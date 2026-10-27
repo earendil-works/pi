@@ -1,8 +1,8 @@
 /**
  * The `codemode` tool: the model writes JavaScript that calls other tools. Scripts use `tools`,
  * `ALL_TOOLS`, `text()`, `image()`, `exit()`, `store()`/`load()`, `console.*`, and `return <value>`,
- * may start with a `// @options:` line, and reach the model catalog and classifiers through
- * `models.*`. Results start with a "Script completed" or "Script failed" header.
+ * may start with a `// @options:` line, and reach the model catalog, classifiers, and image models
+ * through `models.*`. Results start with a "Script completed" or "Script failed" header.
  *
  * Scripts can call the agent loop's nested tools: active `direct` tools and every `codemode` or
  * `deferred` tool. Nested calls run through the agent loop's tool pipeline (`ctx.executeTool`), so
@@ -11,7 +11,7 @@
  *
  * Nested results are handed to the script as follows:
  * - A tool that declares `outputSchema` resolves to its `structuredContent`, also for error
- *   results that carry one (MCP tools resolve to their `CallToolResult`, including `isError`).
+ *   results that carry one.
  * - Any other tool resolves to its text content as one string.
  * - A failed, blocked, or invalid call rejects with an Error carrying the tool's error text.
  *
@@ -21,25 +21,16 @@
  * so each branch sees the values written on its own path.
  */
 
+import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { CodemodeJsonSchema, CodemodeTool } from "@earendil-works/pi-codemode";
-import {
-	MCP_TYPESCRIPT_PREAMBLE,
-	mcpStructuredContentSchema,
-	renderDeclarations,
-	renderToolSample,
-	toCodemodeIdentifier,
-} from "@earendil-works/pi-codemode/declarations";
+import { renderToolOutputType, renderToolSample, toCodemodeIdentifier } from "@earendil-works/pi-codemode/declarations";
 import { CODEMODE_SOURCE_GRAMMAR } from "@earendil-works/pi-codemode/source";
 import { type Static, Type } from "typebox";
-import type {
-	ToolDefinition,
-	ToolInfo,
-	ToolLoadout,
-	ToolLoadoutChanges,
-	ToolNamespace,
-} from "../../core/extensions/types.ts";
+import { getDocsPath } from "../../config.ts";
+import type { ToolDefinition, ToolLoadout, ToolLoadoutChanges, ToolNamespace } from "../../core/extensions/types.ts";
 import type { ModelRegistry } from "../../core/model-registry.ts";
+import { SETTINGS_DEFAULTS } from "../../core/settings-defaults.ts";
 import type { CodemodeMode } from "../../core/settings-manager.ts";
 import { wrapToolDefinition } from "../../core/tools/tool-definition-wrapper.ts";
 import { loadCodemodeExecutor } from "./execute.lazy.ts";
@@ -58,12 +49,14 @@ export interface CodemodeStoreEntryData {
 /** The part of the model registry that scripts reach through `models`. */
 export type CodemodeModelRuntime = Pick<
 	ModelRegistry,
-	"getModelsOfType" | "getAvailableOfType" | "getModelOfType" | "classify"
+	"getModelsOfType" | "getAvailableOfType" | "getModelOfType" | "classify" | "generateImages"
 >;
 
 export interface CodemodeToolOptions {
 	/** Namespace of a tool, for `searchTools()` ranking and its `namespace` filter. */
 	getToolNamespace?: (toolName: string) => ToolNamespace | undefined;
+	/** Prompt guidelines of every tool, by tool name, shown with declarations by `describeTool()` and `ALL_TOOLS`. */
+	getToolGuidelines?: () => ReadonlyMap<string, readonly string[]>;
 	/**
 	 * Expose the `models` namespace to scripts, backed by the session's model registry
 	 * (`ctx.modelRegistry`). Without it, `models` is not declared.
@@ -84,20 +77,11 @@ const TEXT_OUTPUT_SCHEMA: CodemodeJsonSchema = { type: "string" };
 
 export const codemodeSchema = Type.Object({
 	code: Type.String({
-		description:
-			'Raw JavaScript source. Top-level await and return work. May start with a `// @options: {"max_output_tokens": 1000}` line.',
+		description: "Raw JavaScript source.",
 	}),
 });
 
 export type CodemodeToolInput = Static<typeof codemodeSchema>;
-
-/**
- * Whether a registered tool is this package's `codemode` tool rather than another extension's tool
- * with the same name. Compares the parameter schema, which the definition passes through by reference.
- */
-export function isCodemodeTool(tool: Pick<ToolInfo, "name" | "parameters">): boolean {
-	return tool.name === CODEMODE_TOOL_NAME && tool.parameters === codemodeSchema;
-}
 
 export type CodemodeNestedCallStatus = "running" | "ok" | "error" | "cancelled";
 
@@ -122,113 +106,50 @@ export interface CodemodeToolDetails {
 }
 
 export const codemodeToolSystemPromptContribution = {
-	snippet: "Run JavaScript that calls other tools (chains, loops, Promise.all, filtering large results)",
+	snippet: "Run JavaScript that calls other tools",
 	guidelines: [
-		"Use codemode to batch or chain several tool calls, or to filter large tool output down to what you need, instead of issuing many individual tool calls. Batch independent calls in one codemode call using await Promise.allSettled([...]).",
+		"Use codemode to batch independent tool calls (Promise.allSettled), chain them, or filter large output, instead of many separate calls.",
 	],
 } as const;
 
-const DESCRIPTION_INTRO = `Run JavaScript code to orchestrate/compose tool calls
-- Evaluates the provided JavaScript code in a fresh QuickJS sandbox as the body of an async function: top-level \`await\` and \`return\` work.
-- All nested tools are available on the global \`tools\` object, for example \`await tools.read(...)\`. Tool names are exposed as normalized JavaScript identifiers, for example \`await tools.mcp__ologs__get_profile(...)\`.
-- Nested tool methods take an object as their input argument.
-- Nested tools return either an object or a string, based on the description.
-- A nested tool call that fails, is blocked, or gets invalid arguments rejects with an Error carrying the tool's error text.
-- Runs raw JavaScript -- no Node, no file system, no network access, no timers.
-- Accepts raw JavaScript source text, not JSON, quoted strings, or markdown code fences.
-- You may optionally start the tool input with a first line like \`// @options: {"max_output_tokens": 1000, "timeout_ms": 60000}\`.
-- \`max_output_tokens\` sets the token budget for the script's output. Defaults to 10000 tokens.
-- \`timeout_ms\` sets a hard deadline for the whole script. By default there is none.
-- When the JS code is fully evaluated, calls that are still running are cancelled and unawaited promises are silently discarded.
-- Tool calls are real and have side effects. If the script fails partway, earlier calls are not undone.
-- Scripts have a 256 MB memory limit; exceeding it throws \`InternalError: out of memory\`. Filter or aggregate large data instead of accumulating it.
+/** The reference for scripts: globals, tool results, `store()`, the `models` API, and limits. */
+export const CODEMODE_DOCS_PATH = join(getDocsPath(), "codemode.md");
 
-- Global helpers:
-- \`exit()\`: Immediately ends the current script successfully (like an early return from the top level).
-- \`text(value: string | number | boolean | undefined | null)\`: Appends a text item. Non-string values are stringified with \`JSON.stringify(...)\` when possible.
-- \`image(imageUrlOrItem: string | { image_url: string } | ImageContent)\`: Appends an image item. \`image_url\` should be a base64-encoded \`data:\` URL. To forward an MCP tool image, pass an individual \`ImageContent\` block from \`result.content\`, for example \`image(result.content[0])\`.
-- \`store(key: string, value: any)\`: stores a serializable value under a string key for later \`codemode\` calls in the same session. Storing \`undefined\` deletes the key. Writes are kept only if the script succeeds.
-- \`load(key: string)\`: returns the stored value for a string key, or \`undefined\` if it is missing.
-- \`ALL_TOOLS\`: metadata for the enabled nested tools as \`{ name, description }\` entries.
-- \`searchTools(query: string, options?: { limit?: number; namespace?: string })\`: resolves to the nested tools that best match the query (BM25, default limit 8), as \`{ name, description }\` entries like \`ALL_TOOLS\`.
-- \`describeTool(name: string)\`: resolves to the description and declaration of a nested tool, or \`undefined\`.
-- \`console.log(...)\` and the other \`console\` methods append a text item like \`text()\`.
-- \`return value\` at the top level appends the value like \`text()\`.`;
+const DESCRIPTION_INTRO = `Run JavaScript that calls other tools. The input is raw JavaScript (not JSON, no code fence), run as an async function body in a QuickJS sandbox: top-level \`await\` and \`return\` work. No Node, file system, network, or timers.
+- \`await tools.<name>({ ...args })\` resolves to a string, or an object if the tool's declaration says so, and rejects with an Error on failure. A tool whose declaration returns an object resolves on failure too when it returned that object; check its fields. Calls still running when the script ends are cancelled.
+- Optional first line: \`// @options: {"max_output_tokens": 10000, "timeout_ms": 60000}\``;
 
-const MODEL_TYPES = `type ModelType = "chat" | "image" | "classifier";
-/** A model catalog entry. \`provider\` and \`id\` identify it; the other fields depend on the type. */
-interface ModelInfo {
-  type?: ModelType;
-  provider: string;
-  id: string;
-  name: string;
-  api: string;
-  input: ("text" | "image")[];
-  contextWindow?: number;
-  [key: string]: unknown;
+/** One line per global. The details live in {@link CODEMODE_DOCS_PATH}. */
+function describeGlobals(models: boolean): string {
+	const lines = [
+		"Globals:",
+		"- `text(value)`, `image(dataUrlOrImageBlock)`, `console.log(...)`, and top-level `return` add output; `exit()` ends the script. With several text items, each starts with a `==> text N/M <==` line, and `console` lines follow the other output in one `<console_output>` block. `image()` also saves the image to a temp file and the result names its path.",
+		"- `store(key, value)` and `load(key)` keep JSON values across codemode calls.",
+		"- `ALL_TOOLS`, `await searchTools(query, { limit?, namespace? })`, `await describeTool(name)`, `await describeNamespace(name)`: find unlisted tools, such as MCP tools.",
+	];
+	if (models) {
+		lines.push(`- \`models\`: classifiers and image generation. Read ${CODEMODE_DOCS_PATH} first.`);
+	}
+	return lines.join("\n");
 }
-type ClassifierQuestion =
-  | { type: "choice"; instructions: string; criteria: Record<string, string> }
-  | { type: "score"; instructions: string; criteria: string[] }
-  | { type: "bool"; instructions: string; criteria: { true: string; false: string } };
-type ClassifierAnswer =
-  | { type: "choice"; choice: string; probabilities: Record<string, number>; confidence: number }
-  | { type: "score"; score: number; confidence: number }
-  | { type: "bool"; probability: number };
-interface ClassifierContext {
-  state: Record<string, unknown>;
-  questions: Record<string, ClassifierQuestion>;
-}
-interface ClassifierResult {
-  api: string;
-  provider: string;
-  model: string;
-  answers: Record<string, ClassifierAnswer>;
-  /** Set when the service reports token counts. Cost is in USD. */
-  usage?: { input: number; output: number; totalTokens: number; cost: { total: number } };
-  stopReason: "stop" | "error" | "aborted";
-  errorMessage?: string;
-  timestamp: number;
-}`;
-
-/** Declarations of the `models` globals; codemode-execute.ts implements them. */
-export const MODEL_GLOBAL_DECLARATIONS: readonly Omit<CodemodeTool, "execute">[] = [
-	{
-		name: "models.getModelsOfType",
-		description: "Every known model of a type, optionally for one provider.",
-		signature: "(type: ModelType, provider?: string): Promise<ModelInfo[]>",
-	},
-	{
-		name: "models.getAvailableOfType",
-		description: "Models of a type whose provider has working credentials.",
-		signature: "(type: ModelType, provider?: string): Promise<ModelInfo[]>",
-	},
-	{
-		name: "models.getModelOfType",
-		description: "One catalog entry, or undefined.",
-		signature: "(type: ModelType, provider: string, id: string): Promise<ModelInfo | undefined>",
-	},
-	{
-		name: "models.classify",
-		description:
-			"Run a classifier model on one state. Only `provider` and `id` of `model` are used. Provider errors do not throw: check `stopReason` and `errorMessage`.",
-		signature: "(model: ModelInfo, context: ClassifierContext): Promise<ClassifierResult>",
-	},
-];
-
-const DEFERRED_TOOLS_GUIDANCE = `Some deferred nested tools may be omitted from this description. They are still available on the global \`tools\` object and listed in \`ALL_TOOLS\`.
-To find one, call \`await searchTools(query)\`, or filter \`ALL_TOOLS\` by \`name\` and \`description\`.`;
 
 /** Default for {@link CodemodeDescriptionOptions.inlineBudget}, in estimated tokens. */
-export const DEFAULT_CODEMODE_INLINE_BUDGET = 3000;
+export const DEFAULT_CODEMODE_INLINE_BUDGET = SETTINGS_DEFAULTS.codemode.inlineBudget;
 /** Characters per token when estimating the cost of a tool section. */
 const CHARS_PER_TOKEN = 4;
 
-/** What a script sees of a tool. Tools without an output schema resolve to their text output. */
-export function toCodemodeDeclaration(tool: AgentTool<any>): Omit<CodemodeTool, "execute"> {
+/**
+ * What a script sees of a tool: its description followed by its prompt guidelines, which the system
+ * prompt only has for declared tools. Tools without an output schema resolve to their text output.
+ */
+export function toCodemodeDeclaration(
+	tool: AgentTool<any>,
+	guidelines: readonly string[] = [],
+): Omit<CodemodeTool, "execute"> {
+	const bullets = guidelines.flatMap((guideline) => (guideline.trim() ? [`- ${guideline.trim()}`] : []));
 	return {
 		name: tool.name,
-		description: tool.description,
+		description: bullets.length > 0 ? `${tool.description.trim()}\n\n${bullets.join("\n")}` : tool.description,
 		inputSchema: tool.parameters as CodemodeJsonSchema,
 		outputSchema: (tool.outputSchema as CodemodeJsonSchema | undefined) ?? TEXT_OUTPUT_SCHEMA,
 	};
@@ -246,6 +167,8 @@ export interface CodemodeDescriptionOptions {
 	namespaces?: ReadonlyMap<string, ToolNamespace>;
 	/** Tools that are callable but never listed with their declaration (`deferred` exposure). */
 	deferred?: ReadonlySet<string>;
+	/** Prompt guidelines of each tool, by tool name, listed after its description. */
+	guidelines?: ReadonlyMap<string, readonly string[]>;
 	/**
 	 * Estimated tokens (characters / 4) the tool sections may use. Tools that do not fit are left
 	 * out, like deferred tools. Unset lists every tool that is not deferred.
@@ -264,7 +187,6 @@ interface CatalogEntry {
 	name: string;
 	section: string;
 	cost: number;
-	deferred: boolean;
 }
 
 interface CatalogGroup {
@@ -279,9 +201,8 @@ interface CatalogGroup {
  * represented before any namespace is complete.
  */
 function selectCatalog(groups: readonly CatalogGroup[], budget: number | undefined): Set<string> {
-	const listable = groups.map((group) => group.entries.filter((entry) => !entry.deferred));
-	if (budget === undefined) return new Set(listable.flat().map((entry) => entry.name));
-	const queues = listable.map((entries) => [...entries].sort((a, b) => a.cost - b.cost));
+	if (budget === undefined) return new Set(groups.flatMap((group) => group.entries.map((entry) => entry.name)));
+	const queues = groups.map((group) => [...group.entries].sort((a, b) => a.cost - b.cost));
 	const shown = new Set<string>();
 	let remaining = budget;
 	let active = queues.filter((queue) => queue.length > 0);
@@ -299,16 +220,18 @@ function selectCatalog(groups: readonly CatalogGroup[], budget: number | undefin
 }
 
 /**
- * Model-facing description: the helper list, guidance for omitted tools, the shared MCP types when
- * MCP tools are callable, the `models` API, and one section per tool, grouped by namespace. Tool
- * sections are limited to `inlineBudget`; every namespace is listed with its tool count either
- * way, and the listing states whether it is complete.
+ * Model-facing description: the helper list, guidance for finding tools that are not listed, the
+ * `models` API, and one section per listed tool, grouped by namespace. Deferred tools are never
+ * listed and do not affect the description at all, so it stays the same while tools are registered
+ * late (for example by MCP servers that connect). Tool sections are limited to `inlineBudget`.
  */
 export function createCodemodeDescription(
 	tools: readonly AgentTool<any>[],
 	options: CodemodeDescriptionOptions = {},
 ): string {
-	const declarations = getCodemodeCallableTools(tools).map(toCodemodeDeclaration);
+	const declarations = getCodemodeCallableTools(tools)
+		.filter((tool) => !options.deferred?.has(tool.name))
+		.map((tool) => toCodemodeDeclaration(tool, options.guidelines?.get(tool.name)));
 	const groups = new Map<string, CatalogGroup>([["", { namespace: undefined, entries: [] }]]);
 	for (const declaration of declarations) {
 		const namespace = options.namespaces?.get(declaration.name);
@@ -316,50 +239,29 @@ export function createCodemodeDescription(
 		const group = groups.get(key) ?? { namespace, entries: [] };
 		groups.set(key, group);
 		const section = renderToolSection(declaration);
-		group.entries.push({
-			name: declaration.name,
-			section,
-			cost: Math.ceil(section.length / CHARS_PER_TOKEN),
-			deferred: options.deferred?.has(declaration.name) === true,
-		});
+		group.entries.push({ name: declaration.name, section, cost: Math.ceil(section.length / CHARS_PER_TOKEN) });
 	}
 	const ordered = [...groups.values()].sort((a, b) =>
 		a.namespace === undefined ? -1 : b.namespace === undefined ? 1 : a.namespace.name.localeCompare(b.namespace.name),
 	);
 	const shown = selectCatalog(ordered, options.inlineBudget);
-	const complete = shown.size === declarations.length;
 
-	const sections = [DESCRIPTION_INTRO];
-	if (!complete) sections.push(DEFERRED_TOOLS_GUIDANCE);
-	if (declarations.some((declaration) => mcpStructuredContentSchema(declaration.outputSchema) !== undefined)) {
-		sections.push(`Shared MCP Types:\n\`\`\`ts\n${MCP_TYPESCRIPT_PREAMBLE}\n\`\`\``);
-	}
-	if (options.models) {
-		const noop = () => undefined;
-		const models = renderDeclarations({
-			globals: MODEL_GLOBAL_DECLARATIONS.map((global) => ({ ...global, execute: noop })),
-		});
-		sections.push(`Model API:\n\`\`\`ts\n${MODEL_TYPES}\n\n${models}\n\`\`\``);
-	}
+	const sections = [DESCRIPTION_INTRO, describeGlobals(options.models === true)];
 	if (declarations.length === 0) return sections.join("\n\n");
 
-	const toolSections = [
-		complete
-			? `Nested tools: COMPLETE list (${declarations.length} tool${declarations.length === 1 ? "" : "s"}).`
-			: `Nested tools: PARTIAL - ${shown.size} of ${declarations.length} shown.`,
-	];
+	const toolSections = ["Nested tools:"];
 	for (const { namespace, entries } of ordered) {
 		const visible = entries.filter((entry) => shown.has(entry.name));
 		if (namespace) {
-			const count = `${entries.length} tool${entries.length === 1 ? "" : "s"}`;
-			const suffix =
+			// Only tools that did not fit the budget are counted as not listed here.
+			const listing =
 				visible.length === entries.length
 					? ""
 					: visible.length === 0
-						? ", none shown"
-						: `, ${visible.length} shown`;
+						? " (tools not listed)"
+						: " (some tools not listed)";
 			const description = namespace.description?.trim();
-			toolSections.push(`## ${namespace.name} (${count}${suffix})${description ? `\n${description}` : ""}`);
+			toolSections.push(`## ${namespace.name}${listing}${description ? `\n${description}` : ""}`);
 		}
 		for (const entry of visible) toolSections.push(entry.section);
 	}
@@ -368,24 +270,62 @@ export function createCodemodeDescription(
 }
 
 /**
+ * The field names of an object schema, `{ output, exit_code, full_output_path? }`, with the fields of
+ * object-typed fields `depth` levels deep: `{ content, structuredContent?: { results } }`. Undefined
+ * for other schemas.
+ */
+function describeFields(schema: unknown, depth: number): string | undefined {
+	if (typeof schema !== "object" || schema === null) return undefined;
+	const { type, properties, required } = schema as Record<string, unknown>;
+	if (type !== "object" || typeof properties !== "object" || properties === null) return undefined;
+	const requiredNames = new Set(Array.isArray(required) ? required : []);
+	const fields = Object.entries(properties).map(([name, field]) => {
+		const nested = depth > 0 ? describeFields(field, depth - 1) : undefined;
+		return `${name}${requiredNames.has(name) ? "" : "?"}${nested ? `: ${nested}` : ""}`;
+	});
+	return `{ ${fields.join(", ")} }`;
+}
+
+/**
+ * What a script call resolves to, in one line: `a string`, the field names of an object (see
+ * {@link describeFields}), or the rendered type for anything else.
+ */
+function describeOutput(schema: CodemodeJsonSchema | undefined): string {
+	const type = renderToolOutputType(schema);
+	if (type === "string") return "a string";
+	const fields = describeFields(schema, 1);
+	return `\`${fields ?? type.replace(/\s+/g, " ")}\``;
+}
+
+/**
+ * A declared tool's description followed by how scripts call it and what the call resolves to. The
+ * arguments are the tool's declared parameters, so they are not repeated.
+ */
+function describeScriptCall(tool: AgentTool<any>): string {
+	return `${tool.description.trim()}\n\nCodemode: \`tools.${toCodemodeIdentifier(tool.name)}(args)\` resolves to ${describeOutput(toCodemodeDeclaration(tool).outputSchema)}.`;
+}
+
+/**
  * How the codemode tool presents tools that are both declared and callable from scripts:
- * - `on`: their descriptions get the codemode declaration appended, and the codemode description
+ * - `on`: their descriptions say how scripts call them, and the codemode description
  *   lists only the callable tools without `direct` exposure.
  * - `only`: the codemode description lists every callable tool, and requests leave out the
  *   declarations of active `direct` tools.
+ *
+ * Listed tools carry their prompt guidelines, which the system prompt only has for declared tools.
  *
  * Listing by exposure, not by the active set, keeps the codemode description unchanged when
  * `tool_search` loads a tool, so loads do not redeclare codemode.
  */
 function prepareCodemodeLoadout(loadout: ToolLoadout, options: CodemodeToolOptions): ToolLoadoutChanges {
-	const mode = options.getMode?.() ?? "on";
+	const mode = options.getMode?.() ?? SETTINGS_DEFAULTS.codemode.mode;
 	const isDirect = (tool: AgentTool) => loadout.getExposure(tool.name) === "direct";
 	const callable = getCodemodeCallableTools(loadout.callable);
 	const callableNames = new Set(callable.map((tool) => tool.name));
 	const descriptions: Record<string, string> = {};
 	if (mode === "on") {
 		for (const tool of loadout.declared) {
-			if (callableNames.has(tool.name)) descriptions[tool.name] = renderToolSample(toCodemodeDeclaration(tool));
+			if (callableNames.has(tool.name)) descriptions[tool.name] = describeScriptCall(tool);
 		}
 	}
 	const listed = mode === "only" ? callable : callable.filter((tool) => !isDirect(tool));
@@ -395,9 +335,11 @@ function prepareCodemodeLoadout(loadout: ToolLoadout, options: CodemodeToolOptio
 			return namespace ? [[tool.name, namespace] as const] : [];
 		}),
 	);
+	const guidelines = new Map(listed.map((tool) => [tool.name, loadout.getPromptGuidelines(tool.name)] as const));
 	descriptions[CODEMODE_TOOL_NAME] = createCodemodeDescription(listed, {
 		models: options.models === true,
 		namespaces,
+		guidelines,
 		deferred: new Set(
 			listed.filter((tool) => loadout.getExposure(tool.name) === "deferred").map((tool) => tool.name),
 		),
@@ -411,6 +353,19 @@ function prepareCodemodeLoadout(loadout: ToolLoadout, options: CodemodeToolOptio
 				? callable.filter((tool) => isDirect(tool) && declaredNames.has(tool.name)).map((tool) => tool.name)
 				: [],
 	};
+}
+
+/** Script globals that list or look up tools and namespaces, which the script may then call by any name. */
+const DISCOVERY_GLOBALS = /\b(searchTools|describeNamespace|describeTool|ALL_TOOLS)\b/;
+
+/**
+ * The tools a script may call (`ToolDefinition.reachesTools`): every tool when it uses a discovery
+ * global, else the words of its source, so `tools.mcp__docs__search` and
+ * `tools["mcp__docs__" + name]` both name the `mcp__docs` namespace.
+ */
+function getScriptReach(code: unknown): "all" | readonly string[] {
+	if (typeof code !== "string") return [];
+	return DISCOVERY_GLOBALS.test(code) ? "all" : (code.match(/\w+/g) ?? []);
 }
 
 export function createCodemodeToolDefinition(
@@ -427,6 +382,7 @@ export function createCodemodeToolDefinition(
 		// Scripts must not start other scripts.
 		exposure: "model-only",
 		prepareLoadout: (loadout) => prepareCodemodeLoadout(loadout, options),
+		reachesTools: (input) => getScriptReach(input.code),
 		// Capable models write the script as raw text instead of a JSON-escaped string.
 		constrainedSampling: { type: "grammar", variants: { openai_lark: CODEMODE_SOURCE_GRAMMAR } },
 		// The sandbox (worker, QuickJS wasm) loads on the first call, not at startup.

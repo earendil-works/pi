@@ -47,46 +47,6 @@ function makeAssistantMessage(content: AssistantMessage["content"]): AssistantMe
 }
 
 describe("OpenAI to Anthropic session migration for Copilot Claude", () => {
-	it("converts thinking blocks to plain text when source model differs", () => {
-		const model = makeCopilotClaudeModel();
-		const messages: Message[] = [
-			{ role: "user", content: "hello", timestamp: Date.now() },
-			{
-				role: "assistant",
-				content: [
-					{
-						type: "thinking",
-						thinking: "Let me think about this...",
-						thinkingSignature: "reasoning_content",
-					},
-					{ type: "text", text: "Hi there!" },
-				],
-				api: "openai-completions",
-				provider: "github-copilot",
-				model: "gpt-4o",
-				usage: {
-					input: 0,
-					output: 0,
-					cacheRead: 0,
-					cacheWrite: 0,
-					totalTokens: 0,
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-				},
-				stopReason: "stop",
-				timestamp: Date.now(),
-			},
-		];
-
-		const result = transformMessages(messages, model, anthropicNormalizeToolCallId);
-		const assistantMsg = result.find((m) => m.role === "assistant") as AssistantMessage;
-
-		// Thinking block should be converted to text since models differ
-		const textBlocks = assistantMsg.content.filter((b) => b.type === "text");
-		const thinkingBlocks = assistantMsg.content.filter((b) => b.type === "thinking");
-		expect(thinkingBlocks).toHaveLength(0);
-		expect(textBlocks.length).toBeGreaterThanOrEqual(2);
-	});
-
 	it("removes thoughtSignature from tool calls when migrating between models", () => {
 		const model = makeCopilotClaudeModel();
 		const messages: Message[] = [

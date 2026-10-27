@@ -84,6 +84,90 @@ describe("DefaultResourceLoader", () => {
 			]);
 		});
 
+		// #11088
+		it("should warn and keep loading when a configured package cannot be installed", async () => {
+			vi.stubEnv("PI_OFFLINE", "");
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.inMemory({
+					packages: ["npm:broken-package"],
+					// Any non-zero exit stands in for an npm install that cannot reach the registry.
+					npmCommand: [process.execPath, "-e", "process.exit(1)"],
+				}),
+			});
+
+			await loader.reload();
+
+			const warnings = loader.getExtensions().warnings ?? [];
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0].path).toBe("npm:broken-package");
+			expect(warnings[0].warning).toMatch(/^failed to install \(.*failed with code 1\)\./);
+			expect(warnings[0].warning).toContain('Run "pi remove npm:broken-package" to remove it from settings.json.');
+		});
+
+		// #11088
+		it("should point temporary extension sources at the source instead of pi remove", async () => {
+			vi.stubEnv("PI_OFFLINE", "");
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				additionalExtensionPaths: ["npm:broken-package"],
+				settingsManager: SettingsManager.inMemory({
+					npmCommand: [process.execPath, "-e", "process.exit(1)"],
+				}),
+			});
+
+			await loader.reload();
+
+			const warnings = loader.getExtensions().warnings ?? [];
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0].path).toBe("npm:broken-package");
+			expect(warnings[0].warning).toContain("Check the source and try again.");
+			expect(warnings[0].warning).not.toContain("pi remove");
+		});
+
+		// #11088
+		it("should point project extension packages at pi remove --local", async () => {
+			vi.stubEnv("PI_OFFLINE", "");
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ npmCommand: [process.execPath, "-e", "process.exit(1)"] }),
+			);
+			mkdirSync(join(cwd, ".pi"), { recursive: true });
+			writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:broken-package"] }));
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.create(cwd, agentDir, { projectTrusted: true }),
+			});
+
+			await loader.reload();
+
+			const warnings = loader.getExtensions().warnings ?? [];
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0].warning).toContain('Run "pi remove npm:broken-package --local"');
+		});
+
+		// #11088
+		it("should warn once about a failing install when project trust is resolved", async () => {
+			vi.stubEnv("PI_OFFLINE", "");
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.inMemory({
+					packages: ["npm:broken-package"],
+					npmCommand: [process.execPath, "-e", "process.exit(1)"],
+				}),
+			});
+
+			await loader.reload({ resolveProjectTrust: async () => false });
+
+			const warnings = loader.getExtensions().warnings ?? [];
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0].path).toBe("npm:broken-package");
+		});
+
 		it("should fail when an extension package manifest cannot be parsed", async () => {
 			const packageRoot = join(tempDir, "invalid-extension-package");
 			const extensionsDir = join(packageRoot, "extensions");
@@ -1110,6 +1194,27 @@ export default function(pi: ExtensionAPI) {
 			expect(loaded).toEqual(["llama"]);
 		});
 
+		it("should skip disabledBuiltinExtensions even when settings or -e enable them", async () => {
+			mkdirSync(join(cwd, ".pi"), { recursive: true });
+			writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ extensions: ["+builtin:mcp"] }));
+			const loaded: string[] = [];
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				disabledBuiltinExtensions: ["mcp"],
+				additionalExtensionPaths: ["builtin:mcp"],
+				extensionFactories: [
+					{ name: "mcp", builtin: true, factory: () => void loaded.push("mcp") },
+					{ name: "llama", builtin: true, factory: () => void loaded.push("llama") },
+				],
+			});
+			await loader.reload({ resolveProjectTrust: async () => true });
+
+			expect(loader.getExtensions().extensions.map((extension) => extension.path)).toEqual(["builtin:llama"]);
+			expect(loader.getExtensions().errors).toEqual([]);
+			expect(loaded).toEqual(["llama"]);
+		});
+
 		it("should load built-in extensions after file extensions with and without trust resolution", async () => {
 			const userExtDir = join(agentDir, "extensions");
 			mkdirSync(userExtDir, { recursive: true });
@@ -1220,6 +1325,29 @@ export default function(pi: ExtensionAPI) {
 			const files = loadProjectContextFiles({ cwd: worktreeSrc, agentDir });
 
 			expect(files.map((f) => f.content)).toEqual(["worktree instructions"]);
+		});
+
+		// https://github.com/earendil-works/pi/issues/10681
+		it("should load the worktree's context once when it symlinks to the main repo's file", () => {
+			const { main, worktree, worktreeSrc } = setupNestedWorktree();
+			writeFileSync(join(main, "AGENTS.md"), "main repo instructions");
+			symlinkSync(join(main, "AGENTS.md"), join(worktree, "AGENTS.md"));
+
+			const files = loadProjectContextFiles({ cwd: worktreeSrc, agentDir });
+
+			expect(files.map((f) => f.path)).toEqual([join(worktree, "AGENTS.md")]);
+		});
+
+		it("should skip the main repo's duplicate when the main repo's file is a symlink", () => {
+			const { outer, main, worktree, worktreeSrc } = setupNestedWorktree();
+			const shared = join(outer, "shared-agents.md");
+			writeFileSync(shared, "shared instructions");
+			symlinkSync(shared, join(main, "AGENTS.md"));
+			symlinkSync(shared, join(worktree, "AGENTS.md"));
+
+			const files = loadProjectContextFiles({ cwd: worktreeSrc, agentDir });
+
+			expect(files.map((f) => f.path)).toEqual([join(worktree, "AGENTS.md")]);
 		});
 
 		it("should still inherit the main repo's context when the worktree root has none", () => {

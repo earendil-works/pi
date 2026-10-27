@@ -14,7 +14,7 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 }
 
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
-import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
+import type { LoginOptions, OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { startOAuthCallbackServer, waitForCallbackOrManualInput } from "./callback-server.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 import { generatePKCE } from "./pkce.ts";
@@ -356,8 +356,11 @@ async function loginOpenAICodexDeviceCode(interaction: ProviderAuthInteraction):
 	);
 }
 
-async function loginOpenAICodex(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
-	const { verifier, state, url } = await createAuthorizationFlow();
+async function loginOpenAICodex(
+	interaction: ProviderAuthInteraction,
+	options?: LoginOptions,
+): Promise<OAuthCredential> {
+	const { verifier, state, url } = await createAuthorizationFlow(options?.agentName);
 	// Port 1455 is shared with the Codex CLI; when it is taken, fall back to the pasted redirect URL.
 	const callback = await startOAuthCallbackServer({
 		providerName: "OpenAI",
@@ -407,7 +410,7 @@ export const openaiCodexOAuth: OAuthAuth = {
 	name: "OpenAI (ChatGPT Plus/Pro)",
 	isSubscription: true,
 
-	async login(interaction) {
+	async login(interaction, options) {
 		const method = await interaction.prompt({
 			type: "select",
 			message: "Select OpenAI Codex login method:",
@@ -424,7 +427,7 @@ export const openaiCodexOAuth: OAuthAuth = {
 			throw new Error(`Unknown OpenAI Codex login method: ${method}`);
 		}
 
-		return loginOpenAICodex(interaction);
+		return loginOpenAICodex(interaction, options);
 	},
 
 	refresh: (credential, signal) => refreshOpenAICodexToken(credential.refresh, signal),

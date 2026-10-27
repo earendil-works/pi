@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { EventStream } from "../src/utils/event-stream.ts";
+import type { AssistantMessage } from "../src/types.ts";
+import { AssistantMessageEventStream, EventStream } from "../src/utils/event-stream.ts";
 
 // Regression tests for https://github.com/earendil-works/pi/issues/9055
 describe("EventStream", () => {
@@ -90,5 +91,79 @@ describe("EventStream", () => {
 
 		expect(await firstEvent).toEqual({ value: undefined, done: true });
 		expect(await secondEvent).toEqual({ value: undefined, done: true });
+	});
+});
+
+function message(timestamp: number, durationMs?: number): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [],
+		api: "openai-responses",
+		provider: "openai",
+		model: "m",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp,
+		...(durationMs === undefined ? {} : { durationMs }),
+	};
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+describe("AssistantMessageEventStream timing", () => {
+	it("sets durationMs on the final done or error message of a response it saw start", async () => {
+		const done = new AssistantMessageEventStream();
+		const answer = message(Date.now());
+		await sleep(20);
+		done.push({ type: "done", reason: "stop", message: answer });
+		expect(answer.durationMs).toBeGreaterThanOrEqual(15);
+		expect((await done.result()).durationMs).toBe(answer.durationMs);
+
+		const failed = new AssistantMessageEventStream();
+		const error = { ...message(Date.now()), stopReason: "error" as const };
+		failed.push({ type: "error", reason: "error", error });
+		expect(error.durationMs).toBeGreaterThanOrEqual(0);
+
+		const ended = new AssistantMessageEventStream();
+		const result = message(Date.now());
+		ended.end(result);
+		expect(result.durationMs).toBeGreaterThanOrEqual(0);
+	});
+
+	it("keeps an existing duration, so a forwarding stream keeps the inner measurement", async () => {
+		const outer = new AssistantMessageEventStream();
+		await sleep(20);
+		const inner = new AssistantMessageEventStream();
+		const answer = message(Date.now());
+		inner.push({ type: "done", reason: "stop", message: answer });
+		const measured = answer.durationMs;
+		outer.push({ type: "done", reason: "stop", message: answer });
+		expect(answer.durationMs).toBe(measured);
+		expect(measured).toBeLessThan(20);
+
+		const preset = message(Date.now(), 1234);
+		new AssistantMessageEventStream().push({ type: "done", reason: "stop", message: preset });
+		expect(preset.durationMs).toBe(1234);
+	});
+
+	it("leaves a message untimed when it started before the stream, such as a fetched deferred result", () => {
+		const fetched = message(Date.now() - 60_000);
+		new AssistantMessageEventStream().push({ type: "done", reason: "stop", message: fetched });
+		expect(fetched.durationMs).toBeUndefined();
+	});
+
+	it("does not time a message pushed after the stream completed", () => {
+		const stream = new AssistantMessageEventStream();
+		stream.push({ type: "done", reason: "stop", message: message(Date.now()) });
+		const late = message(Date.now());
+		stream.push({ type: "done", reason: "stop", message: late });
+		expect(late.durationMs).toBeUndefined();
 	});
 });

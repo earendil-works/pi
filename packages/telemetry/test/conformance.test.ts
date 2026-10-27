@@ -6,6 +6,9 @@ const conformance = createTelemetryAdapterConformance(() => {
 	const context = new InMemoryTelemetryContext();
 	return Promise.resolve<TelemetryAdapterFixture>({
 		context,
+		propagation: context,
+		metrics: context,
+		getMetrics: () => Promise.resolve(context.getMetrics()),
 		getSpans: () => Promise.resolve(context.getSpans()),
 		[Symbol.asyncDispose]: () => Promise.resolve(),
 	});

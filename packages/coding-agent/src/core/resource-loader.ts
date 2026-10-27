@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { detectCapabilities, getTerminalColorMode, type TerminalColorMode } from "@earendil-works/pi-tui";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME } from "../config.ts";
+import { APP_NAME, CONFIG_DIR_NAME } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 
@@ -25,7 +25,12 @@ import type {
 	LoadExtensionsResult,
 } from "./extensions/types.ts";
 import { findGitPaths } from "./footer-data-provider.ts";
-import { DefaultPackageManager, type PathMetadata, type ResolvedResource } from "./package-manager.ts";
+import {
+	DefaultPackageManager,
+	type PackageInstallFailure,
+	type PathMetadata,
+	type ResolvedResource,
+} from "./package-manager.ts";
 import type { PromptTemplate } from "./prompt-templates.ts";
 import { loadPromptTemplates } from "./prompt-templates.ts";
 import { SettingsManager } from "./settings-manager.ts";
@@ -94,6 +99,28 @@ function collectExtensionPackageWarnings(
 		});
 	}
 	return warnings;
+}
+
+/** Describe a package that was skipped because it could not be installed, including how to drop it. */
+function describePackageInstallFailure(failure: PackageInstallFailure): string {
+	const hint =
+		failure.scope === "temporary"
+			? "Check the source and try again."
+			: `Run "${APP_NAME} remove ${failure.source}${failure.scope === "project" ? " --local" : ""}" to remove it from settings.json.`;
+	return `failed to install (${failure.message}). ${hint}`;
+}
+
+/** One-line startup warning for a package that could not be installed. */
+export function formatPackageInstallWarning(failure: PackageInstallFailure): string {
+	return `Extension package "${failure.source}": ${describePackageInstallFailure(failure)}`;
+}
+
+function collectPackageInstallWarnings(
+	...failures: Array<PackageInstallFailure[] | undefined>
+): Array<{ path: string; warning: string }> {
+	return failures.flatMap((entries) =>
+		(entries ?? []).map((failure) => ({ path: failure.source, warning: describePackageInstallFailure(failure) })),
+	);
 }
 
 function mergeExtensionWarnings(
@@ -252,8 +279,12 @@ export function loadProjectContextFiles(options: {
 
 	while (true) {
 		const contextFile = loadContextFileFromDir(currentDir);
+		// Compare the directory's real path, not the file's: a worktree AGENTS.md that
+		// symlinks to the main repo's file resolves to the shadowed path itself.
 		const isShadowed =
-			shadowedContextFile !== undefined && canonicalizePath(contextFile?.path ?? "") === shadowedContextFile;
+			shadowedContextFile !== undefined &&
+			contextFile !== null &&
+			join(canonicalizePath(currentDir), basename(contextFile.path)) === shadowedContextFile;
 		if (contextFile && !isShadowed && !seenPaths.has(contextFile.path)) {
 			ancestorContextFiles.unshift(contextFile);
 			seenPaths.add(contextFile.path);
@@ -280,6 +311,8 @@ export interface DefaultResourceLoaderOptions {
 	additionalThemePaths?: string[];
 	extensionFactories?: InlineExtension[];
 	noExtensions?: boolean;
+	/** Built-in extensions not to load, by name (such as `mcp`), even when settings or `-e` enable them. */
+	disabledBuiltinExtensions?: string[];
 	noSkills?: boolean;
 	noPromptTemplates?: boolean;
 	noThemes?: boolean;
@@ -319,6 +352,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private extensionFactories: InlineExtension[];
 	private builtinExtensions: Map<string, BuiltinExtension>;
 	private noExtensions: boolean;
+	private disabledBuiltinExtensions: Set<string>;
 	private noSkills: boolean;
 	private noPromptTemplates: boolean;
 	private noThemes: boolean;
@@ -384,6 +418,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.additionalPromptTemplatePaths = options.additionalPromptTemplatePaths ?? [];
 		this.additionalThemePaths = options.additionalThemePaths ?? [];
 		this.noExtensions = options.noExtensions ?? false;
+		this.disabledBuiltinExtensions = new Set(options.disabledBuiltinExtensions);
 		this.noSkills = options.noSkills ?? false;
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
 		this.noThemes = options.noThemes ?? false;
@@ -522,6 +557,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
 			temporary: true,
 		});
+		const installWarnings = collectPackageInstallWarnings(
+			resolvedPaths.installFailures,
+			cliExtensionPaths.installFailures,
+		);
 		// Kept on the instance so post-reload passes (extendResources) can still resolve package metadata.
 		this.resourceMetadataByPath = new Map();
 		const metadataByPath = this.resourceMetadataByPath;
@@ -566,13 +605,17 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const cliEnabledPrompts = getEnabledPaths(cliExtensionPaths.prompts);
 		const cliEnabledThemes = getEnabledPaths(cliExtensionPaths.themes);
 
-		const extensionPaths = this.noExtensions
-			? cliEnabledExtensions
-			: this.mergePaths(cliEnabledExtensions, enabledExtensions);
+		const extensionPaths = (
+			this.noExtensions ? cliEnabledExtensions : this.mergePaths(cliEnabledExtensions, enabledExtensions)
+		).filter(
+			(path) =>
+				!path.startsWith(BUILTIN_PATH_PREFIX) ||
+				!this.disabledBuiltinExtensions.has(path.slice(BUILTIN_PATH_PREFIX.length)),
+		);
 
 		const packageWarnings = collectExtensionPackageWarnings(extensionPaths, metadataByPath);
 		const extensionsResult = await this.loadFinalExtensionSet(extensionPaths, preTrustExtensions);
-		mergeExtensionWarnings(extensionsResult, packageWarnings);
+		mergeExtensionWarnings(extensionsResult, [...installWarnings, ...packageWarnings]);
 		for (const p of this.additionalExtensionPaths) {
 			if (isLocalPath(p)) {
 				const resolved = this.resolveResourcePath(p);
@@ -684,8 +727,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 			]),
 		);
 		const packageWarnings = collectExtensionPackageWarnings(extensionPaths, metadataByPath);
+		const installWarnings = collectPackageInstallWarnings(
+			resolvedPaths.installFailures,
+			cliExtensionPaths.installFailures,
+		);
 		const extensionsResult = await loadExtensionsCached(extensionPaths, this.cwd, this.eventBus);
-		mergeExtensionWarnings(extensionsResult, packageWarnings);
+		mergeExtensionWarnings(extensionsResult, [...installWarnings, ...packageWarnings]);
 		if (!options.includeInlineFactories) {
 			return extensionsResult;
 		}

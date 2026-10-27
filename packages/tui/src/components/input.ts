@@ -1,7 +1,14 @@
 import { getKeybindings } from "../keybindings.ts";
 import { decodeKittyPrintable } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
-import { type Component, CURSOR_MARKER, type Focusable, type TuiMouseEvent, type TuiMouseEventResult } from "../tui.ts";
+import {
+	type Component,
+	CURSOR_MARKER,
+	type Focusable,
+	renderFakeCursor,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
+} from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
 import { getGraphemeSegmenter, isWhitespaceChar, sliceByColumn, truncateToWidth, visibleWidth } from "../utils.ts";
 import { findWordBackward, findWordForward } from "../word-navigation.ts";
@@ -423,7 +430,7 @@ export class Input implements Component, Focusable {
 			const atCursor = graphemes[0]?.segment ?? " ";
 			const afterCursor = placeholder.slice(atCursor.length);
 			const marker = this.focused ? CURSOR_MARKER : "";
-			const cursorChar = `\x1b[7m${this.placeholderStyle(atCursor)}\x1b[27m`;
+			const cursorChar = renderFakeCursor(this.placeholderStyle(atCursor));
 			const textWithCursor = marker + cursorChar + this.placeholderStyle(afterCursor);
 			const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(textWithCursor)));
 			return [this.prompt + textWithCursor + padding];
@@ -480,8 +487,8 @@ export class Input implements Component, Focusable {
 		// Hardware cursor marker (zero-width, emitted before fake cursor for IME positioning)
 		const marker = this.focused ? CURSOR_MARKER : "";
 
-		// Use inverse video to show cursor
-		const cursorChar = `\x1b[7m${atCursor}\x1b[27m`; // ESC[7m = reverse video, ESC[27m = normal
+		// TUI draws the fake cursor in reverse video, or omits it when the hardware cursor is shown
+		const cursorChar = renderFakeCursor(atCursor);
 		const textWithCursor = beforeCursor + marker + cursorChar + afterCursor;
 
 		// Calculate visual width

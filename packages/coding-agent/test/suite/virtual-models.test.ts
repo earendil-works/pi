@@ -368,13 +368,13 @@ describe("AgentSession virtual models", () => {
 		expect(reasons()).toEqual(["user", "user"]);
 	});
 
-	it("routes compaction summaries before sizing them", async () => {
+	it("routes compaction summaries to the resolved model", async () => {
 		const summaries: string[] = [];
 		const { harness, reasons } = await createRoutedHarness(defaultRoute, {
 			settings: { compaction: { keepRecentTokens: 1 } },
 		});
 		const summary: FauxResponseStep = (_context, options, _state, model) => {
-			summaries.push(`${model.id}:${options?.reasoning ?? "off"}:${options?.maxTokens}`);
+			summaries.push(`${model.id}:${options?.reasoning ?? "off"}`);
 			return fauxAssistantMessage("summary");
 		};
 		// Compaction summarizes the history and the split turn prefix with one routed model.
@@ -391,7 +391,7 @@ describe("AgentSession virtual models", () => {
 
 		expect(result.summary).toContain("summary");
 		expect(reasons()).toEqual(["user", "user", "direct"]);
-		// The router's thinking level applies, and the output budget respects the large model's 4000 tokens.
-		expect(summaries).toEqual(["large:low:4000", "large:low:4000"]);
+		// The router's model and thinking level apply. The provider layer sizes output from that model.
+		expect(summaries).toEqual(["large:low", "large:low"]);
 	});
 });

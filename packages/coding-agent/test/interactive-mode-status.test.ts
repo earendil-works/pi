@@ -6,6 +6,7 @@ import { type Component, Container, type Focusable, type TUI } from "../../tui/s
 import { TuiMainScreen } from "../../tui/src/tui-main-screen.ts";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
+import type { QuietStartup } from "../src/core/settings-manager.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
@@ -233,6 +234,15 @@ describe("InteractiveMode.showExtensionCustom", () => {
 		initTheme("dark");
 	});
 
+	// Inline custom components go through the extension dialog stack.
+	const extensionDialogState = () => ({
+		extensionDialogs: [],
+		programStatus: { setBlocked: vi.fn() },
+		pushExtensionDialog: (InteractiveMode as any).prototype.pushExtensionDialog,
+		removeExtensionDialog: (InteractiveMode as any).prototype.removeExtensionDialog,
+		showTopExtensionDialog: (InteractiveMode as any).prototype.showTopExtensionDialog,
+	});
+
 	test("overlay custom UI reclaims input after non-overlay custom UI closes", async () => {
 		const terminal = new VirtualTerminal(80, 24);
 		const ui: TUI = new TuiMainScreen(terminal);
@@ -253,6 +263,7 @@ describe("InteractiveMode.showExtensionCustom", () => {
 			keybindings: {},
 			ui,
 			disposeActiveSelector: vi.fn(),
+			...extensionDialogState(),
 		};
 		const showExtensionCustom = <T>(
 			factory: (tui: TUI, theme: unknown, keybindings: unknown, done: (result: T) => void) => Component,
@@ -299,6 +310,85 @@ describe("InteractiveMode.showExtensionCustom", () => {
 			ui.stop();
 		}
 	});
+
+	// Regression test for #10648: closing a lower overlay removed the topmost overlay instead.
+	test.each([
+		{ lowerKind: "capturing", nonCapturing: false },
+		{ lowerKind: "non-capturing", nonCapturing: true },
+	])(
+		"closing a lower $lowerKind overlay custom UI removes its own overlay, not the topmost one",
+		async ({ nonCapturing }) => {
+			const terminal = new VirtualTerminal(80, 24);
+			const ui: TUI = new TuiMainScreen(terminal);
+			const editorContainer = new Container();
+			const editor = new TestFocusableComponent("EDITOR");
+			const lower = new TestFocusableComponent("LOWER");
+			const upper = new TestFocusableComponent("UPPER");
+			let closeLower: (value: string) => void = () => {
+				throw new Error("closeLower was not initialized");
+			};
+			let closeUpper: (value: string) => void = () => {
+				throw new Error("closeUpper was not initialized");
+			};
+			const fakeThis = {
+				editor,
+				editorContainer,
+				keybindings: {},
+				ui,
+				disposeActiveSelector: vi.fn(),
+				...extensionDialogState(),
+			};
+			const showExtensionCustom = <T>(
+				factory: (tui: TUI, theme: unknown, keybindings: unknown, done: (result: T) => void) => Component,
+				options?: { overlay?: boolean; overlayOptions?: { nonCapturing?: boolean } },
+			): Promise<T> =>
+				(InteractiveMode as any).prototype.showExtensionCustom.call(fakeThis, factory, options) as Promise<T>;
+
+			editorContainer.addChild(editor);
+			ui.addChild(editorContainer);
+			ui.setFocus(editor);
+			ui.start();
+			try {
+				const lowerPromise = showExtensionCustom<string>(
+					(_tui, _theme, _keybindings, done) => {
+						closeLower = done;
+						return lower;
+					},
+					{ overlay: true, overlayOptions: { nonCapturing } },
+				);
+				await flushTui(ui, terminal);
+				const upperPromise = showExtensionCustom<string>(
+					(_tui, _theme, _keybindings, done) => {
+						closeUpper = done;
+						return upper;
+					},
+					{ overlay: true },
+				);
+				await flushTui(ui, terminal);
+				expect(upper.focused).toBe(true);
+
+				closeLower("lower closed");
+				await expect(lowerPromise).resolves.toBe("lower closed");
+				await flushTui(ui, terminal);
+
+				const viewport = terminal.getViewport().join("\n");
+				expect(viewport).toContain("UPPER");
+				expect(viewport).not.toContain("LOWER");
+				terminal.sendInput("x");
+				await flushTui(ui, terminal);
+				expect(upper.inputs).toEqual(["x"]);
+				expect(lower.inputs).toEqual([]);
+
+				closeUpper("upper closed");
+				await expect(upperPromise).resolves.toBe("upper closed");
+				await flushTui(ui, terminal);
+				expect(ui.hasOverlay()).toBe(false);
+				expect(editor.focused).toBe(true);
+			} finally {
+				ui.stop();
+			}
+		},
+	);
 });
 
 describe("InteractiveMode.createExtensionUIContext addAutocompleteProvider", () => {
@@ -486,9 +576,10 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 			sessionManager: { getCwd: () => "/tmp" },
 			fdPath: null,
 			getLoginProviderOptions: () => [
-				{ id: "anthropic", name: "Anthropic", authType: "oauth" },
-				{ id: "anthropic", name: "Anthropic", authType: "api_key" },
+				{ id: "anthropic", name: "Anthropic", authType: "oauth", subscription: true },
+				{ id: "anthropic", name: "Anthropic", authType: "api_key", subscription: true },
 				{ id: "openai", name: "OpenAI", authType: "api_key" },
+				{ id: "radius", name: "Radius", authType: "oauth", subscription: false },
 			],
 		};
 
@@ -505,6 +596,13 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 				description: "Anthropic · subscription/API key",
 			},
 		]);
+
+		// OAuth sign-in without a subscription, such as Radius, is an account.
+		const radiusLine = "/login radius";
+		const radiusSuggestions = await provider.getSuggestions([radiusLine], 0, radiusLine.length, {
+			signal: new AbortController().signal,
+		});
+		expect(radiusSuggestions?.items).toEqual([{ value: "radius", label: "radius", description: "Radius · account" }]);
 	});
 });
 describe("InteractiveMode.showLoadedResources", () => {
@@ -513,7 +611,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 	});
 
 	function createShowLoadedResourcesThis(options: {
-		quietStartup: boolean;
+		quietStartup: QuietStartup;
 		verbose?: boolean;
 		toolOutputExpanded?: boolean;
 		cwd?: string;
@@ -561,6 +659,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 				(InteractiveMode as any).prototype.formatExtensionDisplayPath.call(fakeThis, p),
 			formatContextPath: (p: string) => (InteractiveMode as any).prototype.formatContextPath.call(fakeThis, p),
 			getStartupExpansionState: () => (InteractiveMode as any).prototype.getStartupExpansionState.call(fakeThis),
+			shouldShowStartupDetails: () => (InteractiveMode as any).prototype.shouldShowStartupDetails.call(fakeThis),
 			buildScopeGroups: () => [],
 			formatScopeGroups: () => "resource-list",
 			isPackageSource: (sourceInfo?: SourceInfo) =>
@@ -1230,6 +1329,28 @@ describe("InteractiveMode.showLoadedResources", () => {
 		});
 
 		expect(fakeThis.loadedResourcesContainer.children).toHaveLength(0);
+	});
+
+	test("hides resource listing but keeps the startup header with header-only quiet startup", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: "header",
+			skills: [{ filePath: "/tmp/skill/SKILL.md", name: "commit" }],
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+
+		expect(fakeThis.loadedResourcesContainer.children).toHaveLength(0);
+		expect((InteractiveMode as any).prototype.shouldShowStartupHeader.call(fakeThis)).toBe(true);
+		expect((InteractiveMode as any).prototype.shouldShowStartupDetails.call(fakeThis)).toBe(false);
+	});
+
+	test("hides the startup header with full quiet startup unless verbose", () => {
+		const quiet = createShowLoadedResourcesThis({ quietStartup: true });
+		expect((InteractiveMode as any).prototype.shouldShowStartupHeader.call(quiet)).toBe(false);
+		const verbose = createShowLoadedResourcesThis({ quietStartup: "header", verbose: true });
+		expect((InteractiveMode as any).prototype.shouldShowStartupDetails.call(verbose)).toBe(true);
 	});
 
 	test("still shows diagnostics on quiet startup when requested", () => {

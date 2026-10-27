@@ -315,6 +315,9 @@ export function validateToolCall(tools: Tool[], toolCall: ToolCall): any {
  * @throws Error with formatted message if validation fails
  */
 export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
+	if (toolCall.argumentsError) {
+		throw new Error(`Invalid arguments for tool "${toolCall.name}": ${toolCall.argumentsError}`);
+	}
 	const args = structuredClone(toolCall.arguments);
 	normalizeOptionalNulls(args, tool.parameters as JsonSchemaObject);
 	Value.Convert(tool.parameters, args);

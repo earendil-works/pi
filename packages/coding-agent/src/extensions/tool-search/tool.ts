@@ -102,7 +102,8 @@ function schemaText(schema: unknown, parts: string[]): void {
 
 /**
  * Search text of a tool: the name, the name with `_`
- * as spaces, the description, schema descriptions and property names, and the namespace.
+ * as spaces, the description, schema descriptions and property names, and the namespace with its
+ * description and instructions.
  */
 export function createToolSearchDocument(
 	tool: Pick<ToolInfo, "name" | "description" | "parameters">,
@@ -110,11 +111,32 @@ export function createToolSearchDocument(
 ): ToolSearchDocument {
 	const parts = [tool.name, tool.name.replaceAll("_", " "), tool.description];
 	schemaText(tool.parameters, parts);
-	if (namespace) parts.push(namespace.name, namespace.description ?? "");
+	if (namespace) parts.push(namespace.name, namespace.description ?? "", namespace.instructions ?? "");
 	return { name: tool.name, text: parts.filter((part) => part.trim()).join(" ") };
 }
 
-/** Okapi BM25 with the usual parameters. Ties keep document order. */
+/** Lowercase with characters invalid in script identifiers as `_`, so `dev-radius` matches `dev_radius`. */
+function normalizeName(name: string): string {
+	return name
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9_$]/g, "_");
+}
+
+/**
+ * Whether `query` names the tool: its full name or a suffix after a `__` separator, so `thread_read`
+ * and `app__thread_read` both name `mcp__app__thread_read`.
+ */
+function isNameQuery(query: string, name: string): boolean {
+	const normalized = normalizeName(name);
+	return normalized === query || normalized.endsWith(`__${query}`);
+}
+
+/**
+ * Okapi BM25 with the usual parameters. A query that names a tool ranks that tool first, because
+ * length normalization can otherwise rank a short description sharing the name's words above it.
+ * Ties keep document order.
+ */
 export class Bm25Ranker implements ToolRanker {
 	private readonly k1: number;
 	private readonly b: number;
@@ -140,7 +162,8 @@ export class Bm25Ranker implements ToolRanker {
 				return [term, Math.log(1 + (documents.length - frequency + 0.5) / (frequency + 0.5))] as const;
 			}),
 		);
-		const matches: ToolSearchMatch[] = [];
+		const nameQuery = normalizeName(query);
+		const matches: (ToolSearchMatch & { named: boolean })[] = [];
 		documents.forEach((document, index) => {
 			let score = 0;
 			for (const term of queryTerms) {
@@ -149,9 +172,12 @@ export class Bm25Ranker implements ToolRanker {
 				const norm = this.k1 * (1 - this.b + (this.b * lengths[index]) / averageLength);
 				score += (idf.get(term) ?? 0) * ((count * (this.k1 + 1)) / (count + norm));
 			}
-			if (score > 0) matches.push({ name: document.name, score });
+			if (score > 0) matches.push({ name: document.name, score, named: isNameQuery(nameQuery, document.name) });
 		});
-		return matches.sort((a, b) => b.score - a.score).slice(0, limit);
+		return matches
+			.sort((a, b) => Number(b.named) - Number(a.named) || b.score - a.score)
+			.slice(0, limit)
+			.map(({ name, score }) => ({ name, score }));
 	}
 }
 
@@ -163,11 +189,6 @@ export const toolSearchSchema = Type.Object({
 });
 
 export type ToolSearchInput = Static<typeof toolSearchSchema>;
-
-/** Whether the tool is this `tool_search`, not another extension's tool of the same name. */
-export function isToolSearchTool(tool: Pick<ToolInfo, "name" | "parameters">): boolean {
-	return tool.name === TOOL_SEARCH_TOOL_NAME && tool.parameters === toolSearchSchema;
-}
 
 export interface ToolSearchResultTool {
 	name: string;
@@ -213,21 +234,10 @@ function searchAndLoad(
 }
 
 /**
- * The `tool_search` description. `sources` lists the namespaces whose tools can be found, with
- * their descriptions.
+ * The `tool_search` description. It does not list the searchable tools or their namespaces, so it
+ * stays the same while tools are registered, for example when MCP servers connect.
  */
-export function createToolSearchDescription(sources: readonly ToolNamespace[] = []): string {
-	const listed =
-		sources.length === 0
-			? "None currently enabled."
-			: sources
-					.map((source) => {
-						const description = source.description?.trim().split(/\r?\n/)[0];
-						return description ? `- ${source.name}: ${description}` : `- ${source.name}`;
-					})
-					.join("\n");
-	return `# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call.\n\nYou have access to tools from the following sources:\n${listed}\n\nSome of the tools may not have been provided to you upfront, and you should use this tool (\`${TOOL_SEARCH_TOOL_NAME}\`) to search for the required tools. For MCP tool discovery, always use \`${TOOL_SEARCH_TOOL_NAME}\`.`;
-}
+export const TOOL_SEARCH_DESCRIPTION = `# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call.\n\nSome of the tools, such as tools of MCP servers, may not have been provided to you upfront, and you should use this tool (\`${TOOL_SEARCH_TOOL_NAME}\`) to search for the required tools. For MCP tool discovery, always use \`${TOOL_SEARCH_TOOL_NAME}\`.`;
 
 export function createToolSearchToolDefinition(
 	options: ToolSearchToolOptions = {},
@@ -235,23 +245,13 @@ export function createToolSearchToolDefinition(
 	return {
 		name: TOOL_SEARCH_TOOL_NAME,
 		label: TOOL_SEARCH_TOOL_NAME,
-		// Replaced with the searchable sources when the tool is activated.
-		description: createToolSearchDescription(),
+		description: TOOL_SEARCH_DESCRIPTION,
 		promptSnippet: "Search for tools that are not loaded yet and load the matches",
 		parameters: toolSearchSchema,
 		// Searching is not something scripts need; it changes what the model sees.
 		exposure: "model-only",
-		// List the namespaces of the searchable tools.
-		prepareLoadout: (loadout) => {
-			const sources = new Map<string, ToolNamespace>();
-			for (const tool of loadout.registered) {
-				const namespace = loadout.getNamespace(tool.name);
-				if (isSearchable(loadout.getExposure(tool.name)) && namespace && !sources.has(namespace.name)) {
-					sources.set(namespace.name, namespace);
-				}
-			}
-			return { descriptions: { [TOOL_SEARCH_TOOL_NAME]: createToolSearchDescription([...sources.values()]) } };
-		},
+		// A query can match any tool that is not declared yet.
+		reachesTools: () => "all",
 		async execute(_toolCallId, { query, limit }) {
 			if (query.trim() === "") throw new Error("query must not be empty");
 			const max = limit ?? DEFAULT_TOOL_SEARCH_LIMIT;

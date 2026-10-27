@@ -9,7 +9,6 @@ import {
 	SessionManager,
 	createAgentSessionFromServices,
 } from "@earendil-works/pi-coding-agent";
-import { Levenshtein } from "autoevals";
 import { createJudge, describeEval } from "vitest-evals";
 import { createPiDocumentationEvalHarness, type PiCodingAgentInput } from "../src/harness.ts";
 
@@ -20,6 +19,22 @@ const CONTEXT_FIXTURES = [
 	{ percent: 65, expectedBar: "███████░░░ 65%" },
 	{ percent: 120, expectedBar: "██████████ 100%" },
 ] as const;
+
+/** Normalized Levenshtein similarity: 1 for identical strings, 0 for completely different ones. */
+function levenshteinSimilarity(a: string, b: string): number {
+	const maxLength = Math.max(a.length, b.length);
+	if (maxLength === 0) return 1;
+	let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+	for (let i = 1; i <= a.length; i++) {
+		const current = [i];
+		for (let j = 1; j <= b.length; j++) {
+			const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+			current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost);
+		}
+		previous = current;
+	}
+	return 1 - previous[b.length] / maxLength;
+}
 
 class RecordingTerminal {
 	readonly columns = 100;
@@ -226,11 +241,9 @@ const contextFooterJudge = createJudge<PiCodingAgentInput, TuiFooterOutput>(
 				if (otherBar !== expectedBar && normalizedStatusLine.includes(otherBar)) valid = false;
 			}
 			if (reference) {
-				const result = await Levenshtein({
-					expected: reference,
-					output: normalizedStatusLine.replace(expectedBar, contextMarker),
-				});
-				if (result.score !== null) similarities.push(result.score);
+				similarities.push(
+					levenshteinSimilarity(normalizedStatusLine.replace(expectedBar, contextMarker), reference),
+				);
 			}
 		}
 		const retained = similarities.length === CONTEXT_FIXTURES.length ? Math.min(...similarities) : 0;

@@ -29,6 +29,11 @@ import { getProviderEnvValue } from "./utils/provider-env.ts";
 export const ANTHROPIC_AUTH_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN";
 export const ANTHROPIC_OAUTH_TOKEN_ENV = "ANTHROPIC_OAUTH_TOKEN";
 export const ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY";
+export const ANTHROPIC_FEDERATION_RULE_ID_ENV = "ANTHROPIC_FEDERATION_RULE_ID";
+export const ANTHROPIC_ORGANIZATION_ID_ENV = "ANTHROPIC_ORGANIZATION_ID";
+export const ANTHROPIC_SERVICE_ACCOUNT_ID_ENV = "ANTHROPIC_SERVICE_ACCOUNT_ID";
+export const ANTHROPIC_IDENTITY_TOKEN_FILE_ENV = "ANTHROPIC_IDENTITY_TOKEN_FILE";
+export const ANTHROPIC_WORKSPACE_ID_ENV = "ANTHROPIC_WORKSPACE_ID";
 
 let cachedVertexAdcCredentialsExists: boolean | null = null;
 
@@ -82,7 +87,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		"qwen-token-plan-cn": "QWEN_TOKEN_PLAN_CN_API_KEY",
 		"qwen-token-plan-individual": "QWEN_TOKEN_PLAN_API_KEY",
 		openai: "OPENAI_API_KEY",
-		"azure-openai-responses": "AZURE_OPENAI_API_KEY",
+		azure: "AZURE_OPENAI_API_KEY",
 		nvidia: "NVIDIA_API_KEY",
 		deepseek: "DEEPSEEK_API_KEY",
 		google: "GEMINI_API_KEY",

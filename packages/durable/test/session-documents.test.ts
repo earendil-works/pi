@@ -14,6 +14,7 @@ type Live = { message?: string; items: string[]; nested: { count: number }; othe
 
 let liveInitCount = 0;
 const LiveDoc = defineDoc<Live>({
+	checkpointWhen: () => false,
 	kind: "test.live",
 	version: 1,
 	scope: "conversation",
@@ -26,6 +27,7 @@ const LiveDoc = defineDoc<Live>({
 });
 
 const RewindableLiveDoc = defineDoc<Live>({
+	checkpointWhen: () => false,
 	kind: "test.live",
 	version: 1,
 	scope: "conversation",
@@ -35,6 +37,7 @@ const RewindableLiveDoc = defineDoc<Live>({
 });
 
 const LiveDocV2 = defineDoc<Live>({
+	checkpointWhen: () => false,
 	kind: "test.live",
 	version: 2,
 	scope: "conversation",
@@ -45,6 +48,7 @@ const LiveDocV2 = defineDoc<Live>({
 
 type Counter = { count: number };
 const CounterDoc = defineDoc<Counter>({
+	checkpointWhen: () => false,
 	kind: "test.counter",
 	version: 1,
 	scope: "session",
@@ -54,6 +58,7 @@ const CounterDoc = defineDoc<Counter>({
 type Member = { seed: string; hits: number };
 const seeds: string[] = [];
 const MemberDoc = defineDocFamily<Member, string>({
+	checkpointWhen: () => false,
 	kind: "test.member",
 	version: 1,
 	family: true,
@@ -312,6 +317,7 @@ describe("Session document transactions", () => {
 		const { session, storage } = openTestSession();
 		let initialized = 0;
 		const LateDoc = defineDoc<Counter>({
+			checkpointWhen: () => false,
 			kind: "test.late",
 			version: 1,
 			scope: "session",
@@ -381,6 +387,7 @@ describe("Session document transactions", () => {
 		const { session, storage } = openTestSession();
 		const conversationId = await createConversation(session);
 		const DateDoc = defineDoc<JsonObject>({
+			checkpointWhen: () => false,
 			kind: "test.date",
 			version: 1,
 			scope: "session",
@@ -421,7 +428,6 @@ describe("Session document transactions", () => {
 					kind: "missing",
 					version: 1,
 					input: null,
-					after: [],
 					background: false,
 					abortRequested: false,
 					state: { status: "pending", checkpoint: { phase: "start" } },
@@ -438,7 +444,7 @@ describe("Session document transactions", () => {
 		expect((await session.snapshot(CounterDoc, context))!.count).toBe(3);
 	});
 
-	it("poisons the Session after an uncertain Storage failure and publishes nothing", async () => {
+	it("fails the Session after a Storage failure and publishes nothing", async () => {
 		const { session, storage, publications, conversationId } = await setupLive();
 		await flush();
 		const before = (await session.snapshot(LiveDoc, conversationId, context))!;
@@ -452,8 +458,8 @@ describe("Session document transactions", () => {
 		await flush();
 		expect(publications.length).toBe(published);
 		expect(before.message).toBeUndefined();
-		await expect(session.snapshot(LiveDoc, conversationId, context)).rejects.toThrow("poisoned");
-		await expect(session.commit(() => undefined, context)).rejects.toThrow("poisoned");
+		await expect(session.snapshot(LiveDoc, conversationId, context)).rejects.toMatchObject({ name: "SessionFailed" });
+		await expect(session.commit(() => undefined, context)).rejects.toMatchObject({ name: "SessionFailed" });
 		await session.close(context);
 	});
 

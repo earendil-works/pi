@@ -1189,10 +1189,20 @@ export class SessionManager {
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
+		const previousLeafId = this.leafId;
 		this.fileEntries.push(entry);
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
-		this._persist(entry);
+		try {
+			this._persist(entry);
+		} catch (error) {
+			// Keep memory in line with the file: an entry that was not written must not become the
+			// parent of later entries, or the file would hold entries pointing to a missing parent.
+			this.fileEntries.pop();
+			this.byId.delete(entry.id);
+			this.leafId = previousLeafId;
+			throw error;
+		}
 	}
 
 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
@@ -1853,13 +1863,18 @@ export class SessionManager {
 			cwd: resolvedTargetCwd,
 			parentSession: resolvedSourcePath,
 		};
-		writeFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`, { flag: "wx" });
-
-		// Copy all non-header entries from source
-		for (const entry of sourceEntries) {
-			if (entry.type !== "session") {
-				appendFileSync(newSessionFile, `${JSON.stringify(entry)}\n`);
+		// Write the header and all non-header entries through one fd. Reopening the file per entry
+		// is slow where open/close is expensive (e.g. filesystem security monitors).
+		const fd = openSync(newSessionFile, "wx");
+		try {
+			writeFileSync(fd, `${JSON.stringify(newHeader)}\n`);
+			for (const entry of sourceEntries) {
+				if (entry.type !== "session") {
+					writeFileSync(fd, `${JSON.stringify(entry)}\n`);
+				}
 			}
+		} finally {
+			closeSync(fd);
 		}
 
 		return new SessionManager(resolvedTargetCwd, dir, newSessionFile, true);

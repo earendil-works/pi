@@ -1,4 +1,3 @@
-import { calculateCost } from "../models.ts";
 import type {
 	ClassifierAnswer,
 	ClassifierApi,
@@ -6,18 +5,53 @@ import type {
 	ClassifierModel,
 	ClassifierOptions,
 	ClassifierResult,
-	ProviderHeaders,
-	Usage,
+	ImageContent,
+	SystemOneCompat,
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
-import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
-import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { isRecord, parseClassifierUsage, postClassifierRequest, requiredNumber } from "./classifier-shared.ts";
+
+/** A System One image asset: base64 file bytes, referenced by its name from the state. */
+interface SystemOneImageAsset {
+	type: "image";
+	format: "png" | "jpeg";
+	data_base64: string;
+}
+
+/** An image in the state, OpenRouter's form. */
+interface SystemOneImageUrlPart {
+	type: "image_url";
+	image_url: { url: string };
+}
 
 /** TypeSafe System One request body without the transport-specific envelope. */
 export interface SystemOneWireRequest {
-	state: ClassifierContext["state"];
+	/** The context state, or with images a list of the images or their asset names followed by the state. */
+	state: unknown;
 	questions: Record<string, unknown>;
+	/** Images as System One assets, keyed by the names the state references. */
+	assets?: Record<string, SystemOneImageAsset>;
+	/** Images as data URLs, Clef's extension to System One. */
+	images?: string[];
 }
+
+/**
+ * How a service takes images (`SystemOneCompat.imageInput`):
+ * - `assets`: TypeSafe's `assets` map, `{ "<image-1>": { type: "image", format, data_base64 } }`,
+ *   with the names placed before the state: `state: ["<image-1>", state]`. PNG and JPEG only.
+ * - `images`: Clef's `images` list of data URLs, which the model reads before the state.
+ *   PNG, JPEG, and WebP, at most four.
+ * - `state-image-urls`: OpenRouter's form, data URL parts placed before the state:
+ *   `state: [{ type: "image_url", image_url: { url } }, state]`. OpenRouter accepts this for every
+ *   model, and drops `assets` silently.
+ */
+export type SystemOneImageInput = NonNullable<SystemOneCompat["imageInput"]>;
+
+/** System One compatibility settings with every field resolved. */
+export type ResolvedSystemOneCompat = Required<SystemOneCompat>;
+
+/** TypeSafe's opt-in header for its experimental image input. */
+const IMAGE_OPT_IN_HEADERS = { "TypeSafe-Danger-Zone-Images": "true" };
 
 /** Differences between services that serve System One models. */
 export interface SystemOneTransport {
@@ -25,46 +59,14 @@ export interface SystemOneTransport {
 	api: ClassifierApi;
 	/** Service name used in error messages. */
 	label: string;
+	/** Compatibility settings for models that do not set them in `compat`. */
+	detectCompat(model: ClassifierModel<ClassifierApi>): ResolvedSystemOneCompat;
 	/** Absolute request URL. */
 	url(model: ClassifierModel<ClassifierApi>): URL;
 	/** Wraps the System One request in the service's request envelope. */
 	payload(model: ClassifierModel<ClassifierApi>, request: SystemOneWireRequest): unknown;
 	/** Extracts the System One output (`{ answers, usage }`) from the service's response envelope. */
 	output(body: unknown): Record<string, unknown>;
-}
-
-interface SystemOneHttpError extends Error {
-	status: number | undefined;
-	headers: Headers | undefined;
-	body: string;
-}
-
-function httpError(label: string, response: Response, body: string): SystemOneHttpError {
-	const error = new Error(`${label} returned ${response.status}`) as SystemOneHttpError;
-	error.status = response.status;
-	error.headers = response.headers;
-	error.body = body;
-	return error;
-}
-
-function timeoutError(timeoutMs: number): SystemOneHttpError {
-	const error = new Error(`Request timed out after ${timeoutMs}ms`) as SystemOneHttpError;
-	error.name = "TimeoutError";
-	error.status = undefined;
-	error.headers = undefined;
-	error.body = "";
-	return error;
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function requiredNumber(label: string, value: unknown, field: string): number {
-	if (typeof value !== "number" || !Number.isFinite(value)) {
-		throw new Error(`${label} returned an invalid ${field}`);
-	}
-	return value;
 }
 
 function probabilities(label: string, value: unknown, id: string): Record<string, number> {
@@ -120,28 +122,54 @@ function parseAnswers(label: string, value: unknown, context: ClassifierContext)
 	return Object.fromEntries(answers);
 }
 
-function tokenCount(value: unknown): number {
-	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
-}
+const ASSET_FORMATS: Record<string, SystemOneImageAsset["format"]> = { "image/png": "png", "image/jpeg": "jpeg" };
+const DATA_URL_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+/** Clef accepts at most this many images per request. */
+const MAX_DATA_URL_IMAGES = 4;
 
-/**
- * Usage from System One's `{ input_tokens, output_tokens }`, priced from the model catalog like chat
- * usage. A missing or malformed usage object leaves the result without usage instead of failing it.
- */
-function parseUsage(value: unknown, model: ClassifierModel<ClassifierApi>): Usage | undefined {
-	if (!isRecord(value) || (value.input_tokens === undefined && value.output_tokens === undefined)) return undefined;
-	const input = tokenCount(value.input_tokens);
-	const output = tokenCount(value.output_tokens);
-	const usage: Usage = {
-		input,
-		output,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: input + output,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-	};
-	calculateCost(model, usage);
-	return usage;
+/** Adds the context images to `request` in the service's form. */
+function addImages(
+	label: string,
+	model: ClassifierModel<ClassifierApi>,
+	input: SystemOneImageInput,
+	images: ImageContent[],
+	request: SystemOneWireRequest,
+): void {
+	if (input === "images") {
+		if (images.length > MAX_DATA_URL_IMAGES) {
+			throw new Error(
+				`${label} accepts at most ${MAX_DATA_URL_IMAGES} images for ${model.id}, got ${images.length}`,
+			);
+		}
+		request.images = images.map((image) => {
+			if (!DATA_URL_TYPES.has(image.mimeType)) {
+				throw new Error(`${label} accepts PNG, JPEG, and WebP images for ${model.id}, got ${image.mimeType}`);
+			}
+			return `data:${image.mimeType};base64,${image.data}`;
+		});
+		return;
+	}
+	if (input === "state-image-urls") {
+		// OpenRouter validates the images against the model that serves the request.
+		const parts = images.map(
+			(image): SystemOneImageUrlPart => ({
+				type: "image_url",
+				image_url: { url: `data:${image.mimeType};base64,${image.data}` },
+			}),
+		);
+		request.state = [...parts, request.state];
+		return;
+	}
+	const assets: Record<string, SystemOneImageAsset> = {};
+	images.forEach((image, index) => {
+		const format = ASSET_FORMATS[image.mimeType];
+		if (!format) throw new Error(`${label} accepts PNG and JPEG images for ${model.id}, got ${image.mimeType}`);
+		assets[`<image-${index + 1}>`] = { type: "image", format, data_base64: image.data };
+	});
+	request.assets = assets;
+	// Every asset must be referenced from the request. The names go before the state, where Clef
+	// also places its images.
+	request.state = [...Object.keys(assets), request.state];
 }
 
 /** Maps public `bool` questions to TypeSafe's wire-level `noul` type. */
@@ -155,20 +183,6 @@ function wireRequest(context: ClassifierContext): SystemOneWireRequest {
 			]),
 		),
 	};
-}
-
-function requestHeaders(
-	model: ClassifierModel<ClassifierApi>,
-	apiKey: string,
-	optionsHeaders?: ProviderHeaders,
-): Record<string, string> {
-	return (
-		providerHeadersToRecord(
-			{ authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-			model.headers,
-			optionsHeaders,
-		) ?? {}
-	);
 }
 
 /** Runs one System One classification over the given transport. */
@@ -189,43 +203,29 @@ export async function classifySystemOne(
 
 	try {
 		if (model.api !== transport.api) throw new Error(`Unsupported classifier API: ${model.api}`);
-		if (!options?.apiKey) throw new Error(`No API key for provider: ${model.provider}`);
-		const apiKey = options.apiKey;
-		let payload = transport.payload(model, wireRequest(context));
-		const transformed = await options.onPayload?.(payload, model);
-		if (transformed !== undefined) payload = transformed;
-		const requestFetch = options.fetch ?? globalThis.fetch;
-		const { response, body } = await retryProviderRequest(
-			async () => {
-				const timeoutSignal = options.timeoutMs !== undefined ? AbortSignal.timeout(options.timeoutMs) : undefined;
-				const signal =
-					options.signal && timeoutSignal
-						? AbortSignal.any([options.signal, timeoutSignal])
-						: (options.signal ?? timeoutSignal);
-				try {
-					const next = await requestFetch(transport.url(model), {
-						method: "POST",
-						headers: requestHeaders(model, apiKey, options.headers),
-						body: JSON.stringify(payload),
-						signal,
-					});
-					if (!next.ok) throw httpError(transport.label, next, await next.text());
-					return { response: next, body: (await next.json()) as unknown };
-				} catch (error) {
-					if (timeoutSignal?.aborted && !options.signal?.aborted) throw timeoutError(options.timeoutMs!);
-					throw error;
-				}
-			},
-			{
-				maxRetries: options.maxRetries ?? 2,
-				maxRetryDelayMs: options.maxRetryDelayMs,
-				signal: options.signal,
-			},
+		const request = wireRequest(context);
+		let requestOptions = options;
+		if (context.images?.length) {
+			if (!model.input.includes("image")) {
+				throw new Error(`${transport.label} does not support image input for ${model.id}`);
+			}
+			const detected = transport.detectCompat(model);
+			const imageInput = model.compat?.imageInput ?? detected.imageInput;
+			addImages(transport.label, model, imageInput, context.images, request);
+			if (model.compat?.sendImageOptInHeader ?? detected.sendImageOptInHeader) {
+				requestOptions = { ...options, headers: { ...IMAGE_OPT_IN_HEADERS, ...options?.headers } };
+			}
+		}
+		const body = await postClassifierRequest(
+			transport.label,
+			transport.url(model),
+			model,
+			transport.payload(model, request),
+			requestOptions,
 		);
-		await options.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 		const result = transport.output(body);
 		// Set before parsing answers: a request with malformed answers was still billed.
-		const usage = parseUsage(result.usage, model);
+		const usage = parseClassifierUsage(result.usage, model);
 		if (usage) output.usage = usage;
 		output.answers = parseAnswers(transport.label, result.answers, context);
 		return output;

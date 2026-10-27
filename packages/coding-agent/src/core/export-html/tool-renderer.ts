@@ -8,12 +8,12 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { Component } from "@earendil-works/pi-tui";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
-import type { ToolDefinition, ToolRenderContext } from "../extensions/types.ts";
+import type { ToolRenderContext, ToolRenderers } from "../extensions/types.ts";
 import { ansiLinesToHtml } from "./ansi-to-html.ts";
 
 export interface ToolHtmlRendererDeps {
-	/** Function to look up tool definition by name */
-	getToolDefinition: (name: string) => ToolDefinition | undefined;
+	/** Renderers of calls to a tool, as resolved by extensions and the registered tool */
+	getToolRenderers: (name: string) => ToolRenderers | undefined;
 	/** Theme for styling */
 	theme: Theme;
 	/** Working directory for render context */
@@ -56,7 +56,7 @@ function trimRenderedResultLines(lines: string[]): string[] {
 }
 
 export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRenderer {
-	const { getToolDefinition, theme, cwd, width = 100 } = deps;
+	const { getToolRenderers, theme, cwd, width = 100 } = deps;
 
 	const renderedCallComponents = new Map<string, Component>();
 	const renderedResultComponents = new Map<string, Component>();
@@ -92,6 +92,8 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 			expanded,
 			showImages: false,
 			isError,
+			durationMs: undefined,
+			outputPad: 1,
 		};
 	};
 
@@ -99,7 +101,7 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 		renderCall(toolCallId: string, toolName: string, args: unknown): string | undefined {
 			try {
 				renderedArgs.set(toolCallId, args);
-				const toolDef = getToolDefinition(toolName);
+				const toolDef = getToolRenderers(toolName);
 				if (!toolDef?.renderCall) {
 					return undefined;
 				}
@@ -126,7 +128,7 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 			isError: boolean,
 		): { collapsed?: string; expanded?: string } | undefined {
 			try {
-				const toolDef = getToolDefinition(toolName);
+				const toolDef = getToolRenderers(toolName);
 				if (!toolDef?.renderResult) {
 					return undefined;
 				}

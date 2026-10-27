@@ -18,7 +18,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { SessionImpl } from "../src/session/session.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, chatSetup, openChat, unanswered } from "./chat-support.ts";
-import { ControlledStorage, context } from "./session-support.ts";
+import { ControlledStorage, context, LateResolvingStorage } from "./session-support.ts";
 import { deferred } from "./task-support.ts";
 
 const directories = new Set<string>();
@@ -54,7 +54,7 @@ describe("submissions", () => {
 		await harness.close(context);
 	});
 
-	it("places idle input and rejects every submission while busy without writing", async () => {
+	it("places idle input, and rejects busy input with whenBusy reject without writing", async () => {
 		const storage = new ControlledStorage();
 		const setup = chatSetup();
 		setup.now = () => 42;
@@ -72,14 +72,9 @@ describe("submissions", () => {
 		expect((await harness.getTask(live!.run!.taskId, context))?.kind).toBe("pi.generation");
 
 		const commits = storage.commits.length;
-		for (const whenBusy of ["steer", "followUp", "reject"] as const) {
-			const busy = root.submit({ type: "input", content: "again", whenBusy }, context);
-			await expect(busy).rejects.toBeInstanceOf(ConversationBusy);
-		}
-		await expect(root.submit({ type: "write", entry: { kind: "note" } }, context)).rejects.toMatchObject({
-			name: "ConversationBusy",
-			conversationId: root.id,
-		});
+		const rejected = root.submit({ type: "input", content: "again", whenBusy: "reject" }, context);
+		await expect(rejected).rejects.toBeInstanceOf(ConversationBusy);
+		await expect(rejected).rejects.toMatchObject({ conversationId: root.id });
 		expect(storage.commits.length).toBe(commits);
 		await harness.close(context);
 	});
@@ -215,7 +210,10 @@ describe("submissions", () => {
 		await harness.close(context);
 
 		const passive = await openChat(new ControlledStorage(), chatSetup());
-		const taskId = await passive.root.commit((tx) => tx.createTask(GenerationTask, {}), context);
+		const taskId = await passive.root.commit(
+			(tx) => tx.createTask(GenerationTask, {}, { ownership: { kind: "conversation" } }),
+			context,
+		);
 		// A committed task alone does not start scheduling; waiting for it does.
 		expect((await passive.harness.getTask(taskId, context))?.state.status).toBe("pending");
 		expect((await passive.harness.waitForTask(taskId, context)).state.status).toBe("terminal");
@@ -275,6 +273,22 @@ describe("submissions", () => {
 		expect(Counter.is(counter)).toBe(true);
 		expect(AssistantEntry.is(counter)).toBe(false);
 		expect([UserEntry.kind, AssistantEntry.kind]).toEqual(["pi.user", "pi.assistant"]);
+		await harness.close(context);
+	});
+
+	it("resumes a wait only once subscribeCommits() listeners saw the commit that settled it", async () => {
+		const setup = chatSetup();
+		setup.faux.setResponses([fauxAssistantMessage("hi")]);
+		const { harness, root } = await openChat(new LateResolvingStorage(), setup);
+		const settled = new Set<SubmissionId>();
+		harness.subscribeCommits((publication) => {
+			for (const change of publication.changes) {
+				if (change.type === "submission" && change.value.status === "done") settled.add(change.value.id);
+			}
+		});
+		const submission = await root.submit({ type: "input", content: "hello" }, context);
+		await submission.wait(context);
+		expect(settled.has(submission.id)).toBe(true);
 		await harness.close(context);
 	});
 });

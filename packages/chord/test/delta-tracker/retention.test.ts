@@ -18,6 +18,7 @@ describe("delta tracker retention across GC jobs", () => {
 		"same-job-fast-cleanup",
 		"same-job-folded-ops-cleanup",
 		"lifecycle-churn",
+		"adopted-changes-flat",
 	])(
 		"validates %s retention semantics",
 		(scenario) => {

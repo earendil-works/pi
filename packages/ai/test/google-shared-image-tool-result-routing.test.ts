@@ -100,4 +100,21 @@ describe("google-shared image tool result routing", () => {
 		expect(imageResponse?.parts).toHaveLength(1);
 		expect(imageResponse?.parts?.[0]?.inlineData).toBeTruthy();
 	});
+
+	// https://github.com/earendil-works/pi/issues/8720
+	it("treats whitespace-only tool result text as no text", () => {
+		const model = makeModel("google-generative-ai", "google", "gemini-3-pro-preview");
+		const context = makeContext(model);
+		for (const message of context.messages) {
+			if (message.role !== "toolResult") continue;
+			if (message.toolCallId === "call_a") message.content = [{ type: "text", text: "\r\n" }];
+			if (message.toolCallId === "call_img") message.content.unshift({ type: "text", text: " \n" });
+		}
+		const contents = convertMessages(model, normalizeContext(context));
+
+		const responses = contents[2].parts?.map((part) => part.functionResponse?.response);
+		expect(responses?.[0]).toEqual({ output: "" });
+		expect(responses?.[1]).toEqual({ output: "(see attached image)" });
+		expect(responses?.[2]).toEqual({ output: "beta text" });
+	});
 });

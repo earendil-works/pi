@@ -8,10 +8,6 @@ Stateful agent with tool execution and event streaming. Built on `@earendil-work
 npm install @earendil-works/pi-agent-core
 ```
 
-### SQLite session backends
-
-The SQLite session backend and the `node:sqlite` adapter live in a separate package, `@earendil-works/pi-session-backend-sqlite-node`, so the core package does not pull in runtime builtins or native SQLite dependencies by default. The backend accepts a runtime-specific SQLite factory, allowing other session backends to ship as their own packages in the future.
-
 ## Quick Start
 
 ```typescript
@@ -41,10 +37,6 @@ agent.subscribe((event) => {
 
 await agent.prompt("Hello!");
 ```
-
-## Experimental facet services
-
-Transport-neutral facet-service primitives live in `@earendil-works/chord`. The agent core does not export the service runtime.
 
 ## Core Concepts
 
@@ -239,6 +231,11 @@ const agent = new Agent({
 
   // Session ID for provider caching
   sessionId: "session-123",
+
+  // How requests identify the app to providers (pi-ai ClientIdentity), merged over
+  // DEFAULT_AGENT_IDENTITY ({ attribution: PI_ATTRIBUTION }: provider attribution headers name pi).
+  // Pass your app's attribution, or null to send none.
+  identity: { attribution: { name: "my-app", url: "https://my-app.example" } },
 
   // Dynamic API key resolution (for expiring OAuth tokens)
   getApiKey: async (provider) => refreshToken(),

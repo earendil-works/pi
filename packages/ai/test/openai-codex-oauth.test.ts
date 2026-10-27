@@ -485,6 +485,34 @@ describe("OpenAI Codex OAuth", () => {
 		expect(consoleError).not.toHaveBeenCalled();
 	});
 
+	it("uses the app's agent name as the browser login originator", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () =>
+				jsonResponse({ access_token: createAccessToken("acct"), refresh_token: "refresh", expires_in: 3600 }),
+			),
+		);
+
+		let authUrl = "";
+		await openaiCodexOAuth.login(
+			{
+				signal: neverAbortedSignal,
+				notify: (event) => {
+					if (event.type === "auth_url") authUrl = event.url;
+				},
+				prompt: async (prompt) => {
+					if (prompt.type === "select") return "browser";
+					if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
+					const state = new URL(authUrl).searchParams.get("state");
+					return `http://localhost:1455/auth/callback?code=pasted-code&state=${state}`;
+				},
+			},
+			{ agentName: "my-app" },
+		);
+
+		expect(new URL(authUrl).searchParams.get("originator")).toBe("my-app");
+	});
+
 	it("falls back to the pasted redirect URL when the fixed callback port is taken", async () => {
 		// Port 1455 is registered with OpenAI; the Codex CLI may hold it. Occupy it unless it already is.
 		const blocker = createServer();

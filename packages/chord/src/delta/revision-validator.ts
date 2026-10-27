@@ -1,4 +1,4 @@
-import type { JsonValue } from "../types.ts";
+import type { JsonValue } from "../json.ts";
 
 type JsonContainer = JsonValue[] | Record<string, JsonValue>;
 

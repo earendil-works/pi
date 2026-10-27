@@ -250,6 +250,31 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.ok(values?.includes("@file.txt"));
 		});
 
+		// #10972
+		test("matches regex metacharacters in queries literally", async () => {
+			setupFolder(baseDir, {
+				files: {
+					"pages/[id].tsx": "x",
+					"pages/index.tsx": "x",
+					"pages/(group).ts": "x",
+				},
+			});
+
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
+			for (const [line, expected] of [
+				["@pages/[", "@pages/[id].tsx"],
+				["@pages/(", "@pages/(group).ts"],
+				["@[id", "@pages/[id].tsx"],
+			] as const) {
+				const result = await getSuggestions(provider, [line], 0, line.length);
+				assert.deepStrictEqual(
+					result?.items.map((item) => item.value),
+					[expected],
+					line,
+				);
+			}
+		});
+
 		test("filters are case insensitive", async () => {
 			setupFolder(baseDir, {
 				dirs: ["src"],

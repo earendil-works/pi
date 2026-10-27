@@ -12,6 +12,7 @@ Map each action identifier to one key or a list of keys:
 
 ```json
 {
+  "$schema": "https://pi.dev/schemas/keybindings.schema.json",
   "app.session.new": "ctrl+shift+n",
   "app.session.tree": ["ctrl+shift+t", "alt+shift+t"]
 }
@@ -57,8 +58,8 @@ Examples: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `super+k`, `ctrl+sup
 | `tui.editor.cursorRight` | `right`, `ctrl+f` | Move cursor right |
 | `tui.editor.cursorWordLeft` | `alt+left`, `ctrl+left`, `alt+b` | Move cursor word left |
 | `tui.editor.cursorWordRight` | `alt+right`, `ctrl+right`, `alt+f` | Move cursor word right |
-| `tui.editor.cursorLineStart` | `home`, `ctrl+home`, `ctrl+a` | Move to line start |
-| `tui.editor.cursorLineEnd` | `end`, `ctrl+end`, `ctrl+e` | Move to line end |
+| `tui.editor.cursorLineStart` | `home`, `ctrl+a` | Move to line start |
+| `tui.editor.cursorLineEnd` | `end`, `ctrl+e` | Move to line end |
 | `tui.editor.jumpForward` | `ctrl+]` | Jump forward to character |
 | `tui.editor.jumpBackward` | `ctrl+alt+]` | Jump backward to character |
 | `tui.editor.pageUp` | `pageUp`, `ctrl+pageUp` | Scroll up by page |
@@ -113,8 +114,8 @@ In fullscreen mode, these actions control the transcript and take precedence ove
 | `tui.altScreen.searchNext` | `enter`, `ctrl+g` | Select the next search match while searching |
 | `tui.altScreen.searchPrevious` | `shift+enter`, `ctrl+shift+g` | Select the previous search match while searching |
 | `tui.altScreen.searchClose` | `escape` | Close transcript search |
-| `tui.altScreen.top` | `home` | Scroll to the beginning of the transcript |
-| `tui.altScreen.bottom` | `end` | Scroll to the transcript end and follow new output |
+| `tui.altScreen.top` | `ctrl+home` | Scroll to the beginning of the transcript |
+| `tui.altScreen.bottom` | `ctrl+end` | Scroll to the transcript end and follow new output |
 
 ### Application
 
@@ -161,7 +162,7 @@ On native Windows, `app.suspend` has no default because Windows terminals do not
 | Keybinding id | Default | Description |
 |--------|---------|-------------|
 | `app.tools.expand` | `ctrl+o` | Collapse or expand tool output |
-| `app.message.copy` | `ctrl+x` | Copy the selected message in `/tree`; in fullscreen mode, copy the active selection when `fullscreenCopyOnSelect` is `false`; otherwise copy the last assistant message |
+| `app.message.copy` | `ctrl+x` | Copy the selected message in `/tree`; in fullscreen mode, copy the active selection when `fullscreenCopyOnSelect` is `false`; otherwise copy the last assistant message. On OAuth sign-in screens, copy the sign-in URL |
 | `app.message.followUp` | `alt+enter` (`ctrl+q` on Windows and WSL) | Queue follow-up message |
 | `app.message.dequeue` | `alt+up` (`alt+q` on Windows and WSL) | Restore queued messages to editor |
 

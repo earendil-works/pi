@@ -19,6 +19,7 @@ import type {
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
+import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
@@ -58,7 +59,7 @@ export const generateImages: ImagesFunction<ImagesOptions> = async (
 		if (!apiKey) {
 			throw new Error(`No API key for provider: ${model.provider}`);
 		}
-		const client = createClient(model, apiKey, options?.headers, options?.fetch);
+		const client = createClient(model, apiKey, options?.headers, options?.fetch, options?.identity);
 		let params = buildParams(model, context);
 		const nextParams = await options?.onPayload?.(params, model);
 		if (nextParams !== undefined) {
@@ -121,13 +122,14 @@ function createClient(
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
 	fetch?: typeof globalThis.fetch,
+	identity?: ClientIdentity,
 ): OpenAI {
 	return new OpenAI({
 		apiKey,
 		baseURL: model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		fetch,
-		defaultHeaders: providerHeadersToRecord({ ...model.headers, ...optionsHeaders }),
+		defaultHeaders: providerHeadersToRecord(getIdentityHeaders(model, identity), model.headers, optionsHeaders),
 	});
 }
 
@@ -191,6 +193,7 @@ function parseUsage(
 			cacheRead: (model.cost.cacheRead / 1000000) * cacheReadTokens,
 			cacheWrite: (model.cost.cacheWrite / 1000000) * cacheWriteTokens,
 			total: 0,
+			totalFromProvider: false,
 		},
 	};
 	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;

@@ -3,32 +3,18 @@
  * The server manages auth and proxies requests to LLM providers.
  */
 
-// Internal import for JSON parsing utility
 import {
 	type AssistantMessage,
 	type AssistantMessageEvent,
-	EventStream,
+	type AssistantMessageEventStream,
+	createAssistantMessageEventStream,
 	type Model,
-	parseStreamingJson,
 	type SimpleStreamOptions,
 	type StopReason,
 	type ToolCall,
+	ToolCallArgumentsStream,
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
-
-// Create stream class matching ProxyMessageEventStream
-class ProxyMessageEventStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
-	constructor() {
-		super(
-			(event) => event.type === "done" || event.type === "error",
-			(event) => {
-				if (event.type === "done") return event.message;
-				if (event.type === "error") return event.error;
-				throw new Error("Unexpected event type");
-			},
-		);
-	}
-}
 
 /**
  * Proxy event types - server sends these with partial field stripped to reduce bandwidth.
@@ -121,8 +107,8 @@ export function streamProxy(
 	model: Model<any>,
 	context: TranscriptContext,
 	options: ProxyStreamOptions,
-): ProxyMessageEventStream {
-	const stream = new ProxyMessageEventStream();
+): AssistantMessageEventStream {
+	const stream = createAssistantMessageEventStream();
 
 	(async () => {
 		// Initialize the partial message that we'll build up from events
@@ -188,13 +174,15 @@ export function streamProxy(
 			const decoder = new TextDecoder();
 			let buffer = "";
 			let sawTerminalEvent = false;
+			// Argument streams of open tool calls by content index, kept off the content blocks.
+			const toolArguments = new Map<number, ToolCallArgumentsStream>();
 
 			const processLine = (line: string): void => {
 				if (!line.startsWith("data: ")) return;
 				const data = line.slice(6).trim();
 				if (!data) return;
 				const proxyEvent = JSON.parse(data) as ProxyAssistantMessageEvent;
-				const event = processProxyEvent(proxyEvent, partial);
+				const event = processProxyEvent(proxyEvent, partial, toolArguments);
 				if (event) {
 					if (event.type === "done" || event.type === "error") sawTerminalEvent = true;
 					stream.push(event);
@@ -270,6 +258,7 @@ export function streamProxy(
 function processProxyEvent(
 	proxyEvent: ProxyAssistantMessageEvent,
 	partial: AssistantMessage,
+	toolArguments: Map<number, ToolCallArgumentsStream>,
 ): AssistantMessageEvent | undefined {
 	switch (proxyEvent.type) {
 		case "start":
@@ -345,16 +334,16 @@ function processProxyEvent(
 				id: proxyEvent.id,
 				name: proxyEvent.toolName,
 				arguments: {},
-				partialJson: "",
-			} satisfies ToolCall & { partialJson: string } as ToolCall;
+			};
+			toolArguments.set(proxyEvent.contentIndex, new ToolCallArgumentsStream());
 			return { type: "toolcall_start", contentIndex: proxyEvent.contentIndex, partial };
 
 		case "toolcall_delta": {
 			const content = partial.content[proxyEvent.contentIndex];
-			if (content?.type === "toolCall") {
-				(content as any).partialJson += proxyEvent.delta;
-				content.arguments = parseStreamingJson((content as any).partialJson) || {};
-				partial.content[proxyEvent.contentIndex] = { ...content }; // Trigger reactivity
+			const args = toolArguments.get(proxyEvent.contentIndex);
+			if (content?.type === "toolCall" && args !== undefined) {
+				// A new block object, so reactive consumers see the change.
+				partial.content[proxyEvent.contentIndex] = { ...content, arguments: args.append(proxyEvent.delta) };
 				return {
 					type: "toolcall_delta",
 					contentIndex: proxyEvent.contentIndex,
@@ -369,7 +358,7 @@ function processProxyEvent(
 			const content = partial.content[proxyEvent.contentIndex];
 			if (content?.type === "toolCall") {
 				Object.assign(content, proxyEvent.toolCall);
-				delete (content as any).partialJson;
+				toolArguments.delete(proxyEvent.contentIndex);
 				return {
 					type: "toolcall_end",
 					contentIndex: proxyEvent.contentIndex,

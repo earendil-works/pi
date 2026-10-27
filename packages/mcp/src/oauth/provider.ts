@@ -1,5 +1,11 @@
-import type { OAuthClientProvider } from "./flow.ts";
-import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthDiscoveryState, OAuthTokens } from "./types.ts";
+import type { OAuthClientMetadataDocument, OAuthClientProvider } from "./flow.ts";
+import type {
+	AuthorizationServerMetadata,
+	OAuthClientInformationMixed,
+	OAuthClientMetadata,
+	OAuthDiscoveryState,
+	OAuthTokens,
+} from "./types.ts";
 
 export interface McpOAuthState {
 	serverUrl: string;
@@ -21,6 +27,10 @@ export interface McpOAuthProviderOptions {
 	serverUrl: string | URL;
 	redirectUrl: string | URL;
 	clientMetadata: Omit<OAuthClientMetadata, "redirect_uris"> & { redirect_uris?: string[] };
+	/** See `OAuthClientProvider.clientMetadataDocument`. */
+	clientMetadataDocument?: (
+		metadata: AuthorizationServerMetadata | undefined,
+	) => OAuthClientMetadataDocument | undefined;
 	clientId?: string;
 	clientSecret?: string;
 	store?: McpOAuthStateStore;
@@ -43,6 +53,9 @@ export class MemoryOAuthStateStore implements McpOAuthStateStore {
 export class McpOAuthProvider implements OAuthClientProvider {
 	readonly redirectUrl: string;
 	readonly clientMetadata: OAuthClientMetadata;
+	readonly clientMetadataDocument?: (
+		metadata: AuthorizationServerMetadata | undefined,
+	) => OAuthClientMetadataDocument | undefined;
 	private serverUrl: string;
 	private configuredClient: OAuthClientInformationMixed | undefined;
 	private store: McpOAuthStateStore;
@@ -60,6 +73,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 			token_endpoint_auth_method:
 				options.clientMetadata.token_endpoint_auth_method ?? (options.clientSecret ? "client_secret_post" : "none"),
 		};
+		this.clientMetadataDocument = options.clientMetadataDocument;
 		this.configuredClient = options.clientId
 			? { client_id: options.clientId, ...(options.clientSecret ? { client_secret: options.clientSecret } : {}) }
 			: undefined;

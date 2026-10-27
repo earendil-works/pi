@@ -25,6 +25,7 @@ import {
 	deleteKittyImage,
 	getCapabilities,
 	getKittyImagePlacement,
+	getKittyImagePlacementRows,
 	type ImageProtocol,
 	isImageLine,
 	setCapabilities,
@@ -80,8 +81,9 @@ const MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES = 64 * 1024 * 1024;
 const DOUBLE_CLICK_INTERVAL_MS = 500;
 const COPY_ERROR_FLASH_DURATION_MS = 5000;
 // Regular mode delegates double-click selection to the terminal emulator. Fullscreen owns mouse selection,
-// so mirror common terminal word-selection behavior by keeping paths and kebab-case tokens whole.
-const TERMINAL_WORD_SELECTION_JOINERS = new Set(["/", "-"]);
+// so it uses iTerm2's default "characters considered part of a word" set:
+// https://github.com/gnachman/iTerm2/blob/7f4ff739721f95d0b93003d8701c4523a7edf261/sources/Settings/iTermPreferences.m#L743
+const TERMINAL_WORD_SELECTION_JOINERS = new Set(["/", "-", "+", "\\", "~", "_", "."]);
 const wordSegmenter = getWordSegmenter();
 
 interface CachedKittyImage {
@@ -312,6 +314,17 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return this.copyTextToClipboard(text);
 	}
 
+	/** Drop the text selection and multi-click history, e.g. before the host replaces the transcript. */
+	resetTextSelection(): void {
+		this.clearTextSelection();
+		this.lastClick = undefined;
+	}
+
+	/** The lines of the last rendered frame, one per terminal row, as written to the terminal. */
+	getScreenLines(): string[] {
+		return [...this.previousScreen];
+	}
+
 	setLayoutRoot(component: Component | undefined): void {
 		if (this.layoutRoot === component) return;
 		this.layoutRoot = component;
@@ -395,7 +408,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			this.terminal.write(`${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`);
 		} else {
 			const width = Math.max(1, this.terminal.columns);
-			const documentLines = this.render(width).map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
+			const documentLines = this.resolveFakeCursors(this.render(width)).map((line) =>
+				line.replace(OSC133_ZONE_PREFIX, ""),
+			);
 			this.lastDocument = this.applyLineResets(documentLines.map((line) => line.replaceAll(CURSOR_MARKER, ""))).map(
 				(line) => (isImageLine(line) || visibleWidth(line) <= width ? line : sliceByColumn(line, 0, width, true)),
 			);
@@ -411,6 +426,17 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			setCapabilities(this.savedCapabilities);
 			this.savedCapabilities = undefined;
 		}
+	}
+
+	protected override getExitRestorePrefix(): string {
+		const prefix = super.getExitRestorePrefix();
+		if (!this.altScreenActive) return prefix;
+		return `${END_SYNCHRONIZED_OUTPUT}${this.mouseEnabled ? DISABLE_MOUSE : ""}${ENABLE_AUTOWRAP}${prefix}`;
+	}
+
+	protected override getExitRestoreSuffix(): string {
+		// Kitty keyboard flags are per screen, so the terminal pops them before the alternate screen is left.
+		return `${super.getExitRestoreSuffix()}${this.altScreenActive ? `${EXIT_ALT_SCREEN}\x1b[?25h` : ""}`;
 	}
 
 	private deleteKittyImages(): string {
@@ -701,7 +727,6 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				if (this.applyMouseDispatchResult(event, result)) this.requestRender();
 				return { consume: true };
 			}
-			if (this.shouldDeferViewportInputToOverlay()) return undefined;
 			this.routeWheel(wheelEvent, wheelDelta);
 			return { consume: true };
 		}
@@ -1672,7 +1697,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		if (this.refreshSearch(nextLayout)) {
 			nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());
 		}
-		let screen = nextLayout.lines.map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
+		// Resolve fake cursors before highlighting and compositing, which only track SGR codes
+		let screen = this.resolveFakeCursors(nextLayout.lines.map((line) => line.replace(OSC133_ZONE_PREFIX, "")));
 		screen = this.applySearchHighlights(screen, nextLayout);
 		screen = this.compositeScrollToEndIndicator(screen, nextLayout, width);
 		screen = this.compositeOverlays(screen, width, height);
@@ -1688,10 +1714,25 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 		const fullRedraw =
 			this.previousScreen.length === 0 || this.previousScreenWidth !== width || this.previousScreenHeight !== height;
-		const imagesNeedRedraw = screen.some(
-			(line, row) =>
-				line !== this.previousScreen[row] && (isImageLine(line) || isImageLine(this.previousScreen[row] ?? "")),
+		const changedRows = screen.map((line, row) => line !== this.previousScreen[row]);
+		const imageAnchorsNeedRedraw = screen.some(
+			(line, row) => changedRows[row] && (isImageLine(line) || isImageLine(this.previousScreen[row] ?? "")),
 		);
+		const isWezTerm = Boolean(process.env.WEZTERM_PANE) || process.env.TERM_PROGRAM?.toLowerCase() === "wezterm";
+		const imageCellsNeedRedraw =
+			!imageAnchorsNeedRedraw &&
+			isWezTerm &&
+			this.imageProtocol === "kitty" &&
+			changedRows.some(Boolean) &&
+			screen.some((line, row) => {
+				const placementRows = getKittyImagePlacementRows(line);
+				if (placementRows === undefined) return false;
+				for (let coveredRow = row; coveredRow < row + placementRows; coveredRow++) {
+					if (changedRows[coveredRow]) return true;
+				}
+				return false;
+			});
+		const imagesNeedRedraw = imageAnchorsNeedRedraw || imageCellsNeedRedraw;
 		const redrawImages = fullRedraw || imagesNeedRedraw;
 		const hadUploadedKittyImages = this.uploadedKittyImages.size > 0;
 		const preparedKittyScreen =
@@ -1713,24 +1754,31 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		}
 		buffer += preparedKittyScreen.evictedImageDeletion;
 
-		// WezTerm erases intersecting Kitty image cells when a later EL clears a covered row.
-		// Only separate clearing from drawing for WezTerm frames that place images; preserve the
-		// existing interleaved output for text-only frames and every other terminal.
-		const clearRowsBeforeKittyImages =
-			redrawImages &&
-			this.imageProtocol === "kitty" &&
-			screen.some(isImageLine) &&
-			(Boolean(process.env.WEZTERM_PANE) || process.env.TERM_PROGRAM?.toLowerCase() === "wezterm");
-		if (clearRowsBeforeKittyImages) {
+		// WezTerm erases intersecting Kitty image cells when a later row write touches a covered row.
+		// Draw image placements after every clear and text write so nothing later intersects them; preserve
+		// the existing interleaved output for text-only frames and every other terminal.
+		const drawKittyImagesLast =
+			redrawImages && this.imageProtocol === "kitty" && screen.some(isImageLine) && isWezTerm;
+		if (drawKittyImagesLast) {
 			for (let row = 0; row < height; row++) {
 				if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;
 				buffer += `\x1b[${row + 1};1H\x1b[2K`;
 			}
-		}
-
-		for (let row = 0; row < height; row++) {
-			if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;
-			buffer += `\x1b[${row + 1};1H${clearRowsBeforeKittyImages ? "" : "\x1b[2K"}${preparedKittyScreen.lines[row] ?? ""}`;
+			for (let row = 0; row < height; row++) {
+				if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;
+				if (isImageLine(preparedKittyScreen.lines[row] ?? "")) continue;
+				buffer += `\x1b[${row + 1};1H${preparedKittyScreen.lines[row] ?? ""}`;
+			}
+			for (let row = 0; row < height; row++) {
+				if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;
+				if (!isImageLine(preparedKittyScreen.lines[row] ?? "")) continue;
+				buffer += `\x1b[${row + 1};1H${preparedKittyScreen.lines[row] ?? ""}`;
+			}
+		} else {
+			for (let row = 0; row < height; row++) {
+				if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;
+				buffer += `\x1b[${row + 1};1H\x1b[2K${preparedKittyScreen.lines[row] ?? ""}`;
+			}
 		}
 
 		if (cursorPos) {

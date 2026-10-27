@@ -4,7 +4,6 @@ import {
 	defineDocFamily,
 	defineTask,
 	type EntryId,
-	StorageRejected,
 	type StorageWrite,
 	type TaskId,
 } from "@earendil-works/pi-durable";
@@ -29,6 +28,7 @@ function documentCopies(writes: readonly StorageWrite[]) {
 describe("Session conversation document forks", () => {
 	it("copies as-of and current singleton and family bases while leaving initial documents absent", async () => {
 		const AsOf = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.policies.as-of",
 			version: 1,
 			scope: "conversation",
@@ -37,6 +37,7 @@ describe("Session conversation document forks", () => {
 			initial: () => ({ value: "as-initial" }),
 		});
 		const Current = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.policies.current",
 			version: 1,
 			scope: "conversation",
@@ -45,6 +46,7 @@ describe("Session conversation document forks", () => {
 			initial: () => ({ value: "current-initial" }),
 		});
 		const Initial = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.policies.initial",
 			version: 1,
 			scope: "conversation",
@@ -53,6 +55,7 @@ describe("Session conversation document forks", () => {
 			initial: () => ({ value: "fresh" }),
 		});
 		const AsOfFamily = defineDocFamily<{ value: string }, string>({
+			checkpointWhen: () => false,
 			kind: "fork.policies.as-of-family",
 			version: 1,
 			family: true,
@@ -62,6 +65,7 @@ describe("Session conversation document forks", () => {
 			initial: (seed) => ({ value: seed }),
 		});
 		const CurrentFamily = defineDocFamily<{ value: string }, string>({
+			checkpointWhen: () => false,
 			kind: "fork.policies.current-family",
 			version: 1,
 			family: true,
@@ -151,6 +155,7 @@ describe("Session conversation document forks", () => {
 
 	it("uses final document state from the fork entry commit while excluding later same-commit entries", async () => {
 		const Doc = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.same-commit",
 			version: 1,
 			scope: "conversation",
@@ -179,6 +184,7 @@ describe("Session conversation document forks", () => {
 
 	it("selects the entry-owning ancestor for as-of copies and the immediate parent for current copies", async () => {
 		const AsOf = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.ancestry.as-of",
 			version: 1,
 			scope: "conversation",
@@ -187,6 +193,7 @@ describe("Session conversation document forks", () => {
 			initial: () => ({ value: "initial" }),
 		});
 		const Current = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.ancestry.current",
 			version: 1,
 			scope: "conversation",
@@ -230,6 +237,7 @@ describe("Session conversation document forks", () => {
 
 	it("copies the stored value and version without consulting migration definitions or migrated caches", async () => {
 		const V1 = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "fork.stored-version",
 			version: 1,
 			scope: "conversation",
@@ -239,6 +247,7 @@ describe("Session conversation document forks", () => {
 		});
 		let migrations = 0;
 		const V3 = defineDoc<{ count: number; migrated: boolean }>({
+			checkpointWhen: () => false,
 			kind: "fork.stored-version",
 			version: 3,
 			scope: "conversation",
@@ -280,6 +289,7 @@ describe("Session conversation document forks", () => {
 
 	it("coalesces a typed migration and override into the copied creation base", async () => {
 		const V1 = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "fork.override",
 			version: 1,
 			scope: "conversation",
@@ -338,6 +348,7 @@ describe("Session conversation document forks", () => {
 
 	it("copies the incarnation alive at the fork point across retirement and recreation", async () => {
 		const Doc = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.incarnations",
 			version: 1,
 			scope: "conversation",
@@ -411,6 +422,7 @@ describe("Session conversation document forks", () => {
 
 	it("rejects duplicate as-of and current selections for one child address before admission", async () => {
 		const AsOf = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.duplicate-policy",
 			version: 1,
 			scope: "conversation",
@@ -419,6 +431,7 @@ describe("Session conversation document forks", () => {
 			initial: () => ({ value: "as-of" }),
 		});
 		const Current = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.duplicate-policy",
 			version: 1,
 			scope: "conversation",
@@ -449,6 +462,7 @@ describe("Session conversation document forks", () => {
 
 	it("rejects current and as-of source writes in the fork transaction", async () => {
 		const Current = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.same-transaction-current",
 			version: 1,
 			scope: "conversation",
@@ -457,6 +471,7 @@ describe("Session conversation document forks", () => {
 			initial: () => ({ value: "committed" }),
 		});
 		const AsOf = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.same-transaction-as-of",
 			version: 1,
 			scope: "conversation",
@@ -502,6 +517,7 @@ describe("Session conversation document forks", () => {
 
 	it("rolls every copied base back when later pre-admission assembly fails", async () => {
 		const Copied = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.rollback.copied",
 			version: 1,
 			scope: "conversation",
@@ -550,8 +566,9 @@ describe("Session conversation document forks", () => {
 		expect(await session.snapshot(Copied, parentId, context)).toEqual({ value: "copied" });
 	});
 
-	it("rolls back a guaranteed Storage rejection without poisoning the Session", async () => {
+	it("fails the Session on a rejected fork commit, which leaves no effect", async () => {
 		const Doc = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.storage-rejected",
 			version: 1,
 			scope: "conversation",
@@ -567,19 +584,24 @@ describe("Session conversation document forks", () => {
 			await tx.doc(Doc, parentId);
 		}, context);
 		let rejectedChildId!: ConversationId;
-		storage.failNextCommit(new StorageRejected("copy rejected"));
+		const rejection = new Error("copy rejected");
+		storage.failNextCommit(rejection);
 		await expect(
 			session.commit(async (tx) => {
 				rejectedChildId = (await tx.forkConversation(parentId, forkAt, { ownership: { kind: "ownerless" } })).id;
 			}, context),
-		).rejects.toThrow("copy rejected");
-		expect(await storage.conversation(rejectedChildId, context)).toBeUndefined();
-		const next = await session.commit((tx) => tx.createConversation({ ownership: { kind: "ownerless" } }), context);
-		expect(await storage.conversation(next.id, context)).toEqual(next);
+		).rejects.toBe(rejection);
+		await expect(
+			session.commit((tx) => tx.createConversation({ ownership: { kind: "ownerless" } }), context),
+		).rejects.toMatchObject({ name: "SessionFailed", cause: rejection });
+		// The failed Session closed its Storage; reopened, it holds nothing of the batch.
+		expect(await session.closed).toEqual({ reason: "failed", error: rejection });
+		expect(await storage.reopen().conversation(rejectedChildId, context)).toBeUndefined();
 	});
 
 	it("retires a copied document and can recreate the address in the fork transaction", async () => {
 		const Doc = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.retire-recreate",
 			version: 1,
 			scope: "conversation",
@@ -609,6 +631,7 @@ describe("Session conversation document forks", () => {
 
 	it("copies only conversation documents, leaving Session and task documents in their original scopes", async () => {
 		const Copied = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.scope.conversation",
 			version: 1,
 			scope: "conversation",
@@ -617,12 +640,14 @@ describe("Session conversation document forks", () => {
 			initial: () => ({ value: "conversation" }),
 		});
 		const SessionOnly = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.scope.session",
 			version: 1,
 			scope: "session",
 			initial: () => ({ value: "session" }),
 		});
 		const TaskOnly = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "fork.scope.task",
 			version: 1,
 			scope: "task",
@@ -641,7 +666,7 @@ describe("Session conversation document forks", () => {
 		let taskId!: TaskId;
 		await session.commit(async (tx) => {
 			forkAt = (await tx.appendEntry(parentId, { kind: "point" })).id;
-			taskId = await tx.createTask(Work, null, { conversationId: parentId });
+			taskId = await tx.createTask(Work, null, { ownership: { kind: "conversation" }, conversationId: parentId });
 			await tx.doc(Copied, parentId);
 			await tx.doc(SessionOnly);
 			await tx.doc(TaskOnly, taskId);
@@ -663,6 +688,7 @@ describe("Session conversation document forks", () => {
 
 	it("copies every family member across storage scan pages", async () => {
 		const Family = defineDocFamily<{ value: number }, number>({
+			checkpointWhen: () => false,
 			kind: "fork.pagination",
 			version: 1,
 			family: true,

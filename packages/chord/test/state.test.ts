@@ -1,411 +1,260 @@
-import { describe, expect, it } from "vitest";
-import { BACKGROUND_CONTEXT } from "../src/context/index.ts";
-import type { Draft, Op } from "../src/delta/index.ts";
-import {
-	type Context,
-	type JsonValue,
-	type ReplicatedStateSource,
-	type ReplicatedStateSourceAttachment,
-	type ReplicatedStateSourceFrame,
-	replicatedState,
-} from "../src/index.ts";
-import { ReplicatedStateReplica } from "../src/services/state.ts";
-import { getReplicatedStateInternals } from "../src/services/state-internals.ts";
+import assert from "node:assert/strict";
+import { Type } from "typebox";
+import { describe, it } from "vitest";
+import { applyImmutable } from "../src/delta/index.ts";
+import { type Ctx, createHost, isChordError, local, method, type StateEvent } from "../src/index.ts";
 
-describe("transactional replicated state", () => {
-	it("publishes one immutable structurally shared revision", () => {
-		const initial = { changed: { value: 1 }, retained: { value: 2 } };
-		const state = replicatedState(initial);
-		const previous = state.value;
-		const deliveries: number[] = [];
-		state.subscribe((_value, _context, delivery) => deliveries.push(delivery.sequence));
-		state.change(BACKGROUND_CONTEXT, (draft) => {
-			draft.changed.value = 3;
-			draft.changed.value = 4;
-		});
-		expect(state.value).toEqual({ changed: { value: 4 }, retained: { value: 2 } });
-		expect(state.value).not.toBe(previous);
-		expect(state.value.changed).not.toBe(previous.changed);
-		expect(state.value.retained).toBe(previous.retained);
-		expect(Object.isFrozen(state.value)).toBe(false);
-		expect(deliveries).toEqual([0, 1]);
-	});
+const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-	it("rolls back callback failures and revokes escaped drafts", () => {
-		const state = replicatedState({ nested: { value: 1 } });
-		const previous = state.value;
-		let escaped: Draft<{ value: number }> | undefined;
-		expect(() =>
-			state.change(BACKGROUND_CONTEXT, (draft) => {
-				escaped = draft.nested;
-				draft.nested.value = 2;
-				throw new Error("stop");
-			}),
-		).toThrow("stop");
-		expect(state.value).toBe(previous);
-		expect(() => escaped?.value).toThrow(TypeError);
-	});
+function emitter<E>() {
+	const listeners = new Set<(event: E) => void>();
+	return {
+		emit: (event: E) => {
+			for (const fn of listeners) fn(event);
+		},
+		subscribe: (fn: (event: E) => void) => {
+			listeners.add(fn);
+			return () => listeners.delete(fn);
+		},
+		get size() {
+			return listeners.size;
+		},
+	};
+}
 
-	it("rejects PromiseLike callbacks and aborts their draft", () => {
-		const state = replicatedState({ value: 0 });
-		const previous = state.value;
-		expect(() =>
-			state.change(BACKGROUND_CONTEXT, ((draft: Draft<{ value: number }>) => {
-				draft.value = 1;
-				return Promise.resolve();
-			}) as (draft: Draft<{ value: number }>) => void),
-		).toThrow(/synchronous/);
-		expect(state.value).toBe(previous);
-	});
+const Item = Type.Object({ id: Type.Number(), label: Type.String() });
+const Items = Type.Object({ items: Type.Array(Item), count: Type.Number() });
 
-	it("rejects nested changes and replacements without losing the outer rollback", () => {
-		const state = replicatedState({ left: 0, right: 0 });
-		expect(() =>
-			state.change(BACKGROUND_CONTEXT, (draft) => {
-				draft.left = 1;
-				state.change(BACKGROUND_CONTEXT, (nested) => {
-					nested.right = 2;
-				});
-			}),
-		).toThrow(/reentrantly/);
-		expect(state.value).toEqual({ left: 0, right: 0 });
-		expect(() =>
-			state.change(BACKGROUND_CONTEXT, () => {
-				state.replace(BACKGROUND_CONTEXT, { left: 1, right: 2 });
-			}),
-		).toThrow(/change callback/);
-		expect(state.value).toEqual({ left: 0, right: 0 });
-	});
-
-	it("queues listener-triggered changes in sequence order", () => {
-		const state = replicatedState({ value: 0 });
-		const sourceSequences: number[] = [];
-		const deliveries: Array<{ value: number; sequence: number }> = [];
-		const lateDeliveries: Array<{ kind: string; sequence: number }> = [];
-		let nested = false;
-		getReplicatedStateInternals(state)!.subscribe((_operations, sequence) => {
-			if (!nested) {
-				nested = true;
-				state.change(BACKGROUND_CONTEXT, (draft) => {
-					draft.value = 2;
-				});
-				state.subscribe((_value, _context, delivery) => lateDeliveries.push(delivery));
-			}
-			void sequence;
-		});
-		getReplicatedStateInternals(state)!.subscribe((_operations, sequence) => sourceSequences.push(sequence));
-		state.subscribe((value, _context, delivery) => {
-			if (delivery.kind === "update") deliveries.push({ value: value.value, sequence: delivery.sequence });
-		});
-		state.change(BACKGROUND_CONTEXT, (draft) => {
-			draft.value = 1;
-		});
-		expect(sourceSequences).toEqual([1, 2]);
-		expect(deliveries).toEqual([
-			{ value: 1, sequence: 1 },
-			{ value: 2, sequence: 2 },
-		]);
-		expect(lateDeliveries).toEqual([{ kind: "hydrate", sequence: 2 }]);
-	});
-
-	it("isolates listener failures after committing the revision", () => {
-		const state = replicatedState({ value: 0 });
-		const received: number[] = [];
-		getReplicatedStateInternals(state)!.subscribe(() => {
-			throw new Error("listener failed");
-		});
-		getReplicatedStateInternals(state)!.subscribe((_operations, sequence) => received.push(sequence));
-		expect(() =>
-			state.change(BACKGROUND_CONTEXT, (draft) => {
-				draft.value = 1;
-			}),
-		).toThrow("listener failed");
-		expect(state.value).toEqual({ value: 1 });
-		expect(received).toEqual([1]);
-	});
-
-	it("copies assigned values by value", () => {
-		const external = { value: 1 };
-		const state = replicatedState<{ left: { value: number } | null; right: { value: number } | null }>({
-			left: null,
-			right: null,
-		});
-		state.change(BACKGROUND_CONTEXT, (draft) => {
-			draft.left = external;
-			draft.right = external;
-			draft.left.value = 2;
-		});
-		expect(external.value).toBe(1);
-		expect(state.value).toEqual({ left: { value: 2 }, right: { value: 1 } });
-		expect(state.value.left).not.toBe(state.value.right);
-	});
-
-	it("takes immutable ownership of alias-free replacements", () => {
-		const state = replicatedState({ left: { value: 1 }, right: { value: 2 } });
-		const replacement = { left: { ...state.value.left }, right: { ...state.value.left } };
-		state.replace(BACKGROUND_CONTEXT, replacement);
-		expect(state.value).toBe(replacement);
-		expect(state.value.left).not.toBe(state.value.right);
-		state.change(BACKGROUND_CONTEXT, (draft) => {
-			draft.left.value = 9;
-		});
-		expect(state.value).toEqual({ left: { value: 9 }, right: { value: 1 } });
-	});
-
-	it("preserves compact string, splice, and permutation operations", () => {
-		const a = { id: "a" };
-		const b = { id: "b" };
-		const c = { id: "c" };
-		const state = replicatedState({ text: "abcdefgh", values: [a, b, c] });
-		const batches: JsonValue[] = [];
-		getReplicatedStateInternals(state)!.subscribe((operations) => batches.push(operations as unknown as JsonValue));
-		state.change(BACKGROUND_CONTEXT, (draft) => {
-			draft.text = "defghxyz";
-			draft.values.shift();
-		});
-		state.change(BACKGROUND_CONTEXT, (draft) => {
-			draft.values.reverse();
-		});
-		expect(batches).toEqual([
-			[
-				["t", ["text"], 3],
-				["a", ["text"], "xyz"],
-				["p", ["values"], 0, 1, []],
-			],
-			[["m", ["values"], [1, 0]]],
-		]);
-	});
-
-	it("validates replica revisions without freezing shared immutable payloads", () => {
-		const replica = new ReplicatedStateReplica<{ rows: { value: number }[] }>(() => {});
-		const initial = { rows: [{ value: 1 }] };
-		replica.hydrate(0, [["r", initial]], BACKGROUND_CONTEXT);
-		expect(replica.value).toBe(initial);
-		expect(Object.isFrozen(initial)).toBe(false);
-		expect(Object.isFrozen(initial.rows[0])).toBe(false);
-
-		const inserted = { value: 2 };
-		replica.update(1, [["p", ["rows"], 1, 0, [inserted]]], BACKGROUND_CONTEXT);
-		expect(replica.value).not.toBe(initial);
-		expect(replica.value?.rows).toEqual([{ value: 1 }, { value: 2 }]);
-		expect(replica.value?.rows[0]).toBe(initial.rows[0]);
-		expect(replica.value?.rows[1]).toBe(inserted);
-		expect(initial.rows).toHaveLength(1);
-		expect(Object.isFrozen(inserted)).toBe(false);
-	});
-
-	it("clears a replica when an adopted update is invalid", () => {
-		const errors: Error[] = [];
-		const replica = new ReplicatedStateReplica<{ value: number }>((error) => errors.push(error));
-		replica.hydrate(0, [["r", { value: 0 }]], BACKGROUND_CONTEXT);
-		expect(() => replica.update(1, [["s", ["value"], Number.NaN]], BACKGROUND_CONTEXT)).toThrow(/strict JSON/);
-		expect(replica.value).toBeUndefined();
-		expect(() => replica.update(2, [["s", ["value"], 2]], BACKGROUND_CONTEXT)).toThrow(/before hydration/);
-
-		const malformed = new ReplicatedStateReplica<{ values: number[] }>((error) => errors.push(error));
-		malformed.hydrate(0, [["r", { values: [1, 2] }]], BACKGROUND_CONTEXT);
-		expect(() => malformed.update(1, [["m", ["values"], [0]]], BACKGROUND_CONTEXT)).toThrow();
-		expect(malformed.value).toBeUndefined();
-		expect(errors).toEqual([]);
-	});
-
-	it("replaces atomically and ignores deeply equal replacements", () => {
-		const state = replicatedState({ value: { nested: 1 }, retained: { nested: 2 } });
-		const previous = state.value;
-		state.replace(BACKGROUND_CONTEXT, { value: { nested: 1 }, retained: { nested: 2 } });
-		expect(state.value).toBe(previous);
-		state.replace(BACKGROUND_CONTEXT, { ...state.value, value: { nested: 2 } });
-		expect(state.value).toEqual({ value: { nested: 2 }, retained: { nested: 2 } });
-		expect(state.value.retained).toBe(previous.retained);
-	});
+const List = local("t.list", {
+	version: 1,
+	input: Type.Object({}),
+	members: {
+		list: Items,
+		labels: Type.Array(Type.String()),
+		push: method(Item),
+		set: method(Items),
+	},
 });
 
-type SourceValue = Readonly<{ value: number }>;
-
-class TestSource<T> implements ReplicatedStateSource<T> {
-	readonly attachments = new Set<TestSourceAttachment<T>>();
-	onAttach: (() => void) | undefined;
-	#value: T;
-	#cursor: number;
-
-	constructor(value: T, cursor = 0) {
-		this.#value = value;
-		this.#cursor = cursor;
-	}
-
-	attach(): ReplicatedStateSourceAttachment<T> {
-		const attachment = new TestSourceAttachment(Object.freeze({ value: this.#value, cursor: this.#cursor }), () =>
-			this.attachments.delete(attachment),
-		);
-		this.attachments.add(attachment);
-		this.onAttach?.();
-		return attachment;
-	}
-
-	commit(value: T, ops: readonly Op[], context: Context = BACKGROUND_CONTEXT, cursor = this.#cursor + 1): void {
-		this.#value = value;
-		this.#cursor = cursor;
-		const frame = Object.freeze({ cursor, value, ops, context });
-		for (const attachment of [...this.attachments]) attachment.publish(frame);
-	}
-}
-
-class TestSourceAttachment<T> implements ReplicatedStateSourceAttachment<T> {
-	readonly snapshot: { readonly value: T; readonly cursor: number };
-	readonly #onDispose: () => void;
-	readonly #buffer: ReplicatedStateSourceFrame<T>[] = [];
-	#listener: ((frame: ReplicatedStateSourceFrame<T>) => void) | undefined;
-	#activated = false;
-	#disposed = false;
-
-	constructor(snapshot: { readonly value: T; readonly cursor: number }, onDispose: () => void) {
-		this.snapshot = snapshot;
-		this.#onDispose = onDispose;
-	}
-
-	activate(listener: (frame: ReplicatedStateSourceFrame<T>) => void): void {
-		if (this.#activated) throw new Error("attachment is already active");
-		this.#activated = true;
-		this.#listener = listener;
-		for (const frame of this.#buffer.splice(0)) listener(frame);
-	}
-
-	publish(frame: ReplicatedStateSourceFrame<T>): void {
-		if (this.#disposed) return;
-		if (this.#listener === undefined) this.#buffer.push(frame);
-		else this.#listener(frame);
-	}
-
-	dispose(): void {
-		if (this.#disposed) return;
-		this.#disposed = true;
-		this.#buffer.length = 0;
-		this.#onDispose();
-	}
-}
-
-describe("authoritative replicated state sources", () => {
-	it("captures before activation and drains queued commits in order", () => {
-		const initial = Object.freeze({ value: 0 });
-		const first = Object.freeze({ value: 1 });
-		const second = Object.freeze({ value: 2 });
-		const firstOps = Object.freeze([["s", ["value"], 1] as const]);
-		const secondOps = Object.freeze([["s", ["value"], 2] as const]);
-		const source = new TestSource<SourceValue>(initial, 10);
-		source.onAttach = () => {
-			source.commit(first, firstOps);
-			source.commit(second, secondOps);
+function serveList(host: ReturnType<typeof createHost>) {
+	host.serve(List, (_input, _principal, self) => {
+		const listState = self.state("list", Items, { items: [], count: 0 });
+		const labels = self.derive([listState], (list) => list.items.map((item) => item.label));
+		return {
+			list: listState,
+			labels,
+			push: (item: { id: number; label: string }, ctx: Ctx) => {
+				listState.change(ctx, (draft) => {
+					draft.items.push(item);
+					draft.count += 1;
+				});
+			},
+			set: (value: { items: { id: number; label: string }[]; count: number }, ctx: Ctx) => {
+				listState.replace(ctx, value);
+			},
 		};
+	});
+}
 
-		const state = replicatedState(source);
-		const deliveries: Array<{ value: SourceValue; sequence: number }> = [];
-		state.subscribe((value, _context, delivery) => deliveries.push({ value, sequence: delivery.sequence }));
-		expect(state.value).toBe(second);
-		expect(deliveries).toEqual([{ value: second, sequence: 2 }]);
-		expect(getReplicatedStateInternals(state)?.snapshot()).toEqual({ value: second, sequence: 2 });
+describe("state cells", () => {
+	it("publishes snapshots then exact ops; derivations follow", async () => {
+		const host = createHost({ self: { kind: "host" }, onError: () => {} });
+		serveList(host);
+		const ref = host.hold(List, {});
+		const events: StateEvent<unknown>[] = [];
+		const labels: StateEvent<unknown>[] = [];
+		ref.list.events((event) => events.push(event));
+		ref.labels.events((event) => labels.push(event));
+		await ref.push({ id: 1, label: "a" });
+		// Subscribed while loading: the snapshot once live, then exact ops.
+		assert.deepEqual(events[0], { type: "snap", value: { items: [], count: 0 } });
+		const ops = events[1]?.type === "ops" ? events[1].ops.map((op) => JSON.stringify(op)).sort() : [];
+		assert.deepEqual(ops, ['["p",["items"],0,0,[{"id":1,"label":"a"}]]', '["s",["count"],1]']);
+		assert.deepEqual(events[1]?.value, { items: [{ id: 1, label: "a" }], count: 1 });
+		assert.deepEqual(ref.labels.value, ["a"]);
+		assert.deepEqual(
+			labels.map((event) => event.type),
+			["snap", "ops"],
+		);
+		await ref.set({ items: [], count: 0 });
+		assert.deepEqual(ref.labels.value, []);
 	});
 
-	it("hydrates at sequence zero when attaching after existing commits", () => {
-		const initial = Object.freeze({ value: 0 });
-		const current = Object.freeze({ value: 1 });
-		const source = new TestSource<SourceValue>(initial, 40);
-		source.commit(current, Object.freeze([["s", ["value"], 1] as const]));
-		const state = replicatedState(source);
-		const deliveries: number[] = [];
-		state.subscribe((_value, _context, delivery) => deliveries.push(delivery.sequence));
-		expect(state.value).toBe(current);
-		expect(deliveries).toEqual([0]);
+	it("supports primitive cells and value-returning changes", async () => {
+		const host = createHost({ self: { kind: "host" }, onError: () => {} });
+		const Counter = local("t.prim", {
+			version: 1,
+			input: Type.Object({}),
+			members: { n: Type.Number(), inc: method(undefined, Type.Number()) },
+		});
+		host.serve(Counter, (_input, _principal, self) => {
+			const nState = self.state("n", Type.Number(), 0);
+			return {
+				n: nState,
+				inc: (ctx: Ctx) => {
+					nState.change(ctx, (n) => n + 1);
+					return nState.value;
+				},
+			};
+		});
+		const ref = host.hold(Counter, {});
+		const values: unknown[] = [];
+		await ref.ready;
+		const events: StateEvent<unknown>[] = [];
+		ref.n.events((event) => events.push(event));
+		ref.n.subscribe((value) => values.push(value));
+		assert.equal(await ref.inc(), 1);
+		assert.equal(await ref.inc(), 2);
+		assert.deepEqual(values, [0, 1, 2]);
+		assert.deepEqual(events, [
+			{ type: "snap", value: 0 },
+			{ type: "ops", ops: [["r", 1]], value: 1 },
+			{ type: "ops", ops: [["r", 2]], value: 2 },
+		]);
 	});
 
-	it("publishes exact source value and operation references without applying or re-diffing", () => {
-		const source = new TestSource<SourceValue>(Object.freeze({ value: 0 }));
-		const state = replicatedState(source);
-		const next = Object.freeze({ value: 1 });
-		const ops = Object.freeze([["s", ["value"], 1] as const]);
-		let publishedOps: readonly Op[] | undefined;
-		getReplicatedStateInternals(state)?.subscribe((received) => {
-			publishedOps = received;
+	it("rejects a returned value that does not fit the schema, even outside dev mode", async () => {
+		const host = createHost({ self: { kind: "host" }, onError: () => {} });
+		const Box = local("t.box", {
+			version: 1,
+			input: Type.Object({}),
+			members: { put: method() },
 		});
-		let publishedValue: SourceValue | undefined;
-		state.subscribe((value, _context, delivery) => {
-			if (delivery.kind === "update") publishedValue = value;
+		host.serve(Box, (_input, _principal, self) => {
+			const list = self.state("list", Type.Array(Type.Number()), []);
+			return {
+				put: (ctx: Ctx) => {
+					// The classic slip: an expression-bodied arrow returns push()'s length.
+					list.change(ctx, (draft) => draft.push(1) as never);
+				},
+			};
 		});
-
-		source.commit(next, ops);
-		expect(state.value).toBe(next);
-		expect(publishedValue).toBe(next);
-		expect(publishedOps).toBe(ops);
+		await assert.rejects(host.hold(Box, {}).put(), (error) => isChordError(error, "invalid"));
 	});
 
-	it("buffers reentrant frames and skips updates covered by a late hydration", () => {
-		const source = new TestSource<SourceValue>(Object.freeze({ value: 0 }));
-		const state = replicatedState(source);
-		const received: number[] = [];
-		const late: Array<{ kind: string; sequence: number; value: number }> = [];
-		let nested = false;
-		getReplicatedStateInternals(state)?.subscribe((_ops, sequence) => {
-			if (sequence !== 1 || nested) return;
-			nested = true;
-			source.commit(Object.freeze({ value: 2 }), Object.freeze([["s", ["value"], 2] as const]));
-			state.subscribe((value, _context, delivery) => late.push({ ...delivery, value: value.value }));
+	it("validates initial values always and writes only in dev mode", async () => {
+		const Bad = local("t.bad-initial", { version: 1, input: Type.Object({}) });
+		const host = createHost({ self: { kind: "host" }, onError: () => {} });
+		host.serve(Bad, (_input, _principal, self) => {
+			self.state("x", Type.Object({ n: Type.Number() }), { n: "no" } as never);
+			return {};
 		});
-		state.subscribe((value, _context, delivery) => {
-			if (delivery.kind === "update") received.push(value.value);
-		});
+		await assert.rejects(host.hold(Bad, {}).ready, /initial value of state x/);
 
-		source.commit(Object.freeze({ value: 1 }), Object.freeze([["s", ["value"], 1] as const]));
-		expect(received).toEqual([1, 2]);
-		expect(late).toEqual([{ kind: "hydrate", sequence: 2, value: 2 }]);
+		const lax = createHost({ self: { kind: "host" }, onError: () => {} });
+		serveList(lax);
+		await lax.hold(List, {}).set({ items: [], count: "x" } as never);
+
+		const dev = createHost({ self: { kind: "host" }, dev: true, onError: () => {} });
+		serveList(dev);
+		const ref = dev.hold(List, {});
+		await assert.rejects(
+			ref.set({ items: [], count: "x" } as never),
+			(error) => isChordError(error, "invalid") && error.reason === "state",
+		);
+		assert.deepEqual(ref.list.value, { items: [], count: 0 });
 	});
 
-	it("reports listener failures without throwing them into the source", () => {
-		const source = new TestSource<SourceValue>(Object.freeze({ value: 0 }));
-		const errors: Error[] = [];
-		const state = replicatedState(source, { onError: (error) => errors.push(error) });
-		const received: number[] = [];
-		state.subscribe((_value, _context, delivery) => {
-			if (delivery.kind === "update") throw new Error("listener failed");
+	it("rejects writes from inside a factory and placeholder use before activation", async () => {
+		const host = createHost({ self: { kind: "host" }, onError: () => {} });
+		const Writer = local("t.writer", { version: 1, input: Type.Object({}) });
+		let captured: Ctx | undefined;
+		await host.root((ctx) => {
+			captured = ctx;
 		});
-		state.subscribe((value, _context, delivery) => {
-			if (delivery.kind === "update") received.push(value.value);
+		host.serve(Writer, (_input, _principal, self) => {
+			const x = self.state("x", Type.Object({}), {});
+			const r = self.resource("r", { version: 1, open: () => 1 });
+			assert.throws(
+				() => r.value,
+				(error) => isChordError(error, "not_ready"),
+			);
+			x.replace(captured!, {});
+			return {};
 		});
-
-		expect(() =>
-			source.commit(Object.freeze({ value: 1 }), Object.freeze([["s", ["value"], 1] as const])),
-		).not.toThrow();
-		source.commit(Object.freeze({ value: 2 }), Object.freeze([["s", ["value"], 2] as const]));
-		expect(received).toEqual([1, 2]);
-		expect(errors.map((error) => error.message)).toEqual(["listener failed", "listener failed"]);
+		await assert.rejects(host.hold(Writer, {}).ready, /read_only/);
 	});
 
-	it("reports cursor gaps, disposes the broken attachment, and ignores later frames", () => {
-		const source = new TestSource<SourceValue>(Object.freeze({ value: 0 }), 5);
-		const errors: Error[] = [];
-		const state = replicatedState(source, { onError: (error) => errors.push(error) });
-		source.commit(Object.freeze({ value: 2 }), Object.freeze([["s", ["value"], 2] as const]), BACKGROUND_CONTEXT, 7);
-		expect(errors[0]?.message).toContain("expected 6, received 7");
-		expect(source.attachments.size).toBe(0);
-		expect(state.value).toEqual({ value: 0 });
-		source.commit(Object.freeze({ value: 3 }), Object.freeze([["s", ["value"], 3] as const]), BACKGROUND_CONTEXT, 8);
-		expect(state.value).toEqual({ value: 0 });
+	it("listeners run each event in a fresh root; tasks get an abortable ctx", async () => {
+		const host = createHost({ self: { kind: "host" }, onError: () => {} });
+		const events = emitter<number>();
+		const Watcher = local("t.watcher", {
+			version: 1,
+			input: Type.Object({}),
+			members: { seen: Type.Object({ sum: Type.Number() }) },
+		});
+		const roots = new Set<string>();
+		let taskAborted = false;
+		host.serve(Watcher, (_input, _principal, self) => {
+			const seen = self.state("seen", Type.Object({ sum: Type.Number() }), { sum: 0 });
+			const sourceResource = self.resource("source", { version: 1, open: () => events });
+			self.on(
+				"onEvent",
+				sourceResource,
+				(source) => source,
+				(value, ctx) => {
+					roots.add(ctx.rootId);
+					seen.change(ctx, (draft) => {
+						draft.sum += value;
+					});
+				},
+			);
+			self.task(async (ctx) => {
+				await new Promise<void>((resolve) => ctx.signal.addEventListener("abort", () => resolve()));
+				taskAborted = true;
+			});
+			return { seen };
+		});
+		const ref = host.hold(Watcher, {});
+		await ref.ready;
+		events.emit(2);
+		events.emit(3);
+		await tick();
+		assert.deepEqual(ref.seen.value, { sum: 5 });
+		assert.equal(roots.size, 2);
+		ref.release();
+		await tick();
+		await tick();
+		assert.equal(events.size, 0);
+		assert.ok(taskAborted);
 	});
 
-	it("keeps attachments independent and disposes each idempotently", () => {
-		const source = new TestSource<SourceValue>(Object.freeze({ value: 0 }));
-		const first = replicatedState(source);
-		const second = replicatedState(source);
-		expect(source.attachments.size).toBe(2);
-		source.commit(Object.freeze({ value: 1 }), Object.freeze([["s", ["value"], 1] as const]));
-		expect(first.value.value).toBe(1);
-		expect(second.value.value).toBe(1);
-
-		first.dispose();
-		first.dispose();
-		expect(source.attachments.size).toBe(1);
-		source.commit(Object.freeze({ value: 2 }), Object.freeze([["s", ["value"], 2] as const]));
-		expect(first.value.value).toBe(1);
-		expect(second.value.value).toBe(2);
-		second.dispose();
-		expect(source.attachments.size).toBe(0);
+	it("re-entrant writes publish in adoption order; derivations never go stale (Sol #3)", async () => {
+		const host = createHost({ self: { kind: "host" }, onError: () => {} });
+		const Echo = local("t.reentrant", {
+			version: 1,
+			input: Type.Object({}),
+			members: { n: Type.Number(), d: Type.Number(), set: method(Type.Number()) },
+		});
+		host.serve(Echo, (_input, _principal, self) => {
+			const nState = self.state("n", Type.Number(), 0);
+			const d = self.derive([nState], (n) => n * 2);
+			// Subscribed first: re-enters the write while revision 1 is being published.
+			self.on("bump", nState, (n, ctx) => {
+				if (n === 1) nState.replace(ctx, 2);
+			});
+			return {
+				n: nState,
+				d,
+				set: (value: number, ctx: Ctx) => {
+					nState.replace(ctx, value);
+				},
+			};
+		});
+		const ref = host.hold(Echo, {});
+		await ref.ready;
+		const values: unknown[] = [];
+		let replica: unknown;
+		ref.n.events((event) => {
+			replica = event.type === "ops" ? applyImmutable(replica, event.ops) : event.value;
+			values.push(replica);
+		});
+		const doubled: unknown[] = [];
+		ref.d.subscribe((value) => doubled.push(value));
+		await ref.set(1);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		assert.deepEqual(values, [0, 1, 2]);
+		assert.equal(ref.d.value, 4);
+		assert.deepEqual(doubled, [0, 2, 4]);
 	});
 });

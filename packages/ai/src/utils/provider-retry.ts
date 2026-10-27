@@ -4,6 +4,8 @@ interface ProviderRetryOptions {
 	maxRetries?: number;
 	maxRetryDelayMs?: number;
 	signal?: AbortSignal;
+	/** HTTP statuses that fail at once although the default policy would retry them. */
+	noRetryStatuses?: readonly number[];
 }
 
 interface ProviderError extends Error {
@@ -52,14 +54,14 @@ function getRetryDelayMs(error: ProviderError, retryIndex: number, maxRetryDelay
 	const retryAfterMs = error.headers?.get("retry-after-ms");
 	if (retryAfterMs) {
 		const value = Number.parseFloat(retryAfterMs);
-		if (!Number.isNaN(value)) return validateServerRetryDelayMs(value, maxRetryDelayMs, error.message);
+		if (Number.isFinite(value)) return validateServerRetryDelayMs(value, maxRetryDelayMs, error.message);
 	}
 
 	const retryAfter = error.headers?.get("retry-after");
 	if (retryAfter) {
 		const seconds = Number.parseFloat(retryAfter);
 		const delayMs = Number.isNaN(seconds) ? Date.parse(retryAfter) - Date.now() : seconds * 1000;
-		return validateServerRetryDelayMs(delayMs, maxRetryDelayMs, error.message);
+		if (Number.isFinite(delayMs)) return validateServerRetryDelayMs(delayMs, maxRetryDelayMs, error.message);
 	}
 
 	const exponentialDelay = Math.min(0.5 * 2 ** retryIndex, 8) * 1000;
@@ -116,6 +118,7 @@ export async function retryProviderRequest<T>(
 		} catch (error) {
 			if (options.signal?.aborted) throw createAbortError();
 			if (retriesRemaining <= 0 || !isProviderError(error) || !isRetryableProviderError(error)) throw error;
+			if (error.status !== undefined && options.noRetryStatuses?.includes(error.status)) throw error;
 
 			const retryIndex = maxRetries - retriesRemaining;
 			retriesRemaining--;

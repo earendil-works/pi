@@ -19,6 +19,8 @@ export interface OAuthCallbackServerOptions {
 	redirectHost?: string;
 	port?: number;
 	path?: string;
+	/** More paths that receive the callback, for example a server-specific path of a redirect URI. */
+	extraPaths?: string[];
 	timeoutMs?: number;
 	/** Render the browser page as HTML. Default: a plain-text message. */
 	renderPage?: (page: OAuthCallbackPage) => string;
@@ -32,7 +34,7 @@ function plainText(page: OAuthCallbackPage): string {
 export class OAuthCallbackServer {
 	readonly redirectUrl: string;
 	private server: Server;
-	private path: string;
+	private paths: string[];
 	private timeoutMs: number;
 	private renderPage: ((page: OAuthCallbackPage) => string) | undefined;
 	private pending = new Map<
@@ -41,19 +43,20 @@ export class OAuthCallbackServer {
 			resolve: (callback: OAuthCallback) => void;
 			reject: (error: Error) => void;
 			timer: ReturnType<typeof setTimeout>;
+			path: string | undefined;
 		}
 	>();
 
 	private constructor(
 		server: Server,
 		redirectUrl: string,
-		path: string,
+		paths: string[],
 		timeoutMs: number,
 		renderPage: ((page: OAuthCallbackPage) => string) | undefined,
 	) {
 		this.server = server;
 		this.redirectUrl = redirectUrl;
-		this.path = path;
+		this.paths = paths;
 		this.timeoutMs = timeoutMs;
 		this.renderPage = renderPage;
 	}
@@ -76,21 +79,25 @@ export class OAuthCallbackServer {
 		instance = new OAuthCallbackServer(
 			server,
 			`http://${redirectHost.includes(":") ? `[${redirectHost}]` : redirectHost}:${address.port}${path}`,
-			path,
+			[path, ...(options.extraPaths ?? [])],
 			options.timeoutMs ?? 5 * 60_000,
 			options.renderPage,
 		);
 		return instance;
 	}
 
-	waitForCallback(state: string): Promise<OAuthCallback> {
+	/**
+	 * Wait for the authorization response with `state`. With `path`, a response on another path fails, so
+	 * a server-specific redirect URI can tell authorization servers apart (RFC 9700 section 4.4.2.2).
+	 */
+	waitForCallback(state: string, path?: string): Promise<OAuthCallback> {
 		if (this.pending.has(state)) throw new Error("OAuth state is already pending");
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.pending.delete(state);
 				reject(new Error("OAuth callback timed out"));
 			}, this.timeoutMs);
-			this.pending.set(state, { resolve, reject, timer });
+			this.pending.set(state, { resolve, reject, timer, path });
 		});
 	}
 
@@ -116,7 +123,7 @@ export class OAuthCallbackServer {
 
 	private handle(rawUrl: string, response: ServerResponse): void {
 		const url = new URL(rawUrl, this.redirectUrl);
-		if (url.pathname !== this.path) {
+		if (!this.paths.includes(url.pathname)) {
 			this.reply(response, 404, { ok: false, message: "Not found" });
 			return;
 		}
@@ -128,6 +135,11 @@ export class OAuthCallbackServer {
 		}
 		clearTimeout(pending.timer);
 		this.pending.delete(state);
+		if (pending.path !== undefined && url.pathname !== pending.path) {
+			pending.reject(new Error("The authorization response arrived on another redirect URI"));
+			this.reply(response, 400, { ok: false, message: "Unexpected redirect URI" });
+			return;
+		}
 		const error = url.searchParams.get("error");
 		if (error) {
 			const description = url.searchParams.get("error_description") ?? error;

@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { ExtensionCommandContext } from "../../core/extensions/types.ts";
 import type { KeybindingsManager } from "../../core/keybindings.ts";
+import { AuthUrlComponent } from "../../modes/interactive/components/auth-url.ts";
 import { DynamicBorder } from "../../modes/interactive/components/dynamic-border.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { getSelectListTheme, type Theme } from "../../modes/interactive/theme/theme.ts";
@@ -45,8 +46,8 @@ export interface McpUi {
 	 * rebuilds the menu on every change, keeping the selected item.
 	 */
 	menu(build: () => McpMenu, subscribe?: (listener: () => void) => () => void): Promise<string | undefined>;
-	/** Show a message while an operation runs. */
-	status(title: string, message: string): void;
+	/** Show a message while an operation runs. With `onCancel`, the cancel key calls it. */
+	status(title: string, message: string, onCancel?: () => void): void;
 	/**
 	 * Show the authorization URL and wait for a pasted redirect URL. Resolves to undefined when
 	 * cancelled or when `signal` aborts (the browser reached the callback).
@@ -155,8 +156,15 @@ export class McpManagerView implements McpUi, Component, Focusable {
 		});
 	}
 
-	status(title: string, message: string): void {
-		this.setContent(frame(this.theme, title, [new Spacer(1), new Text(this.theme.fg("muted", message), 1, 0)]));
+	status(title: string, message: string, onCancel?: () => void): void {
+		const body = [new Spacer(1), new Text(this.theme.fg("muted", message), 1, 0)];
+		if (!onCancel) {
+			this.setContent(frame(this.theme, title, body));
+			return;
+		}
+		this.setContent(frame(this.theme, title, body, keyHint("tui.select.cancel", "cancel")), (data) => {
+			if (this.keybindings.matches(data, "tui.select.cancel")) onCancel();
+		});
 	}
 
 	redirectUrl(title: string, authorizationUrl: string, signal: AbortSignal): Promise<string | undefined> {
@@ -175,10 +183,11 @@ export class McpManagerView implements McpUi, Component, Focusable {
 			}
 			signal.addEventListener("abort", onAbort, { once: true });
 			const input = new Input();
+			const link = new AuthUrlComponent(this.tui, authorizationUrl);
 			const body: Component[] = [
 				new Spacer(1),
 				new Text(this.theme.fg("muted", "Approve access in your browser. If it did not open, visit:"), 1, 0),
-				new Text(this.theme.fg("accent", authorizationUrl), 1, 0),
+				link,
 				new Spacer(1),
 				new Text(
 					this.theme.fg("muted", "If the browser runs on another machine, paste the URL it was redirected to:"),
@@ -202,6 +211,10 @@ export class McpManagerView implements McpUi, Component, Focusable {
 					}
 					if (this.keybindings.matches(data, "tui.select.cancel")) {
 						finish(undefined);
+						return;
+					}
+					if (this.keybindings.matches(data, "app.message.copy")) {
+						void link.copy();
 						return;
 					}
 					input.handleInput(data);

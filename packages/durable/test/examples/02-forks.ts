@@ -8,6 +8,7 @@ const context = BACKGROUND_CONTEXT;
 const session = createSession(new MemoryStorage());
 
 const Notes = defineDoc<{ text: string }>({
+	checkpointWhen: () => false,
 	kind: "example.notes",
 	version: 1,
 	scope: "conversation",

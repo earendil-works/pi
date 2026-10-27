@@ -84,7 +84,7 @@ describe.skipIf(!process.env.OPENAI_API_KEY || !process.env.ANTHROPIC_API_KEY)(
 			// This tests the scenario where:
 			// 1. Model A (gpt-5-mini) generates reasoning + function_call
 			// 2. User switches to Model B (gpt-5.2-codex) - same provider, different model
-			// 3. transform-messages: isSameModel=false, thinking converted to text
+			// 3. transform-messages: isSameModel=false, thinking dropped
 			// 4. But tool call ID still has OpenAI pairing history (fc_xxx paired with rs_xxx)
 			// 5. Without fix: OpenAI returns 400 "function_call without required reasoning item"
 			// 6. With fix: tool calls/results converted to text, conversation continues
@@ -184,7 +184,7 @@ describe.skipIf(!process.env.OPENAI_API_KEY || !process.env.ANTHROPIC_API_KEY)(
 			// This tests cross-provider handoff:
 			// 1. Anthropic model generates thinking + function_call (toolu_xxx ID)
 			// 2. User switches to OpenAI Codex
-			// 3. transform-messages: isSameModel=false, thinking converted to text
+			// 3. transform-messages: isSameModel=false, thinking dropped
 			// 4. Tool call ID is Anthropic format (toolu_xxx), no OpenAI pairing history
 			// 5. Should work because foreign IDs have no pairing expectation
 

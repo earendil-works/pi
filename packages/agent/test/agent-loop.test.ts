@@ -1,9 +1,9 @@
 import {
 	type AssistantMessage,
-	type AssistantMessageEvent,
-	EventStream,
+	createAssistantMessageEventStream,
 	type Message,
 	type Model,
+	type ToolResultMessage,
 	type UserMessage,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -18,20 +18,6 @@ import type {
 	AgentTool,
 	AgentToolCall,
 } from "../src/types.ts";
-
-// Mock stream for testing - mimics MockAssistantStream
-class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
-	constructor() {
-		super(
-			(event) => event.type === "done" || event.type === "error",
-			(event) => {
-				if (event.type === "done") return event.message;
-				if (event.type === "error") return event.error;
-				throw new Error("Unexpected event type");
-			},
-		);
-	}
-}
 
 function createUsage() {
 	return {
@@ -95,7 +81,7 @@ describe("default stream function compatibility", () => {
 		let calls = 0;
 		setDefaultStreamFn(() => {
 			calls++;
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				stream.push({
 					type: "done",
@@ -139,7 +125,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage([{ type: "text", text: "Hi there!" }]);
 				stream.push({ type: "done", reason: "stop", message });
@@ -195,7 +181,7 @@ describe("agentLoop with AgentMessage", () => {
 				// The provider receives a transcript: no top-level prompt or tool fields.
 				expect(Object.keys(providerContext)).toEqual(["messages"]);
 				expect(providerContext.messages[0]).toBe(initialSystem);
-				const response = new MockAssistantStream();
+				const response = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					response.push({
 						type: "done",
@@ -244,7 +230,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage([{ type: "text", text: "Response" }]);
 				stream.push({ type: "done", reason: "stop", message });
@@ -296,7 +282,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage([{ type: "text", text: "Response" }]);
 				stream.push({ type: "done", reason: "stop", message });
@@ -369,7 +355,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					// First call: return tool call
@@ -412,6 +398,61 @@ describe("agentLoop with AgentMessage", () => {
 		expect(toolResult?.role === "toolResult" ? toolResult.usage : undefined).toEqual(patchedToolUsage);
 	});
 
+	// #10549
+	it("records how long execute() took on the tool result, excluding hooks", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				await sleep(30);
+				return { content: [{ type: "text", text: params.value }], details: { value: params.value } };
+			},
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			beforeToolCall: async ({ toolCall }) => {
+				await sleep(100);
+				return toolCall.id === "blocked" ? { block: true, reason: "no" } : undefined;
+			},
+		};
+		let callIndex = 0;
+		const streamFn = () => {
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				const message =
+					callIndex === 0
+						? createAssistantMessage(
+								[
+									{ type: "toolCall", id: "ran", name: "echo", arguments: { value: "a" } },
+									{ type: "toolCall", id: "blocked", name: "echo", arguments: { value: "b" } },
+								],
+								"toolUse",
+							)
+						: createAssistantMessage([{ type: "text", text: "done" }]);
+				stream.push({ type: "done", reason: callIndex === 0 ? "toolUse" : "stop", message });
+				callIndex++;
+			});
+			return stream;
+		};
+		const stream = agentLoop([createUserMessage("go")], { messages: [], tools: [tool] }, config, undefined, streamFn);
+		for await (const _event of stream) {
+			// drain
+		}
+		const results = (await stream.result()).filter(
+			(message): message is ToolResultMessage => message.role === "toolResult",
+		);
+		const [ran, blocked] = results;
+		expect(ran?.durationMs).toBeGreaterThanOrEqual(25);
+		expect(ran?.durationMs).toBeLessThan(100);
+		expect(blocked?.isError).toBe(true);
+		expect(blocked).not.toHaveProperty("durationMs");
+	});
+
 	it("should not execute tool calls from a length-truncated assistant message", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];
@@ -441,7 +482,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					// Output hit the token limit mid tool call. The salvage parser can
@@ -520,7 +561,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
@@ -592,7 +633,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
@@ -667,7 +708,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const stream = agentLoop([userPrompt], context, config, undefined, () => {
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
@@ -770,7 +811,7 @@ describe("agentLoop with AgentMessage", () => {
 				);
 			}
 
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					// First call: return two tool calls
@@ -867,7 +908,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const stream = agentLoop([userPrompt], context, config, undefined, () => {
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
@@ -960,7 +1001,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const stream = agentLoop([userPrompt], context, config, undefined, () => {
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
@@ -1034,7 +1075,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const stream = agentLoop([userPrompt], context, config, undefined, () => {
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
@@ -1100,7 +1141,7 @@ describe("agentLoop with AgentMessage", () => {
 			},
 			undefined,
 			() => {
-				const stream = new MockAssistantStream();
+				const stream = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					stream.push({
 						type: "done",
@@ -1151,7 +1192,7 @@ describe("agentLoop with AgentMessage", () => {
 				undefined,
 				() => {
 					providerCalls++;
-					const stream = new MockAssistantStream();
+					const stream = createAssistantMessageEventStream();
 					queueMicrotask(() => {
 						stream.push({
 							type: "error",
@@ -1208,7 +1249,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		const stream = agentLoop([createUserMessage("run")], { messages: [], tools: [tool] }, config, undefined, () => {
 			providerCalls++;
-			const response = new MockAssistantStream();
+			const response = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				response.push({
 					type: "done",
@@ -1246,7 +1287,7 @@ describe("agentLoop with AgentMessage", () => {
 			undefined,
 			() => {
 				providerCalls++;
-				const response = new MockAssistantStream();
+				const response = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					response.push({
 						type: "done",
@@ -1287,7 +1328,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		const stream = agentLoop([createUserMessage("run")], { messages: [], tools: [tool] }, config, undefined, () => {
 			providerCalls++;
-			const response = new MockAssistantStream();
+			const response = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message =
 					providerCalls === 1
@@ -1342,7 +1383,7 @@ describe("agentLoop with AgentMessage", () => {
 						),
 					);
 				}
-				const response = new MockAssistantStream();
+				const response = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					response.push({
 						type: "done",
@@ -1399,7 +1440,7 @@ describe("agentLoop with AgentMessage", () => {
 				expect(model).toBe(replacementModel);
 				expect(context.messages).toEqual([canonicalMessage]);
 				expect(options?.reasoning).toBe("high");
-				const response = new MockAssistantStream();
+				const response = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					response.push({
 						type: "done",
@@ -1440,7 +1481,7 @@ describe("agentLoop with AgentMessage", () => {
 			undefined,
 			(_model, context) => {
 				requestIncludedSteering.push(context.messages.includes(lateSteering));
-				const response = new MockAssistantStream();
+				const response = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					response.push({
 						type: "done",
@@ -1505,7 +1546,7 @@ describe("agentLoop with AgentMessage", () => {
 					(message) => message.role === "system" && message.content === "updated guidance",
 				);
 			}
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (llmCalls === 1) {
 					mockStream.push({
@@ -1569,7 +1610,7 @@ describe("agentLoop with AgentMessage", () => {
 			(_model, context) => {
 				providerCalls++;
 				if (providerCalls === 2) secondRequestIncludedSteering = context.messages.includes(lateSteering);
-				const response = new MockAssistantStream();
+				const response = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					const message =
 						providerCalls === 1
@@ -1637,7 +1678,7 @@ describe("agentLoop with AgentMessage", () => {
 		let llmCalls = 0;
 		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, () => {
 			llmCalls++;
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (llmCalls === 1) {
 					const message = createAssistantMessage(
@@ -1717,7 +1758,7 @@ describe("agentLoop with AgentMessage", () => {
 		let llmCalls = 0;
 		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, () => {
 			llmCalls++;
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage(
 					[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
@@ -1768,7 +1809,7 @@ describe("agentLoop with AgentMessage", () => {
 		let llmCalls = 0;
 		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, () => {
 			llmCalls++;
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message =
 					llmCalls === 1
@@ -1830,7 +1871,7 @@ describe("agentLoop with AgentMessage", () => {
 		let llmCalls = 0;
 		const stream = agentLoop([createUserMessage("echo both")], context, config, undefined, () => {
 			llmCalls++;
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message =
 					llmCalls === 1
@@ -1884,7 +1925,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const stream = agentLoop([createUserMessage("echo both")], context, config, undefined, () => {
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
@@ -1949,7 +1990,7 @@ describe("agentLoop with AgentMessage", () => {
 		let llmCalls = 0;
 		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, () => {
 			llmCalls++;
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage(
 					[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
@@ -2001,7 +2042,7 @@ describe("agentLoopContinue with AgentMessage", () => {
 		};
 
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage([{ type: "text", text: "Response" }]);
 				stream.push({ type: "done", reason: "stop", message });
@@ -2067,7 +2108,7 @@ describe("agentLoopContinue with AgentMessage", () => {
 		};
 
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage([{ type: "text", text: "Response to custom message" }]);
 				stream.push({ type: "done", reason: "stop", message });

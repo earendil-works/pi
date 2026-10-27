@@ -175,7 +175,7 @@ describe("builtin providers", () => {
 			["openai", "gpt-5.4"],
 			["openai", "gpt-5.5"],
 			["openai", "gpt-6-astra"],
-			["openai-codex", "gpt-5.5"],
+			["openai-codex", "gpt-5.6-sol"],
 			["anthropic", "claude-opus-5"],
 			["opencode", "gpt-5.4"],
 			["opencode", "gpt-5.6-terra"],

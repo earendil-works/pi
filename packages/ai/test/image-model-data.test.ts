@@ -93,6 +93,7 @@ describe("OpenRouter catalog parsing", () => {
 				input: ["text"],
 				cost: { input: 0.042, output: 0, cacheRead: 0, cacheWrite: 0 },
 				contextWindow: 32000,
+				compat: { imageInput: "state-image-urls", sendImageOptInHeader: false },
 			},
 		]);
 	});

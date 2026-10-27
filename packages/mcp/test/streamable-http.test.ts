@@ -1,9 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	LATEST_PROTOCOL_VERSION,
 	type McpAuthRequiredError,
 	McpClient,
+	type McpFetch,
 	McpSessionExpiredError,
 	StreamableHttpTransport,
 } from "../src/index.ts";
@@ -339,6 +340,131 @@ describe("StreamableHttpTransport", () => {
 			{ status: 403, token: "new" },
 		]);
 		await client.close();
+	});
+
+	// #10598: a request cancelled or timed out while waiting for a shared refresh must not be retried.
+	it("does not retry requests that were cancelled while authorization was recovering", async () => {
+		let token = "old";
+		const executed: unknown[] = [];
+		const { url } = await startServer(async (request, response, requests) => {
+			if (request.method !== "POST") return protocolHandler(request, response, requests);
+			const message = JSON.parse(await readBody(request)) as Record<string, unknown>;
+			if (message.method === "tools/call" && request.headers.authorization === "Bearer old") {
+				response.writeHead(401, { "www-authenticate": "Bearer" }).end();
+				return;
+			}
+			if (message.method === "tools/call") executed.push((message.params as { name: string }).name);
+			return protocolHandler(request, response, requests, message);
+		});
+		let releaseRefresh = () => {};
+		const refreshGate = new Promise<void>((resolve) => {
+			releaseRefresh = resolve;
+		});
+		let refresh: Promise<void> | undefined;
+		let refreshes = 0;
+		let waiting = 0;
+		let allWaiting = () => {};
+		const waitingGate = new Promise<void>((resolve) => {
+			allWaiting = resolve;
+		});
+		const client = new McpClient({ name: "http-test", version: "1.0.0" });
+		await client.connect(
+			new StreamableHttpTransport({
+				url,
+				openGetStream: false,
+				authProvider: {
+					token: async () => token,
+					onUnauthorized: async () => {
+						if (!refresh) {
+							refreshes++;
+							refresh = refreshGate.then(() => {
+								token = "new";
+							});
+						}
+						if (++waiting === 3) allWaiting();
+						await refresh;
+					},
+				},
+			}),
+		);
+		const controller = new AbortController();
+		const aborted = client.callTool("aborted", {}, { signal: controller.signal });
+		const timedOut = client.callTool("timed-out", {}, { timeoutMs: 200 });
+		const kept = client.callTool("kept");
+		await waitingGate;
+		controller.abort();
+		await expect(aborted).rejects.toMatchObject({ name: "AbortError" });
+		await expect(timedOut).rejects.toMatchObject({ name: "McpTimeoutError" });
+		releaseRefresh();
+		expect(await kept).toEqual({ content: [{ type: "text", text: "hello" }] });
+		expect(executed).toEqual(["kept"]);
+		expect(refreshes).toBe(1);
+		await client.close();
+	});
+
+	// #10565: the auth provider may refresh over the network, which closing must not wait for.
+	it("closes the session with the last request's token, without asking the auth provider", async () => {
+		const { url, requests } = await startServer(protocolHandler);
+		let calls = 0;
+		const client = new McpClient({ name: "http-test", version: "1.0.0" });
+		await client.connect(
+			new StreamableHttpTransport({
+				url,
+				openGetStream: false,
+				authProvider: { token: async () => `token-${++calls}` },
+			}),
+		);
+		const before = calls;
+		await client.close();
+		expect(calls).toBe(before);
+		const deletes = requests.filter((entry) => entry.method === "DELETE");
+		expect(deletes.map((entry) => entry.headers.authorization)).toEqual([`Bearer token-${before}`]);
+		expect(deletes[0]?.headers["mcp-session-id"]).toBe("session-1");
+	});
+
+	// #10188: Cloudflare Workers reject the platform fetch when called with a receiver other than globalThis.
+	it("calls fetch without a receiver", async () => {
+		const realFetch = globalThis.fetch;
+		const strictFetch = function (this: unknown, input: string | URL, init?: RequestInit) {
+			if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+			return realFetch(input, init);
+		} satisfies McpFetch;
+		const { url } = await startServer(async (request, response, requests) => {
+			if (request.method === "POST" && request.headers.authorization === undefined) {
+				await readBody(request);
+				response.writeHead(401, { "www-authenticate": "Bearer" }).end();
+				return;
+			}
+			return protocolHandler(request, response, requests);
+		});
+		const connect = async (fetch: McpFetch | undefined) => {
+			let token: string | undefined;
+			const client = new McpClient({ name: "http-test", version: "1.0.0" });
+			await client.connect(
+				new StreamableHttpTransport({
+					url,
+					fetch,
+					openGetStream: false,
+					authProvider: {
+						token: async () => token,
+						onUnauthorized: async (context) => {
+							await (await context.fetch(url)).body?.cancel();
+							token = "token";
+						},
+					},
+				}),
+			);
+			expect(await client.listTools()).toEqual([{ name: "echo", inputSchema: { type: "object" } }]);
+			await client.close();
+		};
+
+		await connect(strictFetch);
+		vi.stubGlobal("fetch", strictFetch);
+		try {
+			await connect(undefined);
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 
 	it("classifies an expired established session", async () => {

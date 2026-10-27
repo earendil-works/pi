@@ -11,6 +11,7 @@ import type {
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
+import { getIdentityHeaders } from "../utils/identity.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 
 /**
@@ -234,6 +235,7 @@ async function post(request: RequestContext, path: string, body: unknown, observ
 	const requestFetch = options?.fetch ?? globalThis.fetch;
 	const headers =
 		providerHeadersToRecord(
+			getIdentityHeaders(model, options?.identity),
 			{
 				"content-type": "application/json",
 				...(options?.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}),
@@ -434,6 +436,7 @@ export const classify: ClassifierFunction<ClassifierOptions> = async (model, con
 
 	try {
 		if (model.api !== "llama-cpp-classify") throw new Error(`Unsupported classifier API: ${model.api}`);
+		if (context.images?.length) throw new Error(`${LABEL} classification does not support image input`);
 		const temperature = options?.temperature ?? 1;
 		if (!(temperature > 0) || !Number.isFinite(temperature)) {
 			throw new Error(`Temperature must be a positive number, got ${temperature}`);

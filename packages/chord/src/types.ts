@@ -1,330 +1,89 @@
-import type { Draft, Op } from "./delta/index.ts";
-import type { RemoteServiceProvider } from "./services/provider.ts";
+import type { AnyContract, InputOf, Ref } from "./contract.ts";
+import type { Op } from "./delta/index.ts";
 
-export type { RemoteServiceError } from "./services/errors.ts";
-export type { RemoteServiceProvider } from "./services/provider.ts";
-
-/** Typed identity for one value carried by a {@link Context}. */
-export interface ContextKey<T> {
-	readonly token: symbol;
-	/** Type-only marker that prevents keys with different value types from being interchangeable. */
-	readonly valueType?: (value: T) => T;
-}
-
-/** Immutable invocation-scoped values passed explicitly through operations. */
-export interface Context {
-	readonly abortSignal: AbortSignal | undefined;
-	value<T>(key: ContextKey<T>): T | undefined;
-	toString(): string;
-}
-
-export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
-
-type IsAny<T> = 0 extends 1 & T ? true : false;
-
-/** Strict-JSON representation of an application data type. Unknown payloads become JsonValue. */
-export type JsonRepresentation<T> = IsAny<T> extends true
-	? JsonValue
-	: unknown extends T
-		? JsonValue
-		: T extends null | boolean | number | string
-			? T
-			: T extends readonly (infer TItem)[]
-				? JsonRepresentation<TItem>[]
-				: T extends object
-					? { [TKey in keyof T]: JsonRepresentation<T[TKey]> }
-					: never;
-
-export interface ReplicatedStateDelivery {
-	readonly kind: "hydrate" | "update";
-	readonly sequence: number;
-}
-
-export interface ReplicatedState<T> {
+/**
+ * Options of `get`. `P` is the app's principal type: a JSON-serializable identity of a caller, mapped to an object key
+ * by `createHost({ principalKey })`.
+ */
+export interface GetOptions<P = unknown> {
+	/** Principal the object is created for. Defaults to the host's own principal (`createHost({ self })`). */
+	readonly principal?: P;
 	/**
-	 * Contract-immutable value, or undefined until hydration. It is not frozen and may share containers with an
-	 * in-process provider; consumers must not mutate it. Later updates do not mutate previously returned values.
+	 * False: a method-only reference. It receives no state (unless another reference to the same object wants it), and
+	 * is ready once its object is live.
 	 */
-	readonly value: T | undefined;
-	/**
-	 * Each subscription serializes callbacks, awaiting hydration before updates. Values are immutable and may
-	 * share unchanged revision data. At most 100 deliveries wait behind the running callback; overflow keeps
-	 * only the newest pending value/context/delivery, so update sequences may skip. Failures are reported in
-	 * isolation and delivery continues. Unsubscribe discards pending work without aborting or joining a callback.
-	 */
-	subscribe(listener: (value: T, context: Context, delivery: ReplicatedStateDelivery) => Promise<void>): () => void;
-	subscribe(listener: (value: T, context: Context, delivery: ReplicatedStateDelivery) => void): () => void;
-}
-
-export interface MutableReplicatedState<T extends object> extends ReplicatedState<T> {
-	readonly value: T;
-	/**
-	 * Atomically publish one synchronous overlay mutation. Draft handles are unusable after the callback returns.
-	 * Values placed through the draft are cloned by value; assigning `undefined` to an object property deletes it.
-	 */
-	change(context: Context, mutate: (draft: Draft<T>) => void): void;
-	/**
-	 * Atomically take immutable ownership of an alias-free strict-JSON replacement.
-	 * The caller must not mutate the transferred root after this call.
-	 */
-	replace(context: Context, value: T): void;
-}
-
-/** One immutable authoritative revision committed after an attachment snapshot. */
-export interface ReplicatedStateSourceFrame<T> {
-	/** Monotonic source cursor. The first frame after a snapshot must be `snapshot.cursor + 1`. */
-	readonly cursor: number;
-	/** The exact immutable value produced by this commit. */
-	readonly value: T;
-	/** The exact immutable operation batch that produced `value` from the preceding source revision. */
-	readonly ops: readonly Op[];
-	readonly context: Context;
-}
-
-export interface ReplicatedStateSourceAttachment<T> {
-	/** Fixed immutable snapshot captured at the atomic attachment boundary. */
-	readonly snapshot: { readonly value: T; readonly cursor: number };
-	/**
-	 * Install the sole listener and synchronously drain every buffered frame in source commit order.
-	 * This method is single-use. After it begins, every new committed frame must also be delivered in order
-	 * until disposal, including commits made reentrantly while a prior frame is being delivered.
-	 */
-	activate(listener: (frame: ReplicatedStateSourceFrame<T>) => void): void;
-	/** Stop delivery and release source resources. Disposal must be idempotent. */
-	dispose(): void;
+	readonly state?: boolean;
 }
 
 /**
- * An authoritative immutable revision source.
- *
- * `attach()` must synchronously and atomically capture one snapshot and register the returned attachment to buffer
- * every later committed frame. The snapshot must include every commit before that boundary; buffered frames must
- * include every commit after it, with no overlap or gap. Snapshot values, frame values, and operation batches are
- * immutable and remain valid after delivery. Chord only publishes these references; it never applies or re-diffs them.
+ * The explicit call context of one root (a short Chord call tree). Calls made with it carry its root id and code
+ * version; `get` references are released when the call that received this ctx settles.
  */
-export interface ReplicatedStateSource<T> {
-	attach(): ReplicatedStateSourceAttachment<T>;
+export interface Ctx<P = unknown> {
+	readonly signal: AbortSignal;
+	readonly rootId: string;
+	readonly codeVersion: number;
+	/** Who the root acts as: the caller at ingress, the host's own principal inside objects. */
+	readonly principal: P;
+	/**
+	 * A reference for this call, released when the call settles. Resolves once it is ready: live, with every state
+	 * member of its variant (unless `state: false`). Rejects with the activation error, `aborted` when the ctx is
+	 * aborted or the call settles first, or `unavailable/ready_timeout` after the host's `readyTimeout`; the reference
+	 * is released then.
+	 */
+	get<C extends AnyContract>(type: C, input: InputOf<C>, options?: GetOptions<P>): Promise<Ref<C>>;
 }
 
-export interface ReplicatedStateSourceOptions {
-	/** Receives source-contract and publication-listener failures without throwing them into the source. */
-	readonly onError?: (error: Error) => void;
-}
+export type StateEvent<T> =
+	| { readonly type: "snap"; readonly value: T }
+	| { readonly type: "ops"; readonly ops: readonly Op[]; readonly value: T }
+	| { readonly type: "reset"; readonly value: T };
 
-/** A synchronously hydrated publication-only state backed by one source attachment. */
-export interface AttachedReplicatedState<T> extends ReplicatedState<T> {
+/** A readable state source: a cell, a derivation, or a reference's state member. Values are immutable by contract. */
+export interface Readable<T> {
 	readonly value: T;
-	/** Idempotently release the source attachment. The last published value remains readable. */
-	dispose(): void;
-}
-
-declare const SERVICE_TYPE: unique symbol;
-
-export type ServiceMode = "singleton" | "keyed";
-
-/** Stable identity for one shared TypeScript service contract. */
-export interface Service<T> {
-	readonly id: string;
-	/** Process-local services accept unrestricted object contracts and are never published remotely. */
-	readonly local: boolean;
-	readonly [SERVICE_TYPE]?: (value: T) => T;
-}
-
-type InvalidJsonPart<T> = IsAny<T> extends true
-	? T
-	: unknown extends T
-		? never
-		: [T] extends [JsonValue]
-			? [JsonValue] extends [T]
-				? never
-				: InvalidJsonStructure<T>
-			: InvalidJsonStructure<T>;
-
-type InvalidJsonProperty<T> = [Exclude<T, undefined>] extends [never] ? T : InvalidJsonPart<Exclude<T, undefined>>;
-
-type InvalidJsonStructure<T> = T extends null | boolean | number | string
-	? never
-	: T extends readonly (infer TItem)[]
-		? InvalidJsonPart<TItem>
-		: T extends (...args: never[]) => unknown
-			? T
-			: T extends object
-				? { [TKey in keyof T]-?: InvalidJsonProperty<T[TKey]> }[keyof T]
-				: T;
-
-type InvalidRemoteMember<T> = T extends ReplicatedState<infer TValue>
-	? InvalidJsonPart<TValue> extends never
-		? never
-		: "state value is not JSON"
-	: T extends (...args: [...infer TArgs, Context]) => Promise<infer TResult>
-		? InvalidJsonPart<TArgs[number]> extends never
-			? TResult extends void
-				? never
-				: InvalidJsonPart<TResult> extends never
-					? never
-					: "method result is not JSON or void"
-			: "method argument is not JSON"
-		: "member is not a remote method or ReplicatedState";
-
-type InvalidRemoteMemberNames<T> = {
-	[TKey in keyof T]-?: InvalidRemoteMember<T[TKey]> extends never ? never : TKey;
-}[keyof T];
-
-export type RemoteServiceContract<T> = InvalidRemoteMemberNames<T> extends never ? T : never;
-
-export interface ServiceSpawner<T> {
-	spawn(key: string, implementation: T): () => void;
-}
-
-export interface RemoteServices {
-	use<T>(service: Service<T>): T;
-	observe<T>(service: Service<T>, handler: (service: T, context: Context) => void | Promise<void>): () => void;
-	/** Wait until every currently acquired service has installed its initial snapshot. */
-	ready(context: Context): Promise<void>;
-	dispose(context: Context): Promise<void>;
-}
-
-export type ServiceCatalogueEntry = {
-	readonly serviceId: string;
-	readonly mode: ServiceMode;
-};
-
-export type ServiceInstanceAddress = {
-	readonly key: string;
-	readonly generation: number;
-};
-
-export type ServiceMemberSnapshot =
-	| { readonly name: string; readonly kind: "method" }
-	| { readonly name: string; readonly kind: "state"; readonly sequence: number; readonly ops: readonly Op[] };
-
-export type ServiceInstanceSnapshot = {
-	readonly instance?: ServiceInstanceAddress;
-	readonly members: readonly ServiceMemberSnapshot[];
-};
-
-export type ServiceSubscriptionSnapshot = {
-	readonly serviceId: string;
-	readonly mode: ServiceMode;
-	readonly instances: readonly ServiceInstanceSnapshot[];
-};
-
-export type ServiceProviderUpdate =
-	| {
-			readonly type: "state";
-			readonly instance?: ServiceInstanceAddress;
-			readonly member: string;
-			readonly sequence: number;
-			readonly ops: readonly Op[];
-	  }
-	/** Full subscription rebaseline after overflow; every state is a root replacement at its new sequence. */
-	| { readonly type: "reset"; readonly snapshot: ServiceSubscriptionSnapshot }
-	| { readonly type: "unavailable" }
-	| { readonly type: "replaced"; readonly snapshot: ServiceInstanceSnapshot }
-	| { readonly type: "spawned"; readonly instance: ServiceInstanceSnapshot }
-	| { readonly type: "closed"; readonly instance: ServiceInstanceAddress };
-
-export type ServiceCall = {
-	readonly serviceId: string;
-	readonly instance?: ServiceInstanceAddress;
-	readonly member: string;
-	/** Borrowed immutable values. Chord validates but does not clone them. */
-	readonly args: readonly JsonValue[];
-};
-
-export interface ServiceSubscription {
-	/** Atomic baseline. Later updates buffer until activation, with a full reset on pending delivery 101. */
-	readonly snapshot: ServiceSubscriptionSnapshot;
-	activate(): void;
-	close(context?: Context): void | Promise<void>;
+	/** Called with the current value immediately, then with every new value. */
+	subscribe(listener: (value: T) => void): () => void;
+	/** Delta stream: a snapshot immediately, then ops, or a reset after a migration or rebind. */
+	events(listener: (event: StateEvent<T>) => void): () => void;
 }
 
 /**
- * Pluggable wire boundary consumed by a remote service binding.
- *
- * Implementations choose transport, framing, routing, and envelope encoding. Values crossing this
- * boundary must remain strict JSON. Chord does not clone values or require a particular application wire protocol;
- * adapters own serialization and any isolation copies they require.
- *
+ * What an implementation may expose as a state member: a cell, a derivation, or a held object's state member (an
+ * object goes live only once the members it exposes have their values).
  */
-export interface RemoteServiceTransport {
-	invoke(call: ServiceCall, context: Context): Promise<JsonValue | undefined>;
-	subscribe(
-		serviceId: string,
-		mode: ServiceMode,
-		listener: (update: ServiceProviderUpdate, context: Context) => void,
-		context: Context,
-	): Promise<ServiceSubscription>;
+export type StateSource<T> = Readable<T>;
+
+declare const EXPOSED: unique symbol;
+
+/** A local member backed by a resource (`self.expose(res.x)`): references read the resource's value once live. */
+export interface Exposed<T> {
+	readonly [EXPOSED]: T;
 }
 
-export interface RemoteServiceBindingOptions {
-	readonly services: readonly { readonly id: string }[];
-	readonly transport: RemoteServiceTransport;
-	readonly bound?: boolean;
-	readonly onError?: (error: Error) => void;
-	readonly assertAccess?: () => void;
+export type RefStatus = "loading" | "live" | "released" | "gone";
+
+export interface Shape {
+	readonly variant: string | undefined;
+	readonly members: readonly string[];
+	/** Fingerprint of the provider contract. */
+	readonly contract: string;
 }
 
-export interface RemoteServiceBinding extends RemoteServices {
-	rebind(bound: boolean, context: Context): Promise<void>;
-}
-
-export interface FacetEnvironment {
-	/** Declare a hard dependency on one singleton service and return its stable handle. */
-	use<T>(service: Service<T>): T;
-	/** Declare a hard dependency on a keyed service and observe each live instance. */
-	observe<T>(service: Service<T>, handler: (service: T, context: Context) => void | Promise<void>): void;
-	/** Declare and install this facet's singleton implementation of a service. */
-	provide<T>(service: Service<T>, implementation: NoInfer<T>): void;
-	/** Declare ownership of a multi-instance service and return its deferred spawning capability. */
-	provideMany<T>(service: Service<T>): ServiceSpawner<T>;
+export interface RefBase<C extends AnyContract> {
+	/** The consumer contract token this reference was bound with. */
+	readonly contract: C;
+	readonly status: RefStatus;
+	readonly ready: Promise<void>;
+	readonly variant: string | undefined;
+	readonly shape: Shape | undefined;
+	/** Why the reference is gone, if it is. */
+	readonly error: unknown;
+	onShape(listener: (shape: Shape) => void): () => void;
 	/**
-	 * Create initialized mutable state by taking immutable ownership of an alias-free strict-JSON root.
-	 * The caller must not mutate `initial` after this call.
+	 * Called after every status change (`loading` → `live`, `live` → `loading` while a link reconnects, `released`,
+	 * `gone` with `error`). A UI watches for `gone` to `get` again.
 	 */
-	replicatedState<T extends object>(initial: T): MutableReplicatedState<T>;
-	/** Give the facet ownership of a resource cleanup function. */
-	own(disposal: () => void | Promise<void>): void;
-	/** Register asynchronous initialization after dependencies are bound and ready. */
-	onActivate(callback: () => void | Promise<void>): void;
-	/** Register final facet teardown. */
-	onDeactivate(callback: () => void | Promise<void>): void;
-}
-
-export interface Facet {
-	readonly id: string;
-	setup(env: FacetEnvironment): void;
-}
-
-export interface RemoteServiceSource {
-	/** Whether this currently unavailable source may provisionally own absent requirements. */
-	readonly acceptsUnavailableServices: boolean;
-	catalogue(context: Context): Promise<readonly ServiceCatalogueEntry[]>;
-	open(options: {
-		readonly services: readonly { readonly id: string }[];
-		assertAccess(): void;
-		onError(error: Error): void;
-	}): RemoteServices;
-}
-
-export interface FacetOptions {
-	readonly facets: readonly Facet[];
-	readonly serviceSources?: readonly RemoteServiceSource[];
-	readonly onError?: (error: Error) => void;
-}
-
-export interface FacetHost {
-	readonly services: RemoteServiceProvider;
-	/** Activate and replace facets with matching IDs without disconnecting consumer service handles. */
-	reload(facets: readonly Facet[]): Promise<void>;
-	dispose(): Promise<void>;
-}
-
-export interface LoadedFacets {
-	readonly facets: readonly Facet[];
-	dispose(): Promise<void>;
-}
-
-export interface FacetLoader {
-	load(): Promise<LoadedFacets>;
+	onStatus(listener: (status: RefStatus, error: unknown) => void): () => void;
+	release(): void;
 }

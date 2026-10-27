@@ -2,9 +2,13 @@ import { createModels } from "@earendil-works/pi-ai";
 import {
 	type AnyTask,
 	createRegistry,
+	defineExtension,
 	Harness,
+	type HarnessOptions,
+	type HarnessSettings,
 	type Registry,
 	type RegistryReader,
+	type ReportInfo,
 	type Storage,
 } from "@earendil-works/pi-durable";
 import { context, flush } from "./session-support.ts";
@@ -34,9 +38,9 @@ export function aborted(signal: AbortSignal): Promise<never> {
 }
 
 /** Flush macrotask turns until `check` holds. */
-export async function eventually(check: () => boolean): Promise<void> {
+export async function eventually(check: () => boolean | Promise<boolean>): Promise<void> {
 	for (let attempt = 0; attempt < 200; attempt++) {
-		if (check()) return;
+		if (await check()) return;
 		await flush();
 	}
 	throw new Error("Condition was not reached");
@@ -57,26 +61,46 @@ export async function settled(promise: Promise<unknown>): Promise<boolean> {
 	return done;
 }
 
-/** Open a Harness whose registry holds `tasks`; failures passed to `onReport` are collected. */
+/** Open a Harness whose registry holds `tasks`; failures passed to `onReport` are collected, their infos in `infos`. */
 export async function openTasks(
 	storage: Storage,
 	tasks: readonly AnyTask[],
-	options: { readonly registry?: Registry; readonly now?: () => number } = {},
-): Promise<{ readonly harness: Harness; readonly registry: Registry; readonly reports: unknown[] }> {
+	options: {
+		readonly registry?: Registry;
+		readonly now?: () => number;
+		readonly settings?: HarnessSettings;
+		readonly onWake?: HarnessOptions["onWake"];
+		readonly setTimer?: HarnessOptions["setTimer"];
+		readonly telemetry?: HarnessOptions["telemetry"];
+	} = {},
+): Promise<{
+	readonly harness: Harness;
+	readonly registry: Registry;
+	readonly reports: unknown[];
+	readonly infos: ReportInfo[];
+}> {
 	const registry = options.registry ?? createRegistry();
-	for (const task of tasks) registry.tasks.add(task);
+	if (tasks.length > 0) registry.install(defineExtension({ name: "tasks", tasks }));
 	const reports: unknown[] = [];
+	const infos: ReportInfo[] = [];
 	const harness = await Harness.open(
 		storage,
 		{
 			models: createModels(),
 			registry,
-			onReport: (error) => reports.push(error),
+			onReport: (error, info) => {
+				reports.push(error);
+				infos.push(info);
+			},
 			...(options.now === undefined ? {} : { now: options.now }),
+			...(options.settings === undefined ? {} : { settings: options.settings }),
+			...(options.onWake === undefined ? {} : { onWake: options.onWake }),
+			...(options.setTimer === undefined ? {} : { setTimer: options.setTimer }),
+			...(options.telemetry === undefined ? {} : { telemetry: options.telemetry }),
 		},
 		context,
 	);
-	return { harness, registry, reports };
+	return { harness, registry, reports, infos };
 }
 
 /** Next state that completes a task with `result`. */

@@ -25,7 +25,7 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Audit production vulnerabilities
-        run: npm audit --omit=dev --audit-level=moderate
+        run: node scripts/npm-audit.mjs
 
       - name: Verify registry signatures
         run: npm audit signatures --omit=dev

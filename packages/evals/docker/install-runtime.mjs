@@ -2,8 +2,9 @@ import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { installCodingAgentConsumer, packReleasePackages } from "../../../scripts/coding-agent-consumer.mjs";
-import { getPublicWorkspacePackages } from "../../../scripts/release-packages.mjs";
+import { installConsumer } from "../../../scripts/local-package-install.mjs";
+import { produceArtifactSet } from "../../../scripts/package-artifacts.mjs";
+import { codingAgentName } from "../../../scripts/coding-agent-smoke.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const outputDirectory = process.argv[2];
@@ -12,10 +13,17 @@ if (!outputDirectory || process.argv.length !== 3) {
 }
 
 const evalPackage = JSON.parse(readFileSync(join(repositoryRoot, "packages/evals/package.json"), "utf8"));
-const tarballs = packReleasePackages(getPublicWorkspacePackages(), join(outputDirectory, "tarballs"));
-const evaluatorDependencies = Object.entries(evalPackage.devDependencies).filter(([name]) => !tarballs.has(name));
+const artifactSet = produceArtifactSet({
+	build: false,
+	outDir: join(outputDirectory, "artifacts"),
+	repoRoot: repositoryRoot,
+	// Docker build contexts may omit Git metadata; this artifact set is consumed only within this image build.
+	source: null,
+});
+const artifactNames = new Set(artifactSet.packages.map((pkg) => pkg.name));
+const evaluatorDependencies = Object.entries(evalPackage.devDependencies).filter(([name]) => !artifactNames.has(name));
 const installDirectory = join(outputDirectory, "install");
-installCodingAgentConsumer(installDirectory, tarballs);
+installConsumer({ artifactSet, directory: installDirectory, packageNames: [codingAgentName] });
 execFileSync(
 	"npm",
 	[
@@ -30,8 +38,8 @@ execFileSync(
 	{ cwd: installDirectory, stdio: "inherit" },
 );
 
-for (const packageName of tarballs.keys()) {
-	if (packageName === "@earendil-works/pi-coding-agent") continue;
+for (const packageName of artifactNames) {
+	if (packageName === codingAgentName) continue;
 	const packageDirectory = join(installDirectory, "node_modules", ...packageName.split("/"));
 	if (!existsSync(packageDirectory)) continue;
 	for (const entry of readdirSync(packageDirectory, { withFileTypes: true })) {

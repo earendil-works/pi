@@ -1,32 +1,36 @@
 import {
 	type AssistantMessage,
 	fauxAssistantMessage,
-	fauxToolCall,
 	type Message,
 	type Models,
+	PI_ATTRIBUTION,
 	type SimpleStreamOptions,
 	type SystemMessage,
 } from "@earendil-works/pi-ai";
 import {
 	AssistantEntry,
-	type CommitPublication,
 	type Conversation,
-	ConversationConfig,
 	createRegistry,
 	defineDoc,
+	defineExtension,
 	GenerationTask,
 	Harness,
+	type HarnessSettings,
 	LiveDoc,
 	type LiveState,
 	MemoryStorage,
+	ProviderDoc,
 	type RegistrySnapshot,
 	type TaskId,
 	UserEntry,
+	wrapSection,
 } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
+import { resolveSettings } from "../src/harness/agent.ts";
 import type { SessionImpl } from "../src/session/session.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf, unanswered, waitFor } from "./chat-support.ts";
-import { ControlledStorage, context } from "./session-support.ts";
+import { addSection } from "./harness-support.ts";
+import { ControlledStorage, context, observeCommits } from "./session-support.ts";
 
 const ERROR_503 = fauxAssistantMessage([], { stopReason: "error", errorMessage: "503 Service Unavailable" });
 
@@ -71,7 +75,7 @@ function invalidFinalStream(): ReturnType<Models["streamSimple"]> {
 
 function livePublications(harness: Harness): LiveState[] {
 	const values: LiveState[] = [];
-	harness.subscribeCommits((publication: CommitPublication) => {
+	observeCommits(harness, (publication) => {
 		for (const change of publication.changes) {
 			if (change.type === "document" && change.record.kind === "pi.live" && change.value !== null) {
 				values.push(change.value as LiveState);
@@ -84,7 +88,7 @@ function livePublications(harness: Harness): LiveState[] {
 describe("generation", () => {
 	it("answers an input and settles its submission", async () => {
 		const setup = chatSetup();
-		setup.registry.systemPrompt.section("preamble", () => "You are helpful.", { tag: false });
+		addSection(setup.registry, "preamble", () => "You are helpful.", { tag: false });
 		setup.faux.setResponses([fauxAssistantMessage("Hello there")]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		harness.resume();
@@ -155,16 +159,6 @@ describe("generation", () => {
 		await harness.close(context);
 	});
 
-	it("settles a tool call as the answer until the tool chain exists", async () => {
-		const setup = chatSetup();
-		setup.faux.setResponses([fauxAssistantMessage([fauxToolCall("read", { path: "a" })], { stopReason: "toolUse" })]);
-		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		harness.resume();
-		const settled = await (await root.submit({ type: "input", content: "read a" }, context)).wait(context);
-		expect(settled.status).toBe("done");
-		await harness.close(context);
-	});
-
 	it("fails with no_model when no model is configured or the model is unknown", async () => {
 		const setup = chatSetup();
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
@@ -173,7 +167,7 @@ describe("generation", () => {
 		const unset = await (await plain.submit({ type: "input", content: "hi" }, context)).wait(context);
 		expect(unset).toMatchObject({ status: "unanswered", reason: "no_model" });
 
-		await root.setModel({ provider: "faux", modelId: "missing" }, context);
+		await root.configure({ model: { provider: "faux", modelId: "missing" } }, context);
 		const unknown = await (await root.submit({ type: "input", content: "hi" }, context)).wait(context);
 		expect(unknown).toMatchObject({ status: "unanswered", reason: "no_model", entry: expect.any(Number) });
 		expect((await allEntries(root)).map((entry) => entry.kind)).toEqual(["pi.user"]);
@@ -192,10 +186,10 @@ describe("generation", () => {
 
 	it("retries a retryable error after a durable backoff and then answers", async () => {
 		const setup = chatSetup();
-		setup.registry.systemPrompt.section("preamble", () => "p", { tag: false });
+		addSection(setup.registry, "preamble", () => "p", { tag: false });
 		setup.faux.setResponses([ERROR_503, fauxAssistantMessage("recovered")]);
+		setup.settings.retry = { enabled: true, maxRetries: 3, baseDelayMs: 1 };
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		await root.setRetryPolicy({ enabled: true, maxRetries: 3, baseDelayMs: 1 }, context);
 		const values = livePublications(harness);
 		harness.resume();
 		const settled = await (await root.submit({ type: "input", content: "hi" }, context)).wait(context);
@@ -212,8 +206,8 @@ describe("generation", () => {
 	it("fails with model_error once retries are exhausted", async () => {
 		const setup = chatSetup();
 		setup.faux.setResponses([ERROR_503, ERROR_503, fauxAssistantMessage("never")]);
+		setup.settings.retry = { enabled: true, maxRetries: 1, baseDelayMs: 1 };
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		await root.setRetryPolicy({ enabled: true, maxRetries: 1, baseDelayMs: 1 }, context);
 		harness.resume();
 		const settled = await (await root.submit({ type: "input", content: "hi" }, context)).wait(context);
 		expect(settled).toMatchObject({ status: "unanswered", reason: "model_error", detail: "503 Service Unavailable" });
@@ -225,8 +219,8 @@ describe("generation", () => {
 	it("fails a retryable error without retrying when the retry policy is disabled", async () => {
 		const setup = chatSetup();
 		setup.faux.setResponses([ERROR_503, fauxAssistantMessage("never")]);
+		setup.settings.retry = { enabled: false };
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		await root.setRetryPolicy({ enabled: false, maxRetries: 3, baseDelayMs: 1 }, context);
 		harness.resume();
 		const settled = await (await root.submit({ type: "input", content: "hi" }, context)).wait(context);
 		expect(settled).toMatchObject({ status: "unanswered", reason: "model_error" });
@@ -236,10 +230,17 @@ describe("generation", () => {
 
 	it("reports section wrapper failures while preparing", async () => {
 		const setup = chatSetup();
-		setup.registry.systemPrompt.section("cwd", () => "/repo");
-		setup.registry.systemPrompt.wrap("cwd", "broken", () => {
-			throw new Error("wrapper failed");
-		});
+		addSection(setup.registry, "cwd", () => "/repo");
+		setup.registry.install(
+			defineExtension({
+				name: "broken",
+				wraps: [
+					wrapSection("cwd", () => {
+						throw new Error("wrapper failed");
+					}),
+				],
+			}),
+		);
 		setup.faux.setResponses([fauxAssistantMessage("ok")]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		harness.resume();
@@ -270,8 +271,8 @@ describe("generation", () => {
 	it("polls a deferred response until it is ready", async () => {
 		const setup = chatSetup({ deferred: { pendingFetches: 1, pollAfterMs: 1 } });
 		setup.faux.setResponses([fauxAssistantMessage("deferred answer")]);
+		setup.settings.stream = { deferred: true };
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		await root.setStreamOptions({ deferred: true }, context);
 		const values = livePublications(harness);
 		harness.resume();
 		const settled = await (await root.submit({ type: "input", content: "hi" }, context)).wait(context);
@@ -311,8 +312,8 @@ describe("generation", () => {
 	it("cancels a deferred response when aborted during polling", async () => {
 		const setup = chatSetup({ deferred: { pendingFetches: 100, pollAfterMs: 60_000 } });
 		setup.faux.setResponses([fauxAssistantMessage("never")]);
+		setup.settings.stream = { deferred: true };
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		await root.setStreamOptions({ deferred: true }, context);
 		harness.resume();
 		const submission = await root.submit({ type: "input", content: "hi" }, context);
 		const taskId = await runTask(harness, root);
@@ -335,8 +336,8 @@ describe("generation", () => {
 			},
 		});
 		const setup: ChatSetup = { ...base, models };
+		setup.settings.stream = { deferred: true };
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		await root.setStreamOptions({ deferred: true }, context);
 		harness.resume();
 		const submission = await root.submit({ type: "input", content: "hi" }, context);
 		const taskId = await runTask(harness, root);
@@ -361,42 +362,225 @@ describe("generation", () => {
 				return fauxAssistantMessage("b");
 			},
 		]);
+		setup.settings.stream = { timeoutMs: 1234, headers: { "x-test": "1" } };
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		await root.setStreamOptions({ timeoutMs: 1234, headers: { "x-test": "1" } }, context);
-		await root.setThinkingLevel("high", context);
+		await root.configure({ thinkingLevel: "high" }, context);
 		harness.resume();
 		await (await root.submit({ type: "input", content: "one" }, context)).wait(context);
-		await root.setThinkingLevel("off", context);
+		// Both are read at the next preparation: the thinking level from pi.agent, the stream options live from settings.
+		await root.configure({ thinkingLevel: null }, context);
+		setup.settings.stream = { timeoutMs: 99 };
 		await (await root.submit({ type: "input", content: "two" }, context)).wait(context);
-		expect(seen[0]).toMatchObject({ timeoutMs: 1234, headers: { "x-test": "1" }, reasoning: "high" });
+		const sessionId = (await harness.snapshot(ProviderDoc, root.id, context))!.sessionId;
+		expect(seen[0]).toMatchObject({
+			timeoutMs: 1234,
+			headers: { "x-test": "1" },
+			reasoning: "high",
+			sessionId,
+		});
 		expect(seen[0]!.signal).toBeInstanceOf(AbortSignal);
 		expect(seen[1]!.reasoning).toBeUndefined();
+		expect(seen[1]).toMatchObject({ timeoutMs: 99, sessionId });
+		expect(seen[1]!.headers).toBeUndefined();
 		await harness.close(context);
 	});
 
-	it("reads and writes stream options and the retry policy", async () => {
-		const { harness, root } = await openChat(new MemoryStorage(), chatSetup());
-		expect(await root.getStreamOptions(context)).toEqual({});
-		expect(await root.getRetryPolicy(context)).toEqual({
-			enabled: true,
-			maxRetries: 3,
-			baseDelayMs: 2000,
-			maxAgentDelayMs: 60000,
-		});
-		await root.setStreamOptions({ cacheRetention: "long", deferred: { window: "1h" } }, context);
-		await root.setRetryPolicy({ enabled: false, maxRetries: 0, baseDelayMs: 5 }, context);
-		expect(await root.getStreamOptions(context)).toEqual({ cacheRetention: "long", deferred: { window: "1h" } });
-		expect(await root.getRetryPolicy(context)).toEqual({ enabled: false, maxRetries: 0, baseDelayMs: 5 });
-		await root.setRetryPolicy(undefined, context);
-		expect(await root.getRetryPolicy(context)).toMatchObject({ enabled: true, maxRetries: 3 });
-		await expect(
-			root.setStreamOptions({ timeoutMs: undefined, headers: { a: undefined } } as never, context),
-		).rejects.toThrow();
+	it("records the requested thinking level on answers, streamed and polled", async () => {
+		const setup = chatSetup({ deferred: { pendingFetches: 1, pollAfterMs: 1 } });
+		setup.faux.setResponses([fauxAssistantMessage("streamed"), fauxAssistantMessage("polled")]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		harness.resume();
+		const answer = async (content: string) => {
+			const settled = await (await root.submit({ type: "input", content }, context)).wait(context);
+			if (settled.status !== "done" || settled.type !== "input") throw new Error(`Unexpected ${settled.status}`);
+			return (await root.commit((tx) => tx.entry(AssistantEntry, settled.answer), context))?.model?.[0];
+		};
+		await root.configure({ thinkingLevel: "high" }, context);
+		expect(await answer("one")).toMatchObject({ thinkingLevel: "high" });
+		setup.settings.stream = { deferred: true };
+		expect(await answer("two")).toMatchObject({ thinkingLevel: "high" });
+		expect(setup.faux.state.deferredFetchCount).toBe(2);
 		await harness.close(context);
+	});
+
+	it("attributes model requests to pi by default and merges the Harness identity over it", async () => {
+		const seen: (SimpleStreamOptions["identity"] | undefined)[] = [];
+		const capture = (_context: unknown, options?: SimpleStreamOptions) => {
+			seen.push(options?.identity);
+			return fauxAssistantMessage("ok");
+		};
+		const acme = { name: "acme", url: "https://acme.example" };
+		for (const identity of [undefined, { userAgent: "short" as const, attribution: acme }]) {
+			const setup = chatSetup();
+			setup.identity = identity;
+			setup.faux.setResponses([capture]);
+			const { harness, root } = await openChat(new MemoryStorage(), setup);
+			harness.resume();
+			await (await root.submit({ type: "input", content: "hi" }, context)).wait(context);
+			await harness.close(context);
+		}
+		expect(seen).toEqual([{ attribution: PI_ATTRIBUTION }, { attribution: acme, userAgent: "short" }]);
+	});
+
+	// Regression coverage for #10424.
+	it("keeps provider session IDs request-local across concurrent conversations", async () => {
+		const setup = chatSetup();
+		const seen = new Map<string, string[]>();
+		const capture = (request: { messages: readonly Message[] }, options?: SimpleStreamOptions) => {
+			const message = request.messages.findLast((candidate) => candidate.role === "user");
+			const content = message?.role === "user" ? message.content : undefined;
+			const text = typeof content === "string" ? content : "";
+			const values = seen.get(text) ?? [];
+			values.push(options?.sessionId ?? "");
+			seen.set(text, values);
+			return fauxAssistantMessage(`answer:${text}`);
+		};
+		setup.faux.setResponses([capture, capture, capture, capture]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		const child = await harness.createConversation(
+			{
+				ownership: { kind: "ownerless" },
+				agent: { model: { provider: "faux", modelId: "faux-1" } },
+			},
+			context,
+		);
+		harness.resume();
+		await Promise.all(
+			[root, child].map(async (conversation, index) => {
+				await (await conversation.submit({ type: "input", content: `first-${index}` }, context)).wait(context);
+			}),
+		);
+		await Promise.all(
+			[root, child].map(async (conversation, index) => {
+				await (await conversation.submit({ type: "input", content: `second-${index}` }, context)).wait(context);
+			}),
+		);
+		const rootId = (await harness.snapshot(ProviderDoc, root.id, context))!.sessionId;
+		const childId = (await harness.snapshot(ProviderDoc, child.id, context))!.sessionId;
+		expect(rootId).not.toBe(childId);
+		expect(seen.get("first-0")).toEqual([rootId]);
+		expect(seen.get("second-0")).toEqual([rootId]);
+		expect(seen.get("first-1")).toEqual([childId]);
+		expect(seen.get("second-1")).toEqual([childId]);
+		await harness.close(context);
+	});
+
+	// Regression coverage for #10424.
+	it("creates and persists provider state before a legacy conversation's request", async () => {
+		const setup = chatSetup();
+		let sent: string | undefined;
+		setup.faux.setResponses([
+			(_request, options) => {
+				sent = options?.sessionId;
+				return fauxAssistantMessage("ok");
+			},
+		]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		await root.commit((tx) => tx.retireDoc(ProviderDoc, root.id), context);
+		expect(await harness.snapshot(ProviderDoc, root.id, context)).toBeUndefined();
+		harness.resume();
+		await (await root.submit({ type: "input", content: "legacy" }, context)).wait(context);
+		const stored = await harness.snapshot(ProviderDoc, root.id, context);
+		expect(stored?.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+		expect(sent).toBe(stored?.sessionId);
+		await harness.close(context);
+	});
+
+	it("reads settings through getters at every decision", async () => {
+		const setup = chatSetup();
+		let timeoutMs = 111;
+		const seen: (number | undefined)[] = [];
+		setup.faux.setResponses([
+			(_context, options) => {
+				seen.push(options?.timeoutMs);
+				// The user changes the setting while the first attempt runs.
+				timeoutMs = 222;
+				return ERROR_503;
+			},
+			(_context, options) => {
+				seen.push(options?.timeoutMs);
+				return fauxAssistantMessage("ok");
+			},
+		]);
+		const settings: HarnessSettings = {
+			get stream() {
+				return { timeoutMs };
+			},
+			retry: { baseDelayMs: 1 },
+		};
+		const harness = await Harness.open(
+			new MemoryStorage(),
+			{ models: setup.models, registry: setup.registry, settings },
+			context,
+		);
+		const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" } } });
+		harness.resume();
+		expect((await (await root.submit({ type: "input", content: "hi" }, context)).wait(context)).status).toBe("done");
+		// The retry prepares again, so it resolves the settings again and sends the new timeout.
+		expect(seen).toEqual([111, 222]);
+		await harness.close(context);
+	});
+
+	it("resolves settings over the built-in defaults", () => {
+		expect(resolveSettings(undefined)).toEqual({
+			stream: {},
+			retry: { enabled: true, maxRetries: 3, baseDelayMs: 2000, maxAgentDelayMs: 60000 },
+			compaction: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000, backgroundTokens: 32768 },
+			progress: { partialIntervalMs: 100, outputIntervalMs: 100, persistWithinMs: 1000 },
+			toolExecution: "parallel",
+			steeringMode: "one-at-a-time",
+			followUpMode: "one-at-a-time",
+			contextRetentionMs: 600_000,
+			documentRetentionMs: expect.any(Number),
+			afterFailedRun: "keep",
+			restartLimit: 5,
+		});
+		expect(resolveSettings({ restartLimit: 0 }).restartLimit).toBe(5);
+		expect(resolveSettings({ restartLimit: Number.POSITIVE_INFINITY }).restartLimit).toBe(Number.POSITIVE_INFINITY);
+		expect(resolveSettings({ retry: { enabled: false }, compaction: { backgroundTokens: 0 } })).toMatchObject({
+			retry: { enabled: false, maxRetries: 3, baseDelayMs: 2000 },
+			compaction: { enabled: true, backgroundTokens: 0 },
+		});
+		expect(resolveSettings({ progress: { outputIntervalMs: 500 } }).progress).toEqual({
+			partialIntervalMs: 100,
+			outputIntervalMs: 500,
+			persistWithinMs: 1000,
+		});
+		// Not a number of milliseconds, 0 or more: the default.
+		expect(resolveSettings({ progress: { persistWithinMs: -1 } }).progress.persistWithinMs).toBe(1000);
+		expect(resolveSettings({ progress: { persistWithinMs: 0 } }).progress.persistWithinMs).toBe(0);
+	});
+
+	it("commits partials no more often than progress.partialIntervalMs", async () => {
+		const shortStream = (): ReturnType<Models["streamSimple"]> => {
+			const events = async function* () {
+				yield { type: "start", partial: fauxAssistantMessage("partial", { stopReason: "pending" }) };
+				// Longer than the default 100 ms, shorter than the configured interval.
+				await new Promise((resolve) => setTimeout(resolve, 300));
+			};
+			const final = fauxAssistantMessage("final");
+			return { [Symbol.asyncIterator]: events, result: async () => final } as unknown as ReturnType<
+				Models["streamSimple"]
+			>;
+		};
+		const publishedPartial = async (settings: ChatSetup["settings"]): Promise<boolean> => {
+			const base = chatSetup();
+			const setup: ChatSetup = { ...base, settings, models: withStream(base.models, shortStream) };
+			const { harness, root } = await openChat(new MemoryStorage(), setup);
+			const values = livePublications(harness);
+			harness.resume();
+			const submission = await root.submit({ type: "input", content: "hi" }, context);
+			expect(await submission.wait(context)).toMatchObject({ status: "done" });
+			await harness.close(context);
+			return values.some((value) => textOf(value.generation?.message as Message) === "partial");
+		};
+		expect(await publishedPartial({})).toBe(true);
+		expect(await publishedPartial({ progress: { partialIntervalMs: 5000 } })).toBe(false);
 	});
 
 	it("renders sections that read conversation documents through input.read", async () => {
 		const Agent = defineDoc<{ cwd: string; kind: string }>({
+			checkpointWhen: () => false,
 			kind: "test.agent",
 			version: 1,
 			scope: "conversation",
@@ -405,11 +589,12 @@ describe("generation", () => {
 			initial: () => ({ cwd: "/", kind: "main" }),
 		});
 		const setup = chatSetup();
-		setup.registry.systemPrompt.section(
+		addSection(
+			setup.registry,
 			"cwd",
 			async (input, ctx) => (await input.read.snapshot(Agent, input.conversationId, ctx))?.cwd,
 		);
-		setup.registry.systemPrompt.section("agents", async (input, ctx) =>
+		addSection(setup.registry, "agents", async (input, ctx) =>
 			(await input.read.snapshot(Agent, input.conversationId, ctx))?.kind === "sub" ? undefined : "Read AGENTS.md",
 		);
 		setup.faux.setResponses([fauxAssistantMessage("a"), fauxAssistantMessage("b")]);
@@ -420,8 +605,8 @@ describe("generation", () => {
 		const sub = await harness.createConversation(
 			{
 				ownership: { kind: "ownerless" },
+				agent: { model: { provider: "faux", modelId: "faux-1" } },
 				init: async (tx, id) => {
-					(await tx.doc(ConversationConfig, id)).model = { provider: "faux", modelId: "faux-1" };
 					const agent = await tx.doc(Agent, id);
 					agent.kind = "sub";
 					agent.cwd = "/sub";
@@ -446,7 +631,33 @@ describe("generation", () => {
 		await harness.close(context);
 	});
 
-	it("faults a run task, settling its inputs and discarding the committed partial", async () => {
+	it("commits no partial for a response that turns deferred after an empty start event", async () => {
+		const base = chatSetup();
+		const handle = { provider: "faux", modelId: "faux-1", api: "faux", id: "handle-1", pollAfterMs: 60_000 };
+		const deferredStream = (): ReturnType<Models["streamSimple"]> => {
+			const events = async function* () {
+				yield { type: "start", partial: fauxAssistantMessage([], { stopReason: "pending" }) };
+				// Longer than the partial throttle: an empty partial would be committed here.
+				await new Promise((resolve) => setTimeout(resolve, 300));
+			};
+			const final = fauxAssistantMessage([], { stopReason: "deferred", deferred: handle });
+			return { [Symbol.asyncIterator]: events, result: async () => final } as unknown as ReturnType<
+				Models["streamSimple"]
+			>;
+		};
+		const setup: ChatSetup = { ...base, models: withStream(base.models, deferredStream) };
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		const values = livePublications(harness);
+		const submission = await root.submit({ type: "input", content: "hi" }, context);
+		await waitFor(async () => (await live(harness, root))?.generation?.deferred !== undefined);
+		expect(values.some((value) => value.generation?.message !== undefined)).toBe(false);
+		await harness.abortTask((await live(harness, root))!.run!.taskId, context);
+		expect(await submission.wait(context)).toMatchObject({ status: "unanswered", reason: "aborted" });
+		expect((await allEntries(root)).map((entry) => entry.kind)).toEqual(["pi.user"]);
+		await harness.close(context);
+	});
+
+	it("faults a run task, settling its inputs and converting the committed partial", async () => {
 		const base = chatSetup();
 		const setup: ChatSetup = { ...base, models: withStream(base.models, invalidFinalStream) };
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
@@ -459,7 +670,10 @@ describe("generation", () => {
 			detail: expect.stringContaining("non-JSON function"),
 		});
 		expect(values.some((value) => textOf(value.generation?.message as Message) === "partial")).toBe(true);
-		expect((await allEntries(root)).map((entry) => entry.kind)).toEqual(["pi.user"]);
+		const entries = await allEntries(root);
+		expect(entries.map((entry) => entry.kind)).toEqual(["pi.user", "pi.assistant"]);
+		expect(entries[1]!.model![0]).toMatchObject({ role: "assistant", stopReason: "aborted" });
+		expect(textOf(entries[1]!.model![0])).toBe("partial");
 		expect(await live(harness, root)).toEqual({});
 		const tasks = await harness.commit((tx) => tx.scanTasks({ conversationId: root.id }, 10), context);
 		expect(tasks.items[0]!.state).toMatchObject({ status: "terminal", outcome: { status: "faulted" } });
@@ -483,13 +697,15 @@ describe("generation", () => {
 			const taskId = await tx.createTask(
 				{ definition: { ...GenerationTask.definition, version: 2 } },
 				{},
-				{ conversationId: root.id },
+				{ ownership: { kind: "conversation" }, conversationId: root.id },
 			);
 			(await tx.doc(LiveDoc, root.id)).run = { taskId, inputs: [submission.id] };
 			return { taskId, submissionId: submission.id };
 		}, context);
 		harness.resume();
-		await expect(root.submit({ type: "input", content: "busy" }, context)).rejects.toThrow("is busy");
+		await expect(root.submit({ type: "input", content: "busy", whenBusy: "reject" }, context)).rejects.toThrow(
+			"is busy",
+		);
 		expect(await harness.abortTask(taskId, context)).toBe("marked");
 		expect((await harness.waitForTask(taskId, context)).state.outcome).toEqual({
 			status: "orphaned",
@@ -506,14 +722,12 @@ describe("generation", () => {
 	it("rejects a registry without the built-in tasks", async () => {
 		const empty = createRegistry().snapshot();
 		const snapshot: RegistrySnapshot = {
+			installed: () => [],
+			extension: () => undefined,
 			tools: () => [],
-			tool: () => undefined,
-			toolNames: () => [],
-			task: (name) => (name === "pi.generation" ? undefined : empty.task(name)),
-			hooks: () => [],
 			sections: () => [],
-			failures: () => [],
-			conversationSetups: () => [],
+			tasks: () => empty.tasks().filter((task) => task.definition.name !== "pi.generation"),
+			task: (name) => (name === "pi.generation" ? undefined : empty.task(name)),
 		};
 		await expect(
 			Harness.open(
@@ -521,6 +735,6 @@ describe("generation", () => {
 				{ models: chatSetup().models, registry: { snapshot: () => snapshot, subscribe: () => () => {} } },
 				context,
 			),
-		).rejects.toThrow("Registry lacks built-in task pi.generation, conversation setup pi");
+		).rejects.toThrow("Registry lacks built-in tasks pi.generation");
 	});
 });

@@ -13,6 +13,8 @@
 // Anthropic / `@google/genai` happy path where the SDK already folded the body
 // into the message, so providers can preserve it without double-printing.
 
+import { ownedSlice } from "./text.ts";
+
 export const MAX_PROVIDER_ERROR_BODY_CHARS = 4000;
 
 export interface NormalizedProviderError {
@@ -136,7 +138,7 @@ export function formatProviderError(norm: NormalizedProviderError, prefix?: stri
 
 export function truncateErrorText(text: string, maxChars: number): string {
 	if (text.length <= maxChars) return text;
-	return `${text.slice(0, maxChars)}... [truncated ${text.length - maxChars} chars]`;
+	return `${ownedSlice(text, 0, maxChars)}... [truncated ${text.length - maxChars} chars]`;
 }
 
 export function safeJsonStringify(value: unknown): string {

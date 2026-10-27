@@ -1,11 +1,11 @@
-import { arch, platform, release } from "node:os";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { stream as streamMistral } from "../src/api/mistral-conversations.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Api, FetchFunction, Model, ProviderResponse } from "../src/types.ts";
+import { formatUserAgent } from "../src/utils/identity.ts";
 
-const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
+const PI_USER_AGENT = formatUserAgent();
 
 function createSseResponse(events: unknown[], headers?: Record<string, string>): Response {
 	const body = `${events.map((event) => `data: ${JSON.stringify(event)}`).join("\r\n\r\n")}\r\n\r\ndata: [DONE]\r\n\r\n`;
@@ -469,18 +469,15 @@ describe("Mistral HTTP transport", () => {
 		expect(message.stopReason).toBe("aborted");
 	});
 
-	it("applies the request timeout while waiting for an SSE chunk", async () => {
+	it("applies the request timeout while waiting for response headers", async () => {
 		const model = getModel("mistral", "mistral-large-latest");
 		const context = normalizeContext({
 			messages: [{ role: "user", content: "hello", timestamp: 1 }],
 		});
-		const fetch: FetchFunction = async () =>
-			new Response(
-				new ReadableStream({
-					start() {},
-				}),
-				{ headers: { "content-type": "text/event-stream" } },
-			);
+		const fetch: FetchFunction = (_url, init) =>
+			new Promise<Response>((_resolve, reject) => {
+				init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+			});
 
 		const message = await streamMistral(model, context, {
 			apiKey: "test",
@@ -489,7 +486,44 @@ describe("Mistral HTTP transport", () => {
 		}).result();
 
 		expect(message.stopReason).toBe("error");
-		expect(message.errorMessage).toMatch(/timeout/i);
+		expect(message.errorMessage).toBe("Mistral response headers timed out after 5ms");
+	});
+
+	// Regression test for #10609: an active stream must not be cut off after timeoutMs.
+	it("does not abort an active stream that lasts longer than the request timeout", async () => {
+		const model = getModel("mistral", "mistral-large-latest");
+		const context = normalizeContext({
+			messages: [{ role: "user", content: "hello", timestamp: 1 }],
+		});
+		const encoder = new TextEncoder();
+		const thinkingEvent = {
+			choices: [{ index: 0, delta: { content: [{ type: "thinking", thinking: [{ type: "text", text: "x" }] }] } }],
+		};
+		const fetch: FetchFunction = async () =>
+			new Response(
+				new ReadableStream({
+					async start(controller) {
+						for (let i = 0; i < 5; i++) {
+							controller.enqueue(encoder.encode(`data: ${JSON.stringify(thinkingEvent)}\n\n`));
+							await new Promise((resolve) => setTimeout(resolve, 10));
+						}
+						controller.enqueue(
+							encoder.encode(`data: ${JSON.stringify(createTerminalEvent())}\n\ndata: [DONE]\n\n`),
+						);
+						controller.close();
+					},
+				}),
+				{ headers: { "content-type": "text/event-stream" } },
+			);
+
+		const message = await streamMistral(model, context, {
+			apiKey: "test",
+			fetch,
+			timeoutMs: 20,
+		}).result();
+
+		expect(message.stopReason).toBe("stop");
+		expect(message.content).toEqual([{ type: "thinking", thinking: "xxxxx" }]);
 	});
 
 	it("preserves HTTP status and response bodies in errors", async () => {

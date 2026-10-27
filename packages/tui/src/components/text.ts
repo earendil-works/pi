@@ -1,5 +1,5 @@
 import type { Component } from "../tui.ts";
-import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
 /**
  * Text component - displays multi-line text with word wrapping
@@ -34,6 +34,11 @@ export class Text implements Component {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
+	}
+
+	setPaddingX(paddingX: number): void {
+		this.paddingX = paddingX;
+		this.invalidate();
 	}
 
 	invalidate(): void {
@@ -96,6 +101,7 @@ export class Text implements Component {
 		}
 
 		const result = [...emptyLines, ...contentLines, ...emptyLines];
+		flattenLines(result);
 
 		// Update cache
 		this.cachedText = this.text;

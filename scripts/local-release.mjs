@@ -1,142 +1,30 @@
 #!/usr/bin/env node
+import { execFileSync } from "node:child_process";
 
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
-import { installCodingAgentConsumer, packReleasePackages, smokeTestCodingAgentConsumer } from "./coding-agent-consumer.mjs";
-
-const packages = [
-	{ directory: "packages/chord", name: "@earendil-works/chord" },
-	{ directory: "packages/telemetry", name: "@earendil-works/pi-telemetry" },
-	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
-	{ directory: "packages/durable", name: "@earendil-works/pi-durable" },
-	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
-	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
-	{ directory: "packages/protocol", name: "@earendil-works/pi-protocol" },
-	{ directory: "packages/client", name: "@earendil-works/pi-client" },
-	{ directory: "packages/session-backends/sqlite-node", name: "@earendil-works/pi-session-backend-sqlite-node" },
-	{ directory: "packages/server", name: "@earendil-works/pi-server" },
-	{ directory: "packages/coding-agent", name: "@earendil-works/pi-coding-agent" },
-];
+import { join } from "node:path";
+import { parseArgs } from "node:util";
+import { installConsumer, packageConsumerDirectoryName, smokeTestNpmConsumer } from "./local-package-install.mjs";
+import { produceArtifactSet } from "./package-artifacts.mjs";
+import { codingAgentName, smokeTestCodingAgent } from "./coding-agent-smoke.mjs";
+import { execNpmSync } from "./npm-command.mjs";
 
 function printUsage() {
 	console.log(`Usage: node scripts/local-release.mjs [options]
 
-Builds and packs the publishable packages, then installs the tarballs into an
-isolated directory outside the repository for local release testing.
+Builds and packs the publishable packages, then installs the tarballs into
+isolated directories outside the repository for local release testing.
 
 Options:
   --out <dir>          Output directory. Defaults to a new directory under ${tmpdir()}
   --force              Remove --out first if it already exists
   --skip-check         Do not run npm run check before building
-  --skip-test          Do not run ./test.sh before building
-  --skip-install       Only create tarballs; do not create isolated installs
+  --skip-test          Do not run ./test.sh after building
+  --skip-install       Only create the artifact set; do not create isolated installs
   --skip-bun-install   Do not create the isolated Bun install
   --help               Show this help
 `);
-}
-
-function parseArgs() {
-	const options = {
-		force: false,
-		outDir: undefined,
-		skipBunInstall: false,
-		skipCheck: false,
-		skipInstall: false,
-		skipTest: false,
-	};
-	const args = process.argv.slice(2);
-
-	for (let i = 0; i < args.length; i++) {
-		const arg = args[i];
-		if (arg === "--help") {
-			printUsage();
-			process.exit(0);
-		}
-		if (arg === "--force") {
-			options.force = true;
-			continue;
-		}
-		if (arg === "--skip-check") {
-			options.skipCheck = true;
-			continue;
-		}
-		if (arg === "--skip-test") {
-			options.skipTest = true;
-			continue;
-		}
-		if (arg === "--skip-install") {
-			options.skipInstall = true;
-			continue;
-		}
-		if (arg === "--skip-bun-install") {
-			options.skipBunInstall = true;
-			continue;
-		}
-		if (arg === "--out") {
-			const value = args[++i];
-			if (!value) {
-				throw new Error("--out requires a directory");
-			}
-			options.outDir = value;
-			continue;
-		}
-		throw new Error(`Unknown option: ${arg}`);
-	}
-
-	return options;
-}
-
-function run(command, args, options = {}) {
-	console.log(`$ ${[command, ...args].join(" ")}`);
-	const result = spawnSync(command, args, {
-		cwd: options.cwd,
-		encoding: "utf8",
-		shell: process.platform === "win32",
-		stdio: options.capture ? ["inherit", "pipe", "inherit"] : "inherit",
-	});
-
-	if (result.status !== 0) {
-		throw new Error(`Command failed: ${[command, ...args].join(" ")}`);
-	}
-
-	return result.stdout ?? "";
-}
-
-function readPackageJson(directory) {
-	return JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
-}
-
-function commandExists(command) {
-	return spawnSync(command, ["--version"], { stdio: "ignore" }).status === 0;
-}
-
-function isInsidePath(child, parent) {
-	const relativePath = relative(parent, child);
-	return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
-}
-
-function prepareOutputDirectory(options, repoRoot) {
-	if (!options.outDir) {
-		return mkdtempSync(join(tmpdir(), "pi-local-release-"));
-	}
-
-	const outDir = resolve(options.outDir);
-
-	if (isInsidePath(outDir, repoRoot)) {
-		throw new Error(`Output directory must be outside the repository: ${outDir}`);
-	}
-
-	if (existsSync(outDir)) {
-		if (!options.force) {
-			throw new Error(`Output directory already exists. Use --force to replace it: ${outDir}`);
-		}
-		rmSync(outDir, { force: true, recursive: true });
-	}
-
-	mkdirSync(outDir, { recursive: true });
-	return outDir;
 }
 
 function currentBinaryPlatform() {
@@ -147,19 +35,16 @@ function currentBinaryPlatform() {
 }
 
 function buildBunBinaryRelease(targetDirectory, archiveDirectory) {
-	if (!commandExists("bun")) {
-		throw new Error("Bun is required for the local binary release build.");
-	}
 	const platform = currentBinaryPlatform();
 	const binaryBuildDirectory = join(archiveDirectory, "binary-build");
-	run("./scripts/build-binaries.sh", [
+	execFileSync("bash", ["./scripts/build-binaries.sh",
 		"--skip-install",
 		"--skip-build",
 		"--platform",
 		platform,
 		"--out",
 		binaryBuildDirectory,
-	]);
+	], { stdio: "inherit" });
 	rmSync(targetDirectory, { force: true, recursive: true });
 	cpSync(join(binaryBuildDirectory, platform), targetDirectory, { recursive: true });
 	const archiveName = platform.startsWith("windows-") ? `pi-${platform}.zip` : `pi-${platform}.tar.gz`;
@@ -182,64 +67,79 @@ function createPiShim(installDirectory) {
 	symlinkSync(join("node_modules", ".bin", "pi"), join(installDirectory, "pi"));
 }
 
-const options = parseArgs();
-const repoRoot = process.cwd();
-const rootPackageJson = readPackageJson(repoRoot);
-
-if (rootPackageJson.name !== "pi-monorepo") {
-	throw new Error("Run this script from the repository root");
+const { values } = parseArgs({
+	options: {
+		force: { type: "boolean", default: false },
+		help: { type: "boolean", default: false },
+		out: { type: "string" },
+		"skip-bun-install": { type: "boolean", default: false },
+		"skip-check": { type: "boolean", default: false },
+		"skip-install": { type: "boolean", default: false },
+		"skip-test": { type: "boolean", default: false },
+	},
+});
+if (values.help) {
+	printUsage();
+	process.exit(0);
 }
+const options = {
+	force: values.force,
+	outDir: values.out,
+	skipBunInstall: values["skip-bun-install"],
+	skipCheck: values["skip-check"],
+	skipInstall: values["skip-install"],
+	skipTest: values["skip-test"],
+};
+const repoRoot = process.cwd();
+const rootPackageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+if (rootPackageJson.name !== "pi-monorepo") throw new Error("Run this script from the repository root");
 
-const outDir = prepareOutputDirectory(options, repoRoot);
-const tarballDirectory = join(outDir, "tarballs");
+execNpmSync(["run", "generate:models"], { cwd: repoRoot, stdio: "inherit" });
+if (!options.skipCheck) execNpmSync(["run", "check"], { cwd: repoRoot, stdio: "inherit" });
+
+const artifactSet = produceArtifactSet({
+	build: true,
+	force: options.force,
+	offlineModelData: true,
+	outDir: options.outDir,
+	repoRoot,
+});
+const outDir = artifactSet.artifactDirectory;
+const binaryDirectory = join(outDir, "bun");
 const nodeInstallDirectory = join(outDir, "node");
 const bunInstallDirectory = join(outDir, "bun-install");
-const binaryDirectory = join(outDir, "bun");
-mkdirSync(tarballDirectory, { recursive: true });
 
-// Release artifacts always use a freshly generated, strictly validated catalog,
-// including when checks or tests are explicitly skipped.
-run("npm", ["run", "generate:models"], { cwd: repoRoot });
-
-if (!options.skipCheck) {
-	run("npm", ["run", "check"], { cwd: repoRoot });
-}
-
-for (const pkg of packages) {
-	run("npm", ["run", "clean"], { cwd: pkg.directory });
-	run("npm", ["run", pkg.directory === "packages/ai" ? "build:offline" : "build"], { cwd: pkg.directory });
-}
-
-if (!options.skipTest) {
-	run("./test.sh", [], { cwd: repoRoot });
-}
-
-const tarballs = packReleasePackages(packages, tarballDirectory);
+if (!options.skipTest) execFileSync("bash", ["./test.sh"], { cwd: repoRoot, stdio: "inherit" });
 
 let binaryPlatform;
 if (!options.skipInstall) {
 	binaryPlatform = buildBunBinaryRelease(binaryDirectory, outDir);
-
-	installCodingAgentConsumer(nodeInstallDirectory, tarballs);
-	smokeTestCodingAgentConsumer(nodeInstallDirectory);
-	createPiShim(nodeInstallDirectory);
-
-	if (!options.skipBunInstall) {
-		if (!commandExists("bun")) {
-			throw new Error("Bun is required for the isolated Bun install. Use --skip-bun-install to skip it.");
+	const validationRoot = mkdtempSync(join(tmpdir(), "pi-local-release-consumers-"));
+	try {
+		for (const pkg of artifactSet.packages) {
+			const directory = pkg.name === codingAgentName
+				? nodeInstallDirectory
+				: join(validationRoot, "npm", packageConsumerDirectoryName(pkg.name));
+			installConsumer({ artifactSet, directory, packageNames: [pkg.name] });
+			smokeTestNpmConsumer({ artifactSet, directory, packageName: pkg.name });
+			if (pkg.name === codingAgentName) smokeTestCodingAgent(directory);
 		}
-		installCodingAgentConsumer(bunInstallDirectory, tarballs, "bun");
-		smokeTestCodingAgentConsumer(bunInstallDirectory, "bun");
-		createPiShim(bunInstallDirectory);
+		createPiShim(nodeInstallDirectory);
+
+		if (!options.skipBunInstall) {
+			installConsumer({ artifactSet, directory: bunInstallDirectory, packageManager: "bun", packageNames: [codingAgentName] });
+			smokeTestCodingAgent(bunInstallDirectory, "bun");
+			createPiShim(bunInstallDirectory);
+		}
+	} finally {
+		rmSync(validationRoot, { force: true, recursive: true });
 	}
 }
 
-console.log("\nLocal release artifacts created:");
-console.log(`  ${outDir}`);
+console.log(`\nLocal release artifacts created: ${outDir}`);
+console.log(`Manifest: ${artifactSet.manifestPath}`);
 console.log("\nTarballs:");
-for (const tarball of tarballs.values()) {
-	console.log(`  ${tarball}`);
-}
+for (const pkg of artifactSet.packages) console.log(`  ${pkg.tarballPath}`);
 
 if (!options.skipInstall) {
 	console.log("\nLocal Bun binary release:");

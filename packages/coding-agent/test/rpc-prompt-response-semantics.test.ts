@@ -4,8 +4,7 @@ import { join } from "node:path";
 import { Agent } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
-	type AssistantMessageEvent,
-	EventStream,
+	createAssistantMessageEventStream,
 	getModel,
 	type Model,
 } from "@earendil-works/pi-ai/compat";
@@ -43,19 +42,6 @@ vi.mock("../src/modes/rpc/jsonl.js", () => ({
 	}),
 	serializeJsonLine: (value: unknown) => `${JSON.stringify(value)}\n`,
 }));
-
-class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
-	constructor() {
-		super(
-			(event) => event.type === "done" || event.type === "error",
-			(event) => {
-				if (event.type === "done") return event.message;
-				if (event.type === "error") return event.error;
-				throw new Error("Unexpected event type");
-			},
-		);
-	}
-}
 
 function createAssistantMessage(text: string): AssistantMessage {
 	return {
@@ -121,7 +107,7 @@ async function createRuntimeHost(options: {
 			tools: [],
 		},
 		streamFn: (_model, _context, _options) => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				stream.push({ type: "start", partial: createAssistantMessage("") });
 				setTimeout(() => {

@@ -15,9 +15,14 @@ const CLIENT_ID = decode("OWQxYzI1MGEtZTYxYi00NGQ5LTg4ZWQtNTk0NGQxOTYyZjVl");
 const AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
 const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
 const CALLBACK_HOST = getProviderEnvValue("PI_OAUTH_CALLBACK_HOST") || "127.0.0.1";
+// Preferred so the port can be forwarded into containers or over SSH. Anthropic accepts any loopback port,
+// so login falls back to a free port when this one cannot be bound (#10571).
 const CALLBACK_PORT = 53692;
 const CALLBACK_PATH = "/callback";
 const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}${CALLBACK_PATH}`;
+const COPY_CODE_REDIRECT_URI = "https://platform.claude.com/oauth/code/callback";
+const ANTHROPIC_BROWSER_LOGIN_METHOD = "browser";
+const ANTHROPIC_COPY_CODE_LOGIN_METHOD = "copy_code";
 const SCOPES =
 	"org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 
@@ -134,22 +139,29 @@ async function exchangeAuthorizationCode(
 
 async function loginAnthropic(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
 	const { verifier, challenge } = await generatePKCE();
-	const callback = await startOAuthCallbackServer({
-		providerName: "Anthropic",
-		host: CALLBACK_HOST,
-		port: CALLBACK_PORT,
-		path: CALLBACK_PATH,
-		state: verifier,
-		complete: async (code) => code,
-		signal: interaction.signal,
-	}).catch(() => undefined);
+	const startCallbackServer = (port: number) =>
+		startOAuthCallbackServer({
+			providerName: "Anthropic",
+			host: CALLBACK_HOST,
+			port,
+			path: CALLBACK_PATH,
+			redirectHost: "localhost",
+			state: verifier,
+			complete: async (code) => code,
+			signal: interaction.signal,
+		});
+	// Without a callback server, login continues with the pasted redirect URL.
+	const callback = await startCallbackServer(CALLBACK_PORT)
+		.catch(() => startCallbackServer(0))
+		.catch(() => undefined);
+	const redirectUri = callback?.redirectUri ?? REDIRECT_URI;
 
 	try {
 		const authParams = new URLSearchParams({
 			code: "true",
 			client_id: CLIENT_ID,
 			response_type: "code",
-			redirect_uri: REDIRECT_URI,
+			redirect_uri: redirectUri,
 			scope: SCOPES,
 			code_challenge: challenge,
 			code_challenge_method: "S256",
@@ -164,7 +176,7 @@ async function loginAnthropic(interaction: ProviderAuthInteraction): Promise<OAu
 
 		const result = await waitForCallbackOrManualInput(interaction, callback, {
 			message: "Complete login in your browser, or paste the authorization code / redirect URL here:",
-			placeholder: REDIRECT_URI,
+			placeholder: redirectUri,
 		});
 		let code: string | undefined;
 		let state = verifier;
@@ -179,10 +191,47 @@ async function loginAnthropic(interaction: ProviderAuthInteraction): Promise<OAu
 
 		if (!code) throw new Error("Missing authorization code");
 		interaction.notify({ type: "progress", message: "Exchanging authorization code for tokens..." });
-		return await exchangeAuthorizationCode(code, state, verifier, REDIRECT_URI, interaction.signal);
+		return await exchangeAuthorizationCode(code, state, verifier, redirectUri, interaction.signal);
 	} finally {
 		callback?.close();
 	}
+}
+
+async function loginAnthropicCopyCode(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
+	const { verifier, challenge } = await generatePKCE();
+	const authParams = new URLSearchParams({
+		code: "true",
+		client_id: CLIENT_ID,
+		response_type: "code",
+		redirect_uri: COPY_CODE_REDIRECT_URI,
+		scope: SCOPES,
+		code_challenge: challenge,
+		code_challenge_method: "S256",
+		state: verifier,
+	});
+	interaction.notify({
+		type: "auth_url",
+		url: `${AUTHORIZE_URL}?${authParams.toString()}`,
+		instructions: "Complete login in your browser, then copy the code Anthropic shows and paste it here.",
+	});
+
+	const input = await interaction.prompt({
+		type: "manual_code",
+		message: "Paste the code Anthropic shows after you sign in:",
+		placeholder: "code#state",
+		signal: interaction.signal,
+	});
+	const parsed = parseAuthorizationInput(input);
+	if (parsed.state && parsed.state !== verifier) throw new Error("OAuth state mismatch");
+	if (!parsed.code) throw new Error("Missing authorization code");
+	interaction.notify({ type: "progress", message: "Exchanging authorization code for tokens..." });
+	return await exchangeAuthorizationCode(
+		parsed.code,
+		parsed.state ?? verifier,
+		verifier,
+		COPY_CODE_REDIRECT_URI,
+		interaction.signal,
+	);
 }
 
 /**
@@ -229,7 +278,27 @@ async function refreshAnthropicToken(refreshToken: string, signal: AbortSignal):
 export const anthropicOAuth: OAuthAuth = {
 	name: "Anthropic (Claude Pro/Max)",
 	isSubscription: true,
-	login: loginAnthropic,
+
+	async login(interaction) {
+		const method = await interaction.prompt({
+			type: "select",
+			message: "Select Anthropic login method:",
+			options: [
+				{ id: ANTHROPIC_BROWSER_LOGIN_METHOD, label: "Browser login (default)" },
+				{ id: ANTHROPIC_COPY_CODE_LOGIN_METHOD, label: "Copy code login (headless)" },
+			],
+		});
+
+		if (method === ANTHROPIC_COPY_CODE_LOGIN_METHOD) {
+			return loginAnthropicCopyCode(interaction);
+		}
+		if (method !== ANTHROPIC_BROWSER_LOGIN_METHOD) {
+			throw new Error(`Unknown Anthropic login method: ${method}`);
+		}
+
+		return loginAnthropic(interaction);
+	},
+
 	refresh: (credential, signal) => refreshAnthropicToken(credential.refresh, signal),
 
 	async toAuth(credential) {

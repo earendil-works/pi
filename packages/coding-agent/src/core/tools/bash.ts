@@ -54,12 +54,9 @@ export type BashToolInput = Static<typeof bashSchema>;
  * `output` is not limited like the model-facing output: callers decide how much of it reaches the model.
  */
 const bashOutputSchema = Type.Object({
-	output: Type.String({
-		description:
-			"Combined stdout and stderr, up to 1 MiB. Longer output keeps its first and last 512 KiB around an omission marker.",
-	}),
-	truncated: Type.Boolean({ description: "Whether `output` omits part of the command output" }),
-	full_output_path: Type.Optional(Type.String({ description: "Temp file with the full output, when truncated" })),
+	output: Type.String({ description: "Combined stdout and stderr, possibly truncated" }),
+	truncated: Type.Boolean(),
+	full_output_path: Type.Optional(Type.String({ description: "Full output, when truncated" })),
 	exit_code: Type.Number(),
 	wall_time_seconds: Type.Number(),
 });

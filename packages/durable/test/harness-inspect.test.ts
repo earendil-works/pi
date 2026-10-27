@@ -1,7 +1,6 @@
 import { defineTask, MemoryStorage, type TaskId, type TaskInspection } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
 import { chatSetup, openChat, unanswered, waitFor } from "./chat-support.ts";
-import { tool } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 import { completed, deferred, eventually, openTasks } from "./task-support.ts";
 
@@ -40,7 +39,23 @@ describe("Harness.inspect()", () => {
 	it("derives every live task's state without running task code", async () => {
 		const gate = deferred();
 		const Gate = task("test.gate", 1, { gate: gate.promise });
-		const Dependent = task("test.dependent", 1);
+		let gateId: TaskId | undefined;
+		const Dependent = defineTask<null, { phase: "wait" } | { phase: "done" }, null>({
+			name: "test.dependent",
+			version: 1,
+			initial: () => ({ phase: "wait" }),
+			phases: {
+				wait: async (_task, runtime, ctx) => {
+					const checkpoint = { phase: "done" } as const;
+					await runtime.commit(
+						() => ({ status: "waiting", checkpoint, on: [gateId!], policy: "allSettled" }),
+						ctx,
+					);
+				},
+				done: async (_task, runtime, ctx) => runtime.commit(() => completed(null), ctx),
+			},
+			abort: async () => {},
+		});
 		let migrations = 0;
 		const registered = [
 			Gate,
@@ -61,16 +76,18 @@ describe("Harness.inspect()", () => {
 		const { harness } = await openTasks(new MemoryStorage(), registered);
 		const root = await harness.root(context);
 		const ids = await root.commit(async (tx) => {
-			const gateId = await tx.createTask(Gate, null);
+			gateId = await tx.createTask(Gate, null, { ownership: { kind: "conversation" } });
 			return {
 				gate: gateId,
-				dependent: await tx.createTask(Dependent, null, { after: [gateId] }),
+				dependent: await tx.createTask(Dependent, null, { ownership: { kind: "conversation" } }),
 				// Stored by definitions other than the registered ones.
-				migrating: await tx.createTask(task("test.migrating", 1), null),
-				noMigration: await tx.createTask(task("test.no-migration", 1), null),
-				failing: await tx.createTask(task("test.failing", 1), null),
-				tooOld: await tx.createTask(task("test.too-old", 2), null),
-				missing: await tx.createTask(task("test.missing", 1), null),
+				migrating: await tx.createTask(task("test.migrating", 1), null, { ownership: { kind: "conversation" } }),
+				noMigration: await tx.createTask(task("test.no-migration", 1), null, {
+					ownership: { kind: "conversation" },
+				}),
+				failing: await tx.createTask(task("test.failing", 1), null, { ownership: { kind: "conversation" } }),
+				tooOld: await tx.createTask(task("test.too-old", 2), null, { ownership: { kind: "conversation" } }),
+				missing: await tx.createTask(task("test.missing", 1), null, { ownership: { kind: "conversation" } }),
 			};
 		}, context);
 
@@ -78,7 +95,7 @@ describe("Harness.inspect()", () => {
 		expect(paused.scheduling).toBe("paused");
 		expect(paused.tasks.map((entry) => entry.record.id)).toEqual(Object.values(ids));
 		expect(stateOf(paused.tasks, ids.gate)).toEqual({ kind: "ready", migrates: false });
-		expect(stateOf(paused.tasks, ids.dependent)).toEqual({ kind: "waiting", on: [ids.gate] });
+		expect(stateOf(paused.tasks, ids.dependent)).toEqual({ kind: "ready", migrates: false });
 		expect(stateOf(paused.tasks, ids.migrating)).toEqual({ kind: "ready", migrates: true });
 		// A migration that was never tried is not run to find out.
 		expect(stateOf(paused.tasks, ids.failing)).toEqual({ kind: "ready", migrates: true });
@@ -98,8 +115,12 @@ describe("Harness.inspect()", () => {
 		let running = await harness.inspect(context);
 		await waitFor(async () => {
 			running = await harness.inspect(context);
-			return stateOf(running.tasks, ids.gate)?.kind === "running";
+			return (
+				stateOf(running.tasks, ids.gate)?.kind === "running" &&
+				stateOf(running.tasks, ids.dependent)?.kind === "waiting"
+			);
 		});
+		expect(stateOf(running.tasks, ids.dependent)).toEqual({ kind: "waiting", on: [ids.gate] });
 		expect(running.scheduling).toBe("running");
 		expect(stateOf(running.tasks, ids.gate)).toEqual({ kind: "running" });
 		expect(stateOf(running.tasks, ids.migrating)).toBeUndefined();
@@ -121,14 +142,10 @@ describe("Harness.inspect()", () => {
 		await harness.close(context);
 	});
 
-	it("lists unsettled submissions and registry failures", async () => {
+	it("lists unsettled submissions", async () => {
 		const setup = chatSetup();
 		const busy = unanswered();
 		setup.faux.setResponses([busy.step]);
-		setup.registry.tools.add(tool("read"));
-		setup.registry.tools.wrap("read", "broken", () => {
-			throw new Error("wrapper failed");
-		});
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const other = await harness.createConversation({ ownership: { kind: "ownerless" } }, context);
 		await other.submit({ type: "write", entry: { kind: "note" } }, context);
@@ -140,7 +157,6 @@ describe("Harness.inspect()", () => {
 		expect(inspection.tasks.map((entry) => [entry.record.kind, entry.state.kind])).toEqual([
 			["pi.generation", "running"],
 		]);
-		expect(inspection.registry).toEqual([{ kind: "tool", name: "read", error: new Error("wrapper failed") }]);
 		await harness.close(context);
 	});
 });

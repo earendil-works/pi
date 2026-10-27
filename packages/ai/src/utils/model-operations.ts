@@ -3,6 +3,7 @@ import type {
 	Api,
 	AssistantImages,
 	ClassifierApi,
+	ClassifierContext,
 	ClassifierModel,
 	ClassifierResult,
 	ImageApi,
@@ -38,6 +39,16 @@ export function assertImageModel(model: AnyModel): asserts model is ImageModel<I
 export function assertClassifierModel(model: AnyModel): asserts model is ClassifierModel<ClassifierApi> {
 	if (!isModelType(model, "classifier")) {
 		throw new ModelsError("provider", `Model ${model.provider}/${model.id} is not a classifier model`);
+	}
+}
+
+/** Rejects classifier images for models whose catalog entry does not accept image input. */
+export function assertClassifierInputSupported(
+	model: ClassifierModel<ClassifierApi>,
+	context: ClassifierContext,
+): void {
+	if (context.images?.length && !model.input.includes("image")) {
+		throw new ModelsError("provider", `Model ${model.provider}/${model.id} does not accept image input`);
 	}
 }
 

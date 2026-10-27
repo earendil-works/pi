@@ -1,7 +1,7 @@
 {
 	"name": "@earendil-works/chord",
-	"version": "0.87.1",
-	"description": "Application composition runtime for services, replicated state, RPC, and plugins",
+	"version": "1.4.0",
+	"description": "Typed host runtime for plugins, contracts, replicated state, and RPC over JSON links",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -16,27 +16,49 @@
 			"types": "./dist/context/index.d.ts",
 			"import": "./dist/context/index.js"
 		},
+		"./output": {
+			"source": "./src/output.ts",
+			"types": "./dist/output.d.ts",
+			"import": "./dist/output.js"
+		},
 		"./delta": {
 			"source": "./src/delta/index.ts",
 			"types": "./dist/delta/index.d.ts",
 			"import": "./dist/delta/index.js"
-		},
-		"./bundler": {
-			"source": "./src/bundler.ts",
-			"types": "./dist/bundler.d.ts",
-			"import": "./dist/bundler.js"
 		},
 		"./node": {
 			"source": "./src/node.ts",
 			"types": "./dist/node.d.ts",
 			"import": "./dist/node.js"
 		},
+		"./telemetry-sqlite": {
+			"source": "./src/telemetry-sqlite/index.ts",
+			"types": "./dist/telemetry-sqlite/index.d.ts",
+			"import": "./dist/telemetry-sqlite/index.js"
+		},
+		"./sqlite": {
+			"source": "./src/sqlite/index.ts",
+			"types": "./dist/sqlite/index.d.ts",
+			"import": "./dist/sqlite/index.js"
+		},
+		"./sqlite/node": {
+			"source": "./src/sqlite/node.ts",
+			"types": "./dist/sqlite/node.d.ts",
+			"import": "./dist/sqlite/node.js"
+		},
+		"./sqlite/cloudflare": {
+			"source": "./src/sqlite/cloudflare.ts",
+			"types": "./dist/sqlite/cloudflare.d.ts",
+			"import": "./dist/sqlite/cloudflare.js"
+		},
 		"./package.json": "./package.json"
 	},
 	"sideEffects": false,
 	"files": [
 		"dist",
+		"docs",
 		"README.md",
+		"CHANGELOG.md",
 		"src/delta/README.md"
 	],
 	"scripts": {
@@ -49,7 +71,7 @@
 		"application",
 		"plugins",
 		"rpc",
-		"services",
+		"contracts",
 		"state"
 	],
 	"author": "Earendil Works",
@@ -63,10 +85,13 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"esbuild": "0.28.2"
+		"@earendil-works/pi-telemetry": "1.4.0",
+		"typebox": "1.3.27"
 	},
 	"devDependencies": {
-		"shx": "0.4.0",
-		"vitest": "4.1.9"
+		"@types/ws": "8.18.2",
+		"shx": "0.3.4",
+		"vitest": "4.1.12",
+		"ws": "8.21.0"
 	}
 }

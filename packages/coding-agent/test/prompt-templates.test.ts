@@ -383,8 +383,10 @@ describe("parseCommandArgs", () => {
 	});
 
 	test("should handle quoted empty string", () => {
-		// Note: Empty quotes are skipped by current implementation
-		expect(parseCommandArgs('"" " "')).toEqual([" "]);
+		// Empty quotes keep their position as an empty argument (#10867)
+		expect(parseCommandArgs('"" " "')).toEqual(["", " "]);
+		expect(parseCommandArgs("a '' c")).toEqual(["a", "", "c"]);
+		expect(parseCommandArgs('a ""')).toEqual(["a", ""]);
 	});
 
 	test("should handle arguments with special characters", () => {
@@ -433,6 +435,24 @@ describe("parseCommandArgs", () => {
 // ============================================================================
 
 describe("expandPromptTemplate", () => {
+	// #10867
+	test("should use positional default for empty quoted argument without shifting later args", () => {
+		const template = {
+			name: "review",
+			description: "test",
+			content: `Review $2. Focus: \${1:-correctness}.`,
+			sourceInfo: { path: "/tmp/review.md", source: "local", scope: "temporary", origin: "top-level" } as const,
+			filePath: "/tmp/review.md",
+		};
+
+		expect(expandPromptTemplate('/review "" src/index.ts', [template])).toBe(
+			"Review src/index.ts. Focus: correctness.",
+		);
+		expect(expandPromptTemplate("/review '' src/index.ts", [template])).toBe(
+			"Review src/index.ts. Focus: correctness.",
+		);
+	});
+
 	test("should split template arguments on unquoted newlines", () => {
 		const result = expandPromptTemplate("/arg-test label-2\n\nHere is some description #2.", [
 			{

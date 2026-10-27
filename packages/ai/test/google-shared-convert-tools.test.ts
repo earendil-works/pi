@@ -201,3 +201,133 @@ describe("google-shared convertTools", () => {
 		expect(convertTools([], true)).toBeUndefined();
 	});
 });
+
+// Regression coverage for #11308.
+describe("google-shared convertTools const handling", () => {
+	it.each(["default", "examples", "enum", "const", "x-custom"])("preserves literal data under %s", (key) => {
+		const literal = { const: "literal-data", properties: { nested: { const: 1 } } };
+		const parameters = {
+			type: "object",
+			properties: { value: { type: "object", [key]: key === "enum" || key === "examples" ? [literal] : literal } },
+		};
+		const original = structuredClone(parameters);
+
+		expect(convertTools([makeTool(parameters)])?.[0]?.functionDeclarations?.[0]?.parametersJsonSchema).toEqual(
+			original,
+		);
+		expect(parameters).toEqual(original);
+	});
+
+	it.each(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "dependencies"])(
+		"preserves names while rewriting schemas in %s",
+		(key) => {
+			const parameters = {
+				type: "object",
+				[key]: {
+					["__proto__"]: { const: "x" },
+					const: { const: "y" },
+					properties: { const: "z" },
+				},
+			};
+			const original = structuredClone(parameters);
+			const expected = {
+				type: "object",
+				[key]: {
+					["__proto__"]: { enum: ["x"] },
+					const: { enum: ["y"] },
+					properties: { enum: ["z"] },
+				},
+			};
+
+			const result = convertTools([makeTool(parameters)])?.[0]?.functionDeclarations?.[0]?.parametersJsonSchema;
+			expect(result).toEqual(expected);
+			expect(JSON.stringify(result)).toBe(JSON.stringify(expected));
+			expect(parameters).toEqual(original);
+		},
+	);
+
+	it("rewrites only schema-bearing keywords", () => {
+		const parameters = {
+			type: "object",
+			additionalProperties: { const: "x" },
+			unevaluatedProperties: false,
+			propertyNames: { const: "name" },
+			// biome-ignore lint/suspicious/noThenProperty: JSON Schema conditional keyword, not a thenable.
+			allOf: [{ if: { const: "x" }, then: { const: "y" }, else: { not: { const: "z" } } }],
+			properties: {
+				list: {
+					type: "array",
+					items: [{ const: 1 }],
+					prefixItems: [{ const: 2 }],
+					additionalItems: { const: 3 },
+					contains: { const: 4 },
+					unevaluatedItems: { const: 5 },
+				},
+			},
+			dependencies: { list: ["other"] },
+		};
+
+		expect(convertTools([makeTool(parameters)])?.[0]?.functionDeclarations?.[0]?.parametersJsonSchema).toEqual({
+			type: "object",
+			additionalProperties: { enum: ["x"] },
+			unevaluatedProperties: false,
+			propertyNames: { enum: ["name"] },
+			// biome-ignore lint/suspicious/noThenProperty: JSON Schema conditional keyword, not a thenable.
+			allOf: [{ if: { enum: ["x"] }, then: { enum: ["y"] }, else: { not: { enum: ["z"] } } }],
+			properties: {
+				list: {
+					type: "array",
+					items: [{ enum: [1] }],
+					prefixItems: [{ enum: [2] }],
+					additionalItems: { enum: [3] },
+					contains: { enum: [4] },
+					unevaluatedItems: { enum: [5] },
+				},
+			},
+			dependencies: { list: ["other"] },
+		});
+	});
+
+	it("rewrites string and number const values to single-value enums in parametersJsonSchema", () => {
+		const parameters = {
+			type: "object",
+			properties: {
+				origin: { type: "string", const: "zq-src-7" },
+				mode: {
+					anyOf: [
+						{ type: "string", const: "a" },
+						{ type: "string", const: "b" },
+					],
+				},
+				level: { oneOf: [{ const: 1 }, { const: 2 }] },
+				flag: { type: "boolean", const: true },
+				list: { type: "array", items: { const: "x" } },
+				const: { type: "string" },
+			},
+			required: ["origin"],
+		};
+		const tools = [makeTool(parameters)];
+
+		const result = convertTools(tools);
+		const decl = result?.[0]?.functionDeclarations?.[0];
+
+		expect(decl?.parametersJsonSchema).toEqual({
+			type: "object",
+			properties: {
+				origin: { type: "string", enum: ["zq-src-7"] },
+				mode: {
+					anyOf: [
+						{ type: "string", enum: ["a"] },
+						{ type: "string", enum: ["b"] },
+					],
+				},
+				level: { oneOf: [{ enum: [1] }, { enum: [2] }] },
+				flag: { type: "boolean", const: true },
+				list: { type: "array", items: { enum: ["x"] } },
+				const: { type: "string" },
+			},
+			required: ["origin"],
+		});
+		expect(parameters.properties.origin).toEqual({ type: "string", const: "zq-src-7" });
+	});
+});

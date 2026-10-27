@@ -8,6 +8,7 @@ import {
 	type TUI,
 	TuiMainScreen,
 } from "../src/index.ts";
+import { StdinBuffer } from "../src/stdin-buffer.ts";
 import { parseOscColorResponse } from "../src/terminal-colors.ts";
 
 class TestTerminal implements Terminal {
@@ -65,6 +66,7 @@ class TestTerminal implements Terminal {
 	setTitle(_title: string): void {}
 
 	setProgress(_active: boolean): void {}
+	setProgramStatus(): void {}
 
 	sendInput(data: string): void {
 		this.inputHandler?.(data);
@@ -154,6 +156,29 @@ describe("TUI.queryTerminalColors", () => {
 			terminal.sendInput(DA1);
 			assert.deepStrictEqual(component.inputs, ["x"]);
 		} finally {
+			tui.stop();
+		}
+	});
+
+	it("consumes delayed Ghostty color fragments without typing their tail or opening the editor", async (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		const { terminal, tui, component } = setup();
+		const buffer = new StdinBuffer();
+		buffer.on("data", (data) => terminal.sendInput(data));
+		try {
+			const query = tui.queryTerminalColors({ timeoutMs: 1000 });
+			// Captured from Ghostty 1.3.1 with Ayu Light, split at the reported tail.
+			buffer.process("\x1b]4;1;rgb:eaea/6c");
+			t.mock.timers.tick(100);
+			buffer.process(`6c/6d6d\x07${DA1}`);
+			assert.deepStrictEqual(await query, { foreground: undefined, background: undefined, palette: undefined });
+			assert.deepStrictEqual(component.inputs, []);
+
+			// A real Ctrl+G must still reach the editor after the reply.
+			buffer.process("\x07");
+			assert.deepStrictEqual(component.inputs, ["\x07"]);
+		} finally {
+			buffer.destroy();
 			tui.stop();
 		}
 	});

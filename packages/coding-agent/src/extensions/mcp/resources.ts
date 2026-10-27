@@ -22,18 +22,15 @@ import type {
 } from "@earendil-works/pi-mcp";
 import type { TSchema } from "typebox";
 import type { ToolAnnotations, ToolDefinition } from "../../core/extensions/types.ts";
-import type { McpExposure } from "./config.ts";
 import {
-	limitMcpContent,
-	type McpToolDetails,
+	LIST_MCP_RESOURCE_TEMPLATES_TOOL,
+	LIST_MCP_RESOURCES_TOOL,
 	READ_MCP_RESOURCE_TOOL,
-	toModelContent,
-	toToolExposure,
-} from "./tools.ts";
+} from "../../core/mcp-servers.ts";
+import type { McpExposure } from "./config.ts";
+import { limitMcpContent, type McpToolDetails, toModelContent, toToolExposure } from "./tools.ts";
 
-export const LIST_MCP_RESOURCES_TOOL = "list_mcp_resources";
-export const LIST_MCP_RESOURCE_TEMPLATES_TOOL = "list_mcp_resource_templates";
-export { READ_MCP_RESOURCE_TOOL };
+export { LIST_MCP_RESOURCE_TEMPLATES_TOOL, LIST_MCP_RESOURCES_TOOL, READ_MCP_RESOURCE_TOOL };
 
 /** A connected server that offers resources. */
 export interface McpResourceServer {
@@ -47,7 +44,7 @@ export interface McpResourceServer {
 }
 
 /** MCP App user interfaces, which only hosts that render them can use. */
-export function isMcpAppResource(item: { uri?: string; uriTemplate?: string; mimeType?: string }): boolean {
+function isMcpAppResource(item: { uri?: string; uriTemplate?: string; mimeType?: string }): boolean {
 	const uri = item.uri ?? item.uriTemplate ?? "";
 	return uri.startsWith("ui://") || /;\s*profile\s*=\s*"?mcp-app"?/i.test(item.mimeType ?? "");
 }

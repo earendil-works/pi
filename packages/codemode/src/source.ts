@@ -95,7 +95,8 @@ function parseOptions(directive: string): CodemodeSourceOptions {
 
 /**
  * Split an optional first-line `// @options: {...}` from the script. Throws
- * {@link CodemodeSourceError} for empty input and invalid options.
+ * {@link CodemodeSourceError} for empty input, invalid options, and an options line that is not the
+ * first line, which would otherwise be ignored without notice.
  */
 export function parseCodemodeSource(input: string): ParsedCodemodeSource {
 	if (input.trim() === "") {
@@ -103,8 +104,17 @@ export function parseCodemodeSource(input: string): ParsedCodemodeSource {
 			'Expected JavaScript source text (non-empty). Provide JS only, optionally with a first line `// @options: {"max_output_tokens": 1000}`.',
 		);
 	}
+	const lines = input.split("\n");
+	const misplaced = lines.findIndex(
+		(line, index) => index > 0 && line.trimStart().startsWith(CODEMODE_OPTIONS_PREFIX),
+	);
+	if (misplaced !== -1) {
+		throw new CodemodeSourceError(
+			`The ${CODEMODE_OPTIONS_PREFIX} line must be the first line of the input; found one on line ${misplaced + 1}`,
+		);
+	}
 	const newline = input.indexOf("\n");
-	const firstLine = (newline === -1 ? input : input.slice(0, newline)).replace(/\r$/, "");
+	const firstLine = lines[0].replace(/\r$/, "");
 	const trimmed = firstLine.trimStart();
 	if (!trimmed.startsWith(CODEMODE_OPTIONS_PREFIX)) return { code: input, options: {} };
 	const code = newline === -1 ? "" : input.slice(newline);

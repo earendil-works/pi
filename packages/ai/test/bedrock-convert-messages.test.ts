@@ -325,6 +325,98 @@ describe("bedrock convertMessages skips unknown content types", () => {
 		expect(p.messages[0].content[0].toolResult.content).toEqual([{ text: "<empty>" }]);
 	});
 
+	// Regression for #10794: Claude rejects error tool results that contain images.
+	it("moves images of error tool results after the tool results", async () => {
+		const messages: Message[] = [
+			{
+				role: "assistant",
+				content: [
+					{ type: "toolCall", id: "call-1", name: "codemode", arguments: {} },
+					{ type: "toolCall", id: "call-2", name: "read", arguments: {} },
+				],
+				api: "bedrock-converse-stream",
+				provider: "amazon-bedrock",
+				model: baseModel.id,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "toolUse",
+				timestamp: Date.now(),
+			},
+			{
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "codemode",
+				content: [
+					{ type: "text", text: "Script failed" },
+					{ type: "image", data: "AAAA", mimeType: "image/png" },
+					{ type: "text", text: "Script error" },
+				],
+				isError: true,
+				timestamp: Date.now(),
+			},
+			{
+				role: "toolResult",
+				toolCallId: "call-2",
+				toolName: "read",
+				content: [{ type: "image", data: "BBBB", mimeType: "image/png" }],
+				isError: false,
+				timestamp: Date.now(),
+			},
+		];
+		const payload = (await capturePayload({ messages })) as {
+			messages: Array<{ role: string; content: Array<Record<string, any>> }>;
+		};
+		const content = payload.messages[1].content;
+		expect(content).toHaveLength(4);
+		expect(content[0].toolResult).toEqual({
+			toolUseId: "call-1",
+			content: [
+				{ text: "Script failed" },
+				{ text: "(image attached after the tool results)" },
+				{ text: "Script error" },
+			],
+			status: "error",
+		});
+		expect(content[1].toolResult.status).toBe("success");
+		expect(content[1].toolResult.content).toEqual([{ image: expect.objectContaining({ format: "png" }) }]);
+		expect(content[2]).toEqual({ text: "Images from the error result of tool call call-1 (codemode):" });
+		expect(content[3]).toEqual({ image: expect.objectContaining({ format: "png" }) });
+	});
+
+	it("keeps images in error tool results for non-Claude models", async () => {
+		const messages: Message[] = [
+			{
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "codemode",
+				content: [
+					{ type: "text", text: "Script failed" },
+					{ type: "image", data: "AAAA", mimeType: "image/png" },
+				],
+				isError: true,
+				timestamp: Date.now(),
+			},
+		];
+		const payload = (await capturePayload({ messages }, novaModel)) as {
+			messages: Array<{ role: string; content: Array<Record<string, any>> }>;
+		};
+		expect(payload.messages[0].content).toEqual([
+			{
+				toolResult: {
+					toolUseId: "call-1",
+					content: [{ text: "Script failed" }, { image: expect.objectContaining({ format: "png" }) }],
+					status: "error",
+				},
+			},
+		]);
+	});
+
 	it("skips assistant messages with only unknown content blocks", async () => {
 		const messages: Message[] = [
 			{

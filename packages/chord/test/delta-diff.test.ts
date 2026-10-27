@@ -8,7 +8,7 @@ import {
 	encoder,
 	type Op,
 } from "../src/delta/index.ts";
-import type { JsonValue } from "../src/types.ts";
+import type { JsonValue } from "../src/json.ts";
 
 const expectDiff = (before: JsonValue, after: JsonValue, expected: unknown): void => {
 	const operations = diffRevisions(before, after);

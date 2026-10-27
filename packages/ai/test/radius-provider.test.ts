@@ -49,7 +49,7 @@ describe("Radius provider catalogs", () => {
 		expect(provider.getModels()).toEqual([]);
 	});
 
-	it("overlays refreshed models on the static public catalog", async () => {
+	it("replaces the static public catalog with refreshed models", async () => {
 		vi.spyOn(globalThis, "fetch").mockResolvedValue(
 			new Response(JSON.stringify(radiusConfig()), {
 				status: 200,
@@ -70,10 +70,11 @@ describe("Radius provider catalogs", () => {
 			contextWindow: 424242,
 		});
 		expect(models.getModel("radius", "organization-only")).toBeDefined();
-		expect(models.getModels("radius").length).toBeGreaterThan(radiusConfig().models.length);
+		// Models disabled by the organization must not reappear from the shipped catalog.
+		expect(models.getModels("radius").map((model) => model.id)).toEqual(["balanced", "organization-only"]);
 	});
 
-	it("overlays a cached effective catalog without network access", async () => {
+	it("replaces the static public catalog with a cached catalog without network access", async () => {
 		const store = new InMemoryModelsStore();
 		await store.write("radius", {
 			models: getRadiusModelsFromConfig("radius", radiusConfig()),
@@ -86,5 +87,24 @@ describe("Radius provider catalogs", () => {
 
 		expect(models.getModel("radius", "balanced")?.name).toBe("Fresh Balanced");
 		expect(models.getModel("radius", "organization-only")).toBeDefined();
+		expect(models.getModels("radius").map((model) => model.id)).toEqual(["balanced", "organization-only"]);
+	});
+
+	it("exposes no models when the organization disabled all of them", async () => {
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(JSON.stringify({ baseUrl: "https://radius.example/v1", models: [] }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+		const credentials = new InMemoryCredentialStore();
+		await credentials.modify("radius", async () => ({ type: "api_key", key: "radius-key" }));
+		const models = createModels({ credentials });
+		models.setProvider(radiusProvider());
+
+		const result = await models.refresh({ providers: ["radius"] });
+
+		expect(result.errors).toEqual(new Map());
+		expect(models.getModels("radius")).toEqual([]);
 	});
 });

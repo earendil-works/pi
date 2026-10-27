@@ -252,3 +252,28 @@ describe("openai-completions reasoning_details streaming", () => {
 		expect(getAssistantPayload(mockState.payloads[1])?.reasoning_details).toEqual(expectedReasoningDetails);
 	});
 });
+
+describe("openai-completions reasoning and content in one delta", () => {
+	beforeEach(() => {
+		mockState.chunkSets = [];
+		mockState.payloads = [];
+	});
+
+	// https://github.com/earendil-works/pi/issues/10926
+	it("places thinking before text when one delta carries reasoning_content and content", async () => {
+		mockState.chunkSets = [[chunk({ role: "assistant", reasoning_content: "thinking", content: "answer" }, "stop")]];
+
+		const assistantMessage = await runOpenAICompletionsStream();
+		expect(assistantMessage.content).toEqual([
+			{ type: "thinking", thinking: "thinking", thinkingSignature: "reasoning_content" },
+			{ type: "text", text: "answer" },
+		]);
+	});
+
+	it("places thinking before text when one delta carries reasoning_details and content", async () => {
+		mockState.chunkSets = [[chunk({ reasoning_details: [reasoningDetail], content: "answer" }, "stop")]];
+
+		const assistantMessage = await runOpenAICompletionsStream();
+		expect(assistantMessage.content.map((block) => block.type)).toEqual(["thinking", "text"]);
+	});
+});

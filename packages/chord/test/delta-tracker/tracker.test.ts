@@ -924,6 +924,59 @@ describe("delta tracker by-value placements", () => {
 });
 
 describe("delta tracker piece arrays", () => {
+	it("emits one insert for an append to a long array", () => {
+		const tracker = track({ values: Array.from({ length: 10_000 }, (_, index) => index) });
+		const change = tracker.beginChange();
+		change.state.values.push(-1);
+		const prepared = change.prepare();
+		expect(prepared.ops).toEqual([["p", ["values"], 10_000, 0, [-1]]]);
+		tracker.adopt(prepared);
+		expect(tracker.value.values.at(-1)).toBe(-1);
+		expect(tracker.value.values).toHaveLength(10_001);
+	});
+
+	it("emits removals from the end backwards, then inserts, when kept elements keep their order", () => {
+		const tracker = track({ values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] });
+		const values = settle(tracker, (draft) => {
+			draft.values.shift(); // gap before the first kept element
+			draft.values.splice(1, 2, 20); // gap between kept elements, with an insert
+			draft.values.splice(5, 1); // another gap
+			draft.values.pop(); // gap after the last kept element
+			draft.values.push(30);
+		});
+		expect(values.values).toEqual([1, 20, 4, 5, 6, 8, 30]);
+		const change = track({ values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] }).beginChange();
+		change.state.values.shift();
+		change.state.values.splice(1, 2, 20);
+		change.state.values.splice(5, 1);
+		change.state.values.pop();
+		change.state.values.push(30);
+		expect(change.prepare().ops).toEqual([
+			["p", ["values"], 9, 1, []],
+			["p", ["values"], 7, 1, []],
+			["p", ["values"], 2, 2, []],
+			["p", ["values"], 0, 1, []],
+			["p", ["values"], 1, 0, [20]],
+			["p", ["values"], 6, 0, [30]],
+		]);
+	});
+
+	it("emits a permutation when kept elements change order", () => {
+		for (const mutate of [
+			(values: number[]) => values.reverse(),
+			(values: number[]) => values.sort((left, right) => (left % 2) - (right % 2) || left - right),
+		]) {
+			const tracker = track({ values: [0, 1, 2, 3, 4] });
+			const expected = [0, 1, 2, 3, 4];
+			mutate(expected);
+			const change = tracker.beginChange();
+			mutate(change.state.values);
+			const prepared = change.prepare();
+			expect(prepared.ops.some((operation) => operation[0] === "m")).toBe(true);
+			expect(replay(tracker.value, prepared.ops)).toEqual({ values: expected });
+		}
+	});
+
 	it("keeps adoption independent from mutable detached permutation metadata", () => {
 		const tracker = track({ values: [3, 1, 2] });
 		const change = tracker.beginChange();

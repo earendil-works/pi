@@ -24,6 +24,9 @@ import type {
 } from "../src/types.ts";
 import { ROOT_CONVERSATION_ID } from "../src/types.ts";
 
+/** Storage-level commits here have no in-memory owner to adopt them. */
+const adopt = (): void => {};
+
 const context = BACKGROUND_CONTEXT;
 const openStorages = new Set<SqliteStorage>();
 const tempDirectories = new Set<string>();
@@ -56,10 +59,14 @@ class ReopeningStorage implements Storage {
 		this.options = options;
 	}
 
-	async commit(writes: readonly StorageWrite[], commitContext: Parameters<Storage["commit"]>[1]): Promise<Seq> {
-		if (this.closed) return this.current.commit(writes, commitContext);
+	async commit(
+		writes: readonly StorageWrite[],
+		adopt: Parameters<Storage["commit"]>[1],
+		commitContext: Parameters<Storage["commit"]>[2],
+	): Promise<Seq> {
+		if (this.closed) return this.current.commit(writes, adopt, commitContext);
 		try {
-			return await this.current.commit(writes, commitContext);
+			return await this.current.commit(writes, adopt, commitContext);
 		} finally {
 			await this.current.close(context);
 			this.current = await openNodeSqliteStorage(this.path, this.options);
@@ -133,7 +140,7 @@ function entry(id: EntryId, conversationId: ConversationId, data?: JsonValue): E
 }
 
 async function createRoot(storage: Storage): Promise<Seq> {
-	return storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
+	return storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], adopt, context);
 }
 
 function pendingTask(id: TaskId<JsonValue>): TaskRecord<JsonValue, JsonValue, JsonValue> {
@@ -144,7 +151,6 @@ function pendingTask(id: TaskId<JsonValue>): TaskRecord<JsonValue, JsonValue, Js
 		version: 1,
 		input: null,
 		state: { status: "pending", checkpoint: { phase: "ready" } },
-		after: [],
 		background: false,
 		abortRequested: false,
 	};
@@ -172,7 +178,9 @@ describe("Pico SqliteStorage", () => {
 		const { storage, path } = await createSqliteStorage();
 		expect(await createRoot(storage)).toBe(1);
 		const entryId = await storage.mintId<EntryId>();
-		expect(await storage.commit([{ type: "entry", value: entry(entryId, ROOT_CONVERSATION_ID) }], context)).toBe(2);
+		expect(
+			await storage.commit([{ type: "entry", value: entry(entryId, ROOT_CONVERSATION_ID) }], adopt, context),
+		).toBe(2);
 		await storage.close(context);
 		openStorages.delete(storage);
 
@@ -186,9 +194,50 @@ describe("Pico SqliteStorage", () => {
 		expect(
 			await reopened.commit(
 				[{ type: "task", value: pendingTask(await reopened.mintId<TaskId<JsonValue>>()) }],
+				adopt,
 				context,
 			),
 		).toBe(3);
+	});
+
+	it("namespaces tables and indexes with a prefix across reopen", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "pi-durable-sqlite-"));
+		tempDirectories.add(directory);
+		const path = join(directory, "storage.sqlite");
+		const host = new DatabaseSync(path);
+		try {
+			host.exec("CREATE TABLE tasks (text TEXT)");
+		} finally {
+			host.close();
+		}
+		const storage = await openNodeSqliteStorage(path, { prefix: "pi_" });
+		expect(await createRoot(storage)).toBe(1);
+		await storage.close(context);
+
+		const reopened = await openNodeSqliteStorage(path, { prefix: "pi_" });
+		openStorages.add(reopened);
+		expect(await reopened.conversation(ROOT_CONVERSATION_ID, context)).toEqual({ id: ROOT_CONVERSATION_ID });
+		const database = new DatabaseSync(path);
+		try {
+			const names = database
+				.prepare("SELECT name FROM sqlite_master WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%'")
+				.all()
+				.map((row) => String(row.name));
+			expect(names.filter((name) => !name.startsWith("pi_"))).toEqual(["tasks"]);
+			expect(names).toContain("pi_tasks");
+		} finally {
+			database.close();
+		}
+	});
+
+	it("rejects an invalid prefix before creating the database", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "pi-durable-sqlite-"));
+		tempDirectories.add(directory);
+		const databaseDirectory = join(directory, "nested");
+		await expect(
+			openNodeSqliteStorage(join(databaseDirectory, "storage.sqlite"), { prefix: "bad-prefix" }),
+		).rejects.toThrow("Invalid SQLite schema prefix");
+		await expect(stat(databaseDirectory)).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
 	it("rejects persisted metadata corruption on reopen", async () => {
@@ -216,6 +265,7 @@ describe("Pico SqliteStorage", () => {
 					content: { kind: "base", version: 1, value: { retained: true } },
 				},
 			],
+			adopt,
 			context,
 		);
 		const database = new DatabaseSync(path);
@@ -241,6 +291,7 @@ describe("Pico SqliteStorage", () => {
 					content: { kind: "base", version: 1, value: { nested: { value: 1 }, rows: [] } },
 				},
 			],
+			adopt,
 			context,
 		);
 		await storage.commit(
@@ -255,6 +306,7 @@ describe("Pico SqliteStorage", () => {
 					},
 				},
 			],
+			adopt,
 			context,
 		);
 		await storage.commit(
@@ -273,6 +325,7 @@ describe("Pico SqliteStorage", () => {
 					},
 				},
 			],
+			adopt,
 			context,
 		);
 		await storage.commit(
@@ -283,6 +336,7 @@ describe("Pico SqliteStorage", () => {
 					content: { kind: "delta", version: 1, ops: [["s", ["nested", "value"], 4]] },
 				},
 			],
+			adopt,
 			context,
 		);
 
@@ -321,15 +375,16 @@ describe("Pico SqliteStorage", () => {
 						value: { ...pendingTask(transientTaskId), input: circular as unknown as JsonValue },
 					},
 				],
+				adopt,
 				context,
 			),
 		).rejects.toThrow("circular structure");
 		expect(await storage.entry(transientId, context)).toBeUndefined();
 		expect(await storage.task(transientTaskId, context)).toBeUndefined();
 		const committedId = await storage.mintId<EntryId>();
-		expect(await storage.commit([{ type: "entry", value: entry(committedId, ROOT_CONVERSATION_ID) }], context)).toBe(
-			2,
-		);
+		expect(
+			await storage.commit([{ type: "entry", value: entry(committedId, ROOT_CONVERSATION_ID) }], adopt, context),
+		).toBe(2);
 
 		const db = new DatabaseSync(path, { readOnly: true });
 		try {
@@ -353,6 +408,7 @@ describe("Pico SqliteStorage", () => {
 		} satisfies DocumentCreate;
 		const createdAt = await storage.commit(
 			[{ type: "document.create", record, content: { kind: "base", version: 1, value: { count: 0 } } }],
+			adopt,
 			context,
 		);
 		let ancientAt = createdAt;
@@ -369,6 +425,7 @@ describe("Pico SqliteStorage", () => {
 								: { kind: "delta", version: 1, ops: [["s", ["count"], count]] },
 					},
 				],
+				adopt,
 				context,
 			);
 			if (count === 5) ancientAt = recentAt;
@@ -451,11 +508,13 @@ describe("Pico SqliteStorage", () => {
 					content: { kind: "base", version: 1, value: { count: 0 } },
 				},
 			],
+			adopt,
 			context,
 		);
 		for (let count = 1; count <= 10; count++) {
 			await storage.commit(
 				[{ type: "document.change", id, content: { kind: "delta", version: 1, ops: [["s", ["count"], count]] } }],
+				adopt,
 				context,
 			);
 		}
@@ -473,6 +532,7 @@ describe("Pico SqliteStorage", () => {
 		}
 		await storage.commit(
 			[{ type: "document.change", id, content: { kind: "base", version: 1, value: { count: 11 } } }],
+			adopt,
 			context,
 		);
 		expect(revisionCount(path, id)).toBe(1);
@@ -484,10 +544,11 @@ describe("Pico SqliteStorage", () => {
 					content: { kind: "delta", version: 1, ops: [["r", { count: 12 }]] },
 				},
 			],
+			adopt,
 			context,
 		);
 		expect(revisionCount(path, id)).toBe(2);
-		await storage.commit([{ type: "document.retire", id }], context);
+		await storage.commit([{ type: "document.retire", id }], adopt, context);
 		expect(revisionCount(path, id)).toBe(0);
 	});
 
@@ -505,6 +566,7 @@ describe("Pico SqliteStorage", () => {
 						}),
 					},
 				],
+				adopt,
 				context,
 			);
 		}
@@ -534,10 +596,12 @@ describe("Pico SqliteStorage", () => {
 					content: { kind: "base", version: 1, value: { text: large } },
 				},
 			],
+			adopt,
 			context,
 		);
 		await storage.commit(
 			[{ type: "document.change", id, content: { kind: "base", version: 1, value: { text: "small" } } }],
+			adopt,
 			context,
 		);
 		const before = new DatabaseSync(path, { readOnly: true });
@@ -552,6 +616,7 @@ describe("Pico SqliteStorage", () => {
 		expect(freeAfterDelete).toBeGreaterThan(0);
 		await storage.commit(
 			[{ type: "document.change", id, content: { kind: "base", version: 1, value: { text: large } } }],
+			adopt,
 			context,
 		);
 		const after = new DatabaseSync(path, { readOnly: true });
@@ -579,6 +644,7 @@ describe("Pico SqliteStorage", () => {
 						}),
 					},
 				],
+				adopt,
 				context,
 			);
 		}
@@ -597,6 +663,7 @@ describe("Pico SqliteStorage", () => {
 					content: { kind: "base", version: 1, value: { count: 0 } },
 				},
 			],
+			adopt,
 			context,
 		);
 		for (let count = 1; count <= 100; count++) {
@@ -608,6 +675,7 @@ describe("Pico SqliteStorage", () => {
 						content: { kind: "delta", version: 1, ops: [["s", ["count"], count]] },
 					},
 				],
+				adopt,
 				context,
 			);
 		}

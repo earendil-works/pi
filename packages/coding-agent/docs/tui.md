@@ -45,7 +45,7 @@ Prefer these components over rebuilding selection, scrolling, text editing, or w
 
 Use `matchesKey()` and `Key` for terminal keyboard input. The parser accounts for supported terminal protocols and key modifiers. Extension components should use the injected `KeybindingsManager` for configurable application actions.
 
-A component that displays a text cursor should implement `Focusable` and place `CURSOR_MARKER` immediately before its visual cursor. The TUI uses that marker to position the hardware cursor for input method editors.
+A component that displays a text cursor should implement `Focusable` and place `CURSOR_MARKER` immediately before its visual cursor. Wrap the cursor cell in `renderFakeCursor()` so the TUI draws it in reverse video, or hides it after `CURSOR_MARKER` when the hardware cursor is shown. The TUI uses the marker to position the hardware cursor for input method editors.
 
 Containers that wrap an `Input` or `Editor` must propagate their `focused` state to that child. Without propagation, Chinese, Japanese, Korean, and other IME candidate windows can appear at the wrong screen position.
 
@@ -64,6 +64,78 @@ Regular mode leaves mouse input to the terminal because the terminal owns scroll
 ## Use custom screens and overlays
 
 `ctx.ui.custom()` temporarily gives one component control of the interactive area and resolves when that component calls the supplied completion callback.
+
+### Build a minimal custom screen
+
+This complete extension shows the custom-component lifecycle: render within the supplied width, use injected keybindings, invalidate cached output after state changes, request a render, and finish through `done()`.
+
+```typescript
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
+
+export default function (pi: ExtensionAPI) {
+  pi.registerCommand("pick-target", {
+    description: "Pick a deployment target",
+    handler: async (_args, ctx) => {
+      if (ctx.mode !== "tui") {
+        ctx.ui.notify("pick-target requires interactive mode", "error");
+        return;
+      }
+
+      const choices = ["development", "staging", "production"];
+      const selected = await ctx.ui.custom<string | undefined>((tui, theme, keybindings, done) => {
+        let selectedIndex = 0;
+        let cachedWidth: number | undefined;
+        let cachedLines: string[] | undefined;
+
+        const invalidate = () => {
+          cachedWidth = undefined;
+          cachedLines = undefined;
+        };
+
+        return {
+          render(width: number): string[] {
+            if (cachedLines && cachedWidth === width) return cachedLines;
+
+            cachedWidth = width;
+            cachedLines = [
+              theme.fg("accent", "Choose a deployment target"),
+              ...choices.map((choice, index) => `${index === selectedIndex ? "> " : "  "}${choice}`),
+              theme.fg("dim", "up/down move, enter selects, escape cancels"),
+            ].map((line) => truncateToWidth(line, width));
+            return cachedLines;
+          },
+          handleInput(data: string): void {
+            if (keybindings.matches(data, "tui.select.up")) {
+              selectedIndex = (selectedIndex - 1 + choices.length) % choices.length;
+            } else if (keybindings.matches(data, "tui.select.down")) {
+              selectedIndex = (selectedIndex + 1) % choices.length;
+            } else if (keybindings.matches(data, "tui.select.confirm")) {
+              done(choices[selectedIndex]);
+              return;
+            } else if (keybindings.matches(data, "tui.select.cancel")) {
+              done(undefined);
+              return;
+            } else {
+              return;
+            }
+
+            invalidate();
+            tui.requestRender();
+          },
+          invalidate,
+        };
+      });
+
+      if (selected) ctx.ui.notify(`Selected ${selected}`, "info");
+    },
+  });
+}
+```
+
+This component does not display a text cursor, so it does not need `Focusable`. A component containing `Input` or `Editor` must implement `Focusable` and propagate its `focused` value to that child.
+
+Custom components do not report pi as waiting for the user, because `ctx.ui.custom()` also hosts loaders and other non-blocking UI. When an inline component waits for an answer, pass `blocked: { kind: "question", message: "Pick a color" }` so terminals that support [program status](terminal-setup.md#program-status) show pi as blocked while the component is visible. `kind` is `"question"`, `"permission"`, or `"auth"`. Overlays ignore this option.
 
 Pass `overlay: true` to draw above existing content. Overlay options control size, anchors, offsets, margins, and responsive visibility. An overlay handle can change focus or temporarily hide and show the overlay with `setHidden()` while the interaction remains active.
 

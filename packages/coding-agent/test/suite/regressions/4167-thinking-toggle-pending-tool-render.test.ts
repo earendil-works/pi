@@ -37,6 +37,7 @@ type RenderSessionContextThis = {
 	pendingTools: Map<string, ToolExecutionComponent>;
 	chatContainer: Container;
 	footer: { invalidate(): void };
+	programStatus: { handleEvent(): void };
 	ui: TUI;
 	settingsManager: {
 		getShowImages(): boolean;
@@ -68,6 +69,7 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		pendingTools: new Map<string, ToolExecutionComponent>(),
 		chatContainer,
 		footer: { invalidate: vi.fn() },
+		programStatus: { handleEvent: vi.fn() },
 		ui: { requestRender: vi.fn() } as unknown as TUI,
 		settingsManager: {
 			getShowImages: () => false,

@@ -1,22 +1,11 @@
-import type { ClassifierModel, ImageModel, Model, ModelCost } from "../src/types.ts";
+import { type OpenRouterModel, openRouterCost } from "../src/providers/openrouter-api.ts";
+import type { ClassifierModel, ImageModel, Model } from "../src/types.ts";
 import { getOpenRouterThinkingLevelMap, type OpenRouterReasoningMetadata } from "./openrouter-reasoning-options.ts";
 
-export interface OpenRouterModelListItem {
-	id: string;
+export interface OpenRouterModelListItem extends OpenRouterModel {
 	name: string;
 	supported_parameters?: string[];
 	architecture?: { modality?: string; input_modalities?: string[]; output_modalities?: string[] };
-	pricing?: {
-		prompt?: string;
-		completion?: string;
-		input_cache_read?: string;
-		input_cache_write?: string;
-	};
-	top_provider?: {
-		context_length?: number;
-		max_completion_tokens?: number;
-	};
-	context_length?: number;
 	reasoning?: OpenRouterReasoningMetadata;
 }
 
@@ -26,24 +15,10 @@ export interface OpenRouterCatalog {
 	classifiers: ClassifierModel<"typesafe-system-one">[];
 }
 
-function roundCost(value: number): number {
-	return Number(value.toFixed(6));
-}
-
 function modalities(values: string[] | undefined): ("text" | "image")[] {
 	return Array.from(
 		new Set((values ?? []).filter((value): value is "text" | "image" => value === "text" || value === "image")),
 	);
-}
-
-function cost(model: OpenRouterModelListItem): ModelCost {
-	// Convert pricing from $/token to $/million tokens
-	return {
-		input: roundCost(parseFloat(model.pricing?.prompt || "0") * 1_000_000),
-		output: roundCost(parseFloat(model.pricing?.completion || "0") * 1_000_000),
-		cacheRead: roundCost(parseFloat(model.pricing?.input_cache_read || "0") * 1_000_000),
-		cacheWrite: roundCost(parseFloat(model.pricing?.input_cache_write || "0") * 1_000_000),
-	};
 }
 
 /**
@@ -81,7 +56,7 @@ export function buildOpenRouterCatalog(
 			reasoning: model.supported_parameters?.includes("reasoning") || false,
 			...(thinkingLevelMap && { thinkingLevelMap }),
 			input,
-			cost: cost(model),
+			cost: openRouterCost(model.pricing),
 			contextWindow: model.top_provider?.context_length || model.context_length || 4096,
 			maxTokens: model.top_provider?.max_completion_tokens || 4096,
 		});
@@ -102,7 +77,7 @@ export function buildOpenRouterCatalog(
 			baseUrl: "https://openrouter.ai/api/v1",
 			input: input.length > 0 ? input : ["text"],
 			output,
-			cost: cost(model),
+			cost: openRouterCost(model.pricing),
 		});
 	}
 
@@ -121,8 +96,10 @@ export function buildOpenRouterCatalog(
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
 			input: input.length > 0 ? input : ["text"],
-			cost: cost(model),
+			cost: openRouterCost(model.pricing),
 			contextWindow: model.top_provider?.context_length || model.context_length || 4096,
+			// OpenRouter answers TypeSafe `assets` with 200 but drops the images.
+			compat: { imageInput: "state-image-urls", sendImageOptInHeader: false },
 		});
 	}
 

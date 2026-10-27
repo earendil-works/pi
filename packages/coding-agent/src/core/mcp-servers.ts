@@ -6,28 +6,64 @@
  */
 
 /**
- * - `codemode`: tools are callable from codemode scripts and listed in its description, but not
- *   declared to the model.
- * - `codemode-deferred`: like `codemode`, but not listed in the codemode description. Scripts find
- *   them with `searchTools()`.
+ * Regular expression for a tool name pattern where `*` matches any characters, as `toolExposure`,
+ * `--tools`, and `--exclude-tools` accept them.
+ */
+function toolPatternRegExp(pattern: string): RegExp {
+	const source = pattern
+		.split("*")
+		.map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+		.join(".*");
+	return new RegExp(`^${source}$`);
+}
+
+/** Whether a tool name matches any of the entries, each an exact name or a pattern. */
+export function createToolNameMatcher(entries: readonly string[]): (name: string) => boolean {
+	const names = new Set(entries.filter((entry) => !entry.includes("*")));
+	const patterns = entries.filter((entry) => entry.includes("*")).map(toolPatternRegExp);
+	return (name) => names.has(name) || patterns.some((pattern) => pattern.test(name));
+}
+
+/** MCP resource tools, which reach every server with resources. */
+export const LIST_MCP_RESOURCES_TOOL = "list_mcp_resources";
+export const LIST_MCP_RESOURCE_TEMPLATES_TOOL = "list_mcp_resource_templates";
+export const READ_MCP_RESOURCE_TOOL = "read_mcp_resource";
+
+const MCP_RESOURCE_TOOLS: ReadonlySet<string> = new Set([
+	LIST_MCP_RESOURCES_TOOL,
+	LIST_MCP_RESOURCE_TEMPLATES_TOOL,
+	READ_MCP_RESOURCE_TOOL,
+]);
+
+/** Whether a tool comes from MCP: a server tool (`mcp__<server>__<tool>`) or a resource tool. */
+export function isMcpToolName(name: string): boolean {
+	return name.startsWith("mcp__") || MCP_RESOURCE_TOOLS.has(name);
+}
+
+/**
+ * - `codemode`: tools are callable from codemode scripts but neither declared to the model nor
+ *   listed in the codemode description, which lists only the server's namespace. Scripts find them
+ *   with `searchTools()`. `codemode-deferred` is accepted as an alias.
  * - `deferred`: not declared to the model until the `tool_search` tool loads them; the model then
  *   calls them directly. Does not need codemode.
  * - `direct`: tools are declared to the model like any other tool (and callable from codemode).
  * - `hidden`: tools are registered but unreachable.
  */
-export type McpExposure = "codemode" | "codemode-deferred" | "deferred" | "direct" | "hidden";
+export type McpExposure = "codemode" | "deferred" | "direct" | "hidden";
 
-const MCP_EXPOSURES: readonly string[] = [
-	"codemode",
-	"codemode-deferred",
-	"deferred",
-	"direct",
-	"hidden",
-] satisfies McpExposure[];
+const MCP_EXPOSURES: readonly string[] = ["codemode", "deferred", "direct", "hidden"] satisfies McpExposure[];
+
+/** Older exposure names, accepted in configs and replaced by their current name when validated. */
+const MCP_EXPOSURE_ALIASES: Readonly<Record<string, McpExposure>> = { "codemode-deferred": "codemode" };
 
 interface McpServerConfigBase {
 	/** Default: `codemode`. */
 	exposure?: McpExposure;
+	/**
+	 * What the server offers, in a sentence. The `mcp_servers` system prompt section lists the server
+	 * with it, tool search ranks the server's tools by it, and codemode's `describeNamespace()` returns it.
+	 */
+	description?: string;
 	/**
 	 * Exposure of single tools, overriding `exposure`. Keys are tool names as the server offers them,
 	 * or patterns where `*` matches any characters. An exact name wins over patterns; among patterns
@@ -70,6 +106,23 @@ export interface McpOAuthConfig {
 	callbackUrl?: string;
 	/** Scopes to request, separated by spaces. Default: the scopes the server advertises. */
 	scope?: string;
+	/**
+	 * `client_name` sent with dynamic client registration, for servers that only accept known clients.
+	 * Default: `pi`.
+	 */
+	clientName?: string;
+	/**
+	 * How pi identifies itself without `clientId`. `dcr` (default): dynamic client registration. `cimd`:
+	 * pi's Client ID Metadata Document on pi.dev, for authorization servers that allow pi by that URL. The
+	 * server must support it for public clients, and the callback must use the default path `/callback`.
+	 */
+	clientRegistration?: "dcr" | "cimd";
+	/**
+	 * Authorization server metadata document (RFC 8414 or OpenID Connect discovery) to use instead of
+	 * discovery through the server, for servers that advertise a wrong authorization server or none.
+	 * The document is trusted as configured. Must use https, except on loopback hosts.
+	 */
+	authServerMetadataUrl?: string;
 }
 
 const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
@@ -87,11 +140,21 @@ export interface McpHttpServerConfig extends McpServerConfigBase {
 	/** Values may reference environment variables (`${NAME}`) or commands (`!cmd`). */
 	headers?: Record<string, string>;
 	oauth?: McpOAuthConfig;
+	/**
+	 * Send the token of a pi provider (`/login <provider>`) instead of using OAuth. Not allowed in project
+	 * `mcp.json` files, and requires https except on loopback hosts, since it sends the credential to `url`.
+	 */
+	auth?: { provider: string };
 }
 
 export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
 
 const SERVER_NAME = /^[A-Za-z0-9_-]+$/;
+
+/** Namespace of a server's tools: `mcp__<server>` with `-` replaced by `_`, like the tool names. */
+export function mcpNamespace(server: string): string {
+	return `mcp__${server.replace(/-/g, "_")}`;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -122,6 +185,26 @@ function validateOAuth(value: unknown): string | undefined {
 		}
 	}
 	if (value.scope !== undefined && typeof value.scope !== "string") return "oauth.scope must be a string";
+	if (value.clientName !== undefined && (typeof value.clientName !== "string" || !value.clientName.trim())) {
+		return "oauth.clientName must be a non-empty string";
+	}
+	if (value.clientRegistration !== undefined && value.clientRegistration !== "dcr") {
+		if (value.clientRegistration !== "cimd") return 'oauth.clientRegistration must be "dcr" or "cimd"';
+		if (value.clientId !== undefined || value.clientName !== undefined) {
+			return 'oauth.clientRegistration "cimd" cannot be combined with oauth.clientId or oauth.clientName';
+		}
+		const callback = typeof value.callbackUrl === "string" ? new URL(value.callbackUrl) : undefined;
+		if (callback && (callback.hostname === "[::1]" || callback.pathname !== "/callback")) {
+			return 'oauth.clientRegistration "cimd" requires oauth.callbackUrl on localhost or 127.0.0.1 with path /callback';
+		}
+	}
+	const metadataUrl = value.authServerMetadataUrl;
+	if (metadataUrl !== undefined) {
+		const url = typeof metadataUrl === "string" && URL.canParse(metadataUrl) ? new URL(metadataUrl) : undefined;
+		if (!url || !(url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK_HOSTS.includes(url.hostname)))) {
+			return "oauth.authServerMetadataUrl must be an https URL, or http on localhost, 127.0.0.1, or [::1]";
+		}
+	}
 	return undefined;
 }
 
@@ -129,12 +212,22 @@ function isExposure(value: unknown): value is McpExposure {
 	return typeof value === "string" && MCP_EXPOSURES.includes(value);
 }
 
-function toolPatternRegExp(pattern: string): RegExp {
-	const source = pattern
-		.split("*")
-		.map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-		.join(".*");
-	return new RegExp(`^${source}$`);
+/** The exposure an alias stands for; other values are returned unchanged. */
+function resolveExposureAlias(value: unknown): unknown {
+	return typeof value === "string" ? (MCP_EXPOSURE_ALIASES[value] ?? value) : value;
+}
+
+/** A copy of the server entry with exposure aliases replaced by their current names. */
+function resolveExposureAliases(value: Record<string, unknown>): Record<string, unknown> {
+	const { exposure, toolExposure } = value;
+	const resolved: Record<string, unknown> = { ...value };
+	if (exposure !== undefined) resolved.exposure = resolveExposureAlias(exposure);
+	if (isRecord(toolExposure)) {
+		resolved.toolExposure = Object.fromEntries(
+			Object.entries(toolExposure).map(([tool, entry]) => [tool, resolveExposureAlias(entry)]),
+		);
+	}
+	return resolved;
 }
 
 /** Exposure of one tool of a server: its `toolExposure` entry, else the server's `exposure`. */
@@ -148,11 +241,15 @@ export function getMcpToolExposure(config: McpServerConfig, toolName: string): M
 	return config.exposure ?? "codemode";
 }
 
-/** Validate one server entry of the `mcpServers` shape. Returns the config or an error message. */
-export function validateMcpServerConfig(name: string, value: unknown): McpServerConfig | string {
+/**
+ * Validate one server entry of the `mcpServers` shape. Returns a copy of the config with exposure
+ * aliases resolved, or an error message.
+ */
+export function validateMcpServerConfig(name: string, raw: unknown): McpServerConfig | string {
 	if (!SERVER_NAME.test(name)) return `invalid server name "${name}" (use letters, digits, "_" and "-")`;
-	if (!isRecord(value)) return `server "${name}" must be an object`;
-	const { type, exposure, enabled, timeout, toolExposure } = value;
+	if (!isRecord(raw)) return `server "${name}" must be an object`;
+	const value = resolveExposureAliases(raw);
+	const { type, exposure, enabled, timeout, toolExposure, description } = value;
 	const exposures = MCP_EXPOSURES.map((value) => `"${value}"`).join(", ");
 	if (exposure !== undefined && !isExposure(exposure)) {
 		return `server "${name}": exposure must be one of ${exposures}`;
@@ -164,6 +261,9 @@ export function validateMcpServerConfig(name: string, value: unknown): McpServer
 		}
 	}
 	if (enabled !== undefined && typeof enabled !== "boolean") return `server "${name}": enabled must be a boolean`;
+	if (description !== undefined && typeof description !== "string") {
+		return `server "${name}": description must be a string`;
+	}
 	if (timeout !== undefined && (typeof timeout !== "number" || !(timeout > 0))) {
 		return `server "${name}": timeout must be a positive number of seconds`;
 	}
@@ -178,6 +278,15 @@ export function validateMcpServerConfig(name: string, value: unknown): McpServer
 		}
 		const oauthError = validateOAuth(value.oauth);
 		if (oauthError) return `server "${name}": ${oauthError}`;
+		if (value.auth !== undefined) {
+			if (!isRecord(value.auth) || typeof value.auth.provider !== "string" || !value.auth.provider) {
+				return `server "${name}": auth.provider must be a provider name`;
+			}
+			const url = new URL(value.url);
+			if (url.protocol !== "https:" && !LOOPBACK_HOSTS.includes(url.hostname)) {
+				return `server "${name}": auth requires an https URL, or http on localhost, 127.0.0.1, or [::1]`;
+			}
+		}
 		return value as unknown as McpHttpServerConfig;
 	}
 	if (typeof value.command === "string" && (type === undefined || type === "stdio")) {

@@ -260,6 +260,35 @@ if (scenario === "settled-lifecycle") {
 	const retainedMiB = (process.memoryUsage().heapUsed - readyHeap) / (1024 * 1024);
 	assert.ok(retainedMiB < 8, `same-job folded operations retained ${retainedMiB.toFixed(2)} MiB`);
 	assert.equal(tracker.value.field0, 100);
+} else if (scenario === "adopted-changes-flat") {
+	// Each change registers its context with the tracker through a WeakRef; adoption must drop every registration, so
+	// a long run of small changes keeps only the document, not a record per change.
+	const gc = global.gc;
+	assert.ok(gc, "worker requires --expose-gc");
+	const tracker = track({ entries: [{ id: 0, text: "" }] });
+	const commit = (): void => {
+		const change = tracker.beginChange();
+		change.state.entries[0]!.text += " tok";
+		tracker.adopt(change.prepare());
+	};
+	const settledHeap = async (): Promise<number> => {
+		for (let round = 0; round < 5; round++) {
+			await setImmediate();
+			gc();
+		}
+		return process.memoryUsage().heapUsed;
+	};
+	for (let index = 0; index < 1_000; index++) commit();
+	const readyHeap = await settledHeap();
+	for (let index = 0; index < 10_000; index++) {
+		commit();
+		// Let WeakRef targets go, as between the jobs of real commits.
+		if (index % 100 === 0) await setImmediate();
+	}
+	// The text itself grows 4 bytes per change.
+	const perChange = ((await settledHeap()) - readyHeap) / 10_000 - 4;
+	assert.ok(perChange < 48, `each adopted change retained ${perChange.toFixed(1)} bytes`);
+	assert.equal(tracker.value.entries[0]!.text.length, 4 * 11_000);
 } else if (scenario === "lifecycle-churn") {
 	const tracker = track({ value: 0 });
 	for (let index = 0; index < 100_000; index++) {

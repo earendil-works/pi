@@ -42,6 +42,7 @@ beforeEach(() => {
 		"WT_SESSION",
 		"WSL_DISTRO_NAME",
 		"WSLENV",
+		"PI_CLIPBOARD_OSC52",
 	])
 		vi.stubEnv(name, "");
 	mocks.platform.mockReturnValue("darwin");
@@ -76,7 +77,6 @@ describe("readClipboardText", () => {
 		["WAYLAND_DISPLAY", "wl-paste", ["--no-newline", "--type", "text"], ["wl-paste"]],
 		["DISPLAY", "xclip", ["-selection", "clipboard", "-out"], ["xclip"]],
 		["DISPLAY", "xsel", ["--clipboard", "--output"], ["xclip", "xsel"]],
-		["TERMUX_VERSION", "termux-clipboard-get", [], ["termux-clipboard-get"]],
 	] as const) {
 		test.each(["clipboard text", ""])(`${command} result %j stops fallback`, async (text) => {
 			// Regression test for #7248: empty Wayland content must not fall through to stale X11.
@@ -99,6 +99,15 @@ describe("readClipboardText", () => {
 		await expect(readClipboardText()).resolves.toBe(text || null);
 		expect(mocks.getNativeClipboard).toHaveBeenCalledExactlyOnceWith();
 		expect(mocks.command.mock.calls.map(([name]) => name)).toEqual(["wl-paste", "xclip", "xsel"]);
+	});
+	test.each(["clipboard text", ""])("Termux reads termux-clipboard-get result %j on Android", async (text) => {
+		// Regression test for #10391: Termux reports platform "android".
+		mocks.platform.mockReturnValue("android");
+		vi.stubEnv("TERMUX_VERSION", "0.119");
+		mocks.command.mockResolvedValue(Buffer.from(text));
+		await expect(readClipboardText()).resolves.toBe(text || null);
+		expect(mocks.command).toHaveBeenCalledExactlyOnceWith("termux-clipboard-get", [], { timeoutMs: 5000 });
+		expect(mocks.getNativeClipboard).not.toHaveBeenCalled();
 	});
 	test("falls back to X11 tools when wl-paste is unavailable", async () => {
 		mocks.platform.mockReturnValue("linux");
@@ -141,6 +150,26 @@ describe("copyToClipboard", () => {
 		await copy;
 		expect(osc52Writes).toHaveLength(1);
 		expect(mocks.command).not.toHaveBeenCalled();
+	});
+	test.each([
+		["darwin", undefined],
+		["win32", undefined],
+		["linux", ":99"],
+	] as const)("PI_CLIPBOARD_OSC52=1 emits OSC 52 after a successful %s copy", async (platform, display) => {
+		// Regression test for #10826, #10835, #10114: remote clients without SSH markers.
+		mocks.platform.mockReturnValue(platform);
+		if (display) vi.stubEnv("DISPLAY", display);
+		vi.stubEnv("PI_CLIPBOARD_OSC52", "1");
+		await copyToClipboard("hello");
+		if (platform === "linux") {
+			expect(mocks.command).toHaveBeenCalledWith("xclip", ["-selection", "clipboard"], {
+				input: "hello",
+				timeoutMs: 5000,
+			});
+		} else {
+			expect(mocks.clipboard.setText).toHaveBeenCalledWith("hello");
+		}
+		expect(osc52Writes).toEqual([`\x1b]52;c;${Buffer.from("hello").toString("base64")}\x07`]);
 	});
 	test("a rejected native write falls back to pbcopy", async () => {
 		mocks.clipboard.setText.mockRejectedValue(new Error("native failed"));
@@ -256,6 +285,27 @@ describe("copyToClipboard", () => {
 			"Clipboard unavailable: install `wl-clipboard` (`wl-copy`) or check Wayland access",
 		);
 		expect(mocks.command.mock.calls.map(([name]) => name)).toEqual(["wl-copy", "xclip", "xsel"]);
+	});
+	test("Termux on Android writes through termux-clipboard-set", async () => {
+		mocks.platform.mockReturnValue("android");
+		vi.stubEnv("TERMUX_VERSION", "0.119");
+		mocks.getNativeClipboard.mockReturnValue(undefined);
+		await copyToClipboard("hello");
+		expect(mocks.command).toHaveBeenCalledExactlyOnceWith("termux-clipboard-set", [], {
+			input: "hello",
+			timeoutMs: 5000,
+		});
+		expect(osc52Writes).toHaveLength(0);
+	});
+	test("reports the Termux:API requirement on Android", async () => {
+		// Regression test for #10391: Termux reports platform "android".
+		mocks.platform.mockReturnValue("android");
+		vi.stubEnv("TERMUX_VERSION", "0.119");
+		mocks.getNativeClipboard.mockReturnValue(undefined);
+		mocks.command.mockResolvedValue(undefined);
+		await expect(copyToClipboard("hello")).rejects.toThrow(
+			"Clipboard unavailable: install the Termux:API app and `termux-api` package",
+		);
 	});
 	test("uses OSC 52 when native and command writes fail in a remote session", async () => {
 		vi.stubEnv("SSH_CONNECTION", "client server");

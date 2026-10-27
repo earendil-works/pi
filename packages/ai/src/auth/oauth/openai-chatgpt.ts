@@ -238,20 +238,19 @@ async function loginOpenAIChatGPT(
 	const { verifier, challenge } = await generatePKCE();
 	const state = randomValue();
 	const nonce = randomValue();
-	let callback: CallbackServer | undefined;
-	try {
-		callback = await startCallbackServer(state);
-	} catch (error) {
-		interaction.notify({
-			type: "info",
-			message: `Could not listen on ${REDIRECT_URI}; paste the final redirect URL to continue. ${error instanceof Error ? error.message : String(error)}`,
-		});
-	}
+	// Without this server, the browser's callback would reach whatever else holds the port (another
+	// pending login or the Codex CLI), which rejects it as a state mismatch. Fail with a clear error instead.
+	const callback = await startCallbackServer(state).catch((error: unknown) => {
+		if (!(error instanceof Error && "code" in error && error.code === "EADDRINUSE")) throw error;
+		throw new Error(
+			`Port ${CALLBACK_PORT} is in use, probably by an unfinished login in another pi session or by the Codex CLI. Cancel that login and try again.`,
+		);
+	});
 
 	const authorizationUrl = new URL(AUTHORIZE_URL);
 	authorizationUrl.search = new URLSearchParams({
 		client_id: DYNAMIC_CLIENT_ID,
-		agent_name_hint: AGENT_NAME_HINT,
+		agent_name_hint: options?.agentName ?? AGENT_NAME_HINT,
 		ext_agent_host_id: hostId,
 		response_type: "code",
 		redirect_uri: REDIRECT_URI,
@@ -280,7 +279,7 @@ async function loginOpenAIChatGPT(
 		.then((input) => authorizationResultFromManualInput(input, state));
 
 	try {
-		const result = await (callback ? Promise.race([callback.result, manualCode]) : manualCode);
+		const result = await Promise.race([callback.result, manualCode]);
 		interaction.notify({ type: "progress", message: "Exchanging authorization code for tokens..." });
 		return await exchangeAuthorizationCode(result.code, verifier, result.clientId, interaction.signal);
 	} catch (error) {
@@ -288,13 +287,13 @@ async function loginOpenAIChatGPT(
 		throw error;
 	} finally {
 		manualAbort.abort();
-		callback?.server.close();
+		callback.server.close();
 		// close() only stops accepting new connections. Browsers open spare connections ahead of
 		// time, and one that has not sent a request yet stays open and attached to this server.
 		// A later login in the same process starts a new server with a new state, but the browser
 		// may send that login's callback over the spare connection. This server would then handle
 		// it and reject it with "OAuth state mismatch", and the new login would never see it.
-		callback?.server.closeAllConnections();
+		callback.server.closeAllConnections();
 	}
 }
 

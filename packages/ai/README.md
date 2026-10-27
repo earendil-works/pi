@@ -18,6 +18,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - [Auth](#auth)
   - [How Auth Resolves](#how-auth-resolves)
   - [Transforming Request Headers](#transforming-request-headers)
+  - [Client Identity](#client-identity)
   - [Credential Store](#credential-store)
   - [Environment Variables](#environment-variables)
 - [Tools](#tools)
@@ -26,7 +27,6 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
   - [Streaming Tool Calls with Partial JSON](#streaming-tool-calls-with-partial-json)
   - [Validating Tool Arguments](#validating-tool-arguments)
   - [Complete Event Reference](#complete-event-reference)
-  - [Compact Assistant Message Frames](#compact-assistant-message-frames)
 - [Image Input](#image-input)
 - [Image Generation](#image-generation)
 - [Classification](#classification)
@@ -35,6 +35,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
   - [Provider-Specific Options](#provider-specific-options-streamcomplete)
   - [Streaming Thinking Content](#streaming-thinking-content)
 - [Stop Reasons](#stop-reasons)
+- [Telemetry](#telemetry)
 - [Error Handling](#error-handling)
   - [Aborting Requests](#aborting-requests)
   - [Continuing After Abort](#continuing-after-abort)
@@ -60,7 +61,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 
 ## Supported Providers
 
-- **OpenAI**
+- **OpenAI** (including the Decisions classifier API)
 - **Ant Ling**
 - **Azure OpenAI (Responses)**
 - **OpenAI Codex (legacy)** (ChatGPT Plus/Pro subscription, requires OAuth, see below)
@@ -232,7 +233,11 @@ for (const block of response.content) {
 }
 ```
 
+`usage.cost.totalFromProvider` is `true` when `usage.cost.total` is the billed cost reported by the provider and `false` when it is estimated from the model's catalog rates. A missing value, as in sessions recorded before this field existed, also means `false`.
+
 Snippets in the rest of this README assume a `models` collection set up like this (with the relevant providers registered).
+
+`usage.cost.total` is the best available total cost. For OpenRouter chat responses, it uses the cost reported by OpenRouter, including both the OpenRouter charge and upstream inference cost for BYOK requests. When provider accounting is unavailable or invalid, it falls back to the model's catalog rates. The `input`, `output`, `cacheRead`, and `cacheWrite` cost components remain catalog estimates and may not sum to a provider-reported total.
 
 ## Providers and Models
 
@@ -424,6 +429,33 @@ provider auth headers -> model.headers -> explicit options.headers -> transformH
 Header names are merged case-insensitively. Explicit headers override auth/model headers, and the transform has final control; returning `null` for a header suppresses lower-level defaults that support deletion.
 
 `transformHeaders` belongs to `Models`, not `Provider`. A `Models` implementation must consume it and remove it before calling `Provider.stream*()`. Provider implementations continue receiving ordinary `ApiStreamOptions` or `SimpleStreamOptions` and never handle the transform themselves. Use this option instead of calling `getAuth(model)` before `stream*()`, which would resolve request auth twice.
+
+### Client Identity
+
+`identity` controls how requests identify the calling app to providers. Set it on `createModels()` as a default, or per request; a request's fields override the `Models` default field by field:
+
+```typescript
+const models = createModels({
+  identity: {
+    userAgent: 'detailed',
+    version: '2.1.0',
+    attribution: { name: 'my-app', url: 'https://my-app.example', categories: ['cloud-agent'] },
+  },
+});
+
+await models.completeSimple(model, context, { identity: { attribution: null } });
+```
+
+- `userAgent`: `"detailed"` (default) sends `pi/<version> (<platform>; <runtime>; <arch>)`, `"short"` sends `pi`, and `{ custom: "..." }` sends the given value. On Bedrock the value is appended to the AWS SDK user agent.
+- `version`: the version in the detailed `User-Agent`. Default: the pi-ai version.
+- `attribution`: provider attribution headers. Absent (default) or `null` sends none; `null` also turns off attribution from a merged identity. `{ name, url, categories? }` maps to each provider's headers:
+  - OpenRouter: `HTTP-Referer: <url>` (the app's identity in OpenRouter's rankings, grouped by origin), `X-OpenRouter-Title: <name>`, and `X-OpenRouter-Categories` (comma-separated).
+  - NVIDIA NIM: `X-BILLING-INVOKE-ORIGIN: <name>` with its first letter upper-cased.
+  - OpenCode: `x-opencode-client: <name>`.
+
+  `PI_ATTRIBUTION` is pi's: `{ name: "pi", url: "https://pi.dev", categories: ["cli-agent"] }`.
+
+Identity headers are defaults below provider, model, and request headers, so configured headers win and a `null` request header removes one. Providers that send a fixed client identity, such as GitHub Copilot and Anthropic OAuth, keep it. `withClientIdentity(models, identity)` returns a wrapper of a `Models` (or `MutableModels`) whose requests use `identity` over the one the `Models` was created with, for libraries that receive a `Models` from their host. `identity` is plain JSON, so it can be persisted with other request options.
 
 ### Credential Store
 
@@ -723,34 +755,6 @@ All streaming events emitted during assistant message generation:
 
 Streaming events for different content blocks are not guaranteed to be contiguous. Providers may emit deltas for text, thinking, and tool calls in the same upstream chunk, and pi may surface corresponding events interleaved, for example `text_start`, `text_delta`, `toolcall_start`, `text_delta`, `toolcall_delta`. Consumers must use `contentIndex` to associate each delta/end event with its block and must not assume that a block's `*_start`/`*_delta`/`*_end` sequence is uninterrupted by events for other blocks.
 
-### Compact Assistant Message Frames
-
-`AssistantMessageFrameEncoder` converts one stream into compact, persistable `AssistantMessageFrame` values. Create one encoder per stream and feed it every event in order. The encoder understands that `partial` is live: a block-start event consumed after the provider has already queued later deltas snapshots the current block once, and covered queued text/thinking deltas produce no duplicate frame. It retains only per-open-block counters plus, temporarily, the raw prefix needed to synchronize an already-advanced tool call. It never clones the growing full partial per token.
-
-The start frame contains message metadata with empty content. Text and thinking frames store each generated character at most once before the authoritative end frame. Tool calls that were already advanced when their start event was consumed use one compact JSON checkpoint before ordinary deltas resume. Terminal `done` and `error` events produce no frame because final message settlement is separate. A pre-generation `error` therefore produces no frames.
-
-`reduceAssistantMessageFrames()` is the canonical pure reducer. It reconstructs text, thinking, and tool-call arguments, including interleaved blocks identified by `contentIndex`, and rejects malformed sequences. It performs a single pass over the iterable and returns `undefined` when there is no start frame. End frames replace blocks with the provider's authoritative completed content and metadata. The reducer does not validate tool arguments against a TypeBox schema; call `validateToolCall` before execution.
-
-```typescript
-import {
-  AssistantMessageFrameEncoder,
-  reduceAssistantMessageFrames,
-  type AssistantMessageFrame,
-} from '@earendil-works/pi-ai';
-
-const encoder = new AssistantMessageFrameEncoder();
-const frames: AssistantMessageFrame[] = [];
-for await (const event of s) {
-  const frame = encoder.encode(event);
-  if (frame) frames.push(frame);
-}
-
-const reconstructedPartial = reduceAssistantMessageFrames(frames);
-const finalMessage = await s.result(); // Persist terminal settlement separately.
-```
-
-An encoder rejects duplicate starts, updates before start, `done` before start, events after a terminal event, duplicate block starts, and block-kind mismatches. An `error` before start is valid and returns no frame.
-
 ## Image Input
 
 Models with vision capabilities can process images. You can check if a model supports images via the `input` property. If you pass images to a non-vision model, they are silently ignored.
@@ -890,15 +894,16 @@ console.log(model.output); // ['image'] or ['image', 'text']
 
 ## Classification
 
-Classifier models consume structured JSON state and answer one or more typed questions. They do not use chat or image-generation APIs. TypeSafe's Jev model is available from these built-in providers:
+Classifier models consume structured JSON state, and optionally images, and answer one or more typed questions. They do not use chat or image-generation APIs. TypeSafe's Jev model, Cloudflare's Clef models, and OpenAI's GPT-6 Luna are available from these built-in providers:
 
 | Provider | Model IDs | Auth |
 | --- | --- | --- |
 | `typesafe` | `jev-latest` | `TYPESAFE_API_KEY` |
-| `openrouter` | `typesafe/jev-1.13`, `~typesafe/jev-latest` | `OPENROUTER_API_KEY` or OpenRouter OAuth |
-| `cloudflare-workers-ai` | `typesafe/jev` | `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` |
+| `openrouter` | `typesafe/jev-1.13`, `typesafe/jev-1.14`, `~typesafe/jev-latest`, `cloudflare/clef`, `cloudflare/clef-flash`, `cloudflare/clef-omni` | `OPENROUTER_API_KEY` or OpenRouter OAuth |
+| `cloudflare-workers-ai` | `typesafe/jev`, `typesafe/jev-1.14.0`, `@cf/cloudflare/clef`, `@cf/cloudflare/clef-flash`, `@cf/cloudflare/clef-omni` | `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` |
 | `vercel-ai-gateway` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` |
 | `opencode` | `jev-1.13`, `jev-1.13-free` | `OPENCODE_API_KEY` |
+| `openai` | `gpt-6-luna` | `OPENAI_API_KEY` |
 
 ```typescript
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
@@ -936,9 +941,31 @@ The public contract uses `bool` questions and `{ type: "bool", probability }` an
 
 When the service reports token counts, `result.usage` carries them with their cost at the model's catalog price, the same `Usage` shape as chat messages. All System One services report token counts; a request that was answered with malformed answers keeps its usage. Local classifiers such as `llama-cpp-classify` report no usage.
 
-`ClassifierOptions.temperature` divides the answer logits by the given value before they are normalized; values above 1 soften the distribution. APIs that cannot apply it, such as System One, ignore it.
+`ClassifierOptions.temperature` divides the answer logits by the given value before they are normalized; values above 1 soften the distribution. APIs that cannot apply it, such as System One and OpenAI Decisions, ignore it.
+
+`ClassifierContext.images` holds image blocks (`{ type: "image", data, mimeType }`) judged together with the state. Only models whose `input` includes `"image"` accept them; `classify()` returns an error result for other models.
+
+### System One images
+
+System One services take images in three forms. The model's `compat.imageInput` chooses the form (`"assets"`, `"images"`, or `"state-image-urls"`), and `compat.sendImageOptInHeader` controls TypeSafe's opt-in header:
+
+- **TypeSafe** (`typesafe`, and Jev on Workers AI) takes PNG and JPEG images as `assets`, `{ "<image-1>": { type: "image", format: "png", data_base64 } }`. Every asset must be referenced from the request, so the state is sent as `["<image-1>", ..., state]`. Images are experimental on TypeSafe's own API and need the `TypeSafe-Danger-Zone-Images: true` header, which the API sends with requests that carry images.
+- **Clef on Workers AI** takes up to four PNG, JPEG, or WebP images as an `images` list of data URLs, next to the unchanged state.
+- **OpenRouter** takes images as `{ type: "image_url", image_url: { url } }` parts before the state: `[part, ..., state]`. It answers requests with `assets` but drops the images, without an error.
+
+Built-in catalog entries set `compat` explicitly, so they keep their form when `baseUrl` points at a proxy. For models without it, the APIs detect the form: OpenRouter by provider `openrouter` or a `baseUrl` containing `openrouter.ai`, Clef by a model ID starting with `@cf/cloudflare/clef`, and TypeSafe's form with the opt-in header otherwise. A custom provider that reaches OpenRouter through a proxy matches neither check and must set `compat.imageInput: "state-image-urls"` and `compat.sendImageOptInHeader: false`; otherwise OpenRouter drops its images.
+
+Vercel AI Gateway and OpenCode list their Jev models with text input only.
+
+### OpenAI Decisions
+
+The `openai-decisions` API calls OpenAI's [Decisions API](https://developers.openai.com/api/docs/guides/decisions) (`POST /v1/decisions`). GPT-6 Luna is its only model. The state is sent as JSON text; with images, the input is one user message with the state followed by the images as data URLs (at most 128). `choice` and `score` questions map to the Decisions types of the same name. `bool` questions become `predicate` questions; predicates have no criteria field, so the meanings of true and false are appended to the instructions. If OpenAI refuses to answer a question, the whole result is an error. Usage reports input tokens only, priced at the catalog input rate with OpenAI's long-context multiplier.
+
+The endpoint needs an OpenAI API key; Sign in with ChatGPT credentials are rejected, so the `openai` provider hides `gpt-6-luna` from `getAvailableOfType('classifier')` while it uses OAuth. The API rejects inputs above 922K tokens, but requests that run longer than about five seconds, currently above roughly 600K input tokens, fail with a gateway timeout (504).
 
 ### Chat models on llama.cpp
+
+llama.cpp also serves decision models such as Julia-1 or Kev natively through `/v1/systemone`. Since llama.cpp 0.6.0, `GET /models` lists `decisions` in a model's `architecture.output_modalities` for these models. They use the `typesafe-system-one` API with the server's `/v1` URL as `baseUrl` (for example `http://127.0.0.1:8080/v1`); it needs an `apiKey`, which llama.cpp ignores unless it was started with `--api-key`. The `llama-cpp-classify` API is the fallback for chat models.
 
 The `llama-cpp-classify` API turns a chat model served by llama.cpp's `llama-server` into a classifier. Each question becomes one chat prompt: the state, every question of the request, the state again, and the question with its answers under single-token labels (letters for a choice, `Yes`/`No` for a bool, digits for a score). The prompt up to the final question is shared by all questions of a request, so the server's prompt cache evaluates the state once per request. The server returns the log-probabilities of the next token, and the answer is the softmax over the label tokens. Choices support up to 62 options and scores up to 10 levels. The model's `baseUrl` is the server URL; a trailing `/v1` is ignored. In router mode, the model ID selects the model.
 
@@ -1087,6 +1114,40 @@ Every `AssistantMessage` includes a `stopReason` field that indicates how the ge
 - `"aborted"` - Request was cancelled via abort signal
 
 `AssistantMessage` may also include `responseId`, a provider-specific upstream response or message identifier when the underlying API exposes one. Do not assume it is always present across providers.
+
+## Telemetry
+
+Pass an explicit parent span (`TelemetrySpan`, not an adapter) through `telemetry`; omitting it uses the no-op span:
+
+```typescript
+import { InMemoryTelemetryContext } from '@earendil-works/pi-telemetry';
+
+const telemetry = new InMemoryTelemetryContext();
+await telemetry.startSpan({ name: 'application.turn' }, async (span) => {
+  await models.completeSimple(model, context, { telemetry: span });
+});
+```
+
+`Models.stream()` and `streamSimple()` create `pi.ai.request`; `streamDeferred()` creates one `pi.ai.poll` per poll. Their completion helpers use the same spans. These spans include auth/setup, end at the terminal result, and do not require the caller to consume events. Direct provider/API calls are not instrumented.
+
+`AI_TELEMETRY_SCHEMA`, exported from the root and `@earendil-works/pi-ai/models`, defines the typed Pi-owned vocabulary:
+
+- Start attributes: `provider`, `api`, `model`, and `reasoning` only when `options.reasoning` is a string. Provider-native reasoning objects are ignored.
+- End attributes: `stop`, `usage.input`, `usage.output`, `usage.cache_read`, `usage.cache_write`, `cost.total`, and optional `response.id`. `stop: "error"` sets error status with the fixed category `provider_error` and `AssistantMessage.errorMessage` truncated to 500 characters (empty when absent). Cancellation keeps status `ok` with `stop: "aborted"`.
+- `pi.ai.first_chunk` marks the first normalized event, including setup errors. Each completed text, thinking, or tool-call block emits `pi.ai.block` with `type`, `index`, and `chars`; only tool calls include `tool`. Character counts use JavaScript string length; tool counts sum argument delta lengths without serializing arguments.
+
+When `options.telemetry.metrics` is available, the same requests record metrics:
+
+| Metric | Unit | Attributes |
+| --- | --- | --- |
+| `pi.ai.request.duration` | `ms` | `provider`, `model`, `stop` |
+| `pi.ai.first_chunk.duration` | `ms` | `provider`, `model` |
+| `pi.ai.tokens` | `token` | `provider`, `model`, `kind` (`input`, `output`, `cache_read`, `cache_write`) |
+| `pi.ai.cost` | `USD` | `provider`, `model` |
+
+Durations use `performance.now()`. Pending/deferred polls do not add tokens or cost; final completed/error polls do. A parent span without metric capabilities remains valid and simply records no metrics. Adapter-created spans carry the same optional metric and propagation capabilities as their root.
+
+Telemetry does not record prompts, generated text, reasoning content, or arguments in attributes/events. Error status includes up to 500 characters of provider error text, which may contain sensitive data; apply your export policy accordingly. Telemetry observes the existing forwarding path without another stream consumer or per-delta events. Response identifiers and error messages never become metric attributes.
 
 ## Error Handling
 
@@ -1516,13 +1577,13 @@ Notes:
 
 ## Cross-Provider Handoffs
 
-The library supports seamless handoffs between different LLM providers within the same conversation. This allows you to switch models mid-conversation while preserving context, including thinking blocks, tool calls, and tool results.
+The library supports seamless handoffs between different LLM providers within the same conversation. This allows you to switch models mid-conversation while preserving context, including text, tool calls, and tool results.
 
 When messages from one provider are sent to a different provider, the library automatically transforms them for compatibility:
 
 - **User and tool result messages** are passed through unchanged
-- **Assistant messages from the same provider/API** are preserved as-is
-- **Assistant messages from different providers** have their thinking blocks converted to text with `<thinking>` tags
+- **Assistant messages from the same provider, API, and model** are preserved as-is, including thinking blocks
+- **Assistant messages from a different model** have their thinking blocks dropped. Signatures and encrypted reasoning only work with the model that produced them, and readable thinking sent as plain text makes the new model treat it as part of the reply
 - **Tool calls and regular text** are preserved unchanged
 
 ```typescript
@@ -1543,7 +1604,7 @@ const claude = models.getModel('anthropic', 'claude-sonnet-4-5')!;
 context.messages.push({ role: 'user', content: 'What is 25 * 18?', timestamp: Date.now() });
 context.messages.push(await models.completeSimple(claude, context, { reasoning: 'medium' }));
 
-// Switch to GPT-5 - it will see Claude's thinking as <thinking> tagged text
+// Switch to GPT-5 - it sees Claude's answer, but not Claude's thinking
 const gpt5 = models.getModel('openai', 'gpt-5-mini')!;
 context.messages.push({ role: 'user', content: 'Is that calculation correct?', timestamp: Date.now() });
 context.messages.push(await models.complete(gpt5, context));
@@ -1554,7 +1615,7 @@ context.messages.push({ role: 'user', content: 'What was the original question?'
 const geminiResponse = await models.complete(gemini, context);
 ```
 
-All providers can handle messages from other providers — text, tool calls and results (including images), thinking blocks (transformed to tagged text), and aborted messages with partial content. This enables flexible workflows: start with a fast model, switch to a more capable one for complex reasoning, or maintain continuity across provider outages.
+All providers can handle messages from other providers — text, tool calls and results (including images), thinking blocks (dropped when the model changes), and aborted messages with partial content. This enables flexible workflows: start with a fast model, switch to a more capable one for complex reasoning, or maintain continuity across provider outages.
 
 ## System Messages
 
@@ -1587,7 +1648,7 @@ getCurrentTools(messages);        // []
 
 A custom `Provider` or `ProviderStreams` implementation reads the prompt and tools the same way from `context.messages`; `context.systemPrompt` and `context.tools` do not exist at that layer.
 
-Models that accept system messages mid-conversation (`supportsMidConvoSystemMessages` in the model's compat settings, set by the generated catalog for verified models) receive each later system message in place, so the cached prefix stays intact; section changes are framed by name for the model. Every other model receives `collapseSystemMessages(transcript)`: the replayed prompt and current tools as the leading system message, with later system messages dropped. Anthropic models that also set `supportsMidConvoToolChanges` send tool changes as native `tool_addition`/`tool_removal` blocks: the initial tools stay active at the top level, every later declaration is sent with `defer_loading` (plus a stable deferred placeholder from the first request, which keeps Anthropic's deferred-tool scaffolding in the cached prefix), and removed tools stay declared, so tool changes do not invalidate the prompt cache. That needs at least one initial tool and no same-name redefinition; otherwise the current tool list is sent at the top level with the system text only. OpenAI Responses models with `supportsAdditionalTools` or `supportsToolSearch` anchor additive tool changes at their message; everything else sends the current tool list at the top level.
+Models that accept system messages mid-conversation (`supportsMidConvoSystemMessages` in the model's compat settings, set by the generated catalog for verified models) receive each later system message in place, so the cached prefix stays intact; section changes are framed by name for the model. Every other model receives `collapseSystemMessages(transcript)`: the replayed prompt and current tools as the leading system message, with later system messages dropped. Anthropic models that also set `supportsMidConvoToolChanges` send tool changes as native blocks (`inline-tools-2026-09-15` beta): the top-level tool list holds the initial tools plus a stable deferred placeholder and never changes, later tools are defined by value in `tool_addition` blocks (a new definition under an existing name replaces the old one), and removals are `tool_removal` references, so tool changes do not invalidate the prompt cache. That needs at least one initial tool; otherwise the current tool list is sent at the top level with the system text only. OpenAI Responses models with `supportsAdditionalTools` declare every tool in `additional_tools` items, like Codex: the initial tools in one at the head of the input and later additions and redefinitions at their message, with no top-level tool list. A later item replaces same-name definitions from earlier items but cannot replace a top-level tool or remove any tool, so removals are announced as text, later updates restate the tools that are still unavailable, and calls to removed tools fail at execution. OpenAI Responses models with only `supportsToolSearch`, and Kimi models with `supportsMidConvoToolAdditions`, anchor new tools at their message; a removal or a redeclared name moves the tool state up to that point into the top-level list once. Everything else sends the current tool list at the top level.
 
 ## Context Serialization
 
@@ -1653,10 +1714,10 @@ Browser compatibility notes:
 
 ## Bundling and Tree Shaking
 
-For small bundles, import only the providers you need:
+For small bundles and low-overhead unbundled scripts, import the model runtime and only the providers you need:
 
 ```typescript
-import { createModels } from '@earendil-works/pi-ai';
+import { createModels } from '@earendil-works/pi-ai/models';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 
 const models = createModels();
@@ -1665,7 +1726,8 @@ models.setProvider(openaiProvider());
 
 Rules:
 
-- `@earendil-works/pi-ai` is the core entrypoint and does not import built-in catalogs, provider factories, or SDK implementations.
+- `@earendil-works/pi-ai/models` exports the model runtime (`createModels`, `createProvider`, model helpers, and their types) without TypeBox, built-in catalogs, or SDK implementations. Other types can still use `import type` from the root.
+- `@earendil-works/pi-ai` is the core entrypoint and does not import built-in catalogs, real provider factories, or SDK implementations, but it eagerly imports TypeBox and schema validation. Unbundled Node scripts do not tree-shake its unused exports; prefer `./models`, `./providers/faux`, and specific `./utils/*` subpaths when those are all you need.
 - `@earendil-works/pi-ai/providers/<provider>` imports that provider's catalog and lazy API wrapper only.
 - `@earendil-works/pi-ai/providers/all` imports every built-in provider factory and all catalogs. Use it only when you want the full built-in set.
 - With code splitting, provider SDKs stay in lazy chunks and load on first request.
@@ -1878,7 +1940,7 @@ Add a lazy wrapper `src/api/<api-id>.lazy.ts` (`<name>Api()` via `lazyApi()`) so
 - `createProvider()` wiring catalog + auth + the lazy API wrapper
 - Auth: `envApiKeyAuth` for standard key providers, a custom `ApiKeyAuth` for ambient auth (AWS profiles, ADC), `lazyOAuth` where an OAuth flow exists
 - Register the factory in `src/providers/all.ts`
-- If it is a new API: register it in the builtin list in `src/compat.ts` and add the package subpath export in `package.json`
+- If it is a new API: register it in the builtin list in `src/compat.ts`; the `./api/*` subpath export in `package.json` already covers the new module
 
 #### 5. Tests (`test/`)
 
@@ -1889,7 +1951,6 @@ Create or update test files to cover the new provider:
 - `abort.test.ts` - Request cancellation
 - `empty.test.ts` - Empty message handling
 - `context-overflow.test.ts` - Context limit errors
-- `image-limits.test.ts` - Image support (if applicable)
 - `unicode-surrogate.test.ts` - Unicode handling
 - `tool-call-without-result.test.ts` - Orphaned tool calls
 - `image-tool-result.test.ts` - Images in tool results
@@ -1905,15 +1966,15 @@ For providers with non-standard auth (AWS, Google Vertex), create a utility like
 
 Update `src/core/model-resolver.ts`:
 
-- Add a default model ID for the provider in `DEFAULT_MODELS`
+- Add a default model ID for the provider in `defaultModelPerProvider`
 
 Update `src/cli/args.ts`:
 
 - Add environment variable documentation in the help text
 
-Update `README.md`:
+Update `docs/providers.md`:
 
-- Add the provider to the providers section with setup instructions
+- Add setup instructions, the environment variable, and the `auth.json` key
 
 #### 7. Documentation
 

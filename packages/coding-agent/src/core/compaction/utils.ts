@@ -110,6 +110,12 @@ function truncateForSummary(text: string, maxChars: number): string {
  *
  * Tool results are truncated to keep the summarization request within
  * reasonable token budgets. Full content is not needed for summarization.
+ *
+ * Thinking is omitted. Providers return summaries of the real reasoning, and
+ * replayed thinking is often not part of the model's live context: for example,
+ * a block that does not match its request is dropped. Including it can make the
+ * summarization request larger than the context it summarizes. Visible text,
+ * tool calls, and tool results record what happened.
  */
 export function serializeConversation(messages: Message[]): string {
 	const parts: string[] = [];
@@ -119,13 +125,10 @@ export function serializeConversation(messages: Message[]): string {
 			const content = contentText(msg.content, "");
 			if (content) parts.push(`[User]: ${content}`);
 		} else if (msg.role === "assistant") {
-			const thinkingParts: string[] = [];
 			const toolCalls: string[] = [];
 
 			for (const block of msg.content) {
-				if (block.type === "thinking") {
-					thinkingParts.push(block.thinking);
-				} else if (block.type === "toolCall") {
+				if (block.type === "toolCall") {
 					const args = block.arguments as Record<string, unknown>;
 					const argsStr = Object.entries(args)
 						.map(([k, v]) => `${k}=${JSON.stringify(v)}`)
@@ -134,9 +137,6 @@ export function serializeConversation(messages: Message[]): string {
 				}
 			}
 
-			if (thinkingParts.length > 0) {
-				parts.push(`[Assistant thinking]: ${thinkingParts.join("\n")}`);
-			}
 			if (msg.content.some((block) => block.type === "text")) {
 				parts.push(`[Assistant]: ${contentText(msg.content)}`);
 			}

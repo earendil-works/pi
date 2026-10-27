@@ -38,3 +38,13 @@ export function renderSystemMessageUpdate(message: SystemMessage): string {
 	}
 	return parts.join("\n\n");
 }
+
+/**
+ * `text.slice(start, end)` as a string of its own. V8 represents a slice of 13 or more characters as a view that keeps
+ * all of `text` alive, so a short excerpt kept from a large text (a 500-character error message cut from a megabyte
+ * response body) would keep the whole text alive as long as the excerpt lives. Appending a character and slicing it off
+ * again makes V8 copy just the slice.
+ */
+export function ownedSlice(text: string, start: number, end = text.length): string {
+	return `${text.slice(start, end)} `.slice(0, -1);
+}

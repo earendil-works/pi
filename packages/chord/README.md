@@ -1,108 +1,128 @@
 # @earendil-works/chord
 
-Chord is an application-composition runtime for systems assembled from
-plugins/extensions. It provides facets, services, replicated state, and a
-pluggable remote-service boundary. It is developed as a standalone package in
-the Pi monorepo, but it is not a Pi package: it does not depend on any other Pi
-workspace package and can be used by unrelated applications.
+Chord builds applications out of **objects** that live in several processes (a server, workers, browser tabs) and can be **hot reloaded** while they run.
 
-## What Chord is for
+- An **object** is state plus code at an address. It is created on demand and lives while someone references it.
+- Everyone gets a **reference**, never the object. References work the same locally and across processes, and survive reloads.
+- Every object knows its **principal**: an owner and a guest get different objects, with different methods.
+- **State** is observable JSON. Remote viewers get a snapshot followed by deltas.
+- **Hot reload** swaps code while it runs. Work in flight finishes on the code it started with, state is kept, and incompatible changes migrate at a safe point.
 
-A single application feature may need to run in several environments: for
-example, an agent worker, a terminal UI, and a remote WebUI.  Chord provides the
-generic machinery to write such extensions in a way that is both delightful for
-humans as well as agents.
+Contracts are runtime values described with [TypeBox](https://github.com/sinclairzx81/typebox) schemas. Hosts exchange JSON frames over links: in memory, a Node IPC channel, or a WebSocket.
 
-The design has a few connected pieces:
+## Entry points
 
-- **Plugins** are synchronous setup units that declare the services they provide
-  and require. After every plugin has declared its shape, a host validates the
-  complete dependency graph, binds services, activates providers before consumers,
-  and disposes resources in reverse dependency order.  These units are called
-  *facets*.
+| Import | Contents | Runs in |
+|--------|----------|---------|
+| `@earendil-works/chord` | Contracts (`local`, `remote`, `method`, `opaque`), declarations (through the factory's `self`: `state`, `derive`, `resource`, `on`, `task`), hosts (`createHost`, `defineFacet`, `defineRegistry`), links (`memoryLinkPair`, `ipcLink`, `webSocketLink`, `acceptWebSockets`), errors (`ChordError`, `isChordError`, `forbidden`, `invalid`). Also the shared base: `Context`, `JsonValue`, `JsonRepresentation`, `Draft`, `copyJson`, `isJsonValue`, `replicatedState` with its types, and the watch types `WatchHandle`, `NativeWatchHandle`, `WatchChange`, `NativeWatchChange`, and `WatchEnd` with their implementations `Watch` and `NativeWatch`. | Node and browsers |
+| `@earendil-works/chord/node` | Child host processes: `createHostManager`, `forkDriver`, `childControl`, `processLock`; the facet module loader `nodeLoader`. | Node |
+| `@earendil-works/chord/context` | Explicit cancellation, telemetry, and invocation values: `BACKGROUND_CONTEXT`, `withCancel`, `withAbortSignal`, `withoutAbortSignal`, `withTelemetry`, `traceIn`, `withContextValue`, `awaitWithContext`. | Node and browsers |
+| `@earendil-works/chord/delta` | The transactional JSON tracker, structural diff, immutable apply, and the wire encoder/decoder for operation batches. | Node and browsers |
+| `@earendil-works/chord/output` | Bounded output streams and paced progress: `OutputBuffer` (head or tail window of a stream, `OutputLimits`, `OutputSkip`), `boundOutput`, `sanitizeOutput`, `utf8ByteLength`, and `Progress` (adaptive commits of a changing value). | Node and browsers |
+| `@earendil-works/chord/telemetry-sqlite` | `createSqliteTelemetry(db, { retentionMs?, maxQueuedSpans? })`: buffered recording and backend-independent `TelemetryStore` queries. | Any SQLite adapter |
+| `@earendil-works/chord/sqlite` | Portable `SqliteDatabase`, `SqliteExecutor`, and `SqliteValue`, atomic `applySqliteMigrations(database, migrations, { table })`, and `validateSqliteSchemaPrefix`. The metadata table must be a valid, non-reserved SQLite identifier; migration versions start at 1 and are contiguous. | Any SQLite adapter |
+| `@earendil-works/chord/sqlite/node` | `NodeSqliteDatabase`, `openNodeSqliteDatabase`, and `NodeSqliteDatabaseOptions`. | Node |
+| `@earendil-works/chord/sqlite/cloudflare` | `DurableObjectSqliteDatabase` and the structural `DurableObjectSqliteStorage` binding type. | Cloudflare Durable Objects |
 
-- **Facets** are parts of a plugin.  Each facet is bundled up separately and runs
-  in the process or environment where it's supposed to run.  You can use facets
-  to split a plugin into separate pieces that need to be loaded into different
-  processes and environments (think backend, browser, TUI etc.)
+## Quick start
 
-- **Services** are typed, stable tokens with either one provider (**singleton**)
-  or dynamic keyed instances (**keyed**).  A service can be process-local, with
-  an unrestricted JavaScript contract, or remotely exposable. Consumers retain a
-  stable facade while a provider disconnects or is replaced.
+```ts
+import { Type } from "typebox";
+import { createHost, hostNamed, method, remote } from "@earendil-works/chord";
 
-- **Replicated state** exposes authoritative state to local and remote
-  connected consumers. Producers publish atomic overlay transactions with
-  `change(context, callback)`; consumers receive complete immutable values. Draft
-  proxies exist only during the callback and become unusable afterward. Preparation
-  materializes a structurally shared immutable candidate and one exact decoded
-  operation batch, while each remote client/state stream owns independent path-codec
-  state. Replicas become unready on disconnect or replacement until rehydrated.
+// contract.ts: shared by provider and consumers
+export const Counter = remote("demo.counter", {
+	version: 1,
+	input: Type.Object({ name: Type.String() }),
+	host: hostNamed("server"), // where its objects live; callers never name a host
+	variants: {
+		default: {
+			state: { count: Type.Number() },
+			methods: { increment: method(Type.Object({ by: Type.Number() })) },
+		},
+	},
+});
 
-- **Delta tracking** records and coalesces operations over tracked plain JSON.
-  It preserves common string and array operations, supports durable base
-  batches, and validates untrusted operations as they are applied. Batches
-  guarantee convergence but are not canonical or necessarily minimal.
+const host = createHost({ name: "server", self: { kind: "server" } });
 
-- **Remote service sources** advertise services available outside a facet host
-  and open bindings for the services its facets require. Bindings carry logical
-  calls and subscriptions through an application-supplied adapter. Chord
-  requires strict-JSON arguments, results, snapshots, updates, and catalogues,
-  but does not prescribe framing, routing, transport, or an application wire
-  envelope. `JsonRepresentation<T>` derives a wire-safe type for application data
-  with unknown payloads, while `isJsonValue()` validates received values at an
-  adapter boundary. Symmetric RPC peers are planned as one optional
-  implementation of this boundary.
+host.serve(Counter, ({ name }, _principal, self) => {
+	const count = self.state("count", Type.Number(), 0);
+	return {
+		variant: "default",
+		count,
+		increment: async ({ by }, ctx) => {
+			count.change(ctx, (n) => n + by);
+		},
+	};
+});
 
-- **Context** Chord provides a Go-like context system for cancellation and
-  invocation-scoped application values. Applications can carry permissions or
-  telemetry through those values without Chord depending on either.
+await host.root(async (ctx) => {
+	const clicks = await ctx.get(Counter, { name: "clicks" }); // ready, with its state; released when this root ends
+	clicks.count.subscribe((n) => console.log("count", n));
+	await clicks.increment({ by: 2 }, ctx); // logs 0, then 2
+});
+```
 
-The current runtime exports service tokens, singleton and keyed providers,
-remote bindings, replicated state, facet hosts, and facet loaders from
-`@earendil-works/chord`. Import public types and general runtime APIs from the
-package root. Context constants and functions live in
-`@earendil-works/chord/context` because their generic names should not pollute
-the root API.
-Chord-owned identifiers use the `chord.*` namespace and its reserved service
-prefix is `$chord.*`.
+## Documentation
 
-## Remote service adapters
+- [Tutorial](docs/tutorial.md): a shared todo list, built up section by section. Every example runs as `test/tutorial.test.ts`.
+- [Usage guide](docs/guide.md): API reference for contracts, objects, state, roots, lifetime, plugins, hot reload, hosts, and links.
+- [Specification](docs/spec.md): compatibility, lifetime, and reload semantics, plus known limitations and implementation decisions.
+- [Delta guide](src/delta/README.md): ownership, lifecycle, operation, and replica contracts of `@earendil-works/chord/delta`.
 
-Chord owns its transport-independent service wire grammar. Consumer adapters
-use `createServiceCatalogueCall()`, `createServiceSubscribeCall()`, and
-`createServiceUnsubscribeCall()` for `$chord.service` control calls.
-`createRemoteServiceEndpoint()` handles those calls for one provider consumer,
-including subscription activation and cleanup. `parseServiceCall()`,
-`parseServiceCatalogue()`, and the decoded/wire snapshot and update parsers
-validate Chord semantics after an adapter has established a strict-JSON
-boundary. `RemoteServiceErrorCode` and `REMOTE_SERVICE_ERROR_CODES` define the
-service errors that may cross that boundary.
+## Explicit Context telemetry
 
-Replicated state operations use one `createServiceStateEncoder()` at the
-provider side and one `createServiceStateDecoder()` at the consumer side for
-each subscription. Those registries create an independent Delta path dictionary
-for every instance/member state and reset it on replacement, unavailability,
-close, or fresh hydration. Applications may place these values inside any
-routing, request, response, or event envelope; Chord does not prescribe that
-outer protocol.
+`Context` always carries a `telemetry: TelemetrySpan`, alongside `abortSignal`. `BACKGROUND_CONTEXT` and `TODO_CONTEXT` use the shared no-op span `NOOP_TELEMETRY_CONTEXT`. Adapters (`TelemetryContext`) belong to hosts and start root spans; adapters are never placed in a `Context`.
 
-Provider subscriptions atomically capture a snapshot and buffer subsequent
-updates until activation. Activation and reentrant publication use the same FIFO.
-The provider retains at most 100 pending updates per subscription, excluding the
-running delivery. Adding update 101 replaces the entire pending queue with
-`{ type: "reset", snapshot }`: a current full subscription snapshot whose state
-members contain `[["r", value]]` and their new sequence baselines. It also captures
-current instance membership, so discarded spawn/close/replacement events cannot
-leave stale instances behind. Live keyed generations retain their existing handles.
-The reset carries the context of the publication that triggered overflow.
+```ts
+import { BACKGROUND_CONTEXT, traceIn, withTelemetry } from '@earendil-works/chord/context';
+import { InMemoryTelemetryContext } from '@earendil-works/pi-telemetry';
 
-Consumers and codecs must handle this explicit reset before accepting subsequent
-ordinary deltas. A root operation in an ordinary `state` update does **not** permit
-a sequence gap. Resets restart the subscription's path dictionaries, and later
-deltas must be contiguous from each reset baseline. Transport adapters must
-preserve snapshot/reset/update order; they must not drop encoded delta batches or
-assume their own asynchronous queues are bounded by the provider's queue.
+const telemetry = new InMemoryTelemetryContext();
+await telemetry.startSpan({ name: 'app.request' }, async (span) => {
+  const context = withTelemetry(span, BACKGROUND_CONTEXT);
+  await traceIn(
+    { name: 'app.load' },
+    async (child) => {
+      child.telemetry.addEvent('cache.miss');
+      return traceIn({ name: 'app.read' }, (nested) => readAccount(nested), child);
+    },
+    context,
+  );
+});
+```
+
+`withTelemetry(span, context)` derives a new context; it never changes its parent, cancellation, or typed values. `traceIn(options, fn, context)` creates a callback-managed child span, and `fn` receives its derived context. Every context already supports `telemetry.addEvent()` and `telemetry.addLink()`. Values, cancellation, callback results, and rejection identities are preserved. Concurrent calls keep independent parents; there is no ambient current span. `value()`, `ContextKey`, and `withContextValue()` remain supported.
+
+These helpers operate on the standalone `Context` API. They do not yet instrument Chord hosts, methods, or network frames.
+
+## SQLite telemetry
+
+```ts
+import { createSqliteTelemetry } from '@earendil-works/chord/telemetry-sqlite';
+import { openNodeSqliteDatabase } from '@earendil-works/chord/sqlite/node';
+import { renderTrace } from '@earendil-works/pi-telemetry/render';
+
+const db = await openNodeSqliteDatabase('telemetry.db');
+const telemetry = await createSqliteTelemetry(db);
+try {
+  await telemetry.startSpan({ name: 'app.request' }, async (span) => {
+    span.addEvent('request.accepted');
+    await span.startSpan({ name: 'app.read' }, () => readAccount());
+  });
+  await telemetry.flush();
+  const { traces } = await telemetry.findTraces({ name: 'app.request', limit: 10 });
+  for (const trace of traces) console.log(renderTrace(trace.spans));
+} finally {
+  try { await telemetry.close(); } finally { await db.close(); }
+}
+```
+
+The adapter is portable over `SqliteDatabase` and owns no connection. Recording performs no SQL. A one-second timer flushes settled spans and completed ten-second metric intervals in one transaction, including retention cleanup. Metrics retain count, sum, minimum, and maximum per name/kind/unit/attribute series, not raw samples, buckets, or exemplars. `close()` stops recording and drains partial metric intervals without waiting for business callbacks or closing the database. Late span completions are ignored.
+
+Retention defaults to seven days. `maxQueuedSpans` defaults to 10,000 and counts settled spans awaiting commit, including an in-flight batch. The same limit independently bounds pending metric interval/series pairs. Overflow increments `droppedSpans` or `droppedMeasurements`; the limits bound counts, not bytes or active spans. A write failure stops recording permanently: `flush()` and `close()` reject with the original error without retrying.
+
+The adapter implements `TelemetryStore`: `findTraces()`, `getTrace()`, and `findMetrics()` read committed rows, including after adapter close while the database remains open. See [stored telemetry](../telemetry/README.md#stored-telemetry) for filters, pagination, and cross-process trace assembly. Schema tables are `telemetry_spans`, `telemetry_metrics`, and `telemetry_schema`.
 
 ## Tracking JSON deltas
 
@@ -131,16 +151,18 @@ freezing. `track(initial)`, `prepareReplace(value)`, `replicatedState(initial)`,
 `replace(context, value)` take ownership of alias-free strict-JSON roots without
 walking them. Callers must not mutate transferred or published data. Values placed
 through drafts are already copied, so that walk also rejects non-strict JSON before
-the draft changes. Published values are not frozen. In-process loopback consumers
-may share their containers with the provider; mutating a consumed value violates
-the contract and can corrupt authority. Clone or serialize at any mutable trust
-boundary.
+the draft changes. Published values are not frozen. In-process consumers may share
+their containers with the provider; mutating a consumed value violates the contract
+and can corrupt authority. Clone or serialize at any mutable trust boundary.
 
-Replicated state provides the same model through a callback:
+Replicated state provides the same model through a callback. `replicatedState` is a
+standalone observable value, independent of hosts:
 
 ```ts
+import { replicatedState } from "@earendil-works/chord";
+
 const initial = { output: "", count: 0 };
-const status = env.replicatedState(initial); // transfers ownership of initial
+const status = replicatedState(initial); // transfers ownership of initial
 status.change(context, (draft) => {
 	draft.output += "done\n";
 	draft.count += 1;
@@ -148,11 +170,14 @@ status.change(context, (draft) => {
 ```
 
 A successful `change()` publishes exactly one atomic revision. If its callback
-throws, the original value and sequence remain unchanged. Draft handles become
-unusable when the callback returns. Chord emits string append and front-truncate
-operations, array splices and permutations, sets, and deletes; large edit sets may
-fold into a complete replacement. Remote connection plumbing encodes each batch
-independently for every client/state pairing.
+throws, the original value and sequence remain unchanged. Draft references become
+unusable when the callback returns. The tracker emits string append and
+front-truncate operations, array splices and permutations, sets, and deletes; large
+edit sets may fold into a complete replacement.
+
+`replicatedState(source, { onError })` instead attaches a publication-only state to
+an authoritative revision source (`ReplicatedStateSource`): it captures a snapshot,
+then publishes every committed frame in cursor order.
 
 ### Public state subscriptions
 
@@ -166,99 +191,57 @@ Each subscription retains at most 100 pending complete-value deliveries, excludi
 the running callback. On overflow, only the newest pending value, context, and
 delivery metadata are retained; a not-yet-started initial hydration is preserved.
 Thus public delivery sequences may skip. This is a frame-count policy, not a byte
-limit. Internal exact-operation subscriptions remain synchronous and receive every
-revision, independently of slow public callbacks.
+limit.
 
 The returned unsubscribe function immediately discards pending work and prevents
 new callbacks. It neither aborts nor waits for the running callback. Synchronous
 throws and promise rejections are observed, reported, and do not stop other
-subscriptions or subsequent callbacks. Attached sources and remote bindings use
-their `onError` handler; local mutable states (and attached sources without a
-handler) report failures by throwing in a microtask. Unsubscribing does not hide a
-later rejection from the running callback.
+subscriptions or subsequent callbacks. Attached sources use their `onError`
+handler; mutable states (and attached sources without a handler) report failures
+by throwing in a microtask. Unsubscribing does not hide a later rejection from the
+running callback.
 
-The standalone [Delta guide](src/delta/README.md) defines the complete ownership,
-lifecycle, operation, and replica contracts.
+Cells of Chord objects and their remote readables have their own subscription
+model; see [State](docs/guide.md#state) in the usage guide.
 
-## Bundling and loading facets
+### Watches
 
-`@earendil-works/chord/bundler` uses esbuild to turn ESM or TypeScript application
-entries into independent, content-addressed CommonJS files. The package-level API
-reads plugin identity and build configuration from `package.json`, then applies
-facet path conventions supplied by the host application:
+`WatchHandle<T>` is the one watch interface, implemented by watch sources such as
+Durable's documents, conversation views, and task graph. `watch.value` is the value
+at acquisition until `start(listener)` installs the sole asynchronous listener; each
+later change arrives as `(change, context)`, one call at a time, with
+`change: WatchChange<T>` = `{ value, ops, retired }` (plain data; the context is
+the second argument), and `value` advances to it.
+Changes made while the listener runs (or before `start`) arrive in one call: the
+newest value, the ops of all of them folded by Delta's `PendingOps`, and the newest
+change's context. Past 10,000 pending ops after folding the call gets one root
+replacement `[["r", newest]]` instead.
 
-```json
-{
-  "name": "@example/my-plugin",
-  "version": "1.0.0",
-  "type": "module",
-  "peerDependencies": {
-    "@earendil-works/chord": "^0.84.4"
-  },
-  "chord": {
-    "facets": {
-      "worker": "./src/custom-worker.ts",
-      "presentation": false
-    }
-  }
-}
-```
+`retired` says the document the watch follows was retired since the previous call.
+It does not end the watch: the call carries what the address shows after the
+retirement (the source decides; a Durable document keeps the last value the watch
+was given, with no ops), and a document created there later arrives as
+`[["r", value]]`, folded with what is pending, so one call can report a retirement
+and carry the new value.
 
-```ts
-import { bundleFacetPackage } from "@earendil-works/chord/bundler";
+`stop()` is idempotent, drops pending frames, and neither aborts nor awaits a
+running call; it and `closed` give the `WatchEnd`:
 
-await bundleFacetPackage({
-	packagePath: "/path/to/my-plugin",
-	outdir: "/application-owned/plugin-builds/my-plugin",
-	defaultFacets: {
-		worker: "src/worker.ts",
-		presentation: "src/presentation.ts",
-	},
-});
-```
+- `stopped`: `stop()` was called;
+- `cancelled`: the context the watch was acquired with was cancelled;
+- `ended`: the source closed (its owner ended or closed);
+- `listener_error` with `error`: the listener threw or rejected;
+- `failed` with `error`: the source failed.
 
-Existing conventional files become entries unless `chord.facets` overrides or
-disables them. Peer dependencies are externalized and resolved against the host
-when loading. Chord never installs dependencies or runs package lifecycle
-scripts. `bundleFacets()` remains available as the lower-level API for callers
-that already have explicit plugin identity and entry mappings.
+An ended watch drops every reference into its source, so a stopped watch that is
+still referenced keeps only its last value alive.
 
-The output directory contains one `.cjs` file per entry plus
-`chord-facets.json`. Load one application-selected entry through the Node-only
-loader:
-
-```ts
-import { createFacetBundleLoader } from "@earendil-works/chord/node";
-
-const loader = createFacetBundleLoader({
-	manifestPath: "/application-owned/plugin-builds/my-plugin/chord-facets.json",
-	entry: "worker",
-	resolveExternal: (specifier) => import.meta.resolve(specifier),
-});
-const loaded = await loader.load();
-```
-
-Each `load()` verifies SHA-256 integrity and compiles the CommonJS body directly
-with `node:vm` instead of putting the plugin into Node's CommonJS or ESM module
-cache. Externals are resolved by the host and loaded through a restricted
-`require`; esbuild lowers dynamic imports so they use the same path. Disposing a
-retired generation releases the loader's facet references, making its compiled
-code eligible for garbage collection once plugin-owned resources are also gone.
-
-For transport to another Node host, `readFacetBundleArtifact()` packages one
-verified manifest entry with its source, and `createFacetBundleArtifactLoader()`
-materializes fresh temporary generations while resolving externals against the
-receiving host.
-
-To reload, load a candidate, pass its facets to `FacetHost.reload()`, dispose the
-candidate on failure, and dispose the retired `LoadedFacets` only after a
-successful cutover. The host activates and validates the candidate while the
-currently active providers remain routed, then replaces each singleton directly
-without an unavailable interval. Stable service handles therefore do not become
-disconnected during an ordinary reload. Keyed instances
-remain incarnation-specific and replacements receive fresh generations. The
-bundler writes a complete temporary directory before replacing the previous
-output, so loaders do not observe partially built generations.
-
-See [PLANNING.md](PLANNING.md) for the broader RPC and generation-loading
-architecture.
+Sources implement handles with `Watch<T>`, fed through `advance(change, context)`
+(a `WatchChange`, `retired` set for a retirement), `end()` or `end({ error })`
+(at once, dropping what is pending), `endAfterDelivery()` (take no more frames,
+deliver what is pending, then end `ended` once the last call returned; the
+source's `end()` still ends it first), and `observeCancellation(signal)`.
+`NativeWatch<T>` implements `NativeWatchHandle<T>`, the same lifecycle for
+in-process values: the listener gets `({ value }, context)` without ops, one call
+per value in order; past 100 pending values they collapse to one, the value of the
+optional `replace()` or the newest.

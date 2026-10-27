@@ -5,8 +5,15 @@
 // Bedrock ServiceException), plus the non-Error fallback, truncation, the empty
 // parsed-body edge case, and the formatProviderError compose helper.
 
+import { getHeapStatistics } from "node:v8";
 import { describe, expect, it } from "vitest";
-import { formatProviderError, MAX_PROVIDER_ERROR_BODY_CHARS, normalizeProviderError } from "../src/utils/error-body.ts";
+import {
+	formatProviderError,
+	MAX_PROVIDER_ERROR_BODY_CHARS,
+	normalizeProviderError,
+	truncateErrorText,
+} from "../src/utils/error-body.ts";
+import { collectGarbage } from "./memory-helpers.ts";
 
 describe("normalizeProviderError", () => {
 	it("extracts status and body from a Mistral-shaped error", () => {
@@ -222,5 +229,22 @@ describe("formatProviderError", () => {
 		const norm = normalizeProviderError({ reason: "boom" });
 
 		expect(formatProviderError(norm)).toBe('{"reason":"boom"}');
+	});
+});
+
+// #9265
+describe("truncateErrorText", () => {
+	it("keeps an excerpt that does not hold the whole body alive", async () => {
+		await collectGarbage();
+		const before = getHeapStatistics().used_heap_size;
+		const kept = (() => {
+			const body = "<html>".repeat(1_000_000);
+			return truncateErrorText(body, MAX_PROVIDER_ERROR_BODY_CHARS);
+		})();
+		await collectGarbage();
+		expect(kept.startsWith("<html><html>")).toBe(true);
+		expect(kept.endsWith(`[truncated ${6_000_000 - MAX_PROVIDER_ERROR_BODY_CHARS} chars]`)).toBe(true);
+		// A slice would keep the 6 MB body alive with the excerpt.
+		expect(getHeapStatistics().used_heap_size - before).toBeLessThan(1_000_000);
 	});
 });

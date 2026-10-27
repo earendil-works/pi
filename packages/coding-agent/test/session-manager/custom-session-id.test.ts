@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -165,5 +165,48 @@ describe("SessionManager.newSession with custom id", () => {
 		const sessionFile = forked.getSessionFile()!;
 		expect(sessionFile).toContain("forked-session-id");
 		expect(basename(sessionFile)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_forked-session-id\.jsonl$/);
+	});
+});
+
+describe("SessionManager.forkFrom", () => {
+	it("copies all entries unchanged into the forked session", () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-session-manager-"));
+		try {
+			const sourcePath = join(tempDir, "source.jsonl");
+			const lines = [
+				JSON.stringify({
+					type: "session",
+					version: 3,
+					id: "source-id",
+					timestamp: new Date().toISOString(),
+					cwd: tempDir,
+				}),
+			];
+			let parentId: string | null = null;
+			for (let i = 0; i < 50; i++) {
+				const id = `e${i}`;
+				lines.push(
+					JSON.stringify({
+						type: "message",
+						id,
+						parentId,
+						timestamp: new Date().toISOString(),
+						message: { role: "user", content: `message ${i}`, timestamp: 0 },
+					}),
+				);
+				parentId = id;
+			}
+			writeFileSync(sourcePath, `${lines.join("\n")}\n`);
+
+			const forked = SessionManager.forkFrom(sourcePath, tempDir, join(tempDir, "sessions"));
+
+			const written = readFileSync(forked.getSessionFile()!, "utf8").trimEnd().split("\n");
+			expect(written).toHaveLength(51);
+			expect(JSON.parse(written[0]).parentSession).toBe(sourcePath);
+			expect(written.slice(1)).toEqual(lines.slice(1));
+			expect(forked.getEntries()).toHaveLength(50);
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
 	});
 });

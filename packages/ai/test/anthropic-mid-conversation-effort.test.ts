@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stream } from "../src/api/anthropic-messages.ts";
+import { type AnthropicOptions, stream } from "../src/api/anthropic-messages.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
 
@@ -64,14 +64,14 @@ function assistant(model: Model<"anthropic-messages">, level?: string): Assistan
 async function capture(
 	model: Model<"anthropic-messages">,
 	context: Context,
-	effort?: "low" | "medium" | "high" | "xhigh" | "max",
+	options: Pick<AnthropicOptions, "effort" | "thinkingEnabled"> = {},
 ): Promise<{ payload: CapturedPayload; message: AssistantMessage }> {
 	let payload: CapturedPayload | undefined;
 	const result = stream(model, normalizeContext(context), {
 		apiKey: "test-key",
 		cacheRetention: "none",
 		thinkingEnabled: true,
-		effort,
+		...options,
 		onPayload: (value) => {
 			payload = value as CapturedPayload;
 			throw new Error("payload captured");
@@ -91,11 +91,11 @@ function effortMessages(payload: CapturedPayload): WireMessage[] {
 describe("Anthropic mid-conversation effort", () => {
 	it("reconstructs an exact historical marker prefix and appends the current marker", async () => {
 		const model = managedModel();
-		const first = await capture(model, { messages: [user("one", 1)] }, "low");
+		const first = await capture(model, { messages: [user("one", 1)] }, { effort: "low" });
 		const second = await capture(
 			model,
 			{ messages: [user("one", 1), assistant(model, "low"), user("two", 2)] },
-			"high",
+			{ effort: "high" },
 		);
 
 		expect(first.payload.messages).toEqual([
@@ -108,8 +108,8 @@ describe("Anthropic mid-conversation effort", () => {
 			content: [],
 			output_config: { effort: "high" },
 		});
-		expect(first.payload.output_config).toEqual({ effort: "high" });
-		expect(second.payload.output_config).toEqual({ effort: "high" });
+		expect(first.payload.output_config).toEqual({ effort: "low" });
+		expect(second.payload.output_config).toEqual({ effort: "low" });
 		expect(second.payload.thinking).toEqual({
 			type: "adaptive",
 			display: "summarized",
@@ -120,7 +120,7 @@ describe("Anthropic mid-conversation effort", () => {
 
 	it.each(["low", "medium", "high", "xhigh", "max"] as const)("preserves native effort %s", async (effort) => {
 		const model = managedModel();
-		const { payload, message } = await capture(model, { messages: [user("one", 1)] }, effort);
+		const { payload, message } = await capture(model, { messages: [user("one", 1)] }, { effort });
 		expect(effortMessages(payload)).toEqual([{ role: "system", content: [], output_config: { effort } }]);
 		expect(message.providerThinkingLevel).toBe(effort);
 	});
@@ -143,15 +143,50 @@ describe("Anthropic mid-conversation effort", () => {
 		const { payload } = await capture(
 			model,
 			{ messages: [user("one", 1), legacy, user("two", 2), otherProvider, user("three", 3)] },
-			"medium",
+			{ effort: "medium" },
 		);
 		expect(effortMessages(payload)).toEqual([{ role: "system", content: [], output_config: { effort: "medium" } }]);
+	});
+
+	it("sends plain disabled thinking without effort when off is supported", async () => {
+		const model = managedModel();
+		model.thinkingLevelMap = { minimal: null, low: "low", medium: "medium", high: "high", max: "max" };
+		// Anthropic rejects block_binding with disabled thinking, and rejects effort markers
+		// that change level (here low, then medium) while thinking is disabled.
+		const { payload, message } = await capture(
+			model,
+			{
+				messages: [
+					user("one", 1),
+					assistant(model, "low"),
+					user("two", 2),
+					assistant(model, "medium"),
+					user("three", 3),
+				],
+			},
+			{ thinkingEnabled: false },
+		);
+		expect(payload.thinking).toEqual({ type: "disabled" });
+		expect(payload.output_config).toBeUndefined();
+		expect(effortMessages(payload)).toEqual([]);
+		expect(message.providerThinkingLevel).toBeUndefined();
+	});
+
+	it("keeps adaptive thinking when off is unsupported", async () => {
+		const { payload, message } = await capture(
+			managedModel(),
+			{ messages: [user("one", 1)] },
+			{ thinkingEnabled: false },
+		);
+		expect(payload.thinking?.type).toBe("adaptive");
+		expect(effortMessages(payload)).toEqual([{ role: "system", content: [], output_config: { effort: "high" } }]);
+		expect(message.providerThinkingLevel).toBe("high");
 	});
 
 	it("leaves unsupported models on top-level effort", async () => {
 		const model = managedModel();
 		model.compat = { forceAdaptiveThinking: true };
-		const { payload, message } = await capture(model, { messages: [user("one", 1)] }, "low");
+		const { payload, message } = await capture(model, { messages: [user("one", 1)] }, { effort: "low" });
 		expect(payload.messages).toEqual([{ role: "user", content: "one" }]);
 		expect(payload.output_config).toEqual({ effort: "low" });
 		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
@@ -206,5 +241,16 @@ describe("Anthropic mid-conversation effort", () => {
 		// OpenRouter rejects configuration_update on Opus 5 but accepts it on Fable 5.1.
 		expect(getModel("openrouter", "anthropic/claude-opus-5").compat?.supportsMidConvoEffort).toBeUndefined();
 		expect(getModel("anthropic", "claude-opus-5").compat?.allowedFallbackModels).toBeUndefined();
+	});
+
+	it("supports off only on managed models that accept disabled thinking", () => {
+		for (const id of ["claude-opus-5", "claude-haiku-5-5"] as const) {
+			const model = getModel("anthropic", id);
+			expect(model.compat?.supportsMidConvoEffort).toBe(true);
+			expect(model.thinkingLevelMap?.off).not.toBeNull();
+		}
+		for (const id of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"] as const) {
+			expect(getModel("anthropic", id).thinkingLevelMap?.off).toBeNull();
+		}
 	});
 });

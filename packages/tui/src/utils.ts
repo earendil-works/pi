@@ -326,6 +326,13 @@ export function stripTerminalSequences(str: string): string {
 	return result;
 }
 
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]+/g;
+
+/** Replace each run of C0 and C1 control characters (ESC, BEL, newlines, ...) with one space. */
+export function replaceControlCharacters(str: string): string {
+	return str.replace(CONTROL_CHARACTERS, " ");
+}
+
 interface GraphemeCellRange {
 	start: number;
 	end: number;
@@ -888,6 +895,15 @@ function splitIntoTokensWithAnsi(text: string): string[] {
  * @param width - Maximum visible width per line
  * @returns Array of wrapped lines (NOT padded to width)
  */
+/**
+ * Flatten cached lines. V8 keeps a string built by concatenation as a tree of its parts until something reads it
+ * whole, and a cached line kept as such a tree retains several times its own size. Converting a string to a number
+ * reads it whole, so V8 flattens it in place; the strings' values do not change.
+ */
+export function flattenLines(lines: readonly string[]): void {
+	for (const line of lines) Number(line);
+}
+
 export function wrapTextWithAnsi(text: string, width: number): string[] {
 	if (!text) {
 		return [""];
@@ -1273,8 +1289,11 @@ export function sliceWithWidth(
 	while (i < line.length) {
 		const ansi = extractAnsiCode(line, i);
 		if (ansi) {
-			if (currentCol >= startCol && currentCol < endCol) result += ansi.code;
-			else if (currentCol < startCol) pendingAnsi += ansi.code;
+			if (currentCol >= startCol && currentCol < endCol) {
+				// Keep original order: codes from before the range must precede codes at the boundary
+				result += pendingAnsi + ansi.code;
+				pendingAnsi = "";
+			} else if (currentCol < startCol) pendingAnsi += ansi.code;
 			i += ansi.length;
 			continue;
 		}
@@ -1339,8 +1358,13 @@ export function extractSegments(
 			// Include ANSI codes in their respective segments
 			if (currentCol < beforeEnd) {
 				pendingAnsiBefore += ansi.code;
-			} else if (currentCol >= afterStart && currentCol < afterEnd && afterStarted) {
-				// Only include after we've started "after" (styling already prepended)
+			} else if (
+				currentCol >= afterStart &&
+				currentCol < afterEnd &&
+				(afterStarted || ansi.code.startsWith("\x1b_"))
+			) {
+				// SGR codes are only included after "after" started (styling already prepended). Zero-width APC
+				// markers like CURSOR_MARKER are not tracked styling, so keep them at the boundary too.
 				after += ansi.code;
 			}
 			i += ansi.length;

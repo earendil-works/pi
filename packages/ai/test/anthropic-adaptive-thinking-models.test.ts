@@ -4,6 +4,7 @@ import type { Api, Model } from "../src/types.ts";
 
 const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
 	"anthropic/claude-fable-5",
+	"anthropic/claude-haiku-5-5",
 	"anthropic/claude-opus-4-8",
 	"anthropic/claude-opus-5",
 	"anthropic/claude-sonnet-5",
@@ -11,9 +12,8 @@ const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
 	"fireworks/accounts/fireworks/models/deepseek-v4p1-flash",
 	"fireworks/accounts/fireworks/models/gpt-oss-120b",
 	"fireworks/accounts/fireworks/models/qwen3p8-max",
-	"kimi-coding/kimi-for-coding",
-	"kimi-coding/k3",
-	"kimi-coding/kimi-for-coding-highspeed",
+	"minimax-cn/MiniMax-M3.1-Flash",
+	"minimax/MiniMax-M3.1-Flash",
 	"opencode/claude-opus-4-8",
 	"opencode/claude-opus-5",
 	"vercel-ai-gateway/anthropic/claude-opus-4.8",
@@ -40,7 +40,10 @@ describe("Anthropic adaptive thinking model metadata", () => {
 					// Regression for #9323: Fireworks uses catalog effort metadata and
 					// verified fallbacks, not a fixed set of adaptive model names.
 					modelId.startsWith("fireworks/") ||
-					/(opus[-.](4[-.][678]|5)|sonnet[-.]4[-.]6|sonnet[-.]5|fable[-.]5|kimi-coding\/)/.test(modelId),
+					// #11121: MiniMax models with catalog effort levels require adaptive thinking.
+					modelId.startsWith("minimax/") ||
+					modelId.startsWith("minimax-cn/") ||
+					/(opus[-.](4[-.][678]|5)|sonnet[-.]4[-.]6|sonnet[-.]5|haiku[-.]5[-.]5|fable[-.]5)/.test(modelId),
 			),
 		);
 	});

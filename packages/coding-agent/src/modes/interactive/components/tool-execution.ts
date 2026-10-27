@@ -1,4 +1,3 @@
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
 	Box,
 	type Component,
@@ -11,29 +10,13 @@ import {
 	type TUI,
 	type TuiMouseEvent,
 } from "@earendil-works/pi-tui";
-import type { ToolDefinition, ToolRenderContext, ToolRenderResultOptions } from "../../../core/extensions/types.ts";
-import type { Theme } from "../theme/theme.ts";
+import type { ToolDefinition, ToolRenderContext, ToolRenderers } from "../../../core/extensions/types.ts";
 
-/**
- * What this component needs from a tool: how to draw it. It neither executes tools nor reads their
- * parameter schemas, so a definition and a bare renderer pair are equally acceptable.
- *
- * The renderer parameters are `any` on purpose: a `ToolDefinition` types them from its schema, and
- * narrowing them here would make those definitions unassignable.
- */
-export interface ToolRenderers {
-	renderShell?: "default" | "self";
-	renderCall?: (args: any, theme: Theme, context: ToolRenderContext<any, any>) => Component;
-	renderResult?: (
-		result: AgentToolResult<any>,
-		options: ToolRenderResultOptions,
-		theme: Theme,
-		context: ToolRenderContext<any, any>,
-	) => Component;
-}
+/** What this component needs from a tool: how to draw it, without executing it. */
+export type { ToolRenderers };
 
 import { formatToolCallWithArgs, getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
-import { convertToPng } from "../../../utils/image-convert.ts";
+import { ensurePngTranscoder } from "../../../utils/image-convert.ts";
 import { theme } from "../theme/theme.ts";
 import { keyHint } from "./keybinding-hints.ts";
 
@@ -42,6 +25,7 @@ const FALLBACK_PREVIEW_LINES = 10;
 export interface ToolExecutionOptions {
 	showImages?: boolean;
 	imageWidthCells?: number;
+	outputPad?: number;
 }
 
 export class ToolExecutionComponent extends Container {
@@ -54,6 +38,8 @@ export class ToolExecutionComponent extends Container {
 	private resultRendererComponent?: Component;
 	private rendererState: any = {};
 	private imageComponents: Image[] = [];
+	/** Inputs of imageComponents, so updateDisplay can reuse images and keep their converted PNG data. */
+	private imageSources: Array<{ data: string; mimeType: string; widthCells: number }> = [];
 	private imageSpacers: Spacer[] = [];
 	private toolName: string;
 	private toolCallId: string;
@@ -61,21 +47,21 @@ export class ToolExecutionComponent extends Container {
 	private expanded = false;
 	private showImages: boolean;
 	private imageWidthCells: number;
+	private outputPad: number;
 	private isPartial = true;
 	private toolDefinition?: ToolRenderers;
 	private ui: TUI;
 	private cwd: string;
 	private executionStarted = false;
 	private argsComplete = false;
+	/** `updateArgs()` ran since the last display update; the next render applies it. */
+	private argsPending = false;
 	private result?: {
 		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 		isError: boolean;
 		details?: any;
+		durationMs?: number;
 	};
-	private convertedImages: Map<
-		number,
-		{ sourceData: string; sourceMimeType: string; data: string; mimeType: string }
-	> = new Map();
 	private hideComponent = false;
 
 	constructor(
@@ -94,6 +80,7 @@ export class ToolExecutionComponent extends Container {
 		this.toolDefinition = toolDefinition;
 		this.showImages = options.showImages ?? true;
 		this.imageWidthCells = options.imageWidthCells ?? 60;
+		this.outputPad = options.outputPad ?? 1;
 		this.ui = ui;
 		this.cwd = cwd;
 
@@ -149,6 +136,8 @@ export class ToolExecutionComponent extends Container {
 			expanded: this.expanded,
 			showImages: this.showImages,
 			isError: this.result?.isError ?? false,
+			durationMs: this.isPartial ? undefined : this.result?.durationMs,
+			outputPad: this.outputPad,
 		};
 	}
 
@@ -180,9 +169,14 @@ export class ToolExecutionComponent extends Container {
 		});
 	}
 
+	/**
+	 * Show new partial arguments. Applied at the next render, so a call streaming many argument deltas between two
+	 * frames runs its renderer once per frame, not once per delta (#9265).
+	 */
 	updateArgs(args: any): void {
 		this.args = args;
-		this.updateDisplay();
+		this.argsPending = true;
+		this.ui.requestRender();
 	}
 
 	markExecutionStarted(): void {
@@ -202,47 +196,23 @@ export class ToolExecutionComponent extends Container {
 			content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 			details?: any;
 			isError: boolean;
+			/** Execution time of a final result. */
+			durationMs?: number;
 		},
 		isPartial = false,
 	): void {
 		this.result = result;
 		this.isPartial = isPartial;
 		this.updateDisplay();
-		this.maybeConvertImagesForKitty();
-	}
-
-	private maybeConvertImagesForKitty(): void {
-		const caps = getCapabilities();
-		if (caps.images !== "kitty") return;
-		if (!this.result) return;
-
-		const imageBlocks = this.result.content.filter((c) => c.type === "image");
-		for (let i = 0; i < imageBlocks.length; i++) {
-			const img = imageBlocks[i];
-			if (!img.data || !img.mimeType) continue;
-			const sourceData = img.data;
-			const sourceMimeType = img.mimeType;
-			if (sourceMimeType === "image/png") continue;
-			const cached = this.convertedImages.get(i);
-			if (cached?.sourceData === sourceData && cached.sourceMimeType === sourceMimeType) continue;
-
-			const index = i;
-			convertToPng(sourceData, sourceMimeType).then((converted) => {
-				const currentImage = this.result?.content.filter((content) => content.type === "image")[index];
-				if (!converted || currentImage?.data !== sourceData || currentImage.mimeType !== sourceMimeType) return;
-				this.convertedImages.set(index, {
-					sourceData,
-					sourceMimeType,
-					...converted,
-				});
-				this.updateDisplay();
-				this.ui.requestRender();
-			});
-		}
 	}
 
 	setExpanded(expanded: boolean): void {
 		this.expanded = expanded;
+		this.updateDisplay();
+	}
+
+	setOutputPad(outputPad: number): void {
+		this.outputPad = outputPad;
 		this.updateDisplay();
 	}
 
@@ -262,6 +232,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override render(width: number): string[] {
+		if (this.argsPending) this.updateDisplay();
 		if (this.hideComponent) {
 			return [];
 		}
@@ -305,6 +276,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private updateDisplay(): void {
+		this.argsPending = false;
 		const bgFn = this.isPartial
 			? (text: string) => theme.bg("toolPendingBg", text)
 			: this.result?.isError
@@ -317,6 +289,7 @@ export class ToolExecutionComponent extends Container {
 			const renderContainer = this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentBox;
 			if (renderContainer instanceof Box) {
 				renderContainer.setBgFn(bgFn);
+				renderContainer.setPaddingX(this.outputPad);
 			}
 			renderContainer.clear();
 
@@ -368,14 +341,18 @@ export class ToolExecutionComponent extends Container {
 			}
 		} else {
 			this.contentText.setCustomBgFn(bgFn);
+			this.contentText.setPaddingX(this.outputPad);
 			this.contentText.setText(this.formatToolExecution());
 			hasContent = true;
 		}
 
+		const previousImages = this.imageComponents;
+		const previousSources = this.imageSources;
 		for (const img of this.imageComponents) {
 			this.removeChild(img);
 		}
 		this.imageComponents = [];
+		this.imageSources = [];
 		for (const spacer of this.imageSpacers) {
 			this.removeChild(spacer);
 		}
@@ -384,26 +361,33 @@ export class ToolExecutionComponent extends Container {
 		if (this.result) {
 			const imageBlocks = this.result.content.filter((c) => c.type === "image");
 			const caps = getCapabilities();
-			for (let i = 0; i < imageBlocks.length; i++) {
-				const img = imageBlocks[i];
+			for (const img of imageBlocks) {
 				if (caps.images && this.showImages && img.data && img.mimeType) {
-					const cached = this.convertedImages.get(i);
-					const converted =
-						cached?.sourceData === img.data && cached.sourceMimeType === img.mimeType ? cached : undefined;
-					const imageData = converted?.data ?? img.data;
-					const imageMimeType = converted?.mimeType ?? img.mimeType;
-					if (caps.images === "kitty" && imageMimeType !== "image/png") continue;
-
 					const spacer = new Spacer(1);
 					this.addChild(spacer);
 					this.imageSpacers.push(spacer);
-					const imageComponent = new Image(
-						imageData,
-						imageMimeType,
-						{ fallbackColor: (s: string) => theme.fg("toolOutput", s) },
-						{ maxWidthCells: this.imageWidthCells },
-					);
+					const source = { data: img.data, mimeType: img.mimeType, widthCells: this.imageWidthCells };
+					const index = this.imageComponents.length;
+					const previous = previousSources[index];
+					const imageComponent =
+						previous?.data === source.data &&
+						previous.mimeType === source.mimeType &&
+						previous.widthCells === source.widthCells
+							? previousImages[index]
+							: new Image(
+									source.data,
+									source.mimeType,
+									{ fallbackColor: (s: string) => theme.fg("toolOutput", s) },
+									{ maxWidthCells: source.widthCells },
+								);
+					if (source.mimeType !== "image/png") {
+						ensurePngTranscoder(() => {
+							this.invalidate();
+							this.ui.requestRender();
+						});
+					}
 					this.imageComponents.push(imageComponent);
+					this.imageSources.push(source);
 					this.addChild(imageComponent);
 				}
 			}

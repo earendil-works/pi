@@ -25,6 +25,7 @@ import {
 	type DeferredCancelOptions,
 	type DeferredFetchOptions,
 	type DeferredHandle,
+	getOpenCodeSessionHeaders,
 	type ImageApi,
 	type ImageModel,
 	type ImagesContext,
@@ -57,8 +58,10 @@ import {
 	type StreamOptions,
 } from "@earendil-works/pi-ai";
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
+import { personalizeOpenRouterCatalog } from "@earendil-works/pi-ai/providers/openrouter";
 import {
 	assertChatModel,
+	assertClassifierInputSupported,
 	assertClassifierModel,
 	assertImageModel,
 	classifierErrorResult,
@@ -79,7 +82,7 @@ import {
 	resolveConfiguredModelHeaders,
 	validateExtensionProvider,
 } from "./provider-composer.ts";
-import { withRemoteCatalog } from "./remote-catalog-provider.ts";
+import { withPersonalizedCatalog, withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
 import {
 	createVirtualModel,
@@ -223,13 +226,19 @@ export class ModelRuntime implements Models {
 				? new FileModelsStore(options.modelsStorePath ?? join(dirname(modelsPath), "models-store.json"))
 				: new InMemoryCodingAgentModelsStore());
 		const builtinModelDataGeneratedAt = builtinProviderCatalog.getBuiltinModelDataGeneratedAt();
-		const providers = builtinProviderCatalog
-			.builtinProviders()
-			.map((provider) =>
-				provider.id === "radius"
-					? provider
-					: withRemoteCatalog(provider, options.catalogBaseUrl, builtinModelDataGeneratedAt),
-			);
+		const providers = builtinProviderCatalog.builtinProviders().map((provider) => {
+			if (provider.id === "radius") return provider;
+			// OpenRouter narrows the catalog to the models, limits and prices of the user's key.
+			if (provider.id === "openrouter") {
+				return withPersonalizedCatalog(
+					provider,
+					personalizeOpenRouterCatalog,
+					options.catalogBaseUrl,
+					builtinModelDataGeneratedAt,
+				);
+			}
+			return withRemoteCatalog(provider, options.catalogBaseUrl, builtinModelDataGeneratedAt);
+		});
 		const runtime = new ModelRuntime(
 			credentials,
 			config,
@@ -669,13 +678,20 @@ export class ModelRuntime implements Models {
 
 		const { transformHeaders, ...rawProviderOptions } = options ?? {};
 		const providerOptions = rawProviderOptions as Omit<TOptions, "transformHeaders"> & ProviderRequestOptions<TModel>;
-		let headers = mergeHeaders(resolution.auth.headers, providerOptions.headers);
+		const requestModel: TModel = resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model;
+		const sessionId =
+			"sessionId" in providerOptions && typeof providerOptions.sessionId === "string"
+				? providerOptions.sessionId
+				: undefined;
+		let headers = mergeHeaders(
+			mergeHeaders(getOpenCodeSessionHeaders(requestModel, sessionId), resolution.auth.headers),
+			providerOptions.headers,
+		);
 		if (transformHeaders) headers = await transformHeaders(headers ?? {});
 		const env =
 			resolution.env || providerOptions.env
 				? { ...(resolution.env ?? {}), ...(providerOptions.env ?? {}) }
 				: undefined;
-		const requestModel: TModel = resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model;
 		return {
 			provider,
 			model: requestModel,
@@ -804,6 +820,7 @@ export class ModelRuntime implements Models {
 	): Promise<ClassifierResult> {
 		try {
 			assertClassifierModel(model);
+			assertClassifierInputSupported(model, context);
 			const prepared = await this.prepareRequest(model, options);
 			if (!prepared.provider.classify) {
 				throw new ModelsError("provider", `Provider ${model.provider} does not support classification`);
@@ -885,7 +902,35 @@ export class ModelRuntime implements Models {
 		this.nativeExtensionProviders.set(provider.id, provider);
 		this.recomposeProvider(provider.id);
 		this.updateModelSnapshot();
+		this.markProvisionallyConfigured(
+			provider.id,
+			configuredRequestAuthStatus(this.config.getProvider(provider.id), undefined),
+			provider.auth.oauth && !provider.auth.apiKey ? "oauth" : "api_key",
+		);
 		void this.refresh({ allowNetwork: false });
+	}
+
+	/**
+	 * Mark a newly registered provider as configured when it has a stored credential or a configured
+	 * API key. Availability checks run asynchronously, and callers such as initial model selection
+	 * read the snapshot before they finish. The next availability pass replaces this entry.
+	 */
+	private markProvisionallyConfigured(
+		providerId: string,
+		configuredStatus: AuthStatus | undefined,
+		type: AuthType,
+	): void {
+		if (!this.snapshot.storedProviders.has(providerId) && !configuredStatus?.configured) return;
+		const configuredProviders = new Set(this.snapshot.configuredProviders).add(providerId);
+		const auth = new Map(this.snapshot.auth);
+		// Never clobber a real check result.
+		if (!auth.get(providerId)) auth.set(providerId, { type, source: "configured provider" });
+		this.snapshot = {
+			...this.snapshot,
+			auth,
+			configuredProviders,
+			available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
+		};
 	}
 
 	registerProvider(providerId: string, config: ProviderConfigInput): void {
@@ -903,26 +948,11 @@ export class ModelRuntime implements Models {
 		this.extensionProviders.set(providerId, effective);
 		this.recomposeProvider(providerId);
 		this.updateModelSnapshot();
-		if (
-			this.snapshot.storedProviders.has(providerId) ||
-			configuredRequestAuthStatus(this.config.getProvider(providerId), effective)?.configured
-		) {
-			const configuredProviders = new Set(this.snapshot.configuredProviders).add(providerId);
-			const auth = new Map(this.snapshot.auth);
-			// Provisional entry until the async refresh lands; never clobber a real check result.
-			if (!auth.get(providerId)) {
-				auth.set(providerId, {
-					type: effective.oauth && !effective.apiKey ? "oauth" : "api_key",
-					source: "configured provider",
-				});
-			}
-			this.snapshot = {
-				...this.snapshot,
-				auth,
-				configuredProviders,
-				available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
-			};
-		}
+		this.markProvisionallyConfigured(
+			providerId,
+			configuredRequestAuthStatus(this.config.getProvider(providerId), effective),
+			effective.oauth && !effective.apiKey ? "oauth" : "api_key",
+		);
 		void this.refresh({ allowNetwork: false });
 	}
 

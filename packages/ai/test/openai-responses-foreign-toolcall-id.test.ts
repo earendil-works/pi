@@ -18,7 +18,7 @@ const usage: Usage = {
 
 describe("OpenAI Responses foreign tool call ID normalization", () => {
 	it("hashes foreign Copilot tool item IDs into a bounded Codex-safe fc_<hash> shape", () => {
-		const model = getModel("openai-codex", "gpt-5.5");
+		const model = getModel("openai-codex", "gpt-6.1-sol");
 		const assistant: AssistantMessage = {
 			role: "assistant",
 			content: [

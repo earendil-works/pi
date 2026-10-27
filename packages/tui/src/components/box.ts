@@ -1,5 +1,5 @@
 import { type Component, dispatchMouseEvent, type TuiMouseDispatchResult, type TuiMouseEvent } from "../tui.ts";
-import { visibleWidth } from "../utils.ts";
+import { flattenLines, visibleWidth } from "../utils.ts";
 
 type RenderCache = {
 	childLines: string[];
@@ -48,6 +48,11 @@ export class Box implements Component {
 	setBgFn(bgFn?: (text: string) => string): void {
 		this.bgFn = bgFn;
 		// Don't invalidate here - we'll detect bgFn changes by sampling output
+	}
+
+	setPaddingX(paddingX: number): void {
+		this.paddingX = paddingX;
+		this.invalidateCache();
 	}
 
 	private invalidateCache(): void {
@@ -151,6 +156,7 @@ export class Box implements Component {
 		}
 
 		// Update cache
+		flattenLines(result);
 		this.cache = { childLines, width, bgSample, lines: result };
 
 		return result;

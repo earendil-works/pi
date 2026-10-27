@@ -10,7 +10,7 @@ import {
 	Spacer,
 	Text,
 } from "@earendil-works/pi-tui";
-import { getModelSearchText } from "../model-search.ts";
+import { getDistinctModelName, getModelSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyDisplayText } from "./keybinding-hints.ts";
@@ -252,9 +252,11 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			const id = item.model?.id ?? item.fullId;
 			const styledId = item.model ? id : theme.strikethrough(id);
 			const modelText = isSelected ? theme.fg("accent", styledId) : styledId;
+			const name = item.model ? getDistinctModelName(item.model) : undefined;
+			const nameText = name ? theme.fg("muted", ` (${name})`) : "";
 			const providerBadge = theme.fg("muted", item.model ? ` [${item.model.provider}]` : " [unavailable]");
 			const status = item.model && item.enabled ? theme.fg("accent", "✓ ") : "  ";
-			this.listContainer.addChild(new Text(`${prefix}${status}${modelText}${providerBadge}`, 0, 0));
+			this.listContainer.addChild(new Text(`${prefix}${status}${modelText}${nameText}${providerBadge}`, 0, 0));
 		}
 
 		// Add scroll indicator if needed

@@ -4,7 +4,6 @@ import { join } from "node:path";
 const dependencySections = ["dependencies", "devDependencies", "optionalDependencies"];
 const exactVersionPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const ignoredDirectories = new Set([".git", "dist", "node_modules"]);
-const internalPackageNames = new Set(["@earendil-works/chord"]);
 const packageJsonFiles = [];
 
 function collectPackageJsonFiles(directory) {
@@ -20,10 +19,6 @@ function collectPackageJsonFiles(directory) {
 			packageJsonFiles.push(join(directory, entry.name));
 		}
 	}
-}
-
-function isInternalWorkspaceDependency(name) {
-	return name.startsWith("@earendil-works/pi-") || internalPackageNames.has(name);
 }
 
 function isNonRegistrySpecifier(specifier) {
@@ -50,7 +45,7 @@ for (const file of packageJsonFiles.sort()) {
 		if (!dependencies) continue;
 
 		for (const [name, specifier] of Object.entries(dependencies)) {
-			if (isInternalWorkspaceDependency(name) || isNonRegistrySpecifier(specifier)) continue;
+			if (isNonRegistrySpecifier(specifier)) continue;
 			if (exactVersionPattern.test(getVersionSpecifier(specifier))) continue;
 			failures.push(`${file}: ${section}.${name} must be pinned, found ${specifier}`);
 		}
@@ -58,7 +53,7 @@ for (const file of packageJsonFiles.sort()) {
 }
 
 if (failures.length > 0) {
-	console.error("Direct external dependencies must use exact versions:");
+	console.error("Direct registry dependencies must use exact versions:");
 	for (const failure of failures) console.error(`  ${failure}`);
 	process.exit(1);
 }

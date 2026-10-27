@@ -27,7 +27,7 @@ pi --print "Summarize the changes in this repository"
 
 Use print mode when only the final text is needed, including command substitution, pipelines, and one-shot jobs. Intermediate events are not exposed.
 
-Print mode writes errors to stderr. A final assistant response with an `error` or `aborted` stop reason produces a nonzero exit status.
+Print mode writes errors to stderr. A final assistant response with an `error` or `aborted` stop reason produces a nonzero exit status. A response cut off at the model's output token limit (`length` stop reason) still prints its partial text to stdout, writes a warning to stderr, and produces a nonzero exit status.
 
 When no mode is selected explicitly, non-TTY stdin or stdout also selects print mode. This allows piped input and output without adding `--print`.
 

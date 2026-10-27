@@ -141,6 +141,10 @@ export type AuthEvent =
 			type: "device_code";
 			userCode: string;
 			verificationUri: string;
+			/** Offer best-effort browser opening on user confirmation. Defaults to true; clients may ignore it. */
+			openBrowserOnConfirm?: boolean;
+			/** Offer copying of userCode on user confirmation, replacing the clipboard. Defaults to true. */
+			copyCodeOnConfirm?: boolean;
 			intervalSeconds?: number;
 			expiresInSeconds?: number;
 	  }
@@ -206,6 +210,11 @@ export interface LoginOptions {
 	 * the ID on first use and must return the same ID on every later call.
 	 */
 	getDeviceId?: () => string;
+	/**
+	 * Name this app introduces itself with during login, e.g. OpenAI's agent name hint and
+	 * Codex originator. Defaults to pi's own name.
+	 */
+	agentName?: string;
 }
 
 /**

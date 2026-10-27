@@ -153,7 +153,7 @@ describe("Responses API tool result images", () => {
 	});
 
 	describe.skipIf(!hasAzureOpenAICredentials())("Azure OpenAI Responses Provider (gpt-4o-mini)", () => {
-		const model = getModel("azure-openai-responses", "gpt-4o-mini");
+		const model = getModel("azure", "gpt-4o-mini");
 		const azureDeploymentName = resolveAzureDeploymentName(model.id);
 		const azureOptions = azureDeploymentName ? { azureDeploymentName } : {};
 
@@ -162,8 +162,8 @@ describe("Responses API tool result images", () => {
 		});
 	});
 
-	describe("GitHub Copilot Responses Provider (gpt-5-mini)", () => {
-		const model = getModel("github-copilot", "gpt-5-mini");
+	describe("GitHub Copilot Responses Provider (gpt-6-luna)", () => {
+		const model = getModel("github-copilot", "gpt-6-luna");
 
 		it.skipIf(!githubCopilotToken)(
 			"should send tool result images in function_call_output",
@@ -177,8 +177,8 @@ describe("Responses API tool result images", () => {
 		);
 	});
 
-	describe("OpenAI Codex Responses Provider (gpt-5.5)", () => {
-		const model = getModel("openai-codex", "gpt-5.5");
+	describe("OpenAI Codex Responses Provider (gpt-6.1-sol)", () => {
+		const model = getModel("openai-codex", "gpt-6.1-sol");
 
 		it.skipIf(!openaiCodexToken)(
 			"should send tool result images in function_call_output",

@@ -1,6 +1,7 @@
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
+	type CommitChange,
 	type CommitPublication,
 	type ConversationId,
 	type DocumentAddress,
@@ -11,9 +12,10 @@ import {
 	type Id,
 	MemoryStorage,
 	type Seq,
+	type Session,
 	type StorageWrite,
 } from "@earendil-works/pi-durable";
-import { SessionImpl } from "../src/session/session.ts";
+import { type ObservedCommit, SessionImpl } from "../src/session/session.ts";
 
 export const context: Context = BACKGROUND_CONTEXT;
 
@@ -41,6 +43,10 @@ export class ControlledStorage extends MemoryStorage {
 	readonly commits: (readonly StorageWrite[])[] = [];
 	mintCount = 0;
 	documentReadCount = 0;
+	/** Set while `adopt` runs, the storage's synchronous step: code that sees it set runs inside `Storage.commit()`'s adopt. */
+	adopting = false;
+	/** Runs once, in the next commit's synchronous step right after `adopt` returned. */
+	afterAdopt: (() => void) | undefined;
 	#commitGate: { gate: Deferred; entered: Deferred } | undefined;
 	#findGate: { gate: Deferred; entered: Deferred } | undefined;
 	#commitFailure: Error | undefined;
@@ -66,13 +72,23 @@ export class ControlledStorage extends MemoryStorage {
 		this.#commitFailure = error;
 	}
 
+	/** Reopen after `close()`, as a fresh process would reopen the same database, keeping every committed record. */
+	reopen(): this {
+		(this as unknown as { closed: boolean }).closed = false;
+		return this;
+	}
+
 	#release(kind: "commit" | "find", held: { gate: Deferred }): void {
 		if (kind === "commit" && this.#commitGate === held) this.#commitGate = undefined;
 		if (kind === "find" && this.#findGate === held) this.#findGate = undefined;
 		held.gate.resolve();
 	}
 
-	override async commit(writes: readonly StorageWrite[], commitContext: Context): Promise<Seq> {
+	override async commit(
+		writes: readonly StorageWrite[],
+		adopt: (seq: Seq) => void,
+		commitContext: Context,
+	): Promise<Seq> {
 		this.admittedCommits.push(writes);
 		this.commits.push(structuredClone(writes));
 		const held = this.#commitGate;
@@ -85,7 +101,18 @@ export class ControlledStorage extends MemoryStorage {
 			this.#commitFailure = undefined;
 			throw failure;
 		}
-		return super.commit(writes, commitContext);
+		const step = (seq: Seq): void => {
+			this.adopting = true;
+			try {
+				adopt(seq);
+			} finally {
+				this.adopting = false;
+			}
+			const after = this.afterAdopt;
+			this.afterAdopt = undefined;
+			after?.();
+		};
+		return super.commit(writes, step, commitContext);
 	}
 
 	override mintId<I extends Id<string>>(): Promise<I> {
@@ -112,6 +139,39 @@ export class ControlledStorage extends MemoryStorage {
 	}
 }
 
+/**
+ * Controlled storage whose commits resolve a macrotask after they adopted the batch, as a storage with work after
+ * durability does (JSONL reclaims sidecars): code woken inside `adopt` runs before the commit resolves. `gap` runs in
+ * that work, a macrotask after adoption, and `rejectAfterAdopt` makes a commit it matches reject there, durable and
+ * adopted, as a failed reclaim does; each fires once.
+ */
+export class LateResolvingStorage extends ControlledStorage {
+	/** Set from a commit's start until it resolves. */
+	committing = false;
+	gap: ((writes: readonly StorageWrite[]) => boolean) | undefined;
+	rejectAfterAdopt: ((writes: readonly StorageWrite[]) => boolean) | undefined;
+
+	override async commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, commitContext: Context) {
+		this.committing = true;
+		try {
+			const seq = await super.commit(writes, adopt, commitContext);
+			await flush();
+			if (this.gap?.(writes) === true) {
+				this.gap = undefined;
+				// What the gap started runs before the commit resolves.
+				await flush();
+			}
+			if (this.rejectAfterAdopt?.(writes) === true) {
+				this.rejectAfterAdopt = undefined;
+				throw new Error("reclaim failed");
+			}
+			return seq;
+		} finally {
+			this.committing = false;
+		}
+	}
+}
+
 /** Session kernel plus its controlled storage and every committed publication. */
 export function openTestSession(): {
 	readonly storage: ControlledStorage;
@@ -119,7 +179,8 @@ export function openTestSession(): {
 	readonly publications: CommitPublication[];
 } {
 	const storage = new ControlledStorage();
-	const session = new SessionImpl(storage);
+	// These tests pin the cache's identities and loads, so documents stay as long as the default keeps them.
+	const session = new SessionImpl(storage, Date.now, () => 600_000);
 	const publications: CommitPublication[] = [];
 	session.subscribeCommits((publication) => {
 		publications.push(publication);
@@ -127,12 +188,24 @@ export function openTestSession(): {
 	return { storage, session, publications };
 }
 
-export function documentChanges(
-	publication: CommitPublication,
-): readonly Extract<DocumentCommitChange, { readonly type: "document" }>[] {
+export function documentChanges(publication: {
+	readonly changes: readonly CommitChange[];
+}): readonly Extract<DocumentCommitChange, { readonly type: "document" }>[] {
 	return publication.changes.filter(
 		(change): change is Extract<DocumentCommitChange, { readonly type: "document" }> => change.type === "document",
 	);
+}
+
+/**
+ * Observe every commit as memory adopts it, deferred ones before they are stored, as views and document watches do;
+ * `subscribeCommits()` sees only what was stored.
+ */
+export function observeCommits(
+	session: Session,
+	listener: (publication: ObservedCommit, context: Context) => void,
+): () => void {
+	// `observeCommits()` is internal, so the public type lacks it; every Session and Harness is a `SessionImpl`.
+	return (session as unknown as SessionImpl).observeCommits(listener);
 }
 
 export function documentCopyChanges(

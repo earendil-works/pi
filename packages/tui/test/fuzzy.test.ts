@@ -54,6 +54,23 @@ describe("fuzzyMatch", () => {
 		assert.ok(atBoundary.score < notAtBoundary.score);
 	});
 
+	// #11220: greedy alignment took o, p, u from "openrouter", so the real "opus" scored worst
+	it("scores a contiguous occurrence instead of an earlier scattered alignment", () => {
+		const opus = fuzzyMatch("opus", "openrouter openrouter/anthropic/claude-opus-4.1");
+		const sonnet = fuzzyMatch("opus", "openrouter openrouter/anthropic/claude-sonnet-4.5");
+		const gptOss = fuzzyMatch("opus", "openrouter openrouter/openai/gpt-oss-120b");
+
+		assert.ok(opus.score < sonnet.score);
+		assert.ok(opus.score < gptOss.score);
+	});
+
+	it("uses the best contiguous occurrence, not the first", () => {
+		const embeddedFirst = fuzzyMatch("opus", "xxopus opus");
+		const boundaryOnly = fuzzyMatch("opus", "xxxxxx opus");
+
+		assert.strictEqual(embeddedFirst.score, boundaryOnly.score);
+	});
+
 	it("matches swapped alpha numeric tokens", () => {
 		const result = fuzzyMatch("codex52", "gpt-5.2-codex");
 		assert.strictEqual(result.matches, true);
@@ -101,6 +118,19 @@ describe("fuzzyFilter", () => {
 		assert.strictEqual(result.length, 2);
 		assert.ok(result.map((r) => r.name).includes("foo"));
 		assert.ok(result.map((r) => r.name).includes("foobar"));
+	});
+
+	// #11220: "radius radius/gpt" contains a, s, t, r, a in order, so every radius model matched there
+	it("ranks a model containing the query above models matching a shared provider prefix", () => {
+		const items = [
+			"radius radius/gpt-5.4 radius gpt-5.4 GPT 5.4",
+			"radius radius/agentic radius agentic Agentic",
+			"radius radius/gpt-6-sol radius gpt-6-sol GPT 6 Sol",
+			"radius radius/gpt-6-astra radius gpt-6-astra GPT 6 Astra",
+		];
+		const result = fuzzyFilter(items, "astra", (x: string) => x);
+
+		assert.strictEqual(result[0], items[3]);
 	});
 
 	it("matches slash-separated provider/model queries against reordered text", () => {

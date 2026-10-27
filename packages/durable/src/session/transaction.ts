@@ -1,5 +1,7 @@
 import { type Context, copyJson, type Draft, type JsonValue } from "@earendil-works/chord";
-import { type Change, type Op, type Prepared, type Tracker, track } from "@earendil-works/chord/delta";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { type Change, type Op, type PendingOps, type Prepared, type Tracker, track } from "@earendil-works/chord/delta";
+import type { TelemetryCarrier } from "@earendil-works/pi-telemetry";
 import {
 	type AnyDocDefinition,
 	type AnyDocToken,
@@ -22,6 +24,7 @@ import type {
 	Cursor,
 	DocumentAddress,
 	DocumentCommitChange,
+	DocumentContent,
 	DocumentCopySource,
 	DocumentCreate,
 	DocumentId,
@@ -57,14 +60,25 @@ import { prepareForkDocumentCopies } from "./forks.ts";
 
 type AnyTaskRecord = TaskRecord<JsonValue, JsonValue, JsonValue>;
 
-/** Complete record after applying one settlement; only a placed input can be answered. A settled record stays. */
-function settledSubmission(current: SubmissionRecord, settlement: SubmissionSettlement): SubmissionRecord {
+/** A staged submission change: a settlement, or the placement of a queued submission at its entry. */
+type SubmissionChange = SubmissionSettlement | { readonly status: "placed"; readonly entry: EntryId };
+
+/**
+ * Complete record after applying one change. Placement turns a queued input `placed` and a queued write `done`; only a
+ * placed input can be answered. A settled record stays.
+ */
+function applySubmissionChange(current: SubmissionRecord, change: SubmissionChange): SubmissionRecord {
 	if (current.status === "done" || current.status === "unanswered") return current;
-	if (settlement.status === "done" && current.status !== "placed") {
+	if (change.status === "placed") {
+		if (current.status !== "queued") throw new Error(`Submission ${current.id} is not queued`);
+		const status = current.type === "input" ? "placed" : "done";
+		return { ...current, status, entry: change.entry } as SubmissionRecord;
+	}
+	if (change.status === "done" && current.status !== "placed") {
 		throw new Error(`Submission ${current.id} is not a placed input`);
 	}
 	// Queued and placed records carry no answer, reason, or detail; an unanswered input keeps its entry.
-	return { ...current, ...settlement } as SubmissionRecord;
+	return { ...current, ...change } as SubmissionRecord;
 }
 
 const INTERNAL_SCAN_PAGE_SIZE = 256;
@@ -84,9 +98,30 @@ export type LoadedDocument = {
 	readonly tracker: Tracker<JsonObject>;
 };
 
+/**
+ * The changes of a cached incarnation that deferred commits adopted in memory and the Session has not stored yet
+ * (`CommitPersistence`), folded. The Session owns it; a commit that stores them takes them.
+ */
+export type HeldDocument = {
+	readonly loaded: LoadedDocument;
+	readonly pending: PendingOps;
+	/** Set when a held commit selected a base (`checkpointWhen`): their store writes the whole value. */
+	base: boolean;
+};
+
+/** What adoption publishes: to the Session's own observers, and the stored changes to `subscribeCommits()`. */
+export type AdoptedDocuments = {
+	/** This commit's own changes, as memory adopted them. */
+	readonly observed: readonly DocumentCommitChange[];
+	/** What Storage got: `observed`, unless the commit also stored held changes, which precede its own. */
+	readonly stored: readonly DocumentCommitChange[];
+};
+
 /** Session services used by a transaction while it holds the mutation line. */
 export interface TransactionHost {
 	readonly storage: Storage;
+	/** Wall clock for task lifecycle times. */
+	now(): number;
 	/** Return the cached current incarnation without loading. */
 	cached(addressId: string): LoadedDocument | undefined;
 	/** Return the cached current incarnation, cold-loading and migrating it when necessary. */
@@ -110,6 +145,9 @@ type TransactionTask = {
 	write?: { readonly kind: "create" | "replace"; readonly record: AnyTaskRecord };
 	publicationConversationId?: ConversationId;
 };
+
+/** Internal run creation resolves submission carriers against staged records before reading storage. */
+export type TaskCreationOptions = TaskOptions & { readonly submissionIds?: readonly SubmissionId[] };
 
 /** Defaults a commit binds to: `tx.createTask()` conversation and the task attributed to appended entries. */
 export type TransactionScope = {
@@ -170,6 +208,11 @@ type DocumentPlan = {
 	};
 	/** Resolved before Storage admission so adoption performs no reads. */
 	conversationId?: ConversationId;
+	/**
+	 * Set when this commit also stores held changes of the incarnation (`takeHeld()`): the operations its stored change
+	 * publishes, held first, and whether it has a change of its own to show the Session's observers.
+	 */
+	held?: { readonly ops: readonly Op[]; readonly observed: boolean };
 };
 
 /**
@@ -180,7 +223,7 @@ type DocumentPlan = {
  */
 export class Transaction implements Tx {
 	readonly #host: TransactionHost;
-	readonly #context: Context;
+	#context: Context;
 	readonly #scope: TransactionScope;
 	readonly #pendingOperations = new Set<Promise<unknown>>();
 	#sealed = false;
@@ -195,8 +238,8 @@ export class Transaction implements Tx {
 	readonly #tasksById = new Map<TaskId, TransactionTask>();
 	/** Submissions created by this transaction, by ID. */
 	readonly #submissions = new Map<SubmissionId, SubmissionRecord>();
-	/** Settlements in staging order; resolved against the latest candidate record during assembly. */
-	readonly #settlements: { readonly id: SubmissionId; readonly settlement: SubmissionSettlement }[] = [];
+	/** Submission settlements and placements in staging order; resolved against the latest candidate record during assembly. */
+	readonly #submissionChanges: { readonly id: SubmissionId; readonly change: SubmissionChange }[] = [];
 
 	/** Write and publication plans of every staged incarnation, built during assembly. */
 	readonly #plans: DocumentPlan[] = [];
@@ -242,6 +285,12 @@ export class Transaction implements Tx {
 		return this.#read("scanEntries", () => this.#host.storage.scanEntries(query, limit, cursor, this.#context));
 	}
 
+	latestHeadMarker(conversationId: ConversationId) {
+		return this.#read("latestHeadMarker", () =>
+			this.#host.storage.findLatestHeadMarker(conversationId, undefined, this.#context),
+		);
+	}
+
 	scanTasks(query: TaskQuery, limit: number, cursor?: Cursor) {
 		return this.#read("scanTasks", () => this.#host.storage.scanTasks(query, limit, cursor, this.#context));
 	}
@@ -251,7 +300,7 @@ export class Transaction implements Tx {
 		return this.#read("submission", () => this.#host.storage.submission(id, this.#context));
 	}
 
-	/** Internal: committed submission with a conversation-scoped request ID. */
+	/** Committed submission with a conversation-scoped request ID. */
 	submissionByRequest(conversationId: ConversationId, requestId: string): Promise<SubmissionRecord | undefined> {
 		return this.#read("submissionByRequest", () =>
 			this.#host.storage.submissionByRequest(conversationId, requestId, this.#context),
@@ -364,10 +413,36 @@ export class Transaction implements Tx {
 	createTask<I, S extends { phase: string }, R, H extends object>(
 		task: Task<I, S, R, H>,
 		input: I,
-		options?: TaskOptions,
+		options: TaskCreationOptions,
 	): Promise<TaskId<R>> {
 		return this.#write(async () => {
-			const conversationId = options?.conversationId ?? this.#scope.conversationId;
+			if (options.submissionIds !== undefined) {
+				let trace: TaskOptions["trace"];
+				let links: TelemetryCarrier[] | undefined;
+				for (let index = 0; index < options.submissionIds.length; index++) {
+					const id = options.submissionIds[index]!;
+					const submission = this.#submissions.get(id) ?? (await this.#host.storage.submission(id, this.#context));
+					if (index === 0) trace = submission?.trace ?? "root";
+					else if (submission?.trace !== undefined) {
+						links ??= [];
+						links.push(submission.trace);
+					}
+				}
+				options = { ...options, trace, links };
+			}
+			const ownership = options.ownership;
+			let owner: AnyTaskRecord | undefined;
+			if (ownership.kind === "task") {
+				// Validated again against the owner's final candidate during assembly.
+				owner = await this.#currentTask(ownership.taskId);
+				this.#assertOpen();
+				if (owner === undefined) throw new Error(`Task owner ${ownership.taskId} does not exist`);
+				if (options.background === true) throw new TypeError("A child task cannot be background");
+				if (options.conversationId !== undefined && options.conversationId !== owner.conversationId) {
+					throw new Error(`A child task lives in its owner's conversation ${owner.conversationId}`);
+				}
+			}
+			const conversationId = owner?.conversationId ?? options.conversationId ?? this.#scope.conversationId;
 			if (conversationId === undefined) throw new TypeError("Tx.createTask() requires options.conversationId");
 			await this.#requireConversation(conversationId);
 			this.#assertOpen();
@@ -382,9 +457,15 @@ export class Transaction implements Tx {
 					kind: definition.name,
 					version: definition.version,
 					input,
-					after: options?.after ?? [],
-					background: options?.background ?? false,
+					trace:
+						options.trace === "root"
+							? undefined
+							: (options.trace ?? this.#context.telemetry.propagation?.inject(this.#context.telemetry)),
+					links: options.links,
+					...(owner === undefined ? {} : { owner: owner.id }),
+					background: options.background ?? false,
 					abortRequested: false,
+					...(options.abandonOnRestart === true ? { abandonOnRestart: true } : {}),
 					state: { status: "pending", checkpoint },
 				},
 				TABLE_JSON_COPY_OPTIONS,
@@ -394,7 +475,7 @@ export class Transaction implements Tx {
 		});
 	}
 
-	/** Internal: create a submission record with a fresh ID. */
+	/** Create a raw submission record with a fresh ID; no admission rules apply. */
 	createSubmission(create: SubmissionCreate): Promise<SubmissionRecord> {
 		return this.#write(async () => {
 			await this.#requireConversation(create.conversationId);
@@ -414,7 +495,14 @@ export class Transaction implements Tx {
 	settleSubmission(id: SubmissionId, settlement: SubmissionSettlement): void {
 		this.#assertOpen();
 		this.#hasTableWrite = true;
-		this.#settlements.push({ id, settlement: copyJson(settlement) as SubmissionSettlement });
+		this.#submissionChanges.push({ id, change: copyJson(settlement) as SubmissionSettlement });
+	}
+
+	/** Place a queued submission at `entry`; resolved during assembly like `settleSubmission()`. */
+	placeSubmission(id: SubmissionId, entry: EntryId): void {
+		this.#assertOpen();
+		this.#hasTableWrite = true;
+		this.#submissionChanges.push({ id, change: { status: "placed", entry } });
 	}
 
 	/** Internal: replace one task record completely. Tasks change their own state through their runtime. */
@@ -431,8 +519,22 @@ export class Transaction implements Tx {
 		}
 		task.write = {
 			kind: task.write?.kind === "create" ? "create" : "replace",
-			record: copyJson(value, TABLE_JSON_COPY_OPTIONS) as unknown as AnyTaskRecord,
+			record: copyJson(this.#stampTimes(value, candidate), TABLE_JSON_COPY_OPTIONS) as unknown as AnyTaskRecord,
 		};
+	}
+
+	/** Internal: candidate records of the tasks this transaction created or replaced so far. */
+	stagedTasks(): AnyTaskRecord[] {
+		const records: AnyTaskRecord[] = [];
+		for (const task of this.#tasksById.values()) if (task.write !== undefined) records.push(task.write.record);
+		return records;
+	}
+
+	/** Internal: conversations this transaction created or forked so far. */
+	stagedConversations(): ConversationRecord[] {
+		const records: ConversationRecord[] = [];
+		for (const write of this.#writes) if (write.type === "conversation") records.push(write.value);
+		return records;
 	}
 
 	// ─── Documents ──────────────────────────────────────────────────────────
@@ -613,6 +715,7 @@ export class Transaction implements Tx {
 		this.#sealed = true;
 		this.#abortChanges();
 		await Promise.allSettled(this.#pendingOperations);
+		this.#context = BACKGROUND_CONTEXT;
 	}
 
 	/**
@@ -624,6 +727,7 @@ export class Transaction implements Tx {
 		if (this.#pendingOperations.size > 0) {
 			this.#abortChanges();
 			await Promise.allSettled(this.#pendingOperations);
+			this.#context = BACKGROUND_CONTEXT;
 			throw new Error("Session commit callback settled before its pending Tx operations");
 		}
 		try {
@@ -635,6 +739,8 @@ export class Transaction implements Tx {
 		} catch (error) {
 			this.#abortChanges();
 			throw error;
+		} finally {
+			this.#context = BACKGROUND_CONTEXT;
 		}
 	}
 
@@ -643,9 +749,102 @@ export class Transaction implements Tx {
 		this.#abortChanges();
 	}
 
-	/** Adopt every prepared change by pointer swap after Storage success and describe the publication. */
-	adopt(seq: Seq): DocumentCommitChange[] {
+	/**
+	 * Internal: what a deferred commit holds in memory instead of storing (`CommitPersistence`), each changed incarnation
+	 * with its operations and whether they selected a base; `undefined` when the commit must be stored. It may be held
+	 * only when every write changes an existing `latest`, `initial`-fork conversation document at its stored version.
+	 */
+	holdable(): { readonly loaded: LoadedDocument; readonly ops: readonly Op[]; readonly base: boolean }[] | undefined {
+		if (this.#writes.some((write) => write.type !== "document.change")) return undefined;
+		const held = [];
+		for (const plan of this.#plans) {
+			const { content, change } = plan;
+			if (content === undefined && !plan.retire) continue;
+			if (plan.retire || change?.loaded === undefined || content?.type !== "document.change") return undefined;
+			const { loaded, prepared, version } = change;
+			const record = loaded.record;
+			if (record.scope.kind !== "conversation" || record.history !== "latest" || record.fork !== "initial") {
+				return undefined;
+			}
+			// A migration stores a base at once.
+			if (loaded.storedVersion !== version) return undefined;
+			held.push({ loaded, ops: prepared.ops, base: content.content.kind === "base" });
+		}
+		return held;
+	}
+
+	/**
+	 * Internal: adopt a held commit (`holdable()`) in memory only. Trackers advance by pointer swap; stored versions and
+	 * delta counts stay, as nothing was stored. Returns its publication for the Session's own observers.
+	 */
+	adoptHeld(): DocumentCommitChange[] {
 		const publications: DocumentCommitChange[] = [];
+		for (const plan of this.#plans) {
+			// Every plan of a held commit changes or reads a loaded incarnation (`holdable()`).
+			const { tracker, prepared, version, loaded } = plan.change!;
+			if (prepared.ops.length === 0) {
+				prepared.abort();
+				continue;
+			}
+			tracker.adopt(prepared);
+			const record = loaded!.record;
+			const conversationId = plan.conversationId;
+			publications.push({
+				type: "document",
+				record,
+				conversationId,
+				version,
+				value: prepared.value,
+				ops: prepared.ops,
+			});
+		}
+		return publications;
+	}
+
+	/**
+	 * Internal: store the held changes of every incarnation this commit reads or writes in front of its own, so a stored
+	 * document never misses an operation its later ones build on. Called right before Storage admission, after every
+	 * fallible step, because it empties the holds: a failure earlier keeps them. Returns the holds it took.
+	 */
+	takeHeld<H extends HeldDocument>(held: (id: DocumentId) => H | undefined): H[] {
+		const taken: H[] = [];
+		for (const plan of this.#plans) {
+			// A new incarnation holds nothing yet.
+			if (!("createdAt" in plan.record)) continue;
+			const hold = held(plan.record.id);
+			if (hold === undefined) continue;
+			taken.push(hold);
+			const own = plan.content?.type === "document.change" ? plan.content : undefined;
+			const change = plan.change;
+			const value = change?.prepared.value ?? hold.loaded.tracker.value;
+			const stored = storeHeld(hold, change?.prepared.ops ?? EMPTY_OPERATIONS, value, hold.loaded.valueVersion);
+			// A base this commit selected or must write covers what was held.
+			const content = own?.content.kind === "base" ? own.content : stored.content;
+			const write = { type: "document.change", id: plan.record.id, content } as const;
+			if (own !== undefined) this.#writes[this.#writes.indexOf(own)] = write;
+			else this.#insertBeforeRetirement(write);
+			if (!plan.retire) plan.held = { ops: stored.ops, observed: own !== undefined };
+			plan.content = write;
+			// Held documents are conversation documents; one this commit only read has no owner resolved yet.
+			if (plan.record.scope.kind === "conversation") plan.conversationId = plan.record.scope.conversationId;
+		}
+		return taken;
+	}
+
+	/** Stage a content write for an incarnation, before its retirement when it retires. */
+	#insertBeforeRetirement(write: Extract<StorageWrite, { readonly type: "document.change" }>): void {
+		const at = this.#writes.findIndex(
+			(candidate) => candidate.type === "document.retire" && candidate.id === write.id,
+		);
+		if (at < 0) this.#writes.push(write);
+		else this.#writes.splice(at, 0, write);
+	}
+
+	/** Adopt every prepared change by pointer swap after Storage success and describe the publication. */
+	adopt(seq: Seq): AdoptedDocuments {
+		const publications: DocumentCommitChange[] = [];
+		// Only when the commit stored held changes: then what Storage got differs from what memory adopted.
+		let stored: DocumentCommitChange[] | undefined;
 		for (const plan of this.#plans) {
 			const committed = "createdAt" in plan.record;
 			let record: DocumentRecord = committed ? (plan.record as DocumentRecord) : { ...plan.record, createdAt: seq };
@@ -673,31 +872,21 @@ export class Transaction implements Tx {
 					});
 				}
 			}
-			const conversationId = plan.conversationId;
-			if (plan.retire) {
-				if (committed) this.#host.evict(plan.addressId, record.id);
-				const retired = { version: undefined, value: null, ops: EMPTY_OPERATIONS };
-				publications.push({ type: "document", record, conversationId, ...retired });
-			} else if (plan.content?.type === "document.copy") {
-				publications.push({
-					type: "document.copy",
-					record,
-					conversationId: conversationId!,
-					source: plan.content.source,
-				});
-			} else if (change !== undefined && publishes(plan)) {
-				const ops = change.loaded === undefined ? EMPTY_OPERATIONS : change.prepared.ops;
-				publications.push({
-					type: "document",
-					record,
-					conversationId,
-					version: change.version,
-					value: change.prepared.value,
-					ops,
-				});
+			if (plan.retire && committed) this.#host.evict(plan.addressId, record.id);
+			const publication = describe(plan, record);
+			if (publication === undefined) continue;
+			const held = plan.held;
+			if (held === undefined) {
+				publications.push(publication);
+				stored?.push(publication);
+				continue;
 			}
+			stored ??= [...publications];
+			if (held.observed) publications.push(publication);
+			// Only a document change of a loaded incarnation carries held operations.
+			stored.push(publication.type === "document" ? { ...publication, ops: held.ops } : publication);
 		}
-		return publications;
+		return { observed: publications, stored: stored ?? publications };
 	}
 
 	async #assemble(): Promise<StorageWrite[]> {
@@ -708,7 +897,7 @@ export class Transaction implements Tx {
 			if (plan !== undefined) plans.push(plan);
 		}
 		this.#rejectForkSourceWrites(plans);
-		await this.#validateConversationOwners();
+		await this.#validateOwners();
 		for (const [id, task] of this.#tasksById) {
 			if (task.write?.kind !== "replace") continue;
 			const committed = await this.#committedTask(id);
@@ -766,11 +955,11 @@ export class Transaction implements Tx {
 			plan.conversationId = task.publicationConversationId;
 		}
 
-		for (const { id, settlement } of this.#settlements) {
+		for (const { id, change } of this.#submissionChanges) {
 			const current = this.#submissions.get(id) ?? (await storage.submission(id, this.#context));
 			if (current === undefined) throw new Error(`Submission ${id} does not exist`);
-			const settled = settledSubmission(current, settlement);
-			if (settled !== current) this.#submissions.set(id, settled);
+			const next = applySubmissionChange(current, change);
+			if (next !== current) this.#submissions.set(id, next);
 		}
 
 		const writes = this.#writes;
@@ -784,7 +973,7 @@ export class Transaction implements Tx {
 			if (plan.content?.type === "document.change" && plan.content.content.kind === "delta" && change?.loaded) {
 				const { prepared, version } = change;
 				const info = { deltasSinceBase: change.loaded.deltasSinceBase };
-				if (change.definition?.checkpointWhen?.(prepared.value, prepared.ops, info)) {
+				if (change.definition!.checkpointWhen(prepared.value, prepared.ops, info)) {
 					plan.content = { ...plan.content, content: { version, kind: "base", value: prepared.value } };
 				}
 			}
@@ -796,21 +985,27 @@ export class Transaction implements Tx {
 
 	// ─── Helpers ────────────────────────────────────────────────────────────
 
-	async #validateConversationOwners(): Promise<void> {
+	/**
+	 * New owned work needs a live owner, judged on the owner's final candidate: not `completing`, terminal, or
+	 * abort-marked. A task therefore cannot create owned work in the commit that finishes it (spec §5.5).
+	 */
+	async #validateOwners(): Promise<void> {
+		const owners: { readonly what: string; readonly taskId: TaskId }[] = [];
 		for (const write of this.#writes) {
 			if (write.type !== "conversation" || write.value.owner === undefined) continue;
-			const owner = write.value.owner;
-			const task = await this.#currentTask(owner.taskId);
-			if (task === undefined) throw new Error(`Conversation owner task ${owner.taskId} does not exist`);
-			if (task.conversationId !== owner.conversationId) {
-				throw new Error(`Conversation owner task ${owner.taskId} changed conversations`);
+			owners.push({ what: "Conversation owner task", taskId: write.value.owner.taskId });
+		}
+		for (const task of this.#tasksById.values()) {
+			const record = task.write?.kind === "create" ? task.write.record : undefined;
+			if (record?.owner !== undefined) owners.push({ what: "Task owner", taskId: record.owner });
+		}
+		for (const { what, taskId } of owners) {
+			const task = await this.#currentTask(taskId);
+			if (task === undefined) throw new Error(`${what} ${taskId} does not exist`);
+			if (task.state.status === "terminal" || task.state.status === "completing") {
+				throw new Error(`${what} ${taskId} is ${task.state.status}`);
 			}
-			if (task.state.status === "terminal") {
-				throw new Error(`Conversation owner task ${owner.taskId} is terminal`);
-			}
-			if (task.abortRequested) {
-				throw new Error(`Conversation owner task ${owner.taskId} is abort-marked`);
-			}
+			if (task.abortRequested) throw new Error(`${what} ${taskId} is abort-marked`);
 		}
 	}
 
@@ -887,6 +1082,23 @@ export class Transaction implements Tx {
 		}
 	}
 
+	/**
+	 * Lifecycle times: `startedAt` on the first change to `running`, `endedAt` on the change to `terminal`. Once set,
+	 * they carry over from the replaced record; records written before they existed lack them.
+	 */
+	#stampTimes(value: AnyTaskRecord, candidate: AnyTaskRecord | undefined): AnyTaskRecord {
+		const status = value.state.status;
+		const now = (stamps: boolean) => (stamps ? this.#host.now() : undefined);
+		const startedAt = candidate?.startedAt ?? value.startedAt ?? now(status === "running");
+		const endedAt = candidate?.endedAt ?? value.endedAt ?? now(status === "terminal");
+		if (startedAt === value.startedAt && endedAt === value.endedAt) return value;
+		return {
+			...value,
+			...(startedAt === undefined ? {} : { startedAt }),
+			...(endedAt === undefined ? {} : { endedAt }),
+		};
+	}
+
 	#taskEntry(id: TaskId): TransactionTask {
 		let task = this.#tasksById.get(id);
 		if (task === undefined) {
@@ -958,7 +1170,42 @@ function planDocument(document: DocumentEntry): DocumentPlan | undefined {
 	}
 }
 
-/** Whether adoption publishes the plan: every creation, copy, and retirement, and a loaded incarnation that changed. */
+/** The publication of one adopted plan, if it publishes (`publishes()`), with `record` as committed. */
+function describe(plan: DocumentPlan, record: DocumentRecord): DocumentCommitChange | undefined {
+	const conversationId = plan.conversationId;
+	if (plan.retire)
+		return { type: "document", record, conversationId, version: undefined, value: null, ops: EMPTY_OPERATIONS };
+	if (plan.content?.type === "document.copy") {
+		return { type: "document.copy", record, conversationId: conversationId!, source: plan.content.source };
+	}
+	const change = plan.change;
+	if (change === undefined || !publishes(plan)) return undefined;
+	const ops = change.loaded === undefined ? EMPTY_OPERATIONS : change.prepared.ops;
+	return { type: "document", record, conversationId, version: change.version, value: change.prepared.value, ops };
+}
+
+/**
+ * Take a hold's changes after `ops`, a commit's own on top of them, as one stored content for an incarnation now at
+ * `value`, and the operations a reader of the stored state applies to reach it: the folded ones, or a root replacement
+ * after the queue overflowed, which stores a base, as does a hold whose commits selected one.
+ */
+export function storeHeld(
+	hold: HeldDocument,
+	ops: readonly Op[],
+	value: JsonObject,
+	version: number,
+): { readonly content: DocumentContent; readonly ops: readonly Op[] } {
+	hold.pending.push(ops);
+	const taken = hold.pending.take();
+	if (taken.kind === "replace") return { content: { version, kind: "base", value }, ops: [["r", value]] };
+	if (hold.base) return { content: { version, kind: "base", value }, ops: taken.ops };
+	return { content: { version, kind: "delta", ops: taken.ops }, ops: taken.ops };
+}
+
+/**
+ * Whether adoption publishes the plan: every creation, copy, and retirement, and a loaded incarnation that writes
+ * content, which includes a migration-only base so observers of the older shape receive the new value.
+ */
 function publishes(plan: DocumentPlan): boolean {
-	return plan.retire || plan.change?.loaded === undefined || plan.change.prepared.ops.length > 0;
+	return plan.retire || plan.change?.loaded === undefined || plan.content !== undefined;
 }

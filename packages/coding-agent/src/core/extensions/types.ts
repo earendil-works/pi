@@ -52,6 +52,7 @@ import type {
 	KeyId,
 	OverlayHandle,
 	OverlayOptions,
+	ProgramStatus,
 	TUI,
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
@@ -224,6 +225,11 @@ export interface ExtensionUIContext {
 			overlayOptions?: OverlayOptions | (() => OverlayOptions);
 			/** Called with the overlay handle after the overlay is shown. Use to control visibility. */
 			onHandle?: (handle: OverlayHandle) => void;
+			/**
+			 * Report pi as blocked on user input (OSC 7501 program status) while this component is visible.
+			 * Only applies to inline components, not overlays.
+			 */
+			blocked?: { kind: NonNullable<ProgramStatus["kind"]>; message: string };
 		},
 	): Promise<T>;
 
@@ -489,6 +495,13 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 	showImages: boolean;
 	/** Whether the current result is an error. */
 	isError: boolean;
+	/**
+	 * Milliseconds the tool's execution took, from the final result; `undefined` while it runs, when it did not run, or
+	 * for results stored before durations were recorded.
+	 */
+	durationMs: number | undefined;
+	/** Horizontal padding configured by the outputPad setting. Renderers with `renderShell: "self"` apply it themselves. */
+	outputPad: number;
 }
 
 /**
@@ -527,8 +540,18 @@ export interface ToolAnnotations {
 export interface ToolNamespace {
 	/** For example `mcp__docs`. */
 	name: string;
-	/** Shown once above the group's tools. */
+	/**
+	 * Other names that refer to the namespace where tools look it up by name (codemode's
+	 * `describeNamespace()` and the `namespace` option of `searchTools()`), for example `docs`.
+	 */
+	aliases?: readonly string[];
+	/** Short summary shown once with the group in model-facing tool listings. */
 	description?: string;
+	/**
+	 * Longer usage guidance, such as MCP server instructions. Not part of tool listings; tools that
+	 * describe the namespace on request (codemode's `describeNamespace()`) return it.
+	 */
+	instructions?: string;
 }
 
 /** The tools of a session as {@link ToolDefinition.prepareLoadout} sees them. */
@@ -541,6 +564,8 @@ export interface ToolLoadout {
 	readonly registered: readonly AgentTool[];
 	getExposure(name: string): ToolExposure;
 	getNamespace(name: string): ToolNamespace | undefined;
+	/** A tool's `promptGuidelines`. Hidden declarations leave them out of the system prompt. */
+	getPromptGuidelines(name: string): readonly string[];
 }
 
 /** Changes {@link ToolDefinition.prepareLoadout} makes to what the model sees. */
@@ -592,6 +617,15 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	/** Group the tool belongs to, for example its MCP server. */
 	namespace?: ToolNamespace;
 
+	/**
+	 * For tools that reach other tools (such as `codemode`, which calls them, and `tool_search`, which
+	 * loads them): which tools a call with `input` may reach. `"all"`, or the words of the input that
+	 * may name them, where a word refers to a tool or namespace whose name it contains, so words may
+	 * over-match. Extensions that register tools late, such as MCP servers that are still connecting,
+	 * use it from their `tool_call` handler to finish registering those tools before the call runs.
+	 */
+	reachesTools?: (input: Record<string, unknown>) => "all" | readonly string[];
+
 	/** Hints about what the tool does, for example from an MCP server. */
 	annotations?: ToolAnnotations;
 
@@ -640,6 +674,17 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 }
 
 type AnyToolDefinition = ToolDefinition<any, any, any>;
+
+export type ToolRenderers = Pick<AnyToolDefinition, "renderShell" | "renderCall" | "renderResult">;
+
+/**
+ * Chooses how calls to a tool are drawn, including tools that are not registered. `next()` returns
+ * the renderers the remaining resolvers, then the registered tool, would use.
+ */
+export type ToolRendererResolver = (
+	toolName: string,
+	next: () => ToolRenderers | undefined,
+) => ToolRenderers | undefined;
 
 /**
  * Preserve parameter inference for standalone tool definitions.
@@ -890,18 +935,32 @@ export interface ProviderStreamEvent {
 	data: unknown;
 }
 
-/** Fired after user submits prompt but before agent loop. */
-export interface BeforeAgentStartEvent {
+interface BeforeAgentStartEventBase {
 	type: "before_agent_start";
-	/** The raw user prompt text (after expansion). */
-	prompt: string;
-	/** Images attached to the user prompt, if any. */
-	images?: ImageContent[];
 	/** The current system prompt, rendered from systemPromptOptions and earlier handler changes. */
 	readonly systemPrompt: string;
 	/** Mutable prompt sections. Later handlers observe mutations made by earlier handlers. */
 	systemPromptOptions: NormalizedBuildSystemPromptOptions;
 }
+
+/** A run started by a submitted prompt, RPC prompt, or `pi.sendUserMessage()`. */
+export interface BeforeAgentStartUserEvent extends BeforeAgentStartEventBase {
+	messageType: "user";
+	/** The raw user prompt text (after expansion). */
+	prompt: string;
+	/** Images attached to the user prompt, if any. */
+	images?: ImageContent[];
+}
+
+/** A run started by `pi.sendMessage(..., { triggerTurn: true })` while idle. */
+export interface BeforeAgentStartCustomEvent extends BeforeAgentStartEventBase {
+	messageType: "custom";
+	/** The custom message that starts the run. */
+	message: CustomMessage;
+}
+
+/** Fired before a run starts from a user message or an idle custom message with `triggerTurn`. */
+export type BeforeAgentStartEvent = BeforeAgentStartUserEvent | BeforeAgentStartCustomEvent;
 
 /** Fired when an agent loop starts */
 export interface AgentStartEvent {
@@ -979,6 +1038,8 @@ export interface AgentBeforeSettleEvent extends BoundaryState {
 /** Fired after an agent run has fully settled and no automatic retry, compaction, or queued continuation will run. */
 export interface AgentSettledEvent {
 	type: "agent_settled";
+	/** Whether the run ended because it was aborted, for example with Escape. */
+	aborted: boolean;
 }
 
 export type UIPromptKind = "select" | "confirm" | "input" | "editor" | "custom";
@@ -1063,6 +1124,8 @@ export interface ToolExecutionEndEvent {
 	toolName: string;
 	result: any;
 	isError: boolean;
+	/** Milliseconds `execute()` took, measured with a monotonic clock; absent when the tool did not run. */
+	durationMs?: number;
 	/** Set when another tool (for example a codemode script) made this call. */
 	parentToolCallId?: string;
 }
@@ -1485,6 +1548,10 @@ export interface MarkdownTransformContext {
 	messageType: "user" | "assistant" | "assistant-thinking";
 	isStreaming: boolean;
 	availableWidth: number;
+	/** Persisted session-entry id. Undefined for live messages or live rendering; available when rendering from persisted session entries. */
+	messageId?: string;
+	/** Persisted session-entry ISO timestamp. Undefined for live messages or live rendering; available when rendering from persisted session entries. */
+	timestamp?: string;
 }
 
 export type MarkdownTransformer = (markdown: string, context: MarkdownTransformContext) => string;
@@ -1662,6 +1729,9 @@ export interface ExtensionAPI {
 
 	/** Register a custom renderer for CustomEntry. Custom entries do not participate in LLM context. */
 	registerEntryRenderer<T = unknown>(customType: string, renderer: EntryRenderer<T>): void;
+
+	/** Choose how tool calls are drawn. Resolvers run in extension load order. */
+	registerToolRenderer(resolver: ToolRendererResolver): void;
 
 	// =========================================================================
 	// Actions
@@ -2059,7 +2129,10 @@ export type GetSessionNameHandler = () => string | undefined;
 export type GetActiveToolsHandler = () => string[];
 
 /** Tool info with name, description, parameter schema, prompt guidelines, and source metadata. */
-export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters" | "promptGuidelines"> & {
+export type ToolInfo = Pick<
+	ToolDefinition,
+	"name" | "description" | "parameters" | "promptGuidelines" | "reachesTools"
+> & {
 	exposure: ToolExposure;
 	namespace?: ToolNamespace;
 	annotations?: ToolAnnotations;
@@ -2212,6 +2285,7 @@ export interface Extension {
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
 	messageRenderers: Map<string, MessageRenderer>;
+	toolRenderers?: ToolRendererResolver[];
 	markdownTransformer?: MarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;
 	commands: Map<string, RegisteredCommand>;

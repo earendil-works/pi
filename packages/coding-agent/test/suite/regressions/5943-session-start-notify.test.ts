@@ -32,6 +32,7 @@ type LoadedResourcesContext = {
 		};
 	};
 	getStartupExpansionState: () => boolean;
+	shouldShowStartupDetails: () => boolean;
 	formatDisplayPath: (resourcePath: string) => string;
 	formatContextPath: (resourcePath: string) => string;
 	getBuiltInCommandConflictDiagnostics: (extensionRunner: LoadedResourcesContext["session"]["extensionRunner"]) => [];
@@ -40,6 +41,7 @@ type LoadedResourcesContext = {
 type RebindContext = {
 	unsubscribe?: () => void;
 	applyRuntimeSettings: () => void;
+	programStatus: { reset(): void };
 	renderCurrentSessionState: () => void;
 	bindCurrentSessionExtensions: () => Promise<void>;
 	subscribeToAgent: () => void;
@@ -208,6 +210,7 @@ function createLoadedResourcesContext(): LoadedResourcesContext {
 			},
 		},
 		getStartupExpansionState: () => false,
+		shouldShowStartupDetails: () => true,
 		formatDisplayPath: (resourcePath) => resourcePath,
 		formatContextPath: (resourcePath) => resourcePath.replace("/repo/", ""),
 		getBuiltInCommandConflictDiagnostics: () => [],
@@ -250,6 +253,7 @@ describe("regression #5943: session_start transient UI", () => {
 		try {
 			const context: RebindContext = {
 				applyRuntimeSettings: () => events.push("apply"),
+				programStatus: { reset: () => {} },
 				renderCurrentSessionState: () => events.push("render"),
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
@@ -291,6 +295,7 @@ describe("regression #5943: session_start transient UI", () => {
 		try {
 			const context: RebindContext = {
 				applyRuntimeSettings: () => {},
+				programStatus: { reset: () => {} },
 				renderCurrentSessionState: () => events.push("render"),
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
@@ -343,6 +348,7 @@ describe("regression #5943: session_start transient UI", () => {
 		try {
 			const context: RebindContext = {
 				applyRuntimeSettings: () => {},
+				programStatus: { reset: () => {} },
 				renderCurrentSessionState: () => events.push("render"),
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");

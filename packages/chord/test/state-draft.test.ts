@@ -36,7 +36,7 @@ describe("transactional overlay drafts", () => {
 		expect(prepared.value).toEqual({ values: [5, 5, 9, 2] });
 	});
 
-	it("copies inserted draft values without aliasing their original handle", () => {
+	it("copies inserted draft values without aliasing their original reference", () => {
 		const tracker = track({ values: [{ value: 1 }, { value: 2 }] });
 		const change = tracker.beginChange();
 		const held = change.state.values[0]!;
@@ -65,7 +65,7 @@ describe("transactional overlay drafts", () => {
 		expect(prepared.value.rows.map((row) => row.comparisons)).toEqual([1, 1]);
 	});
 
-	it("drops writes through detached child handles", () => {
+	it("drops writes through detached child references", () => {
 		const tracker = track({ child: { value: "removed" }, items: [{ value: "removed" }, { value: "kept" }] });
 		const change = tracker.beginChange();
 		const child = change.state.child;

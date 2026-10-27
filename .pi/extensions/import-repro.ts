@@ -1,16 +1,18 @@
 /**
  * Import a pi session shared as a gist by the issue-analysis CI workflow
- * (.github/workflows/issue-analysis.yml) and switch to it.
+ * (.github/workflows/issue-analysis.yml), or a .jsonl session file served at a URL,
+ * and switch to it.
  *
- * The CI job runs in a high-entropy checkout directory; this command rewrites
- * the recorded cwd to the local checkout, installs the session file into the
- * current session directory, and switches to it.
+ * The session ran in another checkout (the CI job's high-entropy directory, or a
+ * research VM); this command rewrites the recorded cwd to the local checkout,
+ * installs the session file into the current session directory, and switches to it.
  *
  * Usage:
  *   /ir b4d100022aefb12f25dd2d8485e0a82a
  *   /ir https://gist.github.com/mitsuhiko/b4d100022aefb12f25dd2d8485e0a82a
  *   /ir https://pi.dev/session/#b4d100022aefb12f25dd2d8485e0a82a
  *   /ir https://github.com/earendil-works/pi/issues/123
+ *   /ir https://example.com/path/session.jsonl
  *
  *   pi "/ir <gist-id>"
  */
@@ -58,11 +60,11 @@ interface IssueComment {
 function parseRef(
 	ref: string,
 	cwd: string,
-): { type: "gist"; id: string } | { type: "file"; path: string } | { type: "issue"; owner: string; repo: string; issue: string } {
-	if (ref.endsWith(".html") || ref.endsWith(".jsonl")) {
-		return { type: "file", path: isAbsolute(ref) ? ref : resolve(cwd, ref) };
-	}
-
+):
+	| { type: "gist"; id: string }
+	| { type: "file"; path: string }
+	| { type: "issue"; owner: string; repo: string; issue: string }
+	| { type: "url"; url: URL } {
 	const shareMatch = ref.match(SHARE_URL_RE);
 	if (shareMatch) return { type: "gist", id: shareMatch[1] };
 
@@ -72,9 +74,17 @@ function parseRef(
 	const issueMatch = ref.match(ISSUE_URL_RE);
 	if (issueMatch) return { type: "issue", owner: issueMatch[1], repo: issueMatch[2], issue: issueMatch[3] };
 
+	if (/^https?:\/\/.*\.jsonl$/.test(ref)) return { type: "url", url: new URL(ref) };
+
+	if (ref.endsWith(".html") || ref.endsWith(".jsonl")) {
+		return { type: "file", path: isAbsolute(ref) ? ref : resolve(cwd, ref) };
+	}
+
 	if (GIST_ID_RE.test(ref)) return { type: "gist", id: ref };
 
-	throw new Error(`expected a gist ID, gist URL, pi.dev share URL, issue URL, .html file, or .jsonl file: ${ref}`);
+	throw new Error(
+		`expected a gist ID, gist URL, pi.dev share URL, issue URL, .jsonl URL, .html file, or .jsonl file: ${ref}`,
+	);
 }
 
 function parseSessionJsonl(raw: string): { header: SessionHeader; jsonl: string } {
@@ -282,11 +292,12 @@ async function fetchGistSession(gistId: string): Promise<{ header: SessionHeader
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("ir", {
-		description: "Import a CI issue-analysis session from a gist ID, share URL, or issue URL and switch to it",
+		description:
+			"Import a CI issue-analysis session from a gist ID, share URL, issue URL, or .jsonl URL and switch to it",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const ref = args.trim();
 			if (!ref) {
-				ctx.ui.notify("Usage: /ir <gist-id | gist-url | pi.dev/session URL | issue URL>", "error");
+				ctx.ui.notify("Usage: /ir <gist-id | gist-url | pi.dev/session URL | issue URL | .jsonl URL>", "error");
 				return;
 			}
 
@@ -306,6 +317,9 @@ export default function (pi: ExtensionAPI) {
 					const gistId = await findIssueGistId(parsedRef.owner, parsedRef.repo, parsedRef.issue);
 					decoded = await fetchGistSession(gistId);
 					sourceName = `${gistId}.jsonl`;
+				} else if (parsedRef.type === "url") {
+					decoded = parseSessionJsonl(await fetchText(parsedRef.url.href));
+					sourceName = basename(parsedRef.url.pathname);
 				} else {
 					if (!existsSync(parsedRef.path)) throw new Error(`session file not found: ${parsedRef.path}`);
 					const raw = readFileSync(parsedRef.path, "utf8");

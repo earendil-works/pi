@@ -64,6 +64,8 @@ interface PendingRequest {
 	timer: ReturnType<typeof setTimeout> | undefined;
 	signal: AbortSignal | undefined;
 	onAbort: () => void;
+	/** Aborted when the request settles, so the transport does not dispatch (or retry) it afterwards. */
+	sendController: AbortController;
 	cancellable: boolean;
 	onProgress: ((progress: ProgressNotification) => void) | undefined;
 	progressToken: JsonRpcId | undefined;
@@ -100,10 +102,10 @@ function validateListPage(
 	for (const item of items) {
 		if (!isObject(item) || !isItem(item)) throw invalid(`Invalid entry in MCP ${method} result`);
 	}
-	if (value.nextCursor !== undefined && typeof value.nextCursor !== "string") {
-		throw invalid(`Invalid MCP ${method} cursor`);
-	}
-	return { items, ...(value.nextCursor === undefined ? {} : { nextCursor: value.nextCursor }) };
+	// Some servers end pagination with `null` or `""` instead of omitting the cursor.
+	const nextCursor = value.nextCursor === null || value.nextCursor === "" ? undefined : value.nextCursor;
+	if (nextCursor !== undefined && typeof nextCursor !== "string") throw invalid(`Invalid MCP ${method} cursor`);
+	return { items, ...(nextCursor === undefined ? {} : { nextCursor }) };
 }
 
 const isTool = (tool: Record<string, unknown>) => typeof tool.name === "string" && isObject(tool.inputSchema);
@@ -139,13 +141,13 @@ function validateReadResourceResult(value: unknown): ReadResourceResult {
 	return value as unknown as ReadResourceResult;
 }
 
-/** `content` is required by the spec, but servers that only return `structuredContent` omit it (the SDK defaults it too). */
+/**
+ * `content` is required by the spec, but servers that only return `structuredContent` omit it (the SDK defaults it too).
+ * `structuredContent` may be any JSON value, as MCP 2026-07-28 allows.
+ */
 function validateCallToolResult(value: unknown): CallToolResult {
 	if (!isObject(value) || (value.content !== undefined && !Array.isArray(value.content))) {
 		throw new McpError(JSON_RPC_ERROR_CODES.invalidRequest, "Invalid MCP tools/call result");
-	}
-	if (value.structuredContent !== undefined && !isObject(value.structuredContent)) {
-		throw new McpError(JSON_RPC_ERROR_CODES.invalidRequest, "Invalid MCP tools/call structured content");
 	}
 	return (value.content === undefined ? { ...value, content: [] } : value) as unknown as CallToolResult;
 }
@@ -426,6 +428,7 @@ export class McpClient {
 						method !== "initialize",
 						String(options.signal?.reason ?? "Aborted"),
 					),
+				sendController: new AbortController(),
 				cancellable: method !== "initialize",
 				onProgress: options.onProgress,
 				progressToken,
@@ -434,7 +437,9 @@ export class McpClient {
 			if (progressToken !== undefined) this.progressRequests.set(progressToken, id);
 			options.signal?.addEventListener("abort", entry.onAbort, { once: true });
 			this.armTimeout(id, entry);
-			transport.send(message).catch((error) => this.cancelPending(id, error, false));
+			transport
+				.send(message, { signal: entry.sendController.signal })
+				.catch((error) => this.cancelPending(id, error, false));
 		});
 	}
 
@@ -574,6 +579,7 @@ export class McpClient {
 		if (entry.timer) clearTimeout(entry.timer);
 		if (entry.progressToken !== undefined) this.progressRequests.delete(entry.progressToken);
 		entry.signal?.removeEventListener("abort", entry.onAbort);
+		entry.sendController.abort();
 	}
 
 	private rejectPending(error: unknown): void {

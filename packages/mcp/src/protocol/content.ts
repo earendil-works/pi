@@ -64,7 +64,8 @@ export type ContentBlock = TextContent | ImageContent | AudioContent | ResourceL
 
 export interface CallToolResult {
 	content: ContentBlock[];
-	structuredContent?: Record<string, unknown>;
+	/** Any JSON value, including arrays and `null` (MCP 2026-07-28; earlier revisions allowed only objects). */
+	structuredContent?: unknown;
 	isError?: boolean;
 	_meta?: Record<string, unknown>;
 }

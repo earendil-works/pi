@@ -1,0 +1,393 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pi.dev/schemas/keybindings.schema.json",
+  "$comment": "This file is generated from TypeScript source. Do not edit it manually; run npm run generate:schemas.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "tui.editor.cursorUp": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Move cursor up"
+    },
+    "tui.editor.cursorDown": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Move cursor down"
+    },
+    "tui.editor.historyPrevious": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Select previous prompt history entry"
+    },
+    "tui.editor.historyNext": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Select next prompt history entry"
+    },
+    "tui.editor.cursorLeft": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Move cursor left"
+    },
+    "tui.editor.cursorRight": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Move cursor right"
+    },
+    "tui.editor.cursorWordLeft": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Move cursor word left"
+    },
+    "tui.editor.cursorWordRight": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Move cursor word right"
+    },
+    "tui.editor.cursorLineStart": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Move to line start"
+    },
+    "tui.editor.cursorLineEnd": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Move to line end"
+    },
+    "tui.editor.jumpForward": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Jump forward to character"
+    },
+    "tui.editor.jumpBackward": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Jump backward to character"
+    },
+    "tui.editor.pageUp": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Page up"
+    },
+    "tui.editor.pageDown": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Page down"
+    },
+    "tui.editor.deleteCharBackward": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Delete character backward"
+    },
+    "tui.editor.deleteCharForward": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Delete character forward"
+    },
+    "tui.editor.deleteWordBackward": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Delete word backward"
+    },
+    "tui.editor.deleteWordForward": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Delete word forward"
+    },
+    "tui.editor.deleteToLineStart": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Delete to line start"
+    },
+    "tui.editor.deleteToLineEnd": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Delete to line end"
+    },
+    "tui.editor.yank": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Yank"
+    },
+    "tui.editor.yankPop": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Yank pop"
+    },
+    "tui.editor.undo": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Undo"
+    },
+    "tui.input.newLine": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Insert newline"
+    },
+    "tui.input.submit": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Submit input"
+    },
+    "tui.input.tab": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Tab / autocomplete"
+    },
+    "tui.input.copy": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Copy selection"
+    },
+    "tui.select.up": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Move selection up"
+    },
+    "tui.select.down": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Move selection down"
+    },
+    "tui.select.pageUp": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Selection page up"
+    },
+    "tui.select.pageDown": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Selection page down"
+    },
+    "tui.select.confirm": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Confirm selection"
+    },
+    "tui.select.cancel": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Cancel selection"
+    },
+    "tui.altScreen.pageUp": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Scroll viewport up one page"
+    },
+    "tui.altScreen.pageDown": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Scroll viewport down one page"
+    },
+    "tui.altScreen.halfPageUp": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Scroll viewport up half a page"
+    },
+    "tui.altScreen.halfPageDown": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Scroll viewport down half a page"
+    },
+    "tui.altScreen.lineUp": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Scroll viewport up one line"
+    },
+    "tui.altScreen.lineDown": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Scroll viewport down one line"
+    },
+    "tui.altScreen.previousPrompt": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Jump to previous semantic prompt"
+    },
+    "tui.altScreen.nextPrompt": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Jump to next semantic prompt"
+    },
+    "tui.altScreen.search": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Search the primary scroll view"
+    },
+    "tui.altScreen.searchNext": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Select the next search match"
+    },
+    "tui.altScreen.searchPrevious": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Select the previous search match"
+    },
+    "tui.altScreen.searchClose": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Close transcript search"
+    },
+    "tui.altScreen.top": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Scroll viewport to top"
+    },
+    "tui.altScreen.bottom": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Scroll viewport to bottom"
+    },
+    "app.interrupt": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Cancel or abort"
+    },
+    "app.clear": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Clear editor"
+    },
+    "app.exit": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Exit when editor is empty"
+    },
+    "app.suspend": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Suspend to background"
+    },
+    "app.thinking.cycle": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Cycle thinking level"
+    },
+    "app.thinking.save": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Save thinking level"
+    },
+    "app.model.cycleForward": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Cycle to next model"
+    },
+    "app.model.cycleBackward": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Cycle to previous model"
+    },
+    "app.model.select": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Open model selector"
+    },
+    "app.tools.expand": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Toggle tool output"
+    },
+    "app.thinking.toggle": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Toggle thinking blocks"
+    },
+    "app.session.toggleNamedFilter": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Toggle named session filter"
+    },
+    "app.editor.external": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Open external editor"
+    },
+    "app.message.copy": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Copy selection or last assistant message"
+    },
+    "app.message.followUp": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Queue follow-up message"
+    },
+    "app.message.dequeue": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Restore queued messages"
+    },
+    "app.clipboard.pasteImage": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Paste files on macOS, images, or text from clipboard"
+    },
+    "app.session.new": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Start a new session"
+    },
+    "app.session.tree": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Open session tree"
+    },
+    "app.session.fork": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Fork current session"
+    },
+    "app.session.resume": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Resume a session"
+    },
+    "app.tree.foldOrUp": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Fold tree branch or move up"
+    },
+    "app.tree.unfoldOrDown": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Unfold tree branch or move down"
+    },
+    "app.tree.editLabel": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Edit tree label"
+    },
+    "app.tree.toggleLabelTimestamp": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Toggle tree label timestamps"
+    },
+    "app.session.togglePath": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Toggle session path display"
+    },
+    "app.session.toggleSort": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Toggle session sort mode"
+    },
+    "app.session.rename": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Rename session"
+    },
+    "app.session.delete": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Delete session"
+    },
+    "app.session.deleteNoninvasive": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Delete session when query is empty"
+    },
+    "app.models.save": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Save model selection"
+    },
+    "app.models.enableAll": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Enable all models"
+    },
+    "app.models.clearAll": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Clear all models"
+    },
+    "app.models.toggleProvider": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Toggle all models for provider"
+    },
+    "app.models.reorderUp": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Move model up in order"
+    },
+    "app.models.reorderDown": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Move model down in order"
+    },
+    "app.tree.filter.default": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Tree filter: default view"
+    },
+    "app.tree.filter.noTools": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Tree filter: hide tool results"
+    },
+    "app.tree.filter.userOnly": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Tree filter: user messages only"
+    },
+    "app.tree.filter.labeledOnly": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Tree filter: labeled entries only"
+    },
+    "app.tree.filter.all": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Tree filter: show all entries"
+    },
+    "app.tree.filter.cycleForward": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Tree filter: cycle forward"
+    },
+    "app.tree.filter.cycleBackward": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Tree filter: cycle backward"
+    }
+  },
+  "additionalProperties": {
+    "$ref": "#/$defs/KeybindingValue"
+  },
+  "$defs": {
+    "KeybindingValue": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(?!.*(?:ctrl\\+.*ctrl\\+|shift\\+.*shift\\+|alt\\+.*alt\\+|super\\+.*super\\+))(?:(?:ctrl|shift|alt|super)\\+){0,4}(?:[a-z0-9]|escape|esc|enter|return|tab|space|backspace|delete|insert|clear|home|end|pageUp|pageDown|up|down|left|right|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|`|-|=|\\[|\\]|\\\\|;|'|,|\\.|/|!|@|#|\\$|%|\\^|&|\\*|\\(|\\)|_|\\+|\\||~|\\{|\\}|:|<|>|\\?)$",
+          "description": "Key identifier with optional ctrl, shift, alt, or super modifiers."
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?!.*(?:ctrl\\+.*ctrl\\+|shift\\+.*shift\\+|alt\\+.*alt\\+|super\\+.*super\\+))(?:(?:ctrl|shift|alt|super)\\+){0,4}(?:[a-z0-9]|escape|esc|enter|return|tab|space|backspace|delete|insert|clear|home|end|pageUp|pageDown|up|down|left|right|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|`|-|=|\\[|\\]|\\\\|;|'|,|\\.|/|!|@|#|\\$|%|\\^|&|\\*|\\(|\\)|_|\\+|\\||~|\\{|\\}|:|<|>|\\?)$",
+            "description": "Key identifier with optional ctrl, shift, alt, or super modifiers."
+          }
+        }
+      ]
+    }
+  }
+}

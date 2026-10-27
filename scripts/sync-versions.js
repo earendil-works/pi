@@ -2,11 +2,11 @@
 
 /**
  * Validates lockstep versions for published packages, then synchronizes
- * internal dependency versions in all workspace packages, including private ones.
+ * exact internal dependency versions in all workspace packages, including private ones.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { findPackageDirectories } from "./package-workspaces.mjs";
 
 const GENERATED_PACKAGE_SUFFIXES = [join("coding-agent", "install-lock")];
@@ -41,7 +41,7 @@ console.log("\nAll non-private packages are at the same version (lockstep).");
 let totalUpdates = 0;
 const updatedPackages = new Set();
 for (const pkg of workspacePackages) {
-	for (const dependencyType of ["dependencies", "devDependencies"]) {
+	for (const dependencyType of ["dependencies", "devDependencies", "optionalDependencies"]) {
 		const dependencies = pkg.data[dependencyType];
 		if (!dependencies) {
 			continue;
@@ -50,15 +50,14 @@ for (const pkg of workspacePackages) {
 		for (const [dependencyName, currentSpecifier] of Object.entries(dependencies)) {
 			// Registry aliases such as `npm:@earendil-works/pi-ai@0.1.2` are never workspace-linked,
 			// so lockstep bumping them would point at a version that is not published yet.
-			const version = versionMap.get(dependencyName);
-			const newSpecifier = version ? `^${version}` : null;
+			const newSpecifier = versionMap.get(dependencyName);
 			if (!newSpecifier || currentSpecifier === newSpecifier) {
 				continue;
 			}
 
 			console.log(`\n${pkg.data.name}:`);
 			console.log(
-				`  ${dependencyName}: ${currentSpecifier} → ${newSpecifier}${dependencyType === "devDependencies" ? " (devDependencies)" : ""}`,
+				`  ${dependencyName}: ${currentSpecifier} → ${newSpecifier}${dependencyType === "dependencies" ? "" : ` (${dependencyType})`}`,
 			);
 			dependencies[dependencyName] = newSpecifier;
 			updatedPackages.add(pkg);
@@ -75,4 +74,15 @@ if (totalUpdates === 0) {
 	console.log("\nAll inter-package dependencies are already in sync.");
 } else {
 	console.log(`\nUpdated ${totalUpdates} dependency version(s).`);
+}
+
+// pi-ai reports its version in the User-Agent without reading package.json, which browsers cannot do.
+const aiPackage = workspacePackages.find((pkg) => pkg.data.name === "@earendil-works/pi-ai");
+const aiVersionPath = aiPackage && join(dirname(aiPackage.path), "src", "utils", "version.ts");
+if (aiVersionPath && existsSync(aiVersionPath)) {
+	const content = `// The @earendil-works/pi-ai package version. scripts/sync-versions.js keeps it in sync with package.json.\nexport const PI_AI_VERSION = ${JSON.stringify(aiPackage.data.version)};\n`;
+	if (readFileSync(aiVersionPath, "utf8") !== content) {
+		writeFileSync(aiVersionPath, content);
+		console.log(`\nUpdated ${aiVersionPath} to ${aiPackage.data.version}.`);
+	}
 }

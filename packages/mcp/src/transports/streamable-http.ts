@@ -5,11 +5,17 @@ import {
 	JSON_RPC_ERROR_CODES,
 	type JsonRpcId,
 	type JsonRpcMessage,
+	McpAbortError,
 	McpConnectionClosedError,
 	parseJsonRpcMessage,
 	toError,
 } from "../protocol/jsonrpc.ts";
-import { DEFAULT_MAX_MESSAGE_BYTES, type McpTransport, TransportEvents } from "./transport.ts";
+import {
+	DEFAULT_MAX_MESSAGE_BYTES,
+	type McpTransport,
+	type McpTransportSendOptions,
+	TransportEvents,
+} from "./transport.ts";
 
 const MAX_ERROR_BODY_BYTES = 8 * 1024;
 const ERROR_MESSAGE_BODY_CHARS = 500;
@@ -195,12 +201,17 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	private sessionIdValue: string | undefined;
 	private protocolVersion: string | undefined;
 	private getStreamStarted = false;
+	/** Access token of the latest request, which `close()` reuses instead of asking the auth provider. */
+	private lastToken: string | undefined;
 
 	constructor(options: StreamableHttpTransportOptions) {
 		super();
 		this.options = Object.freeze({ ...options, headers: options.headers ? { ...options.headers } : undefined });
 		this.url = new URL(options.url);
-		this.fetch = options.fetch ?? globalThis.fetch;
+		const fetch = options.fetch ?? globalThis.fetch;
+		// Call fetch without a receiver. `this.fetch(...)` and `context.fetch(...)` would pass the transport or
+		// the auth context as `this`, which Cloudflare Workers reject for the platform fetch ("Illegal invocation").
+		this.fetch = (input, init) => fetch(input, init);
 	}
 
 	get sessionId(): string | undefined {
@@ -217,12 +228,16 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		this.protocolVersion = version;
 	}
 
-	async send(message: JsonRpcMessage): Promise<void> {
+	async send(message: JsonRpcMessage, { signal }: McpTransportSendOptions = {}): Promise<void> {
 		if (!this.started || this.closed) throw new McpConnectionClosedError();
-		const response = await this.authorizedFetch("POST", {
-			headers: { accept: "application/json, text/event-stream", "content-type": "application/json" },
-			body: JSON.stringify(message),
-		});
+		const response = await this.authorizedFetch(
+			"POST",
+			{
+				headers: { accept: "application/json, text/event-stream", "content-type": "application/json" },
+				body: JSON.stringify(message),
+			},
+			signal,
+		);
 		await this.checkResponse(response);
 		this.captureSession(response);
 
@@ -255,18 +270,16 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		this.closed = true;
 		this.controller.abort();
 		if (this.started && this.sessionIdValue) {
-			const controller = new AbortController();
-			const timeout = setTimeout(() => controller.abort(), 1_000);
+			// Best effort: the session expires on the server anyway. The auth provider may refresh tokens
+			// over the network, so it is not asked here and closing never waits for a refresh.
 			try {
-				const { headers } = await this.headers();
-				await this.fetch(this.url, { method: "DELETE", headers, signal: controller.signal })
-					.then(discard)
-					.catch(() => undefined);
-			} catch {
-				// Resolving auth headers failed; the session will expire on the server.
-			} finally {
-				clearTimeout(timeout);
-			}
+				const response = await this.fetch(this.url, {
+					method: "DELETE",
+					headers: this.buildHeaders({}, this.lastToken),
+					signal: AbortSignal.timeout(1_000),
+				});
+				await discard(response);
+			} catch {}
 		}
 		this.emitClose();
 	}
@@ -274,14 +287,20 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	/**
 	 * Fetch with auth headers. A 401 (or a 403 asking for more scope) is handed to the auth provider
 	 * once, and the request is retried with whatever credentials it left behind.
+	 *
+	 * `signal` only stops dispatch: getting a token or the authorization recovery can take a while, and a
+	 * request its sender gave up on in the meantime must not reach the server. It does not abort the shared
+	 * recovery, which other requests may wait for.
 	 */
 	private async authorizedFetch(
 		method: "GET" | "POST",
 		init: { headers: Record<string, string>; body?: string },
+		signal?: AbortSignal,
 	): Promise<Response> {
 		const onUnauthorized = this.options.authProvider?.onUnauthorized?.bind(this.options.authProvider);
 		for (let attempt = 0; ; attempt++) {
 			const { headers, token } = await this.headers(init.headers);
+			if (signal?.aborted) throw new McpAbortError();
 			const response = await this.fetch(this.url, {
 				method,
 				headers,
@@ -298,13 +317,18 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	}
 
 	private async headers(extra: Record<string, string> = {}): Promise<{ headers: Headers; token?: string }> {
+		const token = await this.options.authProvider?.token();
+		this.lastToken = token;
+		return { headers: this.buildHeaders(extra, token), ...(token ? { token } : {}) };
+	}
+
+	private buildHeaders(extra: Record<string, string>, token: string | undefined): Headers {
 		const headers = new Headers(this.options.headers);
 		for (const [name, value] of Object.entries(extra)) headers.set(name, value);
 		if (this.sessionIdValue) headers.set("Mcp-Session-Id", this.sessionIdValue);
 		if (this.protocolVersion) headers.set("MCP-Protocol-Version", this.protocolVersion);
-		const token = await this.options.authProvider?.token();
 		if (token) headers.set("Authorization", `Bearer ${token}`);
-		return { headers, ...(token ? { token } : {}) };
+		return headers;
 	}
 
 	private captureSession(response: Response): void {
@@ -314,7 +338,8 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 
 	private async checkResponse(response: Response): Promise<void> {
 		if (response.ok) return;
-		const body = (await response.text().catch(() => "")).slice(0, MAX_ERROR_BODY_BYTES);
+		// A copy, not a slice: V8 slices keep the whole body alive, and the error keeps this excerpt.
+		const body = `${(await response.text().catch(() => "")).slice(0, MAX_ERROR_BODY_BYTES)} `.slice(0, -1);
 		if (response.status === 401) throw new McpAuthRequiredError(response, body);
 		if (response.status === 404 && this.sessionIdValue) throw new McpSessionExpiredError(body);
 		throw new McpHttpError(response.status, describeHttpFailure(response.status, body), body);

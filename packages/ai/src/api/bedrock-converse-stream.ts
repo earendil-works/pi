@@ -13,6 +13,7 @@ import {
 	type ContentBlockStopEvent,
 	ConversationRole,
 	ConverseStreamCommand,
+	type ConverseStreamCommandOutput,
 	type ConverseStreamMetadataEvent,
 	ImageFormat,
 	type Message,
@@ -43,20 +44,19 @@ import type {
 	StreamOptions,
 	TextContent,
 	ThinkingBudgets,
-	ThinkingContent,
 	ThinkingLevel,
 	Tool,
-	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
 import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
-import { parseStreamingJson } from "../utils/json-parse.ts";
+import { type ClientIdentity, getClientVersion } from "../utils/identity.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { ToolCallArgumentsStream } from "../utils/streaming-json.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import {
 	collapseSystemMessages,
@@ -65,14 +65,19 @@ import {
 	type TranscriptContext,
 	withoutInitialSystemMessage,
 } from "../utils/transcript.ts";
-import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import {
+	getJsonSchemaToolParameters,
+	isStrictToolLimitErrorMessage,
+	prefersJsonSchemaStrictSampling,
+	resolveJsonSchemaStrictSampling,
+} from "./constrained-sampling.ts";
 import {
 	adjustMaxTokensForThinking,
 	buildBaseOptions,
 	clampMaxTokensToContext,
 	clampReasoning,
 } from "./simple-options.ts";
-import { transformMessages } from "./transform-messages.ts";
+import { splitErrorToolResultImages, transformMessages } from "./transform-messages.ts";
 
 export type BedrockThinkingDisplay = "summarized" | "omitted";
 
@@ -110,14 +115,22 @@ export interface BedrockOptions extends StreamOptions {
 	bearerToken?: string;
 }
 
-type Block = (TextContent | ThinkingContent | ToolCall) & {
-	index?: number;
-	partialJson?: string;
-	/** Scratch buffer for encrypted reasoning deltas, joined into `thinkingSignature`. */
+/**
+ * Stream state of one open Bedrock content block, keyed by `contentBlockIndex` and kept off the content block so it
+ * never reaches partial messages.
+ */
+type OpenBlock = {
+	readonly contentIndex: number;
+	readonly arguments?: ToolCallArgumentsStream;
+	/** Encrypted reasoning deltas, joined into `thinkingSignature` when the block ends. */
 	redactedChunks?: Uint8Array[];
 };
 
+type OpenBlocks = Map<number, OpenBlock>;
+
 const EMPTY_TEXT_PLACEHOLDER = "<empty>";
+
+const THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01";
 
 /** Matches the placeholder the Anthropic API path uses for redacted thinking. */
 const REDACTED_THINKING_PLACEHOLDER = "[Reasoning redacted]";
@@ -150,7 +163,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			timestamp: Date.now(),
 		};
 
-		const blocks = output.content as Block[];
+		const openBlocks: OpenBlocks = new Map();
 
 		// A profile explicitly configured through pi's auth flow (the `profile`
 		// option or scoped `AWS_PROFILE` on the stored credential's env) must win
@@ -160,6 +173,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 		const optionsProfile = options.profile || options.env?.AWS_PROFILE;
 		const config: BedrockRuntimeClientConfig = {
 			profile: optionsProfile || getProviderEnvValue("AWS_PROFILE", options.env),
+			customUserAgent: bedrockUserAgent(options.identity),
 		};
 		const configuredRegion = getConfiguredBedrockRegion(options);
 		const hasAmbientConfiguredProfile = Boolean(getProviderEnvValue("AWS_PROFILE"));
@@ -261,29 +275,55 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			const inferenceMaxTokens = options.maxTokens ?? (isAnthropicClaudeModel(model) ? model.maxTokens : undefined);
 			const initialSystemMessage = getInitialSystemMessage(normalizedContext.messages);
 			const initialSystemPrompt = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : undefined;
-			let commandInput = {
-				modelId: model.id,
-				messages: convertMessages(normalizedContext, model, cacheRetention, options.env),
-				system: buildSystemPrompt(initialSystemPrompt, model, cacheRetention, options.env),
-				inferenceConfig: {
-					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
-					...(options.temperature !== undefined && { temperature: options.temperature }),
-				},
-				toolConfig: convertToolConfig(
+			let disablePreferredStrictTools = false;
+			let response: ConverseStreamCommandOutput;
+			for (;;) {
+				const tools = convertToolConfig(
 					getCurrentTools(normalizedContext.messages),
 					options.toolChoice,
 					supportsStrictMode,
-				),
-				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
-				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
-			};
-			const nextCommandInput = await options?.onPayload?.(commandInput, model);
-			if (nextCommandInput !== undefined) {
-				commandInput = nextCommandInput as typeof commandInput;
+					disablePreferredStrictTools,
+				);
+				let commandInput = {
+					modelId: model.id,
+					messages: convertMessages(normalizedContext, model, cacheRetention, options.env),
+					system: buildSystemPrompt(initialSystemPrompt, model, cacheRetention, options.env),
+					inferenceConfig: {
+						...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
+						...(options.temperature !== undefined && { temperature: options.temperature }),
+					},
+					toolConfig: tools.toolConfig,
+					additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
+					...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
+				};
+				const nextCommandInput = await options?.onPayload?.(commandInput, model);
+				if (nextCommandInput !== undefined) {
+					commandInput = nextCommandInput as typeof commandInput;
+				}
+				try {
+					response = await client.send(new ConverseStreamCommand(commandInput), { abortSignal: options.signal });
+					break;
+				} catch (error) {
+					// Bedrock checks the tool schemas before it starts the stream, so a retry never repeats streamed output.
+					if (
+						options.signal?.aborted ||
+						disablePreferredStrictTools ||
+						!tools.hasPreferredStrictTools ||
+						!(error instanceof BedrockRuntimeServiceException) ||
+						error.name !== "ValidationException" ||
+						!isStrictToolLimitErrorMessage(error.message)
+					) {
+						throw error;
+					}
+					disablePreferredStrictTools = true;
+					appendAssistantMessageDiagnostic(output, {
+						type: "bedrock_strict_tools_fallback",
+						timestamp: Date.now(),
+						error: { message: error.message },
+						details: { reason: "strict_tool_limits_exceeded" },
+					});
+				}
 			}
-			const command = new ConverseStreamCommand(commandInput);
-
-			const response = await client.send(command, { abortSignal: options.signal });
 			responseRequestId = normalizeDiagnosticValue(response.$metadata.requestId);
 			if (!observedRawResponse && response.$metadata.httpStatusCode !== undefined) {
 				const responseHeaders: Record<string, string> = {};
@@ -301,11 +341,11 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					}
 					stream.push({ type: "start", partial: output });
 				} else if (item.contentBlockStart) {
-					handleContentBlockStart(item.contentBlockStart, blocks, output, stream);
+					handleContentBlockStart(item.contentBlockStart, openBlocks, output, stream);
 				} else if (item.contentBlockDelta) {
-					handleContentBlockDelta(item.contentBlockDelta, blocks, output, stream);
+					handleContentBlockDelta(item.contentBlockDelta, openBlocks, output, stream);
 				} else if (item.contentBlockStop) {
-					handleContentBlockStop(item.contentBlockStop, blocks, output, stream);
+					handleContentBlockStop(item.contentBlockStop, openBlocks, output, stream);
 				} else if (item.messageStop) {
 					output.rawStopReason = item.messageStop.stopReason;
 					const { stopReason, errorMessage } = mapStopReason(item.messageStop.stopReason);
@@ -340,13 +380,11 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 
 			// A stream can settle without stopping every block, so finalize here too.
-			for (const block of output.content) finalizeStreamingBlock(block as Block);
+			flushOpenBlocks(openBlocks, output);
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
-			for (const block of output.content) {
-				finalizeStreamingBlock(block as Block);
-			}
+			flushOpenBlocks(openBlocks, output);
 			output.stopReason = options.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatBedrockError(error);
 			if (output.stopReason === "error") {
@@ -469,6 +507,16 @@ function isReservedHeader(key: string): boolean {
 }
 
 /**
+ * The client identity as AWS SDK user agent pairs. The SDK appends them to its own `User-Agent` and escapes characters
+ * that are not valid in a user agent token, so the detailed form is reduced to name and version.
+ */
+function bedrockUserAgent(identity: ClientIdentity | undefined): string | [string, string?][] {
+	const mode = identity?.userAgent ?? "detailed";
+	if (typeof mode === "object") return mode.custom;
+	return mode === "short" ? [["pi"]] : [["pi", getClientVersion(identity)]];
+}
+
+/**
  * Attach caller-supplied headers to the outgoing Bedrock request via a Smithy
  * `build`-step middleware. The `build` step runs after request serialisation but
  * before SigV4 signing, so injected headers are covered by the signature. Reserved
@@ -579,70 +627,70 @@ export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStrea
 
 function handleContentBlockStart(
 	event: ContentBlockStartEvent,
-	blocks: Block[],
+	openBlocks: OpenBlocks,
 	output: AssistantMessage,
 	stream: AssistantMessageEventStream,
 ): void {
-	const index = event.contentBlockIndex!;
 	const start = event.start;
 
 	if (start?.toolUse) {
-		const block: Block = {
+		output.content.push({
 			type: "toolCall",
 			id: start.toolUse.toolUseId || "",
 			name: start.toolUse.name || "",
 			arguments: {},
-			partialJson: "",
-			index,
-		};
-		output.content.push(block);
-		stream.push({ type: "toolcall_start", contentIndex: blocks.length - 1, partial: output });
+		});
+		const contentIndex = output.content.length - 1;
+		openBlocks.set(event.contentBlockIndex!, { contentIndex, arguments: new ToolCallArgumentsStream() });
+		stream.push({ type: "toolcall_start", contentIndex, partial: output });
 	}
 }
 
 function handleContentBlockDelta(
 	event: ContentBlockDeltaEvent,
-	blocks: Block[],
+	openBlocks: OpenBlocks,
 	output: AssistantMessage,
 	stream: AssistantMessageEventStream,
 ): void {
 	const contentBlockIndex = event.contentBlockIndex!;
 	const delta = event.delta;
-	let index = blocks.findIndex((b) => b.index === contentBlockIndex);
-	let block = blocks[index];
+	let open = openBlocks.get(contentBlockIndex);
+	let block = open === undefined ? undefined : output.content[open.contentIndex];
 
 	if (delta?.text !== undefined) {
 		// If no text block exists yet, create one, as `handleContentBlockStart` is not sent for text blocks
-		if (!block) {
-			const newBlock: Block = { type: "text", text: "", index: contentBlockIndex };
-			output.content.push(newBlock);
-			index = blocks.length - 1;
-			block = blocks[index];
-			stream.push({ type: "text_start", contentIndex: index, partial: output });
+		if (!open) {
+			output.content.push({ type: "text", text: "" });
+			open = { contentIndex: output.content.length - 1 };
+			openBlocks.set(contentBlockIndex, open);
+			block = output.content[open.contentIndex];
+			stream.push({ type: "text_start", contentIndex: open.contentIndex, partial: output });
 		}
-		if (block.type === "text") {
+		if (block?.type === "text") {
 			block.text += delta.text;
-			stream.push({ type: "text_delta", contentIndex: index, delta: delta.text, partial: output });
+			stream.push({ type: "text_delta", contentIndex: open.contentIndex, delta: delta.text, partial: output });
 		}
-	} else if (delta?.toolUse && block?.type === "toolCall") {
-		block.partialJson = (block.partialJson || "") + (delta.toolUse.input || "");
-		block.arguments = parseStreamingJson(block.partialJson);
-		stream.push({ type: "toolcall_delta", contentIndex: index, delta: delta.toolUse.input || "", partial: output });
+	} else if (delta?.toolUse && block?.type === "toolCall" && open?.arguments !== undefined) {
+		block.arguments = open.arguments.append(delta.toolUse.input || "");
+		stream.push({
+			type: "toolcall_delta",
+			contentIndex: open.contentIndex,
+			delta: delta.toolUse.input || "",
+			partial: output,
+		});
 	} else if (delta?.reasoningContent) {
-		let thinkingBlock = block;
-		let thinkingIndex = index;
-
-		if (!thinkingBlock) {
-			const newBlock: Block = { type: "thinking", thinking: "", thinkingSignature: "", index: contentBlockIndex };
-			output.content.push(newBlock);
-			thinkingIndex = blocks.length - 1;
-			thinkingBlock = blocks[thinkingIndex];
-			stream.push({ type: "thinking_start", contentIndex: thinkingIndex, partial: output });
+		if (!open) {
+			output.content.push({ type: "thinking", thinking: "", thinkingSignature: "" });
+			open = { contentIndex: output.content.length - 1 };
+			openBlocks.set(contentBlockIndex, open);
+			block = output.content[open.contentIndex];
+			stream.push({ type: "thinking_start", contentIndex: open.contentIndex, partial: output });
 		}
 
-		if (thinkingBlock?.type === "thinking") {
+		if (block?.type === "thinking") {
+			const thinkingIndex = open.contentIndex;
 			if (delta.reasoningContent.text) {
-				thinkingBlock.thinking += delta.reasoningContent.text;
+				block.thinking += delta.reasoningContent.text;
 				stream.push({
 					type: "thinking_delta",
 					contentIndex: thinkingIndex,
@@ -652,18 +700,17 @@ function handleContentBlockDelta(
 			}
 			// `thinkingSignature` holds either an Anthropic signature or an opaque redacted
 			// payload, never both: mixing them would corrupt whichever arrived first.
-			if (delta.reasoningContent.signature && !thinkingBlock.redacted) {
-				thinkingBlock.thinkingSignature =
-					(thinkingBlock.thinkingSignature || "") + delta.reasoningContent.signature;
+			if (delta.reasoningContent.signature && !block.redacted) {
+				block.thinkingSignature = (block.thinkingSignature || "") + delta.reasoningContent.signature;
 			}
 			if (delta.reasoningContent.redactedContent?.length) {
 				// Encrypted reasoning from non-Anthropic models on Bedrock (e.g. OpenAI GPT-5.6).
 				// The payload is opaque, so keep it verbatim in `thinkingSignature` the way the
 				// Anthropic path stores redacted thinking, and replay it on the next turn.
-				if (!thinkingBlock.redacted) {
-					thinkingBlock.redacted = true;
-					thinkingBlock.thinkingSignature = "";
-					thinkingBlock.thinking += REDACTED_THINKING_PLACEHOLDER;
+				if (!block.redacted) {
+					block.redacted = true;
+					block.thinkingSignature = "";
+					block.thinking += REDACTED_THINKING_PLACEHOLDER;
 					stream.push({
 						type: "thinking_delta",
 						contentIndex: thinkingIndex,
@@ -671,33 +718,29 @@ function handleContentBlockDelta(
 						partial: output,
 					});
 				}
-				thinkingBlock.redactedChunks ??= [];
-				thinkingBlock.redactedChunks.push(delta.reasoningContent.redactedContent);
+				open.redactedChunks ??= [];
+				open.redactedChunks.push(delta.reasoningContent.redactedContent);
 			}
 		}
 	}
 }
 
 /**
- * Encodes buffered encrypted reasoning into `thinkingSignature` and drops the scratch
- * buffer, which must never reach a persisted message: `Uint8Array` serializes to an
- * index-keyed object roughly ten times the size of the base64 payload.
+ * Encodes buffered encrypted reasoning into `thinkingSignature`. The chunks stay in the stream state, never on the
+ * block: `Uint8Array` is not JSON and serializes to an index-keyed object roughly ten times the size of the base64
+ * payload.
  */
-function flushRedactedContent(block: Block): void {
-	if (block.type !== "thinking" || !block.redactedChunks) return;
-	block.thinkingSignature = bytesToBase64(block.redactedChunks);
-	delete block.redactedChunks;
+function flushRedactedContent(open: OpenBlock, output: AssistantMessage): void {
+	const block = output.content[open.contentIndex];
+	if (block?.type !== "thinking" || !open.redactedChunks) return;
+	block.thinkingSignature = bytesToBase64(open.redactedChunks);
+	open.redactedChunks = undefined;
 }
 
-/**
- * Strips every streaming scratch field. Runs from the terminal paths as well as
- * `contentBlockStop`, because a stream can settle without stopping each block.
- */
-function finalizeStreamingBlock(block: Block): void {
-	delete block.index;
-	// partialJson is only a streaming scratch buffer; never persist it.
-	delete block.partialJson;
-	flushRedactedContent(block);
+/** Ends the stream state of blocks a stream settled without stopping. */
+function flushOpenBlocks(openBlocks: OpenBlocks, output: AssistantMessage): void {
+	for (const open of openBlocks.values()) flushRedactedContent(open, output);
+	openBlocks.clear();
 }
 
 function handleMetadata(
@@ -721,28 +764,26 @@ function handleMetadata(
 
 function handleContentBlockStop(
 	event: ContentBlockStopEvent,
-	blocks: Block[],
+	openBlocks: OpenBlocks,
 	output: AssistantMessage,
 	stream: AssistantMessageEventStream,
 ): void {
-	const index = blocks.findIndex((b) => b.index === event.contentBlockIndex);
-	const block = blocks[index];
-	if (!block) return;
-	delete (block as Block).index;
+	const open = openBlocks.get(event.contentBlockIndex!);
+	if (!open) return;
+	openBlocks.delete(event.contentBlockIndex!);
+	const index = open.contentIndex;
+	const block = output.content[index]!;
 
 	switch (block.type) {
 		case "text":
 			stream.push({ type: "text_end", contentIndex: index, content: block.text, partial: output });
 			break;
 		case "thinking":
-			flushRedactedContent(block);
+			flushRedactedContent(open, output);
 			stream.push({ type: "thinking_end", contentIndex: index, content: block.thinking, partial: output });
 			break;
 		case "toolCall":
-			block.arguments = parseStreamingJson(block.partialJson);
-			// Finalize in-place and strip the scratch buffer so replay only
-			// carries parsed arguments.
-			delete (block as Block).partialJson;
+			if (open.arguments !== undefined) Object.assign(block, open.arguments.finish());
 			stream.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: output });
 			break;
 	}
@@ -771,6 +812,7 @@ function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean 
 			s.includes("opus-5") ||
 			s.includes("sonnet-4-6") ||
 			s.includes("sonnet-5") ||
+			s.includes("haiku-5") ||
 			s.includes("fable-5"),
 	);
 }
@@ -783,6 +825,24 @@ function supportsNativeXhighEffort(model: Model<"bedrock-converse-stream">): boo
 			s.includes("opus-4-8") ||
 			s.includes("opus-5") ||
 			s.includes("sonnet-5") ||
+			s.includes("haiku-5") ||
+			s.includes("fable-5"),
+	);
+}
+
+/**
+ * Check if the model accepts `thinking.block_binding`. Opus 4.6 and Sonnet 4.6 reject it with
+ * "thinking.adaptive.block_binding: Extra inputs are not permitted".
+ */
+function supportsThinkingBlockBinding(model: Model<"bedrock-converse-stream">): boolean {
+	const candidates = getModelMatchCandidates(model.id, model.name);
+	return candidates.some(
+		(s) =>
+			s.includes("opus-4-7") ||
+			s.includes("opus-4-8") ||
+			s.includes("opus-5") ||
+			s.includes("sonnet-5") ||
+			s.includes("haiku-5") ||
 			s.includes("fable-5"),
 	);
 }
@@ -862,8 +922,13 @@ function supportsPromptCaching(model: Model<"bedrock-converse-stream">, env?: Pr
 		if (getProviderEnvValue("AWS_BEDROCK_FORCE_CACHE", env) === "1") return true;
 		return false;
 	}
-	// Claude 5 models (fable-5, opus-5, sonnet-5)
-	if (candidates.some((s) => s.includes("fable-5") || s.includes("opus-5") || s.includes("sonnet-5"))) return true;
+	// Claude 5 models (fable-5, opus-5, sonnet-5, haiku-5)
+	if (
+		candidates.some(
+			(s) => s.includes("fable-5") || s.includes("opus-5") || s.includes("sonnet-5") || s.includes("haiku-5"),
+		)
+	)
+		return true;
 	// Claude 4.x models (opus-4, sonnet-4, haiku-4)
 	if (candidates.some((s) => s.includes("-4-"))) return true;
 	// Claude 3.7 Sonnet
@@ -1067,35 +1132,34 @@ function convertMessages(
 			case "toolResult": {
 				// Collect all consecutive toolResult messages into a single user message
 				// Bedrock requires all tool results to be in one message
-				const toolResults: ContentBlock.ToolResultMember[] = [];
-
-				// Add current tool result with all content blocks combined
-				toolResults.push({
-					toolResult: {
-						toolUseId: m.toolCallId,
-						content: convertToolResultContent(m.content),
-						status: m.isError ? ToolResultStatus.ERROR : ToolResultStatus.SUCCESS,
-					},
-				});
-
-				// Look ahead for consecutive toolResult messages
-				let j = i + 1;
+				const toolResults: ContentBlock[] = [];
+				// Claude rejects error tool results that contain anything but text, so for Claude their
+				// images follow all tool results of the turn (#10794). Other models keep them in place.
+				const errorImages: ContentBlock[] = [];
+				let j = i;
 				while (j < transformedMessages.length && transformedMessages[j].role === "toolResult") {
-					const nextMsg = transformedMessages[j] as ToolResultMessage;
+					const toolMsg = transformedMessages[j] as ToolResultMessage;
+					const split = isAnthropicClaudeModel(model) ? splitErrorToolResultImages(toolMsg) : undefined;
 					toolResults.push({
 						toolResult: {
-							toolUseId: nextMsg.toolCallId,
-							content: convertToolResultContent(nextMsg.content),
-							status: nextMsg.isError ? ToolResultStatus.ERROR : ToolResultStatus.SUCCESS,
+							toolUseId: toolMsg.toolCallId,
+							content: convertToolResultContent(split?.content ?? toolMsg.content),
+							status: toolMsg.isError ? ToolResultStatus.ERROR : ToolResultStatus.SUCCESS,
 						},
 					});
+					if (split) {
+						errorImages.push(
+							{ text: split.caption },
+							...split.images.map((image) => ({ image: createImageBlock(image.mimeType, image.data) })),
+						);
+					}
 					j++;
 				}
 
 				// Skip the messages we've already processed
 				i = j - 1;
 
-				result.push({ role: ConversationRole.USER, content: toolResults });
+				result.push({ role: ConversationRole.USER, content: [...toolResults, ...errorImages] });
 				break;
 			}
 			default:
@@ -1123,12 +1187,18 @@ function convertToolConfig(
 	tools: Tool[] | undefined,
 	toolChoice: BedrockOptions["toolChoice"],
 	supportsStrictMode: boolean,
-): ToolConfiguration | undefined {
-	if (!tools?.length) return undefined;
-	if (toolChoice === "none") return undefined;
+	disablePreferredStrictTools: boolean,
+): { toolConfig: ToolConfiguration | undefined; hasPreferredStrictTools: boolean } {
+	if (!tools?.length || toolChoice === "none") return { toolConfig: undefined, hasPreferredStrictTools: false };
 
+	let hasPreferredStrictTools = false;
 	const bedrockTools: BedrockTool[] = tools.map((tool) => {
-		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
+		const preferred = prefersJsonSchemaStrictSampling(tool);
+		const strict =
+			disablePreferredStrictTools && preferred
+				? undefined
+				: resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
+		if (strict === true && preferred) hasPreferredStrictTools = true;
 		return {
 			toolSpec: {
 				name: tool.name,
@@ -1153,7 +1223,7 @@ function convertToolConfig(
 			}
 	}
 
-	return { tools: bedrockTools, toolChoice: bedrockToolChoice };
+	return { toolConfig: { tools: bedrockTools, toolChoice: bedrockToolChoice }, hasPreferredStrictTools };
 }
 
 function mapStopReason(reason: string | undefined): { stopReason: StopReason; errorMessage?: string } {
@@ -1244,11 +1314,21 @@ function buildAdditionalModelRequestFields(
 	if (isAnthropicClaudeModel(model)) {
 		// GovCloud Bedrock currently rejects the Claude thinking.display field.
 		// Omit it there until the GovCloud Converse schema catches up.
-		const display = isGovCloudBedrockTarget(model, options) ? undefined : (options.thinkingDisplay ?? "summarized");
+		const isGovCloud = isGovCloudBedrockTarget(model, options);
+		const display = isGovCloud ? undefined : (options.thinkingDisplay ?? "summarized");
+		// Replayed signed thinking blocks are bound to the system prompt and tools they were
+		// created with. Bedrock 400s on replay after either changes unless stale blocks are
+		// dropped, matching the Anthropic provider. Skipped on GovCloud like display.
+		const useBlockBinding = !isGovCloud && supportsThinkingBlockBinding(model);
 		const result: Record<string, any> = supportsAdaptiveThinking(model.id, model.name)
 			? {
-					thinking: { type: "adaptive", ...(display !== undefined ? { display } : {}) },
+					thinking: {
+						type: "adaptive",
+						...(display !== undefined ? { display } : {}),
+						...(useBlockBinding ? { block_binding: { prefix_mismatch_behavior: "drop_block" } } : {}),
+					},
 					output_config: { effort: mapThinkingLevelToEffort(model, options.reasoning) },
+					...(useBlockBinding ? { anthropic_beta: [THINKING_BINDING_CONTROLS_BETA] } : {}),
 				}
 			: (() => {
 					const defaultBudgets: Record<ThinkingLevel, number> = {
@@ -1280,8 +1360,44 @@ function buildAdditionalModelRequestFields(
 		return result;
 	}
 
+	const candidates = getModelMatchCandidates(model.id, model.name);
+
+	if (candidates.some((s) => s.includes("gpt-oss"))) {
+		return { reasoning_effort: OPENAI_GPT_OSS_EFFORT[options.reasoning] };
+	}
+
+	if (candidates.some((s) => s.includes("gpt-"))) {
+		const mapped = model.thinkingLevelMap?.[options.reasoning];
+		return {
+			reasoning: { effort: typeof mapped === "string" ? mapped : OPENAI_GPT_EFFORT[options.reasoning] },
+		};
+	}
+
 	return undefined;
 }
+
+type OpenAIGptEffort = "low" | "medium" | "high" | "xhigh" | "max";
+type OpenAIGptOssEffort = "low" | "medium" | "high";
+
+/** OpenAI GPT models (GPT-5.x, GPT-6) take a nested `reasoning.effort` and reject `minimal`. */
+const OPENAI_GPT_EFFORT: Record<ThinkingLevel, OpenAIGptEffort> = {
+	minimal: "low",
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: "xhigh",
+	max: "max",
+};
+
+/** gpt-oss takes a flat `reasoning_effort` and only accepts low, medium and high. */
+const OPENAI_GPT_OSS_EFFORT: Record<ThinkingLevel, OpenAIGptOssEffort> = {
+	minimal: "low",
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: "high",
+	max: "high",
+};
 
 function createImageBlock(mimeType: string, data: string) {
 	let format: ImageFormat;

@@ -1,6 +1,7 @@
 import { constants as bufferConstants } from "buffer";
 import {
 	appendFileSync,
+	chmodSync,
 	closeSync,
 	existsSync,
 	mkdirSync,
@@ -470,5 +471,43 @@ describe("SessionManager session file creation", () => {
 		session.appendMessage(assistantMsg("first answer"));
 
 		expect(readSessionFileRoles(session.getSessionFile()!)).toEqual(["session", "user", "custom", "assistant"]);
+	});
+
+	// #10166, #10661, #11460: a failed write must not leave later entries pointing to a missing parent
+	it("does not keep an entry in memory when writing it fails", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		const firstId = session.appendMessage(userMsg("first question"));
+		const file = session.getSessionFile()!;
+
+		chmodSync(file, 0o444);
+		expect(() => session.appendMessage(assistantMsg("lost answer"))).toThrow();
+		expect(session.getLeafId()).toBe(firstId);
+		expect(session.getEntries().map((entry) => entry.id)).toEqual([firstId]);
+
+		chmodSync(file, 0o644);
+		const secondId = session.appendMessage(assistantMsg("second answer"));
+		expect(session.getEntry(secondId)?.parentId).toBe(firstId);
+
+		const reopened = SessionManager.open(file, tempDir);
+		expect(reopened.getBranch().map((entry) => entry.id)).toEqual([firstId, secondId]);
+	});
+
+	it("does not keep an entry in memory when creating the file fails", () => {
+		const sessionDir = join(tempDir, "sessions");
+		mkdirSync(sessionDir);
+		const session = SessionManager.create(tempDir, sessionDir);
+		const modelChangeId = session.appendModelChange("anthropic", "claude-sonnet-4-5");
+
+		chmodSync(sessionDir, 0o555);
+		try {
+			expect(() => session.appendMessage(userMsg("first question"))).toThrow();
+		} finally {
+			chmodSync(sessionDir, 0o755);
+		}
+		expect(session.getLeafId()).toBe(modelChangeId);
+		expect(session.getEntries().map((entry) => entry.id)).toEqual([modelChangeId]);
+
+		session.appendMessage(userMsg("second question"));
+		expect(readSessionFileRoles(session.getSessionFile()!)).toEqual(["session", "model_change", "user"]);
 	});
 });

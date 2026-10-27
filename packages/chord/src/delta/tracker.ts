@@ -1,10 +1,23 @@
+import type { JsonValue } from "../json.ts";
 import { copyJson } from "../json.ts";
-import type { JsonValue } from "../types.ts";
 import { applyImmutableTrusted } from "./apply-immutable-trusted.ts";
 import type { Draft } from "./draft.ts";
-import { applyImmutable, type NonEmptyPath, type Op, overlap, type Path, RESERVED_SEGMENTS } from "./index.ts";
+import {
+	applyImmutable,
+	type NonEmptyPath,
+	type Op,
+	overlap,
+	ownedSlice,
+	type Path,
+	RESERVED_SEGMENTS,
+} from "./index.ts";
 
 export type { Draft, JsonValue, Op };
+
+/** Keys of `T` whose value type is exactly `string`: required, and not a string literal type. */
+export type StringKeys<T> = T extends readonly unknown[]
+	? never
+	: { [Key in keyof T]: string extends T[Key] ? (T[Key] extends string ? Key : never) : never }[keyof T];
 
 type Primitive = null | boolean | number | string;
 type Container = JsonValue[] | Record<string, JsonValue>;
@@ -69,6 +82,11 @@ type OverlayNode = {
 	deleteKey?: string;
 	deletes?: Set<string>;
 	readded?: Set<string>;
+	/**
+	 * Keys whose only changes in this transaction are `appendText()` calls, with the text appended so far. `prepare()`
+	 * records each as one append op without comparing the old and new strings.
+	 */
+	appends?: Map<string, string>;
 	array?: ArrayOverlay;
 	dirty?: boolean;
 	subtreeDirty?: boolean;
@@ -320,6 +338,33 @@ class TrackerImpl<T extends object> implements Tracker<T> {
 /** Take immutable ownership of an alias-free strict-JSON root in O(1). */
 export function track<T extends object>(initial: T): Tracker<T> {
 	return new TrackerImpl(initial);
+}
+
+/**
+ * Append `text` to the string at `draft[key]`, costing O(text.length). The change is recorded as one append op
+ * (several appends to the same key in one change join into one op) without comparing the old and new strings. A plain
+ * assignment such as `draft[key] += text` gives the same op, but `prepare()` then has to check that the new string
+ * extends the old one, which reads the whole string: O(length) per change. A plain assignment or deletion of the key in
+ * the same change falls back to that check.
+ */
+export function appendText<T extends object>(draft: Draft<T>, key: StringKeys<T>, text: string): void {
+	// Trust boundary: JavaScript callers can pass any object and key; the types cover TypeScript callers.
+	const node = (draft as Record<PropertyKey, unknown>)[NODE] as OverlayNode | undefined;
+	if (node === undefined) throw new TypeError("appendText() needs a draft");
+	assertWritable(node.context);
+	const name = String(key);
+	const current = Array.isArray(nodeBase(node)) || !objectHas(node, name) ? undefined : objectValue(node, name);
+	if (typeof current !== "string") throw new TypeError(`appendText() needs a string at ${JSON.stringify(name)}`);
+	if (text.length === 0) return;
+	// The op and the new value keep the text; a copy, so they never keep a larger string the caller cut it from alive.
+	const owned = ownedSlice(text, 0);
+	const appended = node.appends?.get(name) ?? (hasObjectWrite(node, name) ? undefined : "");
+	setObjectWrite(node, name, current + owned);
+	markDirty(node);
+	if (appended !== undefined) {
+		node.appends ??= new Map();
+		node.appends.set(name, appended + owned);
+	}
 }
 
 function materializePrepared<T extends object>(context: OverlayContext): PreparedImpl<T> {
@@ -580,6 +625,7 @@ function setProperty(node: OverlayNode, property: PropertyKey, supplied: unknown
 	const current = objectValue(node, key);
 	const wasDeleted = isObjectDeleted(node, key);
 	if (!wasDeleted && !isContainer(stored) && current === stored) return true;
+	node.appends?.delete(key);
 	setObjectWrite(node, key, stored);
 	if (wasDeleted && Object.hasOwn(nodeBase(node), key)) {
 		if (node.readded === undefined) node.readded = new Set();
@@ -596,6 +642,7 @@ function deleteProperty(node: OverlayNode, property: PropertyKey): boolean {
 	if (Array.isArray(nodeBase(node))) throw new TypeError("Overlay arrays cannot contain holes");
 	const key = String(property);
 	if (!objectHas(node, key)) return true;
+	node.appends?.delete(key);
 	deleteObjectWrite(node, key);
 	node.readded?.delete(key);
 	setObjectDeletion(node, key);
@@ -1838,6 +1885,11 @@ function hasPlacementAncestor(node: OverlayNode): boolean {
 
 function emitObjectWrite(node: OverlayNode, path: Path, operations: Op[], key: string, value: Stored): boolean {
 	const nextPath = [...path, key] as unknown as NonEmptyPath;
+	const appended = node.appends?.get(key);
+	if (appended !== undefined) {
+		operations.push(["a", nextPath, appended]);
+		return false;
+	}
 	const before =
 		node.readded?.has(key) || !Object.hasOwn(nodeBase(node), key)
 			? undefined
@@ -1888,7 +1940,37 @@ function buildArrayPlan(node: OverlayNode): ArrayPlan {
 	if (overlay.plan !== undefined) return overlay.plan;
 	const base = nodeBase(node) as JsonValue[];
 	const pieces = piecesOf(overlay);
-	const retained = new Uint8Array(base.length);
+	overlay.plan = orderedArrayPlan(base.length, pieces) ?? elementArrayPlan(base.length, pieces);
+	return overlay.plan;
+}
+
+/**
+ * The plan when the retained base elements keep their order, the common case of inserts and removals: computed from the
+ * pieces alone, so appending to a long array costs no walk over its elements. `undefined` when base elements moved.
+ */
+function orderedArrayPlan(baseLength: number, pieces: readonly Piece[]): ArrayPlan | undefined {
+	// Retained base ranges in piece order, `[first, last]` each; ordered means strictly ascending without overlap.
+	const ranges: number[] = [];
+	for (const piece of pieces) {
+		if (piece.kind !== "base" || piece.length === 0) continue;
+		if (piece.step !== 1 && piece.length > 1) return undefined;
+		if (ranges.length > 0 && piece.start <= ranges[ranges.length - 1]!) return undefined;
+		ranges.push(piece.start, piece.start + piece.length - 1);
+	}
+	// Unretained runs from the end backwards, as `start, length` pairs: after the last range, between ranges, before the first.
+	const removeRuns: number[] = [];
+	let end = baseLength;
+	for (let index = ranges.length - 2; index >= -2; index -= 2) {
+		const start = index >= 0 ? ranges[index + 1]! + 1 : 0;
+		if (end > start) removeRuns.push(start, end - start);
+		if (index >= 0) end = ranges[index]!;
+	}
+	return { removeRuns, permutation: undefined, insertRuns: insertRunsOf(pieces) };
+}
+
+/** The plan from a walk over every base element, for pieces that moved base elements. */
+function elementArrayPlan(baseLength: number, pieces: readonly Piece[]): ArrayPlan {
+	const retained = new Uint8Array(baseLength);
 	const targetBase: number[] = [];
 	for (const piece of pieces) {
 		if (piece.kind !== "base") continue;
@@ -1899,7 +1981,7 @@ function buildArrayPlan(node: OverlayNode): ArrayPlan {
 		}
 	}
 	const removeRuns: number[] = [];
-	for (let end = base.length; end > 0; ) {
+	for (let end = baseLength; end > 0; ) {
 		if (retained[end - 1] !== 0) {
 			end -= 1;
 			continue;
@@ -1916,6 +1998,11 @@ function buildArrayPlan(node: OverlayNode): ArrayPlan {
 		const positions = new Map(retainedBase.map((value, index) => [value, index]));
 		permutation = targetBase.map((value) => positions.get(value)!);
 	}
+	return { removeRuns, permutation, insertRuns: insertRunsOf(pieces) };
+}
+
+/** Runs of consecutive insert pieces as `logical index, first piece, end piece` triples. */
+function insertRunsOf(pieces: readonly Piece[]): number[] {
 	const insertRuns: number[] = [];
 	let logicalIndex = 0;
 	for (let pieceIndex = 0; pieceIndex < pieces.length; ) {
@@ -1932,8 +2019,7 @@ function buildArrayPlan(node: OverlayNode): ArrayPlan {
 		}
 		insertRuns.push(logicalIndex - rangeLength(pieces, startPiece, pieceIndex), startPiece, pieceIndex);
 	}
-	overlay.plan = { removeRuns, permutation, insertRuns };
-	return overlay.plan;
+	return insertRuns;
 }
 
 function rangeLength(pieces: readonly Piece[], start: number, end: number): number {
@@ -2011,16 +2097,17 @@ function emitChangedValue(
 	if (!isContainer(after) && before === after) return false;
 	if (isContainer(before) && isContainer(after) && equalTrustedJson(before, after)) return false;
 	if (typeof before === "string" && typeof after === "string") {
-		// Slice/equality stays on V8's rope fast path; startsWith scans the entire
-		// accumulated prefix on every append.
+		// O(length): any slice of a rope makes V8 flatten all of it, so this prefix check copies the whole string once per
+		// change, even when the writer only appended. Streaming writers use appendText(), which skips it. The op text gets
+		// a copy of its own, so it does not keep the whole of `after` alive.
 		if (after.length > before.length && after.slice(0, before.length) === before) {
-			operations.push(["a", path, after.slice(before.length)]);
+			operations.push(["a", path, ownedSlice(after, before.length)]);
 			return true;
 		}
 		const shared = overlap(before, after, 65_536);
 		if (shared > 0) {
 			operations.push(["t", path, before.length - shared]);
-			if (after.length > shared) operations.push(["a", path, after.slice(shared)]);
+			if (after.length > shared) operations.push(["a", path, ownedSlice(after, shared)]);
 			return true;
 		}
 	}

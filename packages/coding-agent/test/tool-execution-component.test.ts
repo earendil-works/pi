@@ -3,10 +3,6 @@ import { resetCapabilitiesCache, setCapabilities, Text, type TUI, type TuiMouseE
 import { Type } from "typebox";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 
-const imageConvertMocks = vi.hoisted(() => ({ convertToPng: vi.fn() }));
-
-vi.mock("../src/utils/image-convert.ts", () => imageConvertMocks);
-
 import { getReadmePath } from "../src/config.ts";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.ts";
@@ -30,6 +26,10 @@ function createBaseToolDefinition(name = "custom_tool"): ToolDefinition {
 	};
 }
 
+// Small 2x2 blue JPEG image
+const TINY_JPEG =
+	"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAACAAIDAREAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAVAQEBAAAAAAAAAAAAAAAAAAAGCf/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AD3VTB3/2Q==";
+
 function createFakeTui(): TUI {
 	return {
 		requestRender: () => {},
@@ -42,44 +42,27 @@ describe("ToolExecutionComponent parity", () => {
 	});
 	afterEach(() => {
 		resetCapabilitiesCache();
-		imageConvertMocks.convertToPng.mockReset();
 		vi.useRealTimers();
 	});
 
-	// Issue #8577: ignore conversions that finish after the image was replaced.
-	test("keeps the final tool image when a partial image conversion finishes late", async () => {
+	// Issue #10292: the component loads the PNG transcoder itself, so this works in any TUI host.
+	// Issue #8577: a replaced partial image must not resurface.
+	test("converts non-PNG tool images once the transcoder loads", async () => {
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
-		let finishConversion!: (result: { data: string; mimeType: string }) => void;
-		const conversion = new Promise<{ data: string; mimeType: string }>((resolve) => {
-			finishConversion = resolve;
-		});
-		imageConvertMocks.convertToPng.mockReturnValue(conversion);
-		const component = new ToolExecutionComponent(
-			"custom_tool",
-			"tool-image-race",
-			{},
-			{},
-			undefined,
-			createFakeTui(),
-			process.cwd(),
-		);
-
+		const component = new ToolExecutionComponent("tool", "id", {}, {}, undefined, createFakeTui(), process.cwd());
 		component.updateResult(
-			{ content: [{ type: "image", data: "partial-jpeg", mimeType: "image/jpeg" }], isError: false },
+			{ content: [{ type: "image", data: "cGFydGlhbA==", mimeType: "image/jpeg" }], isError: false },
 			true,
 		);
-		component.updateResult({
-			content: [{ type: "image", data: "final-png", mimeType: "image/png" }],
-			isError: false,
-		});
-		expect(component.render(120).join("\n")).toContain("final-png");
+		component.updateResult({ content: [{ type: "image", data: TINY_JPEG, mimeType: "image/jpeg" }], isError: false });
 
-		finishConversion({ data: "converted-partial", mimeType: "image/png" });
-		await conversion;
-
+		await vi.waitFor(() => expect(component.render(120).join("\n")).toContain(";iVBORw0KGgo"));
 		const rendered = component.render(120).join("\n");
-		expect(rendered).toContain("final-png");
-		expect(rendered).not.toContain("converted-partial");
+		expect(rendered).not.toContain("cGFydGlhbA==");
+
+		// Invalidation reuses the converted Image, so the Kitty image ID stays the same.
+		component.invalidate();
+		expect(component.render(120).join("\n")).toBe(rendered);
 	});
 
 	test("stacks custom call and result renderers like the old implementation", () => {
@@ -277,6 +260,33 @@ describe("ToolExecutionComponent parity", () => {
 		expect(stripAnsi(component.render(120).join("\n"))).toBe(completed);
 		expect(running).toContain(`Elapsed ${formatted}`);
 		expect(completed).toContain(`Took ${formatted}`);
+	});
+
+	// #10549
+	test("bash renderer shows a result's recorded duration, also for a result restored without a live start", () => {
+		const render = (live: boolean): string => {
+			vi.useFakeTimers();
+			vi.setSystemTime(0);
+			const component = new ToolExecutionComponent(
+				"bash",
+				"tool-bash-recorded",
+				{ command: "sleep 4" },
+				{},
+				createBashToolDefinition(process.cwd(), { exposeSessionEnvironment: false }),
+				createFakeTui(),
+				process.cwd(),
+			);
+			if (live) {
+				component.markExecutionStarted();
+				component.updateResult({ content: [], isError: false }, true);
+				// The wall clock jumps; the recorded duration does not.
+				vi.advanceTimersByTime(3_600_000);
+			}
+			component.updateResult({ content: [], isError: false, durationMs: 4_200 }, false);
+			return stripAnsi(component.render(120).join("\n"));
+		};
+		expect(render(true)).toContain("Took 4.2s");
+		expect(render(false)).toContain("Took 4.2s");
 	});
 
 	test("does not duplicate built-in headers when passed the active built-in definition", () => {
@@ -519,6 +529,59 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).toContain("one");
 		expect(rendered).toContain("two");
 		expect(rendered).not.toContain("two\n\n");
+	});
+
+	// #9265: every argument delta re-ran the call renderer; a streamed `write` re-highlighted its whole content each time.
+	test("renders streamed partial arguments once per frame, with the latest arguments", () => {
+		const write = createWriteToolDefinition(process.cwd());
+		let renderCalls = 0;
+		const counted: typeof write = {
+			...write,
+			renderCall: (...args) => {
+				renderCalls++;
+				return write.renderCall!(...args);
+			},
+		};
+		let renderRequests = 0;
+		const tui = { requestRender: () => renderRequests++ } as unknown as TUI;
+		const component = new ToolExecutionComponent("write", "tool-9", {}, {}, counted, tui, ".");
+		const lines = Array.from({ length: 200 }, (_, index) => `const line${index} = ${index};`);
+		const callsBefore = renderCalls;
+		let content = "";
+		for (const line of lines) {
+			content += `${line}\n`;
+			component.updateArgs({ path: "src/file.ts", content });
+		}
+		expect(renderCalls).toBe(callsBefore);
+		expect(renderRequests).toBeGreaterThan(0);
+
+		const streamed = stripAnsi(component.render(120).join("\n"));
+		expect(renderCalls - callsBefore).toBe(1);
+		// The same preview as rendering the final arguments directly.
+		const direct = new ToolExecutionComponent(
+			"write",
+			"tool-10",
+			{ path: "src/file.ts", content },
+			{},
+			write,
+			tui,
+			".",
+		);
+		expect(streamed).toBe(stripAnsi(direct.render(120).join("\n")));
+
+		// More deltas before the next frame: one more renderer run, which shows them all.
+		component.updateArgs({ path: "src/file.ts", content: `${content}const tail = 1;\n` });
+		const final = { path: "src/file.ts", content: `${content}const tail = 2;\n` };
+		component.updateArgs(final);
+		const next = stripAnsi(component.render(120).join("\n"));
+		expect(renderCalls - callsBefore).toBe(2);
+		expect(next).toContain("201 total");
+		expect(next).toBe(
+			stripAnsi(new ToolExecutionComponent("write", "t", final, {}, write, tui, ".").render(120).join("\n")),
+		);
+		// Rendering again without new arguments does not run the renderer.
+		component.render(120);
+		expect(renderCalls - callsBefore).toBe(2);
 	});
 
 	test("trims trailing blank display lines from read results", () => {

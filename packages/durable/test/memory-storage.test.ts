@@ -9,7 +9,7 @@ registerStorageConformance({ describe, expect, it }, "MemoryStorage", (use) => u
 
 it("does not expose retained state through a prepared commit", async () => {
 	const storage = new MemoryStorage();
-	await storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], BACKGROUND_CONTEXT);
+	await storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], () => {}, BACKGROUND_CONTEXT);
 	const entryId = idFromNumber<EntryId>(2);
 	const prepared = storage.prepareCommit([
 		{

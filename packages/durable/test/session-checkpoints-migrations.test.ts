@@ -63,6 +63,7 @@ describe("Session document checkpoints", () => {
 			},
 		});
 		const DefaultDoc = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "checkpoint.default",
 			version: 1,
 			scope: "session",
@@ -333,6 +334,7 @@ describe("Session document migrations", () => {
 	it("migrates read-only once per cold load, copies the callback result, and writes nothing", async () => {
 		type Current = { count: number; labels: string[] };
 		const Old = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "migration.read-only",
 			version: 1,
 			scope: "session",
@@ -341,6 +343,7 @@ describe("Session document migrations", () => {
 		let calls = 0;
 		let retained: Current | undefined;
 		const Current = defineDoc<Current>({
+			checkpointWhen: () => false,
 			kind: "migration.read-only",
 			version: 3,
 			scope: "session",
@@ -375,6 +378,7 @@ describe("Session document migrations", () => {
 
 	it("writes the required base on the first successful transaction, then writes deltas", async () => {
 		const Old = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "migration.transition",
 			version: 1,
 			scope: "session",
@@ -395,8 +399,20 @@ describe("Session document migrations", () => {
 		const { session, storage, publications } = openTestSession();
 		await session.commit((tx) => tx.doc(Old).then(() => undefined), context);
 		await session.unloadDocuments();
+		// An observer of the older shape.
+		const watch = (await session.watchDoc(Old, context))!;
+		const frames: unknown[] = [];
+		watch.start(async ({ value, ops }) => {
+			frames.push({ value, ops });
+		});
 		expect(await session.snapshot(Current, context)).toEqual({ count: 4 });
 		const snapshot = await session.snapshot(Current, context);
+		// An observer of the new shape: the migration changes nothing it sees.
+		const current = (await session.watchDoc(Current, context))!;
+		const currentFrames: unknown[] = [];
+		current.start(async ({ value }) => {
+			currentFrames.push(value);
+		});
 
 		await session.commit((tx) => tx.doc(Current).then(() => undefined), context);
 		await flush();
@@ -405,7 +421,12 @@ describe("Session document migrations", () => {
 			content: { kind: "base", version: 3, value: { count: 4 } },
 		});
 		expect(checkpoints).toBe(0);
-		expect(documentChanges(publications.at(-1)!)).toHaveLength(0);
+		// The migration-only base is published, so the older-shape watch receives the new value as a root replacement.
+		expect(documentChanges(publications.at(-1)!)).toMatchObject([{ version: 3, value: { count: 4 }, ops: [] }]);
+		expect(frames).toEqual([{ value: { count: 4 }, ops: [["r", { count: 4 }]] }]);
+		expect(currentFrames).toEqual([]);
+		await watch.stop();
+		await current.stop();
 		expect(await session.snapshot(Current, context)).toBe(snapshot);
 
 		await session.commit(async (tx) => {
@@ -422,6 +443,7 @@ describe("Session document migrations", () => {
 
 	it("rolls migration and edits back with the callback, then coalesces later edits into one base", async () => {
 		const Old = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "migration.rollback",
 			version: 1,
 			scope: "session",
@@ -429,6 +451,7 @@ describe("Session document migrations", () => {
 		});
 		let migrations = 0;
 		const Current = defineDoc<{ count: number; migrated: boolean }>({
+			checkpointWhen: () => false,
 			kind: "migration.rollback",
 			version: 2,
 			scope: "session",
@@ -478,12 +501,14 @@ describe("Session document migrations", () => {
 
 	it("strict-checks migration results before tracker ownership and remains usable after rejection", async () => {
 		const Old = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "migration.invalid",
 			version: 1,
 			scope: "session",
 			initial: () => ({ count: 1 }),
 		});
 		const Invalid = defineDoc<JsonObject>({
+			checkpointWhen: () => false,
 			kind: "migration.invalid",
 			version: 2,
 			scope: "session",
@@ -491,6 +516,7 @@ describe("Session document migrations", () => {
 			migrate: () => ({ invalid: new Date() }) as unknown as JsonObject,
 		});
 		const Other = defineDoc<{ ok: boolean }>({
+			checkpointWhen: () => false,
 			kind: "migration.invalid.other",
 			version: 1,
 			scope: "session",
@@ -511,18 +537,21 @@ describe("Session document migrations", () => {
 
 	it("rejects newer stored versions and older versions without migration for snapshots and transactions", async () => {
 		const V2 = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "migration.compatibility",
 			version: 2,
 			scope: "session",
 			initial: () => ({ count: 2 }),
 		});
 		const V1 = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "migration.compatibility",
 			version: 1,
 			scope: "session",
 			initial: () => ({ count: 1 }),
 		});
 		const V3WithoutMigration = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "migration.compatibility",
 			version: 3,
 			scope: "session",
@@ -546,6 +575,7 @@ describe("Session document migrations", () => {
 
 	it("persists a required migration base before retirement without consulting the checkpoint predicate", async () => {
 		const Old = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "migration.retire",
 			version: 1,
 			scope: "session",
@@ -579,12 +609,14 @@ describe("Session document migrations", () => {
 
 	it("leaves unaccessed older documents and unavailable definitions untouched", async () => {
 		const FirstV1 = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "migration.lazy.first",
 			version: 1,
 			scope: "session",
 			initial: () => ({ count: 1 }),
 		});
 		const SecondV1 = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "migration.lazy.second",
 			version: 1,
 			scope: "session",
@@ -592,6 +624,7 @@ describe("Session document migrations", () => {
 		});
 		let secondMigrations = 0;
 		const FirstV2 = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "migration.lazy.first",
 			version: 2,
 			scope: "session",
@@ -599,6 +632,7 @@ describe("Session document migrations", () => {
 			migrate: (value) => ({ count: value.count as number }),
 		});
 		defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "migration.lazy.second",
 			version: 2,
 			scope: "session",
@@ -630,6 +664,7 @@ describe("Session document migrations", () => {
 describe("Session historical document snapshots", () => {
 	it("migrates current and historical rewindable values independently and follows fork ancestry", async () => {
 		const V1 = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "history.migration",
 			version: 1,
 			scope: "conversation",
@@ -638,6 +673,7 @@ describe("Session historical document snapshots", () => {
 			initial: () => ({ count: 0 }),
 		});
 		const Family = defineDocFamily<{ seed: string; count: number }, string>({
+			checkpointWhen: () => false,
 			kind: "history.family",
 			version: 1,
 			family: true,
@@ -648,6 +684,7 @@ describe("Session historical document snapshots", () => {
 		});
 		const migrations: number[] = [];
 		const V3 = defineDoc<{ count: number; version: number }>({
+			checkpointWhen: () => false,
 			kind: "history.migration",
 			version: 3,
 			scope: "conversation",
@@ -717,6 +754,7 @@ describe("Session historical document snapshots", () => {
 
 	it("selects the incarnation alive at the entry commit across retirement and recreation", async () => {
 		const Doc = defineDoc<{ value: string }>({
+			checkpointWhen: () => false,
 			kind: "history.incarnation",
 			version: 1,
 			scope: "conversation",
@@ -759,12 +797,14 @@ describe("Session tracker cache across definition versions", () => {
 	type V1 = { name: string };
 	type V2 = { names: string[] };
 	const V1Doc = defineDoc<V1>({
+		checkpointWhen: () => false,
 		kind: "cache.versioned",
 		version: 1,
 		scope: "session",
 		initial: () => ({ name: "first" }),
 	});
 	const V2Doc = defineDoc<V2>({
+		checkpointWhen: () => false,
 		kind: "cache.versioned",
 		version: 2,
 		scope: "session",
@@ -793,11 +833,10 @@ describe("Session tracker cache across definition versions", () => {
 	it("sends observers of an older shape a root replacement after a newer token writes", async () => {
 		const { session } = openTestSession();
 		await session.commit((tx) => tx.doc(V1Doc), context);
-		const state = (await session.documentState(V1Doc, context))!;
 		const watch = (await session.watchDoc(V1Doc, context))!;
 		const frames: (readonly unknown[])[] = [];
 		const delivered = new Promise<void>((resolve) => {
-			watch.start(async (_value, ops) => {
+			watch.start(async ({ ops }) => {
 				frames.push(ops);
 				resolve();
 			});
@@ -806,10 +845,8 @@ describe("Session tracker cache across definition versions", () => {
 			(await tx.doc(V2Doc)).names.push("second");
 		}, context);
 		await delivered;
-		expect(state.value).toEqual({ names: ["first", "second"] });
 		expect(watch.value).toEqual({ names: ["first", "second"] });
 		expect(frames).toEqual([[["r", { names: ["first", "second"] }]]]);
-		state.dispose();
 		await watch.stop();
 	});
 

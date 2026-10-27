@@ -145,6 +145,12 @@ describe("parseArgs", () => {
 			const result = parseArgs(["--models", "gpt-4o,claude-sonnet,gemini-pro"]);
 			expect(result.models).toEqual(["gpt-4o", "claude-sonnet", "gemini-pro"]);
 		});
+
+		// Issue #10334
+		test("ignores empty entries in --models", () => {
+			const result = parseArgs(["--models", "gpt-4o, ,claude-sonnet,"]);
+			expect(result.models).toEqual(["gpt-4o", "claude-sonnet"]);
+		});
 	});
 
 	// Issue #9045
@@ -273,6 +279,14 @@ describe("parseArgs", () => {
 			const result = parseArgs(["--no-extensions", "-e", "foo.ts", "-e", "bar.ts"]);
 			expect(result.noExtensions).toBe(true);
 			expect(result.extensions).toEqual(["foo.ts", "bar.ts"]);
+		});
+	});
+
+	describe("--no-mcp flag", () => {
+		test("parses --no-mcp flag", () => {
+			const result = parseArgs(["--no-mcp"]);
+			expect(result.noMcp).toBe(true);
+			expect(result.unknownFlags.size).toBe(0);
 		});
 	});
 
@@ -449,6 +463,31 @@ describe("parseArgs", () => {
 		test("parses -t shorthand", () => {
 			const result = parseArgs(["-t", "read,bash"]);
 			expect(result.tools).toEqual(["read", "bash"]);
+		});
+
+		test("parses +name and -name tool modifiers", () => {
+			const result = parseArgs(["-t", "+codemode,-write"]);
+			expect(result.tools).toEqual(["+codemode", "-write"]);
+			expect(result.diagnostics).toEqual([]);
+		});
+
+		test("rejects tool names mixed with modifiers", () => {
+			const result = parseArgs(["--tools", "read,+codemode"]);
+			expect(result.tools).toBeUndefined();
+			expect(result.diagnostics).toEqual([
+				{ type: "error", message: "--tools: tool names cannot be mixed with +name or -name entries" },
+			]);
+		});
+
+		test("rejects patterns in tool modifiers", () => {
+			const result = parseArgs(["-t", "+mcp__radius__*"]);
+			expect(result.tools).toBeUndefined();
+			expect(result.diagnostics).toEqual([
+				{
+					type: "error",
+					message: "-t: +name and -name entries take exact tool names, not patterns: +mcp__radius__*",
+				},
+			]);
 		});
 
 		test("parses --exclude-tools flag", () => {

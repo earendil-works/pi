@@ -21,7 +21,7 @@ function escapeRegex(value: string): string {
 function buildFdPathQuery(query: string): string {
 	const normalized = toDisplayPath(query);
 	if (!normalized.includes("/")) {
-		return normalized;
+		return escapeRegex(normalized);
 	}
 
 	const hasTrailingSeparator = normalized.endsWith("/");
@@ -35,9 +35,6 @@ function buildFdPathQuery(query: string): string {
 		.split("/")
 		.filter(Boolean)
 		.map((segment) => escapeRegex(segment));
-	if (segments.length === 0) {
-		return normalized;
-	}
 
 	let pattern = segments.join(separatorPattern);
 	if (hasTrailingSeparator) {
@@ -335,11 +332,12 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			};
 		}
 
-		if (!options.force && textBeforeCursor.startsWith("/")) {
-			const spaceIndex = textBeforeCursor.indexOf(" ");
+		const commandText = textBeforeCursor.trimStart();
+		if (!options.force && commandText.startsWith("/")) {
+			const spaceIndex = commandText.indexOf(" ");
 
 			if (spaceIndex === -1) {
-				const prefix = textBeforeCursor.slice(1);
+				const prefix = commandText.slice(1);
 				const commandItems = this.commands.map((cmd) => {
 					const name = "name" in cmd ? cmd.name : cmd.value;
 					const hint = "argumentHint" in cmd && cmd.argumentHint ? cmd.argumentHint : undefined;
@@ -371,12 +369,12 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 
 				return {
 					items: filtered,
-					prefix: textBeforeCursor,
+					prefix: commandText,
 				};
 			}
 
-			const commandName = textBeforeCursor.slice(1, spaceIndex);
-			const argumentText = textBeforeCursor.slice(spaceIndex + 1);
+			const commandName = commandText.slice(1, spaceIndex);
+			const argumentText = commandText.slice(spaceIndex + 1);
 
 			const command = this.commands.find((cmd) => {
 				const name = "name" in cmd ? cmd.name : cmd.value;

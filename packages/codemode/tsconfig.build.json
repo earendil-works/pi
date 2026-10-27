@@ -5,5 +5,7 @@
 		"rootDir": "./src"
 	},
 	"include": ["src/**/*.ts"],
+	// Ambient declarations the build needs; `exclude` below does not apply to `files`.
+	"files": ["src/cloudflare-modules.d.ts"],
 	"exclude": ["node_modules", "dist", "**/*.d.ts", "src/**/*.d.ts"]
 }

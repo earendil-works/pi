@@ -11,7 +11,7 @@ it("exposes GLM-4.6V on the China Coding Plan catalog", () => {
 		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
 		reasoning: true,
 		input: ["text", "image"],
-		cost: { input: 0.3, output: 0.9, cacheRead: 0, cacheWrite: 0 },
+		cost: { input: 0.3, output: 0.9, cacheRead: 0.05, cacheWrite: 0 },
 		contextWindow: 128000,
 		maxTokens: 32768,
 		compat: {

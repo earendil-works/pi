@@ -1,5 +1,5 @@
 import { mkdtempSync } from "node:fs";
-import { arch, platform, release, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import { Type } from "typebox";
@@ -12,6 +12,7 @@ import {
 	streamSimple as streamSimpleOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
 import type { Api, Context, Model } from "../src/types.ts";
+import { formatUserAgent } from "../src/utils/identity.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -161,7 +162,7 @@ describe("openai-codex streaming", () => {
 				expect(headers?.get("chatgpt-account-id")).toBe("acc_test");
 				expect(headers?.get("OpenAI-Beta")).toBe("responses=experimental");
 				expect(headers?.get("originator")).toBe("pi");
-				expect(headers?.get("User-Agent")).toBe(`pi (${platform()} ${release()}; ${arch()})`);
+				expect(headers?.get("User-Agent")).toBe(formatUserAgent());
 				expect(headers?.get("accept")).toBe("text/event-stream");
 				expect(headers?.has("x-api-key")).toBe(false);
 				return new Response(stream, {
@@ -795,6 +796,55 @@ describe("openai-codex streaming", () => {
 
 		expect(capturedHeaders?.get("session-id")).toBe("x".repeat(64));
 		expect(capturedHeaders?.get("x-client-request-id")).toBe("x".repeat(64));
+	});
+
+	it("lets model and caller headers override originator and User-Agent", async () => {
+		const token = mockToken();
+		let capturedHeaders: Headers | undefined;
+		const encoder = new TextEncoder();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (_input: string | URL, init?: RequestInit) => {
+				capturedHeaders = init?.headers instanceof Headers ? init.headers : undefined;
+				return new Response(
+					new ReadableStream<Uint8Array>({
+						start(controller) {
+							controller.enqueue(encoder.encode(buildSSEPayload({ status: "completed" })));
+							controller.close();
+						},
+					}),
+					{ status: 200, headers: { "content-type": "text/event-stream" } },
+				);
+			}),
+		);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+			headers: { originator: "my-app" },
+		};
+		const context = normalizeContext({
+			systemPrompt: "You are a helpful assistant.",
+			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+		});
+
+		await streamOpenAICodexResponses(model, context, {
+			apiKey: token,
+			transport: "sse",
+			headers: { "user-agent": "my-app/1.0", Authorization: "Bearer ignored" },
+		}).result();
+
+		expect(capturedHeaders?.get("originator")).toBe("my-app");
+		expect(capturedHeaders?.get("User-Agent")).toBe("my-app/1.0");
+		expect(capturedHeaders?.get("Authorization")).toBe(`Bearer ${token}`);
 	});
 
 	it("preserves gpt-5.5 xhigh reasoning effort from simple options", async () => {

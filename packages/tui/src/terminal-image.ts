@@ -86,6 +86,16 @@ function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean)
 		return { images: null, trueColor: hasTrueColorHint, hyperlinks: false };
 	}
 
+	// Herdr forwards OSC 8 hyperlinks and supports the Kitty graphics protocol. Check it before
+	// outer-terminal detection because variables like KITTY_WINDOW_ID can leak into its panes.
+	if (termProgram === "herdr") {
+		return { images: "kitty", trueColor: hasTrueColorHint, hyperlinks: true };
+	}
+
+	if (termProgram === "rex") {
+		return { images: "kitty", trueColor: true, hyperlinks: true };
+	}
+
 	if (process.env.KITTY_WINDOW_ID || termProgram === "kitty") {
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
@@ -332,15 +342,20 @@ export interface KittyImagePlacement {
 	transmissionGeneration: number;
 	transmissionBytes: number;
 	estimatedDecodedBytes: number;
+	rows: number;
 	sequence: string;
 	replacementLine: string;
 }
 
 const kittyImageMetadata = new Map<number, RegisteredKittyImageMetadata>();
 let kittyTransmissionGeneration = 0;
+// Tallest registered image. Bounds backward searches for image lines above a
+// viewport: no image line further up than this can reach into it.
+let maxKittyImageRows = 0;
 
 export function registerKittyImageMetadata(metadata: KittyImageMetadata): void {
 	kittyTransmissionGeneration += 1;
+	maxKittyImageRows = Math.max(maxKittyImageRows, metadata.rows);
 	kittyImageMetadata.delete(metadata.imageId);
 	kittyImageMetadata.set(metadata.imageId, { ...metadata, transmissionGeneration: kittyTransmissionGeneration });
 	if (kittyImageMetadata.size > 1000) {
@@ -349,11 +364,30 @@ export function registerKittyImageMetadata(metadata: KittyImageMetadata): void {
 	}
 }
 
-function getRegisteredKittyImageMetadata(line: string): RegisteredKittyImageMetadata | undefined {
-	const controls = /\x1b_G([^;]*);/.exec(line)?.[1];
-	if (!controls) return undefined;
+/** Return the row height of the tallest Kitty image registered so far. */
+export function getMaxKittyImageRows(): number {
+	return maxKittyImageRows;
+}
+
+function getRegisteredKittyImageMetadataFromControls(controls: string): RegisteredKittyImageMetadata | undefined {
 	const imageId = /(?:^|,)i=(\d+)(?:,|$)/.exec(controls)?.[1];
 	return imageId === undefined ? undefined : kittyImageMetadata.get(Number.parseInt(imageId, 10));
+}
+
+function getRegisteredKittyImageMetadata(line: string): RegisteredKittyImageMetadata | undefined {
+	const controls = /\x1b_G([^;]*);/.exec(line)?.[1];
+	return controls === undefined ? undefined : getRegisteredKittyImageMetadataFromControls(controls);
+}
+
+function getExplicitKittyImageRows(controls: string): number | undefined {
+	const value = /(?:^|,)r=(\d+)(?:,|$)/.exec(controls)?.[1];
+	if (value === undefined) return undefined;
+	const rows = Number.parseInt(value, 10);
+	return rows > 0 ? rows : undefined;
+}
+
+function getKittyImageRowsFromControls(controls: string, fallbackRows: number): number {
+	return getExplicitKittyImageRows(controls) ?? fallbackRows;
 }
 
 export function getKittyImageMetadata(line: string): KittyImageMetadata | undefined {
@@ -388,11 +422,21 @@ const KITTY_PLACEMENT_CONTROL_KEYS = new Set([
 	"V",
 ]);
 
+/** Read the number of rows covered by an image placement without scanning its payload. */
+export function getKittyImagePlacementRows(line: string): number | undefined {
+	const controls = /\x1b_G([^;]*);/.exec(line)?.[1];
+	if (controls === undefined) return undefined;
+	const explicitRows = getExplicitKittyImageRows(controls);
+	if (explicitRows !== undefined) return explicitRows;
+	return getRegisteredKittyImageMetadataFromControls(controls)?.rows;
+}
+
 /** Build a placement-only command for an image line emitted by {@link renderImage}. */
 export function getKittyImagePlacement(line: string): KittyImagePlacement | undefined {
 	const match = /\x1b_G([^;]*);/.exec(line);
-	const metadata = getRegisteredKittyImageMetadata(line);
-	if (!match || !metadata) return undefined;
+	if (!match) return undefined;
+	const metadata = getRegisteredKittyImageMetadataFromControls(match[1]);
+	if (!metadata) return undefined;
 
 	let commandStart = match.index;
 	let commandControls = match[1];
@@ -418,6 +462,7 @@ export function getKittyImagePlacement(line: string): KittyImagePlacement | unde
 		transmissionGeneration: metadata.transmissionGeneration,
 		transmissionBytes: transmissionEnd - match.index,
 		estimatedDecodedBytes: metadata.widthPx * metadata.heightPx * 4,
+		rows: getKittyImageRowsFromControls(match[1], metadata.rows),
 		sequence,
 		replacementLine: `${line.slice(0, match.index)}${sequence}${line.slice(transmissionEnd)}`,
 	};

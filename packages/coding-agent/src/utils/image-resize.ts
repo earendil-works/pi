@@ -1,12 +1,13 @@
 import { Worker } from "node:worker_threads";
-import { type ImageResizeOptions, type ResizedImage, resizeImageInProcess } from "./image-resize-core.ts";
+import {
+	IMAGE_RESIZE_WORKER_RESPONSE_TYPE,
+	type ImageResizeOptions,
+	type ResizedImage,
+	type ResizeImageWorkerResponse,
+	resizeImageInProcess,
+} from "./image-resize-core.ts";
 
 export type { ImageResizeOptions, ResizedImage } from "./image-resize-core.ts";
-
-interface ResizeImageWorkerResponse {
-	result?: ResizedImage | null;
-	error?: string;
-}
 
 function toTransferableBytes(input: Uint8Array): Uint8Array<ArrayBuffer> {
 	// Transfer detaches the buffer, so transfer a worker-owned copy and leave the
@@ -15,7 +16,9 @@ function toTransferableBytes(input: Uint8Array): Uint8Array<ArrayBuffer> {
 }
 
 function isResizeImageWorkerResponse(value: unknown): value is ResizeImageWorkerResponse {
-	return value !== null && typeof value === "object";
+	return (
+		value !== null && typeof value === "object" && "type" in value && value.type === IMAGE_RESIZE_WORKER_RESPONSE_TYPE
+	);
 }
 
 function createResizeWorker(workerSpecifier: string | URL): Worker {
@@ -44,16 +47,12 @@ async function resizeImageInWorker(
 				reject(error);
 			};
 
-			worker.once("message", (message: unknown) => {
-				if (!isResizeImageWorkerResponse(message)) {
-					fail(new Error("Invalid image resize worker response"));
-					return;
-				}
-				if (message.error) {
-					fail(new Error(message.error));
-					return;
-				}
-				settle(message.result ?? null);
+			worker.on("message", (message: unknown) => {
+				// Ignore messages Node posts on the worker channel itself, such as
+				// `{ "watch:require": [...] }` under `node --watch` (nodejs/node#65044).
+				if (!isResizeImageWorkerResponse(message)) return;
+				if ("error" in message) fail(new Error(message.error));
+				else settle(message.result);
 			});
 			worker.once("error", fail);
 			worker.once("exit", (code) => {

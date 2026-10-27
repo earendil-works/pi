@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { accessSync, constants } from "node:fs";
+import { delimiter, join, win32 } from "node:path";
 import { spawn, spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
 
@@ -9,11 +9,17 @@ export interface ShellConfig {
 	commandTransport?: "argv" | "stdin";
 }
 
-/**
- * Find bash executable on PATH (cross-platform)
- */
+// Keep in sync with packages/durable/src/env/node.ts.
 function isLegacyWslBashPath(path: string): boolean {
-	const normalized = path.replace(/\//g, "\\").toLowerCase();
+	const normalized = win32.normalize(path).toLowerCase();
+	const systemRoot = process.env.SystemRoot;
+	if (systemRoot) {
+		if (!/^[a-z]:[\\/]/i.test(systemRoot)) return false;
+		return ["System32", "Sysnative"].some(
+			(directory) => normalized === win32.join(systemRoot, directory, "bash.exe").toLowerCase(),
+		);
+	}
+	// Fall back to conventional launcher paths only when the Windows directory is unknown.
 	return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized);
 }
 
@@ -21,9 +27,22 @@ function getBashShellConfig(shell: string): ShellConfig {
 	return isLegacyWslBashPath(shell) ? { shell, args: ["-s"], commandTransport: "stdin" } : { shell, args: ["-c"] };
 }
 
+// Matches harness-v2's pathExists (packages/durable/src/env/node.ts).
+// On Unix this is identical to existsSync() (both are access(F_OK)), just
+// spelled with try/catch. On Windows we explicitly avoid existsSync(): its
+// extra stat check rejects runnable Store aliases (nodejs/node#36790).
+function shellPathExists(path: string): boolean {
+	try {
+		accessSync(path, constants.F_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 function findExecutableOnPath(executable: string): string | null {
 	if (process.platform === "win32") {
-		// Windows: Use 'where' and verify file exists (where can return non-existent paths)
+		// Windows: use 'where' and check the returned path.
 		try {
 			const result = spawnSync("where", [executable], {
 				encoding: "utf-8",
@@ -32,7 +51,7 @@ function findExecutableOnPath(executable: string): string | null {
 			});
 			if (result.status === 0 && result.stdout) {
 				const firstMatch = result.stdout.trim().split(/\r?\n/)[0];
-				if (firstMatch && existsSync(firstMatch)) {
+				if (firstMatch && shellPathExists(firstMatch)) {
 					return firstMatch;
 				}
 			}
@@ -67,7 +86,7 @@ function findExecutableOnPath(executable: string): string | null {
 export function getShellConfig(customShellPath?: string): ShellConfig {
 	// 1. Check user-specified shell path
 	if (customShellPath) {
-		if (existsSync(customShellPath)) {
+		if (shellPathExists(customShellPath)) {
 			return getBashShellConfig(customShellPath);
 		}
 		throw new Error(`Custom shell path not found: ${customShellPath}`);
@@ -86,7 +105,7 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 		}
 
 		for (const path of paths) {
-			if (existsSync(path)) {
+			if (shellPathExists(path)) {
 				return getBashShellConfig(path);
 			}
 		}
@@ -107,7 +126,7 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 	}
 
 	// Unix: try /bin/bash, then bash on PATH, then fallback to sh
-	if (existsSync("/bin/bash")) {
+	if (shellPathExists("/bin/bash")) {
 		return getBashShellConfig("/bin/bash");
 	}
 
@@ -127,7 +146,21 @@ export function getPowerShellConfig(): ShellConfig {
 		throw new Error("The powershell tool is only available on Windows.");
 	}
 
-	const shell = findExecutableOnPath("pwsh.exe") ?? findExecutableOnPath("powershell.exe");
+	let shell = findExecutableOnPath("pwsh.exe");
+	// Installation directories may be on any drive and need not be on PATH.
+	const programFiles = process.env.ProgramFiles;
+	if (!shell && programFiles) {
+		const pwsh7 = win32.join(programFiles, "PowerShell", "7", "pwsh.exe");
+		if (shellPathExists(pwsh7)) shell = pwsh7;
+	}
+
+	shell ??= findExecutableOnPath("powershell.exe");
+	const systemRoot = process.env.SystemRoot;
+	if (!shell && systemRoot) {
+		const windowsPowerShell = win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+		if (shellPathExists(windowsPowerShell)) shell = windowsPowerShell;
+	}
+
 	if (!shell) {
 		throw new Error("No PowerShell executable found. Install PowerShell or add powershell.exe/pwsh.exe to PATH.");
 	}
@@ -189,7 +222,7 @@ export function killProcessTree(pid: number): void {
 		// Use the trusted System32 executable so cleanup does not depend on PATH.
 		try {
 			const child = spawn(
-				join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"),
+				join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"),
 				["/F", "/T", "/PID", String(pid)],
 				{
 					stdio: "ignore",
@@ -203,6 +236,19 @@ export function killProcessTree(pid: number): void {
 			// Ignore errors if taskkill fails.
 		}
 	} else {
+		if (process.platform === "darwin") {
+			// macOS signals group members individually after releasing the group lock. A killed
+			// child can wake its waiting shell before that shell is signalled, letting `a; b`
+			// start b during cancellation (#11252). Stop the group first to reduce this race;
+			// this is best-effort, not an atomic freeze. SIGKILL also kills stopped processes.
+			// Linux holds tasklist_lock across group signalling; child exit notification needs
+			// its write lock, so the shell is signalled before observing the killed child's exit.
+			try {
+				process.kill(-pid, "SIGSTOP");
+			} catch {
+				// A failed stop must not prevent the kill attempt or its single-process fallback.
+			}
+		}
 		// Use SIGKILL on Unix/Linux/Mac
 		try {
 			process.kill(-pid, "SIGKILL");

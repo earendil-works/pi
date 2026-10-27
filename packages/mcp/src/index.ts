@@ -68,4 +68,5 @@ export type {
 	McpTransportCloseListener,
 	McpTransportErrorListener,
 	McpTransportMessageListener,
+	McpTransportSendOptions,
 } from "./transports/transport.ts";

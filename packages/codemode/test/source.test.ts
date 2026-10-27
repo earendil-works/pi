@@ -25,9 +25,24 @@ describe("parseCodemodeSource", () => {
 	});
 
 	it("only treats the first line as an options line", () => {
-		const input = 'text(1)\n// @options: {"timeout_ms": 1}';
-		expect(parseCodemodeSource(input)).toEqual({ code: input, options: {} });
 		expect(parseCodemodeSource("// @optionsx {}\ntext(1)").options).toEqual({});
+		expect(parseCodemodeSource('text("// @options: {}")').options).toEqual({});
+	});
+
+	// #10631: an options line after the first line used to be ignored, so its timeout never applied.
+	it("rejects an options line that is not the first line", () => {
+		const cases: [string, number][] = [
+			['// count things\n// @options: {"timeout_ms": 1000}\nwhile (true) {}', 2],
+			['\n  // @options: {"timeout_ms": 1000}\nwhile (true) {}', 2],
+			['text(1)\r\n// @options: {"timeout_ms": 1}', 2],
+			['// @options: {"timeout_ms": 1}\ntext(1)\n// @options: {"timeout_ms": 2}', 3],
+		];
+		for (const [input, line] of cases) {
+			expect(() => parseCodemodeSource(input), input).toThrow(CodemodeSourceError);
+			expect(() => parseCodemodeSource(input), input).toThrow(
+				`The // @options: line must be the first line of the input; found one on line ${line}`,
+			);
+		}
 	});
 
 	it("rejects empty input and invalid options", () => {

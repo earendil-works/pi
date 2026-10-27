@@ -1,5 +1,7 @@
 import type * as ChildProcess from "node:child_process";
 import type * as Fs from "node:fs";
+import type * as Os from "node:os";
+import { arch, platform } from "os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ensureTool, getLatestVersion, type ToolStatus } from "../src/utils/tools-manager.ts";
 
@@ -10,6 +12,15 @@ vi.mock("fs", async (importOriginal) => {
 	return {
 		...actual,
 		existsSync: vi.fn(() => false),
+	};
+});
+
+vi.mock("os", async (importOriginal) => {
+	const actual = await importOriginal<typeof Os>();
+	return {
+		...actual,
+		arch: vi.fn(() => "x64"),
+		platform: vi.fn(() => "linux"),
 	};
 });
 
@@ -25,6 +36,8 @@ afterEach(() => {
 	if (originalOffline === undefined) delete process.env.PI_OFFLINE;
 	else process.env.PI_OFFLINE = originalOffline;
 	vi.unstubAllGlobals();
+	vi.mocked(arch).mockReturnValue("x64");
+	vi.mocked(platform).mockReturnValue("linux");
 });
 
 function redirectResponse(location: string): Response {
@@ -136,6 +149,26 @@ describe("ensureTool", () => {
 			{
 				type: "warning",
 				message: "Failed to download fd: fetch failed: connect ETIMEDOUT 140.82.113.3:443",
+			},
+		]);
+	});
+
+	// #11209: ARM32 previously fell back to x86-64 release archives.
+	it.each(["arm", "ia32"])("does not download x86-64 binaries on %s", async (architecture) => {
+		delete process.env.PI_OFFLINE;
+		vi.mocked(arch).mockReturnValue(architecture as NodeJS.Architecture);
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		const statuses: ToolStatus[] = [];
+
+		const result = await ensureTool("rg", (status) => statuses.push(status));
+
+		expect(result).toBeUndefined();
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(statuses).toEqual([
+			{
+				type: "warning",
+				message: `ripgrep not found. Automatic download is not supported on linux/${architecture}. Install ripgrep with your system package manager.`,
 			},
 		]);
 	});

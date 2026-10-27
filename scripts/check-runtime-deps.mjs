@@ -35,7 +35,15 @@ function checkSource(source, manifest) {
 	function checkSpecifier(node) {
 		if (!node || !(isStringLiteral(node) || isNoSubstitutionTemplateLiteral(node))) return;
 		const specifier = node.text;
-		if (specifier.startsWith(".") || specifier.startsWith("/") || isBuiltin(specifier)) return;
+		// `cloudflare:` modules are built into the Workers runtime, like `node:` modules are into Node.
+		if (
+			specifier.startsWith(".") ||
+			specifier.startsWith("/") ||
+			specifier.startsWith("cloudflare:") ||
+			isBuiltin(specifier)
+		) {
+			return;
+		}
 		const name = specifier.split("/").slice(0, specifier.startsWith("@") ? 2 : 1).join("/");
 		if (declared.has(name)) return;
 		const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));

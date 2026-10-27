@@ -6,9 +6,18 @@ export type McpTransportMessageListener = (message: JsonRpcMessage) => void;
 export type McpTransportErrorListener = (error: Error) => void;
 export type McpTransportCloseListener = () => void;
 
+export interface McpTransportSendOptions {
+	/**
+	 * Aborted once the sender no longer waits for a reply (the request was cancelled, timed out, answered,
+	 * or the client closed). A transport must not dispatch the message after that, for example when
+	 * retrying it after an authorization refresh. It does not undo a message already dispatched.
+	 */
+	signal?: AbortSignal;
+}
+
 export interface McpTransport {
 	start(): Promise<void>;
-	send(message: JsonRpcMessage): Promise<void>;
+	send(message: JsonRpcMessage, options?: McpTransportSendOptions): Promise<void>;
 	close(): Promise<void>;
 	onMessage(listener: McpTransportMessageListener): () => void;
 	onError(listener: McpTransportErrorListener): () => void;
