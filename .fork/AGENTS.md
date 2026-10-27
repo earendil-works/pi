@@ -34,7 +34,7 @@ Machines that run pi install with `.fork/install-next.sh`: it downloads the late
 6. **Rebuild `next`**: `git checkout next && .fork/sync.sh --rebuild-only`. It tags the old `next`, rebuilds it from the current tips, and runs the focused checks. Nothing is fetched or rebased.
 7. **Push**: `.fork/sync.sh --rebuild-only --push`, or `git push --force-with-lease origin <branch> next`. `next` is always force-pushed because it is regenerated; the branches only when they were rebased. The push to `next` starts the workflow, which checks and publishes the release.
 
-The workflow pulls in upstream daily. To do it by hand, run `.fork/sync.sh` (full mode) on `next` instead of step 6. Order inside it is fixed: tag tips, fetch, fast-forward `main`, rebase every branch onto `main` in file order, rebuild `next`, check, optionally push. If a rebase stops on a conflict, resolve it, `git rebase --continue`, and re-run `.fork/sync.sh --offline`.
+The workflow pulls in upstream daily. To do it by hand, run `.fork/sync.sh` (full mode) on `next` instead of step 6. Order inside it is fixed: tag tips, fetch, fast-forward `main`, rebase every branch onto `main` in file order, rebuild `next`, check, optionally push. If a rebase stops on a conflict, resolve it, `git rebase --continue`, return to `next`, and re-run `.fork/sync.sh --offline --resume`. Resume mode allows the old `next` commits that the rebase replaced; never use it to discard unrelated commits.
 
 ## Recovery
 

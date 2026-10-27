@@ -8,6 +8,7 @@
 #   .fork/sync.sh                      fetch upstream, fast-forward main, rebase every branch, rebuild next
 #   .fork/sync.sh --upstream-rev REV   like the full sync but fast-forward main to REV instead of upstream/main
 #   .fork/sync.sh --offline            full sync without fetching
+#   .fork/sync.sh --offline --resume   resume after resolving a rebase conflict; old next contains replaced commits
 #   .fork/sync.sh --no-check           skip .fork/check.sh focused after the rebuild
 #   .fork/sync.sh --push               push main, next, the branches and the pre-sync tags with --force-with-lease
 #
@@ -42,6 +43,7 @@ upstream_rev="upstream/main"
 fetch=1
 check=1
 push=0
+resume=0
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--status) mode="status"; shift ;;
@@ -49,6 +51,7 @@ while [[ $# -gt 0 ]]; do
 		--align) mode="align"; shift ;;
 		--upstream-rev) upstream_rev="$2"; shift 2 ;;
 		--offline|--no-fetch) fetch=0; shift ;;
+		--resume) resume=1; shift ;;
 		--no-check) check=0; shift ;;
 		--push) push=1; shift ;;
 		-h|--help) sed -n '2,17p' "$0"; exit 0 ;;
@@ -217,7 +220,7 @@ case "$mode" in
 		if [[ -z "$(missing_from_next)" && "$(stray_on_next)" -eq 0 ]]; then
 			echo "next $(short next) already contains every branch tip; nothing to rebuild"
 		else
-			refuse_stray
+			[[ $resume -eq 1 ]] || refuse_stray
 			tag_tips next
 			rebuild_next
 		fi
@@ -237,7 +240,7 @@ case "$mode" in
 			echo "main is already at $upstream_rev ($(short main)) and next $(short next) is current; nothing to do"
 			exit 0
 		fi
-		refuse_stray
+		[[ $resume -eq 1 ]] || refuse_stray
 		tag_tips main next "${branches[@]}"
 		git checkout -q main
 		git merge --ff-only "$upstream_rev"
@@ -245,7 +248,7 @@ case "$mode" in
 		for b in "${branches[@]}"; do
 			git checkout -q "$b"
 			if ! git rebase -q main; then
-				echo "rebase of $b onto main failed; resolve it, 'git rebase --continue', then re-run with --offline" >&2
+				echo "rebase of $b onto main failed; resolve it, 'git rebase --continue', then re-run with --offline --resume" >&2
 				exit 1
 			fi
 			echo "  $b -> $(short "$b") ($(count main..HEAD) commits)"
