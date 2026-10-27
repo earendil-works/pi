@@ -922,11 +922,14 @@ function buildParams(
 		}
 	} else if (compat.thinkingFormat === "openrouter" && model.reasoning) {
 		// OpenRouter normalizes reasoning across providers via a nested reasoning object.
-		const openRouterParams = params as typeof params & { reasoning?: { effort?: string } };
+		const openRouterParams = params as typeof params & { reasoning?: { effort?: string; max_tokens?: number } };
 		if (options?.reasoningEffort) {
-			openRouterParams.reasoning = {
-				effort: model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort,
-			};
+			// OpenRouter rejects requests that specify both effort and max_tokens.
+			// A token budget is more precise and guarantees room for the answer.
+			openRouterParams.reasoning =
+				thinkingBudget !== undefined
+					? { max_tokens: thinkingBudget }
+					: { effort: model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort };
 		} else if (model.thinkingLevelMap?.off !== null) {
 			openRouterParams.reasoning = { effort: model.thinkingLevelMap?.off ?? "none" };
 		}

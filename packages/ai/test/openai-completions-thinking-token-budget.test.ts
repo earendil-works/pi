@@ -47,6 +47,7 @@ type CapturedParams = {
 	thinking_budget_tokens?: number;
 	thinking?: unknown;
 	chat_template_kwargs?: Record<string, unknown>;
+	reasoning?: { effort?: string; max_tokens?: number };
 };
 
 function vllmModel(
@@ -115,6 +116,28 @@ describe("openai-completions thinking token budget", () => {
 		expect(params.thinking_token_budget).toBeUndefined();
 		expect(params.thinking_budget).toBeUndefined();
 		expect(params.thinking_budget_tokens).toBeUndefined();
+	});
+
+	it("caps OpenRouter reasoning inside the reasoning object", async () => {
+		const params = await capture(
+			vllmModel({
+				thinkingFormat: "openrouter",
+				supportsReasoningEffort: true,
+			}),
+			{ reasoning: "high", thinkingBudgets: { high: 8192 }, maxTokens: 16384 },
+		);
+		expect(params.reasoning).toEqual({ max_tokens: 8192 });
+	});
+
+	it("leaves answer room when clamping OpenRouter reasoning", async () => {
+		const params = await capture(
+			vllmModel({
+				thinkingFormat: "openrouter",
+				supportsReasoningEffort: true,
+			}),
+			{ reasoning: "high", thinkingBudgets: { high: 8192 }, maxTokens: 4096 },
+		);
+		expect(params.reasoning).toEqual({ max_tokens: 4096 - 1024 });
 	});
 
 	it("omits the budget when thinking is off", async () => {

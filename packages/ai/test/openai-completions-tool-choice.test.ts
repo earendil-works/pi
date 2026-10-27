@@ -1788,7 +1788,7 @@ describe("openai-completions tool_choice", () => {
 			reasoning?: { effort?: string };
 			reasoning_effort?: string;
 		};
-		expect(params.reasoning).toEqual({ effort: "high" });
+		expect(params.reasoning).toEqual({ max_tokens: 16384 });
 		expect(params.reasoning_effort).toBeUndefined();
 	});
 
