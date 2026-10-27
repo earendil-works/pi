@@ -536,10 +536,14 @@ export class Markdown implements Component {
 
 			case "latexBlock": {
 				const latexToken = token as LatexToken;
-				const rendered =
+				let rendered =
 					!latexToken.pending && this.options.renderLatex !== false
-						? (renderLatex(latexToken.text, { display: true }) ?? latexToken.raw.trim())
-						: latexToken.raw.trim();
+						? renderLatex(latexToken.text, { display: true })
+						: undefined;
+				// A 2D layout cannot be wrapped row by row; fall back to the raw source when it does not fit.
+				if (rendered === undefined || rendered.split("\n").some((line) => visibleWidth(line) > width)) {
+					rendered = latexToken.raw.trim();
+				}
 				for (const line of rendered.split("\n")) {
 					lines.push(this.applyDefaultStyle(line));
 				}

@@ -966,6 +966,29 @@ Inline \(A_{sf}\)`,
 			);
 		});
 
+		// Regression test for https://github.com/earendil-works/pi/issues/11483
+		it("falls back to raw source when display math is wider than the content width", () => {
+			const source = [
+				"\\[",
+				String.raw`\frac{\partial^2 u}{\partial x^2} + \frac{\partial^2 u}{\partial y^2} = \sum_{i=1}^{n} \frac{1}{i^2} + \int_0^1 f(x)\,dx`,
+				"\\]",
+			].join("\n");
+			const render = (width: number) =>
+				new Markdown(source, 0, 0, defaultMarkdownTheme).render(width).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(render(40), [
+				"∂² u   ∂² u   n   1   1",
+				"──── + ──── = ∑   ── +∫ f(x) dx",
+				"∂ x²   ∂ y²  i=1  i²  0",
+			]);
+
+			const narrow = render(30);
+			assert.strictEqual(narrow[0], "\\[");
+			assert.strictEqual(narrow[narrow.length - 1], "\\]");
+			assert.ok(!narrow.some((line) => line.includes("─")));
+			assert.ok(narrow.every((line) => line.length <= 30));
+		});
+
 		// Regression tests for https://github.com/earendil-works/pi/issues/11159
 		describe("unclosed display math before tables (#11159)", () => {
 			const table = ["| A | B |", "|---|---|", "| 1 | 2 |"];

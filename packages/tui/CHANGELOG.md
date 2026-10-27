@@ -11,6 +11,7 @@
 - Fixed fullscreen double-click selection splitting paths and tokens at `~`, `.`, `\`, and `+`. Word characters now match iTerm2's defaults ([#10980](https://github.com/earendil-works/pi/issues/10980))
 - Fixed `fuzzyMatch()` ranking a query scattered over an earlier part of the text above a contiguous match later in it. It now also scores each contiguous occurrence of the query and keeps the best alignment ([#11220](https://github.com/earendil-works/pi/issues/11220), [#11296](https://github.com/earendil-works/pi/pull/11296))
 - Fixed `ProcessTerminal.setTitle()` writing control characters from the title, which could end the title sequence and send the rest to the terminal as escape sequences
+- Fixed display math wider than the content width being wrapped row by row, which split fractions and sums apart. It now falls back to the raw LaTeX source ([#11483](https://github.com/earendil-works/pi/issues/11483))
 
 ## [1.4.0] - 2026-10-21
 
