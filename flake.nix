@@ -36,9 +36,6 @@
       forAllSystems = genAttrs platforms;
 
       piOverlay = _final: prev: {
-        biome = prev.callPackage ./nix/biome.nix {
-          inherit source;
-        };
         pi = prev.callPackage ./nix/package.nix {
           inherit source packageJson platforms;
           nodejs = prev.nodejs_22;
@@ -49,19 +46,11 @@
         system:
         let
           pkgs = (nixpkgsFor system).extend piOverlay;
-          inherit (pkgs) pi;
-          nodejs = pkgs.nodejs_22;
-          treefmtWrapper = import ./nix/treefmt.nix { inherit pkgs; };
-          devShell = import ./nix/devshell.nix { inherit pkgs nodejs treefmtWrapper; };
         in
         {
-          inherit
-            pkgs
-            pi
-            nodejs
-            devShell
-            treefmtWrapper
-            ;
+          inherit pkgs;
+          inherit (pkgs) pi;
+          nodejs = pkgs.nodejs_22;
         }
       );
     in
@@ -69,12 +58,7 @@
       checks = forAllSystems (
         system:
         import ./nix/checks.nix {
-          inherit (perSystem.${system})
-            pkgs
-            pi
-            nodejs
-            treefmtWrapper
-            ;
+          inherit (perSystem.${system}) pkgs pi nodejs;
           inherit source;
         }
       );
@@ -83,12 +67,6 @@
         default = perSystem.${system}.pi;
         pi = perSystem.${system}.pi;
       });
-
-      devShells = forAllSystems (system: {
-        default = perSystem.${system}.devShell;
-      });
-
-      formatter = forAllSystems (system: perSystem.${system}.treefmtWrapper);
 
       apps = forAllSystems (system: rec {
         default = pi;

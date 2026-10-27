@@ -110,18 +110,6 @@ npm run check         # Lint, format, and type check
 ./pi-test.sh         # Run pi from sources (can be run from any directory)
 ```
 
-### Nix development shell
-
-The flake provides the same toolchain without npm-managed binaries. Node.js 22
-and the Biome version pinned in `package.json` come from Nix, so `nix fmt` and
-`npm run check` format the same way.
-
-```bash
-nix develop           # Shell with Node.js, Biome, and treefmt
-nix fmt               # Format JavaScript, TypeScript, JSON, CSS, and Nix
-nix flake check       # Build pi, then run the smoke, formatting, and hygiene checks
-```
-
 ### Using local packages outside the monorepo
 
 Build every public package into one coherent local artifact set:

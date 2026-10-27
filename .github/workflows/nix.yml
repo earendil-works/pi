@@ -131,7 +131,6 @@ jobs:
         run: |
           nix build -L --no-link \
             .#checks.${{ matrix.system }}.smoke \
-            .#checks.${{ matrix.system }}.formatting \
             .#checks.${{ matrix.system }}.repo-hygiene
 
       - name: Smoke-test

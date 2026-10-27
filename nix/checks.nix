@@ -1,7 +1,6 @@
 {
   pkgs,
   pi,
-  treefmtWrapper,
   source,
   nodejs,
 }:
@@ -15,27 +14,6 @@
         export HOME=$(mktemp -d)
         pi --version
         pi --help > /dev/null
-        touch $out
-      '';
-
-  formatting =
-    pkgs.runCommand "pi-formatting-check"
-      {
-        nativeBuildInputs = [
-          treefmtWrapper
-          pkgs.git
-        ];
-      }
-      ''
-        export HOME=$(mktemp -d)
-        mkdir repo && cd repo
-        cp -r ${source}/. .
-        chmod -R +w .
-        git init -q
-        git config user.email "test@example.com"
-        git config user.name "Test"
-        git add .
-        treefmt --ci
         touch $out
       '';
 
