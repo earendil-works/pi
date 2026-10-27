@@ -331,6 +331,32 @@ describe("viewport layout", () => {
 		}
 	});
 
+	it("paints the scrollbar on a plain ASCII row without disturbing it", () => {
+		// Rows of one printable ASCII character per cell are the common case, and they
+		// take the cheap path in replaceScrollbarCell: the replaced cell is one character
+		// and there is no tail. What it must preserve is the row's own background under
+		// the bar glyph, exactly like the general path does for a wider grapheme above.
+		const background = "\x1b[48;5;236m";
+		const content = {
+			render: (width: number) => Array.from({ length: 6 }, () => `${background}${"x".repeat(width)}\x1b[0m`),
+			invalidate: () => {},
+		};
+		const scrollView = new ScrollView(content, {
+			scrollbar: "auto",
+			scrollbarTrackStyle: (text) => `\x1b[90m${text}\x1b[39m`,
+			scrollbarThumbStyle: (text) => `\x1b[37m${text}\x1b[39m`,
+		});
+		renderLayoutFrame(scrollView, 8, 3, () => {});
+		scrollView.scrollBy(1);
+		const frame = renderLayoutFrame(scrollView, 8, 3, () => {});
+
+		assert.deepStrictEqual(frame.lines.map(stripTerminalSequences), ["xxxxxxx┃", "xxxxxxx┃", "xxxxxxx│"]);
+		for (const line of frame.lines) {
+			assert.ok(line.includes(`\x1b[0m\x1b]8;;\x07${background}`), "the row background stays under the bar");
+			assert.ok(line.endsWith("\x1b[39m"), "nothing is appended after the bar");
+		}
+	});
+
 	it("updates reserved scrollbar layout at runtime", () => {
 		const scrollView = new ScrollView(new Text("123456", 0, 0), { scrollbar: "always" });
 		const render = () => renderLayoutFrame(new HStack([scrollView], { align: "start" }), 6, 2, () => {});

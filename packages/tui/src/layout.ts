@@ -246,6 +246,32 @@ function layoutComponent(
 	return box;
 }
 
+/**
+ * Visible width of a row where every cell is one printable ASCII character between
+ * ANSI codes, or -1 when the row needs grapheme segmentation (wide characters,
+ * combining marks, tabs, control codes) or does not fit in `totalWidth`.
+ */
+function plainAsciiWidth(line: string, totalWidth: number): number {
+	let width = 0;
+	let i = 0;
+	while (i < line.length) {
+		const code = line.charCodeAt(i);
+		if (code >= 0x20 && code <= 0x7e) {
+			width++;
+			i++;
+			continue;
+		}
+		if (code === 0x1b) {
+			const ansi = extractAnsiCode(line, i);
+			if (!ansi) return -1;
+			i += ansi.length;
+			continue;
+		}
+		return -1;
+	}
+	return width <= totalWidth ? width : -1;
+}
+
 function replaceScrollbarCell(
 	line: string,
 	column: number,
@@ -254,6 +280,39 @@ function replaceScrollbarCell(
 	preserveTargetBackground: boolean,
 ): string {
 	if (isImageLine(line)) return line;
+
+	// A terminal row is almost always plain ASCII that ends exactly on the bar column:
+	// cell N is then the N-th printable character, the replaced cell is one character,
+	// and there is no tail to keep. Asking for the grapheme at that column costs an
+	// Intl.Segmenter pass over the whole row plus two re-slices, once per row and per
+	// frame while the scrollbar is visible, so take the cheap path there and keep the
+	// general one for everything else.
+	const width = plainAsciiWidth(line, totalWidth);
+	if (width >= 0 && width <= column + 1) {
+		let before = "";
+		let targetPrefix = "";
+		let col = 0;
+		let i = 0;
+		while (i < line.length) {
+			const ansi = extractAnsiCode(line, i);
+			if (ansi) {
+				if (col <= column) {
+					// Strict slicing carries every code seen before the cell into the cell;
+					// that is what keeps the row's own background under the bar glyph.
+					targetPrefix += ansi.code;
+					if (col < column) before += ansi.code;
+				}
+				i += ansi.length;
+				continue;
+			}
+			if (col < column) before += line[i];
+			col++;
+			i++;
+		}
+		const beforePadding = " ".repeat(Math.max(0, column - Math.min(col, column)));
+		const targetStyle = `\x1b[0m\x1b]8;;\x07${preserveTargetBackground ? getActiveBackgroundAnsi(targetPrefix) : ""}`;
+		return `${before}${beforePadding}${targetStyle}${replacement}`;
+	}
 
 	const graphemeRange = getGraphemeCellRange(line, column);
 	const start = graphemeRange?.start ?? column;
