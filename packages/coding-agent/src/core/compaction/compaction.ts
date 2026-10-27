@@ -12,6 +12,7 @@ import {
 	normalizeContext,
 	type RetryCallbacks,
 	type RetryPolicy,
+	type Tool,
 	retryAssistantCall,
 	uuidv7,
 } from "@earendil-works/pi-ai";
@@ -709,6 +710,8 @@ export async function generateSummaryWithUsage(
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
+	systemPrompt?: string,
+	tools?: Tool[],
 ): Promise<{ text: string; usage: Usage }> {
 	// Use update prompt if we have a previous summary, otherwise initial prompt
 	let basePrompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
@@ -716,23 +719,51 @@ export async function generateSummaryWithUsage(
 		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
 	}
 
-	// Serialize conversation to text so model doesn't try to continue it
 	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
 	const llmMessages = convertToLlm(currentMessages);
-	const conversationText = serializeConversation(llmMessages);
-
-	// Build the prompt with conversation wrapped in tags
-	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
-	if (previousSummary) {
-		promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
-	}
-	promptText += basePrompt;
-
 	const completionOptions = createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId);
+
+	let context: TranscriptContext;
+	if (systemPrompt !== undefined) {
+		// Prefix-preserving compaction: replay the conversation messages as-is
+		// and append ONE user instruction, so the summarization request shares
+		// its prefix (system prompt and tool declarations included) with the
+		// regular turns that produced it and the provider's prefix cache
+		// absorbs the prefill. The legacy path below serializes the
+		// conversation into a fresh prompt with a fresh system prompt and no
+		// tool declarations, which forfeits the entire cached prefix.
+		let instructionText = basePrompt;
+		if (previousSummary) {
+			instructionText += `\n\n<previous-summary>\n${previousSummary}\n</previous-summary>`;
+		}
+		context = normalizeContext({
+			systemPrompt,
+			...(tools !== undefined ? { tools } : {}),
+			messages: [
+				...llmMessages,
+				{
+					role: "user",
+					content: [{ type: "text", text: instructionText }],
+					timestamp: Date.now(),
+				},
+			],
+		});
+	} else {
+		// Serialize conversation to text so model doesn't try to continue it
+		const conversationText = serializeConversation(llmMessages);
+
+		// Build the prompt with conversation wrapped in tags
+		let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
+		if (previousSummary) {
+			promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
+		}
+		promptText += basePrompt;
+		context = buildSummarizationContext(promptText);
+	}
 
 	const response = await completeSummarization(
 		model,
-		buildSummarizationContext(promptText),
+		context,
 		completionOptions,
 		streamFn,
 		retry,
@@ -962,6 +993,8 @@ export async function compact(
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
+	systemPrompt?: string,
+	tools?: Tool[],
 ): Promise<CompactionResult> {
 	const {
 		firstKeptEntryId,
@@ -996,6 +1029,8 @@ export async function compact(
 				retry,
 				callbacks,
 				sessionId,
+				systemPrompt,
+				tools,
 			);
 			historyText = historyResult.text;
 			historyUsage = historyResult.usage;
@@ -1013,6 +1048,8 @@ export async function compact(
 			callbacks,
 			sessionId,
 			customInstructions,
+			systemPrompt,
+			tools,
 		);
 		// Merge into single summary
 		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
@@ -1034,6 +1071,8 @@ export async function compact(
 			retry,
 			callbacks,
 			sessionId,
+			systemPrompt,
+			tools,
 		);
 		summary = result.text;
 		summaryUsage = result.usage;
@@ -1072,22 +1111,51 @@ async function generateTurnPrefixSummary(
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
 	customInstructions?: string,
+	systemPrompt?: string,
+	tools?: Tool[],
 ): Promise<{ text: string; usage: Usage }> {
 	const llmMessages = convertToLlm(messages);
-	const conversationText = serializeConversation(llmMessages);
-	let promptText = `# Conversation\n${conversationText}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
-	if (customInstructions) {
-		promptText = `${promptText}\n\nAdditional focus: ${customInstructions}`;
+	let response: AssistantMessage;
+	if (systemPrompt !== undefined) {
+		// Prefix-preserving variant: see generateSummaryWithUsage.
+		let instructionText = TURN_PREFIX_SUMMARIZATION_PROMPT;
+		if (customInstructions) {
+			instructionText = `${instructionText}\n\nAdditional focus: ${customInstructions}`;
+		}
+		response = await completeSummarization(
+			model,
+			normalizeContext({
+				systemPrompt,
+				...(tools !== undefined ? { tools } : {}),
+				messages: [
+					...llmMessages,
+					{
+						role: "user",
+						content: [{ type: "text", text: instructionText }],
+						timestamp: Date.now(),
+					},
+				],
+			}),
+			createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId),
+			streamFn,
+			retry,
+			callbacks,
+		);
+	} else {
+		const conversationText = serializeConversation(llmMessages);
+		let promptText = `# Conversation\n${conversationText}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
+		if (customInstructions) {
+			promptText = `${promptText}\n\nAdditional focus: ${customInstructions}`;
+		}
+		response = await completeSummarization(
+			model,
+			buildSummarizationContext(promptText),
+			createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId),
+			streamFn,
+			retry,
+			callbacks,
+		);
 	}
-
-	const response = await completeSummarization(
-		model,
-		buildSummarizationContext(promptText),
-		createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId),
-		streamFn,
-		retry,
-		callbacks,
-	);
 
 	const failure = getSummarizationFailure(response, "Turn prefix summarization");
 	if (failure) {

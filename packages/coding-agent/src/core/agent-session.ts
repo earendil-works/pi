@@ -2802,6 +2802,11 @@ export class AgentSession {
 			this.settingsManager.getRetrySettings(),
 			this._summarizationRetryCallbacks({ source: "compaction", reason }),
 			undefined, // sessionId
+			// Prefix-preserving compaction: share the outgoing prefix (system
+			// prompt and tool declarations included) with regular turns so the
+			// summarization request rides the provider prefix cache.
+			this.systemPrompt,
+			this._getCallableTools(),
 		);
 	}
 
