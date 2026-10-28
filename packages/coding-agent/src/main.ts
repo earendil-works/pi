@@ -591,7 +591,18 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 	cleanupManagedInstall();
 
-	const cwd = process.cwd();
+	let cwd: string;
+	try {
+		cwd = process.cwd();
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		console.error(
+			chalk.red(
+				"Error: The current working directory no longer exists. Change to an existing directory and try again.",
+			),
+		);
+		process.exit(1);
+	}
 	const agentDir = getAgentDir();
 	const bootstrapSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
 	applyHttpProxySettings(bootstrapSettingsManager.getGlobalSettings().httpProxy);
