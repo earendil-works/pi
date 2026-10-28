@@ -305,6 +305,8 @@ pub fn run(
             sys::interrupt_reader(reader);
         }
         kill_group(pid);
+        // On Windows the group kill spawns taskkill, which can fail under the same limit; kill the child directly.
+        let _ = child.kill();
         let _ = child.wait();
         groups.lock().unwrap().remove(&pid);
         Failure::new("spawn_error", error.to_string())
