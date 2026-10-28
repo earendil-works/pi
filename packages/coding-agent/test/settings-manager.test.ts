@@ -387,6 +387,35 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	// #11115: connection and idle budgets resolve independently.
+	describe("httpConnectTimeoutMs", () => {
+		it.each([
+			[undefined, 10_000],
+			[60_000, 60_000],
+			[0, 0],
+			["disabled", 0],
+		] as const)("resolves %s to %s milliseconds", (value, expected) => {
+			expect(SettingsManager.inMemory({ httpConnectTimeoutMs: value }).getHttpConnectTimeoutMs()).toBe(expected);
+		});
+
+		it("uses project settings only after trust is granted and reloads changes", async () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ httpConnectTimeoutMs: 60_000 }));
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ httpConnectTimeoutMs: 30_000 }));
+			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: false });
+			expect(manager.getHttpConnectTimeoutMs()).toBe(60_000);
+			manager.setProjectTrusted(true);
+			expect(manager.getHttpConnectTimeoutMs()).toBe(30_000);
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ httpConnectTimeoutMs: 0 }));
+			await manager.reload();
+			expect(manager.getHttpConnectTimeoutMs()).toBe(0);
+		});
+
+		it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])("rejects invalid connection budget %s", (value) => {
+			const manager = SettingsManager.inMemory({ httpConnectTimeoutMs: value });
+			expect(() => manager.getHttpConnectTimeoutMs()).toThrow("Invalid httpConnectTimeoutMs setting");
+		});
+	});
+
 	describe("httpIdleTimeoutMs", () => {
 		it("should default to 5 minutes", () => {
 			const manager = SettingsManager.create(projectDir, agentDir);

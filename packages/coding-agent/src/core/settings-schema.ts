@@ -394,6 +394,12 @@ export const SettingsSchema = Type.Object(
 		httpProxy: Type.Optional(
 			Type.String({ description: "Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients." }),
 		),
+		httpConnectTimeoutMs: Type.Optional(
+			timeoutSetting({
+				description:
+					'TCP and TLS connection timeout in milliseconds, including proxy connections; 0 or "disabled" disables it.',
+			}),
+		),
 		httpIdleTimeoutMs: Type.Optional(
 			timeoutSetting({
 				description: 'HTTP header or body idle timeout in milliseconds; 0 or "disabled" disables it.',

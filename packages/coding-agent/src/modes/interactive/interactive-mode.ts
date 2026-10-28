@@ -2077,7 +2077,10 @@ export class InteractiveMode {
 	private applyRuntimeSettings(): void {
 		setCapabilityOverrides(this.settingsManager.getTerminalCapabilityOverrides());
 		this.ensurePngTranscoder();
-		configureHttpDispatcher(this.settingsManager.getHttpIdleTimeoutMs());
+		configureHttpDispatcher(
+			this.settingsManager.getHttpIdleTimeoutMs(),
+			this.settingsManager.getHttpConnectTimeoutMs(),
+		);
 		this.applyFullscreenScrollbarSetting();
 		if (this.renderer instanceof TuiAltScreen) {
 			this.renderer.setCopyOnSelect(this.settingsManager.getFullscreenCopyOnSelect());
@@ -5015,7 +5018,7 @@ export class InteractiveMode {
 					},
 					onHttpIdleTimeoutMsChange: (timeoutMs) => {
 						this.settingsManager.setHttpIdleTimeoutMs(timeoutMs);
-						configureHttpDispatcher(timeoutMs);
+						configureHttpDispatcher(timeoutMs, this.settingsManager.getHttpConnectTimeoutMs());
 						this.showStatus(`HTTP idle timeout: ${formatHttpIdleTimeoutMs(timeoutMs)}`);
 					},
 					onCacheWarmingModeChange: (mode) => {

@@ -147,6 +147,40 @@ describe("http dispatcher", () => {
 		}
 	});
 
+	// #11115: the connection budget must reach both direct and proxy TLS connectors.
+	it.each([false, true])("uses the configured TLS connect timeout (proxy=%s)", async (proxied) => {
+		const sockets = new Set<net.Socket>();
+		const server = net.createServer((socket) => {
+			sockets.add(socket);
+			socket.on("error", () => {});
+			socket.once("close", () => sockets.delete(socket));
+			if (proxied) {
+				socket.once("data", () => socket.write("HTTP/1.1 200 Connection Established\r\n\r\n"));
+			}
+			// Leave TLS incomplete, after accepting TCP (and CONNECT for the proxy).
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address();
+		if (!address || typeof address === "string") throw new Error("Server did not bind to a TCP port");
+		if (proxied) process.env.HTTPS_PROXY = `http://127.0.0.1:${address.port}`;
+		configureHttpDispatcher(60_000, 20);
+		const dispatcher = undici.getGlobalDispatcher();
+		try {
+			const url = proxied ? "https://example.invalid" : `https://127.0.0.1:${address.port}`;
+			await expect(undici.fetch(url, { signal: AbortSignal.timeout(2_000) })).rejects.toMatchObject({
+				cause: {
+					code: "UND_ERR_CONNECT_TIMEOUT",
+					message: expect.stringContaining("timeout: 20ms"),
+				},
+			});
+		} finally {
+			await dispatcher.destroy();
+			undici.setGlobalDispatcher(originalDispatcher);
+			for (const socket of sockets) socket.destroy();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+		}
+	});
+
 	it("allows two seconds for HTTPS connection attempts without changing the Node default", async () => {
 		// Preserve a deliberate host fetch override while testing the dispatcher itself.
 		globalThis.fetch = async () => {

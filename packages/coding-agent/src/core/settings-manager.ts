@@ -8,7 +8,11 @@ import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
-import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
+import {
+	DEFAULT_HTTP_CONNECT_TIMEOUT_MS,
+	DEFAULT_HTTP_IDLE_TIMEOUT_MS,
+	parseHttpIdleTimeoutMs,
+} from "./http-dispatcher.ts";
 import { SETTINGS_DEFAULTS } from "./settings-defaults.ts";
 import type {
 	CacheWarmingMode,
@@ -910,6 +914,13 @@ export class SettingsManager {
 			baseDelayMs: this.settings.retry?.baseDelayMs ?? SETTINGS_DEFAULTS.retry.baseDelayMs,
 			maxAgentDelayMs: this.settings.retry?.maxAgentDelayMs ?? SETTINGS_DEFAULTS.retry.maxAgentDelayMs,
 		};
+	}
+
+	getHttpConnectTimeoutMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.httpConnectTimeoutMs, "httpConnectTimeoutMs") ??
+			DEFAULT_HTTP_CONNECT_TIMEOUT_MS
+		);
 	}
 
 	getHttpIdleTimeoutMs(): number {

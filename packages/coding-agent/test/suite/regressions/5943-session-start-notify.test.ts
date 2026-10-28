@@ -62,6 +62,7 @@ type ReloadCommandContext = {
 	};
 	settingsManager: {
 		getHttpIdleTimeoutMs: () => number;
+		getHttpConnectTimeoutMs: () => number;
 		getHideThinkingBlock: () => boolean;
 		getOutputPad: () => 0 | 1;
 		getEditorPaddingX: () => number;
@@ -134,6 +135,7 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 		},
 		settingsManager: {
 			getHttpIdleTimeoutMs: () => 0,
+			getHttpConnectTimeoutMs: () => 10000,
 			getHideThinkingBlock: () => false,
 			getOutputPad: () => 1,
 			getEditorPaddingX: () => 1,

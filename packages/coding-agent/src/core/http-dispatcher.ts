@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import * as undici from "undici";
 
 export const DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300_000;
+export const DEFAULT_HTTP_CONNECT_TIMEOUT_MS = 10_000;
 // Node's 250ms default can terminate valid connection attempts on high-latency routes.
 const DEFAULT_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS = 2_000;
 
@@ -78,10 +79,17 @@ function createUndiciOriginDispatcher(origin: string | URL, options: object): un
 	);
 }
 
-export function configureHttpDispatcher(timeoutMs: number = DEFAULT_HTTP_IDLE_TIMEOUT_MS): void {
+export function configureHttpDispatcher(
+	timeoutMs: number = DEFAULT_HTTP_IDLE_TIMEOUT_MS,
+	connectTimeoutMs: number = DEFAULT_HTTP_CONNECT_TIMEOUT_MS,
+): void {
 	const normalizedTimeoutMs = parseHttpIdleTimeoutMs(timeoutMs);
 	if (normalizedTimeoutMs === undefined) {
 		throw new Error(`Invalid HTTP idle timeout: ${String(timeoutMs)}`);
+	}
+	const normalizedConnectTimeoutMs = parseHttpIdleTimeoutMs(connectTimeoutMs);
+	if (normalizedConnectTimeoutMs === undefined) {
+		throw new Error(`Invalid HTTP connect timeout: ${String(connectTimeoutMs)}`);
 	}
 	const dispatcher = withUndiciErrorListener(
 		new undici.EnvHttpProxyAgent({
@@ -89,6 +97,8 @@ export function configureHttpDispatcher(timeoutMs: number = DEFAULT_HTTP_IDLE_TI
 			// Keep HTTP origins on CONNECT tunnels as they were before Undici 8.7.
 			proxyTunnel: true,
 			bodyTimeout: normalizedTimeoutMs,
+			// ProxyAgent uses this for both the proxy connection and tunneled TLS.
+			connectTimeout: normalizedConnectTimeoutMs,
 			connect: {
 				autoSelectFamilyAttemptTimeout: DEFAULT_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS,
 			},

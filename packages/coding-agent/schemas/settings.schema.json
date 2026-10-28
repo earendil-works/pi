@@ -639,6 +639,19 @@
       "type": "string",
       "description": "Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients."
     },
+    "httpConnectTimeoutMs": {
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "const": "disabled"
+        }
+      ],
+      "description": "TCP and TLS connection timeout in milliseconds, including proxy connections; 0 or \"disabled\" disables it."
+    },
     "httpIdleTimeoutMs": {
       "anyOf": [
         {
