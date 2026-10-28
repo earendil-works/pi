@@ -6,6 +6,8 @@ import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-m
 import { getSourcePackageKey, type SourceInfo } from "../src/core/source-info.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
+type ExtensionChangelogUpdate = { name: string; version: string; markdown: string };
+
 type ExtensionChangelogContext = {
 	session: {
 		state: { messages: unknown[] };
@@ -16,7 +18,7 @@ type ExtensionChangelogContext = {
 };
 
 const prototype = InteractiveMode.prototype as unknown as {
-	getExtensionChangelogForDisplay(this: ExtensionChangelogContext): string | undefined;
+	getExtensionChangelogUpdates(this: ExtensionChangelogContext): ExtensionChangelogUpdate[];
 	readPackageJson(packageRoot: string): { name?: string; version?: string } | undefined;
 };
 
@@ -66,8 +68,8 @@ describe("InteractiveMode extension changelog", () => {
 		};
 	}
 
-	function display(): string | undefined {
-		return prototype.getExtensionChangelogForDisplay.call(createContext());
+	function display(): ExtensionChangelogUpdate[] {
+		return prototype.getExtensionChangelogUpdates.call(createContext());
 	}
 
 	beforeEach(() => {
@@ -94,7 +96,7 @@ describe("InteractiveMode extension changelog", () => {
 	test("records the version on first launch without showing the changelog", () => {
 		writePackage("1.0.0");
 
-		expect(display()).toBeUndefined();
+		expect(display()).toEqual([]);
 		expect(settingsManager.getExtensionChangelogVersion(getSourcePackageKey(sourceInfo))).toBe("1.0.0");
 	});
 
@@ -103,13 +105,16 @@ describe("InteractiveMode extension changelog", () => {
 		display();
 		writePackage("1.2.0");
 
-		const markdown = display();
-
-		expect(markdown).toBe(
-			"## pi-demo-extension [1.2.0]\n\n- Added feature B\n\n## pi-demo-extension [1.1.0]\n\n- Added feature A",
-		);
+		expect(display()).toEqual([
+			{
+				name: "pi-demo-extension",
+				version: "1.2.0",
+				markdown:
+					"## pi-demo-extension [1.2.0]\n\n- Added feature B\n\n## pi-demo-extension [1.1.0]\n\n- Added feature A",
+			},
+		]);
 		expect(settingsManager.getExtensionChangelogVersion(getSourcePackageKey(sourceInfo))).toBe("1.2.0");
-		expect(display()).toBeUndefined();
+		expect(display()).toEqual([]);
 	});
 
 	test("skips resumed sessions", () => {
@@ -118,17 +123,17 @@ describe("InteractiveMode extension changelog", () => {
 		writePackage("1.2.0");
 		messages.push({ role: "user", content: "hi" });
 
-		expect(display()).toBeUndefined();
+		expect(display()).toEqual([]);
 		expect(settingsManager.getExtensionChangelogVersion(getSourcePackageKey(sourceInfo))).toBe("1.0.0");
 	});
 
 	test("ignores non-package extensions and packages without a changelog", () => {
 		writePackage("1.0.0");
 		sourceInfo = { ...sourceInfo, origin: "top-level" };
-		expect(display()).toBeUndefined();
+		expect(display()).toEqual([]);
 
 		sourceInfo = { ...sourceInfo, origin: "package", changelogPath: undefined };
-		expect(display()).toBeUndefined();
+		expect(display()).toEqual([]);
 		expect(settingsManager.getExtensionChangelogVersion(getSourcePackageKey(sourceInfo))).toBeUndefined();
 	});
 });

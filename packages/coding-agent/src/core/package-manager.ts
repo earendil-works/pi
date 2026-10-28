@@ -675,6 +675,8 @@ function collectResourceFiles(dir: string, resourceType: ResourceType): string[]
 	return collectFiles(dir, FILE_PATTERNS[resourceType]);
 }
 
+// A `pi` object counts as an explicit resource manifest only when it lists resources. Packages whose
+// `pi` object holds only metadata (changelogPath, gallery image/video) still use directory auto-discovery.
 function hasManifestResourceFields(manifest: PiManifest): boolean {
 	return RESOURCE_TYPES.some((resourceType) => manifest[resourceType] !== undefined);
 }

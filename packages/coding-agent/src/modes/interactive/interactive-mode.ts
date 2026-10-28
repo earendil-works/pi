@@ -451,6 +451,12 @@ export interface InteractiveModeOptions {
 	terminal?: Terminal;
 }
 
+interface ExtensionChangelogUpdate {
+	name: string;
+	version: string;
+	markdown: string;
+}
+
 export class InteractiveMode {
 	private runtimeHost: AgentSessionRuntime;
 	private renderer: TuiMainScreen | TuiAltScreen;
@@ -494,7 +500,7 @@ export class InteractiveMode {
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
 	private changelogMarkdown: string | undefined = undefined;
-	private extensionChangelogMarkdown: string | undefined = undefined;
+	private extensionChangelogUpdates: ExtensionChangelogUpdate[] = [];
 	private startupNoticesShown = false;
 	private anthropicSubscriptionWarningShown = false;
 
@@ -850,7 +856,7 @@ export class InteractiveMode {
 		}
 		this.startupNoticesShown = true;
 
-		if (!this.changelogMarkdown && !this.extensionChangelogMarkdown) {
+		if (!this.changelogMarkdown && this.extensionChangelogUpdates.length === 0) {
 			return;
 		}
 
@@ -873,16 +879,24 @@ export class InteractiveMode {
 				this.chatContainer.addChild(new Spacer(1));
 			}
 		}
-		if (this.extensionChangelogMarkdown) {
+		if (this.extensionChangelogUpdates.length > 0) {
 			if (this.changelogMarkdown) {
 				this.chatContainer.addChild(new Spacer(1));
 			}
-			this.chatContainer.addChild(new ThemedText(() => theme.bold(theme.fg("accent", "Extension Updates")), 1, 0));
-			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(
-				new Markdown(this.extensionChangelogMarkdown.trim(), 1, 0, this.getMarkdownThemeWithSettings()),
-			);
-			this.chatContainer.addChild(new Spacer(1));
+			if (this.settingsManager.getCollapseChangelog()) {
+				const condensedText = this.extensionChangelogUpdates
+					.map((update) => `Updated ${update.name} to v${update.version}.`)
+					.join("\n");
+				this.chatContainer.addChild(new Text(condensedText, 1, 0));
+			} else {
+				this.chatContainer.addChild(
+					new ThemedText(() => theme.bold(theme.fg("accent", "Extension Updates")), 1, 0),
+				);
+				this.chatContainer.addChild(new Spacer(1));
+				const markdown = this.extensionChangelogUpdates.map((update) => update.markdown).join("\n\n");
+				this.chatContainer.addChild(new Markdown(markdown, 1, 0, this.getMarkdownThemeWithSettings()));
+				this.chatContainer.addChild(new Spacer(1));
+			}
 		}
 		this.chatContainer.addChild(new DynamicBorder());
 	}
@@ -964,7 +978,7 @@ export class InteractiveMode {
 
 		// Load changelogs (only show new entries, skip for resumed sessions)
 		this.changelogMarkdown = this.getChangelogForDisplay();
-		this.extensionChangelogMarkdown = this.getExtensionChangelogForDisplay();
+		this.extensionChangelogUpdates = this.getExtensionChangelogUpdates();
 
 		// Fullscreen renders on the alternate screen, so text printed to stdout here would stay in the shell
 		// after exit. Fullscreen shows the notice in the header instead (#11508).
@@ -1367,14 +1381,14 @@ export class InteractiveMode {
 		return undefined;
 	}
 
-	private getExtensionChangelogForDisplay(): string | undefined {
+	private getExtensionChangelogUpdates(): ExtensionChangelogUpdate[] {
 		// Skip changelog for resumed/continued sessions (already have messages)
 		if (this.session.state.messages.length > 0) {
-			return undefined;
+			return [];
 		}
 
 		const seenKeys = new Set<string>();
-		const sections: string[] = [];
+		const updates: ExtensionChangelogUpdate[] = [];
 		for (const { sourceInfo } of this.session.resourceLoader.getExtensions().extensions) {
 			if (sourceInfo.origin !== "package" || !sourceInfo.baseDir || !sourceInfo.changelogPath) {
 				continue;
@@ -1403,11 +1417,15 @@ export class InteractiveMode {
 				this.settingsManager.setExtensionChangelogVersion(key, pkg.version);
 				const name = pkg.name || sourceInfo.source;
 				// Prefix each "## [x.y.z]" heading with the package name so entries render like Pi's own.
-				sections.push(...newEntries.map((entry) => entry.content.replace(/^##\s+/, `## ${name} `)));
+				const markdown = newEntries
+					.map((entry) => entry.content.replace(/^##\s+/, `## ${name} `))
+					.join("\n\n")
+					.trim();
+				updates.push({ name, version: pkg.version, markdown });
 			}
 		}
 
-		return sections.length > 0 ? sections.join("\n\n") : undefined;
+		return updates;
 	}
 
 	private readPackageJson(packageRoot: string): { name?: string; version?: string } | undefined {
