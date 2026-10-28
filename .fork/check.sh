@@ -27,7 +27,7 @@ case "${1:-focused}" in
 			antigravity-native antigravity-images antigravity-catalog antigravity-oauth
 			anthropic-oauth-payload anthropic-model-generation anthropic-oauth-security anthropic-oauth-system-prompt
 			anthropic-force-adaptive-thinking anthropic-temperature-compat anthropic-mid-conversation-effort
-			anthropic-thinking-disable anthropic-oauth oauth-callback-server
+			anthropic-thinking-disable anthropic-oauth oauth-callback-server anthropic-sse-parsing
 			google-shared-gemini3-unsigned-tool-call google-shared-convert-tools meta-oauth
 			generic-endpoint-provider openrouter-regional openrouter-user-models
 			openai-responses-mid-convo-effort openai-codex-stream provider-audit-model-generation native-providers-catalog
