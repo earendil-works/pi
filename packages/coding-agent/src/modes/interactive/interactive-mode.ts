@@ -122,14 +122,7 @@ import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { addMcpServerConfig, loadMcpConfig } from "../../extensions/mcp/config.ts";
-import {
-	type ChangelogEntry,
-	compareVersions,
-	getChangelogPath,
-	getNewEntries,
-	normalizeChangelogLinks,
-	parseChangelog,
-} from "../../utils/changelog.ts";
+import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardFilePaths, readClipboardText } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
@@ -140,7 +133,7 @@ import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { stripBom } from "../../utils/text.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
-import { checkForNewPiVersion, comparePackageVersions, type LatestPiRelease } from "../../utils/version-check.ts";
+import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
 import { reportBug } from "./bug-report.ts";
 import { createChatViewport } from "./chat-viewport.ts";
 import { ArminComponent } from "./components/armin.ts";
@@ -1381,9 +1374,8 @@ export class InteractiveMode {
 		}
 
 		const seenKeys = new Set<string>();
-		const notices: string[] = [];
-		for (const extension of this.session.resourceLoader.getExtensions().extensions) {
-			const sourceInfo = extension.sourceInfo;
+		const sections: string[] = [];
+		for (const { sourceInfo } of this.session.resourceLoader.getExtensions().extensions) {
 			if (sourceInfo.origin !== "package" || !sourceInfo.baseDir || !sourceInfo.changelogPath) {
 				continue;
 			}
@@ -1394,76 +1386,43 @@ export class InteractiveMode {
 			}
 			seenKeys.add(key);
 
-			const currentVersion = this.getPackageVersion(sourceInfo.baseDir);
-			if (!currentVersion) {
+			const pkg = this.readPackageJson(sourceInfo.baseDir);
+			if (!pkg?.version) {
 				continue;
 			}
 
 			const lastVersion = this.settingsManager.getExtensionChangelogVersion(key);
 			if (!lastVersion) {
-				// Fresh extension install - record the version, don't show changelog.
-				this.settingsManager.setExtensionChangelogVersion(key, currentVersion);
+				// Fresh install - record the version, don't show changelog
+				this.settingsManager.setExtensionChangelogVersion(key, pkg.version);
 				continue;
 			}
 
-			const comparison = comparePackageVersions(currentVersion, lastVersion);
-			const isNewerVersion = comparison === undefined ? currentVersion !== lastVersion : comparison > 0;
-			if (!isNewerVersion) {
-				continue;
+			const newEntries = getNewEntries(parseChangelog(sourceInfo.changelogPath), lastVersion);
+			if (newEntries.length > 0) {
+				this.settingsManager.setExtensionChangelogVersion(key, pkg.version);
+				const name = pkg.name || sourceInfo.source;
+				// Prefix each "## [x.y.z]" heading with the package name so entries render like Pi's own.
+				sections.push(...newEntries.map((entry) => entry.content.replace(/^##\s+/, `## ${name} `)));
 			}
-
-			const currentEntry = this.parseChangelogEntryVersion(currentVersion);
-			const newEntries = getNewEntries(parseChangelog(sourceInfo.changelogPath), lastVersion).filter(
-				(entry) => !currentEntry || compareVersions(entry, currentEntry) <= 0,
-			);
-			if (newEntries.length === 0) {
-				continue;
-			}
-
-			this.settingsManager.setExtensionChangelogVersion(key, currentVersion);
-			notices.push(
-				[
-					`### ${this.getPackageDisplayName(sourceInfo.baseDir, sourceInfo.source)} ${lastVersion} → ${currentVersion}`,
-				]
-					.concat(newEntries.map((entry) => entry.content))
-					.join("\n\n"),
-			);
 		}
 
-		return notices.length > 0 ? notices.join("\n\n") : undefined;
+		return sections.length > 0 ? sections.join("\n\n") : undefined;
 	}
 
-	private getPackageVersion(packageRoot: string): string | undefined {
+	private readPackageJson(packageRoot: string): { name?: string; version?: string } | undefined {
 		try {
-			const content = fs.readFileSync(path.join(packageRoot, "package.json"), "utf-8");
-			const pkg = JSON.parse(stripBom(content)) as { version?: unknown };
-			return typeof pkg.version === "string" ? pkg.version : undefined;
+			const pkg = JSON.parse(stripBom(fs.readFileSync(path.join(packageRoot, "package.json"), "utf-8"))) as {
+				name?: unknown;
+				version?: unknown;
+			};
+			return {
+				name: typeof pkg.name === "string" ? pkg.name : undefined,
+				version: typeof pkg.version === "string" ? pkg.version : undefined,
+			};
 		} catch {
 			return undefined;
 		}
-	}
-
-	private getPackageDisplayName(packageRoot: string, fallback: string): string {
-		try {
-			const content = fs.readFileSync(path.join(packageRoot, "package.json"), "utf-8");
-			const pkg = JSON.parse(stripBom(content)) as { name?: unknown };
-			return typeof pkg.name === "string" && pkg.name ? pkg.name : fallback;
-		} catch {
-			return fallback;
-		}
-	}
-
-	private parseChangelogEntryVersion(version: string): ChangelogEntry | undefined {
-		const match = version.match(/^(\d+)\.(\d+)\.(\d+)/);
-		if (!match) {
-			return undefined;
-		}
-		return {
-			major: Number.parseInt(match[1], 10),
-			minor: Number.parseInt(match[2], 10),
-			patch: Number.parseInt(match[3], 10),
-			content: "",
-		};
 	}
 
 	private reportInstallTelemetry(version: string): void {

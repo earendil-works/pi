@@ -29,11 +29,10 @@ import {
 } from "./config.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
-import { DefaultPackageManager, type PackageUpdateResult } from "./core/package-manager.ts";
+import { DefaultPackageManager } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import { DefaultResourceLoader, formatPackageInstallWarning, isBuiltinExtension } from "./core/resource-loader.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
-import { getSourcePackageKey } from "./core/source-info.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { spawnProcess, spawnProcessSync, waitForChildProcess } from "./utils/child-process.ts";
 import { canonicalizePath, getCwdRelativePath } from "./utils/paths.ts";
@@ -605,25 +604,6 @@ function updateTargetIncludesExtensions(target: UpdateTarget): boolean {
 	return target.type === "all" || target.type === "extensions";
 }
 
-function rememberExtensionChangelogVersions(
-	settingsManager: SettingsManager,
-	updates: readonly PackageUpdateResult[],
-): void {
-	for (const update of updates) {
-		if (!update.changelogPath || !update.fromVersion || !update.toVersion) {
-			continue;
-		}
-		if (!isNewerPackageVersion(update.toVersion, update.fromVersion)) {
-			continue;
-		}
-
-		const key = getSourcePackageKey(update);
-		if (!settingsManager.getExtensionChangelogVersion(key)) {
-			settingsManager.setExtensionChangelogVersion(key, update.fromVersion);
-		}
-	}
-}
-
 async function refreshModelCatalogs(agentDir: string): Promise<void> {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), 15_000);
@@ -1068,9 +1048,7 @@ export async function handlePackageCommand(
 				}
 				if (updateTargetIncludesExtensions(target)) {
 					const updateSource = target.type === "extensions" ? target.source : undefined;
-					const updates = await packageManager.update(updateSource);
-					rememberExtensionChangelogVersions(settingsManager, updates);
-					await settingsManager.flush();
+					await packageManager.update(updateSource);
 					if (updateSource) {
 						console.log(chalk.green(`Updated ${updateSource}`));
 					} else {

@@ -238,7 +238,6 @@ export {
 export type {
 	PackageInstallFailure,
 	PackageManager,
-	PackageUpdateResult,
 	PathMetadata,
 	ProgressCallback,
 	ProgressEvent,

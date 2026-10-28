@@ -2635,50 +2635,6 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			);
 		});
 
-		it("should return changelog metadata for updated npm packages", async () => {
-			const installedPath = join(tempDir, ".pi", "npm", "node_modules", "example");
-			const changelogPath = join(installedPath, "docs", "CHANGELOG.md");
-			mkdirSync(join(installedPath, "docs"), { recursive: true });
-			writeFileSync(
-				join(installedPath, "package.json"),
-				JSON.stringify({
-					name: "example",
-					version: "1.0.0",
-					pi: { changelogPath: "docs/CHANGELOG.md" },
-				}),
-			);
-			writeFileSync(changelogPath, "## [1.1.0]\n\n- Updated");
-			settingsManager.setProjectPackages(["npm:example"]);
-
-			vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('"1.1.0"');
-			vi.spyOn(packageManager as any, "runCommand").mockImplementation(async () => {
-				writeFileSync(
-					join(installedPath, "package.json"),
-					JSON.stringify({
-						name: "example",
-						version: "1.1.0",
-						pi: { changelogPath: "docs/CHANGELOG.md" },
-					}),
-				);
-			});
-
-			const updates = await packageManager.update("npm:example");
-
-			expect(updates).toEqual([
-				{
-					source: "npm:example",
-					displayName: "example",
-					type: "npm",
-					scope: "project",
-					installedPath,
-					baseDir: installedPath,
-					fromVersion: "1.0.0",
-					toVersion: "1.1.0",
-					changelogPath,
-				},
-			]);
-		});
-
 		it("should skip project npm update when installed version matches latest", async () => {
 			const installedPath = join(tempDir, ".pi", "npm", "node_modules", "example");
 			mkdirSync(installedPath, { recursive: true });

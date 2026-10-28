@@ -121,14 +121,6 @@ export interface PackageUpdate {
 	scope: Exclude<SourceScope, "temporary">;
 }
 
-export interface PackageUpdateResult extends PackageUpdate {
-	installedPath: string;
-	baseDir: string;
-	fromVersion?: string;
-	toVersion?: string;
-	changelogPath?: string;
-}
-
 export interface ConfiguredPackage {
 	source: string;
 	scope: "user" | "project";
@@ -142,7 +134,7 @@ export interface PackageManager {
 	installAndPersist(source: string, options?: { local?: boolean }): Promise<void>;
 	remove(source: string, options?: { local?: boolean }): Promise<void>;
 	removeAndPersist(source: string, options?: { local?: boolean }): Promise<boolean>;
-	update(source?: string): Promise<PackageUpdateResult[]>;
+	update(source?: string): Promise<void>;
 	listConfiguredPackages(): ConfiguredPackage[];
 	resolveExtensionSources(
 		sources: string[],
@@ -1141,7 +1133,7 @@ export class DefaultPackageManager implements PackageManager {
 		return this.removeSourceFromSettings(source, options);
 	}
 
-	async update(source?: string): Promise<PackageUpdateResult[]> {
+	async update(source?: string): Promise<void> {
 		const globalSettings = this.settingsManager.getGlobalSettings();
 		const projectSettings = this.settingsManager.getProjectSettings();
 		const identity = source ? this.getPackageIdentity(source) : undefined;
@@ -1170,12 +1162,12 @@ export class DefaultPackageManager implements PackageManager {
 			);
 		}
 
-		return await this.updateConfiguredSources(updateSources);
+		await this.updateConfiguredSources(updateSources);
 	}
 
-	private async updateConfiguredSources(sources: ConfiguredUpdateSource[]): Promise<PackageUpdateResult[]> {
+	private async updateConfiguredSources(sources: ConfiguredUpdateSource[]): Promise<void> {
 		if (isOfflineModeEnabled() || sources.length === 0) {
-			return [];
+			return;
 		}
 
 		const npmCandidates: NpmUpdateTarget[] = [];
@@ -1212,7 +1204,7 @@ export class DefaultPackageManager implements PackageManager {
 			}
 		}
 
-		const tasks: Promise<PackageUpdateResult[]>[] = [];
+		const tasks: Promise<void>[] = [];
 		if (userNpmUpdates.length > 0) {
 			tasks.push(this.updateNpmBatch(userNpmUpdates, "user"));
 		}
@@ -1220,16 +1212,16 @@ export class DefaultPackageManager implements PackageManager {
 			tasks.push(this.updateNpmBatch(projectNpmUpdates, "project"));
 		}
 		if (gitCandidates.length > 0) {
-			const gitTasks = gitCandidates.map((entry) => async () => this.updateGitWithResult(entry));
-			tasks.push(
-				this.runWithConcurrency(gitTasks, GIT_UPDATE_CONCURRENCY).then((results) =>
-					results.filter((result): result is PackageUpdateResult => result !== undefined),
-				),
+			const gitTasks = gitCandidates.map(
+				(entry) => async () =>
+					this.withProgress("update", entry.source, `Updating ${entry.source}...`, async () => {
+						await this.updateGit(entry.parsed, entry.scope);
+					}),
 			);
+			tasks.push(this.runWithConcurrency(gitTasks, GIT_UPDATE_CONCURRENCY).then(() => {}));
 		}
 
-		const results = await Promise.all(tasks);
-		return results.flat();
+		await Promise.all(tasks);
 	}
 
 	private async shouldUpdateNpmSource(source: NpmSource, scope: InstalledSourceScope): Promise<boolean> {
@@ -1248,21 +1240,9 @@ export class DefaultPackageManager implements PackageManager {
 		}
 	}
 
-	private async updateNpmBatch(
-		sources: NpmUpdateTarget[],
-		scope: InstalledSourceScope,
-	): Promise<PackageUpdateResult[]> {
+	private async updateNpmBatch(sources: NpmUpdateTarget[], scope: InstalledSourceScope): Promise<void> {
 		if (sources.length === 0) {
-			return [];
-		}
-
-		const beforeVersions = new Map<string, { installedPath: string; version?: string }>();
-		for (const entry of sources) {
-			const installedPath = this.getNpmInstallPath(entry.parsed, scope);
-			beforeVersions.set(entry.source, {
-				installedPath,
-				version: existsSync(installedPath) ? this.getInstalledNpmVersion(installedPath) : undefined,
-			});
+			return;
 		}
 
 		const sourceLabel = sources.length === 1 ? sources[0].source : `${scope} npm packages`;
@@ -1271,22 +1251,6 @@ export class DefaultPackageManager implements PackageManager {
 
 		await this.withProgress("update", sourceLabel, message, async () => {
 			await this.installNpmBatch(specs, scope);
-		});
-
-		return sources.map((entry) => {
-			const installedPath = this.getNpmInstallPath(entry.parsed, scope);
-			const before = beforeVersions.get(entry.source);
-			return {
-				source: entry.source,
-				displayName: entry.parsed.name,
-				type: "npm" as const,
-				scope,
-				installedPath,
-				baseDir: installedPath,
-				fromVersion: before?.version,
-				toVersion: this.getInstalledNpmVersion(installedPath),
-				changelogPath: this.getPackageChangelogPath(installedPath),
-			};
 		});
 	}
 
@@ -1633,10 +1597,6 @@ export class DefaultPackageManager implements PackageManager {
 		} catch {
 			return undefined;
 		}
-	}
-
-	private getPackageChangelogPath(packageRoot: string): string | undefined {
-		return resolvePackageChangelogPath(packageRoot, readPiManifest(join(packageRoot, "package.json")));
 	}
 
 	private async getLatestNpmVersion(packageSpec: string, range?: string): Promise<string> {
@@ -2022,36 +1982,6 @@ export class DefaultPackageManager implements PackageManager {
 			this.pruneEmptyGitParents(targetDir, gitRoot);
 			throw error;
 		}
-	}
-
-	private async updateGitWithResult(entry: GitUpdateTarget): Promise<PackageUpdateResult | undefined> {
-		const installedPath = this.getGitInstallPath(entry.parsed, entry.scope);
-		const fromVersion = existsSync(installedPath) ? this.getInstalledNpmVersion(installedPath) : undefined;
-		let result: PackageUpdateResult | undefined;
-
-		await this.withProgress("update", entry.source, `Updating ${entry.source}...`, async () => {
-			await this.updateGit(entry.parsed, entry.scope);
-			const toVersion = this.getInstalledNpmVersion(installedPath);
-			if (fromVersion === undefined && toVersion === undefined) {
-				return;
-			}
-			if (fromVersion === toVersion) {
-				return;
-			}
-			result = {
-				source: entry.source,
-				displayName: `${entry.parsed.host}/${entry.parsed.path}`,
-				type: "git",
-				scope: entry.scope,
-				installedPath,
-				baseDir: installedPath,
-				fromVersion,
-				toVersion,
-				changelogPath: this.getPackageChangelogPath(installedPath),
-			};
-		});
-
-		return result;
 	}
 
 	private async updateGit(source: GitSource, scope: SourceScope): Promise<void> {
