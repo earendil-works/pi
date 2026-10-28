@@ -21,10 +21,8 @@ export interface ExecOptions {
 	/** Working directory */
 	cwd?: string;
 	/**
-	 * Maximum bytes of stdout and stderr combined. If exceeded, the command is terminated,
-	 * the output is truncated, and the result has `truncated: true`.
-	 * Default: 256 MiB, or the runtime string limit if smaller.
-	 * Must be an integer from 0 through node:buffer's constants.MAX_STRING_LENGTH.
+	 * Combined stdout/stderr byte limit; exceeding it terminates the command with `truncated: true`.
+	 * Nonnegative integer up to the runtime string limit. Default: 256 MiB, capped by that limit.
 	 */
 	maxBuffer?: number;
 }
