@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- Fixed compaction, branch summaries, and bug-report summaries in SDK sessions passing the stored OAuth token back to the model runtime as an explicit API key. Provider auth that treats explicit keys differently from stored OAuth now sees the OAuth login, as normal prompts do ([#11520](https://github.com/earendil-works/pi/issues/11520))
 - Fixed a redundant system prompt update (tools, rules) when an extension set the same active tools in a different order, for example a reversed `pi.setActiveTools()` list. Tools that stay active now keep their order and newly activated tools are appended ([#11495](https://github.com/earendil-works/pi/issues/11495))
 - Fixed `pi install` and `pi remove` adding ever deeper nested entries to the npm `package-lock.json` when the agent directory is reached through a symlink, such as `~/.pi` linked into a dotfiles repo. pi now passes the resolved real path to npm ([#11358](https://github.com/earendil-works/pi/issues/11358))
 - MCP sign-in now rejects authorization endpoints and other OAuth metadata URLs that are not `http:` or `https:`. Before, a malicious MCP server could supply a `file:` or custom protocol URL, which pi passed to the platform URL handler.
