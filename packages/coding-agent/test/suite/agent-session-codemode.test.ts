@@ -184,6 +184,49 @@ describe("AgentSession codemode tool", () => {
 		expect(description("echo")).toBe("Echo text back.\n\nSecond paragraph.");
 	});
 
+	// #11501
+	it("summarizes union and multi-line output types instead of inlining them", async () => {
+		const outputTool = (name: string, outputSchema: AgentTool["outputSchema"]): AgentTool => ({
+			name,
+			label: name,
+			description: `${name} tool`,
+			parameters: Type.Object({}),
+			outputSchema,
+			execute: async () => ({ content: [], details: {} }),
+		});
+		const process = outputTool(
+			"process",
+			Type.Union([
+				Type.Object({
+					action: Type.Literal("start"),
+					process: Type.Object({ id: Type.String({ description: "Process id" }), pid: Type.Integer() }),
+				}),
+				Type.Object({
+					action: Type.Literal("list"),
+					processes: Type.Array(Type.Object({ id: Type.String() })),
+					truncated: Type.Optional(Type.Boolean()),
+				}),
+			]),
+		);
+		const entries = outputTool("entries", Type.Array(Type.Object({ id: Type.String(), size: Type.Integer() })));
+		const count = outputTool("count", Type.Number());
+		const harness = await setup([
+			(pi: ExtensionAPI) => {
+				for (const tool of [process, entries, count]) pi.registerTool(createToolDefinitionFromAgentTool(tool));
+			},
+		]);
+		harness.session.setActiveToolsByName(["process", "entries", "count", "codemode"]);
+		const description = (name: string) =>
+			harness.session.agent.state.tools.find((tool) => tool.name === name)?.description ?? "";
+		expect(description("process")).toBe(
+			'process tool\n\nCodemode: `tools.process(args)` resolves to `{ action: "start", process } | { action: "list", processes, truncated? }`.',
+		);
+		expect(description("entries")).toBe(
+			'entries tool\n\nCodemode: `tools.entries(args)` resolves to a value; `await describeTool("entries")` shows its type.',
+		);
+		expect(description("count")).toBe("count tool\n\nCodemode: `tools.count(args)` resolves to `number`.");
+	});
+
 	// #10343
 	it("shows the guidelines of tools that do not fit the inline budget through describeTool()", async () => {
 		const harness = await setup();
