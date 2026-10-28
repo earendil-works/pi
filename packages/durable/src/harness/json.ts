@@ -1,8 +1,6 @@
 import type { JsonValue } from "@earendil-works/chord";
 import { appendText, type Draft } from "@earendil-works/chord/delta";
 
-type JsonContainer = Record<string, JsonValue> | JsonValue[];
-
 /** How `assignJson()` writes one value instead of assigning it leaf by leaf. */
 export type AssignPlan =
 	/** The string grew by `text` since it was last assigned: append it, when the lengths agree. */
@@ -19,10 +17,18 @@ export type AssignPlan =
  * string member grew by, and the committed string plus that text has the new string's length, the text is appended
  * with `appendText()` instead.
  */
-export function assignJson(target: JsonContainer, key: string | number, value: JsonValue, plan?: AssignPlan): void {
+export function assignJson<T extends object, K extends keyof T & (string | number)>(
+	target: T,
+	key: K,
+	value: T[K] & JsonValue,
+	plan?: AssignPlan,
+): void {
 	if (plan?.kind === "keep") return;
+	// Every target is a document container: JSON members or items, whatever its declared type names them.
 	const slots = target as Record<string | number, JsonValue>;
-	const current = slots[key];
+	// A `__proto__` member the target lacks reads through to Object.prototype; merging into that would pollute every
+	// object in the process. Other inherited members are functions, which are not merged into.
+	const current: JsonValue | undefined = key === "__proto__" && !Object.hasOwn(slots, key) ? undefined : slots[key];
 	const fields = plan?.kind === "fields" ? plan.fields : undefined;
 	if (isRecord(current) && isRecord(value)) {
 		for (const name of Object.keys(current)) if (!Object.hasOwn(value, name)) delete current[name];

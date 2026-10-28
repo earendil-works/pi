@@ -11,13 +11,18 @@ import {
 	type Storage,
 	type TaskId,
 } from "@earendil-works/pi-durable";
-import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
+import {
+	InMemoryTelemetryContext,
+	NOOP_TELEMETRY_CONTEXT,
+	NOOP_TELEMETRY_METRICS,
+	type TelemetryContext,
+} from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
 import { createCodemodeTool } from "../src/codemode/codemode.ts";
 import { type ChatSetup, chatSetup, waitFor } from "./chat-support.ts";
 import { addHooks, addTask, addTool } from "./harness-support.ts";
-import { ControlledStorage, context } from "./session-support.ts";
-import { aborted } from "./task-support.ts";
+import { ControlledStorage, context, flush, onValue } from "./session-support.ts";
+import { aborted, openTasks } from "./task-support.ts";
 
 async function openTracked(storage: Storage, setup: ChatSetup, telemetry: InMemoryTelemetryContext) {
 	const harness = await Harness.open(
@@ -28,7 +33,7 @@ async function openTracked(storage: Storage, setup: ChatSetup, telemetry: InMemo
 			settings: setup.settings,
 			now: () => setup.now(),
 			telemetry,
-			onReport: (error) => setup.reports.push(error),
+			onReport: ({ error }) => setup.reports.push(error),
 		},
 		context,
 	);
@@ -717,8 +722,8 @@ describe("Durable telemetry", () => {
 			phases: {
 				report: async (_task, runtime, ctx) => {
 					runtime.report(error);
-					runtime.report(error, { type: "extension", extension: "reporting-extension" });
-					runtime.report(error, { type: "host", callback: "models" });
+					runtime.report(error, { kind: "extension", extension: "reporting-extension" });
+					runtime.report(error, { kind: "host", callback: "models" });
 					await runtime.commit(
 						() => ({ status: "terminal", outcome: { status: "completed", result: null } }),
 						ctx,
@@ -851,7 +856,7 @@ describe("Durable telemetry", () => {
 				.getMetrics()
 				.filter((metric) => metric.name === "pi.durable.reports")
 				.map((metric) => metric.attributes),
-		).toEqual([{ type: "session_failed" }]);
+		).toEqual([{ type: "storage_failed" }]);
 	});
 
 	it("counts reports raised with a NOOP span without creating a root", async () => {
@@ -859,8 +864,11 @@ describe("Durable telemetry", () => {
 		const telemetry = new InMemoryTelemetryContext();
 		const { harness, root } = await openTracked(new MemoryStorage(), setup, telemetry);
 		const error = new Error("private-noop-report");
-		const unsubscribe = harness.subscribeCommits(() => {
-			throw error;
+		const observation = harness.observeCommits({
+			advance: () => {
+				throw error;
+			},
+			end: () => {},
 		});
 		await root.commit((tx) => tx.appendEntry(root.id, { kind: "app.note" }), context);
 		expect(setup.reports).toEqual([error]);
@@ -871,7 +879,7 @@ describe("Durable telemetry", () => {
 				.filter((metric) => metric.name === "pi.durable.reports")
 				.map((metric) => metric.attributes),
 		).toEqual([{ type: "listener_error" }]);
-		unsubscribe();
+		observation.detach();
 		await harness.close(context);
 	});
 
@@ -881,9 +889,12 @@ describe("Durable telemetry", () => {
 		setup.faux.setResponses([fauxAssistantMessage("answer")]);
 		const { harness, root } = await openTracked(new MemoryStorage(), setup, telemetry);
 		const error = new Error("private-listener-error");
-		const unsubscribe = harness.subscribeCommits((publication) => {
-			if (publication.changes.some((change) => change.type === "entry" && change.value.kind === "pi.user"))
-				throw error;
+		const observation = harness.observeCommits({
+			advance: (publication) => {
+				if (publication.changes.some((change) => change.type === "entry" && change.value.kind === "pi.user"))
+					throw error;
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "input" }, context)).wait(context);
 		await harness.waitForIdle(context);
@@ -892,7 +903,7 @@ describe("Durable telemetry", () => {
 		const span = telemetry.getSpans().find((span) => span.name === "pi.durable.submit")!;
 		expect(span.events).toContainEqual({ name: "pi.durable.report", attributes: { type: "listener_error" } });
 		expect(JSON.stringify(telemetry.getSpans())).not.toContain("private-listener-error");
-		unsubscribe();
+		observation.detach();
 		await harness.close(context);
 	});
 
@@ -902,9 +913,12 @@ describe("Durable telemetry", () => {
 		setup.faux.setResponses([fauxAssistantMessage("answer")]);
 		const { harness, root } = await openTracked(new MemoryStorage(), setup, telemetry);
 		const failed = Promise.withResolvers<void>();
-		const unsubscribe = harness.subscribeCommits((publication) => {
-			if (publication.changes.some((change) => change.type === "entry" && change.value.kind === "pi.user"))
-				return failed.promise;
+		const observation = harness.observeCommits({
+			advance: (publication) => {
+				if (publication.changes.some((change) => change.type === "entry" && change.value.kind === "pi.user"))
+					return failed.promise;
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "input" }, context)).wait(context);
 		await harness.waitForIdle(context);
@@ -920,7 +934,7 @@ describe("Durable telemetry", () => {
 				.map((metric) => metric.attributes),
 		).toEqual([{ type: "listener_error" }]);
 		expect(JSON.stringify(telemetry.getSpans())).not.toContain("private-async-listener-error");
-		unsubscribe();
+		observation.detach();
 		await harness.close(context);
 	});
 
@@ -984,5 +998,94 @@ describe("Durable telemetry", () => {
 		).toContainEqual({ name: "pi.durable.replay", attributes: { "tool.name": "once" } });
 		await harness.close(context);
 		await sandbox.close();
+	});
+
+	it("reports telemetry adapters that throw while a commit is published, and the commit stands", async () => {
+		const Idle = defineTask<null, { phase: "run" }, null>({
+			name: "test.telemetry-idle",
+			version: 1,
+			initial: () => ({ phase: "run" }),
+			phases: { run: async () => {} },
+			abort: async () => {},
+		});
+		const throwingMetric = {
+			add: () => {
+				throw new Error("metrics down");
+			},
+		};
+		const telemetry: TelemetryContext = {
+			...NOOP_TELEMETRY_CONTEXT,
+			metrics: { ...NOOP_TELEMETRY_METRICS, upDownCounter: () => throwingMetric },
+		};
+		const { harness, infos } = await openTasks(new MemoryStorage(), [Idle], { telemetry });
+		const root = await harness.root(context);
+		const view = await root.watch(context);
+		const shown: (number | undefined)[] = [];
+		view.start(
+			onValue(async ({ value }) => {
+				shown.push(value.entries.at(-1)?.id);
+			}),
+		);
+		const hosts: number[] = [];
+		harness.observeCommits({
+			advance: (publication) => {
+				hosts.push(publication.seq);
+			},
+			end: () => {},
+		});
+		const failing = withTelemetry(
+			{
+				...NOOP_TELEMETRY_CONTEXT,
+				addEvent: () => {
+					throw new Error("telemetry down");
+				},
+			},
+			context,
+		);
+		const { entry, task } = await root.commit(async (tx) => {
+			const entry = await tx.appendEntry(root.id, { kind: "note", data: {} });
+			const task = await tx.createTask(Idle, null, { ownership: { kind: "conversation" } });
+			return { entry: entry.id, task };
+		}, failing);
+		// The entry event, then the active-task metric; the report's own event throws too and is dropped.
+		expect(infos).toEqual([
+			{ kind: "host_error", callback: "telemetry" },
+			{ kind: "host_error", callback: "telemetry" },
+		]);
+		expect(hosts).toHaveLength(1);
+		await flush();
+		expect(shown).toEqual([entry]);
+		expect((await harness.getTask(task, context))?.state.status).toBe("pending");
+		await view.stop();
+		await harness.close(context);
+		expect(await harness.closed).toEqual({ kind: "closed" });
+	});
+
+	it("drops a report's own metric that throws, after onReport got the report", async () => {
+		const throwingCounter = {
+			add: () => {
+				throw new Error("metrics down");
+			},
+		};
+		const telemetry: TelemetryContext = {
+			...NOOP_TELEMETRY_CONTEXT,
+			metrics: { ...NOOP_TELEMETRY_METRICS, counter: () => throwingCounter },
+		};
+		const { harness, reports, infos } = await openTasks(new MemoryStorage(), [], { telemetry });
+		const root = await harness.root(context);
+		const bug = new Error("listener bug");
+		harness.observeCommits({
+			advance: () => {
+				throw bug;
+			},
+			end: () => {},
+		});
+		await root.commit((tx) => tx.appendEntry(root.id, { kind: "note", data: {} }), context);
+		// The listener runs in the commit's dispatch microtask; a throw escaping its report would be unhandled there.
+		await flush();
+		expect(reports).toEqual([bug]);
+		expect(infos).toEqual([{ kind: "listener_error" }]);
+		await harness.close(context);
+		expect(await harness.closed).toEqual({ kind: "closed" });
 	});
 });

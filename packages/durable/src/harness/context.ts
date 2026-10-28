@@ -253,17 +253,6 @@ function settle(
 	return { settled: [...settled, ...orderToolResults(open.slice(0, last))], open: open.slice(last) };
 }
 
-/** The raw active entries within captured bounds, without deriving model context. */
-export async function activeEntries(
-	storage: Storage,
-	conversationId: ConversationId,
-	bounds: ContextBounds | undefined,
-	context: Context,
-): Promise<readonly EntryRecord[]> {
-	if (bounds === undefined) return [];
-	return selectActive(bounds.head, await scanRange(storage, conversationId, rangeQuery(bounds), context));
-}
-
 /** The visible range of `bounds`: from the head marker's head, or transcript start, through the tail. */
 function rangeQuery(bounds: ContextBounds): Omit<EntryQuery, "conversationId"> {
 	const head = bounds.head;

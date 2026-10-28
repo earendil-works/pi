@@ -2,7 +2,16 @@ import type { Draft, JsonRepresentation, JsonValue } from "@earendil-works/chord
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import { defineDoc } from "../documents.ts";
 import type { Transaction } from "../session/transaction.ts";
-import type { EntryId, JsonObject, SubmissionId, SubmissionSettlement, TaskId, TaskRecord, Tx } from "../types.ts";
+import type {
+	CommitOptions,
+	EntryId,
+	JsonObject,
+	SubmissionId,
+	SubmissionSettlement,
+	TaskId,
+	TaskRecord,
+	Tx,
+} from "../types.ts";
 import { convertPartial } from "./generation.ts";
 import type { SchedulerOutcome } from "./scheduler.ts";
 import type { CompactionReason, CompactionResult, ToolDiagnostic } from "./types.ts";
@@ -35,7 +44,7 @@ export type ToolSlot = SlotProgress & {
 
 /**
  * Presentation of one nested call: a call a running tool made through `executeTool()`. `callId` is
- * `<parentCallId>/<key>`, the call's ID in tool events and unique because keys contain no `/`. The Harness relates
+ * `<parentCallId>/<key>`, the call's ID, unique because keys contain no `/`. The Harness relates
  * slots by task ID: `taskId` is the call's tool task, `parentTaskId` the calling one, model-issued or nested.
  */
 export type NestedToolSlot = SlotProgress & {
@@ -62,7 +71,8 @@ export type NestedToolSummary = {
 /** Presentation of one live compaction task (spec §8.7). */
 export type CompactionStatus = {
 	taskId: TaskId<CompactionResult>;
-	reason: CompactionReason;
+	/** What started it: `compact()`, a threshold, or a context overflow. */
+	trigger: CompactionReason;
 	/** Whether a generation waits for it: a compaction the generation owns. */
 	blocking: boolean;
 	attempt: number;
@@ -73,9 +83,49 @@ export type CompactionStatus = {
 /** The newest compaction that failed since a compaction last produced a summary (spec §8.7). */
 export type CompactionFailure = {
 	taskId: TaskId<CompactionResult>;
-	reason: CompactionReason;
+	/** What started the compaction that failed. */
+	trigger: CompactionReason;
 	/** The failed or faulted outcome's error message, or why the scheduler orphaned the task. */
 	error: string;
+};
+
+/**
+ * Why a run ended without an answer:
+ * - `model_error`: the model's response failed, after any retries, or the compaction a request needed failed;
+ * - `no_model`: no model is configured, or the configured one is not available;
+ * - `aborted`: the run was aborted (`Conversation.abort()`, `abortTask()`); `detail` says when its abort handler was
+ *   cut off `settings.restartLimit` times and did not finish;
+ * - `reset`: a queued reset started a new context at the post-tools boundary, before an answer (a tool's handoff
+ *   continues the run);
+ * - `faulted`: the run's task threw where it cannot recover, or storage rejected its commit;
+ * - `orphaned`: the run's task was aborted while no registered definition could take it;
+ * - `interrupted`: the host stopped while the model was answering, more often than `settings.retry` retries;
+ * - `restart_limit`: the run's generation was cut off `settings.restartLimit` times in a row; a request or poll it was
+ *   cut off during counts as a failed attempt first, so this ends one whose charge itself keeps failing.
+ */
+export type RunFailureReason =
+	| "model_error"
+	| "no_model"
+	| "aborted"
+	| "reset"
+	| "faulted"
+	| "orphaned"
+	| "interrupted"
+	| "restart_limit";
+
+/** The newest run that ended without an answer (spec §8.2). */
+export type RunFailure = {
+	/** The task that ended the run: the run's task at its end. */
+	taskId: TaskId;
+	/** The run's inputs, settled `unanswered`. */
+	inputs: SubmissionId[];
+	reason: RunFailureReason;
+	/**
+	 * `model_error`: the error text; `no_model`: which model is missing; `faulted`: the error message; `orphaned`: why
+	 * the task could not run (`missing_task`, `task_too_old`, `migration_failed`); `interrupted` and `restart_limit`: what
+	 * was cut off, and how often.
+	 */
+	detail?: string;
 };
 
 /** Built-in live conversation state: run control and presentation of the current generation and tool round. */
@@ -106,15 +156,31 @@ export type LiveState = {
 	 * removes it; one that is aborted or finds nothing to compact leaves it.
 	 */
 	compactionFailure?: CompactionFailure;
+	/**
+	 * Why the newest run ended without an answer, so a client can show it after the run ended. Set in the commit that
+	 * ends the run; removed when a later commit starts a run. A run started in the same commit, by
+	 * `afterFailedRun: "continue"` or after a reset, keeps it.
+	 */
+	runFailure?: RunFailure;
 };
 
 export const LiveDoc = defineDoc<LiveState>({
 	kind: "pi.live",
-	version: 1,
+	version: 2,
 	scope: "conversation",
 	history: "latest",
 	fork: "initial",
 	initial: () => ({}),
+	// Version 1 named a compaction's trigger `reason`, in `compactions` and `compactionFailure`.
+	migrate: (value) => {
+		const live = value as { compactions?: JsonObject[]; compactionFailure?: JsonObject };
+		const { compactions, compactionFailure } = live;
+		return {
+			...value,
+			...(compactions === undefined ? {} : { compactions: compactions.map(renameReason) }),
+			...(compactionFailure === undefined ? {} : { compactionFailure: renameReason(compactionFailure) }),
+		} as LiveState;
+	},
 	// REMINDER: a complete base whenever nothing runs (spec §8.2): no generation and no running tool slot. That holds
 	// while idle, in the commit handing a generation over to its tool round, and between tools, so the delta chain
 	// spans at most one generation or the overlapping execution of one round's tools. A slot holds output only while
@@ -126,18 +192,85 @@ export const LiveDoc = defineDoc<LiveState>({
 		!(value.nestedTools ?? []).some((slot) => slot.status === "running"),
 });
 
+/** A copy of a version 1 compaction status or failure with `reason` renamed `trigger`, its keys in their order. */
+function renameReason(value: JsonObject): JsonObject {
+	return Object.fromEntries(Object.entries(value).map(([key, field]) => [key === "reason" ? "trigger" : key, field]));
+}
+
+/**
+ * How the progress throttles commit a partial answer and running tool output into `pi.live`: deferred, so storage gets
+ * them together, at the next commit that reads or writes `pi.live` or after `settings.progress.persistWithinMs`. Every
+ * commit that consumes or clears streamed fields reads `pi.live`, so it stores them with its own changes (spec §8.2).
+ */
+export const PROGRESS_COMMIT: CommitOptions = { persistence: { kind: "deferred" } };
+
 /** Built-in task kinds that can own `pi.live.run`. */
 const RUN_TASK_KINDS: ReadonlySet<string> = new Set(["pi.generation"]);
 const TOOL_TASK_KIND = "pi.tool";
 const COMPACTION_TASK_KIND = "pi.compaction";
 
 /**
- * End the run owned by `taskId`: settle each of its inputs and remove `run`. Always removes `generation`, `tools`, and
- * `nestedTools`, whose presentation belongs to the ending run.
+ * Built-in task kinds that end themselves once cut off `settings.restartLimit` times (`TaskRecord.restarts`); the
+ * scheduler faults a task of any other kind instead (spec §5.4).
  */
-export function endRun(tx: Tx, live: Draft<LiveState>, taskId: TaskId, settlement: SubmissionSettlement): void {
+export const LIMITS_RESTARTS: ReadonlySet<string> = new Set([...RUN_TASK_KINDS, TOOL_TASK_KIND, COMPACTION_TASK_KIND]);
+
+/** Whether `task` was cut off `settings.restartLimit` times in a row, so its phase ends it instead of running. */
+export function cutOffTooOften(
+	task: { readonly restarts?: number },
+	runtime: { readonly settings: { readonly restartLimit: number } },
+): boolean {
+	// The settings are read only for a task that was cut off at all, so the normal path resolves nothing more.
+	return task.restarts !== undefined && task.restarts >= runtime.settings.restartLimit;
+}
+
+/**
+ * Whether a task at the limit may still do the cleanup it does when it ends, such as converting a partial: only at the
+ * limit. Past it, that cleanup may be what cut the task off, so the task ends without it.
+ */
+export function salvageable(
+	task: { readonly restarts?: number },
+	runtime: { readonly settings: { readonly restartLimit: number } },
+): boolean {
+	return (task.restarts ?? 0) <= runtime.settings.restartLimit;
+}
+
+/** How often a task was cut off, for a message: "once", or "3 times in a row". */
+export function cutOffCount(task: { readonly restarts?: number }): string {
+	const restarts = task.restarts ?? 0;
+	return restarts === 1 ? "once" : `${restarts} times in a row`;
+}
+
+/** How a run ends: with an answer, or without one, settling its inputs `unanswered` and recording why. */
+export type RunEnd =
+	| { readonly status: "done"; readonly answer: EntryId }
+	| {
+			readonly status: "unanswered";
+			readonly reason: RunFailureReason;
+			readonly detail?: string;
+			/** The inputs' settlement; default `unanswered` with `reason` and `detail`. */
+			readonly settlement?: SubmissionSettlement;
+	  };
+
+/**
+ * End the run owned by `taskId`: settle each of its inputs, remove `run`, and, without an answer, record
+ * `runFailure`. Always removes `generation`, `tools`, and `nestedTools`, whose presentation belongs to the ending run.
+ */
+export function endRun(tx: Tx, live: Draft<LiveState>, taskId: TaskId, end: RunEnd): void {
 	if (live.run?.taskId === taskId) {
-		for (const id of live.run.inputs) tx.settleSubmission(id, settlement);
+		const inputs = [...live.run.inputs];
+		if (end.status === "done") {
+			for (const id of inputs) tx.settleSubmission(id, { status: "done", answer: end.answer });
+		} else {
+			const { reason, detail } = end;
+			const settlement = end.settlement ?? {
+				status: "unanswered",
+				reason,
+				...(detail === undefined ? {} : { detail }),
+			};
+			for (const id of inputs) tx.settleSubmission(id, settlement);
+			live.runFailure = { taskId, inputs, reason, ...(detail === undefined ? {} : { detail }) };
+		}
 		delete live.run;
 	}
 	delete live.generation;
@@ -168,7 +301,7 @@ export function removeCompactionStatus(live: Draft<LiveState>, taskId: TaskId): 
 /** Remove the status of compaction task `taskId` and record that it failed with `error`. */
 export function failCompactionStatus(live: Draft<LiveState>, taskId: TaskId, error: string): void {
 	const status = compactionStatus(live, taskId);
-	if (status !== undefined) live.compactionFailure = { taskId: status.taskId, reason: status.reason, error };
+	if (status !== undefined) live.compactionFailure = { taskId: status.taskId, trigger: status.trigger, error };
 	removeCompactionStatus(live, taskId);
 }
 
@@ -248,21 +381,33 @@ export async function settleSchedulerOutcome(
 		removeNestedSlots(live, record.id);
 		return;
 	}
+	// Only an abort handler is faulted for the limit here (the built-in phases end themselves): the task was aborted,
+	// and keeps that meaning. Its run ends `aborted`, with the limit as detail, and an aborted compaction is no failure.
+	const detail = outcome.status === "faulted" ? outcome.error.detail : undefined;
+	const cutOff =
+		typeof detail === "object" && detail !== null && "reason" in detail && detail.reason === "restart_limit";
 	if (record.kind === COMPACTION_TASK_KIND) {
-		const error = outcome.status === "faulted" ? outcome.error.message : outcome.reason;
-		failCompactionStatus(await tx.doc(LiveDoc, record.conversationId), record.id, error);
+		const live = await tx.doc(LiveDoc, record.conversationId);
+		if (cutOff) removeCompactionStatus(live, record.id);
+		else failCompactionStatus(live, record.id, outcome.status === "faulted" ? outcome.error.message : outcome.reason);
 		return;
 	}
 	if (!RUN_TASK_KINDS.has(record.kind)) return;
 	const live = await tx.doc(LiveDoc, record.conversationId);
 	if (live.run?.taskId !== record.id) return;
-	await convertPartial(tx, live, record.conversationId);
+	// Cut off, the abort handler may have died converting the partial: the run ends without it.
+	if (!cutOff) await convertPartial(tx, live, record.conversationId);
 	endRun(
 		tx,
 		live,
 		record.id,
 		outcome.status === "faulted"
-			? { status: "unanswered", reason: "faulted", detail: outcome.error.message }
-			: { status: "unanswered", reason: outcome.reason },
+			? { status: "unanswered", reason: cutOff ? "aborted" : "faulted", detail: outcome.error.message }
+			: {
+					status: "unanswered",
+					reason: "orphaned",
+					detail: outcome.reason,
+					settlement: { status: "unanswered", reason: outcome.reason },
+				},
 	);
 }

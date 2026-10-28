@@ -395,6 +395,26 @@ describe("ProcessTerminal progress", () => {
 	});
 });
 
+describe("ProcessTerminal title", () => {
+	it("replaces control characters so the title cannot end the OSC sequence", () => {
+		const terminal = new ProcessTerminal();
+		const writes: string[] = [];
+		const previousWrite = process.stdout.write;
+
+		process.stdout.write = ((chunk: string | Uint8Array) => {
+			writes.push(String(chunk));
+			return true;
+		}) as typeof process.stdout.write;
+
+		try {
+			terminal.setTitle("pi - work\x07\x1b]52;c;Zm9v\x07\u009b2J - repo");
+			assert.deepEqual(writes, ["\x1b]0;pi - work ]52;c;Zm9v 2J - repo\x07"]);
+		} finally {
+			process.stdout.write = previousWrite;
+		}
+	});
+});
+
 describe("ProcessTerminal dimensions", () => {
 	it("falls back to COLUMNS and LINES before default dimensions", () => {
 		const previousColumnsDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "columns");

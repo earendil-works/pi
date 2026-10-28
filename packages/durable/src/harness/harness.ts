@@ -20,6 +20,7 @@ import { contained, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
 import { hostTimers } from "../timers.ts";
 import type {
+	CommitOptions,
 	ConversationId,
 	ConversationOwnership,
 	ConversationRecord,
@@ -27,7 +28,10 @@ import type {
 	EntryId,
 	EntryQuery,
 	EntryRecord,
+	Observation,
+	Observer,
 	Page,
+	Report,
 	ReportInfo,
 	Storage,
 	SubmissionId,
@@ -40,12 +44,12 @@ import { AgentDoc, configure, createAgent, resolveAgent, resolveSettings } from 
 import { createCompaction } from "./compaction.ts";
 import { readContext } from "./context.ts";
 import { InboxDoc, withdrawQueuedInputs } from "./inbox.ts";
-import { LiveDoc, settleSchedulerOutcome } from "./live.ts";
+import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts";
 import { ProviderDoc } from "./provider.ts";
 import { BUILTIN_TASKS } from "./registry.ts";
 import { type InvocationBinding, TaskScheduler } from "./scheduler.ts";
 import { Submissions } from "./submissions.ts";
-import { TaskGraphView, type TaskGraphWatch } from "./task-graph.ts";
+import { type TaskGraph, TaskGraphView, type TaskGraphWatch } from "./task-graph.ts";
 import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
 import type {
 	Agent,
@@ -71,7 +75,7 @@ import type {
 } from "./types.ts";
 import { addUsageState, UsageDoc, type UsageState } from "./usage.ts";
 import { scanAll } from "./util.ts";
-import { ConversationViews } from "./view.ts";
+import { type ConversationView, ConversationViews, type ConversationWindow } from "./view.ts";
 
 const SCAN_PAGE_SIZE = 256;
 
@@ -138,8 +142,8 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		await this.#host.submissions.submit(this.id, { type: "write", entry }, context);
 	}
 
-	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T> {
-		return this.#host.harness.commitWith(change, context, { conversationId: this.id });
+	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context, options?: CommitOptions): Promise<T> {
+		return this.#host.harness.commitWith(change, context, { conversationId: this.id }, options);
 	}
 
 	context(context: Context, options?: { readonly at?: EntryId }): Promise<ContextView> {
@@ -175,8 +179,8 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		return this.#host.tasks.waitForIdle(this.id, context);
 	}
 
-	watch(context: Context): Promise<ConversationWatch> {
-		return this.#host.views.watch(this.id, context);
+	watch(context: Context, window?: ConversationWindow): Promise<ConversationWatch> {
+		return this.#host.views.watch(this.id, context, window);
 	}
 }
 
@@ -213,8 +217,15 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		const report = safeReport(options.onReport, options.telemetry ?? NOOP_TELEMETRY_CONTEXT);
 		const now = safeNow(options.now, report);
 		const hostSettings = currentSettings(options.settings);
-		// Read at each use, as all settings are, but only this field: it is read on every commit.
-		super(rawStorage, now, () => hostSettings()?.documentRetentionMs, options.setTimer, options.readOnly === true);
+		// Read at each use, as all settings are, but only these fields: they are read on every commit.
+		super(
+			rawStorage,
+			now,
+			() => hostSettings()?.documentRetentionMs,
+			options.setTimer,
+			options.readOnly === true,
+			() => hostSettings()?.progress?.persistWithinMs,
+		);
 		// Every component reads and writes through the Session's failure guard: `rawStorage` serves only `super()`.
 		const storage = this.storage;
 		this.#options = options;
@@ -232,9 +243,10 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 			env: (id, callContext) => this.buildEnv(id, callContext),
 			now,
 			onWake: options.onWake,
-			timers: hostTimers(options.setTimer, (error) => report(error, { type: "host_error", callback: "setTimer" })),
+			timers: hostTimers(options.setTimer, (error) => report(error, { kind: "host_error", callback: "setTimer" })),
 			writeAtClose: (writes) => this.writeAtClose(writes),
 			report: this.#report,
+			limitsRestarts: (kind) => LIMITS_RESTARTS.has(kind),
 			settleOutcome: settleSchedulerOutcome,
 			withdrawInputs: withdrawQueuedInputs,
 			conversation: async (id, binding, callContext) => {
@@ -269,7 +281,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		const registry = snapshot ?? this.#options.registry.snapshot();
 		const state = await this.snapshot(AgentDoc, id, context);
 		return resolveAgent(state, registry, resolveSettings(this.#hostSettings()), (error, extension) =>
-			this.#report(error, { type: "extension_error", conversationId: id, extension }, context),
+			this.#report(error, { kind: "extension_error", conversationId: id, extension }, context),
 		);
 	}
 
@@ -333,11 +345,6 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#tasks.abort(id, context);
 	}
 
-	retryTask(id: TaskId, context: Context): Promise<void> {
-		this.assertUsable();
-		return this.#tasks.retry(id, context);
-	}
-
 	async waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>> {
 		this.#tasks.resume();
 		return this.#tasks.waitForTask(id, context) as Promise<SettledTask<R>>;
@@ -365,6 +372,21 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#taskGraph.watch(context);
 	}
 
+	async observeTaskGraph(observer: Observer<TaskGraph>, context: Context): Promise<Observation<TaskGraph>> {
+		this.assertUsable();
+		return this.#taskGraph.observe(observer, context);
+	}
+
+	async observeConversation(
+		id: ConversationId,
+		observer: Observer<ConversationView>,
+		context: Context,
+		window?: ConversationWindow,
+	): Promise<Observation<ConversationView>> {
+		this.assertUsable();
+		return this.#host.views.observe(id, observer, context, window);
+	}
+
 	root(
 		context: Context,
 		options?: { readonly agent?: AgentChange; readonly init?: ConversationInit },
@@ -382,7 +404,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#create({ kind: "independent", ownership: options.ownership }, options, context);
 	}
 
-	override report(error: unknown, info: ReportInfo = { type: "listener_error" }, context?: Context): void {
+	override report(error: unknown, info: ReportInfo = { kind: "listener_error" }, context?: Context): void {
 		this.#report(error, info, context);
 	}
 
@@ -425,30 +447,35 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 	}
 }
 
-/** Preserve the host callback's error containment; telemetry adapters are responsible for their own failures. */
+/**
+ * Report to `onReport`, then count it and record its event. Never throws, since reports also come from inside Storage's
+ * `adopt`: a throwing `onReport` is dropped, and so is a throwing metric or event, as reporting it would report again.
+ */
 function safeReport(
-	onReport: ((error: unknown, info: ReportInfo) => void) | undefined,
+	onReport: ((report: Report) => void) | undefined,
 	telemetry: TelemetryContext,
 ): (error: unknown, info: ReportInfo, context?: Context) => void {
 	const reports = createTypedMetrics(telemetry.metrics ?? NOOP_TELEMETRY_METRICS, [DURABLE_TELEMETRY_SCHEMA]).counter(
 		"pi.durable.reports",
 	);
 	return (error, info, context) => {
-		contained(
-			() => onReport?.(error, info),
-			() => {},
-		);
+		if (onReport !== undefined) {
+			contained(
+				() => onReport({ ...info, error }),
+				() => {},
+			);
+		}
 		const attributes: SpanAttributes = {
-			type: info.type,
+			type: info.kind,
 		};
-		switch (info.type) {
+		switch (info.kind) {
 			case "task_faulted":
+			case "task_interrupted":
 			case "task_outdated":
 				attributes.reason = info.reason;
 				attributes.extension = info.extension;
 				attributes["task.id"] = info.task.id;
 				break;
-			case "task_parked":
 			case "migration_failed":
 			case "task_error":
 			case "extension_error":
@@ -459,8 +486,12 @@ function safeReport(
 				attributes["task.id"] = info.task?.id;
 				break;
 		}
-		reports.add(1, { type: info.type });
-		context?.telemetry.addEvent("pi.durable.report", attributes);
+		try {
+			reports.add(1, { type: info.kind });
+			context?.telemetry.addEvent("pi.durable.report", attributes);
+		} catch {
+			// Dropped: see above.
+		}
 	};
 }
 
@@ -481,7 +512,7 @@ export function safeNow(
 			// Set first: a report handler that reads the clock again must not report again.
 			if (!reported) {
 				reported = true;
-				report(error, { type: "host_error", callback: "now" });
+				report(error, { kind: "host_error", callback: "now" });
 			}
 			return Date.now();
 		}

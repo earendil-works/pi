@@ -13,6 +13,8 @@
 
 ### Fixed
 
+- Fixed a redundant system prompt update (tools, rules) when an extension set the same active tools in a different order, for example a reversed `pi.setActiveTools()` list. Tools that stay active now keep their order and newly activated tools are appended ([#11495](https://github.com/earendil-works/pi/issues/11495))
+- Fixed `pi install` and `pi remove` adding ever deeper nested entries to the npm `package-lock.json` when the agent directory is reached through a symlink, such as `~/.pi` linked into a dotfiles repo. pi now passes the resolved real path to npm ([#11358](https://github.com/earendil-works/pi/issues/11358))
 - MCP sign-in now rejects authorization endpoints and other OAuth metadata URLs that are not `http:` or `https:`. Before, a malicious MCP server could supply a `file:` or custom protocol URL, which pi passed to the platform URL handler.
 - Automatic `fd` and `rg` downloads no longer fetch x86-64 binaries on ARM32 and other architectures without a prebuilt release. pi now warns and recommends installing the tool with the system package manager ([#11209](https://github.com/earendil-works/pi/issues/11209))
 - Fixed `/model` search ranking letters scattered over an earlier part of an entry above a real match, for example `opus` listing `gpt-oss-120b` and `claude-sonnet-4.5` before `claude-opus-4.1` ([#11220](https://github.com/earendil-works/pi/issues/11220), [#11296](https://github.com/earendil-works/pi/pull/11296))
@@ -21,6 +23,7 @@
 - Fixed HTML export not showing system messages: the system prompt and tools, and later section updates such as after `/reload`. `pi --export` now includes the system prompt and tools too ([#11261](https://github.com/earendil-works/pi/issues/11261), [#3464](https://github.com/earendil-works/pi/issues/3464), [#11290](https://github.com/earendil-works/pi/pull/11290))
 - Fixed aborting a bash command on macOS sometimes running the next command of a list such as `long_step; next_step`. pi now stops the process group before killing it ([#11252](https://github.com/earendil-works/pi/issues/11252), [#11289](https://github.com/earendil-works/pi/pull/11289))
 - Fixed streamed tool calls re-running their call renderer on every argument delta; the interactive mode now renders the latest arguments once per frame, so a large streamed `write` no longer re-highlights its whole content per delta ([#9265](https://github.com/earendil-works/pi/issues/9265))
+- Fixed the login dialog opening sign-in URLs that are not web URLs, and printing control characters from sign-in, device-code, and info URLs, which could end a terminal hyperlink and send escape sequences to the terminal
 
 ## [1.4.0] - 2026-10-21
 

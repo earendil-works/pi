@@ -94,11 +94,11 @@ describe("Harness.inspect()", () => {
 		const paused = await harness.inspect(context);
 		expect(paused.scheduling).toBe("paused");
 		expect(paused.tasks.map((entry) => entry.record.id)).toEqual(Object.values(ids));
-		expect(stateOf(paused.tasks, ids.gate)).toEqual({ kind: "ready", migrates: false });
-		expect(stateOf(paused.tasks, ids.dependent)).toEqual({ kind: "ready", migrates: false });
-		expect(stateOf(paused.tasks, ids.migrating)).toEqual({ kind: "ready", migrates: true });
+		expect(stateOf(paused.tasks, ids.gate)).toEqual({ kind: "pending", migrates: false });
+		expect(stateOf(paused.tasks, ids.dependent)).toEqual({ kind: "pending", migrates: false });
+		expect(stateOf(paused.tasks, ids.migrating)).toEqual({ kind: "pending", migrates: true });
 		// A migration that was never tried is not run to find out.
-		expect(stateOf(paused.tasks, ids.failing)).toEqual({ kind: "ready", migrates: true });
+		expect(stateOf(paused.tasks, ids.failing)).toEqual({ kind: "pending", migrates: true });
 		expect(stateOf(paused.tasks, ids.noMigration)).toMatchObject({
 			kind: "blocked",
 			reason: "migration_failed",

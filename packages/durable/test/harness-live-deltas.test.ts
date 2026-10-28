@@ -13,7 +13,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { chatSetup, openChat, waitFor } from "./chat-support.ts";
 import { addTool } from "./harness-support.ts";
-import { context, documentChanges } from "./session-support.ts";
+import { context, documentChanges, documentValues, followCommits } from "./session-support.ts";
 
 type Action = (api: ToolExecutionApi) => void | Promise<void>;
 
@@ -52,8 +52,8 @@ async function drive(outputLimits: ToolRegistration["outputLimits"] = {}) {
 	]);
 	const { harness, root } = await openChat(new MemoryStorage(), setup);
 	const commits: Op[][] = [];
-	harness.subscribeCommits((publication) => {
-		for (const change of documentChanges(publication)) {
+	followCommits(harness, (publication) => {
+		for (const change of documentValues(publication)) {
 			if (change.record.kind === "pi.live" && change.ops.length > 0) commits.push([...change.ops]);
 		}
 	});
@@ -114,10 +114,13 @@ describe("pi.live deltas", () => {
 		]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const commits: Op[][] = [];
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication)) {
-				if (change.record.kind === "pi.live" && change.ops.length > 0) commits.push([...change.ops]);
-			}
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentValues(publication)) {
+					if (change.record.kind === "pi.live" && change.ops.length > 0) commits.push([...change.ops]);
+				}
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		const tasks = await harness.commit((tx) => tx.scanTasks({ conversationId: root.id }, 20), context);
@@ -261,8 +264,8 @@ describe("pi.live deltas", () => {
 		setup.faux.setResponses([fauxAssistantMessage([fauxText("word ".repeat(250))])]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const commits: Op[][] = [];
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication)) {
+		followCommits(harness, (publication) => {
+			for (const change of documentValues(publication)) {
 				if (change.record.kind === "pi.live" && change.ops.length > 0) commits.push([...change.ops]);
 			}
 		});
@@ -321,12 +324,15 @@ describe("pi.live deltas", () => {
 		setup.settings.toolExecution = "sequential";
 		const { harness, root } = await openChat(new RecordingStorage(), setup);
 		const values = new Map<number, LiveState>();
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication)) {
-				if (change.record.kind !== "pi.live") continue;
-				liveId = change.record.id;
-				if (change.value !== null) values.set(publication.seq, change.value as LiveState);
-			}
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentChanges(publication)) {
+					if (change.record.kind !== "pi.live") continue;
+					liveId = change.record.id;
+					if (change.kind === "change") values.set(publication.seq, change.value as LiveState);
+				}
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		const nothingRuns = (value: LiveState) =>
@@ -361,10 +367,13 @@ describe("pi.live deltas", () => {
 		]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const commits: Op[][] = [];
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication)) {
-				if (change.record.kind === "pi.live" && change.ops.length > 0) commits.push([...change.ops]);
-			}
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentValues(publication)) {
+					if (change.record.kind === "pi.live" && change.ops.length > 0) commits.push([...change.ops]);
+				}
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		const entries = await root.entries({}, 10, undefined, context);
@@ -402,12 +411,15 @@ describe("pi.live deltas", () => {
 		]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		let handover: CommitPublication | undefined;
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication)) {
-				if (change.record.kind === "pi.live" && (change.value as LiveState | null)?.tools?.length === 2) {
-					handover ??= publication;
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentValues(publication)) {
+					if (change.record.kind === "pi.live" && (change.value as LiveState)?.tools?.length === 2) {
+						handover ??= publication;
+					}
 				}
-			}
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		const changes = handover!.changes;

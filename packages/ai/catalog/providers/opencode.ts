@@ -17,6 +17,7 @@ import type { ModelsDevModel } from "../sources/models-dev.ts";
 // OpenAI-compatible endpoints reject the long prompt-cache retention parameter for these models.
 const LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = new Set([
 	"opencode:deepseek-v4-flash",
+	"opencode:deepseek-v4.1-flash",
 	"opencode:deepseek-v4-pro",
 	"opencode:kimi-k2.5",
 	"opencode:kimi-k2.6",
@@ -34,18 +35,18 @@ function opencodeApi(
 		case "responses":
 			return {
 				api: "openai-responses",
-				baseUrl: `${basePath}/v1`,
+				baseUrl: `${basePath}/openai/v1`,
 				compat: { sessionAffinityFormat: "openai-nosession" },
 			};
 		case "messages":
 			// Anthropic SDK appends /v1/messages to baseURL
-			return { api: "anthropic-messages", baseUrl: basePath };
+			return { api: "anthropic-messages", baseUrl: `${basePath}/anthropic` };
 		case "generate-content":
-			return { api: "google-generative-ai", baseUrl: `${basePath}/v1` };
+			return { api: "google-generative-ai", baseUrl: `${basePath}/google/v1beta` };
 		default:
 			return {
 				api: "openai-completions",
-				baseUrl: `${basePath}/v1`,
+				baseUrl: `${basePath}/openai/v1`,
 				...(primary?.aisdk === "@ai-sdk/alibaba" ? { compat: { cacheControlFormat: "anthropic" } } : {}),
 			};
 	}
@@ -56,7 +57,7 @@ export function opencodeModels(ctx: ProviderContext, basePath: string): ChatMode
 	const provider = ctx.providerId;
 	return modelsDevModels(ctx, provider, {
 		api: "openai-completions",
-		baseUrl: `${basePath}/v1`,
+		baseUrl: `${basePath}/openai/v1`,
 		skipDeprecated: true,
 		// Codex Spark is not usable through OpenCode.
 		include: (source) => source.id !== "gpt-5.3-codex-spark",
@@ -71,10 +72,10 @@ export function opencodeModels(ctx: ProviderContext, basePath: string): ChatMode
 				compat = { ...compat, thinkingFormat: "deepseek", supportsReasoningEffort: false };
 			}
 			// models.dev reports these as @ai-sdk/anthropic, but OpenCode Go serves
-			// them through the OpenAI-compatible /v1/chat/completions path.
+			// them through the OpenAI-compatible /openai/v1/chat/completions path.
 			if (provider === "opencode-go" && (model.id === "qwen3.5-plus" || model.id === "qwen3.6-plus")) {
 				api = "openai-completions";
-				baseUrl = `${basePath}/v1`;
+				baseUrl = `${basePath}/openai/v1`;
 				// Qwen/DashScope uses enable_thinking at the top level.
 				compat = { ...compat, thinkingFormat: "qwen" };
 			}
@@ -151,7 +152,7 @@ export function finalizeOpencodeModel(model: ChatModel): void {
 }
 
 // OpenCode Zen serves Jev through its TypeSafe-compatible System One endpoint.
-// Neither its /inference/v1/models listing nor models.dev carries metadata for it.
+// Neither its /inference/openai/v1/models listing nor models.dev carries metadata for it.
 // https://opencode.ai/docs/zen
 function jev(id: string, name: string, input: number): ClassifierModel<"typesafe-system-one"> {
 	return {
@@ -160,7 +161,7 @@ function jev(id: string, name: string, input: number): ClassifierModel<"typesafe
 		name,
 		api: "typesafe-system-one",
 		provider: "opencode",
-		baseUrl: "https://opencode.ai/inference/v1",
+		baseUrl: "https://opencode.ai/inference/systemone/v1",
 		input: ["text"],
 		cost: { input, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 32000,

@@ -103,6 +103,14 @@ class DurableObjectSqliteExecutor implements SqliteExecutor {
 		this.storage.sql.exec(sql, ...bind(params));
 	}
 
+	async runCounted(sql: string, ...params: SqliteValue[]): Promise<number> {
+		this.check();
+		this.storage.sql.exec(sql, ...bind(params));
+		// The cursor's `rowsWritten` is a billing count that includes index writes; SQLite's own count is exact.
+		const counted = this.storage.sql.exec("SELECT changes() AS changes").next();
+		return counted.done ? 0 : Number(counted.value.changes);
+	}
+
 	async get<T extends object>(sql: string, ...params: SqliteValue[]): Promise<T | undefined> {
 		this.check();
 		const result = this.storage.sql.exec(sql, ...bind(params)).next();
@@ -149,6 +157,10 @@ export class DurableObjectSqliteDatabase extends DurableObjectSqliteExecutor imp
 
 	override run(sql: string, ...params: SqliteValue[]): Promise<void> {
 		return this.queue.run(() => super.run(sql, ...params));
+	}
+
+	override runCounted(sql: string, ...params: SqliteValue[]): Promise<number> {
+		return this.queue.run(() => super.runCounted(sql, ...params));
 	}
 
 	override get<T extends object>(sql: string, ...params: SqliteValue[]): Promise<T | undefined> {

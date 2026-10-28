@@ -33,6 +33,7 @@ export const OPENAI_STANDARD_COSTS: Record<string, ModelCost> = {
 	"gpt-6-luna": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
 	"gpt-6-sol": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
 	"gpt-6.1-sol": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+	"gpt-6.1-terra": { input: 1, output: 5, cacheRead: 0.05, cacheWrite: 1.25 },
 };
 
 /** The standard price of an OpenAI model with long-context pricing. */
@@ -40,11 +41,11 @@ export function openAiStandardCost(id: string): ModelCost {
 	return withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS[id]);
 }
 
+// GPT-5.5 and older put tools loaded through tool search or additional_tools in a namespace named
+// after the tool and reject replayed calls without it, so history from other models fails there
+// (#11415). Like Codex, dynamic tool loading therefore starts with GPT-5.6, which does not do this.
+/** Models that accept tool search and `additional_tools`. */
 export const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
-	"gpt-5.4",
-	"gpt-5.4-mini",
-	"gpt-5.4-pro",
-	"gpt-5.5",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
@@ -52,9 +53,16 @@ export const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-6-sol",
 	"gpt-6-luna",
 	"gpt-6.1-sol",
+	"gpt-6.1-terra",
 ]);
-/** Models that accept `additional_tools` and mid-conversation developer messages. */
-export const OPENAI_MID_CONVO_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
+/** Models that accept mid-conversation developer messages. */
+export const OPENAI_MID_CONVO_MODEL_IDS = new Set([
+	"gpt-5.4",
+	"gpt-5.4-mini",
+	"gpt-5.4-pro",
+	"gpt-5.5",
+	...OPENAI_TOOL_SEARCH_MODEL_IDS,
+]);
 
 const RESPONSES_APIS = new Set<Api>(["openai-responses", "azure-openai-responses", "openai-codex-responses"]);
 
@@ -73,7 +81,7 @@ export function supportsOpenAiXhigh(modelId: string): boolean {
 	);
 }
 
-const GPT_6_MODEL_IDS = new Set(["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]);
+const GPT_6_MODEL_IDS = new Set(["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra"]);
 
 /** Thinking levels of GPT models on any host. */
 export function applyOpenAiFamilyRules(model: ChatModel): void {
@@ -82,7 +90,8 @@ export function applyOpenAiFamilyRules(model: ChatModel): void {
 	}
 	if (GPT_6_MODEL_IDS.has(model.id) && isResponsesApi(model)) {
 		mergeThinking(model, {
-			// GPT-6 Astra and GPT-6.1 Sol reject reasoning.effort "none".
+			// GPT-6 Astra and GPT-6.1 Sol reject reasoning.effort "none"; GPT-6.1 Terra accepts it. All reject
+			// "minimal" (verified on Codex, October 2026).
 			off: model.id === "gpt-6-astra" || model.id === "gpt-6.1-sol" ? null : "none",
 			minimal: null,
 			low: "low",
@@ -120,13 +129,13 @@ export function enableOpenAiGrammarTools(model: ChatModel): void {
 /**
  * Newer OpenAI Responses models accept developer messages after the
  * conversation has started. Proxies that pass them through also pass
- * `additional_tools` items through unchanged.
+ * `additional_tools` items through unchanged, for the models that accept them.
  */
 export function enableOpenAiMidConvoSystemMessages(model: ChatModel, options: { proxy: boolean }): void {
 	if (model.api !== "openai-responses" && model.api !== "openai-codex-responses") return;
 	if (!OPENAI_MID_CONVO_MODEL_IDS.has(model.id)) return;
 	mergeCompat(model as Model<"openai-responses">, {
 		supportsMidConvoSystemMessages: true,
-		...(options.proxy ? { supportsAdditionalTools: true } : {}),
+		...(options.proxy && OPENAI_TOOL_SEARCH_MODEL_IDS.has(model.id) ? { supportsAdditionalTools: true } : {}),
 	});
 }

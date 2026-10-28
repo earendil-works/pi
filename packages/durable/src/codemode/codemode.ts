@@ -37,13 +37,13 @@
 import { type Context, copyJson, type JsonValue } from "@earendil-works/chord";
 import { ownedSlice } from "@earendil-works/chord/delta";
 import type { TextContent } from "@earendil-works/pi-ai";
-import {
-	type CodemodeHostCall,
-	type CodemodeOutcome,
-	type CodemodeResult,
-	type CodemodeRun,
-	type CodemodeSandboxBase,
-	toCodemodeIdentifier,
+import { toCodemodeIdentifier } from "@earendil-works/pi-codemode/declarations";
+import type {
+	CodemodeHostCall,
+	CodemodeOutcome,
+	CodemodeResult,
+	CodemodeRun,
+	CodemodeSandboxBase,
 } from "@earendil-works/pi-codemode/portable";
 import { CODEMODE_SOURCE_GRAMMAR, parseCodemodeSource } from "@earendil-works/pi-codemode/source";
 import { type Static, Type } from "typebox";

@@ -7,16 +7,8 @@ import {
 	type TelemetrySpan,
 } from "@earendil-works/pi-telemetry";
 import { ConversationBusy } from "../errors.ts";
-import type { SessionImpl } from "../session/session.ts";
-import type {
-	CommitPublication,
-	ConversationId,
-	JsonObject,
-	Storage,
-	SubmissionId,
-	SubmissionRecord,
-	Tx,
-} from "../types.ts";
+import type { ObservedCommit, SessionImpl } from "../session/session.ts";
+import type { ConversationId, JsonObject, Storage, SubmissionId, SubmissionRecord, Tx } from "../types.ts";
 import { startRun } from "./generation.ts";
 import {
 	appendInput,
@@ -65,7 +57,7 @@ export class Submissions {
 		this.#now = now;
 		this.#queueModes = queueModes;
 		this.#resume = resume;
-		session.observeCommits((publication) => this.#observe(publication));
+		session.followCommits((publication) => this.#observe(publication));
 		session.subscribeClose(() => {
 			this.#closed = true;
 			this.#waiters.rejectAll(closedError(this.#session));
@@ -142,7 +134,9 @@ export class Submissions {
 		}, context);
 	}
 
-	#observe(publication: CommitPublication): void {
+	#observe(publication: ObservedCommit): void {
+		// A commit held in memory changes documents only.
+		if (publication.kind === "memory") return;
 		for (const change of publication.changes) {
 			if (change.type !== "submission" || !isSettled(change.value)) continue;
 			this.#waiters.resolve(change.value.id, change.value);

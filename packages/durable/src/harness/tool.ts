@@ -34,10 +34,13 @@ import { toolExtension } from "./agent.ts";
 import { assignJson } from "./json.ts";
 import {
 	clearProgress,
+	cutOffCount,
+	cutOffTooOften,
 	finishSlot,
 	LiveDoc,
 	type NestedToolSlot,
 	type NestedToolSummary,
+	PROGRESS_COMMIT,
 	removeNestedSlots,
 	type ToolSlot,
 	toolSlot,
@@ -134,6 +137,7 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 	phases: {
 		call: async (task, runtime, context) => {
 			const call = await readCall(runtime, task.input, context);
+			if (cutOffTooOften(task, runtime)) return endCutOff(runtime, task, call, context);
 			const tool = await resolveTool(runtime, task.input, call.name, context);
 			if (tool === undefined) {
 				const error = harnessError("tool_unavailable", `Tool ${call.name} is not available`);
@@ -183,6 +187,7 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 			const call = await readCall(runtime, task.input, context);
 			const tool = await resolveTool(runtime, task.input, call.name, context);
 			if (replay === "safe" && tool?.replay === "safe") {
+				if (cutOffTooOften(task, runtime)) return endCutOff(runtime, task, call, context);
 				// The rerun reports from scratch; clear what the interrupted attempt published.
 				await runtime.commit(async (tx) => {
 					const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
@@ -210,6 +215,21 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 		await settle(runtime, task.input, call, ending, (slot) => fromSlot(slot, code, message), context);
 	},
 });
+
+/**
+ * End a call cut off `settings.restartLimit` times in a row (spec §5.4) with an error result, built from the slot like
+ * an interrupted call's, instead of running it again. `failed`, like an interruption, so its owned work is aborted.
+ */
+async function endCutOff(
+	runtime: Runtime,
+	task: { readonly restarts?: number; readonly input: ToolTaskInput },
+	call: ToolHookCall,
+	context: Context,
+): Promise<void> {
+	const message = `Tool ${call.name} was interrupted ${cutOffCount(task)}; it is not run again`;
+	const ending = { status: "failed", message, reason: "restart_limit" } as const;
+	await settle(runtime, task.input, call, ending, (slot) => fromSlot(slot, "restart_limit", message), context);
+}
 
 /** The called tool: among the tools the model is offered for a model-issued call, else among those tools may call. */
 async function resolveTool(
@@ -358,12 +378,16 @@ async function run(
 			committed.catch(() => {});
 			return awaitWithContext(committed, detailsContext);
 		},
-		commit: async (change, commitContext) => {
+		commit: async (change, commitContext, options) => {
 			let result: Awaited<ReturnType<typeof change>> | undefined;
-			await runtime.commit(async (tx) => {
-				result = await change(tx);
-				return undefined;
-			}, commitContext);
+			await runtime.commit(
+				async (tx) => {
+					result = await change(tx);
+					return undefined;
+				},
+				commitContext,
+				options,
+			);
 			return result as Awaited<ReturnType<typeof change>>;
 		},
 		memo: runtime.memo,
@@ -478,7 +502,7 @@ function progressClock(runtime: Runtime): ProgressClock {
 
 /**
  * Throttled commits of what the tool reported into its slot, in `pi.live.tools` or `pi.live.nestedTools`, each writing
- * only what changed since the last one; none when `enabled` is false.
+ * only what changed since the last one, deferred (`PROGRESS_COMMIT`); none when `enabled` is false.
  */
 function publishProgress(runtime: Runtime, reported: Reported, enabled: boolean, context: Context): Progress {
 	let written = { text: "", details: undefined as JsonValue | undefined, diagnostics: 0 };
@@ -501,24 +525,28 @@ function publishProgress(runtime: Runtime, reported: Reported, enabled: boolean,
 			}
 			if (detailsChanged) bytes += utf8ByteLength(JSON.stringify(current.details ?? null));
 			if (added.length > 0) bytes += utf8ByteLength(JSON.stringify(added));
-			await runtime.commit(async (tx) => {
-				const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
-				if (slot === undefined) return undefined;
-				// REMINDER: assign `output` as one string field. Chord then diffs it into an append, or a trim plus an
-				// append for a sliding tail; replacing the slot object would record the whole window on every commit.
-				if ((slot.output ?? "") !== snapshot.text) slot.output = snapshot.text;
-				if (snapshot.droppedBytes > 0) slot.droppedBytes = snapshot.droppedBytes;
-				if (snapshot.droppedLines > 0) slot.droppedLines = snapshot.droppedLines;
-				// Diff details leaf by leaf and append new diagnostics, so each commit writes only what changed.
-				if (detailsChanged && current.details !== undefined) {
-					assignJson(slot as unknown as Record<string, JsonValue>, "details", current.details);
-				}
-				if (added.length > 0) {
-					if (slot.diagnostics === undefined) slot.diagnostics = [];
-					for (const diagnostic of added) slot.diagnostics.push(diagnostic);
-				}
-				return undefined;
-			}, context);
+			await runtime.commit(
+				async (tx) => {
+					const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
+					if (slot === undefined) return undefined;
+					// REMINDER: assign `output` as one string field. Chord then diffs it into an append, or a trim plus an
+					// append for a sliding tail; replacing the slot object would record the whole window on every commit.
+					if ((slot.output ?? "") !== snapshot.text) slot.output = snapshot.text;
+					if (snapshot.droppedBytes > 0) slot.droppedBytes = snapshot.droppedBytes;
+					if (snapshot.droppedLines > 0) slot.droppedLines = snapshot.droppedLines;
+					// Diff details leaf by leaf and append new diagnostics, so each commit writes only what changed.
+					if (detailsChanged && current.details !== undefined) {
+						assignJson(slot, "details", current.details);
+					}
+					if (added.length > 0) {
+						if (slot.diagnostics === undefined) slot.diagnostics = [];
+						for (const diagnostic of added) slot.diagnostics.push(diagnostic);
+					}
+					return undefined;
+				},
+				context,
+				PROGRESS_COMMIT,
+			);
 			written = current;
 			return bytes;
 		},
@@ -579,7 +607,7 @@ async function finalResult(
 				(agent) => toolExtension(agent, tool.name),
 				() => undefined,
 			);
-			runtime.report(new Error(broken), { type: "extension", ...optionalExtension(extension) });
+			runtime.report(new Error(broken), { kind: "extension", ...optionalExtension(extension) });
 		}
 	}
 	// Programs get the tool's own value: without a schema, its output. The model reads only `output`, so model-issued
@@ -690,7 +718,10 @@ async function settle(
 		if (madeNested) removeNestedSlots(live, runtime.taskId);
 		if (ending.status === "aborted") return { status: "terminal", outcome: { status: "aborted", result: settled } };
 		if (ending.status === "failed") {
-			const error = { message: ending.message };
+			const error = {
+				message: ending.message,
+				...(ending.reason === undefined ? {} : { detail: { reason: ending.reason } }),
+			};
 			return { status: "terminal", outcome: { status: "failed", error, result: settled } };
 		}
 		return { status: "terminal", outcome: { status: "completed", result: settled } };
@@ -817,7 +848,9 @@ function fallbackResult(taskId: TaskId, name: string, outcome: TaskOutcome<ToolT
  * How a tool task ends; the result entry is appended either way. `failed` (execution threw or was interrupted)
  * records cancellation intent for the conversations the call owns; a result with `isError` still completes.
  */
-type Ending = { readonly status: "completed" | "aborted" } | { readonly status: "failed"; readonly message: string };
+type Ending =
+	| { readonly status: "completed" | "aborted" }
+	| { readonly status: "failed"; readonly message: string; readonly reason?: string };
 
 const COMPLETED: Ending = { status: "completed" };
 

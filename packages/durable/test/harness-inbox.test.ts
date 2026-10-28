@@ -35,7 +35,7 @@ import { recordUsage } from "../src/harness/usage.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf, waitFor } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
-import { ControlledStorage, context, documentChanges, flush } from "./session-support.ts";
+import { ControlledStorage, context, documentChanges, documentValues, flush } from "./session-support.ts";
 import { aborted, type Deferred, deferred } from "./task-support.ts";
 
 const directories = new Set<string>();
@@ -80,6 +80,14 @@ function holdTool(setup: ChatSetup, gate: Deferred, result: ToolExecutionResult 
 /** A write that affects model context, so it queues while busy; a data-only write would be appended at once. */
 function queuedNote(text: string) {
 	return { kind: "note", model: [{ role: "user", content: text, timestamp: 0 }] } as const;
+}
+
+/** A faux response that records the request's messages as `role:text` and answers `text`. */
+function recordRequest(requests: string[][], text: string): FauxResponseStep {
+	return (request) => {
+		requests.push(request.messages.map((message) => `${message.role}:${textOf(message) ?? ""}`));
+		return answer(text);
+	};
 }
 
 const HOLD = fauxAssistantMessage([fauxToolCall("hold", {}, { id: "c1" })], { stopReason: "toolUse" });
@@ -239,11 +247,7 @@ describe("inbox", () => {
 		const gate = deferred();
 		holdTool(setup, gate);
 		const requests: string[][] = [];
-		const record: FauxResponseStep = (request) => {
-			requests.push(request.messages.map((message) => `${message.role}:${textOf(message) ?? ""}`));
-			return answer("fresh");
-		};
-		setup.faux.setResponses([HOLD, record]);
+		setup.faux.setResponses([HOLD, recordRequest(requests, "fresh")]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const input = await root.submit({ type: "input", content: "a" }, context);
 		await toolRunning(harness, root);
@@ -348,11 +352,164 @@ describe("inbox", () => {
 		await harness.close(context);
 	});
 
-	it("ends the run with a pi.reset entry when a tool requests a handoff", async () => {
+	it("continues the run in a new context when a tool requests a handoff", async () => {
 		const setup = chatSetup();
 		const gate = deferred();
 		gate.resolve();
 		holdTool(setup, gate, { output: [], control: { handoff: "continue here" } });
+		const requests: string[][] = [];
+		setup.faux.setResponses([HOLD, recordRequest(requests, "after handoff")]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		const settled = await (await root.submit({ type: "input", content: "a" }, context)).wait(context);
+		const entries = await allEntries(root);
+		expect(settled).toMatchObject({ status: "done", answer: entries.at(-1)!.id });
+		expect(transcript(entries)).toEqual([
+			"pi.user:a",
+			"pi.assistant",
+			"pi.tool-result",
+			"pi.reset:continue here",
+			"pi.assistant:after handoff",
+		]);
+		const reset = entries.find((entry) => ResetEntry.is(entry))!;
+		expect(reset.head).toBe(reset.id);
+		expect(requests).toEqual([["system:", "user:continue here"]]);
+		expect(setup.faux.state.callCount).toBe(2);
+		expect(await harness.snapshot(LiveDoc, root.id, context)).toEqual({});
+		await harness.close(context);
+	});
+
+	it("places queued writes and steers after the handoff text and adds the steers to the continuing run", async () => {
+		const setup = chatSetup();
+		const gate = deferred();
+		holdTool(setup, gate, { output: [], control: { handoff: "continue here" } });
+		const requests: string[][] = [];
+		setup.faux.setResponses([HOLD, recordRequest(requests, "after handoff")]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		const input = await root.submit({ type: "input", content: "a" }, context);
+		await toolRunning(harness, root);
+		const steer = await root.submit({ type: "input", content: "s", whenBusy: "steer" }, context);
+		const write = await root.submit({ type: "write", entry: queuedNote("w") }, context);
+		gate.resolve();
+		await input.wait(context);
+		const entries = await allEntries(root);
+		expect(transcript(entries)).toEqual([
+			"pi.user:a",
+			"pi.assistant",
+			"pi.tool-result",
+			"pi.reset:continue here",
+			"note:w",
+			"pi.user:s",
+			"pi.assistant:after handoff",
+		]);
+		expect(requests).toEqual([["system:", "user:continue here", "user:w", "user:s"]]);
+		for (const submission of [input, steer]) {
+			expect(await status(submission)).toMatchObject({ status: "done", answer: entries.at(-1)!.id });
+		}
+		expect(await status(write)).toMatchObject({ status: "done" });
+		await harness.close(context);
+	});
+
+	it("holds a follow-up queued across a handoff until the continuing run's final boundary", async () => {
+		const setup = chatSetup();
+		const gate = deferred();
+		holdTool(setup, gate, { output: [], control: { handoff: "continue here" } });
+		const after = gated(answer("after handoff"));
+		setup.faux.setResponses([HOLD, after.step, answer("follow-up")]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		const input = await root.submit({ type: "input", content: "a" }, context);
+		await toolRunning(harness, root);
+		const followUp = await root.submit({ type: "input", content: "f" }, context);
+		gate.resolve();
+		await after.reached;
+		expect((await status(input)).status).toBe("placed");
+		expect(await inbox(harness, root)).toEqual([[followUp.id, "followUp"]]);
+		after.release();
+		await followUp.wait(context);
+		const entries = await allEntries(root);
+		expect(transcript(entries)).toEqual([
+			"pi.user:a",
+			"pi.assistant",
+			"pi.tool-result",
+			"pi.reset:continue here",
+			"pi.assistant:after handoff",
+			"pi.user:f",
+			"pi.assistant:follow-up",
+		]);
+		const answers = entries.filter((entry) => entry.kind === "pi.assistant");
+		expect(await status(input)).toMatchObject({ status: "done", answer: answers[1]!.id });
+		expect(await status(followUp)).toMatchObject({ status: "done", answer: answers[2]!.id });
+		await harness.close(context);
+	});
+
+	it("ends a handed-off run at a queued reset and runs earlier follow-ups after it", async () => {
+		const setup = chatSetup();
+		const gate = deferred();
+		holdTool(setup, gate, { output: [], control: { handoff: "continue here" } });
+		const requests: string[][] = [];
+		setup.faux.setResponses([HOLD, recordRequest(requests, "fresh")]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		const input = await root.submit({ type: "input", content: "a" }, context);
+		await toolRunning(harness, root);
+		const followUp = await root.submit({ type: "input", content: "f" }, context);
+		await root.reset(undefined, context);
+		gate.resolve();
+		await followUp.wait(context);
+		expect(await status(input)).toMatchObject({ status: "unanswered", reason: "reset" });
+		expect(transcript(await allEntries(root))).toEqual([
+			"pi.user:a",
+			"pi.assistant",
+			"pi.tool-result",
+			"pi.reset:continue here",
+			"pi.reset",
+			"pi.user:f",
+			"pi.assistant:fresh",
+		]);
+		expect(requests).toEqual([["system:", "user:f"]]);
+		expect(setup.faux.state.callCount).toBe(2);
+		await harness.close(context);
+	});
+
+	it("hands off again in a later round of the same run", async () => {
+		const setup = chatSetup();
+		let handoffs = 0;
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "hold",
+				description: "Hands off",
+				parameters: Type.Object({}),
+				execute: async () => ({ output: [], control: { handoff: `h${++handoffs}` } }),
+			}),
+		);
+		setup.faux.setResponses([HOLD, HOLD, answer("done")]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		const settled = await (await root.submit({ type: "input", content: "a" }, context)).wait(context);
+		const entries = await allEntries(root);
+		expect(transcript(entries)).toEqual([
+			"pi.user:a",
+			"pi.assistant",
+			"pi.tool-result",
+			"pi.reset:h1",
+			"pi.assistant",
+			"pi.tool-result",
+			"pi.reset:h2",
+			"pi.assistant:done",
+		]);
+		expect(settled).toMatchObject({ status: "done", answer: entries.at(-1)!.id });
+		const messages = (await root.context(context)).messages;
+		expect(messages.map((message) => `${message.role}:${textOf(message) ?? ""}`)).toEqual([
+			"system:",
+			"user:h2",
+			"assistant:done",
+		]);
+		await harness.close(context);
+	});
+
+	it("ends the run after the handoff when the round also terminates", async () => {
+		const setup = chatSetup();
+		const gate = deferred();
+		gate.resolve();
+		holdTool(setup, gate, { output: [], control: { handoff: "continue here", terminate: true } });
 		setup.faux.setResponses([HOLD]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const settled = await (await root.submit({ type: "input", content: "a" }, context)).wait(context);
@@ -360,7 +517,6 @@ describe("inbox", () => {
 		const calling = entries.find((entry) => entry.kind === "pi.assistant")!;
 		expect(settled).toMatchObject({ status: "done", answer: calling.id });
 		expect(transcript(entries)).toEqual(["pi.user:a", "pi.assistant", "pi.tool-result", "pi.reset:continue here"]);
-		expect(entries.at(-1)!.head).toBe(entries.at(-1)!.id);
 		expect(setup.faux.state.callCount).toBe(1);
 		expect(await harness.snapshot(LiveDoc, root.id, context)).toEqual({});
 		await harness.close(context);
@@ -460,10 +616,13 @@ describe("inbox", () => {
 		setup.faux.setResponses([first.step, answer("second")]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const ops: Op[][] = [];
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication)) {
-				if (change.record.kind === "pi.inbox" && change.ops.length > 0) ops.push([...change.ops]);
-			}
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentValues(publication)) {
+					if (change.record.kind === "pi.inbox" && change.ops.length > 0) ops.push([...change.ops]);
+				}
+			},
+			end: () => {},
 		});
 		const input = await root.submit({ type: "input", content: "a" }, context);
 		await first.reached;
@@ -630,7 +789,7 @@ describe("inbox", () => {
 		await harness.close(context);
 	});
 
-	it("writes the last handoff in call order and then runs queued follow-ups in the new context", async () => {
+	it("writes only the last handoff in call order and runs queued follow-ups after the continuing run", async () => {
 		const setup = chatSetup();
 		const firstGate = deferred();
 		const secondGate = deferred();
@@ -651,7 +810,7 @@ describe("inbox", () => {
 			[fauxToolCall("hold", {}, { id: "c1" }), fauxToolCall("later", {}, { id: "c2" })],
 			{ stopReason: "toolUse" },
 		);
-		setup.faux.setResponses([round, answer("follow-up")]);
+		setup.faux.setResponses([round, answer("after handoff"), answer("follow-up")]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const input = await root.submit({ type: "input", content: "a" }, context);
 		await toolRunning(harness, root);
@@ -660,13 +819,19 @@ describe("inbox", () => {
 		await waitFor(async () => (await harness.snapshot(LiveDoc, root.id, context))?.tools?.[1]?.status === "done");
 		firstGate.resolve();
 		await f.wait(context);
-		expect(await status(input)).toMatchObject({ status: "done" });
-		expect(transcript(await allEntries(root)).slice(-4)).toEqual([
+		const entries = await allEntries(root);
+		expect(transcript(entries)).toEqual([
+			"pi.user:a",
+			"pi.assistant",
+			"pi.tool-result",
 			"pi.tool-result",
 			"pi.reset:two",
+			"pi.assistant:after handoff",
 			"pi.user:f",
 			"pi.assistant:follow-up",
 		]);
+		const answers = entries.filter((entry) => entry.kind === "pi.assistant");
+		expect(await status(input)).toMatchObject({ status: "done", answer: answers[1]!.id });
 		await harness.close(context);
 	});
 
@@ -711,10 +876,13 @@ describe("inbox", () => {
 		const items = [];
 		for (const text of ["x", "y", "z"]) items.push(await root.submit({ type: "input", content: text }, context));
 		const ops: Op[][] = [];
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication)) {
-				if (change.record.kind === "pi.inbox" && change.ops.length > 0) ops.push([...change.ops]);
-			}
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentValues(publication)) {
+					if (change.record.kind === "pi.inbox" && change.ops.length > 0) ops.push([...change.ops]);
+				}
+			},
+			end: () => {},
 		});
 		await items[1]!.abort(context);
 		expect(ops).toEqual([[["p", ["items"], 1, 1, []]]]);
@@ -747,9 +915,12 @@ describe("inbox", () => {
 		const first = gated(answer("first"));
 		setup.faux.setResponses([first.step, answer("second")]);
 		const { harness, root } = await openChat(new RecordingStorage(), setup);
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication))
-				if (change.record.kind === "pi.inbox") inboxId = change.record.id;
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentChanges(publication))
+					if (change.record.kind === "pi.inbox") inboxId = change.record.id;
+			},
+			end: () => {},
 		});
 		const input = await root.submit({ type: "input", content: "a" }, context);
 		await first.reached;
@@ -912,12 +1083,15 @@ describe("usage", () => {
 		setup.faux.setResponses([answer("one"), answer("two")]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const commits: { entries: number; ops: readonly Op[] }[] = [];
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication)) {
-				if (change.record.kind !== "pi.usage") continue;
-				const entries = publication.changes.filter((other) => other.type === "entry").length;
-				commits.push({ entries, ops: change.ops });
-			}
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentValues(publication)) {
+					if (change.record.kind !== "pi.usage") continue;
+					const entries = publication.changes.filter((other) => other.type === "entry").length;
+					commits.push({ entries, ops: change.ops });
+				}
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "a" }, context)).wait(context);
 		await (await root.submit({ type: "input", content: "b" }, context)).wait(context);

@@ -130,8 +130,8 @@ describe("Models with classifier models", () => {
 
 	it.each([
 		["vercel-ai-gateway", "typesafe-ai/jev", "https://ai-gateway.vercel.sh/typesafe/v1/systemone"],
-		["opencode", "jev-1.13", "https://opencode.ai/inference/v1/systemone"],
-		["opencode", "jev-1.13-free", "https://opencode.ai/inference/v1/systemone"],
+		["opencode", "jev-1.13", "https://opencode.ai/inference/systemone/v1/systemone"],
+		["opencode", "jev-1.13-free", "https://opencode.ai/inference/systemone/v1/systemone"],
 	])("routes %s Jev (%s) to its TypeSafe-compatible endpoint", async (provider, id, url) => {
 		const models = builtinModels();
 		const jev = models.getModelOfType("classifier", provider, id);

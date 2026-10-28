@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { JsonValue } from "@earendil-works/chord";
 import { withAbortSignal } from "@earendil-works/chord/context";
+import { applyImmutable } from "@earendil-works/chord/delta";
 import {
 	type AssistantMessage,
 	fauxAssistantMessage,
@@ -13,12 +14,13 @@ import {
 	type Usage,
 } from "@earendil-works/pi-ai";
 import {
-	type AgentEvent,
 	AssistantEntry,
+	type ConversationView,
 	defineTool,
 	type EntryRecord,
 	type Harness,
 	LiveDoc,
+	type LiveState,
 	MemoryStorage,
 	NestedCallDoc,
 	type NestedToolExecutionResult,
@@ -30,13 +32,13 @@ import {
 	type ToolTaskInput,
 	type ToolTaskResult,
 	UsageDoc,
-	watchEvents,
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
-import { context } from "./session-support.ts";
+import { endedAt, nestedResultOf, nestedResults, slotsOf, startOrder, viewHistory } from "./live-support.ts";
+import { context, onValue } from "./session-support.ts";
 import { aborted, deferred, eventually } from "./task-support.ts";
 
 const Parameters = Type.Object({ text: Type.Optional(Type.String()) });
@@ -372,15 +374,12 @@ describe("nested tool calls", () => {
 		);
 		setup.faux.setResponses([call("batch"), DONE]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		const stream = await watchEvents(harness, root.id, context);
-		const ends: AgentEvent[] = [];
-		stream.start(async (batch) => {
-			ends.push(...batch.filter((event) => event.type === "tool_execution_end"));
-		});
+		const history = await viewHistory(harness, root.id);
+		const nested = nestedResults(harness);
 		const settled = await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		expect(settled.status).toBe("done");
 		await harness.waitForIdle(context);
-		await stream.stop();
+		history.detach();
 		const [result] = results(await allEntries(root));
 		expect(text(result)).toBe("returned early");
 		const [, child] = await toolTasks(harness);
@@ -389,16 +388,13 @@ describe("nested tool calls", () => {
 			outcome: { status: "aborted", result: { kind: "nested" } },
 		});
 		// The aborted call's result keeps its details; programs get no partial output, which only the model read.
-		const childEnd = ends.find((event) => event.type === "tool_execution_end" && event.toolCallId === "c1/1");
-		expect(childEnd).toMatchObject({ result: { isError: true, details: { step: 1 } } });
-		expect((childEnd as { result?: NestedToolExecutionResult }).result).not.toHaveProperty("structuredOutput");
-		// The nested call ends, with its result, before its caller.
-		expect(ends.map((event) => [event.type === "tool_execution_end" && event.toolCallId, "result" in event])).toEqual(
-			[
-				["c1/1", true],
-				["c1", false],
-			],
-		);
+		const childResult = nestedResultOf(history.live(), nested, "c1/1");
+		expect(childResult).toMatchObject({ isError: true, details: { step: 1 } });
+		expect(childResult).not.toHaveProperty("structuredOutput");
+		// The nested call ends before its caller.
+		const live = history.live();
+		expect(endedAt(live, "c1/1")).toBeGreaterThan(0);
+		expect(endedAt(live, "c1/1")).toBeLessThan(endedAt(live, "c1"));
 		expect(await harness.snapshot(LiveDoc, root.id, context)).toEqual({});
 		await harness.close(context);
 	});
@@ -429,7 +425,7 @@ describe("nested tool calls", () => {
 		await harness.close(context);
 	});
 
-	it("reports nested calls in pi.live.nestedTools and as tool events with their parent", async () => {
+	it("reports nested calls in pi.live.nestedTools with their parent", async () => {
 		const setup = chatSetup();
 		const release = deferred();
 		const running = deferred();
@@ -452,12 +448,9 @@ describe("nested tool calls", () => {
 		);
 		setup.faux.setResponses([call("batch"), DONE]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		const stream = await watchEvents(harness, root.id, context);
-		expect(stream.snapshot.nestedTools).toEqual([]);
-		const events: AgentEvent[] = [];
-		stream.start(async (batch) => {
-			events.push(...batch);
-		});
+		const history = await viewHistory(harness, root.id);
+		expect(history.live()[0]!.nestedTools).toBeUndefined();
+		const nested = nestedResults(harness);
 		const submission = await root.submit({ type: "input", content: "go" }, context);
 		await running.promise;
 		const live = await harness.snapshot(LiveDoc, root.id, context);
@@ -477,32 +470,19 @@ describe("nested tool calls", () => {
 		release.resolve();
 		await submission.wait(context);
 		await harness.waitForIdle(context);
-		await stream.stop();
-		const tools = events.flatMap((event) =>
-			event.type === "tool_execution_start" || event.type === "tool_execution_end"
-				? [[event.type, event.toolCallId, event.parentToolCallId]]
-				: [],
-		);
-		expect(tools).toEqual([
-			["tool_execution_start", "c1", undefined],
-			["tool_execution_start", "c1/1", "c1"],
-			["tool_execution_end", "c1/1", "c1"],
-			["tool_execution_end", "c1", undefined],
-		]);
-		const nestedEnd = events.find((event) => event.type === "tool_execution_end" && event.toolCallId === "c1/1");
-		expect(nestedEnd).toMatchObject({ result: { structuredOutput: "slow done", isError: false } });
-		// Events name the call's task and, for a nested call, the calling one.
+		history.detach();
+		const states = history.live();
+		expect(startOrder(states)).toEqual(["c1", "c1/1"]);
+		expect(endedAt(states, "c1/1")).toBeLessThan(endedAt(states, "c1"));
+		expect(nestedResultOf(states, nested, "c1/1")).toMatchObject({ structuredOutput: "slow done", isError: false });
+		// Slots name the call's task and, for a nested call, the calling one.
 		const [parent, child] = await toolTasks(harness);
-		const parentEnd = events.find((event) => event.type === "tool_execution_end" && event.toolCallId === "c1");
-		expect(nestedEnd).toMatchObject({ taskId: child!.id, parentTaskId: parent!.id });
-		expect(parentEnd).toMatchObject({ taskId: parent!.id });
-		expect(parentEnd).not.toHaveProperty("parentTaskId");
-		expect(
-			events.some(
-				(event) =>
-					event.type === "tool_execution_update" && event.toolCallId === "c1/1" && event.parentToolCallId === "c1",
-			),
-		).toBe(true);
+		expect(slotsOf(states, "c1/1").find((slot) => slot !== undefined)).toMatchObject({
+			taskId: child!.id,
+			parentCallId: "c1",
+			parentTaskId: parent!.id,
+		});
+		expect(slotsOf(states, "c1").find((slot) => slot?.taskId !== undefined)).toMatchObject({ taskId: parent!.id });
 		expect(await harness.snapshot(LiveDoc, root.id, context)).toEqual({});
 		await harness.close(context);
 	});
@@ -535,7 +515,9 @@ describe("nested tool calls", () => {
 			record!.state.status === "terminal" ? record!.state.outcome : undefined;
 		expect(outcome(child)).toMatchObject({ status: "aborted", result: { kind: "nested" } });
 		expect(outcome(parent)).toMatchObject({ status: "aborted", result: { kind: "model" } });
-		expect(await harness.snapshot(LiveDoc, root.id, context)).toEqual({});
+		expect(await harness.snapshot(LiveDoc, root.id, context)).toEqual({
+			runFailure: expect.objectContaining({ reason: "aborted" }),
+		});
 		await harness.close(context);
 	});
 
@@ -831,29 +813,19 @@ describe("nested tool calls", () => {
 		);
 		setup.faux.setResponses([call("outer"), DONE]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		const stream = await watchEvents(harness, root.id, context);
-		const tools: (string | undefined)[][] = [];
-		stream.start(async (batch) => {
-			for (const event of batch) {
-				if (event.type === "tool_execution_start" || event.type === "tool_execution_end") {
-					tools.push([event.type, event.toolCallId, event.parentToolCallId]);
-				}
-			}
-		});
+		const history = await viewHistory(harness, root.id);
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		await harness.waitForIdle(context);
-		await stream.stop();
+		history.detach();
 		expect(text(results(await allEntries(root))[0])).toBe("echo deep");
 		const [outer, inner, deep] = await toolTasks(harness);
 		expect([inner!.owner, deep!.owner]).toEqual([outer!.id, inner!.id]);
-		expect(tools).toEqual([
-			["tool_execution_start", "c1", undefined],
-			["tool_execution_start", "c1/1", "c1"],
-			["tool_execution_start", "c1/1/x", "c1/1"],
-			["tool_execution_end", "c1/1/x", "c1/1"],
-			["tool_execution_end", "c1/1", "c1"],
-			["tool_execution_end", "c1", undefined],
-		]);
+		const states = history.live();
+		expect(startOrder(states)).toEqual(["c1", "c1/1", "c1/1/x"]);
+		expect(slotsOf(states, "c1/1/x").find((slot) => slot !== undefined)).toMatchObject({ parentCallId: "c1/1" });
+		// Children end first.
+		expect(endedAt(states, "c1/1/x")).toBeLessThan(endedAt(states, "c1/1"));
+		expect(endedAt(states, "c1/1")).toBeLessThan(endedAt(states, "c1"));
 		expect(await harness.snapshot(LiveDoc, root.id, context)).toEqual({});
 		await harness.close(context);
 	});
@@ -889,31 +861,33 @@ describe("nested tool calls", () => {
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const submission = await root.submit({ type: "input", content: "go" }, context);
 		await Promise.all([running.one.promise, running.two.promise]);
-		const stream = await watchEvents(harness, root.id, context);
-		expect(stream.snapshot.nestedTools.map((slot) => [slot.callId, slot.status])).toEqual([
+		const watch = await root.watch(context);
+		const nestedOf = (view: ConversationView) => (view.docs["pi.live"] as LiveState).nestedTools ?? [];
+		expect(nestedOf(watch.value).map((slot) => [slot.callId, slot.status])).toEqual([
 			["c1/1", "running"],
 			["c1/2", "running"],
 		]);
-		const updates: [string, unknown][] = [];
-		stream.start(async (batch) => {
-			for (const event of batch) {
-				if (event.type === "tool_execution_update" && event.output !== undefined) {
-					updates.push([event.toolCallId, event.output]);
-				}
-			}
-		});
+		// Each value's operations rebuild the next one, the late subscriber's starting value included.
+		let replayed = watch.value;
+		const outputs: [string | undefined, string | undefined][] = [];
+		watch.start(
+			onValue(async ({ value, ops }) => {
+				replayed = applyImmutable(replayed, ops);
+				expect(replayed).toEqual(value);
+				const [one, two] = nestedOf(value);
+				outputs.push([one?.output, two?.output]);
+			}),
+		);
 		// The second slot writes first, so a wrong slot index in the update path would show.
 		wrote.two.resolve();
-		await eventually(() => updates.length === 1);
+		await eventually(() => outputs.at(-1)?.[1] === "two\n");
+		expect(outputs.at(-1)).toEqual([undefined, "two\n"]);
 		wrote.one.resolve();
-		await eventually(() => updates.length === 2);
+		await eventually(() => outputs.at(-1)?.[0] === "one\n");
+		expect(outputs.at(-1)).toEqual(["one\n", "two\n"]);
 		release.resolve();
 		await submission.wait(context);
-		await stream.stop();
-		expect(updates).toEqual([
-			["c1/2", { set: "two\n" }],
-			["c1/1", { set: "one\n" }],
-		]);
+		await watch.stop();
 		await harness.close(context);
 	});
 
@@ -988,17 +962,13 @@ describe("nested tool calls", () => {
 		);
 		setup.faux.setResponses([call("batch"), DONE]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		const stream = await watchEvents(harness, root.id, context);
-		const ends: AgentEvent[] = [];
-		stream.start(async (batch) => {
-			ends.push(...batch.filter((event) => event.type === "tool_execution_end"));
-		});
+		const history = await viewHistory(harness, root.id);
+		const nested = nestedResults(harness);
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		await harness.waitForIdle(context);
-		await stream.stop();
+		history.detach();
 		// The abort's result is built from the slot, which never got the output.
-		const end = ends.find((event) => event.type === "tool_execution_end" && event.toolCallId === "c1/1");
-		const result = (end as { result?: NestedToolExecutionResult }).result!;
+		const result = nestedResultOf(history.live(), nested, "c1/1")!;
 		expect(result).toMatchObject({ isError: true });
 		expect(result).not.toHaveProperty("structuredOutput");
 		expect(result).not.toHaveProperty("details");
@@ -1038,11 +1008,6 @@ describe("nested tool calls", () => {
 		);
 		setup.faux.setResponses([call("batch"), DONE]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		const stream = await watchEvents(harness, root.id, context);
-		const starts: AgentEvent[] = [];
-		stream.start(async (batch) => {
-			starts.push(...batch.filter((event) => event.type === "tool_execution_start"));
-		});
 		const submission = await root.submit({ type: "input", content: "go" }, context);
 		const slot = async () => (await harness.snapshot(LiveDoc, root.id, context))!.nestedTools![0]!;
 		await hookEntered.promise;
@@ -1053,10 +1018,7 @@ describe("nested tool calls", () => {
 		release.resolve();
 		await submission.wait(context);
 		await harness.waitForIdle(context);
-		await stream.stop();
-		// The start event carries the arguments the call runs with; the task input keeps the ones it was made with.
-		const start = starts.find((event) => event.type === "tool_execution_start" && event.toolCallId === "c1/1");
-		expect(start).toMatchObject({ args: { text: large } });
+		// The slot showed the arguments the call runs with; the task input keeps the ones it was made with.
 		const nested = (await toolTasks(harness)).find((task) => (task.input as ToolTaskInput).kind === "nested");
 		expect(nested!.input as ToolTaskInput).toMatchObject({ call: { arguments: { text: "asked" } } });
 		await harness.close(context);

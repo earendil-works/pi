@@ -71,6 +71,7 @@ export async function openTasks(
 		readonly settings?: HarnessSettings;
 		readonly onWake?: HarnessOptions["onWake"];
 		readonly setTimer?: HarnessOptions["setTimer"];
+		readonly telemetry?: HarnessOptions["telemetry"];
 	} = {},
 ): Promise<{
 	readonly harness: Harness;
@@ -87,7 +88,7 @@ export async function openTasks(
 		{
 			models: createModels(),
 			registry,
-			onReport: (error, info) => {
+			onReport: ({ error, ...info }) => {
 				reports.push(error);
 				infos.push(info);
 			},
@@ -95,6 +96,7 @@ export async function openTasks(
 			...(options.settings === undefined ? {} : { settings: options.settings }),
 			...(options.onWake === undefined ? {} : { onWake: options.onWake }),
 			...(options.setTimer === undefined ? {} : { setTimer: options.setTimer }),
+			...(options.telemetry === undefined ? {} : { telemetry: options.telemetry }),
 		},
 		context,
 	);

@@ -125,14 +125,15 @@ describe("recovery at open", () => {
 		});
 		const wakes: Wake[] = [];
 		const { harness } = await openTasks(failing, [], { registry, onWake: (wake) => wakes.push(wake) });
-		expect((await harness.closed).reason).toBe("failed");
+		expect((await harness.closed).kind).toBe("failed");
 		// The host was told work is underway, and never that it ended: its recovery alarm stays.
 		expect(wakes).toEqual([{ active: true }]);
 	});
 });
 
 describe("tasks that cannot run", () => {
-	it("parks a task cut off restartLimit times in a row, shows why, and runs it again on retryTask()", async () => {
+	// #11139
+	it("faults an extension's task cut off restartLimit times in a row instead of running it again", async () => {
 		const path = await sqlitePath();
 		const state = { crashing: true, started: 0 };
 		const registry = createRegistry();
@@ -150,31 +151,32 @@ describe("tasks that cannot run", () => {
 		}
 		const { harness, infos } = opened;
 		expect((await harness.getTask(id, context))?.restarts).toBe(3);
-		expect(infos).toEqual([
-			{ type: "task_parked", task: { id, kind: "test.crash-loop", conversationId: root.id }, extension: "loop" },
-		]);
+		// Nothing is parked: the task is ready, and the host is asked to run, which ends it.
 		const inspection = await harness.inspect(context);
 		expect(inspection.tasks.find((task) => task.record.id === id)?.state).toEqual({
-			kind: "blocked",
-			reason: "restart_limit",
+			kind: "pending",
+			migrates: false,
 		});
-		const graph = await harness.watchTaskGraph(context);
-		// A started watch keeps its value current.
-		graph.start(async () => {});
-		expect(graph.value.tasks[String(id)]?.blocked).toBe("restart_limit");
-		// Parked work needs no process: nothing is active.
-		await eventually(() => !harness.wake().active);
-		expect(harness.wake()).toEqual({ active: false });
+		expect(harness.wake().active).toBe(true);
 		harness.resume();
-		// A scheduling pass runs within a few turns; it leaves the parked task out.
-		for (let turn = 0; turn < 5; turn++) await flush();
+		const settled = await harness.waitForTask(id, context);
+		expect(settled.state.outcome).toEqual({
+			status: "faulted",
+			error: {
+				message: `Task ${id} (test.crash-loop) was cut off 3 times without progress`,
+				detail: { reason: "restart_limit" },
+			},
+		});
 		expect(state.started).toBe(3);
-
-		state.crashing = false;
-		await harness.retryTask(id, context);
-		expect((await harness.waitForTask(id, context)).state.outcome.status).toBe("completed");
-		expect(state.started).toBe(4);
-		await graph.stop();
+		await eventually(() => infos.length > 0);
+		expect(infos).toEqual([
+			{
+				kind: "task_faulted",
+				task: { id, kind: "test.crash-loop", conversationId: root.id },
+				extension: "loop",
+				reason: "restart_limit",
+			},
+		]);
 		await harness.close(context);
 	});
 
@@ -264,11 +266,11 @@ describe("tasks that cannot run", () => {
 		expect(settled.restarts).toBeUndefined();
 		expect(aborts).toBe(1);
 		await eventually(() => opened.infos.length > 0);
-		expect(opened.infos).toMatchObject([{ type: "task_faulted", task: { id }, reason: "restart_limit" }]);
+		expect(opened.infos).toMatchObject([{ kind: "task_faulted", task: { id }, reason: "restart_limit" }]);
 		await opened.harness.close(context);
 	});
 
-	it("runs a parked task once a raised restartLimit no longer parks it", async () => {
+	it("reads restartLimit when it reserves the task: a raised one runs it again", async () => {
 		const path = await sqlitePath();
 		const state = { crashing: true, started: 0 };
 		const registry = createRegistry();
@@ -284,24 +286,17 @@ describe("tasks that cannot run", () => {
 		await eventually(() => state.started === 1);
 		opened.kill(); // a crash: a close would not count
 		opened = await openWith(path, registry, settings);
-		const graph = await opened.harness.watchTaskGraph(context);
-		// A started watch keeps its value current.
-		graph.start(async () => {});
-		opened.harness.resume();
-		await eventually(() => graph.value.tasks[String(id)]?.blocked === "restart_limit");
-		// Let a scheduling pass leave the parked task out.
-		for (let turn = 0; turn < 5; turn++) await flush();
+		expect((await opened.harness.getTask(id, context))?.restarts).toBe(1);
 		state.crashing = false;
-		// The host's live settings change; the next pass runs the task.
+		// The host's live settings change before the task is reserved; it runs instead of ending.
 		settings.restartLimit = Number.POSITIVE_INFINITY;
 		opened.harness.resume();
 		expect((await opened.harness.waitForTask(id, context)).state.outcome.status).toBe("completed");
 		expect(state.started).toBe(2);
-		await graph.stop();
 		await opened.harness.close(context);
 	});
 
-	it("still runs the abort handler of a parked task", async () => {
+	it("runs the abort handler of a task at the limit", async () => {
 		const path = await sqlitePath();
 		const state = { crashing: true, started: 0 };
 		const aborted: TaskId[] = [];
@@ -362,10 +357,12 @@ describe("tasks that cannot run", () => {
 			opened = await openWith(path, registry, { restartLimit: 2 });
 		}
 		expect((await opened.harness.getTask(id, context))?.restarts).toBe(2);
-		expect((await opened.harness.inspect(context)).tasks[0]?.state).toEqual({
-			kind: "blocked",
-			reason: "restart_limit",
+		opened.harness.resume();
+		expect((await opened.harness.waitForTask(id, context)).state.outcome).toMatchObject({
+			status: "faulted",
+			error: { detail: { reason: "restart_limit" } },
 		});
+		expect(started).toBe(2);
 		await opened.harness.close(context);
 	});
 

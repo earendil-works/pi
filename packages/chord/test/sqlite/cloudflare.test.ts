@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { DurableObjectSqliteDatabase } from "../../src/sqlite/cloudflare.ts";
-import { durableObjectStorage } from "./helpers.ts";
+import { durableObjectStorage, RUN_CHANGES, runChanges } from "./helpers.ts";
 
 describe("Durable Object SQLite driver", () => {
 	it("binds and returns BLOB values as Uint8Array", async () => {
@@ -12,6 +12,15 @@ describe("Durable Object SQLite driver", () => {
 			data: new Uint8Array([1, 2, 3]),
 			n: 7,
 		});
+	});
+
+	it("reports the rows a statement changed, without index writes", async () => {
+		const database = new DurableObjectSqliteDatabase(durableObjectStorage());
+		expect(await runChanges(database)).toEqual(RUN_CHANGES);
+		const inTransaction = await database.transaction((handle) =>
+			handle.runCounted("INSERT INTO changes_probe VALUES (?, ?, ?)", "t", "t/1", 1),
+		);
+		expect(inTransaction).toBe(1);
 	});
 
 	it("reads only the cursor's first row for get", async () => {

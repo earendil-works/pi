@@ -53,6 +53,23 @@ describe("system prompt updates", () => {
 		}
 	});
 
+	// #11495
+	test("does not patch the prompt when the active tools are only reordered", async () => {
+		const harness = await createHarness();
+		try {
+			harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+			await harness.session.prompt("one");
+			const before = harness.session.getActiveToolNames();
+			harness.session.setActiveToolsByName([...before].reverse());
+			expect(harness.session.getActiveToolNames()).toEqual(before);
+			await harness.session.prompt("two");
+			const systemMessages = harness.session.messages.filter((message) => message.role === "system");
+			expect(systemMessages).toHaveLength(1);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	test("opens a transcript without a system message and declares the prompt on the first request", async () => {
 		const tempDir = mkdtempSync(join(tmpdir(), "pi-system-prompt-migration-"));
 		try {

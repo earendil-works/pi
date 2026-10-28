@@ -63,6 +63,14 @@ const ADAPTIVE_THINKING = [
 	"fable-5",
 	"mythos-5",
 ];
+/**
+ * OpenRouter's `~anthropic/claude-*-latest` aliases follow the newest model of each family,
+ * all of which use adaptive thinking.
+ */
+function isClaudeLatestAlias(modelId: string): boolean {
+	return /^~anthropic\/claude-[a-z]+-latest$/.test(modelId);
+}
+
 const TEMPERATURE_UNSUPPORTED = [
 	"opus-4-7",
 	"opus-4.7",
@@ -100,7 +108,9 @@ export function applyClaudeFamilyRules(model: ChatModel): void {
 	if (model.id.includes("fable-5")) mergeThinking(model, { off: null, xhigh: "xhigh", max: "max" });
 	if (model.api !== "anthropic-messages") return;
 	const messagesModel = model as Model<"anthropic-messages">;
-	if (idIncludesAny(model.id, ADAPTIVE_THINKING)) mergeCompat(messagesModel, { forceAdaptiveThinking: true });
+	if (isClaudeLatestAlias(model.id) || idIncludesAny(model.id, ADAPTIVE_THINKING)) {
+		mergeCompat(messagesModel, { forceAdaptiveThinking: true });
+	}
 	if (idIncludesAny(model.id.toLowerCase(), TEMPERATURE_UNSUPPORTED)) {
 		mergeCompat(messagesModel, { supportsTemperature: false });
 	}

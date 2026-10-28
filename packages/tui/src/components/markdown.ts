@@ -3,11 +3,21 @@ import markedCjkFriendly from "marked-cjk-friendly";
 import { renderLatex } from "../latex.ts";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
 import type { Component } from "../tui.ts";
-import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { applyBackgroundToLine, cjkPunctuationRegex, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
 
-class StrictStrikethroughTokenizer extends Tokenizer {
+class MarkdownTokenizer extends Tokenizer {
+	override url(src: string): Tokens.Link | undefined {
+		const token = super.url(src);
+		if (!token) return undefined;
+
+		// Bare URLs stop at CJK punctuation; explicit links and angle autolinks
+		// use separate tokenizers and can still contain these characters.
+		const punctuationIndex = token.raw.search(cjkPunctuationRegex);
+		return punctuationIndex < 0 ? token : super.url(token.raw.slice(0, punctuationIndex));
+	}
+
 	override del(src: string): Tokens.Del | undefined {
 		const match = STRICT_STRIKETHROUGH_REGEX.exec(src);
 		if (!match) {
@@ -189,7 +199,7 @@ function trimPartialClosingFences(tokens: readonly Token[]): void {
 
 const markdownParser = new Marked();
 markdownParser.setOptions({
-	tokenizer: new StrictStrikethroughTokenizer(),
+	tokenizer: new MarkdownTokenizer(),
 });
 markdownParser.use({
 	tokenizer: { emStrong: markedCjkFriendly().tokenizer?.emStrong },
@@ -536,10 +546,14 @@ export class Markdown implements Component {
 
 			case "latexBlock": {
 				const latexToken = token as LatexToken;
-				const rendered =
+				let rendered =
 					!latexToken.pending && this.options.renderLatex !== false
-						? (renderLatex(latexToken.text, { display: true }) ?? latexToken.raw.trim())
-						: latexToken.raw.trim();
+						? renderLatex(latexToken.text, { display: true })
+						: undefined;
+				// A 2D layout cannot be wrapped row by row; fall back to the raw source when it does not fit.
+				if (rendered === undefined || rendered.split("\n").some((line) => visibleWidth(line) > width)) {
+					rendered = latexToken.raw.trim();
+				}
 				for (const line of rendered.split("\n")) {
 					lines.push(this.applyDefaultStyle(line));
 				}

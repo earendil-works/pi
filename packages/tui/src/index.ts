@@ -186,6 +186,7 @@ export { TuiMainScreen, type TuiMainScreenRenderState } from "./tui-main-screen.
 // Utilities
 export {
 	getOsc8LinkAtColumn,
+	replaceControlCharacters,
 	sliceByColumn,
 	stripTerminalSequences,
 	truncateToWidth,
