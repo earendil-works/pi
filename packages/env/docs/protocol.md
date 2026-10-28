@@ -62,7 +62,8 @@ command as a full pipe would.
 ## Liveness
 
 Each side sends `ping` every 5 seconds. The daemon kills every process group it started and exits after 30 seconds
-without receiving any bytes, or when stdin ends. A dropped connection therefore stops remote commands. The client
+without receiving any bytes, when stdin ends, or on `SIGTERM`, `SIGINT` or `SIGHUP` (on Windows, a job object kills
+its commands with it). A dropped connection or a stopped daemon therefore stops remote commands. The client
 fails requests of a lost connection with `{ code: "unknown", lost: true }` and starts a new daemon on the next request;
 handles belong to the daemon that opened them, so requests on them fail instead of reaching the new one.
 

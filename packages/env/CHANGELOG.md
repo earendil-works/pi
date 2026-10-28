@@ -9,6 +9,7 @@
 ### Fixed
 
 - `exec` and `pty` fail with `spawn_error` instead of hanging when the daemon cannot start a helper thread (for example at a cgroup task limit); the started command is killed and reaped ([#11433](https://github.com/earendil-works/pi/issues/11433)).
+- `Connection.close()` on Unix no longer leaves running commands behind: the daemon used to die from the client's `SIGTERM` before killing its process groups. It now kills them on `SIGTERM`, `SIGINT` or `SIGHUP` before exiting.
 
 ## [1.4.0] - 2026-10-21
 
