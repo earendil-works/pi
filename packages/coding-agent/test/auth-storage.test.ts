@@ -260,6 +260,82 @@ describe("AuthStorage", () => {
 		expect(release).toHaveBeenCalledTimes(1);
 	});
 
+	describe("Windows EPERM on lock acquisition", () => {
+		// #10801: a delete-pending lock directory on Windows makes mkdir fail with EPERM briefly.
+		const eperm = () => Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+		const originalPlatform = process.platform;
+		const setPlatform = (platform: NodeJS.Platform) =>
+			Object.defineProperty(process, "platform", { value: platform, configurable: true });
+
+		afterEach(() => {
+			setPlatform(originalPlatform);
+		});
+
+		test("retries transient EPERM on Windows (async)", async () => {
+			setPlatform("win32");
+			writeAuthJson({});
+			const backend = new FileAuthStorageBackend(authJsonPath);
+			const release = vi.fn(async () => {});
+			const lockSpy = vi.spyOn(lockfile, "lock").mockRejectedValueOnce(eperm()).mockResolvedValueOnce(release);
+			vi.spyOn(Math, "random").mockReturnValue(0);
+			const update = vi.fn(async () => ({ result: undefined }));
+
+			await backend.withLockAsync(update);
+
+			expect(lockSpy).toHaveBeenCalledTimes(2);
+			expect(update).toHaveBeenCalledTimes(1);
+			expect(release).toHaveBeenCalledTimes(1);
+		});
+
+		test("surfaces persistent EPERM on Windows after a bounded number of retries (async)", async () => {
+			setPlatform("win32");
+			writeAuthJson({});
+			const backend = new FileAuthStorageBackend(authJsonPath);
+			const lockSpy = vi.spyOn(lockfile, "lock").mockImplementation(async () => {
+				throw eperm();
+			});
+			vi.spyOn(Math, "random").mockReturnValue(0);
+			const update = vi.fn(async () => ({ result: undefined }));
+
+			await expect(backend.withLockAsync(update)).rejects.toMatchObject({ code: "EPERM" });
+
+			expect(lockSpy).toHaveBeenCalledTimes(6);
+			expect(update).not.toHaveBeenCalled();
+		});
+
+		test("does not retry EPERM on other platforms (async)", async () => {
+			setPlatform("linux");
+			writeAuthJson({});
+			const backend = new FileAuthStorageBackend(authJsonPath);
+			const lockSpy = vi.spyOn(lockfile, "lock").mockRejectedValueOnce(eperm());
+
+			await expect(backend.withLockAsync(async () => ({ result: undefined }))).rejects.toMatchObject({
+				code: "EPERM",
+			});
+			expect(lockSpy).toHaveBeenCalledTimes(1);
+		});
+
+		test("retries transient EPERM on Windows (sync)", () => {
+			setPlatform("win32");
+			writeAuthJson({});
+			const backend = new FileAuthStorageBackend(authJsonPath);
+			const release = vi.fn();
+			const lockSpy = vi
+				.spyOn(lockfile, "lockSync")
+				.mockImplementationOnce(() => {
+					throw eperm();
+				})
+				.mockReturnValueOnce(release);
+			const update = vi.fn(() => ({ result: undefined }));
+
+			backend.withLock(update);
+
+			expect(lockSpy).toHaveBeenCalledTimes(2);
+			expect(update).toHaveBeenCalledTimes(1);
+			expect(release).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	test("surfaces a compromised file storage lock", async () => {
 		writeAuthJson({ anthropic: { type: "api_key", key: "stored" } });
 		const backend = new FileAuthStorageBackend(authJsonPath);

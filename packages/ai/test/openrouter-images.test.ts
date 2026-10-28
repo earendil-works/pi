@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateImages } from "../src/images.ts";
-import type { ImagesContext, ImagesModel } from "../src/types.ts";
+import type { ImageModel, ImagesContext } from "../src/types.ts";
 
 const mockState = vi.hoisted(() => ({
 	lastParams: undefined as unknown,
@@ -65,7 +65,8 @@ describe("openrouter images", () => {
 	});
 
 	it("returns text plus images in final output", async () => {
-		const model: ImagesModel<"openrouter-images"> = {
+		const model: ImageModel<"openrouter-images"> = {
+			type: "image",
 			id: "google/gemini-3.1-flash-image-preview",
 			name: "Gemini 3.1 Flash Image Preview",
 			api: "openrouter-images",
@@ -97,7 +98,8 @@ describe("openrouter images", () => {
 	});
 
 	it("passes through abort signal and returns aborted result", async () => {
-		const model: ImagesModel<"openrouter-images"> = {
+		const model: ImageModel<"openrouter-images"> = {
+			type: "image",
 			id: "black-forest-labs/flux.2-pro",
 			name: "FLUX.2 Pro",
 			api: "openrouter-images",
@@ -120,7 +122,8 @@ describe("openrouter images", () => {
 	});
 
 	it("generateImages resolves the final assistant images result", async () => {
-		const model: ImagesModel<"openrouter-images"> = {
+		const model: ImageModel<"openrouter-images"> = {
+			type: "image",
 			id: "black-forest-labs/flux.2-pro",
 			name: "FLUX.2 Pro",
 			api: "openrouter-images",
@@ -136,5 +139,7 @@ describe("openrouter images", () => {
 
 		const output = await generateImages(model, context, { apiKey: "test" });
 		expect(output.output.some((item) => item.type === "image")).toBe(true);
+		// Image-only models must not request text output.
+		expect((mockState.lastParams as { modalities?: string[] }).modalities).toEqual(["image"]);
 	});
 });

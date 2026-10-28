@@ -11,6 +11,33 @@ import type {
 
 const NON_VISION_USER_IMAGE_PLACEHOLDER = "(image omitted: model does not support images)";
 const NON_VISION_TOOL_IMAGE_PLACEHOLDER = "(tool image omitted: model does not support images)";
+const ERROR_TOOL_IMAGE_PLACEHOLDER = "(image attached after the tool results)";
+
+/** An error tool result split into a text-only result and the images to send after the tool results. */
+export interface SplitErrorToolResult {
+	/** The result content with each run of images replaced by a note. */
+	content: TextContent[];
+	/** Text naming the tool call, to send before `images`. */
+	caption: string;
+	images: ImageContent[];
+}
+
+/**
+ * Split the images out of an error tool result, for APIs that reject images in error results
+ * (Anthropic, and Claude on Bedrock). Send the returned content as the tool result and the caption and
+ * images after all tool results of the turn, in the same user message. Returns undefined for results
+ * that need no split (#10794).
+ */
+export function splitErrorToolResultImages(msg: ToolResultMessage): SplitErrorToolResult | undefined {
+	if (!msg.isError) return undefined;
+	const images = msg.content.filter((block): block is ImageContent => block.type === "image");
+	if (images.length === 0) return undefined;
+	return {
+		content: replaceImagesWithPlaceholder(msg.content, ERROR_TOOL_IMAGE_PLACEHOLDER),
+		caption: `Images from the error result of tool call ${msg.toolCallId} (${msg.toolName}):`,
+		images,
+	};
+}
 
 function replaceImagesWithPlaceholder(content: (TextContent | ImageContent)[], placeholder: string): TextContent[] {
 	const result: TextContent[] = [];
@@ -75,8 +102,8 @@ export function transformMessages<TApi extends Api>(
 
 	// First pass: transform messages (unsupported image downgrade, thinking blocks, tool call ID normalization)
 	const transformed = imageAwareMessages.map((msg) => {
-		// User messages pass through unchanged
-		if (msg.role === "user") {
+		// System and user messages pass through unchanged
+		if (msg.role === "system" || msg.role === "user") {
 			return msg;
 		}
 
@@ -99,21 +126,15 @@ export function transformMessages<TApi extends Api>(
 
 			const transformedContent = assistantMsg.content.flatMap((block) => {
 				if (block.type === "thinking") {
-					// Redacted thinking is opaque encrypted content, only valid for the same model.
-					// Drop it for cross-model to avoid API errors.
-					if (block.redacted) {
-						return isSameModel ? block : [];
-					}
-					// For same model: keep thinking blocks with signatures (needed for replay)
-					// even if the thinking text is empty (OpenAI encrypted reasoning)
-					if (isSameModel && block.thinkingSignature) return block;
-					// Skip empty thinking blocks, convert others to plain text
+					// Thinking from another model is dropped. Signatures and encrypted reasoning are
+					// only valid for the model that produced them, and sending readable thinking as
+					// plain text makes the new model treat it as part of the visible reply.
+					if (!isSameModel) return [];
+					// Keep redacted and signed blocks even if the thinking text is empty
+					// (OpenAI encrypted reasoning); they are needed for replay.
+					if (block.redacted || block.thinkingSignature) return block;
 					if (!block.thinking || block.thinking.trim() === "") return [];
-					if (isSameModel) return block;
-					return {
-						type: "text" as const,
-						text: block.thinking,
-					};
+					return block;
 				}
 
 				if (block.type === "text") {
@@ -160,7 +181,11 @@ export function transformMessages<TApi extends Api>(
 	const result: Message[] = [];
 	let pendingToolCalls: ToolCall[] = [];
 	let existingToolResultIds = new Set<string>();
-	const insertSyntheticToolResults = () => {
+	// System messages are transparent to tool-call accounting: one that lands between a tool
+	// call and its results is held back and emitted after the results (synthetic ones
+	// included), so it never causes a duplicate result for a call that is answered later.
+	const heldSystemMessages: Message[] = [];
+	const closePendingToolCalls = () => {
 		if (pendingToolCalls.length > 0) {
 			for (const tc of pendingToolCalls) {
 				if (!existingToolResultIds.has(tc.id)) {
@@ -177,6 +202,8 @@ export function transformMessages<TApi extends Api>(
 			pendingToolCalls = [];
 			existingToolResultIds = new Set();
 		}
+		result.push(...heldSystemMessages);
+		heldSystemMessages.length = 0;
 	};
 
 	for (let i = 0; i < transformed.length; i++) {
@@ -184,7 +211,7 @@ export function transformMessages<TApi extends Api>(
 
 		if (msg.role === "assistant") {
 			// If we have pending orphaned tool calls from a previous assistant, insert synthetic results now
-			insertSyntheticToolResults();
+			closePendingToolCalls();
 
 			// Skip errored/aborted assistant messages entirely.
 			// These are incomplete turns that shouldn't be replayed:
@@ -207,9 +234,15 @@ export function transformMessages<TApi extends Api>(
 		} else if (msg.role === "toolResult") {
 			existingToolResultIds.add(msg.toolCallId);
 			result.push(msg);
+		} else if (msg.role === "system") {
+			if (pendingToolCalls.length > 0) {
+				heldSystemMessages.push(msg);
+			} else {
+				result.push(msg);
+			}
 		} else if (msg.role === "user") {
-			// User message interrupts tool flow - insert synthetic results for orphaned calls
-			insertSyntheticToolResults();
+			// A new user turn interrupts tool flow - insert synthetic results for orphaned calls
+			closePendingToolCalls();
 			result.push(msg);
 		} else {
 			result.push(msg);
@@ -217,7 +250,7 @@ export function transformMessages<TApi extends Api>(
 	}
 
 	// If the conversation ends with unresolved tool calls, synthesize results now.
-	insertSyntheticToolResults();
+	closePendingToolCalls();
 
 	return result;
 }

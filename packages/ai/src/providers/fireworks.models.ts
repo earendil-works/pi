@@ -2,7 +2,13 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/fireworks.json" with { type: "json" };
-import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
+import { flattenChatModelCatalog, flattenClassifierModelCatalog, flattenImageModelCatalog, type ChatModelCatalog, type ClassifierModelCatalog, type ImageModelCatalog } from "../model-catalog.ts";
 
-export const FIREWORKS_MODELS: ModelCatalog<typeof values, "fireworks"> =
-	flattenModelCatalog("fireworks", values);
+export const FIREWORKS_MODELS: ChatModelCatalog<typeof values, "fireworks"> =
+	flattenChatModelCatalog("fireworks", values);
+
+export const FIREWORKS_IMAGE_MODELS: ImageModelCatalog<typeof values, "fireworks"> =
+	flattenImageModelCatalog("fireworks", values);
+
+export const FIREWORKS_CLASSIFIER_MODELS: ClassifierModelCatalog<typeof values, "fireworks"> =
+	flattenClassifierModelCatalog("fireworks", values);

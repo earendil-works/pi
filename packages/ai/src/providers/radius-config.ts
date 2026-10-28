@@ -1,5 +1,6 @@
 import type { OAuthCredential } from "../auth/types.ts";
 import type { Model, ThinkingLevelMap } from "../types.ts";
+import { ownedSlice } from "../utils/text.ts";
 
 export const DEFAULT_RADIUS_GATEWAY = "https://radius.pi.dev";
 
@@ -74,7 +75,7 @@ export function getRadiusModels(providerId: string, credential: OAuthCredential 
 
 function truncateHttpBody(body: string): string {
 	const trimmed = body.trim();
-	return trimmed.length > 512 ? `${trimmed.slice(0, 512)}…` : trimmed;
+	return trimmed.length > 512 ? `${ownedSlice(trimmed, 0, 512)}…` : trimmed;
 }
 
 export async function loadRadiusGatewayConfig(

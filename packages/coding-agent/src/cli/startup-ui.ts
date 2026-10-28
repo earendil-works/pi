@@ -17,17 +17,19 @@ import {
 	FirstTimeSetupComponent,
 	type FirstTimeSetupResult,
 } from "../modes/interactive/components/first-time-setup.ts";
+import { SYSTEM_THEME_NAME } from "../modes/interactive/theme/system-theme.ts";
 import {
-	detectTerminalBackgroundFromEnv,
-	detectTerminalThemeForAuto,
+	getTerminalTheme,
 	initTheme,
 	loadThemeFromPath,
-	parseAutoThemeSetting,
+	markTerminalColorsPending,
 	resolveThemeSetting,
 	setRegisteredThemes,
+	setTerminalColors,
 	setTheme,
 	type Theme,
 } from "../modes/interactive/theme/theme.ts";
+import { requestTerminalColors } from "../modes/interactive/theme/theme-controller.ts";
 
 const OFFICIAL_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const OFFICIAL_APP_NAME = "pi";
@@ -83,8 +85,9 @@ async function loadStartupThemes(settingsManager: SettingsManager): Promise<Them
 export async function createStartupTui(settingsManager: SettingsManager): Promise<TUI> {
 	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());
 	setRegisteredThemes(await loadStartupThemes(settingsManager));
-	const terminalTheme = detectTerminalBackgroundFromEnv().theme;
-	initTheme(resolveThemeSetting(settingsManager.getThemeSetting(), terminalTheme) ?? terminalTheme);
+	// The system theme starts in grayscale until the terminal reports its colors.
+	markTerminalColorsPending();
+	initTheme(resolveThemeSetting(settingsManager.getThemeSetting(), getTerminalTheme()) ?? SYSTEM_THEME_NAME);
 	setKeybindings(KeybindingsManager.create());
 	const ui: TUI = new TuiMainScreen(new ProcessTerminal(), settingsManager.getShowHardwareCursor(), getAgentDir());
 	ui.setClearOnShrink(settingsManager.getClearOnShrink());
@@ -93,17 +96,23 @@ export async function createStartupTui(settingsManager: SettingsManager): Promis
 
 export function startStartupTui(ui: TUI, settingsManager: SettingsManager): void {
 	ui.start();
-	void applyDetectedStartupTheme(ui, settingsManager);
+	const themeSetting = settingsManager.getThemeSetting();
+	queryStartupTerminalColors(ui, () => {
+		setTheme(resolveThemeSetting(themeSetting, getTerminalTheme()) ?? SYSTEM_THEME_NAME);
+	});
 }
 
-async function applyDetectedStartupTheme(ui: TUI, settingsManager: SettingsManager): Promise<void> {
-	const themeSetting = settingsManager.getThemeSetting();
-	if (themeSetting && !parseAutoThemeSetting(themeSetting)) return;
-
-	const terminalTheme = await detectTerminalThemeForAuto({ ui, timeoutMs: 100 });
-	setTheme(resolveThemeSetting(themeSetting, terminalTheme) ?? terminalTheme);
-	ui.invalidate();
-	ui.requestRender();
+/**
+ * Query the terminal's colors without waiting for them. When they arrive, including after the timeout,
+ * record them for the system theme and "" (terminal default) tokens, run `onColors`, and re-render.
+ */
+function queryStartupTerminalColors(ui: TUI, onColors: () => void): void {
+	void requestTerminalColors(ui, (colors) => {
+		setTerminalColors(colors);
+		onColors();
+		ui.invalidate();
+		ui.requestRender();
+	});
 }
 
 async function clearStartupTui(ui: TUI): Promise<void> {
@@ -189,25 +198,23 @@ export async function showFirstTimeSetup(settingsManager: SettingsManager): Prom
 			resolve();
 		};
 
-		const showSetup = async () => {
-			ui.start();
-			const detectedTheme = await detectTerminalThemeForAuto({ ui, timeoutMs: 100 });
-			setTheme(detectedTheme);
-			const component = new FirstTimeSetupComponent({
-				detectedTheme,
-				onThemePreview: (themeName) => {
-					setTheme(themeName);
-					ui.requestRender();
-				},
-				onSubmit: (result) => void finish(result),
-				onCancel: () => void finish(undefined),
-			});
-			ui.addChild(component);
-			ui.setFocus(component);
-			ui.requestRender();
-		};
-
-		void showSetup();
+		ui.start();
+		let previewTheme = SYSTEM_THEME_NAME;
+		setTheme(previewTheme);
+		const component = new FirstTimeSetupComponent({
+			onThemePreview: (themeName) => {
+				previewTheme = themeName;
+				setTheme(themeName);
+				ui.requestRender();
+			},
+			onSubmit: (result) => void finish(result),
+			onCancel: () => void finish(undefined),
+		});
+		ui.addChild(component);
+		ui.setFocus(component);
+		ui.requestRender();
+		// The terminal's colors regenerate the system theme; re-rendering rebuilds the dialog with it.
+		queryStartupTerminalColors(ui, () => setTheme(previewTheme));
 	});
 }
 

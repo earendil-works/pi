@@ -2,7 +2,13 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/xiaomi-token-plan-ams.json" with { type: "json" };
-import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
+import { flattenChatModelCatalog, flattenClassifierModelCatalog, flattenImageModelCatalog, type ChatModelCatalog, type ClassifierModelCatalog, type ImageModelCatalog } from "../model-catalog.ts";
 
-export const XIAOMI_TOKEN_PLAN_AMS_MODELS: ModelCatalog<typeof values, "xiaomi-token-plan-ams"> =
-	flattenModelCatalog("xiaomi-token-plan-ams", values);
+export const XIAOMI_TOKEN_PLAN_AMS_MODELS: ChatModelCatalog<typeof values, "xiaomi-token-plan-ams"> =
+	flattenChatModelCatalog("xiaomi-token-plan-ams", values);
+
+export const XIAOMI_TOKEN_PLAN_AMS_IMAGE_MODELS: ImageModelCatalog<typeof values, "xiaomi-token-plan-ams"> =
+	flattenImageModelCatalog("xiaomi-token-plan-ams", values);
+
+export const XIAOMI_TOKEN_PLAN_AMS_CLASSIFIER_MODELS: ClassifierModelCatalog<typeof values, "xiaomi-token-plan-ams"> =
+	flattenClassifierModelCatalog("xiaomi-token-plan-ams", values);

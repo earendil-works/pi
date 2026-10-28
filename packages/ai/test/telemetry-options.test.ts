@@ -1,22 +1,15 @@
-import { NOOP_TELEMETRY_CONTEXT, type TelemetryContext } from "@earendil-works/pi-telemetry";
+import { NOOP_TELEMETRY_CONTEXT, type TelemetrySpan } from "@earendil-works/pi-telemetry";
 import { describe, expect, it } from "vitest";
 import { buildBaseOptions } from "../src/api/simple-options.ts";
 import { generateImages } from "../src/images.ts";
 import { registerImagesApiProvider } from "../src/images-api-registry.ts";
-import { createImagesModels, createImagesProvider } from "../src/images-models.ts";
 import { createModels, createProvider } from "../src/models.ts";
-import type {
-	Context,
-	DeferredHandle,
-	ImagesContext,
-	ImagesModel,
-	Model,
-	ProviderRequestOptions,
-} from "../src/types.ts";
+import type { DeferredHandle, ImageModel, ImagesContext, Model, ProviderRequestOptions } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
-const telemetryContext: TelemetryContext = NOOP_TELEMETRY_CONTEXT;
-const context: Context = { messages: [] };
+const telemetry: TelemetrySpan = NOOP_TELEMETRY_CONTEXT;
+const context = normalizeContext({ messages: [] });
 const imagesContext: ImagesContext = { input: [{ type: "text", text: "circle" }] };
 
 const model: Model<"telemetry-test"> = {
@@ -32,7 +25,8 @@ const model: Model<"telemetry-test"> = {
 	maxTokens: 100,
 };
 
-const imageModel: ImagesModel<"telemetry-test-images"> = {
+const imageModel: ImageModel<"telemetry-test-images"> = {
+	type: "image",
 	id: "image-model",
 	name: "Image Model",
 	api: "telemetry-test-images",
@@ -71,15 +65,23 @@ function completedStream(requestModel: Model<string>): AssistantMessageEventStre
 	return stream;
 }
 
-describe("ProviderRequestOptions.telemetryContext", () => {
+describe("ProviderRequestOptions.telemetry", () => {
 	it("is inherited by every request option surface and simple-stream conversion", () => {
-		const options = { telemetryContext } satisfies ProviderRequestOptions;
-		expect(options.telemetryContext).toBe(telemetryContext);
-		expect(buildBaseOptions(model, context, { telemetryContext }).telemetryContext).toBe(telemetryContext);
+		const options = { telemetry } satisfies ProviderRequestOptions;
+		expect(options.telemetry).toBe(telemetry);
+		expect(buildBaseOptions(model, context, { telemetry }).telemetry).toBe(telemetry);
+		const compileTimeFailures = () => {
+			const removed: ProviderRequestOptions = {
+				// @ts-expect-error telemetryContext was renamed, with no compatibility alias
+				telemetryContext: telemetry,
+			};
+			return removed;
+		};
+		expect(compileTimeFailures).toBeTypeOf("function");
 	});
 
 	it("survives provider and Models stream/deferred dispatch", async () => {
-		const observed: Array<TelemetryContext | undefined> = [];
+		const observed: Array<TelemetrySpan | undefined> = [];
 		const handle: DeferredHandle = {
 			provider: model.provider,
 			modelId: model.id,
@@ -92,45 +94,45 @@ describe("ProviderRequestOptions.telemetryContext", () => {
 			models: [model],
 			api: {
 				stream: (requestModel, _context, options) => {
-					observed.push(options?.telemetryContext);
+					observed.push(options?.telemetry);
 					return completedStream(requestModel);
 				},
 				streamSimple: (requestModel, _context, options) => {
-					observed.push(options?.telemetryContext);
+					observed.push(options?.telemetry);
 					return completedStream(requestModel);
 				},
 				fetchDeferred: (requestModel, _handle, options) => {
-					observed.push(options?.telemetryContext);
+					observed.push(options?.telemetry);
 					return completedStream(requestModel);
 				},
 				cancelDeferred: async (_requestModel, _handle, options) => {
-					observed.push(options?.telemetryContext);
+					observed.push(options?.telemetry);
 				},
 			},
 		});
 
-		await provider.stream(model, context, { telemetryContext }).result();
-		await provider.streamSimple(model, context, { telemetryContext }).result();
-		await provider.fetchDeferred!(model, handle, { telemetryContext }).result();
-		await provider.cancelDeferred!(model, handle, { telemetryContext });
+		await provider.stream(model, context, { telemetry }).result();
+		await provider.streamSimple(model, context, { telemetry }).result();
+		await provider.fetchDeferred!(model, handle, { telemetry }).result();
+		await provider.cancelDeferred!(model, handle, { telemetry });
 
 		const models = createModels();
 		models.setProvider(provider);
-		await models.stream(model, context, { telemetryContext }).result();
-		await models.streamSimple(model, context, { telemetryContext }).result();
-		await models.fetchDeferred(model, handle, { telemetryContext });
-		await models.cancelDeferred(model, handle, { telemetryContext });
+		await models.stream(model, context, { telemetry }).result();
+		await models.streamSimple(model, context, { telemetry }).result();
+		await models.fetchDeferred(model, handle, { telemetry });
+		await models.cancelDeferred(model, handle, { telemetry });
 
 		expect(observed).toHaveLength(8);
-		expect(observed.every((value) => value === telemetryContext)).toBe(true);
+		expect(observed.every((value) => value === telemetry)).toBe(true);
 	});
 
-	it("survives direct and ImagesModels image dispatch", async () => {
-		const observed: Array<TelemetryContext | undefined> = [];
+	it("survives direct and Models image dispatch", async () => {
+		const observed: Array<TelemetrySpan | undefined> = [];
 		registerImagesApiProvider({
 			api: imageModel.api,
 			generateImages: async (requestModel, _context, options) => {
-				observed.push(options?.telemetryContext);
+				observed.push(options?.telemetry);
 				return {
 					api: requestModel.api,
 					provider: requestModel.provider,
@@ -141,31 +143,33 @@ describe("ProviderRequestOptions.telemetryContext", () => {
 				};
 			},
 		});
-		await generateImages(imageModel, imagesContext, { telemetryContext });
+		await generateImages(imageModel, imagesContext, { telemetry });
 
-		const models = createImagesModels();
+		const models = createModels();
 		models.setProvider(
-			createImagesProvider({
+			createProvider({
 				id: imageModel.provider,
 				auth: { apiKey: { name: "Test", resolve: async () => ({ auth: {} }) } },
 				models: [imageModel],
-				api: {
-					generateImages: async (requestModel, _context, options) => {
-						observed.push(options?.telemetryContext);
-						return {
-							api: requestModel.api,
-							provider: requestModel.provider,
-							model: requestModel.id,
-							output: [],
-							stopReason: "stop",
-							timestamp: 0,
-						};
+				images: {
+					[imageModel.api]: {
+						generateImages: async (requestModel, _context, options) => {
+							observed.push(options?.telemetry);
+							return {
+								api: requestModel.api,
+								provider: requestModel.provider,
+								model: requestModel.id,
+								output: [],
+								stopReason: "stop",
+								timestamp: 0,
+							};
+						},
 					},
 				},
 			}),
 		);
-		await models.generateImages(imageModel, imagesContext, { telemetryContext });
+		await models.generateImages(imageModel, imagesContext, { telemetry });
 
-		expect(observed).toEqual([telemetryContext, telemetryContext]);
+		expect(observed).toEqual([telemetry, telemetry]);
 	});
 });

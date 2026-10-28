@@ -22,6 +22,20 @@ class StaticOverlay implements Component {
 	invalidate(): void {}
 }
 
+class CursorTrackingTerminal extends VirtualTerminal {
+	cursorVisible = true;
+
+	override hideCursor(): void {
+		this.cursorVisible = false;
+		super.hideCursor();
+	}
+
+	override showCursor(): void {
+		this.cursorVisible = true;
+		super.showCursor();
+	}
+}
+
 class EmptyContent implements Component {
 	render(): string[] {
 		return [];
@@ -536,6 +550,33 @@ describe("TUI overlay options", () => {
 			assert.ok(viewport[0]?.includes("FIRST"), "FIRST should be visible after hiding SECOND");
 
 			tui.stop();
+		});
+	});
+
+	// https://github.com/earendil-works/pi/issues/10026
+	describe("hiding after stop", () => {
+		it("hideOverlay() leaves the cursor visible", () => {
+			const terminal = new CursorTrackingTerminal(80, 24);
+			const tui: TUI = new TuiMainScreen(terminal);
+			tui.start();
+			tui.showOverlay(new StaticOverlay(["OVERLAY"]), { nonCapturing: true });
+
+			tui.stop();
+			tui.hideOverlay();
+
+			assert.strictEqual(terminal.cursorVisible, true);
+		});
+
+		it("overlay handle hide() leaves the cursor visible", () => {
+			const terminal = new CursorTrackingTerminal(80, 24);
+			const tui: TUI = new TuiMainScreen(terminal);
+			tui.start();
+			const handle = tui.showOverlay(new StaticOverlay(["OVERLAY"]), { nonCapturing: true });
+
+			tui.stop();
+			handle.hide();
+
+			assert.strictEqual(terminal.cursorVisible, true);
 		});
 	});
 });

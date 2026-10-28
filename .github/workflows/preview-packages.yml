@@ -1,0 +1,117 @@
+# Publishes the preview packages that CI packed for main and for PRs from branches of this repo to pkg.earendil.com,
+# moving the `main` or `pr-<number>` ref, and deletes a PR's ref when the PR closes. It reads the CI artifact as data
+# and never checks out or runs PR code.
+#
+# Uploads are only accepted if pkg.earendil.com allows this repository, this workflow on main, and every package it
+# publishes.
+
+name: Preview packages
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  pull_request_target:
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  publish:
+    # Only CI runs for pushes to main and for PRs from branches of this repo. A branch can make its own copy of CI run
+    # on push; such runs are not reviewed and must not be published as push builds.
+    if: >-
+      github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'cancelled' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      ((github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main') ||
+      github.event.workflow_run.event == 'pull_request')
+    # Publish and cleanup runs for the same branch execute one at a time, in order. The group is set per job, so runs
+    # whose job is skipped (forks) never wait in it. `queue: max` keeps every waiting run instead of replacing one.
+    concurrency:
+      group: preview-packages-${{ github.event.workflow_run.head_branch }}
+      queue: max
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read # download the artifact from the CI run
+      contents: read # check out scripts/
+      id-token: write # authenticate to pkg.earendil.com
+      pull-requests: read # check that the PR is still open
+    steps:
+      - name: Find packed packages
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          count=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" \
+            --jq '[.artifacts[] | select(.name == "preview-packages")] | length')
+          if [ "$count" = 0 ]; then echo "::notice::CI produced no preview packages (it failed before packing)"; fi
+          echo "found=$([ "$count" != 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Download packed packages
+        if: steps.find.outputs.found == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: preview-packages
+          path: ${{ runner.temp }}/preview-packages
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Check out scripts
+        if: steps.find.outputs.found == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - name: Publish
+        if: steps.find.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Event data is passed through env, never interpolated into the script: branch names are PR-controlled.
+          EVENT: ${{ github.event.workflow_run.event }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          PULL_REQUESTS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          DIR: ${{ runner.temp }}/preview-packages
+        run: |
+          args=(--dir "$DIR" --sha "$HEAD_SHA" --run "$RUN_ID" --event "$EVENT")
+          if [ "$EVENT" = push ] && [ "$HEAD_BRANCH" = main ]; then
+            args+=(--ref main)
+          else
+            # The branch's PR into main; a branch can also have PRs into other branches. It may have closed or received
+            # new commits since CI ran, so the ref moves only while the PR is open with this commit as its head.
+            pr=$(jq -r 'map(select(.base.ref == "main")) | .[0].number // empty' <<< "$PULL_REQUESTS")
+            state=$([ -z "$pr" ] || gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '"\(.state) \(.base.ref) \(.head.sha)"')
+            if [ "$state" = "open main $HEAD_SHA" ]; then
+              args+=(--ref "pr-$pr")
+            else
+              echo "::notice::No open PR into main has head $HEAD_SHA; publishing without a pr-<number> ref"
+            fi
+          fi
+          node scripts/preview-packages.mjs publish "${args[@]}"
+
+  cleanup:
+    # Only PRs into main: pull_request_target runs this file from the PR's base branch, and only main is allowed.
+    if: >-
+      github.event_name == 'pull_request_target' && github.event.pull_request.base.ref == github.event.repository.default_branch &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    concurrency:
+      group: preview-packages-${{ github.event.pull_request.head.ref }}
+      queue: max
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out scripts/ from the base branch, not PR code
+      id-token: write # authenticate to pkg.earendil.com
+    steps:
+      - name: Check out scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - name: Delete PR ref
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: node scripts/preview-packages.mjs delete-ref --ref "pr-$PR"

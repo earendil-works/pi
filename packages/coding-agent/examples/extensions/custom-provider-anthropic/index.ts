@@ -27,9 +27,11 @@ import {
 	type Api,
 	type AssistantMessage,
 	type AssistantMessageEventStream,
-	type Context,
 	calculateCost,
+	collapseSystemMessages,
 	createAssistantMessageEventStream,
+	getCurrentSystemPrompt,
+	getCurrentTools,
 	type ImageContent,
 	type Message,
 	type Model,
@@ -40,8 +42,9 @@ import {
 	type TextContent,
 	type ThinkingContent,
 	type Tool,
-	type ToolCall,
+	ToolCallArgumentsStream,
 	type ToolResultMessage,
+	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -334,10 +337,15 @@ function mapStopReason(reason: string): StopReason {
 
 function streamCustomAnthropic(
 	model: Model<Api>,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
 	const stream = createAssistantMessageEventStream();
+	// The transcript carries the prompt and tools in its system messages. This provider sends
+	// one top-level system prompt, so fold later system messages into the leading one first.
+	const transcript = collapseSystemMessages(context);
+	const systemPrompt = getCurrentSystemPrompt(transcript.messages);
+	const tools = getCurrentTools(transcript.messages);
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -393,7 +401,7 @@ function streamCustomAnthropic(
 			// Build request params
 			const params: MessageCreateParamsStreaming = {
 				model: model.id,
-				messages: convertMessages(context.messages, isOAuth, context.tools),
+				messages: convertMessages(transcript.messages, isOAuth, tools),
 				max_tokens: options?.maxTokens || Math.floor(model.maxTokens / 3),
 				stream: true,
 			};
@@ -407,25 +415,25 @@ function streamCustomAnthropic(
 						cache_control: { type: "ephemeral" },
 					},
 				];
-				if (context.systemPrompt) {
+				if (systemPrompt) {
 					params.system.push({
 						type: "text",
-						text: sanitizeSurrogates(context.systemPrompt),
+						text: sanitizeSurrogates(systemPrompt),
 						cache_control: { type: "ephemeral" },
 					});
 				}
-			} else if (context.systemPrompt) {
+			} else if (systemPrompt) {
 				params.system = [
 					{
 						type: "text",
-						text: sanitizeSurrogates(context.systemPrompt),
+						text: sanitizeSurrogates(systemPrompt),
 						cache_control: { type: "ephemeral" },
 					},
 				];
 			}
 
-			if (context.tools) {
-				params.tools = convertTools(context.tools, isOAuth);
+			if (tools.length > 0) {
+				params.tools = convertTools(tools, isOAuth);
 			}
 
 			// Handle thinking/reasoning
@@ -446,8 +454,9 @@ function streamCustomAnthropic(
 			const anthropicStream = client.messages.stream({ ...params }, { signal: options?.signal });
 			stream.push({ type: "start", partial: output });
 
-			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string })) & { index: number };
-			const blocks = output.content as Block[];
+			// Stream state per Anthropic block index, kept off the content blocks so it never reaches partial messages.
+			// ToolCallArgumentsStream reads each argument delta once and shows the arguments parsed so far.
+			const openBlocks = new Map<number, { contentIndex: number; arguments?: ToolCallArgumentsStream }>();
 
 			for await (const event of anthropicStream) {
 				if (event.type === "message_start") {
@@ -460,33 +469,31 @@ function streamCustomAnthropic(
 					calculateCost(model, output.usage);
 				} else if (event.type === "content_block_start") {
 					if (event.content_block.type === "text") {
-						output.content.push({ type: "text", text: "", index: event.index } as any);
+						output.content.push({ type: "text", text: "" });
+						openBlocks.set(event.index, { contentIndex: output.content.length - 1 });
 						stream.push({ type: "text_start", contentIndex: output.content.length - 1, partial: output });
 					} else if (event.content_block.type === "thinking") {
-						output.content.push({
-							type: "thinking",
-							thinking: "",
-							thinkingSignature: "",
-							index: event.index,
-						} as any);
+						output.content.push({ type: "thinking", thinking: "", thinkingSignature: "" });
+						openBlocks.set(event.index, { contentIndex: output.content.length - 1 });
 						stream.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
 					} else if (event.content_block.type === "tool_use") {
 						output.content.push({
 							type: "toolCall",
 							id: event.content_block.id,
-							name: isOAuth
-								? fromClaudeCodeName(event.content_block.name, context.tools)
-								: event.content_block.name,
+							name: isOAuth ? fromClaudeCodeName(event.content_block.name, tools) : event.content_block.name,
 							arguments: {},
-							partialJson: "",
-							index: event.index,
-						} as any);
+						});
+						openBlocks.set(event.index, {
+							contentIndex: output.content.length - 1,
+							arguments: new ToolCallArgumentsStream(),
+						});
 						stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
 					}
 				} else if (event.type === "content_block_delta") {
-					const index = blocks.findIndex((b) => b.index === event.index);
-					const block = blocks[index];
-					if (!block) continue;
+					const open = openBlocks.get(event.index);
+					if (!open) continue;
+					const index = open.contentIndex;
+					const block = output.content[index]!;
 
 					if (event.delta.type === "text_delta" && block.type === "text") {
 						block.text += event.delta.text;
@@ -499,11 +506,8 @@ function streamCustomAnthropic(
 							delta: event.delta.thinking,
 							partial: output,
 						});
-					} else if (event.delta.type === "input_json_delta" && block.type === "toolCall") {
-						(block as any).partialJson += event.delta.partial_json;
-						try {
-							block.arguments = JSON.parse((block as any).partialJson);
-						} catch {}
+					} else if (event.delta.type === "input_json_delta" && block.type === "toolCall" && open.arguments) {
+						block.arguments = open.arguments.append(event.delta.partial_json);
 						stream.push({
 							type: "toolcall_delta",
 							contentIndex: index,
@@ -514,20 +518,19 @@ function streamCustomAnthropic(
 						block.thinkingSignature = (block.thinkingSignature || "") + (event.delta as any).signature;
 					}
 				} else if (event.type === "content_block_stop") {
-					const index = blocks.findIndex((b) => b.index === event.index);
-					const block = blocks[index];
-					if (!block) continue;
+					const open = openBlocks.get(event.index);
+					if (!open) continue;
+					openBlocks.delete(event.index);
+					const index = open.contentIndex;
+					const block = output.content[index]!;
 
-					delete (block as any).index;
 					if (block.type === "text") {
 						stream.push({ type: "text_end", contentIndex: index, content: block.text, partial: output });
 					} else if (block.type === "thinking") {
 						stream.push({ type: "thinking_end", contentIndex: index, content: block.thinking, partial: output });
-					} else if (block.type === "toolCall") {
-						try {
-							block.arguments = JSON.parse((block as any).partialJson);
-						} catch {}
-						delete (block as any).partialJson;
+					} else if (block.type === "toolCall" && open.arguments) {
+						// One full parse of the complete text; malformed arguments are reported in `argumentsError`.
+						Object.assign(block, open.arguments.finish());
 						stream.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: output });
 					}
 				} else if (event.type === "message_delta") {
@@ -557,7 +560,6 @@ function streamCustomAnthropic(
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
-			for (const block of output.content) delete (block as any).index;
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });

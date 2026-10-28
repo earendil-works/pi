@@ -1,46 +1,34 @@
 import { complete, resetApiProviders } from "@earendil-works/pi-ai/compat";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 
-const openAIState = vi.hoisted(() => ({ clientOptions: undefined as unknown }));
+interface CapturedRequest {
+	url: string;
+	headers: Headers;
+}
 
-vi.mock("openai", () => {
-	class FakeOpenAI {
-		constructor(options: unknown) {
-			openAIState.clientOptions = options;
-		}
-
-		chat = {
-			completions: {
-				create: () => {
-					const stream = {
-						async *[Symbol.asyncIterator]() {
-							yield {
-								choices: [{ delta: {}, finish_reason: "stop" }],
-								usage: { prompt_tokens: 1, completion_tokens: 1 },
-							};
-						},
-					};
-					const promise = Promise.resolve(stream) as Promise<typeof stream> & {
-						withResponse(): Promise<{
-							data: typeof stream;
-							response: { status: number; headers: Headers };
-						}>;
-					};
-					promise.withResponse = async () => ({
-						data: stream,
-						response: { status: 200, headers: new Headers() },
-					});
-					return promise;
-				},
-			},
+function createCapturingFetch(): { fetch: typeof globalThis.fetch; requests: CapturedRequest[] } {
+	const requests: CapturedRequest[] = [];
+	const fetch: typeof globalThis.fetch = async (input, init) => {
+		const request = new Request(input, init);
+		requests.push({ url: request.url, headers: request.headers });
+		const chunk = {
+			id: "chatcmpl-test",
+			object: "chat.completion.chunk",
+			created: 0,
+			model: "test",
+			choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+			usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
 		};
-	}
-
-	return { default: FakeOpenAI };
-});
+		return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+	};
+	return { fetch, requests };
+}
 
 async function createCloudflareRuntime(): Promise<{ modelRuntime: ModelRuntime; modelRegistry: ModelRegistry }> {
 	const authStorage = AuthStorage.inMemory();
@@ -56,6 +44,8 @@ async function createCloudflareRuntime(): Promise<{ modelRuntime: ModelRuntime; 
 	return { modelRuntime, modelRegistry: new ModelRegistry(modelRuntime) };
 }
 
+const CLOUDFLARE_COMPAT_URL = "https://gateway.ai.cloudflare.com/v1/test-account/test-gateway/compat/chat/completions";
+
 describe("ModelRegistry Cloudflare compat streaming", () => {
 	it("materializes the Cloudflare endpoint through ModelRuntime streaming", async () => {
 		const { modelRuntime } = await createCloudflareRuntime();
@@ -63,14 +53,13 @@ describe("ModelRegistry Cloudflare compat streaming", () => {
 		expect(model).toBeDefined();
 
 		resetApiProviders();
-		await modelRuntime.completeSimple(model!, { messages: [] });
+		const { fetch, requests } = createCapturingFetch();
+		const result = await modelRuntime.completeSimple(model!, { messages: [] }, { fetch });
 
-		const clientOptions = openAIState.clientOptions as {
-			baseURL?: string;
-			defaultHeaders?: Record<string, unknown>;
-		};
-		expect(clientOptions.baseURL).toBe("https://gateway.ai.cloudflare.com/v1/test-account/test-gateway/compat");
-		expect(clientOptions.defaultHeaders?.["cf-aig-authorization"]).toBe("Bearer test-token");
+		expect(result.stopReason).toBe("stop");
+		expect(requests).toHaveLength(1);
+		expect(requests[0].url).toBe(CLOUDFLARE_COMPAT_URL);
+		expect(requests[0].headers.get("cf-aig-authorization")).toBe("Bearer test-token");
 	});
 
 	it("materializes the Cloudflare endpoint after extension-style auth resolution", async () => {
@@ -88,15 +77,14 @@ describe("ModelRegistry Cloudflare compat streaming", () => {
 			"x-api-key": null,
 		});
 
-		await complete(model!, { messages: [] }, auth);
+		const { fetch, requests } = createCapturingFetch();
+		const result = await complete(model!, { messages: [] }, { ...auth, fetch });
 
-		const clientOptions = openAIState.clientOptions as {
-			baseURL?: string;
-			defaultHeaders?: Record<string, unknown>;
-		};
-		expect(clientOptions.baseURL).toBe("https://gateway.ai.cloudflare.com/v1/test-account/test-gateway/compat");
-		expect(clientOptions.defaultHeaders?.["cf-aig-authorization"]).toBe("Bearer test-token");
-		expect(clientOptions.defaultHeaders?.Authorization).toBeNull();
-		expect(clientOptions.defaultHeaders?.["x-api-key"]).toBeNull();
+		expect(result.stopReason).toBe("stop");
+		expect(requests).toHaveLength(1);
+		expect(requests[0].url).toBe(CLOUDFLARE_COMPAT_URL);
+		expect(requests[0].headers.get("cf-aig-authorization")).toBe("Bearer test-token");
+		expect(requests[0].headers.has("authorization")).toBe(false);
+		expect(requests[0].headers.has("x-api-key")).toBe(false);
 	});
 });

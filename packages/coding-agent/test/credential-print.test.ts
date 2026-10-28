@@ -24,6 +24,20 @@ describe("credential print commands", () => {
 		await expect(resolveCredentialForPrint(args, runtime, "api_key")).resolves.toBe("test-api-key");
 	});
 
+	test("resolves --model without --provider only among catalog models of configured providers", async () => {
+		const runtime = await createRuntime(
+			AuthStorage.inMemory({
+				openai: { type: "api_key", key: "openai-test-key" },
+				anthropic: { type: "api_key", key: "anthropic-test-key" },
+			}),
+		);
+
+		// anthropic has no gpt-5.5; an uncatalogued id on a configured provider must not count as a match.
+		await expect(resolveCredentialForPrint(parseArgs(["--model", "gpt-5.5"]), runtime, "api_key")).resolves.toBe(
+			"openai-test-key",
+		);
+	});
+
 	test("prints bearer tokens resolved from an Authorization header", async () => {
 		const runtime = await createRuntime(
 			AuthStorage.inMemory({

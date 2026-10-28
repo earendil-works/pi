@@ -7,7 +7,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Interactive example of using coding-agent via RpcClient.
- * Usage: npx tsx test/rpc-example.ts
+ * Usage: node test/rpc-example.ts
  */
 
 async function main() {

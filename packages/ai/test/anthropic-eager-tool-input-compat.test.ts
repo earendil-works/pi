@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import type { Context, Model, Tool } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 interface CapturedRequest {
 	headers: IncomingMessage["headers"];
@@ -30,20 +31,6 @@ const tool: Tool = {
 	name: "lookup",
 	description: "Look up a value",
 	parameters: Type.Object({ value: Type.String() }),
-};
-
-const schemaCompatibilityTool: Tool = {
-	...tool,
-	parameters: Type.Object({ value: Type.String() }, { additionalProperties: false, title: "LookupInput" }),
-};
-
-const strictTool: Tool = {
-	...tool,
-	parameters: Type.Object(
-		{ value: Type.String(), optional: Type.Optional(Type.Number()) },
-		{ title: "StrictLookupInput" },
-	),
-	constrainedSampling: { type: "json_schema", strict: "prefer" },
 };
 
 function createContext(tools: Tool[] = [tool]): Context {
@@ -84,10 +71,14 @@ async function captureAnthropicRequest(
 	const address = server.address() as AddressInfo;
 
 	try {
-		const stream = streamAnthropic(createModel(`http://127.0.0.1:${address.port}`, compat), context, {
-			apiKey: "test-key",
-			cacheRetention: "none",
-		});
+		const stream = streamAnthropic(
+			createModel(`http://127.0.0.1:${address.port}`, compat),
+			normalizeContext(context),
+			{
+				apiKey: "test-key",
+				cacheRetention: "none",
+			},
+		);
 
 		for await (const event of stream) {
 			if (event.type === "done" || event.type === "error") break;
@@ -112,14 +103,6 @@ function getFirstTool(body: Record<string, unknown>): Record<string, unknown> {
 	return tools[0] as Record<string, unknown>;
 }
 
-function getFirstToolInputSchema(body: Record<string, unknown>): Record<string, unknown> {
-	const inputSchema = getFirstTool(body).input_schema;
-	if (typeof inputSchema !== "object" || inputSchema === null || Array.isArray(inputSchema)) {
-		throw new Error("Expected first tool input schema in request body");
-	}
-	return inputSchema as Record<string, unknown>;
-}
-
 describe("Anthropic eager tool input streaming compatibility", () => {
 	it("sends per-tool eager_input_streaming by default", async () => {
 		const request = await captureAnthropicRequest(undefined, createContext());
@@ -140,27 +123,5 @@ describe("Anthropic eager tool input streaming compatibility", () => {
 
 		expect(request.body.tools).toBeUndefined();
 		expect(request.headers["anthropic-beta"]).toBeUndefined();
-	});
-
-	it("only sends the full input schema for strict JSON-schema tools", async () => {
-		const legacyRequest = await captureAnthropicRequest(
-			{ supportsStrictTools: true },
-			createContext([schemaCompatibilityTool]),
-		);
-		const parameters = schemaCompatibilityTool.parameters as { properties?: unknown; required?: unknown };
-		expect(getFirstToolInputSchema(legacyRequest.body)).toEqual({
-			type: "object",
-			properties: parameters.properties,
-			required: parameters.required,
-		});
-
-		const strictRequest = await captureAnthropicRequest({ supportsStrictTools: true }, createContext([strictTool]));
-		expect(getFirstTool(strictRequest.body).strict).toBe(true);
-		expect(getFirstToolInputSchema(strictRequest.body)).toMatchObject({
-			additionalProperties: false,
-			required: ["value", "optional"],
-			properties: { optional: { anyOf: [{ type: "number" }, { type: "null" }] } },
-			title: "StrictLookupInput",
-		});
 	});
 });

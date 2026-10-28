@@ -242,8 +242,11 @@ if (cmd === "contrast") {
 } else if (cmd === "light" || cmd === "dark") {
 	cmdTheme(cmd);
 } else {
-	console.log("Usage:");
-	console.log("  npx tsx test-theme-colors.ts light|dark     Test built-in theme");
-	console.log("  npx tsx test-theme-colors.ts contrast 4.5   Compute colors at ratio");
-	console.log("  npx tsx test-theme-colors.ts test file.json Test any JSON file");
+	console.log("Usage (from packages/coding-agent):");
+	console.log("  node --import ./src/experimental/source-resolver.ts test/test-theme-colors.ts <command>");
+	console.log("");
+	console.log("Commands:");
+	console.log("  light|dark     Test built-in theme");
+	console.log("  contrast 4.5   Compute colors at ratio");
+	console.log("  test file.json Test any JSON file");
 }

@@ -1,0 +1,15 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "pi-codemode-agent-example",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-04-22",
+	"durable_objects": {
+		"bindings": [
+			{ "name": "SESSION", "class_name": "Session" },
+			// The sandbox class lives in its own Worker. `script_name` is what puts scripts in a different
+			// isolate; binding a class exported from this Worker would run them on the session's thread.
+			{ "name": "CODEMODE_SANDBOX", "class_name": "CodemodeSandbox", "script_name": "pi-codemode-sandbox" }
+		]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Session"] }]
+}

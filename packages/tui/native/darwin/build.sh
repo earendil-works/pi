@@ -3,7 +3,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source_file="$script_dir/src/darwin-modifiers.c"
+source_file="$script_dir/src/darwin-platform.m"
 
 if [[ -n "${CC:-}" ]]; then
     compiler="$CC"
@@ -37,25 +37,32 @@ build() {
     local arch="$1"
     local target="$2"
     local output_dir="$script_dir/prebuilds/darwin-$arch"
-    local temporary_output="$temporary_dir/darwin-$arch/darwin-modifiers.node"
+    local temporary_output="$temporary_dir/darwin-$arch/darwin-platform.node"
 
     mkdir -p "$(dirname "$temporary_output")"
     "$compiler" \
+        -fobjc-arc \
         -std=c11 \
         -Wall \
         -Wextra \
-        -O2 \
+        -Oz \
+        -flto \
+        -fvisibility=hidden \
         "--target=$target" \
         "${sdk_flags[@]}" \
         -bundle \
         -undefined dynamic_lookup \
+        -Wl,-dead_strip \
+        -Wl,-x \
+        -framework AppKit \
         -framework CoreGraphics \
+        -framework Foundation \
         "$source_file" \
         -o "$temporary_output"
 
     mkdir -p "$output_dir"
-    install -m 755 "$temporary_output" "$output_dir/darwin-modifiers.node"
-    echo "Built $output_dir/darwin-modifiers.node"
+    install -m 755 "$temporary_output" "$output_dir/darwin-platform.node"
+    echo "Built $output_dir/darwin-platform.node"
 }
 
 build arm64 arm64-apple-macos11.0

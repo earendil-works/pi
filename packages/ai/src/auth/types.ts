@@ -141,6 +141,10 @@ export type AuthEvent =
 			type: "device_code";
 			userCode: string;
 			verificationUri: string;
+			/** Offer best-effort browser opening on user confirmation. Defaults to true; clients may ignore it. */
+			openBrowserOnConfirm?: boolean;
+			/** Offer copying of userCode on user confirmation, replacing the clipboard. Defaults to true. */
+			copyCodeOnConfirm?: boolean;
 			intervalSeconds?: number;
 			expiresInSeconds?: number;
 	  }
@@ -198,6 +202,21 @@ export interface ApiKeyAuth {
 	}): Promise<AuthResult | undefined>;
 }
 
+/** App-supplied context for `Models.login`. */
+export interface LoginOptions {
+	/**
+	 * Returns the stable ID of this app installation, e.g. sent to OpenAI as its
+	 * agent host ID. Called only by login flows that need it, so apps can create
+	 * the ID on first use and must return the same ID on every later call.
+	 */
+	getDeviceId?: () => string;
+	/**
+	 * Name this app introduces itself with during login, e.g. OpenAI's agent name hint and
+	 * Codex originator. Defaults to pi's own name.
+	 */
+	agentName?: string;
+}
+
 /**
  * OAuth auth. The `refresh`/`toAuth` split lets `Models` own the locked
  * refresh pattern: `refresh` produces a credential, `toAuth` derives request
@@ -213,7 +232,7 @@ export interface OAuthAuth {
 	/** Selector label for the OAuth login option, e.g. "Sign in with SuperGrok or X Premium". */
 	loginLabel?: string;
 
-	login(interaction: ProviderAuthInteraction): Promise<OAuthCredential>;
+	login(interaction: ProviderAuthInteraction, options?: LoginOptions): Promise<OAuthCredential>;
 
 	/**
 	 * Exchange the refresh token. Network call; throws on failure

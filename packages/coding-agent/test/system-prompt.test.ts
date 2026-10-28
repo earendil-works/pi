@@ -1,5 +1,16 @@
 import { describe, expect, test } from "vitest";
+import type { Skill } from "../src/core/skills.ts";
+import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 import { buildSystemPrompt } from "../src/core/system-prompt.ts";
+
+const testSkill: Skill = {
+	name: "test-skill",
+	description: "A test skill.",
+	filePath: "/skills/test-skill/SKILL.md",
+	baseDir: "/skills/test-skill",
+	sourceInfo: createSyntheticSourceInfo("/skills/test-skill/SKILL.md", { source: "test" }),
+	disableModelInvocation: false,
+};
 
 describe("buildSystemPrompt", () => {
 	describe("empty tools", () => {
@@ -11,7 +22,7 @@ describe("buildSystemPrompt", () => {
 				cwd: process.cwd(),
 			});
 
-			expect(prompt).toContain("Available tools:\n(none)");
+			expect(prompt).toContain("<tools>\n(none)\n");
 		});
 
 		test("shows file paths guideline even with no tools", () => {
@@ -23,6 +34,43 @@ describe("buildSystemPrompt", () => {
 			});
 
 			expect(prompt).toContain("Show file paths clearly");
+		});
+	});
+
+	describe("prompt structure", () => {
+		test("keeps the default and custom prompt prefixes exact", () => {
+			const defaultPrompt = buildSystemPrompt({ cwd: "/tmp", selectedTools: [], contextFiles: [], skills: [] });
+			const customPrompt = buildSystemPrompt({
+				customPrompt: "You are Exact.",
+				cwd: "/tmp",
+				selectedTools: [],
+				contextFiles: [],
+				skills: [],
+			});
+
+			expect(defaultPrompt.startsWith("You are an expert coding assistant operating inside pi")).toBe(true);
+			expect(customPrompt.startsWith("You are Exact.\n\n<cwd>")).toBe(true);
+		});
+
+		test("preserves an exact forced prompt without sections", () => {
+			expect(buildSystemPrompt({ forceSystemPrompt: "exact", cwd: "/tmp" })).toBe("exact");
+		});
+
+		test("maps appended instructions and project context to stable sections", () => {
+			const prompt = buildSystemPrompt({
+				customPrompt: "You are Exact.",
+				appendSystemPrompt: "Additional instructions.",
+				contextFiles: [{ path: "/tmp/AGENTS.md", content: "Project instructions." }],
+				selectedTools: [],
+				skills: [],
+				cwd: "/tmp",
+			});
+
+			expect(prompt).toContain("<addendum>\nAdditional instructions.\n</addendum>");
+			expect(prompt).toContain(
+				'<project_context>\nProject-specific instructions and guidelines:\n\n<project_instructions path="/tmp/AGENTS.md">',
+			);
+			expect(prompt).toContain("<cwd>\n/tmp\n</cwd>");
 		});
 	});
 
@@ -70,7 +118,7 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).toContain(
 				"- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory",
 			);
-			expect(prompt).toContain("environment variables (docs/environment-variables.md)");
+			expect(prompt).toContain("environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md)");
 		});
 	});
 
@@ -124,6 +172,67 @@ describe("buildSystemPrompt", () => {
 			});
 
 			expect(prompt.match(/- Use dynamic_tool for summaries\./g)).toHaveLength(1);
+		});
+	});
+
+	describe("skills", () => {
+		test.each([
+			{ name: "default prompt", customPrompt: undefined },
+			{ name: "custom prompt", customPrompt: "Custom system prompt" },
+		])("includes skills with only bash in the $name", ({ customPrompt }) => {
+			const prompt = buildSystemPrompt({
+				customPrompt,
+				selectedTools: ["bash"],
+				contextFiles: [],
+				skills: [testSkill],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).toContain("<skills>");
+			expect(prompt).toContain("<available_skills>");
+			expect(prompt).toContain("<name>test-skill</name>");
+			expect(prompt).toContain("Use bash to load a skill's file");
+		});
+
+		test("omits skills without read or bash", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: ["write"],
+				contextFiles: [],
+				skills: [testSkill],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).not.toContain("<available_skills>");
+		});
+	});
+
+	// #10343
+	describe("hidden tools", () => {
+		const build = (hiddenTools: string[]) =>
+			buildSystemPrompt({
+				selectedTools: ["read", "bash", "run"],
+				hiddenTools,
+				toolSnippets: { read: "Read files", bash: "Run commands", run: "Run a task" },
+				toolGuidelines: { read: ["Use read for files."], run: ["Prefer run."] },
+				contextFiles: [],
+				skills: [testSkill],
+				cwd: process.cwd(),
+			});
+
+		test("leaves hidden tools out of the tool list and rules", () => {
+			const prompt = build(["read", "bash"]);
+
+			expect(prompt).toContain("<tools>\n- run: Run a task\n");
+			expect(prompt).not.toContain("- read: ");
+			expect(prompt).not.toContain("Use read for files.");
+			expect(prompt).not.toContain("Use bash for file operations");
+			expect(prompt).toContain("- Prefer run.");
+		});
+
+		test("keeps skills without naming a hidden reader", () => {
+			expect(build(["read", "bash"])).toContain("\nLoad a skill's file when the task matches its description.");
+			expect(build(["read"])).toContain("Use bash to load a skill's file");
+			expect(build([])).toContain("Use the read tool to load a skill's file");
 		});
 	});
 });

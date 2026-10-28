@@ -2,7 +2,13 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/moonshotai.json" with { type: "json" };
-import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
+import { flattenChatModelCatalog, flattenClassifierModelCatalog, flattenImageModelCatalog, type ChatModelCatalog, type ClassifierModelCatalog, type ImageModelCatalog } from "../model-catalog.ts";
 
-export const MOONSHOTAI_MODELS: ModelCatalog<typeof values, "moonshotai"> =
-	flattenModelCatalog("moonshotai", values);
+export const MOONSHOTAI_MODELS: ChatModelCatalog<typeof values, "moonshotai"> =
+	flattenChatModelCatalog("moonshotai", values);
+
+export const MOONSHOTAI_IMAGE_MODELS: ImageModelCatalog<typeof values, "moonshotai"> =
+	flattenImageModelCatalog("moonshotai", values);
+
+export const MOONSHOTAI_CLASSIFIER_MODELS: ClassifierModelCatalog<typeof values, "moonshotai"> =
+	flattenClassifierModelCatalog("moonshotai", values);

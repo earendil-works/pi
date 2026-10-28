@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Image } from "../src/components/image.ts";
+import { Input } from "../src/components/input.ts";
 import type { Terminal } from "../src/terminal.ts";
 import {
 	deleteKittyImage,
@@ -13,8 +14,9 @@ import {
 	setCapabilities,
 	setCellDimensions,
 } from "../src/terminal-image.ts";
-import type { Component, TUI } from "../src/tui.ts";
+import { type Component, CURSOR_MARKER, renderFakeCursor, type TUI } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
+import { sliceByColumn } from "../src/utils.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 class TestComponent implements Component {
@@ -60,6 +62,7 @@ class BoundedWriteTerminal implements Terminal {
 	clearScreen(): void {}
 	setTitle(_title: string): void {}
 	setProgress(_active: boolean): void {}
+	setProgramStatus(): void {}
 }
 
 class LoggingVirtualTerminal extends VirtualTerminal {
@@ -143,7 +146,7 @@ describe("TUI debug logging", () => {
 	it("writes redraw logs to the provided directory", async () => {
 		const logDir = mkdtempSync(join(tmpdir(), "pi-tui-log-"));
 		try {
-			await withEnv({ PI_DEBUG_REDRAW: "1" }, async () => {
+			await withEnv({ PI_TUI_DEBUG_REDRAW: "1" }, async () => {
 				const terminal = new VirtualTerminal(40, 10);
 				const tui: TUI = new TuiMainScreen(terminal, undefined, logDir);
 				const component = new TestComponent();
@@ -152,7 +155,7 @@ describe("TUI debug logging", () => {
 				tui.start();
 				await terminal.waitForRender();
 
-				assert.match(readFileSync(join(logDir, "pi-debug.log"), "utf-8"), /fullRender: first render/);
+				assert.match(readFileSync(join(logDir, "pi-tui-debug.log"), "utf-8"), /fullRender: first render/);
 				tui.stop();
 			});
 		} finally {
@@ -203,6 +206,56 @@ describe("TUI bounded render output", () => {
 		assert.ok(output.startsWith("\x1b[?2026h"));
 		assert.ok(output.endsWith("\x1b[?2026l"));
 		assert.ok(!output.includes("\x1b[2J"), "the update should stay on the differential render path");
+	});
+});
+
+/** Set each environment variable to `value`, returning a function that restores the previous state. */
+function overrideEnv(names: readonly string[], value: string): () => void {
+	const previousValues = names.map((name) => [name, process.env[name]] as const);
+	for (const name of names) {
+		process.env[name] = value;
+	}
+	return () => {
+		for (const [name, previousValue] of previousValues) {
+			if (previousValue === undefined) delete process.env[name];
+			else process.env[name] = previousValue;
+		}
+	};
+}
+
+describe("TUI crash dump without configured log directory", () => {
+	it("writes the crash dump to the OS temp directory instead of a home-directory default", async () => {
+		// The TUI falls back to os.tmpdir() when no log directory is configured, so
+		// isolate the test by pointing the temp directory at a fresh directory rather
+		// than sharing the real one with concurrent test runs. os.tmpdir() reads
+		// TMPDIR on POSIX and TEMP/TMP on Windows, so override all three.
+		const crashDir = mkdtempSync(join(tmpdir(), "pi-tui-crash-"));
+		const crashLogPath = join(crashDir, "pi-tui-crash.log");
+		const restoreTmpdirEnv = overrideEnv(["TMPDIR", "TEMP", "TMP"], crashDir);
+		try {
+			const terminal = new VirtualTerminal(40, 10);
+			const tui: TUI = new TuiMainScreen(terminal);
+			const component = new TestComponent();
+			tui.addChild(component);
+			component.lines = ["ok"];
+			tui.start();
+			await terminal.waitForRender();
+
+			// Width overflow is detected in the differential render path
+			component.lines = ["ok", "x".repeat(60)];
+			assert.throws(
+				() => tui.renderNow(),
+				(error: unknown) => {
+					assert.ok(error instanceof Error);
+					assert.ok(error.message.includes(crashLogPath), `error message should reference ${crashLogPath}`);
+					return true;
+				},
+			);
+			assert.match(readFileSync(crashLogPath, "utf-8"), /Terminal width: 40/);
+		} finally {
+			restoreTmpdirEnv();
+			rmSync(crashDir, { recursive: true, force: true });
+		}
 	});
 });
 
@@ -898,5 +951,74 @@ describe("TUI differential rendering", () => {
 		]);
 
 		tui.stop();
+	});
+});
+
+describe("TUI fake cursor", () => {
+	it("draws the focused fake cursor in reverse video and omits it when the hardware cursor is shown", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const input = new Input();
+		input.setValue("abc");
+		tui.addChild(input);
+		tui.setFocus(input);
+		tui.start();
+		await terminal.waitForRender();
+		assert.ok(terminal.getWrites().includes("> \x1b[7ma\x1b[27mbc"));
+
+		terminal.clearWrites();
+		tui.setShowHardwareCursor(true);
+		await terminal.waitForRender();
+		assert.ok(!terminal.getWrites().includes("\x1b[7m"));
+		assert.ok(!terminal.getWrites().includes("\x1b_pi:"));
+
+		tui.stop();
+	});
+
+	it("keeps the fake cursor of an unfocused input when the hardware cursor is shown", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui: TUI = new TuiMainScreen(terminal, true);
+		const input = new Input();
+		input.setValue("abc");
+		tui.addChild(input);
+		tui.start();
+		await terminal.waitForRender();
+		assert.ok(terminal.getWrites().includes("> \x1b[7ma\x1b[27mbc"));
+		tui.stop();
+	});
+
+	it("omits the focused fake cursor when truncation dropped its end marker", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui: TUI = new TuiMainScreen(terminal, true);
+		const base = new TestComponent();
+		base.lines = [sliceByColumn(`ab${CURSOR_MARKER}${renderFakeCursor("c")}def`, 0, 3, true)];
+		tui.addChild(base);
+		tui.start();
+		await terminal.waitForRender();
+		assert.ok(!terminal.getWrites().includes("\x1b[7m"));
+		assert.ok(terminal.getWrites().endsWith("\x1b[3G"));
+		tui.stop();
+	});
+
+	it("keeps the cursor when an overlay ends directly left of it", async () => {
+		for (const showHardwareCursor of [false, true]) {
+			const terminal = new LoggingVirtualTerminal(20, 5);
+			const tui: TUI = new TuiMainScreen(terminal, showHardwareCursor);
+			const base = new TestComponent();
+			base.lines = [`abc${CURSOR_MARKER}${renderFakeCursor("d")}ef`];
+			tui.addChild(base);
+			const overlay = new TestComponent();
+			overlay.lines = ["XXX"];
+			tui.showOverlay(overlay, { row: 0, col: 0, width: 3 });
+			tui.start();
+			await terminal.waitForRender();
+
+			const writes = terminal.getWrites();
+			assert.ok(writes.includes("XXX"));
+			assert.strictEqual(writes.includes("\x1b[7md"), !showHardwareCursor);
+			// The hardware cursor is positioned at column 4 in both modes
+			assert.ok(writes.endsWith("\x1b[4G"));
+			tui.stop();
+		}
 	});
 });

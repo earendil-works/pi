@@ -16,8 +16,8 @@ import {
 	resetOpenAICodexWebSocketDebugStats,
 	stream as streamOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
-import { getModel } from "../src/compat.ts";
-import type { AssistantMessage, Context, Message, Model, Tool, ToolResultMessage, Transport } from "../src/types.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
+import type { AssistantMessage, Message, Model, Tool, ToolResultMessage, Transport } from "../src/types.ts";
 
 type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -163,8 +163,8 @@ function percentile(values: number[], p: number): number {
 
 async function main(): Promise<void> {
 	const args = parseArgs(process.argv.slice(2));
-	const model = getModel("openai-codex", "gpt-5.5") as Model<"openai-codex-responses"> | undefined;
-	if (!model) throw new Error("Model openai-codex/gpt-5.5 not found");
+	const model = getModel("openai-codex", "gpt-6.1-sol") as Model<"openai-codex-responses"> | undefined;
+	if (!model) throw new Error("Model openai-codex/gpt-6.1-sol not found");
 	const modelWithMaxTokens = { ...model, maxTokens: args.maxTokens };
 	const modelRuntime = await ModelRuntime.create();
 	const apiKey =
@@ -172,16 +172,16 @@ async function main(): Promise<void> {
 	if (!apiKey) {
 		throw new Error("No OpenAI Codex API key found in coding-agent auth storage.");
 	}
-	const context: Context = {
+	const context = normalizeContext({
 		systemPrompt:
 			"You are participating in a benchmark. For each benchmark turn, call deterministic_probe exactly once before the final answer. Keep final answers minimal.",
 		messages: [],
 		tools: [deterministicProbeTool()],
-	};
+	});
 	const elapsed: number[] = [];
 	resetOpenAICodexWebSocketDebugStats(args.sessionId);
 
-	console.log(`provider openai-codex, model gpt-5.5`);
+	console.log(`provider openai-codex, model gpt-6.1-sol`);
 	console.log(`sessionId ${args.sessionId}`);
 	console.log(
 		`turns ${args.turns}, transport ${args.transport}, reasoning ${args.reasoning}, maxTokens ${args.maxTokens}`,

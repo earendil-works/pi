@@ -223,8 +223,10 @@ describe("AgentSession bash and persistence characterization", () => {
 		await harness.session.prompt("start");
 
 		const entries = harness.sessionManager.getEntries();
+		// The prompt is declared by the first request, after the queued custom message.
 		expect(entries.map((entry) => entry.type)).toEqual([
 			"custom_message",
+			"message",
 			"message",
 			"message",
 			"message",
@@ -232,6 +234,7 @@ describe("AgentSession bash and persistence characterization", () => {
 		]);
 		expect(harness.session.messages.map((message) => message.role)).toEqual([
 			"custom",
+			"system",
 			"user",
 			"assistant",
 			"toolResult",
@@ -333,5 +336,64 @@ describe("AgentSession bash and persistence characterization", () => {
 			{ id: "bash-1", delta: "hello " },
 			{ id: "bash-1", delta: "world" },
 		]);
+	});
+
+	// Regression tests for https://github.com/earendil-works/pi/issues/10504
+	describe("escape sequences split across output chunks", () => {
+		/** Runs a user bash command whose fake shell emits the given chunks; `beforeExit` sees what was streamed by then. */
+		async function runChunks(chunks: Array<string | Buffer>, beforeExit?: (streamed: string) => void) {
+			const harness = await createHarness();
+			harnesses.push(harness);
+			const deltas: string[] = [];
+			const operations: BashOperations = {
+				exec: async (_command, _cwd, options) => {
+					for (const chunk of chunks) {
+						options.onData(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+					}
+					beforeExit?.(deltas.join(""));
+					return { exitCode: 0 };
+				},
+			};
+			const result = await harness.session.executeBash("custom", (delta) => deltas.push(delta), { operations });
+			const recorded = harness.session.messages[harness.session.messages.length - 1];
+			return {
+				output: result.output,
+				streamed: deltas.join(""),
+				recorded: recorded?.role === "bashExecution" ? recorded.output : undefined,
+			};
+		}
+
+		it("strips a color reset split inside its parameters", async () => {
+			const { output, streamed, recorded } = await runChunks(["\x1b[31mERROR: file.py:1\x1b[0", "m\n"]);
+			expect(output).toBe("ERROR: file.py:1\n");
+			expect(streamed).toBe("ERROR: file.py:1\n");
+			expect(recorded).toBe("ERROR: file.py:1\n");
+		});
+
+		it("strips a color code split right after ESC", async () => {
+			const { output, streamed } = await runChunks(["before\x1b", "[32mafter\n"]);
+			expect(output).toBe("beforeafter\n");
+			expect(streamed).toBe("beforeafter\n");
+		});
+
+		it("strips an OSC sequence split before its terminator", async () => {
+			const { output } = await runChunks(["a\x1b]0;window ", "title\x1b", "\\b\n"]);
+			expect(output).toBe("ab\n");
+		});
+
+		it("flushes an incomplete multi-byte character at the end of output", async () => {
+			const { output, streamed } = await runChunks(["ok", Buffer.from("\u00e9").subarray(0, 1)]);
+			expect(output).toBe("ok\uFFFD");
+			expect(streamed).toBe("ok\uFFFD");
+		});
+
+		it("does not hold back output behind a long unterminated sequence", async () => {
+			const long = "x".repeat(300);
+			let streamedBeforeExit = "";
+			await runChunks([`\x1b]${long}`], (streamed) => {
+				streamedBeforeExit = streamed;
+			});
+			expect(streamedBeforeExit).toBe(`]${long}`);
+		});
 	});
 });

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * Manual SDK probe for OpenAI Codex prompt caching through the tool loop.
  *
@@ -11,6 +12,7 @@ import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import {
 	type Api,
 	type AssistantMessage,
@@ -134,7 +136,7 @@ Options:
 
 Notes:
   - Uses createAgentSession() from the coding-agent SDK
-  - Provider/model fixed to openai-codex/gpt-5.5
+  - Provider/model fixed to openai-codex/gpt-6.1-sol
   - Thinking level fixed to low
   - Activates exactly one deterministic custom tool
   - Prompts are intentionally > 1024 tokens and explicitly describe the test
@@ -279,9 +281,9 @@ async function main(): Promise<void> {
 	const authStorage = AuthStorage.create();
 	const modelRegistry = await createModelRegistry(authStorage);
 
-	const model = getModel("openai-codex", "gpt-5.5");
+	const model = getModel("openai-codex", "gpt-6.1-sol");
 	if (!model) {
-		throw new Error("Model openai-codex/gpt-5.5 not found");
+		throw new Error("Model openai-codex/gpt-6.1-sol not found");
 	}
 	const baseModel = { ...model, maxTokens: args.maxTokens };
 	const streamSimpleOpenAICodexResponsesForRegistry = (
@@ -289,7 +291,11 @@ async function main(): Promise<void> {
 		context: Context,
 		options?: SimpleStreamOptions,
 	): AssistantMessageEventStream =>
-		streamSimpleOpenAICodexResponses(registryModel as Model<"openai-codex-responses">, context, options);
+		streamSimpleOpenAICodexResponses(
+			registryModel as Model<"openai-codex-responses">,
+			normalizeContext(context),
+			options,
+		);
 	modelRegistry.registerProvider("openai-codex", {
 		api: "openai-codex-responses",
 		baseUrl: baseModel.baseUrl,
@@ -328,7 +334,7 @@ async function main(): Promise<void> {
 	const turnElapsedMs: number[] = [];
 	let previousCacheRead: number | null = null;
 
-	console.log(`provider openai-codex, model gpt-5.5`);
+	console.log(`provider openai-codex, model gpt-6.1-sol`);
 	console.log(`session ${session.sessionFile}`);
 	console.log(`turns ${args.turns}, transport ${args.transport}, reasoning low, maxTokens ${args.maxTokens}`);
 	console.log("");

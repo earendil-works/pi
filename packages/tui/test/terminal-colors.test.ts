@@ -2,12 +2,14 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import {
 	type Component,
-	parseOsc11BackgroundColor,
 	parseTerminalColorSchemeReport,
 	type Terminal,
+	type TerminalColors,
 	type TUI,
 	TuiMainScreen,
 } from "../src/index.ts";
+import { StdinBuffer } from "../src/stdin-buffer.ts";
+import { parseOscColorResponse } from "../src/terminal-colors.ts";
 
 class TestTerminal implements Terminal {
 	private inputHandler?: (data: string) => void;
@@ -64,6 +66,7 @@ class TestTerminal implements Terminal {
 	setTitle(_title: string): void {}
 
 	setProgress(_active: boolean): void {}
+	setProgramStatus(): void {}
 
 	sendInput(data: string): void {
 		this.inputHandler?.(data);
@@ -90,27 +93,6 @@ class InputRecorder implements Component {
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-describe("parseOsc11BackgroundColor", () => {
-	it("parses 16-bit OSC 11 rgb responses", () => {
-		assert.deepStrictEqual(parseOsc11BackgroundColor("\x1b]11;rgb:0000/8000/ffff\x07"), {
-			r: 0,
-			g: 128,
-			b: 255,
-		});
-	});
-
-	it("parses OSC 11 hex responses", () => {
-		assert.deepStrictEqual(parseOsc11BackgroundColor("\x1b]11;#ffffff\x1b\\"), { r: 255, g: 255, b: 255 });
-		assert.deepStrictEqual(parseOsc11BackgroundColor("\x1b]11;#000000\x07"), { r: 0, g: 0, b: 0 });
-	});
-
-	it("rejects non-strict OSC 11 responses", () => {
-		assert.strictEqual(parseOsc11BackgroundColor(`x\x1b]11;#ffffff\x07`), undefined);
-		assert.strictEqual(parseOsc11BackgroundColor("\x1b]10;#ffffff\x07"), undefined);
-		assert.strictEqual(parseOsc11BackgroundColor("\x1b]11;#ffffff\x07x"), undefined);
-	});
-});
-
 describe("parseTerminalColorSchemeReport", () => {
 	it("parses color scheme reports", () => {
 		assert.strictEqual(parseTerminalColorSchemeReport("\x1b[?997;1n"), "dark");
@@ -123,128 +105,118 @@ describe("parseTerminalColorSchemeReport", () => {
 	});
 });
 
-describe("TUI.queryTerminalBackgroundColor", () => {
-	it("writes OSC 11 query and resolves with the parsed RGB reply", async () => {
-		const terminal = new TestTerminal();
-		const tui: TUI = new TuiMainScreen(terminal);
-		tui.start();
-		try {
-			const query = tui.queryTerminalBackgroundColor({ timeoutMs: 1000 });
-			assert.ok(terminal.writes.includes("\x1b]11;?\x07"));
-
-			terminal.sendInput("\x1b]11;#ffffff\x07");
-
-			assert.deepStrictEqual(await query, { r: 255, g: 255, b: 255 });
-		} finally {
-			tui.stop();
-		}
-	});
-
-	it("consumes OSC 11 replies before input listeners and focused component dispatch", async () => {
-		const terminal = new TestTerminal();
-		const tui: TUI = new TuiMainScreen(terminal);
-		const component = new InputRecorder();
-		const listenerInputs: string[] = [];
-		tui.addChild(component);
-		tui.setFocus(component);
-		tui.addInputListener((data) => {
-			listenerInputs.push(data);
-			return undefined;
+describe("parseOscColorResponse", () => {
+	it("parses OSC 10, 11, and 4 replies", () => {
+		assert.deepStrictEqual(parseOscColorResponse("\x1b]10;rgb:ffff/ffff/ffff\x07"), {
+			target: "foreground",
+			rgb: { r: 255, g: 255, b: 255 },
 		});
-		tui.start();
-		try {
-			const query = tui.queryTerminalBackgroundColor({ timeoutMs: 1000 });
-
-			terminal.sendInput("\x1b]11;#000000\x07");
-
-			assert.deepStrictEqual(await query, { r: 0, g: 0, b: 0 });
-			assert.deepStrictEqual(listenerInputs, []);
-			assert.deepStrictEqual(component.inputs, []);
-		} finally {
-			tui.stop();
-		}
-	});
-
-	it("consumes unparseable strict OSC 11 replies and resolves undefined", async () => {
-		const terminal = new TestTerminal();
-		const tui: TUI = new TuiMainScreen(terminal);
-		const component = new InputRecorder();
-		const listenerInputs: string[] = [];
-		tui.addChild(component);
-		tui.setFocus(component);
-		tui.addInputListener((data) => {
-			listenerInputs.push(data);
-			return undefined;
+		assert.deepStrictEqual(parseOscColorResponse("\x1b]4;13;#ff0080\x1b\\"), {
+			target: 13,
+			rgb: { r: 255, g: 0, b: 128 },
 		});
-		tui.start();
-		try {
-			const query = tui.queryTerminalBackgroundColor({ timeoutMs: 1000 });
-
-			terminal.sendInput("\x1b]11;not-a-color\x07");
-
-			assert.strictEqual(await query, undefined);
-			assert.deepStrictEqual(listenerInputs, []);
-			assert.deepStrictEqual(component.inputs, []);
-		} finally {
-			tui.stop();
-		}
+		assert.deepStrictEqual(parseOscColorResponse("\x1b]4;1;bogus\x07"), { target: 1, rgb: undefined });
+		assert.strictEqual(parseOscColorResponse("\x1b]12;#ffffff\x07"), undefined);
 	});
+});
 
-	it("dispatches non-matching input normally while waiting for an OSC 11 reply", async () => {
-		const terminal = new TestTerminal();
-		const tui: TUI = new TuiMainScreen(terminal);
-		const component = new InputRecorder();
-		const listenerInputs: string[] = [];
-		tui.addChild(component);
-		tui.setFocus(component);
-		tui.addInputListener((data) => {
-			listenerInputs.push(data);
-			return undefined;
-		});
-		tui.start();
+const PALETTE_REPLIES = Array.from({ length: 16 }, (_, index) => `\x1b]4;${index};#000000\x07`);
+const DA1 = "\x1b[?62;22c";
+const BLACK = { r: 0, g: 0, b: 0 };
+const WHITE = { r: 255, g: 255, b: 255 };
+
+function setup(): { terminal: TestTerminal; tui: TUI; component: InputRecorder } {
+	const terminal = new TestTerminal();
+	const tui: TUI = new TuiMainScreen(terminal);
+	const component = new InputRecorder();
+	tui.addChild(component);
+	tui.setFocus(component);
+	tui.start();
+	return { terminal, tui, component };
+}
+
+describe("TUI.queryTerminalColors", () => {
+	it("queries all colors in one write and consumes the replies", async () => {
+		const { terminal, tui, component } = setup();
 		try {
-			let settled = false;
-			const query = tui.queryTerminalBackgroundColor({ timeoutMs: 1000 }).then((rgb) => {
-				settled = true;
-				return rgb;
-			});
+			const query = tui.queryTerminalColors({ timeoutMs: 1000 });
+			const written = terminal.writes.at(-1) ?? "";
+			assert.ok(written.startsWith("\x1b]10;?\x07\x1b]11;?\x07\x1b]4;0;?\x07") && written.endsWith("\x1b[c"));
 
 			terminal.sendInput("x");
-			await Promise.resolve();
-
-			assert.strictEqual(settled, false);
-			assert.deepStrictEqual(listenerInputs, ["x"]);
+			terminal.sendInput("\x1b]10;#ffffff\x07");
+			terminal.sendInput("\x1b]11;rgb:0000/0000/0000\x1b\\");
+			for (const reply of PALETTE_REPLIES) terminal.sendInput(reply);
+			// Resolves once every reply arrived, without waiting for DA1.
+			assert.deepStrictEqual(await query, {
+				foreground: WHITE,
+				background: BLACK,
+				palette: Array.from({ length: 16 }, () => BLACK),
+			});
+			terminal.sendInput(DA1);
 			assert.deepStrictEqual(component.inputs, ["x"]);
-
-			terminal.sendInput("\x1b]11;#ffffff\x07");
-			assert.deepStrictEqual(await query, { r: 255, g: 255, b: 255 });
 		} finally {
 			tui.stop();
 		}
 	});
 
-	it("keeps consuming a late OSC 11 reply after timeout", async () => {
-		const terminal = new TestTerminal();
-		const tui: TUI = new TuiMainScreen(terminal);
-		const component = new InputRecorder();
-		const listenerInputs: string[] = [];
-		tui.addChild(component);
-		tui.setFocus(component);
-		tui.addInputListener((data) => {
-			listenerInputs.push(data);
-			return undefined;
-		});
-		tui.start();
+	it("consumes delayed Ghostty color fragments without typing their tail or opening the editor", async (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		const { terminal, tui, component } = setup();
+		const buffer = new StdinBuffer();
+		buffer.on("data", (data) => terminal.sendInput(data));
 		try {
-			const query = tui.queryTerminalBackgroundColor({ timeoutMs: 1 });
-			await wait(5);
+			const query = tui.queryTerminalColors({ timeoutMs: 1000 });
+			// Captured from Ghostty 1.3.1 with Ayu Light, split at the reported tail.
+			buffer.process("\x1b]4;1;rgb:eaea/6c");
+			t.mock.timers.tick(100);
+			buffer.process(`6c/6d6d\x07${DA1}`);
+			assert.deepStrictEqual(await query, { foreground: undefined, background: undefined, palette: undefined });
+			assert.deepStrictEqual(component.inputs, []);
 
-			assert.strictEqual(await query, undefined);
+			// A real Ctrl+G must still reach the editor after the reply.
+			buffer.process("\x07");
+			assert.deepStrictEqual(component.inputs, ["\x07"]);
+		} finally {
+			buffer.destroy();
+			tui.stop();
+		}
+	});
+
+	it("resolves on DA1 with the replies that arrived, in query order", async () => {
+		const { terminal, tui } = setup();
+		try {
+			const first = tui.queryTerminalColors({ timeoutMs: 1000 });
+			const second = tui.queryTerminalColors({ timeoutMs: 1000 });
+			terminal.sendInput("\x1b]11;#000000\x07");
+			// An incomplete palette is dropped.
+			for (const reply of PALETTE_REPLIES.slice(0, 8)) terminal.sendInput(reply);
+			terminal.sendInput(DA1);
+			terminal.sendInput(DA1);
+
+			assert.deepStrictEqual(await first, { foreground: undefined, background: BLACK, palette: undefined });
+			assert.deepStrictEqual(await second, { foreground: undefined, background: undefined, palette: undefined });
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("reports late replies after a timeout and consumes them until DA1", async () => {
+		const { terminal, tui, component } = setup();
+		try {
+			const late: TerminalColors[] = [];
+			const query = tui.queryTerminalColors({ timeoutMs: 1, onLateReply: (colors) => late.push(colors) });
+			await wait(5);
+			assert.strictEqual((await query).background, undefined);
 
 			terminal.sendInput("\x1b]11;#ffffff\x07");
-
-			assert.deepStrictEqual(listenerInputs, []);
+			terminal.sendInput(DA1);
+			assert.deepStrictEqual(late, [{ foreground: undefined, background: WHITE, palette: undefined }]);
 			assert.deepStrictEqual(component.inputs, []);
+
+			// With no query pending, color replies are ordinary input again.
+			terminal.sendInput("\x1b]11;#ffffff\x07");
+			assert.deepStrictEqual(component.inputs, ["\x1b]11;#ffffff\x07"]);
 		} finally {
 			tui.stop();
 		}

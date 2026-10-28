@@ -2,9 +2,21 @@ import { describe, expect, it } from "vitest";
 import { lazyApi } from "../src/api/lazy.ts";
 import { envApiKeyAuth } from "../src/auth/helpers.ts";
 import type { AuthContext, AuthEvent } from "../src/auth/types.ts";
-import { createModels, createProvider } from "../src/models.ts";
+import { getModel as getCompatModel, getModels as getCompatModels } from "../src/compat.ts";
+import { createModels, createProvider, getSupportedThinkingLevels } from "../src/models.ts";
 import { InMemoryModelsStore } from "../src/models-store.ts";
-import { builtinModels, builtinProviders, getBuiltinModel } from "../src/providers/all.ts";
+import {
+	builtinModels,
+	builtinProviders,
+	getAllBuiltinModels,
+	getBuiltinClassifierModel,
+	getBuiltinClassifierModels,
+	getBuiltinImageModel,
+	getBuiltinImageModels,
+	getBuiltinModel,
+	getBuiltinModels,
+	getBuiltinProviders,
+} from "../src/providers/all.ts";
 import { amazonBedrockProvider } from "../src/providers/amazon-bedrock.ts";
 import { anthropicProvider } from "../src/providers/anthropic.ts";
 import { cloudflareAIGatewayProvider } from "../src/providers/cloudflare-ai-gateway.ts";
@@ -13,7 +25,6 @@ import { fauxAssistantMessage, fauxProvider } from "../src/providers/faux.ts";
 import { googleVertexProvider } from "../src/providers/google-vertex.ts";
 import type {
 	Api,
-	Context,
 	DeferredCancelOptions,
 	DeferredFetchOptions,
 	DeferredHandle,
@@ -21,6 +32,7 @@ import type {
 	ProviderStreams,
 } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function fakeAuthContext(env: Record<string, string>, files: string[] = []): AuthContext {
 	return {
@@ -31,7 +43,14 @@ function fakeAuthContext(env: Record<string, string>, files: string[] = []): Aut
 
 const neverAbortedSignal = new AbortController().signal;
 
-const context: Context = { messages: [{ role: "user", content: "hi", timestamp: Date.now() }] };
+const context = normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: Date.now() }] });
+
+const DEFAULT_IMAGE_RESIZE = {
+	maxWidth: 2000,
+	maxHeight: 2000,
+	maxBytes: 4.5 * 1024 * 1024,
+	jpegQuality: 80,
+};
 
 describe("builtin providers", () => {
 	it("builtinModels registers every builtin provider with models", async () => {
@@ -46,13 +65,30 @@ describe("builtin providers", () => {
 		const all = models.getModels();
 		expect(all.length).toBeGreaterThan(500);
 
-		// Static providers list models immediately; Radius is purely dynamic.
 		for (const provider of providers) {
-			const list = models.getModels(provider.id);
-			if (provider.id === "radius") expect(list).toEqual([]);
-			else expect(list.length).toBeGreaterThan(0);
+			const list = models.getAllModels(provider.id);
+			expect(list.length).toBeGreaterThan(0);
 			expect(list.every((m) => m.provider === provider.id)).toBe(true);
 		}
+		expect(getBuiltinModel("radius", "balanced")).toMatchObject({
+			api: "pi-messages",
+			provider: "radius",
+		});
+	});
+
+	it("returns empty results for unknown provider ids", () => {
+		const unknownProvider = "not-a-provider" as never;
+		const unknownModel = "x" as never;
+
+		expect(getBuiltinModel(unknownProvider, unknownModel)).toBeUndefined();
+		expect(getBuiltinImageModel(unknownProvider, unknownModel)).toBeUndefined();
+		expect(getBuiltinClassifierModel(unknownProvider, unknownModel)).toBeUndefined();
+		expect(getBuiltinModels(unknownProvider)).toEqual([]);
+		expect(getBuiltinImageModels(unknownProvider)).toEqual([]);
+		expect(getBuiltinClassifierModels(unknownProvider)).toEqual([]);
+		expect(getAllBuiltinModels(unknownProvider)).toEqual([]);
+		expect(getCompatModel(unknownProvider, unknownModel)).toBeUndefined();
+		expect(getCompatModels(unknownProvider)).toEqual([]);
 	});
 
 	it("stores native constrained-sampling capabilities in model metadata", () => {
@@ -64,6 +100,164 @@ describe("builtin providers", () => {
 			supportsOpenAIGrammarTools: true,
 		});
 		expect(getBuiltinModel("anthropic", "claude-haiku-4-5").compat?.supportsStrictTools).toBe(true);
+	});
+
+	it("keeps the conservative resize profile on every vision model", () => {
+		const visionModels = getBuiltinProviders()
+			.flatMap((provider) => getBuiltinModels(provider))
+			.filter((model) => model.input.includes("image"));
+		expect(visionModels.length).toBeGreaterThan(0);
+		for (const model of visionModels) {
+			expect(model.inputLimits?.images?.resize).toEqual(DEFAULT_IMAGE_RESIZE);
+		}
+	});
+
+	it("records known direct-provider image request limits", () => {
+		expect(getBuiltinModel("anthropic", "claude-haiku-4-5").inputLimits).toMatchObject({
+			maxRequestBytes: 32 * 1024 * 1024,
+			images: { maxPerRequest: 100 },
+		});
+		expect(getBuiltinModel("anthropic", "claude-opus-5").inputLimits?.images?.maxPerRequest).toBe(600);
+		expect(getBuiltinModel("amazon-bedrock", "anthropic.claude-haiku-4-5-20251001-v1:0").inputLimits).toMatchObject({
+			images: { maxPerMessage: 20 },
+		});
+		expect(getBuiltinModel("openai", "gpt-4o").inputLimits).toMatchObject({
+			maxRequestBytes: 512 * 1024 * 1024,
+			images: { maxPerRequest: 1500 },
+		});
+		expect(getBuiltinModel("google", "gemini-2.5-flash").inputLimits).toMatchObject({
+			maxRequestBytes: 20 * 1024 * 1024,
+			images: { maxPerRequest: 3600 },
+		});
+	});
+
+	it("does not infer image limits from gateway API compatibility", () => {
+		const openRouterModel = getBuiltinModels("openrouter").find((model) => model.input.includes("image"));
+		expect(openRouterModel?.inputLimits).toEqual({ images: { resize: DEFAULT_IMAGE_RESIZE } });
+	});
+
+	it("uses models.dev effort levels for Google thinking models", () => {
+		// Regression test for https://github.com/earendil-works/pi/issues/9455
+		for (const provider of ["google", "google-vertex"] as const) {
+			expect(getSupportedThinkingLevels(getBuiltinModel(provider, "gemini-3.6-flash"))).toContain("minimal");
+			expect(getSupportedThinkingLevels(getBuiltinModel(provider, "gemini-3.8-flash"))).toEqual([
+				"low",
+				"medium",
+				"high",
+			]);
+			expect(getSupportedThinkingLevels(getBuiltinModel(provider, "gemini-3.1-pro-preview"))).toEqual([
+				"low",
+				"medium",
+				"high",
+			]);
+		}
+		expect(getSupportedThinkingLevels(getBuiltinModel("opencode", "gemini-3.8-flash"))).toEqual([
+			"low",
+			"medium",
+			"high",
+		]);
+		expect(getSupportedThinkingLevels(getBuiltinModel("google", "gemma-4-31b-it"))).toEqual(["minimal", "high"]);
+	});
+
+	it("enables mid-conversation system messages only for verified models", () => {
+		const models = builtinModels();
+		const supported = [
+			["moonshotai", "kimi-k2.6"],
+			["moonshotai", "kimi-k2.7-code"],
+			["moonshotai", "kimi-k2.7-code-highspeed"],
+			["moonshotai", "kimi-k3"],
+			["moonshotai-cn", "kimi-k2.6"],
+			["moonshotai-cn", "kimi-k2.7-code"],
+			["moonshotai-cn", "kimi-k2.7-code-highspeed"],
+			["moonshotai-cn", "kimi-k3"],
+			["fireworks", "accounts/fireworks/models/kimi-k3"],
+			["fireworks", "accounts/fireworks/routers/kimi-k3-fast"],
+			["openai", "gpt-5.4"],
+			["openai", "gpt-5.5"],
+			["openai", "gpt-6-astra"],
+			["openai-codex", "gpt-5.6-sol"],
+			["anthropic", "claude-opus-5"],
+			["opencode", "gpt-5.4"],
+			["opencode", "gpt-5.6-terra"],
+			["opencode-go", "gpt-5.6-luna"],
+			["opencode", "claude-opus-4-8"],
+			["opencode", "claude-opus-5"],
+			["opencode", "kimi-k3"],
+			["opencode-go", "kimi-k3"],
+			["github-copilot", "gpt-5.6-terra"],
+			["github-copilot", "claude-opus-5"],
+			["github-copilot", "claude-opus-4.8"],
+			["github-copilot", "kimi-k3"],
+			["deepseek", "deepseek-v4-pro"],
+			["openrouter", "openai/gpt-5.6-terra"],
+		] as const;
+		const unsupported = [
+			["fireworks", "accounts/fireworks/models/nemotron-3-ultra-nvfp4"],
+			["openai", "gpt-4.1"],
+			["openai", "gpt-5.2"],
+			["anthropic", "claude-sonnet-4-5"],
+			["google", "gemini-2.5-pro"],
+			["opencode", "gpt-5.2"],
+			["opencode", "claude-sonnet-4-5"],
+			["github-copilot", "claude-sonnet-4.6"],
+			["deepseek", "deepseek-flash"],
+			["openrouter", "anthropic/claude-opus-5"],
+			["openrouter", "moonshotai/kimi-k3"],
+			["openrouter", "openai/gpt-5.6-terra:batch"],
+		] as const;
+		for (const [provider, modelId] of supported) {
+			expect(models.getModel(provider, modelId), `${provider}/${modelId}`).toHaveProperty(
+				"compat.supportsMidConvoSystemMessages",
+				true,
+			);
+		}
+		for (const [provider, modelId] of unsupported) {
+			expect(models.getModel(provider, modelId), `${provider}/${modelId}`).not.toHaveProperty(
+				"compat.supportsMidConvoSystemMessages",
+			);
+		}
+	});
+
+	it("routes proxied tool changes through verified transports only", () => {
+		const models = builtinModels();
+		for (const [provider, modelId] of [
+			["opencode", "gpt-5.6-terra"],
+			["github-copilot", "gpt-5.6-terra"],
+		] as const) {
+			// Proxies pass `additional_tools` through to OpenAI but are not verified for tool search.
+			expect(models.getModel(provider, modelId)?.compat, `${provider}/${modelId}`).toMatchObject({
+				supportsAdditionalTools: true,
+			});
+			expect(models.getModel(provider, modelId)?.compat, `${provider}/${modelId}`).not.toHaveProperty(
+				"supportsToolSearch",
+			);
+		}
+		// Proxied Anthropic endpoints reject `tool_addition`/`tool_removal` blocks.
+		for (const provider of ["opencode", "github-copilot"] as const) {
+			expect(models.getModel(provider, "claude-opus-5")?.compat, provider).not.toHaveProperty(
+				"supportsMidConvoToolChanges",
+			);
+		}
+		expect(models.getModel("anthropic", "claude-opus-5")?.compat).toMatchObject({
+			supportsMidConvoToolChanges: true,
+		});
+		// Kimi-style tool-bearing system messages survive Moonshot and OpenCode but not Copilot.
+		for (const provider of ["moonshotai", "moonshotai-cn", "opencode", "opencode-go"] as const) {
+			expect(models.getModel(provider, "kimi-k3")?.compat, provider).toMatchObject({
+				supportsMidConvoToolAdditions: true,
+			});
+		}
+		for (const provider of ["moonshotai", "moonshotai-cn"] as const) {
+			for (const modelId of ["kimi-k2.6", "kimi-k2.7-code", "kimi-k2.7-code-highspeed"] as const) {
+				expect(models.getModel(provider, modelId)?.compat, `${provider}/${modelId}`).not.toHaveProperty(
+					"supportsMidConvoToolAdditions",
+				);
+			}
+		}
+		expect(models.getModel("github-copilot", "kimi-k3")?.compat).not.toHaveProperty("supportsMidConvoToolAdditions");
+		expect(models.getModel("openrouter", "openai/gpt-5.6-terra")?.compat).not.toHaveProperty(
+			"supportsMidConvoToolAdditions",
+		);
 	});
 
 	it("uses official Kimi K3 pricing for Moonshot providers", () => {

@@ -153,6 +153,20 @@ export function assistantMsg(text: string) {
 }
 
 /**
+ * Read a session JSONL file and return one label per record: the message role for
+ * message entries, otherwise the entry type (e.g. "session", "model_change").
+ */
+export function readSessionFileRoles(file: string): string[] {
+	return readFileSync(file, "utf-8")
+		.trim()
+		.split("\n")
+		.map((line) => {
+			const record = JSON.parse(line);
+			return record.message?.role ?? record.type;
+		});
+}
+
+/**
  * Options for creating a test session.
  */
 export interface TestSessionOptions {

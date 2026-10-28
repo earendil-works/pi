@@ -34,6 +34,43 @@ function parseProxyTargetUrl(targetUrl: string | URL): URL | undefined {
 	}
 }
 
+function stripBrackets(host: string): string {
+	return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+}
+
+function parseNoProxyEntry(entry: string): { host: string; port: number } | undefined {
+	const trimmed = entry.trim().toLowerCase();
+	if (!trimmed) return undefined;
+
+	if (trimmed.startsWith("[")) {
+		const closingBracket = trimmed.indexOf("]");
+		if (closingBracket !== -1) {
+			const host = trimmed.slice(1, closingBracket);
+			const rest = trimmed.slice(closingBracket + 1);
+			if (rest.startsWith(":")) {
+				const port = Number.parseInt(rest.slice(1), 10);
+				return { host, port: Number.isNaN(port) ? 0 : port };
+			}
+			return { host, port: 0 };
+		}
+	}
+
+	if (trimmed.includes(":") && trimmed.split(":").length > 2) {
+		return { host: trimmed, port: 0 };
+	}
+
+	const colonIndex = trimmed.lastIndexOf(":");
+	if (colonIndex !== -1 && colonIndex === trimmed.indexOf(":")) {
+		const host = trimmed.slice(0, colonIndex);
+		const port = Number.parseInt(trimmed.slice(colonIndex + 1), 10);
+		if (!Number.isNaN(port)) {
+			return { host, port };
+		}
+	}
+
+	return { host: trimmed, port: 0 };
+}
+
 function shouldProxyHostname(hostname: string, port: number, env?: ProviderEnv): boolean {
 	const noProxy = getProxyEnv("no_proxy", env).toLowerCase();
 	if (!noProxy) {
@@ -43,26 +80,38 @@ function shouldProxyHostname(hostname: string, port: number, env?: ProviderEnv):
 		return false;
 	}
 
-	return noProxy.split(/[,\s]/).every((proxy) => {
-		if (!proxy) {
+	const normalizedTargetHost = stripBrackets(hostname.toLowerCase());
+
+	return noProxy.split(/[,\s]/).every((entry) => {
+		const parsed = parseNoProxyEntry(entry);
+		if (!parsed) {
 			return true;
 		}
 
-		const parsedProxy = proxy.match(/^(.+):(\d+)$/);
-		let proxyHostname = parsedProxy ? parsedProxy[1] : proxy;
-		const proxyPort = parsedProxy ? Number.parseInt(parsedProxy[2]!, 10) : 0;
-		if (proxyPort && proxyPort !== port) {
+		if (parsed.port && parsed.port !== port) {
 			return true;
 		}
 
-		if (!/^[.*]/.test(proxyHostname)) {
-			return hostname !== proxyHostname;
+		let domain = stripBrackets(parsed.host);
+		if (domain.startsWith("*.")) {
+			domain = domain.slice(2);
+		} else if (domain.startsWith(".") || domain.startsWith("*")) {
+			domain = domain.slice(1);
 		}
 
-		if (proxyHostname.startsWith("*")) {
-			proxyHostname = proxyHostname.slice(1);
+		if (!domain) {
+			return true;
 		}
-		return !hostname.endsWith(proxyHostname);
+
+		if (normalizedTargetHost === domain) {
+			return false;
+		}
+
+		if (normalizedTargetHost.endsWith(`.${domain}`)) {
+			return false;
+		}
+
+		return true;
 	});
 }
 
@@ -73,7 +122,7 @@ function getProxyForUrl(targetUrl: string | URL, env?: ProviderEnv): string {
 	}
 
 	const protocol = parsedUrl.protocol.split(":", 1)[0]!;
-	const hostname = parsedUrl.host.replace(/:\d*$/, "");
+	const hostname = stripBrackets(parsedUrl.hostname || parsedUrl.host.replace(/:\d*$/, ""));
 	const port = Number.parseInt(parsedUrl.port, 10) || DEFAULT_PROXY_PORTS[protocol] || 0;
 	if (!shouldProxyHostname(hostname, port, env)) {
 		return "";

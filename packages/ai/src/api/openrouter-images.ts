@@ -8,16 +8,18 @@ import type {
 } from "openai/resources/chat/completions.js";
 import type {
 	AssistantImages,
+	ImageApi,
 	ImageContent,
+	ImageModel,
 	ImagesContext,
 	ImagesFunction,
-	ImagesModel,
 	ImagesOptions,
 	ProviderHeaders,
 	TextContent,
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
+import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
@@ -37,8 +39,9 @@ type OpenRouterImageGenerationResponse = ChatCompletion & {
 	choices: OpenRouterImageGenerationChoice[];
 };
 
-export const generateImages: ImagesFunction<"openrouter-images", ImagesOptions> = async (
-	model: ImagesModel<"openrouter-images">,
+/** Image generation over OpenRouter's chat completions endpoint. */
+export const generateImages: ImagesFunction<ImagesOptions> = async (
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: ImagesOptions,
 ) => {
@@ -56,7 +59,7 @@ export const generateImages: ImagesFunction<"openrouter-images", ImagesOptions> 
 		if (!apiKey) {
 			throw new Error(`No API key for provider: ${model.provider}`);
 		}
-		const client = createClient(model, apiKey, options?.headers, options?.fetch);
+		const client = createClient(model, apiKey, options?.headers, options?.fetch, options?.identity);
 		let params = buildParams(model, context);
 		const nextParams = await options?.onPayload?.(params, model);
 		if (nextParams !== undefined) {
@@ -115,17 +118,18 @@ export const generateImages: ImagesFunction<"openrouter-images", ImagesOptions> 
 };
 
 function createClient(
-	model: ImagesModel<"openrouter-images">,
+	model: ImageModel<ImageApi>,
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
 	fetch?: typeof globalThis.fetch,
+	identity?: ClientIdentity,
 ): OpenAI {
 	return new OpenAI({
 		apiKey,
 		baseURL: model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		fetch,
-		defaultHeaders: providerHeadersToRecord({ ...model.headers, ...optionsHeaders }),
+		defaultHeaders: providerHeadersToRecord(getIdentityHeaders(model, identity), model.headers, optionsHeaders),
 	});
 }
 
@@ -133,7 +137,7 @@ type OpenRouterImagesCreateParams = Omit<ChatCompletionCreateParamsNonStreaming,
 	modalities: Array<"image" | "text">;
 };
 
-function buildParams(model: ImagesModel<"openrouter-images">, context: ImagesContext): OpenRouterImagesCreateParams {
+function buildParams(model: ImageModel<ImageApi>, context: ImagesContext): OpenRouterImagesCreateParams {
 	const content: ChatCompletionContentPart[] = context.input.map((item): ChatCompletionContentPart => {
 		if (item.type === "text") {
 			return {
@@ -168,7 +172,7 @@ function parseUsage(
 		completion_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
 	},
-	model: ImagesModel<"openrouter-images">,
+	model: ImageModel<ImageApi>,
 ) {
 	const promptTokens = rawUsage.prompt_tokens || 0;
 	const reportedCachedTokens = rawUsage.prompt_tokens_details?.cached_tokens || 0;
@@ -189,6 +193,7 @@ function parseUsage(
 			cacheRead: (model.cost.cacheRead / 1000000) * cacheReadTokens,
 			cacheWrite: (model.cost.cacheWrite / 1000000) * cacheWriteTokens,
 			total: 0,
+			totalFromProvider: false,
 		},
 	};
 	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;

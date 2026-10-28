@@ -2,7 +2,13 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/openai-codex.json" with { type: "json" };
-import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
+import { flattenChatModelCatalog, flattenClassifierModelCatalog, flattenImageModelCatalog, type ChatModelCatalog, type ClassifierModelCatalog, type ImageModelCatalog } from "../model-catalog.ts";
 
-export const OPENAI_CODEX_MODELS: ModelCatalog<typeof values, "openai-codex"> =
-	flattenModelCatalog("openai-codex", values);
+export const OPENAI_CODEX_MODELS: ChatModelCatalog<typeof values, "openai-codex"> =
+	flattenChatModelCatalog("openai-codex", values);
+
+export const OPENAI_CODEX_IMAGE_MODELS: ImageModelCatalog<typeof values, "openai-codex"> =
+	flattenImageModelCatalog("openai-codex", values);
+
+export const OPENAI_CODEX_CLASSIFIER_MODELS: ClassifierModelCatalog<typeof values, "openai-codex"> =
+	flattenClassifierModelCatalog("openai-codex", values);

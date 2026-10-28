@@ -41,7 +41,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -142,7 +142,14 @@ jobs:
       actions: read
     env:
       RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      SOURCE_REF: ${{ github.event.inputs.source_ref || github.event.inputs.tag || github.ref_name }}
     steps:
+      - name: Checkout smoke tests
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          persist-credentials: false
+
       - name: Download binary archives
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -198,6 +205,7 @@ jobs:
         run: |
           "${{ steps.binary.outputs.binary }}" --help
           "${{ steps.binary.outputs.binary }}" --version
+          node scripts/smoke-test-codemode-binary.mjs "${{ steps.binary.outputs.binary }}"
 
   stage-github-release:
     runs-on: ubuntu-latest
@@ -293,9 +301,17 @@ jobs:
             exit 1
           fi
 
+  # The pi-env daemon for every remote system @earendil-works/pi-env supports; the npm package ships them all.
+  env-daemons:
+    uses: ./.github/workflows/env-daemons.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.inputs.source_ref || github.event.inputs.tag || github.ref_name }}
+
   publish-npm:
     runs-on: ubuntu-latest
-    needs: stage-github-release
+    needs: [stage-github-release, env-daemons]
     environment: npm-publish
     permissions:
       contents: read
@@ -326,19 +342,46 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      - name: Download pi-env daemons
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: pi-env-*
+          path: packages/env/bin
+
+      - name: Check pi-env daemons
+        run: |
+          set -euo pipefail
+          for name in linux-x64 linux-arm64 android-arm64 android-x64 darwin-arm64 darwin-x64; do
+            test -s "packages/env/bin/pi-env-${name}/pi-env"
+          done
+          for name in windows-x64 windows-arm64; do
+            test -s "packages/env/bin/pi-env-${name}/pi-env.exe"
+          done
+          chmod +x packages/env/bin/*/pi-env*
+          ls -lR packages/env/bin
+
       - name: Build
         run: npm run build
 
       - name: Check
         run: npm run check
 
+      - name: Build the pi-env daemon for tests
+        run: npm run build:daemon --workspace packages/env
+
       - name: Test
         run: npm test
+
+      - name: Smoke-test packed npm consumer
+        run: npm run check:package-install
 
       - name: Upgrade npm for trusted publishing
         run: |
           npm install -g npm@11.16.0 --ignore-scripts
           npm --version
+
+      - name: Validate npm tarball publication with provenance
+        run: node scripts/publish.mjs --dry-run
 
       - name: Publish npm packages
         run: node scripts/publish.mjs

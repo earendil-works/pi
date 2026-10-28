@@ -50,11 +50,12 @@ async function basicPrompt(model: Model<string>) {
 	await agent.prompt("What is 2+2? Answer with just the number.");
 
 	expect(agent.state.isStreaming).toBe(false);
-	expect(agent.state.messages.length).toBe(2);
-	expect(agent.state.messages[0].role).toBe("user");
-	expect(agent.state.messages[1].role).toBe("assistant");
+	expect(agent.state.messages.length).toBe(3);
+	expect(agent.state.messages[0].role).toBe("system");
+	expect(agent.state.messages[1].role).toBe("user");
+	expect(agent.state.messages[2].role).toBe("assistant");
 
-	const assistantMessage = agent.state.messages[1];
+	const assistantMessage = agent.state.messages[2];
 	if (assistantMessage.role !== "assistant") throw new Error("Expected assistant message");
 	expect(getTextContent(assistantMessage)).toContain("4");
 }
@@ -157,7 +158,7 @@ async function stateUpdates(model: Model<string>) {
 	expect(events.indexOf("message_end")).toBeLessThan(events.lastIndexOf("agent_end"));
 
 	expect(agent.state.isStreaming).toBe(false);
-	expect(agent.state.messages.length).toBe(2);
+	expect(agent.state.messages.length).toBe(3);
 }
 
 async function multiTurnConversation(model: Model<string>) {
@@ -172,12 +173,12 @@ async function multiTurnConversation(model: Model<string>) {
 	});
 
 	await agent.prompt("My name is Alice.");
-	expect(agent.state.messages.length).toBe(2);
+	expect(agent.state.messages.length).toBe(3);
 
 	await agent.prompt("What is my name?");
-	expect(agent.state.messages.length).toBe(4);
+	expect(agent.state.messages.length).toBe(5);
 
-	const lastMessage = agent.state.messages[3];
+	const lastMessage = agent.state.messages[4];
 	if (lastMessage.role !== "assistant") throw new Error("Expected assistant message");
 	expect(getTextContent(lastMessage).toLowerCase()).toContain("alice");
 }
@@ -255,7 +256,7 @@ describe("Agent integration with faux provider", () => {
 
 		await agent.prompt("What is 2+2?");
 
-		const assistantMessage = agent.state.messages[1];
+		const assistantMessage = agent.state.messages[2];
 		if (assistantMessage?.role !== "assistant") throw new Error("Expected assistant message");
 		expect(assistantMessage.content).toEqual([
 			{ type: "thinking", thinking: "step by step" },

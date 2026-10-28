@@ -1,6 +1,16 @@
 # Examples
 
-Example code for pi-coding-agent SDK and extensions.
+Example code for the pi-coding-agent SDK, process integration, and extensions.
+
+## CLI integration
+
+[`rpc-client.ts`](rpc-client.ts) uses the typed `RpcClient` to run Pi in a child process, stream events, and wait for the run to settle.
+
+Build the coding-agent package before running it from a repository checkout:
+
+```bash
+node examples/rpc-client.ts "Explain this repository"
+```
 
 ## Directories
 
@@ -20,6 +30,7 @@ Example extensions demonstrating:
 
 ## Documentation
 
-- [SDK Reference](sdk/README.md)
+- [SDK Examples](sdk/README.md)
+- [CLI Integration](../docs/cli-integration.md)
 - [Extensions Documentation](../docs/extensions.md)
 - [Skills Documentation](../docs/skills.md)

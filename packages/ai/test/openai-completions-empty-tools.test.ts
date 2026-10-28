@@ -4,7 +4,7 @@ import { getModel, streamSimple } from "../src/compat.ts";
 // Empty tools arrays must NOT be serialized as `tools: []` — some OpenAI-compatible
 // backends (e.g. DashScope / Aliyun Qwen via compatible-mode) reject the request with
 // `"[] is too short - 'tools'"` (HTTP 400) when `--no-tools` produces an empty array.
-// Regression for https://github.com/earendil-works/pi-mono/issues/<issue-number>
+// Regression for https://github.com/earendil-works/pi/issues/3649
 
 const mockState = vi.hoisted(() => ({
 	lastParams: undefined as unknown,
@@ -140,7 +140,7 @@ describe("openai-completions empty tools handling", () => {
 
 		const params = mockState.lastParams as { max_tokens?: number; max_completion_tokens?: number };
 		expect(params.max_tokens).toBeUndefined();
-		expect(params.max_completion_tokens).toBe(3904);
+		expect(params.max_completion_tokens).toBe(3618);
 	});
 
 	it("clamps explicit maxTokens to remaining context", async () => {
@@ -157,7 +157,7 @@ describe("openai-completions empty tools handling", () => {
 
 		const params = mockState.lastParams as { max_tokens?: number; max_completion_tokens?: number };
 		expect(params.max_tokens).toBeUndefined();
-		expect(params.max_completion_tokens).toBe(3904);
+		expect(params.max_completion_tokens).toBe(3618);
 	});
 
 	it("uses conservative OpenAI-compatible fields for Cloudflare AI Gateway /compat models", async () => {

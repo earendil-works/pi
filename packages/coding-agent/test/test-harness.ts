@@ -17,13 +17,14 @@ import type {
 	AssistantMessage,
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
-	Context,
+	JsonObject,
 	Model,
 	SimpleStreamOptions,
 	StopReason,
 	TextContent,
 	ThinkingContent,
 	ToolCall,
+	TranscriptContext,
 	Usage,
 } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
@@ -68,7 +69,7 @@ export interface FauxResponse {
 	/** Text content blocks. String shorthand becomes a single text block. */
 	text?: string;
 	/** Tool calls to include in the response. */
-	toolCalls?: Array<{ id?: string; name: string; args: Record<string, unknown> }>;
+	toolCalls?: Array<{ id?: string; name: string; args: JsonObject }>;
 	/** Thinking content. */
 	thinking?: string;
 	/** Stop reason. Defaults to "stop", or "toolUse" if toolCalls are present, or "error" if error is set. */
@@ -274,7 +275,7 @@ export interface FauxStreamFnState {
 	/** Number of times the stream function has been called. */
 	callCount: number;
 	/** The context passed to each call, in order. */
-	contexts: Context[];
+	contexts: TranscriptContext[];
 }
 
 /**
@@ -286,7 +287,11 @@ export interface FauxStreamFnState {
  * Returns the stream function and a state object for inspection.
  */
 export function createFauxStreamFn(responses: FauxResponseInput[]): {
-	streamFn: (model: Model<any>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
+	streamFn: (
+		model: Model<any>,
+		context: TranscriptContext,
+		options?: SimpleStreamOptions,
+	) => AssistantMessageEventStream;
 	state: FauxStreamFnState;
 } {
 	if (responses.length === 0) {
@@ -295,7 +300,7 @@ export function createFauxStreamFn(responses: FauxResponseInput[]): {
 
 	const state: FauxStreamFnState = { callCount: 0, contexts: [] };
 
-	const streamFn = (_model: Model<any>, context: Context, _options?: SimpleStreamOptions) => {
+	const streamFn = (_model: Model<any>, context: TranscriptContext, _options?: SimpleStreamOptions) => {
 		const index = state.callCount % responses.length;
 		state.callCount++;
 		state.contexts.push(context);

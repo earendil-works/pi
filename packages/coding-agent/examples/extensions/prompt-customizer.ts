@@ -1,11 +1,8 @@
 /**
  * Prompt Customizer Extension
  *
- * Demonstrates using systemPromptOptions to make informed, context-aware
- * modifications to the system prompt without re-discovering resources.
- *
- * This extension adds tool-specific guidance based on what tools and skills
- * are currently active, respecting whatever the user has configured.
+ * Demonstrates using systemPromptOptions to add context-aware prompt sections
+ * without replacing or reparsing the complete rendered prompt.
  *
  * Usage:
  * 1. Copy this file to ~/.pi/agent/extensions/ or your project's .pi/extensions/
@@ -14,84 +11,39 @@
 
 import type { BuildSystemPromptOptions, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-/**
- * Adds tool-specific guidance that adapts to the active tool set.
- * Instead of appending one-size-fits-all instructions, this reads what's
- * actually loaded and tailors the guidance accordingly.
- */
-function addToolGuidance(options: BuildSystemPromptOptions, basePrompt: string): string {
+function buildToolGuidance(options: BuildSystemPromptOptions): string {
 	const hasTool = (name: string) => options.selectedTools?.includes(name) ?? false;
-
-	const parts: string[] = [];
+	const rules: string[] = [];
 
 	if (hasTool("read")) {
-		parts.push(
-			"• Use the `read` tool for file contents (supports text and images).",
-			"  - For large files, use `offset` and `limit` to read in chunks.",
+		rules.push(
+			"- Use `read` for file contents; it supports text and images.",
+			"- For large files, use `offset` and `limit` to read in chunks.",
 		);
 	}
-
 	if (hasTool("bash")) {
-		parts.push("• Execute commands with the `bash` tool. Use it for file operations like `ls`, `find`, `grep`.");
+		rules.push("- Use `bash` for file operations such as `ls`, `find`, and `grep`.");
 	}
-
 	if (hasTool("edit")) {
-		parts.push(
-			"• Use the `edit` tool for precise text replacements in files. Match exact content including whitespace.",
-		);
+		rules.push("- Use `edit` for precise text replacements that match existing content exactly.");
 	}
-
 	if (hasTool("write")) {
-		parts.push("• Use the `write` tool to create new files or overwrite existing ones completely.");
+		rules.push("- Use `write` to create new files or replace existing files completely.");
 	}
-
 	if (options.skills && options.skills.length > 0) {
-		const skillNames = options.skills.map((s) => s.name).join(", ");
-		parts.push(`\nAvailable skills: ${skillNames}`, "Use skill documentation for best practices on specific tools.");
+		rules.push(`- Available skills: ${options.skills.map((skill) => skill.name).join(", ")}.`);
 	}
 
-	if (parts.length === 0) {
-		return basePrompt;
-	}
-
-	return `${basePrompt}
-
-## Tool Guidance
-
-${parts.join("\n")}
-`;
-}
-
-/**
- * Merges extension instructions with user-provided append prompts.
- * This respects whatever the user configured via --append-system-prompt
- * flags or files, rather than duplicating that work.
- */
-function mergeWithUserAppend(options: BuildSystemPromptOptions): string {
-	const userAppend = options.appendSystemPrompt;
-	const extensionSpecific = `
-## Extension-Added Context
-
-This prompt includes tool guidance and skill information loaded dynamically.
-If you have additional requirements, configure them via --append-system-prompt or project context files.
-`;
-
-	if (userAppend) {
-		return `${userAppend}\n\n${extensionSpecific}`;
-	}
-
-	return extensionSpecific;
+	return rules.join("\n");
 }
 
 export default function promptCustomizer(pi: ExtensionAPI) {
-	pi.on("before_agent_start", async (event) => {
-		const { systemPrompt, systemPromptOptions } = event;
-
-		const customPrompt = addToolGuidance(systemPromptOptions, systemPrompt);
-		const appendSection = mergeWithUserAppend(systemPromptOptions);
-
-		return {
-			systemPrompt: `${customPrompt}${appendSection}`,
-		};
+	pi.on("before_agent_start", (event) => {
+		const guidance = buildToolGuidance(event.systemPromptOptions);
+		if (guidance) {
+			event.systemPromptOptions.sections.tool_guidance = guidance;
+		} else {
+			delete event.systemPromptOptions.sections.tool_guidance;
+		}
 	});
 }

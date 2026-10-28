@@ -19,6 +19,12 @@ jobs:
             const LAST_READ_LABEL = 'last-read';
             const TO_DISCUSS_LABEL = 'to-discuss';
             const INPROGRESS_LABEL = 'inprogress';
+            // Applying one of these labels assigns the user and reopens the issue if it is closed.
+            const LABEL_ASSIGNEES = new Map([
+              ['mcp', 'mitsuhiko'],
+              ['codemode', 'mitsuhiko'],
+              ['durable', 'badlogic'],
+            ]);
 
             function issueHasLabel(issue, labelName) {
               return (issue.labels ?? []).some((label) => label.name === labelName);
@@ -47,14 +53,44 @@ jobs:
               }
             }
 
+            async function removeClosedStateLabels(issueNumber, issue) {
+              await removeLabelIfPresent(issueNumber, issue, UNTRIAGED_LABEL);
+              await removeLabelIfPresent(issueNumber, issue, NO_ACTION_LABEL);
+            }
+
             if (context.payload.action === 'reopened') {
-              await removeLabelIfPresent(context.issue.number, context.payload.issue, UNTRIAGED_LABEL);
-              await removeLabelIfPresent(context.issue.number, context.payload.issue, NO_ACTION_LABEL);
+              await removeClosedStateLabels(context.issue.number, context.payload.issue);
               return;
             }
 
             if (context.payload.action === 'labeled' && context.payload.label?.name === NO_ACTION_LABEL) {
               await removeLabelIfPresent(context.issue.number, context.payload.issue, UNTRIAGED_LABEL);
+              return;
+            }
+
+            const labelAssignee =
+              context.payload.action === 'labeled' ? LABEL_ASSIGNEES.get(context.payload.label?.name) : undefined;
+            if (labelAssignee) {
+              const issueNumber = context.issue.number;
+              await github.rest.issues.addAssignees({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                assignees: [labelAssignee],
+              });
+              console.log(`Assigned ${labelAssignee} to #${issueNumber}`);
+
+              if (context.payload.issue.state === 'closed') {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  state: 'open',
+                });
+                console.log(`Reopened #${issueNumber}`);
+                // Reopening with the workflow token does not trigger the reopened handler above.
+                await removeClosedStateLabels(issueNumber, context.payload.issue);
+              }
               return;
             }
 

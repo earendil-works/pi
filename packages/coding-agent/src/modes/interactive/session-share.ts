@@ -21,9 +21,13 @@ interface SessionShareContext {
 	showError: (message: string) => void;
 }
 
-/** Export the current branch with presentation metadata for Radius. */
-export function exportSessionForShare(filePath: string, session: AgentSession): void {
-	exportSessionToJsonl(session.sessionManager, filePath, (parentId, timestamp) => [
+/** Trailing `pi.share` entry carrying the system prompt and tool schemas for the session viewer. */
+export function createShareTrailingEntries(
+	session: AgentSession,
+	parentId: string | null,
+	timestamp: string,
+): object[] {
+	return [
 		{
 			type: "custom",
 			customType: "pi.share",
@@ -39,13 +43,21 @@ export function exportSessionForShare(filePath: string, session: AgentSession): 
 				})),
 			},
 		},
-	]);
+	];
+}
+
+/** Export the current branch with presentation metadata for Radius. */
+export function exportSessionForShare(filePath: string, session: AgentSession): void {
+	exportSessionToJsonl(session.sessionManager, filePath, (parentId, timestamp) =>
+		createShareTrailingEntries(session, parentId, timestamp),
+	);
 }
 
 /** Share the current session through Radius, falling back to a private gist. */
 export async function shareSession(context: SessionShareContext): Promise<void> {
-	const jsonlFile = path.join(os.tmpdir(), "session.jsonl");
-	let htmlFile: string | null = null;
+	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-share-"));
+	const jsonlFile = path.join(tempDir, "session.jsonl");
+	const htmlFile = path.join(tempDir, "session.html");
 
 	try {
 		try {
@@ -54,7 +66,14 @@ export async function shareSession(context: SessionShareContext): Promise<void> 
 			context.showError(`Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`);
 			return;
 		}
-		if (await tryShareViaRadius(jsonlFile, context)) return;
+		const destination = context.session.settingsManager.getSessionShareDestination();
+		if (destination !== "gist") {
+			if (await tryShareViaRadius(jsonlFile, context)) return;
+			if (destination === "radius") {
+				context.showError("Radius authentication is not configured. Run '/login radius' first.");
+				return;
+			}
+		}
 
 		try {
 			const authResult = spawnSync("gh", ["auth", "status"], { encoding: "utf-8" });
@@ -68,7 +87,6 @@ export async function shareSession(context: SessionShareContext): Promise<void> 
 		}
 
 		try {
-			htmlFile = path.join(os.tmpdir(), "session.html");
 			await context.session.exportToHtml(htmlFile, { themeName: theme.name });
 		} catch (error: unknown) {
 			context.showError(`Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -76,14 +94,10 @@ export async function shareSession(context: SessionShareContext): Promise<void> 
 		}
 		await shareViaGist(htmlFile, context);
 	} finally {
-		for (const tmpFile of [jsonlFile, htmlFile]) {
-			try {
-				if (tmpFile !== null) {
-					fs.unlinkSync(tmpFile);
-				}
-			} catch {
-				// Ignore cleanup errors
-			}
+		try {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		} catch {
+			// Ignore cleanup errors
 		}
 	}
 }

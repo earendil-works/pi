@@ -5,23 +5,16 @@
  * gateway; only the interactive browser authorization endpoint is discovered.
  * Model catalog loading is owned by the Radius provider.
  *
- * NOTE: This module uses node:http for the OAuth callback server.
+ * NOTE: This module uses node:http (via callback-server.ts) for the OAuth callback server.
  * It is only intended for CLI use, not browser environments.
  */
 
-// NEVER convert to top-level imports - breaks browser/Vite builds
-let _http: typeof import("node:http") | null = null;
-if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
-	import("node:http").then((m) => {
-		_http = m;
-	});
-}
-
 import { normalizeRadiusGatewayUrl } from "../../providers/radius-config.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
+import { startOAuthCallbackServer } from "./callback-server.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
-import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
 import { generatePKCE } from "./pkce.ts";
+import { trustedHttpUrl } from "./trusted-url.ts";
 
 const CALLBACK_HOST = "127.0.0.1";
 const CALLBACK_PORT = 1456;
@@ -59,10 +52,11 @@ async function loadRadiusOAuthDiscovery(gateway: string, signal: AbortSignal): P
 	}
 
 	const discovery = (await response.json()) as Partial<RadiusOAuthDiscovery>;
-	if (typeof discovery.authorizationEndpoint !== "string") {
+	const authorizationEndpoint = trustedHttpUrl(discovery.authorizationEndpoint);
+	if (!authorizationEndpoint) {
 		throw new Error(`Invalid Radius OAuth config from ${gateway}`);
 	}
-	return { authorizationEndpoint: discovery.authorizationEndpoint };
+	return { authorizationEndpoint };
 }
 
 class OAuthResponseError extends Error {
@@ -139,84 +133,6 @@ async function requestOAuthToken(
 	};
 }
 
-type OAuthCallbackServer = {
-	waitForCode(): Promise<string | null>;
-	close(): void;
-};
-
-function startOAuthCallbackServer(expectedState: string, signal: AbortSignal): Promise<OAuthCallbackServer> {
-	if (!_http) {
-		throw new Error("Radius OAuth is only available in Node.js environments");
-	}
-
-	let settle: (code: string | null) => void = () => {};
-	let settled = false;
-	const wait = new Promise<string | null>((resolve) => {
-		settle = resolve;
-	});
-	const finish = (code: string | null) => {
-		if (settled) {
-			return;
-		}
-		settled = true;
-		signal.removeEventListener("abort", onAbort);
-		settle(code);
-	};
-	const onAbort = () => finish(null);
-	signal.addEventListener("abort", onAbort, { once: true });
-
-	const sendPage = (response: import("node:http").ServerResponse, status: number, html: string) => {
-		response.statusCode = status;
-		response.setHeader("content-type", "text/html; charset=utf-8");
-		response.end(html);
-	};
-
-	const server = _http.createServer((request, response) => {
-		const url = new URL(request.url ?? "/", REDIRECT_URI);
-		if (url.pathname !== CALLBACK_PATH) {
-			sendPage(response, 404, oauthErrorHtml("Callback route not found."));
-			return;
-		}
-		if (url.searchParams.get("state") !== expectedState) {
-			sendPage(response, 400, oauthErrorHtml("OAuth state mismatch."));
-			return;
-		}
-
-		const error = url.searchParams.get("error");
-		if (error) {
-			sendPage(response, 400, oauthErrorHtml(url.searchParams.get("error_description") ?? error));
-			finish(null);
-			return;
-		}
-
-		const code = url.searchParams.get("code");
-		if (!code) {
-			sendPage(response, 400, oauthErrorHtml("Missing authorization code."));
-			return;
-		}
-
-		sendPage(response, 200, oauthSuccessHtml("Signed in to Radius. You may now close this page."));
-		finish(code);
-	});
-
-	return new Promise((resolve) => {
-		server
-			.listen(CALLBACK_PORT, CALLBACK_HOST, () => {
-				resolve({
-					waitForCode: () => wait,
-					close: () => {
-						finish(null);
-						server.close();
-					},
-				});
-			})
-			.once("error", () => {
-				finish(null);
-				resolve({ waitForCode: async () => null, close: () => {} });
-			});
-	});
-}
-
 async function loginWithBrowser(
 	gateway: string,
 	authorizationEndpoint: string,
@@ -236,7 +152,26 @@ async function loginWithBrowser(
 		state,
 	}).toString();
 
-	const callbackServer = await startOAuthCallbackServer(state, interaction.signal);
+	const callback = await startOAuthCallbackServer({
+		providerName: "Radius",
+		host: CALLBACK_HOST,
+		port: CALLBACK_PORT,
+		path: CALLBACK_PATH,
+		state,
+		complete: (code) =>
+			requestOAuthToken(
+				gateway,
+				new URLSearchParams({
+					grant_type: "authorization_code",
+					client_id: OAUTH_CLIENT_ID,
+					redirect_uri: REDIRECT_URI,
+					code,
+					code_verifier: verifier,
+				}),
+				interaction.signal,
+			),
+		signal: interaction.signal,
+	});
 	interaction.notify({ type: "progress", message: `Listening for OAuth callback on ${REDIRECT_URI}` });
 	interaction.notify({
 		type: "auth_url",
@@ -245,26 +180,11 @@ async function loginWithBrowser(
 	});
 
 	try {
-		const code = await callbackServer.waitForCode();
-		if (!code) {
-			if (interaction.signal.aborted) {
-				throw new Error("Login cancelled");
-			}
-			throw new Error("OAuth callback did not complete.");
-		}
-		return await requestOAuthToken(
-			gateway,
-			new URLSearchParams({
-				grant_type: "authorization_code",
-				client_id: OAUTH_CLIENT_ID,
-				redirect_uri: REDIRECT_URI,
-				code,
-				code_verifier: verifier,
-			}),
-			interaction.signal,
-		);
+		const credential = await callback.wait();
+		if (!credential) throw new Error("OAuth callback did not complete.");
+		return credential;
 	} finally {
-		callbackServer.close();
+		callback.close();
 	}
 }
 
@@ -292,11 +212,15 @@ async function requestDeviceAuthorization(gateway: string, signal: AbortSignal):
 	if (!data.device_code || !data.user_code || !data.verification_uri || !data.expires_in) {
 		throw new Error("Radius OAuth device authorization response is missing required fields");
 	}
+	const verificationUri = trustedHttpUrl(data.verification_uri);
+	if (!verificationUri) {
+		throw new Error("Untrusted verification_uri in Radius OAuth device authorization response");
+	}
 
 	return {
 		device_code: data.device_code,
 		user_code: data.user_code,
-		verification_uri: data.verification_uri,
+		verification_uri: verificationUri,
 		expires_in: data.expires_in,
 		interval: data.interval,
 	};

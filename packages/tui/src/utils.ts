@@ -54,6 +54,14 @@ const widthCache = new Map<string, number>();
 export const cjkBreakRegex =
 	/[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Hangul}\p{Script_Extensions=Bopomofo}]/u;
 
+// CJK letters remain part of words and paths; only punctuation can separate prose from completions.
+export const cjkPunctuationRegex = new RegExp(
+	`(?:(?=\\p{Punctuation})${cjkBreakRegex.source}|[，．：；！？（）［］｛｝“”‘’…—])`,
+	"u",
+);
+export const autocompleteSeparatorRegex = new RegExp(`(?:\\s|${cjkPunctuationRegex.source})`, "u");
+export const autocompleteBoundaryRegex = new RegExp(`(?:^|${autocompleteSeparatorRegex.source})`, "u");
+
 function isPrintableAscii(str: string): boolean {
 	for (let i = 0; i < str.length; i++) {
 		const code = str.charCodeAt(i);
@@ -172,8 +180,10 @@ function finalizeTruncatedResult(
  * check to avoid running the RGI_Emoji regex unnecessarily.
  */
 function graphemeWidth(segment: string): number {
-	if (segment === "\t") {
-		return 3;
+	if (segment.length === 1) {
+		const code = segment.charCodeAt(0);
+		if (code >= 0x20 && code <= 0x7e) return 1;
+		if (code === 0x09) return 3;
 	}
 
 	// Some marks occupy cells even without a base character.
@@ -242,9 +252,11 @@ export function visibleWidth(str: string): number {
 		return 0;
 	}
 
-	// Fast path: pure ASCII printable
-	if (isPrintableAscii(str)) {
-		return str.length;
+	// Fast path: printable ASCII, tabs, and ANSI escape sequences. Styled lines take this path, so
+	// re-rendering after a theme change does not run grapheme segmentation on every line.
+	const asciiWidth = asciiVisibleWidth(str);
+	if (asciiWidth !== -1) {
+		return asciiWidth;
 	}
 
 	// Check cache
@@ -258,22 +270,25 @@ export function visibleWidth(str: string): number {
 	if (str.includes("\t")) {
 		clean = clean.replace(/\t/g, "   ");
 	}
-	if (clean.includes("\x1b")) {
+	let escapeIndex = clean.indexOf("\x1b");
+	if (escapeIndex !== -1) {
 		// Strip supported ANSI/OSC/APC escape sequences in one pass.
 		// This covers CSI styling/cursor codes, OSC hyperlinks and prompt markers,
 		// and APC sequences like CURSOR_MARKER.
 		let stripped = "";
-		let i = 0;
-		while (i < clean.length) {
-			const ansi = extractAnsiCode(clean, i);
-			if (ansi) {
-				i += ansi.length;
-				continue;
+		let copyFrom = 0;
+		while (escapeIndex !== -1) {
+			const length = ansiCodeLength(clean, escapeIndex);
+			if (length > 0) {
+				stripped += clean.slice(copyFrom, escapeIndex);
+				escapeIndex += length;
+				copyFrom = escapeIndex;
+			} else {
+				escapeIndex++;
 			}
-			stripped += clean[i];
-			i++;
+			escapeIndex = clean.indexOf("\x1b", escapeIndex);
 		}
-		clean = stripped;
+		clean = stripped + clean.slice(copyFrom);
 	}
 
 	// Calculate width
@@ -309,6 +324,13 @@ export function stripTerminalSequences(str: string): string {
 		i++;
 	}
 	return result;
+}
+
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]+/g;
+
+/** Replace each run of C0 and C1 control characters (ESC, BEL, newlines, ...) with one space. */
+export function replaceControlCharacters(str: string): string {
+	return str.replace(CONTROL_CHARACTERS, " ");
 }
 
 interface GraphemeCellRange {
@@ -404,43 +426,66 @@ export function normalizeTerminalOutput(str: string): string {
  * Extract ANSI escape sequences from a string at the given position.
  */
 export function extractAnsiCode(str: string, pos: number): { code: string; length: number } | null {
-	if (pos >= str.length || str[pos] !== "\x1b") return null;
+	const length = ansiCodeLength(str, pos);
+	return length > 0 ? { code: str.substring(pos, pos + length), length } : null;
+}
+
+/**
+ * Width of a string made of printable ASCII, tabs, and ANSI escape sequences, or -1 if it contains
+ * anything else. Matches `visibleWidth` for those strings without allocating.
+ */
+function asciiVisibleWidth(str: string): number {
+	let width = 0;
+	let i = 0;
+	while (i < str.length) {
+		const code = str.charCodeAt(i);
+		if (code >= 0x20 && code <= 0x7e) {
+			width++;
+			i++;
+		} else if (code === 0x09) {
+			width += 3;
+			i++;
+		} else if (code === 0x1b) {
+			const length = ansiCodeLength(str, i);
+			if (length === 0) return -1;
+			i += length;
+		} else {
+			return -1;
+		}
+	}
+	return width;
+}
+
+/** Length of the ANSI/OSC/APC escape sequence starting at `pos`, or 0 if there is none. */
+function ansiCodeLength(str: string, pos: number): number {
+	if (pos >= str.length || str.charCodeAt(pos) !== 0x1b) return 0;
 
 	const next = str[pos + 1];
 
 	// CSI sequence: ESC [ ... m/G/K/H/J
 	if (next === "[") {
-		let j = pos + 2;
-		while (j < str.length && !/[mGKHJ]/.test(str[j]!)) j++;
-		if (j < str.length) return { code: str.substring(pos, j + 1), length: j + 1 - pos };
-		return null;
+		for (let j = pos + 2; j < str.length; j++) {
+			const c = str.charCodeAt(j);
+			// m, G, K, H, J
+			if (c === 0x6d || c === 0x47 || c === 0x4b || c === 0x48 || c === 0x4a) return j + 1 - pos;
+		}
+		return 0;
 	}
 
 	// OSC sequence: ESC ] ... BEL or ESC ] ... ST (ESC \)
 	// Used for hyperlinks (OSC 8), window titles, etc.
-	if (next === "]") {
-		let j = pos + 2;
-		while (j < str.length) {
-			if (str[j] === "\x07") return { code: str.substring(pos, j + 1), length: j + 1 - pos };
-			if (str[j] === "\x1b" && str[j + 1] === "\\") return { code: str.substring(pos, j + 2), length: j + 2 - pos };
-			j++;
-		}
-		return null;
-	}
-
 	// APC sequence: ESC _ ... BEL or ESC _ ... ST (ESC \)
 	// Used for cursor marker and application-specific commands
-	if (next === "_") {
-		let j = pos + 2;
-		while (j < str.length) {
-			if (str[j] === "\x07") return { code: str.substring(pos, j + 1), length: j + 1 - pos };
-			if (str[j] === "\x1b" && str[j + 1] === "\\") return { code: str.substring(pos, j + 2), length: j + 2 - pos };
-			j++;
+	if (next === "]" || next === "_") {
+		for (let j = pos + 2; j < str.length; j++) {
+			const c = str.charCodeAt(j);
+			if (c === 0x07) return j + 1 - pos;
+			if (c === 0x1b && str[j + 1] === "\\") return j + 2 - pos;
 		}
-		return null;
+		return 0;
 	}
 
-	return null;
+	return 0;
 }
 
 type Osc8Terminator = "\x07" | "\x1b\\";
@@ -692,6 +737,10 @@ class AnsiCodeTracker {
 		return result;
 	}
 
+	getActiveBackgroundCode(): string {
+		return this.bgColor ? `\x1b[${this.bgColor}m` : "";
+	}
+
 	hasActiveCodes(): boolean {
 		return (
 			this.bold ||
@@ -727,16 +776,28 @@ class AnsiCodeTracker {
 }
 
 function updateTrackerFromText(text: string, tracker: AnsiCodeTracker): void {
-	let i = 0;
-	while (i < text.length) {
-		const ansiResult = extractAnsiCode(text, i);
-		if (ansiResult) {
-			tracker.process(ansiResult.code);
-			i += ansiResult.length;
+	let i = text.indexOf("\x1b");
+	while (i !== -1) {
+		const length = ansiCodeLength(text, i);
+		if (length > 0) {
+			tracker.process(text.substring(i, i + length));
+			i += length;
 		} else {
 			i++;
 		}
+		i = text.indexOf("\x1b", i);
 	}
+}
+
+/** Return only the background color active at the end of an ANSI-styled string. */
+export function getActiveBackgroundAnsi(text: string): string {
+	const tracker = new AnsiCodeTracker();
+	updateTrackerFromText(text, tracker);
+	return tracker.getActiveBackgroundCode();
+}
+
+function* graphemeSegments(text: string): Generator<string> {
+	for (const { segment } of graphemeSegmenter.segment(text)) yield segment;
 }
 
 /**
@@ -767,14 +828,19 @@ function splitIntoTokensWithAnsi(text: string): string[] {
 			continue;
 		}
 
-		let end = i;
-		while (end < text.length && !extractAnsiCode(text, end)) {
-			end++;
+		// Visible text runs up to the next escape sequence.
+		let end = text.indexOf("\x1b", i + 1);
+		while (end !== -1 && ansiCodeLength(text, end) === 0) {
+			end = text.indexOf("\x1b", end + 1);
 		}
+		if (end === -1) end = text.length;
 
-		for (const { segment } of graphemeSegmenter.segment(text.slice(i, end))) {
+		const chunk = text.slice(i, end);
+		// Printable ASCII characters are single graphemes, so skip the segmenter for them.
+		const ascii = isPrintableAscii(chunk);
+		for (const segment of ascii ? chunk : graphemeSegments(chunk)) {
 			const segmentIsSpace = segment === " ";
-			if (!segmentIsSpace && cjkBreakRegex.test(segment)) {
+			if (!ascii && !segmentIsSpace && cjkBreakRegex.test(segment)) {
 				flushCurrent();
 				const token = pendingAnsi + segment;
 				pendingAnsi = "";
@@ -829,6 +895,15 @@ function splitIntoTokensWithAnsi(text: string): string[] {
  * @param width - Maximum visible width per line
  * @returns Array of wrapped lines (NOT padded to width)
  */
+/**
+ * Flatten cached lines. V8 keeps a string built by concatenation as a tree of its parts until something reads it
+ * whole, and a cached line kept as such a tree retains several times its own size. Converting a string to a number
+ * reads it whole, so V8 flattens it in place; the strings' values do not change.
+ */
+export function flattenLines(lines: readonly string[]): void {
+	for (const line of lines) Number(line);
+}
+
 export function wrapTextWithAnsi(text: string, width: number): string[] {
 	if (!text) {
 		return [""];
@@ -1214,8 +1289,11 @@ export function sliceWithWidth(
 	while (i < line.length) {
 		const ansi = extractAnsiCode(line, i);
 		if (ansi) {
-			if (currentCol >= startCol && currentCol < endCol) result += ansi.code;
-			else if (currentCol < startCol) pendingAnsi += ansi.code;
+			if (currentCol >= startCol && currentCol < endCol) {
+				// Keep original order: codes from before the range must precede codes at the boundary
+				result += pendingAnsi + ansi.code;
+				pendingAnsi = "";
+			} else if (currentCol < startCol) pendingAnsi += ansi.code;
 			i += ansi.length;
 			continue;
 		}
@@ -1280,8 +1358,13 @@ export function extractSegments(
 			// Include ANSI codes in their respective segments
 			if (currentCol < beforeEnd) {
 				pendingAnsiBefore += ansi.code;
-			} else if (currentCol >= afterStart && currentCol < afterEnd && afterStarted) {
-				// Only include after we've started "after" (styling already prepended)
+			} else if (
+				currentCol >= afterStart &&
+				currentCol < afterEnd &&
+				(afterStarted || ansi.code.startsWith("\x1b_"))
+			) {
+				// SGR codes are only included after "after" started (styling already prepended). Zero-width APC
+				// markers like CURSOR_MARKER are not tracked styling, so keep them at the boundary too.
 				after += ansi.code;
 			}
 			i += ansi.length;

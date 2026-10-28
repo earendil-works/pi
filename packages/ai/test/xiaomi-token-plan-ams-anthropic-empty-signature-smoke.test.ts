@@ -6,7 +6,7 @@ const provider = "xiaomi-token-plan-ams";
 const apiKey = getEnvApiKey(provider);
 
 const model: Model<"anthropic-messages"> = {
-	id: "mimo-v2.5-pro",
+	id: "mimo-v2.6-pro",
 	name: "MiMo-V2.5-Pro Anthropic smoke",
 	api: "anthropic-messages",
 	provider,

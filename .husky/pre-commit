@@ -16,6 +16,24 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 
+# p2 has its own check (own biome.json, TypeScript 5.9; apps/ is outside the root Biome and tsc configs).
+# apps/ exists only in pi-private.
+if [ -d apps/p2 ]; then
+  for file in $STAGED_FILES; do
+    case "$file" in
+      apps/p2/*|packages/*|package.json|package-lock.json|tsconfig.json|tsconfig.base.json)
+        echo "Checking apps/p2..."
+        npm --prefix apps/p2 run check
+        if [ $? -ne 0 ]; then
+          echo "❌ apps/p2 checks failed."
+          exit 1
+        fi
+        break
+        ;;
+    esac
+  done
+fi
+
 RUN_BROWSER_SMOKE=0
 for file in $STAGED_FILES; do
   case "$file" in

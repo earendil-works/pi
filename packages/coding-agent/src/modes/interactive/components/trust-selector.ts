@@ -107,10 +107,10 @@ export class TrustSelectorComponent extends Container {
 
 			const isSelected = i === this.selectedIndex;
 			const isCurrent = this.isSavedOption(option);
-			const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
+			const currentMarker = isCurrent ? theme.fg("accent", "✓ ") : "  ";
 			const prefix = isSelected ? theme.fg("accent", "→ ") : "  ";
 			const label = isSelected ? theme.fg("accent", option.label) : theme.fg("text", option.label);
-			this.listContainer.addChild(new Text(`${prefix}${label}${checkmark}`, 1, 0));
+			this.listContainer.addChild(new Text(`${prefix}${currentMarker}${label}`, 1, 0));
 		}
 	}
 

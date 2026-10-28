@@ -1,0 +1,16 @@
+language js
+
+// Chat models may omit `type`, so a direct comparison with "chat" misses them.
+or {
+	`$model.type === "chat"`,
+	`$model.type !== "chat"`,
+	`$model.type == "chat"`,
+	`$model.type != "chat"`,
+	`"chat" === $model.type`,
+	`"chat" !== $model.type`
+} as $comparison where {
+	register_diagnostic(
+		span = $comparison,
+		message = "Chat models may omit type. Use isModelType(model, 'chat') or getModelType(model) instead of comparing type to 'chat'."
+	)
+}

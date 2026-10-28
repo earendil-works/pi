@@ -10,7 +10,7 @@ export function detectSupportedImageMimeType(buffer: Uint8Array): string | null 
 	if (startsWith(buffer, PNG_SIGNATURE)) {
 		return isPng(buffer) && !isAnimatedPng(buffer) ? "image/png" : null;
 	}
-	if (startsWithAscii(buffer, 0, "GIF")) {
+	if (startsWithAscii(buffer, 0, "GIF87a") || startsWithAscii(buffer, 0, "GIF89a")) {
 		return "image/gif";
 	}
 	if (startsWithAscii(buffer, 0, "RIFF") && startsWithAscii(buffer, 8, "WEBP")) {

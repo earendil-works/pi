@@ -63,6 +63,13 @@ const SYMBOLS: Readonly<Record<string, string>> = {
 	uplus: "⊎",
 	sqcap: "⊓",
 	sqcup: "⊔",
+	bowtie: "⋈",
+	Join: "⋈",
+	ltimes: "⋉",
+	rtimes: "⋊",
+	leftouterjoin: "⟕",
+	rightouterjoin: "⟖",
+	fullouterjoin: "⟗",
 	triangleleft: "◁",
 	triangleright: "▷",
 	wr: "≀",
@@ -295,12 +302,15 @@ const RELATION_COMMANDS = new Set([
 	"Longleftrightarrow",
 	"Longrightarrow",
 	"Rightarrow",
+	"Join",
 	"Vdash",
 	"Vvdash",
 	"approx",
 	"asymp",
+	"bowtie",
 	"cong",
 	"dashv",
+	"fullouterjoin",
 	"doteq",
 	"downarrow",
 	"equiv",
@@ -321,6 +331,7 @@ const RELATION_COMMANDS = new Set([
 	"leftharpoonup",
 	"leftrightarrow",
 	"leftrightharpoons",
+	"leftouterjoin",
 	"leq",
 	"leqslant",
 	"ll",
@@ -328,6 +339,7 @@ const RELATION_COMMANDS = new Set([
 	"longleftrightarrow",
 	"longmapsto",
 	"longrightarrow",
+	"ltimes",
 	"mapsto",
 	"mid",
 	"models",
@@ -347,8 +359,10 @@ const RELATION_COMMANDS = new Set([
 	"rightharpoondown",
 	"rightharpoonup",
 	"rightleftharpoons",
+	"rightouterjoin",
 	"rightarrow",
 	"rightsquigarrow",
+	"rtimes",
 	"searrow",
 	"sim",
 	"simeq",
@@ -509,6 +523,7 @@ const SPACING_COMMANDS = new Set([
 ]);
 const NEGATIVE_SPACING_COMMANDS = new Set(["!", "negmedspace", "negthickspace", "negthinspace"]);
 const NEGATIVE_SPACE = "\u0000";
+const FONT_SWITCH_COMMANDS = new Set(["bf", "cal", "it", "rm", "sf", "sl", "tt"]);
 const IGNORED_COMMANDS = new Set([
 	"displaystyle",
 	"limits",
@@ -596,10 +611,17 @@ function replaceCharacters(value: string, replacements: Readonly<Record<string, 
 	return result;
 }
 
+function normalizeScriptValue(value: string): string {
+	return value.trim().replace(/\s*([=+-])\s*/g, "$1");
+}
+
+function formatUnicodeScript(value: string, kind: "sub" | "sup"): string | undefined {
+	return replaceCharacters(normalizeScriptValue(value), kind === "sub" ? SUBSCRIPTS : SUPERSCRIPTS);
+}
+
 function formatScript(value: string, kind: "sub" | "sup"): string {
-	value = value.trim();
-	const replacements = kind === "sub" ? SUBSCRIPTS : SUPERSCRIPTS;
-	const unicode = replaceCharacters(value.replace(/\s*([=+-])\s*/g, "$1"), replacements);
+	value = normalizeScriptValue(value);
+	const unicode = formatUnicodeScript(value, kind);
 	if (unicode !== undefined) {
 		return unicode;
 	}
@@ -655,13 +677,19 @@ interface OperatorNode {
 	upper?: string;
 }
 
+interface ScriptNode {
+	type: "script";
+	lower?: string;
+	upper?: string;
+}
+
 interface MatrixNode {
 	type: "matrix";
 	lines: string[];
 	baseline: number;
 }
 
-type LayoutNode = FractionNode | OperatorNode | MatrixNode;
+type LayoutNode = FractionNode | OperatorNode | ScriptNode | MatrixNode;
 
 interface Layout {
 	lines: string[];
@@ -764,6 +792,19 @@ function renderLayout(source: string, nodes: readonly LayoutNode[]): Layout {
 					width: contentWidth + 1,
 					baseline: node.upper === undefined ? 0 : 1,
 				});
+			} else if (node.type === "script") {
+				const upper = node.upper === undefined ? undefined : renderLayout(node.upper, nodes);
+				const lower = node.lower === undefined ? undefined : renderLayout(node.lower, nodes);
+				const width = Math.max(upper?.width ?? 0, lower?.width ?? 0);
+				layouts.push({
+					lines: [
+						...(upper?.lines.map((line) => padLayoutLine(line, width)) ?? []),
+						" ".repeat(width),
+						...(lower?.lines.map((line) => padLayoutLine(line, width)) ?? []),
+					],
+					width,
+					baseline: upper?.lines.length ?? 0,
+				});
 			} else {
 				const width = Math.max(0, ...node.lines.map((line) => visibleWidth(line)));
 				layouts.push({
@@ -801,6 +842,7 @@ class LatexParser {
 	private position = 0;
 	private supported = true;
 	private stackFractions = true;
+	private scriptDepth = 0;
 
 	constructor(source: string, layoutNodes: LayoutNode[], display: boolean) {
 		this.source = source;
@@ -852,7 +894,7 @@ class LatexParser {
 			if (character === "^" || character === "_") {
 				this.position++;
 				result = result.trimEnd();
-				const script = formatScript(this.parseRequiredArgument(false), character === "_" ? "sub" : "sup");
+				const script = this.parseScripts(character);
 				if (result.endsWith(NAMED_OPERATOR_END)) {
 					result = `${result.slice(0, -NAMED_OPERATOR_END.length)}${script}${NAMED_OPERATOR_END}`;
 				} else {
@@ -904,6 +946,64 @@ class LatexParser {
 		return result;
 	}
 
+	private parseScripts(initialMarker: "^" | "_"): string {
+		const scripts: { sub?: string; sup?: string } = {};
+		const order: Array<"sub" | "sup"> = [];
+		const parse = (marker: "^" | "_"): void => {
+			const kind = marker === "_" ? "sub" : "sup";
+			this.scriptDepth++;
+			try {
+				scripts[kind] = this.parseRequiredArgument(false);
+			} finally {
+				this.scriptDepth--;
+			}
+			order.push(kind);
+		};
+
+		parse(initialMarker);
+		let nextPosition = this.position;
+		while (nextPosition < this.source.length && /\s/.test(this.source[nextPosition] ?? "")) {
+			nextPosition++;
+		}
+		const nextMarker = this.source[nextPosition];
+		if ((nextMarker === "^" || nextMarker === "_") && nextMarker !== initialMarker) {
+			this.position = nextPosition + 1;
+			parse(nextMarker);
+		}
+
+		const subUnicode = scripts.sub === undefined ? undefined : formatUnicodeScript(scripts.sub, "sub");
+		const supUnicode = scripts.sup === undefined ? undefined : formatUnicodeScript(scripts.sup, "sup");
+		const canUseLayout = ![scripts.sub, scripts.sup].some(
+			(value) =>
+				value !== undefined &&
+				(value.includes("/") ||
+					(!value.includes(LAYOUT_MARKER_START) && Array.from(value).length > 1 && !/[A-Z*∗]/.test(value))),
+		);
+		const needsLayout =
+			this.display &&
+			canUseLayout &&
+			(this.scriptDepth > 0 ||
+				(scripts.sub !== undefined && subUnicode === undefined) ||
+				(scripts.sup !== undefined && supUnicode === undefined));
+		if (!needsLayout) {
+			return order
+				.map((kind) =>
+					kind === "sub"
+						? (subUnicode ?? formatScript(scripts.sub ?? "", kind))
+						: (supUnicode ?? formatScript(scripts.sup ?? "", kind)),
+				)
+				.join("");
+		}
+
+		const index =
+			this.layoutNodes.push({
+				type: "script",
+				lower: scripts.sub === undefined ? undefined : normalizeOutput(scripts.sub),
+				upper: scripts.sup === undefined ? undefined : normalizeOutput(scripts.sup),
+			}) - 1;
+		return `${LAYOUT_MARKER_START}${index}${LAYOUT_MARKER_END}`;
+	}
+
 	private parseWhitespace(): string {
 		while (this.position < this.source.length && /\s/.test(this.source[this.position] ?? "")) {
 			this.position++;
@@ -946,6 +1046,12 @@ class LatexParser {
 		}
 		if (NEGATIVE_SPACING_COMMANDS.has(command)) {
 			return NEGATIVE_SPACE;
+		}
+		if (FONT_SWITCH_COMMANDS.has(command)) {
+			while (this.position < this.source.length && /\s/.test(this.source[this.position] ?? "")) {
+				this.position++;
+			}
+			return "";
 		}
 		if (IGNORED_COMMANDS.has(command)) {
 			return "";
@@ -1270,18 +1376,7 @@ class LatexParser {
 		}
 
 		if (environment === "cases" || environment === "cases*") {
-			const rows = this.splitEnvironmentRows(body)
-				.map((row) => row.split("&").map((cell) => this.renderNested(cell, false).trim()))
-				.filter((row) => row.some(Boolean));
-			return rows
-				.map((row, index) => {
-					const value = (row[0] ?? "").replace(/,\s*$/, "");
-					const condition = row[1] ?? "";
-					const delimiter = index === 0 ? "⎧" : index === rows.length - 1 ? "⎩" : "⎨";
-					const conditionPrefix = /^(?:if|when|for|otherwise)\b/i.test(condition) ? " " : " if ";
-					return `${delimiter} ${value}${condition ? `${conditionPrefix}${condition}` : ""}`;
-				})
-				.join("\n");
+			return this.renderCases(body);
 		}
 
 		if (
@@ -1293,6 +1388,37 @@ class LatexParser {
 
 		this.supported = false;
 		return body;
+	}
+
+	private renderCases(body: string): string {
+		const rows = this.splitEnvironmentRows(body)
+			.map((row) => row.split("&").map((cell) => this.renderNested(cell, false).trim()))
+			.filter((row) => row.some(Boolean));
+		const valueWidth = Math.max(0, ...rows.map((row) => visibleWidth((row[0] ?? "").replace(/,\s*$/, ""))));
+		const contents = rows.map((row) => {
+			const value = (row[0] ?? "").replace(/,\s*$/, "");
+			const condition = row[1] ?? "";
+			if (!condition) {
+				return value;
+			}
+			const conditionPrefix = /^(?:if|when|for|otherwise)\b/i.test(condition) ? " " : " if ";
+			return `${value}${PROTECTED_SPACE.repeat(valueWidth - visibleWidth(value))}${conditionPrefix}${condition}`;
+		});
+		if (contents.length <= 1) {
+			return contents.length === 0 ? "" : `⎧ ${contents[0]}`;
+		}
+
+		const middle = Math.floor(contents.length / 2);
+		const visualRows: Array<string | undefined> = [...contents];
+		if (contents.length % 2 === 0) {
+			visualRows.splice(middle, 0, undefined);
+		}
+		const lines = visualRows.map((content, index) => {
+			const delimiter = index === 0 ? "⎧" : index === visualRows.length - 1 ? "⎩" : "⎨";
+			return content === undefined ? delimiter : `${delimiter} ${content}`;
+		});
+		const index = this.layoutNodes.push({ type: "matrix", lines, baseline: middle }) - 1;
+		return `${LAYOUT_MARKER_START}${index}${LAYOUT_MARKER_END}`;
 	}
 
 	private renderMatrix(environment: string, body: string): string {

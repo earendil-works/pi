@@ -197,8 +197,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		};
 	});
 
-	// Inject plan/execution context before agent starts
-	pi.on("before_agent_start", async () => {
+	// Inject plan/execution context before a user prompt. Runs started by custom messages, such as
+	// background task notifications, skip it: the context from the last prompt is still in the
+	// conversation, and adding it again on every notification would only repeat it.
+	pi.on("before_agent_start", async (event) => {
+		if (event.messageType !== "user") return;
+
 		if (planModeEnabled) {
 			return {
 				message: {

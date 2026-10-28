@@ -1,47 +1,61 @@
+import { clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
-	Context,
 	Model,
+	ModelThinkingLevel,
+	SamplingParams,
 	SimpleStreamOptions,
 	StreamOptions,
 	ThinkingBudgets,
 	ThinkingLevel,
+	TranscriptContext,
 } from "../types.ts";
 import { estimateContextTokens } from "../utils/estimate.ts";
 
 const CONTEXT_SAFETY_TOKENS = 4096;
 const MIN_MAX_TOKENS = 1;
 
-export function clampMaxTokensToContext(model: Model<Api>, context: Context, maxTokens: number): number {
+export function clampMaxTokensToContext(model: Model<Api>, context: TranscriptContext, maxTokens: number): number {
 	if (model.contextWindow <= 0) return Math.max(MIN_MAX_TOKENS, maxTokens);
 	const available = model.contextWindow - estimateContextTokens(context).tokens - CONTEXT_SAFETY_TOKENS;
 	return Math.min(maxTokens, Math.max(MIN_MAX_TOKENS, available));
 }
 
+export function resolveSamplingParams(
+	model: Model<Api>,
+	thinkingLevel: ModelThinkingLevel,
+	requestParams?: SamplingParams,
+): SamplingParams | undefined {
+	const effectiveThinkingLevel = clampThinkingLevel(model, thinkingLevel);
+	const thinkingLevelParams = model.samplingParamsByThinkingLevel?.[effectiveThinkingLevel];
+	return model.samplingParams || thinkingLevelParams || requestParams
+		? { ...model.samplingParams, ...thinkingLevelParams, ...requestParams }
+		: undefined;
+}
+
 export function buildBaseOptions(
 	model: Model<Api>,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 	apiKey?: string,
 ): StreamOptions {
-	const samplingParams =
-		model.samplingParams || options?.samplingParams
-			? { ...model.samplingParams, ...options?.samplingParams }
-			: undefined;
+	const samplingParams = resolveSamplingParams(model, options?.reasoning ?? "off", options?.samplingParams);
 	return {
 		temperature: options?.temperature,
 		samplingParams,
 		maxTokens: clampMaxTokensToContext(model, context, options?.maxTokens ?? model.maxTokens),
 		signal: options?.signal,
-		telemetryContext: options?.telemetryContext,
+		telemetry: options?.telemetry,
 		apiKey: apiKey || options?.apiKey,
 		fetch: options?.fetch,
 		transport: options?.transport,
 		cacheRetention: options?.cacheRetention,
 		sessionId: options?.sessionId,
 		headers: options?.headers,
+		identity: options?.identity,
 		onPayload: options?.onPayload,
 		onResponse: options?.onResponse,
+		onProviderStreamEvent: options?.onProviderStreamEvent,
 		timeoutMs: options?.timeoutMs,
 		websocketConnectTimeoutMs: options?.websocketConnectTimeoutMs,
 		maxRetries: options?.maxRetries,

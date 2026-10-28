@@ -2,7 +2,13 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/huggingface.json" with { type: "json" };
-import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
+import { flattenChatModelCatalog, flattenClassifierModelCatalog, flattenImageModelCatalog, type ChatModelCatalog, type ClassifierModelCatalog, type ImageModelCatalog } from "../model-catalog.ts";
 
-export const HUGGINGFACE_MODELS: ModelCatalog<typeof values, "huggingface"> =
-	flattenModelCatalog("huggingface", values);
+export const HUGGINGFACE_MODELS: ChatModelCatalog<typeof values, "huggingface"> =
+	flattenChatModelCatalog("huggingface", values);
+
+export const HUGGINGFACE_IMAGE_MODELS: ImageModelCatalog<typeof values, "huggingface"> =
+	flattenImageModelCatalog("huggingface", values);
+
+export const HUGGINGFACE_CLASSIFIER_MODELS: ClassifierModelCatalog<typeof values, "huggingface"> =
+	flattenClassifierModelCatalog("huggingface", values);

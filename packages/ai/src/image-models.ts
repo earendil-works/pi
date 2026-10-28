@@ -1,42 +1,50 @@
-import { IMAGE_MODELS } from "./image-models.generated.ts";
-import type { ImagesApi, ImagesModel, KnownImagesProvider } from "./types.ts";
+import { IMAGE_MODELS } from "./models.generated.ts";
+import type { ImageApi, ImageModel } from "./types.ts";
 
-const imageModelRegistry: Map<string, Map<string, ImagesModel<ImagesApi>>> = new Map();
+/**
+ * Compat reads of the generated catalog restricted to image models. New code
+ * uses `Models.getModelOfType("image", ...)` or `getBuiltinImageModel()` from `providers/all`.
+ */
 
+type Catalog = typeof IMAGE_MODELS;
+type ImageModelIds<TProvider extends keyof Catalog> = keyof Catalog[TProvider];
+
+/** Built-in providers with at least one image model in the generated catalog. */
+export type BuiltinImageProvider = {
+	[TProvider in keyof Catalog]: [ImageModelIds<TProvider>] extends [never] ? never : TProvider;
+}[keyof Catalog];
+
+type BuiltinImageModel<
+	TProvider extends BuiltinImageProvider,
+	TModelId extends ImageModelIds<TProvider>,
+> = Catalog[TProvider][TModelId] extends ImageModel<infer TApi extends ImageApi> ? ImageModel<TApi> : never;
+
+const imageModelsByProvider = new Map<string, Map<string, ImageModel<ImageApi>>>();
 for (const [provider, models] of Object.entries(IMAGE_MODELS)) {
-	const providerModels = new Map<string, ImagesModel<ImagesApi>>();
-	for (const [id, model] of Object.entries(models)) {
-		providerModels.set(id, model as ImagesModel<ImagesApi>);
+	const imageModels = new Map<string, ImageModel<ImageApi>>();
+	for (const model of Object.values(models as Record<string, ImageModel<ImageApi>>)) {
+		imageModels.set(model.id, model);
 	}
-	imageModelRegistry.set(provider, providerModels);
+	if (imageModels.size > 0) imageModelsByProvider.set(provider, imageModels);
 }
 
-type ImageModelApi<
-	TProvider extends KnownImagesProvider,
-	TModelId extends keyof (typeof IMAGE_MODELS)[TProvider],
-> = (typeof IMAGE_MODELS)[TProvider][TModelId] extends { api: infer TApi }
-	? TApi extends ImagesApi
-		? TApi
-		: never
-	: never;
-
-export function getImageModel<
-	TProvider extends KnownImagesProvider,
-	TModelId extends keyof (typeof IMAGE_MODELS)[TProvider],
->(provider: TProvider, modelId: TModelId): ImagesModel<ImageModelApi<TProvider, TModelId>> {
-	const providerModels = imageModelRegistry.get(provider);
-	return providerModels?.get(modelId as string) as ImagesModel<ImageModelApi<TProvider, TModelId>>;
-}
-
-export function getImageProviders(): KnownImagesProvider[] {
-	return Array.from(imageModelRegistry.keys()) as KnownImagesProvider[];
-}
-
-export function getImageModels<TProvider extends KnownImagesProvider>(
+/** @deprecated Static catalog read. Use `getBuiltinImageModel` from "@earendil-works/pi-ai/providers/all" or `Models.getModelOfType("image", ...)`. */
+export function getImageModel<TProvider extends BuiltinImageProvider, TModelId extends ImageModelIds<TProvider>>(
 	provider: TProvider,
-): ImagesModel<ImageModelApi<TProvider, keyof (typeof IMAGE_MODELS)[TProvider]>>[] {
-	const models = imageModelRegistry.get(provider);
-	return models
-		? (Array.from(models.values()) as ImagesModel<ImageModelApi<TProvider, keyof (typeof IMAGE_MODELS)[TProvider]>>[])
-		: [];
+	modelId: TModelId,
+): BuiltinImageModel<TProvider, TModelId> {
+	return imageModelsByProvider.get(provider)?.get(modelId as string) as BuiltinImageModel<TProvider, TModelId>;
+}
+
+/** @deprecated Static catalog read. Use `Models.getProviders()`. */
+export function getImageProviders(): BuiltinImageProvider[] {
+	return Array.from(imageModelsByProvider.keys()) as BuiltinImageProvider[];
+}
+
+/** @deprecated Static catalog read. Use `getBuiltinImageModels` from "@earendil-works/pi-ai/providers/all" or `Models.getModelsOfType("image")`. */
+export function getImageModels<TProvider extends BuiltinImageProvider>(
+	provider: TProvider,
+): BuiltinImageModel<TProvider, ImageModelIds<TProvider>>[] {
+	const models = imageModelsByProvider.get(provider);
+	return models ? (Array.from(models.values()) as BuiltinImageModel<TProvider, ImageModelIds<TProvider>>[]) : [];
 }

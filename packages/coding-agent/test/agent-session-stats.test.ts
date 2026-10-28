@@ -208,6 +208,39 @@ describe("AgentSession.getSessionStats", () => {
 		}
 	});
 
+	it("includes cache-warming usage exactly once without adding messages", async () => {
+		const { session, sessionManager } = await createSession();
+
+		try {
+			sessionManager.appendUsage(
+				"cache_warm",
+				"anthropic",
+				model.id,
+				{
+					input: 2,
+					output: 1,
+					cacheRead: 97,
+					cacheWrite: 0,
+					totalTokens: 100,
+					cost: { input: 0.001, output: 0.002, cacheRead: 0.007, cacheWrite: 0, total: 0.01 },
+				},
+				"extension override",
+			);
+
+			const [entry] = sessionManager.getEntries();
+			expect(entry).toMatchObject({ type: "usage", kind: "cache_warm", note: "extension override" });
+			const stats = session.getSessionStats();
+			expect(stats.tokens).toEqual({ input: 2, output: 1, cacheRead: 97, cacheWrite: 0, total: 100 });
+			expect(stats.totalMessages).toBe(0);
+			expect(sessionManager.buildSessionContext().messages).toEqual([]);
+			expect(getUsageCostBreakdown(sessionManager.getEntries())).toEqual([
+				{ key: `anthropic/${model.id}`, cost: 0.01, tokens: 100 },
+			]);
+		} finally {
+			session.dispose();
+		}
+	});
+
 	it("includes tool result usage in session totals", async () => {
 		const { session, sessionManager } = await createSession();
 

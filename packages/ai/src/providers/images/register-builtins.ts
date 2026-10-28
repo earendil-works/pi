@@ -1,6 +1,13 @@
 import type { generateImages as generateImagesOpenRouterFunction } from "../../api/openrouter-images.ts";
 import { registerImagesApiProvider } from "../../images-api-registry.ts";
-import type { AssistantImages, ImagesContext, ImagesFunction, ImagesModel, ImagesOptions } from "../../types.ts";
+import type {
+	AssistantImages,
+	ImageApi,
+	ImageModel,
+	ImagesContext,
+	ImagesFunction,
+	ImagesOptions,
+} from "../../types.ts";
 
 interface OpenRouterImagesProviderModule {
 	generateImages: typeof generateImagesOpenRouterFunction;
@@ -8,7 +15,7 @@ interface OpenRouterImagesProviderModule {
 
 let openRouterImagesProviderModulePromise: Promise<OpenRouterImagesProviderModule> | undefined;
 
-function createLazyLoadErrorImages(model: ImagesModel<"openrouter-images">, error: unknown): AssistantImages {
+function createLazyLoadErrorImages(model: ImageModel<ImageApi>, error: unknown): AssistantImages {
 	return {
 		api: model.api,
 		provider: model.provider,
@@ -27,8 +34,8 @@ function loadOpenRouterImagesProviderModule(): Promise<OpenRouterImagesProviderM
 	return openRouterImagesProviderModulePromise;
 }
 
-export const generateImagesOpenRouter: ImagesFunction<"openrouter-images", ImagesOptions> = async (
-	model: ImagesModel<"openrouter-images">,
+export const generateImagesOpenRouter: ImagesFunction<ImagesOptions> = async (
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: ImagesOptions,
 ) => {

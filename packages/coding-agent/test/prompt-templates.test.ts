@@ -8,7 +8,7 @@
  * - Edge cases and integration between parsing and substitution
  */
 
-import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterAll, describe, expect, test } from "vitest";
@@ -383,8 +383,10 @@ describe("parseCommandArgs", () => {
 	});
 
 	test("should handle quoted empty string", () => {
-		// Note: Empty quotes are skipped by current implementation
-		expect(parseCommandArgs('"" " "')).toEqual([" "]);
+		// Empty quotes keep their position as an empty argument (#10867)
+		expect(parseCommandArgs('"" " "')).toEqual(["", " "]);
+		expect(parseCommandArgs("a '' c")).toEqual(["a", "", "c"]);
+		expect(parseCommandArgs('a ""')).toEqual(["a", ""]);
 	});
 
 	test("should handle arguments with special characters", () => {
@@ -433,6 +435,24 @@ describe("parseCommandArgs", () => {
 // ============================================================================
 
 describe("expandPromptTemplate", () => {
+	// #10867
+	test("should use positional default for empty quoted argument without shifting later args", () => {
+		const template = {
+			name: "review",
+			description: "test",
+			content: `Review $2. Focus: \${1:-correctness}.`,
+			sourceInfo: { path: "/tmp/review.md", source: "local", scope: "temporary", origin: "top-level" } as const,
+			filePath: "/tmp/review.md",
+		};
+
+		expect(expandPromptTemplate('/review "" src/index.ts', [template])).toBe(
+			"Review src/index.ts. Focus: correctness.",
+		);
+		expect(expandPromptTemplate("/review '' src/index.ts", [template])).toBe(
+			"Review src/index.ts. Focus: correctness.",
+		);
+	});
+
 	test("should split template arguments on unquoted newlines", () => {
 		const result = expandPromptTemplate("/arg-test label-2\n\nHere is some description #2.", [
 			{
@@ -515,7 +535,7 @@ argument-hint: "<PR-URL>"
 You are given one or more GitHub PR URLs: $@`,
 		);
 
-		const templates = loadPromptTemplates({
+		const { templates } = loadPromptTemplates({
 			cwd: process.cwd(),
 			agentDir: getAgentDir(),
 			promptPaths: [testDir],
@@ -538,7 +558,7 @@ argument-hint: "[instructions]"
 Wrap it. Additional instructions: $ARGUMENTS`,
 		);
 
-		const templates = loadPromptTemplates({
+		const { templates } = loadPromptTemplates({
 			cwd: process.cwd(),
 			agentDir: getAgentDir(),
 			promptPaths: [testDir],
@@ -560,7 +580,7 @@ description: Audit changelog entries before release
 Audit changelog entries for all commits since the last release.`,
 		);
 
-		const templates = loadPromptTemplates({
+		const { templates } = loadPromptTemplates({
 			cwd: process.cwd(),
 			agentDir: getAgentDir(),
 			promptPaths: [testDir],
@@ -582,7 +602,7 @@ argument-hint: ""
 Do something`,
 		);
 
-		const templates = loadPromptTemplates({
+		const { templates } = loadPromptTemplates({
 			cwd: process.cwd(),
 			agentDir: getAgentDir(),
 			promptPaths: [testDir],
@@ -604,7 +624,7 @@ argument-hint: "<issue>"
 Analyze GitHub issue(s): $ARGUMENTS`,
 		);
 
-		const templates = loadPromptTemplates({
+		const { templates } = loadPromptTemplates({
 			cwd: process.cwd(),
 			agentDir: getAgentDir(),
 			promptPaths: [testDir],
@@ -620,5 +640,35 @@ Analyze GitHub issue(s): $ARGUMENTS`,
 		try {
 			rmSync(testDir, { recursive: true, force: true });
 		} catch {}
+	});
+});
+
+describe("loadPromptTemplates - diagnostics", () => {
+	// Regression test for #9354.
+	test("reports invalid YAML frontmatter and keeps valid siblings", () => {
+		const testDir = mkdtempSync(join(tmpdir(), "pi-test-prompts-invalid-"));
+		const invalidPromptPath = join(testDir, "invalid.md");
+		try {
+			writeFileSync(invalidPromptPath, "---\ndescription: Broken: unquoted colon\n---\nDo something.\n");
+			writeFileSync(join(testDir, "valid.md"), "Valid prompt content.");
+
+			const { templates, diagnostics } = loadPromptTemplates({
+				cwd: process.cwd(),
+				agentDir: getAgentDir(),
+				promptPaths: [testDir],
+				includeDefaults: false,
+			});
+
+			expect(templates.map((template) => template.name)).toEqual(["valid"]);
+			expect(diagnostics).toEqual([
+				expect.objectContaining({
+					type: "warning",
+					path: invalidPromptPath,
+					message: expect.stringContaining("line 1, column 14"),
+				}),
+			]);
+		} finally {
+			rmSync(testDir, { recursive: true, force: true });
+		}
 	});
 });

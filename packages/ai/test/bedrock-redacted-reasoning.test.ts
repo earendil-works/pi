@@ -63,6 +63,7 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
 import type { Context, Message, Model, ThinkingContent } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const gptModel: Model<"bedrock-converse-stream"> = {
 	id: "global.openai.gpt-5.6-terra",
@@ -103,13 +104,15 @@ function redactedReasoningEvents(): unknown[] {
 	];
 }
 
+const helloContext = normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: Date.now() }] });
+
 interface BedrockRequestPayload {
 	messages: Array<{ role: string; content: Array<Record<string, unknown>> }>;
 }
 
 async function capturePayload(context: Context): Promise<BedrockRequestPayload> {
 	let capturedPayload: BedrockRequestPayload | undefined;
-	const s = streamBedrock(gptModel, context, {
+	const s = streamBedrock(gptModel, normalizeContext(context), {
 		cacheRetention: "none",
 		signal: AbortSignal.abort(),
 		onPayload: (payload) => {
@@ -134,9 +137,7 @@ describe("Bedrock redacted reasoning", () => {
 	it("does not fail the stream when reasoning arrives as redactedContent", async () => {
 		bedrockMock.streamEvents = redactedReasoningEvents();
 
-		const response = await streamBedrock(gptModel, {
-			messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
-		}).result();
+		const response = await streamBedrock(gptModel, helloContext).result();
 
 		expect(response.stopReason, response.errorMessage).not.toBe("error");
 		// Reasoning precedes the answer, matching the order Bedrock streamed it.
@@ -147,9 +148,7 @@ describe("Bedrock redacted reasoning", () => {
 	it("preserves the encrypted reasoning payload on the assistant message", async () => {
 		bedrockMock.streamEvents = redactedReasoningEvents();
 
-		const response = await streamBedrock(gptModel, {
-			messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
-		}).result();
+		const response = await streamBedrock(gptModel, helloContext).result();
 
 		const thinking = response.content.find((c): c is ThinkingContent => c.type === "thinking");
 		expect(thinking).toBeDefined();
@@ -174,9 +173,7 @@ describe("Bedrock redacted reasoning", () => {
 			{ messageStop: { stopReason: "end_turn" } },
 		];
 
-		const response = await streamBedrock(gptModel, {
-			messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
-		}).result();
+		const response = await streamBedrock(gptModel, helloContext).result();
 
 		const thinking = response.content.find((c): c is ThinkingContent => c.type === "thinking");
 		expect(thinking?.thinkingSignature).toBe(bedrockMock.redactedBase64);
@@ -195,9 +192,7 @@ describe("Bedrock redacted reasoning", () => {
 			{ messageStop: { stopReason: "end_turn" } },
 		];
 
-		const response = await streamBedrock(gptModel, {
-			messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
-		}).result();
+		const response = await streamBedrock(gptModel, helloContext).result();
 
 		const thinking = response.content.find((c): c is ThinkingContent => c.type === "thinking");
 		expect(thinking?.thinkingSignature).toBe(bedrockMock.redactedBase64);

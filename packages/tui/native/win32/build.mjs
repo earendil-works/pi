@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const sourceFile = path.join(scriptDir, "src", "win32-console-mode.c");
+const sourceFile = path.join(scriptDir, "src", "win32-platform.c");
 const temporaryDir = mkdtempSync(path.join(tmpdir(), "pi-tui-win32-"));
 
 const targets = [
@@ -121,7 +121,7 @@ function resolveMingwCompiler(target) {
 function installOutput(temporaryOutput, target) {
 	const outputDir = path.join(scriptDir, "prebuilds", `win32-${target.arch}`);
 	mkdirSync(outputDir, { recursive: true });
-	const output = path.join(outputDir, "win32-console-mode.node");
+	const output = path.join(outputDir, "win32-platform.node");
 	copyFileSync(temporaryOutput, output);
 	chmodSync(output, 0o755);
 	console.log(`Built ${path.relative(process.cwd(), output)}`);
@@ -129,7 +129,7 @@ function installOutput(temporaryOutput, target) {
 
 function buildWithMsvc(target, vsDevCmd) {
 	const buildDir = path.join(temporaryDir, `msvc-${target.arch}`);
-	const temporaryOutput = path.join(buildDir, "win32-console-mode.node");
+	const temporaryOutput = path.join(buildDir, "win32-platform.node");
 	mkdirSync(buildDir, { recursive: true });
 
 	const batchFile = path.join(buildDir, "build.cmd");
@@ -154,6 +154,7 @@ function buildWithMsvc(target, vsDevCmd) {
 				"/NOENTRY",
 				"/NODEFAULTLIB",
 				"kernel32.lib",
+				"user32.lib",
 				"/OPT:REF",
 				"/OPT:ICF",
 			].join(" "),
@@ -174,7 +175,7 @@ function buildWithMingw(target) {
 	}
 
 	const buildDir = path.join(temporaryDir, `mingw-${target.arch}`);
-	const temporaryOutput = path.join(buildDir, "win32-console-mode.node");
+	const temporaryOutput = path.join(buildDir, "win32-platform.node");
 	mkdirSync(buildDir, { recursive: true });
 
 	const args = [
@@ -183,12 +184,14 @@ function buildWithMingw(target) {
 		"-Wall",
 		"-Wextra",
 		"-Oz",
+		"-fno-builtin",
 		"-shared",
 		"-nostdlib",
 		"-Wl,--no-entry",
 		"-Wl,--strip-all",
 		sourceFile,
 		"-lkernel32",
+		"-luser32",
 		"-o",
 		temporaryOutput,
 	];

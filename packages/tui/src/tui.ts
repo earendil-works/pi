@@ -2,17 +2,15 @@
  * Minimal TUI implementation with differential rendering
  */
 
-import * as os from "node:os";
-import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.ts";
 import type { Terminal } from "./terminal.ts";
 import {
-	isOsc11BackgroundColorResponse,
-	parseOsc11BackgroundColor,
+	parseOscColorResponse,
 	parseTerminalColorSchemeReport,
 	type RgbColor,
 	type TerminalColorScheme,
+	type TerminalColors,
 } from "./terminal-colors.ts";
 import { getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.ts";
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
@@ -20,6 +18,102 @@ import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth
 /**
  * Component interface - all components must implement this
  */
+export type TuiMouseEventType = "press" | "release" | "move" | "drag" | "click" | "wheel";
+export type TuiMouseButton = "left" | "middle" | "right" | "none";
+
+/** Normalized cell-based mouse event. Coordinates are zero-based. */
+export interface TuiMouseEvent {
+	type: TuiMouseEventType;
+	button: TuiMouseButton;
+	/** Coordinates local to the receiving component. */
+	x: number;
+	y: number;
+	/** Absolute terminal coordinates. */
+	screenX: number;
+	screenY: number;
+	/** Current component bounds. */
+	width: number;
+	height: number;
+	shift: boolean;
+	alt: boolean;
+	ctrl: boolean;
+	/** Logical lines. Negative values scroll up. */
+	wheelDelta?: number;
+	/** Consecutive click count when type is click. */
+	clickCount?: number;
+}
+
+export interface TuiMouseEventResult {
+	/** Stop propagation and suppress renderer-level fallback behavior. */
+	handled?: boolean;
+	/** Route subsequent drag/release events to this component. Implies handled. */
+	capture?: boolean;
+	/** Give keyboard focus to this component. Implies handled. */
+	focus?: boolean;
+	/**
+	 * Explicitly request or suppress a render. Move and release default to false;
+	 * press, click, drag, and wheel default to true.
+	 */
+	render?: boolean;
+}
+
+/** Internal target metadata used by containers and alternate-screen dispatch. */
+export interface TuiMouseDispatchTarget {
+	component: Component;
+	originX: number;
+	originY: number;
+	width: number;
+	height: number;
+}
+
+/** Result of dispatching to a concrete component. */
+export interface TuiMouseDispatchResult extends TuiMouseEventResult {
+	handled: true;
+	target: TuiMouseDispatchTarget;
+	/** Keyboard focus target, which may be a delegating parent container. */
+	focusTarget?: Component;
+}
+
+/**
+ * Dispatch an event to a component and retain the exact target and coordinate
+ * transform. Containers use this when forwarding events to nested children.
+ */
+export function dispatchMouseEvent(component: Component, event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+	const result = component.handleMouse?.(event);
+	if (!result) return undefined;
+	if ("target" in result) {
+		// The component forwarded the event to a child it hosts. Like a delegating container, it routes
+		// keys to that child itself, so it keeps keyboard focus. Focusing the child directly would leave
+		// focus on a detached component once the host removes it, e.g. a closed settings submenu.
+		const forwarded = result as TuiMouseDispatchResult;
+		return forwarded.focus && component.handleInput ? { ...forwarded, focusTarget: component } : forwarded;
+	}
+	if (!result.handled && !result.capture && !result.focus) return undefined;
+	return {
+		...result,
+		handled: true,
+		...(result.focus ? { focusTarget: component } : {}),
+		target: {
+			component,
+			originX: event.screenX - event.x,
+			originY: event.screenY - event.y,
+			width: event.width,
+			height: event.height,
+		},
+	};
+}
+
+/** Recreate local coordinates for a previously dispatched mouse target. */
+export function retargetMouseEvent(event: TuiMouseEvent, target: TuiMouseDispatchTarget): TuiMouseEvent {
+	return {
+		...event,
+		x: event.screenX - target.originX,
+		y: event.screenY - target.originY,
+		width: target.width,
+		height: target.height,
+	};
+}
+
 export interface Component {
 	/**
 	 * Render the component to lines for the given viewport width
@@ -28,10 +122,11 @@ export interface Component {
 	 */
 	render(width: number): string[];
 
-	/**
-	 * Optional handler for keyboard input when component has focus
-	 */
+	/** Optional handler for keyboard input when component has focus. */
 	handleInput?(data: string): void;
+
+	/** Optional normalized mouse handler. */
+	handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
 
 	/**
 	 * If true, component receives key release events (Kitty protocol).
@@ -48,11 +143,33 @@ export interface Component {
 
 export type TuiInputListenerResult = { consume?: boolean; data?: string } | undefined;
 export type TuiInputListener = (data: string) => TuiInputListenerResult;
-type PendingOsc11BackgroundQuery = {
-	settled: boolean;
-	resolve: ((rgb: RgbColor | undefined) => void) | undefined;
+type PendingTerminalColorQuery = {
+	foreground?: RgbColor;
+	background?: RgbColor;
+	palette: Array<RgbColor | undefined>;
+	/** Targets that already replied, so duplicates do not count twice. */
+	replied: Set<string>;
+	/**
+	 * Receives the result: the promise's resolve until the timeout, then `onLateReply`. Unset once the
+	 * query completed (on the DA1 reply or once every color replied); later replies are ignored.
+	 */
+	deliver: ((colors: TerminalColors) => void) | undefined;
 	timer: NodeJS.Timeout | undefined;
 };
+
+const TERMINAL_PALETTE_SIZE = 16;
+/** OSC 10 and 11 plus OSC 4 for every palette color. */
+const TERMINAL_COLOR_REPLY_COUNT = 2 + TERMINAL_PALETTE_SIZE;
+/**
+ * Default colors, palette colors 0-15, and a trailing primary device attributes (DA1) request.
+ * Every terminal answers DA1 and terminals answer in order, so the DA1 reply marks the end of
+ * the color replies, including for terminals that ignore the color queries.
+ */
+const TERMINAL_COLOR_QUERY = `\x1b]10;?\x07\x1b]11;?\x07${Array.from(
+	{ length: TERMINAL_PALETTE_SIZE },
+	(_, index) => `\x1b]4;${index};?\x07`,
+).join("")}\x1b[c`;
+const DEVICE_ATTRIBUTES_RESPONSE_PATTERN = /^\x1b\[\?[\d;]*c$/;
 
 /**
  * Interface for components that can receive focus and display a hardware cursor.
@@ -77,6 +194,17 @@ export function isFocusable(component: Component | null): component is Component
  * TUI finds and strips this marker, then positions the hardware cursor there.
  */
 export const CURSOR_MARKER = "\x1b_pi:c\x07";
+
+/** Fake cursor markers - zero-width APC sequences around the text drawn as the cursor. See resolveFakeCursors(). */
+export const FAKE_CURSOR_START = "\x1b_pi:fc\x07";
+export const FAKE_CURSOR_END = "\x1b_pi:/fc\x07";
+// CURSOR_MARKER + FAKE_CURSOR_START + text + FAKE_CURSOR_END. Truncating the line right after the cursor cell drops the end.
+const FOCUSED_FAKE_CURSOR = /(\x1b_pi:c\x07)\x1b_pi:fc\x07(.*?)(?:\x1b_pi:\/fc\x07|$)/s;
+
+/** Wrap text in fake cursor markers. */
+export function renderFakeCursor(text: string): string {
+	return `${FAKE_CURSOR_START}${text}${FAKE_CURSOR_END}`;
+}
 
 export { visibleWidth };
 
@@ -167,6 +295,14 @@ export interface OverlayUnfocusOptions {
 	target: Component | null;
 }
 
+/** Last rendered terminal-relative overlay rectangle. */
+export interface OverlayBounds {
+	row: number;
+	col: number;
+	width: number;
+	height: number;
+}
+
 /**
  * Handle returned by showOverlay for controlling the overlay
  */
@@ -183,6 +319,8 @@ export interface OverlayHandle {
 	unfocus(options?: OverlayUnfocusOptions): void;
 	/** Check if this overlay currently has focus */
 	isFocused(): boolean;
+	/** Get the most recent rendered bounds for a visible overlay. */
+	getBounds(): OverlayBounds | undefined;
 }
 
 type OverlayStackEntry = {
@@ -191,6 +329,15 @@ type OverlayStackEntry = {
 	preFocus: Component | null;
 	hidden: boolean;
 	focusOrder: number;
+	bounds?: OverlayBounds;
+};
+
+type RenderedOverlayLayout = {
+	entry: OverlayStackEntry;
+	row: number;
+	col: number;
+	width: number;
+	height: number;
 };
 
 type OverlayBlockedFocusResume = { status: "restore-overlay" } | { status: "focus-target"; target: Component | null };
@@ -210,6 +357,7 @@ type OverlayFocusRestorePolicy = "clear" | "preserve";
  */
 export class Container implements Component {
 	children: Component[] = [];
+	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
 
 	addChild(component: Component): void {
 		this.children.push(component);
@@ -232,14 +380,39 @@ export class Container implements Component {
 		}
 	}
 
+	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+		if (event.y < 0 || event.y >= event.height) return undefined;
+		const mouseChildren =
+			this.mouseLayout?.width === event.width
+				? this.mouseLayout.children
+				: this.children.map((component) => ({ component, height: component.render(event.width).length }));
+		let childY = 0;
+		for (const { component: child, height: childHeight } of mouseChildren) {
+			if (event.y >= childY && event.y < childY + childHeight) {
+				const result = dispatchMouseEvent(child, {
+					...event,
+					y: event.y - childY,
+					height: childHeight,
+				});
+				if (result?.focus && (this as Component).handleInput) return { ...result, focusTarget: this };
+				return result;
+			}
+			childY += childHeight;
+		}
+		return undefined;
+	}
+
 	render(width: number): string[] {
 		const lines: string[] = [];
+		const mouseChildren: Array<{ component: Component; height: number }> = [];
 		for (const child of this.children) {
 			const childLines = child.render(width);
+			mouseChildren.push({ component: child, height: childLines.length });
 			for (const line of childLines) {
 				lines.push(line);
 			}
 		}
+		this.mouseLayout = { width, children: mouseChildren };
 		return lines;
 	}
 }
@@ -313,8 +486,10 @@ export interface TUI extends Component {
 	removeInputListener(listener: TuiInputListener): void;
 	onTerminalColorSchemeChange(listener: (scheme: TerminalColorScheme) => void): () => void;
 	setTerminalColorSchemeNotifications(enabled: boolean): void;
-	queryTerminalBackgroundColor(options: { timeoutMs: number }): Promise<RgbColor | undefined>;
-	queryTerminalColorScheme(options: { timeoutMs: number }): Promise<TerminalColorScheme | undefined>;
+	queryTerminalColors(options: {
+		timeoutMs: number;
+		onLateReply?: (colors: TerminalColors) => void;
+	}): Promise<TerminalColors>;
 }
 
 export const VIEWPORT_TUI = Symbol.for("@earendil-works/pi-tui/viewport");
@@ -341,19 +516,24 @@ export abstract class TuiBase extends Container implements TUI {
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
-	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
-	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1";
+	private showHardwareCursor = false;
+	private clearOnShrink = false;
 	protected fullRedrawCount = 0;
 	protected stopped = false;
-	private pendingOsc11BackgroundReplies = 0;
-	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
+	/**
+	 * Color queries waiting for their DA1 reply, oldest first. Terminals answer in order, so color
+	 * replies belong to the oldest one. Queries stay here after a timeout to collect late replies.
+	 */
+	private pendingTerminalColorQueries: PendingTerminalColorQuery[] = [];
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
-	protected readonly logDirectory: string;
+	/** Directory for debug/crash logs. When undefined, debug logging is disabled and crash dumps fall back to the OS temp directory. */
+	protected readonly logDirectory: string | undefined;
 
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
 	private overlayStack: OverlayStackEntry[] = [];
+	private renderedOverlayLayouts: RenderedOverlayLayout[] = [];
 
 	get hasOverlayEntries(): boolean {
 		return this.overlayStack.length > 0;
@@ -363,7 +543,7 @@ export abstract class TuiBase extends Container implements TUI {
 	constructor(terminal: Terminal, showHardwareCursor?: boolean, logDirectory?: string) {
 		super();
 		this.terminal = terminal;
-		this.logDirectory = logDirectory ?? process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
+		this.logDirectory = logDirectory;
 		if (showHardwareCursor !== undefined) {
 			this.showHardwareCursor = showHardwareCursor;
 		}
@@ -381,6 +561,29 @@ export abstract class TuiBase extends Container implements TUI {
 
 	protected afterTerminalStop(_options: TuiStopOptions): void {}
 
+	/** Mode resets written before the terminal's own resets when the process exits without stop(). */
+	protected getExitRestorePrefix(): string {
+		return `${this.terminalColorSchemeNotificationsEnabled ? "\x1b[?2031l" : ""}\x1b[?25h`;
+	}
+
+	/** Mode resets written after the terminal's own resets when the process exits without stop(). */
+	protected getExitRestoreSuffix(): string {
+		return "";
+	}
+
+	/**
+	 * Last-resort restore for exit paths that skip stop(), e.g. a direct process.exit() (#11170).
+	 * Hard kills and native aborts run no JavaScript and cannot be covered.
+	 */
+	private readonly exitRestoreHandler = (): void => {
+		if (this.stopped) return;
+		try {
+			this.terminal.restoreOnExit?.(this.getExitRestorePrefix(), this.getExitRestoreSuffix());
+		} catch {
+			// Never throw from an exit handler.
+		}
+	};
+
 	get fullRedraws(): number {
 		return this.fullRedrawCount;
 	}
@@ -393,7 +596,7 @@ export abstract class TuiBase extends Container implements TUI {
 		if (this.showHardwareCursor === enabled) return;
 		this.showHardwareCursor = enabled;
 		if (!enabled) {
-			this.terminal.hideCursor();
+			this.hideTerminalCursor();
 		}
 		this.requestRender();
 	}
@@ -404,8 +607,8 @@ export abstract class TuiBase extends Container implements TUI {
 
 	/**
 	 * Set whether to trigger full re-render when content shrinks.
-	 * When true (default), empty rows are cleared when content shrinks.
-	 * When false, empty rows remain (reduces redraws on slower terminals).
+	 * When true, empty rows are cleared when content shrinks.
+	 * When false (default), empty rows remain (reduces redraws on slower terminals).
 	 */
 	setClearOnShrink(enabled: boolean): void {
 		this.clearOnShrink = enabled;
@@ -559,7 +762,7 @@ export abstract class TuiBase extends Container implements TUI {
 		if (!options?.nonCapturing && this.isOverlayVisible(entry)) {
 			this.setFocus(component);
 		}
-		this.terminal.hideCursor();
+		this.hideTerminalCursor();
 		this.requestRender();
 
 		// Return handle for controlling this overlay
@@ -575,7 +778,7 @@ export abstract class TuiBase extends Container implements TUI {
 						const topVisible = this.getTopmostVisibleOverlay();
 						this.setFocus(topVisible?.component ?? entry.preFocus);
 					}
-					if (this.overlayStack.length === 0) this.terminal.hideCursor();
+					if (this.overlayStack.length === 0) this.hideTerminalCursor();
 					this.requestRender();
 				}
 			},
@@ -638,6 +841,10 @@ export abstract class TuiBase extends Container implements TUI {
 				this.requestRender();
 			},
 			isFocused: () => this.focusedComponent === component,
+			getBounds: () => {
+				if (!this.overlayStack.includes(entry) || !this.isOverlayVisible(entry) || !entry.bounds) return undefined;
+				return { ...entry.bounds };
+			},
 		};
 	}
 
@@ -653,8 +860,13 @@ export abstract class TuiBase extends Container implements TUI {
 			const topVisible = this.getTopmostVisibleOverlay();
 			this.setFocus(topVisible?.component ?? overlay.preFocus);
 		}
-		if (this.overlayStack.length === 0) this.terminal.hideCursor();
+		if (this.overlayStack.length === 0) this.hideTerminalCursor();
 		this.requestRender();
+	}
+
+	/** Hide the cursor while running. After stop(), the shell owns the cursor and it must stay visible. */
+	private hideTerminalCursor(): void {
+		if (!this.stopped) this.terminal.hideCursor();
 	}
 
 	/** Check if there are any visible overlays */
@@ -667,6 +879,46 @@ export abstract class TuiBase extends Container implements TUI {
 		return this.overlayStack.some(
 			(entry) => entry.component === this.focusedComponent && this.isOverlayVisible(entry),
 		);
+	}
+
+	/** Keep overlay containers as keyboard focus owners when a nested control is clicked. */
+	protected resolveMouseFocusTarget(component: Component): Component {
+		for (let index = this.overlayStack.length - 1; index >= 0; index--) {
+			const overlay = this.overlayStack[index]!;
+			if (this.isOverlayVisible(overlay) && this.containsComponent(overlay.component, component)) {
+				return overlay.component;
+			}
+		}
+		return component;
+	}
+
+	/** Dispatch to the visually topmost overlay under the pointer. */
+	protected dispatchMouseToOverlay(event: TuiMouseEvent): { hit: boolean; result?: TuiMouseDispatchResult } {
+		for (let index = this.renderedOverlayLayouts.length - 1; index >= 0; index--) {
+			const layout = this.renderedOverlayLayouts[index]!;
+			if (
+				event.screenX < layout.col ||
+				event.screenX >= layout.col + layout.width ||
+				event.screenY < layout.row ||
+				event.screenY >= layout.row + layout.height
+			) {
+				continue;
+			}
+			const result = dispatchMouseEvent(layout.entry.component, {
+				...event,
+				x: event.screenX - layout.col,
+				y: event.screenY - layout.row,
+				width: layout.width,
+				height: layout.height,
+			});
+			return result
+				? {
+						hit: true,
+						result: result.focus ? { ...result, focusTarget: layout.entry.component } : result,
+					}
+				: { hit: true };
+		}
+		return { hit: false };
 	}
 
 	/** Check if an overlay entry is currently visible */
@@ -697,6 +949,8 @@ export abstract class TuiBase extends Container implements TUI {
 
 	start(): void {
 		this.stopped = false;
+		process.off("exit", this.exitRestoreHandler);
+		process.on("exit", this.exitRestoreHandler);
 		this.beforeTerminalStart();
 		this.terminal.start(
 			(data) => this.handleTerminalInput(data),
@@ -751,6 +1005,7 @@ export abstract class TuiBase extends Container implements TUI {
 
 	stop(options: TuiStopOptions = {}): void {
 		this.stopped = true;
+		process.off("exit", this.exitRestoreHandler);
 		this.cancelRenderTimer();
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031l");
@@ -824,7 +1079,7 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 
 	private handleTerminalInput(data: string): void {
-		if (this.consumeOsc11BackgroundResponse(data)) {
+		if (this.consumeTerminalColorResponse(data)) {
 			return;
 		}
 		if (this.consumeTerminalColorSchemeReport(data)) {
@@ -901,28 +1156,50 @@ export abstract class TuiBase extends Container implements TUI {
 		}
 	}
 
-	private consumeOsc11BackgroundResponse(data: string): boolean {
-		if (this.pendingOsc11BackgroundReplies <= 0) {
+	private consumeTerminalColorResponse(data: string): boolean {
+		const query = this.pendingTerminalColorQueries[0];
+		if (!query) {
 			return false;
 		}
-
-		if (!isOsc11BackgroundColorResponse(data)) {
-			return false;
+		if (DEVICE_ATTRIBUTES_RESPONSE_PATTERN.test(data)) {
+			this.pendingTerminalColorQueries.shift();
+			this.completeTerminalColorQuery(query);
+			return true;
 		}
 
-		const rgb = parseOsc11BackgroundColor(data);
-		this.pendingOsc11BackgroundReplies -= 1;
-		const query = this.pendingOsc11BackgroundQueries.shift();
-		if (query && !query.settled) {
-			query.settled = true;
-			if (query.timer) {
-				clearTimeout(query.timer);
-				query.timer = undefined;
-			}
-			query.resolve?.(rgb);
-			query.resolve = undefined;
+		const response = parseOscColorResponse(data);
+		if (!response) {
+			return false;
+		}
+		const { target, rgb } = response;
+		const key = String(target);
+		if (!query.deliver || query.replied.has(key)) {
+			return true;
+		}
+		query.replied.add(key);
+		if (target === "foreground") {
+			query.foreground = rgb;
+		} else if (target === "background") {
+			query.background = rgb;
+		} else if (target < TERMINAL_PALETTE_SIZE) {
+			query.palette[target] = rgb;
+		}
+		if (query.replied.size === TERMINAL_COLOR_REPLY_COUNT) {
+			this.completeTerminalColorQuery(query);
 		}
 		return true;
+	}
+
+	private terminalColorQueryResult(query: PendingTerminalColorQuery): TerminalColors {
+		const palette = query.palette.every((color) => color !== undefined) ? (query.palette as RgbColor[]) : undefined;
+		return { foreground: query.foreground, background: query.background, palette };
+	}
+
+	private completeTerminalColorQuery(query: PendingTerminalColorQuery): void {
+		const deliver = query.deliver;
+		query.deliver = undefined;
+		clearTimeout(query.timer);
+		deliver?.(this.terminalColorQueryResult(query));
 	}
 
 	private consumeTerminalColorSchemeReport(data: string): boolean {
@@ -1097,11 +1374,16 @@ export abstract class TuiBase extends Container implements TUI {
 
 	/** Composite all overlays into content lines (sorted by focusOrder, higher = on top). */
 	protected compositeOverlays(lines: string[], termWidth: number, termHeight: number): string[] {
-		if (this.overlayStack.length === 0) return lines;
+		if (this.overlayStack.length === 0) {
+			this.renderedOverlayLayouts = [];
+			return lines;
+		}
 		const result = [...lines];
 
+		for (const entry of this.overlayStack) entry.bounds = undefined;
+
 		// Pre-render all visible overlays and calculate positions
-		const rendered: { overlayLines: string[]; row: number; col: number; w: number }[] = [];
+		const rendered: { entry: OverlayStackEntry; overlayLines: string[]; row: number; col: number; w: number }[] = [];
 		let minLinesNeeded = result.length;
 
 		const visibleEntries = this.overlayStack.filter((e) => this.isOverlayVisible(e));
@@ -1114,7 +1396,7 @@ export abstract class TuiBase extends Container implements TUI {
 			const { width, maxHeight } = this.resolveOverlayLayout(options, 0, termWidth, termHeight);
 
 			// Render component at calculated width
-			let overlayLines = component.render(width);
+			let overlayLines = this.resolveFakeCursors(component.render(width));
 
 			// Apply maxHeight if specified
 			if (maxHeight !== undefined && overlayLines.length > maxHeight) {
@@ -1123,10 +1405,18 @@ export abstract class TuiBase extends Container implements TUI {
 
 			// Get final row/col with actual overlay height
 			const { row, col } = this.resolveOverlayLayout(options, overlayLines.length, termWidth, termHeight);
+			entry.bounds = { row, col, width, height: overlayLines.length };
 
-			rendered.push({ overlayLines, row, col, w: width });
+			rendered.push({ entry, overlayLines, row, col, w: width });
 			minLinesNeeded = Math.max(minLinesNeeded, row + overlayLines.length);
 		}
+		this.renderedOverlayLayouts = rendered.map(({ entry, row, col, w, overlayLines }) => ({
+			entry,
+			row,
+			col,
+			width: w,
+			height: overlayLines.length,
+		}));
 
 		// Pad to at least terminal height so overlays have screen-relative positions.
 		// Excludes maxLinesRendered: the historical high-water mark caused self-reinforcing
@@ -1207,57 +1497,47 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 
 	/**
-	 * Query the terminal's default background color with OSC 11 (`ESC ] 11 ; ? BEL`).
-	 * @param timeoutMs Query timeout in milliseconds.
-	 * @returns Promise containing the parsed RGB color, or undefined if it times out or fails to parse.
+	 * Resolve fake cursor markers to reverse video. When the hardware cursor is shown, a fake cursor
+	 * directly after CURSOR_MARKER is dropped because the terminal cursor is drawn there. Fake cursors
+	 * of components without focus have no CURSOR_MARKER and stay visible.
 	 */
-	queryTerminalBackgroundColor({ timeoutMs }: { timeoutMs: number }): Promise<RgbColor | undefined> {
-		return new Promise((resolve) => {
-			const query: PendingOsc11BackgroundQuery = {
-				settled: false,
-				resolve,
-				timer: undefined,
-			};
-
-			query.timer = setTimeout(() => {
-				if (query.settled) {
-					return;
-				}
-				query.settled = true;
-				query.timer = undefined;
-				query.resolve?.(undefined);
-				query.resolve = undefined;
-			}, timeoutMs);
-			this.pendingOsc11BackgroundQueries.push(query);
-			this.pendingOsc11BackgroundReplies += 1;
-			this.terminal.write("\x1b]11;?\x07");
+	protected resolveFakeCursors(lines: string[]): string[] {
+		return lines.map((line) => {
+			if (!line.includes(FAKE_CURSOR_START)) return line;
+			const resolved = this.showHardwareCursor ? line.replace(FOCUSED_FAKE_CURSOR, "$1$2") : line;
+			return resolved.replaceAll(FAKE_CURSOR_START, "\x1b[7m").replaceAll(FAKE_CURSOR_END, "\x1b[27m");
 		});
 	}
 
 	/**
-	 * Query the terminal's color-scheme preference with DSR (`CSI ? 996 n`).
-	 * Terminals that support the color palette notification protocol reply with
-	 * `CSI ? 997 ; 1 n` for dark or `CSI ? 997 ; 2 n` for light.
+	 * Query the terminal's theme colors: the default foreground (OSC 10), the default background
+	 * (OSC 11), and ANSI colors 0-15 (OSC 4), followed by a DA1 request that marks the end of the
+	 * replies. Resolves when the DA1 reply or all color replies arrive, or when the timeout expires.
+	 * Colors the terminal did not report are undefined; the palette is only set when all 16 arrived.
+	 * @param timeoutMs Query timeout in milliseconds, for terminals that do not answer DA1 either.
+	 * @param onLateReply Receives the replies if the query completes after the timeout, e.g. over slow links.
 	 */
-	queryTerminalColorScheme({ timeoutMs }: { timeoutMs: number }): Promise<TerminalColorScheme | undefined> {
+	queryTerminalColors({
+		timeoutMs,
+		onLateReply,
+	}: {
+		timeoutMs: number;
+		onLateReply?: (colors: TerminalColors) => void;
+	}): Promise<TerminalColors> {
 		return new Promise((resolve) => {
-			let settled = false;
-			let timer: NodeJS.Timeout | undefined;
-			let unsubscribe: () => void = () => {};
-			const settle = (scheme: TerminalColorScheme | undefined) => {
-				if (settled) return;
-				settled = true;
-				if (timer) {
-					clearTimeout(timer);
-					timer = undefined;
-				}
-				unsubscribe();
-				resolve(scheme);
+			const query: PendingTerminalColorQuery = {
+				palette: Array.from({ length: TERMINAL_PALETTE_SIZE }, () => undefined),
+				replied: new Set(),
+				deliver: resolve,
+				timer: undefined,
 			};
-
-			unsubscribe = this.onTerminalColorSchemeChange(settle);
-			timer = setTimeout(() => settle(undefined), timeoutMs);
-			this.terminal.write("\x1b[?996n");
+			// Resolve with the replies so far, and keep collecting late replies for `onLateReply`.
+			query.timer = setTimeout(() => {
+				query.deliver = onLateReply;
+				resolve(this.terminalColorQueryResult(query));
+			}, timeoutMs);
+			this.pendingTerminalColorQueries.push(query);
+			this.terminal.write(TERMINAL_COLOR_QUERY);
 		});
 	}
 }

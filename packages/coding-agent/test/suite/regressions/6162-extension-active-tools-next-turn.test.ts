@@ -1,44 +1,48 @@
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import {
+	fauxAssistantMessage,
+	fauxToolCall,
+	getCurrentSystemPrompt,
+	getCurrentTools,
+	type TranscriptContext,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import type { ExtensionFactory } from "../../../src/index.ts";
+import type { ExtensionAPI, ExtensionFactory } from "../../../src/index.ts";
 import { createHarness } from "../harness.ts";
 
-describe("extension active tools next-turn refresh", () => {
-	it("applies pi.setActiveTools before the next provider request in the same run", async () => {
-		const extensionFactories: ExtensionFactory[] = [
-			(pi) => {
-				pi.registerTool({
-					name: "switch_tools",
-					label: "Switch Tools",
-					description: "Switch the active extension tool set",
-					promptSnippet: "Switch to the next extension tool",
-					parameters: Type.Object({}),
-					execute: async () => {
-						pi.setActiveTools(["after_switch"]);
-						return {
-							content: [{ type: "text", text: "switched" }],
-							details: {},
-						};
-					},
-				});
+function getProviderToolNames(context: TranscriptContext): string[] {
+	return getCurrentTools(context.messages)
+		.map((tool) => tool.name)
+		.sort();
+}
 
-				pi.registerTool({
-					name: "after_switch",
-					label: "After Switch",
-					description: "Tool that should be available after switching",
-					promptSnippet: "Run after the active tool set changes",
-					parameters: Type.Object({}),
-					execute: async () => ({
-						content: [{ type: "text", text: "after" }],
-						details: {},
-					}),
-				});
-			},
-		];
-		const harness = await createHarness({
-			extensionFactories,
-		});
+/** Register `switch_tools`, which swaps the active set to `after_switch` when executed. */
+function registerSwitchTools(pi: ExtensionAPI): void {
+	pi.registerTool({
+		name: "switch_tools",
+		label: "Switch Tools",
+		description: "Switch the active extension tool set",
+		promptSnippet: "Switch to the next extension tool",
+		parameters: Type.Object({}),
+		execute: async () => {
+			pi.setActiveTools(["after_switch"]);
+			return { content: [{ type: "text", text: "switched" }], details: {} };
+		},
+	});
+	pi.registerTool({
+		name: "after_switch",
+		label: "After Switch",
+		description: "Tool that should be available after switching",
+		promptSnippet: "Run after the active tool set changes",
+		parameters: Type.Object({}),
+		execute: async () => ({ content: [{ type: "text", text: "after" }], details: {} }),
+	});
+}
+
+describe("extension active tools next-turn refresh", () => {
+	// Regression #6162
+	it("applies pi.setActiveTools before the next provider request in the same run", async () => {
+		const harness = await createHarness({ extensionFactories: [registerSwitchTools] });
 
 		try {
 			harness.session.setActiveToolsByName(["switch_tools"]);
@@ -46,11 +50,11 @@ describe("extension active tools next-turn refresh", () => {
 			const providerToolNames: string[][] = [];
 			harness.setResponses([
 				(context) => {
-					providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());
+					providerToolNames.push(getProviderToolNames(context));
 					return fauxAssistantMessage(fauxToolCall("switch_tools", {}), { stopReason: "toolUse" });
 				},
 				(context) => {
-					providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());
+					providerToolNames.push(getProviderToolNames(context));
 					return fauxAssistantMessage("done");
 				},
 			]);
@@ -66,57 +70,30 @@ describe("extension active tools next-turn refresh", () => {
 		}
 	});
 
-	it("records additive active tool changes on the current tool result", async () => {
-		const extensionFactories: ExtensionFactory[] = [
-			(pi) => {
-				pi.registerTool({
-					name: "load_more_tools",
-					label: "Load More Tools",
-					description: "Load more tools",
-					parameters: Type.Object({}),
-					execute: async () => {
-						pi.setActiveTools([...pi.getActiveTools(), "after_load"]);
-						return {
-							content: [{ type: "text", text: "loaded" }],
-							details: {},
-						};
-					},
-				});
-
-				pi.registerTool({
-					name: "after_load",
-					label: "After Load",
-					description: "Tool available after loading",
-					parameters: Type.Object({}),
-					execute: async () => ({
-						content: [{ type: "text", text: "after" }],
-						details: {},
-					}),
-				});
-			},
-		];
-		const harness = await createHarness({ extensionFactories });
-
+	it("reports the refreshed system prompt during the run", async () => {
+		const harness = await createHarness({ extensionFactories: [registerSwitchTools] });
 		try {
-			harness.session.setActiveToolsByName(["load_more_tools"]);
-
-			const addedToolNames: string[][] = [];
+			harness.session.setActiveToolsByName(["switch_tools"]);
+			const providerPrompts: string[] = [];
+			const sessionPrompts: string[] = [];
 			harness.setResponses([
-				() => fauxAssistantMessage(fauxToolCall("load_more_tools", {}), { stopReason: "toolUse" }),
 				(context) => {
-					addedToolNames.push(
-						context.messages
-							.filter((message) => message.role === "toolResult")
-							.flatMap((message) => message.addedToolNames ?? []),
-					);
+					providerPrompts.push(getCurrentSystemPrompt(context.messages));
+					sessionPrompts.push(harness.session.systemPrompt);
+					return fauxAssistantMessage(fauxToolCall("switch_tools", {}), { stopReason: "toolUse" });
+				},
+				(context) => {
+					providerPrompts.push(getCurrentSystemPrompt(context.messages));
+					sessionPrompts.push(harness.session.systemPrompt);
 					return fauxAssistantMessage("done");
 				},
 			]);
 
 			await harness.session.prompt("start");
 
-			expect(harness.session.getActiveToolNames()).toEqual(["load_more_tools", "after_load"]);
-			expect(addedToolNames).toEqual([["after_load"]]);
+			expect(providerPrompts).toHaveLength(2);
+			expect(providerPrompts[0]).not.toBe(providerPrompts[1]);
+			expect(sessionPrompts).toEqual(providerPrompts);
 		} finally {
 			harness.cleanup();
 		}
@@ -129,32 +106,7 @@ describe("extension active tools next-turn refresh", () => {
 					systemPrompt: `${event.systemPrompt}\n\nkeep this run override`,
 				}));
 
-				pi.registerTool({
-					name: "switch_tools",
-					label: "Switch Tools",
-					description: "Switch the active extension tool set",
-					promptSnippet: "Switch to the next extension tool",
-					parameters: Type.Object({}),
-					execute: async () => {
-						pi.setActiveTools(["after_switch"]);
-						return {
-							content: [{ type: "text", text: "switched" }],
-							details: {},
-						};
-					},
-				});
-
-				pi.registerTool({
-					name: "after_switch",
-					label: "After Switch",
-					description: "Tool that should be available after switching",
-					promptSnippet: "Run after the active tool set changes",
-					parameters: Type.Object({}),
-					execute: async () => ({
-						content: [{ type: "text", text: "after" }],
-						details: {},
-					}),
-				});
+				registerSwitchTools(pi);
 			},
 		];
 		const harness = await createHarness({
@@ -166,15 +118,18 @@ describe("extension active tools next-turn refresh", () => {
 
 			const providerSystemPrompts: string[] = [];
 			const providerToolNames: string[][] = [];
+			const captureSystemPrompt = (context: TranscriptContext): void => {
+				providerSystemPrompts.push(getCurrentSystemPrompt(context.messages));
+			};
 			harness.setResponses([
 				(context) => {
-					providerSystemPrompts.push(context.systemPrompt ?? "");
-					providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());
+					captureSystemPrompt(context);
+					providerToolNames.push(getProviderToolNames(context));
 					return fauxAssistantMessage(fauxToolCall("switch_tools", {}), { stopReason: "toolUse" });
 				},
 				(context) => {
-					providerSystemPrompts.push(context.systemPrompt ?? "");
-					providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());
+					captureSystemPrompt(context);
+					providerToolNames.push(getProviderToolNames(context));
 					return fauxAssistantMessage("done");
 				},
 			]);

@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { streamSimple as streamSimpleBedrock } from "../src/api/bedrock-converse-stream.ts";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
-import type { Context, Model } from "../src/types.ts";
+import type { Model } from "../src/types.ts";
 
 // openai SDK APIError shape: "<status> status code (no body)" message, the
 // parsed body kept on `.error`.
@@ -88,13 +88,13 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 	};
 });
 
-import { getModel } from "../src/compat.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
 
-const context: Context = {
+const context = normalizeContext({
 	systemPrompt: "",
 	messages: [{ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 0 }],
 	tools: [],
-};
+});
 
 const completionsModel: Model<"openai-completions"> = {
 	id: "test-model",
@@ -179,7 +179,9 @@ describe("provider error body passthrough (per-tier regression)", () => {
 		});
 
 		const model = getModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");
-		const output = await drainResult(streamSimpleBedrock(model, { messages: context.messages }, {}));
+		const output = await drainResult(
+			streamSimpleBedrock(model, normalizeContext({ messages: context.messages }), {}),
+		);
 
 		expect(output.stopReason).toBe("error");
 		expect(output.errorMessage).toContain("403");
@@ -203,7 +205,9 @@ describe("provider error body passthrough (per-tier regression)", () => {
 		);
 
 		const model = getModel("amazon-bedrock", "global.anthropic.claude-opus-5");
-		const output = await drainResult(streamSimpleBedrock(model, { messages: context.messages }, {}));
+		const output = await drainResult(
+			streamSimpleBedrock(model, normalizeContext({ messages: context.messages }), {}),
+		);
 
 		expect(output.stopReason).toBe("error");
 		expect(output.errorMessage).toContain("on-demand throughput isn't supported");

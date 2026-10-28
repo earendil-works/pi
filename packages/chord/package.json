@@ -1,0 +1,97 @@
+{
+	"name": "@earendil-works/chord",
+	"version": "1.4.0",
+	"description": "Typed host runtime for plugins, contracts, replicated state, and RPC over JSON links",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"source": "./src/index.ts",
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./context": {
+			"source": "./src/context/index.ts",
+			"types": "./dist/context/index.d.ts",
+			"import": "./dist/context/index.js"
+		},
+		"./output": {
+			"source": "./src/output.ts",
+			"types": "./dist/output.d.ts",
+			"import": "./dist/output.js"
+		},
+		"./delta": {
+			"source": "./src/delta/index.ts",
+			"types": "./dist/delta/index.d.ts",
+			"import": "./dist/delta/index.js"
+		},
+		"./node": {
+			"source": "./src/node.ts",
+			"types": "./dist/node.d.ts",
+			"import": "./dist/node.js"
+		},
+		"./telemetry-sqlite": {
+			"source": "./src/telemetry-sqlite/index.ts",
+			"types": "./dist/telemetry-sqlite/index.d.ts",
+			"import": "./dist/telemetry-sqlite/index.js"
+		},
+		"./sqlite": {
+			"source": "./src/sqlite/index.ts",
+			"types": "./dist/sqlite/index.d.ts",
+			"import": "./dist/sqlite/index.js"
+		},
+		"./sqlite/node": {
+			"source": "./src/sqlite/node.ts",
+			"types": "./dist/sqlite/node.d.ts",
+			"import": "./dist/sqlite/node.js"
+		},
+		"./sqlite/cloudflare": {
+			"source": "./src/sqlite/cloudflare.ts",
+			"types": "./dist/sqlite/cloudflare.d.ts",
+			"import": "./dist/sqlite/cloudflare.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"sideEffects": false,
+	"files": [
+		"dist",
+		"docs",
+		"README.md",
+		"CHANGELOG.md",
+		"src/delta/README.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsc -p tsconfig.build.json",
+		"test": "vitest --run",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"keywords": [
+		"application",
+		"plugins",
+		"rpc",
+		"contracts",
+		"state"
+	],
+	"author": "Earendil Works",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi.git",
+		"directory": "packages/chord"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"dependencies": {
+		"@earendil-works/pi-telemetry": "1.4.0",
+		"typebox": "1.3.27"
+	},
+	"devDependencies": {
+		"@types/ws": "8.18.2",
+		"shx": "0.3.4",
+		"vitest": "4.1.12",
+		"ws": "8.21.0"
+	}
+}

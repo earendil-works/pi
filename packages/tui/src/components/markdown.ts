@@ -1,12 +1,23 @@
 import { Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens } from "marked";
+import markedCjkFriendly from "marked-cjk-friendly";
 import { renderLatex } from "../latex.ts";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
 import type { Component } from "../tui.ts";
-import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { applyBackgroundToLine, cjkPunctuationRegex, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
 
-class StrictStrikethroughTokenizer extends Tokenizer {
+class MarkdownTokenizer extends Tokenizer {
+	override url(src: string): Tokens.Link | undefined {
+		const token = super.url(src);
+		if (!token) return undefined;
+
+		// Bare URLs stop at CJK punctuation; explicit links and angle autolinks
+		// use separate tokenizers and can still contain these characters.
+		const punctuationIndex = token.raw.search(cjkPunctuationRegex);
+		return punctuationIndex < 0 ? token : super.url(token.raw.slice(0, punctuationIndex));
+	}
+
 	override del(src: string): Tokens.Del | undefined {
 		const match = STRICT_STRIKETHROUGH_REGEX.exec(src);
 		if (!match) {
@@ -98,23 +109,41 @@ function tokenizeInlineLatex(source: string): LatexToken | undefined {
 	return { type: "latex", raw, text };
 }
 
+const TABLE_DELIMITER_ROW_REGEX = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+
+// A GFM table starts with a header row followed by a delimiter row such as "|---|---|" or "| --- |".
+// The header needs a "|" only when the delimiter has none: a pipe-free delimiter without a pipe in the
+// header is a thematic break, not a table.
+function containsTableStart(source: string): boolean {
+	const lines = source.split("\n");
+	for (let index = 0; index < lines.length - 1; index++) {
+		const delimiterRow = lines[index + 1];
+		if ((delimiterRow.includes("|") || lines[index].includes("|")) && TABLE_DELIMITER_ROW_REGEX.test(delimiterRow)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 function tokenizeBlockLatex(source: string): LatexToken | undefined {
+	// Display math never spans a table. Without this check, an unclosed "$$" or "\[" pairs with a later
+	// opener or stays pending, swallowing the table. See https://github.com/earendil-works/pi/issues/11159.
 	const dollarMatch = /^ {0,3}\$\$[ \t]*(?:\n)?([\s\S]*?)\$\$[ \t]*(?:\n|$)/.exec(source);
-	if (dollarMatch?.[1]) {
+	if (dollarMatch?.[1] && !containsTableStart(dollarMatch[1])) {
 		return { type: "latexBlock", raw: dollarMatch[0], text: dollarMatch[1].trim() };
 	}
 
 	const bracketMatch = /^ {0,3}\\\[[ \t]*(?:\n)?([\s\S]*?)\\\][ \t]*(?:\n|$)/.exec(source);
-	if (bracketMatch?.[1]) {
+	if (bracketMatch?.[1] && !containsTableStart(bracketMatch[1])) {
 		return { type: "latexBlock", raw: bracketMatch[0], text: bracketMatch[1].trim() };
 	}
 
 	const pendingBracket = /^ {0,3}\\\[[ \t]*(?:\n)?([\s\S]*)$/.exec(source);
-	if (pendingBracket) {
+	if (pendingBracket?.[1] && !containsTableStart(pendingBracket[1])) {
 		return { type: "latexBlock", raw: pendingBracket[0], text: pendingBracket[1], pending: true };
 	}
 	const pendingDollar = /^ {0,3}\$\$[ \t]*(?:\n)?([\s\S]*)$/.exec(source);
-	if (pendingDollar?.[1] && looksLikePendingDollarMath(pendingDollar[1])) {
+	if (pendingDollar?.[1] && looksLikePendingDollarMath(pendingDollar[1]) && !containsTableStart(pendingDollar[1])) {
 		return { type: "latexBlock", raw: pendingDollar[0], text: pendingDollar[1], pending: true };
 	}
 	return undefined;
@@ -170,9 +199,12 @@ function trimPartialClosingFences(tokens: readonly Token[]): void {
 
 const markdownParser = new Marked();
 markdownParser.setOptions({
-	tokenizer: new StrictStrikethroughTokenizer(),
+	tokenizer: new MarkdownTokenizer(),
 });
-markdownParser.use({ extensions: [...LATEX_MARKDOWN_EXTENSIONS] });
+markdownParser.use({
+	tokenizer: { emStrong: markedCjkFriendly().tokenizer?.emStrong },
+	extensions: [...LATEX_MARKDOWN_EXTENSIONS],
+});
 
 /**
  * Default text styling for markdown content.
@@ -246,6 +278,10 @@ export class Markdown implements Component {
 	private cachedText?: string;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
+	// Parsed tokens depend only on the source, so they survive theme and width invalidation. Held weakly: a token tree is
+	// about ten times the size of its source, and every message of a long transcript keeps a Markdown component. The
+	// tokens survive a burst of re-renders, such as a theme preview, and are collected afterwards.
+	private cachedTokens?: WeakRef<{ source: string; tokens: Token[] }>;
 
 	constructor(
 		text: string,
@@ -298,8 +334,13 @@ export class Markdown implements Component {
 		const normalizedText = text.replace(/\t/g, "   ");
 
 		// Parse markdown to HTML-like tokens
-		const tokens = markdownParser.lexer(normalizedText);
-		trimPartialClosingFences(tokens);
+		const cached = this.cachedTokens?.deref();
+		let tokens = cached?.source === normalizedText ? cached.tokens : undefined;
+		if (!tokens) {
+			tokens = markdownParser.lexer(normalizedText);
+			trimPartialClosingFences(tokens);
+			this.cachedTokens = new WeakRef({ source: normalizedText, tokens });
+		}
 
 		// Convert tokens to styled terminal output
 		const renderedLines: string[] = [];
@@ -359,6 +400,7 @@ export class Markdown implements Component {
 
 		// Combine top padding, content, and bottom padding
 		const result = emptyLines.concat(contentLines, emptyLines);
+		flattenLines(result);
 
 		// Update cache
 		this.cachedText = this.text;
@@ -504,10 +546,14 @@ export class Markdown implements Component {
 
 			case "latexBlock": {
 				const latexToken = token as LatexToken;
-				const rendered =
+				let rendered =
 					!latexToken.pending && this.options.renderLatex !== false
-						? (renderLatex(latexToken.text, { display: true }) ?? latexToken.raw.trim())
-						: latexToken.raw.trim();
+						? renderLatex(latexToken.text, { display: true })
+						: undefined;
+				// A 2D layout cannot be wrapped row by row; fall back to the raw source when it does not fit.
+				if (rendered === undefined || rendered.split("\n").some((line) => visibleWidth(line) > width)) {
+					rendered = latexToken.raw.trim();
+				}
 				for (const line of rendered.split("\n")) {
 					lines.push(this.applyDefaultStyle(line));
 				}
@@ -564,8 +610,21 @@ export class Markdown implements Component {
 					return quoteStyle(lineWithReappliedStyle);
 				};
 
+				// With no room for another border ("│ " plus at least one content column), render the
+				// nested content without one. Otherwise each extra level re-wraps every child line at
+				// width 1 and the output grows exponentially with nesting depth.
+				if (width < 3) {
+					const quoteTokens = token.tokens || [];
+					for (let i = 0; i < quoteTokens.length; i++) {
+						for (const line of this.renderToken(quoteTokens[i], width, quoteTokens[i + 1]?.type, styleContext)) {
+							lines.push(line);
+						}
+					}
+					break;
+				}
+
 				// Calculate available width for quote content (subtract border "│ " = 2 chars)
-				const quoteContentWidth = Math.max(1, width - 2);
+				const quoteContentWidth = width - 2;
 
 				// Blockquotes contain block-level tokens (paragraph, list, code, etc.), so render
 				// children with renderToken() instead of renderInlineTokens().
@@ -579,9 +638,14 @@ export class Markdown implements Component {
 				for (let i = 0; i < quoteTokens.length; i++) {
 					const quoteToken = quoteTokens[i];
 					const nextQuoteToken = quoteTokens[i + 1];
-					renderedQuoteLines.push(
-						...this.renderToken(quoteToken, quoteContentWidth, nextQuoteToken?.type, quoteInlineStyleContext),
-					);
+					for (const line of this.renderToken(
+						quoteToken,
+						quoteContentWidth,
+						nextQuoteToken?.type,
+						quoteInlineStyleContext,
+					)) {
+						renderedQuoteLines.push(line);
+					}
 				}
 
 				// Avoid rendering an extra empty quote line before the outer blockquote spacing.

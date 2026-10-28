@@ -6,6 +6,16 @@ export interface RgbColor {
 
 export type TerminalColorScheme = "dark" | "light";
 
+/** Colors the terminal reports for its current theme. */
+export interface TerminalColors {
+	/** Default foreground (OSC 10). */
+	foreground?: RgbColor;
+	/** Default background (OSC 11). */
+	background?: RgbColor;
+	/** ANSI colors 0-15 (OSC 4). Only set when the terminal reported all 16. */
+	palette?: RgbColor[];
+}
+
 function hexToRgb(hex: string): RgbColor {
 	const normalized = hex.startsWith("#") ? hex.slice(1) : hex;
 	const r = parseInt(normalized.slice(0, 2), 16);
@@ -25,20 +35,28 @@ function parseOscHexChannel(channel: string): number | undefined {
 	return Math.round((parseInt(channel, 16) / max) * 255);
 }
 
-const OSC11_BACKGROUND_COLOR_RESPONSE_PATTERN = /^\x1b\]11;([^\x07\x1b]*)(?:\x07|\x1b\\)$/i;
+/** What an OSC color reply reports: the default foreground (OSC 10), background (OSC 11), or a palette index (OSC 4). */
+export type OscColorTarget = "foreground" | "background" | number;
+
+const OSC_COLOR_RESPONSE_PATTERN = /^\x1b\](?:(1[01])|4;(\d{1,3}));([^\x07\x1b]*)(?:\x07|\x1b\\)$/i;
 const COLOR_SCHEME_REPORT_PATTERN = /^(?:\x1b\[\?997;(1|2)n)+$/;
 
-export function isOsc11BackgroundColorResponse(data: string): boolean {
-	return OSC11_BACKGROUND_COLOR_RESPONSE_PATTERN.test(data);
-}
-
-export function parseOsc11BackgroundColor(data: string): RgbColor | undefined {
-	const match = data.match(OSC11_BACKGROUND_COLOR_RESPONSE_PATTERN);
+/**
+ * Parse an OSC 10, 11, or 4 color reply. Returns undefined when `data` is not such a reply;
+ * `rgb` is undefined when it is a reply with an unparseable color.
+ */
+export function parseOscColorResponse(data: string): { target: OscColorTarget; rgb: RgbColor | undefined } | undefined {
+	const match = data.match(OSC_COLOR_RESPONSE_PATTERN);
 	if (!match) {
 		return undefined;
 	}
+	const target: OscColorTarget =
+		match[1] === "10" ? "foreground" : match[1] === "11" ? "background" : Number.parseInt(match[2], 10);
+	return { target, rgb: parseOscColorValue(match[3]) };
+}
 
-	const value = match[1].trim();
+function parseOscColorValue(rawValue: string): RgbColor | undefined {
+	const value = rawValue.trim();
 	if (value.startsWith("#")) {
 		const hex = value.slice(1);
 		if (/^[0-9a-f]{6}$/i.test(hex)) {

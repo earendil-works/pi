@@ -4,7 +4,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { KeybindingsManager } from "../../../src/core/keybindings.ts";
 import { ScopedModelsSelectorComponent } from "../../../src/modes/interactive/components/scoped-models-selector.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
-import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
+import { initTheme, theme } from "../../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../../src/utils/ansi.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
@@ -82,7 +82,9 @@ describe("issue #6949 unavailable scoped models", () => {
 			},
 		);
 
-		expect(stripAnsi(selector.render(100).join("\n"))).toContain(`${unavailableId} [unavailable] ✗`);
+		const rendered = selector.render(100).join("\n");
+		expect(stripAnsi(rendered)).toContain(`${unavailableId} [unavailable]`);
+		expect(rendered).toContain(theme.strikethrough(unavailableId));
 		selector.handleInput("\r");
 		expect(changes).toEqual([[availableId]]);
 		selector.handleInput("\x13");
@@ -104,7 +106,7 @@ describe("issue #6949 unavailable scoped models", () => {
 		if (!selector) throw new Error("Expected scoped-model selector to open");
 		const rendered = stripAnsi(selector.render(100).join("\n"));
 		for (const unavailableId of unavailableIds) {
-			expect(rendered).toContain(`${unavailableId} [unavailable] ✗`);
+			expect(rendered).toContain(`${unavailableId} [unavailable]`);
 		}
 		expect(getAvailableSnapshot).toHaveBeenCalled();
 	});
@@ -124,7 +126,7 @@ describe("issue #6949 unavailable scoped models", () => {
 
 		const selector = getSelector();
 		if (!selector) throw new Error("Expected scoped-model selector to open");
-		expect(stripAnsi(selector.render(100).join("\n"))).toContain(`${fullId} [unavailable] ✗`);
+		expect(stripAnsi(selector.render(100).join("\n"))).toContain(`${fullId} [unavailable]`);
 	});
 
 	it("does not clear a partial scope when an enabled model is unavailable", async () => {

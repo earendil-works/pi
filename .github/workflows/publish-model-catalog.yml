@@ -12,6 +12,9 @@ on:
       - '.gitignore'
       - 'package.json'
       - 'packages/ai/**'
+      - 'scripts/check-model-catalog-compat.mjs'
+      - 'scripts/model-catalog-minimum-version.mjs'
+      - 'scripts/model-catalog-protocol.ts'
       - 'scripts/publish-model-catalog.mjs'
   # GitHub schedules use UTC. Run hourly candidates across the CET/CEST
   # boundaries; the publish job only uploads at 10:17, 12:17, and 14:17
@@ -46,6 +49,8 @@ jobs:
         with:
           ref: ${{ env.SOURCE_REF }}
           persist-credentials: false
+          # The compatibility check reads the latest release's source from its git tag.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -61,6 +66,11 @@ jobs:
 
       - name: Validate model catalog JSON
         run: npm run check:model-catalog
+
+      # pi.dev serves the catalog to released pi >= MINIMUM_PI_VERSION. Fail before
+      # publishing if the latest release's code cannot handle it.
+      - name: Check the model catalog against the latest release
+        run: npm run check:model-catalog-compat
 
       - name: Upload model catalog JSON
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

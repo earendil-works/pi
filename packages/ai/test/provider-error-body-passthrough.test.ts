@@ -14,7 +14,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { generateImages } from "../src/images.ts";
-import type { ImagesContext, ImagesModel } from "../src/types.ts";
+import type { ImageModel, ImagesContext } from "../src/types.ts";
 
 // Reproduce the openai SDK APIError shape: makeMessage(status, error, message)
 // returns `"403 status code (no body)"` when status is set but the parsed body
@@ -52,7 +52,8 @@ vi.mock("openai", () => {
 
 describe("provider error body passthrough", () => {
 	it("surfaces the HTTP body reason instead of the opaque SDK message (openrouter images)", async () => {
-		const model: ImagesModel<"openrouter-images"> = {
+		const model: ImageModel<"openrouter-images"> = {
+			type: "image",
 			id: "black-forest-labs/flux.2-pro",
 			name: "FLUX.2 Pro",
 			api: "openrouter-images",

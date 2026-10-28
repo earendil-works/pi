@@ -1,3 +1,4 @@
+import { colorToHex, okhslColor } from "@earendil-works/pi-tui";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -66,6 +67,28 @@ describe("getThemeExportColors", () => {
 			pageBg: "#112233",
 			cardBg: "#223344",
 			infoBg: "#445566",
+		});
+	});
+
+	it("converts OKHSL export colors to hex because CSS does not support them", () => {
+		const darkTheme = JSON.parse(
+			readFileSync(new URL("../src/modes/interactive/theme/dark.json", import.meta.url), "utf-8"),
+		) as ThemeFile;
+		const customTheme: ThemeFile = {
+			...darkTheme,
+			name: "custom-export-okhsl",
+			vars: { card: "okhsl(250 20% 20%)" },
+			export: { pageBg: "okhsl(250 20% 15%)", cardBg: "card", infoBg: "oklch(30% 0.05 80)" },
+		};
+		writeFileSync(
+			join(process.env.PI_CODING_AGENT_DIR!, "themes", "custom-export-okhsl.json"),
+			JSON.stringify(customTheme, null, 2),
+		);
+
+		expect(getThemeExportColors("custom-export-okhsl")).toEqual({
+			pageBg: colorToHex(okhslColor(250, 0.2, 0.15)),
+			cardBg: colorToHex(okhslColor(250, 0.2, 0.2)),
+			infoBg: "oklch(30% 0.05 80)",
 		});
 	});
 

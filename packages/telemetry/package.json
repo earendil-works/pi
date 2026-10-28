@@ -1,16 +1,23 @@
 {
 	"name": "@earendil-works/pi-telemetry",
-	"version": "0.84.3",
+	"version": "1.4.0",
 	"description": "Vendor-neutral telemetry contracts and typed schema utilities for pi",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
 		".": {
+			"source": "./src/index.ts",
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
+		"./render": {
+			"source": "./src/render.ts",
+			"types": "./dist/render.d.ts",
+			"import": "./dist/render.js"
+		},
 		"./testing": {
+			"source": "./src/testing/index.ts",
 			"types": "./dist/testing/index.d.ts",
 			"import": "./dist/testing/index.js"
 		}
@@ -21,7 +28,7 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"build": "tsgo -p tsconfig.build.json",
+		"build": "tsc -p tsconfig.build.json",
 		"test": "vitest --run",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
@@ -42,6 +49,6 @@
 	},
 	"devDependencies": {
 		"@types/node": "22.19.19",
-		"vitest": "4.1.9"
+		"vitest": "4.1.12"
 	}
 }

@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pi issues</title>
+<style>
+:root{--bg:#fbfaf8;--card:#fff;--text:#1d1b19;--muted:#77716a;--line:#e7e4df;--hover:#f3f0eb;--p0:#c8433d;--p1:#c98a1b;--none:#8a847c;--ok:#2f8f5b;--accent:#5b4bd6;font:15px/1.45 -apple-system,BlinkMacSystemFont,Inter,"Segoe UI",Roboto,sans-serif;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#151413;--card:#1c1b19;--text:#ecebe8;--muted:#9b958d;--line:#2c2a27;--hover:#24221f;--accent:#9d91ff}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text)}
+a{color:var(--accent);text-decoration:none}
+header{position:sticky;top:0;z-index:2;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 14px}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:860px;margin:0 auto}
+h1{font-size:17px;margin:0 8px 0 0}
+.status{font-size:12px;color:var(--muted);max-width:860px;margin:4px auto 0}
+.tabs{display:flex;gap:2px}
+.tab,.btn,select{font:inherit;font-size:14px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:7px;padding:5px 10px;cursor:pointer}
+.tab.on{background:var(--text);color:var(--bg);border-color:var(--text)}
+main{max-width:860px;margin:0 auto;padding:8px 10px 60px}
+.grp{display:flex;justify-content:space-between;align-items:center;margin:18px 4px 6px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:8px 0}
+.card.sel{outline:2px solid var(--accent)}
+.meta{font-size:12.5px;color:var(--muted);display:flex;gap:6px;flex-wrap:wrap}
+.title{font-weight:600;margin:3px 0 6px;display:block;color:var(--text)}
+.sum{margin:0 0 8px}
+.chips{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px}
+.chip{font-size:11.5px;padding:0 7px;border-radius:9px;border:1px solid var(--line);color:var(--muted)}
+.chip.warn{border-color:#d9a441;color:#b07d14}.chip.bad{border-color:var(--p0);color:var(--p0)}
+.dups{font-size:13px;margin:0 0 8px;padding-left:0;list-style:none}
+.dups li{margin:2px 0}
+.dups .k{font-size:11px;font-weight:600;text-transform:uppercase}
+.dups .k.duplicate{color:var(--p0)}.dups .k.related{color:var(--muted)}
+.ai{font-size:13px;color:var(--muted);margin-bottom:10px}
+.ai b{color:var(--text)}
+.acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.btn.p0.on{background:var(--p0);border-color:var(--p0);color:#fff}
+.btn.p1.on{background:var(--p1);border-color:var(--p1);color:#fff}
+.btn.none.on{background:var(--none);border-color:var(--none);color:#fff}
+.btn.small{font-size:12px;padding:3px 8px}
+details{margin-top:8px;font-size:13px}
+summary{cursor:pointer;color:var(--muted)}
+pre{white-space:pre-wrap;word-break:break-word;font:12.5px/1.45 ui-monospace,Menlo,monospace;background:var(--hover);padding:8px;border-radius:6px;max-height:340px;overflow:auto}
+.dec{font-size:11px;font-weight:700;padding:1px 7px;border-radius:4px;color:#fff}
+.dec.p0{background:var(--p0)}.dec.p1{background:var(--p1)}.dec.none{background:var(--none)}
+.empty{color:var(--muted);text-align:center;margin:40px 0}
+.err{color:var(--p0)}
+</style>
+</head>
+<body>
+<header>
+	<div class="bar">
+		<h1>pi issues</h1>
+		<div class="tabs">
+			<button class="tab on" data-view="inbox">Inbox</button>
+			<button class="tab" data-view="decided">Decided</button>
+			<button class="tab" data-view="all">All</button>
+		</div>
+		<select id="cat"><option value="">All categories</option></select>
+		<button class="btn" id="sync">Sync</button>
+	</div>
+	<div class="status" id="status"></div>
+</header>
+<main id="main"></main>
+<script>
+let data = null, view = "inbox", cat = "", sel = -1, openDetails = new Set();
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const gh = (n) => `https://github.com/${data.repo}/issues/${n}`;
+const ago = (iso) => { const h = (Date.now() - Date.parse(iso)) / 3.6e6; return h < 1 ? `${Math.round(h * 60)}m` : h < 48 ? `${Math.round(h)}h` : `${Math.round(h / 24)}d`; };
+const category = (it) => it.decision?.category || it.triage?.result?.category || "";
+const WARN = new Set(["theoretical", "AI-written", "third-party", "upstream", "maybe fixed", "no repro"]);
+const BAD = new Set(["regression", "spam", "empty", "duplicate cluster"]);
+
+async function load() {
+	const res = await fetch("/api/state");
+	if (!res.ok) { $("main").innerHTML = `<p class="empty">${res.status}: ${esc(await res.text())}</p>`; return; }
+	data = await res.json();
+	render();
+}
+
+async function post(path, body) {
+	await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+	await load();
+}
+
+function visible() {
+	return data.items.filter((it) => {
+		if (cat && category(it) !== cat) return false;
+		const decided = !!it.decision?.priority;
+		return view === "all" || (view === "decided" ? decided : !decided);
+	});
+}
+
+function groups(items) {
+	if (view !== "inbox") return [["", items]];
+	const by = { p0: [], p1: [], none: [], pending: [] };
+	for (const it of items) by[it.triage?.status === "done" ? it.triage.result.suggestion : "pending"].push(it);
+	return [["Suggested p0", by.p0], ["Suggested p1", by.p1], ["Suggested none", by.none], ["Not triaged yet", by.pending]];
+}
+
+function card(it, idx) {
+	const r = it.triage?.result, d = it.decision, st = it.authorStats;
+	const meta = [
+		`<a href="${gh(it.number)}" target="_blank">#${it.number}</a>`,
+		r ? `<span>${esc(category(it))}${d?.category ? " ✎" : ""}${r.confidence === "low" ? ` <span class="chip warn">low conf${r.alternative ? `, alt ${esc(r.alternative)}` : ""}</span>` : ""}</span>` : "",
+		`<span>@${esc(it.author)} (${st.prior ? `${st.actedOn}/${st.prior} acted on` : "first issue"}${it.association !== "NONE" && it.association !== "CONTRIBUTOR" ? `, ${esc(it.association.toLowerCase())}` : ""})</span>`,
+		`<span>${esc(it.status)}</span>`,
+		`<span>${ago(it.createdAt)}</span>`,
+		d?.priority ? `<span class="dec ${d.priority}">${d.priority}</span>` : "",
+	].filter(Boolean).join(" · ");
+	let body = "";
+	if (r) {
+		body += `<p class="sum">${esc(r.summary)}</p>`;
+		if (r.signals.length) body += `<div class="chips">${r.signals.map((s) => `<span class="chip ${BAD.has(s) ? "bad" : WARN.has(s) ? "warn" : ""}">${esc(s)}</span>`).join("")}</div>`;
+		if (r.duplicates.length) body += `<ul class="dups">${r.duplicates.map((x) => `<li><span class="k ${x.kind}">${x.kind}</span> <a href="${gh(x.number)}" target="_blank">#${x.number}</a> ${esc(x.title)} <span class="meta" style="display:inline">(${esc(x.status)})</span><br><span class="meta" style="display:inline">${esc(x.reason)}</span></li>`).join("")}</ul>`;
+		body += `<div class="ai">AI: <b>${r.suggestion}</b> — ${esc(r.reason)}</div>`;
+	} else if (it.triage?.status === "failed") {
+		body += `<p class="err">Triage failed: ${esc(it.triage.error)}</p>`;
+	} else {
+		body += `<p class="ai">${it.triage ? esc(it.triage.status) : "waiting"}…</p>`;
+	}
+	const pri = (p) => `<button class="btn ${p} ${d?.priority === p ? "on" : ""}" data-act="prio" data-p="${p}" data-n="${it.number}">${p}</button>`;
+	const cats = data.categories.map((c) => `<option ${c.name === category(it) ? "selected" : ""}>${c.name}</option>`).join("");
+	return `<div class="card ${idx === sel ? "sel" : ""}" data-idx="${idx}">
+		<div class="meta">${meta}</div>
+		<a class="title" href="${gh(it.number)}" target="_blank">${esc(it.title)}</a>
+		${body}
+		<div class="acts">${pri("p0")}${pri("p1")}${pri("none")}
+			<select data-act="cat" data-n="${it.number}">${r ? "" : "<option></option>"}${cats}</select>
+		</div>
+		<details data-n="${it.number}" ${openDetails.has(it.number) ? "open" : ""}><summary>Issue text</summary>
+			<pre>${esc(it.body) || "(empty)"}</pre>
+			<button class="btn small" data-act="retriage" data-n="${it.number}">Triage again</button>
+		</details>
+	</div>`;
+}
+
+function render() {
+	const items = visible();
+	const sel0 = $("cat").value;
+	$("cat").innerHTML = `<option value="">All categories</option>` + data.categories.map((c) => `<option value="${c.name}">${c.name}${c.owner ? ` (${c.owner})` : ""}</option>`).join("");
+	$("cat").value = sel0;
+	const undecided = data.items.filter((it) => !it.decision?.priority).length;
+	const q = data.queue;
+	$("status").innerHTML = [
+		`${undecided} undecided of ${data.items.length} since ${data.inboxSince.slice(0, 10)}`,
+		q.queued || q.running ? `triaging ${q.running}, ${q.queued} queued` : "",
+		data.sync.running ? "syncing…" : data.sync.lastSync ? `synced ${ago(data.sync.lastSync)} ago` : "",
+		data.sync.lastError ? `<span class="err">sync: ${esc(data.sync.lastError)}</span>` : "",
+		`${esc(data.model)} $${data.cost.toFixed(2)}`,
+	].filter(Boolean).join(" · ");
+	let html = "", idx = 0;
+	for (const [name, list] of groups(items)) {
+		if (!list.length) continue;
+		if (name) html += `<div class="grp"><span>${name} (${list.length})</span>${name === "Suggested none" ? `<button class="btn small" data-act="allnone">Mark all none</button>` : ""}</div>`;
+		for (const it of list) html += card(it, idx++);
+	}
+	$("main").innerHTML = html || `<p class="empty">Nothing here.</p>`;
+}
+
+function flat() { return groups(visible()).flatMap(([, list]) => list); }
+
+document.addEventListener("click", (e) => {
+	const t = e.target.closest("[data-act]");
+	if (t?.dataset.act === "prio") {
+		const it = data.items.find((x) => x.number == t.dataset.n);
+		post("/api/decide", { number: Number(t.dataset.n), priority: it.decision?.priority === t.dataset.p ? null : t.dataset.p });
+	} else if (t?.dataset.act === "retriage") post("/api/retriage", { number: Number(t.dataset.n) });
+	else if (t?.dataset.act === "allnone") {
+		const numbers = visible().filter((it) => it.triage?.result?.suggestion === "none").map((it) => it.number);
+		if (confirm(`Mark ${numbers.length} issues as none?`)) post("/api/decide", { numbers, priority: "none" });
+	}
+	const c = e.target.closest(".card");
+	if (c) { sel = Number(c.dataset.idx); document.querySelectorAll(".card").forEach((x) => x.classList.toggle("sel", x === c)); }
+});
+document.addEventListener("change", (e) => {
+	if (e.target.dataset.act === "cat") post("/api/decide", { number: Number(e.target.dataset.n), category: e.target.value });
+	if (e.target.id === "cat") { cat = e.target.value; sel = -1; render(); }
+});
+document.addEventListener("toggle", (e) => {
+	if (e.target.tagName !== "DETAILS") return;
+	const n = Number(e.target.dataset.n);
+	e.target.open ? openDetails.add(n) : openDetails.delete(n);
+}, true);
+document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
+	view = t.dataset.view; sel = -1;
+	document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("on", x === t));
+	render();
+});
+$("sync").onclick = () => post("/api/sync", {});
+
+// Keyboard: j/k select, 0/1/n decide, o open on GitHub.
+document.addEventListener("keydown", (e) => {
+	if (!data || e.target.tagName === "SELECT" || e.metaKey || e.ctrlKey) return;
+	const list = flat(), it = list[sel];
+	if (e.key === "j") sel = Math.min(sel + 1, list.length - 1);
+	else if (e.key === "k") sel = Math.max(sel - 1, 0);
+	else if (it && e.key === "o") { window.open(gh(it.number), "_blank"); return; }
+	else if (it && ["0", "1", "n"].includes(e.key)) {
+		const p = { 0: "p0", 1: "p1", n: "none" }[e.key];
+		post("/api/decide", { number: it.number, priority: p });
+		return;
+	} else return;
+	render();
+	document.querySelector(".card.sel")?.scrollIntoView({ block: "nearest" });
+});
+
+load();
+setInterval(() => { if (!document.hidden && !document.querySelector("select:focus")) load(); }, 8000);
+</script>
+</body>
+</html>

@@ -1,18 +1,18 @@
-import type { AssistantImages, ImagesApi, ImagesContext, ImagesFunction, ImagesModel, ImagesOptions } from "./types.ts";
+import type { AssistantImages, ImageApi, ImageModel, ImagesContext, ImagesFunction, ImagesOptions } from "./types.ts";
 
 export type ImagesApiFunction = (
-	model: ImagesModel<ImagesApi>,
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: ImagesOptions,
 ) => Promise<AssistantImages>;
 
-export interface ImagesApiProvider<TApi extends ImagesApi = ImagesApi, TOptions extends ImagesOptions = ImagesOptions> {
+export interface ImagesApiProvider<TApi extends ImageApi = ImageApi, TOptions extends ImagesOptions = ImagesOptions> {
 	api: TApi;
-	generateImages: ImagesFunction<TApi, TOptions>;
+	generateImages: ImagesFunction<TOptions>;
 }
 
 interface ImagesApiProviderInternal {
-	api: ImagesApi;
+	api: ImageApi;
 	generateImages: ImagesApiFunction;
 }
 
@@ -23,19 +23,19 @@ type RegisteredImagesApiProvider = {
 
 const imagesApiProviderRegistry = new Map<string, RegisteredImagesApiProvider>();
 
-function wrapGenerateImages<TApi extends ImagesApi, TOptions extends ImagesOptions>(
-	api: TApi,
-	generateImages: ImagesFunction<TApi, TOptions>,
+function wrapGenerateImages<TOptions extends ImagesOptions>(
+	api: ImageApi,
+	generateImages: ImagesFunction<TOptions>,
 ): ImagesApiFunction {
 	return (model, context, options) => {
 		if (model.api !== api) {
 			throw new Error(`Mismatched api: ${model.api} expected ${api}`);
 		}
-		return generateImages(model as ImagesModel<TApi>, context, options as TOptions);
+		return generateImages(model, context, options as TOptions);
 	};
 }
 
-export function registerImagesApiProvider<TApi extends ImagesApi, TOptions extends ImagesOptions>(
+export function registerImagesApiProvider<TApi extends ImageApi, TOptions extends ImagesOptions>(
 	provider: ImagesApiProvider<TApi, TOptions>,
 	sourceId?: string,
 ): void {
@@ -48,6 +48,6 @@ export function registerImagesApiProvider<TApi extends ImagesApi, TOptions exten
 	});
 }
 
-export function getImagesApiProvider(api: ImagesApi): ImagesApiProviderInternal | undefined {
+export function getImagesApiProvider(api: ImageApi): ImagesApiProviderInternal | undefined {
 	return imagesApiProviderRegistry.get(api)?.provider;
 }

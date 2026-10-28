@@ -9,8 +9,7 @@ import { join } from "node:path";
 import { Agent } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
-	type AssistantMessageEvent,
-	EventStream,
+	createAssistantMessageEventStream,
 	getModel,
 	type ImageContent,
 	type TextContent,
@@ -21,22 +20,12 @@ import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import type { BuildSystemPromptOptions } from "../src/core/system-prompt.ts";
+import {
+	type BuildSystemPromptOptions,
+	type NormalizedBuildSystemPromptOptions,
+	normalizeBuildSystemPromptOptions,
+} from "../src/core/system-prompt.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "./utilities.ts";
-
-// Mock stream that mimics AssistantMessageEventStream
-class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
-	constructor() {
-		super(
-			(event) => event.type === "done" || event.type === "error",
-			(event) => {
-				if (event.type === "done") return event.message;
-				if (event.type === "error") return event.error;
-				throw new Error("Unexpected event type");
-			},
-		);
-	}
-}
 
 function createAssistantMessage(text: string): AssistantMessage {
 	return {
@@ -92,7 +81,7 @@ describe("AgentSession concurrent prompt guard", () => {
 			},
 			streamFn: (_model, _context, options) => {
 				abortSignal = options?.signal;
-				const stream = new MockAssistantStream();
+				const stream = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					stream.push({ type: "start", partial: createAssistantMessage("") });
 					const checkAbort = () => {
@@ -127,14 +116,22 @@ describe("AgentSession concurrent prompt guard", () => {
 		return session;
 	}
 
+	// A fixed sleep is not enough under full-suite load; wait until the first prompt is streaming.
+	async function waitForStreaming(timeoutMs = 5000): Promise<void> {
+		const startedAt = Date.now();
+		while (!session.isStreaming) {
+			if (Date.now() - startedAt > timeoutMs) throw new Error("Timed out waiting for streaming");
+			await new Promise((resolve) => setTimeout(resolve, 5));
+		}
+	}
+
 	it("should throw when prompt() called while streaming", async () => {
 		await createSession();
 
 		// Start first prompt (don't await, it will block until abort)
 		const firstPrompt = session.prompt("First message");
 
-		// Wait a tick for isStreaming to be set
-		await new Promise((resolve) => setTimeout(resolve, 10));
+		await waitForStreaming();
 
 		// Verify we're streaming
 		expect(session.isStreaming).toBe(true);
@@ -154,10 +151,10 @@ describe("AgentSession concurrent prompt guard", () => {
 
 		// Start first prompt
 		const firstPrompt = session.prompt("First message");
-		await new Promise((resolve) => setTimeout(resolve, 10));
+		await waitForStreaming();
 
 		// steer should work while streaming
-		expect(() => session.steer("Steering message")).not.toThrow();
+		await expect(session.steer("Steering message")).resolves.toBe("queued");
 		expect(session.pendingMessageCount).toBe(1);
 
 		// Cleanup
@@ -170,10 +167,10 @@ describe("AgentSession concurrent prompt guard", () => {
 
 		// Start first prompt
 		const firstPrompt = session.prompt("First message");
-		await new Promise((resolve) => setTimeout(resolve, 10));
+		await waitForStreaming();
 
 		// followUp should work while streaming
-		expect(() => session.followUp("Follow-up message")).not.toThrow();
+		await expect(session.followUp("Follow-up message")).resolves.toBe("queued");
 		expect(session.pendingMessageCount).toBe(1);
 
 		// Cleanup
@@ -197,7 +194,7 @@ describe("AgentSession concurrent prompt guard", () => {
 			},
 			streamFn: (_model, context, options) => {
 				abortSignal = options?.signal;
-				const stream = new MockAssistantStream();
+				const stream = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					const userTexts = context.messages
 						.filter((message) => message.role === "user")
@@ -265,7 +262,7 @@ describe("AgentSession concurrent prompt guard", () => {
 		});
 
 		const firstPrompt = session.prompt("First message");
-		await new Promise((resolve) => setTimeout(resolve, 10));
+		await waitForStreaming();
 		expect(session.isStreaming).toBe(true);
 
 		const pi = (
@@ -302,7 +299,7 @@ describe("AgentSession concurrent prompt guard", () => {
 				tools: [],
 			},
 			streamFn: () => {
-				const stream = new MockAssistantStream();
+				const stream = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					stream.push({ type: "start", partial: createAssistantMessage("") });
 					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("Done") });
@@ -363,7 +360,7 @@ describe("AgentSession concurrent prompt guard", () => {
 				tools: [tool],
 			},
 			streamFn: async (_model, context) => {
-				const stream = new MockAssistantStream();
+				const stream = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					const toolResultCount = context.messages.filter((message) => message.role === "toolResult").length;
 					if (toolResultCount > 0) {
@@ -447,11 +444,9 @@ describe("AgentSession concurrent prompt guard", () => {
 					streamingBehavior?: "steer" | "followUp",
 				) => Promise<{ action: "continue" }>;
 				emitBeforeAgentStart: (
-					prompt: string,
-					images: unknown,
-					systemPrompt: string,
+					trigger: unknown,
 					systemPromptOptions: BuildSystemPromptOptions,
-				) => Promise<undefined>;
+				) => Promise<{ messages: []; systemPromptOptions: NormalizedBuildSystemPromptOptions }>;
 				invalidate: (message?: string) => void;
 			};
 		};
@@ -469,7 +464,10 @@ describe("AgentSession concurrent prompt guard", () => {
 				return undefined;
 			},
 			emitInput: async () => ({ action: "continue" }),
-			emitBeforeAgentStart: async () => undefined,
+			emitBeforeAgentStart: async (_trigger, systemPromptOptions) => ({
+				messages: [],
+				systemPromptOptions: normalizeBuildSystemPromptOptions(systemPromptOptions),
+			}),
 			invalidate: () => {},
 		};
 
@@ -477,8 +475,8 @@ describe("AgentSession concurrent prompt guard", () => {
 		await session.agent.waitForIdle();
 
 		expect(snapshots).toEqual([
-			["user", "assistant"],
-			["user", "assistant"],
+			["system", "user", "assistant"],
+			["system", "user", "assistant"],
 		]);
 	});
 
@@ -509,7 +507,7 @@ describe("AgentSession concurrent prompt guard", () => {
 				tools: [tool],
 			},
 			streamFn: async (_model, context) => {
-				const stream = new MockAssistantStream();
+				const stream = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					const hasToolResult = context.messages.some((message) => message.role === "toolResult");
 
@@ -592,11 +590,9 @@ describe("AgentSession concurrent prompt guard", () => {
 					streamingBehavior?: "steer" | "followUp",
 				) => Promise<{ action: "continue" }>;
 				emitBeforeAgentStart: (
-					prompt: string,
-					images: unknown,
-					systemPrompt: string,
+					trigger: unknown,
 					systemPromptOptions: BuildSystemPromptOptions,
-				) => Promise<undefined>;
+				) => Promise<{ messages: []; systemPromptOptions: NormalizedBuildSystemPromptOptions }>;
 				invalidate: (message?: string) => void;
 			};
 		};
@@ -610,7 +606,10 @@ describe("AgentSession concurrent prompt guard", () => {
 				return undefined;
 			},
 			emitInput: async () => ({ action: "continue" }),
-			emitBeforeAgentStart: async () => undefined,
+			emitBeforeAgentStart: async (_trigger, systemPromptOptions) => ({
+				messages: [],
+				systemPromptOptions: normalizeBuildSystemPromptOptions(systemPromptOptions),
+			}),
 			invalidate: () => {},
 		};
 
@@ -620,9 +619,11 @@ describe("AgentSession concurrent prompt guard", () => {
 
 		const messageEntries = sessionManager.getEntries().filter((entry) => entry.type === "message");
 		expect(messageEntries.map((entry) => entry.message.role)).toEqual([
+			"system",
 			"user",
 			"assistant",
 			"toolResult",
+			"system",
 			"assistant",
 		]);
 	});

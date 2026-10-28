@@ -53,6 +53,7 @@ describe("regressions #1717/#2113: agent session event settlement", () => {
 			.filter((entry) => entry.type === "message")
 			.map((entry) => entry.message);
 		expect(branchMessages.map((message) => message.role)).toEqual([
+			"system",
 			"user",
 			"assistant",
 			"toolResult",
@@ -90,6 +91,6 @@ describe("regressions #1717/#2113: agent session event settlement", () => {
 
 		await harness.session.prompt("run tool");
 
-		expect(branchRolesAtToolCall).toEqual([["user", "assistant"]]);
+		expect(branchRolesAtToolCall).toEqual([["system", "user", "assistant"]]);
 	});
 });

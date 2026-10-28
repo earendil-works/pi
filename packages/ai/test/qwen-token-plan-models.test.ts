@@ -54,6 +54,7 @@ const TEXT_MODELS = [
 	"qwen3.6-plus",
 	"qwen3.7-max",
 	"qwen3.7-plus",
+	"qwen3.8-flash",
 	"qwen3.8-max",
 ];
 
@@ -65,6 +66,7 @@ const INDIVIDUAL_TEXT_MODELS = [
 	"qwen3.6-flash",
 	"qwen3.7-max",
 	"qwen3.7-plus",
+	"qwen3.8-flash",
 	"qwen3.8-max",
 ];
 
@@ -84,6 +86,7 @@ const QWEN_THINKING_MODELS = [
 	"qwen3.6-plus",
 	"qwen3.7-max",
 	"qwen3.7-plus",
+	"qwen3.8-flash",
 	"qwen3.8-max",
 ] as const;
 
@@ -98,6 +101,7 @@ const QWEN_THINKING_MODEL_CASES: QwenTokenPlanModelCase[] = [
 ];
 
 const QWEN_REASONING_EFFORT_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5", "glm-5.1", "glm-5.2"] as const;
+const QWEN38_MODELS = ["qwen3.8-flash", "qwen3.8-max"] as const;
 
 const QWEN_REASONING_EFFORT_MODEL_CASES: QwenTokenPlanModelCase[] = [
 	...(["qwen-token-plan", "qwen-token-plan-cn"] as const).flatMap((provider) =>
@@ -109,7 +113,12 @@ const QWEN_REASONING_EFFORT_MODEL_CASES: QwenTokenPlanModelCase[] = [
 	})),
 ];
 
+const QWEN38_MODEL_CASES: QwenTokenPlanModelCase[] = (
+	["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"] as const
+).flatMap((provider) => QWEN38_MODELS.map((modelId) => ({ provider, modelId })));
+
 describe("Qwen Token Plan models", () => {
+	// #9021
 	it("exposes exactly the documented Individual text models", () => {
 		const modelIds = getModels("qwen-token-plan-individual")
 			.map((model) => model.id)
@@ -190,12 +199,12 @@ describe("Qwen Token Plan models", () => {
 		},
 	);
 
-	it.each(["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"] as const)(
-		"exposes qwen3.8 reasoning_effort levels on %s",
-		(provider) => {
-			const model = getModels(provider).find((candidate) => candidate.id === "qwen3.8-max");
+	it.each(QWEN38_MODEL_CASES)(
+		"exposes qwen3.8 reasoning_effort levels for $provider/$modelId",
+		({ provider, modelId }) => {
+			const model = getModels(provider).find((candidate) => candidate.id === modelId);
 			expect(model).toBeDefined();
-			if (!model) throw new Error(`Missing model: ${provider}/qwen3.8-max`);
+			if (!model) throw new Error(`Missing model: ${provider}/${modelId}`);
 
 			expect(model.thinkingLevelMap).toMatchObject({
 				minimal: null,
@@ -248,12 +257,12 @@ describe("Qwen Token Plan models", () => {
 		},
 	);
 
-	it.each(["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"] as const)(
-		"sends qwen3.8 max reasoning_effort on %s",
-		async (provider) => {
-			const model = getModels(provider).find((candidate) => candidate.id === "qwen3.8-max");
+	it.each(QWEN38_MODEL_CASES)(
+		"sends qwen3.8 xhigh reasoning_effort for $provider/$modelId",
+		async ({ provider, modelId }) => {
+			const model = getModels(provider).find((candidate) => candidate.id === modelId);
 			expect(model).toBeDefined();
-			if (!model) throw new Error(`Missing model: ${provider}/qwen3.8-max`);
+			if (!model) throw new Error(`Missing model: ${provider}/${modelId}`);
 
 			let payload: unknown;
 			await streamSimple(

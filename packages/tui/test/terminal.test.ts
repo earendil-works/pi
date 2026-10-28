@@ -132,7 +132,7 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 	it("queries Kitty mode before enabling modifyOtherKeys fallback", () => {
 		const harness = setupNegotiation();
 		try {
-			assert.equal(harness.writes[0], "\x1b[>7u\x1b[?u\x1b[c");
+			assert.equal(harness.writes[0], "\x1b[>7u\x1b[?u\x1b]7501;?\x1b\\\x1b[c");
 			assert.equal(harness.writes.includes("\x1b[>4;2m"), false);
 			assert.equal(harness.terminal.kittyProtocolActive, false);
 		} finally {
@@ -187,6 +187,21 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		}
 	});
 
+	it("forwards device attributes replies that answer other queries", () => {
+		const harness = setupNegotiation();
+		try {
+			harness.send("\x1b[?7u");
+			harness.send("\x1b[?62;4;52c");
+			assert.equal(harness.getInput(), undefined);
+
+			// The TUI's color query uses DA1 as its own sentinel.
+			harness.send("\x1b[?62;4;52c");
+			assert.equal(harness.getInput(), "\x1b[?62;4;52c");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("forwards normal input while waiting for Kitty response", () => {
 		const harness = setupNegotiation();
 		try {
@@ -216,6 +231,129 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 			harness.cleanup();
 			mock.timers.reset();
 		}
+	});
+
+	// #10607
+	describe("program status (OSC 7501)", () => {
+		const working = "\x1b]7501;state=working:app=pi\x1b\\";
+		const clear = "\x1b]7501;state=clear\x1b\\";
+
+		function withOverride(value: string | undefined, fn: () => void): void {
+			const previous = process.env.PI_PROGRAM_STATUS;
+			if (value === undefined) delete process.env.PI_PROGRAM_STATUS;
+			else process.env.PI_PROGRAM_STATUS = value;
+			try {
+				fn();
+			} finally {
+				if (previous === undefined) delete process.env.PI_PROGRAM_STATUS;
+				else process.env.PI_PROGRAM_STATUS = previous;
+			}
+		}
+
+		it("reports the latest status once the terminal answers the query before DA", () => {
+			withOverride(undefined, () => {
+				const harness = setupNegotiation();
+				try {
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+					assert.equal(harness.writes.includes(working), false);
+
+					harness.send("\x1b]7501;?\x1b\\");
+					assert.equal(harness.getInput(), undefined);
+					assert.equal(harness.writes.filter((write) => write === working).length, 1);
+					harness.send("\x1b[?62;4;52c");
+
+					harness.terminal.setProgramStatus({ state: "done" });
+					assert.equal(harness.writes.at(-1), "\x1b]7501;state=done\x1b\\");
+				} finally {
+					harness.cleanup();
+				}
+			});
+		});
+
+		it("reports nothing when DA arrives first and swallows late replies", () => {
+			withOverride(undefined, () => {
+				const harness = setupNegotiation();
+				try {
+					harness.send("\x1b[?62;4;52c");
+					harness.send("\x1b]7501;?\x07");
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+
+					assert.equal(harness.getInput(), undefined);
+					assert.equal(
+						harness.writes.some((write) => write.startsWith("\x1b]7501;state=")),
+						false,
+					);
+				} finally {
+					harness.cleanup();
+				}
+			});
+		});
+
+		it("skips the query when PI_PROGRAM_STATUS is set", () => {
+			withOverride("1", () => {
+				const harness = setupNegotiation();
+				try {
+					assert.equal(harness.writes[0], "\x1b[>7u\x1b[?u\x1b[c");
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+					assert.equal(harness.writes.at(-1), working);
+				} finally {
+					harness.cleanup();
+				}
+			});
+			withOverride("0", () => {
+				const harness = setupNegotiation();
+				try {
+					assert.equal(harness.writes[0], "\x1b[>7u\x1b[?u\x1b[c");
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+					assert.equal(harness.writes.includes(working), false);
+				} finally {
+					harness.cleanup();
+				}
+			});
+		});
+
+		it("does not let a DA reply from before a restart end the new query", () => {
+			withOverride(undefined, () => {
+				const harness = setupNegotiation();
+				try {
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+					harness.terminal.stop();
+					(harness.terminal as unknown as { queryAndEnableKittyProtocol(): void }).queryAndEnableKittyProtocol();
+
+					// The first start's replies arrive late: its DA, then the second start's reply and DA.
+					harness.send("\x1b[?62;4;52c");
+					harness.send("\x1b]7501;?\x1b\\");
+					harness.send("\x1b[?62;4;52c");
+					assert.equal(harness.writes.at(-1), working);
+					assert.equal(harness.getInput(), undefined);
+				} finally {
+					harness.cleanup();
+				}
+			});
+		});
+
+		it("clears the status on stop and reports it again after restart", () => {
+			withOverride(undefined, () => {
+				const harness = setupNegotiation();
+				try {
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+					harness.send("\x1b]7501;?\x1b\\");
+					harness.terminal.stop();
+					assert.ok(harness.writes.includes(clear));
+
+					// Stopped: nothing is written until the restarted terminal confirms support again.
+					const writesBeforeRestart = harness.writes.length;
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+					assert.equal(harness.writes.length, writesBeforeRestart);
+
+					(harness.terminal as unknown as { queryAndEnableKittyProtocol(): void }).queryAndEnableKittyProtocol();
+					harness.send("\x1b]7501;?\x1b\\");
+					assert.equal(harness.writes.at(-1), working);
+				} finally {
+					harness.cleanup();
+				}
+			});
+		});
 	});
 
 	it("replays buffered CSI-prefix input when it is not a Kitty response", () => {
@@ -251,6 +389,26 @@ describe("ProcessTerminal progress", () => {
 		try {
 			terminal.setProgress(false);
 			assert.deepEqual(writes, ["\x1b]9;4;0\x07"]);
+		} finally {
+			process.stdout.write = previousWrite;
+		}
+	});
+});
+
+describe("ProcessTerminal title", () => {
+	it("replaces control characters so the title cannot end the OSC sequence", () => {
+		const terminal = new ProcessTerminal();
+		const writes: string[] = [];
+		const previousWrite = process.stdout.write;
+
+		process.stdout.write = ((chunk: string | Uint8Array) => {
+			writes.push(String(chunk));
+			return true;
+		}) as typeof process.stdout.write;
+
+		try {
+			terminal.setTitle("pi - work\x07\x1b]52;c;Zm9v\x07\u009b2J - repo");
+			assert.deepEqual(writes, ["\x1b]0;pi - work ]52;c;Zm9v 2J - repo\x07"]);
 		} finally {
 			process.stdout.write = previousWrite;
 		}

@@ -49,17 +49,17 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 });
 
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
-import { getModel } from "../src/compat.ts";
-import type { AssistantMessage, Context, Model } from "../src/types.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
+import type { AssistantMessage, Model } from "../src/types.ts";
 import type { AssistantMessageDiagnostic } from "../src/utils/diagnostics.ts";
 
 const DIAGNOSTIC_TYPE = "bedrock_response_failure";
 const VALIDATION_MESSAGE = "The provided model identifier is invalid.";
 const REQUEST_ID = "11111111-2222-3333-4444-555555555555";
 
-const context: Context = {
+const context = normalizeContext({
 	messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
-};
+});
 
 function getModelFixture(): Model<"bedrock-converse-stream"> {
 	return getModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");

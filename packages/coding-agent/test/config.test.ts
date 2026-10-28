@@ -3,6 +3,7 @@ import { tmpdir } from "os";
 import { delimiter, join } from "path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
+	detectInstallChange,
 	detectInstallMethod,
 	findNodePackageDir,
 	getSelfUpdateCommand,
@@ -447,5 +448,17 @@ describe("detectInstallMethod", () => {
 		expect(getSelfUpdateUnavailableInstruction("@earendil-works/pi-coding-agent")).toContain(
 			"the install path is not writable",
 		);
+	});
+});
+
+describe("detectInstallChange", () => {
+	// Regression test for #10439: a deleted pnpm install must not fall back to a package.json further up.
+	test("reports a removed install instead of reading a package.json further up", () => {
+		tempDir = mkdtempSync(join(tmpdir(), "pi-install-change-"));
+		const installDir = join(tempDir, "global", "hash");
+		mkdirSync(installDir, { recursive: true });
+		writeFileSync(join(tempDir, "package.json"), JSON.stringify({ version: "0.0.1" }));
+		rmSync(installDir, { recursive: true, force: true });
+		expect(detectInstallChange(join(installDir, "package.json"))).toEqual({ kind: "removed" });
 	});
 });

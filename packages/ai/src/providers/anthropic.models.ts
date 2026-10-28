@@ -2,7 +2,13 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/anthropic.json" with { type: "json" };
-import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
+import { flattenChatModelCatalog, flattenClassifierModelCatalog, flattenImageModelCatalog, type ChatModelCatalog, type ClassifierModelCatalog, type ImageModelCatalog } from "../model-catalog.ts";
 
-export const ANTHROPIC_MODELS: ModelCatalog<typeof values, "anthropic"> =
-	flattenModelCatalog("anthropic", values);
+export const ANTHROPIC_MODELS: ChatModelCatalog<typeof values, "anthropic"> =
+	flattenChatModelCatalog("anthropic", values);
+
+export const ANTHROPIC_IMAGE_MODELS: ImageModelCatalog<typeof values, "anthropic"> =
+	flattenImageModelCatalog("anthropic", values);
+
+export const ANTHROPIC_CLASSIFIER_MODELS: ClassifierModelCatalog<typeof values, "anthropic"> =
+	flattenClassifierModelCatalog("anthropic", values);

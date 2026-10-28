@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
-import { getModel } from "../src/compat.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Model, ProviderResponse } from "../src/types.ts";
 
 const MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
@@ -41,7 +41,7 @@ describe("bedrock response headers", () => {
 
 		const result = await streamBedrock(
 			model,
-			{ messages: [{ role: "user", content: "hello", timestamp: Date.now() }] },
+			normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: Date.now() }] }),
 			{
 				cacheRetention: "none",
 				env: { AWS_BEDROCK_FORCE_HTTP1: "1", AWS_BEDROCK_SKIP_AUTH: "1" },

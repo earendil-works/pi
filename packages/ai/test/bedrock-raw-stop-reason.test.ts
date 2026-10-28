@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const bedrockMock = vi.hoisted(() => ({
 	stopReason: "end_turn" as string,
+	streamEvents: undefined as unknown[] | undefined,
 }));
 
 vi.mock("@aws-sdk/client-bedrock-runtime", () => {
@@ -16,6 +17,10 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 			return {
 				$metadata: { httpStatusCode: 200, requestId: "request-id" },
 				stream: (async function* () {
+					if (bedrockMock.streamEvents) {
+						yield* bedrockMock.streamEvents;
+						return;
+					}
 					yield { messageStart: { role: "assistant" } };
 					yield { messageStop: { stopReason: bedrockMock.stopReason } };
 				})(),
@@ -51,13 +56,60 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 });
 
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
-import { getModel } from "../src/compat.ts";
-import type { Context } from "../src/types.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
+import type { Api, Model } from "../src/types.ts";
+
+beforeEach(() => {
+	bedrockMock.streamEvents = undefined;
+});
 
 const model = getModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");
-const context: Context = {
+const context = normalizeContext({
 	messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
-};
+});
+
+describe("Bedrock provider stream events", () => {
+	it("forwards SDK stream items in order before normalizing them", async () => {
+		bedrockMock.streamEvents = [
+			{ messageStart: { role: "assistant" } },
+			{ contentBlockDelta: { contentBlockIndex: 0, delta: { text: "hello" } } },
+			{ messageStop: { stopReason: "end_turn", additionalModelResponseFields: { source: "test" } } },
+			{ metadata: { usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } } },
+		];
+		const received: unknown[] = [];
+		const eventModels: Model<Api>[] = [];
+		const result = await streamBedrock(model, context, {
+			cacheRetention: "none",
+			onProviderStreamEvent: async (item, eventModel) => {
+				await Promise.resolve();
+				received.push(item);
+				eventModels.push(eventModel);
+			},
+		}).result();
+
+		expect(received).toEqual(bedrockMock.streamEvents);
+		for (const [index, item] of received.entries()) expect(item).toBe(bedrockMock.streamEvents[index]);
+		expect(eventModels).toEqual([model, model, model, model]);
+		expect(result.stopReason).toBe("stop");
+		expect(result.content).toEqual([{ type: "text", text: "hello" }]);
+	});
+
+	it("forwards SDK error items before reporting them", async () => {
+		const exception = new Error("bedrock stream failed");
+		bedrockMock.streamEvents = [{ messageStart: { role: "assistant" } }, { internalServerException: exception }];
+		const received: unknown[] = [];
+		const result = await streamBedrock(model, context, {
+			cacheRetention: "none",
+			onProviderStreamEvent: (item) => {
+				received.push(item);
+			},
+		}).result();
+
+		expect(received).toEqual(bedrockMock.streamEvents);
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toBe("bedrock stream failed");
+	});
+});
 
 describe("Bedrock raw stop reasons", () => {
 	it("preserves raw Bedrock stop reasons for successful stops", async () => {

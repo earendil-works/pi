@@ -9,32 +9,33 @@ A new provider touches multiple files. Work through these steps in order.
 
 ## 1. Core Types (`packages/ai/src/types.ts`)
 
-- Add API identifier to `Api` type union (e.g. `"bedrock-converse-stream"`).
-- Create options interface extending `StreamOptions`.
-- Add mapping to `ApiOptionsMap`.
-- Add provider name to `KnownProvider` type union.
+- Add the provider name to the `KnownProvider` union.
+- Only for a new API: add the API identifier to `KnownApi` (e.g. `"bedrock-converse-stream"`) and its options type to `ApiOptionsMap`.
 
-## 2. Provider Implementation (`packages/ai/src/providers/`)
+## 2. API Implementation (`packages/ai/src/api/`, only for a new API)
 
-Create a provider file exporting:
+Most providers reuse an existing API such as `openai-completions`; skip this step then.
 
-- `stream<Provider>()` returning `AssistantMessageEventStream`.
-- `streamSimple<Provider>()` for `SimpleStreamOptions` mapping.
-- Provider-specific options interface.
-- Message/tool conversion functions.
-- Response parsing that emits standardized events (`text`, `tool_call`, `thinking`, `usage`, `stop`).
+- `src/api/<api-id>.ts` exports exactly `stream` and `streamSimple`, plus an options interface extending `StreamOptions`.
+- Convert messages and tools to the provider format. Read the prompt and tools from the transcript with `getInitialSystemMessage()`, `getCurrentTools()`, and `resolveTranscript()`.
+- Parse responses into standardized events (`text`, `tool_call`, `thinking`, `usage`, `stop`).
+- Add a lazy wrapper `src/api/<api-id>.lazy.ts` (`<name>Api()` via `lazyApi()`) so providers can reference the implementation without importing its SDK.
+- Register the lazy wrapper in the builtin API list in `src/compat.ts`.
+- Add `export type` re-exports in `src/index.ts` for option types that should be available from the root entry. The `./api/*` subpath export in `package.json` already covers the new module.
 
-## 3. Provider Exports and Lazy Registration
-
-- Add a package subpath export in `packages/ai/package.json` pointing at `./dist/providers/<provider>.js`.
-- Add `export type` re-exports in `packages/ai/src/index.ts` for provider option types that should remain available from the root entry.
-- Register the provider in `packages/ai/src/providers/register-builtins.ts` via lazy loader wrappers; do not statically import provider implementation modules there.
-- Add credential detection in `packages/ai/src/env-api-keys.ts`.
-
-## 4. Model Generation (`packages/ai/scripts/generate-models.ts`)
+## 3. Model Generation (`packages/ai/scripts/generate-models.ts`)
 
 - Add logic to fetch/parse models from the provider source.
 - Map to the standardized `Model` interface.
+- Regenerate. This writes the stable catalog wrapper `src/providers/<id>.models.ts` (exporting `<ID>_MODELS`) that the provider factory imports, and updates `src/models.generated.ts`.
+
+## 4. Provider Factory and Auth (`packages/ai/src/providers/`)
+
+- Create `src/providers/<id>.ts` exporting `<id>Provider()`, which calls `createProvider({ id, name, baseUrl, auth, models, api })`. `name` is the display name shown by `/login` and related UI. See `deepseek.ts` for a minimal example.
+- Auth: `envApiKeyAuth()` for standard API keys, a custom `ApiKeyAuth` for ambient credentials (AWS profiles, ADC), `lazyOAuth()` where an OAuth flow exists.
+- Pass the lazy API wrapper (e.g. `openAICompletionsApi()`) as `api`; do not statically import API implementation modules.
+- Register the factory in `src/providers/all.ts`.
+- Add the env var to `src/env-api-keys.ts` so the compat `getEnvApiKey()` finds it.
 
 ## 5. Tests (`packages/ai/test/`)
 
@@ -46,9 +47,7 @@ Create a provider file exporting:
 ## 6. Coding Agent (`packages/coding-agent/`)
 
 - `src/core/model-resolver.ts`: add default model ID to `defaultModelPerProvider`.
-- `src/core/provider-display-names.ts`: add API-key login display name so `/login` and related UI show the provider for built-in API-key auth.
 - `src/cli/args.ts`: add env var documentation.
-- `README.md`: add provider setup instructions.
 - `docs/providers.md`: add setup instructions, env var, and `auth.json` key.
 
 ## 7. Documentation

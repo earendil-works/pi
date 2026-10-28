@@ -81,19 +81,20 @@ describe("session selector search", () => {
 	it("relevance sort orders by score and tie-breaks by modified desc", () => {
 		const sessions: SessionInfo[] = [
 			makeSession({
-				id: "late",
+				id: "message",
 				modified: new Date("2026-01-03T00:00:00.000Z"),
-				allMessagesText: "xxxx brave",
+				allMessagesText: "brave",
 			}),
 			makeSession({
-				id: "early",
+				id: "name",
+				name: "Brave work",
 				modified: new Date("2026-01-01T00:00:00.000Z"),
-				allMessagesText: "brave xxxx",
+				allMessagesText: "xxxx",
 			}),
 		];
 
 		const result1 = filterAndSortSessions(sessions, '"brave"', "relevance");
-		expect(result1.map((s) => s.id)).toEqual(["early", "late"]);
+		expect(result1.map((s) => s.id)).toEqual(["name", "message"]);
 
 		const tieSessions: SessionInfo[] = [
 			makeSession({
@@ -110,6 +111,118 @@ describe("session selector search", () => {
 
 		const result2 = filterAndSortSessions(tieSessions, '"brave"', "relevance");
 		expect(result2.map((s) => s.id)).toEqual(["newer", "older"]);
+	});
+
+	// #11220
+	it("ignores the position of a match in message text", () => {
+		const filler = "lorem ipsum dolor sit amet ".repeat(400);
+		const sessions: SessionInfo[] = [
+			makeSession({
+				id: "early",
+				modified: new Date("2026-01-01T00:00:00.000Z"),
+				allMessagesText: `opus ${filler}`,
+			}),
+			makeSession({
+				id: "deep",
+				modified: new Date("2026-01-02T00:00:00.000Z"),
+				allMessagesText: `${filler} we discussed the opus model`,
+			}),
+			makeSession({
+				id: "scattered",
+				modified: new Date("2026-01-03T00:00:00.000Z"),
+				allMessagesText: filler,
+			}),
+		];
+
+		const result = filterAndSortSessions(sessions, "opus", "relevance");
+		expect(result.map((s) => s.id)).toEqual(["deep", "early"]);
+	});
+
+	// #11024
+	it("does not match scattered characters in session ids", () => {
+		const sessions: SessionInfo[] = [
+			makeSession({
+				id: "019e9024-aaaa-7bbb-8ccc-dddddddddddd",
+				modified: new Date("2026-01-03T00:00:00.000Z"),
+				allMessagesText: "unrelated",
+			}),
+			makeSession({
+				id: "01a1ffff-aaaa-7bbb-8ccc-dddddddddddd",
+				name: "#1024 TDD bare env",
+				modified: new Date("2026-01-01T00:00:00.000Z"),
+				allMessagesText: "unrelated",
+			}),
+		];
+
+		expect(filterAndSortSessions(sessions, "1024", "relevance").map((s) => s.name)).toEqual(["#1024 TDD bare env"]);
+		expect(filterAndSortSessions(sessions, "9024-aa", "relevance").map((s) => s.id)).toEqual([
+			"019e9024-aaaa-7bbb-8ccc-dddddddddddd",
+		]);
+	});
+
+	it("ranks name text, then message text, then scattered name matches", () => {
+		const sessions: SessionInfo[] = [
+			makeSession({
+				id: "scattered-name",
+				name: "c-a-c-h-e notes",
+				modified: new Date("2026-01-04T00:00:00.000Z"),
+				allMessagesText: "unrelated",
+			}),
+			makeSession({
+				id: "message",
+				name: "Other work",
+				modified: new Date("2026-01-03T00:00:00.000Z"),
+				allMessagesText: "A discussion mentioning the cache.",
+			}),
+			makeSession({
+				id: "name",
+				name: "Cache work",
+				modified: new Date("2026-01-01T00:00:00.000Z"),
+				allMessagesText: "Summary",
+			}),
+		];
+
+		expect(filterAndSortSessions(sessions, "cache", "relevance").map((s) => s.id)).toEqual([
+			"name",
+			"message",
+			"scattered-name",
+		]);
+	});
+
+	it("matches each token within a single field", () => {
+		const sessions: SessionInfo[] = [
+			makeSession({
+				id: "split",
+				name: "Fuzzy",
+				modified: new Date("2026-01-01T00:00:00.000Z"),
+				allMessagesText: "search ranking",
+			}),
+		];
+
+		expect(filterAndSortSessions(sessions, "fuzzy ranking", "relevance").map((s) => s.id)).toEqual(["split"]);
+		expect(filterAndSortSessions(sessions, "zzysea", "relevance")).toEqual([]);
+		expect(filterAndSortSessions(sessions, "re:fuzzy search", "relevance")).toEqual([]);
+	});
+
+	it("ranks regex name matches first", () => {
+		const sessions: SessionInfo[] = [
+			makeSession({
+				id: "message",
+				modified: new Date("2026-01-02T00:00:00.000Z"),
+				allMessagesText: "brave",
+			}),
+			makeSession({
+				id: "name",
+				name: "Brave",
+				modified: new Date("2026-01-01T00:00:00.000Z"),
+				allMessagesText: "xxxx",
+			}),
+		];
+
+		expect(filterAndSortSessions(sessions, "re:\\bbrave\\b", "relevance").map((s) => s.id)).toEqual([
+			"name",
+			"message",
+		]);
 	});
 
 	it("returns empty list for invalid regex", () => {

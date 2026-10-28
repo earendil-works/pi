@@ -111,7 +111,7 @@ describe("Radius provider", () => {
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 
-	it("does not fetch or expose Radius models without configured auth", async () => {
+	it("does not fetch or make Radius models available without configured auth", async () => {
 		const fetchSpy = vi.spyOn(globalThis, "fetch");
 		const runtime = await ModelRuntime.create({
 			credentials: AuthStorage.inMemory(),
@@ -120,7 +120,7 @@ describe("Radius provider", () => {
 			allowModelNetwork: true,
 		});
 
-		expect(runtime.getModels(RADIUS_PROVIDER_ID)).toEqual([]);
+		expect(runtime.getAvailableSnapshot().filter((model) => model.provider === RADIUS_PROVIDER_ID)).toEqual([]);
 		expect(fetchSpy.mock.calls.some(([url]) => String(url).includes("radius.pi.dev/v1/config"))).toBe(false);
 	});
 
