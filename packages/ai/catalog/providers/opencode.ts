@@ -25,44 +25,66 @@ const LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = new Set([
 	"opencode-go:kimi-k2.6",
 ]);
 
-/** The API OpenCode serves a model on, from the first API models.dev lists. */
-function opencodeApi(
-	source: ModelsDevModel,
-	basePath: string,
-): { api: Api; baseUrl: string; compat?: OpenAICompletionsCompat | OpenAIResponsesCompat } {
-	const primary = source.apis[0];
-	switch (primary?.protocol) {
+// OpenCode serves each model on one protocol-specific endpoint. Native protocols
+// come before generic Chat Completions if models.dev ever lists several.
+const OPENCODE_PROTOCOLS = ["responses", "messages", "generate-content", "chat-completions"] as const;
+
+interface OpencodeApi {
+	api: Api;
+	baseUrl: string;
+	compat?: OpenAICompletionsCompat | OpenAIResponsesCompat;
+}
+
+/**
+ * The API and base URL models.dev lists for a model. Models served only on a
+ * protocol pi does not support fail strict generation and are skipped otherwise.
+ */
+function opencodeApi(ctx: ProviderContext, source: ModelsDevModel): OpencodeApi | undefined {
+	const entry = OPENCODE_PROTOCOLS.map((protocol) =>
+		source.apis.find((candidate) => candidate.protocol === protocol),
+	).find((candidate) => candidate !== undefined);
+	if (!entry) {
+		const protocols = source.apis.map((candidate) => candidate.protocol).join(", ") || "none";
+		const message = `models.dev lists no supported API for ${ctx.providerId}/${source.id} (${protocols})`;
+		if (ctx.strict) throw new Error(message);
+		console.warn(`Skipping model: ${message}`);
+		return undefined;
+	}
+	switch (entry.protocol) {
 		case "responses":
 			return {
 				api: "openai-responses",
-				baseUrl: `${basePath}/openai/v1`,
+				baseUrl: entry.baseUrl,
 				compat: { sessionAffinityFormat: "openai-nosession" },
 			};
 		case "messages":
-			// Anthropic SDK appends /v1/messages to baseURL
-			return { api: "anthropic-messages", baseUrl: `${basePath}/anthropic` };
+			// The Anthropic SDK appends /v1/messages itself.
+			return { api: "anthropic-messages", baseUrl: entry.baseUrl.replace(/\/v1\/?$/, "") };
 		case "generate-content":
-			return { api: "google-generative-ai", baseUrl: `${basePath}/google/v1beta` };
-		default:
+			return { api: "google-generative-ai", baseUrl: entry.baseUrl };
+		case "chat-completions":
 			return {
 				api: "openai-completions",
-				baseUrl: `${basePath}/openai/v1`,
-				...(primary?.aisdk === "@ai-sdk/alibaba" ? { compat: { cacheControlFormat: "anthropic" } } : {}),
+				baseUrl: entry.baseUrl,
+				...(entry.aisdk === "@ai-sdk/alibaba" ? { compat: { cacheControlFormat: "anthropic" } } : {}),
 			};
 	}
 }
 
-/** OpenCode Zen and Go list the same kinds of models under different base paths. */
-export function opencodeModels(ctx: ProviderContext, basePath: string): ChatModel[] {
+/** OpenCode Zen and Go models, on the endpoints models.dev lists for them. */
+export function opencodeModels(ctx: ProviderContext): ChatModel[] {
 	const provider = ctx.providerId;
 	return modelsDevModels(ctx, provider, {
 		api: "openai-completions",
-		baseUrl: `${basePath}/openai/v1`,
+		// Replaced by the base URL of the API models.dev lists for each model.
+		baseUrl: "",
 		skipDeprecated: true,
 		// Codex Spark is not usable through OpenCode.
 		include: (source) => source.id !== "gpt-5.3-codex-spark",
 		map: (model, source) => {
-			let { api, baseUrl, compat } = opencodeApi(source, basePath);
+			const served = opencodeApi(ctx, source);
+			if (!served) return undefined;
+			let { api, baseUrl, compat } = served;
 			if (provider === "opencode" && model.id === "grok-build-0.1") {
 				compat = { ...compat, supportsReasoningEffort: false };
 			}
@@ -73,9 +95,13 @@ export function opencodeModels(ctx: ProviderContext, basePath: string): ChatMode
 			}
 			// models.dev reports these as @ai-sdk/anthropic, but OpenCode Go serves
 			// them through the OpenAI-compatible /openai/v1/chat/completions path.
-			if (provider === "opencode-go" && (model.id === "qwen3.5-plus" || model.id === "qwen3.6-plus")) {
+			if (
+				provider === "opencode-go" &&
+				api === "anthropic-messages" &&
+				(model.id === "qwen3.5-plus" || model.id === "qwen3.6-plus")
+			) {
 				api = "openai-completions";
-				baseUrl = `${basePath}/openai/v1`;
+				baseUrl = baseUrl.replace(/\/anthropic$/, "/openai/v1");
 				// Qwen/DashScope uses enable_thinking at the top level.
 				compat = { ...compat, thinkingFormat: "qwen" };
 			}
@@ -170,7 +196,7 @@ function jev(id: string, name: string, input: number): ClassifierModel<"typesafe
 
 export default defineProvider({
 	id: "opencode",
-	models: (ctx) => opencodeModels(ctx, "https://opencode.ai/inference"),
+	models: opencodeModels,
 	classifiers: () => [jev("jev-1.13", "Jev 1.13", 0.042), jev("jev-1.13-free", "Jev 1.13 Free", 0)],
 	compat: { "openai-completions": OPENCODE_COMPLETIONS_COMPAT },
 	finalize: (model) => {
