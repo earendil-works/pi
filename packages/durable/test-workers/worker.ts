@@ -66,6 +66,8 @@ export class TestSession extends DurableObject {
 				{
 					models,
 					registry,
+					// An eviction during a request is a failed attempt (#11139); its retry need not wait long here.
+					settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } },
 					now: () => this.now(),
 					onWake: (wake) => {
 						this.wakes.push(wake);

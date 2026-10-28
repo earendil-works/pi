@@ -1,12 +1,35 @@
-import { type Context, type JsonValue, Watch, type WatchHandle } from "@earendil-works/chord";
+import {
+	type Context,
+	type JsonValue,
+	Watch,
+	type WatchCall,
+	type WatchEnd,
+	type WatchHandle,
+} from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT, withoutAbortSignal } from "@earendil-works/chord/context";
 import { applyImmutable, type Op } from "@earendil-works/chord/delta";
-import { contained, type ObservedCommit, type SessionImpl } from "../session/session.ts";
-import type { ConversationId, JoinPolicy, Storage, TaskId, TaskOutcome, TaskRecord } from "../types.ts";
+import {
+	contained,
+	ENDED,
+	guardObserver,
+	type ObservedCommit,
+	observation,
+	type SessionImpl,
+} from "../session/session.ts";
+import type {
+	ConversationId,
+	JoinPolicy,
+	Observation,
+	Observer,
+	Storage,
+	TaskId,
+	TaskOutcome,
+	TaskRecord,
+} from "../types.ts";
 import { type BlockedReason, type BlockedSubject, blockedSubject } from "./scheduler.ts";
 import { closedError, scanAll } from "./util.ts";
 
-/** A live task's durable status without its checkpoint and outcome payloads (spec §9.5). */
+/** A live task's durable status without its checkpoint and outcome payloads (spec §9.4). */
 export type TaskGraphState =
 	| { readonly status: "pending" | "running"; readonly phase: string }
 	| {
@@ -31,14 +54,14 @@ export type TaskGraphNode = {
 	readonly state: TaskGraphState;
 	/**
 	 * Why it cannot run here, when it cannot: no registered definition takes it (`missing_task`, `task_too_old`,
-	 * `migration_failed`), or the restart limit parked it (`restart_limit`). Follows registry changes.
+	 * `migration_failed`). Follows registry changes.
 	 */
 	readonly blocked?: BlockedReason;
 	/** Conversations this task owns, in ID order. */
 	readonly conversations: readonly ConversationId[];
 };
 
-/** Every live task of the Session (spec §9.5). */
+/** Every live task of the Session (spec §9.4). */
 export type TaskGraph = {
 	/** Every live task, keyed by its decimal ID. */
 	readonly tasks: Readonly<Record<string, TaskGraphNode>>;
@@ -47,10 +70,10 @@ export type TaskGraph = {
 export type TaskGraphWatch = WatchHandle<TaskGraph>;
 
 type AnyTaskRecord = TaskRecord<JsonValue, JsonValue, JsonValue>;
-type Observer = Watch<TaskGraph>;
 type Mount = {
 	value: TaskGraph;
-	readonly observers: Set<Observer>;
+	/** Watches and guarded host observers (`observeTaskGraph()`). */
+	readonly observers: Set<Observer<TaskGraph>>;
 	/** What the blocked reason reads of each live task, so a registry change can derive it again without payloads. */
 	readonly records: Map<string, BlockedSubject>;
 };
@@ -79,7 +102,7 @@ export class TaskGraphView {
 		this.#session = session;
 		this.#storage = storage;
 		this.#blocking = blocking;
-		session.observeCommits((publication, context) => {
+		session.followCommits((publication, context) => {
 			// A commit held in memory changes documents only, which the graph does not show.
 			if (this.#mount === undefined || publication.kind === "memory") return;
 			advance(this.#mount, publication, context, blocking.blocked, (error) => session.report(error));
@@ -87,9 +110,11 @@ export class TaskGraphView {
 		blocking.subscribeBlocked(() => this.#refreshBlocked());
 		session.subscribeClose(() => {
 			this.#closed = true;
+			const failure = this.#session.failure;
+			const end: WatchEnd = failure === undefined ? ENDED : { kind: "failed", error: failure.error };
 			for (const observer of [...(this.#mount?.observers ?? [])]) {
 				contained(
-					() => observer.end(this.#session.failure),
+					() => observer.end(end),
 					(error) => session.report(error),
 				);
 			}
@@ -97,7 +122,25 @@ export class TaskGraphView {
 		});
 	}
 
-	/** A serialized watch of the graph; cancelling `context` stops it. */
+	/**
+	 * Attach a synchronous observer of the graph (`Harness.observeTaskGraph()`), behind `guardObserver()`; `context`
+	 * governs only the attachment.
+	 */
+	async observe(observer: Observer<TaskGraph>, context: Context): Promise<Observation<TaskGraph>> {
+		let value!: TaskGraph;
+		const attached = await this.#attach((current, release) => {
+			value = current;
+			return guardObserver(observer, release, (error) => this.#session.report(error));
+		}, context);
+		const signal = context.abortSignal;
+		if (signal?.aborted) {
+			attached.detach();
+			throw signal.reason;
+		}
+		return observation(value, attached.observer);
+	}
+
+	/** A serialized watch of the graph, an observer of its mount; aborting `context` ends it `aborted`. */
 	async watch(context: Context): Promise<TaskGraphWatch> {
 		const { observer } = await this.#attach(
 			(value, release) => new Watch<TaskGraph>(value, release, (error) => this.#session.report(error)),
@@ -105,20 +148,20 @@ export class TaskGraphView {
 		);
 		const signal = context.abortSignal;
 		if (signal?.aborted) {
-			observer.cancel();
+			observer.abort();
 			throw signal.reason;
 		}
-		if (signal !== undefined) observer.observeCancellation(signal);
+		if (signal !== undefined) observer.observeAbort(signal);
 		return observer;
 	}
 
 	/** Register an observer created from the current revision, atomically on the Session line. */
-	#attach<O extends Observer>(
+	#attach<O extends Observer<TaskGraph>>(
 		create: (value: TaskGraph, release: () => void) => O,
 		context: Context,
 	): Promise<{ observer: O; detach: () => void }> {
 		return this.#session.readOnLine(async () => {
-			const mount = this.#mount ?? { ...(await this.#build(context)), observers: new Set<Observer>() };
+			const mount = this.#mount ?? { ...(await this.#build(context)), observers: new Set<Observer<TaskGraph>>() };
 			const detach = (): void => {
 				mount.observers.delete(observer);
 				if (mount.observers.size === 0 && this.#mount === mount) this.#mount = undefined;
@@ -232,8 +275,8 @@ function publish(mount: Mount, ops: Op[], context: Context, report: (error: unkn
 	if (ops.length === 0) return;
 	mount.value = applyImmutable(mount.value, ops);
 	const frameContext = withoutAbortSignal(context);
-	for (const observer of [...mount.observers])
-		contained(() => observer.advance(mount.value, ops, frameContext), report);
+	const call: WatchCall<TaskGraph> = { kind: "value", value: mount.value, ops, retired: false };
+	for (const observer of [...mount.observers]) contained(() => observer.advance(call, frameContext), report);
 }
 
 function nodeOf(

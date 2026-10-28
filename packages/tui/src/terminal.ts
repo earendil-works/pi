@@ -10,6 +10,7 @@ import {
 	type ProgramStatus,
 } from "./program-status.ts";
 import { StdinBuffer } from "./stdin-buffer.ts";
+import { replaceControlCharacters } from "./utils.ts";
 
 const TERMINAL_PROGRESS_KEEPALIVE_MS = 1000;
 const TERMINAL_PROGRESS_ACTIVE_SEQUENCE = "\x1b]9;4;3\x07";
@@ -590,8 +591,9 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	setTitle(title: string): void {
-		// OSC 0;title BEL - set terminal window title
-		process.stdout.write(`\x1b]0;${title}\x07`);
+		// OSC 0;title BEL - set terminal window title. A BEL or ESC in the title would end the sequence early and
+		// send the rest to the terminal as escape sequences (session names come from session files).
+		process.stdout.write(`\x1b]0;${replaceControlCharacters(title)}\x07`);
 	}
 
 	setProgramStatus(status: ProgramStatus): void {

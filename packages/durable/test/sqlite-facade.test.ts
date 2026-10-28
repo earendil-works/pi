@@ -35,6 +35,10 @@ class ControlledSettlementDatabase implements SqliteDatabase {
 		return this.delegate.run(sql, ...params);
 	}
 
+	runCounted(sql: string, ...params: SqliteValue[]): Promise<number> {
+		return this.delegate.runCounted(sql, ...params);
+	}
+
 	get<T extends object>(sql: string, ...params: SqliteValue[]): Promise<T | undefined> {
 		return this.delegate.get<T>(sql, ...params);
 	}

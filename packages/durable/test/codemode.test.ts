@@ -928,10 +928,13 @@ describe("durable code mode", () => {
 		]);
 		const { harness, root } = await openChat(await openNodeSqliteStorage(await sqlitePath()), chat.setup);
 		let journalCommits = 0;
-		harness.subscribeCommits((publication) => {
-			for (const change of publication.changes) {
-				if (change.type === "document" && change.record.kind === "pi.codemode.journal") journalCommits++;
-			}
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of publication.changes) {
+					if (change.type === "document" && change.record.kind === "pi.codemode.journal") journalCommits++;
+				}
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		expect(await resultText(chat.setup, root)).toEqual({ text: "50", isError: false });

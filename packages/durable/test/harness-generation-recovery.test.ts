@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf, unanswered, waitFor } from "./chat-support.ts";
 import { addSection } from "./harness-support.ts";
-import { context } from "./session-support.ts";
+import { context, onValue } from "./session-support.ts";
 import { aborted, deferred, eventually } from "./task-support.ts";
 
 const directories = new Set<string>();
@@ -130,9 +130,11 @@ describe("generation recovery", () => {
 		opened.harness.resume();
 		const watch = (await opened.harness.watchDoc(LiveDoc, opened.root.id, context))!;
 		let watched: string | undefined;
-		watch.start(async (value) => {
-			watched = textOf(value?.generation?.message as Message) ?? watched;
-		});
+		watch.start(
+			onValue(async ({ value }) => {
+				watched = textOf(value.generation?.message as Message) ?? watched;
+			}),
+		);
 		const id = (await opened.root.submit({ type: "input", content: "hi" }, context)).id;
 		await waitFor(() => watched !== undefined);
 		await opened.harness.close(context);
@@ -195,7 +197,7 @@ describe("generation recovery", () => {
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		expect(setup.faux.state.callCount).toBe(1);
 		expect(await opened.harness.snapshot(LiveDoc, opened.root.id, context)).toEqual({
-			run: { taskId, inputs: [id] },
+			run: { taskId, inputs: [id], turns: 0, first: expect.any(Number) },
 			generation: { attempt: 1, retry: { at: 61_000, error: "503 Service Unavailable" } },
 		});
 		now = 61_000;

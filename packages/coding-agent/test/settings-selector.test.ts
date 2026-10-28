@@ -6,6 +6,7 @@ import {
 	type SettingsConfig,
 	SettingsSelectorComponent,
 } from "../src/modes/interactive/components/settings-selector.ts";
+import { SelectSubmenu } from "../src/modes/interactive/components/settings-submenu.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 import { createHarness, type Harness } from "./suite/harness.ts";
@@ -164,5 +165,24 @@ describe("SettingsSelectorComponent", () => {
 		output = stripAnsi(list.render(120).join("\n"));
 		expect(output).toContain("  ✓ medium");
 		expect(output).toContain("→   high");
+	});
+
+	it("pages a searchable submenu with selection page keys (#7629)", () => {
+		const onSelect = vi.fn();
+		const submenu = new SelectSubmenu(
+			"Theme",
+			"",
+			Array.from({ length: 20 }, (_, index) => ({ value: `theme-${index}`, label: `theme-${index}` })),
+			"theme-0",
+			onSelect,
+			() => {},
+			undefined,
+			{ searchable: true },
+		);
+
+		submenu.handleInput("\x1b[6~"); // PageDown
+		submenu.handleInput("\r");
+
+		expect(onSelect).toHaveBeenCalledWith("theme-10");
 	});
 });

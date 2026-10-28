@@ -59,7 +59,7 @@ describe("a Harness woken by its Durable Object alarm", () => {
 		await eventually(stub, async (_instance, state) => (await state.storage.getAlarm()) === null);
 	});
 
-	it("recovers a turn an eviction cut off mid-stream through the heartbeat alarm", async () => {
+	it("recovers a turn an eviction cut off mid-stream through the alarms, retrying the charged attempt", async () => {
 		const stub = fresh();
 		await runInDurableObject(stub, async (instance: TestSession, state) => {
 			instance.script(["hang", "recovered"]);

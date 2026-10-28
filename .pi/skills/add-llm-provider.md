@@ -23,11 +23,11 @@ Most providers reuse an existing API such as `openai-completions`; skip this ste
 - Register the lazy wrapper in the builtin API list in `src/compat.ts`.
 - Add `export type` re-exports in `src/index.ts` for option types that should be available from the root entry. The `./api/*` subpath export in `package.json` already covers the new module.
 
-## 3. Model Generation (`packages/ai/scripts/generate-models.ts`)
+## 3. Model Catalog (`packages/ai/catalog/providers/<id>.ts`)
 
-- Add logic to fetch/parse models from the provider source.
-- Map to the standardized `Model` interface.
-- Regenerate. This writes the stable catalog wrapper `src/providers/<id>.models.ts` (exporting `<ID>_MODELS`) that the provider factory imports, and updates `src/models.generated.ts`.
+- Add a provider definition with `defineProvider()` and register it in `catalog/providers/index.ts`. Read `packages/ai/catalog/README.md` first.
+- For a models.dev provider, use `modelsDevModels()`; set compat defaults per API in `compat` and provider-specific behavior in `finalize`.
+- Regenerate with `npm run generate-models` in `packages/ai`. This writes the stable catalog wrapper `src/providers/<id>.models.ts` (exporting `<ID>_MODELS`) that the provider factory imports, and updates `src/models.generated.ts`.
 
 ## 4. Provider Factory and Auth (`packages/ai/src/providers/`)
 

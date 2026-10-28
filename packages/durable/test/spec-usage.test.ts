@@ -6,7 +6,9 @@
 import type { Context, Draft } from "@earendil-works/chord";
 import { type AssistantMessage, type Models, type ToolCall, Type } from "@earendil-works/pi-ai";
 import {
+	type Conversation,
 	type ConversationId,
+	ConversationTranscript,
 	configure,
 	createRegistry,
 	defineDoc,
@@ -27,6 +29,7 @@ import {
 	type TaskId,
 	type ToolExecutionApi,
 	ToolTask,
+	type TranscriptView,
 	type Tx,
 	type UserInput,
 	wrapTool,
@@ -34,6 +37,7 @@ import {
 import { expect, expectTypeOf, it } from "vitest";
 import type { ExecutionEnv } from "../src/env/index.ts";
 import { CodingTools, createBashTool, createEditTool, createReadTool } from "../src/tools/index.ts";
+import { onValue } from "./session-support.ts";
 
 // ─── Names the spec leaves to the application ────────────────────────────────
 
@@ -75,6 +79,8 @@ declare const manager: SettingsManager;
 declare const Anchor: ReturnType<typeof defineTask<null, { phase: "hold" }, null>>;
 declare const Reporter: ReturnType<typeof defineTask<null, { phase: "report" }, null>>;
 declare const subagentTool: ReturnType<typeof createReadTool>;
+declare const conversation: Conversation;
+declare function render(view: TranscriptView): void;
 
 /** Never called: the declared names above have no values. */
 function examples() {
@@ -349,6 +355,21 @@ function examples() {
 				extensions: { remove: [SubagentTools] },
 				instructions: `You are the subagent "${name}". Answer the main agent's requests.`,
 			});
+		},
+
+		// Section 9.3: a client's transcript over the windowed view.
+		transcript: async () => {
+			const transcript = new ConversationTranscript((query, limit, ctx) =>
+				conversation.entries(query, limit, undefined, ctx),
+			);
+			const watch = await conversation.watch(context);
+			render(transcript.merge(watch.value));
+			watch.start(onValue(async ({ value }) => render(transcript.merge(value))));
+			// A marker scrolled into view:
+			render(await transcript.loadEarlier(context));
+			// Reconnect after a drop:
+			const resumed = await conversation.watch(context, transcript.resume);
+			return resumed;
 		},
 
 		// Section 4: table reads before the first table write; documents stay usable.

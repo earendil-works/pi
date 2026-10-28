@@ -6,7 +6,7 @@ import {
 	type TelemetryContext,
 	type TelemetrySpan,
 } from "@earendil-works/pi-telemetry";
-import { ConversationBusy } from "../errors.ts";
+import { ConversationBusy, ConversationIdle, ReadAfterWrite } from "../errors.ts";
 import type { ObservedCommit, SessionImpl } from "../session/session.ts";
 import type { ConversationId, JsonObject, Storage, SubmissionId, SubmissionRecord, Tx } from "../types.ts";
 import { startRun } from "./generation.ts";
@@ -57,7 +57,7 @@ export class Submissions {
 		this.#now = now;
 		this.#queueModes = queueModes;
 		this.#resume = resume;
-		session.observeCommits((publication) => this.#observe(publication));
+		session.followCommits((publication) => this.#observe(publication));
 		session.subscribeClose(() => {
 			this.#closed = true;
 			this.#waiters.rejectAll(closedError(this.#session));
@@ -66,8 +66,40 @@ export class Submissions {
 
 	/** Admit a submission in one commit; see `admitSubmission()`. */
 	async submit(conversationId: ConversationId, draft: SubmissionDraft, context: Context): Promise<Submission> {
+		const { id } = await this.#traced(conversationId, draft, context, (span) =>
+			this.#session.commitWith(
+				(tx) => admitSubmission(tx, conversationId, draft, this.#now(), this.#queueModes(), span),
+				withTelemetry(span, context),
+			),
+		);
+		return new SubmissionHandle(id, this);
+	}
+
+	/**
+	 * Admit a submission inside the caller's commit `tx`, with the rules of `submit()`. The admission is stored or lost
+	 * with that commit. It must come before the commit's first table write, another admission's included.
+	 */
+	async admit(tx: Tx, conversationId: ConversationId, draft: SubmissionDraft): Promise<SubmissionId> {
+		if (!this.#session.ownsTransaction(tx)) throw new Error("The transaction belongs to another Session");
+		// Enforced on every path: admission reads tables only on some (request IDs, an idle boundary, a steer's trace).
+		if (tx.hasTableWrite) throw new ReadAfterWrite("submit(tx, draft)");
+		const admission = await this.#traced(conversationId, draft, tx.context, (span) =>
+			admitSubmission(tx, conversationId, draft, this.#now(), this.#queueModes(), span),
+		);
+		return admission.id;
+	}
+
+	/** Run one admission in its `pi.durable.submit` span, asking for progress first, as the run it starts needs it. */
+	#traced(
+		conversationId: ConversationId,
+		draft: SubmissionDraft,
+		context: Context,
+		admit: (span: TelemetrySpan) => Promise<Admission>,
+	): Promise<Admission> {
 		this.#resume();
-		const parent = draft.type === "input" ? this.#telemetry : context.telemetry;
+		// Inputs and continues start runs: root traces linked to their callers.
+		const startsRun = draft.type !== "write";
+		const parent = startsRun ? this.#telemetry : context.telemetry;
 		return createTypedSpanStarter(parent, [DURABLE_TELEMETRY_SCHEMA])(
 			"pi.durable.submit",
 			{
@@ -75,14 +107,11 @@ export class Submissions {
 				"conversation.id": conversationId,
 			},
 			async (span) => {
-				if (draft.type === "input") span.addLink({ context: context.telemetry });
+				if (startsRun) span.addLink({ context: context.telemetry });
 				try {
-					const { id, status } = await this.#session.commitWith(
-						(tx) => admitSubmission(tx, conversationId, draft, this.#now(), this.#queueModes(), span),
-						withTelemetry(span, context),
-					);
-					span.setAttributes({ "submission.id": id, result: status });
-					return new SubmissionHandle(id, this);
+					const admission = await admit(span);
+					span.setAttributes({ "submission.id": admission.id, result: admission.status });
+					return admission;
 				} catch (error) {
 					// Error text may contain caller content. Record only the status.
 					span.setStatus({ status: "error" });
@@ -183,14 +212,16 @@ function checkInputEntry(entry: InputEntry): void {
 }
 
 /**
- * Admit a submission inside a commit (spec §6); `Conversation.submit()` and conversation-owned compactions share it. A
- * known request ID returns its existing submission without writing. A display-only write (only `kind` and `data`) is
- * appended and settled `done` at once, busy or not, as it changes nothing the model sees; only behind a queued reset it
- * queues, so it lands after the reset instead of before it in the context the reset ends. A busy conversation queues anything else in
- * `pi.inbox`, or rejects `whenBusy: "reject"` input with `ConversationBusy`. An idle conversation with queued items
- * queues it behind them and runs a final boundary. Otherwise idle input places its entry (`pi.user`, or the input's
- * own) and starts a run, and an idle write appends its entry and settles `done`, or `stale` when its head reaches
- * before the active range.
+ * Admit a submission inside a commit (spec §6); both `Conversation.submit()` forms and conversation-owned compactions
+ * share it. A known request ID returns its existing submission without writing. A display-only write (only `kind` and
+ * `data`) is appended and settled `done` at once, busy or not, as it changes nothing the model sees; only behind a
+ * queued reset it queues, so it lands after the reset instead of before it in the context the reset ends. A busy
+ * conversation queues anything else in `pi.inbox`, or rejects `whenBusy: "reject"` input and any continue with
+ * `ConversationBusy`; an idle one rejects `whenIdle: "reject"` input with `ConversationIdle`. An idle continue places
+ * queued items and starts a run with them and itself, placing no entry of its own. An idle conversation with queued
+ * items queues it behind them and runs a final boundary. Otherwise idle input places its entry (`pi.user`, or the
+ * input's own) and starts a run, and an idle write appends its entry and settles `done`, or `stale` when its head
+ * reaches before the active range.
  */
 export async function admitSubmission(
 	tx: Tx,
@@ -232,6 +263,18 @@ export async function admitSubmission(
 		if (run?.trace !== undefined) span.addLink({ context: span.propagation.extract(run.trace) });
 	}
 	if (busy && draft.type === "input" && draft.whenBusy === "reject") throw new ConversationBusy(conversationId);
+	if (!busy && draft.type === "input" && draft.whenIdle === "reject") throw new ConversationIdle(conversationId);
+	if (draft.type === "continue") {
+		// Never queued: whether a run can continue depends on how the current one ends. Rejected before any write.
+		if (busy) throw new ConversationBusy(conversationId);
+		const boundary = await prepareBoundary(tx, conversationId, queueModes);
+		const { id } = await tx.createSubmission({ ...fields, type: "continue", status: "placed" });
+		// Items an earlier failed run left queued (`afterFailedRun: "keep"`) are placed first and join the run. Its history
+		// starts with the failed run's, so `afterRun` hooks see what that run did.
+		const { users, first } = await applyBoundary(tx, boundary, "final", now);
+		await startRun(tx, conversationId, live, { inputs: [...users, id], first: live.runFailure?.first ?? first });
+		return { id, status: "placed" };
+	}
 	// A boundary reads the table, so it is prepared before the first table write; a busy one needs none.
 	const boundary = busy ? undefined : await prepareBoundary(tx, conversationId, queueModes);
 	if (boundary === undefined || boundary.inbox.items.length > 0) {
@@ -253,8 +296,8 @@ export async function admitSubmission(
 			items.push({ id, mode, content, ...entry });
 		}
 		if (boundary === undefined) return { id, status: "queued" };
-		const { users } = await applyBoundary(tx, boundary, "final", now);
-		if (users.length > 0) await startRun(tx, conversationId, live, users);
+		const { users, first } = await applyBoundary(tx, boundary, "final", now);
+		if (users.length > 0) await startRun(tx, conversationId, live, { inputs: users, first });
 		return { id, status: draft.type === "write" ? "done" : users.at(-1) === id ? "placed" : "queued" };
 	}
 	if (draft.type === "write") {
@@ -272,6 +315,6 @@ export async function admitSubmission(
 	const entry = await appendInput(tx, conversationId, draft.content, draft.entry, now);
 	const input = { ...fields, type: "input", status: "placed", entry: entry.id } as const;
 	const { id } = await tx.createSubmission(input);
-	await startRun(tx, conversationId, live, [id]);
+	await startRun(tx, conversationId, live, { inputs: [id], first: entry.id });
 	return { id, status: "placed" };
 }

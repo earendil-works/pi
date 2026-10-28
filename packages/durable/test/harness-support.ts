@@ -40,7 +40,11 @@ export async function openHarness(
 		registry.install(defineExtension({ name: "tools", tools: toolNames.map((name) => tool(name)) }));
 	const harness = await Harness.open(
 		storage,
-		{ models: createModels(), registry, ...(options.onReport === undefined ? {} : { onReport: options.onReport }) },
+		{
+			models: createModels(),
+			registry,
+			...(options.onReport === undefined ? {} : { onReport: (report) => options.onReport?.(report.error) }),
+		},
 		context,
 	);
 	return { harness, registry };

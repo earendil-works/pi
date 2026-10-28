@@ -30,7 +30,7 @@ async function openReadOnly(path: string, setup: ChatSetup, onWake?: (wake: Wake
 			models: setup.models,
 			registry: setup.registry,
 			readOnly: true,
-			onReport: (error) => setup.reports.push(error),
+			onReport: ({ error }) => setup.reports.push(error),
 			...(onWake === undefined ? {} : { onWake }),
 		},
 		context,

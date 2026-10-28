@@ -13,10 +13,14 @@ export function errorMessage(error: unknown): string {
 	}
 }
 
-/** A transaction read a table after its first table write. Read every required row before writing. */
+/**
+ * A transaction read a table after its first table write, or admitted a submission (`submit(tx, draft)`) after it. Read
+ * every required row, and admit, before writing.
+ */
 export class ReadAfterWrite extends Error {
-	constructor(method: string) {
-		super(`Tx.${method}() cannot read tables after the first table write`);
+	/** `operation` names the call, such as `Tx.task()`. */
+	constructor(operation: string) {
+		super(`${operation} cannot read tables after the first table write`);
 		this.name = "ReadAfterWrite";
 	}
 }
@@ -63,6 +67,17 @@ export class ConversationBusy extends Error {
 	constructor(conversationId: ConversationId) {
 		super(`Conversation ${conversationId} is busy`);
 		this.name = "ConversationBusy";
+		this.conversationId = conversationId;
+	}
+}
+
+/** An input with `whenIdle: "reject"` reached an idle conversation and was not admitted. */
+export class ConversationIdle extends Error {
+	readonly conversationId: ConversationId;
+
+	constructor(conversationId: ConversationId) {
+		super(`Conversation ${conversationId} is idle`);
+		this.name = "ConversationIdle";
 		this.conversationId = conversationId;
 	}
 }

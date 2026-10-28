@@ -174,7 +174,7 @@ async function waitUntil(check: () => Promise<boolean>): Promise<void> {
 /** Mark a conversation busy with `task` standing in for its run, so submissions queue. */
 async function busy(conversation: Conversation, task: TaskId): Promise<void> {
 	await conversation.commit(async (tx) => {
-		(await tx.doc(LiveDoc, conversation.id)).run = { taskId: task, inputs: [] };
+		(await tx.doc(LiveDoc, conversation.id)).run = { taskId: task, inputs: [], turns: 0 };
 	}, context);
 }
 
@@ -959,7 +959,7 @@ describe("ownership", () => {
 		// The failed cascade commit fails the Harness. `closed` settles once its invocations have ended, and the owner's
 		// abort handler ignores its signal: let it return.
 		open("abort.owner", "completed");
-		expect(await opened.harness.closed).toMatchObject({ reason: "failed" });
+		expect(await opened.harness.closed).toMatchObject({ kind: "failed" });
 		await opened.harness.close(context);
 		// Reopening derives the mark again.
 		opened = await openHarness(await openNodeSqliteStorage(path));
@@ -991,7 +991,7 @@ describe("ownership", () => {
 		const tree = await ownedChild(root, "owner");
 		failMark = tree.inner;
 		open("owner", "failed");
-		expect(await harness.closed).toEqual({ reason: "failed", error: failure });
+		expect(await harness.closed).toEqual({ kind: "failed", error: failure });
 		expect(reports).toEqual([failure]);
 		await harness.close(context);
 		const reopened = await openHarness(storage.reopen());
@@ -1153,7 +1153,7 @@ describe("owned conversations from tools and supervisors", () => {
 		const childConversation = (await harness.conversation(child!, context))!;
 		await childConversation.waitForIdle(context);
 		const childLive = await harness.snapshot(LiveDoc, child!, context);
-		expect(childLive).toEqual({});
+		expect(childLive).toEqual({ runFailure: expect.objectContaining({ reason: "aborted" }) });
 		const childInputs = (await harness.inspect(context)).submissions.filter((s) => s.conversationId === child);
 		expect(childInputs).toEqual([]);
 		await harness.waitForIdle(context);

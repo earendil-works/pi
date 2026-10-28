@@ -34,12 +34,15 @@ import { toolExtension } from "./agent.ts";
 import { assignJson } from "./json.ts";
 import {
 	clearProgress,
+	cutOffCount,
+	cutOffTooOften,
 	finishSlot,
 	LiveDoc,
 	type NestedToolSlot,
 	type NestedToolSummary,
 	PROGRESS_COMMIT,
 	removeNestedSlots,
+	salvageable,
 	type ToolSlot,
 	toolSlot,
 } from "./live.ts";
@@ -61,7 +64,13 @@ import { optionalExtension } from "./util.ts";
  * whose call the input carries because no entry holds it.
  */
 export type ToolTaskInput =
-	| { kind: "model"; assistant: EntryId; callId: string }
+	| {
+			kind: "model";
+			assistant: EntryId;
+			callId: string;
+			/** A call to a tool its request did not offer: settles `tool_unavailable` without resolving the name. */
+			unoffered?: true;
+	  }
 	| {
 			kind: "nested";
 			parent: TaskId;
@@ -125,25 +134,28 @@ type Content = (TextContent | ImageContent)[];
  */
 export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskResult, ToolHooks>({
 	name: "pi.tool",
-	version: 2,
+	version: 3,
 	initial: () => ({ phase: "call" }),
-	// Version 1 had only model-issued calls.
-	migrate: (input, checkpoint) => ({
-		input: { kind: "model", ...(input as { assistant: EntryId; callId: string }) },
+	// Version 1 had only model-issued calls, without `kind`; version 3 added `unoffered`, absent in version 2 inputs.
+	migrate: (input, checkpoint, fromVersion) => ({
+		input:
+			fromVersion === 1
+				? { kind: "model", ...(input as { assistant: EntryId; callId: string }) }
+				: (input as ToolTaskInput),
 		checkpoint: checkpoint as ToolTaskCheckpoint,
 	}),
 	phases: {
 		call: async (task, runtime, context) => {
 			const call = await readCall(runtime, task.input, context);
-			const tool = await resolveTool(runtime, task.input, call.name, context);
+			if (cutOffTooOften(task, runtime)) return endCutOff(runtime, task, call, context);
+			const tool = isUnoffered(task.input) ? undefined : await resolveTool(runtime, task.input, call.name, context);
 			if (tool === undefined) {
 				const error = harnessError("tool_unavailable", `Tool ${call.name} is not available`);
-				return settle(runtime, task.input, call, COMPLETED, () => error, context);
+				return reject(runtime, task.input, call, undefined, error, context);
 			}
 			const prepared = prepare(tool, call.arguments as JsonObject);
 			const checked = "error" in prepared ? prepared : validate(tool, call, prepared.args);
-			if ("error" in checked)
-				return settle(runtime, task.input, call, COMPLETED, () => invalid(checked.error), context);
+			if ("error" in checked) return reject(runtime, task.input, call, tool, invalid(checked.error), context);
 			let args = checked.args;
 			let block: string | undefined;
 			await runtime.hooks.each("beforeTool", async (hook) => {
@@ -159,11 +171,10 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 			});
 			if (block !== undefined) {
 				const blocked = harnessError("blocked", `Tool call blocked: ${block}`);
-				return settle(runtime, task.input, call, COMPLETED, () => blocked, context);
+				return reject(runtime, task.input, call, tool, blocked, context);
 			}
 			const validated = validate(tool, call, args);
-			if ("error" in validated)
-				return settle(runtime, task.input, call, COMPLETED, () => invalid(validated.error), context);
+			if ("error" in validated) return reject(runtime, task.input, call, tool, invalid(validated.error), context);
 			// Strict JSON: repair may set optional properties to undefined, which the slot and checkpoint cannot hold.
 			const final = copyJson(validated.args, { omitUndefinedProperties: true }) as JsonObject;
 			await runtime.commit(async (tx) => {
@@ -182,6 +193,8 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 		execute: async (task, runtime, context) => {
 			const { arguments: args, replay } = task.state.checkpoint;
 			const call = await readCall(runtime, task.input, context);
+			// Also before an interruption result: its `afterTool` hooks may be what cut the task off.
+			if (cutOffTooOften(task, runtime)) return endCutOff(runtime, task, call, context);
 			const tool = await resolveTool(runtime, task.input, call.name, context);
 			if (replay === "safe" && tool?.replay === "safe") {
 				// The rerun reports from scratch; clear what the interrupted attempt published.
@@ -195,22 +208,115 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 			const message = `Tool ${call.name} was interrupted and may have partially run`;
 			// `failed` records cancellation intent, so the call's owned conversations, left unsupervised, are aborted.
 			const ending = { status: "failed", message } as const;
-			await settle(runtime, task.input, call, ending, (slot) => fromSlot(slot, "interrupted", message), context);
+			// Not cut off too often (checked above), so the hooks run.
+			await settleFromSlot(runtime, task.input, call, { tool }, ending, "interrupted", message, context);
 		},
 	},
 	abort: async (task, runtime, context) => {
 		const call = await readCall(runtime, task.input, context);
-		// Abandoned after a restart (`TaskOptions.abandonOnRestart`): say whether the call may have run.
-		const [code, message] =
-			task.abortReason !== "restart"
+		// Abandoned after a restart (`TaskOptions.abandonOnRestart`): say whether the call may have run. An unoffered call
+		// could not run in any case, and its result says so.
+		const [code, message] = isUnoffered(task.input)
+			? ["tool_unavailable", `Tool ${call.name} is not available`]
+			: task.abortReason !== "restart"
 				? ["aborted", `Tool ${call.name} was aborted`]
 				: task.state.checkpoint.phase === "execute"
 					? ["interrupted", `Tool ${call.name} was interrupted by a restart and may have partially run`]
 					: ["abandoned", `Tool ${call.name} was not started: its caller ended with a restart`];
-		const ending = { status: "aborted" } as const;
-		await settle(runtime, task.input, call, ending, (slot) => fromSlot(slot, code, message), context);
+		// The scheduler runs an abort handler only while its restarts are below the limit, and faults the task without a
+		// result when the last attempt is cut off. That attempt skips the hooks, which may be what cuts it off.
+		const hooks =
+			(task.restarts ?? 0) < runtime.settings.restartLimit - 1
+				? { tool: await toolForLimits(runtime, task.input, call.name, context) }
+				: undefined;
+		await settleFromSlot(runtime, task.input, call, hooks, { status: "aborted" }, code, message, context);
 	},
 });
+
+/**
+ * End a call cut off `settings.restartLimit` times in a row (spec §5.4) with an error result, built from the slot like
+ * an interrupted call's, instead of running it again. `failed`, like an interruption, so its owned work is aborted.
+ */
+async function endCutOff(
+	runtime: Runtime,
+	task: { readonly restarts?: number; readonly input: ToolTaskInput },
+	call: ToolHookCall,
+	context: Context,
+): Promise<void> {
+	const message = `Tool ${call.name} was interrupted ${cutOffCount(task)}; it is not run again`;
+	const ending = { status: "failed", message, reason: "restart_limit" } as const;
+	// Past the limit the hooks may be what keeps cutting the task off (`salvageable`).
+	const hooks = salvageable(task, runtime)
+		? { tool: await toolForLimits(runtime, task.input, call.name, context) }
+		: undefined;
+	await settleFromSlot(runtime, task.input, call, hooks, ending, "restart_limit", message, context);
+}
+
+/**
+ * Settle a result the Harness decided in the `call` phase, without running the tool: the tool did not resolve, the
+ * arguments are invalid, or `beforeTool` blocked the call. `afterTool` applies as to an executed call's result.
+ */
+async function reject(
+	runtime: Runtime,
+	input: ToolTaskInput,
+	call: ToolHookCall,
+	tool: ToolRegistration | undefined,
+	result: ToolExecutionResult,
+	context: Context,
+): Promise<void> {
+	const settled = await afterHarnessResult(runtime, input, call, tool, result, undefined, context);
+	await settle(runtime, input, call, COMPLETED, settled, context);
+}
+
+/**
+ * Settle an error result built from the call's slot (`fromSlot`): an interruption, the restart limit, or an abort.
+ * The tool is not running, so the slot read before the commit is still current when it commits. With `hooks`, the
+ * result passes `afterTool` and is bounded with the limits of `hooks.tool` (the defaults when it is `undefined`);
+ * without, it is settled as built, when the hooks may be what cuts the task off.
+ */
+async function settleFromSlot(
+	runtime: Runtime,
+	input: ToolTaskInput,
+	call: ToolHookCall,
+	hooks: { readonly tool: ToolRegistration | undefined } | undefined,
+	ending: Ending,
+	code: string,
+	message: string,
+	context: Context,
+): Promise<void> {
+	const live = await runtime.snapshot(LiveDoc, runtime.conversationId, context);
+	const { result, truncation } = fromSlot(
+		live === undefined ? undefined : toolSlot(live, runtime.taskId),
+		code,
+		message,
+	);
+	const settled =
+		hooks !== undefined
+			? await afterHarnessResult(runtime, input, call, hooks.tool, result, truncation, context)
+			: truncation === undefined
+				? result
+				: { ...result, diagnostics: [...(result.diagnostics ?? []), truncation] };
+	await settle(runtime, input, call, ending, settled, context);
+}
+
+/**
+ * The tool whose output limits bound a hooks' result: the called tool, or none when it, or the agent, fails to resolve,
+ * and for an unoffered call, which never resolves its name.
+ */
+async function toolForLimits(
+	runtime: Runtime,
+	input: ToolTaskInput,
+	name: string,
+	context: Context,
+): Promise<ToolRegistration | undefined> {
+	if (isUnoffered(input)) return undefined;
+	return resolveTool(runtime, input, name, context).catch(() => undefined);
+}
+
+/** A model-issued call to a tool its request did not offer (spec §8.3). */
+function isUnoffered(input: ToolTaskInput): boolean {
+	return input.kind === "model" && input.unoffered === true;
+}
 
 /** The called tool: among the tools the model is offered for a model-issued call, else among those tools may call. */
 async function resolveTool(
@@ -221,6 +327,15 @@ async function resolveTool(
 ): Promise<ToolRegistration | undefined> {
 	const agent = await runtime.agent(context);
 	return (input.kind === "model" ? agent.tools : agent.callable).find((tool) => tool.name === name);
+}
+
+/** The tool's output limits, the defaults filled in; all defaults when the tool did not resolve. */
+function outputLimits(tool: ToolRegistration | undefined): OutputLimits {
+	return {
+		maxBytes: tool?.outputLimits?.maxBytes ?? DEFAULT_MAX_BYTES,
+		maxLines: tool?.outputLimits?.maxLines ?? DEFAULT_MAX_LINES,
+		retain: tool?.outputLimits?.retain ?? "head",
+	};
 }
 
 /** The call: from the input for a nested call, which hooks see with its parent, else from the assistant entry. */
@@ -291,11 +406,7 @@ async function run(
 	args: JsonObject,
 	context: Context,
 ): Promise<void> {
-	const limits: OutputLimits = {
-		maxBytes: tool.outputLimits?.maxBytes ?? DEFAULT_MAX_BYTES,
-		maxLines: tool.outputLimits?.maxLines ?? DEFAULT_MAX_LINES,
-		retain: tool.outputLimits?.retain ?? "head",
-	};
+	const limits = outputLimits(tool);
 	const reported: Reported = { output: new OutputBuffer(limits), limits, diagnostics: [], details: undefined };
 	const streams = input.kind === "model" || input.progress !== false;
 	const progress = publishProgress(runtime, reported, streams, context);
@@ -454,7 +565,7 @@ async function run(
 	const pending = await progress.stop();
 	try {
 		const settled = await finalResult(runtime, input, call, tool, result, reported, context);
-		await settle(runtime, input, call, ending, () => settled, context, durationMs);
+		await settle(runtime, input, call, ending, settled, context, durationMs);
 	} catch (error) {
 		for (const waiter of pending) waiter.reject(error);
 		throw error;
@@ -588,7 +699,7 @@ async function finalResult(
 				(agent) => toolExtension(agent, tool.name),
 				() => undefined,
 			);
-			runtime.report(new Error(broken), { type: "extension", ...optionalExtension(extension) });
+			runtime.report(new Error(broken), { kind: "extension", ...optionalExtension(extension) });
 		}
 	}
 	// Programs get the tool's own value: without a schema, its output. The model reads only `output`, so model-issued
@@ -609,6 +720,41 @@ async function finalResult(
 		if (text !== "") harness.push(toolDiagnostic("tool_error", text));
 	}
 	return { ...final, output: bounded.content, diagnostics: [...(final.diagnostics ?? []), ...harness] };
+}
+
+/**
+ * A result the Harness wrote itself, without executing the tool, after the `afterTool` chain, normalized like an
+ * executed call's: the output bounded with the tool's limits (the defaults when it did not resolve), a truncation
+ * diagnostic when that dropped something, and the hooks' `structuredOutput` dropped, since the tool never produced
+ * one. A nested call that the hooks turned into a success gets the bounded output as its value, as a schema-less
+ * tool's success does, unless the tool declares a schema. `usage` is kept and recorded; `control` applies only when
+ * the task completes. `truncation` describes what the result's own output lost before (a slot's retained output); it
+ * is kept only while the hooks keep that output.
+ */
+async function afterHarnessResult(
+	runtime: Runtime,
+	input: ToolTaskInput,
+	call: ToolHookCall,
+	tool: ToolRegistration | undefined,
+	result: ToolExecutionResult,
+	truncation: ToolDiagnostic | undefined,
+	context: Context,
+): Promise<ToolExecutionResult> {
+	let final = result;
+	await runtime.hooks.each("afterTool", async (hook) => {
+		final = (await hook(call, final, runtime, context)) ?? final;
+	});
+	const harness: ToolDiagnostic[] = [];
+	if (truncation !== undefined && final.output === result.output) harness.push(truncation);
+	const limits = outputLimits(tool);
+	const bounded = boundContent(final.output ?? [], limits);
+	if (bounded.droppedBytes > 0) harness.push(truncated(bounded, limits.retain));
+	const { structuredOutput: _dropped, ...rest } = final;
+	const value =
+		input.kind === "nested" && final.isError !== true && tool?.structuredOutputSchema === undefined
+			? { structuredOutput: outputValue(bounded.content) as JsonValue }
+			: {};
+	return { ...rest, ...value, output: bounded.content, diagnostics: [...(rest.diagnostics ?? []), ...harness] };
 }
 
 const structuredValidators = new WeakMap<object, ReturnType<typeof Compile>>();
@@ -640,15 +786,14 @@ function structuredOutputError(tool: ToolRegistration, result: ToolExecutionResu
  * Commit the tool's terminal state and mark its slot done. A model-issued call appends its result entry and ends with
  * the entry ID; a nested call writes its result to the caller's `NestedCallDoc`, records its usage, and ends with a
  * small receipt. Nested calls this call left running are aborted first, so they report into their slots before the
- * slots below the call leave `pi.live`. `build` receives the slot so interruption and abort can report the durable
- * partial output.
+ * slots below the call leave `pi.live`. `control` applies only when the task completes.
  */
 async function settle(
 	runtime: Runtime,
 	input: ToolTaskInput,
 	call: ToolHookCall,
 	ending: Ending,
-	build: (slot: Readonly<ToolSlot | NestedToolSlot> | undefined) => ToolExecutionResult,
+	result: ToolExecutionResult,
 	context: Context,
 	durationMs?: number,
 ): Promise<void> {
@@ -665,7 +810,6 @@ async function settle(
 		const conversationId = runtime.conversationId;
 		const live = await tx.doc(LiveDoc, conversationId);
 		const slot = toolSlot(live, runtime.taskId);
-		const result = build(slot);
 		let settled: ToolTaskResult;
 		if (input.kind === "nested") {
 			const nested = nestedResult(runtime.taskId, result, durationMs);
@@ -699,7 +843,10 @@ async function settle(
 		if (madeNested) removeNestedSlots(live, runtime.taskId);
 		if (ending.status === "aborted") return { status: "terminal", outcome: { status: "aborted", result: settled } };
 		if (ending.status === "failed") {
-			const error = { message: ending.message };
+			const error = {
+				message: ending.message,
+				...(ending.reason === undefined ? {} : { detail: { reason: ending.reason } }),
+			};
 			return { status: "terminal", outcome: { status: "failed", error, result: settled } };
 		}
 		return { status: "terminal", outcome: { status: "completed", result: settled } };
@@ -826,26 +973,30 @@ function fallbackResult(taskId: TaskId, name: string, outcome: TaskOutcome<ToolT
  * How a tool task ends; the result entry is appended either way. `failed` (execution threw or was interrupted)
  * records cancellation intent for the conversations the call owns; a result with `isError` still completes.
  */
-type Ending = { readonly status: "completed" | "aborted" } | { readonly status: "failed"; readonly message: string };
+type Ending =
+	| { readonly status: "completed" | "aborted" }
+	| { readonly status: "failed"; readonly message: string; readonly reason?: string };
 
 const COMPLETED: Ending = { status: "completed" };
 
-/** An error result from the slot's durable partial output, details, and diagnostics. */
+/**
+ * An error result from the slot's durable partial output, details, and diagnostics, ending with `code`; and the
+ * truncation diagnostic of that output, when its bounds dropped some, which the caller adds after `afterTool`.
+ */
 function fromSlot(
 	slot: Readonly<ToolSlot | NestedToolSlot> | undefined,
 	code: string,
 	message: string,
-): ToolExecutionResult {
-	const diagnostics = [...(slot?.diagnostics ?? [])];
+): { readonly result: ToolExecutionResult; readonly truncation?: ToolDiagnostic } {
 	const droppedBytes = slot?.droppedBytes ?? 0;
-	if (droppedBytes > 0) diagnostics.push(truncated({ droppedBytes, droppedLines: slot?.droppedLines ?? 0 }));
-	diagnostics.push(toolDiagnostic(code, message));
-	return {
+	const result: ToolExecutionResult = {
 		output: slot?.output === undefined || slot.output === "" ? [] : [{ type: "text", text: slot.output }],
 		isError: true,
 		...(slot?.details === undefined ? {} : { details: slot.details }),
-		diagnostics,
+		diagnostics: [...(slot?.diagnostics ?? []), toolDiagnostic(code, message)],
 	};
+	if (droppedBytes === 0) return { result };
+	return { result, truncation: truncated({ droppedBytes, droppedLines: slot?.droppedLines ?? 0 }) };
 }
 
 /** An error result the Harness writes itself: no content and one `error` diagnostic with `code`. */

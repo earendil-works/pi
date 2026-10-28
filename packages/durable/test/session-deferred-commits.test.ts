@@ -18,7 +18,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
 import { type ObservedCommit, SessionImpl } from "../src/session/session.ts";
-import { ControlledStorage, context, createConversation, flush } from "./session-support.ts";
+import { ControlledStorage, context, createConversation, flush, onValue } from "./session-support.ts";
 
 type Text = { text: string; base?: boolean; explode?: boolean; keys?: Record<string, number> };
 
@@ -91,7 +91,7 @@ type Armed = { readonly callback: () => void; readonly delayMs: number; disarmed
 
 /**
  * A Session over controlled storage with a manual clock and manual foreground timers (background ones are declined, so
- * commits evict), recording what `subscribeCommits()` and the Session's own observers get.
+ * commits evict), recording what `observeCommits()` and the Session's own observers get.
  */
 async function open(options: { readonly retentionMs?: number; readonly persistWithinMs?: number } = {}) {
 	const clock = { now: 1_000 };
@@ -114,11 +114,14 @@ async function open(options: { readonly retentionMs?: number; readonly persistWi
 		() => options.persistWithinMs,
 	);
 	const stored: CommitPublication[] = [];
-	session.subscribeCommits((publication) => {
-		stored.push(publication);
+	session.observeCommits({
+		advance: (publication) => {
+			stored.push(publication);
+		},
+		end: () => {},
 	});
 	const observed: ObservedCommit[] = [];
-	session.observeCommits((publication) => {
+	session.followCommits((publication) => {
 		observed.push(publication);
 	});
 	const conversationId = await createConversation(session);
@@ -396,7 +399,7 @@ describe("storing held changes", () => {
 		const failure = new Error("disk gone");
 		failing.storage.failNextCommit(failure);
 		await expect(failing.session.close(context)).rejects.toBe(failure);
-		expect(await failing.session.closed).toEqual({ reason: "failed", error: failure });
+		expect(await failing.session.closed).toEqual({ kind: "failed", error: failure });
 		// Closed: the backend refuses calls until reopened.
 		await expect(failing.storage.document(failing.recordId, "current", context)).rejects.toThrow("closed");
 		expect((await failing.storage.reopen().document(failing.recordId, "current", context))?.value).toEqual({
@@ -515,7 +518,7 @@ async function overflow(session: SessionImpl, conversationId: ConversationId): P
 }
 
 describe("publications", () => {
-	it("give subscribeCommits() exactly what was stored, and nothing for a held commit", async () => {
+	it("give observeCommits() exactly what was stored, and nothing for a held commit", async () => {
 		const { session, storage, conversationId, recordId, stored, fire } = await open();
 		const from = storage.commits.length;
 		const publications = stored.length;
@@ -540,8 +543,8 @@ describe("publications", () => {
 		for (const [index, batch] of batches.entries()) {
 			const write = changesOf([batch]).find((candidate) => candidate.id === recordId)!;
 			const change = published[index]!.changes.find(
-				(candidate): candidate is Extract<CommitChange, { type: "document" }> =>
-					candidate.type === "document" && candidate.record.id === recordId,
+				(candidate): candidate is Extract<CommitChange, { kind: "change" }> =>
+					candidate.type === "document" && candidate.kind === "change" && candidate.record.id === recordId,
 			)!;
 			fromStorage =
 				write.content.kind === "base" ? write.content.value : applyImmutable(fromStorage, write.content.ops);
@@ -562,9 +565,11 @@ describe("publications", () => {
 		const { session, conversationId, observed, fire } = await open();
 		const watch = (await session.watchDoc(TextDoc, conversationId, context))!;
 		const values: string[] = [];
-		watch.start(async (value) => {
-			values.push(value?.text ?? "");
-		});
+		watch.start(
+			onValue(async ({ value }) => {
+				values.push(value.text);
+			}),
+		);
 		const from = observed.length;
 		for (const text of ["a", "b", "c"]) {
 			await append(session, conversationId, text);
@@ -578,7 +583,9 @@ describe("publications", () => {
 		expect(seen.map((publication) => publication.kind)).toEqual(["memory", "memory", "memory", "stored"]);
 		// The storing commit shows its own operations; the held ones were shown already. The timer showed nothing.
 		expect(
-			seen.map((publication) => publication.changes.map((change) => change.type === "document" && change.ops)),
+			seen.map((publication) =>
+				publication.changes.map((change) => change.type === "document" && change.kind === "change" && change.ops),
+			),
 		).toEqual([
 			[[["a", ["text"], "a"]]],
 			[[["a", ["text"], "b"]]],
@@ -631,10 +638,11 @@ describe("crash", () => {
 	it("leaves Storage at the last stored state, which memory had, and nothing held after reopen", async () => {
 		const { session, storage, conversationId, recordId, fire } = await open();
 		const states: string[] = [];
-		session.observeCommits((publication) => {
+		session.followCommits((publication) => {
 			for (const change of publication.changes) {
 				// Publications carry untyped document values; this one is `TextDoc`'s.
-				if (change.type === "document" && change.record.id === recordId) states.push((change.value as Text).text);
+				if (change.type === "document" && change.kind === "change" && change.record.id === recordId)
+					states.push((change.value as Text).text);
 			}
 		});
 		await append(session, conversationId, "a");

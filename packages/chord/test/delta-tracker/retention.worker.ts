@@ -39,13 +39,16 @@ function draftProxies(tracker: Tracker<{ payload: { rows: { value: number }[] } 
 	return reference;
 }
 
-async function assertRetained(reference: WeakRef<object>): Promise<void> {
+async function assertRetained(
+	reference: WeakRef<object>,
+	message = "retained Prepared must retain its immutable revisions",
+): Promise<void> {
 	assert.ok(global.gc, "worker requires --expose-gc");
 	for (let attempt = 0; attempt < 5; attempt++) {
 		await setImmediate();
 		global.gc();
 	}
-	assert.notEqual(reference.deref(), undefined, "retained Prepared must retain its immutable revisions");
+	assert.notEqual(reference.deref(), undefined, message);
 }
 
 function settledLifecycle(): { tracker: WeakRef<object>; future: WeakRef<object> } {
@@ -261,8 +264,8 @@ if (scenario === "settled-lifecycle") {
 	assert.ok(retainedMiB < 8, `same-job folded operations retained ${retainedMiB.toFixed(2)} MiB`);
 	assert.equal(tracker.value.field0, 100);
 } else if (scenario === "adopted-changes-flat") {
-	// Each change registers its context with the tracker through a WeakRef; adoption must drop every registration, so
-	// a long run of small changes keeps only the document, not a record per change.
+	// Each change's context is tracked by the tracker until it is settled; adoption must drop every one, so a long run
+	// of small changes keeps only the document, not a record per change.
 	const gc = global.gc;
 	assert.ok(gc, "worker requires --expose-gc");
 	const tracker = track({ entries: [{ id: 0, text: "" }] });
@@ -289,6 +292,46 @@ if (scenario === "settled-lifecycle") {
 	const perChange = ((await settledHeap()) - readyHeap) / 10_000 - 4;
 	assert.ok(perChange < 48, `each adopted change retained ${perChange.toFixed(1)} bytes`);
 	assert.equal(tracker.value.entries[0]!.text.length, 4 * 11_000);
+} else if (scenario === "abandoned-draft-released") {
+	// The tracker holds its most recent open draft strongly: one dropped without settling stays until the tracker's next
+	// change or adoption, which releases it.
+	type Root = { value: number; payload: { rows: { value: number }[] } | null };
+	const abandon = (tracker: Tracker<Root>): WeakRef<object> => {
+		const change = tracker.beginChange();
+		change.state.payload = { rows: Array.from({ length: 50_000 }, (_, value) => ({ value })) };
+		return new WeakRef(change.state.payload.rows[0]!);
+	};
+	const byChange = track<Root>({ value: 0, payload: null });
+	const first = abandon(byChange);
+	await assertRetained(first, "the tracker holds its latest open draft");
+	const next = byChange.beginChange();
+	await collect(first);
+	// A chain of abandoned drafts keeps only the latest.
+	next.abort();
+	const chain = Array.from({ length: 20 }, () => abandon(byChange));
+	for (const reference of chain.slice(0, -1)) await collect(reference);
+	await assertRetained(chain.at(-1)!, "the tracker holds its latest open draft");
+	byChange.adopt(byChange.prepareReplace({ value: 1, payload: null }));
+	await collect(chain.at(-1)!);
+
+	const byAdopt = track<Root>({ value: 0, payload: null });
+	const dropped = abandon(byAdopt);
+	byAdopt.adopt(byAdopt.prepareReplace({ value: 1, payload: null }));
+	await collect(dropped);
+	assert.deepEqual(byAdopt.value, { value: 1, payload: null });
+} else if (scenario === "tracker-with-open-draft") {
+	const open = (): WeakRef<object> => {
+		const tracker = track({ value: 0, rows: Array.from({ length: 50_000 }, (_, value) => ({ value })) });
+		const change = tracker.beginChange();
+		change.state.rows[0]!.value = -1;
+		retainedSettledChanges.push(change);
+		const competitor = tracker.beginChange();
+		competitor.state.value = 1;
+		retainedSettledChanges.push(competitor);
+		return new WeakRef(tracker);
+	};
+	await collect(open());
+	assert.equal(retainedSettledChanges.length, 2);
 } else if (scenario === "lifecycle-churn") {
 	const tracker = track({ value: 0 });
 	for (let index = 0; index < 100_000; index++) {

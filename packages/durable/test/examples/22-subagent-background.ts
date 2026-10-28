@@ -14,7 +14,6 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import {
-	type AgentEvent,
 	AssistantEntry,
 	type ConversationId,
 	configure,
@@ -27,7 +26,6 @@ import {
 	Harness,
 	LiveDoc,
 	type TaskId,
-	watchEvents,
 } from "../../src/index.ts";
 import { openNodeSqliteStorage } from "../../src/storage/sqlite/node.ts";
 
@@ -284,11 +282,15 @@ function contentText(content: string | readonly { type: string; text?: string }[
 
 /** Print the main conversation's messages as they are committed. Subagents work in their own conversations. */
 async function follow(harness: Harness, id: ConversationId): Promise<void> {
-	const stream = await watchEvents(harness, id, context);
-	stream.start(async (events: readonly AgentEvent[]) => {
-		for (const event of events) {
-			if (event.type !== "message_end") continue;
-			const message = event.entry.model?.[0];
+	const watch = await (await harness.conversation(id, context))!.watch(context);
+	let newest = watch.value.entries.at(-1)?.id ?? 0;
+	watch.start(async (call) => {
+		if (call.kind !== "value") return;
+		const { value } = call;
+		const entries = value.entries.filter((entry) => entry.id > newest);
+		newest = value.entries.at(-1)?.id ?? newest;
+		for (const entry of entries) {
+			const message = entry.model?.[0];
 			if (message?.role === "user") {
 				const text = contentText(message.content);
 				// Input is either the user or a subagent's report, which arrives whenever the subagent is done.

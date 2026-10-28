@@ -36,6 +36,11 @@
 			"types": "./dist/telemetry-sqlite/index.d.ts",
 			"import": "./dist/telemetry-sqlite/index.js"
 		},
+		"./next": {
+			"source": "./src/next/index.ts",
+			"types": "./dist/next/index.d.ts",
+			"import": "./dist/next/index.js"
+		},
 		"./sqlite": {
 			"source": "./src/sqlite/index.ts",
 			"types": "./dist/sqlite/index.d.ts",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getOpenRouterThinkingLevelMap } from "../scripts/openrouter-reasoning-options.ts";
+import { getOpenRouterThinkingLevelMap } from "../catalog/sources/openrouter.ts";
 import { streamSimple } from "../src/api/openai-completions.ts";
 import type { Model, ThinkingLevelMap } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";

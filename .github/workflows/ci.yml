@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-check-test:
+  build-check:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -22,12 +22,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
-          sudo ln -s $(which fdfind) /usr/local/bin/fd
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -55,11 +49,61 @@ jobs:
       - name: Check
         run: npm run check
 
+  # Tests are split across parallel jobs so the slowest suites do not run back to back.
+  test:
+    name: test (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: coding-agent
+          - name: durable
+          - name: other
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      # fd and ripgrep are used by coding-agent tools tests and tui autocomplete tests.
+      - name: Install system dependencies
+        if: matrix.name != 'durable'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fd-find ripgrep
+          sudo ln -s $(which fdfind) /usr/local/bin/fd
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build
+
       - name: Build the pi-env daemon
+        if: matrix.name == 'other'
         run: npm run build:daemon --workspace packages/env
 
       - name: Test
-        run: npm test
+        env:
+          SUITE: ${{ matrix.name }}
+        run: |
+          if [ "$SUITE" != other ]; then
+            npm run test --workspace "packages/$SUITE"
+            exit 0
+          fi
+          # Every other workspace, so new packages are tested without editing this workflow.
+          args=()
+          for dir in packages/*/; do
+            case "$dir" in packages/coding-agent/ | packages/durable/) continue ;; esac
+            args+=(--workspace "${dir%/}")
+          done
+          npm run test:scripts
+          npm run test --if-present "${args[@]}"
 
   mcp-conformance:
     runs-on: ubuntu-latest

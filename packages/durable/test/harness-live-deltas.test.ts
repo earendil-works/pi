@@ -13,7 +13,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { chatSetup, openChat, waitFor } from "./chat-support.ts";
 import { addTool } from "./harness-support.ts";
-import { context, documentChanges, observeCommits } from "./session-support.ts";
+import { context, documentChanges, documentValues, followCommits } from "./session-support.ts";
 
 type Action = (api: ToolExecutionApi) => void | Promise<void>;
 
@@ -52,8 +52,8 @@ async function drive(outputLimits: ToolRegistration["outputLimits"] = {}) {
 	]);
 	const { harness, root } = await openChat(new MemoryStorage(), setup);
 	const commits: Op[][] = [];
-	observeCommits(harness, (publication) => {
-		for (const change of documentChanges(publication)) {
+	followCommits(harness, (publication) => {
+		for (const change of documentValues(publication)) {
 			if (change.record.kind === "pi.live" && change.ops.length > 0) commits.push([...change.ops]);
 		}
 	});
@@ -114,10 +114,13 @@ describe("pi.live deltas", () => {
 		]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const commits: Op[][] = [];
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication)) {
-				if (change.record.kind === "pi.live" && change.ops.length > 0) commits.push([...change.ops]);
-			}
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentValues(publication)) {
+					if (change.record.kind === "pi.live" && change.ops.length > 0) commits.push([...change.ops]);
+				}
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		const tasks = await harness.commit((tx) => tx.scanTasks({ conversationId: root.id }, 20), context);
@@ -128,13 +131,20 @@ describe("pi.live deltas", () => {
 		const result = entries.items.find((entry) => entry.kind === "pi.tool-result")!.id;
 		expect(commits).toEqual([
 			// submission
-			[["s", ["run"], { taskId: firstGeneration, inputs: [expect.any(Number)] }]],
+			[
+				[
+					"s",
+					["run"],
+					{ taskId: firstGeneration, inputs: [expect.any(Number)], turns: 0, first: expect.any(Number) },
+				],
+			],
 			// request
 			[["s", ["generation"], { attempt: 1 }]],
-			// the generation starts its tool round and keeps the run
+			// the generation starts its tool round and keeps the run, counting the round as one turn (#11043)
 			expect.arrayContaining([
 				["d", ["generation"]],
 				["s", ["tools"], [{ callId: "c1", name: "noop", taskId: tool, status: "pending" }]],
+				["s", ["run", "turns"], 1],
 			]),
 			// intent
 			[["s", ["tools", 0, "status"], "running"]],
@@ -155,7 +165,7 @@ describe("pi.live deltas", () => {
 				["d", ["generation"]],
 			]),
 		]);
-		expect(commits[2]).toHaveLength(2);
+		expect(commits[2]).toHaveLength(3);
 		expect(commits[4]).toHaveLength(2);
 		expect(commits[5]).toHaveLength(2);
 		await harness.close(context);
@@ -261,8 +271,8 @@ describe("pi.live deltas", () => {
 		setup.faux.setResponses([fauxAssistantMessage([fauxText("word ".repeat(250))])]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const commits: Op[][] = [];
-		observeCommits(harness, (publication) => {
-			for (const change of documentChanges(publication)) {
+		followCommits(harness, (publication) => {
+			for (const change of documentValues(publication)) {
 				if (change.record.kind === "pi.live" && change.ops.length > 0) commits.push([...change.ops]);
 			}
 		});
@@ -321,12 +331,15 @@ describe("pi.live deltas", () => {
 		setup.settings.toolExecution = "sequential";
 		const { harness, root } = await openChat(new RecordingStorage(), setup);
 		const values = new Map<number, LiveState>();
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication)) {
-				if (change.record.kind !== "pi.live") continue;
-				liveId = change.record.id;
-				if (change.value !== null) values.set(publication.seq, change.value as LiveState);
-			}
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentChanges(publication)) {
+					if (change.record.kind !== "pi.live") continue;
+					liveId = change.record.id;
+					if (change.kind === "change") values.set(publication.seq, change.value as LiveState);
+				}
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		const nothingRuns = (value: LiveState) =>
@@ -341,7 +354,7 @@ describe("pi.live deltas", () => {
 		await harness.close(context);
 	});
 
-	it("starts calls the request did not offer as done and marks a faulted tool's slot done without an entry", async () => {
+	it("starts calls the request did not offer as flagged tasks and marks a faulted tool's slot done without an entry", async () => {
 		const setup = chatSetup();
 		addTool(
 			setup.registry,
@@ -361,20 +374,22 @@ describe("pi.live deltas", () => {
 		]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const commits: Op[][] = [];
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication)) {
-				if (change.record.kind === "pi.live" && change.ops.length > 0) commits.push([...change.ops]);
-			}
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentValues(publication)) {
+					if (change.record.kind === "pi.live" && change.ops.length > 0) commits.push([...change.ops]);
+				}
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
-		const entries = await root.entries({}, 10, undefined, context);
-		const ghostResult = entries.items.find((entry) => entry.kind === "pi.tool-result")!.id;
 		const handover = commits.find((ops) => ops.some((op) => op[0] === "s" && op[1][0] === "tools"))!;
+		// #11043: an unoffered call gets a task too, flagged on its slot.
 		expect(handover).toContainEqual([
 			"s",
 			["tools"],
 			[
-				{ callId: "g", name: "ghost", status: "done", entry: ghostResult },
+				{ callId: "g", name: "ghost", taskId: expect.any(Number), status: "pending", unoffered: true },
 				{ callId: "b", name: "bad", taskId: expect.any(Number), status: "pending" },
 			],
 		]);
@@ -402,12 +417,15 @@ describe("pi.live deltas", () => {
 		]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		let handover: CommitPublication | undefined;
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication)) {
-				if (change.record.kind === "pi.live" && (change.value as LiveState | null)?.tools?.length === 2) {
-					handover ??= publication;
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentValues(publication)) {
+					if (change.record.kind === "pi.live" && (change.value as LiveState)?.tools?.length === 2) {
+						handover ??= publication;
+					}
 				}
-			}
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		const changes = handover!.changes;
@@ -445,7 +463,7 @@ describe("pi.live deltas", () => {
 		const base = (value: LiveState) =>
 			LiveDoc.definition.checkpointWhen!(value, [], { deltasSinceBase: 1000 } as never);
 		const slot = (status: "pending" | "running" | "done") => ({ callId: "c", name: "n", status });
-		const run = { taskId: 1 as never, inputs: [] };
+		const run = { taskId: 1 as never, inputs: [], turns: 0 };
 		expect(base({})).toBe(true);
 		expect(base({ run, generation: { attempt: 1 } })).toBe(false);
 		expect(base({ run, tools: [slot("pending"), slot("done")] })).toBe(true);

@@ -13,7 +13,6 @@ import {
 	type Harness,
 	LiveDoc,
 	type LiveState,
-	type TaskId,
 	ToolResultEntry,
 } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
@@ -21,13 +20,15 @@ import type { PartialMessage } from "../src/harness/partial-changes.ts";
 import type { SessionImpl } from "../src/session/session.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf, waitFor } from "./chat-support.ts";
 import { addTask, addTool } from "./harness-support.ts";
-import { ControlledStorage, context, observeCommits } from "./session-support.ts";
+import { ControlledStorage, context, followCommits } from "./session-support.ts";
 import { aborted, deferred } from "./task-support.ts";
 
 /** A slow stream: 4 characters 80 times a second. */
 function slowSetup(persistWithinMs: number): ChatSetup {
 	const setup = chatSetup({ tokensPerSecond: 80, tokenSize: { min: 4, max: 4 } });
 	setup.settings.progress = { persistWithinMs };
+	// A request a crash interrupted is a failed attempt (#11139): retry at once.
+	setup.settings.retry = { enabled: true, maxRetries: 5, baseDelayMs: 1 };
 	return setup;
 }
 
@@ -43,11 +44,12 @@ async function open(storage: ControlledStorage, setup: ChatSetup) {
 /** The partial text of every `pi.live` revision memory adopted, the last one last. */
 function memoryPartials(harness: Harness): string[] {
 	const texts: string[] = [];
-	observeCommits(harness, (publication) => {
+	followCommits(harness, (publication) => {
 		for (const change of publication.changes) {
-			if (change.type !== "document" || change.record.kind !== LiveDoc.definition.kind) continue;
+			if (change.type !== "document" || change.kind !== "change" || change.record.kind !== LiveDoc.definition.kind)
+				continue;
 			// Publications carry untyped document values; this one is `pi.live`.
-			const message = (change.value as LiveState | null)?.generation?.message;
+			const message = (change.value as LiveState)?.generation?.message;
 			if (message !== undefined) texts.push(partialText(message) ?? "");
 		}
 	});
@@ -92,10 +94,6 @@ function answers(entries: readonly EntryRecord[]): { text: string | undefined; s
 		});
 }
 
-async function generationId(harness: Harness, conversationId: ConversationId): Promise<TaskId> {
-	return (await harness.snapshot(LiveDoc, conversationId, context))!.run!.taskId;
-}
-
 describe("generation partials", () => {
 	it("hold partials in memory and store them together, at most every persistWithinMs", async () => {
 		const storage = new ControlledStorage();
@@ -113,19 +111,26 @@ describe("generation partials", () => {
 		await harness.close(context);
 	});
 
-	it("converts what was stored into the aborted entry after a crash, and resends", async () => {
+	it("converts what was stored into the aborted entry after a crash, and retries the charged attempt", async () => {
 		const storage = new ControlledStorage();
 		const setup = slowSetup(150);
 		setup.faux.setResponses([fauxAssistantMessage(LONG)]);
 		let opened = await open(storage, setup);
-		// A replica fed by subscribeCommits() alone, as a replication feed would be.
+		// A replica fed by observeCommits() alone, as a replication feed would be.
 		let replica = await storedLive(storage, opened.root.id);
-		opened.harness.subscribeCommits((publication) => {
-			for (const change of publication.changes) {
-				if (change.type === "document" && change.record.kind === LiveDoc.definition.kind) {
-					replica = applyImmutable(replica, change.ops);
+		opened.harness.observeCommits({
+			advance: (publication) => {
+				for (const change of publication.changes) {
+					if (
+						change.type === "document" &&
+						change.kind === "change" &&
+						change.record.kind === LiveDoc.definition.kind
+					) {
+						replica = applyImmutable(replica, change.ops);
+					}
 				}
-			}
+			},
+			end: () => {},
 		});
 		const submission = await opened.root.submit({ type: "input", content: "hi" }, context);
 		await waitFor(async () => (storedText(await storedLive(storage, opened.root.id))?.length ?? 0) > 40);
@@ -217,23 +222,6 @@ describe("generation partials", () => {
 		await opened.harness.close(context);
 	});
 
-	it("never counts partial commits as progress of a task cut off again and again", async () => {
-		const storage = new ControlledStorage();
-		const setup = slowSetup(50);
-		let opened = await open(storage, setup);
-		setup.faux.setResponses([fauxAssistantMessage(LONG)]);
-		await opened.root.submit({ type: "input", content: "hi" }, context);
-		const id = await generationId(opened.harness, opened.root.id);
-		for (let crashes = 1; crashes <= 2; crashes++) {
-			await waitFor(async () => (storedText(await storedLive(storage, opened.root.id))?.length ?? 0) > 40);
-			await crash(opened.harness);
-			setup.faux.setResponses([fauxAssistantMessage(LONG)]);
-			opened = await open(storage, setup);
-			expect((await opened.harness.getTask(id, context))?.restarts).toBe(crashes);
-		}
-		await opened.harness.close(context);
-	});
-
 	it("resumes polling a deferred response after a crash", async () => {
 		const storage = new ControlledStorage();
 		const setup = chatSetup({ deferred: { pollAfterMs: 60_000 } });
@@ -305,6 +293,47 @@ describe("tool output", () => {
 				return message.content.map((item) => (item.type === "text" ? item.text : "")).join("|");
 			});
 	}
+
+	// #11139: a generation's request is charged at once after a crash, so its partials never stream with a count; a
+	// replay-safe tool reruns and streams its output with one.
+	it("never counts progress commits as progress of a task cut off again and again", async () => {
+		const storage = new ControlledStorage();
+		const setup = slowSetup(50);
+		let runs = 0;
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "work",
+				description: "work",
+				parameters: Type.Object({}),
+				replay: "safe",
+				execute: async (_args, api, callContext) => {
+					runs++;
+					for (let line = 0; !callContext.abortSignal!.aborted; line++) {
+						api.output(`run ${runs} line ${line}\n`);
+						await new Promise((resolve) => setTimeout(resolve, 20));
+					}
+					return aborted(callContext.abortSignal!);
+				},
+			}),
+		);
+		setup.faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("work", {}, { id: "c1" })], { stopReason: "toolUse" }),
+		]);
+		let opened = await open(storage, setup);
+		await opened.root.submit({ type: "input", content: "go" }, context);
+		for (let crashes = 1; crashes <= 2; crashes++) {
+			// This run stored output of its own, a progress commit, before it was cut off.
+			await waitFor(
+				async () => (await storedOutput(storage, opened.root.id))?.startsWith(`run ${crashes} `) === true,
+			);
+			await crash(opened.harness);
+			opened = await open(storage, setup);
+			const tool = (await opened.harness.commit((tx) => tx.scanTasks({ kind: "pi.tool" }, 1), context)).items[0]!;
+			expect(tool.restarts).toBe(crashes);
+		}
+		await opened.harness.close(context);
+	});
 
 	it("answers a tool without replay that crashed with the output stored by then", async () => {
 		const storage = new ControlledStorage();

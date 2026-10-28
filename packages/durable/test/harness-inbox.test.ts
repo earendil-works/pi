@@ -35,7 +35,7 @@ import { recordUsage } from "../src/harness/usage.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf, waitFor } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
-import { ControlledStorage, context, documentChanges, flush } from "./session-support.ts";
+import { ControlledStorage, context, documentChanges, documentValues, flush } from "./session-support.ts";
 import { aborted, type Deferred, deferred } from "./task-support.ts";
 
 const directories = new Set<string>();
@@ -616,10 +616,13 @@ describe("inbox", () => {
 		setup.faux.setResponses([first.step, answer("second")]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const ops: Op[][] = [];
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication)) {
-				if (change.record.kind === "pi.inbox" && change.ops.length > 0) ops.push([...change.ops]);
-			}
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentValues(publication)) {
+					if (change.record.kind === "pi.inbox" && change.ops.length > 0) ops.push([...change.ops]);
+				}
+			},
+			end: () => {},
 		});
 		const input = await root.submit({ type: "input", content: "a" }, context);
 		await first.reached;
@@ -873,10 +876,13 @@ describe("inbox", () => {
 		const items = [];
 		for (const text of ["x", "y", "z"]) items.push(await root.submit({ type: "input", content: text }, context));
 		const ops: Op[][] = [];
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication)) {
-				if (change.record.kind === "pi.inbox" && change.ops.length > 0) ops.push([...change.ops]);
-			}
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentValues(publication)) {
+					if (change.record.kind === "pi.inbox" && change.ops.length > 0) ops.push([...change.ops]);
+				}
+			},
+			end: () => {},
 		});
 		await items[1]!.abort(context);
 		expect(ops).toEqual([[["p", ["items"], 1, 1, []]]]);
@@ -909,9 +915,12 @@ describe("inbox", () => {
 		const first = gated(answer("first"));
 		setup.faux.setResponses([first.step, answer("second")]);
 		const { harness, root } = await openChat(new RecordingStorage(), setup);
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication))
-				if (change.record.kind === "pi.inbox") inboxId = change.record.id;
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentChanges(publication))
+					if (change.record.kind === "pi.inbox") inboxId = change.record.id;
+			},
+			end: () => {},
 		});
 		const input = await root.submit({ type: "input", content: "a" }, context);
 		await first.reached;
@@ -1074,12 +1083,15 @@ describe("usage", () => {
 		setup.faux.setResponses([answer("one"), answer("two")]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const commits: { entries: number; ops: readonly Op[] }[] = [];
-		harness.subscribeCommits((publication) => {
-			for (const change of documentChanges(publication)) {
-				if (change.record.kind !== "pi.usage") continue;
-				const entries = publication.changes.filter((other) => other.type === "entry").length;
-				commits.push({ entries, ops: change.ops });
-			}
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of documentValues(publication)) {
+					if (change.record.kind !== "pi.usage") continue;
+					const entries = publication.changes.filter((other) => other.type === "entry").length;
+					commits.push({ entries, ops: change.ops });
+				}
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "a" }, context)).wait(context);
 		await (await root.submit({ type: "input", content: "b" }, context)).wait(context);

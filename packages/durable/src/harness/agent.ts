@@ -57,7 +57,7 @@ const DEFAULT_CONTEXT_RETENTION_MS = 600_000;
 /** Default `settings.restartLimit`. */
 export const DEFAULT_RESTART_LIMIT = 5;
 
-/** A restart limit as given when it is a number of restarts, `1` or more, rounded down (`Infinity` never parks); else the default. */
+/** A restart limit as given when it is a number of restarts, `1` or more, rounded down (`Infinity`: no task ends for restarts); else the default. */
 function restartLimit(limit: number | undefined): number {
 	return typeof limit === "number" && limit >= 1 ? Math.floor(limit) : DEFAULT_RESTART_LIMIT;
 }
@@ -158,6 +158,11 @@ function applyChange(state: Draft<AgentState>, change: AgentChange): void {
 	);
 	set("instructions", change.instructions);
 	set("cwd", change.cwd);
+	const maxTurns = change.maxTurns;
+	if (maxTurns !== undefined && maxTurns !== null && !(Number.isSafeInteger(maxTurns) && maxTurns >= 1)) {
+		throw new RangeError(`maxTurns must be an integer 1 or more, got ${String(maxTurns)}`);
+	}
+	set("maxTurns", maxTurns);
 }
 
 function isList<T>(value: readonly T[] | object): value is readonly T[] {
@@ -281,6 +286,7 @@ export function resolveAgent<Tool extends ToolRegistration>(
 		sections: agentSections,
 		...(instructions === undefined ? {} : { instructions }),
 		...(state?.cwd === undefined ? {} : { cwd: state.cwd }),
+		...(state?.maxTurns === undefined ? {} : { maxTurns: state.maxTurns }),
 	};
 	return agent;
 }

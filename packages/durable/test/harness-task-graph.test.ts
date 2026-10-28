@@ -5,15 +5,17 @@ import type { JsonValue } from "@earendil-works/chord";
 import { applyImmutable, type Op } from "@earendil-works/chord/delta";
 import {
 	type ConversationId,
+	type ConversationView,
 	defineTask,
 	type EntryId,
 	MemoryStorage,
+	type Observer,
 	type TaskGraph,
 	type TaskId,
 } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
-import { ControlledStorage, context, flush } from "./session-support.ts";
+import { ControlledStorage, context, flush, onValue } from "./session-support.ts";
 import { aborted, completed, deferred, eventually, openTasks } from "./task-support.ts";
 
 type ParentState = { phase: "spawn" } | { phase: "join"; child: TaskId } | { phase: "finish" };
@@ -90,9 +92,11 @@ describe("task graph view", () => {
 		const seen: TaskGraph[] = [];
 		const observe = async () => {
 			const opened = await harness.watchTaskGraph(context);
-			opened.start(async (value) => {
-				seen.push(value);
-			});
+			opened.start(
+				onValue(async ({ value }) => {
+					seen.push(value);
+				}),
+			);
 			return opened;
 		};
 		let graph = await observe();
@@ -215,11 +219,13 @@ describe("task graph view", () => {
 		// Exact frames: replaying their operations from the acquisition revision gives each delivered value.
 		let replica: JsonValue = watch.value as unknown as JsonValue;
 		const frames: (readonly Op[])[] = [];
-		watch.start(async (value, ops) => {
-			replica = applyImmutable(replica, ops);
-			expect(replica).toEqual(value);
-			frames.push(ops);
-		});
+		watch.start(
+			onValue(async ({ value, ops }) => {
+				replica = applyImmutable(replica, ops);
+				expect(replica).toEqual(value);
+				frames.push(ops);
+			}),
+		);
 		harness.resume();
 		await eventually(() => watch.value.tasks[String(background)]?.state.status === "running");
 		expect(await harness.abortTask(background, context)).toBe("marked");
@@ -334,9 +340,11 @@ describe("task graph view", () => {
 		const second = await harness.watchTaskGraph(context);
 		expect(second.value).toBe(first.value);
 		const updates: string[] = [];
-		first.start(async (value) => {
-			updates.push(value.tasks[String(id)]?.state.status ?? "gone");
-		});
+		first.start(
+			onValue(async ({ value }) => {
+				updates.push(value.tasks[String(id)]?.state.status ?? "gone");
+			}),
+		);
 		harness.resume();
 		await reached.promise;
 		await flush();
@@ -354,6 +362,31 @@ describe("task graph view", () => {
 		expect(rebuilt.value).toEqual(last);
 		expect(rebuilt.value).not.toBe(last);
 		await rebuilt.stop();
+		await harness.close(context);
+	});
+
+	it("advances with the conversation view inside the one storage commit that changes both", async () => {
+		const storage = new ControlledStorage();
+		const { Parent, Child } = family(gatesNever());
+		const { harness } = await openTasks(storage, [Parent, Child]);
+		const root = await harness.root(context);
+		const seen: string[] = [];
+		const record = (name: string): Observer<ConversationView | TaskGraph> => ({
+			advance: () => {
+				seen.push(`${name} adopting=${storage.adopting}`);
+			},
+			end: () => {},
+		});
+		const view = await harness.observeConversation(root.id, record("view"), context);
+		const graph = await harness.observeTaskGraph(record("graph"), context);
+		await root.commit(async (tx) => {
+			await tx.appendEntry(root.id, { kind: "note" });
+			await tx.createTask(Parent, null, { ownership: { kind: "conversation" } });
+		}, context);
+		// Both inside the one adopt, in no promised order.
+		expect([...seen].sort()).toEqual(["graph adopting=true", "view adopting=true"]);
+		view.detach();
+		graph.detach();
 		await harness.close(context);
 	});
 });
