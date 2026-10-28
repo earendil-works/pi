@@ -135,6 +135,12 @@ export interface Component {
 	wantsKeyRelease?: boolean;
 
 	/**
+	 * If true while focused, fullscreen viewport keys (`tui.altScreen.*` scrolling and prompt jumps) go to this
+	 * component instead of scrolling the transcript, as they do for a focused overlay. Default is false.
+	 */
+	capturesViewportInput?: boolean;
+
+	/**
 	 * Invalidate any cached rendering state.
 	 * Called when theme changes or when component needs to re-render from scratch.
 	 */

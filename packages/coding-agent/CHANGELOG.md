@@ -25,6 +25,7 @@
 - Fixed aborting a bash command on macOS sometimes running the next command of a list such as `long_step; next_step`. pi now stops the process group before killing it ([#11252](https://github.com/earendil-works/pi/issues/11252), [#11289](https://github.com/earendil-works/pi/pull/11289))
 - Fixed streamed tool calls re-running their call renderer on every argument delta; the interactive mode now renders the latest arguments once per frame, so a large streamed `write` no longer re-highlights its whole content per delta ([#9265](https://github.com/earendil-works/pi/issues/9265))
 - Fixed the login dialog opening sign-in URLs that are not web URLs, and printing control characters from sign-in, device-code, and info URLs, which could end a terminal hyperlink and send escape sequences to the terminal
+- Fixed `tui.select.pageUp` and `tui.select.pageDown` being ignored in slash command and file autocomplete, `/settings`, and the model, scoped models, login, fork, `/mcp`, and llama.cpp selectors. In fullscreen mode, PageUp/PageDown now move an open list or autocomplete menu instead of scrolling the transcript, and a page key bound to Ctrl+V pages autocomplete instead of pasting an image ([#7629](https://github.com/earendil-works/pi/issues/7629), based on [#7680](https://github.com/earendil-works/pi/pull/7680) by [@muyiyr](https://github.com/muyiyr))
 
 ## [1.4.0] - 2026-10-21
 

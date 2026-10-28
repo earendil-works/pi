@@ -4,6 +4,7 @@ import {
 	type Focusable,
 	fuzzyFilter,
 	getKeybindings,
+	getSelectPageIndex,
 	Input,
 	Spacer,
 	Text,
@@ -34,10 +35,13 @@ interface DefaultModelReference {
 
 type ModelScope = "all" | "scoped";
 
+const MAX_VISIBLE = 10;
+
 /**
  * Component that renders a model selector with search
  */
 export class ModelSelectorComponent extends Container implements Focusable {
+	readonly capturesViewportInput: boolean = true;
 	private searchInput: Input;
 
 	// Focusable implementation - propagate to searchInput for IME cursor positioning
@@ -305,12 +309,11 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private updateList(): void {
 		this.listContainer.clear();
 
-		const maxVisible = 10;
 		const startIndex = Math.max(
 			0,
-			Math.min(this.selectedIndex - Math.floor(maxVisible / 2), this.filteredModels.length - maxVisible),
+			Math.min(this.selectedIndex - Math.floor(MAX_VISIBLE / 2), this.filteredModels.length - MAX_VISIBLE),
 		);
-		const endIndex = Math.min(startIndex + maxVisible, this.filteredModels.length);
+		const endIndex = Math.min(startIndex + MAX_VISIBLE, this.filteredModels.length);
 
 		// Show visible slice of filtered models
 		for (let i = startIndex; i < endIndex; i++) {
@@ -363,6 +366,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
+		const pageIndex = getSelectPageIndex(kb, keyData, this.selectedIndex, this.filteredModels.length, MAX_VISIBLE);
 		if (kb.matches(keyData, "tui.input.tab")) {
 			if (this.scopedModelItems.length > 0) {
 				const nextScope: ModelScope = this.scope === "all" ? "scoped" : "all";
@@ -383,6 +387,12 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		else if (kb.matches(keyData, "tui.select.down")) {
 			if (this.filteredModels.length === 0) return;
 			this.selectedIndex = this.selectedIndex === this.filteredModels.length - 1 ? 0 : this.selectedIndex + 1;
+			this.updateList();
+		}
+		// Page up/down
+		else if (pageIndex !== undefined) {
+			if (this.filteredModels.length === 0) return;
+			this.selectedIndex = pageIndex;
 			this.updateList();
 		}
 		// Enter
