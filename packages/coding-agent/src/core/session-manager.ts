@@ -1146,7 +1146,7 @@ export class SessionManager {
 	}
 
 	usesDefaultSessionDir(): boolean {
-		return this.sessionDir === getDefaultSessionDirPath(this.cwd);
+		return this.sessionDir !== "" && resolve(this.sessionDir, "..") === resolvePath(getSessionsDir());
 	}
 
 	getSessionId(): string {

@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ENV_AGENT_DIR } from "../../src/config.ts";
 import { findMostRecentSession, loadEntriesFromFile, SessionManager } from "../../src/core/session-manager.ts";
 import { assistantMsg, readSessionFileRoles, userMsg } from "../utilities.ts";
 
@@ -353,6 +354,38 @@ describe("SessionManager custom flat session directory", () => {
 
 		await expect(listing).rejects.toMatchObject({ name: "AbortError" });
 		await expect(SessionManager.listAll(undefined, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+	});
+});
+
+describe("SessionManager.usesDefaultSessionDir", () => {
+	let tempDir: string;
+	let savedAgentDir: string | undefined;
+
+	beforeEach(() => {
+		tempDir = mkdtempSync(join(tmpdir(), "session-default-dir-"));
+		savedAgentDir = process.env[ENV_AGENT_DIR];
+		process.env[ENV_AGENT_DIR] = join(tempDir, "agent");
+		mkdirSync(join(tempDir, "a"));
+		mkdirSync(join(tempDir, "b"));
+	});
+
+	afterEach(() => {
+		if (savedAgentDir === undefined) delete process.env[ENV_AGENT_DIR];
+		else process.env[ENV_AGENT_DIR] = savedAgentDir;
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("is true for a session in the sessions directory opened with another cwd", () => {
+		const session = SessionManager.create(join(tempDir, "a"));
+		session.appendMessage(userMsg("hello"));
+
+		const reopened = SessionManager.open(session.getSessionFile()!, undefined, join(tempDir, "b"));
+		expect(reopened.usesDefaultSessionDir()).toBe(true);
+	});
+
+	it("is false for a custom session directory", () => {
+		const session = SessionManager.create(join(tempDir, "a"), join(tempDir, "custom"));
+		expect(session.usesDefaultSessionDir()).toBe(false);
 	});
 });
 
