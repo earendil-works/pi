@@ -973,6 +973,8 @@ function wrapSingleLine(line: string, width: number): string[] {
 		// Token itself is too long - break it character by character
 		if (tokenVisibleLength > width && !isWhitespace) {
 			if (currentLine) {
+				// Trim before adding the reset, which would otherwise block the final trimEnd()
+				currentLine = currentLine.trimEnd();
 				// Add specific reset for underline only (preserves background)
 				const lineEndReset = tracker.getLineEndReset();
 				if (lineEndReset) {
@@ -1018,6 +1020,10 @@ function wrapSingleLine(line: string, width: number): string[] {
 			}
 			currentLine = tracker.getActiveCodes() + token;
 			currentVisibleLength = tokenVisibleLength;
+		} else if (isWhitespace && totalNeeded > width && token.includes("\x1b")) {
+			// Whitespace wider than an empty line. Plain spaces are removed by the final trimEnd(), but codes after
+			// them (e.g. a trailing reset) would block that and leave the line wider than width. Keep only the codes.
+			currentLine += extractAnsiCodes(token);
 		} else {
 			// Add to current line
 			currentLine += token;

@@ -67,6 +67,26 @@ describe("wrapTextWithAnsi", () => {
 			]);
 		});
 
+		it("does not exceed width for styled whitespace wider than the line", () => {
+			for (const text of [
+				`\x1b[41m${" ".repeat(20)}\x1b[0m`,
+				`ab\x1b[41m${" ".repeat(20)}\x1b[49mcd`,
+				`\x1b[33m${" ".repeat(20)}x\x1b[39m`,
+			]) {
+				for (const line of wrapTextWithAnsi(text, 10)) {
+					assert.ok(visibleWidth(line) <= 10, JSON.stringify(line));
+				}
+			}
+		});
+
+		it("trims trailing spaces before the line-end reset when a long word follows", () => {
+			assert.deepStrictEqual(wrapTextWithAnsi("aaa\x1b[9m    abcdefghij\x1b[29m", 9), [
+				"aaa\x1b[9m\x1b[29m",
+				"\x1b[9mabcdefghi\x1b[29m",
+				"\x1b[9mj\x1b[29m",
+			]);
+		});
+
 		it("resets strikethrough at line end and restores it on the next line", () => {
 			assert.deepStrictEqual(wrapTextWithAnsi("aaaa \x1b[9mstrike me\x1b[29m next", 12), [
 				"aaaa \x1b[9mstrike\x1b[29m",
