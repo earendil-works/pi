@@ -326,6 +326,22 @@ export function stripTerminalSequences(str: string): string {
 	return result;
 }
 
+function extractAnsiCodes(str: string): string {
+	let result = "";
+	let i = str.indexOf("\x1b");
+	while (i !== -1) {
+		const length = ansiCodeLength(str, i);
+		if (length > 0) {
+			result += str.substring(i, i + length);
+			i += length;
+		} else {
+			i++;
+		}
+		i = str.indexOf("\x1b", i);
+	}
+	return result;
+}
+
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]+/g;
 
 /** Replace each run of C0 and C1 control characters (ESC, BEL, newlines, ...) with one space. */
@@ -759,7 +775,7 @@ class AnsiCodeTracker {
 
 	/**
 	 * Get reset codes for attributes that need to be turned off at line end.
-	 * Underline must be closed to prevent bleeding into padding.
+	 * Underline and strikethrough must be closed to prevent bleeding into padding.
 	 * Active OSC 8 hyperlinks must be closed and re-opened on the next line.
 	 * Returns empty string if no attributes need closing.
 	 */
@@ -767,6 +783,9 @@ class AnsiCodeTracker {
 		let result = "";
 		if (this.underline) {
 			result += "\x1b[24m"; // Underline off only
+		}
+		if (this.strikethrough) {
+			result += "\x1b[29m"; // Strikethrough off only, re-opened at line start via getActiveCodes()
 		}
 		if (this.activeHyperlink) {
 			result += formatOsc8Close(this.activeHyperlink.terminator); // Re-opened at line start via getActiveCodes()
@@ -948,7 +967,8 @@ function wrapSingleLine(line: string, width: number): string[] {
 
 	for (const token of tokens) {
 		const tokenVisibleLength = visibleWidth(token);
-		const isWhitespace = token.trim() === "";
+		// Codes closing a styled word attach to the following space, e.g. "\x1b[22m ", so strip them before checking.
+		const isWhitespace = stripTerminalSequences(token).trim() === "";
 
 		// Token itself is too long - break it character by character
 		if (tokenVisibleLength > width && !isWhitespace) {
@@ -979,6 +999,12 @@ function wrapSingleLine(line: string, width: number): string[] {
 		if (totalNeeded > width && currentVisibleLength > 0) {
 			// Trim trailing whitespace, then add underline reset (not full reset, to preserve background)
 			let lineToWrap = currentLine.trimEnd();
+			if (isWhitespace) {
+				// The dropped space may carry codes (e.g. closing a styled word). Keep them on the wrapped line so
+				// the style ends there and is not re-opened on the next line.
+				lineToWrap += extractAnsiCodes(token);
+				updateTrackerFromText(token, tracker);
+			}
 			const lineEndReset = tracker.getLineEndReset();
 			if (lineEndReset) {
 				lineToWrap += lineEndReset;
@@ -988,10 +1014,10 @@ function wrapSingleLine(line: string, width: number): string[] {
 				// Don't start new line with whitespace
 				currentLine = tracker.getActiveCodes();
 				currentVisibleLength = 0;
-			} else {
-				currentLine = tracker.getActiveCodes() + token;
-				currentVisibleLength = tokenVisibleLength;
+				continue;
 			}
+			currentLine = tracker.getActiveCodes() + token;
+			currentVisibleLength = tokenVisibleLength;
 		} else {
 			// Add to current line
 			currentLine += token;
