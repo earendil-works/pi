@@ -59,6 +59,18 @@ describe("normalizeAppleTerminalInput", () => {
 		assert.equal(normalizeAppleTerminalInput("\r", true, false), "\r");
 	});
 
+	it("rewrites Apple Terminal ESC + Return to CSI-u Shift+Enter when Shift is pressed", () => {
+		assert.equal(normalizeAppleTerminalInput("\x1b\r", true, true), "\x1b[13;2u");
+	});
+
+	it("leaves Apple Terminal ESC + Return unchanged when Shift is not pressed", () => {
+		assert.equal(normalizeAppleTerminalInput("\x1b\r", true, false), "\x1b\r");
+	});
+
+	it("leaves non-Apple Terminal ESC + Return unchanged when Shift is pressed", () => {
+		assert.equal(normalizeAppleTerminalInput("\x1b\r", false, true), "\x1b\r");
+	});
+
 	it("leaves non-Apple Terminal Return unchanged when Shift is pressed", () => {
 		assert.equal(normalizeAppleTerminalInput("\r", false, true), "\r");
 	});
