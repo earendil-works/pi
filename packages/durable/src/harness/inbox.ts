@@ -41,8 +41,15 @@ export type Boundary = {
 	head: EntryId | undefined;
 };
 
-/** Selected user items, in ID order, and whether a `head: "self"` write (a reset) was placed. */
-export type BoundaryResult = { readonly users: SubmissionId[]; readonly reset: boolean };
+/**
+ * Selected user items, in ID order, the first entry the boundary placed, a write's or a user item's (a run it starts
+ * begins there, `LiveRun.first`), and whether a `head: "self"` write (a reset) was placed.
+ */
+export type BoundaryResult = {
+	readonly users: SubmissionId[];
+	readonly first: EntryId | undefined;
+	readonly reset: boolean;
+};
 
 /**
  * Read what a boundary needs. Table reads must precede the commit's first table write, so callers prepare the
@@ -86,6 +93,7 @@ export async function applyBoundary(
 	users.sort((a, b) => a - b);
 
 	// `appendEntry()` copies the drafts' values; the items are removed only afterwards.
+	let first: EntryId | undefined;
 	for (const index of writes) {
 		const item = items[index] as Draft<Extract<InboxItem, { mode: "write" }>>;
 		const draft = item.entry as unknown as EntryDraft;
@@ -96,6 +104,7 @@ export async function applyBoundary(
 		const entry = await tx.appendEntry(conversationId, draft);
 		if (draft.head !== undefined) boundary.head = draft.head === "self" ? entry.id : draft.head;
 		tx.placeSubmission(item.id, entry.id);
+		first ??= entry.id;
 	}
 	const placed: SubmissionId[] = [];
 	for (const index of users) {
@@ -103,10 +112,11 @@ export async function applyBoundary(
 		const entry = await appendInput(tx, conversationId, item.content as UserInput, item.entry as InputEntry, now);
 		tx.placeSubmission(item.id, entry.id);
 		placed.push(item.id);
+		first ??= entry.id;
 	}
 	const removed = [...writes, ...users].sort((a, b) => b - a);
 	for (const index of removed) items.splice(index, 1);
-	return { users: placed, reset };
+	return { users: placed, first, reset };
 }
 
 /** Append the entry an input is placed as: `entry`'s kind and data, or `pi.user`, with the user message of `content`. */

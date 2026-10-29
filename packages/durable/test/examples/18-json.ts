@@ -1,11 +1,11 @@
-// JSON mode: stream one prompt's run as JSON lines, like `pi --mode json`. Two modes:
-//   --events (default): the experimental agent events of watchEvents(), starting with a `snapshot` event.
-//   --ops: the raw ConversationView frames, starting with the view itself; each later line holds one commit's ops.
+// JSON mode: stream one prompt's run as JSON lines, like `pi --mode json`. Two modes, both of the ConversationView:
+//   --ops (default): the raw frames, starting with the view itself; each later line holds the ops of the commits since.
+//   --state: per call, the entries appended since the previous one and the current `pi.live`, state a renderer draws.
 // --storage sqlite (default) | jsonl | memory: sqlite writes a temporary database file, jsonl a temporary directory;
 // neither is deleted, and the path is printed to stderr at the end.
 // Uses OpenAI when OPENAI_API_KEY is set, and a scripted faux model otherwise.
 // Run from packages/durable:
-//   node --conditions=source --experimental-strip-types test/examples/18-json.ts --events "What is in this directory?"
+//   node --conditions=source --experimental-strip-types test/examples/18-json.ts --state "What is in this directory?"
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,22 +14,14 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { NodeExecutionEnv } from "../../src/env/node.ts";
-import {
-	createRegistry,
-	defineExtension,
-	Harness,
-	MemoryStorage,
-	type Storage,
-	section,
-	watchEvents,
-} from "../../src/index.ts";
+import { createRegistry, defineExtension, Harness, MemoryStorage, type Storage, section } from "../../src/index.ts";
 import { openNodeJsonlStorage } from "../../src/storage/jsonl/node.ts";
 import { openNodeSqliteStorage } from "../../src/storage/sqlite/node.ts";
 import { createBashTool, createReadTool } from "../../src/tools/index.ts";
 
 const context = BACKGROUND_CONTEXT;
 const args = process.argv.slice(2);
-const mode = args.includes("--ops") ? "ops" : "events";
+const mode = args.includes("--state") ? "state" : "ops";
 const storageIndex = args.indexOf("--storage");
 const storageKind = storageIndex < 0 ? "sqlite" : args[storageIndex + 1];
 const prompt =
@@ -77,20 +69,23 @@ const env = new NodeExecutionEnv({ cwd: process.cwd() });
 const harness = await Harness.open(storage, { models, registry, env: () => env }, context);
 const root = await harness.root(context, { agent: { model } });
 
-// Attach before submitting, so the stream covers the whole run.
-let stop: () => Promise<unknown>;
-if (mode === "events") {
-	const stream = await watchEvents(harness, root.id, context);
-	print(stream.snapshot);
-	stream.start(async (events) => {
-		for (const event of events) print(event);
-	});
-	stop = () => stream.stop();
-} else {
-	const watch = await root.watch(context);
+// Attach before submitting, so the watch covers the whole run.
+const watch = await root.watch(context);
+if (mode === "ops") {
 	print({ view: watch.value });
-	watch.start(async (_value, ops) => print({ ops }));
-	stop = () => watch.stop();
+	watch.start(async (call) => {
+		if (call.kind === "value") print({ ops: call.ops });
+	});
+} else {
+	let newest = watch.value.entries.at(-1)?.id ?? 0;
+	print({ entries: watch.value.entries, live: watch.value.docs["pi.live"] });
+	watch.start(async (call) => {
+		if (call.kind !== "value") return;
+		const { value } = call;
+		const entries = value.entries.filter((entry) => entry.id > newest);
+		newest = value.entries.at(-1)?.id ?? newest;
+		print({ ...(entries.length === 0 ? {} : { entries }), live: value.docs["pi.live"] });
+	});
 }
 
 const submission = await root.submit({ type: "input", content: prompt }, context);
@@ -98,6 +93,6 @@ await submission.wait(context);
 await harness.waitForIdle(context);
 // Let the last batch reach the listener before stopping.
 await new Promise((resolve) => setTimeout(resolve, 0));
-await stop();
+await watch.stop();
 await harness.close(context);
 if (location !== undefined) console.error(`${storageKind} storage: ${location}`);

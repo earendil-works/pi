@@ -267,7 +267,7 @@ describe("scheduler retention", () => {
 		const c = (await harness.conversation(tree.c, context))!;
 		// Busy, so the input queues instead of starting a run.
 		await c.commit(async (tx) => {
-			(await tx.doc(LiveDoc, tree.c)).run = { taskId: tree.keep, inputs: [] };
+			(await tx.doc(LiveDoc, tree.c)).run = { taskId: tree.keep, inputs: [], turns: 0 };
 		}, context);
 		const queued = (await c.submit({ type: "input", content: "later" }, context)).id;
 		await harness.abortTask(tree.p, context);
@@ -452,7 +452,7 @@ describe("scheduler retention", () => {
 		await harness.waitForTask(tree.b, context);
 		const c = (await harness.conversation(tree.c, context))!;
 		await c.commit(async (tx) => {
-			(await tx.doc(LiveDoc, tree.c)).run = { taskId: tree.keep, inputs: [] };
+			(await tx.doc(LiveDoc, tree.c)).run = { taskId: tree.keep, inputs: [], turns: 0 };
 		}, context);
 		// Queued while nothing cancels: no withdrawal scan.
 		const queued = (await c.submit({ type: "input", content: "later" }, context)).id;
@@ -529,7 +529,7 @@ describe("scheduler retention", () => {
 			context,
 		);
 		await root.commit(async (tx) => {
-			(await tx.doc(LiveDoc, root.id)).run = { taskId: busy, inputs: [] };
+			(await tx.doc(LiveDoc, root.id)).run = { taskId: busy, inputs: [], turns: 0 };
 		}, context);
 		const before = scans;
 		await root.submit({ type: "input", content: "queued" }, context);

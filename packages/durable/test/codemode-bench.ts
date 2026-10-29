@@ -66,8 +66,11 @@ async function run(mode: "codemode" | "plain", shape: Shape, n: number): Promise
 		const harness = await Harness.open(storage, { models, registry, settings: {} }, context);
 		const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" } } });
 		let commits = 0;
-		harness.subscribeCommits(() => {
-			commits++;
+		harness.observeCommits({
+			advance: () => {
+				commits++;
+			},
+			end: () => {},
 		});
 		const started = performance.now();
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);

@@ -982,6 +982,8 @@ export async function handlePackageCommand(
 	packageManager.setProgressCallback((event) => {
 		if (event.type === "start") {
 			process.stdout.write(chalk.dim(`${event.message}\n`));
+		} else if (event.type === "progress" && event.message) {
+			process.stdout.write(chalk.yellow(`${event.message}\n`));
 		}
 	});
 

@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import type { DurableObjectSqliteStorage } from "../../src/sqlite/cloudflare.ts";
+import type { SqliteExecutor } from "../../src/sqlite/index.ts";
 
 type SqlValue = ArrayBuffer | string | number | null;
 
@@ -63,3 +64,34 @@ export function durableObjectStorage(
 		},
 	};
 }
+
+/**
+ * The rows each kind of statement changes, as `runCounted` reports them: on a table with two indexes, so a driver that counted
+ * index writes (a Durable Object cursor's `rowsWritten`) would report more.
+ */
+export async function runChanges(database: SqliteExecutor): Promise<Record<string, number>> {
+	await database.exec(
+		"CREATE TABLE changes_probe (id TEXT PRIMARY KEY, path TEXT NOT NULL, n INTEGER NOT NULL) STRICT, WITHOUT ROWID",
+	);
+	await database.exec("CREATE INDEX changes_probe_path ON changes_probe (path, id)");
+	await database.exec("CREATE INDEX changes_probe_n ON changes_probe (n, id)");
+	for (let i = 0; i < 10; i++) await database.run("INSERT INTO changes_probe VALUES (?, ?, ?)", `k${i}`, `a/${i}`, i);
+	const changes = (sql: string, ...params: (string | number)[]) => database.runCounted(sql, ...params);
+	return {
+		insert: await changes("INSERT INTO changes_probe VALUES (?, ?, ?)", "x", "a/x", 99),
+		update: await changes("UPDATE changes_probe SET path = ? WHERE id = ?", "b/x", "x"),
+		none: await changes("UPDATE changes_probe SET n = 0 WHERE id = ?", "absent"),
+		bulk: await changes("UPDATE changes_probe SET path = 'c/' || substr(path, 3) WHERE path >= 'a/' AND path < 'a0'"),
+		upsert: await changes(
+			"INSERT INTO changes_probe VALUES (?, ?, ?) ON CONFLICT (id) DO UPDATE SET n = excluded.n",
+			"x",
+			"b/x",
+			5,
+		),
+		delete: await changes("DELETE FROM changes_probe WHERE id = ?", "x"),
+		bulkDelete: await changes("DELETE FROM changes_probe WHERE path >= 'c/' AND path < 'c0'"),
+	};
+}
+
+/** What `runChanges` reports on every driver. */
+export const RUN_CHANGES = { insert: 1, update: 1, none: 0, bulk: 10, upsert: 1, delete: 1, bulkDelete: 10 };

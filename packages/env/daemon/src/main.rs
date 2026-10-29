@@ -470,6 +470,15 @@ fn serve_frames(server: &Arc<Server>, input: &mut impl Read) -> io::Result<()> {
 }
 
 fn serve(token: &str) -> io::Result<()> {
+    let groups: exec::Groups = Arc::new(Mutex::new(Default::default()));
+    {
+        // A client that stops the daemon (Node's `child.kill()`), or a hangup, leaves nothing running either.
+        let groups = groups.clone();
+        sys::on_exit_signal(move |signal| {
+            kill_all(&groups);
+            std::process::exit(128 + signal);
+        });
+    }
     {
         let mut stdout = io::stdout().lock();
         writeln!(stdout, "PI-ENV {token}")?;
@@ -488,7 +497,7 @@ fn serve(token: &str) -> io::Result<()> {
         handles: Mutex::new(HashMap::new()),
         next_handle: AtomicU64::new(1),
         controls: Mutex::new(HashMap::new()),
-        groups: Arc::new(Mutex::new(Default::default())),
+        groups,
         terminals: Arc::new(Mutex::new(HashMap::new())),
     });
     let last_seen = Arc::new(AtomicU64::new(now_ms()));

@@ -142,6 +142,7 @@ describe("settings", () => {
 		expect(resolveSettings({ progress: { partialIntervalMs: undefined, outputIntervalMs: 250 } }).progress).toEqual({
 			partialIntervalMs: 100,
 			outputIntervalMs: 250,
+			persistWithinMs: 1000,
 		});
 	});
 });

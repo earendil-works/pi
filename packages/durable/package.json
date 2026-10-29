@@ -84,6 +84,12 @@
 			"import": "./dist/storage/jsonl/node.js",
 			"default": "./dist/storage/jsonl/node.js"
 		},
+		"./storage/store": {
+			"source": "./src/storage/store/index.ts",
+			"types": "./dist/storage/store/index.d.ts",
+			"import": "./dist/storage/store/index.js",
+			"default": "./dist/storage/store/index.js"
+		},
 		"./storage/sqlite": {
 			"source": "./src/storage/sqlite/index.ts",
 			"types": "./dist/storage/sqlite/index.d.ts",
@@ -119,7 +125,8 @@
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"build": "tsc -p tsconfig.build.json",
-		"test": "vitest --run && PI_DURABLE_DOCUMENT_RETENTION_MS=0 vitest --run && npm run test:workers",
+		"test": "vitest --run && PI_DURABLE_DOCUMENT_RETENTION_MS=0 vitest --run && npm run test:store && npm run test:workers",
+		"test:store": "vitest --run --config vitest.store.config.ts",
 		"test:workers": "vitest --run --config test-workers/vitest.config.ts",
 		"bench:storage": "vitest bench --config vitest.benchmark.config.ts",
 		"bench:storage:memory": "node --conditions=source --experimental-strip-types test/storage-memory.ts",
@@ -131,6 +138,7 @@
 		"bench:document-cache": "node --conditions=source --experimental-strip-types test/session-document-cache-bench.ts",
 		"bench:document-append": "node --conditions=source --experimental-strip-types test/document-append-bench.ts",
 		"bench:codemode": "node --conditions=source --experimental-strip-types test/codemode-bench.ts",
+		"bench:conversation-view": "node --conditions=source --experimental-strip-types --expose-gc test/conversation-view-bench.ts",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"keywords": [

@@ -83,7 +83,7 @@ async function toolTaskId(harness: Harness): Promise<TaskId> {
 
 /**
  * A tool that writes output, then blocks until its invocation is cancelled the first `blocking` times it runs.
- * `started` resolves once the output is durable.
+ * `started` resolves once the output is committed; a close stores it.
  */
 function blockingTool(name: string, extra: Partial<ToolRegistration> = {}) {
 	const started = deferred();

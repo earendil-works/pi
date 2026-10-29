@@ -115,7 +115,7 @@ import {
 } from "../../core/session-manager.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
-import type { SourceInfo } from "../../core/source-info.ts";
+import { getSourcePackageKey, type SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
@@ -131,6 +131,7 @@ import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
+import { stripBom } from "../../utils/text.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
 import { reportBug } from "./bug-report.ts";
@@ -450,6 +451,12 @@ export interface InteractiveModeOptions {
 	terminal?: Terminal;
 }
 
+interface ExtensionChangelogUpdate {
+	name: string;
+	version: string;
+	markdown: string;
+}
+
 export class InteractiveMode {
 	private runtimeHost: AgentSessionRuntime;
 	private renderer: TuiMainScreen | TuiAltScreen;
@@ -493,6 +500,7 @@ export class InteractiveMode {
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
 	private changelogMarkdown: string | undefined = undefined;
+	private extensionChangelogUpdates: ExtensionChangelogUpdate[] = [];
 	private startupNoticesShown = false;
 	private anthropicSubscriptionWarningShown = false;
 
@@ -848,7 +856,7 @@ export class InteractiveMode {
 		}
 		this.startupNoticesShown = true;
 
-		if (!this.changelogMarkdown) {
+		if (!this.changelogMarkdown && this.extensionChangelogUpdates.length === 0) {
 			return;
 		}
 
@@ -856,18 +864,39 @@ export class InteractiveMode {
 			this.chatContainer.addChild(new Spacer(1));
 		}
 		this.chatContainer.addChild(new DynamicBorder());
-		if (this.settingsManager.getCollapseChangelog()) {
-			const versionMatch = this.changelogMarkdown.match(/##\s+\[?(\d+\.\d+\.\d+)\]?/);
-			const latestVersion = versionMatch ? versionMatch[1] : this.version;
-			const condensedText = `Updated to v${latestVersion}. Use ${theme.bold("/changelog")} to view full changelog.`;
-			this.chatContainer.addChild(new Text(condensedText, 1, 0));
-		} else {
-			this.chatContainer.addChild(new ThemedText(() => theme.bold(theme.fg("accent", "What's New")), 1, 0));
-			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(
-				new Markdown(this.changelogMarkdown.trim(), 1, 0, this.getMarkdownThemeWithSettings()),
-			);
-			this.chatContainer.addChild(new Spacer(1));
+		if (this.changelogMarkdown) {
+			if (this.settingsManager.getCollapseChangelog()) {
+				const versionMatch = this.changelogMarkdown.match(/##\s+\[?(\d+\.\d+\.\d+)\]?/);
+				const latestVersion = versionMatch ? versionMatch[1] : this.version;
+				const condensedText = `Updated to v${latestVersion}. Use ${theme.bold("/changelog")} to view full changelog.`;
+				this.chatContainer.addChild(new Text(condensedText, 1, 0));
+			} else {
+				this.chatContainer.addChild(new ThemedText(() => theme.bold(theme.fg("accent", "What's New")), 1, 0));
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(
+					new Markdown(this.changelogMarkdown.trim(), 1, 0, this.getMarkdownThemeWithSettings()),
+				);
+				this.chatContainer.addChild(new Spacer(1));
+			}
+		}
+		if (this.extensionChangelogUpdates.length > 0) {
+			if (this.changelogMarkdown) {
+				this.chatContainer.addChild(new Spacer(1));
+			}
+			if (this.settingsManager.getCollapseChangelog()) {
+				const condensedText = this.extensionChangelogUpdates
+					.map((update) => `Updated ${update.name} to v${update.version}.`)
+					.join("\n");
+				this.chatContainer.addChild(new Text(condensedText, 1, 0));
+			} else {
+				this.chatContainer.addChild(
+					new ThemedText(() => theme.bold(theme.fg("accent", "Extension Updates")), 1, 0),
+				);
+				this.chatContainer.addChild(new Spacer(1));
+				const markdown = this.extensionChangelogUpdates.map((update) => update.markdown).join("\n\n");
+				this.chatContainer.addChild(new Markdown(markdown, 1, 0, this.getMarkdownThemeWithSettings()));
+				this.chatContainer.addChild(new Spacer(1));
+			}
 		}
 		this.chatContainer.addChild(new DynamicBorder());
 	}
@@ -947,22 +976,15 @@ export class InteractiveMode {
 
 		this.registerSignalHandlers();
 
-		// Load changelog (only show new entries, skip for resumed sessions)
+		// Load changelogs (only show new entries, skip for resumed sessions)
 		this.changelogMarkdown = this.getChangelogForDisplay();
+		this.extensionChangelogUpdates = this.getExtensionChangelogUpdates();
 
-		if (this.session.scopedModels.length > 0 && this.shouldShowStartupDetails()) {
-			const modelList = this.session.scopedModels
-				.map((sm) => {
-					const thinkingStr = sm.thinkingLevel ? `:${sm.thinkingLevel}` : "";
-					return `${sm.model.id}${thinkingStr}`;
-				})
-				.join(", ");
-			const cycleKeys = this.keybindings.getKeys("app.model.cycleForward");
-			const cycleHint =
-				cycleKeys.length > 0
-					? theme.fg("muted", ` (${formatKeyText(cycleKeys.join("/"), { capitalize: true })} to cycle)`)
-					: "";
-			console.log(theme.fg("dim", `Model scope: ${modelList}${cycleHint}`));
+		// Fullscreen renders on the alternate screen, so text printed to stdout here would stay in the shell
+		// after exit. Fullscreen shows the notice in the header instead (#11508).
+		if (this.renderer.mode !== "fullscreen") {
+			const modelScopeNotice = this.getModelScopeNotice();
+			if (modelScopeNotice) console.log(modelScopeNotice);
 		}
 
 		// Keep one component tree and remount it when changing renderers.
@@ -1082,6 +1104,7 @@ export class InteractiveMode {
 			this.builtInHeader = new Text("", 0, 0);
 			this.headerContainer.addChild(this.builtInHeader);
 		}
+		if (this.renderer.mode === "fullscreen") this.showFullscreenModelScopeNotice();
 		this.ui.requestRender();
 
 		// Ensure fd and rg are available after mounting the TUI (downloads if missing, adds to PATH via getBinDir)
@@ -1358,6 +1381,68 @@ export class InteractiveMode {
 		return undefined;
 	}
 
+	private getExtensionChangelogUpdates(): ExtensionChangelogUpdate[] {
+		// Skip changelog for resumed/continued sessions (already have messages)
+		if (this.session.state.messages.length > 0) {
+			return [];
+		}
+
+		const seenKeys = new Set<string>();
+		const updates: ExtensionChangelogUpdate[] = [];
+		for (const { sourceInfo } of this.session.resourceLoader.getExtensions().extensions) {
+			if (sourceInfo.origin !== "package" || !sourceInfo.baseDir || !sourceInfo.changelogPath) {
+				continue;
+			}
+
+			const key = getSourcePackageKey(sourceInfo);
+			if (seenKeys.has(key)) {
+				continue;
+			}
+			seenKeys.add(key);
+
+			const pkg = this.readPackageJson(sourceInfo.baseDir);
+			if (!pkg?.version) {
+				continue;
+			}
+
+			const lastVersion = this.settingsManager.getExtensionChangelogVersion(key);
+			if (!lastVersion) {
+				// Fresh install - record the version, don't show changelog
+				this.settingsManager.setExtensionChangelogVersion(key, pkg.version);
+				continue;
+			}
+
+			const newEntries = getNewEntries(parseChangelog(sourceInfo.changelogPath), lastVersion);
+			if (newEntries.length > 0) {
+				this.settingsManager.setExtensionChangelogVersion(key, pkg.version);
+				const name = pkg.name || sourceInfo.source;
+				// Prefix each "## [x.y.z]" heading with the package name so entries render like Pi's own.
+				const markdown = newEntries
+					.map((entry) => entry.content.replace(/^##\s+/, `## ${name} `))
+					.join("\n\n")
+					.trim();
+				updates.push({ name, version: pkg.version, markdown });
+			}
+		}
+
+		return updates;
+	}
+
+	private readPackageJson(packageRoot: string): { name?: string; version?: string } | undefined {
+		try {
+			const pkg = JSON.parse(stripBom(fs.readFileSync(path.join(packageRoot, "package.json"), "utf-8"))) as {
+				name?: unknown;
+				version?: unknown;
+			};
+			return {
+				name: typeof pkg.name === "string" ? pkg.name : undefined,
+				version: typeof pkg.version === "string" ? pkg.version : undefined,
+			};
+		} catch {
+			return undefined;
+		}
+	}
+
 	private reportInstallTelemetry(version: string): void {
 		if (process.env.PI_OFFLINE) {
 			return;
@@ -1427,6 +1512,28 @@ export class InteractiveMode {
 	}
 
 	/** Startup details (model scope, loaded resources). Hidden by quietStartup: true or "header". */
+	private getModelScopeNotice(): string | undefined {
+		if (this.session.scopedModels.length === 0 || !this.shouldShowStartupDetails()) return undefined;
+		const modelList = this.session.scopedModels
+			.map((sm) => {
+				const thinkingStr = sm.thinkingLevel ? `:${sm.thinkingLevel}` : "";
+				return `${sm.model.id}${thinkingStr}`;
+			})
+			.join(", ");
+		const cycleKeys = this.keybindings.getKeys("app.model.cycleForward");
+		const cycleHint =
+			cycleKeys.length > 0
+				? theme.fg("muted", ` (${formatKeyText(cycleKeys.join("/"), { capitalize: true })} to cycle)`)
+				: "";
+		return theme.fg("dim", `Model scope: ${modelList}${cycleHint}`);
+	}
+
+	private showFullscreenModelScopeNotice(): void {
+		if (!this.getModelScopeNotice()) return;
+		this.headerContainer.addChild(new ThemedText(() => this.getModelScopeNotice() ?? "", 1, 0));
+		this.headerContainer.addChild(new Spacer(1));
+	}
+
 	private shouldShowStartupDetails(): boolean {
 		return this.options.verbose === true || this.settingsManager.getQuietStartup() === false;
 	}
@@ -1918,7 +2025,7 @@ export class InteractiveMode {
 			if (skillDiagnostics.length > 0) {
 				const warningLines = () => this.formatDiagnostics(skillDiagnostics, sourceInfos);
 				this.loadedResourcesContainer.addChild(
-					new ThemedText(() => `${theme.fg("warning", "[Skill conflicts]")}\n${warningLines()}`, 0, 0),
+					new ThemedText(() => `${theme.fg("warning", "[Skill warnings]")}\n${warningLines()}`, 0, 0),
 				);
 				this.loadedResourcesContainer.addChild(new Spacer(1));
 			}
@@ -2839,8 +2946,12 @@ export class InteractiveMode {
 		// Save text from current editor before switching
 		const currentText = this.editor.getText();
 
-		this.disposeActiveSelector();
-		this.editorContainer.clear();
+		// An open extension dialog keeps the editor slot; the new editor is shown when the last dialog closes.
+		const dialogOpen = this.extensionDialogs.length > 0;
+		if (!dialogOpen) {
+			this.disposeActiveSelector();
+			this.editorContainer.clear();
+		}
 
 		if (factory) {
 			// Create the custom editor with tui, theme, and keybindings
@@ -2898,7 +3009,7 @@ export class InteractiveMode {
 			this.editor = this.defaultEditor;
 		}
 
-		this.editorContainer.addChild(this.editor as Component);
+		if (!dialogOpen) this.editorContainer.addChild(this.editor as Component);
 		if (this.activeStatusIndicator) {
 			this.statusContainer.clear();
 			this.activeWorkingIndicatorEmbedded = this.setEditorWorkingStatusIndicator(this.activeStatusIndicator);
@@ -2906,7 +3017,7 @@ export class InteractiveMode {
 				this.statusContainer.addChild(this.activeStatusIndicator);
 			}
 		}
-		this.ui.setFocus(this.editor as Component);
+		if (!dialogOpen) this.ui.setFocus(this.editor as Component);
 		this.ui.requestRender();
 	}
 
@@ -2935,6 +3046,7 @@ export class InteractiveMode {
 			overlay?: boolean;
 			overlayOptions?: OverlayOptions | (() => OverlayOptions);
 			onHandle?: (handle: OverlayHandle) => void;
+			blocked?: BlockedStatus;
 		},
 	): Promise<T> {
 		const savedText = this.editor.getText();
@@ -2988,7 +3100,7 @@ export class InteractiveMode {
 						// Expose handle to caller for visibility control
 						options?.onHandle?.(overlayHandle);
 					} else {
-						this.pushExtensionDialog(c);
+						this.pushExtensionDialog(c, options?.blocked);
 					}
 				})
 				.catch((err) => {

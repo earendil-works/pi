@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>In the Step: when Durable's views change, and who hears it</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">An explainer · Chord v2 slice 6 and pi-durable · 2026-10-26</div>
+  <h1>In the<br>Step</h1>
+  <p class="subtitle">Why Durable&#39;s views must change inside the storage&#39;s commit, why the first build broke hosts, and what the &quot;publication at adoption&quot; proposal changes</p>
+  <div class="cover-stats"><div class="stat"><b>1</b><span>Durable commit, seen as one change</span></div><div class="stat"><b>4</b><span>regressions the first build had, all in one gap</span></div><div class="stat"><b>7</b><span>things that change for hosts compared with HEAD</span></div><div class="stat"><b>5</b><span>decisions for the owner</span></div></div>
+  <div class="cover-note"><p>Written for the owner from the build of <code>/home/badlogic/pi-observers</code> (uncommitted), the four reviews
+(<code>/tmp/observers-review-{astra,fable,opus,sol}.md</code>) and the four checks of the proposal
+(<code>/tmp/observers-proposal-{astra,fable,opus,sol}.md</code>), whose probes ran against HEAD, the first build and the
+proposal. Code is Durable&#39;s <code>session/session.ts</code> and <code>harness/*.ts</code> at HEAD, simplified. Nothing here is decided
+beyond what the decision log says (&quot;Slice 6 first decisions&quot;, refined 2026-10-26).</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#today">I. Today</a></li>
+<li><a href="#first">II. The First Build</a></li>
+<li><a href="#proposal">III. Publication at Adoption</a></li>
+<li><a href="#changes">IV. What Changes for Hosts</a></li>
+<li><a href="#variant">V. The Microtask Variant</a></li>
+<li><a href="#decisions">Decisions</a></li>
+<li><a href="#sources">Appendix A: Sources</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Mario&#39;s phone shows a p3 conversation. Next to the transcript a small status line reads &quot;last: tool call, 1 task
+running&quot;. It is a Chord derive over two Durable views: the conversation view (the transcript) and the task graph (the
+running tasks).</p>
+<p>The model asks for a tool. Durable makes one commit, seq 41, that appends the tool-call entry and creates the tool&#39;s
+task. The phone should go from &quot;last: assistant, 0 running&quot; to &quot;last: tool call, 1 running&quot; in one step. Today it can
+show &quot;last: tool call, 0 running&quot; in between: a state that never existed. Slice 6 also puts Durable and Chord into one
+store with one commit step, where every owner&#39;s memory must show a complete prefix of the log (S1, W1). Both need the
+same thing: Durable&#39;s views must change inside the storage&#39;s commit, not after it.</p>
+<p>This book explains where Durable publishes a commit today, why moving half of it broke hosts, and what moving all of
+it changes.</p>
+<h3 id="seven-things-to-know">Seven things to know</h3>
+<ol class="findings">
+<li><strong>Durable adopts inside the storage, but publishes after it.</strong> <code>Storage.commit(writes, adopt, context)</code> calls
+<code>adopt</code> once the batch is durable; Durable&#39;s views, scheduler and host listeners all run later, after
+<code>Storage.commit</code> returned.</li>
+<li><strong>Two watches tear one commit.</strong> A derive over two Durable views sees seq 41 in one view before the other.</li>
+<li><strong>The first build moved only Durable&#39;s internal observers.</strong> Host listeners and telemetry stayed after the
+storage. Everything a host could see in between came out in the wrong order.</li>
+<li><strong>All four regressions live in one gap:</strong> the time between <code>adopt</code> and the end of <code>Storage.commit</code>.</li>
+<li><strong>The proposal removes the gap:</strong> the whole publication happens inside <code>adopt</code>.</li>
+<li><strong>It changes seven things a host could observe</strong>, most of them timing nobody documented, one a bug fix, one a real
+problem for Chord.</li>
+<li><strong>The real problem has a small fix:</strong> host listeners one microtask after <code>adopt</code>, outside Chord&#39;s batch (Opus&#39;s
+variant).</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p><strong>Durable</strong> is pi&#39;s agent harness; a <strong>Session</strong> is its one line of atomic commits. <strong>Storage</strong> is Durable&#39;s storage
+interface; <code>Storage.commit(writes, adopt, context)</code> stores a batch and calls <strong><code>adopt(seq)</code></strong> once it is durable.
+Durable&#39;s <strong>trackers</strong> hold each loaded document&#39;s value in memory. <strong>Internal observers</strong> are Durable&#39;s own commit
+listeners (<code>observeCommits</code>): the conversation <strong>view</strong> mounts, the <strong>task graph</strong>, the <strong>scheduler</strong> and the
+<strong>submissions</strong>. <strong>Host listeners</strong> are what an app registers with <code>subscribeCommits</code>. A <strong>watch</strong> is a
+<code>WatchHandle</code>: its listener runs a microtask after a frame arrives. <strong>The gap</strong> is the time between <code>adopt</code> and the
+moment <code>Storage.commit</code> resolves. In Chord&#39;s store, the <strong>commit step</strong> is the store-wide serialized part of a commit
+(backend transaction plus adoption), and the <strong>batch</strong> is Chord&#39;s synchronous adopt, mark and flush around it.
+Letters in traces: <strong>A</strong> = <code>adopt</code>, <strong>R</strong> = <code>Storage.commit</code> resolves, <strong>H</strong> = host listeners, <strong>C</strong> =
+<code>session.commit()</code> resolves.</p>
+</section>
+
+<section class="chapter" id="today"><header class="opener"><div class="numeral">I</div><h2>Today</h2><p class="lede">Where a Durable commit is adopted and where it is published, at HEAD.</p></header>
+<p class="dropcap">A Durable commit runs on the Session&#39;s line from start to end. Inside, <code>#runCommit</code> hands the batch to the storage
+with an <code>adopt</code> callback, waits for it, and only then publishes:</p>
+<pre><code><span class="tk-c">// session.ts, #runCommit, at HEAD (simplified)</span>
+<span class="tk-k">const</span> adopt = (seq: <span class="tk-t">Seq</span>): <span class="tk-k">void</span> =&gt; {
+  adoption = { documents: tx.<span class="tk-f">adopt</span>(seq) };          <span class="tk-c">// trackers swap to the new values</span>
+};
+seq = <span class="tk-k">await</span> <span class="tk-k">this</span>.#storage.<span class="tk-f">commit</span>(writes, adopt, context);
+<span class="tk-c">// ... back in the Session, after R:</span>
+<span class="tk-k">this</span>.#<span class="tk-f">publish</span>(seq, writes, documents, context);      <span class="tk-c">// telemetry events, internal observers, host listeners</span>
+<span class="tk-k">return</span> result;                                       <span class="tk-c">// C</span></code></pre>
+<p>The SQLite storage calls <code>adopt</code> right after <code>COMMIT</code> returned. JSONL calls it and then still awaits its own cleanup
+of sidecar files before it resolves:</p>
+<pre><code><span class="tk-c">// jsonl/storage.ts</span>
+<span class="tk-f">adopt</span>(seq);                                           <span class="tk-c">// A</span>
+<span class="tk-k">await</span> <span class="tk-k">this</span>.<span class="tk-f">reclaimSidecars</span>(reclamations, context);   <span class="tk-c">// still inside Storage.commit</span>
+<span class="tk-k">return</span> seq;                                           <span class="tk-c">// R</span></code></pre>
+<figure class="fig anim"><svg viewBox="0 0 720 390" width="100%" role="img" aria-label="One Durable commit at HEAD. The trackers change inside the storage; everything that tells anyone about it happens after the storage returned." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="84.8" y1="52" x2="84.8" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="84.8" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Session</text><text x="84.8" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">the line</text><line x1="222.4" y1="52" x2="222.4" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="160.6" y="10" width="123.6" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="222.4" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Storage</text><text x="222.4" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">JSONL</text><line x1="360" y1="52" x2="360" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="298.2" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">internal observers</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">views, graph, scheduler</text><line x1="497.6" y1="52" x2="497.6" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="435.8" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="497.6" y="27" font-size="11" fill="#2a2723" text-anchor="middle">host</text><text x="497.6" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">subscribeCommits</text><line x1="635.2" y1="52" x2="635.2" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="573.4" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="635.2" y="27" font-size="11" fill="#2a2723" text-anchor="middle">watch listeners</text><text x="635.2" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">microtasks</text><g class="step edge" style="--i:1"><line x1="84.8" y1="78" x2="219.4" y2="78" stroke="#7b7468" marker-end="url(#f1m)"/><text x="153.6" y="72" font-size="10" fill="#2a2723" text-anchor="middle">commit(writes, adopt)</text></g><g class="step edge" style="--i:2"><path d="M222.4 104 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><text x="264.4" y="114" font-size="10" fill="#2a2723" text-anchor="start">write, marker durable</text></g><g class="step edge" style="--i:3"><line x1="222.4" y1="150" x2="87.8" y2="150" stroke="#b4472f" marker-end="url(#f1a)"/><text x="153.6" y="144" font-size="10" fill="#b4472f" text-anchor="middle">A: adopt(41), trackers swap</text></g><g class="step edge" style="--i:4"><path d="M222.4 176 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><text x="264.4" y="186" font-size="10" fill="#2a2723" text-anchor="start">reclaim sidecars</text></g><g class="step edge" style="--i:5"><line x1="222.4" y1="222" x2="87.8" y2="222" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="153.6" y="216" font-size="10" fill="#2a2723" text-anchor="middle">R</text></g><g class="step edge" style="--i:6"><line x1="84.8" y1="254" x2="357" y2="254" stroke="#7b7468" marker-end="url(#f1m)"/><text x="222.4" y="248" font-size="10" fill="#2a2723" text-anchor="middle">telemetry events, then observers (views advance, waits resolve)</text></g><g class="step edge" style="--i:7"><line x1="84.8" y1="286" x2="494.6" y2="286" stroke="#7b7468" marker-end="url(#f1m)"/><text x="291.2" y="280" font-size="10" fill="#2a2723" text-anchor="middle">H: subscribeCommits(41)</text></g><g class="step edge" style="--i:8"><line x1="360" y1="318" x2="632.2" y2="318" stroke="#7b7468" marker-end="url(#f1m)"/><text x="497.6" y="312" font-size="10" fill="#2a2723" text-anchor="middle">frames queued, delivered next microtask</text></g><g class="step edge" style="--i:9"><path d="M84.8 344 h34 v14 h-32" fill="none" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="126.8" y="354" font-size="10" fill="#2a2723" text-anchor="start">C</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> One Durable commit at HEAD. The trackers change inside the storage; everything that tells anyone about it happens after the storage returned.</figcaption></figure>
+<p>Two things follow. A host listener always runs before any watch listener of the same commit: the observers queue the
+watch deliveries as microtasks, and the host listeners run synchronously right after them. And nothing is published
+until the storage is completely done.</p>
+<h3 id="the-tear">The tear</h3>
+<p>Chord follows a Durable view through its watch. Two views mean two watches, and each delivers in its own microtask:</p>
+<pre><code><span class="tk-k">const</span> status = self.<span class="tk-f">derive</span>([conversationView, taskGraph], ([view, graph]) =&gt; ({
+  last: view.entries.<span class="tk-f">at</span>(-<span class="tk-n">1</span>)?.kind,
+  running: graph.tasks.<span class="tk-f">filter</span>((t) =&gt; t.status === <span class="tk-s">"running"</span>).length,
+}));</code></pre>
+<pre class="plain"><code>commit 41 (entry + task)
+  microtask 1: view watch delivers 41   → derive: last "toolCall", running 0    ← never existed
+  microtask 2: graph watch delivers 41  → derive: last "toolCall", running 1</code></pre>
+<p>The phone receives both. Chord&#39;s rule W1 says a commit changes its sources inside one step and the derives over them
+recompute once, right after. For Durable&#39;s views that means: they must change inside <code>adopt</code>, and Chord must follow
+them as sources marked there, not through watches.</p>
+<h3 id="why-after-is-not-good-enough-for-the-store">Why after is not good enough for the store</h3>
+<p>In Chord&#39;s store, Durable&#39;s storage (<code>StoreStorage</code>) runs <code>adopt</code> inside the store&#39;s commit step, and the step lets
+the next owner&#39;s commit start as soon as <code>adopt</code> returned. Durable&#39;s <code>#publish</code> runs later, after its <code>await</code>. In
+between, a Chord object&#39;s commit can adopt, flush and recompute a derive that reads a Durable view still at 40. The
+owner ruled out the alternative, a store that waits for Durable&#39;s continuation: no Durable special cases in the store.</p>
+</section>
+
+<section class="chapter" id="first"><header class="opener"><div class="numeral">II</div><h2>The First Build</h2><p class="lede">Moving half the publication into adopt, and the four things that broke.</p></header>
+<p class="dropcap">The first build moved Durable&#39;s internal observers into <code>adopt</code> and left the rest of <code>#publish</code> (host listeners,
+telemetry events) after R. To keep host code from waking too early, it added <code>afterPublish(callback)</code>: observers queue
+what wakes a host (resolving a wait, aborting a run, <code>onWake</code>), and the queue runs after the host listeners.</p>
+<pre><code><span class="tk-k">const</span> adopt = (seq: <span class="tk-t">Seq</span>): <span class="tk-k">void</span> =&gt; {
+  <span class="tk-k">const</span> documents = tx.<span class="tk-f">adopt</span>(seq);
+  <span class="tk-k">this</span>.#<span class="tk-f">observeStored</span>(seq, writes, documents);       <span class="tk-c">// internal observers, inside A</span>
+};
+seq = <span class="tk-k">await</span> <span class="tk-k">this</span>.#storage.<span class="tk-f">commit</span>(writes, adopt, context);
+<span class="tk-k">this</span>.#<span class="tk-f">publish</span>(...);                                    <span class="tk-c">// host listeners, after R</span>
+<span class="tk-k">this</span>.#<span class="tk-f">settle</span>();                                        <span class="tk-c">// afterPublish callbacks</span></code></pre>
+<p>Durable&#39;s state (views, the scheduler&#39;s idle state, the metric counts) now changes at A. Hosts hear about it at H,
+after R. Everything that runs in between sees a commit that is half published. Four reviewers found four ways that
+shows, each reproduced with a probe.</p>
+<div class="steps"><div class="steps-head"><span class="title">The four regressions</span><span class="count"></span><button class="prev" type="button">Back</button><button class="next" type="button">Next</button></div><div class="step-panel"><h4>Watch listeners before host listeners</h4><p>The observers call <code>Watch.advance()</code> inside A; the watch delivers a microtask later. The storage&#39;s own <code>await</code> and the
+Session&#39;s <code>await</code> resume later still, so the watch listener runs first.</p>
+<pre class="plain"><code>HEAD:        A … R → H → watch
+first build: A (watch queued) → watch → R → H</code></pre>
+<p>Even with the memory storage. With JSONL the watch listener runs before <code>Storage.commit</code> resolved; if the storage then
+rejects, the watch has shown a commit whose <code>commit()</code> failed.</p>
+</div><div class="step-panel"><h4>waitForIdle answers early</h4><p>The scheduler&#39;s idle state is updated in A. A host that calls <code>waitForIdle()</code> in the gap gets the fast path (&quot;already
+idle&quot;) and resumes before H.</p>
+<pre><code>harness.<span class="tk-f">subscribeCommits</span>((p) =&gt; seen.<span class="tk-f">push</span>(p.seq));
+<span class="tk-c">// a task-graph watch listener runs in the gap:</span>
+<span class="tk-k">await</span> harness.<span class="tk-f">waitForIdle</span>(ctx);          <span class="tk-c">// resolves before seen has the terminal commit</span></code></pre>
+</div><div class="step-panel"><h4>A late subscriber misses the commit</h4><p>When nothing listened at A, the publication is never built. A host that subscribes during the gap gets nothing for
+that commit; at HEAD the listener list was read after R, so it did.</p>
+</div><div class="step-panel"><h4>The metric drifts after a rejection</h4><p>A storage that rejects after A (JSONL&#39;s cleanup fails): the scheduler counted the new task in A and queued its <code>+1</code>
+for the metric; the failure seals the scheduler, which subtracts <code>-1</code>; the queued <code>+1</code> is dropped with the failed
+commit.</p>
+<pre class="plain"><code>HEAD:        []        (nothing observed, net 0)
+first build: [-1]      (net -1)</code></pre>
+</div></div>
+<p>Fable found three more of the same kind: a host listener that closes the Harness makes resolved waits reject;
+scheduler line jobs queued in A jump ahead of a host listener&#39;s own commit; abort listeners moved after H. The
+patches each reviewer suggested were more <code>afterPublish</code>. The owner called it what it is: special-casing.</p>
+</section>
+
+<section class="chapter" id="proposal"><header class="opener"><div class="numeral">III</div><h2>Publication at Adoption</h2><p class="lede">One rule: a commit is published when it is adopted, all of it, inside adopt.</p></header>
+<p class="dropcap">The gap is the bug. The first build created it by splitting the publication. The proposal moves all of it:</p>
+<pre><code><span class="tk-k">const</span> adopt = (seq: <span class="tk-t">Seq</span>): <span class="tk-k">void</span> =&gt; {
+  <span class="tk-k">const</span> documents = tx.<span class="tk-f">adopt</span>(seq);                              <span class="tk-c">// trackers, as today</span>
+  <span class="tk-k">const</span> publication = <span class="tk-k">this</span>.#<span class="tk-f">publication</span>(seq, writes, documents);
+  <span class="tk-k">this</span>.#<span class="tk-f">events</span>(writes);                                         <span class="tk-c">// pi.durable.entry / .submission, contained</span>
+  <span class="tk-k">this</span>.#<span class="tk-f">notifyInternal</span>(publication);                            <span class="tk-c">// views, graph, scheduler, submissions</span>
+  <span class="tk-k">this</span>.#<span class="tk-f">notifyHosts</span>(publication);                               <span class="tk-c">// subscribeCommits</span>
+};
+seq = <span class="tk-k">await</span> <span class="tk-k">this</span>.#storage.<span class="tk-f">commit</span>(writes, adopt, context);
+<span class="tk-c">// after R: touch documents, sweep, fail() for an error an observer threw; nothing is published here</span></code></pre>
+<p>The order inside is HEAD&#39;s: telemetry events, internal observers, host listeners. <code>afterPublish</code> disappears. Waits
+need nothing special: an observer resolves a promise in A, and the waiter&#39;s continuation runs later by nature, after
+the host listeners already ran synchronously. One rule replaces the special cases: <code>adopt</code> runs no task code. The
+only synchronous path into task code is <code>AbortController.abort()</code> of a newly marked run (abort listeners run inside
+<code>abort()</code>), so that one is queued with <code>queueMicrotask</code>. <code>adopt</code> never throws: every listener, every report and every
+telemetry call inside it is contained.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 430" width="100%" role="img" aria-label="The same commit under the proposal. Everything happens inside A; R and C only end it." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="84.8" y1="52" x2="84.8" y2="422" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="84.8" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Session</text><text x="84.8" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">the line</text><line x1="222.4" y1="52" x2="222.4" y2="422" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="160.6" y="10" width="123.6" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="222.4" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Storage</text><text x="222.4" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">JSONL</text><line x1="360" y1="52" x2="360" y2="422" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="298.2" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">internal observers</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">views, graph, scheduler</text><line x1="497.6" y1="52" x2="497.6" y2="422" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="435.8" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="497.6" y="27" font-size="11" fill="#2a2723" text-anchor="middle">host</text><text x="497.6" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">subscribeCommits</text><line x1="635.2" y1="52" x2="635.2" y2="422" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="573.4" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="635.2" y="27" font-size="11" fill="#2a2723" text-anchor="middle">watch listeners</text><text x="635.2" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">microtasks</text><g class="step edge" style="--i:1"><line x1="84.8" y1="78" x2="219.4" y2="78" stroke="#7b7468" marker-end="url(#f2m)"/><text x="153.6" y="72" font-size="10" fill="#2a2723" text-anchor="middle">commit(writes, adopt)</text></g><g class="step edge" style="--i:2"><path d="M222.4 104 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="264.4" y="114" font-size="10" fill="#2a2723" text-anchor="start">write, marker durable</text></g><g class="step edge" style="--i:3"><line x1="222.4" y1="150" x2="87.8" y2="150" stroke="#b4472f" marker-end="url(#f2a)"/><text x="153.6" y="144" font-size="10" fill="#b4472f" text-anchor="middle">A: adopt(41)</text></g><g class="step edge" style="--i:4"><path d="M84.8 176 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="126.8" y="186" font-size="10" fill="#2a2723" text-anchor="start">trackers swap, telemetry events</text></g><g class="step edge" style="--i:5"><line x1="84.8" y1="222" x2="357" y2="222" stroke="#b4472f" marker-end="url(#f2a)"/><text x="222.4" y="216" font-size="10" fill="#b4472f" text-anchor="middle">observers: views advance, waits resolve</text></g><g class="step edge" style="--i:6"><line x1="84.8" y1="254" x2="494.6" y2="254" stroke="#b4472f" marker-end="url(#f2a)"/><text x="291.2" y="248" font-size="10" fill="#b4472f" text-anchor="middle">H: subscribeCommits(41)</text></g><g class="step edge" style="--i:7"><line x1="360" y1="286" x2="632.2" y2="286" stroke="#7b7468" marker-end="url(#f2m)"/><text x="497.6" y="280" font-size="10" fill="#2a2723" text-anchor="middle">watches, waits, abort: next microtasks</text></g><g class="step edge" style="--i:8"><path d="M222.4 312 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="264.4" y="322" font-size="10" fill="#2a2723" text-anchor="start">reclaim sidecars</text></g><g class="step edge" style="--i:9"><line x1="222.4" y1="358" x2="87.8" y2="358" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="153.6" y="352" font-size="10" fill="#2a2723" text-anchor="middle">R</text></g><g class="step edge" style="--i:10"><path d="M84.8 384 h34 v14 h-32" fill="none" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="126.8" y="394" font-size="10" fill="#2a2723" text-anchor="start">C</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> The same commit under the proposal. Everything happens inside A; R and C only end it.</figcaption></figure>
+<p>What this does to the regressions, verified by Opus and Fable with probes against HEAD:</p>
+<table>
+<thead>
+<tr>
+<th>regression</th>
+<th>HEAD</th>
+<th>first build</th>
+<th>proposal</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>watch listeners vs H</td>
+<td>H, watch</td>
+<td><strong>watch, H</strong></td>
+<td>H, watch</td>
+</tr>
+<tr>
+<td><code>waitForIdle</code> in the gap</td>
+<td>after H</td>
+<td><strong>before H</strong></td>
+<td>after H</td>
+</tr>
+<tr>
+<td>metric after a rejection following A</td>
+<td>0</td>
+<td><strong>−1</strong></td>
+<td>0 (+1, −1)</td>
+</tr>
+<tr>
+<td><code>close()</code> from H, then <code>waitForTask</code></td>
+<td>resolves</td>
+<td><strong>rejects</strong></td>
+<td>resolves</td>
+</tr>
+<tr>
+<td>scheduler jobs vs H&#39;s own commit</td>
+<td>H first</td>
+<td><strong>jobs first</strong></td>
+<td>H first</td>
+</tr>
+<tr>
+<td>stuck state, lost reports</td>
+<td>none</td>
+<td>yes</td>
+<td>none</td>
+</tr>
+<tr>
+<td>allocations per commit</td>
+<td>baseline</td>
+<td>more</td>
+<td>about HEAD</td>
+</tr>
+</tbody></table>
+<p>HEAD&#39;s whole non-e2e Durable suite (73 files, 1404 tests) passes on a build of the proposal. The four tests the first
+build added that encode its split fail, as they should, and are replaced.</p>
+</section>
+
+<section class="chapter" id="changes"><header class="opener"><div class="numeral">IV</div><h2>What Changes for Hosts</h2><p class="lede">Seven things a host, a task or a storage could observe, compared with HEAD.</p></header>
+<p class="dropcap">Nothing in the public API changes. These are the differences in behaviour the four checks found.</p>
+<h3 id="1-with-jsonl-everything-runs-before-the-storage-is-done">1. With JSONL, everything runs before the storage is done</h3>
+<pre class="plain"><code>HEAD:     marker → A → cleanup … → R → observers → H → watches, waits → C
+proposal: marker → A { observers, H } → watches, waits, abort → cleanup … → R → C</code></pre>
+<p>Host and task code woken by a commit now runs while JSONL still cleans up its sidecars. It cannot reach the storage
+through the Session: the line is still held, so a commit or read it starts waits. The memory, SQLite and IndexedDB
+storages do no work after A, so for them only the microtask placement differs, and the order is HEAD&#39;s. No spec
+section promised &quot;after <code>Storage.commit</code> resolved&quot;. Verdict: harmless; the spec gets one sentence.</p>
+<h3 id="2-abort-listeners-fire-after-host-listeners">2. Abort listeners fire after host listeners</h3>
+<pre><code>runtime.signal.<span class="tk-f">addEventListener</span>(<span class="tk-s">"abort"</span>, () =&gt; <span class="tk-f">log</span>(<span class="tk-f">hostSaw</span>(id)));
+<span class="tk-c">// HEAD: false (abort before H)    proposal: true (abort after H)</span></code></pre>
+<p>At HEAD the scheduler aborted a newly marked run inside <code>#publish</code>, before the host listeners. Under the proposal the
+abort is a microtask after A, so after H. No contract fixes this order. Decision for the owner.</p>
+<h3 id="3-a-commit-the-storage-rejects-after-a-is-published">3. A commit the storage rejects after A is published</h3>
+<p>A host keeps a replica from <code>subscribeCommits</code>. JSONL wrote the marker (the commit is durable), called <code>adopt</code>, then
+failed while cleaning up and rejected.</p>
+<pre class="plain"><code>HEAD:     durable, but no observer and no host listener ran → the replica misses it
+          → replica ≠ storage; waits of that commit reject; the Session fails
+proposal: published at A → the replica gets it → replica = storage
+          → waits of that commit resolve; the Session fails after R</code></pre>
+<p>Durable&#39;s spec says a replica fed by <code>subscribeCommits</code> &quot;stays equal to Storage&quot;; HEAD breaks that, the proposal keeps
+it. Spec invariant 2 changes from &quot;published only after its storage commit succeeds&quot; to &quot;published once it is
+durable, even when <code>commit()</code> then rejects&quot;. Decision for the owner; all four checks recommend it.</p>
+<h3 id="4-a-subscriber-that-arrives-late-misses-the-commit">4. A subscriber that arrives late misses the commit</h3>
+<pre><code><span class="tk-c">// host code that runs in the gap, between A and R:</span>
+harness.<span class="tk-f">subscribeCommits</span>(listener);   <span class="tk-c">// HEAD: gets commit 41; proposal: does not, 41 was published at A</span></code></pre>
+<p>Consistent with the rule: a listener added after the publication misses it, as one added after <code>#publish</code> did at
+HEAD. Documented, nothing to decide.</p>
+<h3 id="5-an-observer-that-throws-fails-the-session-after-the-host-listeners">5. An observer that throws fails the Session after the host listeners</h3>
+<p>At HEAD, a throwing internal observer failed the Session at once, inside <code>#publish</code>: close listeners and the
+<code>session_failed</code> report came before the host listeners. Under the proposal, <code>adopt</code> records the error, lets the other
+observers and the host listeners run, and the Session fails after R. The commit stands, as before. Failing inside A
+instead would make Durable&#39;s storage guard reject the caller of a durable commit with <code>SessionFailed</code>. Verdict: keep
+it so.</p>
+<h3 id="6-telemetry-that-throws-no-longer-breaks-memory">6. Telemetry that throws no longer breaks memory</h3>
+<p>At HEAD, <code>#publish</code> called <code>context.telemetry.addEvent</code> for each entry and submission without protection. A throwing
+adapter rejected a commit that was already durable and adopted, skipped every observer and host listener, and left the
+Session healthy: the scheduler and the views missed the commit for good. Inside <code>adopt</code> nothing may throw, so the
+proposal contains it and reports it; the commit resolves. This fixes a HEAD bug. The report needs a type (<code>host_error</code>
+with callback <code>&quot;telemetry&quot;</code> is the suggestion). The same containment must cover Durable&#39;s report path itself
+(<code>safeReport</code> records a metric and a span event outside its <code>try</code>), or <code>adopt</code> is not truly throw-free.</p>
+<h3 id="7-host-listeners-would-run-inside-chord-39-s-batch">7. Host listeners would run inside Chord&#39;s batch</h3>
+<p>This is the one that matters. In Chord&#39;s store, <code>StoreStorage</code> runs Durable&#39;s <code>adopt</code> inside the store&#39;s commit step,
+inside Chord&#39;s batch, where Chord refuses reentrant calls (<code>self.tx</code>, <code>get</code>, <code>watch</code>, <code>close</code> throw
+<code>invalid/reentrant</code>). Under the proposal the host listeners run inside <code>adopt</code>, so inside that batch:</p>
+<pre><code><span class="tk-c">// p3 code that mirrors Durable's commits into a Chord object</span>
+harness.<span class="tk-f">subscribeCommits</span>((publication) =&gt;
+  <span class="tk-f">chord</span>((ctx) =&gt; audit.<span class="tk-f">record</span>(publication.seq, ctx), context));   <span class="tk-c">// throws invalid/reentrant</span></code></pre>
+<p>The listener keeps every rule Durable states (synchronous, no Session calls) and still fails. Its error is reported;
+an <code>onReport</code> that itself uses Chord throws too, and a throwing <code>onReport</code> is dropped, so the work vanishes without a
+trace. And every host listener&#39;s run time is added to the store-wide commit step that every other object&#39;s commit
+waits for.</p>
+<figure class="fig wide"><svg viewBox="0 0 720 220" width="100%" role="img" aria-label="Under the proposal, a host listener runs inside Chord's batch; Chord calls from it are refused." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f3m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f3a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f3b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">STORE COMMIT STEP (ONE AT A TIME FOR THE WHOLE STORE)</text><text x="16" y="144" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">CHORD</text><rect x="19" y="36" width="210" height="44" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="124" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">backend transaction</text><text x="124" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">BEGIN … COMMIT</text><rect x="255" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">Durable's adopt</text><text x="360" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">trackers, views, scheduler</text><rect x="491" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae" stroke-dasharray="3 3"/><text x="596" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">host listeners</text><text x="596" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">inside the batch</text><rect x="137" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="242" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">flush</text><text x="242" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">derives, wire, watches queued</text><rect x="373" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae" stroke-dasharray="3 3"/><text x="478" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">`self.tx` from a listener</text><text x="478" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">invalid/reentrant</text><path d="M229 58 L253 58" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><rect x="219.6" y="41" width="44.9" height="13" fill="#fbf8f2" opacity=".92"/><text x="242" y="51" font-size="9.5" fill="#7b7468" text-anchor="middle">durable</text><path d="M465 58 L489 58" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><rect x="452.9" y="41" width="50.1" height="13" fill="#fbf8f2" opacity=".92"/><text x="478" y="51" font-size="9.5" fill="#7b7468" text-anchor="middle">proposal</text><path d="M596 80 L478 156" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><rect x="541" y="112" width="60.7" height="13" fill="#fbf8f2" opacity=".92"/><text x="545" y="122" font-size="9.5" fill="#7b7468" text-anchor="start">Chord call</text><path d="M360 80 L242 156" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><rect x="305" y="112" width="81.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="309" y="122" font-size="9.5" fill="#7b7468" text-anchor="start">after the step</text></svg><figcaption><span class="fignum">Figure 3.</span> Under the proposal, a host listener runs inside Chord&#39;s batch; Chord calls from it are refused.</figcaption></figure>
+</section>
+
+<section class="chapter" id="variant"><header class="opener"><div class="numeral">V</div><h2>The Microtask Variant</h2><p class="lede">Host listeners one microtask after adopt: same results, outside Chord&#39;s batch.</p></header>
+<p class="dropcap">Opus proposed a variant that keeps every result of the proposal and moves only the host listeners out of the step.
+The publication is still built in A and the internal observers still run there. The host listeners are dispatched in
+one microtask that is queued before the internal observers run:</p>
+<pre><code><span class="tk-c">// inside adopt, after tx.adopt(seq)</span>
+<span class="tk-k">this</span>.#<span class="tk-f">events</span>(writes);                                            <span class="tk-c">// contained</span>
+<span class="tk-k">if</span> (<span class="tk-k">this</span>.#commitListeners.size &gt; <span class="tk-n">0</span>) {
+  <span class="tk-k">const</span> listeners = [...<span class="tk-k">this</span>.#commitListeners];
+  <span class="tk-f">queueMicrotask</span>(() =&gt; {
+    <span class="tk-k">for</span> (<span class="tk-k">const</span> listener <span class="tk-k">of</span> listeners)
+      <span class="tk-f">contained</span>(() =&gt; <span class="tk-f">listener</span>(stored, context), (error) =&gt; <span class="tk-k">this</span>.<span class="tk-f">report</span>(error, LISTENER, context));
+  });
+}
+<span class="tk-k">for</span> (<span class="tk-k">const</span> listener <span class="tk-k">of</span> [...<span class="tk-k">this</span>.#internalListeners])
+  <span class="tk-f">contained</span>(() =&gt; <span class="tk-f">listener</span>(observed, context), (error) =&gt; { failure ??= { error }; });</code></pre>
+<p>Microtasks run first in, first out. The host dispatch is queued before anything the observers queue, so the host
+listeners still run before every watch delivery, every resolved wait, every abort and <code>onWake</code>. And it is a
+microtask, so it runs after the storage&#39;s synchronous step: after Chord&#39;s batch and flush, where Chord calls work.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 406" width="100%" role="img" aria-label="The variant inside Chord's store. The step stays synchronous and short; host listeners run right after it, first of everything the commit woke." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f4m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f4a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f4b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="84.8" y1="52" x2="84.8" y2="398" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="84.8" y="27" font-size="11" fill="#2a2723" text-anchor="middle">store step</text><text x="84.8" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">one at a time</text><line x1="222.4" y1="52" x2="222.4" y2="398" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="160.6" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="222.4" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Durable adopt</text><text x="222.4" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">views, scheduler</text><line x1="360" y1="52" x2="360" y2="398" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="298.2" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Chord batch</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">mark, flush</text><line x1="497.6" y1="52" x2="497.6" y2="398" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="435.8" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="497.6" y="30" font-size="11" fill="#2a2723" text-anchor="middle">host listeners</text><line x1="635.2" y1="52" x2="635.2" y2="398" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="573.4" y="10" width="123.6" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="635.2" y="30" font-size="11" fill="#2a2723" text-anchor="middle">watches, waits, abort</text><g class="step edge" style="--i:1"><path d="M84.8 72 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f4m)"/><text x="126.8" y="82" font-size="10" fill="#2a2723" text-anchor="start">backend COMMIT</text></g><g class="step edge" style="--i:2"><line x1="84.8" y1="118" x2="219.4" y2="118" stroke="#b4472f" marker-end="url(#f4a)"/><text x="153.6" y="112" font-size="10" fill="#b4472f" text-anchor="middle">adopt(41): trackers, events</text></g><g class="step edge" style="--i:3"><line x1="222.4" y1="150" x2="494.6" y2="150" stroke="#7b7468" marker-end="url(#f4m)"/><text x="360" y="144" font-size="10" fill="#2a2723" text-anchor="middle">queue H (microtask 1)</text></g><g class="step edge" style="--i:4"><path d="M222.4 176 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f4m)"/><text x="264.4" y="186" font-size="10" fill="#2a2723" text-anchor="start">observers: views advance (sources marked)</text></g><g class="step edge" style="--i:5"><line x1="222.4" y1="222" x2="632.2" y2="222" stroke="#7b7468" marker-end="url(#f4m)"/><text x="428.8" y="216" font-size="10" fill="#2a2723" text-anchor="middle">queue watches, waits, abort (microtasks 2…)</text></g><g class="step edge" style="--i:6"><line x1="84.8" y1="254" x2="357" y2="254" stroke="#b4472f" marker-end="url(#f4a)"/><text x="222.4" y="248" font-size="10" fill="#b4472f" text-anchor="middle">flush: derives over both views recompute once</text></g><g class="step edge" style="--i:7"><path d="M84.8 280 h34 v14 h-32" fill="none" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f4m)"/><text x="126.8" y="290" font-size="10" fill="#2a2723" text-anchor="start">step ends, next commit may start</text></g><g class="step edge" style="--i:8"><path d="M497.6 320 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f4m)"/><text x="539.6" y="330" font-size="10" fill="#2a2723" text-anchor="start">H runs: Chord calls allowed</text></g><g class="step edge" style="--i:9"><path d="M635.2 360 h-34 v14 h32" fill="none" stroke="#7b7468" marker-end="url(#f4m)"/><text x="593.2" y="370" font-size="10" fill="#2a2723" text-anchor="end">then watches, waits, abort</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 4.</span> The variant inside Chord&#39;s store. The step stays synchronous and short; host listeners run right after it, first of everything the commit woke.</figcaption></figure>
+<p>Chord needs nothing Durable-specific: only that its commit step and its flush are synchronous, which its design
+already states. The store never knows Durable&#39;s continuation, as the owner required.</p>
+<p>What the variant gives up compared with the proposal: host listeners are no longer called synchronously from inside
+<code>adopt</code>, but one microtask later, still on the Session line and still before C. Opus ran HEAD&#39;s full non-e2e suite
+against the variant (1404 of 1404) and all twelve probes: the same results as the proposal. One detail to settle while
+building: the listener list is copied at A, so a listener removed between A and the microtask is still called once;
+copying it inside the microtask avoids that, but then a listener added in between is called too.</p>
+</section>
+
+<section class="chapter epilogue" id="decisions"><header class="opener"><div class="numeral">∴</div><h2>Decisions</h2><p class="lede">What the owner decides before the rebuild.</p></header>
+<ol>
+<li><strong>The variant or the proposal.</strong> The variant (recommended by Opus) runs host listeners one microtask after <code>adopt</code>,
+outside Chord&#39;s batch. The proposal runs them inside <code>adopt</code> and needs the documented rule &quot;no Chord calls from
+<code>subscribeCommits</code> or <code>onReport</code>&quot;.</li>
+<li><strong>Abort listeners after host listeners</strong> (change 2): acceptable, or must the abort keep HEAD&#39;s place before them.</li>
+<li><strong>Publish a commit the storage rejects after <code>adopt</code></strong> (change 3): recommended by all four checks; it fixes HEAD&#39;s
+replica gap and changes spec invariant 2.</li>
+<li><strong>The report type of a throwing telemetry call</strong> (change 6): suggested <code>host_error</code> with callback <code>&quot;telemetry&quot;</code>.</li>
+<li><strong>HEAD&#39;s order inside the publication</strong> (events, internal observers, host listeners) and a fully throw-free
+<code>adopt</code>, the report path included. These are fixes rather than choices; listed so they are not lost.</li>
+</ol>
+<p>After the decisions: the spec rewrites (invariant 2, section 4 and its pseudo-code, the Storage contract, section 10
+failures), new tests in place of the four that encode the split (order with the memory storage and with a storage that
+works after <code>adopt</code>, <code>waitForIdle</code> in the gap, publication on a rejection with a balanced metric, close in the gap,
+Chord-like reentrancy, telemetry throws), a rebuild by a fresh builder, and the four reviewers again.</p>
+</section>
+
+<section class="chapter appendix" id="sources"><header class="opener"><div class="numeral">A</div><h2>Sources</h2></header>
+<table>
+<thead>
+<tr>
+<th>what</th>
+<th>where</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>HEAD code</td>
+<td><code>packages/durable/src/session/session.ts</code> (<code>#runCommit</code>, <code>#publish</code>), <code>harness/view.ts</code>, <code>harness/task-graph.ts</code>, <code>harness/scheduler.ts</code>, <code>harness/submissions.ts</code>, <code>storage/jsonl/storage.ts</code></td>
+</tr>
+<tr>
+<td>first build</td>
+<td><code>/home/badlogic/pi-observers</code> (uncommitted)</td>
+</tr>
+<tr>
+<td>reviews of the first build</td>
+<td><code>/tmp/observers-review-{astra,fable,opus,sol}.md</code></td>
+</tr>
+<tr>
+<td>the proposal</td>
+<td><code>/tmp/observers-proposal.md</code></td>
+</tr>
+<tr>
+<td>checks of the proposal</td>
+<td><code>/tmp/observers-proposal-{astra,fable,opus,sol}.md</code>; probes in <code>/tmp/obsprobe-*</code></td>
+</tr>
+<tr>
+<td>decisions so far</td>
+<td><code>packages/chord/docs/next/decisions.md</code>, &quot;Slice 6 first decisions&quot;</td>
+</tr>
+<tr>
+<td>Chord rules</td>
+<td><code>packages/chord/docs/next/design.md</code> §11 (W1, the batch), §24 (Durable integration)</td>
+</tr>
+</tbody></table>
+</section>
+
+<p class="colophon">In the Step · first edition · 2026-10-26 · from the observers build, its reviews and the proposal checks</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

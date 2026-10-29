@@ -154,6 +154,8 @@ Growing `length` inserts `null`; shrinking it removes elements.
 
 `tracker.value` is the latest adopted revision. `beginChange()` opens an overlay
 draft over it and never modifies it. A draft may stay open across `await`.
+A draft dropped without `prepare()` or `abort()` stays referenced by its
+tracker until the tracker's next `beginChange()` or `adopt()`.
 `prepare()` materializes the candidate and ops and does not change authority.
 `adopt()` checks the preparation and swaps the root pointer.
 

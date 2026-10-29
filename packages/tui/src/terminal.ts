@@ -10,6 +10,7 @@ import {
 	type ProgramStatus,
 } from "./program-status.ts";
 import { StdinBuffer } from "./stdin-buffer.ts";
+import { replaceControlCharacters } from "./utils.ts";
 
 const TERMINAL_PROGRESS_KEEPALIVE_MS = 1000;
 const TERMINAL_PROGRESS_ACTIVE_SEQUENCE = "\x1b]9;4;3\x07";
@@ -59,12 +60,19 @@ export function refreshTerminalDimensions(): void {
 	}
 }
 
+// Some Apple Terminal setups send ESC+CR (Alt+Enter) for Shift+Enter (#11559).
+function isNativeShiftEnterCandidate(data: string): boolean {
+	return data === "\r" || data === "\x1b\r";
+}
+
 export function normalizeNativeShiftEnterInput(
 	data: string,
 	shouldDetectNativeShiftEnter: boolean,
 	isShiftPressed: boolean,
 ): string {
-	if (shouldDetectNativeShiftEnter && data === "\r" && isShiftPressed) return NATIVE_SHIFT_ENTER_SEQUENCE;
+	if (shouldDetectNativeShiftEnter && isNativeShiftEnterCandidate(data) && isShiftPressed) {
+		return NATIVE_SHIFT_ENTER_SEQUENCE;
+	}
 	return data;
 }
 
@@ -396,7 +404,7 @@ export class ProcessTerminal implements Terminal {
 	private forwardInputSequence(sequence: string): void {
 		if (!this.inputHandler) return;
 		const shouldDetectNativeShiftEnter =
-			sequence === "\r" && (isAppleTerminalSession() || process.platform === "win32");
+			isNativeShiftEnterCandidate(sequence) && (isAppleTerminalSession() || process.platform === "win32");
 		const input = normalizeNativeShiftEnterInput(
 			sequence,
 			shouldDetectNativeShiftEnter,
@@ -590,8 +598,9 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	setTitle(title: string): void {
-		// OSC 0;title BEL - set terminal window title
-		process.stdout.write(`\x1b]0;${title}\x07`);
+		// OSC 0;title BEL - set terminal window title. A BEL or ESC in the title would end the sequence early and
+		// send the rest to the terminal as escape sequences (session names come from session files).
+		process.stdout.write(`\x1b]0;${replaceControlCharacters(title)}\x07`);
 	}
 
 	setProgramStatus(status: ProgramStatus): void {

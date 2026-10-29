@@ -11,9 +11,9 @@ import {
 	Type,
 } from "@earendil-works/pi-ai";
 import {
-	type AgentEvent,
 	type Conversation,
 	type ConversationId,
+	type ConversationView,
 	createSession,
 	defineDoc,
 	defineTask,
@@ -26,18 +26,19 @@ import {
 	type NextTaskState,
 	type Registry,
 	type Storage,
+	type TaskGraph,
 	type TaskId,
 	type TaskOptions,
 	type TaskRuntime,
 	type ToolRegistration,
 	ToolResultEntry,
 	type Tx,
-	watchEvents,
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, chatSetup, openChat, waitFor } from "./chat-support.ts";
 import { addHooks, addTask, addTool } from "./harness-support.ts";
+import { generations, graphHistory, slotsOf, viewHistory } from "./live-support.ts";
 import { ControlledStorage, context } from "./session-support.ts";
 import { aborted, type Deferred, deferred, openTasks, settled } from "./task-support.ts";
 
@@ -1251,7 +1252,9 @@ describe("tool rounds", () => {
 		expect(await submission.wait(context)).toMatchObject({ status: "unanswered", reason: "aborted" });
 		const results = (await allEntries(root)).filter((entry) => ToolResultEntry.is(entry));
 		expect(results.map((entry) => (entry.model![0] as ToolResultMessage).toolCallId)).toEqual(["c1", "c2"]);
-		expect(await harness.snapshot(LiveDoc, root.id, context)).toEqual({});
+		expect(await harness.snapshot(LiveDoc, root.id, context)).toEqual({
+			runFailure: { taskId: generation, inputs: [submission.id], reason: "aborted", first: expect.any(Number) },
+		});
 		expect((await harness.waitForTask(generation, context)).state.outcome.status).toBe("aborted");
 		await harness.close(context);
 	});
@@ -1286,7 +1289,7 @@ describe("tool rounds", () => {
 		await harness.close(context);
 	});
 
-	it("ends a turn at the generation's hold, before its successor's turn starts", async () => {
+	it("hands run control to the successor while the generation holds, and keeps it in the graph until it ends", async () => {
 		const setup = chatSetup();
 		addTask(setup.registry, Node);
 		addTool(
@@ -1308,21 +1311,23 @@ describe("tool rounds", () => {
 		setup.faux.setResponses([toolCalls(["noop", "c1"]), fauxAssistantMessage([fauxText("done")])]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		opened = harness;
-		const stream = await watchEvents(harness, root.id, context);
-		const events: AgentEvent[] = [];
-		stream.start(async (batch) => {
-			events.push(...batch);
-		});
+		const graph = await graphHistory(harness);
+		const history = await viewHistory(harness, root.id);
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		const first = (await harness.commit((tx) => tx.scanTasks({ kind: "pi.generation" }, 1), context)).items[0]!;
 		expect((await state(harness, first.id)).status).toBe("completing");
-		const turns = () => events.filter((event) => event.type.startsWith("turn_")).map((event) => event.type);
-		await waitFor(() => turns().length === 4);
-		expect(turns()).toEqual(["turn_start", "turn_end", "turn_start", "turn_end"]);
+		// The first generation's outcome is committed at its hold: the successor already runs the run, and the graph shows
+		// the first one completing beside it.
+		const handed = graph.graphs.find((value) => generations(value).length === 2)!;
+		const [held, successor] = generations(handed);
+		expect(held).toMatchObject({ id: first.id, state: { status: "completing" } });
+		expect(successor!.state.status).not.toBe("completing");
+		expect(history.live().some((live) => live.run?.taskId === successor!.id)).toBe(true);
 		open("hooked");
 		expect(await outcomeOf(harness, first.id)).toBe("completed");
-		await waitFor(() => turns().length === 4);
-		await stream.stop();
+		await waitFor(() => graph.graphs.at(-1)!.tasks[String(first.id)] === undefined);
+		graph.detach();
+		history.detach();
 		await harness.close(context);
 	});
 
@@ -1336,6 +1341,9 @@ describe("tool rounds", () => {
 			},
 		});
 		const setup = { ...base, models };
+		// The partial is stored at once, so the failed final commit leaves it for the reopened run to convert; held, it would
+		// be lost with the failed Session.
+		setup.settings.progress = { persistWithinMs: 0 };
 		addTask(setup.registry, Node);
 		let opened: Harness | undefined;
 		addHooks(setup.registry, GenerationTask, {
@@ -1385,7 +1393,7 @@ describe("tool rounds", () => {
 		reject = generation;
 		open("abort.hooked");
 		// The final commit, with the run's cleanup, fails: nothing of the cleanup lands, and the Harness fails.
-		expect(await harness.closed).toEqual({ reason: "failed", error: failure });
+		expect(await harness.closed).toEqual({ kind: "failed", error: failure });
 		await expect(submission.wait(context)).rejects.toMatchObject({ name: "SessionFailed", cause: failure });
 		await harness.close(context);
 		// Reopening finalizes the run; the partial becomes one aborted entry.
@@ -1393,7 +1401,15 @@ describe("tool rounds", () => {
 		opened = reopened.harness;
 		const again = (await reopened.harness.submission(submission.id, context))!;
 		expect(await again.wait(context)).toMatchObject({ status: "unanswered", reason: "faulted" });
-		expect(await reopened.harness.snapshot(LiveDoc, reopened.root.id, context)).toEqual({});
+		expect(await reopened.harness.snapshot(LiveDoc, reopened.root.id, context)).toEqual({
+			runFailure: {
+				taskId: expect.any(Number),
+				inputs: [submission.id],
+				reason: "faulted",
+				detail: "Value contains a non-JSON function; expected strict JSON",
+				first: expect.any(Number),
+			},
+		});
 		expect((await allEntries(reopened.root)).map((entry) => entry.kind)).toEqual(["pi.user", "pi.assistant"]);
 		await reopened.harness.close(context);
 	});
@@ -1653,7 +1669,7 @@ describe("conversation abort and boundaries", () => {
 		await until(async () => (await state(harness, parent)).status === "completing");
 		reject = parent;
 		open("child");
-		expect(await harness.closed).toEqual({ reason: "failed", error: failure });
+		expect(await harness.closed).toEqual({ kind: "failed", error: failure });
 		expect(reports).toEqual([failure]);
 		await harness.close(context);
 		const reopened = await openNodes(storage.reopen());
@@ -1754,25 +1770,12 @@ describe("recovery through ownership edges", () => {
 	});
 });
 
-describe("tool rounds and events", () => {
-	async function listen(harness: Harness, conversation: Conversation) {
-		const stream = await watchEvents(harness, conversation.id, context);
-		const events: AgentEvent[] = [];
-		stream.start(async (batch) => {
-			events.push(...batch);
-		});
-		return { stream, events };
-	}
-
-	/** Event types, with tool ends and message ends labelled by call ID and whether an entry came along. */
-	function labels(events: readonly AgentEvent[]): string[] {
-		return events.flatMap((event) => {
-			if (event.type === "tool_execution_end") return [`end:${event.toolCallId}:${event.entry !== undefined}`];
-			if (event.type === "message_end") {
-				const message = event.entry.model?.[0];
-				return [message?.role === "toolResult" ? `result:${message.toolCallId}` : `message:${message?.role}`];
-			}
-			return [];
+describe("tool rounds as the view shows them", () => {
+	/** The tool result entries of a view, by call ID, in transcript order. */
+	function resultsOf(view: ConversationView): string[] {
+		return view.entries.flatMap((entry) => {
+			const message = entry.model?.[0];
+			return message?.role === "toolResult" ? [message.toolCallId] : [];
 		});
 	}
 
@@ -1783,25 +1786,36 @@ describe("tool rounds and events", () => {
 		addTool(setup.registry, defineTool({ ...blockingTool("two").registration, name: "two" }));
 		setup.faux.setResponses([toolCalls(["one", "c1"], ["two", "c2"], ["two", "c3"])]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		const { stream, events } = await listen(harness, root);
+		const history = await viewHistory(harness, root.id);
 		const submission = await root.submit({ type: "input", content: "go" }, context);
 		await one.started;
 		await harness.abortTask((await harness.snapshot(LiveDoc, root.id, context))!.run!.taskId, context);
 		await submission.wait(context);
-		await waitFor(() => labels(events).includes("result:c3"));
-		expect(labels(events).filter((label) => !label.startsWith("message:"))).toEqual([
-			"end:c1:true",
-			"result:c1",
-			"end:c2:true",
-			"result:c2",
-			"end:c3:true",
-			"result:c3",
+		history.detach();
+		// The started call ends with its result entry; the commit that ends the run appends the unstarted calls' results,
+		// in call order, and removes the round.
+		const states = history.live();
+		const c1Done = slotsOf(states, "c1").find((slot) => slot?.status === "done");
+		const last = history.views.at(-1)!;
+		expect(resultsOf(last)).toEqual(["c1", "c2", "c3"]);
+		const c1Result = last.entries.find(
+			(entry) =>
+				entry.model?.[0]?.role === "toolResult" && (entry.model[0] as ToolResultMessage).toolCallId === "c1",
+		);
+		expect(c1Done?.entry).toBe(c1Result?.id);
+		const ending = history.views.findIndex((view) => resultsOf(view).includes("c2"));
+		expect(resultsOf(history.views[ending]!)).toEqual(["c1", "c2", "c3"]);
+		expect(states[ending]!.run).toBeUndefined();
+		expect(states[ending]!.tools).toBeUndefined();
+		expect(states[ending - 1]!.tools?.map((slot) => [slot.callId, slot.status])).toEqual([
+			["c1", "done"],
+			["c2", "pending"],
+			["c3", "pending"],
 		]);
-		await stream.stop();
 		await harness.close(context);
 	});
 
-	it("emits one turn_end per generation, also for a stream attached while it holds", async () => {
+	it("shows a held generation as completing to an observer attached while it holds", async () => {
 		const setup = chatSetup();
 		addTask(setup.registry, Node);
 		addTool(
@@ -1822,19 +1836,22 @@ describe("tool rounds and events", () => {
 		setup.faux.setResponses([toolCalls(["noop", "c1"]), fauxAssistantMessage([fauxText("done")])]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		opened = harness;
-		const early = await listen(harness, root);
+		const early = await graphHistory(harness);
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
-		const late = await listen(harness, root);
+		const late = await graphHistory(harness);
 		open("hooked");
 		const [first] = (await harness.commit((tx) => tx.scanTasks({ kind: "pi.generation" }, 1), context)).items;
 		await harness.waitForTask(first!.id, context);
-		await root.commit((tx) => tx.appendEntry(root.id, { kind: "note" }), context);
-		await waitFor(() => late.events.some((event) => event.type === "entry_appended"));
-		const turns = (events: readonly AgentEvent[]) => events.filter((event) => event.type === "turn_end").length;
-		expect(turns(early.events)).toBe(2);
-		expect(turns(late.events)).toBe(0);
-		await early.stream.stop();
-		await late.stream.stop();
+		// The early observer saw both generations; the late one starts with the held one, completing, and sees it leave.
+		const seen = (graphs: readonly TaskGraph[]) =>
+			new Set(graphs.flatMap((graph) => generations(graph).map((node) => node.id)));
+		expect(seen(early.graphs).size).toBe(2);
+		expect(generations(late.graphs[0]!)).toEqual([
+			expect.objectContaining({ id: first!.id, state: expect.objectContaining({ status: "completing" }) }),
+		]);
+		expect(late.graphs.at(-1)!.tasks[String(first!.id)]).toBeUndefined();
+		early.detach();
+		late.detach();
 		await harness.close(context);
 	});
 
@@ -1858,7 +1875,6 @@ describe("tool rounds and events", () => {
 		);
 		setup.faux.setResponses([toolCalls(["delegate", "c1"]), fauxAssistantMessage([fauxText("done")])]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		const { stream, events } = await listen(harness, root);
 		const submission = await root.submit({ type: "input", content: "go" }, context);
 		await waitFor(async () => (await harness.snapshot(LiveDoc, root.id, context))?.tools?.[0]?.status === "done");
 		const live = (await harness.snapshot(LiveDoc, root.id, context))!;
@@ -1866,16 +1882,14 @@ describe("tool rounds and events", () => {
 		expect(live.tools![0]!.entry).toBeDefined();
 		expect((await state(harness, tool)).status).toBe("completing");
 		expect((await state(harness, live.run!.taskId)).status).toBe("waiting");
-		await waitFor(() => labels(events).includes("end:c1:true"));
 		expect(await settled(submission.wait(context))).toBe(false);
 		open("sub");
 		expect((await submission.wait(context)).status).toBe("done");
 		expect(await outcomeOf(harness, tool)).toBe("completed");
-		await stream.stop();
 		await harness.close(context);
 	});
 
-	it("holds a faulted tool's slot and task_failed until the work it owns drained", async () => {
+	it("holds a faulted tool's slot and its graph node until the work it owns drained", async () => {
 		const setup = chatSetup();
 		addTask(setup.registry, Node);
 		script("held", {
@@ -1898,20 +1912,26 @@ describe("tool rounds and events", () => {
 		);
 		setup.faux.setResponses([toolCalls(["broken", "c1"]), fauxAssistantMessage([fauxText("done")])]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		const { stream, events } = await listen(harness, root);
+		const history = await viewHistory(harness, root.id);
+		const graph = await graphHistory(harness);
 		const submission = await root.submit({ type: "input", content: "go" }, context);
 		await waitFor(() => log.includes("abort:held"));
 		const live = (await harness.snapshot(LiveDoc, root.id, context))!;
 		const tool = live.tools![0]!.taskId!;
 		expect(await state(harness, tool)).toMatchObject({ status: "completing", outcome: { status: "faulted" } });
 		expect(live.tools![0]!.status).not.toBe("done");
-		expect(events.some((event) => event.type === "task_failed")).toBe(false);
+		// The graph shows the held fault; the task is not terminal yet.
+		expect(graph.graphs.at(-1)!.tasks[String(tool)]?.state).toEqual({ status: "completing", outcome: "faulted" });
 		open("abort.held");
 		expect((await submission.wait(context)).status).toBe("done");
 		expect(await outcomeOf(harness, tool)).toBe("faulted");
-		await waitFor(() => events.some((event) => event.type === "task_failed"));
-		expect(labels(events)).toContain("end:c1:false");
-		await stream.stop();
+		await waitFor(() => graph.graphs.at(-1)!.tasks[String(tool)] === undefined);
+		// The slot ends done without a result entry.
+		const done = slotsOf(history.live(), "c1").find((slot) => slot?.status === "done");
+		expect(done).toBeDefined();
+		expect(done).not.toHaveProperty("entry");
+		history.detach();
+		graph.detach();
 		await harness.close(context);
 	});
 });

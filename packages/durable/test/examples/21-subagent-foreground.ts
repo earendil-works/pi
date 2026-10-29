@@ -1,6 +1,6 @@
 // A foreground subagent tool: the parent's tool call creates a child conversation it owns, runs one task there, and
 // returns the child's answer. Aborting the tool call aborts the child. A UI finds the child through the tool's running
-// details and shows its events under the call.
+// details and shows its view under the call.
 // Uses OpenAI when OPENAI_API_KEY is set, and a scripted faux model otherwise.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/21-subagent-foreground.ts
@@ -11,7 +11,6 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import {
-	type AgentEvent,
 	AssistantEntry,
 	type ConversationId,
 	configure,
@@ -19,11 +18,12 @@ import {
 	defineExtension,
 	defineTool,
 	type EntryId,
+	type EntryRecord,
 	type Extension,
 	Harness,
+	type LiveState,
 	MemoryStorage,
 	type ToolExecutionApi,
-	watchEvents,
 } from "../../src/index.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -99,26 +99,30 @@ registry.install(Subagent);
 const harness = await Harness.open(new MemoryStorage(), { models, registry }, context);
 const root = await harness.root(context, { agent: { model } });
 
-// ─── UI: the parent's events, with each subagent's events indented under its call ───
+// ─── UI: the parent's transcript, with each subagent's indented under its call ───
 
-const print = (indent: string, event: AgentEvent): void => {
-	if (event.type === "message_end" && event.entry.kind === "pi.assistant") {
-		const message = event.entry.model?.[0] as AssistantMessage;
-		const text = message.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
-		if (text !== "") console.log(`${indent}assistant: ${text}`);
-	} else if (event.type === "tool_execution_start") {
-		console.log(`${indent}tool ${event.toolName}(${JSON.stringify(event.args)})`);
+/** Print an assistant entry's text and tool calls. */
+const print = (indent: string, entry: EntryRecord): void => {
+	const message = entry.model?.[0];
+	if (entry.kind !== "pi.assistant" || message?.role !== "assistant") return;
+	for (const block of (message as AssistantMessage).content) {
+		if (block.type === "text" && block.text !== "") console.log(`${indent}assistant: ${block.text}`);
+		if (block.type === "toolCall") console.log(`${indent}tool ${block.name}(${JSON.stringify(block.arguments)})`);
 	}
 };
 const attached = new Set<ConversationId>();
 const attach = async (id: ConversationId, indent: string): Promise<void> => {
 	attached.add(id);
-	const stream = await watchEvents(harness, id, context);
-	stream.start(async (events) => {
-		for (const event of events) {
-			print(indent, event);
-			if (event.type !== "tool_execution_update") continue;
-			const child = (event.details as { conversationId?: ConversationId } | undefined)?.conversationId;
+	const watch = await (await harness.conversation(id, context))!.watch(context);
+	let newest = watch.value.entries.at(-1)?.id ?? 0;
+	watch.start(async (call) => {
+		if (call.kind !== "value") return;
+		const { value } = call;
+		for (const entry of value.entries) if (entry.id > newest) print(indent, entry);
+		newest = value.entries.at(-1)?.id ?? newest;
+		// A running subagent call names its child conversation in its details.
+		for (const slot of (value.docs["pi.live"] as LiveState).tools ?? []) {
+			const child = (slot.details as { conversationId?: ConversationId } | undefined)?.conversationId;
 			if (child !== undefined && !attached.has(child)) await attach(child, `${indent}  `);
 		}
 	});
@@ -131,6 +135,6 @@ const submission = await root.submit(
 );
 await submission.wait(context);
 await harness.waitForIdle(context);
-// Event callbacks run after their commit; let the last ones print.
+// Watch callbacks run after their commit; let the last ones print.
 await new Promise((resolve) => setTimeout(resolve, 0));
 await harness.close(context);

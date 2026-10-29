@@ -1,6 +1,7 @@
-import { type Context, type JsonValue, Watch } from "@earendil-works/chord";
+import { type Context, type JsonValue, Watch, type WatchEnd } from "@earendil-works/chord";
 import { awaitWithContext, BACKGROUND_CONTEXT, withoutAbortSignal } from "@earendil-works/chord/context";
-import { type Op, track } from "@earendil-works/chord/delta";
+import { type Op, PendingOps, track } from "@earendil-works/chord/delta";
+import type { SpanAttributes } from "@earendil-works/pi-telemetry";
 import {
 	type AnyDocToken,
 	addressId,
@@ -14,6 +15,10 @@ import { idFromNumber } from "../ids.ts";
 import { hostTimers, type Timers } from "../timers.ts";
 import type {
 	CommitChange,
+	CommitObservation,
+	CommitObserver,
+	CommitOptions,
+	CommitPersistence,
 	CommitPublication,
 	ConversationDocFamilyToken,
 	ConversationDocToken,
@@ -33,6 +38,8 @@ import type {
 	EntryRecord,
 	Id,
 	JsonObject,
+	Observation,
+	Observer,
 	Page,
 	ReportInfo,
 	RewindableConversationDocFamilyToken,
@@ -56,13 +63,50 @@ import type {
 	TaskRecord,
 	Tx,
 } from "../types.ts";
-import { type LoadedDocument, Transaction, type TransactionHost, type TransactionScope } from "./transaction.ts";
+import {
+	type AdoptedDocuments,
+	type HeldDocument,
+	type LoadedDocument,
+	storeHeld,
+	Transaction,
+	type TransactionHost,
+	type TransactionScope,
+} from "./transaction.ts";
 
-/** What a document watch observes: the committed value of its incarnation, `null` once it retired. */
-type ObservedDocumentValue = Readonly<JsonObject> | null;
+/**
+ * What the Session's own components observe of one commit (`followCommits()`): a stored commit with its own changes, or
+ * a deferred one adopted in memory only (`CommitPersistence`), which changes documents only. Memory is never behind:
+ * a later store of held changes is not observed again.
+ */
+export type ObservedCommit =
+	| { readonly kind: "stored"; readonly seq: Seq; readonly changes: readonly CommitChange[] }
+	| { readonly kind: "memory"; readonly changes: readonly DocumentCommitChange[] };
+
+/** A held document (`HeldDocument`) as the Session keeps it: pinned in the cache until stored. */
+type Hold = HeldDocument & {
+	/** When the earliest of its held commits must be stored, on the Session clock. */
+	deadline: number;
+	readonly unpin: () => void;
+};
+
+/** The armed store of held documents: a foreground timer for the earliest deadline, `fired` once its job is queued. */
+type HoldTimer = { readonly at: number; disarm: () => void; fired: boolean };
+
+const NO_HOLDS: readonly Hold[] = [];
+
+const NO_OPERATIONS: readonly Op[] = [];
+
+/**
+ * Queues a commit's host dispatch as one microtask through `then`: in the same queue as `queueMicrotask()`, which Node
+ * wraps in an async resource that costs about twice the memory and three times the time per stored commit.
+ */
+const SETTLED: Promise<void> = Promise.resolve();
 
 /** The default source of a report: a listener, which never fails what ran it. */
-const LISTENER: ReportInfo = { type: "listener_error" };
+const LISTENER: ReportInfo = { kind: "listener_error" };
+
+/** A telemetry adapter that threw on a commit's event, which must not fail the durable commit. */
+const TELEMETRY: ReportInfo = { kind: "host_error", callback: "telemetry" };
 
 /**
  * Open a Session kernel over one storage backend. `now` is the wall clock for task times; default `Date.now`.
@@ -71,14 +115,23 @@ const LISTENER: ReportInfo = { type: "listener_error" };
  */
 export function createSession(
 	storage: Storage,
-	options?: { readonly now?: () => number; readonly documentRetentionMs?: number; readonly setTimer?: SetTimer },
+	options?: {
+		readonly now?: () => number;
+		readonly documentRetentionMs?: number;
+		readonly setTimer?: SetTimer;
+		/** Default `withinMs` of a deferred commit (`CommitPersistence`); default 1,000. */
+		readonly persistWithinMs?: number;
+	},
 ): Session {
 	const retention = options?.documentRetentionMs;
+	const within = options?.persistWithinMs;
 	return new SessionImpl(
 		storage,
 		options?.now,
 		retention === undefined ? undefined : () => retention,
 		options?.setTimer,
+		false,
+		() => within,
 	);
 }
 
@@ -98,6 +151,17 @@ export function documentRetention(ms: number | undefined): number {
 	return typeof ms === "number" && ms >= 0 ? ms : defaultRetention;
 }
 
+/** Default `withinMs` of a deferred commit, `settings.progress.persistWithinMs`. */
+const DEFAULT_PERSIST_WITHIN_MS = 1_000;
+
+/**
+ * A deferred commit's default window as given, when it is a number of milliseconds, `0` or more (`Infinity` waits for a
+ * reading or writing commit or close); otherwise the default.
+ */
+export function persistWithin(ms: number | undefined): number {
+	return typeof ms === "number" && ms >= 0 ? ms : DEFAULT_PERSIST_WITHIN_MS;
+}
+
 /**
  * Session kernel: one mutation line, the loaded document tracker cache, and committed publication.
  *
@@ -105,8 +169,13 @@ export function documentRetention(ms: number | undefined): number {
  * written for the retention period, and the next access loads it from Storage. Eviction runs as a job on the mutation
  * line, so no transaction ever holds a tracker that leaves.
  *
- * Only committed state is observable. Every commit callback, preparation, Storage settlement, adoption, and
- * publication enqueue runs while the line is held; listeners run later.
+ * Only committed state is observable. A deferred commit (`CommitPersistence`) is committed in memory first: it is
+ * adopted and shown to the Session's own observers, and its changes wait, folded per document and pinned in the cache,
+ * for the first commit that reads or writes the document, the document's deadline, a drop of its tracker, or close,
+ * which store them. Every commit callback, preparation, Storage settlement, and adoption runs while the line is held. A
+ * stored commit is published when Storage adopts it: inside `adopt` its telemetry events and the Session's own
+ * observers, one microtask later `observeCommits()` observers, before every wait the commit resolves and every abort
+ * it queues, all still on the line. Host listeners and watch listeners have no order.
  *
  * Storage failures are final. Every Storage call goes through one guard: the first error a Storage method throws, other
  * than for a cancelled caller, fails the Session, as does a commit it cannot adopt. That call gets the error; every later
@@ -123,6 +192,10 @@ export class SessionImpl implements Session {
 	readonly #attachedDocuments = new Map<DocumentId, number>();
 	readonly #clock: () => number;
 	readonly #documentRetentionMs: () => number;
+	readonly #persistWithinMs: () => number;
+	/** Documents with held changes, by incarnation (record ID); each is pinned in the cache until they are stored. */
+	readonly #holds = new Map<DocumentId, Hold>();
+	#holdTimer: HoldTimer | undefined;
 	/** Refuse every commit with writes (`HarnessOptions.readOnly`). */
 	readonly #readOnly: boolean;
 	readonly #timers: Timers;
@@ -131,9 +204,10 @@ export class SessionImpl implements Session {
 	#sweepJobs = 0;
 	/** Set once the host declined a background timer: then none is kept, and the end of each commit evicts what expired. */
 	#documentTimersUnavailable = false;
-	readonly #commitListeners = new Set<(publication: CommitPublication, context: Context) => void>();
+	/** Host commit observers (`observeCommits()`), each behind `guardObserver()`. */
+	readonly #commitListeners = new Set<GuardedObserver<CommitPublication>>();
 	/** The Session's own listeners, such as its scheduler's: they keep memory in step with storage, so a throw fails it. */
-	readonly #internalListeners = new Set<(publication: CommitPublication, context: Context) => void>();
+	readonly #internalListeners = new Set<(publication: ObservedCommit, context: Context) => void>();
 	readonly #closeListeners = new Set<() => void>();
 	readonly #host: TransactionHost;
 	#tail: Promise<void> = Promise.resolve();
@@ -163,12 +237,13 @@ export class SessionImpl implements Session {
 		documentRetentionMs: () => number | undefined = () => undefined,
 		setTimer?: SetTimer,
 		readOnly = false,
+		persistWithinMs: () => number | undefined = () => undefined,
 	) {
 		// Waits race it; none has to.
 		this.#failed.promise.catch(() => {});
 		this.#readOnly = readOnly;
 		this.#storage = new GuardedStorage(storage, this);
-		this.#timers = hostTimers(setTimer, (error) => this.report(error, { type: "host_error", callback: "setTimer" }));
+		this.#timers = hostTimers(setTimer, (error) => this.report(error, { kind: "host_error", callback: "setTimer" }));
 		// Cache bookkeeping must never change the outcome of the operation it follows: a clock or a retention setting
 		// that throws counts as now, and as the default.
 		this.#clock = () => {
@@ -183,6 +258,13 @@ export class SessionImpl implements Session {
 				return documentRetention(documentRetentionMs());
 			} catch {
 				return documentRetention(undefined);
+			}
+		};
+		this.#persistWithinMs = () => {
+			try {
+				return persistWithin(persistWithinMs());
+			} catch {
+				return persistWithin(undefined);
 			}
 		};
 		this.#host = {
@@ -210,8 +292,8 @@ export class SessionImpl implements Session {
 		return this.#storage;
 	}
 
-	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T> {
-		return this.commitWith(change, context);
+	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context, options?: CommitOptions): Promise<T> {
+		return this.commitWith(change, context, undefined, options);
 	}
 
 	/**
@@ -226,7 +308,7 @@ export class SessionImpl implements Session {
 		// Seal first, so a report handler that calls back finds the Session failed. Closing runs the close listeners
 		// synchronously; a failing backend close is the caller's to see, and here nobody waits.
 		this.close(BACKGROUND_CONTEXT).catch(() => {});
-		this.report(error, { type: "session_failed" }, context);
+		this.report(error, { kind: "storage_failed" }, context);
 	}
 
 	/**
@@ -234,13 +316,37 @@ export class SessionImpl implements Session {
 	 * bootstrap and task replacement. `scope` sets the default `tx.createTask()` conversation and the task attributed to
 	 * appended entries.
 	 */
-	commitWith<T>(change: (tx: Transaction) => T | Promise<T>, context: Context, scope?: TransactionScope): Promise<T> {
+	commitWith<T>(
+		change: (tx: Transaction) => T | Promise<T>,
+		context: Context,
+		scope?: TransactionScope,
+		options?: CommitOptions,
+	): Promise<T> {
+		let withinMs: number | undefined;
 		try {
 			this.assertUsable();
+			withinMs = this.#deferral(options?.persistence);
 		} catch (error) {
 			return Promise.reject(error);
 		}
-		return this.#enqueue(() => this.#runCommit(change, context, scope));
+		return this.#enqueue(() => this.#runCommit(change, context, scope, withinMs));
+	}
+
+	/** How long a commit may stay in memory before it is stored; `undefined` when it is immediate. */
+	#deferral(persistence: CommitPersistence | undefined): number | undefined {
+		if (persistence?.kind !== "deferred") return undefined;
+		const ms = persistence.withinMs;
+		if (ms === undefined) return this.#persistWithinMs();
+		// Public options: checked here, as the types cannot.
+		if (typeof ms !== "number" || !(ms >= 0)) {
+			throw new TypeError("CommitPersistence.withinMs must be a number of milliseconds, 0 or more");
+		}
+		return ms;
+	}
+
+	/** Internal: whether `tx` is the transaction of one of this Session's commits. */
+	ownsTransaction(tx: Tx): tx is Transaction {
+		return Transaction.ownedBy(tx, this.#host);
 	}
 
 	/** Internal: run a read-only job on the mutation line so multi-read derivations observe one committed state. */
@@ -350,35 +456,92 @@ export class SessionImpl implements Session {
 		key: string,
 		context: Context,
 	): Promise<DocumentWatch<T> | undefined>;
-	async watchDoc(token: AnyDocToken, ...args: readonly unknown[]): Promise<DocumentWatch<JsonObject> | undefined> {
-		this.assertUsable();
-		const definition = token.definition;
-		const resolved = resolveAddress(definition, args);
-		const context = args[resolved.nextArgument] as Context;
-		const signal = context.abortSignal;
-		let cancelled = signal?.aborted ?? false;
-		const markCancelled = (): void => {
-			cancelled = true;
-		};
-		signal?.addEventListener("abort", markCancelled, { once: true });
+	watchDoc(token: AnyDocToken, ...args: readonly unknown[]): Promise<DocumentWatch<JsonObject> | undefined> {
+		// Not async, so an attachment costs one async frame, `#attachDocument`'s; a throw here still rejects.
 		try {
-			const watch = await this.#enqueue(async () => {
-				this.#assertHealthy();
-				if (cancelled) throw cancellationError(signal!);
-				const loaded = await this.#loadDocument(definition, resolved.id, resolved.address, context);
-				if (cancelled) throw cancellationError(signal!);
-				if (loaded === undefined) return undefined;
-				return this.#attachDocument(definition, loaded);
-			});
-			if (watch === undefined) return undefined;
-			if (cancelled) {
-				watch.cancel();
-				throw cancellationError(signal!);
-			}
-			if (signal !== undefined) watch.observeCancellation(signal);
-			return watch as DocumentWatch<JsonObject>;
-		} finally {
-			signal?.removeEventListener("abort", markCancelled);
+			this.assertUsable();
+			const definition = token.definition;
+			const resolved = resolveAddress(definition, args);
+			const context = args[resolved.nextArgument] as Context;
+			const signal = context.abortSignal;
+			return this.#attachDocument(
+				definition,
+				resolved,
+				context,
+				(loaded) => {
+					const watch = this.#observeDocument(definition, loaded, createWatch, endWatch);
+					if (signal !== undefined) watch.observeAbort(signal);
+					return watch;
+				},
+				abortWatch,
+			);
+		} catch (error) {
+			return Promise.reject(error);
+		}
+	}
+
+	observeDoc<T extends JsonObject>(
+		token: SessionDocToken<T>,
+		observer: Observer<Readonly<T>>,
+		context: Context,
+	): Promise<Observation<Readonly<T>> | undefined>;
+	observeDoc<T extends JsonObject>(
+		token: ConversationDocToken<T>,
+		conversationId: ConversationId,
+		observer: Observer<Readonly<T>>,
+		context: Context,
+	): Promise<Observation<Readonly<T>> | undefined>;
+	observeDoc<T extends JsonObject>(
+		token: TaskDocToken<T>,
+		taskId: TaskId,
+		observer: Observer<Readonly<T>>,
+		context: Context,
+	): Promise<Observation<Readonly<T>> | undefined>;
+	observeDoc<T extends JsonObject, I extends JsonValue>(
+		token: SessionDocFamilyToken<T, I>,
+		key: string,
+		observer: Observer<Readonly<T>>,
+		context: Context,
+	): Promise<Observation<Readonly<T>> | undefined>;
+	observeDoc<T extends JsonObject, I extends JsonValue>(
+		token: ConversationDocFamilyToken<T, I>,
+		conversationId: ConversationId,
+		key: string,
+		observer: Observer<Readonly<T>>,
+		context: Context,
+	): Promise<Observation<Readonly<T>> | undefined>;
+	observeDoc<T extends JsonObject, I extends JsonValue>(
+		token: TaskDocFamilyToken<T, I>,
+		taskId: TaskId,
+		key: string,
+		observer: Observer<Readonly<T>>,
+		context: Context,
+	): Promise<Observation<Readonly<T>> | undefined>;
+	observeDoc(token: AnyDocToken, ...args: readonly unknown[]): Promise<Observation<Readonly<JsonObject>> | undefined> {
+		// Not async, as `watchDoc()`; a throw here still rejects.
+		try {
+			this.assertUsable();
+			const definition = token.definition;
+			const resolved = resolveAddress(definition, args);
+			const observer = args[resolved.nextArgument] as Observer<Readonly<JsonObject>>;
+			const context = args[resolved.nextArgument + 1] as Context;
+			return this.#attachDocument(
+				definition,
+				resolved,
+				context,
+				(loaded) => {
+					const guarded = this.#observeDocument(
+						definition,
+						loaded,
+						(_value, detach, report) => guardObserver(observer, detach, report),
+						endGuarded,
+					);
+					return observation(loaded.tracker.value, guarded);
+				},
+				detachObservation,
+			);
+		} catch (error) {
+			return Promise.reject(error);
 		}
 	}
 
@@ -437,27 +600,43 @@ export class SessionImpl implements Session {
 				.then(() => this.beforeClose())
 				.then(() =>
 					this.#enqueue(async () => {
+						// Last, after the writes at close (`writeAtClose()`), while the trackers are still here. A failed Session
+						// writes nothing; a failing store fails it, and the backend still closes.
+						let unstored: { readonly error: unknown } | undefined;
+						// Only with something to store: otherwise the backend's close begins in this very job.
+						if (this.#failure === undefined && this.#holds.size > 0) {
+							await this.#storeHolds([...this.#holds.values()], cleanup).catch((error: unknown) => {
+								unstored = { error };
+							});
+						}
+						const observers = [...this.#commitListeners];
 						this.#commitListeners.clear();
+						// After the last publication: the commits admitted before the seal have settled, held changes are stored.
+						// Commit observers are synchronous observers, all of them.
+						const end = closeEnds(this.#failure).observer;
+						for (const observer of observers) observer.end(end);
 						this.#internalListeners.clear();
 						this.#documents.clear();
 						this.#idleDocuments.clear();
 						this.#attachedDocuments.clear();
+						this.#holds.clear();
 						try {
 							await this.#storage.close(cleanup);
 						} catch (error) {
 							// A Storage that cannot close is a failed one; an earlier failure stays the cause.
 							if (this.#failure === undefined) {
 								this.#failure = { error };
-								this.report(error, { type: "session_failed" });
+								this.report(error, { kind: "storage_failed" });
 							}
 							throw error;
 						}
+						if (unstored !== undefined) throw unstored.error;
 					}),
 				)
 				.finally(() => {
 					const failure = this.#failure;
 					this.#closed.resolve(
-						failure === undefined ? { reason: "closed" } : { reason: "failed", error: failure.error },
+						failure === undefined ? { kind: "closed" } : { kind: "failed", error: failure.error },
 					);
 				});
 			this.#notifyClose();
@@ -469,6 +648,8 @@ export class SessionImpl implements Session {
 	#notifyClose(): void {
 		this.#documentSweep?.disarm?.();
 		this.#documentSweep = undefined;
+		this.#holdTimer?.disarm();
+		this.#holdTimer = undefined;
 		const listeners = [...this.#closeListeners];
 		this.#closeListeners.clear();
 		for (const listener of listeners) contained(listener, (error) => this.report(error));
@@ -506,18 +687,30 @@ export class SessionImpl implements Session {
 		return Promise.resolve();
 	}
 
-	/** Register a synchronous post-adoption listener. It must not block or call Session operations; a throw is reported. */
-	subscribeCommits(listener: (publication: CommitPublication, context: Context) => void): () => void {
+	/**
+	 * Attach a synchronous observer of every stored commit, with exactly what it stored (`CommitPublication`). Its
+	 * `advance` runs one microtask after Storage adopted the commit, on the line, before every wait the commit resolves
+	 * and every abort it queues (in no order with watch listeners); it must not block or call Session operations. A throw
+	 * is reported, detaches it, and ends it `listener_error`; `end` gets the Session's close after its last publication.
+	 */
+	observeCommits(observer: CommitObserver): CommitObservation {
 		this.assertUsable();
-		this.#commitListeners.add(listener);
-		return () => this.#commitListeners.delete(listener);
+		const guarded = guardObserver(
+			observer,
+			() => this.#commitListeners.delete(guarded),
+			(error, context) => this.report(error, LISTENER, context),
+		);
+		this.#commitListeners.add(guarded);
+		return { detach: () => guarded.detach() };
 	}
 
 	/**
-	 * Internal: `subscribeCommits()` for the Session's own components, whose state follows each commit. A throw leaves
-	 * that state behind storage, so it fails the Session instead of being reported. They run before host listeners.
+	 * Internal: follow every commit as memory adopts it (`ObservedCommit`), for the Session's own components, whose state
+	 * follows memory. A throw leaves that state behind, so it fails the Session instead of being reported. For a stored
+	 * commit they run inside Storage's `adopt`, so they call no Storage method, run no task code, and contain every host
+	 * callback; the waits they resolve and the aborts they queue run after host observers.
 	 */
-	observeCommits(listener: (publication: CommitPublication, context: Context) => void): () => void {
+	followCommits(listener: (publication: ObservedCommit, context: Context) => void): () => void {
 		this.assertUsable();
 		this.#internalListeners.add(listener);
 		return () => this.#internalListeners.delete(listener);
@@ -533,29 +726,32 @@ export class SessionImpl implements Session {
 		return () => this.#closeListeners.delete(listener);
 	}
 
-	/** Drop every loaded tracker on the mutation line; later access cold-loads from Storage. */
+	/** Drop every loaded tracker on the mutation line, held changes stored first; later access cold-loads from Storage. */
 	unloadDocuments(): Promise<void> {
 		return this.#enqueue(async () => {
+			if (this.#failure === undefined) await this.#storeHolds([...this.#holds.values()], BACKGROUND_CONTEXT);
 			this.#documents.clear();
 			this.#idleDocuments.clear();
 		});
 	}
 
 	/**
-	 * Internal, for tests: how many documents the cache holds, how many are idle, how many incarnations are pinned, and how
-	 * many sweep jobs were queued on the line so far.
+	 * Internal, for tests: how many documents the cache holds, how many are idle, how many incarnations are pinned, how
+	 * many sweep jobs were queued on the line so far, and how many documents have held changes.
 	 */
 	get documentCacheSizes(): {
 		readonly cached: number;
 		readonly idle: number;
 		readonly attached: number;
 		readonly sweeps: number;
+		readonly held: number;
 	} {
 		return {
 			cached: this.#documents.size,
 			idle: this.#idleDocuments.size,
 			attached: this.#attachedDocuments.size,
 			sweeps: this.#sweepJobs,
+			held: this.#holds.size,
 		};
 	}
 
@@ -653,7 +849,8 @@ export class SessionImpl implements Session {
 	async #runCommit<T>(
 		change: (tx: Transaction) => T | Promise<T>,
 		context: Context,
-		scope?: TransactionScope,
+		scope: TransactionScope | undefined,
+		withinMs: number | undefined,
 	): Promise<T> {
 		this.#assertHealthy();
 		context.abortSignal?.throwIfAborted();
@@ -687,23 +884,45 @@ export class SessionImpl implements Session {
 			this.#sweepDocuments();
 			throw new ReadOnlySession("a commit with writes");
 		}
-		// Storage adopts the batch synchronously once it is durable, before its next commit; a throw here would reach
-		// Storage, so the callback keeps its own error.
-		let adoption: { readonly documents: DocumentCommitChange[] } | { readonly error: unknown } | undefined;
+		if (withinMs !== undefined) {
+			const held = tx.holdable();
+			if (held !== undefined) {
+				this.#hold(tx, held, withinMs, context);
+				this.#sweepDocuments();
+				return result;
+			}
+		}
+		// The last step before Storage: held changes leave their queue only once nothing but Storage can fail.
+		const taken = this.#holds.size === 0 ? NO_HOLDS : tx.takeHeld((id) => this.#holds.get(id));
+		// Storage adopts the batch synchronously once it is durable, before its next commit, and the commit is published in
+		// the same step, so every view changes with memory. A throw here would reach Storage, so the callback keeps its own
+		// error, and the first error of an own observer.
+		let adoption:
+			| { readonly documents: AdoptedDocuments; readonly failure?: { readonly error: unknown } }
+			| { readonly error: unknown }
+			| undefined;
 		const adopt = (committed: Seq): void => {
+			let documents: AdoptedDocuments;
 			try {
-				adoption = { documents: tx.adopt(committed) };
+				documents = tx.adopt(committed);
 			} catch (error) {
 				adoption = { error };
+				return;
 			}
+			const failure = this.#publish(committed, writes, documents, context);
+			adoption = failure === undefined ? { documents } : { documents, failure };
 		};
-		let seq: Seq;
 		try {
 			// Once admitted, caller cancellation does not interrupt Storage settlement.
-			seq = await this.#storage.commit(writes, adopt, withoutAbortSignal(context));
+			await this.#storage.commit(writes, adopt, withoutAbortSignal(context));
 		} catch (error) {
-			// The guard has failed the Session. A rejection after adoption leaves nothing staged to discard.
+			// The guard has failed the Session with the storage error. A rejection after adoption leaves nothing staged to
+			// discard, and the commit, durable, stays published; an own observer's error that would have failed the Session
+			// is still reported.
 			if (adoption === undefined) tx.discard();
+			else if ("documents" in adoption && adoption.failure !== undefined) {
+				this.report(adoption.failure.error, LISTENER, context);
+			}
 			throw error;
 		}
 		if (adoption === undefined) {
@@ -716,37 +935,153 @@ export class SessionImpl implements Session {
 			this.fail(adoption.error);
 			throw adoption.error;
 		}
-		const documents = adoption.documents;
-		for (const document of documents) this.#touchDocument(addressId(document.record));
-		this.#publish(seq, writes, documents, context);
+		if (taken.length > 0) this.#release(taken);
+		for (const document of adoption.documents.stored) this.#touchDocument(addressId(document.record));
+		// The commit is durable and published, so it stands; memory behind an own observer's state fails the Session.
+		if (adoption.failure !== undefined) this.fail(adoption.failure.error, context);
 		this.#sweepDocuments();
 		return result;
 	}
 
+	/**
+	 * Hold a deferred commit (`Transaction.holdable()`): adopt it in memory, queue its changes per document, pinned, by
+	 * the earliest deadline of the document's held commits, and show it to the Session's own observers.
+	 */
+	#hold(
+		tx: Transaction,
+		held: NonNullable<ReturnType<Transaction["holdable"]>>,
+		withinMs: number,
+		context: Context,
+	): void {
+		const documents = tx.adoptHeld();
+		const deadline = this.#clock() + withinMs;
+		for (const { loaded, ops, base } of held) {
+			const id = loaded.record.id;
+			let hold = this.#holds.get(id);
+			if (hold === undefined) {
+				const unpin = this.#pinDocument(loaded.addressId, id);
+				hold = { loaded, pending: new PendingOps(), base: false, deadline, unpin };
+				this.#holds.set(id, hold);
+			}
+			hold.pending.push(ops);
+			if (base) hold.base = true;
+			if (deadline < hold.deadline) hold.deadline = deadline;
+		}
+		this.#armHoldTimer();
+		const publication: ObservedCommit = { kind: "memory", changes: documents };
+		for (const listener of [...this.#internalListeners]) {
+			// Our own observers are synchronous.
+			try {
+				listener(publication, context);
+			} catch (error) {
+				this.fail(error, context);
+			}
+		}
+	}
+
+	/**
+	 * Store the held changes of `holds` in one storage transaction, on the line. Memory already has them, so only
+	 * `observeCommits()` observers see it, published as Storage adopts it. A failure fails the Session, as every Storage
+	 * failure does.
+	 */
+	async #storeHolds(holds: readonly Hold[], context: Context): Promise<void> {
+		if (holds.length === 0) return;
+		const writes: Extract<StorageWrite, { readonly type: "document.change" }>[] = [];
+		const changes: DocumentCommitChange[] = [];
+		for (const hold of holds) {
+			const { record, tracker, valueVersion: version } = hold.loaded;
+			const value = tracker.value;
+			const stored = storeHeld(hold, NO_OPERATIONS, value, version);
+			writes.push({ type: "document.change", id: record.id, content: stored.content });
+			// Held documents are conversation documents.
+			const conversationId = record.scope.kind === "conversation" ? record.scope.conversationId : undefined;
+			changes.push({ type: "document", kind: "change", record, conversationId, version, value, ops: stored.ops });
+		}
+		let adopted = false;
+		const adopt = (seq: Seq): void => {
+			adopted = true;
+			for (const [index, hold] of holds.entries()) {
+				if (writes[index]!.content.kind === "base") hold.loaded.deltasSinceBase = 0;
+				else hold.loaded.deltasSinceBase++;
+			}
+			if (this.#commitListeners.size > 0) this.#notifyHosts({ seq, changes }, context);
+		};
+		await this.#storage.commit(writes, adopt, withoutAbortSignal(context));
+		if (!adopted) {
+			const error = new Error("Storage committed without adopting the batch");
+			this.fail(error);
+			throw error;
+		}
+		this.#release(holds);
+	}
+
+	/** After their store: forget `holds`, unpin their documents, and move the timer to the next deadline. */
+	#release(holds: readonly Hold[]): void {
+		for (const hold of holds) {
+			this.#holds.delete(hold.loaded.record.id);
+			hold.unpin();
+		}
+		this.#armHoldTimer();
+	}
+
+	/**
+	 * Keep a foreground timer (Workers refuse background ones) for the earliest deadline of the held documents. When it
+	 * fires, every held document is stored, in one storage transaction: a deadline is the latest time, and the others
+	 * cost little more in the same transaction. Once fired, it stays until its job ran.
+	 */
+	#armHoldTimer(): void {
+		if (this.#closing !== undefined) return;
+		let at = Infinity;
+		for (const hold of this.#holds.values()) if (hold.deadline < at) at = hold.deadline;
+		const armed = this.#holdTimer;
+		if (armed !== undefined && (armed.fired || armed.at === at)) return;
+		armed?.disarm();
+		this.#holdTimer = undefined;
+		if (at === Infinity) return;
+		const timer: HoldTimer = { at, disarm: () => {}, fired: false };
+		const run = (): void => {
+			timer.fired = true;
+			this.#enqueue(async () => {
+				if (this.#holdTimer === timer) this.#holdTimer = undefined;
+				// Close stores what is held itself.
+				if (this.#closing !== undefined || this.#failure !== undefined) return;
+				await this.#storeHolds([...this.#holds.values()], BACKGROUND_CONTEXT);
+			}).catch(() => {});
+		};
+		this.#holdTimer = timer;
+		timer.disarm = this.#timers.foreground(run, Math.max(0, at - this.#clock()));
+	}
+
+	/**
+	 * Inside `adopt`: publish a stored commit. Its telemetry events first, then the dispatch to `observeCommits()`
+	 * observers, queued before the waits and aborts the observers wake, then the Session's own observers. Never throws:
+	 * returns the first error of an own observer, which fails the Session once `Storage.commit()` returned.
+	 */
 	#publish(
 		seq: Seq,
 		writes: readonly StorageWrite[],
-		documents: readonly DocumentCommitChange[],
+		documents: AdoptedDocuments,
 		context: Context,
-	): void {
+	): { readonly error: unknown } | undefined {
 		const changes: CommitChange[] | undefined =
 			this.#commitListeners.size > 0 || this.#internalListeners.size > 0 ? [] : undefined;
 		for (const write of writes) {
 			switch (write.type) {
 				case "entry":
-					context.telemetry.addEvent("pi.durable.entry", {
-						"entry.id": write.value.id,
-						"entry.kind": write.value.kind,
-					});
+					this.#event("pi.durable.entry", { "entry.id": write.value.id, "entry.kind": write.value.kind }, context);
 					changes?.push(write);
 					break;
 				case "submission":
 					if (write.value.status === "done" || write.value.status === "unanswered") {
-						context.telemetry.addEvent("pi.durable.submission", {
-							"submission.id": write.value.id,
-							status: write.value.status,
-							"answer.entry_id": write.value.answer,
-						});
+						this.#event(
+							"pi.durable.submission",
+							{
+								"submission.id": write.value.id,
+								status: write.value.status,
+								"answer.entry_id": write.value.answer,
+							},
+							context,
+						);
 					}
 					changes?.push(write);
 					break;
@@ -755,58 +1090,187 @@ export class SessionImpl implements Session {
 					changes?.push(write);
 			}
 		}
-		if (changes === undefined) return;
-		for (const document of documents) changes.push(document);
-		const publication: CommitPublication = { seq, changes };
-		// The commit is durable: a failing listener neither fails the commit nor skips the others.
-		for (const listener of [...this.#internalListeners]) {
-			contained(
-				() => listener(publication, context),
-				(error) => this.fail(error, context),
-			);
+		if (changes === undefined) return undefined;
+		const tables = changes.length;
+		for (const document of documents.observed) changes.push(document);
+		const observed: ObservedCommit = { kind: "stored", seq, changes };
+		if (this.#commitListeners.size > 0) {
+			// One publication for both, unless the commit also stored held changes, which only host listeners get.
+			const stored: CommitPublication =
+				documents.stored === documents.observed
+					? observed
+					: { seq, changes: [...changes.slice(0, tables), ...documents.stored] };
+			this.#notifyHosts(stored, context);
 		}
-		for (const listener of [...this.#commitListeners]) {
-			contained(
-				() => listener(publication, context),
-				(error) => this.report(error, LISTENER, context),
-			);
+		// The commit is durable: a failing observer neither fails the commit nor skips the others.
+		let failure: { readonly error: unknown } | undefined;
+		for (const listener of [...this.#internalListeners]) {
+			// Our own observers are synchronous.
+			try {
+				listener(observed, context);
+			} catch (error) {
+				failure ??= { error };
+			}
+		}
+		return failure;
+	}
+
+	/** Inside `adopt`: record a commit's telemetry event. A throwing adapter is reported, as `adopt` must not throw. */
+	#event(name: string, attributes: SpanAttributes, context: Context): void {
+		try {
+			context.telemetry.addEvent(name, attributes);
+		} catch (error) {
+			this.report(error, TELEMETRY, context);
 		}
 	}
 
 	/**
-	 * Attach a watch to one committed incarnation: check the definition, then forward this incarnation's committed
-	 * changes, its retirement, and close. The watch's detach removes both subscriptions.
+	 * Inside `adopt`: call the `observeCommits()` observers with `publication` one microtask from now, outside the
+	 * storage's synchronous step and, queued before the Session's own observers run, before the waits they resolve and
+	 * the aborts they queue.
+	 * The observers are those attached when it runs; their guards report a throw.
 	 */
-	#attachDocument(definition: AnyDocToken["definition"], loaded: LoadedDocument): Watch<ObservedDocumentValue> {
+	#notifyHosts(publication: CommitPublication, context: Context): void {
+		void SETTLED.then(() => {
+			for (const observer of [...this.#commitListeners]) observer.advance(publication, context);
+		});
+	}
+
+	/**
+	 * On the line, as one job: load the document at `resolved` and `attach` to it, so the attachment sees every commit
+	 * after the value it starts from; `undefined` when absent. Cancelling `context` meanwhile rejects, after `cancel`
+	 * undid an attachment made.
+	 */
+	async #attachDocument<A extends object>(
+		definition: AnyDocToken["definition"],
+		resolved: { readonly id: string; readonly address: DocumentAddress },
+		context: Context,
+		attach: (loaded: LoadedDocument) => A,
+		cancel: (attached: A) => void,
+	): Promise<A | undefined> {
+		const signal = context.abortSignal;
+		let cancelled = signal?.aborted ?? false;
+		const markCancelled = (): void => {
+			cancelled = true;
+		};
+		signal?.addEventListener("abort", markCancelled, { once: true });
+		try {
+			const attached = await this.#enqueue(async () => {
+				this.#assertHealthy();
+				if (cancelled) throw cancellationError(signal!);
+				const loaded = await this.#loadDocument(definition, resolved.id, resolved.address, context);
+				if (cancelled) throw cancellationError(signal!);
+				return loaded === undefined ? undefined : attach(loaded);
+			});
+			if (attached === undefined) return undefined;
+			if (cancelled) {
+				cancel(attached);
+				throw cancellationError(signal!);
+			}
+			return attached;
+		} finally {
+			signal?.removeEventListener("abort", markCancelled);
+		}
+	}
+
+	/**
+	 * Follow the address of the incarnation `loaded`, after checking the definition, with the observer `create` makes
+	 * from its value, the idempotent detach, and the report of a listener error; returns that observer. It gets each
+	 * committed change there, a retirement as a `retired` change with the last value it was given and no ops (a change
+	 * in the retiring commit is not published), and a later incarnation as a root replacement. When the commit makes the
+	 * owner task of a task document terminal, no later commit can change the address: after its changes the commit
+	 * subscription and the pin go, and `ownerEnded` tells the observer, which stays subscribed to the Session's close
+	 * until it ends (its detach drops that). `end` gets the Session's close. The current incarnation is pinned in the
+	 * cache. The detach runs before `end`; once it ran, nothing more of the commit underway reaches the observer or pins
+	 * anything for it. `create` and `ownerEnded` are module functions where they can be, so a watch keeps no closure of
+	 * its caller.
+	 */
+	#observeDocument<O extends Observer<Readonly<JsonObject>>>(
+		definition: AnyDocToken["definition"],
+		loaded: LoadedDocument,
+		create: (value: Readonly<JsonObject>, detach: () => void, report: (error: unknown) => void) => O,
+		ownerEnded: (observer: O) => void,
+	): O {
 		checkRecordScope(definition, loaded.record);
 		checkRecordVersion(definition, loaded.record, loaded.storedVersion);
+		// The closures below keep only the address, as the cache's ID and first record, which the cache shares while the
+		// document is cached: `loaded` holds its incarnation's tracker, which a retirement frees.
+		const addressId = loaded.addressId;
+		const address: DocumentAddress = loaded.record;
+		let incarnation: DocumentId | undefined = loaded.record.id;
+		// The value of the incarnation followed; none while the address is absent, so the Session keeps no retired value.
+		let value: Readonly<JsonObject> | undefined = loaded.tracker.value;
+		// The definition version the observer's value has: a change of another version replaces it whole.
+		let version = loaded.valueVersion;
+		// The incarnation observed stays cached; once it retires or the observer detaches, it is idle again.
+		let unpin = this.#pinDocument(addressId, incarnation);
 		let unsubscribeCommit = (): void => {};
 		let unsubscribeClose = (): void => {};
-		// Attached, the incarnation stays cached; once its last observer detaches, or it retires, it is idle again.
-		const unpin = this.#pinDocument(loaded.addressId, loaded.record.id);
+		let attached = true;
 		const detach = (): void => {
+			if (!attached) return;
+			attached = false;
 			unsubscribeCommit();
 			unsubscribeClose();
 			unpin();
 		};
-		const observer = new Watch<ObservedDocumentValue>(loaded.tracker.value, detach, (error) => this.report(error));
-		const observed = { version: loaded.valueVersion };
-		unsubscribeCommit = this.observeCommits((publication, context) => {
+		const observer = create(loaded.tracker.value, detach, (error) => this.report(error));
+		unsubscribeCommit = this.followCommits((publication, context) => {
+			// Listeners run from a copy of the set: another observer's call may have detached this one.
+			if (!attached) return;
+			let ownerEnds = false;
 			for (const change of publication.changes) {
-				if (change.type !== "document" || change.record.id !== loaded.record.id) continue;
-				if (change.value === null) {
-					// A retired incarnation never changes again: its watch delivers the retirement but pins nothing.
-					unpin();
-					observer.retire(context);
+				if (change.type === "task") {
+					const scope = address.scope;
+					if (
+						scope.kind === "task" &&
+						change.value.id === scope.taskId &&
+						change.value.state.status === "terminal"
+					) {
+						ownerEnds = true;
+					}
 					continue;
 				}
-				const ops = observedOperations(observed, change);
-				// A migration-only base changes nothing for an observer of the new version.
-				if (ops.length === 0) continue;
-				observer.advance(change.value, ops, context);
+				// The incarnation followed is at the address by definition; only another record needs the address compared.
+				if (change.type !== "document") continue;
+				if (change.record.id !== incarnation && !atAddress(change.record, address)) continue;
+				if (change.kind === "retire") {
+					if (change.record.id !== incarnation) continue;
+					// Set with every incarnation.
+					const last = value!;
+					incarnation = undefined;
+					value = undefined;
+					unpin();
+					observer.advance({ kind: "value", value: last, ops: NO_OPERATIONS, retired: true }, context);
+				} else if (change.record.id !== incarnation || change.version !== version) {
+					// A new incarnation at the address, or a value of another definition version, whose shape the observer's
+					// value does not have: shown whole.
+					if (change.record.id !== incarnation) {
+						incarnation = change.record.id;
+						unpin();
+						unpin = this.#pinDocument(addressId, incarnation);
+					}
+					version = change.version;
+					value = change.value;
+					observer.advance({ kind: "value", value, ops: [["r", value]], retired: false }, context);
+				} else {
+					// A migration-only base changes nothing for an observer of the new version.
+					if (change.ops.length === 0) continue;
+					value = change.value;
+					observer.advance({ kind: "value", value, ops: change.ops, retired: false }, context);
+				}
+				// The observer may detach in its call, or throw and be detached: the rest of the commit is not its.
+				if (!attached) return;
 			}
+			if (!ownerEnds) return;
+			unsubscribeCommit();
+			unpin();
+			ownerEnded(observer);
 		});
-		unsubscribeClose = this.subscribeClose(() => observer.end(this.#failure));
+		unsubscribeClose = this.subscribeClose(() => {
+			detach();
+			observer.end(closeEndOf(observer, closeEnds(this.#failure)));
+		});
 		return observer;
 	}
 
@@ -822,7 +1286,12 @@ export class SessionImpl implements Session {
 			this.#touchDocument(addressId);
 			return cached;
 		}
-		if (cached !== undefined) this.#dropDocument(addressId);
+		if (cached !== undefined) {
+			// The reload must find what memory holds: held changes are stored before their tracker goes.
+			const hold = this.#holds.get(cached.record.id);
+			if (hold !== undefined) await this.#storeHolds([hold], context);
+			this.#dropDocument(addressId);
+		}
 		const record = await this.#storage.findDocument(address, "current", context);
 		if (record === undefined) return undefined;
 		const stored = await this.#storage.document(record.id, "current", context);
@@ -875,17 +1344,151 @@ export function contained(callback: () => unknown, onError: (error: unknown) => 
 	}
 }
 
+/** A synchronous observer as Durable attaches it: `Observer` (`advance` gets a `WatchCall`) or `CommitObserver`. */
+type SyncObserver<A> = { advance(call: A, context: Context): void; end(end: WatchEnd): void };
+
+/** A guarded observer (`guardObserver()`) with its observation's detach. */
+export type GuardedObserver<A> = SyncObserver<A> & { detach(): void };
+
 /**
- * Operations an observer applies for one committed change. An observer hydrated under another definition version holds
- * a differently shaped value, so it receives the new value as a root replacement instead of operations for that shape.
+ * `observer`, a host's, behind the rule for observers that run inside Storage's `adopt`: one that throws, or whose
+ * `advance` returns a promise that rejects, is reported through `report`, detached, and ended `listener_error`, so the
+ * throw never reaches `adopt`; nothing reaches it after its detach or end, and from then on the guard references
+ * neither it nor its source. `detach` is the source's; the returned `detach()` is the observation's.
  */
-function observedOperations(
-	observed: { version: number },
-	change: Extract<DocumentCommitChange, { readonly type: "document" }>,
-): readonly Op[] {
-	if (change.version === observed.version) return change.ops;
-	observed.version = change.version!;
-	return [["r", change.value]];
+export function guardObserver<A>(
+	observer: SyncObserver<A>,
+	detach: () => void,
+	report: (error: unknown, context?: Context) => void,
+): GuardedObserver<A> {
+	type Attached = {
+		readonly observer: SyncObserver<A>;
+		readonly detach: () => void;
+		readonly report: (error: unknown, context?: Context) => void;
+	};
+	let attached: Attached | undefined = { observer, detach, report };
+	/** Detach from the source once, and hand back what it was attached with. */
+	const release = (): Attached | undefined => {
+		const released = attached;
+		attached = undefined;
+		released?.detach();
+		return released;
+	};
+	/** Report a throw of `current`'s `advance`, then detach and end it, unless that happened meanwhile. */
+	const fault = (current: Attached, error: unknown, context: Context): void => {
+		current.report(error, context);
+		if (release() !== undefined) {
+			const end: WatchEnd = { kind: "listener_error", error: toError(error) };
+			contained(() => current.observer.end(end), current.report);
+		}
+	};
+	return {
+		advance: (call, context) => {
+			const current = attached;
+			if (current === undefined) return;
+			try {
+				const result: unknown = current.observer.advance(call, context);
+				// Any thenable, as `contained()` takes it: a rejection is the observer's throw, after the fact.
+				if (typeof (result as { then?: unknown } | null)?.then === "function") {
+					Promise.resolve(result).catch((error: unknown) => fault(current, error, context));
+				}
+			} catch (error) {
+				fault(current, error, context);
+			}
+		},
+		end: (end) => {
+			const ending = release();
+			if (ending !== undefined) contained(() => ending.observer.end(end), ending.report);
+		},
+		detach: () => {
+			release();
+		},
+	};
+}
+
+/** A listener's throw as the `Error` a `listener_error` end carries, as Chord's watch makes it. */
+function toError(error: unknown): Error {
+	if (error instanceof Error) return error;
+	try {
+		return new Error(String(error));
+	} catch {
+		return new Error(Object.prototype.toString.call(error));
+	}
+}
+
+/** The end of an observer whose source closed. */
+export const ENDED: WatchEnd = { kind: "ended" };
+
+/**
+ * How a Session's close ends what follows it (decision "Slice 8 S1"), made once per close: an app's watch `ended`; a
+ * synchronous observer (an adapter following the Session, which may open it again) `failed` with "session closed", so
+ * it follows the next Session; `ended` stays for an observed owner that ended (a task document's task). A failed
+ * Session ends both `failed` with its error.
+ */
+export function closeEnds(failure: { readonly error: unknown } | undefined): {
+	readonly watch: WatchEnd;
+	readonly observer: WatchEnd;
+} {
+	if (failure !== undefined) {
+		const failed: WatchEnd = { kind: "failed", error: failure.error };
+		return { watch: failed, observer: failed };
+	}
+	return { watch: ENDED, observer: { kind: "failed", error: new Error("session closed") } };
+}
+
+/** The end `ends` give `follower`: a watch's, or an observer's. */
+export function closeEndOf(follower: unknown, ends: ReturnType<typeof closeEnds>): WatchEnd {
+	return follower instanceof Watch ? ends.watch : ends.observer;
+}
+
+/**
+ * The `Observation` of a guarded observer attached at `value`. Built outside the attaching closure, so a detached
+ * observation keeps nothing but `value` and the spent guard alive.
+ */
+export function observation<T>(value: T, guarded: { detach(): void }): Observation<T> {
+	return { value, detach: () => guarded.detach() };
+}
+
+/** A document watch over its source's detach and report. */
+function createWatch(
+	value: Readonly<JsonObject>,
+	detach: () => void,
+	report: (error: unknown) => void,
+): Watch<Readonly<JsonObject>> {
+	return new Watch<Readonly<JsonObject>>(value, detach, report);
+}
+
+/** Undo a watch attached while its acquisition was aborted. */
+function abortWatch(watch: Watch<Readonly<JsonObject>>): void {
+	watch.abort();
+}
+
+/** Undo an observation attached while its attachment was cancelled. */
+function detachObservation(attached: Observation<Readonly<JsonObject>>): void {
+	attached.detach();
+}
+
+/** A task document's watch delivers the retirement that ends its task, then ends. */
+function endWatch(watch: Watch<Readonly<JsonObject>>): void {
+	watch.endAfterDelivery();
+}
+
+/** A task document's observer ends right after the retirement that ends its task. */
+function endGuarded(guarded: Observer<Readonly<JsonObject>>): void {
+	guarded.end(ENDED);
+}
+
+/** Whether `record` is an incarnation at `address`. */
+function atAddress(record: DocumentRecord, address: DocumentAddress): boolean {
+	if (record.kind !== address.kind || record.key !== address.key) return false;
+	switch (record.scope.kind) {
+		case "session":
+			return address.scope.kind === "session";
+		case "conversation":
+			return address.scope.kind === "conversation" && address.scope.conversationId === record.scope.conversationId;
+		case "task":
+			return address.scope.kind === "task" && address.scope.taskId === record.scope.taskId;
+	}
 }
 
 function cancellationError(signal: AbortSignal): Error {

@@ -8,6 +8,7 @@
 			"@earendil-works/chord": ["./packages/chord/src/index.ts"],
 			"@earendil-works/chord/context": ["./packages/chord/src/context/index.ts"],
 			"@earendil-works/chord/delta": ["./packages/chord/src/delta/index.ts"],
+			"@earendil-works/chord/next": ["./packages/chord/src/next/index.ts"],
 			"@earendil-works/chord/node": ["./packages/chord/src/node.ts"],
 			"@earendil-works/chord/output": ["./packages/chord/src/output.ts"],
 			"@earendil-works/chord/telemetry-sqlite": ["./packages/chord/src/telemetry-sqlite/index.ts"],
@@ -49,6 +50,6 @@
 			"@earendil-works/pi-agent-old/*": ["./packages/agent-old/src/*"]
 		}
 	},
-	"include": ["scripts/model-catalog-protocol.ts", "scripts/model-catalog-protocol.test.ts", "packages/*/src/**/*", "packages/*/test/**/*", "packages/durable/test-workers/**/*", "packages/coding-agent/examples/**/*", "packages/agent/examples/**/*"],
+	"include": ["scripts/model-catalog-protocol.ts", "scripts/model-catalog-protocol.test.ts", "packages/*/src/**/*", "packages/*/test/**/*", "packages/ai/catalog/**/*", "packages/durable/test-workers/**/*", "packages/coding-agent/examples/**/*", "packages/agent/examples/**/*"],
 	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/gondolin/**"]
 }

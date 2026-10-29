@@ -34,7 +34,7 @@ async function open(
 		{
 			models: createModels(),
 			registry,
-			onReport: (error, info) => reports.push({ message: (error as Error).message, info }),
+			onReport: ({ error, ...info }) => reports.push({ message: (error as Error).message, info }),
 			...(options.onWake === undefined ? {} : { onWake: options.onWake }),
 			...(options.setTimer === undefined ? {} : { setTimer: options.setTimer }),
 		},
@@ -69,8 +69,8 @@ describe("reports", () => {
 		// The task's own failures name the extension that installed it.
 		const task = { task: { id, kind: "test.faulty", conversationId: root.id }, extension: "test" };
 		expect(reports).toEqual([
-			{ message: "noted", info: { type: "task_error", ...task } },
-			{ message: "broken", info: { type: "task_faulted", ...task, reason: "threw" } },
+			{ message: "noted", info: { kind: "task_error", ...task } },
+			{ message: "broken", info: { kind: "task_faulted", ...task, reason: "threw" } },
 		]);
 		await harness.close(context);
 	});
@@ -104,7 +104,7 @@ describe("reports", () => {
 		registry.install(defineExtension({ name: "new-extension", tasks: [definition("new")] }));
 		gate.resolve();
 		await harness.waitForTask(id, context);
-		const faulted = (report: Report) => report.info.type === "task_faulted";
+		const faulted = (report: Report) => report.info.kind === "task_faulted";
 		await eventually(() => reports.some(faulted));
 		expect(reports.find(faulted)).toMatchObject({
 			message: "broken in old",
@@ -147,7 +147,7 @@ describe("reports", () => {
 				env: () => {
 					throw new Error("env");
 				},
-				onReport: (error, info) => reports.push({ message: (error as Error).message, info }),
+				onReport: ({ error, ...info }) => reports.push({ message: (error as Error).message, info }),
 			},
 			context,
 		);
@@ -155,9 +155,9 @@ describe("reports", () => {
 		await (await root.submit({ type: "input", content: "hi" }, context)).wait(context);
 		const infoOf = (message: string) => reports.find((report) => report.message === message)?.info;
 		const generation = { kind: "pi.generation", conversationId: root.id };
-		expect(infoOf("env")).toMatchObject({ type: "host_error", callback: "env", task: generation });
-		expect(infoOf("section")).toMatchObject({ type: "extension_error", extension: "sections", task: generation });
-		expect(infoOf("hook")).toMatchObject({ type: "extension_error", extension: "hooks", task: generation });
+		expect(infoOf("env")).toMatchObject({ kind: "host_error", callback: "env", task: generation });
+		expect(infoOf("section")).toMatchObject({ kind: "extension_error", extension: "sections", task: generation });
+		expect(infoOf("hook")).toMatchObject({ kind: "extension_error", extension: "hooks", task: generation });
 		await harness.close(context);
 	});
 
@@ -196,8 +196,11 @@ describe("reports", () => {
 		registry.install(
 			defineExtension({ name: "wraps", wraps: [wrapTool(echo, (tool) => ({ ...tool, name: "renamed" }))] }),
 		);
-		harness.subscribeCommits(() => {
-			throw new Error("listener");
+		harness.observeCommits({
+			advance: () => {
+				throw new Error("listener");
+			},
+			end: () => {},
 		});
 		const root = await harness.root(context);
 		await root.agent(context);
@@ -208,18 +211,18 @@ describe("reports", () => {
 		);
 		const infoOf = (message: string) => reports.find((report) => report.message === message)?.info;
 		expect(infoOf("Wrapper renamed echo to renamed")).toEqual({
-			type: "extension_error",
+			kind: "extension_error",
 			conversationId: root.id,
 			extension: "wraps",
 		});
-		expect(infoOf("listener")).toEqual({ type: "listener_error" });
-		expect(infoOf("alarm")).toEqual({ type: "host_error", callback: "onWake" });
-		expect(infoOf("no timers")).toEqual({ type: "host_error", callback: "setTimer" });
+		expect(infoOf("listener")).toEqual({ kind: "listener_error" });
+		expect(infoOf("alarm")).toEqual({ kind: "host_error", callback: "onWake" });
+		expect(infoOf("no timers")).toEqual({ kind: "host_error", callback: "setTimer" });
 
 		const failure = new Error("disk gone");
 		storage.failNextCommit(failure);
 		await root.commit((tx) => tx.createConversation({ ownership: { kind: "ownerless" } }), context).catch(() => {});
 		await harness.closed;
-		expect(infoOf("disk gone")).toEqual({ type: "session_failed" });
+		expect(infoOf("disk gone")).toEqual({ kind: "storage_failed" });
 	});
 });

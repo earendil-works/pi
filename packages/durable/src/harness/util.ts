@@ -1,6 +1,6 @@
 import type { Context } from "@earendil-works/chord";
 import { SessionFailed } from "../errors.ts";
-import type { Cursor, Page } from "../types.ts";
+import type { ConversationId, Cursor, EntryQuery, Page } from "../types.ts";
 
 /** Pending waits by key. Each settles once: through `resolve`, `rejectAll`, or cancellation of its context. */
 export class Waiters<K, T> {
@@ -63,4 +63,17 @@ export function closedError(session: { readonly failure: { readonly error: unkno
 /** `{ extension }` when the extension is known. */
 export function optionalExtension(extension: string | undefined): { readonly extension?: string } {
 	return extension === undefined ? {} : { extension };
+}
+
+/** The scan of conversation `conversationId`'s history that `query` asks for, without fields an untyped caller added. */
+export function conversationEntries(
+	conversationId: ConversationId,
+	query: Omit<EntryQuery, "conversationId">,
+): EntryQuery {
+	return {
+		conversationId,
+		...(query.minEntryId === undefined ? {} : { minEntryId: query.minEntryId }),
+		...(query.maxEntryId === undefined ? {} : { maxEntryId: query.maxEntryId }),
+		...(query.order === undefined ? {} : { order: query.order }),
+	};
 }

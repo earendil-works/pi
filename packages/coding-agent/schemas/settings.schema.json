@@ -11,6 +11,15 @@
     "lastChangelogVersion": {
       "type": "string"
     },
+    "extensionChangelogVersions": {
+      "type": "object",
+      "patternProperties": {
+        "^.*$": {
+          "type": "string"
+        }
+      },
+      "description": "Last seen changelog version per extension package."
+    },
     "defaultProvider": {
       "type": "string"
     },

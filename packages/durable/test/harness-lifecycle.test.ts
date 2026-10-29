@@ -117,7 +117,7 @@ describe("Harness open", () => {
 		const reports: unknown[] = [];
 		const opening = Harness.open(
 			storage,
-			{ models: createModels(), registry: createRegistry(), onReport: (error) => reports.push(error) },
+			{ models: createModels(), registry: createRegistry(), onReport: ({ error }) => reports.push(error) },
 			context,
 		);
 		await expect(opening).rejects.toThrow("disk full");
@@ -318,9 +318,9 @@ describe("Harness close", () => {
 		expect(docWatch.value).toBe(docValue);
 		expect(viewWatch.value).toBe(viewValue);
 		expect(graphWatch.value).toEqual({ tasks: {} });
-		expect(await graphWatch.closed).toEqual({ reason: "ended" });
-		expect(await docWatch.closed).toEqual({ reason: "ended" });
-		expect(await viewWatch.closed).toEqual({ reason: "ended" });
+		expect(await graphWatch.closed).toEqual({ kind: "ended" });
+		expect(await docWatch.closed).toEqual({ kind: "ended" });
+		expect(await viewWatch.closed).toEqual({ kind: "ended" });
 		// The commit itself settled.
 		expect(storage.commits.at(-1)).toContainEqual(expect.objectContaining({ type: "entry" }));
 	});
@@ -341,8 +341,9 @@ describe("Harness close", () => {
 		}, context);
 		// Count commit subscriptions of document observers.
 		let subscriptions = 0;
-		const subscribe = harness.subscribeCommits.bind(harness);
-		harness.subscribeCommits = (listener) => {
+		const session = harness as unknown as SessionImpl;
+		const subscribe = session.followCommits.bind(session);
+		session.followCommits = (listener) => {
 			subscriptions++;
 			const unsubscribe = subscribe(listener);
 			let active = true;
@@ -586,7 +587,7 @@ describe("registry changes before resume", () => {
 			{ state: { kind: "blocked", reason: "missing_task" } },
 		]);
 		const installed = addTask(first.registry, define("v1"));
-		expect((await first.harness.inspect(context)).tasks).toMatchObject([{ state: { kind: "ready" } }]);
+		expect((await first.harness.inspect(context)).tasks).toMatchObject([{ state: { kind: "pending" } }]);
 		// The same extension name replaces the definition in place, still before resume.
 		installed.dispose();
 		addTask(first.registry, define("v2"));

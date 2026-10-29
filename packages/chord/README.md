@@ -14,7 +14,7 @@ Contracts are runtime values described with [TypeBox](https://github.com/sinclai
 
 | Import | Contents | Runs in |
 |--------|----------|---------|
-| `@earendil-works/chord` | Contracts (`local`, `remote`, `method`, `opaque`), declarations (through the factory's `self`: `state`, `derive`, `resource`, `on`, `task`), hosts (`createHost`, `defineFacet`, `defineRegistry`), links (`memoryLinkPair`, `ipcLink`, `webSocketLink`, `acceptWebSockets`), errors (`ChordError`, `isChordError`, `forbidden`, `invalid`). Also the shared base: `Context`, `JsonValue`, `JsonRepresentation`, `Draft`, `copyJson`, `isJsonValue`, `replicatedState` with its types, and the watch types `WatchHandle`, `NativeWatchHandle`, and `WatchEnd` with their implementations `Watch` and `NativeWatch`. | Node and browsers |
+| `@earendil-works/chord` | Contracts (`local`, `remote`, `method`, `opaque`), declarations (through the factory's `self`: `state`, `derive`, `resource`, `on`, `task`), hosts (`createHost`, `defineFacet`, `defineRegistry`), links (`memoryLinkPair`, `ipcLink`, `webSocketLink`, `acceptWebSockets`), errors (`ChordError`, `isChordError`, `forbidden`, `invalid`). Also the shared base: `Context`, `JsonValue`, `JsonRepresentation`, `Draft`, `copyJson`, `isJsonValue`, `replicatedState` with its types, and the watch types `WatchHandle`, `NativeWatchHandle`, `WatchCall`, `NativeWatchCall`, and `WatchEnd` with their implementations `Watch` and `NativeWatch`. | Node and browsers |
 | `@earendil-works/chord/node` | Child host processes: `createHostManager`, `forkDriver`, `childControl`, `processLock`; the facet module loader `nodeLoader`. | Node |
 | `@earendil-works/chord/context` | Explicit cancellation, telemetry, and invocation values: `BACKGROUND_CONTEXT`, `withCancel`, `withAbortSignal`, `withoutAbortSignal`, `withTelemetry`, `traceIn`, `withContextValue`, `awaitWithContext`. | Node and browsers |
 | `@earendil-works/chord/delta` | The transactional JSON tracker, structural diff, immutable apply, and the wire encoder/decoder for operation batches. | Node and browsers |
@@ -209,27 +209,59 @@ model; see [State](docs/guide.md#state) in the usage guide.
 `WatchHandle<T>` is the one watch interface, implemented by watch sources such as
 Durable's documents, conversation views, and task graph. `watch.value` is the value
 at acquisition until `start(listener)` installs the sole asynchronous listener; each
-later change arrives as `(value, ops, context)`, one call at a time, and `value`
-advances to it. Changes made while the listener runs (or before `start`) arrive in
-one call: the newest value, the ops of all of them folded by Delta's `PendingOps`,
-and the newest change's context. Past 10,000 pending ops after folding the call
-gets one root replacement `[["r", newest]]` instead. `stop()` is idempotent, drops
-pending frames, and neither aborts nor awaits a running call; it and `closed` give
-the `WatchEnd`:
+later change arrives as `(call, context)`, one call at a time, with
+`call: WatchCall<T>` tagged by `kind` (plain data; the context is the second
+argument):
+
+- `{ kind: "value", value, ops, retired }`: the new value, and `watch.value`
+  advances to it;
+- `{ kind: "failed", error }`: the source cannot compute its value now. The watch
+  stays open and `watch.value` keeps the last value; the next value arrives as
+  `[["r", value]]`.
+
+```ts
+watch.start(async (call) => {
+	if (call.kind === "failed") return showError(call.error);
+	render(call.value);
+});
+```
+
+Changes made while the listener runs (or before `start`) arrive in one call: the
+newest value, the ops of all of them folded by Delta's `PendingOps`, and the newest
+change's context. Past 10,000 pending ops after folding the call gets one root
+replacement `[["r", newest]]` instead. A failure drops the pending values and waits
+as one `failed` call (the newest failure); a value after it replaces it, as one
+`[["r", value]]` call.
+
+`retired` says the document the watch follows was retired since the previous value
+call. It does not end the watch: the call carries what the address shows after the
+retirement (the source decides; a Durable document keeps the last value the watch
+was given, with no ops), and a document created there later arrives as
+`[["r", value]]`, folded with what is pending, so one call can report a retirement
+and carry the new value.
+
+A watch ends only for good. `stop()` is idempotent, drops pending frames, and
+neither aborts nor awaits a running call; it and `closed` give the `WatchEnd`,
+tagged by `kind`:
 
 - `stopped`: `stop()` was called;
-- `cancelled`: the context the watch was acquired with was cancelled;
-- `retired`: the source was retired, an explicit event after a last frame `[["r", null]]`;
+- `aborted`: the context the watch was acquired with was aborted;
 - `ended`: the source closed (its owner ended or closed);
 - `listener_error` with `error`: the listener threw or rejected;
-- `failed` with `error`: the source failed.
+- `failed` with `error`: the source failed for good.
 
 An ended watch drops every reference into its source, so a stopped watch that is
 still referenced keeps only its last value alive.
 
-Sources implement handles with `Watch<T>`, fed through `advance(value, ops, context)`,
-`retire(context)`, `end()` or `end({ error })`, and `observeCancellation(signal)`.
+Sources implement handles with `Watch<T>`, fed through `advance(call, context)`
+(a `WatchCall`: a value with `retired` set for a retirement, or a failure),
+`fail(error, context)` (a failure the source may recover from), `end(end)` (a
+`WatchEnd`, at once, dropping what is pending), `endAfterDelivery()` (take no more
+frames, deliver what is pending, then end `ended` once the last call returned; the
+source's `end()` still ends it first), and `observeAbort(signal)`.
 `NativeWatch<T>` implements `NativeWatchHandle<T>`, the same lifecycle for
-in-process values: the listener gets `(value, context)` without ops, one call per
-value in order; past 100 pending values they collapse to one, the value of the
-optional `replace()` or the newest.
+in-process values: the listener gets a `NativeWatchCall<T>`
+(`{ kind: "value", value }` without ops, or `{ kind: "failed", error }`), one call
+per value in order; past 100 pending values they collapse to one, the value of the
+optional `replace()` or the newest. A failure drops the pending values; values
+after it are delivered in order.

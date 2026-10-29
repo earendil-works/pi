@@ -908,6 +908,54 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			expect(await storage.submissionByRequest(rootId, "passive-failed", context)).toEqual(unanswered);
 		}),
 
+		createCase(options, "stores continue submissions, which have no entry and are never queued", async (storage) => {
+			const rootId = await createRoot(storage);
+			const doneId = await storage.mintId<SubmissionId>();
+			const failedId = await storage.mintId<SubmissionId>();
+			const placedDone: SubmissionRecord = {
+				id: doneId,
+				conversationId: rootId,
+				requestId: "continue-done",
+				type: "continue",
+				status: "placed",
+			};
+			const placedFailed: SubmissionRecord = {
+				id: failedId,
+				conversationId: rootId,
+				requestId: "continue-failed",
+				type: "continue",
+				status: "placed",
+			};
+			await storage.commit(
+				[
+					{ type: "submission", value: placedDone },
+					{ type: "submission", value: placedFailed },
+				],
+				adopt,
+				context,
+			);
+			expect(await storage.submission(doneId, context)).toEqual(placedDone);
+			expect((await storage.scanSubmissions({ status: "placed" }, 10, undefined, context)).items).toEqual([
+				placedDone,
+				placedFailed,
+			]);
+
+			const done: SubmissionRecord = { ...placedDone, status: "done", answer: await storage.mintId<EntryId>() };
+			const unanswered: SubmissionRecord = { ...placedFailed, status: "unanswered", reason: "nothing_to_answer" };
+			await storage.commit(
+				[
+					{ type: "submission", value: done },
+					{ type: "submission", value: unanswered },
+				],
+				adopt,
+				context,
+			);
+			expect(await storage.submission(doneId, context)).toEqual(done);
+			expect(await storage.submissionByRequest(rootId, "continue-done", context)).toEqual(done);
+			expect(await storage.submission(failedId, context)).toEqual(unanswered);
+			expect(await storage.submissionByRequest(rootId, "continue-failed", context)).toEqual(unanswered);
+		}),
+
 		createCase(options, "reconstructs rewindable documents and preserves half-open incarnations", async (storage) => {
 			const rootId = await createRoot(storage);
 			const firstId = await storage.mintId<DocumentId>();
@@ -1595,6 +1643,30 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 						context,
 					),
 				).toBeUndefined();
+			},
+		),
+
+		createCase(
+			options,
+			"refuses a creation and a change of one document in one commit, in either order",
+			async (storage) => {
+				await createRoot(storage);
+				for (const order of ["create first", "change first"] as const) {
+					const id = await storage.mintId<DocumentId>();
+					const create: StorageWrite = {
+						type: "document.create",
+						record: { id, kind: "twice", key: order, scope: { kind: "session" } },
+						content: { kind: "base", version: 1, value: { x: 1 } },
+					};
+					const change: StorageWrite = {
+						type: "document.change",
+						id,
+						content: { kind: "delta", version: 1, ops: [["s", ["x"], 2]] },
+					};
+					const writes = order === "create first" ? [create, change] : [change, create];
+					await expect(storage.commit(writes, adopt, context)).rejects.toThrow("more than one content command");
+					expect(await storage.document(id, "current", context)).toBeUndefined();
+				}
 			},
 		),
 

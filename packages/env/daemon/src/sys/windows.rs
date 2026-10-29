@@ -550,6 +550,10 @@ pub fn after_spawn(child: &Child) {
     }
 }
 
+/// Nothing to do: the daemon cannot catch `TerminateProcess`. When it ends, the job object kills each command's own
+/// process; processes those start leave the job (silent breakaway, as in libuv) and keep running.
+pub fn on_exit_signal(_on_signal: impl FnOnce(i32) + Send + 'static) {}
+
 /// Node's `killProcessTree` on Windows: `taskkill /F /T`, not waited for.
 pub fn kill_tree(pid: u32) {
     let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());

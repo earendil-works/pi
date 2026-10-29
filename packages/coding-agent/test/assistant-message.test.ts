@@ -92,6 +92,48 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered).toContain("answer");
 	});
 
+	test("renders nothing for hidden thinking with an empty label", () => {
+		initTheme("dark");
+
+		const thinkingOnly = new AssistantMessageComponent(
+			createAssistantMessage(
+				[
+					{ type: "thinking", thinking: "reasoning" },
+					{ type: "toolCall", id: "tool-1", name: "read", arguments: { path: "file.txt" } },
+				],
+				{ stopReason: "toolUse" },
+			),
+			true,
+			undefined,
+			"",
+		);
+		expect(thinkingOnly.render(80)).toEqual([]);
+
+		const withText = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "thinking", thinking: "reasoning" },
+				{ type: "text", text: "answer" },
+			]),
+			true,
+			undefined,
+			"",
+		);
+		expect(withText.render(80).map((line) => stripAnsi(line).trim())).toEqual(["", "answer"]);
+	});
+
+	test("keeps label row and spacing for hidden thinking with a label", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "thinking", thinking: "reasoning" },
+				{ type: "text", text: "answer" },
+			]),
+			true,
+		);
+		expect(component.render(80).map((line) => stripAnsi(line).trim())).toEqual(["", "Thinking...", "", "answer"]);
+	});
+
 	test("collapses individual thinking runs when clicked", () => {
 		initTheme("dark");
 		const component = new AssistantMessageComponent(

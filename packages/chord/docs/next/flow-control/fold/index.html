@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How folding works</title>
+<style>
+  :root {
+    --bg: #faf8f4; --ink: #222; --muted: #777; --line: #ddd6ca;
+    --a: #2f6fb3; --s: #b5562b; --p: #4f8a3c; --snap: #7a4fb0; --ack: #2a9d8f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 Georgia, "Times New Roman", serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 26px; margin: 8px 0 4px; }
+  .lede { color: var(--muted); margin: 0 0 18px; }
+  h2 { font-size: 19px; margin: 28px 0 8px; }
+  p { margin: 8px 0; }
+  code { font: 13px/1.3 ui-monospace, Menlo, Consolas, monospace; background: #efe9de; padding: 1px 4px; border-radius: 3px; }
+  .stage { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 12px 0; }
+  .controls { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  button { font: 14px system-ui, sans-serif; border: 1px solid var(--line); background: #f4efe6; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .lanes { display: grid; grid-template-columns: 92px 1fr; gap: 8px 10px; align-items: center; font: 13px system-ui, sans-serif; }
+  .label { color: var(--muted); text-align: right; }
+  .lanes > div { min-width: 0; }
+  .lane { min-height: 44px; border: 1px dashed var(--line); border-radius: 8px; padding: 6px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; position: relative; }
+  .chip { font: 12px/1.2 ui-monospace, Menlo, Consolas, monospace; color: #fff; border-radius: 5px; padding: 4px 6px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+          transition: transform .35s ease, opacity .35s ease, background-color .3s; }
+  .chip.a { background: var(--a); } .chip.s { background: var(--s); } .chip.p { background: var(--p); } .chip.snap { background: var(--snap); }
+  .chip.enter { transform: translateY(-14px) scale(.8); opacity: 0; }
+  .chip.merge { transform: translateX(-26px) scale(.6); opacity: 0; }
+  .chip.flash { box-shadow: 0 0 0 3px #ffd36b; }
+  .msg { font: 12px ui-monospace, Menlo, Consolas, monospace; border: 1px solid #c9c0b0; background: #f7f3ec; border-radius: 6px; padding: 4px 6px; }
+  .msg.fly { animation: fly 1.2s ease-in forwards; }
+  @keyframes fly { to { transform: translateX(240px); opacity: 0; } }
+  .stats { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; font: 13px system-ui, sans-serif; color: var(--muted); }
+  .stats b { color: var(--ink); font-weight: 600; }
+  .note { font: 13px system-ui, sans-serif; color: var(--muted); margin-top: 8px; min-height: 2.6em; }
+  .tunnel { display: inline-block; padding: 1px 6px; border-radius: 4px; background: #333; color: #fff; font: 12px system-ui, sans-serif; }
+  .free { display: inline-block; padding: 1px 6px; border-radius: 4px; background: var(--ack); color: #fff; font: 12px system-ui, sans-serif; }
+  table { border-collapse: collapse; font: 14px system-ui, sans-serif; margin: 8px 0; width: 100%; }
+  td, th { border-bottom: 1px solid var(--line); padding: 5px 6px; text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; font: 12px system-ui, sans-serif; color: var(--muted); margin: 6px 0 2px; }
+  .legend span.chip { display: inline-block; }
+</style>
+</head>
+<body>
+<main>
+  <h1>How folding works</h1>
+  <p class="lede">What a hold does with commits while its link's window is full (two messages unacknowledged), and why folding needs no size measuring.</p>
+
+  <h2>The rule</h2>
+  <p>While the window is full, a hold keeps the ops of each new commit <b>raw</b> in a pending list. Before appending an op, it looks at the <b>last pending op only</b>:</p>
+  <table>
+    <tr><th>last pending</th><th>new op</th><th>result</th></tr>
+    <tr><td><code>a path "Hel"</code></td><td><code>a path "lo"</code></td><td>one <code>a path "Hello"</code> (text joined)</td></tr>
+    <tr><td><code>s path 41</code> or <code>a path …</code></td><td><code>s path 42</code></td><td>one <code>s path 42</code> (the set overwrites what came before)</td></tr>
+    <tr><td>anything on another path</td><td>anything</td><td>appended as it is</td></tr>
+  </table>
+  <p>Applied in order, the folded list gives the same value as the unfolded one: only neighbours on the same path merge, so no op in between can see the difference. Cost: one path comparison per op. When an ack frees a slot, the pending list is encoded <b>once</b> into one message.</p>
+  <div class="legend"><span class="chip a">a = append text</span><span class="chip s">s = set value</span><span class="chip p">p = insert into list</span><span class="chip snap">snapshot</span></div>
+
+  <div class="stage">
+    <div class="controls" id="scenarios">
+      <button data-s="stream" class="on">streamed reply</button>
+      <button data-s="counter">counter, 100k sets</button>
+      <button data-s="interleaved">reply + status, interleaved</button>
+      <button data-s="list">new list items</button>
+    </div>
+    <div class="controls">
+      <button id="play">play</button>
+      <button id="step">one commit</button>
+      <button id="ack">ack arrives</button>
+      <button id="reset">reset</button>
+    </div>
+    <div class="lanes">
+      <div class="label">link</div><div><span id="linkState" class="tunnel">window full: 2 unacked (tunnel)</span></div>
+      <div class="label">commits</div><div class="lane" id="incoming"></div>
+      <div class="label">pending (raw)</div><div class="lane" id="pending"></div>
+      <div class="label">sent</div><div class="lane" id="sent"></div>
+    </div>
+    <div class="stats">
+      <span>commits <b id="commits">0</b></span>
+      <span>pending ops <b id="pendingOps">0</b></span>
+      <span>merged or dropped <b id="folded">0</b></span>
+      <span>encodes <b id="encodes">0</b></span>
+    </div>
+    <div class="note" id="note"></div>
+  </div>
+
+  <h2>What the four cases show</h2>
+  <table>
+    <tr><th>case</th><th>pending after the stall</th><th>why</th></tr>
+    <tr><td>streamed reply</td><td>1 op</td><td>every token appends to the same path</td></tr>
+    <tr><td>counter, 100,000 sets</td><td>1 op</td><td>each set overwrites the previous one</td></tr>
+    <tr><td>reply + status, interleaved</td><td>grows</td><td>the neighbour is always on the other path: adjacent-only folding cannot merge</td></tr>
+    <tr><td>new list items</td><td>grows</td><td>inserts carry new data: nothing to fold, this is the real change</td></tr>
+  </table>
+  <p>The last two cases are why a memory bound is still needed. It can be a plain count of pending ops after folding (say 1,000): past it the hold drops its list and marks “send the current value”, which then costs nothing more while the stall lasts.</p>
+
+  <h2>Why not time since the last ack?</h2>
+  <p>A time trigger (“no ack for T seconds: drop the list, send a snapshot later”) punishes the most common case: a phone in a tunnel while a reply streams into a long conversation. Folded, the 60 s stall costs one append of about 12 KB; a snapshot of the conversation costs its whole size (Astra's corpus: 4.6 KB of updates against 168 KB, recovery 0.2 s against 2.7 s). And before T, a fast producer on many paths still piles up rate × T ops: time bounds duration, not memory. With folding, the counter case (100,000 sets) is one op whatever the time, so time adds nothing there.</p>
+</main>
+
+<script>
+const scenarios = {
+  stream: {
+    note: "Every token is an append to the same path: each new chip melts into the one before it.",
+    make: (i) => ({ verb: "a", path: "entries[7].text", value: ["The", " stall", " is", " over", " and", " the", " phone", " gets", " one", " append", "."][i % 11] }),
+  },
+  counter: {
+    note: "100,000 sets of one field: each set overwrites the previous one, so the list never holds more than one op.",
+    make: (i) => ({ verb: "s", path: "count", value: String(41 + i) }),
+  },
+  interleaved: {
+    note: "Tokens and a status field alternate: the last pending op is always on the other path, so adjacent-only folding cannot merge anything.",
+    make: (i) => i % 2 === 0
+      ? { verb: "a", path: "entries[7].text", value: [" one", " two", " three", " four", " five", " six"][(i / 2) % 6] }
+      : { verb: "s", path: "status", value: i % 4 === 1 ? '"typing"' : '"tool"' },
+  },
+  list: {
+    note: "Each commit inserts a new item: that is new data, nothing to fold. A count bound turns a long list into “send the current value”.",
+    make: (i) => ({ verb: "p", path: "sessions", value: `+{id:${100 + i}}` }),
+  },
+};
+
+const $ = (id) => document.getElementById(id);
+let scenario = "stream", pending = [], commits = 0, folded = 0, encodes = 0, timer = undefined, windowFull = true;
+const CAP = 12; // shown small; the proposal is about 1,000
+
+function label(op) {
+  const text = op.value.length > 22 ? `…${op.value.slice(-22)}` : op.value;
+  return op.verb === "a" ? `a ${op.path} "${text}"` : `${op.verb} ${op.path} ${op.value}`;
+}
+
+function chip(op, cls = "") {
+  const el = document.createElement("span");
+  el.className = `chip ${op.verb} ${cls}`;
+  el.textContent = op.verb === "snap" ? "snapshot needed" : label(op);
+  return el;
+}
+
+function render() {
+  $("commits").textContent = commits;
+  $("pendingOps").textContent = pending.filter((op) => op.verb !== "snap").length;
+  $("folded").textContent = folded;
+  $("encodes").textContent = encodes;
+  $("linkState").className = windowFull ? "tunnel" : "free";
+  $("linkState").textContent = windowFull ? "window full: 2 unacked (tunnel)" : "window open";
+}
+
+function step() {
+  const op = scenarios[scenario].make(commits);
+  commits++;
+  const incoming = $("incoming");
+  const shown = chip(op, "enter");
+  incoming.replaceChildren(shown);
+  requestAnimationFrame(() => shown.classList.remove("enter"));
+  if (!windowFull) {
+    encodes++;
+    send([op]);
+    render();
+    return;
+  }
+  setTimeout(() => enqueue(op), 380);
+}
+
+function enqueue(op) {
+  const lane = $("pending");
+  const last = pending.at(-1);
+  if (last?.verb === "snap") {
+    folded++;
+    render();
+    return;
+  }
+  if (last && last.path === op.path && ((last.verb === "a" && op.verb === "a") || ((last.verb === "a" || last.verb === "s") && op.verb === "s"))) {
+    const next = op.verb === "a" ? { ...last, value: last.value + op.value } : op;
+    pending[pending.length - 1] = next;
+    folded++;
+    const ghost = chip(op, "flash");
+    lane.appendChild(ghost);
+    requestAnimationFrame(() => ghost.classList.add("merge"));
+    setTimeout(() => {
+      ghost.remove();
+      const target = lane.lastElementChild;
+      if (target) {
+        target.textContent = label(next);
+        target.className = `chip ${next.verb} flash`;
+        setTimeout(() => target.classList.remove("flash"), 300);
+      }
+    }, 350);
+  } else if (pending.length >= CAP) {
+    folded += pending.length;
+    pending = [{ verb: "snap", path: "", value: "" }];
+    lane.replaceChildren(chip(pending[0], "flash"));
+    $("note").textContent = `Past the bound (${CAP} here, about 1,000 in the proposal): the list is dropped and the hold only remembers “send the current value”. Later commits cost nothing until the window opens.`;
+  } else {
+    pending.push(op);
+    const el = chip(op, "enter");
+    lane.appendChild(el);
+    requestAnimationFrame(() => el.classList.remove("enter"));
+  }
+  render();
+}
+
+function send(ops) {
+  const sentLane = $("sent");
+  const msg = document.createElement("span");
+  msg.className = "msg";
+  msg.textContent = ops[0]?.verb === "snap" ? "1 message: snapshot of the current value" : `1 message: ${ops.length} op${ops.length === 1 ? "" : "s"}`;
+  sentLane.replaceChildren(msg);
+  requestAnimationFrame(() => msg.classList.add("fly"));
+}
+
+function ack() {
+  stop();
+  if (pending.length > 0) {
+    encodes++;
+    send(pending);
+    $("note").textContent = `The ack frees a slot: the pending list is encoded once, as one message (${commits} commits, ${pending[0].verb === "snap" ? "one snapshot" : pending.length + " op(s)"}).`;
+  } else {
+    $("note").textContent = "The ack frees a slot; nothing was pending.";
+  }
+  pending = [];
+  $("pending").replaceChildren();
+  windowFull = false;
+  render();
+  setTimeout(() => { windowFull = true; render(); }, 1600);
+}
+
+function stop() {
+  clearInterval(timer);
+  timer = undefined;
+  $("play").textContent = "play";
+}
+
+function reset() {
+  stop();
+  pending = []; commits = 0; folded = 0; encodes = 0; windowFull = true;
+  for (const id of ["incoming", "pending", "sent"]) $(id).replaceChildren();
+  $("note").textContent = scenarios[scenario].note;
+  render();
+}
+
+$("play").onclick = () => {
+  if (timer) return stop();
+  $("play").textContent = "pause";
+  timer = setInterval(step, 700);
+};
+$("step").onclick = () => { stop(); step(); };
+$("ack").onclick = ack;
+$("reset").onclick = reset;
+for (const button of document.querySelectorAll("#scenarios button")) {
+  button.onclick = () => {
+    for (const other of document.querySelectorAll("#scenarios button")) other.classList.toggle("on", other === button);
+    scenario = button.dataset.s;
+    reset();
+  };
+}
+reset();
+</script>
+</body>
+</html>

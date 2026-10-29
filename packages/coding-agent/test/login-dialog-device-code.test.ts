@@ -140,3 +140,47 @@ describe("device-code login", () => {
 		expect(onComplete).not.toHaveBeenCalled();
 	});
 });
+
+describe("login URLs", () => {
+	beforeAll(() => initTheme("dark"));
+	beforeEach(() => {
+		vi.resetAllMocks();
+		setKeybindings(new KeybindingsManager());
+	});
+
+	it("opens only http(s) sign-in URLs", () => {
+		const { dialog } = createDialog();
+		dialog.showAuth("file:///Users/victim/Downloads/payload.app");
+		expect(openBrowser).not.toHaveBeenCalled();
+
+		dialog.showAuth("https://example.com/authorize");
+		expect(openBrowser).toHaveBeenCalledExactlyOnceWith("https://example.com/authorize");
+	});
+
+	it("keeps control characters in URLs from ending terminal hyperlinks", () => {
+		const { dialog } = createDialog();
+		dialog.showDeviceCode({ ...device, verificationUri: "https://example.com/device\x07\x1b]52;c;Zm9v\x07" });
+		dialog.showInfo("Docs", [{ label: "Help", url: "https://example.com/help\x07\x1b]52;c;Zm9v\x07" }]);
+		const output = dialog.render(120).join("\n");
+
+		expect(output).not.toContain("\x1b]52");
+		expect(render(dialog)).toContain("https://example.com/device%07%1B]52;c;Zm9v");
+		expect(render(dialog)).toContain("Help: https://example.com/help%07%1B]52;c;Zm9v");
+	});
+
+	it("replaces control characters in URLs that are not web URLs", () => {
+		const injected = "x\x07\x1b]52;c;Zm9v\x07";
+		const { dialog } = createDialog();
+		dialog.showAuth(`file:///tmp/${injected}`);
+		expect(dialog.render(120).join("\n")).not.toContain("\x1b]52");
+
+		dialog.showDeviceCode({ ...device, verificationUri: injected });
+		expect(dialog.render(120).join("\n")).not.toContain("\x1b]52");
+		expect(render(dialog)).toContain("x ]52;c;Zm9v");
+
+		dialog.showInfo("Docs", [{ label: "Help", url: injected }]);
+		expect(dialog.render(120).join("\n")).not.toContain("\x1b]52");
+		expect(render(dialog)).toContain("Help: x ]52;c;Zm9v");
+		expect(openBrowser).not.toHaveBeenCalled();
+	});
+});
