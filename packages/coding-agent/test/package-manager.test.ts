@@ -2745,6 +2745,39 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 		});
 
 		// https://github.com/earendil-works/pi/issues/11375
+		it("should refresh temporary git sources with a branch ref", async () => {
+			const managerWithInternals = packageManager as unknown as PackageManagerInternals;
+			const source = "git:github.com/example/repo@main";
+			const parsed = managerWithInternals.parseSource(source);
+			if (parsed.type !== "git") throw new Error("Expected git source");
+			const installedPath = managerWithInternals.getGitInstallPath(parsed, "temporary");
+			mkdirSync(join(installedPath, "extensions"), { recursive: true });
+			writeFileSync(join(installedPath, "extensions", "index.ts"), "export default function() {};");
+
+			const updateGitSpy = vi.spyOn(packageManager as any, "updateGit").mockResolvedValue(undefined);
+
+			const result = await packageManager.resolveExtensionSources([source], { temporary: true });
+			expect(updateGitSpy).toHaveBeenCalledTimes(1);
+			expect(updateGitSpy.mock.calls[0][0]).toMatchObject({ ref: "main" });
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "extensions/index.ts") && r.enabled)).toBe(true);
+		});
+
+		it("should not refresh temporary git sources pinned to the checked-out commit", async () => {
+			const managerWithInternals = packageManager as unknown as PackageManagerInternals;
+			const source = "git:github.com/example/repo@abc1234";
+			const parsed = managerWithInternals.parseSource(source);
+			if (parsed.type !== "git") throw new Error("Expected git source");
+			mkdirSync(managerWithInternals.getGitInstallPath(parsed, "temporary"), { recursive: true });
+
+			vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue(
+				"ABC1234def5678901234567890123456789012345\n",
+			);
+			const updateGitSpy = vi.spyOn(packageManager as any, "updateGit").mockResolvedValue(undefined);
+
+			await packageManager.resolveExtensionSources([source], { temporary: true });
+			expect(updateGitSpy).not.toHaveBeenCalled();
+		});
+
 		it("should refresh unpinned temporary npm sources when a newer version exists", async () => {
 			const managerWithInternals = packageManager as unknown as PackageManagerInternals;
 			const source = "npm:example";

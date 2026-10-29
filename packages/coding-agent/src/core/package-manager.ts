@@ -1373,8 +1373,8 @@ export class DefaultPackageManager implements PackageManager {
 				if (!existsSync(installedPath)) {
 					const installed = await installMissing();
 					if (!installed) continue;
-				} else if (resolvedScope === "temporary" && !parsed.pinned && !isOfflineModeEnabled()) {
-					await this.refreshTemporaryGitSource(parsed, resolvedSource);
+				} else if (resolvedScope === "temporary" && !isOfflineModeEnabled()) {
+					await this.refreshTemporaryGitSource(parsed, resolvedSource, installedPath);
 				}
 				metadata.baseDir = installedPath;
 				metadata.packageRoot = installedPath;
@@ -2059,11 +2059,22 @@ export class DefaultPackageManager implements PackageManager {
 		await this.cleanAndInstallGitDependencies(targetDir, markerPath);
 	}
 
-	private async refreshTemporaryGitSource(source: GitSource, sourceStr: string): Promise<void> {
+	private async refreshTemporaryGitSource(source: GitSource, sourceStr: string, installedPath: string): Promise<void> {
 		if (isOfflineModeEnabled()) {
 			return;
 		}
 		try {
+			// A ref can name a moving branch, so refresh refs too. Skip the network call only when the
+			// ref is a commit hash that is already checked out.
+			if (source.ref && /^[0-9a-f]{7,64}$/i.test(source.ref)) {
+				const head = await this.runCommandCapture("git", ["rev-parse", "HEAD"], {
+					cwd: installedPath,
+					timeoutMs: NETWORK_TIMEOUT_MS,
+				});
+				if (head.trim().toLowerCase().startsWith(source.ref.toLowerCase())) {
+					return;
+				}
+			}
 			await this.withProgress("pull", sourceStr, `Refreshing ${sourceStr}...`, async () => {
 				await this.updateGit(source, "temporary");
 			});

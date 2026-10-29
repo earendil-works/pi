@@ -14,7 +14,7 @@ export type GitSource = {
 	path: string;
 	/** Git ref (branch, tag, commit) if specified */
 	ref?: string;
-	/** True if ref was specified (package won't be auto-updated) */
+	/** True if ref was specified. `pi update` reconciles the checkout to the ref but does not move the ref. */
 	pinned: boolean;
 };
 
