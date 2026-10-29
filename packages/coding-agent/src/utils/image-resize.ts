@@ -70,7 +70,9 @@ async function resizeImageInWorker(
 			);
 		});
 	} finally {
-		void worker.terminate().catch(() => undefined);
+		// Wait for the worker to stop before the next resize can start another one.
+		// Overlapping worker teardown and startup can abort the process on some Node 24 builds.
+		await worker.terminate().catch(() => undefined);
 	}
 }
 
