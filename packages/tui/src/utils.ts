@@ -342,6 +342,33 @@ function extractAnsiCodes(str: string): string {
 	return result;
 }
 
+// Same character set as String.prototype.trim()
+const WHITESPACE_REGEX = /\s/;
+
+/**
+ * Whether a token's visible text is only whitespace. Codes closing a styled word attach to the following space,
+ * e.g. "\x1b[22m ", so they are skipped. Stops at the first visible non-whitespace text without allocating a
+ * stripped copy, because styled words reach this check on every wrap.
+ */
+function isWhitespaceToken(token: string): boolean {
+	let i = 0;
+	while (i < token.length) {
+		const code = token.charCodeAt(i);
+		if (code === 0x1b) {
+			const length = ansiCodeLength(token, i);
+			if (length === 0) return false; // A lone ESC is visible text
+			i += length;
+		} else if (code === 0x20 || (code >= 0x09 && code <= 0x0d)) {
+			i++;
+		} else if (code < 0x80 || !WHITESPACE_REGEX.test(token[i]!)) {
+			return false;
+		} else {
+			i++;
+		}
+	}
+	return true;
+}
+
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]+/g;
 
 /** Replace each run of C0 and C1 control characters (ESC, BEL, newlines, ...) with one space. */
@@ -967,8 +994,7 @@ function wrapSingleLine(line: string, width: number): string[] {
 
 	for (const token of tokens) {
 		const tokenVisibleLength = visibleWidth(token);
-		// Codes closing a styled word attach to the following space, e.g. "\x1b[22m ", so strip them before checking.
-		const isWhitespace = stripTerminalSequences(token).trim() === "";
+		const isWhitespace = isWhitespaceToken(token);
 
 		// Token itself is too long - break it character by character
 		if (tokenVisibleLength > width && !isWhitespace) {
