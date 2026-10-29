@@ -138,3 +138,5 @@ nix profile remove pi
 ```
 
 None of these methods removes configuration, credentials, sessions, or installed Pi packages from `~/.pi/agent/`.
+
+curl -fsSL https://pi.dev/install.sh | sh
