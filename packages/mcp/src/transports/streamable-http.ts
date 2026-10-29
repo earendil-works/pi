@@ -178,6 +178,29 @@ function discard(response: Response): Promise<void> {
 	return response.body?.cancel().catch(() => {}) ?? Promise.resolve();
 }
 
+/** Reads and parses a JSON response body, cancelling it once it exceeds `maxBytes`. */
+async function readJsonBody(response: Response, maxBytes: number): Promise<unknown> {
+	if (!response.body) return response.json();
+	const reader = response.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			total += value.byteLength;
+			if (total > maxBytes) {
+				await reader.cancel().catch(() => {});
+				throw new Error(`MCP JSON response exceeds ${maxBytes} bytes`);
+			}
+			chunks.push(value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	return JSON.parse(new TextDecoder().decode(Buffer.concat(chunks)));
+}
+
 function describeHttpFailure(status: number, body: string): string {
 	const text = body.trim();
 	const snippet = text.length > ERROR_MESSAGE_BODY_CHARS ? `${text.slice(0, ERROR_MESSAGE_BODY_CHARS - 3)}...` : text;
@@ -253,7 +276,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		}
 		const type = contentType(response);
 		if (type === "application/json") {
-			const body: unknown = await response.json();
+			const body = await readJsonBody(response, this.options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES);
 			for (const item of Array.isArray(body) ? body : [body]) this.emitMessage(parseJsonRpcMessage(item));
 			return;
 		}

@@ -291,6 +291,34 @@ describe("StreamableHttpTransport", () => {
 		await client.close();
 	});
 
+	it("applies maxMessageBytes to JSON responses", async () => {
+		const send = async (descriptionBytes: number) => {
+			const body = JSON.stringify({
+				jsonrpc: "2.0",
+				id: 1,
+				result: { tools: [{ name: "echo", description: "x".repeat(descriptionBytes), inputSchema: {} }] },
+			});
+			const transport = new StreamableHttpTransport({
+				url: "http://127.0.0.1/mcp",
+				maxMessageBytes: 512,
+				openGetStream: false,
+				fetch: async () => new Response(body, { headers: { "content-type": "application/json" } }),
+			});
+			const messages: unknown[] = [];
+			transport.onMessage((message) => messages.push(message));
+			await transport.start();
+			try {
+				await transport.send({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+				return messages;
+			} finally {
+				await transport.close();
+			}
+		};
+
+		expect(await send(32)).toHaveLength(1);
+		await expect(send(2048)).rejects.toThrow("MCP JSON response exceeds 512 bytes");
+	});
+
 	it("includes the response body in HTTP errors", async () => {
 		const { url } = await startServer(async (request, response) => {
 			await readBody(request);

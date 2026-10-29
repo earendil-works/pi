@@ -6,6 +6,7 @@
 
 - OAuth metadata parsing and `startAuthorization()` now accept only `http:` and `https:` URLs. Before, a server could supply a `file:` or custom protocol authorization endpoint (for example `search-ms:`), which the platform URL handler would launch on sign-in.
 - Fixed the excerpt of an HTTP error body in Streamable HTTP errors keeping the whole response body alive ([#9265](https://github.com/earendil-works/pi/issues/9265))
+- Fixed Streamable HTTP `application/json` responses bypassing `maxMessageBytes`; oversized JSON responses are now cancelled and rejected like oversized SSE events ([#11335](https://github.com/earendil-works/pi/issues/11335))
 
 ## [1.4.0] - 2026-10-21
 
