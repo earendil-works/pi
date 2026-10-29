@@ -1603,6 +1603,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
 	const isCerebras = provider === "cerebras" || baseUrl.includes("cerebras.ai");
 	const isDeepSeek = provider === "deepseek" || baseUrl.toLowerCase().includes("deepseek.com");
+	const isAliyun = baseUrl.includes("aliyuncs.com");
 
 	const isNonStandard =
 		isNvidia ||
@@ -1618,7 +1619,8 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		baseUrl.includes("opencode.ai") ||
 		isCloudflareWorkersAI ||
 		isCloudflareAiGateway ||
-		isAntLing;
+		isAntLing ||
+		isAliyun;
 
 	const useMaxTokens =
 		baseUrl.includes("chutes.ai") ||

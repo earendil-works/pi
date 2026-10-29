@@ -1222,6 +1222,66 @@ describe("openai-completions tool_choice", () => {
 		expect(params.messages?.[0]?.role).toBe("developer");
 	});
 
+	it("sends system instructions for reasoning models on Alibaba Model Studio endpoints", async () => {
+		// Extension-registered models (e.g. DeepSeek via pi-alibaba-models) have no
+		// compat overrides; URL auto-detection must not send the `developer` role
+		// to *.maas.aliyuncs.com, which rejects it with a 400.
+		const model: Model<"openai-completions"> = {
+			...localOpenAICompletionsModel,
+			id: "deepseek-v4.1-flash",
+			name: "DeepSeek V4.1 Flash",
+			baseUrl: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+			provider: "alibaba-plan",
+		};
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				systemPrompt: "Follow instructions.",
+				messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = payload as { messages?: Array<{ role?: string }>; store?: boolean };
+		expect(params.messages?.[0]?.role).toBe("system");
+		expect(params).not.toHaveProperty("store");
+	});
+
+	it("sends system instructions for reasoning models on DashScope endpoints", async () => {
+		const model: Model<"openai-completions"> = {
+			...localOpenAICompletionsModel,
+			id: "qwen3.8-max",
+			name: "Qwen 3.8 Max",
+			baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+			provider: "alibaba",
+		};
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				systemPrompt: "Follow instructions.",
+				messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = payload as { messages?: Array<{ role?: string }> };
+		expect(params.messages?.[0]?.role).toBe("system");
+	});
+
 	it("stores OpenRouter Kimi K2.6 reasoning replay compat in built-in metadata", () => {
 		// `:free` variant delisted from the OpenRouter API; the generator override
 		// matches any `moonshotai/kimi-k2.6*` variant that is listed.
