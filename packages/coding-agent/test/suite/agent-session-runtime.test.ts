@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
@@ -245,6 +245,27 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.sessionFile).not.toBe(storedPath);
 		expect(readFileSync(runtime.session.sessionFile!, "utf8")).toContain('"id":"imported"');
 	});
+
+	it.skipIf(process.platform === "win32")(
+		"stores imported sessions as 0600 regardless of the source mode",
+		async () => {
+			const { runtime, tempDir } = await createRuntimeForTest(() => {});
+			const importPath = join(tempDir, "import", "shared.jsonl");
+			mkdirSync(join(tempDir, "import"), { recursive: true });
+			writeFileSync(
+				importPath,
+				`${JSON.stringify({ type: "session", version: 3, id: "imported", timestamp: new Date().toISOString(), cwd: tempDir })}\n`,
+			);
+			chmodSync(importPath, 0o644);
+
+			await runtime.importFromJsonl(importPath);
+
+			const storedPath = runtime.session.sessionFile!;
+			expect(storedPath).not.toBe(importPath);
+			expect(statSync(storedPath).mode & 0o777).toBe(0o600);
+			expect(statSync(importPath).mode & 0o777).toBe(0o644);
+		},
+	);
 
 	it("emits session_before_switch and session_start for new and resume flows", async () => {
 		const events: RecordedSessionEvent[] = [];

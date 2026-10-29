@@ -1,4 +1,4 @@
-import { constants, copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, parse, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
@@ -12,7 +12,7 @@ import type {
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
-import { SessionManager } from "./session-manager.ts";
+import { ensureSessionDir, SESSION_FILE_MODE, SessionManager } from "./session-manager.ts";
 
 /**
  * Result returned by runtime creation.
@@ -363,9 +363,7 @@ export class AgentSessionRuntime {
 		}
 
 		const sessionDir = this.session.sessionManager.getSessionDir();
-		if (!existsSync(sessionDir)) {
-			mkdirSync(sessionDir, { recursive: true });
-		}
+		ensureSessionDir(sessionDir);
 
 		let destinationPath = join(sessionDir, basename(resolvedPath));
 		const sourceAlreadyStored = resolve(destinationPath) === resolvedPath;
@@ -383,7 +381,8 @@ export class AgentSessionRuntime {
 
 		const previousSessionFile = this.session.sessionFile;
 		if (!sourceAlreadyStored) {
-			copyFileSync(resolvedPath, destinationPath, constants.COPYFILE_EXCL);
+			// Not copyFileSync: it copies the source's mode, while stored sessions are private.
+			writeFileSync(destinationPath, readFileSync(resolvedPath), { flag: "wx", mode: SESSION_FILE_MODE });
 		}
 
 		const sessionManager = SessionManager.open(destinationPath, sessionDir, cwdOverride);

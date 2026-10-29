@@ -593,11 +593,19 @@ function getDefaultSessionDirPath(cwd: string, agentDir: string = getDefaultAgen
 	return join(resolvedAgentDir, "sessions", safePath);
 }
 
+// Sessions hold conversation history, so new session directories and files are private like auth.json.
+// The modes apply only on creation so existing files and administrator-managed modes and ACLs remain intact.
+const SESSION_DIR_MODE = 0o700;
+export const SESSION_FILE_MODE = 0o600;
+
+/** Create a session directory, and any missing parents, accessible only by the owner. */
+export function ensureSessionDir(dir: string): void {
+	if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: SESSION_DIR_MODE });
+}
+
 export function getDefaultSessionDir(cwd: string, agentDir: string = getDefaultAgentDir()): string {
 	const sessionDir = getDefaultSessionDirPath(cwd, agentDir);
-	if (!existsSync(sessionDir)) {
-		mkdirSync(sessionDir, { recursive: true });
-	}
+	ensureSessionDir(sessionDir);
 	return sessionDir;
 }
 
@@ -1008,9 +1016,7 @@ export class SessionManager {
 		this.cwd = resolvePath(cwd);
 		this.sessionDir = normalizePath(sessionDir);
 		this.persist = persist;
-		if (persist && this.sessionDir && !existsSync(this.sessionDir)) {
-			mkdirSync(this.sessionDir, { recursive: true });
-		}
+		if (persist && this.sessionDir) ensureSessionDir(this.sessionDir);
 
 		if (sessionFile) {
 			this._setSessionFile(sessionFile, preloadedFileEntries);
@@ -1123,7 +1129,7 @@ export class SessionManager {
 
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
-		const fd = openSync(this.sessionFile, "w");
+		const fd = openSync(this.sessionFile, "w", SESSION_FILE_MODE);
 		try {
 			for (const entry of this.fileEntries) {
 				writeFileSync(fd, `${JSON.stringify(entry)}\n`);
@@ -1174,7 +1180,7 @@ export class SessionManager {
 
 		if (!this.flushed) {
 			if (!this._hasConversation()) return;
-			const fd = openSync(this.sessionFile, "wx");
+			const fd = openSync(this.sessionFile, "wx", SESSION_FILE_MODE);
 			try {
 				for (const e of this.fileEntries) {
 					writeFileSync(fd, `${JSON.stringify(e)}\n`);
@@ -1841,9 +1847,7 @@ export class SessionManager {
 		}
 
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(resolvedTargetCwd);
-		if (!existsSync(dir)) {
-			mkdirSync(dir, { recursive: true });
-		}
+		ensureSessionDir(dir);
 
 		// Create new session file with new ID but forked content
 		if (options?.id !== undefined) {
@@ -1865,7 +1869,7 @@ export class SessionManager {
 		};
 		// Write the header and all non-header entries through one fd. Reopening the file per entry
 		// is slow where open/close is expensive (e.g. filesystem security monitors).
-		const fd = openSync(newSessionFile, "wx");
+		const fd = openSync(newSessionFile, "wx", SESSION_FILE_MODE);
 		try {
 			writeFileSync(fd, `${JSON.stringify(newHeader)}\n`);
 			for (const entry of sourceEntries) {
