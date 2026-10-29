@@ -209,6 +209,24 @@ describe("TUI bounded render output", () => {
 	});
 });
 
+describe("TUI OSC 133 markers", () => {
+	it("does not write OSC 133 prompt markers to the terminal", () => {
+		// Terminals read 133;A as a new shell prompt and drop the OSC 7501 program status.
+		const terminal = new BoundedWriteTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		component.lines = ["\x1b]133;A\x07prompt", "\x1b]133;B\x07\x1b]133;C\x07output"];
+		tui.renderNow();
+		component.lines = [...component.lines, "\x1b]133;A\x1b\\reply", "\x1b]133;B\x1b\\\x1b]133;C\x1b\\done"];
+		tui.renderNow();
+
+		const output = terminal.writes.join("");
+		assert.ok(!output.includes("\x1b]133;"), "regular mode must not emit OSC 133 markers");
+		for (const text of ["prompt", "output", "reply", "done"]) assert.ok(output.includes(text));
+	});
+});
+
 /** Set each environment variable to `value`, returning a function that restores the previous state. */
 function overrideEnv(names: readonly string[], value: string): () => void {
 	const previousValues = names.map((name) => [name, process.env[name]] as const);

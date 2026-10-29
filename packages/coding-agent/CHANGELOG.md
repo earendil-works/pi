@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- Fixed the working status (OSC 7501) disappearing in Rex and iTerm2 during runs in regular TUI mode. Rendered messages wrote OSC 133 prompt markers to the terminal, which the terminal treats as a new shell prompt; regular mode no longer writes them ([#11519](https://github.com/earendil-works/pi/issues/11519))
 - Fixed compaction, branch summaries, and bug-report summaries in SDK sessions passing the stored OAuth token back to the model runtime as an explicit API key. Provider auth that treats explicit keys differently from stored OAuth now sees the OAuth login, as normal prompts do ([#11520](https://github.com/earendil-works/pi/issues/11520))
 - Fixed a redundant system prompt update (tools, rules) when an extension set the same active tools in a different order, for example a reversed `pi.setActiveTools()` list. Tools that stay active now keep their order and newly activated tools are appended ([#11495](https://github.com/earendil-works/pi/issues/11495))
 - Fixed `pi.exec()` crashing pi with `RangeError: Invalid string length` when a command printed more output than fits in a string. The default output cap is the smaller of 256 MiB and the runtime string limit; past the cap, the command is terminated and the result has `truncated: true` and a nonzero exit code ([#11360](https://github.com/earendil-works/pi/issues/11360))
