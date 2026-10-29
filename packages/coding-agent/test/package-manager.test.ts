@@ -2631,6 +2631,33 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			expect(maxConcurrentGitUpdates).toBeGreaterThan(1);
 		});
 
+		it("should warn when an npm update leaves the installed version unchanged", async () => {
+			const stalePath = join(agentDir, "npm", "node_modules", "stale-pkg");
+			const freshPath = join(agentDir, "npm", "node_modules", "fresh-pkg");
+			mkdirSync(stalePath, { recursive: true });
+			mkdirSync(freshPath, { recursive: true });
+			writeFileSync(join(stalePath, "package.json"), JSON.stringify({ name: "stale-pkg", version: "1.0.0" }));
+			writeFileSync(join(freshPath, "package.json"), JSON.stringify({ name: "fresh-pkg", version: "1.0.0" }));
+			settingsManager.setPackages(["npm:stale-pkg", "npm:fresh-pkg"]);
+
+			vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('"1.0.1"');
+			vi.spyOn(packageManager as any, "runCommand").mockImplementation(async () => {
+				// Simulate npm resolving stale metadata for stale-pkg only.
+				writeFileSync(join(freshPath, "package.json"), JSON.stringify({ name: "fresh-pkg", version: "1.0.1" }));
+			});
+
+			const events: ProgressEvent[] = [];
+			packageManager.setProgressCallback((event) => events.push(event));
+
+			await packageManager.update();
+
+			const warnings = events.filter((event) => event.type === "progress");
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0].source).toBe("npm:stale-pkg");
+			expect(warnings[0].message).toContain("is still 1.0.0");
+			expect(warnings[0].message).toContain("1.0.1");
+		});
+
 		it("should suggest npm source prefixes for update lookups", async () => {
 			settingsManager.setProjectPackages(["npm:example"]);
 

@@ -170,6 +170,10 @@ interface ConfiguredUpdateSource {
 
 interface NpmUpdateTarget extends ConfiguredUpdateSource {
 	parsed: NpmSource;
+	/** Version installed before the update, if any. */
+	installedVersion?: string;
+	/** Newer version reported by the registry, if the lookup succeeded. */
+	targetVersion?: string;
 }
 
 interface GitUpdateTarget extends ConfiguredUpdateSource {
@@ -1146,10 +1150,13 @@ export class DefaultPackageManager implements PackageManager {
 			}
 		}
 
-		const npmCheckTasks = npmCandidates.map((entry) => async () => ({
-			entry,
-			shouldUpdate: await this.shouldUpdateNpmSource(entry.parsed, entry.scope),
-		}));
+		const npmCheckTasks = npmCandidates.map((entry) => async () => {
+			const check = await this.shouldUpdateNpmSource(entry.parsed, entry.scope);
+			return {
+				entry: { ...entry, installedVersion: check.installedVersion, targetVersion: check.targetVersion },
+				shouldUpdate: check.shouldUpdate,
+			};
+		});
 		const npmCheckResults = await this.runWithConcurrency(npmCheckTasks, UPDATE_CHECK_CONCURRENCY);
 		const userNpmUpdates: NpmUpdateTarget[] = [];
 		const projectNpmUpdates: NpmUpdateTarget[] = [];
@@ -1184,19 +1191,22 @@ export class DefaultPackageManager implements PackageManager {
 		await Promise.all(tasks);
 	}
 
-	private async shouldUpdateNpmSource(source: NpmSource, scope: InstalledSourceScope): Promise<boolean> {
+	private async shouldUpdateNpmSource(
+		source: NpmSource,
+		scope: InstalledSourceScope,
+	): Promise<{ shouldUpdate: boolean; installedVersion?: string; targetVersion?: string }> {
 		const installedPath = this.getManagedNpmInstallPath(source, scope);
 		const installedVersion = existsSync(installedPath) ? this.getInstalledNpmVersion(installedPath) : undefined;
 		if (!installedVersion) {
-			return true;
+			return { shouldUpdate: true };
 		}
 
 		try {
 			const targetVersion = await this.getLatestNpmVersion(source.version ? source.spec : source.name, source.range);
-			return gt(targetVersion, installedVersion);
+			return { shouldUpdate: gt(targetVersion, installedVersion), installedVersion, targetVersion };
 		} catch {
 			// Preserve existing update behavior when version lookup fails.
-			return true;
+			return { shouldUpdate: true, installedVersion };
 		}
 	}
 
@@ -1212,6 +1222,31 @@ export class DefaultPackageManager implements PackageManager {
 		await this.withProgress("update", sourceLabel, message, async () => {
 			await this.installNpmBatch(specs, scope);
 		});
+
+		this.reportUnchangedNpmUpdates(sources, scope);
+	}
+
+	/**
+	 * npm can resolve stale registry metadata shortly after a publish and install the old
+	 * version without an error. Warn when an announced update did not change the installed version.
+	 */
+	private reportUnchangedNpmUpdates(sources: NpmUpdateTarget[], scope: InstalledSourceScope): void {
+		for (const entry of sources) {
+			if (!entry.installedVersion || !entry.targetVersion) {
+				continue;
+			}
+			const installedPath = this.getManagedNpmInstallPath(entry.parsed, scope);
+			const versionAfter = this.getInstalledNpmVersion(installedPath);
+			if (versionAfter !== entry.installedVersion) {
+				continue;
+			}
+			this.emitProgress({
+				type: "progress",
+				action: "update",
+				source: entry.source,
+				message: `${entry.source} is still ${versionAfter} (registry reports ${entry.targetVersion}); npm registry metadata may be stale, try again in a few minutes`,
+			});
+		}
 	}
 
 	private async installNpmBatch(specs: string[], scope: InstalledSourceScope): Promise<void> {
