@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Context } from "@earendil-works/chord";
@@ -24,6 +24,7 @@ import {
 import type { CodemodeNamespace } from "../src/codemode/describe.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import { createReadTool } from "../src/tools/read.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
 import { ControlledStorage, context } from "./session-support.ts";
@@ -1044,6 +1045,29 @@ describe("durable code mode output and tool search", () => {
 		const saved = /\[Image saved to (\S+) \(image\/png, \d+ bytes\)\]/.exec(text);
 		expect(saved).not.toBeNull();
 		expect((await readFile(saved![1]!)).toString("base64")).toBe(png);
+		expect(message.content.some((item) => item.type === "image")).toBe(true);
+	});
+
+	// #11015
+	it("resolves the built-in read with an image's block, which image() shows, and with a text file's text", async () => {
+		const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+		const files = await mkdtemp(join(tmpdir(), "pi-codemode-read-"));
+		directories.add(files);
+		await writeFile(join(files, "pixel.png"), Buffer.from(png, "base64"));
+		await writeFile(join(files, "note.txt"), "hello");
+		const chat = codemodeChat();
+		addTool(chat.setup.registry, createReadTool());
+		const { text, message } = await runScript(
+			`const picture = await tools.read({ path: ${JSON.stringify(join(files, "pixel.png"))} });
+			text([picture.type, picture.mimeType, picture.data.length].join(" "));
+			image(picture);
+			text(await tools.read({ path: ${JSON.stringify(join(files, "note.txt"))} }));`,
+			chat,
+		);
+		expect(message.isError).toBe(false);
+		expect(text).toContain(`image image/png ${png.length}`);
+		expect(text).toMatch(/\[Image saved to \S+ \(image\/png, \d+ bytes\)\]/);
+		expect(text).toContain("hello");
 		expect(message.content.some((item) => item.type === "image")).toBe(true);
 	});
 
