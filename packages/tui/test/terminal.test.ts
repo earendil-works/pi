@@ -36,6 +36,13 @@ describe("normalizeNativeShiftEnterInput", () => {
 		assert.equal(normalizeNativeShiftEnterInput("\r", true, true), "\x1b[13;2u");
 	});
 
+	it("rewrites ESC+CR to CSI-u Shift+Enter when Shift is pressed", () => {
+		// #11559
+		assert.equal(normalizeNativeShiftEnterInput("\x1b\r", true, true), "\x1b[13;2u");
+		assert.equal(normalizeNativeShiftEnterInput("\x1b\r", true, false), "\x1b\r");
+		assert.equal(normalizeNativeShiftEnterInput("\x1b\r", false, true), "\x1b\r");
+	});
+
 	it("leaves Return unchanged when native Shift detection is disabled", () => {
 		assert.equal(normalizeNativeShiftEnterInput("\r", false, true), "\r");
 	});
