@@ -43,6 +43,7 @@ import { spawnProcess, spawnProcessSync } from "../utils/child-process.ts";
 import { type GitSource, parseGitUrl } from "../utils/git.ts";
 import {
 	canonicalizePath,
+	getPathComparisonKey,
 	isLocalPath,
 	markPathIgnoredByCloudSync,
 	normalizePath,
@@ -2589,9 +2590,12 @@ export class DefaultPackageManager implements PackageManager {
 			themes: join(projectBaseDir, "themes"),
 		};
 		const userAgentsSkillsDir = join(getHomeDir(), ".agents", "skills");
+		const userAgentsSkillsKey = getPathComparisonKey(resolve(userAgentsSkillsDir));
 		const projectTrusted = this.settingsManager.isProjectTrusted();
 		const projectAgentsSkillDirs = projectTrusted
-			? collectAncestorAgentsSkillDirs(this.cwd).filter((dir) => resolve(dir) !== resolve(userAgentsSkillsDir))
+			? collectAncestorAgentsSkillDirs(this.cwd).filter(
+					(dir) => getPathComparisonKey(resolve(dir)) !== userAgentsSkillsKey,
+				)
 			: [];
 
 		const addResources = (
@@ -2780,9 +2784,9 @@ export class DefaultPackageManager implements PackageManager {
 
 			const seen = new Set<string>();
 			return resolved.filter((entry) => {
-				const canonicalPath = canonicalizePath(entry.path);
-				if (seen.has(canonicalPath)) return false;
-				seen.add(canonicalPath);
+				const pathKey = getPathComparisonKey(entry.path);
+				if (seen.has(pathKey)) return false;
+				seen.add(pathKey);
 				return true;
 			});
 		};

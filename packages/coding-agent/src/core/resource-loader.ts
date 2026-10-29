@@ -8,7 +8,7 @@ import type { ResourceDiagnostic } from "./diagnostics.ts";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
-import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
+import { canonicalizePath, getPathComparisonKey, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
@@ -1062,9 +1062,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		for (const p of [...primary, ...additional]) {
 			const resolved = this.resolveResourcePath(p);
-			const canonicalPath = canonicalizePath(resolved);
-			if (seen.has(canonicalPath)) continue;
-			seen.add(canonicalPath);
+			const pathKey = getPathComparisonKey(resolved);
+			if (seen.has(pathKey)) continue;
+			seen.add(pathKey);
 			merged.push(resolved);
 		}
 

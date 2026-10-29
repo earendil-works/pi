@@ -33,6 +33,17 @@ export function canonicalizePath(path: string): string {
 	}
 }
 
+/**
+ * Key for comparing filesystem paths for equality. Resolves symlinks and, on
+ * Windows, folds case because Windows paths are case-insensitive and realpath
+ * keeps the input casing (e.g. `c:\\Users` vs `C:\\Users`). Use only for
+ * comparison, never for display or filesystem access.
+ */
+export function getPathComparisonKey(path: string): string {
+	const canonicalPath = canonicalizePath(path);
+	return process.platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
+}
+
 export function getFileRevision(path: string): string | undefined {
 	try {
 		const stats = statSync(path, { bigint: true });

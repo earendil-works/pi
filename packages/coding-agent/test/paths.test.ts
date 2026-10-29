@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	canonicalizePath,
 	getCwdRelativePath,
+	getPathComparisonKey,
 	isLocalPath,
 	normalizePath,
 	normalizeWindowsShellPath,
@@ -25,6 +26,27 @@ function createTempDir(): string {
 	tempDir = mkdtempSync(join(tmpdir(), "pi-paths-"));
 	return tempDir;
 }
+
+describe("getPathComparisonKey", () => {
+	const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+
+	afterEach(() => {
+		if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+	});
+
+	// Regression test for https://github.com/earendil-works/pi/issues/10488
+	it("ignores drive-letter and path casing on Windows", () => {
+		Object.defineProperty(process, "platform", { value: "win32" });
+		expect(getPathComparisonKey("c:\\Users\\me\\.agents\\skills")).toBe(
+			getPathComparisonKey("C:\\Users\\Me\\.agents\\skills"),
+		);
+	});
+
+	it("keeps casing on case-sensitive platforms", () => {
+		Object.defineProperty(process, "platform", { value: "linux" });
+		expect(getPathComparisonKey("/home/me/.agents/skills")).not.toBe(getPathComparisonKey("/home/Me/.agents/skills"));
+	});
+});
 
 describe("canonicalizePath", () => {
 	it("returns the real path for a regular file", () => {

@@ -64,4 +64,26 @@ describe("ProjectTrustStore", () => {
 			}
 		}
 	});
+
+	// Regression test for https://github.com/earendil-works/pi/issues/10488
+	it("ignores the user .agents/skills dir when HOME differs only by case on Windows", () => {
+		const originalHome = process.env.HOME;
+		const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+		const mixedCaseHome = join(tempDir, "Home");
+		const projectDir = join(mixedCaseHome, "project");
+		mkdirSync(join(mixedCaseHome, ".agents", "skills"), { recursive: true });
+		mkdirSync(projectDir, { recursive: true });
+		process.env.HOME = mixedCaseHome.toLowerCase();
+		Object.defineProperty(process, "platform", { value: "win32" });
+		try {
+			expect(hasTrustRequiringProjectResources(projectDir)).toBe(false);
+		} finally {
+			if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+			if (originalHome === undefined) {
+				delete process.env.HOME;
+			} else {
+				process.env.HOME = originalHome;
+			}
+		}
+	});
 });
