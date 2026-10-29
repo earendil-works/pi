@@ -17,14 +17,8 @@ import {
 import { CONFIG_DIR_NAME } from "../../../config.ts";
 import type { PathMetadata, ResolvedPaths, ResolvedResource } from "../../../core/package-manager.ts";
 import type { PackageSource, SettingsManager } from "../../../core/settings-manager.ts";
-import { BUILTIN_PATH_PREFIX } from "../../../core/source-info.ts";
-import {
-	canonicalizePath,
-	getPathComparisonKey,
-	isLocalPath,
-	resolvePath,
-	shortenHomePath,
-} from "../../../utils/paths.ts";
+import { BUILTIN_PATH_PREFIX, getResourcePathKey } from "../../../core/source-info.ts";
+import { isLocalPath, resolvePath, shortenHomePath } from "../../../utils/paths.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
@@ -841,7 +835,7 @@ class ResourceList implements Component, Focusable {
 	}
 
 	private getResourceItemKey(item: ResourceItem): string {
-		return `${item.resourceType}:${getPathComparisonKey(canonicalizePath(item.path))}`;
+		return `${item.resourceType}:${getResourcePathKey(item.path)}`;
 	}
 
 	private getItemScope(item: ResourceItem): SettingsScope {

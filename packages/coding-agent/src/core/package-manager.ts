@@ -33,7 +33,7 @@ function getEnv(): NodeJS.ProcessEnv {
 	}
 }
 
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
@@ -45,7 +45,6 @@ import {
 	canonicalizePath,
 	getPathComparisonKey,
 	isLocalPath,
-	isPathWithin,
 	markPathIgnoredByCloudSync,
 	normalizePath,
 	pathsEqual,
@@ -55,7 +54,7 @@ import { stripBom } from "../utils/text.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
 import { type PiManifest, readPiManifest } from "./pi-manifest.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
-import { BUILTIN_PATH_PREFIX } from "./source-info.ts";
+import { BUILTIN_PATH_PREFIX, getResourcePathKey } from "./source-info.ts";
 
 const NETWORK_TIMEOUT_MS = 10000;
 const UPDATE_CHECK_CONCURRENCY = 4;
@@ -688,6 +687,13 @@ function hasManifestResourceFields(manifest: PiManifest): boolean {
 	return RESOURCE_TYPES.some((resourceType) => manifest[resourceType] !== undefined);
 }
 
+function isPathInside(parent: string, child: string): boolean {
+	const relativePath = relative(parent, child);
+	return (
+		relativePath !== "" && relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath)
+	);
+}
+
 function resolvePackageChangelogPath(packageRoot: string, manifest: PiManifest | null): string | undefined {
 	const changelogPath = manifest?.changelogPath ?? "CHANGELOG.md";
 	if (!changelogPath) return undefined;
@@ -697,7 +703,7 @@ function resolvePackageChangelogPath(packageRoot: string, manifest: PiManifest |
 
 	const canonicalPackageRoot = canonicalizePath(packageRoot);
 	const canonicalChangelogPath = canonicalizePath(resolvedPath);
-	if (!isPathWithin(canonicalPackageRoot, canonicalChangelogPath)) return undefined;
+	if (!isPathInside(canonicalPackageRoot, canonicalChangelogPath)) return undefined;
 
 	try {
 		return statSync(resolvedPath).isFile() ? resolvedPath : undefined;
@@ -1518,7 +1524,7 @@ export class DefaultPackageManager implements PackageManager {
 		if (parsed.type === "git") {
 			return `git:${parsed.host}/${parsed.path}`;
 		}
-		return `local:${this.resolvePath(parsed.path)}`;
+		return `local:${getPathComparisonKey(this.resolvePath(parsed.path))}`;
 	}
 
 	private getSourceMatchKeyForSettings(source: string, scope: SourceScope): string {
@@ -1530,7 +1536,7 @@ export class DefaultPackageManager implements PackageManager {
 			return `git:${parsed.host}/${parsed.path}`;
 		}
 		const baseDir = this.getBaseDirForScope(scope);
-		return `local:${this.resolvePathFromBase(parsed.path, baseDir)}`;
+		return `local:${getPathComparisonKey(this.resolvePathFromBase(parsed.path, baseDir))}`;
 	}
 
 	private buildNoMatchingPackageMessage(source: string, configuredPackages: PackageSource[]): string {
@@ -1835,9 +1841,9 @@ export class DefaultPackageManager implements PackageManager {
 		}
 		if (scope) {
 			const baseDir = this.getBaseDirForScope(scope);
-			return `local:${this.resolvePathFromBase(parsed.path, baseDir)}`;
+			return `local:${getPathComparisonKey(this.resolvePathFromBase(parsed.path, baseDir))}`;
 		}
-		return `local:${this.resolvePath(parsed.path)}`;
+		return `local:${getPathComparisonKey(this.resolvePath(parsed.path))}`;
 	}
 
 	/**
@@ -2066,8 +2072,7 @@ export class DefaultPackageManager implements PackageManager {
 			const nodeModulesDir = resolve(targetDir, "node_modules");
 			return Object.keys(manifest.dependencies).some((name) => {
 				const dependencyPath = resolve(nodeModulesDir, name);
-				if (!isPathWithin(nodeModulesDir, dependencyPath) || pathsEqual(dependencyPath, nodeModulesDir))
-					return false;
+				if (!dependencyPath.startsWith(`${nodeModulesDir}${sep}`)) return false;
 				return !existsSync(dependencyPath);
 			});
 		} catch {
@@ -2164,7 +2169,7 @@ export class DefaultPackageManager implements PackageManager {
 		if (!installRoot) return;
 		const resolvedRoot = resolve(installRoot);
 		let current = dirname(targetDir);
-		while (isPathWithin(resolvedRoot, current) && !pathsEqual(current, resolvedRoot)) {
+		while (current.startsWith(resolvedRoot) && current !== resolvedRoot) {
 			if (!existsSync(current)) {
 				current = dirname(current);
 				continue;
@@ -2309,7 +2314,7 @@ export class DefaultPackageManager implements PackageManager {
 	private resolveManagedPath(root: string, ...parts: string[]): string {
 		const resolvedRoot = resolve(root);
 		const resolvedPath = resolve(resolvedRoot, ...parts);
-		if (!isPathWithin(resolvedRoot, resolvedPath)) {
+		if (resolvedPath !== resolvedRoot && !resolvedPath.startsWith(`${resolvedRoot}${sep}`)) {
 			throw new Error(`Refusing to use path outside package install root: ${resolvedPath}`);
 		}
 		return resolvedPath;
@@ -2777,7 +2782,7 @@ export class DefaultPackageManager implements PackageManager {
 
 			const seen = new Set<string>();
 			return resolved.filter((entry) => {
-				const pathKey = getPathComparisonKey(canonicalizePath(entry.path));
+				const pathKey = getResourcePathKey(entry.path);
 				if (seen.has(pathKey)) return false;
 				seen.add(pathKey);
 				return true;

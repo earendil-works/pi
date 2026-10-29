@@ -1,6 +1,6 @@
 import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve as nodeResolvePath, relative, sep } from "node:path";
+import { isAbsolute, join, resolve as nodeResolvePath, posix, relative, sep, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnProcessSync } from "./child-process.ts";
 
@@ -44,8 +44,14 @@ export function canonicalizePath(path: string): string {
  * filesystem access.
  */
 export function getPathComparisonKey(path: string): string {
-	const resolvedPath = nodeResolvePath(path);
-	return process.platform === "win32" ? resolvedPath.toLowerCase() : resolvedPath;
+	const pathApi = getPlatformPathApi();
+	const resolvedPath = pathApi.resolve(path);
+	return pathApi === win32 ? resolvedPath.toLowerCase() : resolvedPath;
+}
+
+/** `node:path` rules for the current platform, read at call time so tests can simulate Windows. */
+function getPlatformPathApi(): typeof win32 {
+	return process.platform === "win32" ? win32 : posix;
 }
 
 /** True when both paths name the same location (see `getPathComparisonKey`). */
@@ -59,13 +65,16 @@ export function isPathWithin(parent: string, child: string): boolean {
 	const childKey = getPathComparisonKey(child);
 	if (childKey === parentKey) return true;
 	// Filesystem roots (`/`, `C:\`) already end with a separator.
-	return childKey.startsWith(parentKey.endsWith(sep) ? parentKey : `${parentKey}${sep}`);
+	const pathSep = getPlatformPathApi().sep;
+	return childKey.startsWith(parentKey.endsWith(pathSep) ? parentKey : `${parentKey}${pathSep}`);
 }
 
 /** Replace a leading home directory with `~` for display. Relative paths are returned unchanged. */
 export function shortenHomePath(path: string, homeDir: string = homedir()): string {
-	if (!homeDir || !isAbsolute(path) || !isPathWithin(homeDir, path)) return path;
-	return `~${nodeResolvePath(path).slice(nodeResolvePath(homeDir).length)}`;
+	const pathApi = getPlatformPathApi();
+	if (!homeDir || !pathApi.isAbsolute(path) || !isPathWithin(homeDir, path)) return path;
+	const relativePath = pathApi.relative(homeDir, path);
+	return relativePath ? `~${pathApi.sep}${relativePath}` : "~";
 }
 
 export function getFileRevision(path: string): string | undefined {

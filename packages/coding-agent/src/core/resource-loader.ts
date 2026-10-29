@@ -8,14 +8,7 @@ import type { ResourceDiagnostic } from "./diagnostics.ts";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
-import {
-	canonicalizePath,
-	getPathComparisonKey,
-	isLocalPath,
-	isPathWithin,
-	pathsEqual,
-	resolvePath,
-} from "../utils/paths.ts";
+import { canonicalizePath, isLocalPath, isPathWithin, pathsEqual, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
@@ -46,6 +39,7 @@ import { loadSkills } from "./skills.ts";
 import {
 	BUILTIN_PATH_PREFIX,
 	createSourceInfo,
+	getResourcePathKey,
 	getSyntheticPathSource,
 	isSyntheticPath,
 	type SourceInfo,
@@ -757,6 +751,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return isSyntheticPath(path) ? path : resolvePath(path, this.cwd, { normalizeUnicodeSpaces: true });
 	}
 
+	private getExtensionPathKey(path: string): string {
+		return getResourcePathKey(this.resolveExtensionLoadPath(path));
+	}
+
 	/** Load extension paths: files from disk and `builtin:<name>` paths from the built-in extensions. */
 	private async loadExtensionPaths(paths: string[], runtime?: ExtensionRuntime): Promise<LoadExtensionsResult> {
 		const isBuiltinPath = (path: string) => path.startsWith(BUILTIN_PATH_PREFIX);
@@ -799,26 +797,26 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const preloadedByPath = new Map(
 			preloaded
 				.filter((extension) => !extension.path.startsWith("<inline:"))
-				.map((extension) => [extension.resolvedPath, extension]),
+				.map((extension) => [getResourcePathKey(extension.resolvedPath), extension]),
 		);
 		const failedPreloadPaths = new Set(
-			(preTrustExtensions?.errors ?? []).map((error) => this.resolveExtensionLoadPath(error.path)),
+			(preTrustExtensions?.errors ?? []).map((error) => this.getExtensionPathKey(error.path)),
 		);
 		const remainingPaths = extensionPaths.filter((path) => {
-			const resolvedPath = this.resolveExtensionLoadPath(path);
-			return !preloadedByPath.has(resolvedPath) && !failedPreloadPaths.has(resolvedPath);
+			const pathKey = this.getExtensionPathKey(path);
+			return !preloadedByPath.has(pathKey) && !failedPreloadPaths.has(pathKey);
 		});
 		const remainingExtensions = await this.loadExtensionPaths(remainingPaths, preTrustExtensions?.runtime);
 		const loadedByPath = new Map(preloadedByPath);
 		for (const extension of remainingExtensions.extensions) {
-			loadedByPath.set(extension.resolvedPath, extension);
+			loadedByPath.set(getResourcePathKey(extension.resolvedPath), extension);
 		}
 
 		const inlineExtensions = preTrustExtensions
 			? { extensions: preloaded.filter((extension) => extension.path.startsWith("<inline:")), errors: [] }
 			: await this.loadExtensionFactories(remainingExtensions.runtime);
 		const orderedExtensions = extensionPaths
-			.map((path) => loadedByPath.get(this.resolveExtensionLoadPath(path)))
+			.map((path) => loadedByPath.get(this.getExtensionPathKey(path)))
 			.filter((extension): extension is Extension => extension !== undefined);
 		orderedExtensions.push(...inlineExtensions.extensions);
 
@@ -1061,7 +1059,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		for (const p of [...primary, ...additional]) {
 			const resolved = this.resolveResourcePath(p);
-			const pathKey = isSyntheticPath(resolved) ? resolved : getPathComparisonKey(canonicalizePath(resolved));
+			const pathKey = getResourcePathKey(resolved);
 			if (seen.has(pathKey)) continue;
 			seen.add(pathKey);
 			merged.push(resolved);
