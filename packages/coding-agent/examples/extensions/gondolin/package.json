@@ -3,6 +3,7 @@
 	"private": true,
 	"version": "1.4.0",
 	"type": "module",
+	"keywords": ["pi-package"],
 	"scripts": {
 		"clean": "echo 'nothing to clean'",
 		"build": "echo 'nothing to build'",
@@ -15,5 +16,8 @@
 	},
 	"dependencies": {
 		"@earendil-works/gondolin": "0.14.0"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*"
 	}
 }

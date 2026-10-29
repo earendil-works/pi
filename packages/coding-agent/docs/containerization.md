@@ -165,8 +165,6 @@ From a Pi source checkout:
 ```bash
 mkdir -p ~/.pi/agent/extensions
 cp -R packages/coding-agent/examples/extensions/gondolin ~/.pi/agent/extensions/gondolin
-cd ~/.pi/agent/extensions/gondolin
-npm install --ignore-scripts
 ```
 
 ### Start Pi
@@ -177,6 +175,8 @@ Run Pi from the working folder you want mounted:
 cd /path/to/working-folder
 pi -e ~/.pi/agent/extensions/gondolin
 ```
+
+Pi installs package dependencies for managed package sources. The example itself should not vendor host-provided Pi packages.
 
 The extension mounts the host working folder at `/workspace` in the VM and overrides `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls`. File changes under `/workspace` write through to the host.
 
