@@ -36,9 +36,12 @@ export function canonicalizePath(path: string): string {
 /**
  * Key for comparing filesystem paths: the resolved absolute path, case-folded
  * on Windows because Windows paths are case-insensitive (`c:\Users` and
- * `C:\Users` are the same directory). Does not touch the filesystem; call
- * `canonicalizePath` first when symlinks must compare equal. Use only for
- * comparison, never for display or filesystem access.
+ * `C:\Users` are the same directory). NTFS can enable per-directory case
+ * sensitivity, but it is rarely used outside WSL interop, so it is ignored
+ * here (https://learn.microsoft.com/en-us/windows/wsl/case-sensitivity).
+ * Does not touch the filesystem; call `canonicalizePath` first when symlinks
+ * must compare equal. Use only for comparison, never for display or
+ * filesystem access.
  */
 export function getPathComparisonKey(path: string): string {
 	const resolvedPath = nodeResolvePath(path);
