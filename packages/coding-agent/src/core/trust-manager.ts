@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME } from "../config.ts";
-import { canonicalizePath, getPathComparisonKey, resolvePath } from "../utils/paths.ts";
+import { canonicalizePath, pathsEqual, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 
 export type ProjectTrustDecision = boolean | null;
@@ -42,12 +42,19 @@ function normalizeCwd(cwd: string): string {
 	return canonicalizePath(resolvePath(cwd));
 }
 
+/** Trust file keys naming `path`. Usually one; several on Windows when saved with different casing. */
+function findTrustFileKeys(data: TrustFile, path: string): string[] {
+	return Object.keys(data).filter((key) => pathsEqual(key, path));
+}
+
 function findNearestTrustEntry(data: TrustFile, cwd: string): ProjectTrustStoreEntry | null {
 	let currentDir = normalizeCwd(cwd);
 	while (true) {
-		const value = data[currentDir];
-		if (value === true || value === false) {
-			return { path: currentDir, decision: value };
+		for (const key of findTrustFileKeys(data, currentDir)) {
+			const value = data[key];
+			if (value === true || value === false) {
+				return { path: key, decision: value };
+			}
 		}
 
 		const parentDir = dirname(currentDir);
@@ -185,7 +192,7 @@ function withTrustFileLock<T>(path: string, fn: () => T): T {
  */
 export function hasTrustRequiringProjectResources(cwd: string): boolean {
 	const homeDir = canonicalizePath(resolvePath(process.env.HOME || homedir()));
-	const userAgentsSkillsKey = getPathComparisonKey(join(homeDir, ".agents", "skills"));
+	const userAgentsSkillsDir = join(homeDir, ".agents", "skills");
 	let currentDir = canonicalizePath(resolvePath(cwd));
 
 	const configDir = join(currentDir, CONFIG_DIR_NAME);
@@ -195,7 +202,7 @@ export function hasTrustRequiringProjectResources(cwd: string): boolean {
 
 	while (true) {
 		const agentsSkillsDir = join(currentDir, ".agents", "skills");
-		if (getPathComparisonKey(agentsSkillsDir) !== userAgentsSkillsKey && existsSync(agentsSkillsDir)) {
+		if (!pathsEqual(agentsSkillsDir, userAgentsSkillsDir) && existsSync(agentsSkillsDir)) {
 			return true;
 		}
 
@@ -234,9 +241,10 @@ export class ProjectTrustStore {
 			const data = readTrustFile(this.trustPath);
 			for (const { path, decision } of decisions) {
 				const key = normalizeCwd(path);
-				if (decision === null) {
-					delete data[key];
-				} else {
+				for (const existingKey of findTrustFileKeys(data, key)) {
+					delete data[existingKey];
+				}
+				if (decision !== null) {
 					data[key] = decision;
 				}
 			}

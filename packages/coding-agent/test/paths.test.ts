@@ -8,9 +8,12 @@ import {
 	getCwdRelativePath,
 	getPathComparisonKey,
 	isLocalPath,
+	isPathWithin,
 	normalizePath,
 	normalizeWindowsShellPath,
+	pathsEqual,
 	resolvePath,
+	shortenHomePath,
 } from "../src/utils/paths.ts";
 
 let tempDir: string;
@@ -27,7 +30,7 @@ function createTempDir(): string {
 	return tempDir;
 }
 
-describe("getPathComparisonKey", () => {
+describe("path comparison", () => {
 	const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
 
 	afterEach(() => {
@@ -35,16 +38,35 @@ describe("getPathComparisonKey", () => {
 	});
 
 	// Regression test for https://github.com/earendil-works/pi/issues/10488
-	it("ignores drive-letter and path casing on Windows", () => {
+	it("ignores casing on Windows", () => {
 		Object.defineProperty(process, "platform", { value: "win32" });
-		expect(getPathComparisonKey("c:\\Users\\me\\.agents\\skills")).toBe(
-			getPathComparisonKey("C:\\Users\\Me\\.agents\\skills"),
-		);
+		expect(getPathComparisonKey("/Users/Me/.agents/skills")).toBe(getPathComparisonKey("/users/me/.agents/skills"));
+		expect(pathsEqual("/Users/Me", "/users/me")).toBe(true);
+		expect(isPathWithin("/Users/Me", "/users/me/project")).toBe(true);
+		expect(shortenHomePath("/users/me/project", "/Users/Me")).toBe("~/project");
 	});
 
 	it("keeps casing on case-sensitive platforms", () => {
 		Object.defineProperty(process, "platform", { value: "linux" });
-		expect(getPathComparisonKey("/home/me/.agents/skills")).not.toBe(getPathComparisonKey("/home/Me/.agents/skills"));
+		expect(pathsEqual("/home/me", "/home/Me")).toBe(false);
+		expect(isPathWithin("/home/me", "/home/Me/project")).toBe(false);
+		expect(shortenHomePath("/home/Me/project", "/home/me")).toBe("/home/Me/project");
+	});
+
+	it("isPathWithin matches whole path segments", () => {
+		expect(isPathWithin("/home/me", "/home/me")).toBe(true);
+		expect(isPathWithin("/home/me", "/home/me/project")).toBe(true);
+		expect(isPathWithin("/home/me/", "/home/me/project")).toBe(true);
+		expect(isPathWithin("/home/me", "/home/me2")).toBe(false);
+		expect(isPathWithin("/", "/home")).toBe(true);
+	});
+
+	it("shortenHomePath replaces only a leading home directory", () => {
+		expect(shortenHomePath("/home/me", "/home/me")).toBe("~");
+		expect(shortenHomePath("/home/me/project", "/home/me")).toBe("~/project");
+		expect(shortenHomePath("/home/me2/project", "/home/me")).toBe("/home/me2/project");
+		expect(shortenHomePath("home/me/project", "/home/me")).toBe("home/me/project");
+		expect(shortenHomePath("/home/me/project", "")).toBe("/home/me/project");
 	});
 });
 

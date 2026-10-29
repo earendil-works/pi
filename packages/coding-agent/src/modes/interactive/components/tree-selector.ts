@@ -14,6 +14,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { SessionTreeNode } from "../../../core/session-manager.ts";
 import { formatReadLineRange } from "../../../core/tools/render-utils.ts";
+import { shortenHomePath } from "../../../utils/paths.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { formatKeyText, keyHint } from "./keybinding-hints.ts";
@@ -945,11 +946,7 @@ class TreeList implements Component {
 	}
 
 	private formatToolCall(name: string, args: Record<string, unknown>): string {
-		const shortenPath = (p: string): string => {
-			const home = process.env.HOME || process.env.USERPROFILE || "";
-			if (home && p.startsWith(home)) return `~${p.slice(home.length)}`;
-			return p;
-		};
+		const shortenPath = (p: string): string => shortenHomePath(p, process.env.HOME || process.env.USERPROFILE || "");
 
 		switch (name) {
 			case "read": {

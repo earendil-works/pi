@@ -33,7 +33,7 @@ function getEnv(): NodeJS.ProcessEnv {
 	}
 }
 
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
@@ -45,8 +45,10 @@ import {
 	canonicalizePath,
 	getPathComparisonKey,
 	isLocalPath,
+	isPathWithin,
 	markPathIgnoredByCloudSync,
 	normalizePath,
+	pathsEqual,
 	resolvePath,
 } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
@@ -686,13 +688,6 @@ function hasManifestResourceFields(manifest: PiManifest): boolean {
 	return RESOURCE_TYPES.some((resourceType) => manifest[resourceType] !== undefined);
 }
 
-function isPathInside(parent: string, child: string): boolean {
-	const relativePath = relative(parent, child);
-	return (
-		relativePath !== "" && relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath)
-	);
-}
-
 function resolvePackageChangelogPath(packageRoot: string, manifest: PiManifest | null): string | undefined {
 	const changelogPath = manifest?.changelogPath ?? "CHANGELOG.md";
 	if (!changelogPath) return undefined;
@@ -702,7 +697,7 @@ function resolvePackageChangelogPath(packageRoot: string, manifest: PiManifest |
 
 	const canonicalPackageRoot = canonicalizePath(packageRoot);
 	const canonicalChangelogPath = canonicalizePath(resolvedPath);
-	if (!isPathInside(canonicalPackageRoot, canonicalChangelogPath)) return undefined;
+	if (!isPathWithin(canonicalPackageRoot, canonicalChangelogPath)) return undefined;
 
 	try {
 		return statSync(resolvedPath).isFile() ? resolvedPath : undefined;
@@ -2071,7 +2066,8 @@ export class DefaultPackageManager implements PackageManager {
 			const nodeModulesDir = resolve(targetDir, "node_modules");
 			return Object.keys(manifest.dependencies).some((name) => {
 				const dependencyPath = resolve(nodeModulesDir, name);
-				if (!dependencyPath.startsWith(`${nodeModulesDir}${sep}`)) return false;
+				if (!isPathWithin(nodeModulesDir, dependencyPath) || pathsEqual(dependencyPath, nodeModulesDir))
+					return false;
 				return !existsSync(dependencyPath);
 			});
 		} catch {
@@ -2168,7 +2164,7 @@ export class DefaultPackageManager implements PackageManager {
 		if (!installRoot) return;
 		const resolvedRoot = resolve(installRoot);
 		let current = dirname(targetDir);
-		while (current.startsWith(resolvedRoot) && current !== resolvedRoot) {
+		while (isPathWithin(resolvedRoot, current) && !pathsEqual(current, resolvedRoot)) {
 			if (!existsSync(current)) {
 				current = dirname(current);
 				continue;
@@ -2313,7 +2309,7 @@ export class DefaultPackageManager implements PackageManager {
 	private resolveManagedPath(root: string, ...parts: string[]): string {
 		const resolvedRoot = resolve(root);
 		const resolvedPath = resolve(resolvedRoot, ...parts);
-		if (resolvedPath !== resolvedRoot && !resolvedPath.startsWith(`${resolvedRoot}${sep}`)) {
+		if (!isPathWithin(resolvedRoot, resolvedPath)) {
 			throw new Error(`Refusing to use path outside package install root: ${resolvedPath}`);
 		}
 		return resolvedPath;
@@ -2590,12 +2586,9 @@ export class DefaultPackageManager implements PackageManager {
 			themes: join(projectBaseDir, "themes"),
 		};
 		const userAgentsSkillsDir = join(getHomeDir(), ".agents", "skills");
-		const userAgentsSkillsKey = getPathComparisonKey(resolve(userAgentsSkillsDir));
 		const projectTrusted = this.settingsManager.isProjectTrusted();
 		const projectAgentsSkillDirs = projectTrusted
-			? collectAncestorAgentsSkillDirs(this.cwd).filter(
-					(dir) => getPathComparisonKey(resolve(dir)) !== userAgentsSkillsKey,
-				)
+			? collectAncestorAgentsSkillDirs(this.cwd).filter((dir) => !pathsEqual(dir, userAgentsSkillsDir))
 			: [];
 
 		const addResources = (
@@ -2784,7 +2777,7 @@ export class DefaultPackageManager implements PackageManager {
 
 			const seen = new Set<string>();
 			return resolved.filter((entry) => {
-				const pathKey = getPathComparisonKey(entry.path);
+				const pathKey = getPathComparisonKey(canonicalizePath(entry.path));
 				if (seen.has(pathKey)) return false;
 				seen.add(pathKey);
 				return true;

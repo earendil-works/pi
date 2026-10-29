@@ -34,14 +34,35 @@ export function canonicalizePath(path: string): string {
 }
 
 /**
- * Key for comparing filesystem paths for equality. Resolves symlinks and, on
- * Windows, folds case because Windows paths are case-insensitive and realpath
- * keeps the input casing (e.g. `c:\\Users` vs `C:\\Users`). Use only for
+ * Key for comparing filesystem paths: the resolved absolute path, case-folded
+ * on Windows because Windows paths are case-insensitive (`c:\Users` and
+ * `C:\Users` are the same directory). Does not touch the filesystem; call
+ * `canonicalizePath` first when symlinks must compare equal. Use only for
  * comparison, never for display or filesystem access.
  */
 export function getPathComparisonKey(path: string): string {
-	const canonicalPath = canonicalizePath(path);
-	return process.platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
+	const resolvedPath = nodeResolvePath(path);
+	return process.platform === "win32" ? resolvedPath.toLowerCase() : resolvedPath;
+}
+
+/** True when both paths name the same location (see `getPathComparisonKey`). */
+export function pathsEqual(left: string, right: string): boolean {
+	return getPathComparisonKey(left) === getPathComparisonKey(right);
+}
+
+/** True when `child` is `parent` or inside it (see `getPathComparisonKey`). */
+export function isPathWithin(parent: string, child: string): boolean {
+	const parentKey = getPathComparisonKey(parent);
+	const childKey = getPathComparisonKey(child);
+	if (childKey === parentKey) return true;
+	// Filesystem roots (`/`, `C:\`) already end with a separator.
+	return childKey.startsWith(parentKey.endsWith(sep) ? parentKey : `${parentKey}${sep}`);
+}
+
+/** Replace a leading home directory with `~` for display. Relative paths are returned unchanged. */
+export function shortenHomePath(path: string, homeDir: string = homedir()): string {
+	if (!homeDir || !isAbsolute(path) || !isPathWithin(homeDir, path)) return path;
+	return `~${nodeResolvePath(path).slice(nodeResolvePath(homeDir).length)}`;
 }
 
 export function getFileRevision(path: string): string | undefined {
