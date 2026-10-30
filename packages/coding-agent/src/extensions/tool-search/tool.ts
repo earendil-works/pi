@@ -81,12 +81,14 @@ export function tokenize(text: string): string[] {
 		.replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
 		.toLowerCase()
 		.replace(/[^\p{L}\p{M}\p{N}]+/gu, " ");
-	const terms: string[] = [];
-	for (const { segment, isWordLike } of wordSegmenter.segment(normalized)) {
-		if (!isWordLike || STOP_WORDS.has(segment)) continue;
-		terms.push(/^[a-z0-9]+$/.test(segment) ? stem(segment) : segment);
-	}
-	return terms;
+	// The segmenter costs about 15 times a split. Plain ASCII splits into the same words at spaces, so only other
+	// text, such as Chinese written without spaces, goes through it.
+	const words = /^[a-z0-9 ]*$/.test(normalized)
+		? normalized.split(" ")
+		: Array.from(wordSegmenter.segment(normalized), (segment) => (segment.isWordLike ? segment.segment : ""));
+	return words
+		.filter((word) => word.length > 0 && !STOP_WORDS.has(word))
+		.map((word) => (/^[a-z0-9]+$/.test(word) ? stem(word) : word));
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
