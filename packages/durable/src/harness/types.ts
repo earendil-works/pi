@@ -1,9 +1,11 @@
 import type { Context, JsonValue, WatchHandle } from "@earendil-works/chord";
 import type {
+	Api,
 	AssistantMessage,
 	CacheRetention,
 	ClientIdentity,
 	Message,
+	Model,
 	Models,
 	ModelThinkingLevel,
 	Static,
@@ -970,6 +972,16 @@ export interface GenerationHooks {
 		api: HookApi,
 		context: Context,
 	): HookResult<{ readonly messages: readonly Message[] }>;
+	/**
+	 * After pi-ai builds the provider request body, before it is sent; the result replaces the body for that request only.
+	 * Runs again whenever pi-ai rebuilds the body, such as a retry within one attempt. The body is in the provider API's
+	 * own format (`request.model.api`), so a hook checks the API before changing it.
+	 */
+	beforeProviderRequest(
+		request: { readonly model: Model<Api>; readonly payload: unknown },
+		api: HookApi,
+		context: Context,
+	): HookResult<{ readonly payload: unknown }>;
 	/** Every terminal provider message, before classification. */
 	afterResponse(message: AssistantMessage, api: HookApi, context: Context): void | Promise<void>;
 	/** A final answer; the first `continue` appends a user message and continues the run. */

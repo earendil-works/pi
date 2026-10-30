@@ -659,7 +659,7 @@ const Guard = defineExtension({
 });
 ```
 
-- **Generation:** `beforeRequest` (replace the messages of one request), `afterResponse`, `onYield` (continue the run with another user message), `afterTools` (runs once a round's tools are done), and `afterRun` (tasks to run before the run ends, below).
+- **Generation:** `beforeRequest` (replace the messages of one request), `beforeProviderRequest` (replace the provider request body of one request, e.g. to set a provider-specific field), `afterResponse`, `onYield` (continue the run with another user message), `afterTools` (runs once a round's tools are done), and `afterRun` (tasks to run before the run ends, below).
 - **Tools:** `beforeTool` (block or rewrite arguments) and `afterTool` (replace the result). `afterTool` sees every result a tool task writes, also the error results the Harness writes itself (unavailable, invalid, blocked, interrupted, restart limit, aborted), told apart by their diagnostic code; past `settings.restartLimit` it no longer runs. On an abort it runs inside the abort handler, so a slow hook delays `abort()`.
 
 To limit a hook to some conversations, select its extension only there, for example with `configure({ extensions: { add: [Guard] } })`.

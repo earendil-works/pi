@@ -3339,6 +3339,7 @@ consuming commit may rerun them. Abort errors always propagate.
 | hook | composition | ordinary throw |
 |---|---|---|
 | `beforeRequest` | replacement chain | report, continue |
+| `beforeProviderRequest` | replacement chain | report, continue |
 | `afterResponse` | all observers | report, continue |
 | `onYield` | first continuation wins | report, continue |
 | `beforeTool` | argument replacement chain; first block wins | block tool with error text |
@@ -3380,6 +3381,12 @@ interface GenerationHooks {
     api: HookApi,
     context: Context,
   ): HookResult<{ readonly messages: readonly Message[] }>;
+  /** After pi-ai builds the provider request body, before it is sent; replaces the body for that request only. */
+  beforeProviderRequest(
+    request: { readonly model: Model<Api>; readonly payload: unknown },
+    api: HookApi,
+    context: Context,
+  ): HookResult<{ readonly payload: unknown }>;
   /** Every terminal provider message, before classification. */
   afterResponse(message: AssistantMessage, api: HookApi, context: Context): void | Promise<void>;
   /** A final answer; `continue` appends a user message and continues the run. */
@@ -4900,7 +4907,9 @@ The run's inputs live in `pi.live.run`, not in the task input.
   (section 4.1), so Storage gets them at the next commit that reads `pi.live`
   or within `settings.progress.persistWithinMs`.
   Before streaming, the `beforeRequest` chain may
-  replace the messages for this request only. After a close, recovery resends
+  replace the messages for this request only. Once pi-ai has built the provider
+  request body, the `beforeProviderRequest` chain may replace it, again for this
+  request only; it runs each time pi-ai builds a body. After a close, recovery resends
   the same committed messages with the same pinned model, thinking level, and
   stream options, and reruns `beforeRequest`; after a crash the attempt is
   charged instead, as above.
