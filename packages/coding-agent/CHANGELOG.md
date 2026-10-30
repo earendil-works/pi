@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- Fixed pi crashing with `RangeError: Maximum call stack size exceeded` when rendering a very large edit diff, for example after editing a file with a multi-megabyte line, and again on every resume of that session ([#8036](https://github.com/earendil-works/pi/issues/8036))
 - Fixed a saved "Do not trust" decision being ignored for projects without trust-requiring resources, for example a folder with only `AGENTS.md`. pi auto-trusted such projects, so `ctx.isProjectTrusted()` returned true and package commands treated them as trusted. A saved decision in `trust.json` now takes precedence; auto-trust applies only when no decision is saved ([#10947](https://github.com/earendil-works/pi/issues/10947))
 - Fixed `Shift+Enter` queueing a follow-up instead of inserting a newline in Apple Terminal setups that send `ESC` + Return. pi now checks the local Shift key state for that sequence, as it already did for plain Return; `Alt+Enter` without Shift still queues a follow-up ([#11559](https://github.com/earendil-works/pi/issues/11559))
 - Fixed the working status (OSC 7501) disappearing in Rex and iTerm2 during runs in regular TUI mode. Rendered messages wrote OSC 133 prompt markers to the terminal, which the terminal treats as a new shell prompt; regular mode no longer writes them ([#11519](https://github.com/earendil-works/pi/issues/11519))
