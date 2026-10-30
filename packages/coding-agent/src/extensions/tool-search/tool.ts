@@ -20,10 +20,13 @@ import type {
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 export const DEFAULT_TOOL_SEARCH_LIMIT = 8;
 
-/** A tool as the ranker sees it: its name and the text built by {@link createToolSearchDocument}. */
+/** A tool as the ranker sees it: its name and the texts built by {@link createToolSearchDocument}. */
 export interface ToolSearchDocument {
 	name: string;
+	/** Description, schema descriptions, and property names. */
 	text: string;
+	/** Name, description, and instructions of the tool's namespace. */
+	namespaceText?: string;
 }
 
 export interface ToolSearchMatch {
@@ -101,18 +104,19 @@ function schemaText(schema: unknown, parts: string[]): void {
 }
 
 /**
- * Search text of a tool: the name, the name with `_`
- * as spaces, the description, schema descriptions and property names, and the namespace with its
- * description and instructions.
+ * Search text of a tool: the description and the schema descriptions and property names, and
+ * separately the namespace name, description, and instructions. The ranker reads the name from `name`.
  */
 export function createToolSearchDocument(
 	tool: Pick<ToolInfo, "name" | "description" | "parameters">,
 	namespace?: ToolNamespace,
 ): ToolSearchDocument {
-	const parts = [tool.name, tool.name.replaceAll("_", " "), tool.description];
+	const parts = [tool.description];
 	schemaText(tool.parameters, parts);
-	if (namespace) parts.push(namespace.name, namespace.description ?? "", namespace.instructions ?? "");
-	return { name: tool.name, text: parts.filter((part) => part.trim()).join(" ") };
+	const namespaceText = namespace
+		? [namespace.name, namespace.description ?? "", namespace.instructions ?? ""].join(" ")
+		: "";
+	return { name: tool.name, text: parts.filter((part) => part.trim()).join(" "), namespaceText };
 }
 
 /** Lowercase with characters invalid in script identifiers as `_`, so `dev-radius` matches `dev_radius`. */
@@ -123,42 +127,64 @@ function normalizeName(name: string): string {
 		.replace(/[^a-z0-9_$]/g, "_");
 }
 
-/** A query as tool names: the whole query and its words, each normalized with {@link normalizeName}. */
-interface QueryNames {
-	whole: string;
-	words: ReadonlySet<string>;
-}
-
-function toQueryNames(query: string): QueryNames {
-	const words = query.split(/[^A-Za-z0-9_$-]+/).filter((word) => word.length > 0);
-	return { whole: normalizeName(query), words: new Set(words.map(normalizeName)) };
-}
-
 /**
- * Whether the query names the tool. For `mcp__app__thread_read`:
- * - the whole query is the full name or a suffix after a `__` separator: `thread_read`, `app__thread_read`;
- * - a word of the query is the full name or such a suffix and has a `_` in it, since a compound
- *   identifier is unlikely to be a plain word: `read thread_read state`;
- * - the query has the last segment and the segment before it as words: `app thread_read`, and for
- *   `mcp__peekaboo__app`, `peekaboo app`.
+ * Whether the whole query is the tool's name: its full name or a suffix after a `__` separator, so
+ * `thread_read` and `app__thread_read` both name `mcp__app__thread_read`.
  */
-function isNameQuery(query: QueryNames, name: string): boolean {
+function isExactNameQuery(query: string, name: string): boolean {
 	const normalized = normalizeName(name);
-	if (normalized === query.whole || normalized.endsWith(`__${query.whole}`)) return true;
-	const segments = normalized.split("__");
-	for (let start = 0; start < segments.length; start++) {
-		const suffix = segments.slice(start).join("__");
-		if (suffix.includes("_") && query.words.has(suffix)) return true;
-	}
-	const local = segments[segments.length - 1];
-	const server = segments[segments.length - 2];
-	return server !== undefined && query.words.has(local) && query.words.has(server);
+	return normalized === query || normalized.endsWith(`__${query}`);
+}
+
+/** A document split into the fields the ranker weighs differently. */
+interface IndexedDocument {
+	name: string;
+	/** Terms of the name, for example `mcp`, `app`, `thread`, `read` for `mcp__app__thread_read`. */
+	nameTerms: ReadonlySet<string>;
+	/** Terms of the last `__` segment of the name, the part models say: `thread`, `read`. */
+	localNameTerms: readonly string[];
+	textCounts: ReadonlyMap<string, number>;
+	textLength: number;
+	namespaceTerms: ReadonlySet<string>;
+}
+
+function indexDocument(document: ToolSearchDocument): IndexedDocument {
+	const textCounts = new Map<string, number>();
+	for (const term of tokenize(document.text)) textCounts.set(term, (textCounts.get(term) ?? 0) + 1);
+	const segments = document.name.split("__");
+	return {
+		name: document.name,
+		nameTerms: new Set(tokenize(document.name)),
+		localNameTerms: [...new Set(tokenize(segments[segments.length - 1]))],
+		textCounts,
+		textLength: [...textCounts.values()].reduce((sum, count) => sum + count, 0),
+		namespaceTerms: new Set(tokenize(document.namespaceText ?? "")),
+	};
 }
 
 /**
- * Okapi BM25 with the usual parameters. Tools the query names (see {@link isNameQuery}) rank
- * first, because length normalization and other tools sharing the name's words can otherwise rank
- * them below the limit. Ties keep document order.
+ * A query term in the name counts this many times its IDF. The text part of a term is at most
+ * `k1 + 1` (2.2) times its IDF and about 1 for a single mention, so a name match beats any number of
+ * mentions in the description.
+ */
+const NAME_WEIGHT = 3;
+
+/**
+ * A query term in the namespace name, description, or instructions counts this many times its IDF. They
+ * are shared by every tool of the server, so they help find the server but not the tool in it.
+ */
+const NAMESPACE_WEIGHT = 0.5;
+
+/**
+ * Okapi BM25 over the description, with the name and the namespace as separate fields:
+ * - a query term in the name scores more than any number of mentions in the description;
+ * - a tool whose whole local name is in the query (`app` in `peekaboo app` for
+ *   `mcp__peekaboo__app`) gets a bonus worth one more match of every query term, so it mostly wins
+ *   over tools that only mention the words;
+ * - a query that is exactly a tool's name ranks that tool first.
+ *
+ * The description alone is length-normalized, so a long name or long namespace instructions do
+ * not lower a tool's score. Ties keep document order.
  */
 export class Bm25Ranker implements ToolRanker {
 	private readonly k1: number;
@@ -170,35 +196,40 @@ export class Bm25Ranker implements ToolRanker {
 	}
 
 	rank(query: string, documents: readonly ToolSearchDocument[], limit: number): ToolSearchMatch[] {
-		const queryTerms = [...new Set(tokenize(query))];
-		if (queryTerms.length === 0 || documents.length === 0 || limit <= 0) return [];
-		const termCounts = documents.map((document) => {
-			const counts = new Map<string, number>();
-			for (const term of tokenize(document.text)) counts.set(term, (counts.get(term) ?? 0) + 1);
-			return counts;
-		});
-		const lengths = termCounts.map((counts) => [...counts.values()].reduce((sum, count) => sum + count, 0));
-		const averageLength = lengths.reduce((sum, length) => sum + length, 0) / documents.length || 1;
+		const queryTerms = new Set(tokenize(query));
+		if (queryTerms.size === 0 || documents.length === 0 || limit <= 0) return [];
+		const indexed = documents.map(indexDocument);
+		const averageLength = indexed.reduce((sum, document) => sum + document.textLength, 0) / indexed.length || 1;
 		const idf = new Map(
-			queryTerms.map((term) => {
-				const frequency = termCounts.filter((counts) => counts.has(term)).length;
-				return [term, Math.log(1 + (documents.length - frequency + 0.5) / (frequency + 0.5))] as const;
+			[...queryTerms].map((term) => {
+				const frequency = indexed.filter(
+					(document) =>
+						document.nameTerms.has(term) || document.textCounts.has(term) || document.namespaceTerms.has(term),
+				).length;
+				return [term, Math.log(1 + (indexed.length - frequency + 0.5) / (frequency + 0.5))] as const;
 			}),
 		);
-		const nameQuery = toQueryNames(query);
-		const matches: (ToolSearchMatch & { named: boolean })[] = [];
-		documents.forEach((document, index) => {
+		const fullNameBonus = [...idf.values()].reduce((sum, value) => sum + value, 0);
+		const exactQuery = normalizeName(query);
+		const matches: (ToolSearchMatch & { exact: boolean })[] = [];
+		for (const document of indexed) {
+			const norm = this.k1 * (1 - this.b + (this.b * document.textLength) / averageLength);
 			let score = 0;
 			for (const term of queryTerms) {
-				const count = termCounts[index].get(term);
-				if (!count) continue;
-				const norm = this.k1 * (1 - this.b + (this.b * lengths[index]) / averageLength);
-				score += (idf.get(term) ?? 0) * ((count * (this.k1 + 1)) / (count + norm));
+				const count = document.textCounts.get(term) ?? 0;
+				const weight =
+					(document.nameTerms.has(term) ? NAME_WEIGHT : 0) +
+					(document.namespaceTerms.has(term) ? NAMESPACE_WEIGHT : 0) +
+					(count * (this.k1 + 1)) / (count + norm);
+				score += (idf.get(term) ?? 0) * weight;
 			}
-			if (score > 0) matches.push({ name: document.name, score, named: isNameQuery(nameQuery, document.name) });
-		});
+			if (score === 0) continue;
+			const local = document.localNameTerms;
+			if (local.length > 0 && local.every((term) => queryTerms.has(term))) score += fullNameBonus;
+			matches.push({ name: document.name, score, exact: isExactNameQuery(exactQuery, document.name) });
+		}
 		return matches
-			.sort((a, b) => Number(b.named) - Number(a.named) || b.score - a.score)
+			.sort((a, b) => Number(b.exact) - Number(a.exact) || b.score - a.score)
 			.slice(0, limit)
 			.map(({ name, score }) => ({ name, score }));
 	}
