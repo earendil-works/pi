@@ -3810,7 +3810,8 @@ cached prefix holds. `@earendil-works/pi-durable/tool-search` provides the
 coding agent's `tool_search` (`createToolSearchExtension()`): it ranks
 `Agent.deferred` with the coding agent's tool ranking and loads the matches.
 The ranking is BM25 over the tools' descriptions and parameter names and
-descriptions, with the name as a separate field: a query term in the name
+descriptions, with the name as a separate field: a tool matching more of the
+query's terms ranks above one matching fewer, a query term in the name
 outweighs any number of mentions in the description, a tool whose whole name
 after its last `__` is in the query gets a large bonus, and a query that is
 exactly a tool's name ranks it first. Code mode's `searchTools()` ranks the

@@ -84,9 +84,23 @@ describe("rankDocuments", () => {
 		];
 		expect(rankDocuments("peekaboo app", named, 1)).toEqual(["mcp__peekaboo__app"]);
 		expect(rankDocuments("open the peekaboo app tool", named, 1)).toEqual(["mcp__peekaboo__app"]);
-		expect(rankDocuments("describe app", named, 1)).toEqual(["mcp__peekaboo__app"]);
 		expect(rankDocuments("read thread_read state", named, 1)).toEqual(["mcp__dev-app__thread_read"]);
 		// Without the whole name, mentions in descriptions decide.
 		expect(rankDocuments("describe window", named, 1)).toEqual(["mcp__peekaboo__see"]);
+	});
+
+	// https://github.com/earendil-works/pi/issues/11331
+	it("ranks a tool matching more query terms first, whatever the scores", () => {
+		const peekaboo = [
+			doc("mcp__peekaboo__app", "Launch, quit, focus, or switch applications by name or bundle identifier."),
+			doc("mcp__peekaboo__see", "Capture the app window and describe the UI elements of the app."),
+			doc("mcp__peekaboo__window", "Move, resize, or close a window of an app."),
+			doc("mcp__peekaboo__image", "Take a screenshot of the screen, an app, or a window."),
+		];
+		// `window` and `app` are whole names, but each covers one of the two terms.
+		expect(rankDocuments("screenshot window", peekaboo, 1)).toEqual(["mcp__peekaboo__image"]);
+		expect(rankDocuments("describe app", peekaboo, 1)).toEqual(["mcp__peekaboo__see"]);
+		// An exact name still ranks first.
+		expect(rankDocuments("window", peekaboo, 1)).toEqual(["mcp__peekaboo__window"]);
 	});
 });
