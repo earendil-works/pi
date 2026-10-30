@@ -2520,6 +2520,7 @@ pi.registerTool({
 - `toolCallId`, `cwd`, `executionStarted`, `argsComplete`, `isPartial`, `expanded`, `showImages`, `isError`
 - `durationMs` - how long execution took, from the final result; `undefined` while running
 - `outputPad` - horizontal padding from the `outputPad` setting; renderers with `renderShell: "self"` apply it themselves
+- `keyText()`, `keyHint()` - format the user's configured keybindings, see [Keybinding Hints](#keybinding-hints)
 
 Use `context.state` for cross-slot shared state. Keep slot-local caches on the returned component instance when you want to reuse and mutate the same component across renders.
 
@@ -2570,24 +2571,24 @@ If a slot intentionally has no visible content, return an empty `Component` such
 
 #### Keybinding Hints
 
-Use `keyHint()` to display keybinding hints that respect the active keybinding configuration:
+Use `keyHint()` and `keyText()` from the render context to display keybinding hints that respect the user's keybinding configuration:
 
 ```typescript
-import { keyHint } from "@earendil-works/pi-coding-agent";
-
 renderResult(result, { expanded }, theme, context) {
   let text = theme.fg("success", "✓ Done");
   if (!expanded) {
-    text += ` (${keyHint("app.tools.expand", "to expand")})`;
+    text += ` (${context.keyHint("app.tools.expand", "to expand")})`;
   }
   return new Text(text, 0, 0);
 }
 ```
 
-Available functions:
-- `keyHint(keybinding, description)` - Formats a configured keybinding id such as `"app.tools.expand"` or `"tui.select.confirm"`
-- `keyText(keybinding)` - Returns the raw configured key text for a keybinding id
-- `rawKeyHint(key, description)` - Format a raw key string
+The same functions are available as `options.keyHint()`/`options.keyText()` in message and entry renderers, and as `ctx.ui.keyHint()`/`ctx.ui.keyText()` in event and command handlers:
+
+- `keyHint(keybinding, description)` - Formats a configured keybinding id such as `"app.tools.expand"` or `"tui.select.confirm"`, followed by the description
+- `keyText(keybinding)` - Returns the raw configured key text for a keybinding id, or `""` if the id has no keys
+
+Do not import `keyHint()` or `keyText()` from `@earendil-works/pi-coding-agent` in extensions. An extension can resolve its own copy of the package, for example from its own `node_modules`, and that copy does not see pi's configured keybindings: `app.*` ids then format as `""`. `rawKeyHint(key, description)` formats a literal key string and is safe to import.
 
 Use namespaced keybinding ids:
 - Coding-agent ids use the `app.*` namespace, for example `app.tools.expand`, `app.editor.external`, `app.session.rename`
@@ -2945,6 +2946,7 @@ ctx.ui.addAutocompleteProvider((current) => ({
 const wasExpanded = ctx.ui.getToolsExpanded();
 ctx.ui.setToolsExpanded(true);
 ctx.ui.setToolsExpanded(wasExpanded);
+ctx.ui.notify(`Press ${ctx.ui.keyText("app.tools.expand")} to expand tool output`, "info");
 
 // Custom editor (vim mode, emacs mode, etc.)
 ctx.ui.setEditorComponent((tui, theme, keybindings) => new VimEditor(tui, theme, keybindings));
@@ -3144,6 +3146,8 @@ pi.registerMessageRenderer("my-extension", (message, options, theme) => {
 
   if (expanded && message.details) {
     text += "\n" + theme.fg("dim", JSON.stringify(message.details, null, 2));
+  } else if (message.details) {
+    text += ` (${options.keyHint("app.tools.expand", "to expand")})`;
   }
 
   return new Text(text, outputPad, 0);
