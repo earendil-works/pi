@@ -2583,12 +2583,12 @@ renderResult(result, { expanded }, theme, context) {
 }
 ```
 
-The same functions are available as `options.keyHint()`/`options.keyText()` in message and entry renderers, and as `ctx.ui.keyHint()`/`ctx.ui.keyText()` in event and command handlers:
+The same functions are available as `options.keyHint()`/`options.keyText()` in message and entry renderers:
 
 - `keyHint(keybinding, description)` - Formats a configured keybinding id such as `"app.tools.expand"` or `"tui.select.confirm"`, followed by the description
 - `keyText(keybinding)` - Returns the raw configured key text for a keybinding id, or `""` if the id has no keys
 
-Do not import `keyHint()` or `keyText()` from `@earendil-works/pi-coding-agent` in extensions. An extension can resolve its own copy of the package, for example from its own `node_modules`, and that copy does not see pi's configured keybindings: `app.*` ids then format as `""`. `rawKeyHint(key, description)` formats a literal key string and is safe to import.
+In renderers, use these instead of importing `keyHint()` or `keyText()` from `@earendil-works/pi-coding-agent`. An extension can resolve its own copy of the package, for example from its own `node_modules`, and that copy does not see pi's configured keybindings: `app.*` ids then format as `""`. `rawKeyHint(key, description)` formats a literal key string and is safe to import.
 
 Use namespaced keybinding ids:
 - Coding-agent ids use the `app.*` namespace, for example `app.tools.expand`, `app.editor.external`, `app.session.rename`
@@ -2946,7 +2946,6 @@ ctx.ui.addAutocompleteProvider((current) => ({
 const wasExpanded = ctx.ui.getToolsExpanded();
 ctx.ui.setToolsExpanded(true);
 ctx.ui.setToolsExpanded(wasExpanded);
-ctx.ui.notify(`Press ${ctx.ui.keyText("app.tools.expand")} to expand tool output`, "info");
 
 // Custom editor (vim mode, emacs mode, etc.)
 ctx.ui.setEditorComponent((tui, theme, keybindings) => new VimEditor(tui, theme, keybindings));

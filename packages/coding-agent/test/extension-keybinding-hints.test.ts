@@ -1,17 +1,15 @@
 // Issue #4748: extensions that import keyText/keyHint can resolve their own package copy, which does not see the
-// host's keybindings. The host passes its own keyText/keyHint to renderers and ctx.ui instead.
+// host's keybindings. The host passes its own keyText/keyHint to renderers instead.
 import { setKeybindings, Text, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { beforeAll, describe, expect, test } from "vitest";
-import { ExtensionRunner } from "../src/core/extensions/runner.ts";
 import type { KeybindingHints, ToolDefinition } from "../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type { CustomMessage } from "../src/core/messages.ts";
-import type { CustomEntry, SessionManager } from "../src/core/session-manager.ts";
+import type { CustomEntry } from "../src/core/session-manager.ts";
 import { CustomEntryComponent } from "../src/modes/interactive/components/custom-entry.ts";
 import { CustomMessageComponent } from "../src/modes/interactive/components/custom-message.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
@@ -80,19 +78,5 @@ describe("host keybinding hints for extensions", () => {
 		});
 
 		expect(seen).toEqual([EXPECTED]);
-	});
-
-	test("ctx.ui exposes keyText and keyHint in interactive mode and without a UI", () => {
-		const interactiveUi = (InteractiveMode as any).prototype.createExtensionUIContext.call({});
-		const runner = new ExtensionRunner(
-			[],
-			{} as ConstructorParameters<typeof ExtensionRunner>[1],
-			process.cwd(),
-			{} as SessionManager,
-			{} as ConstructorParameters<typeof ExtensionRunner>[4],
-		);
-
-		expect(hintText(interactiveUi)).toBe(EXPECTED);
-		expect(hintText(runner.getUIContext())).toBe(EXPECTED);
 	});
 });

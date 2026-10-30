@@ -2780,8 +2780,6 @@ export class InteractiveMode {
 			},
 			getToolsExpanded: () => this.toolOutputExpanded,
 			setToolsExpanded: (expanded) => this.setToolsExpanded(expanded),
-			keyText,
-			keyHint,
 		};
 	}
 

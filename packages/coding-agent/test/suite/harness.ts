@@ -24,7 +24,6 @@ import { SessionManager } from "../../src/core/session-manager.ts";
 import type { Settings } from "../../src/core/settings-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import type { InlineExtension, ResourceLoader } from "../../src/index.ts";
-import { keyHint, keyText } from "../../src/modes/interactive/components/keybinding-hints.ts";
 import { theme } from "../../src/modes/interactive/theme/theme.ts";
 import {
 	type CreateTestExtensionsResultInput,
@@ -105,8 +104,6 @@ export function createTestUiContext(overrides: Partial<ExtensionUIContext> = {})
 		setTheme: () => ({ success: false, error: "Theme switching not available in tests" }),
 		getToolsExpanded: () => false,
 		setToolsExpanded: () => {},
-		keyText,
-		keyHint,
 		...overrides,
 	};
 }

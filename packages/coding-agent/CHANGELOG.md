@@ -2,17 +2,13 @@
 
 ## [Unreleased]
 
-### Breaking Changes
-
-- Custom `ExtensionUIContext` implementations passed to the SDK must now implement `keyText()` and `keyHint()`. Pass `keyText` and `keyHint` from `@earendil-works/pi-coding-agent`, as pi's own modes do ([#4748](https://github.com/earendil-works/pi/issues/4748))
-
 ### Added
 
 - Extension packages can now show their changelog after an update. Pi reads `pi.changelogPath` from the package's `package.json`, or `CHANGELOG.md` in the package root, and on the next fresh launch shows entries newer than the last seen version under "Extension Updates". The `collapseChangelog` setting condenses this to one line per package ([#5958](https://github.com/earendil-works/pi/issues/5958), [#8790](https://github.com/earendil-works/pi/pull/8790))
 - `pi.exec()` accepts a `maxBuffer` option that limits stdout and stderr combined, and its result has a `truncated` field that is true when output exceeded the limit ([#11360](https://github.com/earendil-works/pi/issues/11360))
 - Device-code login (for example GitHub Copilot) now opens the verification page and copies the code when you press Enter. Providers can turn either action off with `openBrowserOnConfirm: false` or `copyCodeOnConfirm: false` ([#9282](https://github.com/earendil-works/pi/issues/9282), [#9301](https://github.com/earendil-works/pi/pull/9301))
 - `pi update` can update Pi through a wrapper or another package manager. Set `PI_SELF_UPDATE_COMMAND` (for example `mise use -g npm:{packageName}@{version}`) or the global `selfUpdateCommand` setting; `pi update` runs it when pi.dev reports a newer release and fills `{packageName}`, `{version}`, and `{installSpec}` from that release. See [Custom update command](docs/cli.md#custom-update-command) ([#7756](https://github.com/earendil-works/pi/issues/7756), [#5607](https://github.com/earendil-works/pi/issues/5607))
-- Extensions can format the user's configured keybindings with `keyText()` and `keyHint()` from the tool render context, the message and entry renderer options, and `ctx.ui`. Importing these functions from `@earendil-works/pi-coding-agent` can resolve the extension's own copy of the package, which does not see pi's keybindings, so hints such as `keyHint("app.tools.expand", "to expand")` rendered without the key. The docs now recommend the injected functions ([#4748](https://github.com/earendil-works/pi/issues/4748))
+- Extensions can format the user's configured keybindings with `keyText()` and `keyHint()` from the tool render context and the message and entry renderer options. Importing these functions from `@earendil-works/pi-coding-agent` can resolve the extension's own copy of the package, which does not see pi's keybindings, so hints such as `keyHint("app.tools.expand", "to expand")` rendered without the key. The docs now recommend the injected functions ([#4748](https://github.com/earendil-works/pi/issues/4748))
 
 ### Changed
 
