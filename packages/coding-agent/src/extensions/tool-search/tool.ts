@@ -177,11 +177,14 @@ const NAMESPACE_WEIGHT = 0.5;
 
 /**
  * Okapi BM25 over the description, with the name and the namespace as separate fields:
+ * - a tool that matches more of the query's terms, in any field, ranks above one that matches
+ *   fewer, whatever their scores: for `screenshot window`, a tool whose description has both words
+ *   beats `window`, whose name has one;
  * - a query term in the name scores more than any number of mentions in the description;
  * - a tool whose whole local name is in the query (`app` in `peekaboo app` for
- *   `mcp__peekaboo__app`) gets a bonus worth one more match of every query term, so it mostly wins
- *   over tools that only mention the words;
- * - a query that is exactly a tool's name ranks that tool first.
+ *   `mcp__peekaboo__app`) gets a bonus worth one more match of every query term, so among tools
+ *   matching as many terms it mostly wins over tools that only mention the words;
+ * - a query that is exactly a tool's name ranks that tool first, before coverage.
  *
  * The description alone is length-normalized, so a long name or long namespace instructions do
  * not lower a tool's score. Ties keep document order.
@@ -211,25 +214,27 @@ export class Bm25Ranker implements ToolRanker {
 		);
 		const fullNameBonus = [...idf.values()].reduce((sum, value) => sum + value, 0);
 		const exactQuery = normalizeName(query);
-		const matches: (ToolSearchMatch & { exact: boolean })[] = [];
+		const matches: (ToolSearchMatch & { covered: number; exact: boolean })[] = [];
 		for (const document of indexed) {
 			const norm = this.k1 * (1 - this.b + (this.b * document.textLength) / averageLength);
 			let score = 0;
+			let covered = 0;
 			for (const term of queryTerms) {
 				const count = document.textCounts.get(term) ?? 0;
 				const weight =
 					(document.nameTerms.has(term) ? NAME_WEIGHT : 0) +
 					(document.namespaceTerms.has(term) ? NAMESPACE_WEIGHT : 0) +
 					(count * (this.k1 + 1)) / (count + norm);
+				if (weight > 0) covered++;
 				score += (idf.get(term) ?? 0) * weight;
 			}
 			if (score === 0) continue;
 			const local = document.localNameTerms;
 			if (local.length > 0 && local.every((term) => queryTerms.has(term))) score += fullNameBonus;
-			matches.push({ name: document.name, score, exact: isExactNameQuery(exactQuery, document.name) });
+			matches.push({ name: document.name, score, covered, exact: isExactNameQuery(exactQuery, document.name) });
 		}
 		return matches
-			.sort((a, b) => Number(b.exact) - Number(a.exact) || b.score - a.score)
+			.sort((a, b) => Number(b.exact) - Number(a.exact) || b.covered - a.covered || b.score - a.score)
 			.slice(0, limit)
 			.map(({ name, score }) => ({ name, score }));
 	}
