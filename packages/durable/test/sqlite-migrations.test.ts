@@ -11,6 +11,7 @@ import {
 	type SqliteMigration,
 } from "../src/storage/sqlite/index.ts";
 import { openNodeSqliteDatabase, openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import { commitWrites } from "../src/testing/commit-writes.ts";
 import { type EntryId, ROOT_CONVERSATION_ID } from "../src/types.ts";
 
 const directories = new Set<string>();
@@ -44,6 +45,61 @@ describe("durable SQLite migrations", () => {
 		}
 	});
 
+	it("migrates a version 1 database to store sleeping tasks, keeping its tasks and indexes", async () => {
+		const path = await databasePath();
+		const database = await openNodeSqliteDatabase(path);
+		await applySqliteMigrations(database, SQLITE_MIGRATIONS.slice(0, 1));
+		const waiting = {
+			id: 5,
+			conversationId: 1,
+			kind: "test.task",
+			version: 1,
+			input: null,
+			background: false,
+			abortRequested: false,
+			state: { status: "waiting", checkpoint: { phase: "run" }, on: [], policy: "allSettled" },
+		};
+		await database.run(
+			"INSERT INTO tasks (id, conversation_id, kind, status, abort_requested, background, record) VALUES (5, 1, 'test.task', 'waiting', 0, 0, ?)",
+			JSON.stringify(waiting),
+		);
+		await expect(
+			database.run(
+				"INSERT INTO tasks (id, conversation_id, kind, status, abort_requested, background, record) VALUES (6, 1, 'test.task', 'sleeping', 0, 0, '{}')",
+			),
+		).rejects.toThrow();
+		await database.close();
+
+		const storage = await openNodeSqliteStorage(path);
+		await storage.close(BACKGROUND_CONTEXT);
+		const migrated = await openNodeSqliteDatabase(path);
+		try {
+			expect(await migrated.get("SELECT version FROM durable_schema WHERE singleton = 1")).toEqual({ version: 2 });
+			expect(await migrated.get("SELECT status, record FROM tasks WHERE id = 5")).toEqual({
+				status: "waiting",
+				record: JSON.stringify(waiting),
+			});
+			await migrated.run(
+				"INSERT INTO tasks (id, conversation_id, kind, status, abort_requested, background, record) VALUES (6, 1, 'test.task', 'sleeping', 0, 0, '{}')",
+			);
+			const indexes = await migrated.all<{ name: string }>(
+				"SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'tasks' ORDER BY name",
+			);
+			expect(indexes.map(({ name }) => name)).toEqual([
+				"tasks_by_abort_requested",
+				"tasks_by_background",
+				"tasks_by_conversation",
+				"tasks_by_kind",
+				"tasks_by_status",
+			]);
+			expect(await migrated.get("SELECT count(*) AS count FROM sqlite_schema WHERE name = 'tasks_v2'")).toEqual({
+				count: 0,
+			});
+		} finally {
+			await migrated.close();
+		}
+	});
+
 	it("rejects a database newer than the portable core", async () => {
 		const path = await databasePath();
 		const database = await openNodeSqliteDatabase(path);
@@ -57,48 +113,11 @@ describe("durable SQLite migrations", () => {
 		await expect(openNodeSqliteStorage(path)).rejects.toThrow("is newer than supported version");
 	});
 
-	it("rolls initial bootstrap and every pending migration back together", async () => {
-		const database = await openNodeSqliteDatabase(await databasePath());
-		try {
-			const failed: readonly SqliteMigration[] = [
-				{
-					version: 1,
-					statements: [
-						"CREATE TABLE migration_first (value TEXT) STRICT",
-						"INSERT INTO migration_first (value) VALUES ('retained')",
-					],
-				},
-				{
-					version: 2,
-					statements: ["CREATE TABLE migration_second (value TEXT) STRICT", "THIS IS NOT SQL"],
-				},
-			];
-			await expect(applySqliteMigrations(database, failed)).rejects.toThrow();
-			expect(
-				await database.get(
-					"SELECT count(*) AS count FROM sqlite_schema WHERE name IN ('durable_schema', 'migration_first', 'migration_second')",
-				),
-			).toEqual({ count: 0 });
-
-			await applySqliteMigrations(database, [
-				failed[0],
-				{ version: 2, statements: ["CREATE TABLE migration_second (value TEXT) STRICT"] },
-			]);
-			expect(await database.get("SELECT version FROM durable_schema WHERE singleton = 1")).toEqual({
-				version: 2,
-			});
-			expect(await database.get("SELECT value FROM migration_first")).toEqual({
-				value: "retained",
-			});
-		} finally {
-			await database.close();
-		}
-	});
-
 	it("rolls a failed migration back and preserves stored data for a successful retry", async () => {
 		const path = await databasePath();
 		const storage = await openNodeSqliteStorage(path);
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } },
 				{

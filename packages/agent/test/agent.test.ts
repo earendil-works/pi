@@ -1,3 +1,4 @@
+import { type ClientIdentity, PI_ATTRIBUTION } from "@earendil-works/pi-ai";
 import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
@@ -1197,5 +1198,32 @@ describe("Agent", () => {
 
 		await agent.prompt("hello again");
 		expect(receivedSessionId).toBe("session-def");
+	});
+
+	it("attributes requests to pi by default and merges a configured identity over it", async () => {
+		const received: (ClientIdentity | undefined)[] = [];
+		const agent = new Agent({
+			streamFn: (_model, _context, options) => {
+				received.push(options?.identity);
+				const stream = createAssistantMessageEventStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("ok") });
+				});
+				return stream;
+			},
+		});
+
+		await agent.prompt("hello");
+		const acme = { name: "acme", url: "https://acme.example" };
+		agent.identity = { userAgent: "short", attribution: acme };
+		await agent.prompt("hello again");
+		agent.identity = { userAgent: "short" };
+		await agent.prompt("and again");
+
+		expect(received).toEqual([
+			{ attribution: PI_ATTRIBUTION },
+			{ attribution: acme, userAgent: "short" },
+			{ attribution: PI_ATTRIBUTION, userAgent: "short" },
+		]);
 	});
 });

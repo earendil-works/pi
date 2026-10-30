@@ -1,0 +1,5 @@
+{
+	"name": "@example/forecast",
+	"private": true,
+	"type": "module"
+}

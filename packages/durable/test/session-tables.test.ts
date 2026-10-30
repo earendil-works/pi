@@ -24,12 +24,14 @@ const WorkTask = defineTask<{ path: string }, Checkpoint, { ok: boolean }>({
 
 type Progress = { lines: string[] };
 const ProgressDoc = defineDoc<Progress>({
+	checkpointWhen: () => false,
 	kind: "test.progress",
 	version: 1,
 	scope: "task",
 	initial: () => ({ lines: [] }),
 });
 const StepDoc = defineDocFamily<Progress, null>({
+	checkpointWhen: () => false,
 	kind: "test.step",
 	version: 1,
 	family: true,
@@ -39,6 +41,7 @@ const StepDoc = defineDocFamily<Progress, null>({
 
 type Notes = { text: string };
 const NotesDoc = defineDoc<Notes>({
+	checkpointWhen: () => false,
 	kind: "test.notes",
 	version: 1,
 	scope: "conversation",
@@ -429,8 +432,7 @@ describe("Session transaction tables", () => {
 		const publication = publications.at(-1)!;
 		const documents = documentChanges(publication);
 		expect(publication.changes.filter((change) => change.type === "task")).toHaveLength(1);
-		expect(documents.map((document) => document.value)).toEqual([null, null, null]);
-		for (const document of documents) expect(document.ops).toEqual([]);
+		expect(documents.map((document) => document.kind)).toEqual(["retire", "retire", "retire"]);
 		for (const document of documents) expect(document.conversationId).toBe(conversationId);
 		expect(await session.snapshot(ProgressDoc, taskId, context)).toBeUndefined();
 		expect(await session.snapshot(StepDoc, taskId, "committed", context)).toBeUndefined();

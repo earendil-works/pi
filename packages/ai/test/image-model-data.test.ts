@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOpenRouterCatalog, type OpenRouterModelListItem } from "../scripts/openrouter-catalog.ts";
+import { buildOpenRouterCatalog, type OpenRouterModelListItem } from "../catalog/sources/openrouter.ts";
 
 const imageOnly: OpenRouterModelListItem = {
 	id: "example/image-model",
@@ -93,6 +93,7 @@ describe("OpenRouter catalog parsing", () => {
 				input: ["text"],
 				cost: { input: 0.042, output: 0, cacheRead: 0, cacheWrite: 0 },
 				contextWindow: 32000,
+				compat: { imageInput: "state-image-urls", sendImageOptInHeader: false },
 			},
 		]);
 	});

@@ -207,6 +207,11 @@ export const SettingsSchema = Type.Object(
 	{
 		$schema: Type.Optional(Type.String({ description: "JSON Schema reference." })),
 		lastChangelogVersion: Type.Optional(Type.String()),
+		extensionChangelogVersions: Type.Optional(
+			Type.Record(Type.String(), Type.String(), {
+				description: "Last seen changelog version per extension package.",
+			}),
+		),
 		defaultProvider: Type.Optional(Type.String()),
 		defaultModel: Type.Optional(Type.String()),
 		defaultThinkingLevel: Type.Optional(ModelThinkingLevelSchema),
@@ -276,6 +281,13 @@ export const SettingsSchema = Type.Object(
 			Type.Array(Type.String(), {
 				description:
 					'Command used for npm package lookup and installation, in argv form such as ["mise", "exec", "node@20", "--", "npm"].',
+			}),
+		),
+		selfUpdateCommand: Type.Optional(
+			Type.Array(Type.String(), {
+				minItems: 1,
+				description:
+					'Command `pi update` runs to update Pi itself, in argv form such as ["mise", "use", "-g", "npm:{packageName}@{version}"]. Placeholders: {packageName}, {version}, {installSpec}. PI_SELF_UPDATE_COMMAND takes precedence. Global setting only.',
 			}),
 		),
 		collapseChangelog: Type.Optional(

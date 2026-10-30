@@ -18,7 +18,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { SessionImpl } from "../src/session/session.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, chatSetup, openChat, unanswered } from "./chat-support.ts";
-import { ControlledStorage, context } from "./session-support.ts";
+import { ControlledStorage, context, LateResolvingStorage } from "./session-support.ts";
 import { deferred } from "./task-support.ts";
 
 const directories = new Set<string>();
@@ -64,7 +64,7 @@ describe("submissions", () => {
 		const submission = await root.submit({ type: "input", content: "hi" }, context);
 		await busy.reached;
 		const record = await submission.status(context);
-		if (record.status !== "placed") throw new Error(`Unexpected ${record.status}`);
+		if (record.type !== "input" || record.status !== "placed") throw new Error(`Unexpected ${record.status}`);
 		const entry = await root.commit((tx) => tx.entry(UserEntry, record.entry), context);
 		expect(entry?.model).toEqual([{ role: "user", content: "hi", timestamp: 42 }]);
 		const live = await harness.snapshot(LiveDoc, root.id, context);
@@ -163,9 +163,14 @@ describe("submissions", () => {
 			}
 		}
 		const setup = chatSetup();
-		setup.faux.setResponses([unanswered().step]);
-		const { harness, root } = await openChat(new HeldReads(), setup);
-		const submission = await root.submit({ type: "input", content: "hi" }, context);
+		setup.faux.setResponses([unanswered().step, unanswered().step]);
+		const storage = new HeldReads();
+		const first = await openChat(storage, setup);
+		const { id } = await first.root.submit({ type: "input", content: "hi" }, context);
+		await first.harness.close(context);
+		// Reopen: the Session caches the submissions it writes, so only a reopened one reads it from Storage.
+		const { harness } = await openChat(storage.reopen(), setup);
+		const submission = (await harness.submission(id, context))!;
 		hold = true;
 		const waiting = submission.wait(context);
 		await entered.promise;
@@ -273,6 +278,25 @@ describe("submissions", () => {
 		expect(Counter.is(counter)).toBe(true);
 		expect(AssistantEntry.is(counter)).toBe(false);
 		expect([UserEntry.kind, AssistantEntry.kind]).toEqual(["pi.user", "pi.assistant"]);
+		await harness.close(context);
+	});
+
+	it("resumes a wait only once observeCommits() observers saw the commit that settled it", async () => {
+		const setup = chatSetup();
+		setup.faux.setResponses([fauxAssistantMessage("hi")]);
+		const { harness, root } = await openChat(new LateResolvingStorage(), setup);
+		const settled = new Set<SubmissionId>();
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of publication.changes) {
+					if (change.type === "submission" && change.value.status === "done") settled.add(change.value.id);
+				}
+			},
+			end: () => {},
+		});
+		const submission = await root.submit({ type: "input", content: "hello" }, context);
+		await submission.wait(context);
+		expect(settled.has(submission.id)).toBe(true);
 		await harness.close(context);
 	});
 });

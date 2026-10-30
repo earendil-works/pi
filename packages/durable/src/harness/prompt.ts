@@ -26,7 +26,7 @@ export async function renderSections<Tool extends ToolRegistration>(
 	sections: readonly PromptSection<Tool>[],
 	input: PromptInput<Tool>,
 	shown: ReadonlyMap<string, string>,
-	report: (error: unknown) => void,
+	report: (error: unknown, section: PromptSection<Tool>) => void,
 	context: Context,
 ): Promise<Map<string, string>> {
 	const desired = new Map<string, string>();
@@ -36,7 +36,7 @@ export async function renderSections<Tool extends ToolRegistration>(
 			text = await section.render(input, context);
 		} catch (error) {
 			if (context.abortSignal?.aborted) throw error;
-			report(error);
+			report(error, section);
 			const kept = shown.get(section.key);
 			if (kept !== undefined) desired.set(section.key, kept);
 			continue;

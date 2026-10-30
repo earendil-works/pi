@@ -1,10 +1,26 @@
-import type { AttachedReplicatedState, Context, JsonValue } from "@earendil-works/chord";
+import type { Context, JsonValue } from "@earendil-works/chord";
 import { withAbortSignal, withoutAbortSignal } from "@earendil-works/chord/context";
+import type { Models } from "@earendil-works/pi-ai";
+import {
+	type ClientIdentity,
+	mergeClientIdentity,
+	PI_ATTRIBUTION,
+	withClientIdentity,
+} from "@earendil-works/pi-ai/utils/identity";
+import {
+	createTypedMetrics,
+	NOOP_TELEMETRY_CONTEXT,
+	NOOP_TELEMETRY_METRICS,
+	type SpanAttributes,
+	type TelemetryContext,
+} from "@earendil-works/pi-telemetry";
 import { ResetEntry } from "../entries.ts";
 import type { ExecutionEnv } from "../env/index.ts";
 import { contained, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
+import { hostTimers } from "../timers.ts";
 import type {
+	CommitOptions,
 	ConversationId,
 	ConversationOwnership,
 	ConversationRecord,
@@ -12,7 +28,11 @@ import type {
 	EntryId,
 	EntryQuery,
 	EntryRecord,
+	Observation,
+	Observer,
 	Page,
+	Report,
+	ReportInfo,
 	Storage,
 	SubmissionId,
 	TaskId,
@@ -24,12 +44,13 @@ import { AgentDoc, configure, createAgent, resolveAgent, resolveSettings } from 
 import { createCompaction } from "./compaction.ts";
 import { readContext } from "./context.ts";
 import { InboxDoc, withdrawQueuedInputs } from "./inbox.ts";
-import { LiveDoc, settleSchedulerOutcome } from "./live.ts";
+import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts";
 import { ProviderDoc } from "./provider.ts";
 import { BUILTIN_TASKS } from "./registry.ts";
 import { type InvocationBinding, TaskScheduler } from "./scheduler.ts";
 import { Submissions } from "./submissions.ts";
 import { type TaskGraph, TaskGraphView, type TaskGraphWatch } from "./task-graph.ts";
+import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
 import type {
 	Agent,
 	AgentChange,
@@ -43,16 +64,18 @@ import type {
 	ConversationWatch,
 	HarnessInspection,
 	HarnessOptions,
+	HarnessSettings,
 	Harness as HarnessType,
 	RegistrySnapshot,
 	SettledTask,
 	Submission,
 	SubmissionDraft,
 	ToolRegistration,
+	Wake,
 } from "./types.ts";
 import { addUsageState, UsageDoc, type UsageState } from "./usage.ts";
-import { scanAll } from "./util.ts";
-import { type ConversationView, ConversationViews } from "./view.ts";
+import { conversationEntries, scanAll } from "./util.ts";
+import { type ConversationView, ConversationViews, type ConversationWindow } from "./view.ts";
 
 const SCAN_PAGE_SIZE = 256;
 
@@ -100,11 +123,15 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		return this.#host.harness.commitWith((tx) => configure(tx, this.id, change), context);
 	}
 
-	submit(submission: SubmissionDraft, context: Context): Promise<Submission> {
-		return this.#host.submissions.submit(this.id, submission, context);
+	submit(submission: SubmissionDraft, context: Context): Promise<Submission>;
+	submit(tx: Tx, submission: SubmissionDraft): Promise<SubmissionId>;
+	submit(first: SubmissionDraft | Tx, second: Context | SubmissionDraft): Promise<Submission | SubmissionId> {
+		// The overloads pair a draft with a context, and anything else (a transaction) with a draft.
+		if ("type" in first) return this.#host.submissions.submit(this.id, first, second as Context);
+		return this.#host.submissions.admit(first, this.id, second as SubmissionDraft);
 	}
 
-	compact(instructions: string | undefined, context: Context): Promise<TaskId<CompactionResult>> {
+	async compact(instructions: string | undefined, context: Context): Promise<TaskId<CompactionResult>> {
 		this.#host.tasks.resume();
 		const input = { reason: "manual", ...(instructions === undefined ? {} : { instructions }) } as const;
 		return this.#host.harness.commitWith((tx) => createCompaction(tx, this.id, input), context);
@@ -119,8 +146,8 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		await this.#host.submissions.submit(this.id, { type: "write", entry }, context);
 	}
 
-	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T> {
-		return this.#host.harness.commitWith(change, context, { conversationId: this.id });
+	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context, options?: CommitOptions): Promise<T> {
+		return this.#host.harness.commitWith(change, context, { conversationId: this.id }, options);
 	}
 
 	context(context: Context, options?: { readonly at?: EntryId }): Promise<ContextView> {
@@ -133,83 +160,112 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		cursor: Cursor | undefined,
 		context: Context,
 	): Promise<Page<EntryRecord, Cursor>> {
-		const bounded: EntryQuery = {
-			conversationId: this.id,
-			...(query.minEntryId === undefined ? {} : { minEntryId: query.minEntryId }),
-			...(query.maxEntryId === undefined ? {} : { maxEntryId: query.maxEntryId }),
-			...(query.order === undefined ? {} : { order: query.order }),
-		};
-		return this.#host.harness.readOnLine(() => this.#host.storage.scanEntries(bounded, limit, cursor, context));
+		const scan = conversationEntries(this.id, query);
+		return this.#host.harness.readOnLine((storage) => storage.scanEntries(scan, limit, cursor, context));
 	}
 
 	fork(at: EntryId, options: ConversationCreateOptions, context: Context): Promise<Conversation> {
 		return this.#host.create({ kind: "fork", parentId: this.id, at, ownership: options.ownership }, options, context);
 	}
 
-	abort(context: Context, options?: ConversationAbortOptions): Promise<void> {
+	async abort(context: Context, options?: ConversationAbortOptions): Promise<void> {
 		this.#host.tasks.resume();
 		return this.#host.tasks.abortConversation(this.id, options?.background === true, context);
 	}
 
-	waitForIdle(context: Context): Promise<void> {
+	async waitForIdle(context: Context): Promise<void> {
 		this.#host.tasks.resume();
 		return this.#host.tasks.waitForIdle(this.id, context);
 	}
 
-	viewState(context: Context): Promise<AttachedReplicatedState<ConversationView>> {
-		return this.#host.views.state(this.id, context);
+	watch(context: Context, window?: ConversationWindow): Promise<ConversationWatch> {
+		return this.#host.views.watch(this.id, context, window);
 	}
+}
 
-	watch(context: Context): Promise<ConversationWatch> {
-		return this.#host.views.watch(this.id, context);
-	}
+/** Request identity of a Harness's model requests: pi-ai's defaults with provider attribution to pi. */
+export const DEFAULT_HARNESS_IDENTITY: ClientIdentity = { attribution: PI_ATTRIBUTION };
+
+/**
+ * `HarnessOptions.models` as a function with `HarnessOptions.identity` applied. A plain `Models` is wrapped once; a
+ * function's result is wrapped at each call.
+ */
+function currentModels(models: HarnessOptions["models"], identity: ClientIdentity | undefined): () => Models {
+	const merged = mergeClientIdentity(DEFAULT_HARNESS_IDENTITY, identity) ?? DEFAULT_HARNESS_IDENTITY;
+	if (typeof models === "function") return () => withClientIdentity(models(), merged);
+	const wrapped = withClientIdentity(models, merged);
+	return () => wrapped;
+}
+
+/** `HarnessOptions.settings` as a function: plain settings, or none, are returned at every call. */
+function currentSettings(settings: HarnessOptions["settings"]): () => HarnessSettings | undefined {
+	return typeof settings === "function" ? settings : () => settings;
 }
 
 /** Session kernel extended with conversation handles and a registry. */
 class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements HarnessType {
 	readonly #options: HarnessOptions<Tool>;
-	readonly #report: (error: unknown) => void;
+	readonly #hostSettings: () => HarnessSettings | undefined;
+	readonly #report: (error: unknown, info: ReportInfo, context?: Context) => void;
 	readonly #host: ConversationHost<Tool>;
 	readonly #tasks: TaskScheduler;
 	readonly #submissions: Submissions;
 	readonly #taskGraph: TaskGraphView;
 
 	constructor(rawStorage: Storage, options: HarnessOptions<Tool>, context: Context) {
-		const report = safeReport(options.onReport);
+		const report = safeReport(options.onReport, options.telemetry ?? NOOP_TELEMETRY_CONTEXT);
 		const now = safeNow(options.now, report);
-		// Read at each use, as all settings are, but only this field: it is read on every commit.
-		super(rawStorage, now, () => options.settings?.documentRetentionMs);
+		const hostSettings = currentSettings(options.settings);
+		// Read at each use, as all settings are, but only these fields: they are read on every commit.
+		super(
+			rawStorage,
+			now,
+			() => hostSettings()?.documentRetentionMs,
+			options.setTimer,
+			options.readOnly === true,
+			() => hostSettings()?.progress?.persistWithinMs,
+		);
 		// Every component reads and writes through the Session's failure guard: `rawStorage` serves only `super()`.
 		const storage = this.storage;
 		this.#options = options;
 		this.#report = report;
-		const settings = () => resolveSettings(options.settings);
+		this.#hostSettings = hostSettings;
+		const settings = () => resolveSettings(hostSettings());
 		this.#tasks = new TaskScheduler({
+			telemetry: options.telemetry,
 			session: this,
 			storage,
 			registry: options.registry,
-			models: options.models,
+			models: currentModels(options.models, options.identity),
 			agent: (id, snapshot, callContext) => this.resolveAgent(id, snapshot as RegistrySnapshot<Tool>, callContext),
 			settings,
 			env: (id, callContext) => this.buildEnv(id, callContext),
 			now,
+			onWake: options.onWake,
+			timers: hostTimers(options.setTimer, (error) => report(error, { kind: "host_error", callback: "setTimer" })),
+			writeAtClose: (writes) => this.writeAtClose(writes),
 			report: this.#report,
+			limitsRestarts: (kind) => LIMITS_RESTARTS.has(kind),
 			settleOutcome: settleSchedulerOutcome,
 			withdrawInputs: withdrawQueuedInputs,
 			conversation: async (id, binding, callContext) => {
-				const record = await this.readOnLine(() => storage.conversation(id, callContext));
+				const record = await this.readOnLine((line) => line.conversation(id, callContext));
 				return record === undefined ? undefined : boundConversation(id, binding, this.#submissions, this.#tasks);
 			},
 			context: withoutAbortSignal(context),
+			readOnly: options.readOnly === true,
 		});
-		this.#submissions = new Submissions(this, storage, now, settings, () => this.#tasks.resume());
-		this.#taskGraph = new TaskGraphView(this, storage);
+		this.#submissions = new Submissions(this, now, settings, () => this.#tasks.resume(), options.telemetry);
+		this.#taskGraph = new TaskGraphView(this, {
+			blocked: (record) => this.#tasks.blockedReason(record),
+			subscribeBlocked: (listener) => this.#tasks.subscribeBlocked(listener),
+		});
 		this.#host = {
 			harness: this,
 			storage,
 			tasks: this.#tasks,
 			submissions: this.#submissions,
-			views: new ConversationViews(this, storage),
+			views: new ConversationViews(this),
 			now,
 			create: (target, createOptions, context) => this.#create(target, createOptions, context),
 		};
@@ -223,7 +279,9 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 	): Promise<Agent<Tool>> {
 		const registry = snapshot ?? this.#options.registry.snapshot();
 		const state = await this.snapshot(AgentDoc, id, context);
-		return resolveAgent(state, registry, resolveSettings(this.#options.settings), this.#report);
+		return resolveAgent(state, registry, resolveSettings(this.#hostSettings()), (error, extension) =>
+			this.#report(error, { kind: "extension_error", conversationId: id, extension }, context),
+		);
 	}
 
 	/** Build a conversation's environment from its current `cwd`; `undefined` without an `env` option. */
@@ -244,8 +302,13 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		this.#tasks.resume();
 	}
 
+	wake(): Wake {
+		this.assertUsable();
+		return this.#tasks.wake();
+	}
+
 	getTask<R>(id: TaskId<R>, context: Context): Promise<TaskRecord<JsonValue, JsonValue, R> | undefined> {
-		return this.readOnLine(() => this.storage.task(id, context)) as Promise<
+		return this.readOnLine((storage) => storage.task(id, context)) as Promise<
 			TaskRecord<JsonValue, JsonValue, R> | undefined
 		>;
 	}
@@ -256,10 +319,10 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 	}
 
 	inspect(context: Context): Promise<HarnessInspection> {
-		return this.readOnLine(async () => {
+		return this.readOnLine(async (storage) => {
 			const { scheduling, tasks } = await this.#tasks.inspect(this.#options.registry.snapshot());
 			const scan = (status: "queued" | "placed") =>
-				scanAll((cursor) => this.storage.scanSubmissions({ status }, SCAN_PAGE_SIZE, cursor, context));
+				scanAll((cursor) => storage.scanSubmissions({ status }, SCAN_PAGE_SIZE, cursor, context));
 			const submissions = [...(await scan("queued")), ...(await scan("placed"))].sort((a, b) => a.id - b.id);
 			return { scheduling, tasks, submissions };
 		});
@@ -281,20 +344,20 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#tasks.abort(id, context);
 	}
 
-	waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>> {
+	async waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>> {
 		this.#tasks.resume();
 		return this.#tasks.waitForTask(id, context) as Promise<SettledTask<R>>;
 	}
 
-	waitForIdle(context: Context): Promise<void> {
+	async waitForIdle(context: Context): Promise<void> {
 		this.#tasks.resume();
 		return this.#tasks.waitForIdle(undefined, context);
 	}
 
 	/** Sum every conversation's committed `pi.usage`. Each document is read at its own point; totals only grow. */
 	async usage(context: Context): Promise<UsageState> {
-		const conversations = await this.readOnLine(() =>
-			scanAll((cursor) => this.storage.scanConversations({}, SCAN_PAGE_SIZE, cursor, context)),
+		const conversations = await this.readOnLine((storage) =>
+			scanAll((cursor) => storage.scanConversations({}, SCAN_PAGE_SIZE, cursor, context)),
 		);
 		const total = UsageDoc.definition.initial();
 		for (const { id } of conversations) {
@@ -304,12 +367,23 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return total;
 	}
 
-	taskGraph(context: Context): Promise<AttachedReplicatedState<TaskGraph>> {
-		return this.#taskGraph.state(context);
-	}
-
 	watchTaskGraph(context: Context): Promise<TaskGraphWatch> {
 		return this.#taskGraph.watch(context);
+	}
+
+	async observeTaskGraph(observer: Observer<TaskGraph>, context: Context): Promise<Observation<TaskGraph>> {
+		this.assertUsable();
+		return this.#taskGraph.observe(observer, context);
+	}
+
+	async observeConversation(
+		id: ConversationId,
+		observer: Observer<ConversationView>,
+		context: Context,
+		window?: ConversationWindow,
+	): Promise<Observation<ConversationView>> {
+		this.assertUsable();
+		return this.#host.views.observe(id, observer, context, window);
 	}
 
 	root(
@@ -321,7 +395,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 
 	async conversation(id: ConversationId, context: Context): Promise<Conversation | undefined> {
 		this.assertUsable();
-		const record = await this.readOnLine(() => this.storage.conversation(id, context));
+		const record = await this.readOnLine((storage) => storage.conversation(id, context));
 		return record === undefined ? undefined : new ConversationImpl(record.id, this.#host);
 	}
 
@@ -329,8 +403,13 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#create({ kind: "independent", ownership: options.ownership }, options, context);
 	}
 
-	override report(error: unknown): void {
-		this.#report(error);
+	override report(error: unknown, info: ReportInfo = { kind: "listener_error" }, context?: Context): void {
+		this.#report(error, info, context);
+	}
+
+	/** The ownership memberships a commit's task changes write, from the scheduler's index. */
+	protected override membershipKeys(tx: Transaction): readonly string[] | Promise<readonly string[]> {
+		return this.#tasks.membershipKeys(tx);
 	}
 
 	/** Signal and join task invocations after the close listeners and before Storage closes; writes no task outcome. */
@@ -372,20 +451,62 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 	}
 }
 
-/** `onReport` that cannot fail: it is the last place an error goes, so its own throw or rejection is dropped. */
-function safeReport(onReport: ((error: unknown) => void) | undefined): (error: unknown) => void {
-	return (error) =>
-		contained(
-			() => onReport?.(error),
-			() => {},
-		);
+/**
+ * Report to `onReport`, then count it and record its event. Never throws, since reports also come from inside Storage's
+ * `adopt`: a throwing `onReport` is dropped, and so is a throwing metric or event, as reporting it would report again.
+ */
+function safeReport(
+	onReport: ((report: Report) => void) | undefined,
+	telemetry: TelemetryContext,
+): (error: unknown, info: ReportInfo, context?: Context) => void {
+	const reports = createTypedMetrics(telemetry.metrics ?? NOOP_TELEMETRY_METRICS, [DURABLE_TELEMETRY_SCHEMA]).counter(
+		"pi.durable.reports",
+	);
+	return (error, info, context) => {
+		if (onReport !== undefined) {
+			contained(
+				() => onReport({ ...info, error }),
+				() => {},
+			);
+		}
+		const attributes: SpanAttributes = {
+			type: info.kind,
+		};
+		switch (info.kind) {
+			case "task_faulted":
+			case "task_interrupted":
+			case "task_outdated":
+				attributes.reason = info.reason;
+				attributes.extension = info.extension;
+				attributes["task.id"] = info.task.id;
+				break;
+			case "migration_failed":
+			case "task_error":
+			case "extension_error":
+				attributes.extension = info.extension;
+				attributes["task.id"] = info.task?.id;
+				break;
+			case "host_error":
+				attributes["task.id"] = info.task?.id;
+				break;
+		}
+		try {
+			reports.add(1, { type: info.kind });
+			context?.telemetry.addEvent("pi.durable.report", attributes);
+		} catch {
+			// Dropped: see above.
+		}
+	};
 }
 
 /**
  * The host clock, falling back to `Date.now` when it throws: a broken clock must not stop commits. The first throw is
  * reported; the clock is read in every task change, so later ones are not.
  */
-export function safeNow(now: (() => number) | undefined, report: (error: unknown) => void): () => number {
+export function safeNow(
+	now: (() => number) | undefined,
+	report: (error: unknown, info: ReportInfo) => void,
+): () => number {
 	if (now === undefined) return Date.now;
 	let reported = false;
 	return () => {
@@ -395,7 +516,7 @@ export function safeNow(now: (() => number) | undefined, report: (error: unknown
 			// Set first: a report handler that reads the clock again must not report again.
 			if (!reported) {
 				reported = true;
-				report(error);
+				report(error, { kind: "host_error", callback: "now" });
 			}
 			return Date.now();
 		}
@@ -419,18 +540,30 @@ function boundConversation(
 			return operation(bind(context));
 		};
 	};
+	function submit(draft: SubmissionDraft, context: Context): Promise<Submission>;
+	function submit(tx: Tx, draft: SubmissionDraft): Promise<SubmissionId>;
+	async function submit(
+		first: SubmissionDraft | Tx,
+		second: Context | SubmissionDraft,
+	): Promise<Submission | SubmissionId> {
+		binding.check();
+		// The overloads pair a draft with a context, and anything else (a transaction) with a draft.
+		if (!("type" in first)) {
+			// The caller's commit carries its own context, so the invocation's abort is checked here.
+			binding.signal.throwIfAborted();
+			return submissions.admit(first, id, second as SubmissionDraft);
+		}
+		const submission = await submissions.submit(id, first, bind(second as Context));
+		return {
+			id: submission.id,
+			status: bound((callContext) => submission.status(callContext)),
+			wait: bound((callContext) => submission.wait(callContext)),
+			abort: bound((callContext) => submission.abort(callContext)),
+		};
+	}
 	return {
 		id,
-		submit: async (draft, context) => {
-			binding.check();
-			const submission = await submissions.submit(id, draft, bind(context));
-			return {
-				id: submission.id,
-				status: bound((callContext) => submission.status(callContext)),
-				wait: bound((callContext) => submission.wait(callContext)),
-				abort: bound((callContext) => submission.abort(callContext)),
-			};
-		},
+		submit,
 		abort: async (context, options) => {
 			binding.check();
 			return tasks.abortConversation(id, options?.background === true, bind(context));

@@ -91,3 +91,22 @@ test("pins published and private dependencies without touching registry aliases,
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+test("writes the pi-ai version constant", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-sync-versions-"));
+	try {
+		await writeManifest(root, "packages/ai", {
+			name: "@earendil-works/pi-ai",
+			version: "2.0.0",
+		});
+		const versionPath = join(root, "packages/ai/src/utils/version.ts");
+		await mkdir(join(root, "packages/ai/src/utils"), { recursive: true });
+		await writeFile(versionPath, 'export const PI_AI_VERSION = "1.0.0";\n');
+
+		const result = runSyncVersions(root);
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(await readFile(versionPath, "utf8"), /export const PI_AI_VERSION = "2\.0\.0";\n$/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});

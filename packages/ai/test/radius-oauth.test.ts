@@ -128,6 +128,39 @@ describe("Radius OAuth", () => {
 		expect(fetchMock).toHaveBeenCalledOnce();
 	});
 
+	it("rejects an authorization endpoint that is not an http(s) URL", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => jsonResponse({ authorizationEndpoint: "file:///Users/victim/Downloads/payload.app" })),
+		);
+		const events: AuthEvent[] = [];
+
+		const oauth = createRadiusOAuth({ name: "Radius", gateway: GATEWAY });
+		await expect(oauth.login(interaction("browser", events))).rejects.toThrow(
+			`Invalid Radius OAuth config from ${GATEWAY}`,
+		);
+		expect(events).toEqual([]);
+	});
+
+	it("rejects a device verification URI that is not an http(s) URL", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () =>
+				jsonResponse({
+					device_code: "device-code",
+					user_code: "ABCD-1234",
+					verification_uri: "file:///Users/victim/Downloads/payload.app",
+					expires_in: 600,
+				}),
+			),
+		);
+		const events: AuthEvent[] = [];
+
+		const oauth = createRadiusOAuth({ name: "Radius", gateway: GATEWAY });
+		await expect(oauth.login(interaction("device-code", events))).rejects.toThrow("Untrusted verification_uri");
+		expect(events).toEqual([]);
+	});
+
 	it("exchanges the browser callback code before showing the sign-in page", async () => {
 		let tokenStatus = 400;
 		vi.stubGlobal(

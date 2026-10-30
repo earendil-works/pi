@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-codemode",
-	"version": "1.3.0",
+	"version": "1.4.0",
 	"description": "Sandboxed JavaScript execution where the only capability is calling injected tools",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -71,6 +71,6 @@
 	},
 	"devDependencies": {
 		"shx": "0.3.4",
-		"vitest": "4.1.11"
+		"vitest": "4.1.12"
 	}
 }

@@ -324,6 +324,8 @@ describe("RemoteExecutionEnv against NodeExecutionEnv", () => {
 				env,
 				outputWindow: undefined,
 				output: (chunk: string | Uint8Array) => output.push(String(chunk)),
+				// As the Harness: the output so far (these outputs stay below the tool's limits).
+				retainedOutput: () => ({ text: output.join(""), truncated: false }),
 				diagnostic: () => {},
 				details: async () => {},
 			}) as unknown as ToolExecutionApi;
@@ -348,12 +350,17 @@ describe("RemoteExecutionEnv against NodeExecutionEnv", () => {
 			[createReadTool(), { path: "bom.txt" }],
 			[createReadTool(), { path: "bad.txt" }],
 			[createReadTool(), { path: "missing.txt" }],
-			[createBashTool(), { command: "cat text.txt; echo err >&2; exit 0" }],
+			// stdout and stderr are separate pipes, read concurrently: their order relative to each other is not fixed,
+			// so each case writes to one of them.
+			[createBashTool(), { command: "cat text.txt; exit 0" }],
+			[createBashTool(), { command: "echo err >&2; exit 0" }],
 			[createBashTool(), { command: "exit 3" }],
 			[createBashTool(), { command: "printf 'a\\nb'; ls" }],
 		];
 		for (const [tool, args] of cases) {
 			const expected = normalize(await run(local, tool, args), roots[0]);
+			// A bash case returns a result (a nonzero exit is an error result): a throw on both sides would compare equal.
+			if (tool.name === "bash") expect(expected, JSON.stringify(args)).toHaveProperty("result");
 			const actual = normalize(await run(remote, tool, args), roots[1]);
 			expect(actual, JSON.stringify(args)).toEqual(expected);
 		}

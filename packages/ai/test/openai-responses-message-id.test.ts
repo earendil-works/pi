@@ -15,7 +15,7 @@ const usage: Usage = {
 
 describe("OpenAI Responses message ID conversion", () => {
 	it("generates unique fallback message IDs for multiple text blocks in one assistant turn", () => {
-		const model = getModel("openai-codex", "gpt-5.5");
+		const model = getModel("openai-codex", "gpt-6.1-sol");
 		const assistant: AssistantMessage = {
 			role: "assistant",
 			content: [

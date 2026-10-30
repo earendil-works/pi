@@ -13,7 +13,7 @@ const session = createSession(new MemoryStorage());
 // all of them exist or none do.
 
 // A task definition needs a name, a version, the task's starting state, a
-// handler for every phase, and an abort handler (12-tasks.ts runs a task).
+// handler for every phase, and an abort handler (11-tasks.ts runs a task).
 // This example only creates the task record; a plain Session never runs it.
 const Supervisor = defineTask<null, { phase: "ready" }, null>({
 	name: "example.supervisor",
@@ -29,6 +29,7 @@ const Supervisor = defineTask<null, { phase: "ready" }, null>({
 const AgentRegistry = defineDoc<{
 	agents: Record<string, { conversationId: ConversationId; requestId: string }>;
 }>({
+	checkpointWhen: () => false,
 	kind: "example.agent-registry",
 	version: 1,
 	scope: "conversation",

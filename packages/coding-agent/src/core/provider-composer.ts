@@ -7,6 +7,7 @@ import {
 	type AuthInteraction,
 	type AuthResult,
 	type ClassifierApi,
+	type ClassifierModel,
 	type Credential,
 	type ImageApi,
 	isModelType,
@@ -83,6 +84,7 @@ export interface ProviderClassifierModelConfig extends ProviderModelConfigBase {
 	type: "classifier";
 	api?: ClassifierApi;
 	contextWindow: number;
+	compat?: ClassifierModel<ClassifierApi>["compat"];
 }
 
 export type ProviderModelConfig = ProviderChatModelConfig | ProviderImageModelConfig | ProviderClassifierModelConfig;
@@ -324,9 +326,12 @@ function applyModelsJson(
 
 	const models: AnyModel[] = baseModels.map((model) => {
 		const baseUrl = config.oauth === "radius" ? model.baseUrl : (config.baseUrl ?? model.baseUrl);
-		return isModelType(model, "chat")
-			? { ...model, baseUrl, compat: mergeCompat(model.compat, config.compat) }
-			: { ...model, baseUrl };
+		if (isModelType(model, "chat")) return { ...model, baseUrl, compat: mergeCompat(model.compat, config.compat) };
+		// Classifier APIs read their own compat fields, such as how a System One service takes images.
+		if (isModelType(model, "classifier") && config.compat) {
+			return { ...model, baseUrl, compat: { ...model.compat, ...config.compat } };
+		}
+		return { ...model, baseUrl };
 	});
 	for (const definition of config.models ?? []) {
 		const existingIndex = models.findIndex((model) => isModelType(model, "chat") && model.id === definition.id);

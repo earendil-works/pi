@@ -966,6 +966,98 @@ Inline \(A_{sf}\)`,
 			);
 		});
 
+		// Regression test for https://github.com/earendil-works/pi/issues/11483
+		it("falls back to raw source when display math is wider than the content width", () => {
+			const source = [
+				"\\[",
+				String.raw`\frac{\partial^2 u}{\partial x^2} + \frac{\partial^2 u}{\partial y^2} = \sum_{i=1}^{n} \frac{1}{i^2} + \int_0^1 f(x)\,dx`,
+				"\\]",
+			].join("\n");
+			const render = (width: number) =>
+				new Markdown(source, 0, 0, defaultMarkdownTheme).render(width).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(render(40), [
+				"∂² u   ∂² u   n   1   1",
+				"──── + ──── = ∑   ── +∫ f(x) dx",
+				"∂ x²   ∂ y²  i=1  i²  0",
+			]);
+
+			const narrow = render(30);
+			assert.strictEqual(narrow[0], "\\[");
+			assert.strictEqual(narrow[narrow.length - 1], "\\]");
+			assert.ok(!narrow.some((line) => line.includes("─")));
+			assert.ok(narrow.every((line) => line.length <= 30));
+		});
+
+		// Regression tests for https://github.com/earendil-works/pi/issues/11159
+		describe("unclosed display math before tables (#11159)", () => {
+			const table = ["| A | B |", "|---|---|", "| 1 | 2 |"];
+			const renderedTable = ["┌───┬───┐", "│ A │ B │", "├───┼───┤", "│ 1 │ 2 │", "└───┴───┘"];
+			const render = (source: string) =>
+				new Markdown(source, 0, 0, defaultMarkdownTheme).render(80).map((line) => stripAnsi(line).trimEnd());
+
+			it("renders a table after an orphan $$ opener", () => {
+				const source = ["Intro", "", "$$", "", ...table, "", "After"].join("\n");
+				assert.deepStrictEqual(render(source), ["Intro", "", "$$", "", ...renderedTable, "", "After"]);
+			});
+
+			it("renders a table after an orphan $$ opener with math-like content", () => {
+				const source = ["$$", "x = 1", "", ...table].join("\n");
+				assert.deepStrictEqual(render(source), ["$$", "x = 1", "", ...renderedTable]);
+			});
+
+			it("does not pair an unclosed $$ with a later $$ across a table", () => {
+				const source = ["Intro", "", "$$", "x = 1", "", ...table, "", "$$", "y^2", "$$"].join("\n");
+				assert.deepStrictEqual(render(source), ["Intro", "", "$$", "x = 1", "", ...renderedTable, "", "y²"]);
+			});
+
+			it("renders a single-column table with a pipe-free aligned delimiter after an orphan $$", () => {
+				const source = ["$$", "", "| A |", ":---:", "| 1 |"].join("\n");
+				assert.deepStrictEqual(render(source), ["$$", "", "┌───┐", "│ A │", "├───┤", "│ 1 │", "└───┘"]);
+			});
+
+			it("renders a table after an orphan \\[ opener", () => {
+				const source = ["\\\\[", "x^2", "", ...table].join("\n");
+				assert.deepStrictEqual(render(source), ["", "\\[", "x^2", "", ...renderedTable]);
+			});
+
+			it("does not pair an unclosed \\[ with a later \\[ across a table", () => {
+				const source = ["\\\\[", "x = 1", "", ...table, "", "\\\\[", "y^2", "\\\\]"].join("\n");
+				assert.deepStrictEqual(render(source), [
+					"",
+					"\\[",
+					"x = 1",
+					"",
+					...renderedTable,
+					"",
+					"\\",
+					"",
+					"\\[",
+					"y^2",
+					"\\\\]",
+				]);
+			});
+
+			it("renders a table with a pipe-free header after an orphan $$", () => {
+				const source = ["$$", "x^2", "", "Value", "| --- |", "1"].join("\n");
+				assert.deepStrictEqual(render(source), [
+					"$$",
+					"x^2",
+					"",
+					"┌───────┐",
+					"│ Value │",
+					"├───────┤",
+					"│ 1     │",
+					"└───────┘",
+				]);
+			});
+
+			it("still renders closed multi-line display math followed by a table", () => {
+				const source = ["$$", "a", "+ b", "$$", "", ...table].join("\n");
+				assert.deepStrictEqual(render(source), ["a + b", "", ...renderedTable]);
+			});
+		});
+
 		it("switches from raw to rendered math when a streamed delimiter closes", () => {
 			const markdown = new Markdown(String.raw`Map $\mathbb{C}^3`, 0, 0, defaultMarkdownTheme);
 			assert.deepStrictEqual(
@@ -1298,6 +1390,18 @@ again, hello world`,
 		});
 	});
 
+	describe("Deeply nested blockquotes", () => {
+		// Regression test for https://github.com/earendil-works/pi/issues/11272
+		it("should render quotes nested deeper than the width allows without exploding", () => {
+			const markdown = new Markdown(`${">".repeat(60)}x`, 1, 0, defaultMarkdownTheme);
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
+
+			assert.strictEqual(plainLines.length, 1, `Expected a single line: ${JSON.stringify(plainLines)}`);
+			assert.ok(plainLines[0].endsWith("x"), `Expected content to be kept: ${JSON.stringify(plainLines)}`);
+		});
+	});
+
 	describe("Blockquotes with multiline content", () => {
 		it("should apply consistent styling to all lines in lazy continuation blockquote", () => {
 			// Markdown "lazy continuation" - second line without > is still part of the quote
@@ -1585,9 +1689,90 @@ bar`,
 		});
 	});
 
+	// #10925
+	describe("styled words at the wrap boundary", () => {
+		it("should not start the next line with a space or carry styles into padding", () => {
+			const markdown = new Markdown("aaaa **bold** next ~~strk~~ more words", 1, 0, defaultMarkdownTheme, {
+				bgColor: (text) => `\x1b[44m${text}\x1b[49m`,
+			});
+
+			assert.deepStrictEqual(markdown.render(11), [
+				"\x1b[44m aaaa \x1b[1mbold\x1b[22m \x1b[49m",
+				"\x1b[44m next \x1b[9mstrk\x1b[29m \x1b[49m",
+				"\x1b[44m more      \x1b[49m",
+				"\x1b[44m words     \x1b[49m",
+			]);
+		});
+	});
+
+	// #10154
+	describe("CJK emphasis", () => {
+		const tagTheme: MarkdownTheme = {
+			...defaultMarkdownTheme,
+			bold: (text) => `<b>${text}</b>`,
+			italic: (text) => `<i>${text}</i>`,
+		};
+		const render = (text: string) => new Markdown(text, 0, 0, tagTheme).render(80).map((line) => line.trimEnd());
+
+		it("renders emphasis delimited next to CJK punctuation", () => {
+			assert.deepStrictEqual(render("**这是测试。**后面"), ["<b>这是测试。</b>后面"]);
+			assert.deepStrictEqual(render("**一句话说清：**一台机器"), ["<b>一句话说清：</b>一台机器"]);
+			assert.deepStrictEqual(render("**要点到此为止。**20 小时"), ["<b>要点到此为止。</b>20 小时"]);
+			assert.deepStrictEqual(render("字**「引用」**字"), ["字<b>「引用」</b>字"]);
+			assert.deepStrictEqual(render("*斜体。*后面"), ["<i>斜体。</i>后面"]);
+		});
+
+		it("keeps CommonMark flanking rules for non-CJK text", () => {
+			assert.deepStrictEqual(render("**end.**Then next"), ["**end.**Then next"]);
+		});
+	});
+
 	describe("Links", () => {
 		afterEach(() => {
 			resetCapabilitiesCache();
+		});
+
+		it("should stop bare URLs at CJK punctuation and preserve the following text", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			for (const punctuation of "。，；：！？、“”‘’（）【】《》「」『』…—·・〈〉［］｛｝．｡｢｣､･") {
+				for (const url of ["https://example.com", "https://example.com/中文?q=搜索#片段", "www.example.com"]) {
+					const source = `${url}${punctuation}后面的中文`;
+					const output = new Markdown(source, 0, 0, defaultMarkdownTheme).render(160).join("");
+					const href = url.startsWith("www.") ? `http://${url}` : url;
+					assert.ok(output.includes(`\x1b]8;;${href}\x1b\\`), source);
+					assert.ok(stripAnsi(output).includes(`\x1b]8;;\x1b\\${punctuation}后面的中文`), source);
+					assert.strictEqual(stripAnsi(output.replace(/\x1b\]8;;[^\x1b]*\x1b\\/g, "")).trimEnd(), source);
+				}
+			}
+		});
+
+		it("should preserve Chinese characters without punctuation in bare URLs", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			for (const url of [
+				"https://example.com紧接着中文",
+				"https://example.com/中文?q=搜索#片段",
+				"https://example.com/テストー한글",
+			]) {
+				const output = new Markdown(url, 0, 0, defaultMarkdownTheme).render(160).join("");
+				assert.ok(output.includes(`\x1b]8;;${url}\x1b\\`));
+			}
+		});
+
+		it("should preserve CJK punctuation in explicit links and angle autolinks", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const url = "https://example.com/中文，路径·テスト・한글…—。";
+			for (const source of [`[文档](${url})`, `<${url}>`]) {
+				const output = new Markdown(source, 0, 0, defaultMarkdownTheme).render(160).join("");
+				assert.ok(output.includes(`\x1b]8;;${url}\x1b\\`), source);
+			}
+		});
+
+		it("should preserve English punctuation trimming before Chinese punctuation", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const source = "https://example.com.，后面的中文";
+			const output = new Markdown(source, 0, 0, defaultMarkdownTheme).render(160).join("");
+			assert.ok(output.includes("\x1b]8;;https://example.com\x1b\\"));
+			assert.ok(stripAnsi(output).includes("\x1b]8;;\x1b\\.，后面的中文"));
 		});
 
 		it("should not duplicate URL for autolinked emails", () => {

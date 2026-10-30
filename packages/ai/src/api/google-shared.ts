@@ -291,7 +291,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 				? msg.content.filter((c): c is ImageContent => c.type === "image")
 				: [];
 
-			const hasText = textResult.length > 0;
+			const hasText = textResult.trim().length > 0;
 			const hasImages = imageContent.length > 0;
 
 			// Gemini 3+ models support multimodal function responses with images nested inside
@@ -371,11 +371,68 @@ function sanitizeForOpenApi(schema: unknown): unknown {
 	return result;
 }
 
+/** Schema keywords whose values map names to subschemas, so their keys are not schema keywords. */
+const JSON_SCHEMA_NAME_MAPS = new Set([
+	"properties",
+	"patternProperties",
+	"$defs",
+	"definitions",
+	"dependentSchemas",
+	"dependencies",
+]);
+
+/** Keywords containing a subschema or an array of subschemas, not literal data. */
+const JSON_SCHEMA_SUBSCHEMAS = new Set([
+	"additionalProperties",
+	"unevaluatedProperties",
+	"propertyNames",
+	"items",
+	"prefixItems",
+	"additionalItems",
+	"unevaluatedItems",
+	"contains",
+	"allOf",
+	"anyOf",
+	"oneOf",
+	"not",
+	"if",
+	"then",
+	"else",
+	"contentSchema",
+]);
+
+/**
+ * Rewrite string and number `const` values to single-value `enum`s.
+ * Gemini ignores `const` in `parametersJsonSchema` but honors `enum`.
+ */
+function rewriteConstAsEnum(schema: unknown, isNameMap = false): unknown {
+	if (Array.isArray(schema)) return schema.map((item) => rewriteConstAsEnum(item));
+	if (typeof schema !== "object" || schema === null) return schema;
+
+	// fromEntries preserves names such as __proto__ as own properties.
+	const result: Record<string, unknown> = Object.fromEntries(
+		Object.entries(schema).map(([key, value]) => {
+			if (isNameMap || JSON_SCHEMA_SUBSCHEMAS.has(key)) return [key, rewriteConstAsEnum(value)];
+			if (JSON_SCHEMA_NAME_MAPS.has(key)) return [key, rewriteConstAsEnum(value, true)];
+			return [key, value];
+		}),
+	);
+	if (!isNameMap && "const" in result && result.enum === undefined) {
+		const value = result.const;
+		if (typeof value === "string" || typeof value === "number") {
+			delete result.const;
+			result.enum = [value];
+		}
+	}
+	return result;
+}
+
 /**
  * Convert tools to Gemini function declarations format.
  *
  * By default uses `parametersJsonSchema` which supports full JSON Schema (including
- * anyOf, oneOf, const, etc.). Set `useParameters` to true to use the legacy `parameters`
+ * anyOf, oneOf, etc.). Gemini ignores `const` there, so string and number `const`
+ * values are sent as single-value `enum`s. Set `useParameters` to true to use the legacy `parameters`
  * field instead (OpenAPI 3.03 Schema). This is needed for Cloud Code Assist with Claude
  * models, where the API translates `parameters` into Anthropic's `input_schema`.
  */
@@ -395,7 +452,7 @@ export function convertTools(
 					description: tool.description,
 					...(useParameters
 						? { parameters: sanitizeForOpenApi(parameters as unknown) }
-						: { parametersJsonSchema: parameters }),
+						: { parametersJsonSchema: rewriteConstAsEnum(parameters) }),
 				};
 			}),
 		},

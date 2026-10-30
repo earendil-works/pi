@@ -1,10 +1,10 @@
-import { arch, platform, release } from "node:os";
 import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamAzureOpenAIResponses } from "../src/api/azure-openai-responses.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Api, Context, Model } from "../src/types.ts";
+import { formatUserAgent } from "../src/utils/identity.ts";
 
 interface CapturedAzureClientOptions {
 	apiKey: string;
@@ -52,7 +52,7 @@ vi.mock("openai", () => {
 	return { AzureOpenAI };
 });
 
-const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
+const PI_USER_AGENT = formatUserAgent();
 
 const context: Context = {
 	messages: [{ role: "user", content: "hello", timestamp: Date.now() }],

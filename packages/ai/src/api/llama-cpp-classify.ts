@@ -11,6 +11,7 @@ import type {
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
+import { getIdentityHeaders } from "../utils/identity.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 
 /**
@@ -234,6 +235,7 @@ async function post(request: RequestContext, path: string, body: unknown, observ
 	const requestFetch = options?.fetch ?? globalThis.fetch;
 	const headers =
 		providerHeadersToRecord(
+			getIdentityHeaders(model, options?.identity),
 			{
 				"content-type": "application/json",
 				...(options?.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}),

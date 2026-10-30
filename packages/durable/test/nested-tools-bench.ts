@@ -133,10 +133,10 @@ async function runScenario(scenario: Scenario): Promise<{ perRun: Run[]; closedB
 		let commits = 0;
 		const written = noWrites();
 		const commit = storage.commit.bind(storage);
-		storage.commit = (writes, commitContext) => {
-			commits++;
-			for (const write of writes) written[write.type] += JSON.stringify(write).length;
-			return commit(writes, commitContext);
+		storage.commit = (batches, receive, commitContext) => {
+			commits += batches.length;
+			for (const write of batches.flat()) written[write.type] += JSON.stringify(write).length;
+			return commit(batches, receive, commitContext);
 		};
 		const harness = await Harness.open(storage, { models, registry }, context);
 		const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" } } });

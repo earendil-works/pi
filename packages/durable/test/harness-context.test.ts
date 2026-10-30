@@ -444,18 +444,18 @@ describe("conversation context", () => {
 					const initial = await read();
 					expect(initial.view).toEqual(await root.context(taskContext));
 
-					// Three new entries: the bounds probe reads one row, the extension the three new ones.
+					// Three new entries: the kept range took them as they were committed, so the read scans nothing.
 					await write({ kind: "message", model: [user("new")] });
 					await write({ kind: "note", data: { text: "display only" } });
 					await write({ kind: "message", model: [assistant("answer")] });
 					const extended = await read();
-					expect(extended.rows).toBe(4);
+					expect(extended.rows).toBe(0);
 					expect(extended.view).toEqual(await root.context(taskContext));
 
 					// A newer edit of an older entry applies to the extended range.
 					await write({ kind: "edit", edits: [{ target: first.id, action: "omit" }] });
 					const edited = await read();
-					expect(edited.rows).toBe(2);
+					expect(edited.rows).toBe(0);
 					expect(edited.view).toEqual(await root.context(taskContext));
 					expect(edited.view.messages.map(describeMessage)).not.toContain("user:first");
 
@@ -559,9 +559,9 @@ describe("conversation context", () => {
 		await probe("idle");
 		clock += 600_000;
 		await probe("expired");
-		// Bounds probes read one row each. The child scans its own new entry; the waiting parent's later invocation and
-		// the probe within the retention period scan nothing new. After it, the probe reads the whole transcript again.
-		expect(rows).toEqual({ parent: 22, child: 2, after: 1, idle: 1, expired: 23 });
+		// The Session knows the bounds, and the kept range takes each committed entry, so only a first read scans: the
+		// parent's, and the probe's after the retention period, which reads the whole transcript again.
+		expect(rows).toEqual({ parent: 21, child: 0, after: 0, idle: 0, expired: 22 });
 		await harness.close(context);
 	});
 
@@ -732,8 +732,8 @@ describe("conversation context", () => {
 					expect((await read(root)).messages[0]).toBe("user:first");
 					await append(root.id, { kind: "pi.system", model: [system({ plan: "Plan." })] });
 					let read2 = await read(root);
-					// One bounds probe and the added entry: the range was extended, not derived again.
-					expect(read2.rows).toBe(2);
+					// Nothing: the kept range took the added entry as it was committed.
+					expect(read2.rows).toBe(0);
 					expect(read2.messages.slice(0, 3)).toEqual(["system:plan", "user:first", "assistant:old 0"]);
 
 					// A system message the cached range already has keeps a later first `pi.system` entry in place.
@@ -743,7 +743,7 @@ describe("conversation context", () => {
 					expect((await read(fork)).messages).toEqual(["user:first", "assistant:answer", "system:note"]);
 					await append(fork.id, { kind: "pi.system", model: [system({ note: null })] });
 					read2 = await read(fork);
-					expect(read2.rows).toBe(2);
+					expect(read2.rows).toBe(0);
 					expect(read2.messages).toEqual(["user:first", "assistant:answer", "system:note", "system:note"]);
 
 					// An omitted system message still rules out a later baseline; the extended read keeps that.
@@ -761,7 +761,7 @@ describe("conversation context", () => {
 					expect((await read(omitted)).messages).toEqual(["user:first", "assistant:answer"]);
 					await append(omitted.id, { kind: "pi.system", model: [system({ legacy: null })] });
 					read2 = await read(omitted);
-					expect(read2.rows).toBe(2);
+					expect(read2.rows).toBe(0);
 					expect(read2.messages).toEqual(["user:first", "assistant:answer", "system:legacy"]);
 
 					// A first `pi.system` entry without a system message leaves no baseline for a later one to take.
@@ -771,7 +771,7 @@ describe("conversation context", () => {
 					expect((await read(empty)).messages).toEqual(["user:first", "assistant:answer"]);
 					await append(empty.id, { kind: "pi.system", model: [system({ s: "Delta." })] });
 					read2 = await read(empty);
-					expect(read2.rows).toBe(2);
+					expect(read2.rows).toBe(0);
 					expect(read2.messages).toEqual(["user:first", "assistant:answer", "system:s"]);
 					await runtime.commit(() => DONE, taskContext);
 				},
@@ -907,7 +907,7 @@ describe("conversation context", () => {
 		await late;
 		probeStart.resolve();
 		expect((await harness.waitForTask(probeId, context)).state.outcome).toEqual(DONE.outcome);
-		expect(rows).toEqual({ probe: 22 });
+		expect(rows).toEqual({ probe: 21 });
 		await harness.close(context);
 	});
 
@@ -934,7 +934,7 @@ describe("conversation context", () => {
 		vi.advanceTimersByTime(1_000);
 		expect(vi.getTimerCount()).toBe(idle);
 		await probe("second");
-		expect(rows).toEqual({ first: 22, second: 22 });
+		expect(rows).toEqual({ first: 21, second: 21 });
 		await harness.close(context);
 	});
 
@@ -954,7 +954,7 @@ describe("conversation context", () => {
 			expect((await harness.waitForTask(id, context)).state.outcome).toEqual(DONE.outcome);
 			await root.waitForIdle(context);
 		}
-		expect(rows).toEqual({ first: 22, second: 22 });
+		expect(rows).toEqual({ first: 21, second: 21 });
 		await harness.close(context);
 	});
 });

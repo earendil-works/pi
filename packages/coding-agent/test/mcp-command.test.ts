@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { runMcpCommand } from "../src/extensions/mcp/cli.ts";
 
 const FIXTURE = resolve(import.meta.dirname, "../../mcp/test/fixtures/stdio-server.mjs");
@@ -72,6 +73,30 @@ describe("pi mcp", () => {
 			output: 'MCP server "fixture" does not use OAuth. Only HTTP servers without an Authorization header do.',
 		});
 		expect((await run(["frobnicate"], servers)).exitCode).toBe(1);
+	});
+
+	it("suggests a configured server for a mistyped name", async () => {
+		expect((await run(["login", "fixtures"], servers)).output).toBe(
+			'No MCP server named "fixtures". Did you mean "fixture"? Configured: fixture, broken, parked.',
+		);
+	});
+
+	it("reports options as typed", async () => {
+		expect((await run(["list", "-l"], servers)).output).toContain("Unknown option -l.");
+	});
+
+	it("restricts login and logout to project servers with --local", async () => {
+		const { agentDir } = await run(["add", "-l", "local", "--", "node", "server.js"], servers);
+		new ProjectTrustStore(agentDir).set(agentDir, true);
+
+		expect(await run(["logout", "-l", "local"], undefined, agentDir)).toMatchObject({
+			exitCode: 1,
+			output: 'MCP server "local" does not use OAuth. Only HTTP servers without an Authorization header do.',
+		});
+		expect(await run(["login", "-l", "fixture"], undefined, agentDir)).toMatchObject({
+			exitCode: 1,
+			output: `MCP server "fixture" is defined in ${join(agentDir, "mcp.json")}, not in the project; omit --local.`,
+		});
 	});
 
 	it("adds stdio servers and passes options after the command through", async () => {
@@ -146,6 +171,15 @@ describe("pi mcp", () => {
 		expect(readConfig(join(agentDir, "mcp.json")).mcpServers).toMatchObject({
 			sentry: { url: "https://mcp.sentry.dev/mcp", oauth: { clientId: "pi", clientName: "Claude Code" } },
 		});
+
+		await run(
+			["add", "linear", "--url", "https://mcp.linear.app/mcp", "--oauth-client-registration", "dcr"],
+			undefined,
+			agentDir,
+		);
+		expect(readConfig(join(agentDir, "mcp.json")).mcpServers).toMatchObject({
+			linear: { url: "https://mcp.linear.app/mcp", oauth: { clientRegistration: "dcr" } },
+		});
 	});
 
 	it("rejects invalid add invocations without writing", async () => {
@@ -158,6 +192,7 @@ describe("pi mcp", () => {
 			["add", "x", "--header", "A=1", "--", "cmd"],
 			["add", "x", "--env", "NOVALUE", "--", "cmd"],
 			["add", "x", "--exposure", "loud", "--", "cmd"],
+			["add", "x", "--url", "https://example.com", "--oauth-client-registration", "maybe"],
 		];
 		for (const args of cases) {
 			const result = await run(args, undefined);

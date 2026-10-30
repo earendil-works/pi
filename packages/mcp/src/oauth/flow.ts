@@ -21,6 +21,7 @@ import {
 } from "./errors.ts";
 import {
 	type AuthorizationServerMetadata,
+	isHttpUrl,
 	type OAuthClientInformation,
 	type OAuthClientInformationFull,
 	type OAuthClientInformationMixed,
@@ -186,6 +187,8 @@ export async function startAuthorization(
 		throw new Error("Authorization server does not support PKCE S256");
 	}
 	const url = new URL(metadata?.authorization_endpoint ?? new URL("/authorize", authorizationServerUrl));
+	// Callers open this URL with the platform URL handler, which also launches files and custom protocols.
+	if (!isHttpUrl(url)) throw new Error(`Invalid authorization endpoint ${url.href}`);
 	const { verifier, challenge } = await pkce();
 	url.searchParams.set("response_type", "code");
 	url.searchParams.set("client_id", options.clientInformation.client_id);

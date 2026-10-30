@@ -6,10 +6,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	canonicalizePath,
 	getCwdRelativePath,
+	getPathComparisonKey,
 	isLocalPath,
+	isPathWithin,
 	normalizePath,
 	normalizeWindowsShellPath,
+	pathsEqual,
 	resolvePath,
+	shortenHomePath,
 } from "../src/utils/paths.ts";
 
 let tempDir: string;
@@ -25,6 +29,64 @@ function createTempDir(): string {
 	tempDir = mkdtempSync(join(tmpdir(), "pi-paths-"));
 	return tempDir;
 }
+
+describe("path comparison", () => {
+	const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+
+	afterEach(() => {
+		if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+	});
+
+	function simulatePlatform(platform: NodeJS.Platform): void {
+		Object.defineProperty(process, "platform", { value: platform });
+	}
+
+	// Regression test for https://github.com/earendil-works/pi/issues/10488
+	it("treats drive letters and path components case-insensitively on Windows", () => {
+		simulatePlatform("win32");
+		expect(getPathComparisonKey("c:\\Users\\me\\.agents\\skills")).toBe(
+			getPathComparisonKey("C:\\Users\\Me\\.agents\\skills"),
+		);
+		expect(pathsEqual("c:\\Users\\me", "C:/Users/Me/")).toBe(true);
+		expect(pathsEqual("C:\\Users\\me", "D:\\Users\\me")).toBe(false);
+		expect(isPathWithin("C:\\Users\\Me", "c:\\users\\me\\project")).toBe(true);
+		expect(isPathWithin("C:\\Users\\Me", "C:\\Users\\Me2")).toBe(false);
+		expect(isPathWithin("C:\\", "c:\\Users")).toBe(true);
+		expect(isPathWithin("\\\\server\\share", "\\\\SERVER\\Share\\folder")).toBe(true);
+	});
+
+	it("keeps casing on case-sensitive platforms", () => {
+		simulatePlatform("linux");
+		expect(pathsEqual("/home/me", "/home/Me")).toBe(false);
+		expect(isPathWithin("/home/me", "/home/Me/project")).toBe(false);
+	});
+
+	it("isPathWithin matches whole path segments", () => {
+		simulatePlatform("linux");
+		expect(isPathWithin("/home/me", "/home/me")).toBe(true);
+		expect(isPathWithin("/home/me", "/home/me/project")).toBe(true);
+		expect(isPathWithin("/home/me/", "/home/me/project")).toBe(true);
+		expect(isPathWithin("/home/me", "/home/me2")).toBe(false);
+		expect(isPathWithin("/", "/home")).toBe(true);
+	});
+
+	it("shortenHomePath replaces only a leading home directory", () => {
+		simulatePlatform("linux");
+		expect(shortenHomePath("/home/me", "/home/me")).toBe("~");
+		expect(shortenHomePath("/home/me/project", "/home/me")).toBe("~/project");
+		expect(shortenHomePath("/home/me2/project", "/home/me")).toBe("/home/me2/project");
+		expect(shortenHomePath("/home/Me/project", "/home/me")).toBe("/home/Me/project");
+		expect(shortenHomePath("/etc/passwd", "/")).toBe("~/etc/passwd");
+		expect(shortenHomePath("home/me/project", "/home/me")).toBe("home/me/project");
+		expect(shortenHomePath("/home/me/project", "")).toBe("/home/me/project");
+	});
+
+	it("shortenHomePath ignores casing and keeps separators on Windows", () => {
+		simulatePlatform("win32");
+		expect(shortenHomePath("c:\\users\\me\\project", "C:\\Users\\Me")).toBe("~\\project");
+		expect(shortenHomePath("\\\\server\\share\\folder", "\\\\server\\share")).toBe("~\\folder");
+	});
+});
 
 describe("canonicalizePath", () => {
 	it("returns the real path for a regular file", () => {

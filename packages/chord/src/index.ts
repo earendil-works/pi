@@ -78,5 +78,16 @@ export {
 	replicatedState,
 } from "./state.ts";
 export type { Ctx, GetOptions, Readable, RefStatus, Shape, StateEvent } from "./types.ts";
+export {
+	NativeWatch,
+	type NativeWatchable,
+	type NativeWatchCall,
+	type NativeWatchHandle,
+	Watch,
+	type Watchable,
+	type WatchCall,
+	type WatchEnd,
+	type WatchHandle,
+} from "./watch.ts";
 export { acceptWebSockets, type WebSocketAcceptOptions, type WebSocketServerLike } from "./websocket.ts";
 export { type Frame, PROTOCOL_VERSION } from "./wire.ts";

@@ -7,8 +7,8 @@ import type { ExecResult, ExtensionAPI, ExtensionContext } from "../src/core/ext
 
 type AgentEndHandler = (event: { type: "agent_end" }, ctx: ExtensionContext) => Promise<undefined>;
 
-const ok: ExecResult = { stdout: "", stderr: "", code: 0, killed: false };
-const fail: ExecResult = { stdout: "", stderr: "error", code: 1, killed: false };
+const ok: ExecResult = { stdout: "", stderr: "", code: 0, killed: false, truncated: false };
+const fail: ExecResult = { stdout: "", stderr: "error", code: 1, killed: false, truncated: false };
 
 /** Standard exec results for a clean repo tracking origin/main, not in a merge. */
 function withUpstream(results: Map<string, ExecResult>): Map<string, ExecResult> {

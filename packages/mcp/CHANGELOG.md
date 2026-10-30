@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- OAuth metadata parsing and `startAuthorization()` now accept only `http:` and `https:` URLs. Before, a server could supply a `file:` or custom protocol authorization endpoint (for example `search-ms:`), which the platform URL handler would launch on sign-in.
+- Fixed the excerpt of an HTTP error body in Streamable HTTP errors keeping the whole response body alive ([#9265](https://github.com/earendil-works/pi/issues/9265))
+
+## [1.4.0] - 2026-10-21
+
 ## [1.3.0] - 2026-10-15
 
 ## [1.2.0] - 2026-10-12

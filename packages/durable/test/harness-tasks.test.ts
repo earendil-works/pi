@@ -1,7 +1,8 @@
 import type { Context } from "@earendil-works/chord";
-import { withCancel } from "@earendil-works/chord/context";
+import { withAbortSignal, withCancel } from "@earendil-works/chord/context";
 import { createModels, Type } from "@earendil-works/pi-ai";
 import {
+	type CommitPublication,
 	type Conversation,
 	createRegistry,
 	defineDoc,
@@ -13,12 +14,15 @@ import {
 	MemoryStorage,
 	type RegistryReader,
 	type RegistrySnapshot,
+	type StorageWrite,
 	type TaskId,
 	type TaskRuntime,
 } from "@earendil-works/pi-durable";
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it } from "vitest";
+import type { SessionImpl } from "../src/session/session.ts";
 import { addHooks, addTask, addTool, user } from "./harness-support.ts";
-import { ControlledStorage, context, flush } from "./session-support.ts";
+import { ControlledStorage, context, flush, followCommits, LateResolvingStorage, onValue } from "./session-support.ts";
 import { aborted, abortedWith, completed, deferred, eventually, openTasks, settled } from "./task-support.ts";
 
 type Step = { phase: "run" };
@@ -79,7 +83,21 @@ async function markDurably(
 }
 
 function withSignal(signal: AbortSignal): Context {
-	return { ...context, abortSignal: signal };
+	return withAbortSignal(signal, context);
+}
+
+/** Hold the Session line with a commit whose callback waits: the jobs queued after it start once it is released. */
+function holdLine(harness: { commit(change: () => Promise<void>, context: Context): Promise<void> }): {
+	readonly entered: Promise<void>;
+	release(): void;
+} {
+	const entered = deferred();
+	const release = deferred();
+	void harness.commit(async () => {
+		entered.resolve();
+		await release.promise;
+	}, context);
+	return { entered: entered.promise, release: () => release.resolve() };
 }
 
 describe("task phases", () => {
@@ -187,6 +205,7 @@ describe("task phases", () => {
 
 	it("commits results with entries atomically, keeps memos until terminal, and retires task documents", async () => {
 		const Progress = defineDoc<{ lines: string[] }>({
+			checkpointWhen: () => false,
 			kind: "test.task-progress",
 			version: 1,
 			scope: "task",
@@ -231,7 +250,15 @@ describe("task phases", () => {
 			},
 			abort: async () => {},
 		});
-		const { harness, root } = await openRoot([Writer, Child]);
+		class CountingStorage extends MemoryStorage {
+			documentScans = 0;
+			override scanDocuments(...args: Parameters<MemoryStorage["scanDocuments"]>) {
+				this.documentScans++;
+				return super.scanDocuments(...args);
+			}
+		}
+		const storage = new CountingStorage();
+		const { harness, root } = await openRoot([Writer, Child], { storage });
 		const conversation = await harness.createConversation({ ownership: { kind: "ownerless" } }, context);
 		const id = await conversation.commit(
 			(tx) => tx.createTask(Writer, null, { ownership: { kind: "conversation" } }),
@@ -248,6 +275,10 @@ describe("task phases", () => {
 		expect(entry?.conversationId).toBe(conversation.id);
 		expect(progressSeen).toEqual(["wrote"]);
 		expect(await harness.snapshot(Progress, id, context)).toBeUndefined();
+		// The Session indexed the documents of the tasks it created, so no terminal commit scanned for them, and it dropped
+		// each task's entry at its end.
+		expect(storage.documentScans).toBe(0);
+		expect((harness as unknown as SessionImpl).documentCacheSizes.taskDocuments).toBe(0);
 		expect(await harness.getTask(id, context)).toEqual(receipt);
 		expect((await harness.waitForTask(childId!, context)).conversationId).toBe(conversation.id);
 		expect(root.id).not.toBe(conversation.id);
@@ -521,6 +552,7 @@ describe("task phases", () => {
 describe("task runtime", () => {
 	it("rejects runtime operations after the invocation ends and stops its watches", async () => {
 		const Notes = defineDoc<{ text: string }>({
+			checkpointWhen: () => false,
 			kind: "test.task-notes",
 			version: 1,
 			scope: "session",
@@ -530,6 +562,7 @@ describe("task runtime", () => {
 		let watchClosed: Promise<unknown> | undefined;
 		const delivered: string[] = [];
 		const Absent = defineDoc<{ text: string }>({
+			checkpointWhen: () => false,
 			kind: "test.task-absent",
 			version: 1,
 			scope: "session",
@@ -542,9 +575,11 @@ describe("task runtime", () => {
 			handlerContext = ctx;
 			absent = await runtime.watchDoc(Absent, ctx);
 			const watch = await runtime.watchDoc(Notes, ctx);
-			watch!.start(async (value) => {
-				delivered.push(value?.text ?? "retired");
-			});
+			watch!.start(
+				onValue(async ({ value }) => {
+					delivered.push(value.text);
+				}),
+			);
 			watchClosed = watch?.closed;
 			await runtime.commit(() => completed(null), ctx);
 		});
@@ -557,7 +592,7 @@ describe("task runtime", () => {
 		await harness.waitForTask(id, context);
 		expect(absent).toBeUndefined();
 		// The watch stops when the step after the phase ends the invocation; later commits deliver nothing.
-		expect(await watchClosed).toEqual({ reason: "stopped" });
+		expect(await watchClosed).toEqual({ kind: "stopped" });
 		await harness.commit(async (tx) => {
 			(await tx.doc(Notes)).text = "after";
 		}, context);
@@ -567,7 +602,7 @@ describe("task runtime", () => {
 		await expect(runtime.commit(() => {}, context)).rejects.toThrow("invocation has ended");
 		await expect(runtime.memo("x", context)).rejects.toThrow("invocation has ended");
 		await expect(runtime.memo("x", 1, context)).rejects.toThrow("invocation has ended");
-		await expect(runtime.sleep(0, context)).rejects.toThrow("invocation has ended");
+		await expect(runtime.sleepUntil(0, { phase: "run" }, context)).rejects.toThrow("invocation has ended");
 		await expect(runtime.watchDoc(Notes, context)).rejects.toThrow("invocation has ended");
 		// The handler's own context is cancelled by now; the ended invocation still wins.
 		await expect(runtime.agent(handlerContext!)).rejects.toThrow("invocation has ended");
@@ -578,6 +613,7 @@ describe("task runtime", () => {
 
 	it("reads committed documents and context through the runtime, and forwards the clock and reports", async () => {
 		const Notes = defineDoc<{ text: string }>({
+			checkpointWhen: () => false,
 			kind: "test.runtime-notes",
 			version: 1,
 			scope: "conversation",
@@ -653,6 +689,7 @@ describe("task runtime", () => {
 
 	it("stops a watch whose acquisition finishes after the invocation ended", async () => {
 		const Notes = defineDoc<{ text: string }>({
+			checkpointWhen: () => false,
 			kind: "test.late-watch",
 			version: 1,
 			scope: "session",
@@ -687,58 +724,6 @@ describe("task runtime", () => {
 		expect((await harness.waitForTask(id, context)).state.outcome).toMatchObject({ status: "faulted" });
 		await harness.close(context);
 	});
-
-	it("sleeps until the Harness clock reaches the deadline, rechecking after each timer", async () => {
-		let clock = 1_000;
-		const woke = deferred();
-		const Sleeper = oneStep("test.sleeper", async (_task, runtime, ctx) => {
-			await runtime.sleep(900, ctx);
-			await runtime.sleep(1_005, ctx);
-			woke.resolve();
-			await runtime.commit(() => completed(null), ctx);
-		});
-		const { harness, root } = await openRoot([Sleeper], { now: () => clock });
-		const id = await start(root, Sleeper);
-		harness.resume();
-		// The clock stands still, so real timers keep firing without waking the task.
-		await new Promise((resolve) => setTimeout(resolve, 30));
-		expect(await settled(woke.promise)).toBe(false);
-		clock = 1_005;
-		await harness.waitForTask(id, context);
-		await harness.close(context);
-	});
-
-	it("rejects a sleep when the invocation is signalled or the sleep's own context is cancelled", async () => {
-		const results: string[] = [];
-		const sleeping = deferred();
-		const Signalled = oneStep("test.sleep-signalled", async (_task, runtime, ctx) => {
-			sleeping.resolve();
-			await runtime.sleep(Date.now() + 60_000, ctx).catch((error: unknown) => {
-				results.push(`signalled:${(error as Error).name}`);
-				throw error;
-			});
-		});
-		const Cancelled = oneStep("test.sleep-cancelled", async (_task, runtime, ctx) => {
-			const controller = new AbortController();
-			const sleeping = runtime.sleep(Date.now() + 60_000, withSignal(controller.signal));
-			controller.abort(new Error("stop sleeping"));
-			await sleeping.catch((error: unknown) => results.push(`cancelled:${(error as Error).message}`));
-			await runtime.commit(() => completed(null), ctx);
-		});
-		const { harness, root } = await openRoot([Signalled, Cancelled]);
-		const signalled = await start(root, Signalled);
-		const cancelled = await start(root, Cancelled);
-		harness.resume();
-		await harness.waitForTask(cancelled, context);
-		await sleeping.promise;
-		await harness.abortTask(signalled, context);
-		expect((await harness.waitForTask(signalled, context)).state.outcome).toEqual({
-			status: "aborted",
-			reason: "test",
-		});
-		expect(results).toEqual(["cancelled:stop sleeping", "signalled:AbortError"]);
-		await harness.close(context);
-	});
 });
 
 describe("task scheduling", () => {
@@ -756,7 +741,7 @@ describe("task scheduling", () => {
 		storage.failNextCommit(failure);
 		harness.resume();
 		const end = await harness.closed;
-		expect(end).toEqual({ reason: "failed", error: failure });
+		expect(end).toEqual({ kind: "failed", error: failure });
 		expect(reports).toEqual([failure]);
 		// The pending wait and every later call get SessionFailed with the storage error.
 		await expect(waiting).rejects.toMatchObject({ name: "SessionFailed", cause: failure });
@@ -787,7 +772,7 @@ describe("task scheduling", () => {
 		const { harness, root, reports } = await openRoot([Throws], { storage });
 		const id = await start(root, Throws);
 		harness.resume();
-		expect(await harness.closed).toEqual({ reason: "failed", error: failure });
+		expect(await harness.closed).toEqual({ kind: "failed", error: failure });
 		expect(runs).toBe(1);
 		expect(reports).toEqual([failure]);
 		await harness.close(context);
@@ -1197,7 +1182,14 @@ describe("task close", () => {
 		proceed.resolve();
 		await closing;
 		expect(await aborting).toBe("marked");
-		expect(storage.commits.length).toBe(commits);
+		// No outcome: close writes only the stopped task back as pending, so a reopen counts no restart.
+		expect(storage.commits.length).toBe(commits + 1);
+		expect(storage.commits.at(-1)).toMatchObject([
+			{
+				type: "task",
+				value: { id, abortRequested: true, state: { status: "pending", checkpoint: { phase: "two" } } },
+			},
+		]);
 		expect(phases).toEqual(["one"]);
 		expect(abortRan).toBe(false);
 		expect(record).toMatchObject({
@@ -1209,6 +1201,7 @@ describe("task close", () => {
 
 	it("seals admission before signalling handlers and stops watches before joining them", async () => {
 		const Notes = defineDoc<{ text: string }>({
+			checkpointWhen: () => false,
 			kind: "test.close-notes",
 			version: 1,
 			scope: "session",
@@ -1237,18 +1230,16 @@ describe("task close", () => {
 		await reached.promise;
 		await harness.close(context);
 		await expect(fromListener).rejects.toThrow("closed");
-		expect(watchEnd).toEqual({ reason: "session_closed" });
+		expect(watchEnd).toEqual({ kind: "ended" });
 	});
 
 	it("writes no fault when close seals while the step after a failed phase is queued", async () => {
 		const storage = new ControlledStorage();
-		let held: ReturnType<ControlledStorage["holdCommits"]> | undefined;
+		let held: ReturnType<typeof holdLine> | undefined;
 		let harnessRef: Awaited<ReturnType<typeof openRoot>>["harness"] | undefined;
-		const Throws = oneStep("test.close-fault", async (_task, runtime) => {
-			held = storage.holdCommits();
-			void harnessRef!.commit(async (tx) => {
-				await tx.appendEntry(runtime.conversationId, { kind: "blocker" });
-			}, context);
+		const Throws = oneStep("test.close-fault", async () => {
+			// The step after this phase queues behind a job that holds the line.
+			held = holdLine(harnessRef!);
 			throw new Error("would fault");
 		});
 		const { harness, root } = await openRoot([Throws], { storage });
@@ -1264,9 +1255,11 @@ describe("task close", () => {
 		const taskWrites = storage.commits.flatMap((writes) =>
 			writes.filter((write) => write.type === "task" && write.value.id === id),
 		);
+		// Created, reserved, and written back as pending by close: no fault.
 		expect(taskWrites.map((write) => (write.type === "task" ? write.value.state.status : ""))).toEqual([
 			"pending",
 			"running",
+			"pending",
 		]);
 	});
 
@@ -1290,21 +1283,22 @@ describe("task close", () => {
 		held.release();
 		await closing;
 		expect(ran).toBe(false);
-		const writes = storage.commits.at(-1)!.filter((write) => write.type === "task");
-		expect(writes).toMatchObject([{ value: { id, abortRequested: true, state: { status: "running" } } }]);
+		// The reservation landed; close wrote the task back as pending.
+		const reserved = storage.commits.at(-2)!.filter((write) => write.type === "task");
+		expect(reserved).toMatchObject([{ value: { id, abortRequested: true, state: { status: "running" } } }]);
+		expect(storage.commits.at(-1)).toMatchObject([
+			{ type: "task", value: { id, abortRequested: true, state: { status: "pending" } } },
+		]);
 	});
 
 	it("rejects a runtime commit that was queued on the line when close sealed it", async () => {
 		const storage = new ControlledStorage();
 		let queued: Promise<unknown> | undefined;
-		let held: ReturnType<ControlledStorage["holdCommits"]> | undefined;
+		let held: ReturnType<typeof holdLine> | undefined;
 		let harnessRef: Awaited<ReturnType<typeof openRoot>>["harness"] | undefined;
 		const proceed = deferred();
 		const Queued = oneStep("test.close-queued-commit", async (_task, runtime) => {
-			held = storage.holdCommits();
-			void harnessRef!.commit(async (tx) => {
-				await tx.appendEntry(runtime.conversationId, { kind: "blocker" });
-			}, context);
+			held = holdLine(harnessRef!);
 			queued = runtime.commit(() => completed(null), context).catch((error: unknown) => error);
 			// Ignores the close signal, so the invocation is still alive when the queued commit reaches the line.
 			await proceed.promise;
@@ -1324,7 +1318,12 @@ describe("task close", () => {
 		const taskWrites = storage.commits.flatMap((writes) =>
 			writes.filter((write) => write.type === "task" && write.value.id === id),
 		);
-		expect(taskWrites).toHaveLength(2);
+		// Created, reserved, and written back as pending by close; the queued outcome never landed.
+		expect(taskWrites.map((write) => (write.type === "task" ? write.value.state.status : ""))).toEqual([
+			"pending",
+			"running",
+			"pending",
+		]);
 	});
 
 	it("starts no next phase when close seals during a step that decided to continue", async () => {
@@ -1386,7 +1385,316 @@ describe("task close", () => {
 		held.release();
 		await closing;
 		expect(ran).toBe(false);
-		const writes = storage.commits.at(-1)!.filter((write) => write.type === "task");
-		expect(writes).toMatchObject([{ type: "task", value: { id, state: { status: "running" } } }]);
+		// The reservation landed; close wrote the task back as pending.
+		const reserved = storage.commits.at(-2)!.filter((write) => write.type === "task");
+		expect(reserved).toMatchObject([{ type: "task", value: { id, state: { status: "running" } } }]);
+		expect(storage.commits.at(-1)).toMatchObject([{ type: "task", value: { id, state: { status: "pending" } } }]);
+	});
+});
+
+describe("publication at adoption", () => {
+	/** Both storages: one that resolves right after adopting, one that still works after it (JSONL's sidecar reclaim). */
+	const storages = [
+		{ name: "memory", open: () => new ControlledStorage() },
+		{ name: "work after adopt", open: () => new LateResolvingStorage() },
+	] as const;
+
+	/** Whether `publication` makes task `id` terminal. */
+	const terminal = (publication: CommitPublication, id: TaskId): boolean =>
+		publication.changes.some(
+			(change) => change.type === "task" && change.value.id === id && change.value.state.status === "terminal",
+		);
+
+	/** Whether `writes` make a task terminal. */
+	const endsTask = (writes: readonly StorageWrite[]): boolean =>
+		writes.some((write) => write.type === "task" && write.value.state.status === "terminal");
+
+	it("resumes task and idle waits only once observeCommits() observers saw the terminal commit", async () => {
+		const gate = deferred();
+		const Gated = gated("test.wake-gated", gate.promise);
+		const { harness, root } = await openRoot([Gated], { storage: new LateResolvingStorage() });
+		const seen = new Set<TaskId>();
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of publication.changes) {
+					if (change.type === "task" && change.value.state.status === "terminal") seen.add(change.value.id);
+				}
+			},
+			end: () => {},
+		});
+		const id = await start(root, Gated);
+		harness.resume();
+		const task = harness.waitForTask(id, context).then(() => seen.has(id));
+		const idle = harness.waitForIdle(context).then(() => seen.has(id));
+		const conversationIdle = root.waitForIdle(context).then(() => seen.has(id));
+		gate.resolve();
+		expect(await Promise.all([task, idle, conversationIdle])).toEqual([true, true, true]);
+		await harness.close(context);
+	});
+
+	for (const { name, open } of storages) {
+		it(`runs host listeners before the waits a terminal commit resolves (${name})`, async () => {
+			const storage = open();
+			const gate = deferred();
+			const Gated = gated("test.order-gated", gate.promise);
+			const { harness, root } = await openRoot([Gated], { storage });
+			const order: string[] = [];
+			const id = await start(root, Gated);
+			harness.observeCommits({
+				advance: (publication) => {
+					if (terminal(publication, id)) order.push(`host adopting=${storage.adopting}`);
+				},
+				end: () => {},
+			});
+			harness.resume();
+			const waited = harness.waitForTask(id, context).then(() => order.push("wait"));
+			gate.resolve();
+			await waited;
+			expect(order).toEqual(["host adopting=false", "wait"]);
+			await harness.close(context);
+		});
+
+		it(`signals a newly marked run after host listeners saw the mark, outside the storage's adopt (${name})`, async () => {
+			const storage = open();
+			const reached = deferred();
+			const order: string[] = [];
+			const Signalled = oneStep("test.order-signalled", async (_task, runtime) => {
+				runtime.signal.addEventListener("abort", () => order.push(`abort adopting=${storage.adopting}`));
+				reached.resolve();
+				await aborted(runtime.signal);
+			});
+			const { harness, root } = await openRoot([Signalled], { storage });
+			const id = await start(root, Signalled);
+			harness.observeCommits({
+				advance: (publication) => {
+					for (const change of publication.changes)
+						if (change.type === "task" && change.value.id === id && change.value.abortRequested)
+							order.push("host");
+				},
+				end: () => {},
+			});
+			harness.resume();
+			await reached.promise;
+			expect(await harness.abortTask(id, context)).toBe("marked");
+			expect(order).toEqual(["host", "abort adopting=false"]);
+			await harness.close(context);
+		});
+	}
+
+	it("resolves a waitForIdle() called while the storage stores the commit at its publication, after host listeners", async () => {
+		const storage = new LateResolvingStorage();
+		const gate = deferred();
+		const Gated = gated("test.gap-idle", gate.promise);
+		const { harness, root } = await openRoot([Gated], { storage });
+		const order: string[] = [];
+		const id = await start(root, Gated);
+		harness.observeCommits({
+			advance: (publication) => {
+				if (terminal(publication, id)) order.push("host");
+			},
+			end: () => {},
+		});
+		const gapped = deferred();
+		let idle: Promise<unknown> | undefined;
+		storage.gap = (writes) => {
+			if (!endsTask(writes)) return false;
+			idle = harness.waitForIdle(context).then(() => order.push(`idle committing=${storage.committing}`));
+			gapped.resolve();
+			return true;
+		};
+		harness.resume();
+		gate.resolve();
+		await gapped.promise;
+		await idle;
+		expect(order).toEqual(["host", "idle committing=false"]);
+		await harness.close(context);
+	});
+
+	it("publishes a commit the storage rejects after adopting it, resolves its waits, then fails the Session", async () => {
+		const storage = new LateResolvingStorage();
+		const telemetry = new InMemoryTelemetryContext();
+		const gate = deferred();
+		const Gated = gated("test.reject-after-adopt", gate.promise);
+		const { harness, root, infos } = await openRoot([Gated], { storage, telemetry });
+		const id = await start(root, Gated);
+		const seen: string[] = [];
+		harness.observeCommits({
+			advance: (publication) => {
+				if (terminal(publication, id)) seen.push("terminal");
+			},
+			end: () => {},
+		});
+		storage.rejectAfterAdopt = endsTask;
+		harness.resume();
+		const waited = harness.waitForTask(id, context);
+		gate.resolve();
+		expect((await waited).state.outcome).toEqual({ status: "completed", result: null });
+		expect(seen).toEqual(["terminal"]);
+		expect(await harness.closed).toEqual({ kind: "failed", error: new Error("reclaim failed") });
+		expect(infos).toContainEqual({ kind: "storage_failed" });
+		const active = telemetry.getMetrics().filter((metric) => metric.name === "pi.durable.tasks.active");
+		expect(active.map((metric) => metric.value)).toEqual([1, -1]);
+	});
+
+	it("counts a task created by a commit the storage rejects after adopting it, and its close balances it", async () => {
+		const storage = new LateResolvingStorage();
+		const telemetry = new InMemoryTelemetryContext();
+		const Idle = oneStep("test.reject-created", async () => {});
+		const { harness, root } = await openRoot([Idle], { storage, telemetry });
+		storage.rejectAfterAdopt = (writes) => writes.some((write) => write.type === "task");
+		await expect(start(root, Idle)).rejects.toThrow("reclaim failed");
+		expect(await harness.closed).toMatchObject({ kind: "failed" });
+		const active = telemetry.getMetrics().filter((metric) => metric.name === "pi.durable.tasks.active");
+		expect(active.map((metric) => metric.value)).toEqual([1, -1]);
+	});
+
+	it("keeps a task wait resolved when a host listener closes the Harness on the terminal commit", async () => {
+		const gate = deferred();
+		const Gated = gated("test.close-in-listener", gate.promise);
+		const { harness, root } = await openRoot([Gated]);
+		const id = await start(root, Gated);
+		let closing: Promise<void> | undefined;
+		harness.observeCommits({
+			advance: (publication) => {
+				if (terminal(publication, id)) closing = harness.close(context);
+			},
+			end: () => {},
+		});
+		harness.resume();
+		const waited = harness.waitForTask(id, context);
+		gate.resolve();
+		expect((await waited).state.outcome).toEqual({ status: "completed", result: null });
+		await closing;
+	});
+
+	it("ends a task wait when the Harness closes while the terminal commit is stored, and still stores it", async () => {
+		const storage = new LateResolvingStorage();
+		const gate = deferred();
+		const Gated = gated("test.close-in-gap", gate.promise);
+		const { harness, root } = await openRoot([Gated], { storage });
+		const id = await start(root, Gated);
+		const gapped = deferred();
+		let closing: Promise<void> | undefined;
+		storage.gap = (writes) => {
+			if (!endsTask(writes)) return false;
+			closing = harness.close(context);
+			gapped.resolve();
+			return true;
+		};
+		harness.resume();
+		const waited = harness.waitForTask(id, context).then(
+			(record) => record.state.outcome,
+			(error: unknown) => error,
+		);
+		gate.resolve();
+		await gapped.promise;
+		await closing;
+		// Close ends the waits before it drains the commit in flight, which is published and stored all the same.
+		expect(await waited).toMatchObject({ message: expect.stringContaining("closed") });
+		expect(await harness.closed).toEqual({ kind: "closed" });
+		const reopened = await openRoot([Gated], { storage: storage.reopen() });
+		expect((await reopened.harness.getTask(id, context))?.state.status).toBe("terminal");
+		await reopened.harness.close(context);
+	});
+
+	it("fails the Session with the storage error when it rejects after adopting, and reports an observer's throw", async () => {
+		const storage = new LateResolvingStorage();
+		const { harness, root, reports, infos } = await openRoot([], { storage });
+		const bug = new Error("observer bug");
+		followCommits(harness, (publication) => {
+			if (publication.kind === "stored" && publication.changes.some((change) => change.type === "entry")) throw bug;
+		});
+		storage.rejectAfterAdopt = (writes) => writes.some((write) => write.type === "entry");
+		await expect(root.commit((tx) => tx.appendEntry(root.id, { kind: "note", data: {} }), context)).rejects.toThrow(
+			"reclaim failed",
+		);
+		expect(await harness.closed).toEqual({ kind: "failed", error: new Error("reclaim failed") });
+		expect(reports).toContain(bug);
+		expect(infos[reports.indexOf(bug)]).toEqual({ kind: "listener_error" });
+		expect(infos).toContainEqual({ kind: "storage_failed" });
+	});
+
+	it("stores a host listener's own commit before the reconcile commit that the same publication asks for", async () => {
+		const storage = new ControlledStorage();
+		const gate = deferred();
+		const Child = gated("test.order-child", gate.promise);
+		const Parent = oneStep("test.order-parent", async (task, runtime, ctx) => {
+			await runtime.commit(async (tx) => {
+				await tx.createTask(Child, null, { ownership: { kind: "task", taskId: task.id } });
+			}, ctx);
+			// The child is still live, so the outcome is held as `completing` until a reconcile pass finalizes it.
+			await runtime.commit(() => completed(null), ctx);
+		});
+		const { harness, root } = await openRoot([Parent, Child], { storage });
+		const parent = await start(root, Parent);
+		harness.resume();
+		await eventually(async () => (await harness.getTask(parent, context))?.state.status === "completing");
+		harness.observeCommits({
+			advance: (publication) => {
+				const child = publication.changes.find(
+					(change) =>
+						change.type === "task" && change.value.id !== parent && change.value.state.status === "terminal",
+				);
+				if (child !== undefined)
+					void root.commit((tx) => tx.appendEntry(root.id, { kind: "note", data: {} }), context);
+			},
+			end: () => {},
+		});
+		const before = storage.commits.length;
+		gate.resolve();
+		await harness.waitForTask(parent, context);
+		const kinds = storage.commits.slice(before).map((writes) => {
+			if (writes.some((write) => write.type === "entry")) return "host entry";
+			const task = writes.find((write) => write.type === "task");
+			if (task?.type !== "task" || task.value.state.status !== "terminal") return "other";
+			return task.value.id === parent ? "parent terminal" : "child terminal";
+		});
+		expect(kinds.filter((kind) => kind !== "other")).toEqual(["child terminal", "host entry", "parent terminal"]);
+		await harness.close(context);
+	});
+
+	it("calls a host listener added on a Harness during a publication only when one was registered at it", async () => {
+		const storage = new ControlledStorage();
+		const { harness, root } = await openRoot([], { storage });
+		const note = () => root.commit((tx) => tx.appendEntry(root.id, { kind: "note", data: {} }), context);
+		const late: number[] = [];
+		let stopLate = { detach: (): void => {} };
+		// Runs once, during the next publication, after its dispatch was queued or not.
+		let during: (() => void) | undefined;
+		followCommits(harness, () => {
+			const run = during;
+			during = undefined;
+			run?.();
+		});
+		// No host listener at the publication, although the Harness's own observers run: no dispatch, so the late one
+		// misses it.
+		during = () => {
+			stopLate = harness.observeCommits({
+				advance: (publication) => {
+					late.push(publication.seq);
+				},
+				end: () => {},
+			});
+		};
+		await note();
+		await flush();
+		expect(late).toEqual([]);
+		await note();
+		expect(late).toHaveLength(1);
+		stopLate.detach();
+		// One registered at adopt: the dispatch reads the listeners when it runs, the late one included.
+		harness.observeCommits({ advance: () => {}, end: () => {} });
+		const second: number[] = [];
+		during = () => {
+			harness.observeCommits({
+				advance: (publication) => {
+					second.push(publication.seq);
+				},
+				end: () => {},
+			});
+		};
+		await note();
+		expect(second).toHaveLength(1);
+		await harness.close(context);
 	});
 });

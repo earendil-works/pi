@@ -18,7 +18,7 @@ jobs:
           script: |
             const APPROVED_FILE = '.github/APPROVED_CONTRIBUTORS';
             const VALID_CAPABILITIES = new Set(['issue', 'pr']);
-            const TRUSTED_BOT_AUTHORS = new Set(['dependabot[bot]', 'sentry[bot]', 'claude[bot]']);
+            const TRUSTED_BOT_AUTHORS = new Set(['dependabot[bot]', 'sentry[bot]', 'claude[bot]', 'robopipi[bot]']);
             const prAuthor = context.payload.pull_request.user.login;
             const defaultBranch = context.payload.repository.default_branch;
             const isBotAuthor = prAuthor.endsWith('[bot]');

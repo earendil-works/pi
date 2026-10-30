@@ -13,6 +13,7 @@ import { createSession } from "../src/session/session.ts";
 type Entry = { key: string; issued: number; at: number };
 
 const Journal = defineDoc<{ entries: Entry[] }>({
+	checkpointWhen: () => false,
 	kind: "bench.journal",
 	version: 1,
 	scope: "session",
@@ -20,6 +21,7 @@ const Journal = defineDoc<{ entries: Entry[] }>({
 });
 
 const Member = defineDocFamily<{ issued: number; at: number }, null>({
+	checkpointWhen: () => false,
 	kind: "bench.member",
 	version: 1,
 	scope: "session",

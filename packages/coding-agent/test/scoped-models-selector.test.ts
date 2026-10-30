@@ -58,6 +58,21 @@ describe("scoped models selector", () => {
 		return selector;
 	}
 
+	// #5916
+	it("shows model names that differ from the ID", async () => {
+		const selector = await createSelector([
+			{ id: "model-a", name: "Model A", enabled: true },
+			{ id: "model-b", name: "Renamed B", enabled: true },
+		]);
+		const provider = harness!.models[0].provider;
+
+		const rows = stripAnsi(selector.render(120).join("\n"))
+			.split("\n")
+			.map((line) => line.slice(4).trimEnd());
+		expect(rows).toContain(`model-a [${provider}]`);
+		expect(rows).toContain(`model-b (Renamed B) [${provider}]`);
+	});
+
 	it("marks every model after enabling all", async () => {
 		const models = [
 			{ id: "model-a", name: "Model A", enabled: true },

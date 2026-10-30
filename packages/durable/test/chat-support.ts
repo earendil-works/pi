@@ -16,6 +16,7 @@ import {
 	type HarnessOptions,
 	type HarnessSettings,
 	type Registry,
+	type ReportInfo,
 	type Storage,
 	type ToolRegistration,
 } from "@earendil-works/pi-durable";
@@ -28,16 +29,20 @@ export type ChatSetup = {
 	readonly models: Models;
 	readonly registry: Registry;
 	readonly reports: unknown[];
+	/** What each report was about, in the order of `reports`. */
+	readonly infos: ReportInfo[];
 	/** Live Harness settings; tests assign fields to change them between decisions. */
 	readonly settings: { -readonly [K in keyof HarnessSettings]: HarnessSettings[K] };
 	now: () => number;
+	/** `HarnessOptions.identity`. */
+	identity?: HarnessOptions["identity"];
 };
 
 export function chatSetup(options: RegisterFauxProviderOptions = {}): ChatSetup {
 	const faux = fauxProvider(options);
 	const models = createModels();
 	models.setProvider(faux.provider);
-	return { faux, models, registry: createRegistry(), reports: [], settings: {}, now: () => Date.now() };
+	return { faux, models, registry: createRegistry(), reports: [], infos: [], settings: {}, now: () => Date.now() };
 }
 
 /** Open a Harness over `storage` and return its root, configured with the faux model on first creation. */
@@ -53,11 +58,15 @@ export async function openChat(
 			models: setup.models,
 			registry: setup.registry,
 			settings: setup.settings,
+			...(setup.identity === undefined ? {} : { identity: setup.identity }),
 			...(options.env === undefined
 				? {}
 				: { env: typeof options.env === "function" ? options.env : () => options.env as ExecutionEnv }),
 			now: () => setup.now(),
-			onReport: (error) => setup.reports.push(error),
+			onReport: ({ error, ...info }) => {
+				setup.reports.push(error);
+				setup.infos.push(info);
+			},
 		},
 		context,
 	);

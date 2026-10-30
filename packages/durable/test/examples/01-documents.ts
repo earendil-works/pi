@@ -12,6 +12,7 @@ const session = createSession(new MemoryStorage());
 // looked like when a particular entry was written.
 // `fork` says what a forked copy of the conversation starts with (see 02-forks.ts).
 const Notes = defineDoc<{ text: string }>({
+	checkpointWhen: () => false,
 	kind: "example.notes",
 	version: 1,
 	scope: "conversation",

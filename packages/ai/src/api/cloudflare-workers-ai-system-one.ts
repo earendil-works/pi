@@ -23,10 +23,18 @@ function cloudflareErrorMessage(errors: unknown): string {
  * Cloudflare-hosted models such as `@cf/cloudflare/clef` return the output directly:
  * `{ success, result: { model, answers, usage } }`.
  * https://developers.cloudflare.com/workers-ai/models/clef/
+ *
+ * Clef models take images as an `images` list of data URLs. TypeSafe's models take them as
+ * System One `assets`, without TypeSafe's opt-in header. The catalog sets `compat.imageInput`;
+ * the model ID check only covers models without it.
  */
 const transport: SystemOneTransport = {
 	api: "cloudflare-workers-ai-system-one",
 	label: LABEL,
+	detectCompat: (model) => ({
+		imageInput: model.id.startsWith("@cf/cloudflare/clef") ? "images" : "assets",
+		sendImageOptInHeader: false,
+	}),
 	url: (model) => new URL("run", `${model.baseUrl.replace(/\/+$/u, "")}/`),
 	payload: (model, request) => ({ model: model.id, input: request }),
 	output: (body) => {

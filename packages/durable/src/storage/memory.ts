@@ -3,6 +3,7 @@ import { applyImmutableBatches, type Op } from "@earendil-works/chord/delta";
 import { StorageRequestError } from "../errors.ts";
 import { idFromNumber, seqFromNumber } from "../ids.ts";
 import type {
+	CommitResult,
 	ConversationId,
 	ConversationQuery,
 	ConversationRecord,
@@ -247,7 +248,7 @@ export class MemoryStorage implements Storage {
 		entryCommitSeqs: new Map(),
 		tasks: new Map(),
 		taskIds: [],
-		taskIdsByStatus: { pending: [], running: [], waiting: [], completing: [], terminal: [] },
+		taskIdsByStatus: { pending: [], running: [], waiting: [], sleeping: [], completing: [], terminal: [] },
 		submissions: new Map(),
 		submissionIds: [],
 		submissionIdsByStatus: { queued: [], placed: [], done: [], unanswered: [] },
@@ -260,8 +261,35 @@ export class MemoryStorage implements Storage {
 	private nextSeq = 1;
 	private closed = false;
 
-	async commit(writes: readonly StorageWrite[], _context: Context): Promise<Seq> {
-		return this.prepareCommit(writes).apply();
+	/**
+	 * Apply `batches` one by one, each checked against the state the earlier ones left (`prepareCommit()`, which only
+	 * checks and detaches, so a batch it refuses changed nothing); stops at the first one refused. Memory is durable at
+	 * once; the receipts follow the last batch.
+	 */
+	async commit(
+		batches: readonly (readonly StorageWrite[])[],
+		receive: (index: number, seq: Seq) => void,
+		_context: Context,
+	): Promise<CommitResult> {
+		this.assertOpen();
+		const seqs: Seq[] = [];
+		let refused: { readonly error: unknown } | undefined;
+		try {
+			for (const writes of batches) {
+				let prepared: PreparedMemoryCommit;
+				try {
+					prepared = this.prepareCommit(writes);
+				} catch (error) {
+					refused = { error };
+					break;
+				}
+				seqs.push(prepared.apply());
+			}
+		} finally {
+			// Also when a batch's apply throws: the batches applied before it are stored, and their receipts stand.
+			for (const [index, seq] of seqs.entries()) receive(index, seq);
+		}
+		return refused === undefined ? { stored: seqs.length } : { stored: seqs.length, refused: refused.error };
 	}
 
 	/** Validate and detach one commit without changing observable state. */

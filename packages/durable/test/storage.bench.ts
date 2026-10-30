@@ -14,8 +14,9 @@ import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
 import { MemoryStorage } from "../src/storage/memory.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import type { EntryId, Storage } from "../src/types.ts";
+import { openStoreStorage } from "./store-storage-support.ts";
 
-const STORAGE_BENCHMARK_BACKENDS = ["memory", "sqlite", "jsonl"] as const;
+const STORAGE_BENCHMARK_BACKENDS = ["memory", "sqlite", "store", "jsonl"] as const;
 type StorageBenchmarkBackend = (typeof STORAGE_BENCHMARK_BACKENDS)[number];
 
 const READ_OPTIONS = { time: 300, iterations: 10, warmupTime: 75, warmupIterations: 3 } as const;
@@ -38,9 +39,10 @@ async function createFixture(backend: StorageBenchmarkBackend): Promise<Fixture>
 	}
 	const directory = await mkdtemp(join(tmpdir(), "pi-durable-benchmark-"));
 	directories.push(directory);
-	if (backend === "sqlite") {
+	if (backend === "sqlite" || backend === "store") {
 		const path = join(directory, "storage.sqlite");
-		const fixture = { backend, storage: await openNodeSqliteStorage(path) } satisfies Fixture;
+		const storage = backend === "sqlite" ? await openNodeSqliteStorage(path) : await openStoreStorage(path);
+		const fixture = { backend, storage } satisfies Fixture;
 		fixtures.push(fixture);
 		return fixture;
 	}
@@ -123,11 +125,12 @@ type ReopenFixture = {
 };
 
 async function openPersistentStorage(backend: PersistentBackend, path: string): Promise<Storage> {
+	if (backend === "store") return openStoreStorage(path);
 	return backend === "sqlite" ? openNodeSqliteStorage(path) : openNodeJsonlStorage(path, BACKGROUND_CONTEXT);
 }
 
 async function copyPersistentStorage(backend: PersistentBackend, source: string, destination: string): Promise<void> {
-	if (backend === "sqlite") await copyFile(source, destination);
+	if (backend !== "jsonl") await copyFile(source, destination);
 	else await cp(source, destination, { recursive: true });
 }
 
@@ -136,7 +139,7 @@ for (const backend of STORAGE_BENCHMARK_BACKENDS) {
 	if (backend === "memory") continue;
 	const seedDirectory = await mkdtemp(join(tmpdir(), `pi-durable-${backend}-reopen-benchmark-`));
 	directories.push(seedDirectory);
-	const seedPath = join(seedDirectory, backend === "sqlite" ? "storage.sqlite" : "storage");
+	const seedPath = join(seedDirectory, backend === "jsonl" ? "storage" : "storage.sqlite");
 	const seed = await openPersistentStorage(backend, seedPath);
 	const dataset = await seedStorageBenchmark(seed);
 	await seed.close(BACKGROUND_CONTEXT);
@@ -144,7 +147,7 @@ for (const backend of STORAGE_BENCHMARK_BACKENDS) {
 		Array.from({ length: REOPEN_OPTIONS.iterations + REOPEN_OPTIONS.warmupIterations }, async () => {
 			const directory = await mkdtemp(join(tmpdir(), `pi-durable-${backend}-reopen-sample-`));
 			directories.push(directory);
-			const path = join(directory, backend === "sqlite" ? "storage.sqlite" : "storage");
+			const path = join(directory, backend === "jsonl" ? "storage" : "storage.sqlite");
 			await copyPersistentStorage(backend, seedPath, path);
 			return path;
 		}),

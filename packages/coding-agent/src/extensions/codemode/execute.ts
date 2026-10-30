@@ -55,8 +55,60 @@ const MAX_CONCURRENT_MODEL_CALLS = 4;
  */
 const CODEMODE_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
 // Shared across calls and sessions. Allow one replacement while a cancelled worker is still exiting.
-const MAX_CONCURRENT_CODEMODE_WORKERS = 2;
+const DEFAULT_MAX_CODEMODE_WORKERS = 2;
+
+/** `PI_CODEMODE_MAX_WORKERS` if it is a positive integer. Read per call so SDK hosts can set it at runtime. */
+function maxCodemodeWorkers(): number {
+	const value = Number(process.env.PI_CODEMODE_MAX_WORKERS);
+	return Number.isInteger(value) && value > 0 ? value : DEFAULT_MAX_CODEMODE_WORKERS;
+}
+/**
+ * How long a script waits for a free worker before failing. Bounds the wait when every worker is
+ * held by a script that waits on another script, for example an in-process subagent that uses codemode.
+ */
+const CODEMODE_WORKER_WAIT_MS = 60_000;
 let activeCodemodeWorkers = 0;
+/** Scripts waiting for a worker, in arrival order. */
+const codemodeWorkerWaiters: (() => void)[] = [];
+
+/**
+ * Reserve one worker slot, waiting in arrival order while all are taken. Resolves with why it could
+ * not reserve one: the signal aborted, or `timeoutMs` passed.
+ */
+function reserveCodemodeWorker(
+	signal: AbortSignal | undefined,
+	timeoutMs: number,
+): Promise<"reserved" | "aborted" | "timeout"> {
+	if (signal?.aborted) return Promise.resolve("aborted");
+	return new Promise((resolve) => {
+		const settle = (outcome: "reserved" | "aborted" | "timeout") => {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", onAbort);
+			const index = codemodeWorkerWaiters.indexOf(grant);
+			if (index >= 0) codemodeWorkerWaiters.splice(index, 1);
+			resolve(outcome);
+		};
+		const grant = () => settle("reserved");
+		const onAbort = () => settle("aborted");
+		const timer = setTimeout(() => settle("timeout"), timeoutMs);
+		codemodeWorkerWaiters.push(grant);
+		signal?.addEventListener("abort", onAbort, { once: true });
+		admitCodemodeWorkers();
+	});
+}
+
+/** Give free slots to waiting scripts in arrival order. */
+function admitCodemodeWorkers(): void {
+	while (codemodeWorkerWaiters.length > 0 && activeCodemodeWorkers < maxCodemodeWorkers()) {
+		activeCodemodeWorkers++;
+		codemodeWorkerWaiters.shift()?.();
+	}
+}
+
+function releaseCodemodeWorker(): void {
+	activeCodemodeWorkers--;
+	admitCodemodeWorkers();
+}
 const MODEL_TYPES: ReadonlySet<string> = new Set<ModelType>(["chat", "image", "classifier"]);
 
 function truncateText(text: string, maxChars: number): string {
@@ -499,37 +551,63 @@ export async function executeCodemode(
 		},
 	}));
 
-	const sandbox = new CodemodeSandbox({
-		tools: sandboxTools,
-		globals: [
-			...createDiscoveryGlobals(callable, samples, options),
-			...(options.models && ctx
-				? createModelGlobals(ctx.modelRegistry, toolCallId, calls, publish, addModelUsage, addGeneratedImages)
-				: []),
-		],
-		timeoutMs: sourceOptions.timeoutMs ?? Number.POSITIVE_INFINITY,
-		memoryLimitBytes: CODEMODE_MEMORY_LIMIT_BYTES,
-		wasm: loadQuickJSWasm(getQuickJSWasmPath()),
-		workerUrl: getCodemodeWorkerSpecifier(),
-		acquireWorker: () => {
-			if (activeCodemodeWorkers >= MAX_CONCURRENT_CODEMODE_WORKERS) {
-				throw new Error(
-					`Codemode worker limit reached (${MAX_CONCURRENT_CODEMODE_WORKERS} workers are still running or shutting down). Retry after they exit.`,
-				);
-			}
-			activeCodemodeWorkers++;
-			return () => {
-				activeCodemodeWorkers--;
-			};
-		},
-	});
+	// The wait for a worker counts toward the script's deadline.
+	const deadline = sourceOptions.timeoutMs ?? Number.POSITIVE_INFINITY;
+	const waitStartedAt = performance.now();
+	const admission = await reserveCodemodeWorker(signal, Math.min(deadline, CODEMODE_WORKER_WAIT_MS));
+	const waitedMs = performance.now() - waitStartedAt;
+	if (admission !== "reserved") {
+		const waited = ((performance.now() - startedAt) / 1000).toFixed(1);
+		const reason = signal?.reason;
+		const error =
+			admission === "aborted"
+				? `Script aborted: ${reason instanceof Error ? reason.message : "Execution aborted"}`
+				: deadline <= CODEMODE_WORKER_WAIT_MS
+					? `Script timed out: Execution timed out after ${deadline} ms while waiting for a free codemode worker`
+					: `No codemode worker became free within ${CODEMODE_WORKER_WAIT_MS / 1000} seconds. All ${maxCodemodeWorkers()} workers, shared by every session in this process, are held by other scripts. Retry after they finish.`;
+		return {
+			content: [
+				{ type: "text", text: `Script failed\nWall time ${waited} seconds\nOutput:\n` },
+				{ type: "text", text: `Script error:\n${error}\n\nThe script did not start.` },
+			],
+			details: snapshot(),
+			isError: true,
+		};
+	}
+	// The reservation covers the one worker this script starts. A launch that resumes after the result
+	// settled finds it released and starts no worker.
+	let reserved = true;
 
+	let sandbox: CodemodeSandbox | undefined;
 	let result: CodemodeResult;
 	try {
+		sandbox = new CodemodeSandbox({
+			tools: sandboxTools,
+			globals: [
+				...createDiscoveryGlobals(callable, samples, options),
+				...(options.models && ctx
+					? createModelGlobals(ctx.modelRegistry, toolCallId, calls, publish, addModelUsage, addGeneratedImages)
+					: []),
+			],
+			timeoutMs: Math.max(1, Math.round(deadline - waitedMs)),
+			memoryLimitBytes: CODEMODE_MEMORY_LIMIT_BYTES,
+			wasm: loadQuickJSWasm(getQuickJSWasmPath()),
+			workerUrl: getCodemodeWorkerSpecifier(),
+			acquireWorker: () => {
+				if (!reserved) throw new Error("The script already settled");
+				// From here the sandbox releases the slot when the worker actually exits.
+				reserved = false;
+				return releaseCodemodeWorker;
+			},
+		});
 		const store = ctx ? readCodemodeStore(ctx.sessionManager.getBranch()) : {};
 		result = await sandbox.execute(code, { signal, store });
 	} finally {
-		await sandbox.close();
+		await sandbox?.close();
+		if (reserved) {
+			reserved = false;
+			releaseCodemodeWorker();
+		}
 	}
 	// Calls still marked running were cut off by the script ending, a timeout, or an abort.
 	for (const call of calls) {

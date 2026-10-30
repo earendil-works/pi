@@ -16,6 +16,7 @@ import {
 	LiveDoc,
 	MemoryStorage,
 	type Storage,
+	type StorageWrite,
 	type Submission,
 	type TaskId,
 } from "@earendil-works/pi-durable";
@@ -23,7 +24,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { chatSetup, openChat } from "./chat-support.ts";
 import { addTask, addTool } from "./harness-support.ts";
-import { ControlledStorage, context } from "./session-support.ts";
+import { ControlledStorage, context, refusingAt } from "./session-support.ts";
 import { aborted, type Deferred, deferred, openTasks, settled } from "./task-support.ts";
 
 /** Outcome a held task commits once its gate opens. */
@@ -174,7 +175,7 @@ async function waitUntil(check: () => Promise<boolean>): Promise<void> {
 /** Mark a conversation busy with `task` standing in for its run, so submissions queue. */
 async function busy(conversation: Conversation, task: TaskId): Promise<void> {
 	await conversation.commit(async (tx) => {
-		(await tx.doc(LiveDoc, conversation.id)).run = { taskId: task, inputs: [] };
+		(await tx.doc(LiveDoc, conversation.id)).run = { taskId: task, inputs: [], turns: 0 };
 	}, context);
 }
 
@@ -937,18 +938,25 @@ describe("ownership", () => {
 		await opened.harness.abortTask(tree.owner, context);
 		await opened.harness.close(context);
 
-		const storage = await openNodeSqliteStorage(path);
+		const storage: Storage = await openNodeSqliteStorage(path);
 		let rejectMark: TaskId | undefined;
 		const commit = storage.commit.bind(storage);
-		storage.commit = async (writes, ctx) => {
-			if (
-				writes.some((write) => write.type === "task" && write.value.id === rejectMark && write.value.abortRequested)
-			) {
-				rejectMark = undefined;
-				throw new Error("disk gone");
-			}
-			return commit(writes, ctx);
-		};
+		// The batch that marks `rejectMark` is refused.
+		storage.commit = (batches, receive, ctx) =>
+			refusingAt(
+				commit,
+				batches,
+				receive,
+				ctx,
+				(writes) => {
+					const marks = writes.some(
+						(write) => write.type === "task" && write.value.id === rejectMark && write.value.abortRequested,
+					);
+					if (marks) rejectMark = undefined;
+					return marks;
+				},
+				new Error("disk gone"),
+			);
 		opened = await openHarness(storage);
 		const child = (await opened.harness.conversation(tree.child, context))!;
 		const late = await child.commit(async (tx) => {
@@ -959,7 +967,7 @@ describe("ownership", () => {
 		// The failed cascade commit fails the Harness. `closed` settles once its invocations have ended, and the owner's
 		// abort handler ignores its signal: let it return.
 		open("abort.owner", "completed");
-		expect(await opened.harness.closed).toMatchObject({ reason: "failed" });
+		expect(await opened.harness.closed).toMatchObject({ kind: "failed" });
 		await opened.harness.close(context);
 		// Reopening derives the mark again.
 		opened = await openHarness(await openNodeSqliteStorage(path));
@@ -971,18 +979,19 @@ describe("ownership", () => {
 		const failure = new Error("disk gone");
 		let failMark: TaskId | undefined;
 		class Failing extends ControlledStorage {
-			override async commit(
-				writes: Parameters<MemoryStorage["commit"]>[0],
-				ctx: Parameters<MemoryStorage["commit"]>[1],
+			override commit(
+				batches: Parameters<MemoryStorage["commit"]>[0],
+				receive: Parameters<MemoryStorage["commit"]>[1],
+				ctx: Parameters<MemoryStorage["commit"]>[2],
 			) {
-				const marks = writes.some(
-					(write) => write.type === "task" && write.value.id === failMark && write.value.abortRequested,
-				);
-				if (marks) {
-					failMark = undefined;
-					throw failure;
-				}
-				return super.commit(writes, ctx);
+				const refuses = (writes: readonly StorageWrite[]): boolean => {
+					const marks = writes.some(
+						(write) => write.type === "task" && write.value.id === failMark && write.value.abortRequested,
+					);
+					if (marks) failMark = undefined;
+					return marks;
+				};
+				return refusingAt((...args) => super.commit(...args), batches, receive, ctx, refuses, failure);
 			}
 		}
 		const storage = new Failing();
@@ -990,7 +999,7 @@ describe("ownership", () => {
 		const tree = await ownedChild(root, "owner");
 		failMark = tree.inner;
 		open("owner", "failed");
-		expect(await harness.closed).toEqual({ reason: "failed", error: failure });
+		expect(await harness.closed).toEqual({ kind: "failed", error: failure });
 		expect(reports).toEqual([failure]);
 		await harness.close(context);
 		const reopened = await openHarness(storage.reopen());
@@ -1055,7 +1064,7 @@ describe("owned conversations from tools and supervisors", () => {
 		await harness.close(context);
 	});
 
-	it("rejects a handle operation queued on the line when the invocation ends before it runs", async () => {
+	it("runs a handle operation queued behind the abort mark before the mark's publication, and the cascade aborts it", async () => {
 		const setup = chatSetup();
 		const ready = deferred<{ child: ConversationId; taskId: TaskId }>();
 		const go = deferred();
@@ -1086,9 +1095,29 @@ describe("owned conversations from tools and supervisors", () => {
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("delegate", {}, { id: "c1" })], { stopReason: "toolUse" }),
 		]);
-		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		// Holds the storage call that writes the abort mark, so the mark is published only once the test lets it.
+		let holdMark: TaskId | undefined;
+		const stored = deferred();
+		class HoldMark extends MemoryStorage {
+			override async commit(
+				batches: Parameters<MemoryStorage["commit"]>[0],
+				receive: Parameters<MemoryStorage["commit"]>[1],
+				ctx: Parameters<MemoryStorage["commit"]>[2],
+			) {
+				const marks = batches
+					.flat()
+					.some((write) => write.type === "task" && write.value.id === holdMark && write.value.abortRequested);
+				if (marks) {
+					holdMark = undefined;
+					await stored.promise;
+				}
+				return super.commit(batches, receive, ctx);
+			}
+		}
+		const { harness, root } = await openChat(new HoldMark(), setup);
 		await root.submit({ type: "input", content: "go" }, context);
 		const { child, taskId } = await ready.promise;
+		holdMark = taskId;
 		// Hold the Session line, queue the abort mark behind it, then let the tool queue its submit.
 		const release = deferred();
 		const holding = root.commit(async () => {
@@ -1099,10 +1128,22 @@ describe("owned conversations from tools and supervisors", () => {
 		const { submitting } = await queued.promise;
 		release.resolve();
 		await holding;
+		// The submit starts while the mark's storage call is in flight.
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		stored.resolve();
 		await aborting;
-		await expect(submitting).rejects.toThrow();
+		// Cancellation is checked when a job starts: the submit touches nothing the mark writes, so it starts before the
+		// mark is published and lands. The mark's cascade then aborts the run it started in the owned conversation.
+		const submission = (await submitting) as Submission;
 		const childConversation = (await harness.conversation(child, context))!;
-		expect((await childConversation.entries({}, 10, undefined, context)).items).toEqual([]);
+		await childConversation.waitForIdle(context);
+		expect(await (await harness.submission(submission.id, context))!.status(context)).toMatchObject({
+			status: "unanswered",
+			reason: "aborted",
+		});
+		expect((await childConversation.entries({}, 10, undefined, context)).items.map((entry) => entry.kind)).toEqual([
+			"pi.user",
+		]);
 		expect((await harness.inspect(context)).submissions.filter((record) => record.conversationId === child)).toEqual(
 			[],
 		);
@@ -1152,7 +1193,7 @@ describe("owned conversations from tools and supervisors", () => {
 		const childConversation = (await harness.conversation(child!, context))!;
 		await childConversation.waitForIdle(context);
 		const childLive = await harness.snapshot(LiveDoc, child!, context);
-		expect(childLive).toEqual({});
+		expect(childLive).toEqual({ runFailure: expect.objectContaining({ reason: "aborted" }) });
 		const childInputs = (await harness.inspect(context)).submissions.filter((s) => s.conversationId === child);
 		expect(childInputs).toEqual([]);
 		await harness.waitForIdle(context);
@@ -1313,6 +1354,7 @@ describe("owned conversations from tools and supervisors", () => {
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		const Children = defineDoc<{ child?: ConversationId }>({
+			checkpointWhen: () => false,
 			kind: "test.children",
 			version: 1,
 			scope: "conversation",

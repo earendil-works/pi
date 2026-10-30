@@ -89,7 +89,7 @@ describe("Durable provider session cache e2e", () => {
 			);
 			try {
 				const root = await harness.root(context, {
-					agent: { model: { provider: "openai-codex", modelId: "gpt-5.5" } },
+					agent: { model: { provider: "openai-codex", modelId: "gpt-6.1-sol" } },
 				});
 				harness.resume();
 				const usages: AssistantMessage["usage"][] = [];

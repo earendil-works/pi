@@ -18,7 +18,7 @@ import {
 	writeFile,
 } from "node:fs/promises";
 import { homedir, constants as osConstants, tmpdir } from "node:os";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Context } from "@earendil-works/chord";
 import { StreamDecoder } from "./decode.ts";
@@ -28,6 +28,7 @@ import {
 	type ExecutionEnv,
 	ExecutionError,
 	err,
+	type FileChange,
 	FileError,
 	type FileInfo,
 	type FileKind,
@@ -41,7 +42,6 @@ import {
 	type TextLine,
 	type TextLineReader,
 	toError,
-	type WatchChange,
 	type WatchTarget,
 } from "./index.ts";
 import { LineScanner } from "./line-scan.ts";
@@ -205,8 +205,17 @@ interface ShellConfig {
 	commandTransport?: "argv" | "stdin";
 }
 
+// Keep in sync with packages/coding-agent/src/utils/shell.ts.
 function isLegacyWslBashPath(path: string): boolean {
-	const normalized = path.replace(/\//g, "\\").toLowerCase();
+	const normalized = win32.normalize(path).toLowerCase();
+	const systemRoot = process.env.SystemRoot;
+	if (systemRoot) {
+		if (!/^[a-z]:[\\/]/i.test(systemRoot)) return false;
+		return ["System32", "Sysnative"].some(
+			(directory) => normalized === win32.join(systemRoot, directory, "bash.exe").toLowerCase(),
+		);
+	}
+	// Fall back to conventional launcher paths only when the Windows directory is unknown.
 	return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized);
 }
 
@@ -275,7 +284,7 @@ function killProcessTree(pid: number): void {
 	if (process.platform === "win32") {
 		try {
 			const child = spawn(
-				join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"),
+				join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"),
 				["/F", "/T", "/PID", String(pid)],
 				{
 					stdio: "ignore",
@@ -618,7 +627,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 
 	async watch(
 		targets: readonly WatchTarget[],
-		onChange: (change: WatchChange) => void,
+		onChange: (change: FileChange) => void,
 		context: Context,
 	): Promise<Result<FileWatcher, FileError>> {
 		const aborted = abortResult<FileWatcher>(context.abortSignal);
@@ -632,7 +641,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			);
 			const afterOpenAbort = abortResult<FileWatcher>(context.abortSignal);
 			if (afterOpenAbort) {
-				await watcher.close(context);
+				await watcher.stop(context);
 				return afterOpenAbort;
 			}
 			return ok(watcher);

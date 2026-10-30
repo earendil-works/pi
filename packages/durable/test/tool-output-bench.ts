@@ -195,13 +195,17 @@ async function runScenario(scenario: Scenario): Promise<Metrics> {
 		let liveOpBytes = 0;
 		let outputSets = 0;
 		const observe = (target: Harness): void => {
-			target.subscribeCommits((publication) => {
-				for (const change of publication.changes) {
-					if (change.type !== "document" || change.record.kind !== "pi.live") continue;
-					liveCommits++;
-					liveOpBytes += JSON.stringify(change.ops).length;
-					for (const op of change.ops) if (op[0] === "s" && op[1].at(-1) === "output") outputSets++;
-				}
+			target.observeCommits({
+				advance: (publication) => {
+					for (const change of publication.changes) {
+						if (change.type !== "document" || change.kind !== "change" || change.record.kind !== "pi.live")
+							continue;
+						liveCommits++;
+						liveOpBytes += JSON.stringify(change.ops).length;
+						for (const op of change.ops) if (op[0] === "s" && op[1].at(-1) === "output") outputSets++;
+					}
+				},
+				end: () => {},
 			});
 		};
 		observe(harness);
@@ -257,7 +261,7 @@ async function openStorage(backend: Backend, path: string): Promise<Storage> {
 	return openNodeJsonlStorage(path, context);
 }
 
-/** Measure every Storage commit. */
+/** Measure every Storage commit call. */
 function timed(storage: Storage, latencies: number[]): Storage {
 	return new Proxy(storage, {
 		get(target, property) {

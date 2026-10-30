@@ -12,13 +12,16 @@ export const ModelInputModalitySchema = Type.Enum(MODEL_INPUT_MODALITIES);
 export const CacheRetentionSchema = Type.Enum(CACHE_RETENTIONS);
 
 const ThinkingLevelMapValueSchema = Type.Union([Type.String(), Type.Null()]);
-export const ThinkingLevelMapSchema = Type.Partial(Type.Record(ModelThinkingLevelSchema, ThinkingLevelMapValueSchema));
+export const ThinkingLevelMapSchema = Type.Partial(Type.Record(ModelThinkingLevelSchema, ThinkingLevelMapValueSchema), {
+	description:
+		"Provider value sent for each thinking level. null marks a level unsupported. Levels the model does not map use the provider's default value through high; xhigh and max are unsupported.",
+});
 
 export const ModelPromptCacheSchema = Type.Partial(
 	Type.Record(Type.Enum(MODEL_PROMPT_CACHE_RETENTIONS), Type.Number({ exclusiveMinimum: 0 })),
 	{
 		description:
-			"Best-effort prompt cache lifetime in seconds for each retention tier. A missing tier means the lifetime is unknown, so Pi does not warm it.",
+			"Best-effort prompt cache lifetime in seconds for the short and long retention tiers. Pi warms only tiers with a known lifetime.",
 	},
 );
 

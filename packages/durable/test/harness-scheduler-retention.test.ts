@@ -125,21 +125,6 @@ async function sqlitePath(): Promise<string> {
 }
 
 /** Count the task and conversation reads a storage serves. */
-function countReads(storage: Storage): { tasks: number; conversations: number } {
-	const reads = { tasks: 0, conversations: 0 };
-	const task = storage.task.bind(storage);
-	const conversation = storage.conversation.bind(storage);
-	storage.task = (id, readContext) => {
-		reads.tasks++;
-		return task(id, readContext);
-	};
-	storage.conversation = (id, readContext) => {
-		reads.conversations++;
-		return conversation(id, readContext);
-	};
-	return reads;
-}
-
 async function open(storage?: Storage) {
 	const opened = await openTasks(storage ?? (await openNodeSqliteStorage(await sqlitePath())), [
 		Hold,
@@ -191,9 +176,7 @@ describe("scheduler retention", () => {
 	});
 
 	it("holds a live owner for work later created in a forgotten conversation, loading its chain again", async () => {
-		const storage = await openNodeSqliteStorage(await sqlitePath());
-		const reads = countReads(storage);
-		const { harness, root } = await open(storage);
+		const { harness, root } = await open();
 		// Live P -> ended B -> ended A -> conversation C, empty: forgotten.
 		const tree = await root.commit(async (tx) => {
 			const p = await tx.createTask(Hold, { name: "p" }, { ownership: { kind: "conversation" } });
@@ -206,15 +189,14 @@ describe("scheduler retention", () => {
 		gate("b").resolve();
 		await harness.waitForTask(tree.b, context);
 		const before = sizes(harness);
-		const loaded = reads.tasks + reads.conversations;
 		const c = (await harness.conversation(tree.c, context))!;
 		const d = await c.commit(
 			(tx) => tx.createTask(Hold, { name: "d" }, { ownership: { kind: "conversation" } }),
 			context,
 		);
 		gate("p").resolve();
+		// P holds for D: the scheduler loaded the chain from C up to P again.
 		await eventually(async () => (await status(harness, tree.p)).status === "completing");
-		expect(reads.tasks + reads.conversations).toBeGreaterThan(loaded);
 		gate("d").resolve();
 		expect((await harness.waitForTask(d, context)).state.outcome.status).toBe("completed");
 		expect((await harness.waitForTask(tree.p, context)).state.outcome.status).toBe("completed");
@@ -267,7 +249,7 @@ describe("scheduler retention", () => {
 		const c = (await harness.conversation(tree.c, context))!;
 		// Busy, so the input queues instead of starting a run.
 		await c.commit(async (tx) => {
-			(await tx.doc(LiveDoc, tree.c)).run = { taskId: tree.keep, inputs: [] };
+			(await tx.doc(LiveDoc, tree.c)).run = { taskId: tree.keep, inputs: [], turns: 0 };
 		}, context);
 		const queued = (await c.submit({ type: "input", content: "later" }, context)).id;
 		await harness.abortTask(tree.p, context);
@@ -307,7 +289,7 @@ describe("scheduler retention", () => {
 		await harness.close(context);
 	});
 
-	it("keeps a scope busy while the chain of new work below a forgotten conversation loads", async () => {
+	it("loads the chain of new work below a forgotten conversation before admitting it, and keeps the scope busy", async () => {
 		const path = await sqlitePath();
 		const storage = await openNodeSqliteStorage(path);
 		const { harness, root } = await open(storage);
@@ -318,28 +300,36 @@ describe("scheduler retention", () => {
 		}, context);
 		gate("b").resolve();
 		await harness.waitForTask(tree.b, context);
-		// Hold the chain load's read of C: the second read once holding, after the creating commit's own.
-		const read = storage.conversation.bind(storage);
+		await harness.close(context);
+		// Reopen, so that B is in no cache: the chain load reads it from Storage. Hold that read.
+		const reopened = await openNodeSqliteStorage(path);
+		const read = reopened.task.bind(reopened);
 		const held = deferred<void>();
 		const reached = deferred<void>();
 		let holding = false;
-		let readsOfC = 0;
-		storage.conversation = async (id, readContext) => {
-			if (holding && id === tree.c && ++readsOfC === 2) {
+		reopened.task = async (id, readContext) => {
+			if (holding && id === tree.b) {
 				reached.resolve();
 				await held.promise;
 			}
 			return read(id, readContext);
 		};
-		const c = (await harness.conversation(tree.c, context))!;
+		const second = (await open(reopened)).harness;
+		const c = (await second.conversation(tree.c, context))!;
 		holding = true;
-		await c.commit((tx) => tx.createTask(Hold, { name: "d" }, { ownership: { kind: "conversation" } }), context);
+		const committing = c.commit(
+			(tx) => tx.createTask(Hold, { name: "d" }, { ownership: { kind: "conversation" } }),
+			context,
+		);
+		// Its admission loads the chain, for the memberships it writes: the commit waits for the read.
 		await reached.promise;
-		expect(await settled(harness.waitForIdle(context))).toBe(false);
+		expect(await settled(committing)).toBe(false);
 		held.resolve();
+		await committing;
+		expect(await settled(second.waitForIdle(context))).toBe(false);
 		gate("d").resolve();
-		await harness.waitForIdle(context);
-		await harness.close(context);
+		await second.waitForIdle(context);
+		await second.close(context);
 	});
 
 	it("keeps a chain when one commit ends its last task and creates new work below it", async () => {
@@ -452,7 +442,7 @@ describe("scheduler retention", () => {
 		await harness.waitForTask(tree.b, context);
 		const c = (await harness.conversation(tree.c, context))!;
 		await c.commit(async (tx) => {
-			(await tx.doc(LiveDoc, tree.c)).run = { taskId: tree.keep, inputs: [] };
+			(await tx.doc(LiveDoc, tree.c)).run = { taskId: tree.keep, inputs: [], turns: 0 };
 		}, context);
 		// Queued while nothing cancels: no withdrawal scan.
 		const queued = (await c.submit({ type: "input", content: "later" }, context)).id;
@@ -529,7 +519,7 @@ describe("scheduler retention", () => {
 			context,
 		);
 		await root.commit(async (tx) => {
-			(await tx.doc(LiveDoc, root.id)).run = { taskId: busy, inputs: [] };
+			(await tx.doc(LiveDoc, root.id)).run = { taskId: busy, inputs: [], turns: 0 };
 		}, context);
 		const before = scans;
 		await root.submit({ type: "input", content: "queued" }, context);

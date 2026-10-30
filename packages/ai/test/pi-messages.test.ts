@@ -116,6 +116,7 @@ describe("pi-messages", () => {
 					reason: "toolUse",
 					usage,
 					responseId: "resp_1",
+					responseModel: "claude-opus-5-5",
 					providerThinkingLevel: "high",
 				},
 			],
@@ -145,6 +146,7 @@ describe("pi-messages", () => {
 		expect(message.responseId).toBe("resp_1");
 		expect(message.providerThinkingLevel).toBe("high");
 		expect(message.model).toBe("auto");
+		expect(message.responseModel).toBe("claude-opus-5-5");
 		expect(message.provider).toBe("radius");
 		expect(message.content).toEqual([
 			{ type: "text", text: "Hello", textSignature: undefined },
@@ -190,6 +192,7 @@ describe("pi-messages", () => {
 		expect(eventModels).toEqual(wireEvents.map(() => model));
 		expect(message.stopReason).toBe("stop");
 		expect(message.responseId).toBe("resp_1");
+		expect(message).not.toHaveProperty("responseModel");
 		expect(message.content).toEqual([{ type: "text", text: "Hello", textSignature: undefined }]);
 	});
 
@@ -234,7 +237,16 @@ describe("pi-messages", () => {
 
 	it("propagates server-sent error events", async () => {
 		const { baseUrl } = await startServer({
-			events: [{ type: "start" }, { type: "error", reason: "error", usage, errorMessage: "Upstream failed" }],
+			events: [
+				{ type: "start" },
+				{
+					type: "error",
+					reason: "error",
+					usage,
+					errorMessage: "Upstream failed",
+					responseModel: "claude-opus-5-5",
+				},
+			],
 		});
 		const model = createModel(baseUrl);
 
@@ -243,6 +255,7 @@ describe("pi-messages", () => {
 		expect(message.stopReason).toBe("error");
 		expect(message.errorMessage).toBe("Upstream failed");
 		expect(message.usage).toEqual(usage);
+		expect(message.responseModel).toBe("claude-opus-5-5");
 	});
 
 	it("errors when no API key is provided", async () => {
@@ -252,6 +265,34 @@ describe("pi-messages", () => {
 
 		expect(message.stopReason).toBe("error");
 		expect(message.errorMessage).toContain("No API key provided");
+	});
+
+	it("rejects content indexes that are not the next or an existing block", async () => {
+		const cases: unknown[][] = [
+			[{ type: "text_start", contentIndex: 4294967000 }],
+			[{ type: "text_start", contentIndex: "__proto__" }],
+			[
+				{ type: "text_start", contentIndex: 0 },
+				{
+					type: "toolcall_end",
+					contentIndex: "__proto__",
+					toolCall: { polluted: true },
+				},
+			],
+			[{ type: "text_delta", contentIndex: 0, delta: "x" }],
+		];
+		for (const events of cases) {
+			const { baseUrl } = await startServer({
+				events: [{ type: "start" }, ...events, { type: "done", reason: "stop", usage }],
+			});
+			const message = await stream(createModel(baseUrl), normalizeContext(context), { apiKey: "test-key" }).result();
+			server?.close();
+
+			expect(message.stopReason).toBe("error");
+			expect(message.errorMessage).toContain("Invalid contentIndex");
+			expect(message.content.length).toBeLessThanOrEqual(1);
+		}
+		expect(([] as unknown as Record<string, unknown>).polluted).toBeUndefined();
 	});
 
 	it("errors when the stream ends without a terminal event", async () => {

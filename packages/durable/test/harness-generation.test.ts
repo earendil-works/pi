@@ -3,12 +3,12 @@ import {
 	fauxAssistantMessage,
 	type Message,
 	type Models,
+	PI_ATTRIBUTION,
 	type SimpleStreamOptions,
 	type SystemMessage,
 } from "@earendil-works/pi-ai";
 import {
 	AssistantEntry,
-	type CommitPublication,
 	type Conversation,
 	createRegistry,
 	defineDoc,
@@ -30,7 +30,7 @@ import { resolveSettings } from "../src/harness/agent.ts";
 import type { SessionImpl } from "../src/session/session.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf, unanswered, waitFor } from "./chat-support.ts";
 import { addSection } from "./harness-support.ts";
-import { ControlledStorage, context } from "./session-support.ts";
+import { ControlledStorage, context, followCommits } from "./session-support.ts";
 
 const ERROR_503 = fauxAssistantMessage([], { stopReason: "error", errorMessage: "503 Service Unavailable" });
 
@@ -75,9 +75,9 @@ function invalidFinalStream(): ReturnType<Models["streamSimple"]> {
 
 function livePublications(harness: Harness): LiveState[] {
 	const values: LiveState[] = [];
-	harness.subscribeCommits((publication: CommitPublication) => {
+	followCommits(harness, (publication) => {
 		for (const change of publication.changes) {
-			if (change.type === "document" && change.record.kind === "pi.live" && change.value !== null) {
+			if (change.type === "document" && change.record.kind === "pi.live" && change.kind === "change") {
 				values.push(change.value as LiveState);
 			}
 		}
@@ -119,6 +119,8 @@ describe("generation", () => {
 	it("stores partials as deltas and a complete base once nothing is in flight", async () => {
 		const setup = chatSetup({ tokensPerSecond: 200, tokenSize: { min: 1, max: 1 } });
 		setup.faux.setResponses([fauxAssistantMessage("w".repeat(200))]);
+		// Store deferred partials well within the stream, so some reach Storage before the answer.
+		setup.settings.progress = { persistWithinMs: 100 };
 		const storage = new ControlledStorage();
 		const { harness, root } = await openChat(storage, setup);
 		const record = await storage.findDocument(
@@ -155,7 +157,10 @@ describe("generation", () => {
 		expect((await harness.waitForTask(taskId, context)).state.outcome).toEqual({ status: "aborted" });
 		// The earlier settlement stays; the run's own settlement leaves it unchanged.
 		expect(await submission.status(context)).toMatchObject({ status: "unanswered", reason: "withdrawn" });
-		expect(await live(harness, root)).toEqual({});
+		// A run ends without an answer even when its inputs were settled already.
+		expect(await live(harness, root)).toEqual({
+			runFailure: { taskId, inputs: [submission.id], reason: "aborted", first: expect.any(Number) },
+		});
 		await harness.close(context);
 	});
 
@@ -179,8 +184,19 @@ describe("generation", () => {
 				error: { message: "Model faux/missing is not available", detail: { reason: "no_model" } },
 			},
 		});
-		expect(await live(harness, root)).toEqual({});
-		expect(await live(harness, plain)).toEqual({});
+		expect(await live(harness, root)).toEqual({
+			runFailure: {
+				taskId: tasks.items[0]!.id,
+				inputs: [expect.any(Number)],
+				reason: "no_model",
+				detail: "Model faux/missing is not available",
+				first: expect.any(Number),
+			},
+		});
+		expect((await live(harness, plain))?.runFailure).toMatchObject({
+			reason: "no_model",
+			detail: "No model is configured",
+		});
 		await harness.close(context);
 	});
 
@@ -304,7 +320,9 @@ describe("generation", () => {
 		const converted = entries[1]!.model![0] as AssistantMessage;
 		expect(converted.stopReason).toBe("aborted");
 		expect(textOf(converted)!.startsWith(textOf(partial as Message)!)).toBe(true);
-		expect(await live(harness, root)).toEqual({});
+		expect(await live(harness, root)).toEqual({
+			runFailure: { taskId, inputs: [submission.id], reason: "aborted", first: expect.any(Number) },
+		});
 		expect((await harness.waitForTask(taskId, context)).state.outcome).toEqual({ status: "aborted" });
 		await harness.close(context);
 	});
@@ -321,7 +339,9 @@ describe("generation", () => {
 		await harness.abortTask(taskId, context);
 		expect(await submission.wait(context)).toMatchObject({ status: "unanswered", reason: "aborted" });
 		expect(setup.faux.state.cancelledDeferred).toHaveLength(1);
-		expect(await live(harness, root)).toEqual({});
+		expect(await live(harness, root)).toEqual({
+			runFailure: { taskId, inputs: [submission.id], reason: "aborted", first: expect.any(Number) },
+		});
 		await harness.close(context);
 	});
 
@@ -345,7 +365,9 @@ describe("generation", () => {
 		await harness.abortTask(taskId, context);
 		expect(await submission.wait(context)).toMatchObject({ status: "unanswered", reason: "aborted" });
 		expect(setup.reports).toContainEqual(new Error("cancel failed"));
-		expect(await live(harness, root)).toEqual({});
+		expect(await live(harness, root)).toEqual({
+			runFailure: { taskId, inputs: [submission.id], reason: "aborted", first: expect.any(Number) },
+		});
 		await harness.close(context);
 	});
 
@@ -383,6 +405,43 @@ describe("generation", () => {
 		expect(seen[1]).toMatchObject({ timeoutMs: 99, sessionId });
 		expect(seen[1]!.headers).toBeUndefined();
 		await harness.close(context);
+	});
+
+	it("records the requested thinking level on answers, streamed and polled", async () => {
+		const setup = chatSetup({ deferred: { pendingFetches: 1, pollAfterMs: 1 } });
+		setup.faux.setResponses([fauxAssistantMessage("streamed"), fauxAssistantMessage("polled")]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		harness.resume();
+		const answer = async (content: string) => {
+			const settled = await (await root.submit({ type: "input", content }, context)).wait(context);
+			if (settled.status !== "done" || settled.type !== "input") throw new Error(`Unexpected ${settled.status}`);
+			return (await root.commit((tx) => tx.entry(AssistantEntry, settled.answer), context))?.model?.[0];
+		};
+		await root.configure({ thinkingLevel: "high" }, context);
+		expect(await answer("one")).toMatchObject({ thinkingLevel: "high" });
+		setup.settings.stream = { deferred: true };
+		expect(await answer("two")).toMatchObject({ thinkingLevel: "high" });
+		expect(setup.faux.state.deferredFetchCount).toBe(2);
+		await harness.close(context);
+	});
+
+	it("attributes model requests to pi by default and merges the Harness identity over it", async () => {
+		const seen: (SimpleStreamOptions["identity"] | undefined)[] = [];
+		const capture = (_context: unknown, options?: SimpleStreamOptions) => {
+			seen.push(options?.identity);
+			return fauxAssistantMessage("ok");
+		};
+		const acme = { name: "acme", url: "https://acme.example" };
+		for (const identity of [undefined, { userAgent: "short" as const, attribution: acme }]) {
+			const setup = chatSetup();
+			setup.identity = identity;
+			setup.faux.setResponses([capture]);
+			const { harness, root } = await openChat(new MemoryStorage(), setup);
+			harness.resume();
+			await (await root.submit({ type: "input", content: "hi" }, context)).wait(context);
+			await harness.close(context);
+		}
+		expect(seen).toEqual([{ attribution: PI_ATTRIBUTION }, { attribution: acme, userAgent: "short" }]);
 	});
 
 	// Regression coverage for #10424.
@@ -489,13 +548,17 @@ describe("generation", () => {
 			stream: {},
 			retry: { enabled: true, maxRetries: 3, baseDelayMs: 2000, maxAgentDelayMs: 60000 },
 			compaction: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000, backgroundTokens: 32768 },
-			progress: { partialIntervalMs: 100, outputIntervalMs: 100 },
+			progress: { partialIntervalMs: 100, outputIntervalMs: 100, persistWithinMs: 1000 },
 			toolExecution: "parallel",
 			steeringMode: "one-at-a-time",
 			followUpMode: "one-at-a-time",
 			contextRetentionMs: 600_000,
 			documentRetentionMs: expect.any(Number),
+			afterFailedRun: "keep",
+			restartLimit: 5,
 		});
+		expect(resolveSettings({ restartLimit: 0 }).restartLimit).toBe(5);
+		expect(resolveSettings({ restartLimit: Number.POSITIVE_INFINITY }).restartLimit).toBe(Number.POSITIVE_INFINITY);
 		expect(resolveSettings({ retry: { enabled: false }, compaction: { backgroundTokens: 0 } })).toMatchObject({
 			retry: { enabled: false, maxRetries: 3, baseDelayMs: 2000 },
 			compaction: { enabled: true, backgroundTokens: 0 },
@@ -503,7 +566,11 @@ describe("generation", () => {
 		expect(resolveSettings({ progress: { outputIntervalMs: 500 } }).progress).toEqual({
 			partialIntervalMs: 100,
 			outputIntervalMs: 500,
+			persistWithinMs: 1000,
 		});
+		// Not a number of milliseconds, 0 or more: the default.
+		expect(resolveSettings({ progress: { persistWithinMs: -1 } }).progress.persistWithinMs).toBe(1000);
+		expect(resolveSettings({ progress: { persistWithinMs: 0 } }).progress.persistWithinMs).toBe(0);
 	});
 
 	it("commits partials no more often than progress.partialIntervalMs", async () => {
@@ -535,6 +602,7 @@ describe("generation", () => {
 
 	it("renders sections that read conversation documents through input.read", async () => {
 		const Agent = defineDoc<{ cwd: string; kind: string }>({
+			checkpointWhen: () => false,
 			kind: "test.agent",
 			version: 1,
 			scope: "conversation",
@@ -628,7 +696,15 @@ describe("generation", () => {
 		expect(entries.map((entry) => entry.kind)).toEqual(["pi.user", "pi.assistant"]);
 		expect(entries[1]!.model![0]).toMatchObject({ role: "assistant", stopReason: "aborted" });
 		expect(textOf(entries[1]!.model![0])).toBe("partial");
-		expect(await live(harness, root)).toEqual({});
+		expect(await live(harness, root)).toEqual({
+			runFailure: {
+				taskId: expect.any(Number),
+				inputs: [submission.id],
+				reason: "faulted",
+				detail: expect.stringContaining("non-JSON function"),
+				first: expect.any(Number),
+			},
+		});
 		const tasks = await harness.commit((tx) => tx.scanTasks({ conversationId: root.id }, 10), context);
 		expect(tasks.items[0]!.state).toMatchObject({ status: "terminal", outcome: { status: "faulted" } });
 		await harness.close(context);
@@ -649,11 +725,11 @@ describe("generation", () => {
 				entry: entry.id,
 			});
 			const taskId = await tx.createTask(
-				{ definition: { ...GenerationTask.definition, version: 2 } },
+				{ definition: { ...GenerationTask.definition, version: GenerationTask.definition.version + 1 } },
 				{},
 				{ ownership: { kind: "conversation" }, conversationId: root.id },
 			);
-			(await tx.doc(LiveDoc, root.id)).run = { taskId, inputs: [submission.id] };
+			(await tx.doc(LiveDoc, root.id)).run = { taskId, inputs: [submission.id], turns: 0 };
 			return { taskId, submissionId: submission.id };
 		}, context);
 		harness.resume();
@@ -669,7 +745,9 @@ describe("generation", () => {
 			status: "unanswered",
 			reason: "task_too_old",
 		});
-		expect(await live(harness, root)).toEqual({});
+		expect(await live(harness, root)).toEqual({
+			runFailure: { taskId, inputs: [submissionId], reason: "orphaned", detail: "task_too_old" },
+		});
 		await harness.close(context);
 	});
 

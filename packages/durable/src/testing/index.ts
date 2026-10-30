@@ -1,4 +1,5 @@
 export { createExpectAssertions, type ExpectLike } from "./assertions.ts";
+export { commitWrites } from "./commit-writes.ts";
 export { createEnvConformance } from "./env-conformance.ts";
 export { registerEnvConformance, registerStorageConformance, type StorageConformanceRunner } from "./runner.ts";
 export {

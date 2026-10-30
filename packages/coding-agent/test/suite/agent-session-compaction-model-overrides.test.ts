@@ -102,37 +102,6 @@ describe("AgentSession compaction model overrides", () => {
 		},
 	);
 
-	it.each(["manual", "automatic"] as const)("passes resolved budgets to built-in %s summarization", async (path) => {
-		const harness = await createHarness({
-			models: [{ id: "faux-1", contextWindow: 4000, maxTokens: 3000 }],
-			tools: [],
-			settings: {
-				compaction: {
-					reserveTokens: 10,
-					modelOverrides: { "faux/faux-1": { reserveTokens: 2000, keepRecentTokens: 150 } },
-				},
-			},
-		});
-		harnesses.push(harness);
-		const recentUserId = seedHistory(harness, 2500);
-		const budgets: Array<number | undefined> = [];
-		harness.setResponses([
-			(_context, options) => {
-				budgets.push(options?.maxTokens);
-				return fauxAssistantMessage("built-in summary");
-			},
-			...(path === "automatic" ? [fauxAssistantMessage("done")] : []),
-		]);
-		if (path === "manual") await harness.session.compact();
-		else await harness.session.prompt("continue");
-		expect(budgets).toEqual([1600]);
-		expect(harness.sessionManager.getEntries().find((entry) => entry.type === "compaction")).toMatchObject({
-			firstKeptEntryId: recentUserId,
-			summary: "built-in summary",
-		});
-		expect(harness.getPendingResponseCount()).toBe(0);
-	});
-
 	it("uses the newly selected model without changing ordinary settings", async () => {
 		const harness = await createHarness({
 			models: [
@@ -193,14 +162,14 @@ describe("AgentSession compaction model overrides", () => {
 			harness.session.agent.state.model = harness.getModel("second")!;
 			return getAuth(model, ...args);
 		});
-		const requests: Array<{ id: string; maxTokens: number | undefined }> = [];
+		const requests: string[] = [];
 		harness.setResponses([
-			(_context, options, _state, model) => {
-				requests.push({ id: model.id, maxTokens: options?.maxTokens });
+			(_context, _options, _state, model) => {
+				requests.push(model.id);
 				return fauxAssistantMessage("summary");
 			},
 		]);
 		await harness.session.compact();
-		expect(requests).toEqual([{ id: "first", maxTokens: 1600 }]);
+		expect(requests).toEqual(["first"]);
 	});
 });

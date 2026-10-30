@@ -41,9 +41,9 @@ async function run(calls: number): Promise<{ ms: number; commits: number }> {
 	const storage = new MemoryStorage();
 	let commits = 0;
 	const commit = storage.commit.bind(storage);
-	storage.commit = (writes, commitContext) => {
-		commits++;
-		return commit(writes, commitContext);
+	storage.commit = (batches, receive, commitContext) => {
+		commits += batches.length;
+		return commit(batches, receive, commitContext);
 	};
 	const harness = await Harness.open(storage, { models, registry }, context);
 	const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" } } });

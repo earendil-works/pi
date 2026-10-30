@@ -271,8 +271,8 @@ export function createCodemodeDescription(
 
 /**
  * The field names of an object schema, `{ output, exit_code, full_output_path? }`, with the fields of
- * object-typed fields `depth` levels deep: `{ content, structuredContent?: { results } }`. Undefined
- * for other schemas.
+ * object-typed fields `depth` levels deep: `{ content, structuredContent?: { results } }`, and the
+ * value of `const` fields: `{ action: "start", id }`. Undefined for other schemas.
  */
 function describeFields(schema: unknown, depth: number): string | undefined {
 	if (typeof schema !== "object" || schema === null) return undefined;
@@ -280,7 +280,13 @@ function describeFields(schema: unknown, depth: number): string | undefined {
 	if (type !== "object" || typeof properties !== "object" || properties === null) return undefined;
 	const requiredNames = new Set(Array.isArray(required) ? required : []);
 	const fields = Object.entries(properties).map(([name, field]) => {
-		const nested = depth > 0 ? describeFields(field, depth - 1) : undefined;
+		const constValue = (field as Record<string, unknown> | null)?.const;
+		const nested =
+			constValue !== undefined
+				? JSON.stringify(constValue)
+				: depth > 0
+					? describeFields(field, depth - 1)
+					: undefined;
 		return `${name}${requiredNames.has(name) ? "" : "?"}${nested ? `: ${nested}` : ""}`;
 	});
 	return `{ ${fields.join(", ")} }`;
@@ -288,13 +294,30 @@ function describeFields(schema: unknown, depth: number): string | undefined {
 
 /**
  * What a script call resolves to, in one line: `a string`, the field names of an object (see
- * {@link describeFields}), or the rendered type for anything else.
+ * {@link describeFields}), the field names of each object in a union, the rendered type when it
+ * fits on one line, or a pointer to `describeTool()` for anything longer. The full type of a large
+ * schema would otherwise be sent with every request (#11501).
  */
-function describeOutput(schema: CodemodeJsonSchema | undefined): string {
+function describeOutput(name: string, schema: CodemodeJsonSchema | undefined): string {
 	const type = renderToolOutputType(schema);
 	if (type === "string") return "a string";
-	const fields = describeFields(schema, 1);
-	return `\`${fields ?? type.replace(/\s+/g, " ")}\``;
+	const fields = describeFields(schema, 1) ?? describeUnionFields(schema);
+	if (fields) return `\`${fields}\``;
+	if (!type.includes("\n")) return `\`${type}\``;
+	return `a value; \`await describeTool(${JSON.stringify(name)})\` shows its type`;
+}
+
+/**
+ * The field names of each variant of an `anyOf`/`oneOf` whose variants are all objects, joined by
+ * `|`.
+ */
+function describeUnionFields(schema: unknown): string | undefined {
+	if (typeof schema !== "object" || schema === null) return undefined;
+	const { anyOf, oneOf } = schema as Record<string, unknown>;
+	const variants = anyOf ?? oneOf;
+	if (!Array.isArray(variants) || variants.length === 0) return undefined;
+	const described = variants.map((variant) => describeFields(variant, 0));
+	return described.every((fields) => fields !== undefined) ? described.join(" | ") : undefined;
 }
 
 /**
@@ -302,7 +325,7 @@ function describeOutput(schema: CodemodeJsonSchema | undefined): string {
  * arguments are the tool's declared parameters, so they are not repeated.
  */
 function describeScriptCall(tool: AgentTool<any>): string {
-	return `${tool.description.trim()}\n\nCodemode: \`tools.${toCodemodeIdentifier(tool.name)}(args)\` resolves to ${describeOutput(toCodemodeDeclaration(tool).outputSchema)}.`;
+	return `${tool.description.trim()}\n\nCodemode: \`tools.${toCodemodeIdentifier(tool.name)}(args)\` resolves to ${describeOutput(tool.name, toCodemodeDeclaration(tool).outputSchema)}.`;
 }
 
 /**

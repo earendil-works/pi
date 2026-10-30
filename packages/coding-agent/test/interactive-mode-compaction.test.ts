@@ -102,8 +102,15 @@ describe("InteractiveMode compaction events", () => {
 				expect.objectContaining({ role: "compactionSummary", summary: "previous summary" }),
 				{ type: "compaction_cost", kind: "compaction", usage: previousUsage },
 			],
+			expect.any(Map),
 			{},
 		);
+		const [items, messageMeta] = fakeThis.renderSessionItems.mock.calls[0] as [
+			unknown[],
+			Map<unknown, { id: string; timestamp: string }>,
+		];
+		expect(messageMeta.get(items[0])).toEqual({ id: "current", timestamp: "2025-01-02T00:00:00Z" });
+		expect(messageMeta.get(items[2])).toEqual({ id: "previous", timestamp: "2025-01-01T00:00:00Z" });
 	});
 
 	test("renders retained entries and appends the latest summary cost at the bottom", async () => {

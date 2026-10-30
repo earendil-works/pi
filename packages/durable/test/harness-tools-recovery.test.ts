@@ -83,7 +83,7 @@ async function toolTaskId(harness: Harness): Promise<TaskId> {
 
 /**
  * A tool that writes output, then blocks until its invocation is cancelled the first `blocking` times it runs.
- * `started` resolves once the output is durable.
+ * `started` resolves once the output is committed; a close stores it.
  */
 function blockingTool(name: string, extra: Partial<ToolRegistration> = {}) {
 	const started = deferred();
@@ -131,6 +131,70 @@ describe("tool recovery", () => {
 		);
 		expect(await opened.harness.snapshot(LiveDoc, opened.root.id, context)).toEqual({});
 		await opened.harness.close(context);
+	});
+
+	it("reruns a safe tool whose running slot a crash after its intent lost, or a sibling stored, and shows it running", async () => {
+		for (const sibling of [false, true]) {
+			const path = await sqlitePath();
+			const setup = chatSetup();
+			// The running slot is presentation, held in memory; no deadline stores it before the crash.
+			setup.settings.progress = { persistWithinMs: Number.POSITIVE_INFINITY };
+			const started = deferred();
+			let runs = 0;
+			let reopened: Harness | undefined;
+			const seen: (string | undefined)[] = [];
+			addTool(
+				setup.registry,
+				tool(
+					"work",
+					async (_args, api, callContext) => {
+						runs++;
+						if (runs === 1) {
+							started.resolve();
+							await aborted(callContext.abortSignal!);
+						}
+						const slots = (await reopened!.snapshot(LiveDoc, 1 as never, callContext))?.tools ?? [];
+						seen.push(slots.find((slot) => slot.taskId === api.taskId)?.status);
+						return {};
+					},
+					{ replay: "safe" },
+				),
+			);
+			// A sibling that ends once `work` started: its result commit reads `pi.live`, which stores what is held there.
+			addTool(
+				setup.registry,
+				tool("quick", async () => {
+					await started.promise;
+					return {};
+				}),
+			);
+			const calls = [fauxToolCall("work", {}, { id: "w" })];
+			if (sibling) calls.push(fauxToolCall("quick", {}, { id: "q" }));
+			setup.faux.setResponses([fauxAssistantMessage(calls, { stopReason: "toolUse" }), DONE]);
+			const crashed = await open(path, setup);
+			const id = (await crashed.root.submit({ type: "input", content: "go" }, context)).id;
+			await started.promise;
+			const slot = async (harness: Harness, name: string) =>
+				(await harness.snapshot(LiveDoc, crashed.root.id, context))?.tools?.find((each) => each.name === name);
+			const live = (harness: Harness) => slot(harness, "work");
+			const workId = (await live(crashed.harness))!.taskId!;
+			if (sibling) await waitFor(async () => (await slot(crashed.harness, "quick"))?.status === "done");
+			// The process dies here: another one opens the same database, without the held presentation.
+			const next = await openChat(await openNodeSqliteStorage(path), setup);
+			reopened = next.harness;
+			expect((await next.harness.getTask(workId, context))?.state).toMatchObject({
+				checkpoint: { phase: "execute" },
+			});
+			expect((await live(next.harness))?.status).toBe(sibling ? "running" : "pending");
+			next.harness.resume();
+			expect((await (await next.harness.submission(id, context))!.wait(context)).status).toBe("done");
+			// The rerun shows the slot running again.
+			expect(seen).toEqual(["running"]);
+			const [result] = results(await allEntries(next.root)).filter((message) => message.toolCallId === "w");
+			expect(result!.isError).toBe(false);
+			await next.harness.close(context);
+			await crashed.harness.close(context);
+		}
 	});
 
 	it("reruns a tool only when both the stored and the current replay policy are safe", async () => {

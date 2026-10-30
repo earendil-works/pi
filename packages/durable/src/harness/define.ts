@@ -1,6 +1,16 @@
 import type { JsonValue } from "@earendil-works/chord";
 import type { TSchema } from "@earendil-works/pi-ai";
-import type { AnyTask, Extension, HookRegistration, HooksOf, PromptSection, ToolRegistration, Wrap } from "./types.ts";
+import type { Task } from "../types.ts";
+import type {
+	AnyTask,
+	Extension,
+	HookRegistration,
+	HooksOf,
+	PromptSection,
+	RunEndTask,
+	ToolRegistration,
+	Wrap,
+} from "./types.ts";
 
 /** Identity function that types an extension. */
 export function defineExtension<Tool extends ToolRegistration = ToolRegistration>(
@@ -28,6 +38,14 @@ export function section<Tool extends ToolRegistration = ToolRegistration>(
 /** Hook handlers for tasks with `task`'s name. */
 export function hook<K extends AnyTask>(task: K, handlers: Partial<HooksOf<K>>): HookRegistration {
 	return { task: task.definition.name, handlers };
+}
+
+/** A task an `afterRun` hook asks for, its input typed by the task (spec §8.3). */
+export function runEndTask<I extends JsonValue, S extends { phase: string }, R, H extends object>(
+	task: Task<I, S, R, H>,
+	input: I,
+): RunEndTask {
+	return { task, input };
 }
 
 /** Wrap the tool named like `tool` wherever the wrapping extension is selected. */

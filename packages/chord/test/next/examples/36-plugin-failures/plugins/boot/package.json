@@ -1,0 +1,5 @@
+{
+	"name": "@example/boot",
+	"private": true,
+	"type": "module"
+}

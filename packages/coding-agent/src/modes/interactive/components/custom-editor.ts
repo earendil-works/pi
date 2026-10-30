@@ -91,6 +91,16 @@ export class CustomEditor extends Editor {
 			return;
 		}
 
+		// Selection page keys move an open autocomplete menu before app actions run.
+		// This lets users bind Ctrl+V even though it pastes images by default.
+		if (
+			this.isShowingAutocomplete() &&
+			(this.keybindings.matches(data, "tui.select.pageUp") || this.keybindings.matches(data, "tui.select.pageDown"))
+		) {
+			super.handleInput(data);
+			return;
+		}
+
 		// Check for clipboard paste keybinding
 		if (this.keybindings.matches(data, "app.clipboard.pasteImage")) {
 			this.onPasteImage?.();

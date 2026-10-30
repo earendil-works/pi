@@ -2,7 +2,6 @@ import type { Draft } from "@earendil-works/chord";
 import {
 	type ConversationId,
 	createSession,
-	type DocumentState,
 	type DocumentWatch,
 	defineDoc,
 	defineDocFamily,
@@ -23,8 +22,15 @@ import { context } from "./session-support.ts";
 type State = { value: number };
 const initial = (): State => ({ value: 0 });
 
-const SessionDoc = defineDoc<State>({ kind: "t.session", version: 1, scope: "session", initial });
+const SessionDoc = defineDoc<State>({
+	checkpointWhen: () => false,
+	kind: "t.session",
+	version: 1,
+	scope: "session",
+	initial,
+});
 const LatestDoc = defineDoc<State>({
+	checkpointWhen: () => false,
 	kind: "t.latest",
 	version: 1,
 	scope: "conversation",
@@ -33,6 +39,7 @@ const LatestDoc = defineDoc<State>({
 	initial,
 });
 const RewindableDoc = defineDoc<State>({
+	checkpointWhen: () => false,
 	kind: "t.rewindable",
 	version: 1,
 	scope: "conversation",
@@ -40,8 +47,9 @@ const RewindableDoc = defineDoc<State>({
 	fork: "asOf",
 	initial,
 });
-const TaskDoc = defineDoc<State>({ kind: "t.task", version: 1, scope: "task", initial });
+const TaskDoc = defineDoc<State>({ checkpointWhen: () => false, kind: "t.task", version: 1, scope: "task", initial });
 const SessionFamily = defineDocFamily<State, number>({
+	checkpointWhen: () => false,
 	kind: "t.session-family",
 	version: 1,
 	family: true,
@@ -49,6 +57,7 @@ const SessionFamily = defineDocFamily<State, number>({
 	initial: (seed) => ({ value: seed }),
 });
 const ConversationFamily = defineDocFamily<State, number>({
+	checkpointWhen: () => false,
 	kind: "t.conversation-family",
 	version: 1,
 	family: true,
@@ -58,6 +67,7 @@ const ConversationFamily = defineDocFamily<State, number>({
 	initial: (seed) => ({ value: seed }),
 });
 const TaskFamily = defineDocFamily<State, number>({
+	checkpointWhen: () => false,
 	kind: "t.task-family",
 	version: 1,
 	family: true,
@@ -66,12 +76,34 @@ const TaskFamily = defineDocFamily<State, number>({
 });
 
 describe("document definitions", () => {
+	it("requires an explicit checkpoint predicate for documents and families", () => {
+		const check = () => {
+			// @ts-expect-error document definitions require checkpointWhen
+			defineDoc<State>({ kind: "t.missing-checkpoint", version: 1, scope: "session", initial });
+			const family = {
+				kind: "t.missing-family-checkpoint",
+				version: 1,
+				family: true,
+				scope: "session",
+				initial: (seed: number) => ({ value: seed }),
+			} as const;
+			// @ts-expect-error document family definitions require checkpointWhen
+			defineDocFamily<State, number>(family);
+		};
+		expect(check).toBeTypeOf("function");
+	});
+
 	it("validates persisted version semantics", () => {
-		expect(() => defineDoc<State>({ kind: "k", version: 0, scope: "session", initial })).toThrow("positive integer");
-		expect(() => defineDoc<State>({ kind: "k", version: 1.5, scope: "session", initial })).toThrow(
-			"positive integer",
-		);
-		expect(defineDoc<State>({ kind: "", version: 1, scope: "session", initial }).definition.kind).toBe("");
+		expect(() =>
+			defineDoc<State>({ checkpointWhen: () => false, kind: "k", version: 0, scope: "session", initial }),
+		).toThrow("positive integer");
+		expect(() =>
+			defineDoc<State>({ checkpointWhen: () => false, kind: "k", version: 1.5, scope: "session", initial }),
+		).toThrow("positive integer");
+		expect(
+			defineDoc<State>({ checkpointWhen: () => false, kind: "", version: 1, scope: "session", initial }).definition
+				.kind,
+		).toBe("");
 		expect(SessionDoc.definition.kind).toBe("t.session");
 	});
 
@@ -127,7 +159,6 @@ describe("document definitions", () => {
 		const Note = defineEntry<{ text: string }>("t.note");
 		const Marker = defineEntry("t.marker");
 		type Rewound = Promise<Readonly<State> | undefined>;
-		type StateOf = Promise<DocumentState<State> | undefined>;
 		type WatchOf = Promise<DocumentWatch<State> | undefined>;
 		const check = async (session: Session, tx: Tx, conversationId: ConversationId, taskId: TaskId, at: EntryId) => {
 			expectTypeOf(session.snapshotAsOf(RewindableDoc, conversationId, at, context)).toEqualTypeOf<Rewound>();
@@ -141,12 +172,6 @@ describe("document definitions", () => {
 			// @ts-expect-error task documents keep no history
 			void session.snapshotAsOf(TaskDoc, taskId, at, context);
 
-			expectTypeOf(session.documentState(SessionDoc, context)).toEqualTypeOf<StateOf>();
-			expectTypeOf(session.documentState(LatestDoc, conversationId, context)).toEqualTypeOf<StateOf>();
-			expectTypeOf(session.documentState(TaskDoc, taskId, context)).toEqualTypeOf<StateOf>();
-			expectTypeOf(session.documentState(SessionFamily, "k", context)).toEqualTypeOf<StateOf>();
-			expectTypeOf(session.documentState(ConversationFamily, conversationId, "k", context)).toEqualTypeOf<StateOf>();
-			expectTypeOf(session.documentState(TaskFamily, taskId, "k", context)).toEqualTypeOf<StateOf>();
 			expectTypeOf(session.watchDoc(SessionDoc, context)).toEqualTypeOf<WatchOf>();
 			expectTypeOf(session.watchDoc(LatestDoc, conversationId, context)).toEqualTypeOf<WatchOf>();
 			expectTypeOf(session.watchDoc(TaskDoc, taskId, context)).toEqualTypeOf<WatchOf>();

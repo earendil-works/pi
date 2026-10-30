@@ -82,6 +82,35 @@ Parsing a separately serialized message per replica is also a valid detachment.
 `decode()` does not copy payloads, so decoding one in-memory `WireOp[]` for two
 mutable replicas makes them alias each other.
 
+## Slow consumers
+
+`PendingOps` holds the batches one consumer has not taken yet (a watch listener
+that is still running, a link whose window is full) and folds them while they
+wait, so what it hands over replays to the same value with fewer ops:
+
+```ts
+import { PendingOps } from "@earendil-works/chord/delta";
+
+const pending = new PendingOps();
+pending.push(prepared.ops); // for each adopted batch, while the consumer is busy
+// When the consumer is ready again:
+const batch = pending.take();
+const ops = batch.kind === "ops" ? batch.ops : [["r", tracker.value]];
+```
+
+- A leaf op (an append, or a set of a primitive) folds into the last pending leaf
+  op on its path: `a` + `a` join, `s` replaces `s` or `a`, an `a` after a string `s`
+  appends into it. `["a", ["text"], "he"]`, `["s", ["n"], 1]`, `["a", ["text"], "y"]`
+  becomes `["a", ["text"], "hey"]`, `["s", ["n"], 1]`.
+- Any other op (`p`, `m`, `d`, `t`, `s` of an object or array) ends folding into
+  the ops before it, as it may change what a path names; `r` drops them.
+- Past 10,000 pending ops after folding, only `replace` stays: the owner sends the
+  current value as `[["r", value]]`.
+- One batch is handed over as received; received batches and op tuples are never
+  mutated, so the same batch can feed other consumers.
+- It folds ops of the tracker, `diffRevisions()` and `appendText()`; it does not
+  validate or normalize hand-written ops.
+
 ## Do and don't
 
 - Do build a fresh root and then transfer it; validate untrusted roots at your ingestion boundary.
@@ -125,6 +154,8 @@ Growing `length` inserts `null`; shrinking it removes elements.
 
 `tracker.value` is the latest adopted revision. `beginChange()` opens an overlay
 draft over it and never modifies it. A draft may stay open across `await`.
+A draft dropped without `prepare()` or `abort()` stays referenced by its
+tracker until the tracker's next `beginChange()` or `adopt()`.
 `prepare()` materializes the candidate and ops and does not change authority.
 `adopt()` checks the preparation and swaps the root pointer.
 
@@ -181,9 +212,47 @@ and restores `Op` tuples. Use one encoder/decoder pair per ordered state stream.
 Path IDs span batches and an `r` resets both dictionaries. After a decode or
 apply error, discard the decoder and replica and recover from a later `r`.
 
+## Growing strings: use `appendText`
+
+The footgun: appending to a string through a draft costs the string's whole length on every change, not the length of
+what you append.
+
+```ts
+const change = tracker.beginChange();
+change.state.message.text += chunk;   // looks like O(chunk)
+const prepared = change.prepare();     // emits ["a", ["message", "text"], chunk], but costs O(text.length)
+```
+
+The draft's proxy only sees the finished new string, never the chunk, so `prepare()` recovers the append by checking
+that the new string starts with the old one. That check reads the whole string, and V8 first copies a string built by
+`+=` (a rope) into one flat piece. There is no fast path: measured on Node 24 and 26, 20,000 changes appending 40
+characters each, up to 800 KB, take about 2.4 s with the check and about 1 ms without it. A stream of N chunks into one
+string therefore costs O(N x length) in total: quadratic.
+
+The fix: hand Delta the chunk.
+
+```ts
+import { appendText } from "@earendil-works/chord/delta";
+
+appendText(change.state.message, "text", chunk);   // records ["a", path, chunk]: O(chunk), no compare, no copy
+```
+
+- `appendText(parent, key, text)` takes the parent draft and a key whose type is exactly `string` (not optional, not a
+  string literal type), so the compiler refuses `appendText(block, "type", …)`.
+- Several appends to one key in one change become one op. A plain assignment or deletion of the same key in that change
+  falls back to the compare, as does an append after a plain write.
+- The appended text is copied into a string of its own, so neither the op nor the new value keeps a larger string
+  alive.
+- Use it wherever a string grows by appends across many changes (streamed answers, tool output, logs). A one-off
+  assignment is fine with `=`.
+- Derives cannot use it: `diffRevisions()` compares two revisions it did not write, so a derive producing a growing
+  string pays O(length) per delivery.
+
 ## Limits and footguns
 
 - No freezing. Mutating any immutable value corrupts state silently.
+- Appending to a string through a draft (`draft.text += chunk`) costs O(string length) per change; use `appendText`
+  (section "Growing strings").
 - In-process sharing: local handles, cell subscribers, and `replicatedState` subscribers receive the provider's containers. A consumer mutation corrupts authority and makes remote replicas diverge.
 - A change inside a large flat array copies that array's pointer storage for the new revision.
 - Placement validation costs time and memory on bulk inserts. In a benchmark unshifting 100k three-field objects, it added about 19 ms and 20 MiB of transient heap.

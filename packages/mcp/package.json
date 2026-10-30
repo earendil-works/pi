@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-mcp",
-	"version": "1.3.0",
+	"version": "1.4.0",
 	"description": "Standalone Model Context Protocol client for pi and other applications",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -56,6 +56,6 @@
 	"devDependencies": {
 		"@types/cross-spawn": "6.0.6",
 		"shx": "0.3.4",
-		"vitest": "4.1.11"
+		"vitest": "4.1.12"
 	}
 }

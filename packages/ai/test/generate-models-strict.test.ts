@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import type { ModelsDevV2Model } from "../catalog/sources/models-dev.ts";
+import { writeUpstreamMock } from "./catalog-generation-utils.ts";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const temporaryRoots: string[] = [];
@@ -18,7 +20,7 @@ describe("strict model generation", () => {
 		temporaryRoots.push(fixtureRoot);
 		const isolatedPackageRoot = join(fixtureRoot, "package");
 		mkdirSync(isolatedPackageRoot);
-		for (const entry of ["package.json", "scripts", "src"]) {
+		for (const entry of ["package.json", "catalog", "scripts", "src"]) {
 			cpSync(join(packageRoot, entry), join(isolatedPackageRoot, entry), { recursive: true });
 		}
 		const preloadPath = join(fixtureRoot, "mock-models-dev.mjs");
@@ -35,26 +37,22 @@ describe("strict model generation", () => {
 			"qwen3.8-max-preview",
 		];
 		const sourceModels = Object.fromEntries(
-			modelIds.map((id) => [
+			modelIds.map((id): [string, ModelsDevV2Model] => [
 				id,
 				{
 					id,
+					type: "chat",
 					name: id,
-					tool_call: id !== "deepseek-v4-flash-0731",
+					modalities: { input: ["text"], output: ["text"] },
+					capabilities: {
+						tools: { supported: id !== "deepseek-v4-flash-0731" },
+						reasoning: { supported: false },
+					},
+					api: {},
 				},
 			]),
 		);
-		const catalog = { "alibaba-token-plan": { models: sourceModels } };
-		writeFileSync(
-			preloadPath,
-			`const catalog = ${JSON.stringify(catalog)};\n` +
-				`globalThis.fetch = async (input) => {\n` +
-				`  if (String(input) === "https://models.dev/api.json") {\n` +
-				`    return new Response(JSON.stringify(catalog), { status: 200 });\n` +
-				`  }\n` +
-				`  throw new Error(\`Unexpected fetch: \${String(input)}\`);\n` +
-				`};\n`,
-		);
+		writeUpstreamMock(preloadPath, { "alibaba-token-plan": { models: sourceModels } });
 
 		const generatedPaths = [
 			"src/models.generated.ts",
@@ -67,7 +65,7 @@ describe("strict model generation", () => {
 
 		const result = spawnSync(
 			process.execPath,
-			["--import", pathToFileURL(preloadPath).href, "scripts/generate-models.ts", "--strict"],
+			["--import", pathToFileURL(preloadPath).href, "catalog/generate.ts", "--strict"],
 			{
 				cwd: isolatedPackageRoot,
 				encoding: "utf8",

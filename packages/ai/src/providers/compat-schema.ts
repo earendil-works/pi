@@ -521,6 +521,22 @@ export const MistralConversationsCompatSchema = Type.Object(
 	{ description: "Compatibility settings for the Mistral chat API.", additionalProperties: true },
 );
 
+export const SystemOneCompatSchema = Type.Object(
+	{
+		imageInput: Type.Optional(
+			Type.Union([Type.Literal("assets"), Type.Literal("images"), Type.Literal("state-image-urls")], {
+				description:
+					'How the service takes classifier images. "assets" sends TypeSafe\'s assets map (PNG and JPEG) and references the images from the state, as TypeSafe and Jev on Workers AI expect. "images" sends Clef\'s images list of data URLs (PNG, JPEG, and WebP, at most four), as Clef on Workers AI expects. "state-image-urls" places image_url parts before the state, as OpenRouter expects; OpenRouter drops assets without an error. Auto-detected from the provider, baseUrl, and model ID. Classifier models read it from the provider-level compat; models and modelOverrides entries apply to chat models only.',
+			}),
+		),
+		sendImageOptInHeader: optionalCompatBoolean({
+			description:
+				"Whether requests with images send the TypeSafe-Danger-Zone-Images: true header, which TypeSafe's own API requires for its experimental image input. Defaults to true for the typesafe-system-one API unless the model is detected as OpenRouter.",
+		}),
+	},
+	{ description: "Compatibility settings for System One classifier APIs.", additionalProperties: true },
+);
+
 const ProviderCompatPropertyOverrides = {
 	supportsDeveloperRole: optionalCompatBoolean({
 		description: "Whether the provider supports the developer role instead of system. Defaults are API-specific.",
@@ -600,16 +616,21 @@ function mergeCompatProperties<
 	return { ...merged, ...overrides } as MergedCompatProperties<PropertyGroups, Overrides>;
 }
 
-const CompatSchemasByApi = {
+/** Compatibility schema for each API whose models accept compat. Mirrors the compat type of Model. */
+export const CompatSchemasByApi = {
 	"openai-completions": OpenAICompletionsCompatSchema,
 	"openai-responses": OpenAIResponsesCompatSchema,
+	"azure-openai-responses": OpenAIResponsesCompatSchema,
+	"openai-codex-responses": OpenAIResponsesCompatSchema,
 	"anthropic-messages": AnthropicMessagesCompatSchema,
 	"bedrock-converse-stream": BedrockCompatSchema,
 	"mistral-conversations": MistralConversationsCompatSchema,
+	"typesafe-system-one": SystemOneCompatSchema,
+	"cloudflare-workers-ai-system-one": SystemOneCompatSchema,
 } as const;
 
 const ProviderCompatProperties = mergeCompatProperties(
-	Object.values(CompatSchemasByApi).map((schema) => schema.properties),
+	[...new Set(Object.values(CompatSchemasByApi))].map((schema) => schema.properties),
 	ProviderCompatPropertyOverrides,
 );
 
@@ -639,3 +660,5 @@ export interface AnthropicMessagesCompat extends Static<typeof AnthropicMessages
 export interface BedrockCompat extends Static<typeof BedrockCompatSchema> {}
 /** Compatibility settings for the Mistral chat API. */
 export interface MistralConversationsCompat extends Static<typeof MistralConversationsCompatSchema> {}
+/** Compatibility settings for System One classifier APIs. */
+export interface SystemOneCompat extends Static<typeof SystemOneCompatSchema> {}

@@ -45,9 +45,9 @@ function schemaText(schema: unknown, parts: string[]): void {
 	}
 }
 
-/** Search text of a tool: its name, the name with `_` as spaces, its description, and its parameters' text. */
+/** Search text of a tool: its description and its parameters' names and descriptions; the ranker reads the name. */
 function searchText(tool: ToolRegistration): string {
-	const parts = [tool.name, tool.name.replaceAll("_", " "), tool.description];
+	const parts = [tool.description];
 	schemaText(tool.parameters, parts);
 	return parts.filter((part) => part.trim() !== "").join(" ");
 }

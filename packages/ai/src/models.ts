@@ -20,6 +20,7 @@ import type {
 	ProviderAuth,
 } from "./auth/types.ts";
 import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
+import { observeModelRequest } from "./telemetry.ts";
 import type {
 	AnyModel,
 	Api,
@@ -55,6 +56,7 @@ import type {
 	Usage,
 } from "./types.ts";
 import { operationSignal, raceWithAbortSignal } from "./utils/abort.ts";
+import { type ClientIdentity, getOpenCodeSessionHeaders, mergeClientIdentity } from "./utils/identity.ts";
 import {
 	assertChatModel,
 	assertClassifierInputSupported,
@@ -68,6 +70,7 @@ import {
 import { normalizeContext } from "./utils/transcript.ts";
 
 export { ModelsError, type ModelsErrorCode } from "./auth/resolve.ts";
+export { AI_TELEMETRY_SCHEMA } from "./telemetry.ts";
 export { getModelType, isModelType } from "./utils/model-operations.ts";
 
 export interface ModelsPublication {
@@ -374,6 +377,8 @@ export interface CreateModelsOptions {
 	credentials?: CredentialStore;
 	modelsStore?: ModelsStore;
 	authContext?: AuthContext;
+	/** Default identity of every request; a request's `identity` overrides it field by field. */
+	identity?: ClientIdentity;
 }
 
 function mergeHeaders(
@@ -397,6 +402,7 @@ class ModelsImpl implements MutableModels {
 	private credentials: CredentialStore;
 	private modelsStore: ModelsStore;
 	private authContext: AuthContext;
+	private identity: ClientIdentity | undefined;
 	private refreshGenerations = new Map<string, number>();
 	private refreshControllers = new Map<string, AbortController>();
 	private publicationChains = new Map<string, Promise<unknown>>();
@@ -405,6 +411,7 @@ class ModelsImpl implements MutableModels {
 		this.credentials = options?.credentials ?? new InMemoryCredentialStore();
 		this.modelsStore = options?.modelsStore ?? new InMemoryModelsStore();
 		this.authContext = options?.authContext ?? defaultAuthContext();
+		this.identity = options?.identity;
 	}
 
 	setProvider(provider: Provider): void {
@@ -869,13 +876,24 @@ class ModelsImpl implements MutableModels {
 
 		// Explicit request options win per-field; the Models-only transform runs last.
 		const apiKey = options?.apiKey ?? auth.apiKey;
-		let headers = mergeHeaders(auth.headers, options?.headers);
+		const requestModel: TModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
+		const sessionId =
+			options && "sessionId" in options && typeof options.sessionId === "string" ? options.sessionId : undefined;
+		let headers = mergeHeaders(
+			mergeHeaders(getOpenCodeSessionHeaders(requestModel, sessionId), auth.headers),
+			options?.headers,
+		);
 		if (options?.transformHeaders) headers = await options.transformHeaders(headers ?? {});
 		const env = resolution.env || options?.env ? { ...(resolution.env ?? {}), ...(options?.env ?? {}) } : undefined;
-		const requestModel: TModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
+		const identity = mergeClientIdentity(this.identity, options?.identity);
 		const { transformHeaders: _transformHeaders, ...providerOptions } = options ?? {};
-		const requestOptions = { ...providerOptions, apiKey, headers, env } as Omit<TOptions, "transformHeaders"> &
-			ProviderRequestOptions<TModel>;
+		const requestOptions = {
+			...providerOptions,
+			apiKey,
+			headers,
+			env,
+			...(identity === undefined ? {} : { identity }),
+		} as Omit<TOptions, "transformHeaders"> & ProviderRequestOptions<TModel>;
 
 		return { requestModel, requestOptions };
 	}
@@ -886,14 +904,18 @@ class ModelsImpl implements MutableModels {
 		options?: ModelsApiStreamOptions<TApi>,
 	): AssistantMessageEventStream {
 		const transcript = normalizeContext(context);
-		return lazyStream(model, async () => {
-			const provider = this.requireChatProvider(model);
-			const { requestModel, requestOptions } = await this.applyAuth(
-				model,
-				options as ModelsApiStreamOptions<Api> | undefined,
-			);
-			return provider.stream(requestModel, transcript, requestOptions as ApiStreamOptions<TApi>);
-		});
+		return lazyStream(
+			model,
+			async () => {
+				const provider = this.requireChatProvider(model);
+				const { requestModel, requestOptions } = await this.applyAuth(
+					model,
+					options as ModelsApiStreamOptions<Api> | undefined,
+				);
+				return provider.stream(requestModel, transcript, requestOptions as ApiStreamOptions<TApi>);
+			},
+			observeModelRequest(model, options, false),
+		);
 	}
 
 	async complete<TApi extends Api>(
@@ -906,11 +928,15 @@ class ModelsImpl implements MutableModels {
 
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
 		const transcript = normalizeContext(context);
-		return lazyStream(model, async () => {
-			const provider = this.requireChatProvider(model);
-			const { requestModel, requestOptions } = await this.applyAuth(model, options);
-			return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
-		});
+		return lazyStream(
+			model,
+			async () => {
+				const provider = this.requireChatProvider(model);
+				const { requestModel, requestOptions } = await this.applyAuth(model, options);
+				return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
+			},
+			observeModelRequest(model, options, false),
+		);
 	}
 
 	async completeSimple(
@@ -926,14 +952,18 @@ class ModelsImpl implements MutableModels {
 		handle: DeferredHandle,
 		options?: ModelsDeferredFetchOptions,
 	): AssistantMessageEventStream {
-		return lazyStream(model, async () => {
-			const provider = this.requireChatProvider(model);
-			if (!provider.fetchDeferred) {
-				throw new ModelsError("provider", `Provider ${model.provider} does not support deferred responses`);
-			}
-			const { requestModel, requestOptions } = await this.applyAuth(model, options);
-			return provider.fetchDeferred(requestModel, handle, requestOptions as DeferredFetchOptions);
-		});
+		return lazyStream(
+			model,
+			async () => {
+				const provider = this.requireChatProvider(model);
+				if (!provider.fetchDeferred) {
+					throw new ModelsError("provider", `Provider ${model.provider} does not support deferred responses`);
+				}
+				const { requestModel, requestOptions } = await this.applyAuth(model, options);
+				return provider.fetchDeferred(requestModel, handle, requestOptions as DeferredFetchOptions);
+			},
+			observeModelRequest(model, options, true),
+		);
 	}
 
 	async fetchDeferred(
@@ -1222,6 +1252,7 @@ export function calculateCost(model: AnyModel, usage: Usage): Usage["cost"] {
 	usage.cost.cacheRead = (rates.cacheRead / 1000000) * usage.cacheRead;
 	usage.cost.cacheWrite = (rates.cacheWrite * shortWrite + rates.input * 2 * longWrite) / 1000000;
 	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
+	usage.cost.totalFromProvider = false;
 	return usage.cost;
 }
 

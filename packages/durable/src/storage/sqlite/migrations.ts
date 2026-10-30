@@ -1,10 +1,11 @@
-import type { SqliteDatabase } from "./database.ts";
+import {
+	applySqliteMigrations as applyMigrations,
+	type SqliteDatabase,
+	type SqliteMigration,
+} from "@earendil-works/chord/sqlite";
 import { DEFAULT_SQLITE_SCHEMA, type SqliteSchema } from "./schema.ts";
 
-export type SqliteMigration = {
-	readonly version: number;
-	readonly statements: readonly string[];
-};
+export type { SqliteMigration } from "@earendil-works/chord/sqlite";
 
 /** Build immutable, ordered schema history for a set of SQLite identifiers. */
 export function createSqliteMigrations(schema: SqliteSchema): readonly SqliteMigration[] {
@@ -87,14 +88,37 @@ export function createSqliteMigrations(schema: SqliteSchema): readonly SqliteMig
 		) STRICT`,
 		`CREATE INDEX ${indexes.documentRevisionsByKind} ON ${tables.documentRevisions} (document_id, kind, seq DESC)`,
 	];
-	return [{ version: 1, statements: initialSchema }];
+	// Version 2 adds the `sleeping` task status. SQLite cannot change a CHECK constraint in place, so the table is rebuilt.
+	const rebuiltTasks = `${tables.tasks}_v2`;
+	const sleepingStatus: readonly string[] = [
+		`CREATE TABLE ${rebuiltTasks} (
+			id INTEGER PRIMARY KEY,
+			conversation_id INTEGER NOT NULL,
+			kind TEXT NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'waiting', 'sleeping', 'completing', 'terminal')),
+			abort_requested INTEGER NOT NULL CHECK (abort_requested IN (0, 1)),
+			background INTEGER NOT NULL CHECK (background IN (0, 1)),
+			record TEXT NOT NULL CHECK (json_valid(record))
+		) STRICT`,
+		`INSERT INTO ${rebuiltTasks} (id, conversation_id, kind, status, abort_requested, background, record)
+			SELECT id, conversation_id, kind, status, abort_requested, background, record FROM ${tables.tasks}`,
+		`DROP TABLE ${tables.tasks}`,
+		`ALTER TABLE ${rebuiltTasks} RENAME TO ${tables.tasks}`,
+		`CREATE INDEX ${indexes.tasksByStatus} ON ${tables.tasks} (status, id)`,
+		`CREATE INDEX ${indexes.tasksByConversation} ON ${tables.tasks} (conversation_id, id)`,
+		`CREATE INDEX ${indexes.tasksByKind} ON ${tables.tasks} (kind, id)`,
+		`CREATE INDEX ${indexes.tasksByAbortRequested} ON ${tables.tasks} (abort_requested, id)`,
+		`CREATE INDEX ${indexes.tasksByBackground} ON ${tables.tasks} (background, id)`,
+	];
+	return [
+		{ version: 1, statements: initialSchema },
+		{ version: 2, statements: sleepingStatus },
+	];
 }
 
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = createSqliteMigrations(DEFAULT_SQLITE_SCHEMA);
 
 export const CURRENT_SQLITE_SCHEMA_VERSION = SQLITE_MIGRATIONS.at(-1)?.version ?? 0;
-
-type SchemaRow = { readonly version: number };
 
 /** Apply all pending schema migrations atomically. */
 export async function applySqliteMigrations(
@@ -110,31 +134,5 @@ export async function applySqliteMigrationsForSchema(
 	schema: SqliteSchema,
 	migrations: readonly SqliteMigration[] = createSqliteMigrations(schema),
 ): Promise<void> {
-	for (let index = 0; index < migrations.length; index++) {
-		if (migrations[index]?.version !== index + 1) {
-			throw new Error("Durable SQLite migrations must have contiguous versions starting at 1");
-		}
-	}
-
-	const { durableSchema } = schema.tables;
-	await database.transaction(async (transaction) => {
-		await transaction.exec(`CREATE TABLE IF NOT EXISTS ${durableSchema} (
-			singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-			version INTEGER NOT NULL CHECK (version >= 0)
-		) STRICT`);
-		await transaction.run(`INSERT OR IGNORE INTO ${durableSchema} (singleton, version) VALUES (1, 0)`);
-		const row = await transaction.get<SchemaRow>(`SELECT version FROM ${durableSchema} WHERE singleton = 1`);
-		if (row === undefined) throw new Error("Durable SQLite schema metadata is missing");
-		const currentVersion = migrations.at(-1)?.version ?? 0;
-		if (row.version > currentVersion) {
-			throw new Error(
-				`Durable SQLite schema version ${row.version} is newer than supported version ${currentVersion}`,
-			);
-		}
-		for (const migration of migrations) {
-			if (migration.version <= row.version) continue;
-			for (const statement of migration.statements) await transaction.exec(statement);
-			await transaction.run(`UPDATE ${durableSchema} SET version = ? WHERE singleton = 1`, migration.version);
-		}
-	});
+	await applyMigrations(database, migrations, { table: schema.tables.durableSchema });
 }

@@ -108,8 +108,8 @@ describe("Anthropic mid-conversation effort", () => {
 			content: [],
 			output_config: { effort: "high" },
 		});
-		expect(first.payload.output_config).toEqual({ effort: "high" });
-		expect(second.payload.output_config).toEqual({ effort: "high" });
+		expect(first.payload.output_config).toEqual({ effort: "low" });
+		expect(second.payload.output_config).toEqual({ effort: "low" });
 		expect(second.payload.thinking).toEqual({
 			type: "adaptive",
 			display: "summarized",

@@ -18,6 +18,8 @@ import { orderToolResults } from "./context.ts";
 import {
 	addCompactionStatus,
 	compactionStatus,
+	cutOffCount,
+	cutOffTooOften,
 	failCompactionStatus,
 	LiveDoc,
 	type LiveState,
@@ -115,6 +117,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 	initial: () => ({ phase: "select" }),
 	phases: {
 		select: async (task, runtime, context) => {
+			if (cutOffTooOften(task, runtime)) return failCutOff(runtime, task, context);
 			const { conversationId } = runtime;
 			const agent = await runtime.agent(context);
 			const settings = runtime.settings;
@@ -155,6 +158,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 			await runtime.commit(() => ({ status: "running", checkpoint: { phase: "summarize", ...request } }), context);
 		},
 		summarize: async (task, runtime, context) => {
+			if (cutOffTooOften(task, runtime)) return failCutOff(runtime, task, context);
 			const { phase: _, ...request } = task.state.checkpoint;
 			const { model: ref, thinkingLevel, streamOptions, maxTokens, tail, firstKept, attempt } = request;
 			const model = runtime.models.getModel(ref.provider, ref.modelId);
@@ -177,6 +181,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 				cacheRetention: "none",
 				maxTokens,
 				signal: runtime.signal,
+				telemetry: context.telemetry,
 				sessionId: await ensureProviderSessionId(runtime, context),
 				...(thinkingLevel === "off" ? {} : { reasoning: thinkingLevel }),
 			};
@@ -204,7 +209,8 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 				if (retry) {
 					const status = compactionStatus(live, runtime.taskId);
 					if (status !== undefined) status.retry = { at: until, error: message.errorMessage ?? "" };
-					return { status: "running", checkpoint: { phase: "retry", ...request, until } };
+					const checkpoint = { phase: "retry", ...request, until } as const;
+					return { status: "sleeping", checkpoint, until };
 				}
 				const text = summaryFailure(message);
 				failCompactionStatus(live, runtime.taskId, text);
@@ -214,9 +220,11 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 				};
 			}, context);
 		},
+		/** After the backoff's sleep; a run before `until` (an early wake, or a record of an earlier version) sleeps again. */
 		retry: async (task, runtime, context) => {
 			const { phase: _, until, ...request } = task.state.checkpoint;
-			await runtime.sleep(until, context);
+			if (cutOffTooOften(task, runtime)) return failCutOff(runtime, task, context);
+			if (until > runtime.now()) return runtime.sleepUntil(until, task.state.checkpoint, context);
 			const attempt = request.attempt + 1;
 			await runtime.commit(async (tx) => {
 				const status = compactionStatus(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
@@ -250,7 +258,7 @@ export async function createCompaction(
 		owner === undefined ? ({ kind: "conversation" } as const) : { kind: "task" as const, taskId: owner };
 	const background = owner === undefined && input.reason !== "manual";
 	const taskId = await tx.createTask(CompactionTask, input, { ownership, conversationId, background });
-	const status = { taskId, reason: input.reason, blocking: owner !== undefined, attempt: 1 };
+	const status = { taskId, trigger: input.reason, blocking: owner !== undefined, attempt: 1 };
 	addCompactionStatus(await tx.doc(LiveDoc, conversationId), status);
 	return taskId;
 }
@@ -448,13 +456,15 @@ async function placeSummary(
 	const result: CompactionResult =
 		current.owner === undefined
 			? {
-					submissionId: await admitSubmission(
-						tx,
-						runtime.conversationId,
-						{ type: "write", requestId: `compaction:${runtime.taskId}`, entry },
-						runtime.now(),
-						runtime.settings,
-					),
+					submissionId: (
+						await admitSubmission(
+							tx,
+							runtime.conversationId,
+							{ type: "write", requestId: `compaction:${runtime.taskId}`, entry },
+							runtime.now(),
+							runtime.settings,
+						)
+					).id,
 				}
 			: { entryId: (await tx.appendEntry(runtime.conversationId, entry)).id };
 	return { status: "terminal", outcome: { status: "completed", result } };
@@ -465,6 +475,18 @@ async function complete(runtime: Runtime, context: Context): Promise<void> {
 	await runtime.commit(async (tx) => {
 		removeCompactionStatus(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
 		return { status: "terminal", outcome: { status: "completed", result: {} } };
+	}, context);
+}
+
+/** Fail a compaction cut off `settings.restartLimit` times in a row (spec §5.4) instead of running it again. */
+async function failCutOff(runtime: Runtime, task: { readonly restarts?: number }, context: Context): Promise<void> {
+	const message = `Compaction was interrupted ${cutOffCount(task)}`;
+	await runtime.commit(async (tx) => {
+		failCompactionStatus(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId, message);
+		return {
+			status: "terminal",
+			outcome: { status: "failed", error: { message, detail: { reason: "restart_limit" } } },
+		};
 	}, context);
 }
 

@@ -1,0 +1,5 @@
+{
+	"name": "@test/files",
+	"private": true,
+	"type": "module"
+}

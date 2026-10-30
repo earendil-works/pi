@@ -1,3 +1,7 @@
+import { validateSqliteSchemaPrefix } from "@earendil-works/chord/sqlite";
+
+export { validateSqliteSchemaPrefix } from "@earendil-works/chord/sqlite";
+
 /**
  * Immutable identifier history for migrations and runtime queries. Never change or remove an existing value; a
  * rename adds a new entry so historical migrations keep rendering their original object names.
@@ -39,16 +43,6 @@ export type SqliteSchema = {
 	readonly tables: SqliteIdentifiers<typeof TABLE_NAMES>;
 	readonly indexes: SqliteIdentifiers<typeof INDEX_NAMES>;
 };
-
-/** Validate a prefix before using it as part of a SQLite identifier. */
-export function validateSqliteSchemaPrefix(prefix: string): void {
-	if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(prefix)) {
-		throw new Error(`Invalid SQLite schema prefix ${JSON.stringify(prefix)}`);
-	}
-	if (prefix.toLowerCase().startsWith("sqlite_")) {
-		throw new Error(`SQLite schema prefix ${JSON.stringify(prefix)} is reserved`);
-	}
-}
 
 function prefixIdentifiers<T extends Record<string, string>>(names: T, prefix: string): SqliteIdentifiers<T> {
 	return Object.fromEntries(

@@ -1,0 +1,5 @@
+{
+	"name": "@example/clock",
+	"private": true,
+	"type": "module"
+}

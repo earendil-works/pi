@@ -59,6 +59,7 @@ export type IssueState = {
 type TriageState = { inboxSince: string; issues: Record<string, IssueState> };
 
 const StateDoc = defineDoc<TriageState>({
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 	kind: "triage.state",
 	version: 1,
 	scope: "session",

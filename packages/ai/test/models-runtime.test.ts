@@ -159,6 +159,19 @@ describe("Models runtime", () => {
 		expect(long.cacheWrite).toBe(0.0000125);
 	});
 
+	it("marks catalog-derived totals as not provider-reported", () => {
+		const usage: Usage = {
+			input: 1_000_000,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 1_000_000,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 9, totalFromProvider: true },
+		};
+		calculateCost(testModel("openai", "gpt-5.6-sol"), usage);
+		expect(usage.cost.totalFromProvider).toBe(false);
+	});
+
 	it("registers, replaces, and deletes providers", () => {
 		const models = createModels();
 		models.setProvider(testProvider({ id: "p1" }));

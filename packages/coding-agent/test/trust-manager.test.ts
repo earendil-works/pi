@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -62,6 +62,47 @@ describe("ProjectTrustStore", () => {
 			} else {
 				process.env.HOME = originalHome;
 			}
+		}
+	});
+
+	// Regression test for https://github.com/earendil-works/pi/issues/10488
+	it("ignores the user .agents/skills dir when HOME differs only by case on Windows", () => {
+		const originalHome = process.env.HOME;
+		const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+		const mixedCaseHome = join(tempDir, "Home");
+		const projectDir = join(mixedCaseHome, "project");
+		mkdirSync(join(mixedCaseHome, ".agents", "skills"), { recursive: true });
+		mkdirSync(projectDir, { recursive: true });
+		process.env.HOME = mixedCaseHome.toLowerCase();
+		Object.defineProperty(process, "platform", { value: "win32" });
+		try {
+			expect(hasTrustRequiringProjectResources(projectDir)).toBe(false);
+		} finally {
+			if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+			if (originalHome === undefined) {
+				delete process.env.HOME;
+			} else {
+				process.env.HOME = originalHome;
+			}
+		}
+	});
+
+	// Regression test for https://github.com/earendil-works/pi/issues/10488
+	it("matches saved decisions regardless of casing on Windows", () => {
+		const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+		const projectDir = join(tempDir, "Project-Mixed");
+		mkdirSync(projectDir, { recursive: true });
+		const store = new ProjectTrustStore(agentDir);
+		store.set(projectDir, true);
+		Object.defineProperty(process, "platform", { value: "win32" });
+		try {
+			expect(store.get(projectDir.toLowerCase())).toBe(true);
+			store.set(projectDir.toLowerCase(), false);
+			const saved = JSON.parse(readFileSync(join(agentDir, "trust.json"), "utf-8")) as Record<string, boolean>;
+			expect(Object.values(saved)).toEqual([false]);
+			expect(store.get(projectDir)).toBe(false);
+		} finally {
+			if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
 		}
 	});
 });

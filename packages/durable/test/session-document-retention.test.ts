@@ -1,27 +1,27 @@
 // The Session's document cache is bounded by use: unattached documents leave it after the retention period and load
 // from Storage again; documents with a watch or a document state never leave it.
-import type { Context } from "@earendil-works/chord";
 import { fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
 import {
-	type AgentEvent,
 	type ConversationId,
 	defineDoc,
 	defineDocFamily,
 	defineTool,
 	type HarnessSettings,
+	type LiveState,
 	MemoryStorage,
 	type StorageWrite,
-	watchEvents,
 } from "@earendil-works/pi-durable";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { SessionImpl, setDefaultDocumentRetention } from "../src/session/session.ts";
 import { chatSetup, openChat } from "./chat-support.ts";
 import { addTool } from "./harness-support.ts";
-import { ControlledStorage, context, createConversation } from "./session-support.ts";
+import { viewHistory } from "./live-support.ts";
+import { ControlledStorage, context, createConversation, onValue } from "./session-support.ts";
 import { deferred, eventually } from "./task-support.ts";
 
 type Counter = { count: number };
 const CounterDoc = defineDoc<Counter>({
+	checkpointWhen: () => false,
 	kind: "test.retention.counter",
 	version: 1,
 	scope: "conversation",
@@ -30,6 +30,7 @@ const CounterDoc = defineDoc<Counter>({
 	initial: () => ({ count: 0 }),
 });
 const RewindableDoc = defineDoc<Counter>({
+	checkpointWhen: () => false,
 	kind: "test.retention.rewindable",
 	version: 1,
 	scope: "conversation",
@@ -39,6 +40,7 @@ const RewindableDoc = defineDoc<Counter>({
 });
 /** A third-party conversation family: one member per event. */
 const EventDoc = defineDocFamily<{ seq: number }, number>({
+	checkpointWhen: () => false,
 	kind: "test.retention.event",
 	version: 1,
 	scope: "conversation",
@@ -48,6 +50,7 @@ const EventDoc = defineDocFamily<{ seq: number }, number>({
 	initial: (seq) => ({ seq }),
 });
 const SessionCounterDoc = defineDoc<Counter>({
+	checkpointWhen: () => false,
 	kind: "test.retention.session-counter",
 	version: 1,
 	scope: "session",
@@ -73,6 +76,7 @@ const defaultForRun =
 
 /** A conversation document any Harness test can read. */
 const TestDoc = defineDoc<Counter>({
+	checkpointWhen: () => false,
 	kind: "test.retention.harness",
 	version: 1,
 	scope: "conversation",
@@ -141,22 +145,24 @@ describe("document cache retention", () => {
 		await session.close(context);
 	});
 
-	it("never evicts a document a watch or a document state observes, and evicts it once the last detaches", async () => {
+	it("never evicts a document a watch observes, and evicts it once the last watch detaches", async () => {
 		const { session, storage, clock, sizes } = open(1_000);
 		const conversationId = await createConversation(session);
 		await bump(session, conversationId);
 		const watch = (await session.watchDoc(CounterDoc, conversationId, context))!;
-		const state = (await session.documentState(CounterDoc, conversationId, context))!;
+		const kept = (await session.watchDoc(CounterDoc, conversationId, context))!;
+		kept.start(async () => {});
 		const seen: number[] = [];
-		watch.start(async (value) => {
-			seen.push(value?.count ?? -1);
-		});
+		watch.start(
+			onValue(async ({ value }) => {
+				seen.push(value.count);
+			}),
+		);
 		clock.now += 1_000_000;
 		await bump(session, conversationId);
 		await settleLine(session);
 		// Still cached: a read long after its retention passed loads nothing from Storage.
-		expect(state.value?.count).toBe(2);
-		await eventually(() => seen.includes(2));
+		await eventually(() => seen.includes(2) && kept.value.count === 2);
 		const reads = storage.documentReadCount;
 		clock.now += 1_000_000;
 		await session.commit(async (tx) => {
@@ -169,8 +175,8 @@ describe("document cache retention", () => {
 		clock.now += 1_000_000;
 		await bump(session, conversationId);
 		await settleLine(session);
-		expect(state.value?.count).toBe(3);
-		state.dispose();
+		await eventually(() => kept.value.count === 3);
+		await kept.stop();
 		clock.now += 1_000_000;
 		await session.commit(async () => {}, context);
 		await session.commit(async (tx) => {
@@ -210,9 +216,9 @@ describe("document cache retention", () => {
 		const conversationId = await createConversation(session);
 		const writes: StorageWrite[][] = [];
 		const commit = storage.commit.bind(storage);
-		storage.commit = (batch: readonly StorageWrite[], commitContext: Context) => {
-			writes.push([...batch]);
-			return commit(batch, commitContext);
+		storage.commit = (batches, receive, commitContext) => {
+			for (const batch of batches) writes.push([...batch]);
+			return commit(batches, receive, commitContext);
 		};
 		for (let n = 0; n < 5; n++) {
 			await bump(session, conversationId);
@@ -344,20 +350,27 @@ describe("document cache retention", () => {
 		await session.close(context);
 	});
 
-	it("does not keep a replacement cached for an observer of the retired incarnation", async () => {
+	it("pins only what is at the address a watch follows: nothing while retired, then the new incarnation", async () => {
 		const { session, sizes } = open(0);
 		const conversationId = await createConversation(session);
 		await bump(session, conversationId);
-		const state = (await session.documentState(CounterDoc, conversationId, context))!;
+		const watch = (await session.watchDoc(CounterDoc, conversationId, context))!;
+		watch.start(async () => {});
 		await session.commit((tx) => tx.retireDoc(CounterDoc, conversationId), context);
-		expect(state.value).toBeNull();
-		await bump(session, conversationId, 5);
 		await eventually(async () => {
 			await settleLine(session);
 			return sizes().cached === 0;
 		});
-		expect(await session.snapshot(CounterDoc, conversationId, context)).toEqual({ count: 5 });
-		state.dispose();
+		expect(sizes().attached).toBe(0);
+		await bump(session, conversationId, 5);
+		await settleLine(session);
+		expect(sizes()).toMatchObject({ cached: 1, attached: 1 });
+		await eventually(async () => watch.value.count === 5);
+		await watch.stop();
+		await eventually(async () => {
+			await settleLine(session);
+			return sizes().cached === 0;
+		});
 		await session.close(context);
 	});
 
@@ -370,7 +383,7 @@ describe("document cache retention", () => {
 			return session.documentCacheSizes.cached === 0;
 		});
 		const gate = storage.holdFindDocument();
-		const attaching = session.documentState(CounterDoc, conversationId, context);
+		const attaching = session.watchDoc(CounterDoc, conversationId, context);
 		await gate.entered;
 		const closing = session.close(context);
 		gate.release();
@@ -379,14 +392,14 @@ describe("document cache retention", () => {
 		expect(session.documentCacheSizes).toMatchObject({ cached: 0, idle: 0, attached: 0 });
 	});
 
-	it("evicts on its timer without a commit, and tolerates a detach called twice", async () => {
+	it("evicts on its timer without a commit, and tolerates a stop called twice", async () => {
 		const storage = new ControlledStorage();
 		const session = new SessionImpl(storage, Date.now, () => 20);
 		const conversationId = await createConversation(session);
 		await bump(session, conversationId);
-		const state = (await session.documentState(CounterDoc, conversationId, context))!;
-		state.dispose();
-		state.dispose();
+		const watch = (await session.watchDoc(CounterDoc, conversationId, context))!;
+		await watch.stop();
+		await watch.stop();
 		const until = Date.now() + 2_000;
 		while (session.documentCacheSizes.cached > 0 && Date.now() < until)
 			await new Promise((resolve) => setTimeout(resolve, 10));
@@ -396,6 +409,7 @@ describe("document cache retention", () => {
 
 	it("migrates a document again after its eviction", async () => {
 		const V1 = defineDoc<{ count: number }>({
+			checkpointWhen: () => false,
 			kind: "test.retention.migrating",
 			version: 1,
 			scope: "session",
@@ -403,6 +417,7 @@ describe("document cache retention", () => {
 		});
 		let migrations = 0;
 		const V2 = defineDoc<{ count: number; migrated: boolean }>({
+			checkpointWhen: () => false,
 			kind: "test.retention.migrating",
 			version: 2,
 			scope: "session",
@@ -494,7 +509,7 @@ describe("document cache retention", () => {
 		await harness.close(context);
 	});
 
-	it("gives the same events with documents evicted right after use as with documents kept", async () => {
+	it("gives the same views with documents evicted right after use as with documents kept", async () => {
 		const run = async (documentRetentionMs: number): Promise<string[]> => {
 			const setup = chatSetup();
 			setup.settings.documentRetentionMs = documentRetentionMs;
@@ -519,31 +534,32 @@ describe("document cache retention", () => {
 				fauxAssistantMessage([fauxText("done")]),
 			]);
 			const { harness, root } = await openChat(new MemoryStorage(), setup);
-			const stream = await watchEvents(harness, root.id, context);
-			const events: AgentEvent[] = [];
-			stream.start(async (batch) => {
-				events.push(...batch);
-			});
+			const history = await viewHistory(harness, root.id);
 			await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 			await harness.waitForIdle(context);
-			await stream.stop();
+			history.detach();
 			await harness.close(context);
-			// Ids and times differ between runs; the sequence of event types and tool outputs must not.
-			return events.map((event) =>
-				event.type === "tool_execution_update" ? `update:${JSON.stringify(event.output)}` : event.type,
-			);
+			// Ids and times differ between runs; the sequence of entries, run states, and tool outputs must not.
+			return history.views.map((view) => {
+				const live = (view.docs["pi.live"] ?? {}) as LiveState;
+				const tools = (live.tools ?? []).map((slot) => `${slot.callId}:${slot.status}:${slot.output ?? ""}`);
+				const kinds = view.entries.map((entry) => entry.kind).join(",");
+				return `${kinds} run:${live.run !== undefined} generation:${live.generation !== undefined} ${tools.join(" ")}`;
+			});
 		};
 		expect(await run(0)).toEqual(await run(600_000));
 	});
 
 	it("keeps a reloaded newer version cached while an observer of the older one is attached", async () => {
 		const V1 = defineDoc<Counter>({
+			checkpointWhen: () => false,
 			kind: "test.retention.versioned",
 			version: 1,
 			scope: "session",
 			initial: () => ({ count: 3 }),
 		});
 		const V2 = defineDoc<Counter & { v2: true }>({
+			checkpointWhen: () => false,
 			kind: "test.retention.versioned",
 			version: 2,
 			scope: "session",
@@ -552,11 +568,11 @@ describe("document cache retention", () => {
 		});
 		const { session, sizes } = open(0);
 		await session.commit((tx) => tx.doc(V1).then(() => undefined), context);
-		const state = (await session.documentState(V1, context))!;
+		const watch = (await session.watchDoc(V1, context))!;
 		expect(await session.snapshot(V2, context)).toEqual({ count: 3, v2: true });
 		await settleLine(session);
 		expect(sizes().cached).toBe(1);
-		state.dispose();
+		await watch.stop();
 		await eventually(async () => {
 			await settleLine(session);
 			return sizes().cached === 0;

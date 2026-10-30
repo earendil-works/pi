@@ -41,6 +41,7 @@ afterEach(async () => {
 });
 
 const NoteDoc = defineDoc<{ text: string }>({
+	checkpointWhen: () => false,
 	kind: "test.note",
 	version: 1,
 	scope: "conversation",
@@ -468,9 +469,9 @@ describe("Harness lifecycle", () => {
 		}, context);
 		expect(await harness.snapshot(NoteDoc, root.id, context)).toEqual({ text: "second" });
 		expect(await harness.snapshotAsOf(NoteDoc, root.id, entry.id, context)).toEqual({ text: "first" });
-		const state = await harness.documentState(NoteDoc, root.id, context);
-		expect(state?.value).toEqual({ text: "second" });
-		state?.dispose();
+		const watch = await harness.watchDoc(NoteDoc, root.id, context);
+		expect(watch?.value).toEqual({ text: "second" });
+		await watch?.stop();
 		await harness.close(context);
 	});
 });

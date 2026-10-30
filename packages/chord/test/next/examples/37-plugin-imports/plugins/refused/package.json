@@ -1,0 +1,5 @@
+{
+	"name": "@example/refused",
+	"private": true,
+	"type": "module"
+}

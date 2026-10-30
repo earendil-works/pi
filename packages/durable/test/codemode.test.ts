@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Context } from "@earendil-works/chord";
@@ -24,6 +24,7 @@ import {
 import type { CodemodeNamespace } from "../src/codemode/describe.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import { createReadTool } from "../src/tools/read.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
 import { ControlledStorage, context } from "./session-support.ts";
@@ -115,21 +116,26 @@ function codemodeChat(globals: CodemodeGlobal[] = [], namespaces: CodemodeNamesp
 		),
 	);
 	const gates = new Map<number, Deferred>();
+	const done = new Map<number, Deferred>();
 	const finished: number[] = [];
+	const once = (map: Map<number, Deferred>, id: number) => {
+		const found = map.get(id) ?? deferred();
+		map.set(id, found);
+		return found;
+	};
 	const slows = {
 		finished,
-		gate: (id: number) => {
-			const gate = gates.get(id) ?? deferred();
-			gates.set(id, gate);
-			return gate;
-		},
+		gate: (id: number) => once(gates, id),
 		release: (id: number) => slows.gate(id).resolve(),
+		/** Resolves once call `id` has finished. */
+		finishedCall: (id: number) => once(done, id).promise,
 	};
 	addTool(
 		setup.registry,
 		tool("slow", async (args) => {
 			await slows.gate(args.id ?? 0).promise;
 			finished.push(args.id ?? 0);
+			once(done, args.id ?? 0).resolve();
 			return { output: [{ type: "text", text: `slow ${args.id}` }] };
 		}),
 	);
@@ -230,7 +236,7 @@ describe("durable code mode", () => {
 			return order;`;
 		// 2 finishes first, then 1.
 		chat.slows.release(2);
-		void eventually(() => chat.slows.finished.includes(2)).then(() => chat.slows.release(1));
+		void chat.slows.finishedCall(2).then(() => chat.slows.release(1));
 		const { harness, result } = await restart(chat, code);
 		expect(result).toEqual({ text: "[2,1]", isError: false });
 		expect(Object.fromEntries(chat.echo)).toEqual({ "2,1": 1 });
@@ -663,6 +669,30 @@ describe("durable code mode", () => {
 		await harness.close(context);
 	});
 
+	it("drops a global's result that arrives after the script finished", async () => {
+		const late = deferred<string>();
+		const chat = codemodeChat([
+			{ name: "slowly", execute: () => late.promise },
+			{ name: "quickly", execute: async () => "quick" },
+		]);
+		chat.setup.faux.setResponses([script(`const pending = slowly(); await quickly(); return 1;`), DONE]);
+		const rejections: unknown[] = [];
+		const onRejection = (reason: unknown) => rejections.push(reason);
+		process.on("unhandledRejection", onRejection);
+		try {
+			const { harness, root } = await openChat(await openNodeSqliteStorage(await sqlitePath()), chat.setup);
+			await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
+			expect(await resultText(chat.setup, root)).toEqual({ text: "1", isError: false });
+			// The script's tool call has ended; its pending global resolves now.
+			late.resolve("late");
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(rejections).toEqual([]);
+			await harness.close(context);
+		} finally {
+			process.off("unhandledRejection", onRejection);
+		}
+	});
+
 	it("rejects a failed tool call with its error text and structured output", async () => {
 		const chat = codemodeChat();
 		addTool(
@@ -899,10 +929,13 @@ describe("durable code mode", () => {
 		]);
 		const { harness, root } = await openChat(await openNodeSqliteStorage(await sqlitePath()), chat.setup);
 		let journalCommits = 0;
-		harness.subscribeCommits((publication) => {
-			for (const change of publication.changes) {
-				if (change.type === "document" && change.record.kind === "pi.codemode.journal") journalCommits++;
-			}
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of publication.changes) {
+					if (change.type === "document" && change.record.kind === "pi.codemode.journal") journalCommits++;
+				}
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		expect(await resultText(chat.setup, root)).toEqual({ text: "50", isError: false });
@@ -1012,6 +1045,29 @@ describe("durable code mode output and tool search", () => {
 		const saved = /\[Image saved to (\S+) \(image\/png, \d+ bytes\)\]/.exec(text);
 		expect(saved).not.toBeNull();
 		expect((await readFile(saved![1]!)).toString("base64")).toBe(png);
+		expect(message.content.some((item) => item.type === "image")).toBe(true);
+	});
+
+	// #11015
+	it("resolves the built-in read with an image's block, which image() shows, and with a text file's text", async () => {
+		const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+		const files = await mkdtemp(join(tmpdir(), "pi-codemode-read-"));
+		directories.add(files);
+		await writeFile(join(files, "pixel.png"), Buffer.from(png, "base64"));
+		await writeFile(join(files, "note.txt"), "hello");
+		const chat = codemodeChat();
+		addTool(chat.setup.registry, createReadTool());
+		const { text, message } = await runScript(
+			`const picture = await tools.read({ path: ${JSON.stringify(join(files, "pixel.png"))} });
+			text([picture.type, picture.mimeType, picture.data.length].join(" "));
+			image(picture);
+			text(await tools.read({ path: ${JSON.stringify(join(files, "note.txt"))} }));`,
+			chat,
+		);
+		expect(message.isError).toBe(false);
+		expect(text).toContain(`image image/png ${png.length}`);
+		expect(text).toMatch(/\[Image saved to \S+ \(image\/png, \d+ bytes\)\]/);
+		expect(text).toContain("hello");
 		expect(message.content.some((item) => item.type === "image")).toBe(true);
 	});
 

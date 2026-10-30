@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/chord",
-	"version": "1.3.0",
+	"version": "1.4.0",
 	"description": "Typed host runtime for plugins, contracts, replicated state, and RPC over JSON links",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -30,6 +30,31 @@
 			"source": "./src/node.ts",
 			"types": "./dist/node.d.ts",
 			"import": "./dist/node.js"
+		},
+		"./telemetry-sqlite": {
+			"source": "./src/telemetry-sqlite/index.ts",
+			"types": "./dist/telemetry-sqlite/index.d.ts",
+			"import": "./dist/telemetry-sqlite/index.js"
+		},
+		"./next": {
+			"source": "./src/next/index.ts",
+			"types": "./dist/next/index.d.ts",
+			"import": "./dist/next/index.js"
+		},
+		"./sqlite": {
+			"source": "./src/sqlite/index.ts",
+			"types": "./dist/sqlite/index.d.ts",
+			"import": "./dist/sqlite/index.js"
+		},
+		"./sqlite/node": {
+			"source": "./src/sqlite/node.ts",
+			"types": "./dist/sqlite/node.d.ts",
+			"import": "./dist/sqlite/node.js"
+		},
+		"./sqlite/cloudflare": {
+			"source": "./src/sqlite/cloudflare.ts",
+			"types": "./dist/sqlite/cloudflare.d.ts",
+			"import": "./dist/sqlite/cloudflare.js"
 		},
 		"./package.json": "./package.json"
 	},
@@ -65,12 +90,21 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
+		"@earendil-works/pi-telemetry": "1.4.0",
 		"typebox": "1.3.27"
+	},
+	"peerDependencies": {
+		"esbuild": "0.28.2"
+	},
+	"peerDependenciesMeta": {
+		"esbuild": {
+			"optional": true
+		}
 	},
 	"devDependencies": {
 		"@types/ws": "8.18.2",
 		"shx": "0.3.4",
-		"vitest": "4.1.11",
+		"vitest": "4.1.12",
 		"ws": "8.21.0"
 	}
 }

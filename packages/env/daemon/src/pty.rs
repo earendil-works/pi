@@ -182,7 +182,7 @@ pub fn run(
             format!("Working directory does not exist: {}", request.cwd),
         ));
     }
-    let (master, mut child) =
+    let (master, child) =
         unix::spawn(&request).map_err(|error| Failure::new("spawn_error", error.to_string()))?;
     let master = Arc::new(master);
     let pid = child.id();
@@ -203,12 +203,21 @@ pub fn run(
     ));
 
     let stop = Arc::new(AtomicBool::new(false));
-    let reader = {
+    // A thread that cannot start (a task limit) fails the terminal; the started program is killed and reaped.
+    let abandon = |mut child: std::process::Child, error: std::io::Error| {
+        stop.store(true, Ordering::SeqCst);
+        kill_group(pid);
+        let _ = child.wait();
+        terminals.lock().unwrap().remove(&id);
+        groups.lock().unwrap().remove(&pid);
+        Failure::new("spawn_error", error.to_string())
+    };
+    let started = {
         let master = master.clone();
         let sender = sender.clone();
         let stop = stop.clone();
         let output = output.clone();
-        thread::spawn(move || {
+        thread::Builder::new().spawn(move || {
             unix::read(&master, &stop, |bytes| {
                 let delivered = sender.send(Message::Data(0, bytes.to_vec())).is_ok();
                 // Like a full pipe: a program that writes faster than the link waits.
@@ -218,24 +227,40 @@ pub fn run(
             let _ = sender.send(Message::Eof(0));
         })
     };
-    {
+    let reader = match started {
+        Ok(reader) => reader,
+        Err(error) => return Err(abandon(child, error)),
+    };
+    let started = {
         let master = master.clone();
         let stop = stop.clone();
-        thread::spawn(move || {
+        thread::Builder::new().spawn(move || {
             for bytes in inputs {
                 if !unix::write_all(&master, &bytes, &stop) {
                     return;
                 }
             }
-        });
+        })
+    };
+    if let Err(error) = started {
+        return Err(abandon(child, error));
     }
+    // The waiter receives the child once it runs, so a waiter that cannot start leaves the child here to reap.
+    let (give, take) = mpsc::channel::<std::process::Child>();
     let waiter = sender.clone();
-    thread::spawn(move || {
+    let started = thread::Builder::new().spawn(move || {
+        let Ok(mut child) = take.recv() else {
+            return;
+        };
         let _ = waiter.send(match child.wait() {
             Ok(status) => Message::Exit(status),
             Err(error) => Message::WaitFailed(error.to_string()),
         });
     });
+    if let Err(error) = started {
+        return Err(abandon(child, error));
+    }
+    let _ = give.send(child);
     drop(sender);
 
     let mut status = None;

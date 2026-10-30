@@ -189,12 +189,12 @@ async function runScenario(scenario: Scenario): Promise<Result> {
 		let commits = 0;
 		const written = noWrites();
 		const commit = storage.commit.bind(storage);
-		storage.commit = (writes, commitContext) => {
-			commits++;
+		storage.commit = (batches, receive, commitContext) => {
+			commits += batches.length;
 			// SQLite commits synchronously, which can starve the timer; sample here too.
 			sample();
-			for (const write of writes) written[write.type] += JSON.stringify(write).length;
-			return commit(writes, commitContext);
+			for (const write of batches.flat()) written[write.type] += JSON.stringify(write).length;
+			return commit(batches, receive, commitContext);
 		};
 		const harness = await Harness.open(storage, { models, registry }, context);
 		const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" } } });

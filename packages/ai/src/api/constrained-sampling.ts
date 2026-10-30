@@ -139,6 +139,27 @@ export function makeStrictJsonSchema(
 	return cloned;
 }
 
+/** Returns true for a tool that asks for strict JSON-schema sampling only when possible (`strict: "prefer"`). */
+export function prefersJsonSchemaStrictSampling(tool: Tool): boolean {
+	const config = tool.constrainedSampling;
+	return !!config && config.type === "json_schema" && config.strict === "prefer";
+}
+
+/**
+ * Claude rejects (on the Anthropic API and on Bedrock) a request whose strict tools exceed its limits with one of these
+ * messages. Observed limits: 20 strict tools, and 16 optional or union-typed parameters across all strict tools.
+ */
+const STRICT_TOOL_LIMIT_ERROR_MESSAGES = [
+	"The compiled grammar is too large",
+	"Too many strict tools (",
+	"Schemas contains too many parameters with union types (",
+];
+
+/** Returns true when a provider error message says the request's strict tools exceed the provider's limits. */
+export function isStrictToolLimitErrorMessage(message: string): boolean {
+	return STRICT_TOOL_LIMIT_ERROR_MESSAGES.some((limitMessage) => message.includes(limitMessage));
+}
+
 export function getJsonSchemaToolParameters(tool: Tool, strict: boolean | undefined): Tool["parameters"] {
 	return (strict === true ? makeStrictJsonSchema(tool.parameters) : tool.parameters) as Tool["parameters"];
 }
@@ -167,36 +188,51 @@ export function getGrammarToolInput(
 	return input;
 }
 
+/**
+ * Append `inputDelta` to a streaming grammar tool input and return the matching piece of its JSON arguments text, or
+ * `undefined` for an empty delta. Costs time linear in the delta, never in the input so far.
+ */
 export function appendGrammarToolInputJsonDelta(
 	buffer: GrammarToolInputJsonBuffer,
 	inputProperty: string,
-	nextInput: string,
-	close: boolean,
+	inputDelta: string,
 ): string | undefined {
 	if (buffer.closed) {
-		if (close && nextInput === buffer.input) return undefined;
 		throw new Error(`grammar tool input for property "${inputProperty}" changed after it was closed`);
 	}
-	if (!nextInput.startsWith(buffer.input)) {
+	if (inputDelta.length === 0) return undefined;
+	buffer.input += inputDelta;
+	return grammarToolInputJsonStart(buffer, inputProperty) + JSON.stringify(inputDelta).slice(1, -1);
+}
+
+/**
+ * Close a streaming grammar tool input and return the rest of its JSON arguments text. `finalInput` is the complete
+ * input when the provider sends one; it must continue the input streamed so far. Closing again with the same input
+ * returns `undefined`.
+ */
+export function closeGrammarToolInputJson(
+	buffer: GrammarToolInputJsonBuffer,
+	inputProperty: string,
+	finalInput: string | undefined,
+): string | undefined {
+	if (buffer.closed) {
+		if (finalInput === undefined || finalInput === buffer.input) return undefined;
+		throw new Error(`grammar tool input for property "${inputProperty}" changed after it was closed`);
+	}
+	if (finalInput !== undefined && !finalInput.startsWith(buffer.input)) {
 		throw new Error(`grammar tool input for property "${inputProperty}" changed non-monotonically`);
 	}
+	const rest = finalInput === undefined ? "" : finalInput.slice(buffer.input.length);
+	if (finalInput !== undefined) buffer.input = finalInput;
+	buffer.closed = true;
+	return `${grammarToolInputJsonStart(buffer, inputProperty)}${JSON.stringify(rest).slice(1, -1)}"}`;
+}
 
-	const inputDelta = nextInput.slice(buffer.input.length);
-	if (!close && inputDelta.length === 0) return undefined;
-
-	let delta = "";
-	if (!buffer.started) {
-		delta += `{${JSON.stringify(inputProperty)}:"`;
-		buffer.started = true;
-	}
-	delta += JSON.stringify(inputDelta).slice(1, -1);
-	buffer.input = nextInput;
-
-	if (close) {
-		delta += '"}';
-		buffer.closed = true;
-	}
-	return delta;
+/** The opening of the JSON arguments text, once. */
+function grammarToolInputJsonStart(buffer: GrammarToolInputJsonBuffer, inputProperty: string): string {
+	if (buffer.started) return "";
+	buffer.started = true;
+	return `{${JSON.stringify(inputProperty)}:"`;
 }
 
 function inferGrammarInputProperty(tool: Tool): string {

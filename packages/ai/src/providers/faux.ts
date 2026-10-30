@@ -19,6 +19,7 @@ import type {
 	Usage,
 } from "../types.ts";
 import { createAssistantMessageEventStream } from "../utils/event-stream.ts";
+import { ToolCallArgumentsStream } from "../utils/streaming-json.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 
 const DEFAULT_API = "faux";
@@ -263,11 +264,12 @@ function withUsageEstimate(
 		if (previousPrompt) {
 			const cachedChars = commonPromptPrefixLength(previousPrompt, prompt);
 			cacheRead = Math.ceil(cachedChars / 4);
-			cacheWrite = Math.ceil((promptLength - cachedChars) / 4);
-			input = Math.max(0, promptTokens - cacheRead);
+			cacheWrite = Math.max(0, promptTokens - cacheRead);
 		} else {
 			cacheWrite = promptTokens;
 		}
+		// Every prompt token is either read from or written to the simulated cache.
+		input = 0;
 		promptCache.set(sessionId, prompt);
 	}
 
@@ -424,6 +426,8 @@ async function streamWithDeltas(
 
 		partial.content = [...partial.content, { type: "toolCall", id: block.id, name: block.name, arguments: {} }];
 		stream.push({ type: "toolcall_start", contentIndex: index, partial: { ...partial } });
+		// Partial arguments come from the same parser real providers use, so consumers see them grow.
+		const toolArguments = new ToolCallArgumentsStream();
 		for (const chunk of splitStringByTokenSize(JSON.stringify(block.arguments), minTokenSize, maxTokenSize)) {
 			await scheduleChunk(chunk, tokensPerSecond);
 			if (signal?.aborted) {
@@ -432,6 +436,7 @@ async function streamWithDeltas(
 				stream.end(aborted);
 				return;
 			}
+			(partial.content[index] as ToolCall).arguments = toolArguments.append(chunk);
 			stream.push({ type: "toolcall_delta", contentIndex: index, delta: chunk, partial: { ...partial } });
 		}
 		(partial.content[index] as ToolCall).arguments = block.arguments;

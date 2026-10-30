@@ -12,7 +12,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -36,8 +36,11 @@ const WORKSPACE = {
 const BUDGETS = {
 	"packages/ai": {
 		"./models": {
-			maxFiles: 15,
+			// Request telemetry reaches pi-ai's telemetry.ts and pi-telemetry's root (index, noop, metrics, memory).
+			// Request identity reaches utils/identity.ts and its version constant.
+			maxFiles: 20,
 			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
+			allow: ["packages/telemetry/src/index.ts"],
 		},
 		"./utils/*": { maxFiles: 3, forbid: ["providers/", "api/", "index.ts"] },
 	},
@@ -59,8 +62,17 @@ const BUDGETS = {
 		".": {
 			// Tool argument validation reaches TypeBox; provider-session creation reaches pi-ai's lean UUID utility; the
 			// memory and SQLite storages share scan order and cursor handling. Values from Chord's root (copyJson,
-			// replicatedState) reach its host runtime through the root barrel.
-			maxFiles: 66,
+			// replicatedState) reach its host runtime through the root barrel. Chord's context reaches pi-telemetry's root
+			// (index, noop, metrics, memory) for its NOOP telemetry default; harness/telemetry.ts is Durable's schema.
+			// The Harness's request identity reaches pi-ai's utils/identity.ts and its version constant. Partial commits
+			// parse streamed tool-call arguments with pi-ai's utils/streaming-json.ts (and its json-parse.ts) to append what
+			// argument strings grew by (harness/partial-changes.ts). Chord's watches fold pending ops with Delta's
+			// pending queue (delta/pending.ts). `registryReader` (harness/registry-reader.ts) reads a Chord v2 registry
+			// value through type-only imports. The Session caches hot Storage reads (session/cached-storage.ts) and keeps
+			// each conversation's newest entry and head marker (session/conversation-tails.ts). Group commit sends batches
+			// through `commit()`, or one `commit()` each (storage/commit-batch.ts), from a writer off the Session line
+			// (session/writer.ts) that gates reads by the keys of unpublished writes (session/keys.ts).
+			maxFiles: 83,
 			forbid: [
 				"packages/ai/src/index.ts",
 				"packages/ai/src/utils/typebox-helpers.ts",
@@ -145,7 +157,7 @@ for (const [pkgDir, budgets] of Object.entries(BUDGETS)) {
 				failures += 1;
 				continue;
 			}
-			const graph = [...walk(source)].map((file) => relative(ROOT, file));
+			const graph = [...walk(source)].map((file) => relative(ROOT, file).split(sep).join("/"));
 			if (graph.length > budget.maxFiles) {
 				console.error(
 					`${pkgDir} export "${name}" reaches ${graph.length} files, budget ${budget.maxFiles}\n` +
@@ -154,7 +166,7 @@ for (const [pkgDir, budgets] of Object.entries(BUDGETS)) {
 				failures += 1;
 			}
 			for (const pattern of budget.forbid ?? []) {
-				const hit = graph.filter((file) => file.includes(pattern));
+				const hit = graph.filter((file) => file.includes(pattern) && !(budget.allow ?? []).some((allowed) => file.endsWith(allowed)));
 				if (hit.length > 0) {
 					console.error(`${pkgDir} export "${name}" must not reach ${pattern}:\n${hit.map((f) => `    ${f}`).join("\n")}`);
 					failures += 1;
