@@ -57,6 +57,18 @@ describe("tool output bounds", () => {
 		expect(sanitizeOutput("a\0b\tc\nd\re\u0007f\ufff9g\ufffbh😀")).toBe("ab\tc\ndefgh😀");
 	});
 
+	// #11604
+	it("removes whole ANSI escape sequences, not only their ESC bytes", () => {
+		expect(sanitizeOutput("\x1b[31mERROR\x1b[0m\n")).toBe("ERROR\n");
+		expect(sanitizeOutput("\x1b[1;38;5;208mx\x1b[?25l\x1b[2K\x1b(By\x1b7z")).toBe("xyz");
+		expect(sanitizeOutput("\x1b]8;;https://pi.dev\x07link\x1b]8;;\x1b\\ \x1b]0;title\x07ok")).toBe("link ok");
+		const output = new OutputBuffer({ retain: "tail", maxBytes: 1024, maxLines: 100 });
+		output.push("\x1b[3");
+		output.push("1mERROR\x1b[0");
+		output.push("m\n");
+		expect(output.snapshot().text).toBe("ERROR\n");
+	});
+
 	it("keeps output within the limits unchanged", () => {
 		expect(bound("a\nb\n", head(2))).toEqual({ kept: "a\nb\n", droppedBytes: 0, droppedLines: 0 });
 		expect(bound("a\nb", tail(2))).toEqual({ kept: "a\nb", droppedBytes: 0, droppedLines: 0 });
