@@ -123,19 +123,42 @@ function normalizeName(name: string): string {
 		.replace(/[^a-z0-9_$]/g, "_");
 }
 
-/**
- * Whether `query` names the tool: its full name or a suffix after a `__` separator, so `thread_read`
- * and `app__thread_read` both name `mcp__app__thread_read`.
- */
-function isNameQuery(query: string, name: string): boolean {
-	const normalized = normalizeName(name);
-	return normalized === query || normalized.endsWith(`__${query}`);
+/** A query as tool names: the whole query and its words, each normalized with {@link normalizeName}. */
+interface QueryNames {
+	whole: string;
+	words: ReadonlySet<string>;
+}
+
+function toQueryNames(query: string): QueryNames {
+	const words = query.split(/[^A-Za-z0-9_$-]+/).filter((word) => word.length > 0);
+	return { whole: normalizeName(query), words: new Set(words.map(normalizeName)) };
 }
 
 /**
- * Okapi BM25 with the usual parameters. A query that names a tool ranks that tool first, because
- * length normalization can otherwise rank a short description sharing the name's words above it.
- * Ties keep document order.
+ * Whether the query names the tool. For `mcp__app__thread_read`:
+ * - the whole query is the full name or a suffix after a `__` separator: `thread_read`, `app__thread_read`;
+ * - a word of the query is the full name or such a suffix and has a `_` in it, since a compound
+ *   identifier is unlikely to be a plain word: `read thread_read state`;
+ * - the query has the last segment and the segment before it as words: `app thread_read`, and for
+ *   `mcp__peekaboo__app`, `peekaboo app`.
+ */
+function isNameQuery(query: QueryNames, name: string): boolean {
+	const normalized = normalizeName(name);
+	if (normalized === query.whole || normalized.endsWith(`__${query.whole}`)) return true;
+	const segments = normalized.split("__");
+	for (let start = 0; start < segments.length; start++) {
+		const suffix = segments.slice(start).join("__");
+		if (suffix.includes("_") && query.words.has(suffix)) return true;
+	}
+	const local = segments[segments.length - 1];
+	const server = segments[segments.length - 2];
+	return server !== undefined && query.words.has(local) && query.words.has(server);
+}
+
+/**
+ * Okapi BM25 with the usual parameters. Tools the query names (see {@link isNameQuery}) rank
+ * first, because length normalization and other tools sharing the name's words can otherwise rank
+ * them below the limit. Ties keep document order.
  */
 export class Bm25Ranker implements ToolRanker {
 	private readonly k1: number;
@@ -162,7 +185,7 @@ export class Bm25Ranker implements ToolRanker {
 				return [term, Math.log(1 + (documents.length - frequency + 0.5) / (frequency + 0.5))] as const;
 			}),
 		);
-		const nameQuery = normalizeName(query);
+		const nameQuery = toQueryNames(query);
 		const matches: (ToolSearchMatch & { named: boolean })[] = [];
 		documents.forEach((document, index) => {
 			let score = 0;

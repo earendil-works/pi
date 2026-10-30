@@ -76,6 +76,32 @@ describe("Bm25Ranker", () => {
 		expect(ranker.rank("read", named, 1).map((match) => match.name)).toEqual(["mcp__app__queue_read"]);
 	});
 
+	// https://github.com/earendil-works/pi/issues/11331
+	it("ranks a tool first when the query names it among other words", () => {
+		const named = [
+			tool("mcp__peekaboo__see", "Capture the app window of the peekaboo app and describe the app."),
+			tool(
+				"mcp__peekaboo__app",
+				"Launch, quit, focus, or list applications. Supports bundle identifiers and process names.",
+			),
+			tool("mcp__app__queue_read", "Read a queued message of this thread."),
+			tool(
+				"mcp__dev-app__thread_read",
+				"Read durable state and a paginated timeline from any thread. The default view returns user messages, assistant messages and plans.",
+			),
+		].map((entry) => createToolSearchDocument(entry));
+		const ranker = new Bm25Ranker();
+		const first = (query: string) => ranker.rank(query, named, 1).map((match) => match.name);
+		// Server and local name as words.
+		expect(first("peekaboo app")).toEqual(["mcp__peekaboo__app"]);
+		expect(first("open the peekaboo app tool")).toEqual(["mcp__peekaboo__app"]);
+		// A compound local name or the full name as a word.
+		expect(first("read a queue thread_read")).toEqual(["mcp__dev-app__thread_read"]);
+		expect(first("queue mcp__dev-app__thread_read")).toEqual(["mcp__dev-app__thread_read"]);
+		// A plain-word local name alone does not name the tool.
+		expect(first("describe app")).toEqual(["mcp__peekaboo__see"]);
+	});
+
 	it("includes the namespace in the search text", () => {
 		const document = createToolSearchDocument(tool("mcp__x__run", "Run it."), {
 			name: "mcp__x",
