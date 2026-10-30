@@ -3808,8 +3808,13 @@ declares them, built from the resolved tools. Loaded tools follow the other
 tools in load order, so a load appends declarations to the transcript and the
 cached prefix holds. `@earendil-works/pi-durable/tool-search` provides the
 coding agent's `tool_search` (`createToolSearchExtension()`): it ranks
-`Agent.deferred` with BM25 over the tools' names, descriptions, and parameter
-names and descriptions, and loads the matches. The `codemode` section does not
+`Agent.deferred` with the coding agent's tool ranking and loads the matches.
+The ranking is BM25 over the tools' descriptions and parameter names and
+descriptions, with the name as a separate field: a query term in the name
+outweighs any number of mentions in the description, a tool whose whole name
+after its last `__` is in the query gets a large bonus, and a query that is
+exactly a tool's name ranks it first. Code mode's `searchTools()` ranks the
+same way, with each tool's namespace text as a further, low-weight field. The `codemode` section does not
 list deferred tools; scripts find them with `searchTools()`.
 
 Tools reach files and processes only through `api.env`, never through an

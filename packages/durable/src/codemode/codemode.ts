@@ -946,14 +946,10 @@ class CodemodeCall {
 		const documents = tools.flatMap((tool) => {
 			const own = namespaceOfTool(tool.name);
 			if (typeof namespace === "string" && (own === undefined || !matchesNamespace(own, namespace))) return [];
-			const text = [
-				tool.name,
-				tool.name.replaceAll("_", " "),
-				tool.description,
-				own?.name ?? "",
-				own?.description ?? "",
-			];
-			return [{ name: tool.name, text: text.join(" ") }];
+			const namespaceText =
+				own === undefined ? "" : [own.name, own.description ?? "", own.instructions ?? ""].join(" ");
+			// `description` is the tool's sample: its description and declaration, with the parameters' names and descriptions.
+			return [{ name: tool.name, text: tool.description, namespaceText }];
 		});
 		return rankDocuments(query, documents, limit).map((name) => {
 			const tool = tools.find((candidate) => candidate.name === name)!;
