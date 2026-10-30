@@ -40,6 +40,8 @@
 - Fixed paths next to the home directory being shown with a broken `~` prefix, for example `/home/me2/project` shown as `~2/project` when home is `/home/me`
 - Fixed `pi mcp login -l` and `pi mcp logout -l` failing with `Unknown option --local.` although `pi mcp add` and `pi mcp remove` accept `-l`. With `-l`, they now require the server to be a project server. Unknown options are now reported as typed, and a mistyped server name gets a suggestion, for example `Did you mean "gurker"?`
 - Fixed `pi update` naming pnpm for installs that only live under `PNPM_HOME`, for example a wrapper under `$PNPM_HOME/global-nub/`. pi said "not managed by a global pnpm install"; it now names the package manager only when that manager owns the install ([#7756](https://github.com/earendil-works/pi/issues/7756))
+- Fixed image paste, copy, and opening the browser for sign-in failing silently on WSL when the working directory is deep. Windows programs such as `powershell.exe` and `explorer.exe` cannot start from a directory whose `\\wsl.localhost\...` path exceeds 260 characters; pi now starts these helpers from `/` ([#11592](https://github.com/earendil-works/pi/issues/11592))
+- Fixed the external editor failing silently, for example when the editor command is wrong or a Windows editor cannot start from a deep WSL directory. pi now shows a status message such as `External editor exited with code 1; prompt unchanged` ([#11592](https://github.com/earendil-works/pi/issues/11592))
 
 ## [1.4.0] - 2026-10-21
 

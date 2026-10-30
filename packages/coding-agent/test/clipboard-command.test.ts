@@ -39,6 +39,11 @@ describe("clipboard commands", () => {
 		expect(ownPgid).toMatch(/^\d+$/);
 		expect(childPgid).not.toBe(ownPgid);
 	});
+	// #11592: WSL cannot start Windows executables from a cwd whose UNC path exceeds MAX_PATH.
+	test.skipIf(process.platform === "win32")("runs commands from the filesystem root", async () => {
+		const cwd = await runClipboardCommand(process.execPath, ["-e", "process.stdout.write(process.cwd())"]);
+		expect(cwd?.toString("utf8")).toBe("/");
+	});
 	test("rejects output above the buffer limit", async () => {
 		expect(
 			await runClipboardCommand(process.execPath, ["-e", "process.stdout.write(Buffer.alloc(1024))"], {
