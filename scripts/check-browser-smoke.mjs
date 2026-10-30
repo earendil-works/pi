@@ -6,6 +6,7 @@ import { build } from "esbuild";
 const outputPath = join(tmpdir(), "pi-browser-smoke.js");
 const durableOutputPath = join(tmpdir(), "pi-durable-browser-smoke.js");
 const agentTreeshakeOutputPath = join(tmpdir(), "pi-agent-treeshake-smoke.js");
+const connectOutputDir = join(tmpdir(), "pi-connect-browser-smoke");
 const errorLogPath = join(tmpdir(), "pi-browser-smoke-errors.log");
 const generatedCatalogDataDir = join(process.cwd(), "packages/ai/src/providers/data");
 
@@ -84,6 +85,18 @@ try {
 		const nodeAdapter = findInput(durableInputs, forbiddenInput);
 		if (nodeAdapter) throw new Error(`Durable browser bundle unexpectedly includes ${nodeAdapter}`);
 	}
+
+	// pi-connect runs every OAuth flow in the browser, so the flows' Node-only parts must stay lazy.
+	await build({
+		entryPoints: ["packages/connect/src/index.ts", "packages/connect/src/page.ts"],
+		bundle: true,
+		platform: "browser",
+		format: "esm",
+		logLevel: "silent",
+		outdir: connectOutputDir,
+		plugins: [generatedCatalogDataPlugin],
+		write: false,
+	});
 
 	const agentTreeshakeBuild = await build({
 		entryPoints: ["scripts/agent-treeshake-smoke-entry.ts"],

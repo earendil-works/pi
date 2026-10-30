@@ -1,0 +1,61 @@
+{
+	"name": "@earendil-works/pi-connect",
+	"version": "1.4.0",
+	"description": "Sign in to model providers from the browser with pi-ai: auth documents, a pi.dev sign-in popup and relay, and IndexedDB credential storage",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"source": "./src/index.ts",
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		},
+		"./page": {
+			"source": "./src/page.ts",
+			"types": "./dist/page.d.ts",
+			"import": "./dist/page.js",
+			"default": "./dist/page.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"sideEffects": false,
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsc -p tsconfig.build.json",
+		"test": "vitest --run",
+		"probe": "node scripts/probe-cors.ts",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"keywords": [
+		"ai",
+		"llm",
+		"oauth",
+		"browser",
+		"pi"
+	],
+	"author": "Earendil Works",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi.git",
+		"directory": "packages/connect"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"dependencies": {
+		"@earendil-works/pi-ai": "1.4.0"
+	},
+	"devDependencies": {
+		"fake-indexeddb": "6.2.6",
+		"shx": "0.3.4",
+		"vitest": "4.1.12"
+	}
+}
