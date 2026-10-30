@@ -774,6 +774,112 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		expect(process.exitCode).toBe(1);
 	});
 
+	function prepareSelfUpdateCommand(exitCode = 0): { binDir: string; scriptPath: string; recordPath: string } {
+		const binDir = join(tempDir, "self-update-bin");
+		const scriptPath = join(tempDir, "self-update.cjs");
+		const recordPath = join(tempDir, "self-update-record.json");
+		mkdirSync(binDir, { recursive: true });
+		writeFileSync(
+			scriptPath,
+			`require("node:fs").writeFileSync(${JSON.stringify(recordPath)}, JSON.stringify(process.argv.slice(2)));
+process.exit(${exitCode});
+`,
+		);
+		const shimPath = join(binDir, process.platform === "win32" ? "pi-wrapper.cmd" : "pi-wrapper");
+		writeFileSync(
+			shimPath,
+			process.platform === "win32"
+				? `@echo off\r\n"${originalExecPath}" "${scriptPath}" %*\r\n`
+				: `#!/bin/sh\nexec "${originalExecPath}" "${scriptPath}" "$@"\n`,
+		);
+		chmodSync(shimPath, 0o755);
+		process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
+		return { binDir, scriptPath, recordPath };
+	}
+
+	it("runs PI_SELF_UPDATE_COMMAND instead of the managed update and the selfUpdateCommand setting", async () => {
+		const targetVersion = getNewerPatchVersion();
+		const { npmRecordPath } = prepareManagedInstall(targetVersion);
+		const { scriptPath, recordPath } = prepareSelfUpdateCommand();
+		const settingRecordPath = join(tempDir, "setting-record.json");
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ selfUpdateCommand: [originalExecPath, scriptPath, settingRecordPath] }),
+		);
+		vi.stubEnv("PI_SELF_UPDATE_COMMAND", "pi-wrapper upgrade {installSpec} {version}");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json({ packageName: "@new-scope/pi", version: targetVersion, note: "Read me" })),
+		);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+		expect(JSON.parse(readFileSync(recordPath, "utf8")) as string[]).toEqual([
+			"upgrade",
+			`@new-scope/pi@${targetVersion}`,
+			targetVersion,
+		]);
+		expect(existsSync(npmRecordPath)).toBe(false);
+		const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(stdout).toContain("Read me");
+		// The fake command does not touch this installation, so pi must not claim the update succeeded.
+		expect(stdout).toContain(`but this installation is still ${VERSION}`);
+		expect(stdout).not.toContain("Updated pi from");
+		expect(errorSpy).not.toHaveBeenCalled();
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("runs the global selfUpdateCommand setting only when a newer release exists", async () => {
+		const { scriptPath, recordPath } = prepareSelfUpdateCommand();
+		const projectRecordPath = join(tempDir, "project-record.json");
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ selfUpdateCommand: [originalExecPath, scriptPath, "{packageName}"] }),
+		);
+		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		writeFileSync(
+			join(projectDir, ".pi", "settings.json"),
+			JSON.stringify({ selfUpdateCommand: [originalExecPath, scriptPath, projectRecordPath] }),
+		);
+		vi.stubEnv("PI_SELF_UPDATE_COMMAND", "");
+		const fetchMock = vi.fn(async () => Response.json({ version: VERSION }));
+		vi.stubGlobal("fetch", fetchMock);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+		expect(existsSync(recordPath)).toBe(false);
+		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+			`pi is already up to date (v${VERSION})`,
+		);
+
+		fetchMock.mockImplementation(async () => Response.json({ version: getNewerPatchVersion() }));
+		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+		expect(JSON.parse(readFileSync(recordPath, "utf8")) as string[]).toEqual([PACKAGE_NAME]);
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("fails when the configured self-update command fails", async () => {
+		prepareSelfUpdateCommand(23);
+		vi.stubEnv("PI_SELF_UPDATE_COMMAND", "pi-wrapper upgrade");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json({ version: getNewerPatchVersion() })),
+		);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+		expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+			"pi-wrapper upgrade exited with code 23",
+		);
+		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).not.toContain("Ran pi-wrapper");
+		expect(process.exitCode).toBe(1);
+	});
+
 	it("keeps the managed release active when its update fails", async () => {
 		const targetVersion = getNewerPatchVersion();
 		const { managedRoot } = prepareManagedInstall(targetVersion, 23);

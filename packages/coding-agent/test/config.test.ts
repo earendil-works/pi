@@ -6,9 +6,11 @@ import {
 	detectInstallChange,
 	detectInstallMethod,
 	findNodePackageDir,
+	getConfiguredSelfUpdateArgv,
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
 	getUpdateInstruction,
+	makeConfiguredSelfUpdateCommand,
 } from "../src/config.ts";
 
 const execPathDescriptor = Object.getOwnPropertyDescriptor(process, "execPath");
@@ -487,5 +489,56 @@ describe("detectInstallChange", () => {
 		writeFileSync(join(tempDir, "package.json"), JSON.stringify({ version: "0.0.1" }));
 		rmSync(installDir, { recursive: true, force: true });
 		expect(detectInstallChange(join(installDir, "package.json"))).toEqual({ kind: "removed" });
+	});
+});
+
+describe("configured self-update command", () => {
+	const originalSelfUpdateCommand = process.env.PI_SELF_UPDATE_COMMAND;
+
+	afterEach(() => {
+		if (originalSelfUpdateCommand === undefined) {
+			delete process.env.PI_SELF_UPDATE_COMMAND;
+		} else {
+			process.env.PI_SELF_UPDATE_COMMAND = originalSelfUpdateCommand;
+		}
+	});
+
+	test("prefers PI_SELF_UPDATE_COMMAND over the setting and splits it on whitespace", () => {
+		process.env.PI_SELF_UPDATE_COMMAND = "  nub   upgrade {installSpec} ";
+
+		expect(getConfiguredSelfUpdateArgv(["mise", "upgrade"])).toEqual(["nub", "upgrade", "{installSpec}"]);
+	});
+
+	test("uses the setting when PI_SELF_UPDATE_COMMAND is unset or blank", () => {
+		process.env.PI_SELF_UPDATE_COMMAND = " ";
+
+		expect(getConfiguredSelfUpdateArgv(["mise", "upgrade", "npm:{packageName}"])).toEqual([
+			"mise",
+			"upgrade",
+			"npm:{packageName}",
+		]);
+		expect(getConfiguredSelfUpdateArgv([])).toBeUndefined();
+		expect(getConfiguredSelfUpdateArgv(undefined)).toBeUndefined();
+	});
+
+	test("fills placeholders in every argument", () => {
+		const command = makeConfiguredSelfUpdateCommand(
+			["wrapper", "install", "{installSpec}", "--name={packageName}", "--version", "{version}", "{unknown}"],
+			{ packageName: "@earendil-works/pi-coding-agent", version: "1.2.3" },
+		);
+
+		expect(command).toEqual({
+			command: "wrapper",
+			args: [
+				"install",
+				"@earendil-works/pi-coding-agent@1.2.3",
+				"--name=@earendil-works/pi-coding-agent",
+				"--version",
+				"1.2.3",
+				"{unknown}",
+			],
+			display:
+				"wrapper install @earendil-works/pi-coding-agent@1.2.3 --name=@earendil-works/pi-coding-agent --version 1.2.3 {unknown}",
+		});
 	});
 });
