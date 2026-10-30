@@ -20,8 +20,8 @@ export function openBrowser(target: string): void {
 	// to the user, so keep the launcher failure from becoming a process crash.
 	// On WSL, xdg-open launches explorer.exe, which fails when the cwd's
 	// \\wsl.localhost\... path exceeds MAX_PATH (#11592). The target is a URL,
-	// so the launcher does not need pi's cwd.
-	spawn(cmd, args, { stdio: "ignore", detached: true, cwd: process.platform === "win32" ? undefined : "/" })
+	// so no launcher needs pi's cwd.
+	spawn(cmd, args, { stdio: "ignore", detached: true, cwd: "/" })
 		.on("error", () => {})
 		.unref();
 }
