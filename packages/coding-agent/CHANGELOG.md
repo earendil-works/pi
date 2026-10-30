@@ -39,6 +39,7 @@
 - Fixed Windows paths being compared case-sensitively. When the working directory and home directory differed only in drive-letter casing (`c:\Users\me` vs `C:\Users\me`), skills in `~/.agents/skills` loaded twice, as project and user skills, and were reported as name collisions. The same mismatch also re-asked for saved project trust, hid sessions in a custom session directory from `--continue` and `/resume`, and stopped `pi remove` from matching configured local packages ([#10488](https://github.com/earendil-works/pi/issues/10488))
 - Fixed paths next to the home directory being shown with a broken `~` prefix, for example `/home/me2/project` shown as `~2/project` when home is `/home/me`
 - Fixed `pi mcp login -l` and `pi mcp logout -l` failing with `Unknown option --local.` although `pi mcp add` and `pi mcp remove` accept `-l`. With `-l`, they now require the server to be a project server. Unknown options are now reported as typed, and a mistyped server name gets a suggestion, for example `Did you mean "gurker"?`
+- Fixed `pi update` naming pnpm for installs that only live under `PNPM_HOME`, for example a wrapper under `$PNPM_HOME/global-nub/`. pi said "not managed by a global pnpm install"; it now names the package manager only when that manager owns the install ([#7756](https://github.com/earendil-works/pi/issues/7756))
 
 ## [1.4.0] - 2026-10-21
 

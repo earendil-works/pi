@@ -182,6 +182,33 @@ describe("detectInstallMethod", () => {
 		);
 	});
 
+	// Issue #7756
+	test("does not name pnpm for unmanaged installs under PNPM_HOME", () => {
+		tempDir = mkdtempSync(join(tmpdir(), "pi-pnpm-home-"));
+		const packageDir = join(
+			tempDir,
+			".local",
+			"share",
+			"pnpm",
+			"global-nub",
+			"5",
+			"node_modules",
+			"@earendil-works",
+			"pi-coding-agent",
+		);
+		mkdirSync(packageDir, { recursive: true });
+		process.env.PI_PACKAGE_DIR = packageDir;
+		process.env.PATH = "";
+		process.argv[1] = join(packageDir, "dist", "cli.js");
+		setExecPath(join(packageDir, "dist", "cli.js"));
+
+		expect(detectInstallMethod()).toBe("pnpm");
+		expect(getSelfUpdateCommand("@earendil-works/pi-coding-agent")).toBeUndefined();
+		expect(getSelfUpdateUnavailableInstruction("@earendil-works/pi-coding-agent")).toBe(
+			"Update @earendil-works/pi-coding-agent using the package manager, wrapper, or source checkout that provides this installation.",
+		);
+	});
+
 	test("self-updates npm installs from custom prefixes", () => {
 		const { prefix } = createNpmPrefixInstall();
 
