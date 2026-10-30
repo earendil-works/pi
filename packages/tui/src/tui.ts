@@ -176,6 +176,16 @@ const TERMINAL_COLOR_QUERY = `\x1b]10;?\x07\x1b]11;?\x07${Array.from(
 	(_, index) => `\x1b]4;${index};?\x07`,
 ).join("")}\x1b[c`;
 const DEVICE_ATTRIBUTES_RESPONSE_PATTERN = /^\x1b\[\?[\d;]*c$/;
+/**
+ * mintty under ConPTY answers the palette queries after DA1 and without the `ESC ] 4` introducer,
+ * e.g. `;0;rgb:0000/0000/0000 BEL ;1;rgb:d4d4/2c2c/3a3a BEL` (#10256). StdinBuffer emits that tail
+ * one character at a time, so this matches the characters collected so far: complete replies
+ * followed by at most one partial reply. Values are limited to the characters of `rgb:`, `rgba:`,
+ * and `#` colors so that typed text stops matching early.
+ */
+const PREFIXLESS_PALETTE_REPLIES_PATTERN = /^(?:;\d{1,3};[\da-fgr:/#]*\x07)*(?:;(?:\d{1,3}(?:;[\da-fgr:/#]*)?)?)?$/i;
+/** How long to wait for the next character of prefixless palette replies before treating it as typed input. */
+const PREFIXLESS_PALETTE_REPLY_TIMEOUT_MS = 150;
 
 /**
  * Interface for components that can receive focus and display a hardware cursor.
@@ -531,6 +541,11 @@ export abstract class TuiBase extends Container implements TUI {
 	 * replies belong to the oldest one. Queries stay here after a timeout to collect late replies.
 	 */
 	private pendingTerminalColorQueries: PendingTerminalColorQuery[] = [];
+	/**
+	 * Characters of prefixless palette replies held back after a color query's DA1 arrived without
+	 * any color reply. Set only while such replies may still arrive.
+	 */
+	private prefixlessPaletteReplies: { pending: string; timer: NodeJS.Timeout } | undefined;
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
 	/** Directory for debug/crash logs. When undefined, debug logging is disabled and crash dumps fall back to the OS temp directory. */
@@ -1013,6 +1028,8 @@ export abstract class TuiBase extends Container implements TUI {
 		this.stopped = true;
 		process.off("exit", this.exitRestoreHandler);
 		this.cancelRenderTimer();
+		clearTimeout(this.prefixlessPaletteReplies?.timer);
+		this.prefixlessPaletteReplies = undefined;
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031l");
 		}
@@ -1085,6 +1102,9 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 
 	private handleTerminalInput(data: string): void {
+		if (this.consumePrefixlessPaletteReply(data)) {
+			return;
+		}
 		if (this.consumeTerminalColorResponse(data)) {
 			return;
 		}
@@ -1170,6 +1190,9 @@ export abstract class TuiBase extends Container implements TUI {
 		if (DEVICE_ATTRIBUTES_RESPONSE_PATTERN.test(data)) {
 			this.pendingTerminalColorQueries.shift();
 			this.completeTerminalColorQuery(query);
+			if (query.replied.size === 0) {
+				this.prefixlessPaletteReplies = { pending: "", timer: this.startPrefixlessPaletteReplyTimer() };
+			}
 			return true;
 		}
 
@@ -1194,6 +1217,44 @@ export abstract class TuiBase extends Container implements TUI {
 			this.completeTerminalColorQuery(query);
 		}
 		return true;
+	}
+
+	/**
+	 * Consume prefixless palette replies after a color query's DA1. Input that stops matching, or
+	 * that is followed by a pause, ends the replies; the characters held back so far are then
+	 * delivered as ordinary input, so typed text is delayed but never lost.
+	 */
+	private consumePrefixlessPaletteReply(data: string): boolean {
+		const replies = this.prefixlessPaletteReplies;
+		if (!replies) {
+			return false;
+		}
+		const pending = replies.pending + data;
+		if (!PREFIXLESS_PALETTE_REPLIES_PATTERN.test(pending)) {
+			this.endPrefixlessPaletteReplies();
+			return false;
+		}
+		// Complete replies are dropped; their colors already missed the query's DA1.
+		replies.pending = pending.endsWith("\x07") ? "" : pending;
+		clearTimeout(replies.timer);
+		replies.timer = this.startPrefixlessPaletteReplyTimer();
+		return true;
+	}
+
+	private startPrefixlessPaletteReplyTimer(): NodeJS.Timeout {
+		return setTimeout(() => this.endPrefixlessPaletteReplies(), PREFIXLESS_PALETTE_REPLY_TIMEOUT_MS);
+	}
+
+	private endPrefixlessPaletteReplies(): void {
+		const replies = this.prefixlessPaletteReplies;
+		if (!replies) {
+			return;
+		}
+		clearTimeout(replies.timer);
+		this.prefixlessPaletteReplies = undefined;
+		for (const char of replies.pending) {
+			this.handleTerminalInput(char);
+		}
 	}
 
 	private terminalColorQueryResult(query: PendingTerminalColorQuery): TerminalColors {

@@ -183,6 +183,87 @@ describe("TUI.queryTerminalColors", () => {
 		}
 	});
 
+	// #10256: mintty under ConPTY sends the palette replies after DA1 and without `ESC ] 4`.
+	const MINTTY_DA1 = "\x1b[?1;0c";
+	const MINTTY_PALETTE_TAIL = Array.from({ length: 16 }, (_, index) => `;${index};rgb:d4d4/2c2c/3a3a\x07`).join("");
+
+	it("consumes mintty's prefixless palette replies without typing them or opening the editor (#10256)", async (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		const { terminal, tui, component } = setup();
+		const buffer = new StdinBuffer();
+		buffer.on("data", (data) => terminal.sendInput(data));
+		try {
+			const query = tui.queryTerminalColors({ timeoutMs: 1000 });
+			// Captured from mintty: DA1 and the whole tail in one read.
+			buffer.process(MINTTY_DA1 + MINTTY_PALETTE_TAIL);
+			assert.deepStrictEqual(await query, { foreground: undefined, background: undefined, palette: undefined });
+			assert.deepStrictEqual(component.inputs, []);
+
+			// A real Ctrl+G must still reach the editor after the replies.
+			buffer.process("\x07");
+			assert.deepStrictEqual(component.inputs, ["\x07"]);
+		} finally {
+			buffer.destroy();
+			tui.stop();
+		}
+	});
+
+	it("consumes fragmented prefixless palette replies (#10256)", async (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		const { terminal, tui, component } = setup();
+		const buffer = new StdinBuffer();
+		buffer.on("data", (data) => terminal.sendInput(data));
+		try {
+			const query = tui.queryTerminalColors({ timeoutMs: 1000 });
+			buffer.process(MINTTY_DA1);
+			for (const fragment of [";0", ";rgb:0000/0000/0000", "\x07", ";1", ";rgb:d4d4/2c2c/3a3a\x07"]) {
+				t.mock.timers.tick(50);
+				buffer.process(fragment);
+			}
+			t.mock.timers.tick(1000);
+			assert.deepStrictEqual(await query, { foreground: undefined, background: undefined, palette: undefined });
+			assert.deepStrictEqual(component.inputs, []);
+		} finally {
+			buffer.destroy();
+			tui.stop();
+		}
+	});
+
+	it("delivers held-back typed text in order once it stops matching or pauses", async (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		const { terminal, tui, component } = setup();
+		try {
+			void tui.queryTerminalColors({ timeoutMs: 1000 });
+			terminal.sendInput(DA1);
+			for (const char of ";1;x") terminal.sendInput(char);
+			assert.deepStrictEqual(component.inputs, [";", "1", ";", "x"]);
+
+			void tui.queryTerminalColors({ timeoutMs: 1000 });
+			terminal.sendInput(DA1);
+			terminal.sendInput(";");
+			terminal.sendInput("2");
+			assert.deepStrictEqual(component.inputs, [";", "1", ";", "x"]);
+			t.mock.timers.tick(150);
+			assert.deepStrictEqual(component.inputs, [";", "1", ";", "x", ";", "2"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("does not hold back input after a terminal answered the color queries", async () => {
+		const { terminal, tui, component } = setup();
+		try {
+			const query = tui.queryTerminalColors({ timeoutMs: 1000 });
+			terminal.sendInput("\x1b]11;#000000\x07");
+			terminal.sendInput(DA1);
+			await query;
+			terminal.sendInput(";");
+			assert.deepStrictEqual(component.inputs, [";"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
 	it("resolves on DA1 with the replies that arrived, in query order", async () => {
 		const { terminal, tui } = setup();
 		try {
