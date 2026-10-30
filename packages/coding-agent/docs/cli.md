@@ -284,27 +284,13 @@ Add `--force` to reinstall Pi when the selected update includes Pi.
 
 #### Custom update command
 
-When a wrapper or another package manager provides Pi, tell `pi update` how to update it with `PI_SELF_UPDATE_COMMAND` or the global `selfUpdateCommand` setting. `pi update` still checks pi.dev for the latest release and runs the command only when a newer version exists, or with `--force`. The command replaces Pi's own update logic for every installation method, including installer-managed installs.
+If a wrapper or another package manager provides Pi, set `PI_SELF_UPDATE_COMMAND` so `pi update` runs its update command:
 
 ```sh
-export PI_SELF_UPDATE_COMMAND="mise upgrade npm:{packageName}"
+export PI_SELF_UPDATE_COMMAND="mise use -g npm:{packageName}@{version}"
 ```
 
-```json
-{ "selfUpdateCommand": ["nix", "profile", "upgrade", "pi"] }
-```
-
-Placeholders filled from the latest release:
-
-| Placeholder | Example |
-|---|---|
-| `{packageName}` | `@earendil-works/pi-coding-agent` |
-| `{version}` | `1.2.3` |
-| `{installSpec}` | `@earendil-works/pi-coding-agent@1.2.3` |
-
-- `PI_SELF_UPDATE_COMMAND` is split on whitespace and has no quoting. Use the setting, an argv array, for arguments that contain spaces.
-- `PI_SELF_UPDATE_COMMAND` takes precedence over the setting. Pi reads the setting only from `~/.pi/agent/settings.json`; project settings cannot set it.
-- After the command exits successfully, Pi reports the version now installed at its own location. If the command installed Pi elsewhere, Pi says so; run `pi --version` to check the version on your `PATH`.
+`pi update` runs it only when pi.dev has a newer release, replacing `{packageName}`, `{version}`, and `{installSpec}` (`{packageName}@{version}`) with that release. The value is split on spaces. For arguments with spaces, use the `selfUpdateCommand` setting in `~/.pi/agent/settings.json` instead, an argv array such as `["nix", "profile", "upgrade", "pi"]`.
 
 ### Aliases and command options
 

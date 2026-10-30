@@ -755,26 +755,32 @@ async function runConfiguredSelfUpdate(argv: string[], plan: SelfUpdatePlan): Pr
 		process.exitCode = 1;
 		return;
 	}
-	// The command may install elsewhere (for example a new versioned directory), so exit code 0
-	// does not prove this installation changed.
+	// Exit code 0 does not prove an update. Wrappers such as mise or Nix install each version into a
+	// new directory and leave this installation untouched, so fall back to the pi on PATH.
 	const change = detectInstallChange();
-	if (change?.kind === "updated" && change.version === plan.version) {
+	const installedVersion =
+		change?.kind === "updated" && change.version === plan.version ? change.version : readVersionOnPath();
+	if (installedVersion === plan.version) {
 		console.log(chalk.green(`Updated ${APP_NAME} from ${VERSION} to ${plan.version}`));
-	} else if (change?.kind === "updated") {
-		console.log(chalk.yellow(`${APP_NAME} is now ${change.version}; the latest release is ${plan.version}.`));
-	} else if (change?.kind === "removed") {
-		console.log(
-			chalk.yellow(
-				`Ran ${command.display}, which removed this installation. Run ${APP_NAME} --version to check the version on your PATH.`,
-			),
-		);
-	} else {
-		console.log(
-			chalk.yellow(
-				`Ran ${command.display}, but this installation is still ${VERSION}. Run ${APP_NAME} --version to check the version on your PATH.`,
-			),
-		);
+		return;
 	}
+	console.log(
+		chalk.yellow(
+			`Ran ${command.display}, but \`${APP_NAME} --version\` reports ${installedVersion ?? "no version"}, not ${plan.version}.`,
+		),
+	);
+}
+
+/** Version printed by `pi --version` as resolved from PATH, the pi the user runs next. */
+function readVersionOnPath(): string | undefined {
+	// PI_PACKAGE_DIR points at this installation and would make the new pi report the old version.
+	const { PI_PACKAGE_DIR: _, ...env } = process.env;
+	const result = spawnProcessSync(APP_NAME, ["--version"], {
+		encoding: "utf-8",
+		stdio: ["ignore", "pipe", "pipe"],
+		env,
+	});
+	return result.status === 0 ? result.stdout.trim() || undefined : undefined;
 }
 
 function prepareWindowsNpmSelfUpdate(): void {

@@ -774,9 +774,22 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		expect(process.exitCode).toBe(1);
 	});
 
-	function prepareSelfUpdateCommand(exitCode = 0): { binDir: string; scriptPath: string; recordPath: string } {
+	function writeNodeShim(binDir: string, name: string, scriptPath: string): void {
+		const shimPath = join(binDir, process.platform === "win32" ? `${name}.cmd` : name);
+		writeFileSync(
+			shimPath,
+			process.platform === "win32"
+				? `@echo off\r\n"${originalExecPath}" "${scriptPath}" %*\r\n`
+				: `#!/bin/sh\nexec "${originalExecPath}" "${scriptPath}" "$@"\n`,
+		);
+		chmodSync(shimPath, 0o755);
+	}
+
+	/** Put a `pi-wrapper` update command and a `pi` that prints `piVersion` first on PATH. */
+	function prepareSelfUpdateCommand(piVersion: string, exitCode = 0): { scriptPath: string; recordPath: string } {
 		const binDir = join(tempDir, "self-update-bin");
 		const scriptPath = join(tempDir, "self-update.cjs");
+		const piScriptPath = join(tempDir, "fake-pi.cjs");
 		const recordPath = join(tempDir, "self-update-record.json");
 		mkdirSync(binDir, { recursive: true });
 		writeFileSync(
@@ -785,22 +798,17 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 process.exit(${exitCode});
 `,
 		);
-		const shimPath = join(binDir, process.platform === "win32" ? "pi-wrapper.cmd" : "pi-wrapper");
-		writeFileSync(
-			shimPath,
-			process.platform === "win32"
-				? `@echo off\r\n"${originalExecPath}" "${scriptPath}" %*\r\n`
-				: `#!/bin/sh\nexec "${originalExecPath}" "${scriptPath}" "$@"\n`,
-		);
-		chmodSync(shimPath, 0o755);
+		writeFileSync(piScriptPath, `console.log(${JSON.stringify(piVersion)});\n`);
+		writeNodeShim(binDir, "pi-wrapper", scriptPath);
+		writeNodeShim(binDir, "pi", piScriptPath);
 		process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
-		return { binDir, scriptPath, recordPath };
+		return { scriptPath, recordPath };
 	}
 
 	it("runs PI_SELF_UPDATE_COMMAND instead of the managed update and the selfUpdateCommand setting", async () => {
 		const targetVersion = getNewerPatchVersion();
 		const { npmRecordPath } = prepareManagedInstall(targetVersion);
-		const { scriptPath, recordPath } = prepareSelfUpdateCommand();
+		const { scriptPath, recordPath } = prepareSelfUpdateCommand(targetVersion);
 		const settingRecordPath = join(tempDir, "setting-record.json");
 		writeFileSync(
 			join(agentDir, "settings.json"),
@@ -824,15 +832,15 @@ process.exit(${exitCode});
 		expect(existsSync(npmRecordPath)).toBe(false);
 		const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 		expect(stdout).toContain("Read me");
-		// The fake command does not touch this installation, so pi must not claim the update succeeded.
-		expect(stdout).toContain(`but this installation is still ${VERSION}`);
-		expect(stdout).not.toContain("Updated pi from");
+		// Like mise, the command leaves this installation untouched; the pi on PATH reports the new version.
+		expect(stdout).toContain(`Updated pi from ${VERSION} to ${targetVersion}`);
 		expect(errorSpy).not.toHaveBeenCalled();
 		expect(process.exitCode).toBeUndefined();
 	});
 
 	it("runs the global selfUpdateCommand setting only when a newer release exists", async () => {
-		const { scriptPath, recordPath } = prepareSelfUpdateCommand();
+		const targetVersion = getNewerPatchVersion();
+		const { scriptPath, recordPath } = prepareSelfUpdateCommand(targetVersion);
 		const projectRecordPath = join(tempDir, "project-record.json");
 		writeFileSync(
 			join(agentDir, "settings.json"),
@@ -855,14 +863,34 @@ process.exit(${exitCode});
 			`pi is already up to date (v${VERSION})`,
 		);
 
-		fetchMock.mockImplementation(async () => Response.json({ version: getNewerPatchVersion() }));
+		fetchMock.mockImplementation(async () => Response.json({ version: targetVersion }));
 		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
 		expect(JSON.parse(readFileSync(recordPath, "utf8")) as string[]).toEqual([PACKAGE_NAME]);
 		expect(process.exitCode).toBeUndefined();
 	});
 
+	it("warns when the pi on PATH does not report the new version", async () => {
+		const targetVersion = getNewerPatchVersion();
+		prepareSelfUpdateCommand(VERSION);
+		vi.stubEnv("PI_SELF_UPDATE_COMMAND", "pi-wrapper upgrade");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json({ version: targetVersion })),
+		);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+		const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(stdout).toContain(
+			`Ran pi-wrapper upgrade, but \`pi --version\` reports ${VERSION}, not ${targetVersion}.`,
+		);
+		expect(stdout).not.toContain("Updated pi from");
+		expect(process.exitCode).toBeUndefined();
+	});
+
 	it("fails when the configured self-update command fails", async () => {
-		prepareSelfUpdateCommand(23);
+		prepareSelfUpdateCommand(VERSION, 23);
 		vi.stubEnv("PI_SELF_UPDATE_COMMAND", "pi-wrapper upgrade");
 		vi.stubGlobal(
 			"fetch",

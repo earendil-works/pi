@@ -287,7 +287,7 @@ export const SettingsSchema = Type.Object(
 			Type.Array(Type.String(), {
 				minItems: 1,
 				description:
-					'Command `pi update` runs to update Pi itself, in argv form such as ["mise", "upgrade", "npm:{packageName}"]. Placeholders: {packageName}, {version}, {installSpec}. PI_SELF_UPDATE_COMMAND takes precedence. Global setting only.',
+					'Command `pi update` runs to update Pi itself, in argv form such as ["mise", "use", "-g", "npm:{packageName}@{version}"]. Placeholders: {packageName}, {version}, {installSpec}. PI_SELF_UPDATE_COMMAND takes precedence. Global setting only.',
 			}),
 		),
 		collapseChangelog: Type.Optional(
