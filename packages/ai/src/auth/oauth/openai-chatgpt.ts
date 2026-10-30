@@ -2,15 +2,18 @@
  * OpenAI Responses API token sharing through Sign in with ChatGPT.
  *
  * This public-client flow uses no client secret and sends the resulting user
- * access token directly to api.openai.com.
+ * access token directly to api.openai.com. OpenAI redirects only to the loopback
+ * callback; where no local server can run (browsers), the user pastes the
+ * address of the redirect page instead.
  */
 
-import { randomBytes } from "node:crypto";
-import { createServer, type Server, type ServerResponse } from "node:http";
+import type { Server, ServerResponse } from "node:http";
 import { oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import type { LoginOptions, OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
-import { generatePKCE } from "./pkce.ts";
+import { loadCreateServer } from "./callback-server.ts";
+import { oauthFetch } from "./fetch.ts";
+import { base64urlEncode, generatePKCE } from "./pkce.ts";
 
 // every login registers a new client with this ID; OpenAI returns the issued client ID in the callback
 const DYNAMIC_CLIENT_ID = "dynamic_agent_client";
@@ -47,7 +50,7 @@ type TokenResponse = {
 };
 
 function randomValue(): string {
-	return randomBytes(32).toString("base64url");
+	return base64urlEncode(crypto.getRandomValues(new Uint8Array(32)));
 }
 
 function authorizationResultFromCallback(url: URL, expectedState: string): AuthorizationResult {
@@ -82,7 +85,10 @@ function sendHtml(response: ServerResponse, status: number, body: string): void 
 	response.end(body);
 }
 
-function startCallbackServer(expectedState: string): Promise<CallbackServer> {
+/** Start the loopback callback server, or resolve undefined where no local server can run. */
+async function startCallbackServer(expectedState: string): Promise<CallbackServer | undefined> {
+	const createServer = await loadCreateServer();
+	if (!createServer) return undefined;
 	return new Promise((resolve, reject) => {
 		let resolveResult!: (result: AuthorizationResult) => void;
 		let rejectResult!: (error: Error) => void;
@@ -132,7 +138,7 @@ function startCallbackServer(expectedState: string): Promise<CallbackServer> {
 }
 
 async function requestToken(body: URLSearchParams, signal: AbortSignal): Promise<TokenResponse> {
-	const response = await fetch(TOKEN_URL, {
+	const response = await oauthFetch(TOKEN_URL, {
 		method: "POST",
 		headers: {
 			accept: "application/json",
@@ -240,6 +246,7 @@ async function loginOpenAIChatGPT(
 	const nonce = randomValue();
 	// Without this server, the browser's callback would reach whatever else holds the port (another
 	// pending login or the Codex CLI), which rejects it as a state mismatch. Fail with a clear error instead.
+	// Where no local server can run at all (browsers), `callback` is undefined and only pasting works.
 	const callback = await startCallbackServer(state).catch((error: unknown) => {
 		if (!(error instanceof Error && "code" in error && error.code === "EADDRINUSE")) throw error;
 		throw new Error(
@@ -279,7 +286,7 @@ async function loginOpenAIChatGPT(
 		.then((input) => authorizationResultFromManualInput(input, state));
 
 	try {
-		const result = await Promise.race([callback.result, manualCode]);
+		const result = await (callback ? Promise.race([callback.result, manualCode]) : manualCode);
 		interaction.notify({ type: "progress", message: "Exchanging authorization code for tokens..." });
 		return await exchangeAuthorizationCode(result.code, verifier, result.clientId, interaction.signal);
 	} catch (error) {
@@ -287,13 +294,13 @@ async function loginOpenAIChatGPT(
 		throw error;
 	} finally {
 		manualAbort.abort();
-		callback.server.close();
+		callback?.server.close();
 		// close() only stops accepting new connections. Browsers open spare connections ahead of
 		// time, and one that has not sent a request yet stays open and attached to this server.
 		// A later login in the same process starts a new server with a new state, but the browser
 		// may send that login's callback over the spare connection. This server would then handle
 		// it and reject it with "OAuth state mismatch", and the new login would never see it.
-		callback.server.closeAllConnections();
+		callback?.server.closeAllConnections();
 	}
 }
 

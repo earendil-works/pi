@@ -1,22 +1,15 @@
 /**
  * OpenAI Codex (ChatGPT OAuth) flow
  *
- * NOTE: This module uses Node.js crypto and http (via callback-server.ts) for the OAuth callback.
- * It is only intended for CLI use, not browser environments.
+ * Browser login listens for the redirect on a loopback server (Node only, via callback-server.ts);
+ * without one, it continues with the pasted redirect URL. Device code login needs only fetch.
  */
-
-// NEVER convert to top-level imports - breaks browser/Vite builds
-let _randomBytes: typeof import("node:crypto").randomBytes | null = null;
-if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
-	import("node:crypto").then((m) => {
-		_randomBytes = m.randomBytes;
-	});
-}
 
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import type { LoginOptions, OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { startOAuthCallbackServer, waitForCallbackOrManualInput } from "./callback-server.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
+import { oauthFetch } from "./fetch.ts";
 import { generatePKCE } from "./pkce.ts";
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -60,10 +53,7 @@ type JwtPayload = {
 };
 
 function createState(): string {
-	if (!_randomBytes) {
-		throw new Error("OpenAI Codex OAuth is only available in Node.js environments");
-	}
-	return _randomBytes(16).toString("hex");
+	return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function parseAuthorizationInput(input: string): { code?: string; state?: string } {
@@ -110,7 +100,7 @@ function decodeJwt(token: string): JwtPayload | null {
 
 async function fetchWithLoginCancellation(input: string, init: RequestInit): Promise<Response> {
 	try {
-		return await fetch(input, init);
+		return await oauthFetch(input, init);
 	} catch (error) {
 		if (init.signal?.aborted) {
 			throw new Error("Login cancelled");
@@ -167,7 +157,7 @@ async function exchangeAuthorizationCode(
 async function refreshAccessToken(refreshToken: string, signal: AbortSignal): Promise<OAuthToken> {
 	let response: Response;
 	try {
-		response = await fetch(TOKEN_URL, {
+		response = await oauthFetch(TOKEN_URL, {
 			method: "POST",
 			headers: { "Content-Type": "application/x-www-form-urlencoded" },
 			body: new URLSearchParams({

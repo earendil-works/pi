@@ -6,7 +6,7 @@
 /**
  * Encode bytes as base64url string.
  */
-function base64urlEncode(bytes: Uint8Array): string {
+export function base64urlEncode(bytes: Uint8Array): string {
 	let binary = "";
 	for (const byte of bytes) {
 		binary += String.fromCharCode(byte);

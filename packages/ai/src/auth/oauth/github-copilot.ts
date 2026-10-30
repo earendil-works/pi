@@ -6,6 +6,7 @@ import { GITHUB_COPILOT_MODELS } from "../../providers/github-copilot.models.ts"
 import { sleep } from "../../utils/sleep.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
+import { oauthFetch } from "./fetch.ts";
 import { trustedHttpUrl } from "./trusted-url.ts";
 
 const decode = (s: string) => atob(s);
@@ -146,7 +147,7 @@ async function fetchWithRateLimitRetry(
 	const requestSignal = retryBudgetSignal ? AbortSignal.any([signal, retryBudgetSignal]) : signal;
 	const retryDeadline = retryBudgetSignal ? Date.now() + retryPolicy.maxElapsedMs : undefined;
 	for (let retry = 0; ; retry++) {
-		const response = await fetch(url, {
+		const response = await oauthFetch(url, {
 			...init,
 			signal: AbortSignal.any([requestSignal, AbortSignal.timeout(5000)]),
 		});
@@ -196,7 +197,7 @@ async function fetchGitHubCopilotModels(
 }
 
 async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
-	const response = await fetch(url, init);
+	const response = await oauthFetch(url, init);
 	if (!response.ok) {
 		const text = await response.text();
 		throw new Error(`${response.status} ${response.statusText}: ${text}`);

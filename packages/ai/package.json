@@ -46,6 +46,14 @@
 		"./bun-oauth": {
 			"types": "./dist/bun-oauth.d.ts",
 			"import": "./dist/bun-oauth.js"
+		},
+		"./oauth-flows": {
+			"types": "./dist/oauth-flows.d.ts",
+			"import": "./dist/oauth-flows.js"
+		},
+		"./remote-catalog": {
+			"types": "./dist/remote-catalog.d.ts",
+			"import": "./dist/remote-catalog.js"
 		}
 	},
 	"bin": {

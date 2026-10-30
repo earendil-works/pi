@@ -15,6 +15,8 @@ export const workspaceSourcePaths = {
 	aiCompat: fileURLToPath(new URL("./packages/ai/src/compat.ts", import.meta.url)),
 	aiModels: fileURLToPath(new URL("./packages/ai/src/models.ts", import.meta.url)),
 	aiOAuth: fileURLToPath(new URL("./packages/ai/src/oauth.ts", import.meta.url)),
+	aiOAuthFlows: fileURLToPath(new URL("./packages/ai/src/oauth-flows.ts", import.meta.url)),
+	aiRemoteCatalog: fileURLToPath(new URL("./packages/ai/src/remote-catalog.ts", import.meta.url)),
 	aiApi: fileURLToPath(new URL("./packages/ai/src/api", import.meta.url)),
 	aiProviders: fileURLToPath(new URL("./packages/ai/src/providers", import.meta.url)),
 	aiUtils: fileURLToPath(new URL("./packages/ai/src/utils", import.meta.url)),
@@ -42,6 +44,8 @@ export default defineConfig({
 			{ find: /^@earendil-works\/pi-ai\/compat$/, replacement: workspaceSourcePaths.aiCompat },
 		{ find: /^@earendil-works\/pi-ai\/models$/, replacement: workspaceSourcePaths.aiModels },
 			{ find: /^@earendil-works\/pi-ai\/oauth$/, replacement: workspaceSourcePaths.aiOAuth },
+			{ find: /^@earendil-works\/pi-ai\/oauth-flows$/, replacement: workspaceSourcePaths.aiOAuthFlows },
+			{ find: /^@earendil-works\/pi-ai\/remote-catalog$/, replacement: workspaceSourcePaths.aiRemoteCatalog },
 			{
 				find: /^@earendil-works\/pi-ai\/utils\/(.+)$/,
 				replacement: `${workspaceSourcePaths.aiUtils}/$1.ts`,

@@ -13,6 +13,7 @@ import { normalizeRadiusGatewayUrl } from "../../providers/radius-config.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { startOAuthCallbackServer } from "./callback-server.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
+import { oauthFetch } from "./fetch.ts";
 import { generatePKCE } from "./pkce.ts";
 import { trustedHttpUrl } from "./trusted-url.ts";
 
@@ -40,7 +41,7 @@ type DeviceAuthorizationResponse = {
 };
 
 async function loadRadiusOAuthDiscovery(gateway: string, signal: AbortSignal): Promise<RadiusOAuthDiscovery> {
-	const response = await fetch(new URL("/v1/oauth", gateway), {
+	const response = await oauthFetch(new URL("/v1/oauth", gateway), {
 		headers: { accept: "application/json" },
 		signal,
 	});
@@ -100,7 +101,7 @@ async function requestOAuthToken(
 ): Promise<OAuthCredential> {
 	let response: Response;
 	try {
-		response = await fetch(new URL("/v1/oauth/token", gateway), {
+		response = await oauthFetch(new URL("/v1/oauth/token", gateway), {
 			method: "POST",
 			headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
 			body,
@@ -191,7 +192,7 @@ async function loginWithBrowser(
 async function requestDeviceAuthorization(gateway: string, signal: AbortSignal): Promise<DeviceAuthorizationResponse> {
 	let response: Response;
 	try {
-		response = await fetch(new URL("/v1/oauth/device", gateway), {
+		response = await oauthFetch(new URL("/v1/oauth/device", gateway), {
 			method: "POST",
 			headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
 			body: new URLSearchParams({ client_id: OAUTH_CLIENT_ID, scope: OAUTH_SCOPE }),

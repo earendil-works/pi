@@ -10,6 +10,7 @@ import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import { sleep } from "../../utils/sleep.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
+import { oauthFetch } from "./fetch.ts";
 import { trustedHttpUrl } from "./trusted-url.ts";
 
 const CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
@@ -57,7 +58,7 @@ async function readJson(response: Response): Promise<Record<string, unknown> | n
 }
 
 async function startDeviceAuthorization(oauthHost: string, signal: AbortSignal): Promise<DeviceAuthorization> {
-	const response = await fetch(`${oauthHost}/api/oauth/device_authorization`, {
+	const response = await oauthFetch(`${oauthHost}/api/oauth/device_authorization`, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/x-www-form-urlencoded",
@@ -132,7 +133,7 @@ async function pollForToken(
 		waitBeforeFirstPoll: true,
 		signal,
 		poll: async () => {
-			const response = await fetch(`${oauthHost}/api/oauth/token`, {
+			const response = await oauthFetch(`${oauthHost}/api/oauth/token`, {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/x-www-form-urlencoded",
@@ -205,7 +206,7 @@ async function refreshToken(oauthHost: string, refreshTokenValue: string, signal
 
 		let response: Response;
 		try {
-			response = await fetch(`${oauthHost}/api/oauth/token`, {
+			response = await oauthFetch(`${oauthHost}/api/oauth/token`, {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/x-www-form-urlencoded",

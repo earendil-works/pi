@@ -4,6 +4,7 @@
 
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
+import { oauthFetch } from "./fetch.ts";
 
 const XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
 const XAI_SCOPE = "openid profile email offline_access grok-cli:access api:access";
@@ -64,7 +65,7 @@ function validateVerificationUri(raw: string): string {
 async function postForm(url: string, fields: Record<string, string>, signal: AbortSignal): Promise<OAuthHttpResponse> {
 	let response: Response;
 	try {
-		response = await fetch(url, {
+		response = await oauthFetch(url, {
 			method: "POST",
 			headers: {
 				Accept: "application/json",

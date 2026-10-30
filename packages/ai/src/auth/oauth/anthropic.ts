@@ -8,6 +8,7 @@
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { startOAuthCallbackServer, waitForCallbackOrManualInput } from "./callback-server.ts";
+import { oauthFetch } from "./fetch.ts";
 import { generatePKCE } from "./pkce.ts";
 
 const decode = (s: string) => atob(s);
@@ -74,7 +75,7 @@ function formatErrorDetails(error: unknown): string {
 }
 
 async function postJson(url: string, body: Record<string, string | number>, signal: AbortSignal): Promise<string> {
-	const response = await fetch(url, {
+	const response = await oauthFetch(url, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",

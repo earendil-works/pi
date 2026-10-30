@@ -14,6 +14,7 @@
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { startOAuthCallbackServer, waitForCallbackOrManualInput } from "./callback-server.ts";
+import { oauthFetch } from "./fetch.ts";
 import { generatePKCE } from "./pkce.ts";
 
 const AUTHORIZE_URL = "https://openrouter.ai/auth";
@@ -72,7 +73,7 @@ async function exchangeAuthorizationCode(
 	let response: Response;
 	let body: JsonObject = {};
 	try {
-		response = await fetch(TOKEN_URL, {
+		response = await oauthFetch(TOKEN_URL, {
 			method: "POST",
 			headers: { accept: "application/json", "content-type": "application/json" },
 			body: JSON.stringify({ code, code_verifier: verifier, code_challenge_method: "S256" }),

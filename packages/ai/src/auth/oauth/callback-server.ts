@@ -1,13 +1,26 @@
 /**
  * Loopback OAuth redirect handler shared by the browser sign-in flows.
  *
- * NOTE: This module uses node:http. It is only reachable through the lazily
- * loaded OAuth flow modules, never from browser-facing entry points.
+ * The server needs node:http, which this module loads only when a server starts. Flow modules
+ * therefore bundle for browsers, where starting a server fails and flows that support it fall back
+ * to the pasted redirect URL.
  */
 
-import { createServer, type ServerResponse } from "node:http";
+import type { createServer as CreateServer, ServerResponse } from "node:http";
 import { oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
 import type { ProviderAuthInteraction } from "../types.ts";
+
+// Variable specifier so browser bundlers do not try to resolve node:http.
+const importNodeModule = (specifier: string): Promise<unknown> => import(specifier);
+
+/** Load node:http's `createServer`, or undefined where no local server can run (browsers). */
+export async function loadCreateServer(): Promise<typeof CreateServer | undefined> {
+	try {
+		return ((await importNodeModule("node:http")) as { createServer: typeof CreateServer }).createServer;
+	} catch {
+		return undefined;
+	}
+}
 
 export interface OAuthCallbackServerOptions<T> {
 	/** Provider name used on the browser page, for example `OpenAI`. */
@@ -52,6 +65,8 @@ export async function startOAuthCallbackServer<T>(
 ): Promise<OAuthCallbackServer<T>> {
 	const { providerName, signal } = options;
 	if (signal?.aborted) throw new Error("Login cancelled");
+	const createServer = await loadCreateServer();
+	if (!createServer) throw new Error("OAuth callback servers need Node.js");
 
 	let resolveWait: (value: T | undefined) => void = () => {};
 	let rejectWait: (error: Error) => void = () => {};

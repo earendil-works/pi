@@ -15,6 +15,7 @@
 
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
+import { oauthFetch } from "./fetch.ts";
 import { trustedHttpUrl } from "./trusted-url.ts";
 
 // Muse Code CLI client id.
@@ -60,7 +61,7 @@ function positiveNumber(value: unknown): number | undefined {
 }
 
 async function startDeviceAuthorization(signal: AbortSignal): Promise<DeviceAuthorization> {
-	const response = await fetch(DEVICE_AUTHORIZATION_URL, {
+	const response = await oauthFetch(DEVICE_AUTHORIZATION_URL, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/x-www-form-urlencoded",
@@ -95,7 +96,7 @@ async function pollForIdentityToken(device: DeviceAuthorization, signal: AbortSi
 		waitBeforeFirstPoll: true,
 		signal,
 		poll: async () => {
-			const response = await fetch(DEVICE_TOKEN_URL, {
+			const response = await oauthFetch(DEVICE_TOKEN_URL, {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/x-www-form-urlencoded",
@@ -133,7 +134,7 @@ async function pollForIdentityToken(device: DeviceAuthorization, signal: AbortSi
 
 /** Exchange an identity token for a Model API key. Keys are valid for about a day. */
 async function mintApiKey(identityToken: string, signal: AbortSignal): Promise<OAuthCredential> {
-	const response = await fetch(API_KEY_MINT_URL, {
+	const response = await oauthFetch(API_KEY_MINT_URL, {
 		method: "POST",
 		headers: {
 			Accept: "application/json",
