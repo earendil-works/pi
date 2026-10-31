@@ -29,8 +29,15 @@ const AZURE_DEEPSEEK_V4_THINKING_LEVEL_MAP = {
 	max: null,
 } as const;
 
-// Qwen Token Plan serves DeepSeek V4 through Qwen's own thinking format.
-const QWEN_FORMAT_PROVIDERS = new Set(["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"]);
+// Alibaba Cloud Model Studio (Token Plan and pay-as-you-go) serves DeepSeek V4
+// through Qwen's own thinking format.
+const QWEN_FORMAT_PROVIDERS = new Set([
+	"alibaba",
+	"alibaba-cn",
+	"qwen-token-plan",
+	"qwen-token-plan-cn",
+	"qwen-token-plan-individual",
+]);
 // These hosts accept native reasoning efforts instead of DeepSeek's thinking toggle.
 const NATIVE_EFFORT_PROVIDERS = new Set(["openrouter", "opencode"]);
 

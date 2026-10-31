@@ -1,6 +1,8 @@
 import { CLASSIFIER_MODELS, IMAGE_MODELS, MODELS } from "../models.generated.ts";
 import { type CreateModelsOptions, createModels, type MutableModels, type Provider } from "../models.ts";
 import type { AnyModel, Api, ClassifierApi, ClassifierModel, ImageApi, ImageModel, Model } from "../types.ts";
+import { alibabaProvider } from "./alibaba.ts";
+import { alibabaCnProvider } from "./alibaba-cn.ts";
 import { amazonBedrockProvider } from "./amazon-bedrock.ts";
 import { antLingProvider } from "./ant-ling.ts";
 import { anthropicProvider } from "./anthropic.ts";
@@ -43,6 +45,8 @@ import { xiaomiTokenPlanAmsProvider } from "./xiaomi-token-plan-ams.ts";
 import { xiaomiTokenPlanCnProvider } from "./xiaomi-token-plan-cn.ts";
 import { xiaomiTokenPlanSgpProvider } from "./xiaomi-token-plan-sgp.ts";
 import { zaiProvider } from "./zai.ts";
+import { zaiApiProvider } from "./zai-api.ts";
+import { zaiApiCnProvider } from "./zai-api-cn.ts";
 import { zaiCodingCnProvider } from "./zai-coding-cn.ts";
 
 export { radiusProvider };
@@ -135,6 +139,8 @@ export function getAllBuiltinModels<TProvider extends BuiltinProvider>(provider:
 /** All built-in providers, freshly constructed. */
 export function builtinProviders(): Provider[] {
 	return [
+		alibabaProvider(),
+		alibabaCnProvider(),
 		amazonBedrockProvider(),
 		antLingProvider(),
 		anthropicProvider(),
@@ -176,6 +182,8 @@ export function builtinProviders(): Provider[] {
 		xiaomiTokenPlanCnProvider(),
 		xiaomiTokenPlanSgpProvider(),
 		zaiProvider(),
+		zaiApiProvider(),
+		zaiApiCnProvider(),
 		zaiCodingCnProvider(),
 	];
 }

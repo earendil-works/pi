@@ -95,6 +95,8 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Meta** (Model API, uses OpenAI Responses-compatible API)
 - **Qwen Token Plan** (separate Individual and existing catalogs, with a separate China provider)
 - **Xiaomi MiMo** (defaults to API billing endpoint, with separate Token Plan providers for `cn`/`ams`/`sgp` regions)
+- **Alibaba Cloud Model Studio** (DashScope pay-as-you-go, with a separate China provider)
+- **Z.AI API** (pay-as-you-go, with a separate China provider)
 - **Any OpenAI-compatible API**: Ollama, vLLM, LM Studio, etc.
 
 ## Installation
@@ -513,6 +515,8 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` |
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` |
+| Z.AI API (pay-as-you-go) | `ZAI_PAYG_API_KEY` |
+| Z.AI API (pay-as-you-go, China) | `ZAI_PAYG_CN_API_KEY` |
 | MiniMax (Global) | `MINIMAX_API_KEY` |
 | MiniMax (China) | `MINIMAX_CN_API_KEY` |
 | Moonshot AI / Moonshot AI (China) | `MOONSHOT_API_KEY` |
@@ -523,11 +527,15 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Qwen Token Plan (existing catalog) | `QWEN_TOKEN_PLAN_API_KEY` |
 | Qwen Token Plan (Individual) | `QWEN_TOKEN_PLAN_API_KEY` |
 | Qwen Token Plan (China) | `QWEN_TOKEN_PLAN_CN_API_KEY` |
+| Alibaba Cloud Model Studio | `DASHSCOPE_API_KEY` |
+| Alibaba Cloud Model Studio (China) | `DASHSCOPE_CN_API_KEY` |
 | Xiaomi MiMo (API billing) | `XIAOMI_API_KEY` |
 | Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` |
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` |
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` |
 | GitHub Copilot | `COPILOT_GITHUB_TOKEN` |
+
+The Z.AI pay-as-you-go APIs (`zai-api`, `zai-api-cn`) and Alibaba Cloud Model Studio (`alibaba`, `alibaba-cn`) bill usage to the account balance, while `zai`, `zai-coding-cn`, and the Qwen Token Plan providers draw on a plan. They read separate variables, so a key set for a plan never makes the pay-as-you-go models selectable.
 
 `qwen-token-plan-individual` and `qwen-token-plan` share the international endpoint and
 `QWEN_TOKEN_PLAN_API_KEY`. The Individual provider exposes only the models documented for Individual
