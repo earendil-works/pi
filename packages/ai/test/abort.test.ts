@@ -297,6 +297,54 @@ describe("AI Providers Abort Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.DASHSCOPE_API_KEY)("Alibaba Cloud Model Studio Provider Abort", () => {
+		const llm = getModel("alibaba", "qwen3.7-max");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm);
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.DASHSCOPE_CN_API_KEY)("Alibaba Cloud Model Studio (China) Provider Abort", () => {
+		const llm = getModel("alibaba-cn", "qwen3.7-max");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm);
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.ZAI_PAYG_API_KEY)("Z.AI API (pay-as-you-go) Provider Abort", () => {
+		const llm = getModel("zai-api", "glm-5.3");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm);
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.ZAI_PAYG_CN_API_KEY)("Z.AI API (pay-as-you-go, China) Provider Abort", () => {
+		const llm = getModel("zai-api-cn", "glm-5.3");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm);
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm);
+		});
+	});
+
 	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider Abort", () => {
 		const llm = getModel("kimi-coding", "kimi-for-coding");
 

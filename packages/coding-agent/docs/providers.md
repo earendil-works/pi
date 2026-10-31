@@ -45,6 +45,8 @@ This table covers providers with a single primary API-key variable. Providers th
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` |
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` |
+| Z.AI API (pay-as-you-go) | `ZAI_PAYG_API_KEY` |
+| Z.AI API (pay-as-you-go, China) | `ZAI_PAYG_CN_API_KEY` |
 | OpenCode Zen and Go | `OPENCODE_API_KEY` |
 | Radius | `RADIUS_API_KEY` |
 | TypeSafe ([classifier models](models.md#use-classifier-models)) | `TYPESAFE_API_KEY` |
@@ -59,10 +61,14 @@ This table covers providers with a single primary API-key variable. Providers th
 | Moonshot AI (Global and China) | `MOONSHOT_API_KEY` |
 | Qwen Token Plan and Individual | `QWEN_TOKEN_PLAN_API_KEY` |
 | Qwen Token Plan (China) | `QWEN_TOKEN_PLAN_CN_API_KEY` |
+| Alibaba Cloud Model Studio | `DASHSCOPE_API_KEY` |
+| Alibaba Cloud Model Studio (China) | `DASHSCOPE_CN_API_KEY` |
 | Xiaomi MiMo | `XIAOMI_API_KEY` |
 | Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` |
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` |
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` |
+
+The Z.AI pay-as-you-go APIs (`zai-api`, `zai-api-cn`) and Alibaba Cloud Model Studio (`alibaba`, `alibaba-cn`) bill usage to the account balance, while `zai`, `zai-coding-cn`, and the Qwen Token Plan providers draw on a plan. They read separate variables, so a key set for a plan never makes the pay-as-you-go models selectable.
 
 Anthropic also recognizes `ANTHROPIC_OAUTH_TOKEN` as an API credential and `ANTHROPIC_AUTH_TOKEN` as bearer authentication.
 

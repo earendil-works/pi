@@ -59,6 +59,10 @@ export const defaultModelPerProvider: Partial<Record<KnownProvider, string>> = {
 	"xiaomi-token-plan-cn": "mimo-v2.6-pro",
 	"xiaomi-token-plan-ams": "mimo-v2.6-pro",
 	"xiaomi-token-plan-sgp": "mimo-v2.6-pro",
+	alibaba: "qwen3.8-max",
+	"alibaba-cn": "qwen3.8-max",
+	"zai-api": "glm-5.3",
+	"zai-api-cn": "glm-5.3",
 };
 
 export interface ScopedModel {

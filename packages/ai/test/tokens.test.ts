@@ -316,6 +316,38 @@ describe("Token Statistics on Abort", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.DASHSCOPE_API_KEY)("Alibaba Cloud Model Studio Provider", () => {
+		const llm = getModel("alibaba", "qwen3.7-max");
+
+		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
+			await testTokensOnAbort(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.DASHSCOPE_CN_API_KEY)("Alibaba Cloud Model Studio (China) Provider", () => {
+		const llm = getModel("alibaba-cn", "qwen3.7-max");
+
+		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
+			await testTokensOnAbort(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.ZAI_PAYG_API_KEY)("Z.AI API (pay-as-you-go) Provider", () => {
+		const llm = getModel("zai-api", "glm-5.3");
+
+		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
+			await testTokensOnAbort(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.ZAI_PAYG_CN_API_KEY)("Z.AI API (pay-as-you-go, China) Provider", () => {
+		const llm = getModel("zai-api-cn", "glm-5.3");
+
+		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
+			await testTokensOnAbort(llm);
+		});
+	});
+
 	// =========================================================================
 	// OAuth-based providers (credentials from ~/.pi/agent/oauth.json)
 	// =========================================================================

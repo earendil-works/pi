@@ -454,6 +454,10 @@ ${chalk.bold("Environment Variables:")}
   XIAOMI_TOKEN_PLAN_CN_API_KEY     - Xiaomi MiMo Token Plan API key (China region)
   XIAOMI_TOKEN_PLAN_AMS_API_KEY    - Xiaomi MiMo Token Plan API key (Amsterdam region)
   XIAOMI_TOKEN_PLAN_SGP_API_KEY    - Xiaomi MiMo Token Plan API key (Singapore region)
+  DASHSCOPE_API_KEY                - Alibaba Cloud Model Studio (DashScope) API key (international region)
+  DASHSCOPE_CN_API_KEY             - Alibaba Cloud Model Studio (DashScope) API key (China region)
+  ZAI_PAYG_API_KEY                 - Z.AI pay-as-you-go API key (Global)
+  ZAI_PAYG_CN_API_KEY              - Z.AI pay-as-you-go API key (China, bigmodel.cn)
   AWS_PROFILE                      - AWS profile for Amazon Bedrock
   AWS_ACCESS_KEY_ID                - AWS access key for Amazon Bedrock
   AWS_SECRET_ACCESS_KEY            - AWS secret key for Amazon Bedrock

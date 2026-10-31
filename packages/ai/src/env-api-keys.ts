@@ -120,6 +120,10 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		"xiaomi-token-plan-cn": "XIAOMI_TOKEN_PLAN_CN_API_KEY",
 		"xiaomi-token-plan-ams": "XIAOMI_TOKEN_PLAN_AMS_API_KEY",
 		"xiaomi-token-plan-sgp": "XIAOMI_TOKEN_PLAN_SGP_API_KEY",
+		alibaba: "DASHSCOPE_API_KEY",
+		"alibaba-cn": "DASHSCOPE_CN_API_KEY",
+		"zai-api": "ZAI_PAYG_API_KEY",
+		"zai-api-cn": "ZAI_PAYG_CN_API_KEY",
 	};
 
 	const envVar = envMap[provider];
