@@ -78,7 +78,7 @@ See [Configure shell commands](shell-aliases.md) for command prefixes, aliases, 
 
 ## Choose a terminal
 
-Every Windows terminal runs Pi through the Windows console host (conhost), which translates between console programs and the terminal window. A terminal either uses the conhost built into Windows or bundles its own copy. Pi has known problems with the built-in conhost and with old bundled copies.
+Windows terminals run Pi through a console host (conhost). Some bundle an up-to-date copy; others use the older one built into Windows, which has bugs that affect Pi.
 
 We recommend [Windows Terminal](https://aka.ms/terminal). It always ships an up-to-date conhost, and Pi is best tested with it.
 
@@ -86,28 +86,20 @@ Last updated: October 2026.
 
 | Terminal | Conhost | Status |
 |---|---|---|
-| [Windows Terminal](https://aka.ms/terminal) | Bundled, up to date | Recommended |
-| [VS Code](https://code.visualstudio.com) integrated terminal | Bundled, up to date (default `terminal.integrated.windowsUseConptyDll: true`) | Works |
-| [WezTerm](https://wezterm.org) nightly | Bundled, up to date | Works |
-| [Tabby](https://tabby.sh) | Bundled, up to date (default "Use ConPTY" setting, Windows 10 2004 or newer) | Works |
+| [Windows Terminal](https://aka.ms/terminal) | Bundled, current | Recommended |
+| [VS Code](https://code.visualstudio.com), [Tabby](https://tabby.sh), [WezTerm](https://wezterm.org) nightly | Bundled, current | Works |
+| [Alacritty](https://alacritty.org) | Built-in, unless `conpty.dll` and `OpenConsole.exe` from Windows Terminal are next to `alacritty.exe` | Works only with those files |
 | WezTerm 20240203 and older | Bundled, old | Known problems |
-| [Alacritty](https://alacritty.org) | Built-in, unless `conpty.dll` and `OpenConsole.exe` from a Windows Terminal release are next to `alacritty.exe` or on `PATH` | Works only with those files |
-| Classic console window (`cmd.exe` or PowerShell opened without Windows Terminal) | Built-in | Known problems |
-| mintty (Git Bash) | Built-in | Known problems |
-| ConEmu, Cmder | Built-in | Known problems |
-| [Hyper](https://hyper.is) | Built-in | Known problems |
-| Windows OpenSSH server sessions | Built-in | Known problems |
+| Classic console (`cmd.exe` or PowerShell without Windows Terminal), mintty (Git Bash), ConEmu, Cmder, [Hyper](https://hyper.is), Windows OpenSSH | Built-in | Known problems |
 
-Known problems:
+| Problem | Where | Why |
+|---|---|---|
+| Switching from fullscreen to regular mode, or `Ctrl+G` from fullscreen, crashes the session ([#9186](https://github.com/earendil-works/pi/issues/9186), [microsoft/terminal#17515](https://github.com/microsoft/terminal/issues/17515)). Start with `--tui-mode regular` to avoid it. | Built-in | Conhost crashes when leaving the alternate screen while input is in line mode. |
+| Text such as `;0;rgb:0000/0000/0000` appears in the prompt and BEL opens the external editor ([#10256](https://github.com/earendil-works/pi/issues/10256), [#10362](https://github.com/earendil-works/pi/issues/10362), [#10742](https://github.com/earendil-works/pi/issues/10742)) | Built-in behind another terminal (mintty, OpenSSH) | Conhost drops the start of terminal replies that arrive in pieces. |
+| Fragments such as `79` or `55` appear in the prompt ([#10717](https://github.com/earendil-works/pi/issues/10717), [#10970](https://github.com/earendil-works/pi/issues/10970)) | WezTerm 20240203 | The bundled conhost cuts terminal replies short. |
+| In regular mode, each keystroke redraws the input line on a new row ([#6300](https://github.com/earendil-works/pi/issues/6300)) | Built-in, classic console | Suspected: cursor wraps after full-width lines. |
 
-| Problem | Where | What happens | Why |
-|---|---|---|---|
-| Crash when leaving the alternate screen ([#9186](https://github.com/earendil-works/pi/issues/9186), [microsoft/terminal#17515](https://github.com/microsoft/terminal/issues/17515)) | Built-in conhost | Switching from fullscreen to regular mode in `/settings`, or opening the external editor (`Ctrl+G`) from fullscreen mode, crashes the terminal session. Avoid both, or start with `--tui-mode regular`. | Conhost crashes when a program leaves the alternate screen while console input is in line mode. Pi does this when it stops fullscreen mode. |
-| Terminal replies leak into the prompt ([#10256](https://github.com/earendil-works/pi/issues/10256), [#10362](https://github.com/earendil-works/pi/issues/10362), [#10742](https://github.com/earendil-works/pi/issues/10742)) | Built-in conhost behind another terminal (mintty, OpenSSH) | Text such as `;0;rgb:0000/0000/0000` appears in the prompt, and a trailing BEL opens the external editor. | Conhost answers some of Pi's terminal queries itself and forwards others to the outer terminal. When a forwarded reply arrives in pieces, conhost drops its first piece, so the rest arrives as typed text. |
-| Reply fragments in the prompt ([#10717](https://github.com/earendil-works/pi/issues/10717), [#10970](https://github.com/earendil-works/pi/issues/10970)) | Old bundled conhost (WezTerm 20240203) | Fragments such as `79` or `55` appear at startup or on session resume. | The bundled conhost cuts forwarded terminal replies short. |
-| Input line redrawn on new rows ([#6300](https://github.com/earendil-works/pi/issues/6300)) | Built-in conhost, classic console window | Reported: in regular mode, each keystroke redraws the input line on a new row. | Suspected: conhost moves the cursor to the next row after a full-width line, so Pi's cursor tracking is one row off. |
-
-Microsoft has fixed these conhost bugs in its source. The built-in conhost gets the fixes with a future Windows update, but Microsoft has not said which update or when.
+Microsoft has fixed these bugs in its source, but has not said when the built-in conhost will get the fixes.
 
 ## Configure Windows Terminal
 
