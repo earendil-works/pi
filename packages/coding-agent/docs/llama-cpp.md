@@ -25,8 +25,6 @@ Start `llama serve` without `--model`, `-m`, or `-hf`. Passing a model starts si
 ```bash
 llama serve \
   --no-models-autoload \
-  --host 127.0.0.1 \
-  --port 8080 \
   -ngl all \
   -c 32768
 ```
@@ -34,7 +32,6 @@ llama serve \
 Important options:
 
 - `--no-models-autoload` keeps loading explicit through `/llama`.
-- `--jinja` enables compatible chat templates and tool calling.
 - `-ngl all` offloads all layers to the GPU. Omit it to use automatic GPU offloading.
 - `-c 32768` sets the context size in tokens. Use `-c 0` for the model's full context window, which may require substantially more memory. Context is shared across parallel server slots.
 
@@ -62,14 +59,14 @@ Start Pi and configure the provider:
 /login llama.cpp
 ```
 
-Enter the router URL and optional API key. The default URL is `http://127.0.0.1:8080`.
+Enter the router URL and optional API key. The default URL is `http://127.0.0.1:9931`.
 
 If you start the router with `--no-models-autoload`, `/login llama.cpp` only stores the connection. Run `/llama` to load a model, then `/model` to select the loaded model for the current session.
 
 Environment variables can configure the same values without `/login`:
 
 ```bash
-export LLAMA_BASE_URL=http://127.0.0.1:8080
+export LLAMA_BASE_URL=http://127.0.0.1:9931
 export LLAMA_API_KEY=optional-secret
 pi
 ```
@@ -120,8 +117,8 @@ The model does not generate an answer. Each question becomes one chat prompt: th
 Check that the router is reachable:
 
 ```bash
-curl http://127.0.0.1:8080/health
-curl http://127.0.0.1:8080/models
+curl http://127.0.0.1:9931/health
+curl http://127.0.0.1:9931/models
 ```
 
 - **No models in `/llama`:** Check `--models-dir`, the directory layout, and restart the router.
