@@ -1790,8 +1790,11 @@ export class SessionManager {
 			}
 		}
 		const cwd = cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd();
-		// If no sessionDir provided, derive from file's parent directory
-		const dir = sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..");
+		// If no sessionDir provided, use the cwd's default directory for files in the sessions directory,
+		// otherwise the file's parent directory
+		const parentDir = resolve(resolvedPath, "..");
+		const inSessionsDir = resolve(parentDir, "..") === resolvePath(getSessionsDir());
+		const dir = sessionDir ? normalizePath(sessionDir) : inSessionsDir ? getDefaultSessionDirPath(cwd) : parentDir;
 		return new SessionManager(cwd, dir, resolvedPath, true, undefined, preloadedFileEntries);
 	}
 
