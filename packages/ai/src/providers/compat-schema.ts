@@ -384,6 +384,13 @@ export const OpenAIResponsesCompatSchema = Type.Object(
 				default: false,
 			}),
 		),
+		supportsAdditionalToolsOnCustomEndpoint: Type.Optional(
+			Type.Boolean({
+				description:
+					"Whether a custom baseUrl on the openai provider passes additional_tools items through unchanged. Some proxies accept the request and drop the items, leaving the model with no tools, so a custom endpoint is not trusted by default.",
+				default: false,
+			}),
+		),
 		supportsToolSearch: Type.Optional(
 			Type.Boolean({
 				description: "Whether the model supports client-executed tool search for transcript-anchored additions.",

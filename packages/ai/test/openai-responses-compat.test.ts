@@ -10,6 +10,7 @@ interface CapturedResponsesPayload {
 	prompt_cache_key?: string;
 	session_id?: string;
 	tools?: Array<{ name?: string; strict?: boolean }>;
+	input?: Array<{ type?: string; tools?: Array<{ name?: string }> }>;
 }
 
 function getHeader(headers: CapturedHeaders, name: string): string | null {
@@ -608,5 +609,71 @@ describe("openai-responses max_output_tokens compat", () => {
 		}
 
 		expect(capturedPayload?.max_output_tokens).toBeUndefined();
+	});
+});
+
+describe("openai-responses custom openai baseUrl", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	const pingTool = {
+		name: "ping",
+		description: "Ping",
+		parameters: Type.Object({ value: Type.String() }),
+	};
+
+	async function captureTools(model: Model<"openai-responses">): Promise<CapturedResponsesPayload | undefined> {
+		let capturedPayload: CapturedResponsesPayload | undefined;
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		const stream = streamOpenAIResponses(
+			model,
+			normalizeContext({
+				messages: [{ role: "user", content: "Use the ping tool.", timestamp: Date.now() }],
+				tools: [pingTool],
+			}),
+			{
+				apiKey: "sk-test-key",
+				onPayload: (payload) => {
+					capturedPayload = payload as CapturedResponsesPayload;
+				},
+			},
+		);
+
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
+
+		return capturedPayload;
+	}
+
+	it("declares tools at the top level for a custom openai baseUrl", async () => {
+		const payload = await captureTools({
+			...getModel("openai", "gpt-6.1-sol"),
+			baseUrl: "https://proxy.example.com/v1",
+		});
+
+		expect(payload?.tools).toEqual([expect.objectContaining({ name: "ping" })]);
+	});
+
+	it("keeps additional_tools on a custom openai baseUrl when the proxy opts in", async () => {
+		const baseModel = getModel("openai", "gpt-6.1-sol");
+		const payload = await captureTools({
+			...baseModel,
+			baseUrl: "https://proxy.example.com/v1",
+			compat: { ...baseModel.compat, supportsAdditionalToolsOnCustomEndpoint: true },
+		});
+
+		expect(payload?.tools).toBeUndefined();
+		expect(payload?.input).toEqual([
+			expect.objectContaining({ type: "additional_tools", tools: [expect.objectContaining({ name: "ping" })] }),
+			expect.anything(),
+		]);
 	});
 });

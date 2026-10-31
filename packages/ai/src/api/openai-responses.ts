@@ -34,6 +34,7 @@ import {
 import { buildBaseOptions, resolveSamplingParams } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
+const OPENAI_BASE_URL = "https://api.openai.com/v1";
 // OpenAI Responses rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
 const OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
 const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
@@ -88,7 +89,20 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 	return "short";
 }
 
+/**
+ * `additional_tools` and tool search are OpenAI extensions. A custom baseUrl on the `openai`
+ * provider is a proxy: it may pass the items through, or accept the request and drop them,
+ * which leaves the model with no tools at all while the request still succeeds. Only the
+ * official endpoint is trusted by default; a proxy opts in with
+ * `compat.supportsAdditionalToolsOnCustomEndpoint`.
+ */
+function trustsOpenAiEndpointExtensions(model: Model<"openai-responses">): boolean {
+	if (model.provider !== "openai" || model.baseUrl === OPENAI_BASE_URL) return true;
+	return model.compat?.supportsAdditionalToolsOnCustomEndpoint === true;
+}
+
 function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
+	const endpointExtensions = trustsOpenAiEndpointExtensions(model);
 	return {
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
 		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
@@ -96,8 +110,9 @@ function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCo
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		supportsStrictMode: model.compat?.supportsStrictMode ?? false,
 		supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
-		supportsAdditionalTools: model.compat?.supportsAdditionalTools ?? false,
-		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
+		supportsAdditionalTools: endpointExtensions && (model.compat?.supportsAdditionalTools ?? false),
+		supportsAdditionalToolsOnCustomEndpoint: model.compat?.supportsAdditionalToolsOnCustomEndpoint ?? false,
+		supportsToolSearch: endpointExtensions && (model.compat?.supportsToolSearch ?? false),
 		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
 		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
 		supportsMidConvoEffort: model.compat?.supportsMidConvoEffort ?? false,
