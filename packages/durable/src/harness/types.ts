@@ -9,6 +9,7 @@ import type {
 	Models,
 	ModelThinkingLevel,
 	Static,
+	ThinkingBudgets,
 	Tool,
 	ToolCall,
 	ToolResultMessage,
@@ -536,6 +537,10 @@ export type ConversationCreateOptions = {
 export type ConversationStreamOptions = {
 	transport?: Transport;
 	timeoutMs?: number;
+	/** WebSocket connection/open handshake timeout; stream idleness uses `timeoutMs`. */
+	websocketConnectTimeoutMs?: number;
+	/** Custom token budgets for thinking levels on token-based providers. */
+	thinkingBudgets?: ThinkingBudgets;
 	/** Provider/SDK retries inside one request attempt. */
 	maxRetries?: number;
 	maxRetryDelayMs?: number;
