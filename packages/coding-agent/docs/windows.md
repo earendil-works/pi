@@ -98,12 +98,12 @@ Last updated: October 2026.
 
 Known problems:
 
-| Problem | Where | What happens |
-|---|---|---|
-| Crash when leaving the alternate screen ([#9186](https://github.com/earendil-works/pi/issues/9186), [microsoft/terminal#17515](https://github.com/microsoft/terminal/issues/17515)) | Built-in conhost | Switching from fullscreen to regular mode in `/settings`, or opening the external editor (`Ctrl+G`) from fullscreen mode, crashes the terminal session. Avoid both, or start with `--tui-mode regular`. |
-| Terminal replies leak into the prompt ([#10256](https://github.com/earendil-works/pi/issues/10256), [#10362](https://github.com/earendil-works/pi/issues/10362), [#10742](https://github.com/earendil-works/pi/issues/10742)) | Built-in conhost behind another terminal (mintty, OpenSSH) | Text such as `;0;rgb:0000/0000/0000` appears in the prompt, and a trailing BEL opens the external editor. |
-| Reply fragments in the prompt ([#10717](https://github.com/earendil-works/pi/issues/10717), [#10970](https://github.com/earendil-works/pi/issues/10970)) | Old bundled conhost (WezTerm 20240203) | Fragments such as `79` or `55` appear at startup or on session resume. |
-| Input line redrawn on new rows ([#6300](https://github.com/earendil-works/pi/issues/6300)) | Built-in conhost, classic console window | Reported: in regular mode, each keystroke redraws the input line on a new row. |
+| Problem | Where | What happens | Why |
+|---|---|---|---|
+| Crash when leaving the alternate screen ([#9186](https://github.com/earendil-works/pi/issues/9186), [microsoft/terminal#17515](https://github.com/microsoft/terminal/issues/17515)) | Built-in conhost | Switching from fullscreen to regular mode in `/settings`, or opening the external editor (`Ctrl+G`) from fullscreen mode, crashes the terminal session. Avoid both, or start with `--tui-mode regular`. | Conhost crashes when a program leaves the alternate screen while console input is in line mode. Pi does this when it stops fullscreen mode. |
+| Terminal replies leak into the prompt ([#10256](https://github.com/earendil-works/pi/issues/10256), [#10362](https://github.com/earendil-works/pi/issues/10362), [#10742](https://github.com/earendil-works/pi/issues/10742)) | Built-in conhost behind another terminal (mintty, OpenSSH) | Text such as `;0;rgb:0000/0000/0000` appears in the prompt, and a trailing BEL opens the external editor. | Conhost answers some of Pi's terminal queries itself and forwards others to the outer terminal. When a forwarded reply arrives in pieces, conhost drops its first piece, so the rest arrives as typed text. |
+| Reply fragments in the prompt ([#10717](https://github.com/earendil-works/pi/issues/10717), [#10970](https://github.com/earendil-works/pi/issues/10970)) | Old bundled conhost (WezTerm 20240203) | Fragments such as `79` or `55` appear at startup or on session resume. | The bundled conhost cuts forwarded terminal replies short. |
+| Input line redrawn on new rows ([#6300](https://github.com/earendil-works/pi/issues/6300)) | Built-in conhost, classic console window | Reported: in regular mode, each keystroke redraws the input line on a new row. | Suspected: conhost moves the cursor to the next row after a full-width line, so Pi's cursor tracking is one row off. |
 
 Microsoft has fixed these conhost bugs in its source. The built-in conhost gets the fixes with a future Windows update, but Microsoft has not said which update or when.
 
