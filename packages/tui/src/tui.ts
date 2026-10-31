@@ -176,6 +176,21 @@ const TERMINAL_COLOR_QUERY = `\x1b]10;?\x07\x1b]11;?\x07${Array.from(
 	(_, index) => `\x1b]4;${index};?\x07`,
 ).join("")}\x1b[c`;
 const DEVICE_ATTRIBUTES_RESPONSE_PATTERN = /^\x1b\[\?[\d;]*c$/;
+/**
+ * How long after a color query starts, completes, or times out, or after the last consumed reply, input is
+ * still checked for color replies. ConPTY answers DA1 itself, before the terminal's color replies arrive,
+ * and can strip the reply's `ESC ] Ps` header or deliver only its tail, e.g. `;0;rgb:0000/0000/0000` + BEL
+ * (mintty) or `a8` + ST (WezTerm). Without this window those bytes become typed text and BEL opens the
+ * external editor.
+ */
+const TERMINAL_COLOR_REPLY_WINDOW_MS = 1000;
+/** How long held text waits for the BEL or ST that marks it as a header-less color reply fragment. */
+const TERMINAL_COLOR_FRAGMENT_IDLE_MS = 300;
+/** Longer than any OSC 4/10/11 reply payload, e.g. `4;255;rgb:ffff/ffff/ffff`. */
+const TERMINAL_COLOR_FRAGMENT_MAX_LENGTH = 64;
+/** Characters of an OSC color reply payload: the `]`, target, and `rgb:`, `rgba:`, or `#` color value. */
+const TERMINAL_COLOR_FRAGMENT_CHAR_PATTERN = /^[0-9a-f;:/#rg\]]$/i;
+const STRING_TERMINATOR = "\x1b\\";
 
 /**
  * Interface for components that can receive focus and display a hardware cursor.
@@ -531,6 +546,11 @@ export abstract class TuiBase extends Container implements TUI {
 	 * replies belong to the oldest one. Queries stay here after a timeout to collect late replies.
 	 */
 	private pendingTerminalColorQueries: PendingTerminalColorQuery[] = [];
+	/** End of the window in which input is checked for late or header-less color replies (`Date.now()` ms). */
+	private terminalColorReplyWindowEnd = 0;
+	/** Input that may be a header-less color reply fragment, held until its BEL or ST terminator arrives. */
+	private heldColorReplyFragment = "";
+	private heldColorReplyFragmentTimer: NodeJS.Timeout | undefined;
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
 	/** Directory for debug/crash logs. When undefined, debug logging is disabled and crash dumps fall back to the OS temp directory. */
@@ -1013,6 +1033,7 @@ export abstract class TuiBase extends Container implements TUI {
 		this.stopped = true;
 		process.off("exit", this.exitRestoreHandler);
 		this.cancelRenderTimer();
+		this.clearHeldColorReplyFragment();
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031l");
 		}
@@ -1085,9 +1106,15 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 
 	private handleTerminalInput(data: string): void {
-		if (this.consumeTerminalColorResponse(data)) {
+		if (this.consumeTerminalColorReply(data)) {
 			return;
 		}
+		// Held text was not a color reply fragment: deliver it before the input that followed it.
+		this.flushHeldColorReplyFragment();
+		this.dispatchTerminalInput(data);
+	}
+
+	private dispatchTerminalInput(data: string): void {
 		if (this.consumeTerminalColorSchemeReport(data)) {
 			return;
 		}
@@ -1159,6 +1186,66 @@ export abstract class TuiBase extends Container implements TUI {
 			// Keyboard input is latency-sensitive. Avoid the throttled timer path,
 			// where even setTimeout(0) can take a full 16 ms tick on Windows.
 			this.requestImmediateRender();
+		}
+	}
+
+	/**
+	 * Consume color replies: complete replies to a pending query, and inside the reply window also late
+	 * complete replies and header-less fragments. A fragment is a run of reply payload characters ended by
+	 * BEL or ST. The run is held until its terminator; if anything else follows, or nothing follows in time,
+	 * the held text is delivered as input, so typing is delayed but never lost. A BEL or ST with no held
+	 * text is a keystroke (Ctrl+G or Alt+\) and is delivered.
+	 */
+	private consumeTerminalColorReply(data: string): boolean {
+		if (this.consumeTerminalColorResponse(data)) {
+			this.extendTerminalColorReplyWindow();
+			return true;
+		}
+		if (Date.now() >= this.terminalColorReplyWindowEnd) {
+			return false;
+		}
+		if (parseOscColorResponse(data)) {
+			this.extendTerminalColorReplyWindow();
+			return true;
+		}
+		if (data === "\x07" || data === STRING_TERMINATOR) {
+			if (!this.heldColorReplyFragment) {
+				return false;
+			}
+			this.clearHeldColorReplyFragment();
+			this.extendTerminalColorReplyWindow();
+			return true;
+		}
+		if (
+			!TERMINAL_COLOR_FRAGMENT_CHAR_PATTERN.test(data) ||
+			this.heldColorReplyFragment.length >= TERMINAL_COLOR_FRAGMENT_MAX_LENGTH
+		) {
+			return false;
+		}
+		this.heldColorReplyFragment += data;
+		clearTimeout(this.heldColorReplyFragmentTimer);
+		this.heldColorReplyFragmentTimer = setTimeout(
+			() => this.flushHeldColorReplyFragment(),
+			TERMINAL_COLOR_FRAGMENT_IDLE_MS,
+		);
+		return true;
+	}
+
+	private extendTerminalColorReplyWindow(): void {
+		this.terminalColorReplyWindowEnd = Date.now() + TERMINAL_COLOR_REPLY_WINDOW_MS;
+	}
+
+	private clearHeldColorReplyFragment(): void {
+		clearTimeout(this.heldColorReplyFragmentTimer);
+		this.heldColorReplyFragmentTimer = undefined;
+		this.heldColorReplyFragment = "";
+	}
+
+	private flushHeldColorReplyFragment(): void {
+		const held = this.heldColorReplyFragment;
+		this.clearHeldColorReplyFragment();
+		for (const char of held) {
+			this.dispatchTerminalInput(char);
 		}
 	}
 
@@ -1539,10 +1626,12 @@ export abstract class TuiBase extends Container implements TUI {
 			};
 			// Resolve with the replies so far, and keep collecting late replies for `onLateReply`.
 			query.timer = setTimeout(() => {
+				this.extendTerminalColorReplyWindow();
 				query.deliver = onLateReply;
 				resolve(this.terminalColorQueryResult(query));
 			}, timeoutMs);
 			this.pendingTerminalColorQueries.push(query);
+			this.extendTerminalColorReplyWindow();
 			this.terminal.write(TERMINAL_COLOR_QUERY);
 		});
 	}
