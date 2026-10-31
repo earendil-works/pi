@@ -915,6 +915,7 @@ class ModelsImpl implements MutableModels {
 				return provider.stream(requestModel, transcript, requestOptions as ApiStreamOptions<TApi>);
 			},
 			observeModelRequest(model, options, false),
+			options?.signal,
 		);
 	}
 
@@ -936,6 +937,7 @@ class ModelsImpl implements MutableModels {
 				return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
 			},
 			observeModelRequest(model, options, false),
+			options?.signal,
 		);
 	}
 
@@ -963,6 +965,7 @@ class ModelsImpl implements MutableModels {
 				return provider.fetchDeferred(requestModel, handle, requestOptions as DeferredFetchOptions);
 			},
 			observeModelRequest(model, options, true),
+			options?.signal,
 		);
 	}
 
@@ -1108,12 +1111,18 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 	const dispatch = (
 		model: Model<Api>,
 		run: (streams: ProviderStreams) => AssistantMessageEventStream,
+		signal?: AbortSignal,
 	): AssistantMessageEventStream => {
 		const streams = apiFor(model);
 		if (!streams) {
-			return lazyStream(model, async () => {
-				throw new ModelsError("stream", `Provider ${input.id} has no API implementation for "${model.api}"`);
-			});
+			return lazyStream(
+				model,
+				async () => {
+					throw new ModelsError("stream", `Provider ${input.id} has no API implementation for "${model.api}"`);
+				},
+				undefined,
+				signal,
+			);
 		}
 		return run(streams);
 	};
@@ -1156,23 +1165,29 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 			: undefined,
 		filterModels: input.filterModels,
 		filterAllModels: input.filterAllModels,
-		stream: (model, context, options) => dispatch(model, (streams) => streams.stream(model, context, options)),
+		stream: (model, context, options) =>
+			dispatch(model, (streams) => streams.stream(model, context, options), options?.signal),
 		streamSimple: (model, context, options) =>
-			dispatch(model, (streams) => streams.streamSimple(model, context, options)),
+			dispatch(model, (streams) => streams.streamSimple(model, context, options), options?.signal),
 	};
 
 	if (streams.some((entry) => entry.fetchDeferred !== undefined)) {
 		provider.fetchDeferred = (model, handle, options) =>
-			lazyStream(model, async () => {
-				const implementation = apiFor(model);
-				if (!implementation?.fetchDeferred) {
-					throw new ModelsError(
-						"provider",
-						`Provider ${input.id} does not support deferred responses for "${model.api}"`,
-					);
-				}
-				return implementation.fetchDeferred(model, handle, options);
-			});
+			lazyStream(
+				model,
+				async () => {
+					const implementation = apiFor(model);
+					if (!implementation?.fetchDeferred) {
+						throw new ModelsError(
+							"provider",
+							`Provider ${input.id} does not support deferred responses for "${model.api}"`,
+						);
+					}
+					return implementation.fetchDeferred(model, handle, options);
+				},
+				undefined,
+				options?.signal,
+			);
 	}
 	if (streams.some((entry) => entry.cancelDeferred !== undefined)) {
 		provider.cancelDeferred = async (model, handle, options) => {
