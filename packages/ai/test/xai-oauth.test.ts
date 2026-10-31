@@ -136,22 +136,22 @@ describe("xAI OAuth device flow", () => {
 		await vi.advanceTimersByTimeAsync(5000);
 		expect(pollTimes).toEqual([startTime.getTime() + 5000]);
 
-		// slow_down raised the interval to 10 seconds
+		// slow_down raised the interval to 10 seconds, plus a 250 ms margin.
 		await vi.advanceTimersByTimeAsync(5000);
 		expect(pollTimes).toEqual([startTime.getTime() + 5000, startTime.getTime() + 10_000]);
 
-		await vi.advanceTimersByTimeAsync(10_000);
+		await vi.advanceTimersByTimeAsync(10_250);
 		const credentials = await loginPromise;
 		expect(pollTimes).toEqual([
 			startTime.getTime() + 5000,
 			startTime.getTime() + 10_000,
-			startTime.getTime() + 20_000,
+			startTime.getTime() + 20_250,
 		]);
 		expect(credentials).toEqual({
 			type: "oauth",
 			access: "access-token",
 			refresh: "refresh-token",
-			expires: startTime.getTime() + 20_000 + 21_600_000 - 300_000,
+			expires: startTime.getTime() + 20_250 + 21_600_000 - 300_000,
 		});
 	});
 
