@@ -340,6 +340,45 @@ describe("AgentSession prompt characterization", () => {
 		expect(harness.getPendingResponseCount()).toBe(1);
 	});
 
+	// Regression test for https://github.com/earendil-works/pi/issues/11238
+	it("awaits extension sendUserMessage turns before a command handler returns", async () => {
+		const responseStarted = Promise.withResolvers<void>();
+		const releaseResponse = Promise.withResolvers<void>();
+		let commandCompleted = false;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.registerCommand("sayhi", {
+						handler: async () => {
+							await pi.sendUserMessage("Reply with one word: hi");
+							commandCompleted = true;
+						},
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			async () => {
+				responseStarted.resolve();
+				await releaseResponse.promise;
+				return fauxAssistantMessage("hi");
+			},
+		]);
+
+		const command = harness.session.prompt("/sayhi");
+		await responseStarted.promise;
+		try {
+			expect(commandCompleted).toBe(false);
+		} finally {
+			releaseResponse.resolve();
+			await command;
+		}
+
+		expect(commandCompleted).toBe(true);
+		expect(getMessageText(harness.session.messages.at(-1)!)).toBe("hi");
+	});
+
 	it("extension sendUserMessage can opt into extension command dispatch", async () => {
 		let extensionApi: ExtensionAPI | undefined;
 		let resolveCommandRun: (args: string) => void = () => {};
