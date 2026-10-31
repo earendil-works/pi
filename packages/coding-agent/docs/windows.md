@@ -80,7 +80,7 @@ See [Configure shell commands](shell-aliases.md) for command prefixes, aliases, 
 
 Every Windows terminal runs Pi through the Windows console host (conhost), which translates between console programs and the terminal window. A terminal either uses the conhost built into Windows or bundles its own copy. Pi has known problems with the built-in conhost and with old bundled copies.
 
-Use [Windows Terminal](https://aka.ms/terminal).
+We recommend [Windows Terminal](https://aka.ms/terminal). It always ships an up-to-date conhost, and Pi is best tested with it.
 
 Last updated: October 2026.
 
