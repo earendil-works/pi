@@ -421,6 +421,29 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
+	describe.skipIf(
+		!(process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT) || !process.env.GOOGLE_CLOUD_LOCATION,
+	)("Google Vertex Provider (claude-haiku-4-5 via Anthropic Messages)", () => {
+		// Claude on Vertex authenticates with Application Default Credentials only.
+		const model = getModel("google-vertex", "claude-haiku-4-5@20251001");
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(model, { thinkingEnabled: true });
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(model);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(model);
+		});
+
+		it("should handle image input", { retry: 3 }, async () => {
+			await handleImage(model);
+		});
+	});
+
 	describe.skipIf(!process.env.OPENAI_API_KEY)("OpenAI Completions Provider (gpt-4o-mini)", () => {
 		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini");
 		void _compat;

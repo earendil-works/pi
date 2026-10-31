@@ -261,3 +261,5 @@ gcloud auth application-default login
 ```
 
 To use a service-account key file instead, set `GOOGLE_APPLICATION_CREDENTIALS` along with the project and location.
+
+Claude models on Vertex, such as `google-vertex/claude-opus-4-8@default`, need Application Default Credentials or a service account; a Google Cloud API key only works for Gemini. Enable the Claude model in the Vertex AI Model Garden and set `GOOGLE_CLOUD_LOCATION` to a location that serves it, such as `us-east5` or `global`.
