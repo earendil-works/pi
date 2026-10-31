@@ -76,6 +76,22 @@ JSON uses backslashes for escape sequences. When you write a Windows path with b
 
 See [Configure shell commands](shell-aliases.md) for command prefixes, aliases, and the complete shell-resolution behavior.
 
+## Choose a terminal
+
+Use [Windows Terminal](https://aka.ms/terminal). It ships its own up-to-date copy of the Windows console host (conhost), the layer that translates between console programs such as Pi and the terminal window.
+
+Other setups use an older conhost, and Pi has known problems there:
+
+| Terminal | Console host | Known problems |
+|---|---|---|
+| Classic console window (`cmd.exe` or PowerShell opened without Windows Terminal) | Built-in `conhost.exe` | Switching from fullscreen to regular mode in `/settings`, or opening the external editor (`Ctrl+G`) from fullscreen mode, crashes the console window ([#9186](https://github.com/earendil-works/pi/issues/9186), [microsoft/terminal#17515](https://github.com/microsoft/terminal/issues/17515)). Some users also report that regular mode redraws the input line on a new row after each keystroke ([#6300](https://github.com/earendil-works/pi/issues/6300)). |
+| mintty (Git Bash), Windows OpenSSH server | Built-in `conhost.exe`, used as a pseudo-console | Terminal replies leak into the prompt as text such as `;0;rgb:0000/0000/0000`, and a trailing BEL opens the external editor ([#10256](https://github.com/earendil-works/pi/issues/10256), [#10362](https://github.com/earendil-works/pi/issues/10362), [#10742](https://github.com/earendil-works/pi/issues/10742)). |
+| WezTerm 20240203 and older | Bundled 2024 conhost | Fragments such as `79` or `55` appear in the prompt at startup or on session resume ([#10717](https://github.com/earendil-works/pi/issues/10717), [#10970](https://github.com/earendil-works/pi/issues/10970)). WezTerm nightly builds bundle a newer conhost. |
+
+If you must use the classic console window, stay in the TUI mode Pi started with: keep the default fullscreen mode without using `Ctrl+G`, or start with `--tui-mode regular`.
+
+Microsoft has fixed these conhost bugs in its source. The built-in `conhost.exe` gets the fixes with a future Windows update, but Microsoft has not said which update or when.
+
 ## Configure Windows Terminal
 
 Windows Terminal reserves or rewrites some modified keys. See [Windows Terminal](terminal-setup.md#windows-terminal) to configure `Shift+Enter` and `Alt+Enter`, and [Keybindings](keybindings.md) for Pi's Windows and WSL shortcut defaults.
