@@ -1211,7 +1211,8 @@ Content`,
 			expect(runCommandSpy).not.toHaveBeenCalledWith("git", ["clean", "-fdx"], { cwd: targetDir });
 		});
 
-		it("should repair deleted git package dependencies when cleaning fails", async () => {
+		// https://github.com/earendil-works/pi/issues/11597
+		it("should install git package dependencies when cleaning fails", async () => {
 			const source = "git:github.com/user/repo";
 			const targetDir = join(agentDir, "git", "github.com", "user", "repo");
 			const fetchArgs = ["fetch", "--prune", "--no-tags", "origin", "+refs/heads/main:refs/remotes/origin/main"];
@@ -1237,7 +1238,7 @@ Content`,
 					if (args[0] === "clean") throw new Error("simulated clean failure");
 				});
 
-			await expect(packageManager.update(source)).rejects.toThrow("simulated clean failure");
+			await packageManager.update(source);
 
 			expect(runCommandSpy).toHaveBeenCalledWith(
 				"npm",

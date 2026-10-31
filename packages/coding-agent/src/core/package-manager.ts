@@ -2090,20 +2090,31 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	private async cleanAndInstallGitDependencies(targetDir: string, markerPath: string): Promise<void> {
-		// Clean untracked files (extensions should be pristine). If this fails after
-		// deleting dependencies, repair them so the existing extension still loads.
+		// Clean untracked files (extensions should be pristine). On Windows, files loaded by
+		// another process (e.g. a native module of this extension in another pi session) cannot
+		// be deleted, so git clean fails. Still install dependencies for the new commit, but keep
+		// the marker so the next update retries the clean.
+		let cleaned = true;
 		try {
 			await this.runCommand("git", ["clean", "-fdx"], { cwd: targetDir });
 		} catch (error) {
-			await this.repairMissingGitDependencies(targetDir).catch(() => {});
-			throw error;
+			cleaned = false;
+			const reason = error instanceof Error ? error.message : String(error);
+			this.emitProgress({
+				type: "progress",
+				action: "update",
+				source: targetDir,
+				message: `Could not remove all untracked files in ${targetDir} (${reason}). Files may be in use by another pi session; close it and run the update again.`,
+			});
 		}
 
 		const packageJsonPath = join(targetDir, "package.json");
 		if (existsSync(packageJsonPath)) {
 			await this.runNpmCommand(this.getGitDependencyInstallArgs(), { cwd: targetDir });
 		}
-		rmSync(markerPath, { force: true });
+		if (cleaned) {
+			rmSync(markerPath, { force: true });
+		}
 	}
 
 	private async ensureGitRef(targetDir: string, fetchArgs: string[], ref: string): Promise<void> {

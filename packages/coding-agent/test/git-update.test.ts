@@ -178,6 +178,59 @@ describe("DefaultPackageManager git update", () => {
 		});
 	});
 
+	describe("git clean failures", () => {
+		// https://github.com/earendil-works/pi/issues/11597
+		it("should install dependencies and retry the clean later when git clean fails", async () => {
+			setupRemoteAndInstall();
+			const newCommit = createCommit(
+				remoteDir,
+				"package.json",
+				JSON.stringify({ name: "test-extension", version: "1.0.0" }),
+				"Add package.json",
+			);
+
+			const executedCommands: string[] = [];
+			let failClean = true;
+			const managerWithInternals = packageManager as unknown as {
+				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
+			};
+			managerWithInternals.runCommand = async (command, args, options) => {
+				const commandLine = `${command} ${args.join(" ")}`;
+				executedCommands.push(commandLine);
+				if (command === "npm") return;
+				if (commandLine === "git clean -fdx" && failClean) {
+					throw new Error("git clean -fdx failed with code 1");
+				}
+				const result = spawnSync(command, args, { cwd: options?.cwd, encoding: "utf-8" });
+				if (result.status !== 0) {
+					throw new Error(`Command failed: ${commandLine}\n${result.stderr}`);
+				}
+			};
+			const progressMessages: string[] = [];
+			packageManager.setProgressCallback((event) => {
+				if (event.type === "progress" && event.message) progressMessages.push(event.message);
+			});
+			const markerPath = join(agentDir, "git", "github.com", "test", ".extension.pi-update-incomplete");
+
+			await packageManager.update();
+
+			expect(getCurrentCommit(installedDir)).toBe(newCommit);
+			expect(executedCommands).toContain("git clean -fdx");
+			expect(executedCommands.some((command) => command.startsWith("npm install"))).toBe(true);
+			expect(progressMessages.some((message) => message.includes("Could not remove all untracked files"))).toBe(
+				true,
+			);
+			expect(existsSync(markerPath)).toBe(true);
+
+			failClean = false;
+			executedCommands.length = 0;
+			await packageManager.update();
+
+			expect(executedCommands).toContain("git clean -fdx");
+			expect(existsSync(markerPath)).toBe(false);
+		});
+	});
+
 	describe("force-push scenarios", () => {
 		it("should handle complete history rewrite", async () => {
 			setupRemoteAndInstall();
