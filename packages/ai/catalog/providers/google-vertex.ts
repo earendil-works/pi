@@ -3,18 +3,21 @@ import { googleThinkingLevels } from "../families/google.ts";
 import { modelsDevChatModels } from "../sources/models-dev.ts";
 import { GOOGLE_ALIAS_TARGETS } from "./google.ts";
 
+const BASE_URL = "https://{location}-aiplatform.googleapis.com";
+
 export default defineProvider({
 	id: "google-vertex",
 	models: (ctx) => {
 		const sources = new Map(
 			modelsDevChatModels(ctx.sources.modelsDev, "google-vertex").map((model) => [model.id, model]),
 		);
-		return modelsDevModels(ctx, "google-vertex", {
+		const gemini = modelsDevModels(ctx, "google-vertex", {
 			api: "google-vertex",
-			baseUrl: "https://{location}-aiplatform.googleapis.com",
+			baseUrl: BASE_URL,
 			recordReasoning: false,
 			// The models.dev catalog also includes Claude, OpenAI, and other MaaS models
-			// that do not use the @google/genai Gemini streaming path.
+			// that do not use the @google/genai Gemini streaming path. Claude is added
+			// below; the other partner models are not supported yet.
 			include: (source) => source.id.startsWith("gemini-") && source.id !== "gemini-3.1-flash-lite-preview",
 			map: (model, aliasSource) => {
 				const target = GOOGLE_ALIAS_TARGETS[model.id];
@@ -39,5 +42,13 @@ export default defineProvider({
 				};
 			},
 		});
+		// Claude through Anthropic's Messages API on Vertex (`rawPredict` endpoints).
+		const claude = modelsDevModels(ctx, "google-vertex", {
+			api: "anthropic-messages",
+			baseUrl: BASE_URL,
+			skipDeprecated: true,
+			protocol: "messages",
+		});
+		return [...gemini, ...claude];
 	},
 });

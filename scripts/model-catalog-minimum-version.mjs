@@ -6,4 +6,6 @@
 // older pi clients, in the same commit as the change that requires it.
 // 1.2.1: kimi-coding models use openai-completions at /coding/v1; older clients only
 // implement anthropic-messages for kimi-coding and ignore a model's api.
-export const MINIMUM_PI_VERSION = "1.2.1";
+// 1.4.1: google-vertex serves Claude through anthropic-messages; older clients only
+// implement Google's Vertex API for google-vertex.
+export const MINIMUM_PI_VERSION = "1.4.1";

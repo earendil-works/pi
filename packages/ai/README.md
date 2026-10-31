@@ -71,7 +71,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **NVIDIA NIM**
 - **Anthropic**
 - **Google**
-- **Vertex AI** (Gemini via Vertex AI)
+- **Vertex AI** (Gemini, and Claude through Anthropic's Messages API on Vertex)
 - **Mistral**
 - **Groq**
 - **Cerebras**
@@ -1874,7 +1874,9 @@ export GOOGLE_CLOUD_LOCATION="us-central1"
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
 ```
 
-Official docs: [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials)
+Claude models on Vertex (for example `claude-opus-4-8@default`) use Anthropic's Messages API at Vertex's `rawPredict` endpoints. They need ADC or a service account plus a project and location; Vertex API keys only work for Gemini. Enable each Claude model in the Vertex AI Model Garden first, and use a location that serves it (for example `us-east5` or `global`).
+
+Official docs: [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials), [Claude on Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/claude/use-claude)
 
 ### CLI Login
 
