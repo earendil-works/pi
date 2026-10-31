@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Scripts now run on dquickts (`@earendil-works/dquickts`, Bellard's QuickJS compiled to WebAssembly) instead of `quickjs-wasi` (QuickJS-NG). Hosts that pass their own `wasm` must pass `@earendil-works/dquickts/quickjs.wasm`; `loadQuickJSWasm()`, `cloudflareQuickJSWasm`, and `createInlineCodemodeSandbox()` load it already. Scripts run about 1.3 to 1.9 times faster, and the Wrangler bundle grows from about 640 KB to 850 KB
+- Deep recursion in a script now throws a catchable `InternalError: stack overflow` instead of `RangeError: Maximum call stack size exceeded`. The inline and remote sandboxes allow about 950 calls instead of 1,000
+- Deterministic runs: the engine is part of the VM fingerprint, so a run started before this version reports a different fingerprint and is not replayed on it. `Math.random()` gives other values for the same seed
+
 ## [1.4.0] - 2026-10-21
 
 ## [1.3.0] - 2026-10-15

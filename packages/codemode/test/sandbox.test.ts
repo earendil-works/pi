@@ -584,6 +584,24 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(result).toMatchObject({ ok: false, error: { kind: "timeout" } });
 		});
 
+		it("calls no tool after an interrupted async function", async () => {
+			// The interrupted function's rejection handler and the code after its call must not run.
+			let calls = 0;
+			const sandbox = createSandbox([{ name: "side", execute: () => ++calls }]);
+			const result = await sandbox.execute(
+				"const p = (async () => { while (true) {} })(); p.catch(() => tools.side()); tools.side(); await p",
+				{ timeoutMs: 200 },
+			);
+			expect(result).toMatchObject({ ok: false, error: { kind: "timeout" } });
+			expect(calls).toBe(0);
+		});
+
+		it("terminates a loop of interrupted async functions on timeout", async () => {
+			const sandbox = createSandbox();
+			const result = await sandbox.execute("while (true) (async () => { while (true) {} })()", { timeoutMs: 200 });
+			expect(result).toMatchObject({ ok: false, error: { kind: "timeout" } });
+		});
+
 		it("aborts via signal and cancels in-flight calls", async () => {
 			const controller = new AbortController();
 			let toolSignal: AbortSignal | undefined;
@@ -671,14 +689,14 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(results.map((result) => (result.ok ? result.value : result.error))).toEqual(["a", "b", "undefined"]);
 		});
 
-		it("turns deep recursion into a catchable RangeError", async () => {
+		it("turns deep recursion into a catchable InternalError", async () => {
 			const sandbox = createSandbox();
 			const result = await sandbox.execute(`
 				let depth = 0;
 				function dive() { depth++; dive(); }
-				try { dive(); } catch (error) { return [error.name, depth > 1000]; }
+				try { dive(); } catch (error) { return [error.name, depth > 900]; }
 			`);
-			expect(result).toMatchObject({ ok: true, value: ["RangeError", true] });
+			expect(result).toMatchObject({ ok: true, value: ["InternalError", true] });
 		});
 	});
 

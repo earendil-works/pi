@@ -35,7 +35,7 @@
  * The VM reports `started` with its fingerprint before the script runs, and `idle` with the number of calls issued
  * after each drain, so the host can check a replay step by step.
  */
-import { Intrinsics, JSException, type JSValueHandle, MAX_STACK_SIZE, QuickJS } from "quickjs-wasi";
+import { Intrinsics, JSException, type JSValueHandle, MAX_STACK_SIZE, QuickJS } from "@earendil-works/dquickts";
 import type { CodemodeWasmModule } from "../wasm.ts";
 import { PRELUDE_SOURCE } from "./prelude-source.ts";
 import type { HostToWorkerMessage, VmStartData, WorkerToHostMessage } from "./protocol.ts";
@@ -50,7 +50,8 @@ export interface StartVmOptions {
 	data: VmStartData;
 	wasm: CodemodeWasmModule;
 	/**
-	 * QuickJS's guard on its own stack, which turns deep recursion into a catchable `RangeError`.
+	 * QuickJS's guard on its own stack, which turns deep recursion into a catchable
+	 * `InternalError: stack overflow`.
 	 * The wasm frames also use the host thread's native stack, so the guard must trip before that
 	 * stack runs out: a host overflow fails the whole execution instead. Default: `MAX_STACK_SIZE`
 	 * (512 KiB), which fits the 4 MB stack of a Node worker thread but not a 1 MB main thread.
@@ -171,7 +172,7 @@ export async function startVm(options: StartVmOptions): Promise<VmSession> {
 		wasm: options.wasm,
 		memoryLimit: data.memoryLimitBytes,
 		// Without a guard, deep recursion overflows the wasm stack and traps instead of throwing a
-		// catchable RangeError.
+		// catchable InternalError.
 		maxStackSize,
 		interruptHandler: options.shouldInterrupt,
 		wasi: clock ? deterministicWasi(clock) : discardOutput,
@@ -235,15 +236,13 @@ export async function startVm(options: StartVmOptions): Promise<VmSession> {
 	let api: JSValueHandle;
 	let settle: JSValueHandle;
 	let stalled: JSValueHandle;
-	// `executePendingJobs()` runs the queue to empty without a chance to interrupt, so jobs run one at a
-	// time through the (internal, but public) exports; quickjs-wasi is pinned to an exact version.
-	const exports = vm._getExports();
+	// `executePendingJobs()` runs the queue to empty without a chance to interrupt, so jobs run one at a time.
 	/** Run queued jobs, then fail a script that waits on nothing that can ever resume it. */
 	const drain = () => {
 		let jobs = 0;
-		while (exports.qjs_is_job_pending()) {
-			// A job only fails for uncatchable errors, such as an interrupt.
-			if (exports.qjs_execute_pending_job() < 0) throw new Error("Promise job failed");
+		while (vm.isJobPending()) {
+			// Script errors, interruptions included, reject their promise; this only throws if the job itself fails.
+			vm.executePendingJob();
 			if (++jobs % JOBS_PER_POLL === 0 && options.shouldInterrupt()) throw new Error("Execution interrupted");
 		}
 		vm.callFunction(stalled, api).dispose();
@@ -316,7 +315,7 @@ export async function startVm(options: StartVmOptions): Promise<VmSession> {
 			const budget = options.interruptBudget ?? "none";
 			post({
 				type: "started",
-				fingerprint: `quickjs-wasi ${versions["quickjs-wasi"]}, quickjs ${versions.quickjs}, prelude ${PRELUDE_HASH}, deterministic ${DETERMINISTIC_VERSION}, stack ${maxStackSize}, heap ${data.memoryLimitBytes ?? "none"}, budget ${budget}`,
+				fingerprint: `dquickts ${versions.dquickts}, quickjs ${versions.quickjs}, prelude ${PRELUDE_HASH}, deterministic ${DETERMINISTIC_VERSION}, stack ${maxStackSize}, heap ${data.memoryLimitBytes ?? "none"}, budget ${budget}`,
 			});
 		}
 

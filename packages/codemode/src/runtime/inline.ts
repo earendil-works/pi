@@ -38,12 +38,12 @@ import { startVm } from "./vm.ts";
 
 export const DEFAULT_INTERRUPT_BUDGET = 100_000;
 
-/** Allows recursion about 1,000 calls deep and trips well before a 1 MB host stack overflows. */
+/** Allows recursion about 950 calls deep and trips well before a 1 MB host stack overflows. */
 export const INLINE_MAX_STACK_SIZE = 256 * 1024;
 
 export interface InlineCodemodeSandboxOptions extends CodemodeSandboxBaseOptions {
 	/**
-	 * Compiled `quickjs-wasi/quickjs.wasm`. On Cloudflare, import it with Wrangler's `CompiledWasm`
+	 * Compiled `@earendil-works/dquickts/quickjs.wasm`. On Cloudflare, import it with Wrangler's `CompiledWasm`
 	 * rule (`@earendil-works/pi-codemode/cloudflare` does this); on Node, `loadQuickJSWasm()`.
 	 */
 	wasm: CodemodeWasmModule | Promise<CodemodeWasmModule>;

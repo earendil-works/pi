@@ -28,7 +28,7 @@ export interface VmStartData {
 }
 
 export interface WorkerData extends VmStartData {
-	/** Compiled `quickjs-wasi` module. Structured clone shares the compiled code with the worker. */
+	/** Compiled `@earendil-works/dquickts` module. Structured clone shares the compiled code with the worker. */
 	wasm: CodemodeWasmModule;
 	/**
 	 * One Int32 the host sets to non-zero before terminating the worker. The VM's interrupt handler

@@ -488,11 +488,11 @@ export function setEmbeddedQuickJSWasmPath(path: string): void {
 }
 
 /**
- * Get path to `quickjs-wasi/quickjs.wasm`, the VM that runs codemode scripts. Resolved once so the
+ * Get path to `@earendil-works/dquickts/quickjs.wasm`, the VM that runs codemode scripts. Resolved once so the
  * compiled module cached per path keeps working after an update removes this install (#10439).
  */
 export function getQuickJSWasmPath(): string {
-	quickJSWasmPath ??= createRequire(import.meta.url).resolve("quickjs-wasi/quickjs.wasm");
+	quickJSWasmPath ??= createRequire(import.meta.url).resolve("@earendil-works/dquickts/quickjs.wasm");
 	return quickJSWasmPath;
 }
 

@@ -105,7 +105,7 @@ Supported fields are `max_output_tokens`, a token budget for the output, and `ti
 
 ## Bundled Node and Bun hosts
 
-By default `CodemodeSandbox` loads `quickjs-wasi/quickjs.wasm` from the installed package and starts the worker file that sits next to this package's module. Neither exists on disk when the host is bundled, so pass both:
+By default `CodemodeSandbox` loads `@earendil-works/dquickts/quickjs.wasm` from the installed package and starts the worker file that sits next to this package's module. Neither exists on disk when the host is bundled, so pass both:
 
 ```ts
 import { CodemodeSandbox, loadQuickJSWasm } from "@earendil-works/pi-codemode";
@@ -170,7 +170,7 @@ export default {
 }
 ```
 
-Install `@earendil-works/pi-codemode` in the sandbox Worker's project and run `npx wrangler deploy`. Wrangler bundles QuickJS (about 640 KB) as a compiled WebAssembly module. The object has no routes and keeps no state, and it never uses its storage.
+Install `@earendil-works/pi-codemode` in the sandbox Worker's project and run `npx wrangler deploy`. Wrangler bundles QuickJS (about 850 KB) as a compiled WebAssembly module. The object has no routes and keeps no state, and it never uses its storage.
 
 ### Using it from the agent's Worker
 
@@ -369,6 +369,6 @@ The worker keeps script execution off the host thread: QuickJS runs synchronousl
 
 ## Runtime notes
 
-- Node and Bun support memory limits, interrupts, and a catchable `RangeError` for deep recursion (QuickJS's stack guard is enabled; without it the wasm stack overflows and traps). Bun may delay worker exit during non-interruptible built-ins; results do not wait for exit.
+- Node and Bun support memory limits, interrupts, and a catchable `InternalError: stack overflow` for deep recursion (QuickJS's stack guard is enabled; without it the wasm stack overflows and traps). Bun may delay worker exit during non-interruptible built-ins; results do not wait for exit.
 - Stack traces use QuickJS frames (`at f (codemode.js:2:31)`), prefixed with `Name: message` like V8. The wrapper prefix shares line 1 with the script, so line numbers are exact; column numbers on line 1 are shifted.
 - QuickJS is an interpreter. Glue code and filtering tool results are fast enough; heavy computation is slower than in V8.

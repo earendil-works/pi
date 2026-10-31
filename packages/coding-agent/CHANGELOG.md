@@ -12,6 +12,7 @@
 
 - `pi update` for installs from the pi.dev installer no longer passes `--min-release-age=0` to `npm ci`. The release lockfile pins every package, so the flag had no effect, and security scanners that block it stopped the update ([#11262](https://github.com/earendil-works/pi/issues/11262))
 - `/model` and `/scoped-models` now show a model's name next to its ID when the name adds words the ID lacks, such as a renamed `models.json` override ([#5916](https://github.com/earendil-works/pi/issues/5916), [#11347](https://github.com/earendil-works/pi/pull/11347))
+- Code mode scripts now run on dquickts (`@earendil-works/dquickts`) instead of `quickjs-wasi`, about 1.3 to 1.9 times faster. Deep recursion in a script now fails with `InternalError: stack overflow` instead of `RangeError`
 
 ### Fixed
 

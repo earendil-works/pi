@@ -67,7 +67,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"quickjs-wasi": "3.6.2"
+		"@earendil-works/dquickts": "0.2.0"
 	},
 	"devDependencies": {
 		"shx": "0.3.4",

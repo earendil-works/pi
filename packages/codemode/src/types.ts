@@ -134,8 +134,8 @@ export interface CodemodeSandboxBaseOptions {
 /** Options of `CodemodeSandbox`, which runs each VM in a Node or Bun worker thread. */
 export interface CodemodeSandboxOptions extends CodemodeSandboxBaseOptions {
 	/**
-	 * Compiled `quickjs-wasi/quickjs.wasm`, usually from {@link loadQuickJSWasm}. Default:
-	 * `loadQuickJSWasm()`, the file in the installed `quickjs-wasi` package. Pass it when that file
+	 * Compiled `@earendil-works/dquickts/quickjs.wasm`, usually from {@link loadQuickJSWasm}. Default:
+	 * `loadQuickJSWasm()`, the file in the installed `@earendil-works/dquickts` package. Pass it when that file
 	 * is not on disk, for example in a Bun compiled executable.
 	 */
 	wasm?: CodemodeWasmModule | Promise<CodemodeWasmModule>;

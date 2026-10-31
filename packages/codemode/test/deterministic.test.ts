@@ -194,7 +194,7 @@ for (const [backend, create] of Object.entries(BACKENDS)) {
 			]);
 			const fingerprint = recorded.fingerprint()!;
 			expect(fingerprint).toMatch(
-				/^quickjs-wasi \S+, quickjs \S+, prelude [0-9a-f]{8}, deterministic \d+, stack \d+, heap 67108864, budget \S+$/,
+				/^dquickts \S+, quickjs \S+, prelude [0-9a-f]{8}, deterministic \d+, stack \d+, heap 67108864, budget \S+$/,
 			);
 			if (backend === "remote") expect(fingerprint).toContain(`budget ${BUDGET}`);
 			else expect(fingerprint).toContain("budget none");
@@ -404,7 +404,7 @@ async function waitFor(check: () => boolean): Promise<void> {
 }
 
 /** The first two `Math.random()` values with seed 0. */
-const PINNED_SEED_ZERO = [0.6711372530266764, 0.7258461452833667];
+const PINNED_SEED_ZERO = [0.28083505005035936, 0.6711372530266764];
 
 /** The first `Math.random()` with seed 1. */
-const PINNED_FIRST_RANDOM = 0.34227450605335275;
+const PINNED_FIRST_RANDOM = 0.5616701001007189;

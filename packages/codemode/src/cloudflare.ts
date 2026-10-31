@@ -13,7 +13,7 @@
  *   that computes blocks the caller until it awaits a tool or uses up its interrupt budget.
  */
 import { DurableObject } from "cloudflare:workers";
-import quickjsWasmImport from "quickjs-wasi/quickjs.wasm";
+import quickjsWasmImport from "@earendil-works/dquickts/quickjs.wasm";
 import {
 	DEFAULT_INTERRUPT_BUDGET,
 	InlineCodemodeSandbox,
@@ -31,7 +31,7 @@ const quickjsWasm = quickjsWasmImport as unknown as CodemodeWasmModule;
 /** Default VM memory limit of {@link CodemodeSandboxDurableObject}. Isolates have 128 MB in total. */
 export const DEFAULT_REMOTE_MEMORY_LIMIT_BYTES = 32 * 1024 * 1024;
 
-/** `quickjs-wasi/quickjs.wasm`, compiled by Wrangler. */
+/** `@earendil-works/dquickts/quickjs.wasm`, compiled by Wrangler. */
 export const cloudflareQuickJSWasm: CodemodeWasmModule = quickjsWasm;
 
 /** `InlineCodemodeSandbox` with the QuickJS module Wrangler bundled. */
