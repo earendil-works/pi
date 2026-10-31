@@ -97,6 +97,12 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Xiaomi MiMo** (defaults to API billing endpoint, with separate Token Plan providers for `cn`/`ams`/`sgp` regions)
 - **Alibaba Cloud Model Studio** (DashScope pay-as-you-go, with a separate China provider)
 - **Z.AI API** (pay-as-you-go, with a separate China provider)
+- **DeepInfra**
+- **Nebius Token Factory**
+- **Ollama Cloud**
+- **Scaleway Generative APIs**
+- **SiliconFlow** (with a separate China provider)
+- **StepFun** (with a separate China provider)
 - **Any OpenAI-compatible API**: Ollama, vLLM, LM Studio, etc.
 
 ## Installation
@@ -533,6 +539,14 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` |
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` |
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` |
+| DeepInfra | `DEEPINFRA_API_KEY` |
+| Nebius Token Factory | `NEBIUS_API_KEY` |
+| Ollama Cloud | `OLLAMA_API_KEY` |
+| Scaleway Generative APIs | `SCALEWAY_API_KEY` |
+| SiliconFlow | `SILICONFLOW_API_KEY` |
+| SiliconFlow (China) | `SILICONFLOW_CN_API_KEY` |
+| StepFun | `STEPFUN_API_KEY` |
+| StepFun (China) | `STEPFUN_CN_API_KEY` |
 | GitHub Copilot | `COPILOT_GITHUB_TOKEN` |
 
 The Z.AI pay-as-you-go APIs (`zai-api`, `zai-api-cn`) and Alibaba Cloud Model Studio (`alibaba`, `alibaba-cn`) bill usage to the account balance, while `zai`, `zai-coding-cn`, and the Qwen Token Plan providers draw on a plan. They read separate variables, so a key set for a plan never makes the pay-as-you-go models selectable.

@@ -458,6 +458,14 @@ ${chalk.bold("Environment Variables:")}
   DASHSCOPE_CN_API_KEY             - Alibaba Cloud Model Studio (DashScope) API key (China region)
   ZAI_PAYG_API_KEY                 - Z.AI pay-as-you-go API key (Global)
   ZAI_PAYG_CN_API_KEY              - Z.AI pay-as-you-go API key (China, bigmodel.cn)
+  DEEPINFRA_API_KEY                - DeepInfra API key
+  NEBIUS_API_KEY                   - Nebius Token Factory API key
+  OLLAMA_API_KEY                   - Ollama Cloud API key
+  SCALEWAY_API_KEY                 - Scaleway Generative APIs secret key
+  SILICONFLOW_API_KEY              - SiliconFlow API key (Global)
+  SILICONFLOW_CN_API_KEY           - SiliconFlow API key (China)
+  STEPFUN_API_KEY                  - StepFun API key (Global, stepfun.ai)
+  STEPFUN_CN_API_KEY               - StepFun API key (China, stepfun.com)
   AWS_PROFILE                      - AWS profile for Amazon Bedrock
   AWS_ACCESS_KEY_ID                - AWS access key for Amazon Bedrock
   AWS_SECRET_ACCESS_KEY            - AWS secret key for Amazon Bedrock

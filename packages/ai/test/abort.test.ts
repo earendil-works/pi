@@ -345,6 +345,102 @@ describe("AI Providers Abort Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.DEEPINFRA_API_KEY)("DeepInfra Provider Abort", () => {
+		const llm = getModel("deepinfra", "openai/gpt-oss-120b");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm);
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.NEBIUS_API_KEY)("Nebius Token Factory Provider Abort", () => {
+		const llm = getModel("nebius", "openai/gpt-oss-120b");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm);
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.OLLAMA_API_KEY)("Ollama Cloud Provider Abort", () => {
+		const llm = getModel("ollama-cloud", "gpt-oss:120b");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm);
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.SCALEWAY_API_KEY)("Scaleway Generative APIs Provider Abort", () => {
+		const llm = getModel("scaleway", "gpt-oss-120b");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm);
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.SILICONFLOW_API_KEY)("SiliconFlow Provider Abort", () => {
+		const llm = getModel("siliconflow", "zai-org/GLM-5.2");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm);
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.SILICONFLOW_CN_API_KEY)("SiliconFlow (China) Provider Abort", () => {
+		const llm = getModel("siliconflow-cn", "zai-org/GLM-5.2");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm);
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.STEPFUN_API_KEY)("StepFun Provider Abort", () => {
+		const llm = getModel("stepfun", "step-3.7-flash");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm);
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.STEPFUN_CN_API_KEY)("StepFun (China) Provider Abort", () => {
+		const llm = getModel("stepfun-cn", "step-3.7-flash");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm);
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm);
+		});
+	});
+
 	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider Abort", () => {
 		const llm = getModel("kimi-coding", "kimi-for-coding");
 

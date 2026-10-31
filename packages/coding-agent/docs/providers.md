@@ -67,8 +67,18 @@ This table covers providers with a single primary API-key variable. Providers th
 | Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` |
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` |
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` |
+| DeepInfra | `DEEPINFRA_API_KEY` |
+| Nebius Token Factory | `NEBIUS_API_KEY` |
+| Ollama Cloud | `OLLAMA_API_KEY` |
+| Scaleway Generative APIs | `SCALEWAY_API_KEY` |
+| SiliconFlow | `SILICONFLOW_API_KEY` |
+| SiliconFlow (China) | `SILICONFLOW_CN_API_KEY` |
+| StepFun | `STEPFUN_API_KEY` |
+| StepFun (China) | `STEPFUN_CN_API_KEY` |
 
 The Z.AI pay-as-you-go APIs (`zai-api`, `zai-api-cn`) and Alibaba Cloud Model Studio (`alibaba`, `alibaba-cn`) bill usage to the account balance, while `zai`, `zai-coding-cn`, and the Qwen Token Plan providers draw on a plan. They read separate variables, so a key set for a plan never makes the pay-as-you-go models selectable.
+
+`ollama-cloud` is Ollama's hosted API at `ollama.com`. For a local Ollama server, add it as a [compatible endpoint](models.md#configure-a-compatible-endpoint).
 
 Anthropic also recognizes `ANTHROPIC_OAUTH_TOKEN` as an API credential and `ANTHROPIC_AUTH_TOKEN` as bearer authentication.
 

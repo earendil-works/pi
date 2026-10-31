@@ -1420,6 +1420,230 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.DEEPINFRA_API_KEY)("DeepInfra Provider (openai/gpt-oss-120b)", () => {
+		const llm = getModel("deepinfra", "openai/gpt-oss-120b");
+		const thinkingOptions = {
+			thinkingEnabled: true,
+			reasoningEffort: "high",
+		} satisfies StreamOptionsWithExtras;
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+
+		it("should handle thinking mode", { retry: 3 }, async () => {
+			await handleThinking(llm, thinkingOptions);
+		});
+
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			await multiTurn(llm, thinkingOptions);
+		});
+	});
+
+	describe.skipIf(!process.env.NEBIUS_API_KEY)("Nebius Token Factory Provider (openai/gpt-oss-120b)", () => {
+		const llm = getModel("nebius", "openai/gpt-oss-120b");
+		const thinkingOptions = {
+			thinkingEnabled: true,
+			reasoningEffort: "high",
+		} satisfies StreamOptionsWithExtras;
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+
+		it("should handle thinking mode", { retry: 3 }, async () => {
+			await handleThinking(llm, thinkingOptions);
+		});
+
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			await multiTurn(llm, thinkingOptions);
+		});
+	});
+
+	describe.skipIf(!process.env.OLLAMA_API_KEY)("Ollama Cloud Provider (gpt-oss:120b)", () => {
+		const llm = getModel("ollama-cloud", "gpt-oss:120b");
+		const thinkingOptions = {
+			thinkingEnabled: true,
+			reasoningEffort: "high",
+		} satisfies StreamOptionsWithExtras;
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+
+		it("should handle thinking mode", { retry: 3 }, async () => {
+			await handleThinking(llm, thinkingOptions);
+		});
+
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			await multiTurn(llm, thinkingOptions);
+		});
+	});
+
+	describe.skipIf(!process.env.SCALEWAY_API_KEY)("Scaleway Generative APIs Provider (gpt-oss-120b)", () => {
+		const llm = getModel("scaleway", "gpt-oss-120b");
+		const thinkingOptions = {
+			thinkingEnabled: true,
+			reasoningEffort: "high",
+		} satisfies StreamOptionsWithExtras;
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+
+		it("should handle thinking mode", { retry: 3 }, async () => {
+			await handleThinking(llm, thinkingOptions);
+		});
+
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			await multiTurn(llm, thinkingOptions);
+		});
+	});
+
+	describe.skipIf(!process.env.SILICONFLOW_API_KEY)("SiliconFlow Provider (zai-org/GLM-5.2)", () => {
+		const llm = getModel("siliconflow", "zai-org/GLM-5.2");
+		const thinkingOptions = {
+			thinkingEnabled: true,
+			reasoningEffort: "high",
+		} satisfies StreamOptionsWithExtras;
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+
+		it("should handle thinking mode", { retry: 3 }, async () => {
+			await handleThinking(llm, thinkingOptions);
+		});
+
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			await multiTurn(llm, thinkingOptions);
+		});
+	});
+
+	describe.skipIf(!process.env.SILICONFLOW_CN_API_KEY)("SiliconFlow (China) Provider (zai-org/GLM-5.2)", () => {
+		const llm = getModel("siliconflow-cn", "zai-org/GLM-5.2");
+		const thinkingOptions = {
+			thinkingEnabled: true,
+			reasoningEffort: "high",
+		} satisfies StreamOptionsWithExtras;
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+
+		it("should handle thinking mode", { retry: 3 }, async () => {
+			await handleThinking(llm, thinkingOptions);
+		});
+
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			await multiTurn(llm, thinkingOptions);
+		});
+	});
+
+	describe.skipIf(!process.env.STEPFUN_API_KEY)("StepFun Provider (step-3.7-flash)", () => {
+		const llm = getModel("stepfun", "step-3.7-flash");
+		const thinkingOptions = {
+			thinkingEnabled: true,
+			reasoningEffort: "high",
+		} satisfies StreamOptionsWithExtras;
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+
+		it("should handle thinking mode", { retry: 3 }, async () => {
+			await handleThinking(llm, thinkingOptions);
+		});
+
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			await multiTurn(llm, thinkingOptions);
+		});
+	});
+
+	describe.skipIf(!process.env.STEPFUN_CN_API_KEY)("StepFun (China) Provider (step-3.7-flash)", () => {
+		const llm = getModel("stepfun-cn", "step-3.7-flash");
+		const thinkingOptions = {
+			thinkingEnabled: true,
+			reasoningEffort: "high",
+		} satisfies StreamOptionsWithExtras;
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+
+		it("should handle thinking mode", { retry: 3 }, async () => {
+			await handleThinking(llm, thinkingOptions);
+		});
+
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			await multiTurn(llm, thinkingOptions);
+		});
+	});
+
 	describe.skipIf(!process.env.ANT_LING_API_KEY)("Ant Ling Provider (Ling 2.6 Flash via OpenAI Completions)", () => {
 		const llm = getModel("ant-ling", "Ling-2.6-flash");
 

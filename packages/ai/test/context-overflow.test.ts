@@ -551,6 +551,102 @@ describe("Context overflow error handling", () => {
 		}, 120000);
 	});
 
+	describe.skipIf(!process.env.DEEPINFRA_API_KEY)("DeepInfra", () => {
+		it("openai/gpt-oss-120b - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("deepinfra", "openai/gpt-oss-120b");
+			const result = await testContextOverflow(model, process.env.DEEPINFRA_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/input length/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	describe.skipIf(!process.env.NEBIUS_API_KEY)("Nebius Token Factory", () => {
+		it("openai/gpt-oss-120b - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("nebius", "openai/gpt-oss-120b");
+			const result = await testContextOverflow(model, process.env.NEBIUS_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/input length/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	describe.skipIf(!process.env.OLLAMA_API_KEY)("Ollama Cloud", () => {
+		it("gpt-oss:120b - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("ollama-cloud", "gpt-oss:120b");
+			const result = await testContextOverflow(model, process.env.OLLAMA_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/input length/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	describe.skipIf(!process.env.SCALEWAY_API_KEY)("Scaleway Generative APIs", () => {
+		it("gpt-oss-120b - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("scaleway", "gpt-oss-120b");
+			const result = await testContextOverflow(model, process.env.SCALEWAY_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/input length/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	describe.skipIf(!process.env.SILICONFLOW_API_KEY)("SiliconFlow", () => {
+		it("zai-org/GLM-5.2 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("siliconflow", "zai-org/GLM-5.2");
+			const result = await testContextOverflow(model, process.env.SILICONFLOW_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/input length/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	describe.skipIf(!process.env.SILICONFLOW_CN_API_KEY)("SiliconFlow (China)", () => {
+		it("zai-org/GLM-5.2 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("siliconflow-cn", "zai-org/GLM-5.2");
+			const result = await testContextOverflow(model, process.env.SILICONFLOW_CN_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/input length/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	describe.skipIf(!process.env.STEPFUN_API_KEY)("StepFun", () => {
+		it("step-3.7-flash - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("stepfun", "step-3.7-flash");
+			const result = await testContextOverflow(model, process.env.STEPFUN_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/input length/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	describe.skipIf(!process.env.STEPFUN_CN_API_KEY)("StepFun (China)", () => {
+		it("step-3.7-flash - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("stepfun-cn", "step-3.7-flash");
+			const result = await testContextOverflow(model, process.env.STEPFUN_CN_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/input length/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
 	// =============================================================================
 	// Kimi For Coding
 	// =============================================================================

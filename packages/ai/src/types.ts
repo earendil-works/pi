@@ -133,7 +133,15 @@ export type KnownProvider =
 	| "alibaba"
 	| "alibaba-cn"
 	| "zai-api"
-	| "zai-api-cn";
+	| "zai-api-cn"
+	| "deepinfra"
+	| "nebius"
+	| "ollama-cloud"
+	| "scaleway"
+	| "siliconflow"
+	| "siliconflow-cn"
+	| "stepfun"
+	| "stepfun-cn";
 export type ProviderId = KnownProvider | string;
 
 export type ToolChoice = "auto" | "none";

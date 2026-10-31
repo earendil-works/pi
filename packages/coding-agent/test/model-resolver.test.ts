@@ -702,13 +702,23 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-6.1-sol");
 	});
 
-	test.each(["alibaba", "alibaba-cn", "zai-api", "zai-api-cn"] as const)(
-		"%s default is in its built-in catalog",
-		(provider) => {
-			const modelId = defaultModelPerProvider[provider];
-			expect(getBuiltinModels(provider).some((model) => model.id === modelId)).toBe(true);
-		},
-	);
+	test.each([
+		"alibaba",
+		"alibaba-cn",
+		"zai-api",
+		"zai-api-cn",
+		"deepinfra",
+		"nebius",
+		"ollama-cloud",
+		"scaleway",
+		"siliconflow",
+		"siliconflow-cn",
+		"stepfun",
+		"stepfun-cn",
+	] as const)("%s default is in its built-in catalog", (provider) => {
+		const modelId = defaultModelPerProvider[provider];
+		expect(getBuiltinModels(provider).some((model) => model.id === modelId)).toBe(true);
+	});
 
 	test("zai, minimax, cerebras, and ant-ling defaults track current models", () => {
 		expect(defaultModelPerProvider.zai).toBe("glm-5.3");
