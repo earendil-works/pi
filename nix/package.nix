@@ -5,9 +5,11 @@
   importNpmLock,
   lib,
   libxcb,
-  makeWrapper,
-  nodejs_22,
+  makeBinaryWrapper,
   ripgrep,
+  nodejs,
+  packageJson,
+  platforms,
   source,
   stdenv,
   wl-clipboard,
@@ -15,18 +17,25 @@
 }:
 
 let
-  nodejs = nodejs_22;
-  packageJson = lib.importJSON (source + "/packages/coding-agent/package.json");
+  inherit (lib)
+    importJSON
+    removePrefix
+    optionals
+    getExe
+    makeBinPath
+    licenses
+    sourceTypes
+    ;
   # Lockfile root used by the pi.dev installer. It pins the coding agent's
   # runtime dependency tree and is kept in sync with package-lock.json by
   # `npm run check`.
   installLock = source + "/packages/coding-agent/install-lock";
-  modelCatalogPin = lib.importJSON ./model-catalog.json;
+  modelCatalogPin = importJSON ./model-catalog.json;
   modelCatalog = fetchurl {
     name = "pi-model-catalog.json";
     # The typed catalog is the representation whose bytes the revision hashes.
     url = "https://pi.dev/api/models/revisions/${modelCatalogPin.revision}?types=chat,image,classifier";
-    sha256 = lib.removePrefix "sha256-" modelCatalogPin.revision;
+    sha256 = removePrefix "sha256-" modelCatalogPin.revision;
   };
 
   workspacePackages = stdenv.mkDerivation {
@@ -89,7 +98,7 @@ let
     };
   };
 in
-stdenv.mkDerivation {
+stdenv.mkDerivation (finalAttrs: {
   pname = "pi";
   inherit (packageJson) version;
   src = installLock;
@@ -100,16 +109,12 @@ stdenv.mkDerivation {
   nativeBuildInputs = [
     nodejs
     importNpmLock.npmConfigHook
-    makeWrapper
+    makeBinaryWrapper
   ]
-  ++ lib.optionals stdenv.hostPlatform.isLinux [ autoPatchelfHook ];
+  ++ optionals stdenv.hostPlatform.isLinux [ autoPatchelfHook ];
 
-  buildInputs = [ nodejs ] ++ lib.optionals stdenv.hostPlatform.isLinux [
-    stdenv.cc.cc.lib
-    libxcb
-  ];
+  buildInputs = optionals stdenv.hostPlatform.isLinux [ libxcb ];
 
-  dontBuild = true;
   dontStrip = true;
 
   installPhase = ''
@@ -122,21 +127,22 @@ stdenv.mkDerivation {
     # find npm for package installs; append it so that shells started by the
     # bash tool keep the user's node/npm (e.g. from mise or nvm). fd, ripgrep,
     # and the clipboard tools are Pi's own dependencies and take precedence.
-    makeWrapper ${nodejs}/bin/node "$out/bin/pi" \
+    makeBinaryWrapper ${lib.getExe nodejs} "$out/bin/pi" \
       --add-flags "$out/lib/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" \
       --suffix PATH : ${lib.makeBinPath [ nodejs ]} \
       --prefix PATH : ${
-        lib.makeBinPath (
+        makeBinPath (
           [
             fd
             ripgrep
           ]
-          ++ lib.optionals stdenv.hostPlatform.isLinux [
+          ++ optionals stdenv.hostPlatform.isLinux [
             wl-clipboard
             xclip
           ]
         )
-      }
+      } \
+      --set-default PI_SKIP_VERSION_CHECK 1
 
     runHook postInstall
   '';
@@ -147,7 +153,7 @@ stdenv.mkDerivation {
     test "$("$out/bin/pi" --version)" = "${packageJson.version}"
     # Load host-platform TUI helpers directly so missing native dependencies
     # fail the build rather than silently disabling clipboard support.
-    ${nodejs}/bin/node -e \
+    ${getExe nodejs} -e \
       "const fs = require('node:fs');
        const path = require('node:path');
        const dir = '$out/lib/pi/node_modules/@earendil-works/pi-tui/native/' + process.platform + '/prebuilds/' + process.platform + '-' + process.arch;
@@ -156,25 +162,20 @@ stdenv.mkDerivation {
            if (file.endsWith('.node')) require(path.join(dir, file));
          }
        }"
-    ${nodejs}/bin/node -e \
+    ${getExe nodejs} -e \
       "require('$out/lib/pi/node_modules/@silvia-odwyer/photon-node')"
     runHook postInstallCheck
   '';
 
   meta = {
-    description = packageJson.description;
+    inherit (packageJson) description;
     homepage = "https://pi.dev";
-    license = lib.licenses.mit;
-    mainProgram = "pi";
-    platforms = [
-      "aarch64-darwin"
-      "aarch64-linux"
-      "x86_64-darwin"
-      "x86_64-linux"
-    ];
-    sourceProvenance = with lib.sourceTypes; [
+    license = licenses.mit;
+    mainProgram = finalAttrs.pname;
+    inherit platforms;
+    sourceProvenance = with sourceTypes; [
       fromSource
       binaryNativeCode
     ];
   };
-}
+})
