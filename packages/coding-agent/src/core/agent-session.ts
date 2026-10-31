@@ -585,6 +585,7 @@ export class AgentSession {
 	private async _getSummarizationRequestAuth(
 		selectedModel: Model<any>,
 		signal?: AbortSignal,
+		selectedThinkingLevel: ThinkingLevel = this.thinkingLevel,
 	): Promise<{
 		model: Model<any>;
 		apiKey?: string;
@@ -596,10 +597,10 @@ export class AgentSession {
 		const { model, thinkingLevel } = isVirtualModel(selectedModel)
 			? await this._modelRuntime.resolveModel(selectedModel, convertToLlm(this.messages), {
 					reason: "direct",
-					thinkingLevel: this.thinkingLevel,
+					thinkingLevel: selectedThinkingLevel,
 					signal,
 				})
-			: { model: selectedModel, thinkingLevel: this.thinkingLevel };
+			: { model: selectedModel, thinkingLevel: selectedThinkingLevel };
 		if (this.agent.streamFunction === streamSimple) {
 			return { ...(await this._getRequiredRequestAuth(model, signal)), thinkingLevel };
 		}
@@ -622,6 +623,36 @@ export class AgentSession {
 			if (signal?.aborted) throw error;
 			return { model, thinkingLevel };
 		}
+	}
+
+	private _getSummarizationModel(
+		settings: { provider?: string; model?: string; thinkingLevel?: ThinkingLevel },
+		fallbackModel: Model<any> | undefined,
+		settingsKey: "compaction" | "branchSummary",
+	): { model: Model<any>; thinkingLevel: ThinkingLevel } {
+		const hasModelOverride = settings.provider !== undefined || settings.model !== undefined;
+		const provider = settings.provider ?? fallbackModel?.provider;
+		const modelId = settings.model ?? fallbackModel?.id;
+		if (!provider || !modelId) {
+			if (hasModelOverride) {
+				throw new Error(
+					`Unable to resolve summarization model. Check ${settingsKey}.provider and ${settingsKey}.model in your settings.`,
+				);
+			}
+			throw new Error(formatNoModelSelectedMessage());
+		}
+
+		const model = hasModelOverride ? this._modelRuntime.getModel(provider, modelId) : fallbackModel;
+		if (!model) {
+			throw new Error(
+				`Summarization model not found: ${provider}/${modelId}. Check ${settingsKey}.provider and ${settingsKey}.model in your settings.`,
+			);
+		}
+
+		return {
+			model,
+			thinkingLevel: clampThinkingLevel(model, settings.thinkingLevel ?? this.thinkingLevel),
+		};
 	}
 
 	/**
@@ -2803,13 +2834,15 @@ export class AgentSession {
 	/** Generate Pi's built-in compaction summary for manual and automatic compaction. */
 	private async _runDefaultCompaction(
 		preparation: CompactionPreparation,
-		model: Model<any>,
+		model: Model<any> | undefined,
 		customInstructions: string | undefined,
 		signal: AbortSignal,
 		reason: "manual" | "threshold" | "overflow",
+		settings: { provider?: string; model?: string; thinkingLevel?: ThinkingLevel },
 	): Promise<CompactionResult> {
 		// Resolve the request only when Pi summarizes itself: routing may call models or fail.
-		const request = await this._getSummarizationRequestAuth(model, signal);
+		const summaryConfig = this._getSummarizationModel(settings, model, "compaction");
+		const request = await this._getSummarizationRequestAuth(summaryConfig.model, signal, summaryConfig.thinkingLevel);
 		return compact(
 			preparation,
 			request.model,
@@ -2855,11 +2888,9 @@ export class AgentSession {
 
 		try {
 			const model = this.model;
-			if (!model) {
-				throw new Error(formatNoModelSelectedMessage());
-			}
-
 			const settings = this.settingsManager.getCompactionSettings(model);
+			// Report invalid model settings before preparation errors or extension hooks.
+			this._getSummarizationModel(settings, model, "compaction");
 			const pathEntries = this.sessionManager.getBranch();
 
 			const preparation = prepareCompaction(pathEntries, settings);
@@ -2917,6 +2948,7 @@ export class AgentSession {
 					customInstructions,
 					this._compactionAbortController.signal,
 					"manual",
+					settings,
 				);
 				summary = result.summary;
 				firstKeptEntryId = result.firstKeptEntryId;
@@ -3184,7 +3216,7 @@ export class AgentSession {
 		let cancelledByExtension = false;
 
 		try {
-			if (!model) {
+			if (!model && settings.provider === undefined && settings.model === undefined) {
 				return false;
 			}
 
@@ -3246,6 +3278,7 @@ export class AgentSession {
 					undefined,
 					abortController.signal,
 					reason,
+					settings,
 				);
 				summary = compactResult.summary;
 				firstKeptEntryId = compactResult.firstKeptEntryId;
@@ -4062,8 +4095,15 @@ export class AgentSession {
 			return { cancelled: false };
 		}
 
+		const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
+
 		// Model required for summarization
-		if (options.summarize && !this.model) {
+		if (
+			options.summarize &&
+			!this.model &&
+			branchSummarySettings.provider === undefined &&
+			branchSummarySettings.model === undefined
+		) {
 			throw new Error("No model available for summarization");
 		}
 
@@ -4137,9 +4177,13 @@ export class AgentSession {
 			let summaryUsage: Usage | undefined;
 			if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
 				const signal = this._branchSummaryAbortController.signal;
-				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
+				const { model, thinkingLevel } = this._getSummarizationModel(
+					branchSummarySettings,
+					this.model,
+					"branchSummary",
+				);
 				const result = await generateBranchSummary(entriesToSummarize, {
-					...(await this._getSummarizationRequestAuth(this.model!, signal)),
+					...(await this._getSummarizationRequestAuth(model, signal, thinkingLevel)),
 					signal,
 					customInstructions,
 					replaceInstructions,

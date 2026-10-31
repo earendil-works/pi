@@ -74,6 +74,13 @@ CLI tool options override this setting for one invocation. `--tools` with only `
 | `compaction.reserveTokens` | number | `16384` | Free context tokens below which automatic compaction starts. |
 | `compaction.keepRecentTokens` | number | `20000` | Recent tokens retained without summarization. |
 | `compaction.modelOverrides` | object | None | Per-model token settings keyed by exact `provider/modelId`. |
+| `compaction.provider` | string | current session provider | Provider used for compaction summaries. |
+| `compaction.model` | string | current session model | Model ID used for compaction summaries. |
+| `compaction.thinkingLevel` | string | current session thinking level | Thinking level for compaction summaries: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. |
+
+`compaction.provider` and `compaction.model` can be set independently. An omitted component is inherited from the current session model. Explicit model settings must resolve to an existing model; invalid settings produce an error rather than falling back to the session model.
+
+Choose a summary model whose context window can accommodate the history being summarized. Compaction does not split that history to fit a smaller summary model or automatically fall back to another model. Automatic compaction thresholds still use the session model's context window. If the summary model has a smaller window, increase `compaction.reserveTokens` (or its session-model override) to compact earlier.
 
 <a id="per-model-compaction-overrides"></a>
 
@@ -87,6 +94,11 @@ See [Compaction Reference](compaction.md) for trigger, summarization, and valida
 |---|---|---|---|
 | `branchSummary.reserveTokens` | number | `16384` | Tokens reserved when summarizing branch history. |
 | `branchSummary.skipPrompt` | boolean | `false` | Skip the branch-summary prompt and default to no summary. |
+| `branchSummary.provider` | string | current session provider | Provider used for branch summaries. |
+| `branchSummary.model` | string | current session model | Model ID used for branch summaries. |
+| `branchSummary.thinkingLevel` | string | current session thinking level | Thinking level for branch summaries: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. |
+
+`branchSummary.provider` and `branchSummary.model` can be set independently. An omitted component is inherited from the current session model. Explicit model settings must resolve to an existing model; invalid settings produce an error rather than falling back to the session model.
 
 ## Terminal and display
 

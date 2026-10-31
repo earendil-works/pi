@@ -884,23 +884,55 @@ export class SettingsManager {
 		enabled: boolean;
 		reserveTokens: number;
 		keepRecentTokens: number;
+		provider?: string;
+		model?: string;
+		thinkingLevel?: ThinkingLevel;
 	} {
 		return {
 			enabled: this.getCompactionEnabled(),
 			reserveTokens: this.getCompactionReserveTokens(model),
 			keepRecentTokens: this.getCompactionKeepRecentTokens(model),
+			provider: this.settings.compaction?.provider,
+			model: this.settings.compaction?.model,
+			thinkingLevel: this.settings.compaction?.thinkingLevel,
 		};
 	}
 
-	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean } {
+	getBranchSummarySettings(): {
+		reserveTokens: number;
+		skipPrompt: boolean;
+		provider?: string;
+		model?: string;
+		thinkingLevel?: ThinkingLevel;
+	} {
 		return {
 			reserveTokens: this.settings.branchSummary?.reserveTokens ?? SETTINGS_DEFAULTS.branchSummary.reserveTokens,
 			skipPrompt: this.settings.branchSummary?.skipPrompt ?? SETTINGS_DEFAULTS.branchSummary.skipPrompt,
+			provider: this.settings.branchSummary?.provider,
+			model: this.settings.branchSummary?.model,
+			thinkingLevel: this.settings.branchSummary?.thinkingLevel,
 		};
 	}
 
 	getBranchSummarySkipPrompt(): boolean {
 		return this.settings.branchSummary?.skipPrompt ?? SETTINGS_DEFAULTS.branchSummary.skipPrompt;
+	}
+
+	setSummarizationConfig(
+		settingsKey: "compaction" | "branchSummary",
+		provider: string,
+		model: string,
+		thinkingLevel: ThinkingLevel,
+	): void {
+		const settings = this.globalSettings[settingsKey] ?? {};
+		this.globalSettings[settingsKey] = settings;
+		settings.provider = provider;
+		settings.model = model;
+		settings.thinkingLevel = thinkingLevel;
+		this.markModified(settingsKey, "provider");
+		this.markModified(settingsKey, "model");
+		this.markModified(settingsKey, "thinkingLevel");
+		this.save();
 	}
 
 	getRetryEnabled(): boolean {

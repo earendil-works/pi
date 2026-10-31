@@ -109,6 +109,15 @@
     "compaction": {
       "type": "object",
       "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "thinkingLevel": {
+          "$ref": "#/$defs/ModelThinkingLevel"
+        },
         "enabled": {
           "type": "boolean",
           "default": true
@@ -151,6 +160,15 @@
     "branchSummary": {
       "type": "object",
       "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "thinkingLevel": {
+          "$ref": "#/$defs/ModelThinkingLevel"
+        },
         "reserveTokens": {
           "type": "number",
           "description": "Tokens reserved for the prompt and LLM response.",

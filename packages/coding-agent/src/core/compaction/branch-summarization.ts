@@ -83,6 +83,8 @@ export interface GenerateBranchSummaryOptions {
 	replaceInstructions?: boolean;
 	/** Tokens reserved when selecting branch history (default 16384) */
 	reserveTokens?: number;
+	/** Thinking level for reasoning-capable summarization models. */
+	thinkingLevel?: ThinkingLevel;
 	/** Optional session stream function. Used to preserve SDK request behavior without mutating agent state. */
 	streamFn?: StreamFn;
 	/** Retry policy for transient summarization errors. Reuses coding-agent's `settings.retry`. */
@@ -306,6 +308,7 @@ export async function generateBranchSummary(
 		customInstructions,
 		replaceInstructions,
 		reserveTokens = 16384,
+		thinkingLevel,
 		streamFn,
 		retry,
 		callbacks,

@@ -416,6 +416,8 @@ See `SessionBeforeTreeEvent` and `TreePreparation` in the types file.
 
 ## Settings
 
+See [Settings: Compaction](settings.md#compaction) and [Settings: Branch summaries](settings.md#branch-summaries) for summary model and thinking-level options.
+
 Configure compaction in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`:
 
 ```json
