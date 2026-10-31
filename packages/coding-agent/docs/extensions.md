@@ -866,6 +866,8 @@ pi.on("before_provider_request", (event, ctx) => {
 
 This is mainly useful for debugging provider serialization and cache behavior.
 
+The payload is the full request. Providers that continue from a previous response (OpenAI Codex over WebSocket, Anthropic message threads) may send only the part that is new since the previous request.
+
 #### after_provider_response
 
 Fired after an HTTP response is received and before its stream body is consumed. Handlers run in extension load order.

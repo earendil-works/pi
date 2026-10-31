@@ -51,6 +51,7 @@ export function buildBaseOptions(
 		transport: options?.transport,
 		cacheRetention: options?.cacheRetention,
 		sessionId: options?.sessionId,
+		disableContinuation: options?.disableContinuation,
 		headers: options?.headers,
 		identity: options?.identity,
 		onPayload: options?.onPayload,

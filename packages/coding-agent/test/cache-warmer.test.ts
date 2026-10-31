@@ -155,7 +155,14 @@ describe("cache warming", () => {
 
 		expect(calls[0]).toMatchObject({
 			model: adaptiveModel,
-			options: { reasoning: "high", sessionId: "s", transformHeaders, maxTokens: 1, maxRetries: 0 },
+			options: {
+				reasoning: "high",
+				sessionId: "s",
+				transformHeaders,
+				maxTokens: 1,
+				maxRetries: 0,
+				disableContinuation: true,
+			},
 		});
 		expect(calls[0].options?.signal).not.toBe(signal);
 		expect(events[0]).toMatchObject({

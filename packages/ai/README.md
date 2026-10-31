@@ -1440,6 +1440,8 @@ Built-in API implementations live under `./api/<api-id>`:
 
 Importing an implementation module loads its SDK. The `./api/<id>.lazy` wrappers (used by the provider factories) defer that load to the first request when the runtime or bundler supports dynamic import chunking. Legacy raw API subpaths from older releases (`./anthropic`, `./google`, `./mistral`, `./openai-completions`, ...) were removed; use `@earendil-works/pi-ai/api/<api-id>`.
 
+**Anthropic message threads:** with `sessionId` set and `cacheRetention` not `"none"`, Anthropic requests continue from the previous reply on the server (`message-threads-2026-08-12` beta) and send only the new messages. When anything earlier in the request changed, or the server can't continue, the full request is sent. Token counts and prompt caching are unchanged. On by default only for the `anthropic` provider on `api.anthropic.com`; set `compat.supportsMessageThreads` to change that, for example for gateways that forward the `thread` field. Set `disableContinuation: true` on requests that repeat an earlier one, such as cache warming. Call `cleanupSessionResources(sessionId)` when a session ends.
+
 ### OpenAI Compatibility Settings
 
 The `openai-completions` API is implemented by many providers with minor differences. By default, the library auto-detects compatibility settings based on `baseUrl` for a small set of known OpenAI-compatible providers (Cerebras, xAI, Chutes, DeepSeek, NVIDIA NIM, Together AI, zAi, OpenCode, Cloudflare Workers AI, etc.). For custom proxies or unknown endpoints, you can override these settings via the `compat` field. For `openai-responses` models, the compat field supports Responses-specific flags.

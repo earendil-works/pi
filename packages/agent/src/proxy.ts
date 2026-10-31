@@ -52,6 +52,7 @@ type ProxySerializableStreamOptions = Pick<
 	| "reasoning"
 	| "cacheRetention"
 	| "sessionId"
+	| "disableContinuation"
 	| "headers"
 	| "metadata"
 	| "transport"
@@ -95,6 +96,7 @@ function buildProxyRequestOptions(options: ProxyStreamOptions): ProxySerializabl
 		reasoning: options.reasoning,
 		cacheRetention: options.cacheRetention,
 		sessionId: options.sessionId,
+		disableContinuation: options.disableContinuation,
 		headers: options.headers,
 		metadata: options.metadata,
 		transport: options.transport,

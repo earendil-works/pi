@@ -333,6 +333,8 @@ export class CacheWarmer {
 				.streamSimple(run.model, run.context, {
 					...run.options,
 					maxTokens: 1,
+					// The warm request repeats the last request; it must not replace the conversation's thread state.
+					disableContinuation: true,
 					maxRetries: 0,
 					signal: run.controller.signal,
 				})
