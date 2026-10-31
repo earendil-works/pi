@@ -1,6 +1,7 @@
 export {
 	type OAuthCallback,
 	type OAuthCallbackPage,
+	type OAuthCallbackResponse,
 	OAuthCallbackServer,
 	type OAuthCallbackServerOptions,
 } from "./callback.ts";
