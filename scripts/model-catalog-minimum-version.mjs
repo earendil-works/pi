@@ -7,5 +7,6 @@
 // 1.2.1: kimi-coding models use openai-completions at /coding/v1; older clients only
 // implement anthropic-messages for kimi-coding and ignore a model's api.
 // 1.4.1: google-vertex serves Claude through anthropic-messages; older clients only
-// implement Google's Vertex API for google-vertex.
+// implement Google's Vertex API for google-vertex. amazon-bedrock serves Mantle-only
+// models through openai-responses; older clients only implement Converse for it.
 export const MINIMUM_PI_VERSION = "1.4.1";

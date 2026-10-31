@@ -213,6 +213,8 @@ export AWS_REGION=us-west-2
 
 Pi also supports ECS task credentials and IRSA through the standard `AWS_CONTAINER_CREDENTIALS_*` and `AWS_WEB_IDENTITY_TOKEN_FILE` variables.
 
+Some models, such as OpenAI's GPT models, Grok, and Gemma on Bedrock, are only served by Bedrock Mantle, Bedrock's OpenAI-compatible endpoint. Pi sends them to Mantle's Responses API in your region. Mantle models use a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK` or a bearer token from `/login amazon-bedrock`) when one is set. Otherwise pi signs requests with SigV4 using the same AWS credentials as other Bedrock models (profiles, IAM keys, SSO, ECS task roles, web identity); the IAM principal needs `bedrock-mantle:CreateInference`.
+
 ### Cloudflare AI Gateway
 
 The gateway requires a token, account ID, and gateway ID:
