@@ -2936,7 +2936,7 @@ export class InteractiveMode {
 		this.editorComponentFactory = factory;
 
 		// Save text from current editor before switching
-		const currentText = this.editor.getText();
+		const currentText = this.editor.getExpandedText?.() ?? this.editor.getText();
 
 		// An open extension dialog keeps the editor slot; the new editor is shown when the last dialog closes.
 		const dialogOpen = this.extensionDialogs.length > 0;
@@ -3041,7 +3041,7 @@ export class InteractiveMode {
 			blocked?: BlockedStatus;
 		},
 	): Promise<T> {
-		const savedText = this.editor.getText();
+		const savedText = this.editor.getExpandedText?.() ?? this.editor.getText();
 		const isOverlay = options?.overlay ?? false;
 
 		return new Promise((resolve, reject) => {
@@ -4848,7 +4848,7 @@ export class InteractiveMode {
 			return 0;
 		}
 		const queuedText = allQueued.join("\n\n");
-		const currentText = options?.currentText ?? this.editor.getText();
+		const currentText = options?.currentText ?? this.editor.getExpandedText?.() ?? this.editor.getText();
 		const combinedText = [queuedText, currentText].filter((t) => t.trim()).join("\n\n");
 		this.editor.setText(combinedText);
 		this.updatePendingMessagesDisplay();
