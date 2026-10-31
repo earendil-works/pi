@@ -89,11 +89,13 @@ Last updated: October 2026.
 | [Windows Terminal](https://aka.ms/terminal) | Bundled, up to date | Recommended |
 | [VS Code](https://code.visualstudio.com) integrated terminal | Bundled, up to date (default `terminal.integrated.windowsUseConptyDll: true`) | Works |
 | [WezTerm](https://wezterm.org) nightly | Bundled, up to date | Works |
+| [Tabby](https://tabby.sh) | Bundled, up to date (default "Use ConPTY" setting, Windows 10 2004 or newer) | Works |
 | WezTerm 20240203 and older | Bundled, old | Known problems |
 | [Alacritty](https://alacritty.org) | Built-in, unless `conpty.dll` and `OpenConsole.exe` from a Windows Terminal release are next to `alacritty.exe` or on `PATH` | Works only with those files |
 | Classic console window (`cmd.exe` or PowerShell opened without Windows Terminal) | Built-in | Known problems |
 | mintty (Git Bash) | Built-in | Known problems |
 | ConEmu, Cmder | Built-in | Known problems |
+| [Hyper](https://hyper.is) | Built-in | Known problems |
 | Windows OpenSSH server sessions | Built-in | Known problems |
 
 Known problems:
