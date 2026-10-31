@@ -13,6 +13,7 @@
 export * from "./api/anthropic-messages.lazy.ts";
 export * from "./api/azure-openai-responses.lazy.ts";
 export * from "./api/bedrock-converse-stream.lazy.ts";
+export { setBedrockMantleSigV4Module } from "./api/bedrock-mantle-sigv4.lazy.ts";
 export * from "./api/google-generative-ai.lazy.ts";
 export * from "./api/google-vertex.lazy.ts";
 export * from "./api/mistral-conversations.lazy.ts";

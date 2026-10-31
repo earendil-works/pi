@@ -1,4 +1,5 @@
 import { bedrockConverseStreamApi } from "../api/bedrock-converse-stream.lazy.ts";
+import { bedrockMantleApi } from "../api/bedrock-mantle.lazy.ts";
 import type { ApiKeyAuth } from "../auth/types.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { AMAZON_BEDROCK_MODELS } from "./amazon-bedrock.models.ts";
@@ -79,12 +80,16 @@ const bedrockAuth: ApiKeyAuth = {
 	},
 };
 
-export function amazonBedrockProvider(): Provider<"bedrock-converse-stream"> {
-	return createProvider({
+/** Converse for most models; Mantle's OpenAI Responses API for models Converse does not serve. */
+export function amazonBedrockProvider(): Provider<"bedrock-converse-stream" | "openai-responses"> {
+	return createProvider<"bedrock-converse-stream" | "openai-responses">({
 		id: "amazon-bedrock",
 		name: "Amazon Bedrock",
 		auth: { apiKey: bedrockAuth },
 		models: Object.values(AMAZON_BEDROCK_MODELS),
-		api: bedrockConverseStreamApi(),
+		api: {
+			"bedrock-converse-stream": bedrockConverseStreamApi(),
+			"openai-responses": bedrockMantleApi(),
+		},
 	});
 }
