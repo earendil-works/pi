@@ -56,7 +56,7 @@
 		"hosted-git-info": "9.0.3",
 		"ignore": "7.0.8",
 		"jiti": "2.7.0",
-		"minimatch": "10.2.6",
+		"minimatch": "11.0.3",
 		"proper-lockfile": "4.1.2",
 		"quickjs-wasi": "3.6.2",
 		"semver": "7.8.5",
