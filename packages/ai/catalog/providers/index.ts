@@ -11,6 +11,7 @@ import baseten from "./baseten.ts";
 import cerebras from "./cerebras.ts";
 import cloudflareAiGateway from "./cloudflare-ai-gateway.ts";
 import cloudflareWorkersAi from "./cloudflare-workers-ai.ts";
+import deepinfra from "./deepinfra.ts";
 import deepseek from "./deepseek.ts";
 import fireworks from "./fireworks.ts";
 import githubCopilot from "./github-copilot.ts";
@@ -25,7 +26,9 @@ import minimaxCn from "./minimax-cn.ts";
 import mistral from "./mistral.ts";
 import moonshotai from "./moonshotai.ts";
 import moonshotaiCn from "./moonshotai-cn.ts";
+import nebius from "./nebius.ts";
 import nvidia from "./nvidia.ts";
+import ollamaCloud from "./ollama-cloud.ts";
 import openai from "./openai.ts";
 import openaiCodex from "./openai-codex.ts";
 import opencode from "./opencode.ts";
@@ -35,6 +38,11 @@ import qwenTokenPlan from "./qwen-token-plan.ts";
 import qwenTokenPlanCn from "./qwen-token-plan-cn.ts";
 import qwenTokenPlanIndividual from "./qwen-token-plan-individual.ts";
 import radius from "./radius.ts";
+import scaleway from "./scaleway.ts";
+import siliconflow from "./siliconflow.ts";
+import siliconflowCn from "./siliconflow-cn.ts";
+import stepfun from "./stepfun.ts";
+import stepfunCn from "./stepfun-cn.ts";
 import together from "./together.ts";
 import typesafe from "./typesafe.ts";
 import vercelAiGateway from "./vercel-ai-gateway.ts";
@@ -59,6 +67,7 @@ export const PROVIDERS: readonly ProviderDefinition[] = [
 	cerebras,
 	cloudflareAiGateway,
 	cloudflareWorkersAi,
+	deepinfra,
 	deepseek,
 	fireworks,
 	githubCopilot,
@@ -73,7 +82,9 @@ export const PROVIDERS: readonly ProviderDefinition[] = [
 	mistral,
 	moonshotaiCn,
 	moonshotai,
+	nebius,
 	nvidia,
+	ollamaCloud,
 	openaiCodex,
 	openai,
 	opencodeGo,
@@ -83,6 +94,11 @@ export const PROVIDERS: readonly ProviderDefinition[] = [
 	qwenTokenPlanIndividual,
 	qwenTokenPlan,
 	radius,
+	scaleway,
+	siliconflowCn,
+	siliconflow,
+	stepfunCn,
+	stepfun,
 	together,
 	typesafe,
 	vercelAiGateway,

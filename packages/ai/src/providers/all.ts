@@ -12,6 +12,7 @@ import { cerebrasProvider } from "./cerebras.ts";
 import { cloudflareAIGatewayProvider } from "./cloudflare-ai-gateway.ts";
 import { cloudflareWorkersAIProvider } from "./cloudflare-workers-ai.ts";
 import modelDataManifest from "./data/.manifest.json" with { type: "json" };
+import { deepinfraProvider } from "./deepinfra.ts";
 import { deepseekProvider } from "./deepseek.ts";
 import { fireworksProvider } from "./fireworks.ts";
 import { githubCopilotProvider } from "./github-copilot.ts";
@@ -26,7 +27,9 @@ import { minimaxCnProvider } from "./minimax-cn.ts";
 import { mistralProvider } from "./mistral.ts";
 import { moonshotaiProvider } from "./moonshotai.ts";
 import { moonshotaiCnProvider } from "./moonshotai-cn.ts";
+import { nebiusProvider } from "./nebius.ts";
 import { nvidiaProvider } from "./nvidia.ts";
+import { ollamaCloudProvider } from "./ollama-cloud.ts";
 import { openaiProvider } from "./openai.ts";
 import { openaiCodexProvider } from "./openai-codex.ts";
 import { opencodeProvider } from "./opencode.ts";
@@ -36,6 +39,11 @@ import { qwenTokenPlanProvider } from "./qwen-token-plan.ts";
 import { qwenTokenPlanCnProvider } from "./qwen-token-plan-cn.ts";
 import { qwenTokenPlanIndividualProvider } from "./qwen-token-plan-individual.ts";
 import { radiusProvider } from "./radius.ts";
+import { scalewayProvider } from "./scaleway.ts";
+import { siliconflowProvider } from "./siliconflow.ts";
+import { siliconflowCnProvider } from "./siliconflow-cn.ts";
+import { stepfunProvider } from "./stepfun.ts";
+import { stepfunCnProvider } from "./stepfun-cn.ts";
 import { togetherProvider } from "./together.ts";
 import { typesafeProvider } from "./typesafe.ts";
 import { vercelAIGatewayProvider } from "./vercel-ai-gateway.ts";
@@ -149,6 +157,7 @@ export function builtinProviders(): Provider[] {
 		cerebrasProvider(),
 		cloudflareAIGatewayProvider(),
 		cloudflareWorkersAIProvider(),
+		deepinfraProvider(),
 		deepseekProvider(),
 		fireworksProvider(),
 		githubCopilotProvider(),
@@ -163,7 +172,9 @@ export function builtinProviders(): Provider[] {
 		mistralProvider(),
 		moonshotaiProvider(),
 		moonshotaiCnProvider(),
+		nebiusProvider(),
 		nvidiaProvider(),
+		ollamaCloudProvider(),
 		openaiProvider(),
 		openaiCodexProvider(),
 		opencodeProvider(),
@@ -173,6 +184,11 @@ export function builtinProviders(): Provider[] {
 		qwenTokenPlanCnProvider(),
 		qwenTokenPlanIndividualProvider(),
 		radiusProvider(),
+		scalewayProvider(),
+		siliconflowProvider(),
+		siliconflowCnProvider(),
+		stepfunProvider(),
+		stepfunCnProvider(),
 		togetherProvider(),
 		typesafeProvider(),
 		vercelAIGatewayProvider(),
