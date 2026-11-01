@@ -1,206 +1,184 @@
-<p align="center">
-  <a href="https://pi.dev">
-    <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">
-  </a>
-</p>
-<p align="center">
-  <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
-  <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@earendil-works/pi-coding-agent?style=flat-square" /></a>
-</p>
+# NLT-Pi
 
-> New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](CONTRIBUTING.md).
+**NLT-Pi is the Pi-based agent runtime that NeuroLift Technologies is adapting into the NLT Coding Agent (NCA).** It is not a separate model, a prompt pack, or simply a renamed Pi CLI. It is the runtime and SDK foundation for a governed coding agent.
 
-# Pi
+NLT-Pi retains Pi's modular TypeScript architecture while adding NeuroLift's agent-runtime, governance, and execution requirements. The goal is to make governance part of the agent's execution path rather than an optional warning layer.
 
-Pi is a minimal, extensible agent harness that you can make your own.
+## What NLT-Pi is
 
-Adapt Pi to your workflows, not the other way around. Customize Pi with [extensions](packages/coding-agent/docs/extensions.md), [skills](packages/coding-agent/docs/skills.md), [prompt templates](packages/coding-agent/docs/prompt-templates.md), and [themes](packages/coding-agent/docs/themes.md). Bundle them as [Pi packages](packages/coding-agent/docs/packages.md) and share via npm or git.
+NLT-Pi is the integration point between:
 
-Pi ships with powerful defaults but skips features like sub-agents and plan mode. Ask Pi to build what you want, or install a package that does it your way.
+- **Models:** generate responses, intent, and proposed tool calls.
+- **ASFDK:** supplies the governance foundation and policy framework.
+- **The agent runtime:** orchestrates turns, tools, sessions, and extensions.
+- **AgentOS:** provides the agent's execution environment or "computer".
+- **External integrations:** connect through governed interfaces such as MCP.
 
-Use Pi [interactively](packages/coding-agent/docs/usage.md), automate it in [print or JSON mode](packages/coding-agent/docs/cli.md), control it over [RPC](packages/coding-agent/docs/rpc.md), or build apps with the [Pi TypeScript SDK](packages/coding-agent/docs/sdk.md). See [OpenClaw](https://github.com/OpenClaw/OpenClaw) for a real-world integration.
+The NLT Coding Agent is the resulting agent experience built on this runtime. NLT-Pi is the underlying Pi-derived codebase and SDK/runtime layer that makes that experience possible.
 
-## Getting started
+## Governance architecture
 
-Install the command-line interface:
+NLT-Pi is designed around an **ASFDK multi-level governance firewall**. Each level protects a different trust boundary. Passing one level does not grant unrestricted permission to pass the next.
 
-```bash
-curl -fsSL https://pi.dev/install.sh | sh
+```text
+Model output / proposed intent
+             |
+             v
++----------------------------------+
+| 1. ASFDK Foundation              |
+| SDK-level governance             |
+|                                  |
+| Provenance, trust, TOI context,  |
+| Sleepwalker, RRT, risk signals   |
++----------------------------------+
+             |
+             v
++----------------------------------+
+| 2. ASFDK Harness                 |
+| Agent-level governance           |
+|                                  |
+| Wraps the agent; resolves policy,|
+| authorizes capabilities,         |
+| intercepts tool calls, and       |
+| enforces approval/escalation     |
++----------------------------------+
+             |
+             v
++----------------------------------+
+| 3. ASFDK MCP                     |
+| Integration-level governance     |
+|                                  |
+| Governs MCP-mediated interactions|
+| and exposes governance services  |
++----------------------------------+
+             |
+             v
++----------------------------------+
+| AgentOS                          |
+| Execution environment            |
++----------------------------------+
 ```
 
-On Windows:
+### Enforcement principles
 
-```shell
-powershell -c "irm https://pi.dev/install.ps1 | iex"
-```
+- **Every execution path is governed.** Tool calls and other capability invocations must be checked before execution.
+- **Authorization is not inherited.** A pass at one governance boundary is not permission to execute or bypass a later boundary.
+- **Default deny.** Unknown, malformed, expired, or unresolved authorization decisions do not execute.
+- **Approval is action-bound.** Any required human approval must be bound to the requested operation, arguments, principal, and applicable policy context.
+- **Fail safely.** If governance cannot establish authorization, execution is blocked or escalated.
+- **Execution is independently protected.** AgentOS should verify authorization at its execution boundary rather than relying only on the agent's assertion that an action was approved.
+- **Human authority is preserved.** The agent's capabilities do not confer authority to decide beyond its granted permissions.
 
-The installer pins all dependencies and updates Pi with `pi update`. Alternatively, install directly with npm, which does not pin transitive dependencies:
+MCP is an integration boundary, not a mandatory sequential hop for every action. Direct SDK tools and AgentOS operations must have their own enforcement paths so MCP cannot become a bypass.
 
-```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
-```
+### Implementation status
 
-Pi requires Node.js 22.19 or newer. The macOS, Linux, and Windows installers can install it if needed. Pi does not require dependency lifecycle scripts for a normal npm installation.
+The architecture describes the intended NLT Coding Agent operating model. Existing advisory or warning behavior is not considered equivalent to enforcement. The integration is complete only when governance decisions are connected to the actual execution boundaries, bypass paths are closed, and enforcement behavior is covered by tests.
 
-Start Pi in the directory where you want it to work:
+## Architectural responsibilities
 
-```bash
-cd /path/to/project
-pi
-```
+| Component | Responsibility |
+|---|---|
+| `asfdk` | Governance primitives and foundation: TOI/OTOI concepts, provenance, trust, assessment, Sleepwalker, and RRT |
+| `asfdk-harness` | Agent-level governance: policy resolution, authorization decisions, interception, approval, escalation, and runtime enforcement |
+| `asfdk-dev` | Development-time contract and instructions for agents working within the NLT development environment |
+| NLT-Pi / Pi SDK | Integrates governance into the agent lifecycle and enforces decisions before runtime execution |
+| MCP | Governance interoperability and governed access to external services |
+| AgentOS | Agent execution environment; an independent enforcement point for operations it executes |
 
-For a built-in AI provider, run `/login` inside Pi to connect a subscription or API key. Then give Pi a task.
+These components have distinct responsibilities. The Foundation does not replace the Harness, MCP does not replace runtime enforcement, and the agent must not be able to authorize its own actions.
 
-See the [documentation](https://pi.dev/docs/latest) for full setup and usage instructions, or [visit pi.dev](https://pi.dev) for demos.
+## Pi foundation
 
-## Run with Nix
-
-```bash
-nix run github:earendil-works/pi/stable
-```
-
-`stable` points at the latest release. Install it with `nix profile add github:earendil-works/pi/stable` and update with `nix profile upgrade pi`. Use a release tag such as `github:earendil-works/pi/v1.0.0` to pin a version, or `github:earendil-works/pi` for unreleased changes on `main`. Nix builds Pi from source.
-
-Supports ARM64 and x86-64 on Linux and macOS. Use `nix build .` or `nix run .` to build or run your checkout.
-
-Nix builds are offline, so the bundled model data comes from a pi.dev model catalog revision pinned in `nix/model-catalog.json`. At runtime, Pi still overlays newer catalog data from pi.dev as usual. The Nix workflow replaces the pin on `main` when it no longer matches the checkout, for example after a provider is added or gains a new model type. To refresh it by hand:
-
-```bash
-npm run update:model-catalog-pin
-```
-
-## Packages
-
-This monorepo contains the Pi CLI and its supporting libraries.
+NLT-Pi is based on the TypeScript Pi monorepo and retains its modular packages:
 
 | Package | Description |
 |---------|-------------|
-| **[@earendil-works/chord](packages/chord)** | Typed host runtime for hot-reloadable plugins, contracts, replicated state, and RPC over JSON links |
-| **[@earendil-works/pi-telemetry](packages/telemetry)** | Vendor-neutral telemetry contracts, reference adapter, conformance tests, and typed schemas |
-| **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
-| **[@earendil-works/pi-durable](packages/durable)** | Durable conversation, task, and document runtime |
-| **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
-| **[@earendil-works/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
-| **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
+| `@earendil-works/chord` | Typed host runtime for plugins, contracts, replicated state, and RPC |
+| `@earendil-works/pi-schema` | JSON Schema validation for supported schema drafts |
+| `@earendil-works/pi-telemetry` | Vendor-neutral telemetry contracts and adapters |
+| `@earendil-works/pi-ai` | Unified multi-provider LLM API |
+| `@earendil-works/pi-durable` | Durable conversation, task, and document runtime |
+| `@earendil-works/pi-agent-core` | Agent runtime, tool calling, and state management |
+| `@earendil-works/pi-codemode` | Sandboxed JavaScript execution through injected tools |
+| `@earendil-works/pi-mcp` | Standalone Model Context Protocol client |
+| `@earendil-works/pi-env` | Remote execution environments for Pi Durable |
+| `@earendil-works/pi-coding-agent` | Interactive coding-agent CLI |
+| `@earendil-works/pi-tui` | Terminal UI library |
 
-For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
+For upstream Pi concepts and documentation, see [Pi](https://pi.dev) and the [upstream repository](https://github.com/earendil-works/pi).
 
-## Permissions & Containerization
+## Getting started
 
-Pi does not include a built-in permission system for restricting filesystem, process, network, or credential access. By default, it runs with the permissions of the user and process that launched it.
+NLT-Pi requires Node.js 22.19 or newer.
 
-If you need stronger boundaries, containerize or sandbox Pi. See [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md) for three patterns:
-
-- **Gondolin extension**: keep `pi` and provider auth on the host while routing built-in tools and `!` commands into a local Linux micro-VM.
-- **Plain Docker**: run the whole `pi` process in a local container for simple isolation.
-- **OpenShell**: run the whole `pi` process in a policy-controlled sandbox.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.md](AGENTS.md) for project-specific rules (for both humans and agents).  Longer term plans for Pi can also be found in [RFCs](https://rfc.earendil.com/keyword/pi/).
-
-## Development
+Install dependencies from the repository root:
 
 ```bash
-npm install --ignore-scripts  # Install all dependencies without running lifecycle scripts
-npm run build         # Refresh model data, then build all packages
-npm run build:offline # Rebuild using existing model data without network access
-npm run check         # Lint, format, and type check
-./test.sh            # Run tests (skips LLM-dependent tests without API keys)
-./pi-test.sh         # Run pi from sources (can be run from any directory)
-```
-
-### Using local packages outside the monorepo
-
-Build every public package into one coherent local artifact set:
-
-```bash
-npm run pack:packages -- --out .artifacts/pi-packages
-```
-
-This refreshes model data before building `pi-ai`. To avoid network access when
-model data is already hydrated, pass `--offline-model-data`.
-
-Then configure an external project to consume one package and resolve all of
-its Pi dependencies from the same artifact set. npm is the default:
-
-```bash
-node scripts/use-local-packages.mjs \
-  --manifest .artifacts/pi-packages/manifest.json \
-  --consumer ../my-project \
-  --package @earendil-works/pi-durable \
-  --package @earendil-works/pi-agent-core
-cd ../my-project
 npm install --ignore-scripts
 ```
 
-For a pnpm project, point `--consumer` at the workspace root:
+Build the packages:
 
 ```bash
-node scripts/use-local-packages.mjs \
-  --manifest .artifacts/pi-packages/manifest.json \
-  --consumer ../my-project \
-  --package @earendil-works/pi-agent-core \
-  --package-manager pnpm
-cd ../my-project
-pnpm install --ignore-scripts
+npm run build
 ```
 
-Repeat `--package` for each direct dependency. The command updates the
-consumer's `package.json` with content-addressed local `file:` references. It
-writes transitive overrides to `package.json` for npm or `pnpm-workspace.yaml`
-for pnpm. Keep the artifact directory available while installing or updating
-the consumer. Re-run both commands after changing Pi source.
-
-## Building standalone binaries from release source
-
-GitHub releases include a versioned source archive covered by the release's `SHA256SUMS` file. Extract it and run the same build script used for the official standalone binaries:
+Run the repository checks:
 
 ```bash
-VERSION="<release-version>"
-tar -xzf "pi-${VERSION}-source.tar.gz"
-cd "pi-${VERSION}"
-./scripts/build-binaries.sh --offline-model-data --platform linux-x64 --out "$PWD/out"
+npm run check
 ```
 
-The archive includes release model data and native prebuilds. `--offline-model-data` uses that model data without refreshing provider catalogs. The script installs dependencies and builds the executable with its runtime assets; pass `--skip-install` if dependencies are already provided.
+Run the coding agent from the source checkout:
 
-## Supply-chain hardening
+```bash
+./pi-test.sh
+```
 
-We treat npm dependency changes as reviewed code changes.
+For package-specific usage, SDK integration, extensions, skills, prompt templates, themes, RPC, and containerization, consult the documentation under `packages/coding-agent/docs/`.
 
-- Direct external dependencies are pinned to exact versions. Internal workspace packages remain version-ranged.
-- `.npmrc` sets `save-exact=true` and `min-release-age=2` to avoid same-day dependency releases during npm resolution.
-- `package-lock.json` is the dependency ground truth. Pre-commit blocks accidental lockfile commits unless `PI_ALLOW_LOCKFILE_CHANGE=1` is set.
-- `npm run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent install lock.
-- The pi.dev installer installs from `packages/coding-agent/install-lock/`, generated from the root lockfile, to pin transitive deps. The npm package does not pin transitive deps.
-- Local release smoke tests and npm publication use the same tarball packer; npm publishes the validated tarballs rather than repacking workspace directories.
-- Local release installs, documented npm installs, and `pi update --self` use `--ignore-scripts` where supported.
-- CI installs with `npm ci --ignore-scripts`, and a scheduled GitHub workflow runs `npm audit --omit=dev` plus `npm audit signatures --omit=dev`.
-- Install lock generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
+## Development
 
-## Share your OSS coding agent sessions
+Common repository commands:
 
-If you use Pi or other coding agents for open source work, please share your sessions.
+```bash
+npm install --ignore-scripts
+npm run build
+npm run build:offline
+npm run check
+./test.sh
+./pi-test.sh
+```
 
-Public OSS session data helps improve coding agents with real-world tasks, tool use, failures, and fixes instead of toy benchmarks.
+- `npm run build` refreshes model data and builds the workspace.
+- `npm run build:offline` builds using the model data already present.
+- `npm run check` runs formatting, dependency, TypeScript, and browser-smoke checks.
+- `./test.sh` runs the repository's supported test workflow.
+- `./pi-test.sh` runs Pi from the source checkout.
 
-For the full explanation, see [this post on X](https://x.com/badlogicgames/status/2037811643774652911).
+See [AGENTS.md](AGENTS.md) for repository-specific development rules and [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance.
 
-To publish sessions, use [`badlogic/pi-share-hf`](https://github.com/badlogic/pi-share-hf). Read its README.md for setup instructions. All you need is a Hugging Face account, the Hugging Face CLI, and `pi-share-hf`.
+## Project direction
 
-You can also watch [this video](https://x.com/badlogicgames/status/2041151967695634619), where I show how I publish my `pi-mono` sessions.
+NLT-Pi exists to support a coding agent where:
 
-I regularly publish my own `pi-mono` work sessions here:
+- governance is an execution requirement, not an advisory feature;
+- the human remains the final authority;
+- model-generated intent is treated as a proposal, not permission;
+- the agent's capabilities are constrained by explicit authorization;
+- execution and governance decisions are inspectable and attributable;
+- the same governance contract can be applied across supported runtimes and integrations.
 
-- [badlogicgames/pi-mono on Hugging Face](https://huggingface.co/datasets/badlogicgames/pi-mono)
+**Capability does not equal authority. Escalate, do not guess.**
 
-## License
+## Licensing and provenance
 
-MIT
+NLT-Pi uses a **provenance-based, component-level licensing model**. The license for each portion of the repository follows the origin and ownership of that code; the presence of both licenses in this repository does not mean every file is offered under a choice of either license.
 
-<p align="center">
-  <a href="https://pi.dev">pi.dev</a> domain graciously donated by
-  <br /><br />
-  <a href="https://exe.dev"><img src="packages/coding-agent/docs/images/exy.png" alt="Exy mascot" width="48" /><br />exe.dev</a>
-</p>
+- **Upstream Pi code:** Code retained from the upstream Pi project remains under the license under which it was received, including the MIT License and its original notices. The upstream MIT license and Mario Zechner's copyright attribution are preserved in [LICENSE](LICENSE).
+- **NeuroLift-authored modifications:** Original modifications and additions authored by NeuroLift Technologies for NLT-Pi / the NLT Coding Agent are licensed under the Apache License, Version 2.0, where identified as NeuroLift contributions. See [LICENSE-APACHE](LICENSE-APACHE).
+- **Files containing both upstream and NeuroLift material:** The upstream license and notices continue to apply to the inherited portions. Apache-2.0 applies to the separately copyrightable NeuroLift-authored modifications, not retroactively to upstream material. Modified files should retain upstream notices and clearly identify NeuroLift's changes.
+- **Related governance projects:** The asfdk and asfdk-harness projects are licensed under Apache-2.0. Their licenses apply to those projects and do not change the license of upstream Pi code incorporated into or used by NLT-Pi.
+
+This model preserves upstream attribution while making the licensing of NeuroLift's original work explicit. When redistributing the combined codebase, comply with the applicable licenses and retain all required notices. The [NOTICE](NOTICE) file records project attribution; it does not replace or alter either license.
