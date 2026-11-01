@@ -61,8 +61,8 @@
     "agents/nlt-governance-steward.md",
     "agents/nlt-code-reviewer.md",
     "agents/nlt-implementation-agent.md",
-    "ISSUE_TEMPLATE/agent-escalation.md",
-    "ISSUE_TEMPLATE/governance-proposal.md",
+    ".github/ISSUE_TEMPLATE/agent-escalation.md",
+    ".github/ISSUE_TEMPLATE/governance-proposal.md",
     "PULL_REQUEST_TEMPLATE.md",
     ".github/workflows/validate-nlt-governance.yml"
   ],
