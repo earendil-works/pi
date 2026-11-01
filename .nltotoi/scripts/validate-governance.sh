@@ -29,21 +29,19 @@ printf 'NLT-Pi Governance Validation\nRoot: %s\n\n' "$ROOT"
 check_file "nltotoi.json"
 
 # The manifest is the single source of truth for required repository artifacts.
-if ! required_json="$(python3 -c '
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as manifest_file:
-    manifest = json.load(manifest_file)
-
-required = manifest.get("required_files")
-if not isinstance(required, list) or not required:
-    raise SystemExit("manifest required_files must be a non-empty array")
-
-for path in required:
-    if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):
-        raise SystemExit(f"invalid required_files entry: {path!r}")
-    print(path)
+if ! required_json="$(node -e '
+const fs = require("node:fs");
+const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const required = manifest.required_files;
+if (!Array.isArray(required) || required.length === 0) {
+  throw new Error("manifest required_files must be a non-empty array");
+}
+for (const path of required) {
+  if (typeof path !== "string" || path.length === 0 || path.startsWith("/") || path.split("/").includes("..")) {
+    throw new Error("invalid required_files entry: " + JSON.stringify(path));
+  }
+  process.stdout.write(path + "\\n");
+}
 ' "$ROOT/nltotoi.json")"; then
   printf 'FAIL  nltotoi.json has an invalid required_files inventory\n'
   ((FAIL+=1))
@@ -60,5 +58,5 @@ check_contains AGENTS.md 'ASFDK MCP'
 check_contains nltotoi.json 'NeuroLift-Technologies/nlt-pi'
 check_contains .claude/settings.json SessionStart
 
-printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
+printf '\\nResults: %s passed, %s failed\\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
