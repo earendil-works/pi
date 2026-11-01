@@ -2,28 +2,63 @@
 # Read-only validation of the NLT-Pi repository governance baseline.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PASS=0; FAIL=0
+PASS=0
+FAIL=0
+
 check_file() {
-  if [[ -s "$ROOT/$1" ]]; then printf 'PASS  %s\n' "$1"; ((PASS+=1)); else printf 'FAIL  %s (missing or empty)\n' "$1"; ((FAIL+=1)); fi
+  if [[ -s "$ROOT/$1" ]]; then
+    printf 'PASS  %s\n' "$1"
+    ((PASS+=1))
+  else
+    printf 'FAIL  %s (missing or empty)\n' "$1"
+    ((FAIL+=1))
+  fi
 }
+
 check_contains() {
-  if [[ -f "$ROOT/$1" ]] && grep -Fq -- "$2" "$ROOT/$1"; then printf 'PASS  %s contains %s\n' "$1" "$2"; ((PASS+=1)); else printf 'FAIL  %s missing marker %s\n' "$1" "$2"; ((FAIL+=1)); fi
+  if [[ -f "$ROOT/$1" ]] && grep -Fq -- "$2" "$ROOT/$1"; then
+    printf 'PASS  %s contains %s\n' "$1" "$2"
+    ((PASS+=1))
+  else
+    printf 'FAIL  %s missing marker %s\n' "$1" "$2"
+    ((FAIL+=1))
+  fi
 }
-required=(
-  NLT-DEV-OTOI.md AGENTS.md CLAUDE.md REVIEW.md nltotoi.json
-  docs/active-threads.md docs/agent-log/README.md docs/escalations/README.md
-  templates/agent-registration.json templates/handoff-record.json
-  templates/escalation.md templates/intent-log.md templates/review-record.md
-  templates/commit-message.md .claude/README.md .claude/settings.json
-  .claude/hooks/session-start.sh .nltotoi/index/governance-files.md
-)
+
 printf 'NLT-Pi Governance Validation\nRoot: %s\n\n' "$ROOT"
-for f in "${required[@]}"; do check_file "$f"; done
+check_file "nltotoi.json"
+
+# The manifest is the single source of truth for required repository artifacts.
+if ! required_json="$(python3 -c '
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as manifest_file:
+    manifest = json.load(manifest_file)
+
+required = manifest.get("required_files")
+if not isinstance(required, list) or not required:
+    raise SystemExit("manifest required_files must be a non-empty array")
+
+for path in required:
+    if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):
+        raise SystemExit(f"invalid required_files entry: {path!r}")
+    print(path)
+' "$ROOT/nltotoi.json")"; then
+  printf 'FAIL  nltotoi.json has an invalid required_files inventory\n'
+  ((FAIL+=1))
+else
+  while IFS= read -r required_path; do
+    [[ -n "$required_path" ]] && check_file "$required_path"
+  done <<< "$required_json"
+fi
+
 check_contains NLT-DEV-OTOI.md NLT-PI-DEV-OTOI-1.0.0
 check_contains NLT-DEV-OTOI.md 'Capability does not equal authority'
 check_contains AGENTS.md 'ASFDK harness'
 check_contains AGENTS.md 'ASFDK MCP'
 check_contains nltotoi.json 'NeuroLift-Technologies/nlt-pi'
 check_contains .claude/settings.json SessionStart
+
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
