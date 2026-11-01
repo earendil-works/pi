@@ -30,3 +30,25 @@ Registration, handoff, escalation, intent, review, and commit message templates 
 
 ## Automation
 `.github/workflows/validate-nlt-governance.yml` validates repository-local governance artifacts. No org-wide propagation workflow is installed: downstream adaptations are locally owned and are not silently overwritten.
+
+## Repository SOPs
+| Path | Purpose |
+|---|---|
+| `SOPs/new-agent-onboarding.md` | Agent onboarding and session protocol |
+| `SOPs/repo-governance-setup.md` | Local governance setup and validation |
+| `SOPs/incident-response.md` | Agent and governance incident response |
+
+## Repository agent profiles
+| Path | Purpose |
+|---|---|
+| `agents/nlt-governance-steward.md` | Read-only governance audit |
+| `agents/nlt-code-reviewer.md` | Read-only code/security review |
+| `agents/nlt-implementation-agent.md` | Scoped implementation workflow |
+
+## GitHub integration
+| Path | Purpose |
+|---|---|
+| `ISSUE_TEMPLATE/agent-escalation.md` | Escalation intake |
+| `ISSUE_TEMPLATE/governance-proposal.md` | Governance change proposal |
+| `PULL_REQUEST_TEMPLATE.md` | NLT-Pi PR checklist |
+| `.github/workflows/validate-nlt-governance.yml` | Repository-local governance validation |
