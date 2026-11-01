@@ -10,14 +10,14 @@ assignees: ""
 [Exact policy or artifact change.]
 
 ## Reason
-[Problem being addressed and evidence.]
+[Problem being addressed and non-sensitive evidence.]
 
 ## Scope
 - [ ] Repository-local implementation only
 - [ ] Organization-wide policy impact
 
 ## Impact
-[Effects on development, ASFDK foundation, harness, MCP, AgentOS, security, and contributors.]
+[Effects on development, ASFDK foundation, harness, MCP, AgentOS, security, and contributors. Do not include vulnerability details or other sensitive incident information.]
 
 ## Alternatives
 [Alternatives and trade-offs.]
