@@ -172,6 +172,13 @@ NLT-Pi exists to support a coding agent where:
 
 **Capability does not equal authority. Escalate, do not guess.**
 
-## License
+## Licensing and provenance
 
-This repository retains the upstream Pi project's MIT license. See [LICENSE](LICENSE).
+NLT-Pi uses a **provenance-based, component-level licensing model**. The license for each portion of the repository follows the origin and ownership of that code; the presence of both licenses in this repository does not mean every file is offered under a choice of either license.
+
+- **Upstream Pi code:** Code retained from the upstream Pi project remains under the license under which it was received, including the MIT License and its original notices. The upstream MIT license and Mario Zechner's copyright attribution are preserved in [LICENSE](LICENSE).
+- **NeuroLift-authored modifications:** Original modifications and additions authored by NeuroLift Technologies for NLT-Pi / the NLT Coding Agent are licensed under the Apache License, Version 2.0, where identified as NeuroLift contributions. See [LICENSE-APACHE](LICENSE-APACHE).
+- **Files containing both upstream and NeuroLift material:** The upstream license and notices continue to apply to the inherited portions. Apache-2.0 applies to the separately copyrightable NeuroLift-authored modifications, not retroactively to upstream material. Modified files should retain upstream notices and clearly identify NeuroLift's changes.
+- **Related governance projects:** The asfdk and asfdk-harness projects are licensed under Apache-2.0. Their licenses apply to those projects and do not change the license of upstream Pi code incorporated into or used by NLT-Pi.
+
+This model preserves upstream attribution while making the licensing of NeuroLift's original work explicit. When redistributing the combined codebase, comply with the applicable licenses and retain all required notices. The [NOTICE](NOTICE) file records project attribution; it does not replace or alter either license.
