@@ -284,6 +284,25 @@ describe("DefaultPackageManager git update", () => {
 			expect(getCurrentCommit(installedDir)).toBe(v2Commit);
 			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
 		});
+
+		it("should reconcile a changed pinned commit SHA when resolving an existing checkout", async () => {
+			mkdirSync(remoteDir, { recursive: true });
+			initGitRepo(remoteDir);
+			const firstCommit = createCommit(remoteDir, "extension.ts", "// v1", "First commit");
+			const secondCommit = createCommit(remoteDir, "extension.ts", "// v2", "Second commit");
+
+			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
+			git(["clone", remoteDir, installedDir], tempDir);
+			git(["checkout", firstCommit], installedDir);
+			expect(getCurrentCommit(installedDir)).toBe(firstCommit);
+
+			settingsManager.setPackages([`${gitSource}@${secondCommit}`]);
+
+			await packageManager.resolve();
+
+			expect(getCurrentCommit(installedDir)).toBe(secondCommit);
+			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
+		});
 	});
 
 	describe("temporary git sources", () => {

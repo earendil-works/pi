@@ -1443,8 +1443,23 @@ export class DefaultPackageManager implements PackageManager {
 				if (!existsSync(installedPath)) {
 					const installed = await installMissing();
 					if (!installed) continue;
-				} else if (resolvedScope === "temporary" && !isOfflineModeEnabled()) {
-					await this.refreshTemporaryGitSource(parsed, resolvedSource, installedPath);
+				} else if (!isOfflineModeEnabled()) {
+					if (resolvedScope === "temporary") {
+						await this.refreshTemporaryGitSource(parsed, resolvedSource, installedPath);
+					} else if (await this.pinnedGitRefNeedsReconcile(parsed, installedPath)) {
+						try {
+							await this.withProgress("update", resolvedSource, `Updating ${resolvedSource}...`, async () => {
+								await this.updateGit(parsed, resolvedScope);
+							});
+						} catch (error) {
+							installFailures.push({
+								source: resolvedSource,
+								scope: resolvedScope,
+								message: error instanceof Error ? error.message : String(error),
+							});
+							continue;
+						}
+					}
 				}
 				metadata.baseDir = installedPath;
 				metadata.packageRoot = installedPath;
@@ -2143,6 +2158,23 @@ export class DefaultPackageManager implements PackageManager {
 		writeFileSync(markerPath, "", "utf-8");
 		await this.runCommand("git", ["reset", "--hard", commitRef], { cwd: targetDir });
 		await this.cleanAndInstallGitDependencies(targetDir, markerPath);
+	}
+
+	private async pinnedGitRefNeedsReconcile(source: GitSource, installedPath: string): Promise<boolean> {
+		if (!source.ref || !/^[0-9a-f]{7,64}$/i.test(source.ref)) {
+			return false;
+		}
+
+		try {
+			const head = await this.runCommandCapture("git", ["rev-parse", "HEAD"], {
+				cwd: installedPath,
+				timeoutMs: NETWORK_TIMEOUT_MS,
+			});
+			return !head.trim().toLowerCase().startsWith(source.ref.toLowerCase());
+		} catch {
+			// If the checkout cannot be inspected, let updateGit() try to reconcile it.
+			return true;
+		}
 	}
 
 	private async refreshTemporaryGitSource(source: GitSource, sourceStr: string, installedPath: string): Promise<void> {
