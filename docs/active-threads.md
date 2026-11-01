@@ -8,8 +8,8 @@
 **Status:** in_review  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
 **Summary:** Adapt the canonical NLT governance stack to NLT-Pi. Establish repository-specific OTOI, agent instructions, review and handoff artifacts, agent profiles, Claude Code configuration, and validation.  
-**PR:** https://github.com/NeuroLift-Technologies/nlt-pi/pull/2  
-**Next action:** Review the governance adoption PR; run the repository validator and relevant CI after checkout.
+**PR:** https://github.com/NeuroLift-Technologies/nlt-pi/pull/3  
+**Next action:** Review PR #3 against `main`; run the repository validator and relevant CI after checkout.
 
 ### NLTPI-ARCH-001 — ASFDK three-layer governance alignment
 **Status:** active  
