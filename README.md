@@ -95,10 +95,14 @@ NLT-Pi is based on the TypeScript Pi monorepo and retains its modular packages:
 | Package | Description |
 |---------|-------------|
 | `@earendil-works/chord` | Typed host runtime for plugins, contracts, replicated state, and RPC |
+| `@earendil-works/pi-schema` | JSON Schema validation for supported schema drafts |
 | `@earendil-works/pi-telemetry` | Vendor-neutral telemetry contracts and adapters |
 | `@earendil-works/pi-ai` | Unified multi-provider LLM API |
 | `@earendil-works/pi-durable` | Durable conversation, task, and document runtime |
 | `@earendil-works/pi-agent-core` | Agent runtime, tool calling, and state management |
+| `@earendil-works/pi-codemode` | Sandboxed JavaScript execution through injected tools |
+| `@earendil-works/pi-mcp` | Standalone Model Context Protocol client |
+| `@earendil-works/pi-env` | Remote execution environments for Pi Durable |
 | `@earendil-works/pi-coding-agent` | Interactive coding-agent CLI |
 | `@earendil-works/pi-tui` | Terminal UI library |
 
