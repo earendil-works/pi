@@ -6,6 +6,8 @@ labels: governance, escalation
 assignees: ""
 ---
 
+> **Security notice:** This is a public issue. Do not include credentials, vulnerability details, exploit steps, private data, or sensitive incident evidence. Report security vulnerabilities through GitHub private vulnerability reporting / Security Advisories instead. If unavailable, obtain the repository owner's private reporting route; do not publish the details here.
+
 ## Escalation metadata
 - Agent / platform:
 - Session / branch / PR:
@@ -13,10 +15,10 @@ assignees: ""
 - Date (ISO 8601):
 
 ## Situation
-[Evidence and relevant context.]
+[Sanitized evidence and non-sensitive context only.]
 
 ## Decision required
-[Exact decision or clarification needed.]
+[Exact decision or clarification needed. Do not disclose sensitive incident details.]
 
 ## Options and trade-offs
 1.
@@ -28,5 +30,5 @@ assignees: ""
 ## Blocked work
 [What must stop pending a decision.]
 
-## Related record
-[Path under docs/escalations/, if available.]
+## Related private record
+[Reference only if safe to disclose; never include private evidence or access details.]
