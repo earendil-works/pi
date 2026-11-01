@@ -9,7 +9,10 @@
   },
   "canonical_contract": "NLT-DEV-OTOI.md",
   "agent_gateway": "AGENTS.md",
-  "session_directives": ["CLAUDE.md", "AGENTS.md"],
+  "session_directives": [
+    "CLAUDE.md",
+    "AGENTS.md"
+  ],
   "discovery": {
     "index": ".nltotoi/index/governance-files.md",
     "validation_script": ".nltotoi/scripts/validate-governance.sh",
@@ -50,7 +53,18 @@
     ".claude/README.md",
     ".claude/settings.json",
     ".claude/hooks/session-start.sh",
-    ".nltotoi/scripts/validate-governance.sh"
+    ".nltotoi/scripts/validate-governance.sh",
+    "SOPs/new-agent-onboarding.md",
+    "SOPs/repo-governance-setup.md",
+    "SOPs/incident-response.md",
+    "agents/README.md",
+    "agents/nlt-governance-steward.md",
+    "agents/nlt-code-reviewer.md",
+    "agents/nlt-implementation-agent.md",
+    "ISSUE_TEMPLATE/agent-escalation.md",
+    "ISSUE_TEMPLATE/governance-proposal.md",
+    "PULL_REQUEST_TEMPLATE.md",
+    ".github/workflows/validate-nlt-governance.yml"
   ],
   "metadata": {
     "source_templates": "NeuroLift-Technologies/.github-private",
