@@ -4,7 +4,9 @@
 **Scope:** NeuroLift Technologies / nlt-pi repository and NLT Coding Agent runtime foundation  
 **Authority:** Joshua W. Dorsey, Sr.  
 **Governance source:** NeuroLift-Technologies/.github-private — templates adapted for this repository  
-**Principles:** Human sovereignty; Capability ≠ authority; Escalate, do not guess.
+**Principles:** Human sovereignty; Capability does not equal authority; Escalate, do not guess.
+
+> Capability does not equal authority. A model or agent may possess a capability without having permission to exercise it.
 
 ---
 
