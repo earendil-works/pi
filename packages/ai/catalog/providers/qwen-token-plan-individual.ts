@@ -2,14 +2,16 @@ import { assertExactModelIds } from "../../scripts/model-data.ts";
 import { defineProvider } from "../define.ts";
 import { INTERNATIONAL_BASE_URL, QWEN_COMPLETIONS_COMPAT, qwenTokenPlanModels } from "./qwen-token-plan.ts";
 
-// QwenCloud Token Plan Individual text-model allowlist, verified 2026-09-03.
+// QwenCloud Token Plan Individual text-model allowlist, verified 2026-11-01.
 // It shares the international endpoint with a narrower catalog.
+// Live personal plan /v1/models and models.dev alibaba-token-plan both list glm-5.3.
 // https://docs.qwencloud.com/token-plan/personal/token-plan-personal-overview
 const MODEL_IDS = new Set<string>([
 	"deepseek-v4-flash-0731",
 	"deepseek-v4-pro",
 	"deepseek-v4-pro-0813",
 	"glm-5.2",
+	"glm-5.3",
 	"qwen3.6-flash",
 	"qwen3.7-max",
 	"qwen3.7-plus",

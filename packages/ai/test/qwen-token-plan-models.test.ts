@@ -63,6 +63,7 @@ const INDIVIDUAL_TEXT_MODELS = [
 	"deepseek-v4-pro",
 	"deepseek-v4-pro-0813",
 	"glm-5.2",
+	"glm-5.3",
 	"qwen3.6-flash",
 	"qwen3.7-max",
 	"qwen3.7-plus",
@@ -116,6 +117,15 @@ const QWEN_REASONING_EFFORT_MODEL_CASES: QwenTokenPlanModelCase[] = [
 const QWEN38_MODEL_CASES: QwenTokenPlanModelCase[] = (
 	["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"] as const
 ).flatMap((provider) => QWEN38_MODELS.map((modelId) => ({ provider, modelId })));
+
+// glm-5.3 exposes a low/high/max effort ladder (models.dev reasoning.effort).
+const QWEN_LOW_HIGH_MAX_EFFORT_MODELS = ["glm-5.3"] as const;
+
+const QWEN_LOW_HIGH_MAX_EFFORT_MODEL_CASES: QwenTokenPlanModelCase[] = (
+	["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"] as const
+).flatMap((provider) =>
+	QWEN_LOW_HIGH_MAX_EFFORT_MODELS.map((modelId) => ({ provider, modelId })),
+);
 
 describe("Qwen Token Plan models", () => {
 	// #9021
@@ -214,6 +224,58 @@ describe("Qwen Token Plan models", () => {
 				xhigh: "xhigh",
 				max: null,
 			});
+		},
+	);
+
+	it.each(QWEN_LOW_HIGH_MAX_EFFORT_MODEL_CASES)(
+		"exposes low/high/max reasoning_effort levels for $provider/$modelId",
+		({ provider, modelId }) => {
+			const model = getModels(provider).find((candidate) => candidate.id === modelId);
+			expect(model).toBeDefined();
+			if (!model) throw new Error(`Missing model: ${provider}/${modelId}`);
+
+			expect(model.thinkingLevelMap).toMatchObject({
+				minimal: null,
+				low: "low",
+				medium: null,
+				high: "high",
+				xhigh: null,
+				max: "max",
+			});
+		},
+	);
+
+	it.each(QWEN_LOW_HIGH_MAX_EFFORT_MODEL_CASES)(
+		"sends low reasoning_effort for $provider/$modelId",
+		async ({ provider, modelId }) => {
+			const model = getModels(provider).find((candidate) => candidate.id === modelId);
+			expect(model).toBeDefined();
+			if (!model) throw new Error(`Missing model: ${provider}/${modelId}`);
+
+			let payload: unknown;
+			await streamSimple(
+				model,
+				{
+					messages: [
+						{
+							role: "user",
+							content: "Hi",
+							timestamp: Date.now(),
+						},
+					],
+				},
+				{
+					apiKey: "test",
+					reasoning: "low",
+					onPayload: (params) => {
+						payload = params;
+					},
+				},
+			).result();
+
+			expect(payload).toHaveProperty("enable_thinking", true);
+			expect(payload).toHaveProperty("reasoning_effort", "low");
+			expect(payload).not.toHaveProperty("thinking");
 		},
 	);
 
