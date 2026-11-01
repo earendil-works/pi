@@ -1,0 +1,24 @@
+{
+  "agent_registration": {
+    "agent_name": "ChatGPT GPT-6",
+    "platform": "ChatGPT GitHub connector",
+    "version": "GPT-6",
+    "session_id": "governance/nlt-pi-adoption",
+    "entry_date": "2026-11-01T16:36:34Z",
+    "entry_point": "User-directed adoption of the .github-private governance stack into NeuroLift-Technologies/nlt-pi",
+    "acknowledged_otoi": true,
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.0",
+    "working_repo": "NeuroLift-Technologies/nlt-pi",
+    "working_branch": "governance/nlt-pi-adoption",
+    "capabilities_self_reported": [
+      "Repository file inspection through GitHub connector",
+      "Repository file creation and updates through GitHub connector",
+      "Governance template adaptation and documentation synthesis"
+    ],
+    "known_limitations": [
+      "No local checkout or shell execution in this session",
+      "Governance validation script and runtime tests were not executed"
+    ],
+    "preferred_handoff_format": "Structured Markdown with repository paths, PR links, verification status, and explicit limitations"
+  }
+}
