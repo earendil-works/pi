@@ -48,7 +48,7 @@
       "ISSUE_TEMPLATE/",
       "PULL_REQUEST_TEMPLATE.md",
       ".claude/",
-      " .github/workflows/validate-nlt-governance.yml"
+      ".github/workflows/validate-nlt-governance.yml"
     ],
     "tests_run": [
       "GitHub fetch-back verification of selected created/updated files"
