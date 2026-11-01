@@ -1,0 +1,23 @@
+NLT-Pi - Third-Party Notices
+
+This repository contains code derived from the Pi project.
+
+Pi
+Copyright (c) 2025 Mario Zechner
+
+Upstream Pi code is retained under its original MIT License. See the
+LICENSE file for the MIT license text and its required attribution.
+
+NeuroLift Technologies LLC
+Copyright (c) 2026 NeuroLift Technologies LLC
+
+Original modifications and additions authored by NeuroLift Technologies
+for NLT-Pi / the NLT Coding Agent are licensed under the Apache License,
+Version 2.0, where identified as NeuroLift contributions. See
+LICENSE-APACHE.
+
+The asfdk and asfdk-harness projects are separately licensed under
+the Apache License, Version 2.0. Their licensing does not relicense
+upstream Pi code contained in or used by NLT-Pi.
+
+This NOTICE is informational and does not modify either license.
