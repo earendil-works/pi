@@ -63,6 +63,7 @@ const INDIVIDUAL_TEXT_MODELS = [
 	"deepseek-v4-pro",
 	"deepseek-v4-pro-0813",
 	"glm-5.2",
+	"glm-5.3",
 	"qwen3.6-flash",
 	"qwen3.7-max",
 	"qwen3.7-plus",
@@ -198,6 +199,22 @@ describe("Qwen Token Plan models", () => {
 			});
 		},
 	);
+
+	it("exposes glm-5.3 reasoning_effort levels for qwen-token-plan-individual", () => {
+		const model = getModels("qwen-token-plan-individual").find((candidate) => candidate.id === "glm-5.3");
+		expect(model).toBeDefined();
+		if (!model) throw new Error("Missing model: qwen-token-plan-individual/glm-5.3");
+
+		expect(model.baseUrl).toBe("https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1");
+		expect(model.thinkingLevelMap).toMatchObject({
+			minimal: null,
+			low: "low",
+			medium: null,
+			high: "high",
+			xhigh: null,
+			max: "max",
+		});
+	});
 
 	it.each(QWEN38_MODEL_CASES)(
 		"exposes qwen3.8 reasoning_effort levels for $provider/$modelId",
