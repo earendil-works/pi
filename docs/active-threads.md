@@ -5,10 +5,11 @@
 ## Active
 
 ### NLTPI-GOV-001 — Repository governance adoption
-**Status:** in_progress  
+**Status:** in_review  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
 **Summary:** Adapt the canonical NLT governance stack to NLT-Pi. Establish repository-specific OTOI, agent instructions, review and handoff artifacts, agent profiles, Claude Code configuration, and validation.  
-**Next action:** Review and merge the governance adoption PR after validating paths, manifest, and CI.
+**PR:** https://github.com/NeuroLift-Technologies/nlt-pi/pull/2  
+**Next action:** Review the governance adoption PR; run the repository validator and relevant CI after checkout.
 
 ### NLTPI-ARCH-001 — ASFDK three-layer governance alignment
 **Status:** active  
