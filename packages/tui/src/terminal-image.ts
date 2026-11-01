@@ -438,6 +438,24 @@ export function getKittyImagePlacementRows(line: string): number | undefined {
 	return getRegisteredKittyImageMetadataFromControls(controls)?.rows;
 }
 
+/** Row range occupied by an image, relative to the line containing its protocol sequence. */
+export interface ImagePlacementRowRange {
+	start: number;
+	end: number;
+}
+
+export function getImagePlacementRowRange(line: string): ImagePlacementRowRange | undefined {
+	const kittyRows = getKittyImagePlacementRows(line);
+	if (kittyRows !== undefined) return { start: 0, end: kittyRows - 1 };
+
+	const imageIndex = line.indexOf(ITERM2_PREFIX);
+	if (imageIndex === -1) return undefined;
+
+	const cursorUpMatch = /\x1b\[(\d+)A$/.exec(line.slice(0, imageIndex));
+	const rowsAbove = cursorUpMatch ? Number.parseInt(cursorUpMatch[1], 10) : 0;
+	return { start: -rowsAbove, end: 0 };
+}
+
 /** Build a placement-only command for an image line emitted by {@link renderImage}. */
 export function getKittyImagePlacement(line: string): KittyImagePlacement | undefined {
 	const match = /\x1b_G([^;]*);/.exec(line);

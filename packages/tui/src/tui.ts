@@ -12,7 +12,7 @@ import {
 	type TerminalColorScheme,
 	type TerminalColors,
 } from "./terminal-colors.ts";
-import { getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.ts";
+import { getCapabilities, getImagePlacementRowRange, isImageLine, setCellDimensions } from "./terminal-image.ts";
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
 
 /**
@@ -436,10 +436,9 @@ export function compositeTuiLine(
 	overlayWidth: number,
 	totalWidth: number,
 ): string {
-	if (isImageLine(baseLine)) return baseLine;
-
 	const afterStart = startCol + overlayWidth;
-	const base = extractSegments(baseLine, startCol, afterStart, totalWidth - afterStart, true);
+	const compositableBase = isImageLine(baseLine) ? "" : baseLine;
+	const base = extractSegments(compositableBase, startCol, afterStart, totalWidth - afterStart, true);
 	const overlay = sliceWithWidth(overlayLine, 0, overlayWidth, true);
 	const beforePad = Math.max(0, startCol - base.beforeWidth);
 	const overlayPad = Math.max(0, overlayWidth - overlay.width);
@@ -1438,6 +1437,19 @@ export abstract class TuiBase extends Container implements TUI {
 
 		// Composite each overlay
 		for (const { overlayLines, row, col, w } of rendered) {
+			if (overlayLines.length > 0) {
+				const overlayStart = viewportStart + row;
+				const overlayEnd = overlayStart + overlayLines.length - 1;
+				for (let anchor = 0; anchor < result.length; anchor++) {
+					const placement = getImagePlacementRowRange(result[anchor]);
+					if (!placement) continue;
+
+					const imageStart = anchor + placement.start;
+					const imageEnd = anchor + placement.end;
+					if (imageStart <= overlayEnd && imageEnd >= overlayStart) result[anchor] = "";
+				}
+			}
+
 			for (let i = 0; i < overlayLines.length; i++) {
 				const idx = viewportStart + row + i;
 				if (idx >= 0 && idx < result.length) {
