@@ -14,6 +14,10 @@ on:
       - 'docs/escalations/**'
       - '.claude/**'
       - '.nltotoi/**'
+      - 'SOPs/**'
+      - 'agents/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'PULL_REQUEST_TEMPLATE.md'
       - '.github/workflows/validate-nlt-governance.yml'
   push:
     branches: [main]
@@ -29,6 +33,10 @@ on:
       - 'docs/escalations/**'
       - '.claude/**'
       - '.nltotoi/**'
+      - 'SOPs/**'
+      - 'agents/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'PULL_REQUEST_TEMPLATE.md'
       - '.github/workflows/validate-nlt-governance.yml'
 
 permissions:
