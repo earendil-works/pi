@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR}\/.claude/hooks/session-start.sh\""
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/session-start.sh\""
           }
         ]
       }
@@ -26,7 +26,11 @@
       "Bash(rm -rf:*)",
       "Bash(rm -fr:*)",
       "Bash(rm *--recursive*--force*)",
-      "Bash(rm *--force*--recursive*)"
+      "Bash(rm *--force*--recursive*)",
+      "Bash(rm -r:*)",
+      "Bash(rm * -r*)",
+      "Bash(rm --recursive:*)",
+      "Bash(rm *--recursive*)"
     ]
   },
   "env": {
