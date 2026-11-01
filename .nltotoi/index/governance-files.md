@@ -48,7 +48,7 @@ Registration, handoff, escalation, intent, review, and commit message templates 
 ## GitHub integration
 | Path | Purpose |
 |---|---|
-| `ISSUE_TEMPLATE/agent-escalation.md` | Escalation intake |
-| `ISSUE_TEMPLATE/governance-proposal.md` | Governance change proposal |
+| `.github/ISSUE_TEMPLATE/agent-escalation.md` | Sanitized escalation intake; security-sensitive reports use private reporting |
+| `.github/ISSUE_TEMPLATE/governance-proposal.md` | Governance change proposal |
 | `PULL_REQUEST_TEMPLATE.md` | NLT-Pi PR checklist |
 | `.github/workflows/validate-nlt-governance.yml` | Repository-local governance validation |
