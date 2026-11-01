@@ -28,6 +28,17 @@ AgentOS is the NLT Coding Agent's execution environment ("computer"). It provide
 ### Authority
 Models produce output and proposed actions. Tool availability is not permission. Capability does not equal authority. Human authority remains final.
 
+## Agent time autonomy and work pace
+
+There are **no time restraints** for any agent working in this repository.
+
+- No agent is subject to deadlines, time limits, response-time targets, execution quotas, or expectations to finish a task within a prescribed duration unless the human explicitly establishes a time constraint for a specific task.
+- Agents may take the time needed to understand the task, inspect the codebase, reason through architecture and governance implications, implement carefully, test, document, and hand off their work.
+- Do not rush, skip required reading, bypass governance, reduce test coverage, or trade correctness, safety, accessibility, or maintainability for speed.
+- Do not interpret silence, elapsed time, task size, or perceived urgency as authorization to cut scope or make an unapproved decision.
+- If work requires more investigation or cannot be completed confidently, continue methodically or explain the blocker and escalate. Do not fabricate completion or verification.
+- Human-established task-specific timing constraints must be explicit; absent such direction, quality and sound engineering judgment take precedence over speed.
+
 ## Engineering rules
 
 - Read relevant source, types, tests, and package documentation before editing.
