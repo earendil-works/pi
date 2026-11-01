@@ -23,17 +23,25 @@
 ## Findings
 
 ### Critical
-| Location | Finding | Impact | Required remediation |
-|---|---|---|---|
-| — | None identified / finding | — | — |
+
+| Location | Finding | Scenario | Impact | Required remediation |
+|---|---|---|---|---|
+| — | None identified / finding | — | — | — |
 
 ### High
-| Location | Finding | Impact | Required remediation |
-|---|---|---|---|
-| — | None identified / finding | — | — |
+
+| Location | Finding | Scenario | Impact | Required remediation |
+|---|---|---|---|---|
+| — | None identified / finding | — | — | — |
 
 ### Medium / Low
-- [Non-blocking issue or observation.]
+- **Location:** [exact path and line]
+- **Finding:** [concise issue]
+- **Scenario:** [specific trigger, precondition, or state that causes the failure]
+- **Impact:** [observable consequence]
+- **Required remediation:** [concrete corrective action]
+
+Every finding must identify the concrete trigger, precondition, or state that produces the stated impact. Do not use a speculative impact without labeling it as a hypothesis and stating what evidence is missing. Preserve exact locations and actionable remediation.
 
 ## Architecture and governance
 - [ ] Development, harness, and MCP governance boundaries remain distinct.
@@ -60,4 +68,5 @@ List exact commands and outcomes. Mark tests as not run when they were not run. 
 - Next action:
 
 ---
+
 Reviews support human decision-making; they do not replace human approval.
