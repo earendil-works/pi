@@ -40,7 +40,7 @@ for (const path of required) {
   if (typeof path !== "string" || path.length === 0 || path.startsWith("/") || path.split("/").includes("..")) {
     throw new Error("invalid required_files entry: " + JSON.stringify(path));
   }
-  process.stdout.write(path + "\\n");
+  process.stdout.write(path + "\n");
 }
 ' "$ROOT/nltotoi.json")"; then
   printf 'FAIL  nltotoi.json has an invalid required_files inventory\n'
@@ -58,5 +58,5 @@ check_contains AGENTS.md 'ASFDK MCP'
 check_contains nltotoi.json 'NeuroLift-Technologies/nlt-pi'
 check_contains .claude/settings.json SessionStart
 
-printf '\\nResults: %s passed, %s failed\\n' "$PASS" "$FAIL"
+printf '\nResults: %s passed, %s failed\\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
