@@ -58,5 +58,5 @@ check_contains AGENTS.md 'ASFDK MCP'
 check_contains nltotoi.json 'NeuroLift-Technologies/nlt-pi'
 check_contains .claude/settings.json SessionStart
 
-printf '\nResults: %s passed, %s failed\\n' "$PASS" "$FAIL"
+printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
