@@ -1,8 +1,8 @@
 # NLT-Pi
 
-**NLT-Pi is the Pi-based agent runtime that NeuroLift Technologies is adapting into the NLT Coding Agent (NCA).** It is not a separate model, a prompt pack, or simply a renamed Pi CLI. It is the runtime and SDK foundation for a governed coding agent.
+**NLT-Pi is NeuroLift Technologies' agent runtime and SDK foundation for the NLT Coding Agent (NCA).** It is an NLT-owned project with its own architecture, governance, and development lifecycle. It is not an upstream Pi project or a contribution branch.
 
-NLT-Pi retains Pi's modular TypeScript architecture while adding NeuroLift's agent-runtime, governance, and execution requirements. The goal is to make governance part of the agent's execution path rather than an optional warning layer.
+NLT-Pi provides the modular TypeScript runtime foundation for a governed coding agent. Its inherited code lineage and third-party notices are documented for licensing provenance; they do not define the project's ownership, governance, roadmap, or contribution workflow.
 
 ## What NLT-Pi is
 
@@ -14,7 +14,7 @@ NLT-Pi is the integration point between:
 - **AgentOS:** provides the agent's execution environment or "computer".
 - **External integrations:** connect through governed interfaces such as MCP.
 
-The NLT Coding Agent is the resulting agent experience built on this runtime. NLT-Pi is the underlying Pi-derived codebase and SDK/runtime layer that makes that experience possible.
+The NLT Coding Agent is the product experience built on this runtime. NLT-Pi owns the runtime and SDK integration layer that makes that experience possible.
 
 ## Governance architecture
 
@@ -106,7 +106,7 @@ NLT-Pi is based on the TypeScript Pi monorepo and retains its modular packages:
 | `@earendil-works/pi-coding-agent` | Interactive coding-agent CLI |
 | `@earendil-works/pi-tui` | Terminal UI library |
 
-For upstream Pi concepts and documentation, see [Pi](https://pi.dev) and the [upstream repository](https://github.com/earendil-works/pi).
+Some package names and code retain historical upstream provenance. That provenance is preserved in the applicable license and NOTICE files; it does not create an upstream contribution obligation or require compatibility with upstream.
 
 ## Getting started
 
@@ -155,9 +155,9 @@ npm run check
 - `npm run build:offline` builds using the model data already present.
 - `npm run check` runs formatting, dependency, TypeScript, and browser-smoke checks.
 - `./test.sh` runs the repository's supported test workflow.
-- `./pi-test.sh` runs Pi from the source checkout.
+- `./pi-test.sh` is a legacy script name retained in the current checkout; it does not define the project's identity or upstream relationship.
 
-See [AGENTS.md](AGENTS.md) for repository-specific development rules and [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance.
+See [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md), and [NLT-DEV-OTOI.md](NLT-DEV-OTOI.md) for NLT-Pi development and governance rules.
 
 ## Project direction
 
@@ -176,9 +176,9 @@ NLT-Pi exists to support a coding agent where:
 
 NLT-Pi uses a **provenance-based, component-level licensing model**. The license for each portion of the repository follows the origin and ownership of that code; the presence of both licenses in this repository does not mean every file is offered under a choice of either license.
 
-- **Upstream Pi code:** Code retained from the upstream Pi project remains under the license under which it was received, including the MIT License and its original notices. The upstream MIT license and Mario Zechner's copyright attribution are preserved in [LICENSE](LICENSE).
+- **Inherited MIT-licensed material:** Portions received under the MIT License remain subject to that license and its original notices. The MIT license and Mario Zechner's copyright attribution are preserved in [LICENSE](LICENSE).
 - **NeuroLift-authored modifications:** Original modifications and additions authored by NeuroLift Technologies for NLT-Pi / the NLT Coding Agent are licensed under the Apache License, Version 2.0, where identified as NeuroLift contributions. See [LICENSE-APACHE](LICENSE-APACHE).
 - **Files containing both upstream and NeuroLift material:** The upstream license and notices continue to apply to the inherited portions. Apache-2.0 applies to the separately copyrightable NeuroLift-authored modifications, not retroactively to upstream material. Modified files should retain upstream notices and clearly identify NeuroLift's changes.
 - **Related governance projects:** The asfdk and asfdk-harness projects are licensed under Apache-2.0. Their licenses apply to those projects and do not change the license of upstream Pi code incorporated into or used by NLT-Pi.
 
-This model preserves upstream attribution while making the licensing of NeuroLift's original work explicit. When redistributing the combined codebase, comply with the applicable licenses and retain all required notices. The [NOTICE](NOTICE) file records project attribution; it does not replace or alter either license.
+This model preserves required third-party attribution while making the licensing of NeuroLift's original work explicit. NLT-Pi is developed independently under NeuroLift's direction; no changes are required to be submitted upstream. When redistributing the combined codebase, comply with the applicable licenses and retain all required notices. The [NOTICE](NOTICE) file records project attribution; it does not replace or alter either license.

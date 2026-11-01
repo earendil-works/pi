@@ -1,0 +1,73 @@
+{
+  "manifest_version": "1.0.0",
+  "governance_contract": "NLT-PI-DEV-OTOI-1.0.0",
+  "repository": {
+    "name": "NeuroLift-Technologies/nlt-pi",
+    "purpose": "NLT-owned TypeScript agent runtime and SDK foundation for NLT Coding Agent",
+    "visibility": "public",
+    "governance_profile": "nlt-coding-agent-runtime"
+  },
+  "canonical_contract": "NLT-DEV-OTOI.md",
+  "agent_gateway": "AGENTS.md",
+  "session_directives": [
+    "CLAUDE.md",
+    "AGENTS.md"
+  ],
+  "discovery": {
+    "index": ".nltotoi/index/governance-files.md",
+    "validation_script": ".nltotoi/scripts/validate-governance.sh",
+    "claude_code": ".claude/",
+    "agent_logs": "docs/agent-log/",
+    "active_threads": "docs/active-threads.md"
+  },
+  "governance_layers": {
+    "development": "Repository-local instructions, contracts, reviews, registration, intent, escalation, and handoff",
+    "foundation": "ASFDK SDK-level governance primitives and provenance",
+    "harness": "ASFDK agent-level enforcement around runtime capabilities and tool execution",
+    "integration": "ASFDK MCP governance for external tool integrations"
+  },
+  "runtime": {
+    "name": "NLT-Pi",
+    "product": "NLT Coding Agent",
+    "execution_environment": "AgentOS"
+  },
+  "authority": {
+    "final_authority": "Joshua W. Dorsey, Sr.",
+    "principle": "Capability does not equal authority",
+    "escalation": "Escalate, do not guess"
+  },
+  "required_files": [
+    "NLT-DEV-OTOI.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "REVIEW.md",
+    "docs/active-threads.md",
+    "docs/agent-log/README.md",
+    "docs/escalations/README.md",
+    "templates/agent-registration.json",
+    "templates/handoff-record.json",
+    "templates/escalation.md",
+    "templates/intent-log.md",
+    "templates/review-record.md",
+    "templates/commit-message.md",
+    ".claude/README.md",
+    ".claude/settings.json",
+    ".claude/hooks/session-start.sh",
+    ".nltotoi/scripts/validate-governance.sh",
+    "SOPs/new-agent-onboarding.md",
+    "SOPs/repo-governance-setup.md",
+    "SOPs/incident-response.md",
+    "agents/README.md",
+    "agents/nlt-governance-steward.md",
+    "agents/nlt-code-reviewer.md",
+    "agents/nlt-implementation-agent.md",
+    ".github/ISSUE_TEMPLATE/agent-escalation.md",
+    ".github/ISSUE_TEMPLATE/governance-proposal.md",
+    "PULL_REQUEST_TEMPLATE.md",
+    ".github/workflows/validate-nlt-governance.yml"
+  ],
+  "metadata": {
+    "source_templates": "NeuroLift-Technologies/.github-private",
+    "adaptation": "Repository-specific; local changes do not auto-propagate upstream"
+  }
+}

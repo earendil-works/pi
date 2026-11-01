@@ -1,0 +1,59 @@
+{
+  "handoff_record": {
+    "session_id": "governance/nlt-pi-adoption",
+    "agent_name": "ChatGPT GPT-6",
+    "date": "2026-11-01T16:36:34Z",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.0",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "governance/nlt-pi-adoption",
+    "work_completed": [
+      "Adapted organization governance templates into an NLT-Pi repository governance contract and gateway",
+      "Added review, registration, handoff, escalation, intent, and commit templates",
+      "Added nltotoi.json, .nltotoi index and read-only validator",
+      "Added Claude Code settings, hook, agent profiles, skills, and commands",
+      "Added repository agent profiles, SOPs, GitHub issue/PR templates, and local governance CI",
+      "Updated README to establish NLT-Pi as an NLT-owned project while preserving licensing provenance",
+      "Opened PR #2 against docs/define-nlt-pi-readme"
+    ],
+    "work_in_progress": [
+      "PR #2 awaits review and depends on the README/project identity PR #1 being merged first"
+    ],
+    "blockers": [
+      "No local checkout was available to execute the governance validator or runtime tests"
+    ],
+    "decisions_made": [
+      "Do not copy org-wide propagation, compliance scanning, Hermes bot, or secret-scanning automation into this repository without a separate review",
+      "Keep development governance, ASFDK foundation, ASFDK harness, and ASFDK MCP responsibilities distinct"
+    ],
+    "decisions_pending": [
+      "Human review and merge of PR #1, then PR #2",
+      "Run local governance validator and relevant CI after checkout"
+    ],
+    "escalations": [],
+    "next_agent_notes": "PR #2: https://github.com/NeuroLift-Technologies/nlt-pi/pull/2. It is based on docs/define-nlt-pi-readme to keep the governance-only diff separate from PR #1. Review that PR dependency before merging. Verify the shell validator and GitHub Actions workflow in a checkout; no runtime tests were run.",
+    "files_modified": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "NLT-DEV-OTOI.md",
+      "REVIEW.md",
+      "README.md",
+      "nltotoi.json",
+      ".nltotoi/",
+      "templates/",
+      "docs/active-threads.md",
+      "docs/agent-log/README.md",
+      "docs/escalations/README.md",
+      "SOPs/",
+      "agents/",
+      "ISSUE_TEMPLATE/",
+      "PULL_REQUEST_TEMPLATE.md",
+      ".claude/",
+      ".github/workflows/validate-nlt-governance.yml"
+    ],
+    "tests_run": [
+      "GitHub fetch-back verification of selected created/updated files"
+    ],
+    "tests_passing": false,
+    "pr_url": "https://github.com/NeuroLift-Technologies/nlt-pi/pull/2"
+  }
+}

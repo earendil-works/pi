@@ -1,0 +1,21 @@
+{
+  "handoff_record": {
+    "session_id": "",
+    "agent_name": "",
+    "date": "",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.0",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "",
+    "work_completed": [],
+    "work_in_progress": [],
+    "blockers": [],
+    "decisions_made": [],
+    "decisions_pending": [],
+    "escalations": [],
+    "next_agent_notes": "",
+    "files_modified": [],
+    "tests_run": [],
+    "tests_passing": false,
+    "pr_url": ""
+  }
+}
