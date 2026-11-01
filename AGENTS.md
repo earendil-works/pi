@@ -68,4 +68,4 @@ Escalate to Joshua W. Dorsey, Sr. when scope is unclear, architecture or authori
 
 ## Pull request requirements
 
-Every PR must state scope, architecture/governance impact, tests actually run, known limitations, and any decisions still required. Use `PULL_REQUEST_TEMPLATE/agent-contribution.md`. A review is evidence for the human decision-maker, not a substitute for approval.
+Every PR must state scope, architecture/governance impact, tests actually run, known limitations, and any decisions still required. Use the repository's root `PULL_REQUEST_TEMPLATE.md`. A review is evidence for the human decision-maker, not a substitute for approval.
