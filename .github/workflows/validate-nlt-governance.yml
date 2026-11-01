@@ -1,0 +1,45 @@
+name: Validate NLT-Pi Governance
+
+on:
+  pull_request:
+    paths:
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - 'NLT-DEV-OTOI.md'
+      - 'REVIEW.md'
+      - 'nltotoi.json'
+      - 'templates/**'
+      - 'docs/active-threads.md'
+      - 'docs/agent-log/**'
+      - 'docs/escalations/**'
+      - '.claude/**'
+      - '.nltotoi/**'
+      - '.github/workflows/validate-nlt-governance.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - 'NLT-DEV-OTOI.md'
+      - 'REVIEW.md'
+      - 'nltotoi.json'
+      - 'templates/**'
+      - 'docs/active-threads.md'
+      - 'docs/agent-log/**'
+      - 'docs/escalations/**'
+      - '.claude/**'
+      - '.nltotoi/**'
+      - '.github/workflows/validate-nlt-governance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  governance:
+    name: NLT-Pi Governance Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate repository governance
+        run: bash .nltotoi/scripts/validate-governance.sh
