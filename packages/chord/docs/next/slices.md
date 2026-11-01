@@ -181,6 +181,13 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 - **`rebuild` of tables** (key and column-type changes): `evolveTable` has no edit for them; build one only when a
   real case needs it. (Slice 6a's second spec review; out of slice 7b's scope, `slice-7b.md` §12.)
 
+### The plugin slice (plugin model)
+
+- **Cross-plugin imports by relative path and npm** (decision "Contracts come from where the plugin's code came
+  from"): remove `build.ts`'s by-name lookup, allow relative imports into another plugin of the same root, refuse
+  paths leaving the root; examples 35-38 and fixtures back to relative imports; drop the six `tsconfig` path aliases;
+  plugins README; the guide's chapter "Plugins Using Plugins". (Slice 10 built by-name imports.)
+
 ### After slice 11
 
 - **Small examples** (owner, 2026-10-30: the 7c examples are complete but complex): once HTTP, workers, web and TUI

@@ -1962,7 +1962,10 @@ type ReloadReport = {
 - **A plugin** is a directory with a `package.json` (its `name` is the plugin's name, npm style) and one file per facet
   kind the app names; plugins come from roots found by directory listing (no source parsing; the first root wins a
   duplicate name). Dependencies between plugins resolve by contract name at runtime; names are prefixed
-  (`<plugin>.<name>`; tools `<plugin>_<name>`).
+  (`<plugin>.<name>`; tools `<plugin>_<name>`). A plugin carries the contracts it was written against (decision "Contracts come from where the
+  plugin's code came from"): plugins that change together import each other by relative path within a root
+  (copied into the importer's script); others take contracts as an npm dependency at a fixed version (slice 10 still
+  resolves imports by plugin name; the plugin slice changes it).
 - **Loader D:** one esbuild script per facet (its own files, copied files of other plugins, its npm `dependencies`
   inlined; host packages, `chord.external` packages and Node builtins external, passed in at evaluation); each facet kind is defined once, `kinds: { <kind>: { platform: "node" | "browser", hostPackages } }` (slice 11); evaluated with
   `vm.Script` under a stable filename per (plugin, kind, digest); no module map: old generations are reclaimed by the
