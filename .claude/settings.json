@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/session-start.sh"
+            "command": "bash \"${CLAUDE_PROJECT_DIR}\/.claude/hooks/session-start.sh\""
           }
         ]
       }
@@ -15,11 +15,18 @@
   },
   "permissions": {
     "deny": [
-      "Bash(git push --force:*)",
-      "Bash(git push -f:*)",
+      "Bash(git push *--force*)",
+      "Bash(git push *-f*)",
+      "Bash(git -C * push *--force*)",
+      "Bash(git -C * push *-f*)",
       "Bash(git reset --hard:*)",
+      "Bash(git reset *--hard*)",
       "Bash(git clean -f:*)",
-      "Bash(rm -rf:*)"
+      "Bash(git clean *-f*)",
+      "Bash(rm -rf:*)",
+      "Bash(rm -fr:*)",
+      "Bash(rm *--recursive*--force*)",
+      "Bash(rm *--force*--recursive*)"
     ]
   },
   "env": {
