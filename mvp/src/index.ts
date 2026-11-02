@@ -12,11 +12,14 @@
  * - The MVP application owns the request lifecycle and agent composition.
  */
 
-import { AsfdkHarness, Channel } from "@neurolift-technologies/asfdk-harness";
-import type {
-  FoundationResponse,
-  HealthCheckResult,
-} from "@neurolift-technologies/asfdk";
+import asfdkPiHarness, { AsfdkHarness, Channel } from "@neurolift-technologies/asfdk-harness";
+import {
+  createAgentSession,
+  DefaultResourceLoader,
+  getAgentDir,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
+import type { FoundationResponse, HealthCheckResult } from "@neurolift-technologies/asfdk";
 
 export interface NltCodingAgentConfig {
   userId?: string;
@@ -47,6 +50,11 @@ export interface GovernedTurnResult {
   governance: Record<string, unknown>;
   continuity: Record<string, unknown> | null;
   blockedReason: string | null;
+}
+
+export interface NltCodingTurnResult extends GovernedTurnResult {
+  /** Final assistant text produced by the coding-agent runtime, when allowed. */
+  response: string | null;
 }
 
 export interface NltCodingAgent {
@@ -155,6 +163,69 @@ export function createNltCodingAgent(config: NltCodingAgentConfig = {}): NltCodi
       };
     },
   };
+}
+
+/**
+ * Runs one coding-agent turn under the NLT governance boundary.
+ *
+ * Flow:
+ *  1. Assess the prompt through the ASFDK harness (crisis / governance / continuity).
+ *  2. If the assessment blocks (RED/BLACK crisis or failed governance), do not run the
+ *     agent turn — return the blocked result with a refusal reason.
+ *  3. If allowed, execute the turn through the pi-coding-agent runtime with the ASFDK
+ *     harness extension loaded, and return the final assistant response.
+ */
+export async function runNltCodingTurn(input: GovernedTurnInput & { cwd?: string }): Promise<NltCodingTurnResult> {
+  const agent = createNltCodingAgent({
+    userId: input.userId,
+    sessionId: input.sessionId,
+    mode: input.mode,
+    cwd: input.cwd,
+  });
+
+  const governed = await agent.governedTurn({
+    prompt: input.prompt,
+    userId: input.userId,
+    sessionId: input.sessionId,
+    mode: input.mode,
+    cwd: input.cwd,
+    context: input.context,
+    channel: input.channel,
+  });
+
+  if (!governed.allowed) {
+    return { ...governed, response: null };
+  }
+
+  const cwd = input.cwd ?? process.cwd();
+  const resourceLoader = new DefaultResourceLoader({
+    cwd,
+    agentDir: getAgentDir(),
+    extensionFactories: [asfdkPiHarness],
+  });
+  await resourceLoader.reload();
+
+  const { session } = await createAgentSession({
+    cwd,
+    resourceLoader,
+    sessionManager: SessionManager.create(cwd),
+  });
+
+  let responseText = "";
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+      responseText += event.assistantMessageEvent.delta;
+    }
+  });
+
+  try {
+    await session.prompt(input.prompt);
+  } finally {
+    unsubscribe();
+    await session.dispose();
+  }
+
+  return { ...governed, response: responseText };
 }
 
 export { AsfdkHarness, Channel };
