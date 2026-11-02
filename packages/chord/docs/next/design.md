@@ -2305,8 +2305,10 @@ Decision "Slice 11's points" and "Slice 11, P3" to "P9".
   the page); pages learn of them through an object the web component serves (the current set); a base code change
   reloads the page.
 - `chord/next/react`: `HostProvider`, `useHold`, `useWatch`, `useRegistry`, `useRefState`.
-- `chord/next/tui`: a Node client connecting with a token, always running the downloaded code in a sandbox (a
-  permission-dropped worker thread, a bridge terminal, the trusted launcher outside); a component scope (`hold`,
+- `chord/next/tui`: a Node client connecting with a token, always running the downloaded code in a sandbox (decision
+  "The terminal's sandbox is a child process": a child process on pipes with an empty environment, `--permission`
+  granting nothing and no SQLite; the builtin allowlist and a frozen substitute `process` inside; a bridge terminal;
+  the trusted launcher outside, confirming copy, open and attach on its own prompt); a component scope (`hold`,
   `watch`, `registry`, released on dispose, one `changed` callback for the app's redraw), no pi-tui dependency.
 
 ### Channels
