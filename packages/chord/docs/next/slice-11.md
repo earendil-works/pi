@@ -81,6 +81,20 @@ releases, presence is the app's. No components, no styling.
   the bridged link, in-place reloads through a `TuiScripts` object as the web.
 - **`TuiScope`** (P9): `new TuiScope(host, changed)` with `hold`, `watch`, `registry`, `dispose`; no pi-tui dependency.
 
+## 4b. Looks and themes (decision "Looks and themes", `docs/next/theming/`)
+
+- The kit ships `Themes` (`defineRegistry<Theme, readonly Theme[]>`, in the shared module the kit's apps re-export),
+  `Theme = { id, name, mode: "dark" | "light", colors: { accent, bg, fg, muted, error, warning, success, ...app roles },
+  web?, tui? }`, and a `themes` preference per user (`{ dark, light }` theme ids) stored by the kit's users plugin or a
+  local object for single-user apps.
+- Web: `startPage` watches `Themes` and the preference with `prefers-color-scheme`, and writes the active theme as CSS
+  variables on `:root` (`--accent`, ..., plus `web` extras), with no reload; the base bundle's stylesheet is the app's.
+- TUI: `TuiScope`'s host gets a `theme` lookup by role (true colour, else the nearest of 256 colours, `tui` overrides
+  first).
+- CSS modules (`*.module.css`) work in plugin builds (esbuild's local-css loader); documented in `plugin-authoring.md`.
+- Version 1 of `Themes`; a later role is added by a version bump mapping old entries (missing roles from the default
+  theme).
+
 ## 5. In the app kit
 
 `startApp` gains `web: { entry, page }` and `tui: { entry }` (optional); with them it creates the surfaces and adds
@@ -96,4 +110,4 @@ their facets. Without, an app has no web or TUI surface (an API-only app).
   TUI: the sandbox cannot read a file or spawn a process (a test plugin that tries), the bridge, an in-place reload,
   `TuiScope` disposal; pairing a TUI client against a kit app.
 - Examples: `56-web` (a kit app with a page, two web plugins, an edit applied in place), `57-tui` (a kit app with a
-  TUI client, sandboxed).
+  TUI client, sandboxed), `58-themes` (a theme plugin restyling a page and a TUI live).

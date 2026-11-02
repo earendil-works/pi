@@ -2318,6 +2318,15 @@ validation and copies the v2 kernel added around Delta.
   or `github:bob/plugins#<commit>`, installed by plain npm), imported by path into it (`@bob/plugins/notes/contract.ts`)
   or through its `exports`. Removed: the dependency form of `chord.plugins` (`"name": "github:...#ref:subfolder"`) and
   its own clone-and-link installer (it could delete outside `node_modules`).
+- **Looks and themes (owner, 2026-11-02: "i suppose", then "do all the things"; proposal `docs/next/theming/`):**
+  shared components come from the app's per-kind API modules (one instance in the base bundle); looks are design
+  tokens, CSS custom properties on `:root` on the web, which the app's components and plugins' CSS read; plugins scope
+  their CSS with CSS modules (`*.module.css`); the terminal gets the app's components and a theme lookup by role. A
+  theme is data in one registry, `Themes`, shipped by the kit in its shared module with the code that writes the active
+  theme as CSS variables (web) and the lookup (TUI): a base set of roles the kit defines (accent, bg, fg, muted, error,
+  warning, success), apps may add roles; a user picks one dark and one light theme, the system preference chooses;
+  `web` extras may name fonts and assets of the plugin under the page's CSP. Plugins contribute themes; they cannot
+  change the app's base CSS or components. The open questions' recommendations taken.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
