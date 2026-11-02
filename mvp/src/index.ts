@@ -18,6 +18,7 @@ import {
   DefaultResourceLoader,
   getAgentDir,
   SessionManager,
+  type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import type { FoundationResponse, HealthCheckResult } from "@neurolift-technologies/asfdk";
 
@@ -104,6 +105,27 @@ function hasHighRiskState(state: Record<string, unknown>): boolean {
     Boolean(state.selfHarmIndicators) ||
     Boolean(state.inabilityToEnsureSafety)
   );
+}
+
+function buildPreflightBlocks(governed: GovernedTurnResult): string[] {
+  const blocks: string[] = [];
+  const interaction = governed.interaction;
+  blocks.push(
+    `[ASFDK Authority] ${JSON.stringify({
+      componentsInvolved: interaction?.componentsInvolved ?? [],
+      responseType: interaction?.responseType ?? null,
+      allowed: governed.allowed,
+    })}`,
+  );
+  if (governed.crisisLevel && governed.crisisLevel !== "GREEN") {
+    blocks.push(
+      `[RRT Advocate] Crisis level: ${governed.crisisLevel}${governed.blockedReason ? ` — ${governed.blockedReason}` : ""}`,
+    );
+  }
+  if (governed.continuity) {
+    blocks.push(`[Sleepwalker Continuity] ${JSON.stringify(governed.continuity)}`);
+  }
+  return blocks;
 }
 
 export function createNltCodingAgent(config: NltCodingAgentConfig = {}): NltCodingAgent {
@@ -198,10 +220,24 @@ export async function runNltCodingTurn(input: GovernedTurnInput & { cwd?: string
   }
 
   const cwd = input.cwd ?? process.cwd();
+  const governedExtension: ExtensionFactory = (pi) => {
+    pi.on("before_agent_start", async (event) => {
+      if (event.messageType !== "user") {
+        return;
+      }
+      const protocolSystemPrompt = await agent.harness.protocolSystemPrompt();
+      const blocks = buildPreflightBlocks(governed);
+      const systemPrompt = [event.systemPrompt, protocolSystemPrompt, ...blocks]
+        .filter((part) => part.length > 0)
+        .join("\n\n");
+      return { systemPrompt };
+    });
+  };
+
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: getAgentDir(),
-    extensionFactories: [asfdkPiHarness],
+    extensionFactories: [governedExtension, asfdkPiHarness],
   });
   await resourceLoader.reload();
 
