@@ -32,6 +32,6 @@ Do not expose coding-agent tools to requests until the ASFDK harness and executi
 - Blocking crisis levels (`RED` / `BLACK`) or failed governance assessments return `allowed: false` with a `blockedReason` — escalation to a human precedes agent execution.
 - Non-blocking assessments return `allowed: true` with the interaction, emotional state, governance, and continuity context needed to feed the subsequent coding-agent turn.
 
-`runNltCodingTurn()` wraps the above into a single governed turn entry point: assess → block-or-run → execute through the pi-coding-agent runtime (ASFDK extension loaded) → return the final assistant response.
+`runNltCodingTurn()` wraps the above into a single governed turn entry point: assess → block-or-run → inject governed system prompt (ASFDK protocol + preflight) → execute through the pi-coding-agent runtime (ASFDK extension loaded) → return the final assistant response plus post-turn governance/continuity bookkeeping.
 
-The MVP does not yet execute the coding-agent runtime loop inside this gate; the runtime integration (preflight → agent turn → govern → continuity save) is the next agent-side increment.
+The MVP does not yet persist continuity or run a separate post-turn response-governance pass; those remain explicit follow-up agent-side work.

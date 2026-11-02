@@ -56,6 +56,12 @@ export interface GovernedTurnResult {
 export interface NltCodingTurnResult extends GovernedTurnResult {
   /** Final assistant text produced by the coding-agent runtime, when allowed. */
   response: string | null;
+  /** Post-turn governance + continuity bookkeeping captured after execution. */
+  postTurn: {
+    governance: Record<string, unknown>;
+    continuity: Record<string, unknown> | null;
+    governedAt: Date;
+  };
 }
 
 export interface NltCodingAgent {
@@ -216,7 +222,15 @@ export async function runNltCodingTurn(input: GovernedTurnInput & { cwd?: string
   });
 
   if (!governed.allowed) {
-    return { ...governed, response: null };
+    return {
+      ...governed,
+      response: null,
+      postTurn: {
+        governance: governed.governance,
+        continuity: governed.continuity,
+        governedAt: new Date(),
+      },
+    };
   }
 
   const cwd = input.cwd ?? process.cwd();
@@ -261,7 +275,15 @@ export async function runNltCodingTurn(input: GovernedTurnInput & { cwd?: string
     await session.dispose();
   }
 
-  return { ...governed, response: responseText };
+  return {
+    ...governed,
+    response: responseText,
+    postTurn: {
+      governance: governed.governance,
+      continuity: governed.continuity,
+      governedAt: new Date(),
+    },
+  };
 }
 
 export { AsfdkHarness, Channel };
