@@ -8,7 +8,10 @@
 **Status:** in_review  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
 **Summary:** Align NLT-Pi's repository-specific governance implementation with the minimum requirements and reusable templates in the public NeuroLift-Technologies/.github repository. Correct template provenance, provide local public-baseline governance documents and links, remove inherited upstream Pi contributor restrictions from issue templates, improve registration/handoff evidence states, and validate the baseline locally. The public templates are minimum requirements; NLT-Pi retains justified architecture-specific controls.  
+**PR:** https://github.com/NeuroLift-Technologies/nlt-pi/pull/7  
 **Branch:** `fix/public-governance-baseline-alignment`  
+**Agent registration:** `docs/agent-log/registrations/2026-11-01-chatgpt-gpt6-governance.json`  
+**Intent record:** `docs/agent-log/intent/2026-11-01-public-governance-alignment.md`  
 **Verification:** Static repository inspection and content changes only. Governance validator and repository test suite have not yet been executed in this environment; CI should provide the executable verification.  
 **Next action:** Review PR, inspect CI results, and merge only after human approval.
 
