@@ -2299,7 +2299,8 @@ validation and copies the v2 kernel added around Delta.
   `useHold(Type, params)`, `useWatch(watchable)`, `useRegistry(R)`, `useRefState(ref)`; releasing holds on unmount,
   and a component unmounted by a reload never counts as leaving (design §21). No components, no styling; non-React apps
   never load it.
-- **Slice 11, P8: the terminal client always runs sandboxed (owner, 2026-11-01: "the terminal should always use the
+- **Slice 11, P8: the terminal client always runs sandboxed (**superseded in part** by "The terminal's sandbox is a
+  child process", 2026-11-02: no longer a worker thread) (owner, 2026-11-01: "the terminal should always use the
   sandbox approach"):** `chord/next/tui` is a Node client host that connects with a token (decision "The app kit, point
   3", (c)), downloads the base bundle and the TUI plugin scripts from the server and runs the app's TUI entry, always
   inside p2's sandbox: a permission-dropped worker thread with a bridge terminal, the trusted launcher outside it
@@ -2356,6 +2357,22 @@ validation and copies the v2 kernel added around Delta.
   restarts it. Usually nothing runs: Radius receiving uploads runs no host for a session it does not drive, and taking
   a session back pulls before its worker starts. A live view of a replica (watching a session continue elsewhere) is a
   later refinement: fewer pulls while watched, or a read-only view without the worker.
+- **The terminal's sandbox is a child process (owner, 2026-11-02: "yes"; refines "Slice 11, P8"; slice 11 recheck,
+  Opus E1, E2):** the hardened worker thread was escaped twice in one review round, because downloaded code shares
+  one JavaScript realm with Node's internals: E1 replaced `Set.prototype.has`, which the `require` allowlist used, and
+  `require("tty")` wrote raw to the terminal; E2 patched `EventEmitter.prototype.emit` and caught Node's real
+  `process` when Node emitted a warning on it (environment, `kill`, every builtin). Each fix closes one road and the
+  next reachable internal is another. So the sandbox is a child process of the launcher's Node binary: stdin, stdout
+  and stderr are pipes to the launcher (no descriptor is the terminal), its environment empty (only
+  `LD_LIBRARY_PATH` copied when the launcher has one: needed to run the same binary, set by the user), its directory
+  a private empty one, `--permission` with nothing granted (no file system, network, child processes, workers,
+  addons, inspector, WASI), `--no-experimental-sqlite` (SQLite opens files past the permission model, Node gist
+  https://gist.github.com/badlogic/a83cd80d0669dbcf77e029ac7b25ac96). Messages are length-prefixed binary frames on
+  the pipes, not Node's IPC. The JavaScript layer stays as a second barrier (evaluation only through the bootstrap,
+  the builtin allowlist, a frozen substitute `process`); the V8 code-generation toggle goes (the bridge evaluates
+  strings anyway). Known gaps, accepted until Node closes them: the child can signal the user's processes
+  (`process.kill`) and allocate memory outside its heap. Cost: one more Node process per terminal session (measured
+  by the build against the worker). Back to a worker only if Node ships per-worker permissions.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
