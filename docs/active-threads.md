@@ -8,6 +8,7 @@
 **Status:** in_review  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
 **Summary:** Remove the fork-inherited contributor auto-close/approval mechanism from NLT-Pi so normal GitHub contribution behavior applies. Deleted the PR Gate, Issue Gate, and Approve Contributor workflows first, then their `.github/APPROVED_CONTRIBUTORS` data file, then the local `CONTRIBUTING.md` so GitHub can surface the organization-level default guide from `NeuroLift-Technologies/.github`.  
+**PR:** https://github.com/NeuroLift-Technologies/nlt-pi/pull/4  
 **Branch:** `governance/remove-contributor-gates`  
 **Next action:** Confirm the two requested repository settings and verify that `main` requires approving review(s) and required status checks. Branch-protection read currently returns HTTP 403 for this integration; do not infer protection from the branch's `protected` flag alone.
 
