@@ -10,17 +10,21 @@
       "Created the mvp application directory and initial TypeScript package scaffold.",
       "Declared @earendil-works/pi-coding-agent 1.4.0 as the runtime dependency.",
       "Documented runtime, governance, and execution ownership boundaries.",
-      "Recorded that framework, authentication, persistence, external integrations, and deployment remain unselected."
+      "Recorded that framework, authentication, persistence, external integrations, and deployment remain unselected.",
+      "Added mvp as an npm workspace so its exact @earendil-works/pi-coding-agent dependency resolves to the checked-in packages/coding-agent package.",
+      "Added an explicit MVP typecheck to the root repository check pipeline.",
+      "Updated the npm lockfile workspace metadata and documented the Vercel monorepo source-files-outside-root requirement."
     ],
     "work_in_progress": [],
     "blockers": [
-      "No local checkout or package installation was available to run typecheck/build/tests.",
-      "Vercel framework and deployment configuration have not been selected."
+      "No local npm execution environment was available through the repository connector; npm ci, npm run build, npm run check, and tests remain unverified until PR CI completes.",
+      "Vercel project settings, framework, and deployment configuration remain unselected and unchanged."
     ],
     "decisions_made": [
       "Keep MVP application code separate from packages/coding-agent.",
       "Use the existing coding-agent package rather than copying its implementation.",
-      "Do not expose tools or claim governance enforcement before ASFDK integration is verified."
+      "Do not expose tools or claim governance enforcement before ASFDK integration is verified.",
+      "Use npm workspaces to keep the MVP dependency linked to the checked-in coding-agent package rather than the registry release."
     ],
     "decisions_pending": [
       "Select the Vercel application framework and deployment entry point.",
@@ -34,10 +38,13 @@
       "docs/active-threads.md",
       "docs/agent-log/registrations/2026-11-02-chatgpt-gpt6-mvp-scaffold.json",
       "docs/agent-log/intent/2026-11-02-mvp-coding-agent-scaffold.md",
-      "docs/agent-log/handoffs/2026-11-02-mvp-coding-agent-scaffold.json"
+      "docs/agent-log/handoffs/2026-11-02-mvp-coding-agent-scaffold.json",
+      "package.json",
+      "package-lock.json",
+      ".github/workflows/ci.yml"
     ],
     "tests_run": [],
-    "test_result": "not_run",
+    "test_result": "not_run_connector_only",
     "pr_url": "https://github.com/NeuroLift-Technologies/nlt-pi/pull/8"
   }
 }
