@@ -2351,6 +2351,11 @@ validation and copies the v2 kernel added around Delta.
   call; model, tools and location may differ; the tool's description names the cost (prompt cache only with the same
   model). pi's `/tree` (in-session branches) is wanted for p3: proposed as forks inside the session's store (edit an
   earlier message to fork, a branch list to switch; a full navigator and branch summaries later).
+- **Sync applies batches with the host stopped (owner, 2026-11-02: "sure"; sync example `60-session-sync`):**
+  `applyBatch` refuses while a host holds claims on the store; the sync layer stops the session's worker, applies,
+  restarts it. Usually nothing runs: Radius receiving uploads runs no host for a session it does not drive, and taking
+  a session back pulls before its worker starts. A live view of a replica (watching a session continue elsewhere) is a
+  later refinement: fewer pulls while watched, or a read-only view without the worker.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
