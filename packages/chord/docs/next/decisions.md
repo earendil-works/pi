@@ -2294,6 +2294,11 @@ validation and copies the v2 kernel added around Delta.
   network changes; replace a socket open but silent; stop when the server reports an outdated protocol (the page
   reloads) or the app's `canRetry` says no (a guest's share ended). References keep their last values and wait while
   down, so the UI shows a banner from the connection state. A network reconnect, not a crash restart.
+- **Slice 11, P7: React bindings (owner, 2026-11-01: "we definitely want something like that"; p2's `useObject`,
+  `useReadable`, `useRegistry` in `runtime/web.tsx`):** an optional subpath (`chord/next/react`): `HostProvider`,
+  `useHold(Type, params)`, `useWatch(watchable)`, `useRegistry(R)`, `useRefState(ref)`; releasing holds on unmount,
+  and a component unmounted by a reload never counts as leaving (design §21). No components, no styling; non-React apps
+  never load it.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
