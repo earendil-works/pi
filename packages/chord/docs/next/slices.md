@@ -187,6 +187,11 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   from"): remove `build.ts`'s by-name lookup, allow relative imports into another plugin of the same root, refuse
   paths leaving the root; examples 35-38 and fixtures back to relative imports; drop the six `tsconfig` path aliases;
   plugins README; the guide's chapter "Plugins Using Plugins". (Slice 10 built by-name imports.)
+- **The plugin model's other points** (decision "The plugin model, points 3, 4, 5 and 8, imports and builds"): per-kind
+  API modules and plugin contract files with the build's per-kind import check; package-name imports with npm or git
+  pins (subfolders of multi-plugin repositories cloned and linked); installing plugins from git; base code reduced to
+  the API, bootstrap and a start-data facet, the harness and core registry providers as plugins, a required root; a
+  skill and documentation for agents on a plugin's layout and build.
 
 ### After slice 11
 

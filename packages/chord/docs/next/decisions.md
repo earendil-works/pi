@@ -2165,6 +2165,46 @@ validation and copies the v2 kernel added around Delta.
   Contracts are data and bind through `accepts` whatever Chord runs. One facet imports from one API version only
   (checked at build). Only base code imports Chord directly. Bundling is slice 10's host packages: the version is part
   of the name (`kinds.hostPackages` lists `@acme/app/v3`, `@acme/app/v2`), each process provides its own modules.
+- **The plugin model, points 3, 4, 5 and 8, imports and builds (owner, 2026-11-01, by voice: "yeah that checks out"; "lock the decisions on the
+  points which was discussed"; primer `docs/next/plugin-primer/`):**
+  (3) **Split by host kind, for the app and for plugins alike.** The app's API per version has a shared module
+  (`@acme/app/v3`: Chord's re-exported surface, host kinds, the principal type, `defineFacet` bound to it, contracts
+  and registries that cross hosts) and per-kind modules (`/v3/web`, `/v3/tui`, `/v3/server`, `/v3/worker` where
+  needed: UI components, registries and `local` contracts that live on that kind only). A plugin's contract files
+  mirror it: `contract.ts` (shared) and `contract.server.ts`, `contract.worker.ts`, `contract.web.tsx`,
+  `contract.tui.ts` as needed. A contract file mentions native things (React components, functions) only through
+  `import type`; at runtime it imports only the shared API and its plugin's data-only files (a hard rule). The build
+  checks every import by the file it resolves to: a per-kind file (`.web.` etc.) or per-kind API module only for that
+  kind, and a file importing a package the kind does not provide (React in a worker) refused. Shared UI between
+  plugins: a plain component through an imported file (inlined into the importer's script, frozen at its build), or
+  a registry when one live instance is needed (React contexts, a feature others embed).
+  (4) **Host kinds on registry tokens** are covered by placement: a token used on one kind lives in that kind's file,
+  so other kinds cannot import it; an explicit `hosts` marker only if a shared token must be limited later.
+  Registries version by hand: readers and writers work across versions through the token's version and the defining
+  plugin's `accepts`; no fingerprint for native values (decided earlier, unchanged).
+  (5) **Third parties get the app's contracts through its versioned API:** each built-in plugin keeps its contract
+  files; the API re-exports the ones the app promises (`export { Notes } from "../plugins/notes/contract.ts"`), so a
+  plugin built against `/v2` keeps v2's contracts; the others stay private. No per-area subpackages.
+  (Imports) **Plainly, with no resolution magic:** within one repository (a root, or a repository of several
+  plugins), relative paths to the files (`../notes/contract.web.tsx`); across repositories, the package name with its
+  exports (`@bob/notes`, `@bob/notes/web`), pinned in `dependencies` by an npm version or a git ref
+  (`github:bob/notes#<commit>`; npm's git dependencies, no registry publishing needed; a plugin in a subfolder of a
+  multi-plugin repository is cloned and linked by the plugins component, which npm cannot do). Rejected: one
+  specifier resolving to a sibling or an npm package depending on `dependencies` ("kinda magic"). Plugins are
+  installed from git by cloning a branch, tag or commit into a plugins root (as the coding agent's git packages).
+  (8, base code) **Base code shrinks to the API, bootstrap and a start-data facet:** the vocabulary (the versioned API modules,
+  host packages, never reloaded), bootstrap (creating hosts, opening the store, components such as `createHttp` and
+  `createWorkers`, which take settings and process values and return facets, their natives opened by Chord, passed as
+  the same object at every reload) and one small facet serving process values (start data, the opened store) as core
+  objects. Every implementation, the harness and the providers of core registries included, is a plugin in the app's
+  own root, loaded, reloaded and failing per plugin like any other; the app may mark its root required, so a core
+  plugin failing at startup is fatal. Built-in plugins follow the same rules as any plugin.
+  (Build) **No build hooks from plugins:** the server builds every plugin with one esbuild call from TypeScript source
+  (no `dist` needed; installs run with scripts off); what the build handles (TS, TSX, JS, JSON, CSS, assets and WASM
+  by URL) is the plugin's toolbox, generated files are committed; a CSS preprocessor or similar, if ever needed, is
+  enabled by the app per host kind, never by a plugin (a stranger's web plugin must not run code on the server).
+  To do: a skill and documentation for agents describing a plugin's layout, its contract files, imports and how the
+  host builds it. Open from the primer: (6) `testPlugin` with stub facets, (7) single-file plugins.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
