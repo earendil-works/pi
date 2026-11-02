@@ -29,6 +29,26 @@ export interface NltCodingAgentConfig {
   otoiContent?: string;
 }
 
+export interface GovernedTurnInput {
+  prompt: string;
+  userId?: string;
+  sessionId?: string;
+  mode?: string;
+  cwd?: string;
+  context?: Record<string, unknown>;
+  channel?: Channel;
+}
+
+export interface GovernedTurnResult {
+  allowed: boolean;
+  crisisLevel: string | null;
+  interaction: FoundationResponse;
+  emotionalState: unknown;
+  governance: Record<string, unknown>;
+  continuity: Record<string, unknown> | null;
+  blockedReason: string | null;
+}
+
 export interface NltCodingAgent {
   readonly harness: AsfdkHarness;
   readonly mode: string;
@@ -42,6 +62,40 @@ export interface NltCodingAgent {
   protocolSnapshot(): Promise<Record<string, unknown>>;
   protocolSystemPrompt(): Promise<string>;
   foundation(): Promise<unknown>;
+  governedTurn(input: GovernedTurnInput): Promise<GovernedTurnResult>;
+}
+
+/** Crisis levels that require human escalation before any agent turn may run. */
+const BLOCKING_CRISIS_LEVELS: ReadonlySet<string> = new Set(["RED", "BLACK"]);
+
+function toRecord(value: unknown): Record<string, unknown> {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function extractCrisisLevel(
+  interaction: FoundationResponse | undefined,
+  emotionalState: unknown,
+): string | null {
+  const content = toRecord(interaction?.content);
+  const rrt = toRecord(content.rrt);
+  const level = rrt.crisisLevel;
+  if (typeof level === "string") {
+    return level;
+  }
+  const state = toRecord(emotionalState);
+  const stateLevel = state.crisisLevel ?? state.level;
+  return typeof stateLevel === "string" ? stateLevel : null;
+}
+
+function hasHighRiskState(state: Record<string, unknown>): boolean {
+  return (
+    Boolean(state.explicitSuicidalIdeation) ||
+    Boolean(state.selfHarmIndicators) ||
+    Boolean(state.inabilityToEnsureSafety)
+  );
 }
 
 export function createNltCodingAgent(config: NltCodingAgentConfig = {}): NltCodingAgent {
@@ -65,6 +119,41 @@ export function createNltCodingAgent(config: NltCodingAgentConfig = {}): NltCodi
     protocolSnapshot: async () => (await harness.protocolSnapshot()) as Record<string, unknown>,
     protocolSystemPrompt: () => harness.protocolSystemPrompt(),
     foundation: () => harness.foundation(),
+    governedTurn: async (input: GovernedTurnInput): Promise<GovernedTurnResult> => {
+      const assessment = await harness.assessText(
+        input.prompt,
+        input.context ?? {},
+        input.channel ?? Channel.UNKNOWN,
+      );
+      const interaction = assessment.interaction;
+      const emotionalState = assessment.emotionalState;
+      const crisisLevel = extractCrisisLevel(interaction, emotionalState);
+      const highRisk =
+        BLOCKING_CRISIS_LEVELS.has(crisisLevel ?? "") || hasHighRiskState(toRecord(emotionalState));
+      const interactionFailed = interaction?.success === false;
+      const allowed = !highRisk && !interactionFailed;
+
+      const governance: Record<string, unknown> = {
+        componentsInvolved: interaction?.componentsInvolved ?? [],
+        responseType: interaction?.responseType ?? null,
+      };
+
+      const continuity = (emotionalState ?? null) as Record<string, unknown> | null;
+
+      return {
+        allowed,
+        crisisLevel,
+        interaction,
+        emotionalState,
+        governance,
+        continuity,
+        blockedReason: allowed
+          ? null
+          : highRisk
+            ? `Crisis intervention required before agent turn execution (level: ${crisisLevel ?? "unknown"})`
+            : "Governance assessment failed before agent turn execution",
+      };
+    },
   };
 }
 
