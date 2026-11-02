@@ -196,7 +196,7 @@ class Execution {
 	/** Result numbers `deliver()` used. */
 	private readonly delivered = new Set<number>();
 	private readonly signal: AbortSignal | undefined;
-	private readonly timer: ReturnType<typeof setTimeout> | undefined;
+	private timer: ReturnType<typeof setTimeout> | undefined;
 	private readonly output: CodemodeOutputItem[] = [];
 	private readonly calls: CodemodeCall[] = [];
 	private readonly pending = new Map<number, PendingCall>();
@@ -295,6 +295,22 @@ class Execution {
 			now,
 			...(properties === undefined ? {} : { properties }),
 		});
+	}
+
+	/** Replace a host-controlled run's timer without changing its VM or pending calls. */
+	setDeadline(deadline: number | undefined): void {
+		if (deadline !== undefined && !Number.isFinite(deadline)) throw new Error("Deadline must be finite");
+		if (this.finished) return;
+		clearTimeout(this.timer);
+		this.timer =
+			deadline === undefined
+				? undefined
+				: setTimeout(
+						() => {
+							this.finish({ kind: "timeout", message: "Execution timed out: its deadline passed" });
+						},
+						Math.max(0, deadline - Date.now()),
+					);
 	}
 
 	abort(message: string): Promise<CodemodeResult> {
@@ -558,6 +574,7 @@ export class CodemodeSandboxBase {
 		const result = execution.promise.finally(() => this.running.delete(execution));
 		return {
 			result,
+			setDeadline: (deadline) => execution.setDeadline(deadline),
 			deliver: (seq, now, id, outcome) => execution.deliver(seq, now, id, outcome),
 			get finished() {
 				return execution.finished;

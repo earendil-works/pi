@@ -229,6 +229,11 @@ export interface CodemodeRunOptions {
 export interface CodemodeRun {
 	readonly result: Promise<CodemodeResult>;
 	/**
+	 * Replace the host deadline (milliseconds since the epoch); undefined suspends it. Only the host can call this.
+	 * Does not restart a finished run or change its VM clock, interrupt budget, or memory limit.
+	 */
+	setDeadline(deadline: number | undefined): void;
+	/**
 	 * Whether the run has its outcome: the script ended, timed out, or failed, or the run was aborted. Set when that is
 	 * decided, before `result` settles; calls can no longer be answered. It does not mean the VM has exited.
 	 */

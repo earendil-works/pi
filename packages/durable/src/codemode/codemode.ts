@@ -59,7 +59,7 @@ import type {
 	ToolRegistration,
 } from "../harness/types.ts";
 import { rankDocuments } from "../search.ts";
-import type { JsonObject } from "../types.ts";
+import type { JsonObject, TaskId, Tx } from "../types.ts";
 import {
 	type CodemodeNamespace,
 	codemodeDescription,
@@ -102,7 +102,7 @@ type Start = {
 	seed: number;
 	/** The VM's fingerprint, recorded by the first run before any call is admitted. */
 	fingerprint?: string;
-	/** `startedAt + timeout_ms` when the script set one. */
+	/** Active deadline when the script set a timeout; committed human waits extend it. */
 	deadline?: number;
 	tools: DeclaredTool[];
 	/** The namespaces of the tools, as `describeNamespace()` and `searchTools()` see them. */
@@ -115,6 +115,9 @@ type Start = {
 
 type RunState = {
 	start?: Start;
+	/** Host-declared human waits; false is a permanent receipt for a resolved wait ID. */
+	inputWaits?: Record<string, boolean>;
+	inputWaitStartedAt?: number;
 	/** Directory of the result's files (the full output, images), created once: a rerun writes the same files again. */
 	outputDir?: string;
 	/** The outcome, decided once. */
@@ -127,6 +130,45 @@ export const CodemodeRunDoc = defineDoc<RunState>({
 	scope: "task",
 	initial: () => ({}),
 });
+
+/**
+ * Suspend a script's timeout while the host awaits human input. Commit before waiting, and resolve before
+ * executing the approved action. Repeated or late events for a resolved wait never extend or reopen the timeout.
+ * Callers authorize the human-input boundary; ordinary external-tool latency must remain on the clock.
+ * Returns false after the script ends or when the task is not an active code-mode run.
+ */
+export async function setCodemodeInputWait(tx: Tx, taskId: TaskId, waitId: string, waiting: boolean): Promise<boolean> {
+	if (!waitId || ["__proto__", "constructor", "prototype"].includes(waitId)) throw new Error("Invalid input wait ID");
+	const task = await tx.task(taskId);
+	if (
+		!task ||
+		task.kind !== "pi.tool" ||
+		task.abortRequested ||
+		["terminal", "completing"].includes(task.state.status)
+	)
+		return false;
+	const run = await tx.doc(CodemodeRunDoc, taskId);
+	if (!run.start || run.result !== undefined) return false;
+	run.inputWaits ??= {};
+	const waits = run.inputWaits;
+	if (Object.hasOwn(waits, waitId) && waits[waitId] === waiting) return true;
+	if (waits[waitId] === false) return true;
+	const now = Date.now();
+	if (waiting) {
+		if (run.inputWaitStartedAt === undefined) {
+			if (run.start.deadline !== undefined && run.start.deadline <= now) return false;
+			run.inputWaitStartedAt = now;
+		}
+		waits[waitId] = true;
+	} else {
+		waits[waitId] = false;
+		if (run.inputWaitStartedAt !== undefined && !Object.values(waits).some(Boolean)) {
+			if (run.start.deadline !== undefined) run.start.deadline += Math.max(0, now - run.inputWaitStartedAt);
+			delete run.inputWaitStartedAt;
+		}
+	}
+	return true;
+}
 
 type JournalEntry = {
 	/** The VM's call ID. Its result is the entry's position + 1 (`seq`). */
@@ -448,8 +490,12 @@ class CodemodeCall {
 				),
 			);
 		}
-		const remaining = this.start.deadline === undefined ? undefined : this.start.deadline - Date.now();
+		const watch = await api.watchDoc(CodemodeRunDoc, api.taskId, context);
+		if (!watch?.value) throw new Error("Code mode run state is unavailable");
+		const deadline = watch.value.inputWaitStartedAt === undefined ? watch.value.start?.deadline : undefined;
+		const remaining = deadline === undefined ? undefined : deadline - Date.now();
 		if (remaining !== undefined && remaining <= 0) {
+			await watch.stop();
 			return this.decide(errorResult(`Script timed out: its deadline passed while it was interrupted.`));
 		}
 
@@ -468,6 +514,10 @@ class CodemodeCall {
 				onStarted: (fingerprint) => void this.checkFingerprint(fingerprint),
 				onCall: (call) => this.onCall(call),
 				onIdle: (seq, issued) => this.onIdle(seq, issued),
+			});
+			watch.start(async (state) => {
+				if (!state) return this.fail(new Error("Code mode run state was retired"));
+				this.run.setDeadline(state.inputWaitStartedAt === undefined ? state.start?.deadline : undefined);
 			});
 			const result = await this.run.result;
 			if (this.failure !== undefined) throw this.failure;
@@ -505,6 +555,7 @@ class CodemodeCall {
 			}
 			return this.complete(result);
 		} finally {
+			await watch.stop();
 			context.abortSignal?.removeEventListener("abort", onAbort);
 		}
 	}

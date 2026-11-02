@@ -9,5 +9,6 @@ export {
 	type CodemodeToolOptions,
 	createCodemodeExtension,
 	createCodemodeTool,
+	setCodemodeInputWait,
 } from "./codemode.ts";
 export { type CodemodeNamespace, DEFAULT_CODEMODE_INLINE_BUDGET } from "./describe.ts";
