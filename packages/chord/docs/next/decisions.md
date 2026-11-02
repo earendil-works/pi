@@ -2396,6 +2396,16 @@ validation and copies the v2 kernel added around Delta.
   `t.render` in its own language (checked at runtime across a link: an unknown key shows the key). Never translated:
   the model's prompts and answers, log lines, error codes. No translator file format now; an export/import tool to JSON
   when someone needs it. Built after slice 11 (carry-over "After slice 11").
+- **Chord v2 becomes the package's root (owner, 2026-11-03: "src/old", "subpaths", "yes", "yes", "no, chord is
+  wip"; for merging pi-private into pi this week; trial `/home/badlogic/chord-root-move/report.md`):** `src/next` is
+  the package's `src` (its main export), the Node parts `src/next-node` are `src/node` with short subpaths (`/http`,
+  `/workers`, `/plugins`, `/plugins/runtime`, `/app`, and slice 11's `/web`, `/web/server`, `/react`, `/tui`,
+  `/tui/launcher`), the shared foundations Durable and env use get their own subpaths (`/json`, `/watch`, next to
+  `/context`, `/delta`, `/sqlite`), `test/next` and `docs/next` move up (`test/`, `docs/`). Chord v1, which only p2
+  still runs on, moves to `src/old` (exported as `/old`, `/old/node`; its tests `test/old`, its docs `docs/old`), not
+  into p2 (its vitest tests and about 140 imports would need porting); it is deleted in the change that moves p2 to
+  v2. No version bump: Chord is work in progress. Done by a re-runnable script (move, import and link rewrites,
+  generated exports and aliases) on the base that includes slice 11; p2's imports updated in private.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
