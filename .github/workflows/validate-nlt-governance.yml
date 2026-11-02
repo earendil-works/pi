@@ -5,6 +5,9 @@ on:
     paths:
       - 'AGENTS.md'
       - 'CLAUDE.md'
+      - 'GOVERNANCE.md'
+      - 'governance.yaml'
+      - 'governance.json'
       - 'NLT-DEV-OTOI.md'
       - 'REVIEW.md'
       - 'nltotoi.json'
@@ -16,6 +19,7 @@ on:
       - '.nltotoi/**'
       - 'SOPs/**'
       - 'agents/**'
+      - 'scripts/governance-validator.test.mjs'
       - '.github/ISSUE_TEMPLATE/**'
       - 'PULL_REQUEST_TEMPLATE.md'
       - '.github/workflows/validate-nlt-governance.yml'
@@ -24,6 +28,9 @@ on:
     paths:
       - 'AGENTS.md'
       - 'CLAUDE.md'
+      - 'GOVERNANCE.md'
+      - 'governance.yaml'
+      - 'governance.json'
       - 'NLT-DEV-OTOI.md'
       - 'REVIEW.md'
       - 'nltotoi.json'
@@ -35,6 +42,7 @@ on:
       - '.nltotoi/**'
       - 'SOPs/**'
       - 'agents/**'
+      - 'scripts/governance-validator.test.mjs'
       - '.github/ISSUE_TEMPLATE/**'
       - 'PULL_REQUEST_TEMPLATE.md'
       - '.github/workflows/validate-nlt-governance.yml'
@@ -51,3 +59,5 @@ jobs:
         uses: actions/checkout@v4
       - name: Validate repository governance
         run: bash .nltotoi/scripts/validate-governance.sh
+      - name: Test governance validator
+        run: node --test scripts/governance-validator.test.mjs

@@ -1,13 +1,14 @@
 # CLAUDE.md — NLT-Pi / NLT Coding Agent
 
-This repository is the NLT-owned runtime and SDK foundation for the NeuroLift Technologies Coding Agent (NCA). Treat it as an independent NLT project. Do not assume upstream Pi conventions, compatibility, contribution requirements, or release processes apply.
+This repository is the NLT-owned runtime and SDK foundation for the NeuroLift Technologies Coding Agent (NCA). It adopts the minimum public governance requirements and templates from [NeuroLift-Technologies/.github](https://github.com/NeuroLift-Technologies/.github), adapted to NLT-Pi's architecture and operational requirements. Treat NLT-Pi's local governance files as its repository-specific implementation.
 
 ## Mandatory reading
-1. `NLT-DEV-OTOI.md` — repository governance contract and authority model.
-2. `AGENTS.md` — repository gateway, architecture boundaries, and engineering rules.
-3. `REVIEW.md` — review format.
-4. `docs/active-threads.md` — current work and blockers.
-5. `nltotoi.json` — machine-readable governance manifest.
+1. [Public governance contract](https://github.com/NeuroLift-Technologies/.github/blob/main/governance.yaml) and [public agent guide](https://github.com/NeuroLift-Technologies/.github/blob/main/AGENTS.md).
+2. `GOVERNANCE.md`, `governance.yaml`, `governance.json`, and `NLT-DEV-OTOI.md` — local baseline adaptation and repository-specific authority model.
+3. `AGENTS.md` — repository gateway, architecture boundaries, and engineering rules.
+4. `REVIEW.md` — review format.
+5. `docs/active-threads.md` — current work and blockers.
+6. `nltotoi.json` — machine-readable local governance manifest.
 
 ## Project identity and boundaries
 - NLT-Pi provides the TypeScript agent runtime / SDK foundation used by NLT Coding Agent.
@@ -23,6 +24,7 @@ This repository is the NLT-owned runtime and SDK foundation for the NeuroLift Te
 - Do not introduce provider lock-in, external integrations, deployment changes, or new persistence/security boundaries without approval.
 - Never bypass ASFDK controls or convert model output into authority.
 - Never push directly to `main`; use a feature branch and pull request.
+- Follow the commit format `[AGENT_NAME] type(scope): description` and keep PRs focused on one independently reviewable concern.
 - Do not claim tests, builds, scans, or deployments ran unless they actually ran.
 - Keep diffs scoped. Do not remove functionality without approval.
 - No secrets, credentials, tokens, or private data in source control.

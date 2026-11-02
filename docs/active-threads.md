@@ -4,6 +4,17 @@
 
 ## Active
 
+### NLTPI-GOV-002 — Align repository implementation with public governance baseline
+**Status:** in_review  
+**Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
+**Summary:** Align NLT-Pi's repository-specific governance implementation with the minimum requirements and reusable templates in the public NeuroLift-Technologies/.github repository. Correct template provenance, provide local public-baseline governance documents and links, remove inherited upstream Pi contributor restrictions from issue templates, improve registration/handoff evidence states, and validate the baseline locally. The public templates are minimum requirements; NLT-Pi retains justified architecture-specific controls.  
+**PR:** https://github.com/NeuroLift-Technologies/nlt-pi/pull/7  
+**Branch:** `fix/public-governance-baseline-alignment`  
+**Agent registration:** `docs/agent-log/registrations/2026-11-01-chatgpt-gpt6-governance.json`  
+**Intent record:** `docs/agent-log/intent/2026-11-01-public-governance-alignment.md`  
+**Verification:** GitHub Actions governance workflow run [#47](https://github.com/NeuroLift-Technologies/nlt-pi/actions/runs/41385024000) completed successfully. Both the repository governance validator and its Node test passed. General repository CI run [#41](https://github.com/NeuroLift-Technologies/nlt-pi/actions/runs/41385024202) is still in progress.  
+**Next action:** Inspect general CI run #41, review the PR, and merge only after human approval.
+
 ### NLTPI-SEC-001 — Align security policy with NLT governance
 **Status:** in_review  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
@@ -17,7 +28,7 @@
 ### NLTPI-ARCH-001 — ASFDK three-layer governance alignment
 **Status:** active  
 **Owner:** Joshua W. Dorsey, Sr.  
-**Summary:** Maintain explicit separation between development governance, ASFDK harness enforcement, and ASFDK MCP integration governance.  
+**Summary:** Maintain explicit separation between development governance, ASFDK foundation, and ASFDK MCP integration governance.  
 **Next action:** Keep repository documentation and agent profiles consistent with the actual package/runtime boundaries; do not infer enforcement from documentation alone.
 
 ## Resolved
@@ -32,6 +43,6 @@
 ### NLTPI-GOV-001 — Repository governance adoption
 **Status:** resolved  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
-**Summary:** Adapted the canonical NLT governance stack to NLT-Pi, including repository-specific OTOI, agent instructions, review and handoff artifacts, agent profiles, Claude Code configuration, and validation.  
+**Summary:** Adapted the public NLT governance baseline to NLT-Pi, including repository-specific OTOI, agent instructions, review and handoff artifacts, agent profiles, Claude Code configuration, and validation.  
 **PR:** https://github.com/NeuroLift-Technologies/nlt-pi/pull/3  
 **Resolution:** PR #3 merged to `main`.

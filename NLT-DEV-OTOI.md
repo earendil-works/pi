@@ -1,9 +1,10 @@
 # NLT-Pi Developer Orchestrated Terms of Interaction
 
-**Document ID:** NLT-PI-DEV-OTOI-1.0.0  
+**Document ID:** NLT-PI-DEV-OTOI-1.0.1  
 **Scope:** NeuroLift Technologies / nlt-pi repository and NLT Coding Agent runtime foundation  
 **Authority:** Joshua W. Dorsey, Sr.  
-**Governance source:** NeuroLift-Technologies/.github-private — templates adapted for this repository  
+**Public governance template source:** [NeuroLift-Technologies/.github](https://github.com/NeuroLift-Technologies/.github) — minimum requirements adapted for this repository  
+**Baseline contract:** ORG-DEV-OTOI-1.0.4  
 **Principles:** Human sovereignty; Capability does not equal authority; Escalate, do not guess.
 
 > Capability does not equal authority. A model or agent may possess a capability without having permission to exercise it.
@@ -12,7 +13,9 @@
 
 ## 1. Purpose and authority
 
-This contract defines how human contributors and AI agents collaborate in this repository. It adapts NLT organization governance to NLT-Pi's actual architecture and development lifecycle.
+This contract defines how human contributors and AI agents collaborate in this repository. It adopts the minimum public governance requirements and templates maintained in [NeuroLift-Technologies/.github](https://github.com/NeuroLift-Technologies/.github), then adapts them to NLT-Pi's architecture, risks, tooling, and development lifecycle. The public templates are a baseline, not a complete repository implementation.
+
+The repository-specific governance implementation is maintained in this repository. Its local requirements may extend the public baseline but must not silently weaken or contradict it.
 
 Joshua W. Dorsey, Sr. is the final decision-maker for architecture, security boundaries, provider strategy, deployment, data retention, UX direction, and project scope. Agents may analyze and recommend; they do not acquire authority merely because a capability is available.
 
@@ -50,10 +53,11 @@ The layers have distinct responsibilities. Do not merge their ownership boundari
 
 At session start:
 1. Read this contract, `AGENTS.md`, `CLAUDE.md`, `REVIEW.md`, and `docs/active-threads.md`.
-2. Inspect the current branch, working tree, relevant package docs, and active PRs before editing.
-3. Register the agent session in `docs/agent-log/registrations/` when the work is substantive.
-4. Confirm task scope. If scope or authority is unclear, stop and escalate.
-5. Work on a feature branch. Never push directly to `main` or another protected branch.
+2. Read the public governance baseline: [`governance.yaml`](https://github.com/NeuroLift-Technologies/.github/blob/main/governance.yaml), [`governance.json`](https://github.com/NeuroLift-Technologies/.github/blob/main/governance.json), and [`AGENTS.md`](https://github.com/NeuroLift-Technologies/.github/blob/main/AGENTS.md).
+3. Inspect the current branch, working tree, relevant package docs, and active PRs before editing.
+4. Register the agent session in `docs/agent-log/registrations/` when the work is substantive.
+5. Confirm task scope. If scope or authority is unclear, stop and escalate.
+6. Work on a feature branch. Never push directly to `main` or another protected branch.
 
 ## 5. Commit and change protocol
 
@@ -65,7 +69,7 @@ Commit format:
 
 Allowed types: `feat`, `fix`, `docs`, `refactor`, `chore`, `test`, `ci`.
 
-All agent-authored changes must be delivered through a pull request. Do not commit unless the user explicitly requests committing. Do not force-push.
+All agent-authored changes must be delivered through a pull request. Keep each PR focused on one independently reviewable concern. Do not commit unless the user explicitly requests committing. Do not force-push.
 
 ## 6. Non-negotiable guardrails
 
@@ -96,15 +100,21 @@ Escalate when:
 - a blocker cannot be resolved from repository evidence;
 - a governance rule appears inconsistent with the implementation.
 
-Escalation target: Joshua W. Dorsey, Sr. Use `templates/escalation.md` and, where appropriate, `ISSUE_TEMPLATE/agent-escalation.md`.
+Escalation route: open a sanitized public issue using the repository's Agent Escalation template for non-sensitive decisions. Security vulnerabilities and sensitive incident details must use the private reporting route in [`SECURITY.md`](https://github.com/NeuroLift-Technologies/nlt-pi/blob/main/SECURITY.md), never a public issue.
 
 ## 9. Review and handoff
 
-Reviews follow `REVIEW.md`. Significant sessions end with a handoff under `docs/agent-log/handoffs/`, and `docs/active-threads.md` must reflect the actual state. A handoff must distinguish work completed from work merely proposed and must list tests actually run.
+Reviews follow `REVIEW.md`. Significant sessions end with a handoff under `docs/agent-log/handoffs/`, and `docs/active-threads.md` must reflect the actual state. A handoff must distinguish work completed from work merely proposed and must list tests actually run, including explicit not-run status.
 
-## 10. Amendment
+## 10. Template adoption and amendment
 
-Repository governance adaptations may be changed by the repository owner through explicit review. Changes that alter organization-wide policy should be proposed to the canonical governance source. A downstream repository is not required to propagate local implementation changes upstream.
+The public `.github` repository provides minimum governance requirements and reusable templates for public repositories. NLT-Pi adopts and adapts the applicable baseline into this repository's local implementation.
+
+- Repository-specific controls may extend the baseline where justified by NLT-Pi's architecture, risks, or tooling.
+- Local adaptations are owned and maintained in this repository; upstream template changes do not automatically overwrite them.
+- Review the applicable public templates when making material changes to local governance.
+- Changes that alter organization-wide policy must be proposed to the organizational governance maintainers; NLT-Pi cannot unilaterally amend the organizational contract.
+- Repository-specific governance changes require explicit repository-owner approval.
 
 ## 11. Ethical and operational commitments
 
@@ -112,4 +122,4 @@ Humanity is the orchestrator. AI systems augment human capability without displa
 
 ---
 
-*NLT-PI-DEV-OTOI-1.0.0 | NeuroLift Technologies | Adapted from SOP-NLT-002 governance templates*
+*NLT-PI-DEV-OTOI-1.0.1 | NeuroLift Technologies | Adapted from the public NLT governance baseline ORG-DEV-OTOI-1.0.4*

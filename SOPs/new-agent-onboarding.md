@@ -1,6 +1,6 @@
 # SOP-NLT-001 — NLT-Pi Agent Onboarding
 
-**Version:** 1.0.0  
+**Version:** 1.1.0  
 **Scope:** Human and AI contributors working in NeuroLift-Technologies/nlt-pi  
 **Authority:** Joshua W. Dorsey, Sr.
 
@@ -8,7 +8,7 @@
 Ensure contributors understand the repository's authority model, architecture boundaries, active work, and required session records before substantive work begins.
 
 ## Procedure
-1. Read `NLT-DEV-OTOI.md`, `AGENTS.md`, `CLAUDE.md`, and `REVIEW.md`.
+1. Read the public baseline links in `AGENTS.md` / `CLAUDE.md`, then read local `GOVERNANCE.md`, `governance.yaml`, `governance.json`, `NLT-DEV-OTOI.md`, `AGENTS.md`, `CLAUDE.md`, and `REVIEW.md`.
 2. Read `docs/active-threads.md` and check the current branch, working tree, and relevant pull requests.
 3. Inspect the package documentation and tests relevant to the task.
 4. Register substantive agent sessions using `templates/agent-registration.json`.

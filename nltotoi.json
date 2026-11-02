@@ -1,6 +1,7 @@
 {
-  "manifest_version": "1.0.0",
-  "governance_contract": "NLT-PI-DEV-OTOI-1.0.0",
+  "manifest_version": "1.1.0",
+  "governance_contract": "NLT-PI-DEV-OTOI-1.0.1",
+  "organizational_baseline": "ORG-DEV-OTOI-1.0.4",
   "repository": {
     "name": "NeuroLift-Technologies/nlt-pi",
     "purpose": "NLT-owned TypeScript agent runtime and SDK foundation for NLT Coding Agent",
@@ -9,10 +10,7 @@
   },
   "canonical_contract": "NLT-DEV-OTOI.md",
   "agent_gateway": "AGENTS.md",
-  "session_directives": [
-    "CLAUDE.md",
-    "AGENTS.md"
-  ],
+  "session_directives": ["CLAUDE.md", "AGENTS.md"],
   "discovery": {
     "index": ".nltotoi/index/governance-files.md",
     "validation_script": ".nltotoi/scripts/validate-governance.sh",
@@ -37,6 +35,9 @@
     "escalation": "Escalate, do not guess"
   },
   "required_files": [
+    "GOVERNANCE.md",
+    "governance.yaml",
+    "governance.json",
     "NLT-DEV-OTOI.md",
     "AGENTS.md",
     "CLAUDE.md",
@@ -64,10 +65,14 @@
     ".github/ISSUE_TEMPLATE/agent-escalation.md",
     ".github/ISSUE_TEMPLATE/governance-proposal.md",
     "PULL_REQUEST_TEMPLATE.md",
+    "scripts/governance-validator.test.mjs",
     ".github/workflows/validate-nlt-governance.yml"
   ],
   "metadata": {
-    "source_templates": "NeuroLift-Technologies/.github-private",
-    "adaptation": "Repository-specific; local changes do not auto-propagate upstream"
+    "source_templates": "NeuroLift-Technologies/.github",
+    "source_type": "public_minimum_requirements_and_templates",
+    "source_baseline": "ORG-DEV-OTOI-1.0.4",
+    "adaptation": "Repository-specific implementation; local changes do not auto-propagate upstream",
+    "inheritance_policy": "Adopt and adapt applicable minimum requirements; preserve justified repository-specific controls; do not silently weaken baseline requirements"
   }
 }
