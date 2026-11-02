@@ -442,7 +442,8 @@ drops, folds or resets.
 - **JSON plus `Uint8Array` leaves**, with a bytes schema type, defined independently of the transport. Every link
   carries the same `Message` through its codec (section 22); parts are encoded at their origin; byte segments travel
   raw, never base64. Same-host calls (no link) pass values by reference.
-- Schemas are TypeBox and must describe data (no callbacks, no native types, no runtime codecs). Method arguments are
+- Schemas are plain JSON Schema built with `@earendil-works/pi-schema` (decision "The schema switch") and must
+  describe data (no callbacks, no native types, no runtime codecs); `format` is an annotation, never checked. Method arguments are
   validated at the provider for every caller against closed schemas (section 5, R7, Q12, Q15); results and state are
   never validated (section 30). Values are immutable by convention once handed over (Delta's rule): nobody mutates a
   value it got, and nothing is copied or frozen to enforce it. There is no development mode (R9): one behavior
@@ -572,7 +573,7 @@ host.serve(Notes, ({ session }, principal, self) =>
   (`invalid/member` outside it).
 - **Params** (owner, 2026-10-21/22): a flat record of required fields, each `str()`, `int()`, `bool()` or `oneOf(...)`
   of string literals, constraints allowed (`str({ pattern })`, `int({ min: 0 })`); no defaults, optional, nested or
-  unknown fields. Checked for every caller with one compiled closed-object TypeBox check (a missing or extra field
+  unknown fields. Checked for every caller with one compiled closed-object pi-schema check (a missing or extra field
   fails `invalid/params`). The identity key is the field values in declared order, each escaped, joined with `|`.
   Params are never copied or frozen: the object keeps the caller's object, immutable by convention.
 - **Arguments (R7, Q12, Q15):** always validated with the provider's schema, whoever the caller is (trusted code is
@@ -592,8 +593,8 @@ host.serve(Notes, ({ session }, principal, self) =>
   link protocol (adding one bumps the protocol version; a receiver rejects unknown reasons; a test pins the list):
   `invalid` (`args`, `params`, `member`, `host_address`, `reentrant`, `read_after_bulk`, `cycle`), `contract_mismatch`
   (`updating`), `forbidden` (`revoked`), `gone`, `not_ready`, `released` (`ended`, `closed`, `settled`, `version`, `discarded`; none for a holder's own release), `too_large` (`part`), `unavailable` (`locked`,
-  `park_timeout`, `busy`, `storage_failed`, `undeclared`: a registry no plugin serves here, slice 8), `aborted`. A failed check names TypeBox's instance path ("unknown field", "missing", else TypeBox's
-  message; keys containing `/` or `~` make the path ambiguous, documented). Plugins throw `PluginError(code, message,
+  `park_timeout`, `busy`, `storage_failed`, `undeclared`: a registry no plugin serves here, slice 8), `aborted`. A failed check names pi-schema's JSON Pointer path ("unknown field", "missing", else
+  pi-schema's message; `~` and `/` in keys escaped as `~0`, `~1`). Plugins throw `PluginError(code, message,
   details?)` for codes of their own; anything else crosses a link as the plugin code `internal` with its message, never
   a stack or a cause; plugin errors never use Chord's codes. An error rebuilt from the wire is not copied and only its
   envelope is checked; a malformed envelope is a protocol error.
@@ -1961,7 +1962,10 @@ type ReloadReport = {
 - **A plugin** is a directory with a `package.json` (its `name` is the plugin's name, npm style) and one file per facet
   kind the app names; plugins come from roots found by directory listing (no source parsing; the first root wins a
   duplicate name). Dependencies between plugins resolve by contract name at runtime; names are prefixed
-  (`<plugin>.<name>`; tools `<plugin>_<name>`).
+  (`<plugin>.<name>`; tools `<plugin>_<name>`). A plugin carries the contracts it was written against (decision "Contracts come from where the
+  plugin's code came from"): plugins that change together import each other by relative path within a root
+  (copied into the importer's script); others take contracts as an npm dependency at a fixed version (slice 10 still
+  resolves imports by plugin name; the plugin slice changes it).
 - **Loader D:** one esbuild script per facet (its own files, copied files of other plugins, its npm `dependencies`
   inlined; host packages, `chord.external` packages and Node builtins external, passed in at evaluation); each facet kind is defined once, `kinds: { <kind>: { platform: "node" | "browser", hostPackages } }` (slice 11); evaluated with
   `vm.Script` under a stable filename per (plugin, kind, digest); no module map: old generations are reclaimed by the
@@ -1997,7 +2001,7 @@ validation, no clone of snapshots or ops.
 - **The protocol version** travels in `hello`; hosts of different versions refuse each other (a web page reloads for
   a newer server). Error reasons and message kinds are part of it. Until p3 ships, changes keep `PROTOCOL_VERSION` 1
   (nothing is deployed); after that every message or reason change bumps it.
-- **One typed `Message`** (owner, 2026-10-22, "Wire protocol"): a TypeBox schema `MESSAGE`, a tagged union over
+- **One typed `Message`** (owner, 2026-10-22, "Wire protocol"): a pi-schema schema `MESSAGE`, a tagged union over
   `kind`, from which the protocol types derive; every decoded message is checked against it (compiled once) unless
   the link is trusted (section 3). Kinds:
 
@@ -2416,7 +2420,7 @@ const accepted = checkAccepts(NotesV2, {
   providers fail at declaration naming the member; unknown keys and wrong shapes are rejected.
 - **The fingerprint** is a hash (`hash64`, portable, not a security boundary) of a schema-aware, data-only normal form
   (`NORMAL_FORM_VERSION`, tied to the protocol): annotations dropped only on schema nodes, `required`/`enum` sorted,
-  union and intersection order kept (it is meaning: defaults), a whitelist of TypeBox keywords, executable features
+  union and intersection order kept (it is meaning: defaults), a whitelist of JSON Schema keywords, executable features
   rejected; bytes are a `{ type: "bytes" }` data marker. Schemas are deep-copied into a private history (never frozen; immutable by convention).
 - **Schema helpers:** `str num int bool nul lit oneOf union obj arr map opt bytes unknown` and `type Static`.
 - Chord wraps state mappings as a derive and diffs per object and version (section 22); members an old consumer does not know do

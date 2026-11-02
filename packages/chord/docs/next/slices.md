@@ -170,20 +170,23 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   slice 3b.)
 - **The park deadline's per-type override** is not built: a parked call waits the reference's `readyTimeout`. Build
   it only if a real case needs it. (Slice 3b spec.)
-- Failed-check paths are TypeBox's instance paths (ambiguous for keys containing `/` or `~`); documented, not fixed.
-  (L1.)
 - No CBOR; revisit only if benchmarks show encoding as a bottleneck (slice 3a's and 4a's do not). (L2 decisions.)
 - **One N on every host:** a relay forwards calls at once, so a worker announcing a smaller N than the relay's could
   see more running calls of one origin than it accepts (a protocol error). Every host announces 256; per-link N, if
   ever needed, must bound the relay's forwarding too. (Slice 4a rework.)
 - **The Durable conversation view's size on re-hold** is a known cost until pi #11327 (windowed view) lands. (Slice 4.)
-- **`map(bytes())` is refused at declaration** ("unsupported keyword `~refine`"): TypeBox's `Record` copies the bytes
-  schema's check as an enumerable key, which the snapshot walk refuses. An L1 bug found in slice 3a, not fixed yet.
 
 ### Later: reload (when a case needs it)
 
 - **`rebuild` of tables** (key and column-type changes): `evolveTable` has no edit for them; build one only when a
   real case needs it. (Slice 6a's second spec review; out of slice 7b's scope, `slice-7b.md` §12.)
+
+### The plugin slice (plugin model)
+
+- **Cross-plugin imports by relative path and npm** (decision "Contracts come from where the plugin's code came
+  from"): remove `build.ts`'s by-name lookup, allow relative imports into another plugin of the same root, refuse
+  paths leaving the root; examples 35-38 and fixtures back to relative imports; drop the six `tsconfig` path aliases;
+  plugins README; the guide's chapter "Plugins Using Plugins". (Slice 10 built by-name imports.)
 
 ### After slice 11
 
