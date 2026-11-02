@@ -2289,6 +2289,11 @@ validation and copies the v2 kernel added around Delta.
   it; a rollout publishes the new set without waiting for pages; each page gets one frame and fetches what changed;
   after a reconnect the hold's snapshot brings the current set, so a page catches up on anything it missed. Rejected:
   polling a manifest (p2: every 5 s while visible).
+- **Slice 11, P6: the connection loop (owner, 2026-11-01: "agree"):** p2's `keepConnected`: after a drop, reconnect
+  with a growing pause (250 ms to 5 s); try at once when the tab becomes visible, the browser comes back online or the
+  network changes; replace a socket open but silent; stop when the server reports an outdated protocol (the page
+  reloads) or the app's `canRetry` says no (a guest's share ended). References keep their last values and wait while
+  down, so the UI shows a banner from the connection state. A network reconnect, not a crash restart.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
