@@ -1,0 +1,138 @@
+[
+    {
+        "description": "validation of Relative JSON Pointers (RJP)",
+        "schema": { "format": "relative-json-pointer" },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "a valid upwards RJP",
+                "data": "1",
+                "valid": true
+            },
+            {
+                "description": "a valid downwards RJP",
+                "data": "0/foo/bar",
+                "valid": true
+            },
+            {
+                "description": "a valid up and then down RJP, with array index",
+                "data": "2/0/baz/1/zip",
+                "valid": true
+            },
+            {
+                "description": "a valid RJP taking the member or index name",
+                "data": "0#",
+                "valid": true
+            },
+            {
+                "description": "an invalid RJP that is a valid JSON Pointer",
+                "data": "/foo/bar",
+                "valid": false
+            },
+            {
+                "description": "a json-pointer part that does not start with a slash is invalid",
+                "data": "1foo",
+                "valid": false
+            },
+            {
+                "description": "negative prefix",
+                "data": "-1/foo/bar",
+                "valid": false
+            },
+            {
+                "description": "explicit positive prefix",
+                "data": "+1/foo/bar",
+                "valid": false
+            },
+            {
+                "description": "non-ASCII digit in the prefix is not allowed",
+                "data": "١/foo",
+                "valid": false
+            },
+            {
+                "description": "## is not a valid json-pointer",
+                "data": "0##",
+                "valid": false
+            },
+            {
+                "description": "zero cannot be followed by other digits, plus json-pointer",
+                "data": "01/a",
+                "valid": false
+            },
+            {
+                "description": "zero cannot be followed by other digits, plus octothorpe",
+                "data": "01#",
+                "valid": false
+            },
+            {
+                "description": "empty string",
+                "data": "",
+                "valid": false
+            },
+            {
+                "description": "multi-digit integer prefix",
+                "data": "120/foo/bar",
+                "valid": true
+            },
+            {
+                "description": "multi-digit prefix with a zero followed by another digit",
+                "data": "100",
+                "valid": true
+            },
+            {
+                "description": "tilde not followed by 0 or 1 in the json-pointer part",
+                "data": "0/~2",
+                "valid": false
+            },
+            {
+                "description": "unescaped tilde at the end of the json-pointer part",
+                "data": "0/foo/bar~",
+                "valid": false
+            },
+            {
+                "description": "octothorpe followed by a json-pointer",
+                "data": "1#/foo/bar",
+                "valid": false
+            },
+            {
+                "description": "empty reference tokens in the json-pointer part",
+                "data": "0//",
+                "valid": true
+            },
+            {
+                "description": "trailing newline after the non-negative integer",
+                "data": "1\n",
+                "valid": false
+            }
+        ]
+    }
+]

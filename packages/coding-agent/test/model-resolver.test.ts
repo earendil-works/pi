@@ -115,6 +115,8 @@ const referenceCatalog = [
 	referenceModel("gw-b", "claude-opus-4-8"),
 	referenceModel("gw-b", "gw-b/free"),
 	referenceModel("gw-b", "zz:free"),
+	// URL-derived provider id containing "/" (#11394)
+	referenceModel("llama=http://host:10800", "unsloth/qwen-gguf:BF16"),
 ];
 
 type ReferenceExpected =
@@ -151,6 +153,16 @@ const referenceCases: ReferenceCase[] = [
 		name: "provider prefix, colon id, and thinking suffix",
 		text: "openrouter/qwen/qwen3-coder:exacto:high",
 		expected: { model: "openrouter/qwen/qwen3-coder:exacto", thinkingLevel: "high" },
+	},
+	{
+		name: "provider id containing a slash",
+		text: "llama=http://host:10800/unsloth/qwen-gguf:BF16",
+		expected: { model: "llama=http://host:10800/unsloth/qwen-gguf:BF16" },
+	},
+	{
+		name: "provider id containing a slash, with thinking suffix",
+		text: "llama=http://host:10800/unsloth/qwen-gguf:BF16:high",
+		expected: { model: "llama=http://host:10800/unsloth/qwen-gguf:BF16", thinkingLevel: "high" },
 	},
 	{
 		name: "raw id wins when the provider prefix names no matching model",
@@ -686,7 +698,7 @@ describe("resolveCliModel", () => {
 
 describe("default model selection", () => {
 	test("openai defaults track current models", () => {
-		expect(defaultModelPerProvider.openai).toBe("gpt-5.5");
+		expect(defaultModelPerProvider.openai).toBe("gpt-6.1-sol");
 		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-6.1-sol");
 	});
 

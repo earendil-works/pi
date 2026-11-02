@@ -1,0 +1,304 @@
+[
+    {
+        "description": "a schema given for items",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "items": {"type": "integer"}
+        },
+        "tests": [
+            {
+                "description": "valid items",
+                "data": [ 1, 2, 3 ],
+                "valid": true
+            },
+            {
+                "description": "wrong type of items",
+                "data": [1, "x"],
+                "valid": false
+            },
+            {
+                "description": "ignores non-arrays",
+                "data": {"foo" : "bar"},
+                "valid": true
+            },
+            {
+                "description": "JavaScript pseudo-array is valid",
+                "data": {
+                    "0": "invalid",
+                    "length": 1
+                },
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "items with boolean schema (true)",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "items": true
+        },
+        "tests": [
+            {
+                "description": "any array is valid",
+                "data": [ 1, "foo", true ],
+                "valid": true
+            },
+            {
+                "description": "empty array is valid",
+                "data": [],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "items with boolean schema (false)",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "items": false
+        },
+        "tests": [
+            {
+                "description": "any non-empty array is invalid",
+                "data": [ 1, "foo", true ],
+                "valid": false
+            },
+            {
+                "description": "empty array is valid",
+                "data": [],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "items and subitems",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": {
+                "item": {
+                    "type": "array",
+                    "items": false,
+                    "prefixItems": [
+                        { "$ref": "#/$defs/sub-item" },
+                        { "$ref": "#/$defs/sub-item" }
+                    ]
+                },
+                "sub-item": {
+                    "type": "object",
+                    "required": ["foo"]
+                }
+            },
+            "type": "array",
+            "items": false,
+            "prefixItems": [
+                { "$ref": "#/$defs/item" },
+                { "$ref": "#/$defs/item" },
+                { "$ref": "#/$defs/item" }
+            ]
+        },
+        "tests": [
+            {
+                "description": "valid items",
+                "data": [
+                    [ {"foo": null}, {"foo": null} ],
+                    [ {"foo": null}, {"foo": null} ],
+                    [ {"foo": null}, {"foo": null} ]
+                ],
+                "valid": true
+            },
+            {
+                "description": "too many items",
+                "data": [
+                    [ {"foo": null}, {"foo": null} ],
+                    [ {"foo": null}, {"foo": null} ],
+                    [ {"foo": null}, {"foo": null} ],
+                    [ {"foo": null}, {"foo": null} ]
+                ],
+                "valid": false
+            },
+            {
+                "description": "too many sub-items",
+                "data": [
+                    [ {"foo": null}, {"foo": null}, {"foo": null} ],
+                    [ {"foo": null}, {"foo": null} ],
+                    [ {"foo": null}, {"foo": null} ]
+                ],
+                "valid": false
+            },
+            {
+                "description": "wrong item",
+                "data": [
+                    {"foo": null},
+                    [ {"foo": null}, {"foo": null} ],
+                    [ {"foo": null}, {"foo": null} ]
+                ],
+                "valid": false
+            },
+            {
+                "description": "wrong sub-item",
+                "data": [
+                    [ {}, {"foo": null} ],
+                    [ {"foo": null}, {"foo": null} ],
+                    [ {"foo": null}, {"foo": null} ]
+                ],
+                "valid": false
+            },
+            {
+                "description": "fewer items is valid",
+                "data": [
+                    [ {"foo": null} ],
+                    [ {"foo": null} ]
+                ],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "nested items",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "array",
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "number"
+                        }
+                    }
+                }
+            }
+        },
+        "tests": [
+            {
+                "description": "valid nested array",
+                "data": [[[[1]], [[2],[3]]], [[[4], [5], [6]]]],
+                "valid": true
+            },
+            {
+                "description": "nested array with invalid type",
+                "data": [[[["1"]], [[2],[3]]], [[[4], [5], [6]]]],
+                "valid": false
+            },
+            {
+                "description": "not deep enough",
+                "data": [[[1], [2],[3]], [[4], [5], [6]]],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "prefixItems with no additional items allowed",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "prefixItems": [{}, {}, {}],
+            "items": false
+        },
+        "tests": [
+            {
+                "description": "empty array",
+                "data": [ ],
+                "valid": true
+            },
+            {
+                "description": "fewer number of items present (1)",
+                "data": [ 1 ],
+                "valid": true
+            },
+            {
+                "description": "fewer number of items present (2)",
+                "data": [ 1, 2 ],
+                "valid": true
+            },
+            {
+                "description": "equal number of items present",
+                "data": [ 1, 2, 3 ],
+                "valid": true
+            },
+            {
+                "description": "additional items are not permitted",
+                "data": [ 1, 2, 3, 4 ],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "items does not look in applicators, valid case",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "allOf": [
+                { "prefixItems": [ { "minimum": 3 } ] }
+            ],
+            "items": { "minimum": 5 }
+        },
+        "tests": [
+            {
+                "description": "prefixItems in allOf does not constrain items, invalid case",
+                "data": [ 3, 5 ],
+                "valid": false
+            },
+            {
+                "description": "prefixItems in allOf does not constrain items, valid case",
+                "data": [ 5, 5 ],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "prefixItems validation adjusts the starting index for items",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "prefixItems": [ { "type": "string" } ],
+            "items": { "type": "integer" }
+        },
+        "tests": [
+            {
+                "description": "valid items",
+                "data": [ "x", 2, 3 ],
+                "valid": true
+            },
+            {
+                "description": "wrong type of second item",
+                "data": [ "x", "y" ],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "items with heterogeneous array",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "prefixItems": [{}],
+            "items": false
+        },
+        "tests": [
+            {
+                "description": "heterogeneous invalid instance",
+                "data": [ "foo", "bar", 37 ],
+                "valid": false
+            },
+            {
+                "description": "valid instance",
+                "data": [ null ],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "items with null instance elements",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "items": {
+                "type": "null"
+            }
+        },
+        "tests": [
+            {
+                "description": "allows null elements",
+                "data": [ null ],
+                "valid": true
+            }
+        ]
+    }
+]

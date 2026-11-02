@@ -252,6 +252,8 @@ export default function presetExtension(pi: ExtensionAPI) {
 			container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
 
 			return {
+				// Let PageUp/PageDown page the list instead of scrolling the fullscreen transcript.
+				capturesViewportInput: selectList.capturesViewportInput,
 				render(width: number) {
 					return container.render(width);
 				},

@@ -283,6 +283,29 @@ pub fn configure(
 
 pub fn after_spawn(_child: &Child) {}
 
+/// Run `on_signal` with the signal on its own thread when `SIGTERM`, `SIGINT` or `SIGHUP` arrives, instead of dying
+/// at once. Call before starting any other thread: threads inherit the blocked signals, so only this one receives
+/// them. Commands reset their signal mask before they run.
+pub fn on_exit_signal(on_signal: impl FnOnce(i32) + Send + 'static) {
+    // SAFETY: a zeroed sigset_t initialized by sigemptyset, and plain signal mask calls.
+    let set = unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+            libc::sigaddset(&mut set, signal);
+        }
+        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+        set
+    };
+    std::thread::spawn(move || {
+        let mut signal = 0;
+        // SAFETY: waits for one of the signals blocked above.
+        if unsafe { libc::sigwait(&set, &mut signal) } == 0 {
+            on_signal(signal);
+        }
+    });
+}
+
 /// Kill the command's process group, or the process if the group is gone.
 pub fn kill_tree(pid: u32) {
     let pid = pid as i32;

@@ -32,8 +32,11 @@ const ST = "(?:\\u0007|\\u001B\\u005C|\\u009C)";
 // OSC sequences: ESC ] ... ST
 const OSC_START = "\\u001B\\]";
 
-// CSI and related: ESC/C1, optional intermediates, optional params (supports ; and :), then final byte
-const CSI_START = "[\\u001B\\u009B][[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?";
+// CSI and related: ESC/C1, optional intermediates, optional params (supports ; and :), then final byte.
+// A private prefix (<, =, >) is accepted only right after a real CSI introducer (ESC [ or 0x9B), so
+// ESC[<35;59;1M (SGR mouse report) is stripped whole. After a bare ESC these bytes stay final bytes:
+// ESC = and ESC > (keypad modes) must not swallow the digits of the text that follows.
+const CSI_START = "(?:(?:\\u001B\\[|\\u009B)[<=>]|[\\u001B\\u009B][[\\]()#;?]*)(?:\\d{1,4}(?:[;:]\\d{0,4})*)?";
 const CSI_FINAL = "[\\dA-PR-TZcf-nq-uy=><~]";
 
 // Complete sequences. OSC is non-greedy until the first ST.

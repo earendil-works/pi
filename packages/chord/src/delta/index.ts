@@ -490,19 +490,9 @@ function copyContainers(root: JsonValue, path: Path, owned: WeakSet<object>): Js
 	const copy = (value: JsonValue): JsonValue[] | Record<string, JsonValue> => {
 		if (Array.isArray(value)) return value.slice();
 		if (!isObj(value)) throw new PathError(path);
-		const result = Object.create(Object.getPrototypeOf(value) === null ? null : Object.prototype) as Record<
-			string,
-			JsonValue
-		>;
-		for (const key of Object.keys(value)) {
-			Object.defineProperty(result, key, {
-				value: (value as Record<string, JsonValue>)[key],
-				writable: true,
-				enumerable: true,
-				configurable: true,
-			});
-		}
-		return result;
+		// Spread and `Object.assign()` onto a null-prototype object define own data properties, `__proto__` included,
+		// as `Object.defineProperty()` per key does, at a fraction of its cost.
+		return Object.getPrototypeOf(value) === null ? Object.assign(Object.create(null), value) : { ...value };
 	};
 	if (!isObj(root)) throw new PathError(path);
 	let copiedRoot: JsonValue[] | Record<string, JsonValue>;

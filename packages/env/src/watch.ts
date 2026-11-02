@@ -1,5 +1,5 @@
 import type { Context } from "@earendil-works/chord";
-import { FileError, type FileWatcher, type WatchChange, type WatchTarget } from "@earendil-works/pi-durable/env";
+import { type FileChange, FileError, type FileWatcher, type WatchTarget } from "@earendil-works/pi-durable/env";
 import { type Connection, isConnectionLost } from "./connection.ts";
 import { toFileError } from "./errors.ts";
 
@@ -13,6 +13,9 @@ export interface RemoteWatchOptions {
 	maxDirectories?: number;
 }
 
+/** The one `overflow` change; it carries nothing else. */
+const OVERFLOW: FileChange = { kind: "overflow" };
+
 const RECONNECT_FIRST_MS = 1000;
 const RECONNECT_MAX_MS = 30_000;
 
@@ -23,10 +26,10 @@ const RECONNECT_MAX_MS = 30_000;
 export class RemoteWatcher implements FileWatcher {
 	readonly #connection: Connection;
 	readonly #targets: readonly WatchTarget[];
-	readonly #onChange: (change: WatchChange) => void;
+	readonly #onChange: (change: FileChange) => void;
 	readonly #options: RemoteWatchOptions;
 	#mode: "native" | "polling" = "native";
-	#closed = false;
+	#stopped = false;
 	#controller: AbortController | undefined;
 	#request: Promise<void> | undefined;
 	#wake: (() => void) | undefined;
@@ -34,7 +37,7 @@ export class RemoteWatcher implements FileWatcher {
 	private constructor(
 		connection: Connection,
 		targets: readonly WatchTarget[],
-		onChange: (change: WatchChange) => void,
+		onChange: (change: FileChange) => void,
 		options: RemoteWatchOptions,
 	) {
 		this.#connection = connection;
@@ -47,7 +50,7 @@ export class RemoteWatcher implements FileWatcher {
 	static async open(
 		connection: Connection,
 		targets: readonly WatchTarget[],
-		onChange: (change: WatchChange) => void,
+		onChange: (change: FileChange) => void,
 		options: RemoteWatchOptions = {},
 	): Promise<RemoteWatcher> {
 		const watcher = new RemoteWatcher(connection, targets, onChange, options);
@@ -59,16 +62,16 @@ export class RemoteWatcher implements FileWatcher {
 		return this.#mode;
 	}
 
-	async close(_context: Context): Promise<void> {
-		if (this.#closed) return;
-		this.#closed = true;
+	async stop(_context: Context): Promise<void> {
+		if (this.#stopped) return;
+		this.#stopped = true;
 		this.#wake?.();
 		this.#controller?.abort();
 		await this.#request;
 	}
 
-	#deliver(change: WatchChange): void {
-		if (this.#closed) return;
+	#deliver(change: FileChange): void {
+		if (this.#stopped) return;
 		try {
 			this.#onChange(change);
 		} catch {
@@ -101,12 +104,13 @@ export class RemoteWatcher implements FileWatcher {
 							resolve();
 						} else if (event.kind === "change") {
 							if (event.mode === "polling") this.#mode = "polling";
-							if (event.overflow === true) this.#deliver({ overflow: true });
-							else this.#deliver({ paths: event.paths as string[] });
+							// The daemon's wire format: `{ overflow: true }` or `{ paths }`.
+							if (event.overflow === true) this.#deliver(OVERFLOW);
+							else this.#deliver({ kind: "paths", paths: event.paths as string[] });
 						} else if (event.kind === "error") {
 							const code = event.code === "permission_denied" ? "permission_denied" : "invalid";
-							this.#deliver({ error: new FileError(code, String(event.message)) });
-							this.#closed = true;
+							this.#deliver({ kind: "failed", error: new FileError(code, String(event.message)) });
+							this.#stopped = true;
 						}
 					},
 				},
@@ -118,20 +122,20 @@ export class RemoteWatcher implements FileWatcher {
 						reject(error);
 						return;
 					}
-					if (this.#closed) return;
+					if (this.#stopped) return;
 					if (isConnectionLost(error)) {
 						void this.#reconnect();
 						return;
 					}
-					this.#deliver({ error: toFileError(error) });
-					this.#closed = true;
+					this.#deliver({ kind: "failed", error: toFileError(error) });
+					this.#stopped = true;
 				},
 			);
 		});
 	}
 
 	async #reconnect(): Promise<void> {
-		for (let delay = RECONNECT_FIRST_MS; !this.#closed; delay = Math.min(delay * 2, RECONNECT_MAX_MS)) {
+		for (let delay = RECONNECT_FIRST_MS; !this.#stopped; delay = Math.min(delay * 2, RECONNECT_MAX_MS)) {
 			await new Promise<void>((resolve) => {
 				const timer = setTimeout(resolve, delay);
 				timer.unref();
@@ -141,16 +145,16 @@ export class RemoteWatcher implements FileWatcher {
 				};
 			});
 			this.#wake = undefined;
-			if (this.#closed) return;
+			if (this.#stopped) return;
 			try {
 				await this.#start();
 				// Changes while disconnected were not seen.
-				this.#deliver({ overflow: true });
+				this.#deliver(OVERFLOW);
 				return;
 			} catch (error) {
 				if (isConnectionLost(error)) continue;
-				this.#deliver({ error: toFileError(error) });
-				this.#closed = true;
+				this.#deliver({ kind: "failed", error: toFileError(error) });
+				this.#stopped = true;
 				return;
 			}
 		}

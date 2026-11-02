@@ -1,7 +1,6 @@
 // Regression tests for Sol's phase 1a review (findings #1-#11) and the requested race tests.
 import assert from "node:assert/strict";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { arr, bool, compile, num, obj, opt, str, unknown } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import {
 	type Ctx,
@@ -18,6 +17,7 @@ import {
 } from "../src/index.ts";
 import { fits } from "../src/schema.ts";
 import { CountingLink } from "./fixtures/counting.ts";
+import { typedLit } from "./fixtures/schemas.ts";
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 const ticks = async (n = 10) => {
@@ -51,8 +51,8 @@ function emitter<E>(options: { failSubscribe?: boolean } = {}) {
 
 const Item = local("t.item", {
 	version: 1,
-	input: Type.Object({ id: Type.String() }),
-	members: { version: method(undefined, Type.String()) },
+	input: obj({ id: str() }, { open: true }),
+	members: { version: method(undefined, str()) },
 });
 
 describe("review: reload commit", () => {
@@ -82,15 +82,15 @@ describe("review: reload commit", () => {
 		const host = createHost({ self: { kind: "host" }, dev: true, onError: () => {} });
 		const V1 = remote("t.counted", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("host"),
-			variants: { main: { state: { count: Type.Object({ n: Type.Number() }) } } },
+			variants: { main: { state: { count: obj({ n: num() }, { open: true }) } } },
 		});
 		const V2 = remote("t.counted", {
 			version: 2,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("host"),
-			variants: { main: { state: { count: Type.Object({ total: Type.Number() }) } } },
+			variants: { main: { state: { count: obj({ total: num() }, { open: true }) } } },
 		});
 		host.install({
 			name: "counted",
@@ -99,7 +99,7 @@ describe("review: reload commit", () => {
 					V1,
 					(_input, _principal, self) => ({
 						variant: "main",
-						count: self.state("count", Type.Object({ n: Type.Number() }), { n: 3 }),
+						count: self.state("count", obj({ n: num() }, { open: true }), { n: 3 }),
 					}),
 					{ linger: 60_000 },
 				),
@@ -117,7 +117,7 @@ describe("review: reload commit", () => {
 							variant: "main",
 							count: self.state(
 								"count",
-								Type.Object({ total: Type.Number() }),
+								obj({ total: num() }, { open: true }),
 								{ total: 0 },
 								{ version: 2, migrate: (old) => ({ total: (old as { n: number }).n }) },
 							),
@@ -160,8 +160,8 @@ describe("review: reload commit", () => {
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
 		const Other = local("t.other", {
 			version: 1,
-			input: Type.Object({}),
-			members: { version: method(undefined, Type.String()) },
+			input: obj({}, { open: true }),
+			members: { version: method(undefined, str()) },
 		});
 		const facet = (version: string): Facet => ({
 			name: "pair",
@@ -184,8 +184,8 @@ describe("review: reload commit", () => {
 describe("review: leases, invocations, activation", () => {
 	const Store = local("t.store", {
 		version: 1,
-		input: Type.Object({}),
-		members: { count: Type.Unknown() },
+		input: obj({}, { open: true }),
+		members: { count: unknown() },
 	});
 
 	it("#4 a running listener holds a lease: the gate waits for it before migrating", async () => {
@@ -197,7 +197,7 @@ describe("review: leases, invocations, activation", () => {
 			name: "store",
 			setup: (api) =>
 				api.serve(Store, (_input, _principal, self) => {
-					const count = self.state("count", Type.Object({ n: Type.Number() }), { n: 1 });
+					const count = self.state("count", obj({ n: num() }, { open: true }), { n: 1 });
 					self.on("slow", events, async () => {
 						await go.promise;
 						seen.push(count.value);
@@ -218,7 +218,7 @@ describe("review: leases, invocations, activation", () => {
 						api.serve(Store, (_input, _principal, self) => ({
 							count: self.state(
 								"count",
-								Type.Object({ total: Type.Number() }),
+								obj({ total: num() }, { open: true }),
 								{ total: 0 },
 								{ version: 2, migrate: (old) => ({ total: (old as { n: number }).n }) },
 							),
@@ -238,8 +238,8 @@ describe("review: leases, invocations, activation", () => {
 	it("#5 disposal waits for running methods before closing resources (released and forced)", async () => {
 		const Worker = local("t.busy", {
 			version: 1,
-			input: Type.Object({ id: Type.String() }),
-			members: { work: method(undefined, Type.Boolean()) },
+			input: obj({ id: str() }, { open: true }),
+			members: { work: method(undefined, bool()) },
 		});
 		const log: string[] = [];
 		let go = latch();
@@ -291,7 +291,9 @@ describe("review: leases, invocations, activation", () => {
 		const host = createHost({ self: { kind: "host" }, onError: (error) => errors.push(error) });
 		const Routes = defineRegistry<string>("t.review-routes");
 		const log: string[] = [];
-		const types = ["t.eager-a", "t.eager-b"].map((name) => local(name, { version: 1, input: Type.Object({}) }));
+		const types = ["t.eager-a", "t.eager-b"].map((name) =>
+			local(name, { version: 1, input: obj({}, { open: true }) }),
+		);
 		for (const type of types) {
 			host.serve(
 				type,
@@ -321,7 +323,7 @@ describe("review: leases, invocations, activation", () => {
 		let runs = 0;
 		host.serve(Store, (_input, _principal, self) => {
 			runs++;
-			const count = self.state("count", Type.Number(), 0);
+			const count = self.state("count", num(), 0);
 			self.resource("r", {
 				version: 1,
 				open: () => void log.push("open"),
@@ -345,8 +347,8 @@ describe("review: leases, invocations, activation", () => {
 describe("review: prepare isolation and contracts", () => {
 	const Db = local("t.db", {
 		version: 1,
-		input: Type.Object({}),
-		members: { read: method(undefined, Type.Unknown()) },
+		input: obj({}, { open: true }),
+		members: { read: method(undefined, unknown()) },
 	});
 
 	it("#7 a prepare rerun cannot touch retained resources, even open ones", async () => {
@@ -372,7 +374,7 @@ describe("review: prepare isolation and contracts", () => {
 	it("#7 objects of types a reload adds start listeners and tasks only at commit", async () => {
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
 		const log: string[] = [];
-		const Fresh = local("t.fresh", { version: 1, input: Type.Object({}) });
+		const Fresh = local("t.fresh", { version: 1, input: obj({}, { open: true }) });
 		host.install({ name: "item", setup: (api) => api.serve(Item, () => ({ version: () => "v1" })) });
 		await Promise.all(["a", "b"].map((id) => host.hold(Item, { id }).ready));
 		const plugins = (fail: boolean): Facet[] => [
@@ -408,20 +410,20 @@ describe("review: prepare isolation and contracts", () => {
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
 		const P1 = remote("t.provider", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("host"),
-			variants: { main: { methods: { get: method(undefined, Type.String()) } } },
+			variants: { main: { methods: { get: method(undefined, str()) } } },
 		});
 		const P2 = remote("t.provider", {
 			version: 2,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("host"),
-			variants: { main: { methods: { fetch: method(undefined, Type.String()) } } },
+			variants: { main: { methods: { fetch: method(undefined, str()) } } },
 		});
 		const Consumer = local("t.consumer", {
 			version: 1,
-			input: Type.Object({}),
-			members: { ask: method(undefined, Type.String()) },
+			input: obj({}, { open: true }),
+			members: { ask: method(undefined, str()) },
 		});
 		host.install({
 			name: "both",
@@ -493,7 +495,7 @@ describe("review: prepare isolation and contracts", () => {
 	it("#10 retirement closes dropped resources before releasing dropped holds", async () => {
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
 		const log: string[] = [];
-		const Dep = local("t.dep", { version: 1, input: Type.Object({}) });
+		const Dep = local("t.dep", { version: 1, input: obj({}, { open: true }) });
 		const facet = (withDecls: boolean): Facet => ({
 			name: "item",
 			setup: (api) => {
@@ -535,48 +537,49 @@ describe("review: prepare isolation and contracts", () => {
 		assert.deepEqual(log, ["own closed", "dep closed"]);
 	});
 
-	it("#11 fits has no false positives for unmodelled keywords; counterexamples checked with Value.Check", () => {
+	it("#11 fits has no false positives for unmodelled keywords; counterexamples checked with compile", () => {
 		const cases = [
-			[Type.String(), Type.String({ not: { const: "x" } }), "x"],
-			[Type.Array(Type.Number()), Type.Array(Type.Number(), { contains: Type.Literal(1) }), [2]],
+			[str(), { ...str(), not: { const: "x" } }, "x"],
+			[arr(num()), { ...arr(num()), contains: typedLit(1) }, [2]],
 			[
-				Type.Object({ a: Type.String() }),
-				Type.Object({ a: Type.String() }, { additionalProperties: Type.Number() }),
+				obj({ a: str() }, { open: true }),
+				{ ...obj({ a: str() }, { open: true }), additionalProperties: num() },
 				{ a: "s", b: "t" },
 			],
 			[
-				Type.Object({ x: Type.String() }),
-				Type.Object({}, { patternProperties: { "^x$": Type.Number() } }),
+				obj({ x: str() }, { open: true }),
+				{ ...obj({}, { open: true }), patternProperties: { "^x$": num() } },
 				{ x: "s" },
 			],
-			[Type.Number(), Type.Intersect([Type.Number(), Type.Number({ minimum: 1 })]), 0],
+			[num(), { allOf: [num(), num({ minimum: 1 })] }, 0],
 			[
-				Type.Object({ a: Type.String() }, { additionalProperties: Type.Number() }),
-				Type.Object({ a: Type.String(), b: Type.Optional(Type.String()) }),
+				{ ...obj({ a: str() }, { open: true }), additionalProperties: num() },
+				obj({ a: str(), b: opt(str()) }, { open: true }),
 				{ a: "", b: 1 },
 			],
 		] as const;
 		for (const [sub, sup, value] of cases) {
-			assert.ok(Value.Check(sub, value) && !Value.Check(sup, value), `bad counterexample ${JSON.stringify(value)}`);
+			assert.ok(
+				compile(sub).check(value) && !compile(sup).check(value),
+				`bad counterexample ${JSON.stringify(value)}`,
+			);
 			assert.equal(fits(sub, sup), false, `fits(${JSON.stringify(sub)}, ${JSON.stringify(sup)})`);
 		}
 		// Additive changes still fit.
-		assert.ok(
-			fits(Type.Object({ a: Type.String() }), Type.Object({ a: Type.String(), b: Type.Optional(Type.Number()) })),
-		);
-		assert.ok(fits(Type.Object({ a: Type.String(), extra: Type.Number() }), Type.Object({ a: Type.String() })));
+		assert.ok(fits(obj({ a: str() }, { open: true }), obj({ a: str(), b: opt(num()) }, { open: true })));
+		assert.ok(fits(obj({ a: str(), extra: num() }, { open: true }), obj({ a: str() }, { open: true })));
 	});
 
 	it("#11 arguments are stripped to what the consumer knows, then to what the provider knows", async () => {
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
 		const Strict = remote("t.strict", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("host"),
 			variants: {
 				main: {
 					methods: {
-						echo: method(Type.Object({ a: Type.String() }, { additionalProperties: false }), Type.Unknown()),
+						echo: method(obj({ a: str() }), unknown()),
 					},
 				},
 			},
@@ -590,13 +593,13 @@ describe("review: prepare isolation and contracts", () => {
 describe("review: ctx races", () => {
 	const Target = local("t.target", {
 		version: 1,
-		input: Type.Object({}),
+		input: obj({}, { open: true }),
 		members: { hit: method() },
 	});
 
 	it("an aborted task ctx cannot start fresh calls", async () => {
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
-		const Runner = local("t.runner", { version: 1, input: Type.Object({}) });
+		const Runner = local("t.runner", { version: 1, input: obj({}, { open: true }) });
 		let hits = 0;
 		const go = latch();
 		let outcome: unknown;
@@ -650,7 +653,7 @@ describe("review: ctx races", () => {
 	it("a remote reference refuses a foreign ctx and a ctx not made by Chord, without calling", async () => {
 		const RemoteTarget = remote("t.remote-target", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("server"),
 			variants: { main: { state: {}, methods: { hit: method() } } },
 		});

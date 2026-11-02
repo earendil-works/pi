@@ -1,0 +1,5 @@
+{
+	"name": "@acme/notes",
+	"private": true,
+	"type": "module"
+}

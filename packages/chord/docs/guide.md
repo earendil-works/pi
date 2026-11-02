@@ -36,17 +36,17 @@ Chord builds applications out of **objects** that live in several processes (a s
 ## Quick start
 
 ```ts
-import { Type } from "typebox";
+import { num, obj, str } from "@earendil-works/pi-schema";
 import { createHost, method, remote } from "@earendil-works/chord";
 
 // contract.ts: shared by provider and consumers
 export const Counter = remote("demo.counter", {
 	version: 1,
-	input: Type.Object({ name: Type.String() }),
+	input: obj({ name: str() }),
 	variants: {
 		default: {
-			state: { count: Type.Number() },
-			methods: { increment: method(Type.Object({ by: Type.Number() })) },
+			state: { count: num() },
+			methods: { increment: method(obj({ by: num() })) },
 		},
 	},
 });
@@ -54,7 +54,7 @@ export const Counter = remote("demo.counter", {
 const host = createHost({ name: "server", self: { kind: "server" } });
 
 host.serve(Counter, ({ name }, _principal, self) => {
-	const count = self.state("count", Type.Number(), 0);
+	const count = self.state("count", num(), 0);
 	return {
 		variant: "default",
 		count,
@@ -82,7 +82,7 @@ Remote types can be reached from other hosts. Everything that crosses the wire h
 ```ts
 export const Chat = remote("pi.chat", {
 	version: 1,
-	input: Type.Object({ session: Type.String(), conversation: Type.Number() }),
+	input: obj({ session: str(), conversation: num() }),
 	host: hostFamily("session:", "session"),  // lives on `session:S1` for `{ session: "S1", … }`
 	variants: {
 		viewer: {
@@ -91,7 +91,7 @@ export const Chat = remote("pi.chat", {
 		participant: {
 			state: { view: ConversationViewSchema },
 			methods: {
-				send: method(SendInputSchema, Type.Object({ submissionId: Type.Number() })),
+				send: method(SendInputSchema, obj({ submissionId: num() })),
 				stop: method(),  // no arguments, no result: `chat.stop(ctx)`
 			},
 		},
@@ -119,10 +119,10 @@ Local types are reachable only inside their host. Their members may be anything:
 ```ts
 export const Index = local("pi.index", {
 	version: 1,
-	input: Type.Object({ session: Type.String() }),
+	input: obj({ session: str() }),
 	members: {
-		search: method(Type.Object({ query: Type.String() }), Type.Array(HitSchema)),
-		onChange: method(Type.Function([ChangeSchema], Type.Void()), UnsubscribeSchema),
+		search: method(obj({ query: str() }), arr(HitSchema)),
+		onChange: method({ type: "function", parameters: [ChangeSchema], returnType: { type: "void" } }, UnsubscribeSchema),
 		harness: opaque("pi.durable-harness@1"),
 	},
 });
@@ -181,7 +181,7 @@ A reload runs the factory again over the same object. Declarations that keep som
 ```ts
 host.serve(StatusStore, ({ session }, _host, self) => {
 	const status = self.state("status", StatusSchema, { running: false, tasks: 0 });
-	const errors = self.state("errors", Type.Array(Type.String()), []);
+	const errors = self.state("errors", arr(str()), []);
 	const catalog = self.get(Catalog, {});
 	const db = self.resource("db", {
 		version: 1,
@@ -230,7 +230,7 @@ host.serve(Visits, (_, _p, self) => {
 
 // right
 host.serve(Visits, (_, _p, self) => {
-	const visits = self.state("visits", Type.Number(), 0);
+	const visits = self.state("visits", num(), 0);
 	return {
 		hit: async (ctx) => {
 			visits.change(ctx, (n) => n + 1);
@@ -240,7 +240,7 @@ host.serve(Visits, (_, _p, self) => {
 });
 ```
 
-**Methods** are declared with `method(args?, result?)` in the contract. Without `args` a method takes none: callers write `ref.hit(ctx)` (or `ref.hit()`), and its implementation is `(ctx) => …`. Without `result` it returns nothing: the implementation returns nothing, and callers get `undefined`. `method(undefined, Type.Number())` takes no arguments and returns a number.
+**Methods** are declared with `method(args?, result?)` in the contract. Without `args` a method takes none: callers write `ref.hit(ctx)` (or `ref.hit()`), and its implementation is `(ctx) => …`. Without `result` it returns nothing: the implementation returns nothing, and callers get `undefined`. `method(undefined, num())` takes no arguments and returns a number.
 
 ## Activation
 
@@ -428,7 +428,7 @@ chat.release();
 ## State
 
 ```ts
-const todos = self.state("todos", Type.Array(TodoSchema), []);
+const todos = self.state("todos", arr(TodoSchema), []);
 
 todos.change(ctx, (draft) => {
 	draft.push({ id: "t1", text: "Write docs", done: false });
@@ -457,7 +457,7 @@ view.replace(ctx, rebuilt, { diff: true });              // always diff
 
 ```ts
 const db = self.resource("db", { version: 1, open: () => openSqlite(path), close: (db) => db.close() });
-const notes = self.state("notes", Type.Array(NoteSchema), { init: () => db.value.all("SELECT * FROM notes") });
+const notes = self.state("notes", arr(NoteSchema), { init: () => db.value.all("SELECT * FROM notes") });
 ```
 
 `init(ctx)` runs once the resources are open and the references live, before the object goes live, so no method,

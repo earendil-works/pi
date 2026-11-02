@@ -1,0 +1,104 @@
+[
+    {
+        "description": "a schema given for prefixItems",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "prefixItems": [
+                {"type": "integer"},
+                {"type": "string"}
+            ]
+        },
+        "tests": [
+            {
+                "description": "correct types",
+                "data": [ 1, "foo" ],
+                "valid": true
+            },
+            {
+                "description": "wrong types",
+                "data": [ "foo", 1 ],
+                "valid": false
+            },
+            {
+                "description": "incomplete array of items",
+                "data": [ 1 ],
+                "valid": true
+            },
+            {
+                "description": "array with additional items",
+                "data": [ 1, "foo", true ],
+                "valid": true
+            },
+            {
+                "description": "empty array",
+                "data": [ ],
+                "valid": true
+            },
+            {
+                "description": "JavaScript pseudo-array is valid",
+                "data": {
+                    "0": "invalid",
+                    "1": "valid",
+                    "length": 2
+                },
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "prefixItems with boolean schemas",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "prefixItems": [true, false]
+        },
+        "tests": [
+            {
+                "description": "array with one item is valid",
+                "data": [ 1 ],
+                "valid": true
+            },
+            {
+                "description": "array with two items is invalid",
+                "data": [ 1, "foo" ],
+                "valid": false
+            },
+            {
+                "description": "empty array is valid",
+                "data": [],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "additional items are allowed by default",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "prefixItems": [{"type": "integer"}]
+        },
+        "tests": [
+            {
+                "description": "only the first item is validated",
+                "data": [1, "foo", false],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "prefixItems with null instance elements",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "prefixItems": [
+                {
+                    "type": "null"
+                }
+            ]
+        },
+        "tests": [
+            {
+                "description": "allows null elements",
+                "data": [ null ],
+                "valid": true
+            }
+        ]
+    }
+]

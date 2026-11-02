@@ -8,6 +8,12 @@
 			"@earendil-works/chord": ["./packages/chord/src/index.ts"],
 			"@earendil-works/chord/context": ["./packages/chord/src/context/index.ts"],
 			"@earendil-works/chord/delta": ["./packages/chord/src/delta/index.ts"],
+			"@earendil-works/chord/next": ["./packages/chord/src/next/index.ts"],
+			"@earendil-works/chord/next/plugins": ["./packages/chord/src/next-node/plugins/index.ts"],
+			"@earendil-works/chord/next/plugins/runtime": ["./packages/chord/src/next-node/plugins/runtime.ts"],
+			"@acme/app/*": ["./packages/chord/test/next/examples/49-plugin-api/app/*.ts"],
+			"@earendil-works/chord/next/http": ["./packages/chord/src/next-node/http/index.ts"],
+			"@earendil-works/chord/next/workers": ["./packages/chord/src/next-node/workers/index.ts"],
 			"@earendil-works/chord/node": ["./packages/chord/src/node.ts"],
 			"@earendil-works/chord/output": ["./packages/chord/src/output.ts"],
 			"@earendil-works/chord/telemetry-sqlite": ["./packages/chord/src/telemetry-sqlite/index.ts"],
@@ -23,6 +29,8 @@
 			"@earendil-works/pi-codemode/portable": ["./packages/codemode/src/portable.ts"],
 			"@earendil-works/pi-codemode/source": ["./packages/codemode/src/source.ts"],
 			"@earendil-works/pi-codemode/worker": ["./packages/codemode/src/runtime/worker.ts"],
+			"@earendil-works/pi-schema": ["./packages/schema/src/index.ts"],
+			"@earendil-works/pi-schema/formats": ["./packages/schema/src/formats/index.ts"],
 			"@earendil-works/pi-mcp": ["./packages/mcp/src/index.ts"],
 			"@earendil-works/pi-mcp/oauth": ["./packages/mcp/src/oauth/index.ts"],
 			"@earendil-works/pi-mcp/testing": ["./packages/mcp/src/testing/index.ts"],
@@ -49,6 +57,6 @@
 			"@earendil-works/pi-agent-old/*": ["./packages/agent-old/src/*"]
 		}
 	},
-	"include": ["scripts/model-catalog-protocol.ts", "scripts/model-catalog-protocol.test.ts", "packages/*/src/**/*", "packages/*/test/**/*", "packages/durable/test-workers/**/*", "packages/coding-agent/examples/**/*", "packages/agent/examples/**/*"],
-	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/gondolin/**"]
+	"include": ["scripts/model-catalog-protocol.ts", "scripts/model-catalog-protocol.test.ts", "packages/*/src/**/*", "packages/*/test/**/*", "packages/ai/catalog/**/*", "packages/durable/test-workers/**/*", "packages/coding-agent/examples/**/*", "packages/agent/examples/**/*"],
+	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/**", "packages/coding-agent/test/suite/regressions/8261-subagent-project-trust.test.ts"]
 }

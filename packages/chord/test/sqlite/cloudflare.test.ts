@@ -1,7 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
+import { BACKGROUND_CONTEXT } from "../../src/context/index.ts";
+import { sqliteBackend } from "../../src/next/store/backend.ts";
+import { refusalOf } from "../../src/next/store/refusal.ts";
+import type { StagedWrite } from "../../src/next/store/step.ts";
+import { type ChordStore, openStore } from "../../src/next/store/store.ts";
 import { DurableObjectSqliteDatabase } from "../../src/sqlite/cloudflare.ts";
-import { durableObjectStorage } from "./helpers.ts";
+import { durableObjectStorage, RUN_CHANGES, runChanges } from "./helpers.ts";
 
 describe("Durable Object SQLite driver", () => {
 	it("binds and returns BLOB values as Uint8Array", async () => {
@@ -12,6 +17,15 @@ describe("Durable Object SQLite driver", () => {
 			data: new Uint8Array([1, 2, 3]),
 			n: 7,
 		});
+	});
+
+	it("reports the rows a statement changed, without index writes", async () => {
+		const database = new DurableObjectSqliteDatabase(durableObjectStorage());
+		expect(await runChanges(database)).toEqual(RUN_CHANGES);
+		const inTransaction = await database.transaction((handle) =>
+			handle.runCounted("INSERT INTO changes_probe VALUES (?, ?, ?)", "t", "t/1", 1),
+		);
+		expect(inTransaction).toBe(1);
 	});
 
 	it("reads only the cursor's first row for get", async () => {
@@ -112,5 +126,74 @@ describe("Durable Object SQLite driver", () => {
 		resolve();
 		await expect(transaction).rejects.toThrow("abort");
 		expect(sqlite.prepare("SELECT id FROM items").all()).toEqual([]);
+	});
+});
+
+describe("the outcome of a transaction (slice 6b D4)", () => {
+	/** The test storage, its `transaction` failing after the closure resolved (a failed commit) when asked. */
+	function failingCommit(): { storage: ReturnType<typeof durableObjectStorage>; fail(): void } {
+		const storage = durableObjectStorage();
+		const transaction = storage.transaction.bind(storage);
+		let failing = false;
+		return {
+			storage: {
+				...storage,
+				transaction: async (closure) => {
+					const result = await transaction(closure);
+					if (!failing) return result;
+					failing = false;
+					throw new Error("commit failed");
+				},
+			},
+			fail: () => {
+				failing = true;
+			},
+		};
+	}
+
+	it("rejects with the callback's own error after a rollback, another one when the commit fails", async () => {
+		const { storage, fail } = failingCommit();
+		const database = new DurableObjectSqliteDatabase(storage);
+		const own = new Error("refused");
+		await expect(database.transaction(async () => Promise.reject(own))).rejects.toBe(own);
+		fail();
+		await expect(database.transaction(async () => 1)).rejects.toThrow("commit failed");
+	});
+
+	it("a store on it tells a CHECK refusal by its message, its error having no extended code", async () => {
+		const storage = durableObjectStorage();
+		const exec = storage.sql.exec.bind(storage.sql);
+		// The Durable Object binding's errors carry a message only.
+		const withoutCodes: typeof storage = {
+			...storage,
+			sql: {
+				exec: (query, ...bindings) => {
+					try {
+						return exec(query, ...bindings);
+					} catch (error) {
+						throw new Error((error as Error).message);
+					}
+				},
+			},
+		};
+		const store = (await openStore(
+			sqliteBackend(new DurableObjectSqliteDatabase(withoutCodes)),
+			BACKGROUND_CONTEXT,
+		)) as ChordStore;
+		await store.read(
+			(executor) => executor.exec('CREATE TABLE "checked" (n INTEGER CHECK (n < 10))'),
+			BACKGROUND_CONTEXT,
+		);
+		const refused: StagedWrite = {
+			order: "write",
+			apply: async (step) => {
+				await step.run('INSERT INTO "checked" VALUES (11)');
+				return [];
+			},
+		};
+		const fence = { admit: () => true, adopt: () => {} };
+		const error = await store.commit([refused], fence, BACKGROUND_CONTEXT).catch((thrown: unknown) => thrown);
+		expect(refusalOf(error, "x")).toMatchObject({ kind: "check" });
+		expect(await store.read(async () => 1, BACKGROUND_CONTEXT)).toBe(1);
 	});
 });

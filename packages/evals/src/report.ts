@@ -98,7 +98,7 @@ function validateScore(value: unknown): number | undefined {
 	return value;
 }
 
-export function classifyCaseStatus(status: ReportCase["status"]): "errored" | "skipped" | "pending" | undefined {
+function classifyCaseStatus(status: ReportCase["status"]): "errored" | "skipped" | "pending" | undefined {
 	if (status === "failed") return "errored";
 	if (status === "skipped" || status === "todo" || status === "disabled") return "skipped";
 	if (status === "pending") return "pending";
@@ -145,15 +145,16 @@ export async function readTaskObservation(
 	if (!loaded) return { ...identity, outcome: "errored" };
 	const [{ workspace }, rawReport] = loaded;
 	const reportedFullName = `${task.evalSet} ${task.caseId}`;
-	const assertions = rawReport.testResults.flatMap(({ assertionResults }) => assertionResults);
+	const assertions = rawReport.testResults
+		.flatMap(({ assertionResults }) => assertionResults)
+		.filter(({ fullName }) => fullName === reportedFullName);
 	if (assertions.length !== 1) return { ...identity, outcome: "errored" };
 	const assertion = assertions[0];
-	if (assertion.fullName !== reportedFullName) return { ...identity, outcome: "errored" };
 	const statusOutcome = classifyCaseStatus(assertion.status);
 	if (statusOutcome === "skipped" || statusOutcome === "pending") return { ...identity, outcome: statusOutcome };
-	if (workspace.cases.length !== 1) return { ...identity, outcome: "errored" };
-	const caseResult = workspace.cases[0];
-	if (caseResult.fullName !== reportedFullName) return { ...identity, outcome: "errored" };
+	const caseResults = workspace.cases.filter(({ fullName }) => fullName === reportedFullName);
+	if (caseResults.length !== 1) return { ...identity, outcome: "errored" };
+	const caseResult = caseResults[0];
 	if (caseResult.status !== assertion.status) return { ...identity, outcome: "errored" };
 	const run = caseResult.harness?.run;
 	if (!run) return { ...identity, outcome: "errored" };

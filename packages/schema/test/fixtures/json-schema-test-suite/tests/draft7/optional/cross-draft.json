@@ -1,0 +1,25 @@
+[
+    {
+        "description": "refs to future drafts are processed as future drafts",
+        "schema": {
+            "type": "object",
+            "allOf": [
+                { "properties": { "foo": true } },
+                { "$ref": "http://localhost:1234/draft2019-09/dependentRequired.json" }
+            ]
+        },
+        "tests": [
+            {
+                "description": "missing bar is invalid",
+                "comment": "if the implementation is not processing the $ref as a 2019-09 schema, this test will fail",
+                "data": {"foo": "any value"},
+                "valid": false
+            },
+            {
+                "description": "present bar is valid",
+                "data": {"foo": "any value", "bar": "also any value"},
+                "valid": true
+            }
+        ]
+    }
+]

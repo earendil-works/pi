@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flow control for Chord links</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A design note · Chord v2 slice 4 · 2026-10-22</div>
+  <h1>Slow<br>Links</h1>
+  <p class="subtitle">How a phone on a bad train connection keeps seeing the newest state of a streamed reply, and why the transport&#39;s own backpressure cannot do that</p>
+  <div class="cover-stats"><div class="stat"><b>9.4 s</b><span>how old the newest state was with transport backpressure only</span></div><div class="stat"><b>0.0 s</b><span>with an acknowledged window of two messages</span></div><div class="stat"><b>345 ms</b><span>another client&#39;s p95 during a call flood, without a call window</span></div><div class="stat"><b>~200</b><span>lines for the converged design</span></div></div>
+  <div class="cover-note"><p>Written from the measurements and the cross-checked reports of the reviewers Astra and Fable (2026-10-22): Node 24.4.1,
+<code>ws</code> 8.22, separate server and client processes, a throttling proxy at 64 KiB/s. The numbers are single synthetic
+runs: they show failure modes, not production capacity. Relays: first decided as per-hop acknowledgements (b) on
+2026-10-23, then replaced by flow control per origin on 2026-10-24 after the slice 4a benchmarks (chapter VI).</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#hidden">I. Where the Bytes Hide</a></li>
+<li><a href="#acks">II. Acknowledged Messages</a></li>
+<li><a href="#merge">III. Fold the Backlog</a></li>
+<li><a href="#calls">IV. Calls Get Their Own Window</a></li>
+<li><a href="#relays">V. Relays</a></li>
+<li><a href="#what-changes-in-the-design">What Changes in the Design</a></li>
+<li><a href="#measurements">Appendix A: Measurements</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Mario is on a train. His phone shows a p3 session in which the agent is writing a long reply. Every token is a small
+state change: the worker commits it, the server relays it, the phone applies it. The train enters a tunnel and the
+phone&#39;s link drops to a trickle, 64 KB per second. The worker keeps producing tokens at full speed.</p>
+<p>Without flow control, every token still gets sent. The bytes pile up somewhere between the worker and the phone, and
+when the train leaves the tunnel the phone has to work through a backlog of old tokens before it sees the current text.
+It is not only slow: what it shows is minutes old, and nothing tells it so.</p>
+<p>This note explains what keeps the phone current, why the obvious answer (let the transport push back) fails, and the
+design Astra and Fable converged on after measuring it.</p>
+<h3 id="six-things-to-know">Six things to know</h3>
+<ol class="findings">
+<li><strong>Transport backpressure arrives too late.</strong> The kernel&#39;s and a proxy&#39;s buffers take megabytes before a WebSocket
+reports anything buffered; the phone sees state 4 to 10 seconds old.</li>
+<li><strong>Acknowledgements keep state fresh.</strong> The receiving application acknowledges each message; at most two are in
+flight; the newest state was 0.0 seconds old on the same 64 KB/s link.</li>
+<li><strong>Count messages, not bytes.</strong> Each message carries everything that piled up since the last acknowledgement, so
+throughput adapts to the link by itself.</li>
+<li><strong>Merge ops first, snapshot last.</strong> 2,000 merged token appends cost 26 KB, sent one by one 46 KB; a snapshot of a
+member with 500 KB of history would cost 508 KB.</li>
+<li><strong>Calls need their own window.</strong> A tab firing 100,000 calls pushed another client&#39;s p95 to 345 ms; with a window of
+64 respected by the caller it stayed at 0.66 ms and the flood waited in the buggy tab.</li>
+<li><strong>Nothing is refused for being too many</strong> (decision K16): extra state is merged, extra calls wait.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>A <strong>link</strong> connects two hosts. The <strong>provider</strong> owns an object and sends its state; the <strong>consumer</strong> holds a
+reference to it. A <strong>hold</strong> is one reference over a link, with its own stream of <strong>ops</strong> (Delta&#39;s changes). A
+<strong>snapshot</strong> is a hold&#39;s whole state. An <strong>acknowledgement</strong> (<code>ack</code>) is a tiny message the consumer sends after it
+applied a state message. <strong>In flight</strong> means sent and not yet acknowledged. <strong>Coalescing</strong> means merging the ops that
+wait to be sent. A <strong>relay</strong> is a host in the middle (the server between worker and tab).</p>
+</section>
+
+<section class="chapter" id="hidden"><header class="opener"><div class="numeral">I</div><h2>Where the Bytes Hide</h2><p class="lede">Why the sender cannot see a slow phone.</p></header>
+<p class="dropcap">A WebSocket in Node reports <code>bufferedAmount</code>: bytes the library still holds. It looks like the perfect signal: stop
+sending when it grows. The experiment says otherwise.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 307" width="100%" role="img" aria-label="A flood of state messages to a slow phone through a proxy. The sender's buffer stays small; the kernel's and the proxy's do not." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="299" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="102" y="27" font-size="11" fill="#2a2723" text-anchor="middle">worker</text><text x="102" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">commits tokens</text><line x1="274" y1="52" x2="274" y2="299" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="274" y="27" font-size="11" fill="#2a2723" text-anchor="middle">server WebSocket</text><text x="274" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">bufferedAmount</text><line x1="446" y1="52" x2="446" y2="299" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="446" y="30" font-size="11" fill="#2a2723" text-anchor="middle">kernel + proxy buffers</text><line x1="618" y1="52" x2="618" y2="299" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="618" y="27" font-size="11" fill="#2a2723" text-anchor="middle">phone</text><text x="618" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">64 KB/s</text><g class="step edge" style="--i:1"><line x1="102" y1="78" x2="271" y2="78" stroke="#7b7468" marker-end="url(#f1m)"/><text x="188" y="72" font-size="10" fill="#2a2723" text-anchor="middle">token 1 … token 9,000</text></g><g class="step edge" style="--i:2"><line x1="274" y1="110" x2="443" y2="110" stroke="#7b7468" marker-end="url(#f1m)"/><text x="360" y="104" font-size="10" fill="#2a2723" text-anchor="middle">written at once (bufferedAmount stays near 0)</text></g><g class="step edge" style="--i:3"><line x1="446" y1="142" x2="615" y2="142" stroke="#7b7468" marker-end="url(#f1m)"/><text x="532" y="136" font-size="10" fill="#2a2723" text-anchor="middle">drains at 64 KB/s</text></g><g class="step" style="--i:4"><rect x="370" y="160" width="152" height="23" rx="3" fill="#f4eee2" stroke="#c2b18c"/><text x="446" y="174" font-size="10" fill="#5b5549" text-anchor="middle">megabytes waiting</text></g><g class="step edge" style="--i:5"><line x1="102" y1="211" x2="271" y2="211" stroke="#7b7468" marker-end="url(#f1m)"/><text x="188" y="205" font-size="10" fill="#2a2723" text-anchor="middle">token 9,001 (the newest)</text></g><g class="step edge" style="--i:6"><line x1="274" y1="243" x2="443" y2="243" stroke="#7b7468" marker-end="url(#f1m)"/><text x="360" y="237" font-size="10" fill="#2a2723" text-anchor="middle">queued behind everything</text></g><g class="step edge" style="--i:7"><line x1="446" y1="275" x2="615" y2="275" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="532" y="269" font-size="10" fill="#2a2723" text-anchor="middle">arrives seconds later</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> A flood of state messages to a slow phone through a proxy. The sender&#39;s buffer stays small; the kernel&#39;s and the proxy&#39;s do not.</figcaption></figure>
+<table>
+<thead>
+<tr>
+<th>Flood, ~9,800 × 128 B per second, 64 KB/s link</th>
+<th>Sender memory</th>
+<th>Newest state the phone saw</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>no flow control</td>
+<td>7.0 MB queued in the WebSocket, heap +18.5 MB</td>
+<td>9.4 s old</td>
+</tr>
+<tr>
+<td>cap <code>bufferedAmount</code> at 64 KiB, merge pending state</td>
+<td>+0.46 MB</td>
+<td><strong>still 9.4 s old</strong></td>
+</tr>
+<tr>
+<td>cap at 1 MiB (Fable&#39;s rerun)</td>
+<td>small</td>
+<td>3.8 s, growing to 10.4 s</td>
+</tr>
+<tr>
+<td>at most 1 to 4 acknowledged messages in flight, merge pending state</td>
+<td>+0.4 MB</td>
+<td><strong>0.0 s</strong></td>
+</tr>
+</tbody></table>
+<p>The transport&#39;s backpressure protects the sender&#39;s memory, but freshness depends on buffers the sender cannot see:
+the operating system&#39;s socket buffer, autotuned to hundreds of kilobytes, and every proxy on the way. A normal
+streamed reply (50 tokens per second, 23 bytes each) never fills them; a burst or a tunnel does. Only the receiving
+application knows what it has applied.</p>
+</section>
+
+<section class="chapter" id="acks"><header class="opener"><div class="numeral">II</div><h2>Acknowledged Messages</h2><p class="lede">A window of two messages in flight, and why it adapts to any link.</p></header>
+<p class="dropcap">The rule: a provider has at most <strong>K = 2</strong> state messages in flight per link. The consumer sends <code>ack</code> (three bytes in
+the binary codec) after it applied one. While two are in flight, new commits do not produce messages; their ops wait,
+merged per hold, and go out in the next message once an <code>ack</code> arrives.</p>
+<div class="steps"><div class="steps-head"><span class="title">Two messages in flight on a slow link</span><span class="count"></span><button class="prev" type="button">Back</button><button class="next" type="button">Next</button></div><div class="step-panel"><h4>Fast link</h4><p>Commits 1, 2, 3 each become a message; each is acknowledged before the next commit. Nothing waits: the window never
+fills, so a normal stream behaves exactly as without flow control.</p>
+</div><div class="step-panel"><h4>The link slows</h4><p>Messages 1 and 2 are in flight. Commits 3 to 400 arrive; their ops are folded into the pending queue of each member
+they touch (chapter III). Memory: the net change, not the history; at most 10,000 ops per member.</p>
+</div><div class="step-panel"><h4>An ack arrives</h4><p><code>ack</code> for message 1. The provider sends message 3, carrying the folded ops of commits 3 to 400, encoded once.
+The phone applies them as one batch and shows the newest text.</p>
+</div><div class="step-panel"><h4>Self-clocking</h4><p>The slower the link, the more each message carries; the faster, the smaller and more frequent. Nobody measures
+bandwidth: the acknowledgements pace the sender.</p>
+</div></div>
+<div id="fc-sim" style="font-family: var(--sans, system-ui); margin: 1.5rem 0; padding: 1rem; border: 1px solid #d8d2c6; border-radius: 6px; background: #fbf9f4;">
+  <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:center; font-size:0.9rem;">
+    <label>Link <input id="fc-rate" type="range" min="2" max="60" value="8"> <span id="fc-rate-v"></span> msgs/s</label>
+    <label>Commits <input id="fc-prod" type="range" min="5" max="120" value="60"> <span id="fc-prod-v"></span> /s</label>
+    <button id="fc-reset" style="font:inherit; padding:0.2rem 0.6rem;">Restart</button>
+  </div>
+  <canvas id="fc-canvas" width="640" height="220" style="width:100%; max-width:640px; display:block; margin-top:0.8rem;"></canvas>
+  <div id="fc-stats" style="font-size:0.85rem; margin-top:0.4rem; color:#444;"></div>
+</div>
+<script>
+(() => {
+  const c = document.getElementById("fc-canvas"), g = c.getContext("2d");
+  const rate = document.getElementById("fc-rate"), prod = document.getElementById("fc-prod");
+  const rv = document.getElementById("fc-rate-v"), pv = document.getElementById("fc-prod-v");
+  const stats = document.getElementById("fc-stats");
+  let s;
+  function reset() {
+    s = { t: 0, commit: 0, naive: { queue: [], shown: 0, sent: 0 }, ack: { inflight: [], pending: 0, shown: 0, sent: 0, merged: 0 } };
+  }
+  function step(dt) {
+    const r = +rate.value, p = +prod.value; rv.textContent = r; pv.textContent = p;
+    s.t += dt;
+    const commits = Math.floor((s.t) * p) - s.commit;
+    for (let i = 0; i < commits; i++) {
+      s.commit++;
+      s.naive.queue.push(s.commit);
+      s.ack.pending = s.commit;
+    }
+    // link capacity: r messages per second, shared model: each delivers one message per 1/r s
+    s.naive.budget = (s.naive.budget || 0) + dt * r;
+    while (s.naive.budget >= 1 && s.naive.queue.length) { s.naive.budget -= 1; s.naive.shown = s.naive.queue.shift(); s.naive.sent++; }
+    s.ack.budget = (s.ack.budget || 0) + dt * r;
+    while (s.ack.budget >= 1 && s.ack.inflight.length) { s.ack.budget -= 1; s.ack.shown = s.ack.inflight.shift(); }
+    while (s.ack.inflight.length < 2 && s.ack.pending > (s.ack.inflight.at(-1) ?? s.ack.shown)) {
+      s.ack.merged += s.ack.pending - (s.ack.inflight.at(-1) ?? s.ack.shown) - 1;
+      s.ack.inflight.push(s.ack.pending); s.ack.sent++;
+    }
+  }
+  function lane(y, label, queue, shown, color) {
+    g.fillStyle = "#222"; g.font = "13px system-ui"; g.fillText(label, 8, y - 26);
+    g.fillStyle = "#e9e3d6"; g.fillRect(8, y - 18, 520, 26);
+    const n = Math.min(queue, 130);
+    g.fillStyle = color;
+    for (let i = 0; i < n; i++) g.fillRect(10 + i * 4, y - 15, 3, 20);
+    g.fillStyle = "#222"; g.fillText(`waiting: ${queue}`, 540, y);
+    const age = s.commit - shown;
+    g.fillText(`phone shows commit ${shown}, ${age} behind`, 8, y + 28);
+  }
+  function draw() {
+    g.clearRect(0, 0, c.width, c.height);
+    lane(48, "No flow control: every commit is sent and queued", s.naive.queue.length, s.naive.shown, "#b5523b");
+    lane(150, "Acknowledged window (K = 2), pending ops merged", s.ack.inflight.length, s.ack.shown, "#3b6fb5");
+    stats.textContent = `newest commit ${s.commit} · window: ${s.ack.sent} messages carried ${s.commit} commits (${s.ack.merged} merged)`;
+  }
+  let last = performance.now();
+  function frame(now) { step(Math.min((now - last) / 1000, 0.1)); last = now; draw(); requestAnimationFrame(frame); }
+  document.getElementById("fc-reset").onclick = reset;
+  reset(); requestAnimationFrame(frame);
+})();
+</script>
+<p>The simulation above shows the same effect in miniature. Drag the link below the commit rate: the upper lane&#39;s queue
+grows without bound and the phone falls further behind every second; the lower lane never has more than two messages
+waiting, and the phone is at most a message behind.</p>
+</section>
+
+<section class="chapter" id="merge"><header class="opener"><div class="numeral">III</div><h2>Fold the Backlog</h2><p class="lede">What a waiting hold keeps while the window is full, and why it never measures sizes.</p></header>
+<p class="dropcap">While messages are in flight, each hold member keeps the ops of new commits in a <strong>pending queue</strong> and <strong>folds</strong> them:
+a new op merges into the last pending op on the same path when that is safe, so a backlog keeps the net change, not
+the history. When an acknowledgement frees a slot, the queue is encoded once into one message.</p>
+<table>
+<thead>
+<tr>
+<th>Last pending op</th>
+<th>New op</th>
+<th>Kept</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>a text &quot;Hel&quot;</code></td>
+<td><code>a text &quot;lo&quot;</code></td>
+<td>one <code>a text &quot;Hello&quot;</code></td>
+</tr>
+<tr>
+<td><code>s count 41</code> or an append</td>
+<td><code>s count 42</code></td>
+<td>the <code>s</code>: it overwrites what came before</td>
+</tr>
+<tr>
+<td>anything</td>
+<td><code>r value</code></td>
+<td>only the <code>r</code>: a replacement makes everything before it moot</td>
+</tr>
+<tr>
+<td>anything on a path in the index</td>
+<td>a structural op (<code>p</code>, <code>m</code>, <code>d</code>, <code>t</code>, <code>s</code> of an object)</td>
+<td>appended; the index is cleared</td>
+</tr>
+</tbody></table>
+<p>The merge partner is found through a <strong>leaf index</strong>: a map from path to the last pending append or primitive set on
+that path. Leaf ops on different paths commute, so a new op may merge into an earlier one, not only into its
+neighbour; a status field changing between two tokens no longer stops the reply from folding. Any structural op
+clears the index, because after a splice <code>entries[7]</code> may name another entry. Past 10,000 pending ops the queue keeps
+only &quot;replace with the current value&quot;, which then costs nothing while the consumer stays slow.</p>
+<p><strong>Why no size rule.</strong> The first idea was to send a snapshot once the merged ops outgrow the member. The reviewers
+measured it on real p2 data and it failed three ways: &quot;snapshot bytes plus sent op bytes&quot; is no bound (an interned path
+lets a value grow faster than its ops: 5,404 B of snapshot after 832 B of ops), it drifts 1,254 times too high under
+churn, and an exact size needs a size on every node of the value. Folding alone came within about 10% of an exact
+oracle, with no measuring at all.</p>
+<table>
+<thead>
+<tr>
+<th>60 s stall, all workloads</th>
+<th>Uncompressed</th>
+<th>Compressed</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>merged ops, no folding</td>
+<td>466 KB</td>
+<td>166 KB</td>
+</tr>
+<tr>
+<td>adjacent folding</td>
+<td>399 KB</td>
+<td>147 KB</td>
+</tr>
+<tr>
+<td>leaf index (the decision)</td>
+<td>372 KB</td>
+<td>145 KB</td>
+</tr>
+<tr>
+<td>exact oracle (not buildable)</td>
+<td>335 KB</td>
+<td>136 KB</td>
+</tr>
+</tbody></table>
+<p><strong>One queue for every slow consumer.</strong> The same queue serves Chord&#39;s shared watch handle: a listener still busy with
+the last frame gets the commits made meanwhile as one call with the newest value and the folded ops, instead of
+today&#39;s &quot;after 100 frames, replace everything&quot;. With a listener taking one second, a conversation view&#39;s watch went
+from 402 calls and 17.9 MB of ops to 312 calls and 257 KB. Durable&#39;s event stream keeps a queue of its own, because
+events are not state: folding would drop them.</p>
+<p>Animation of the fold: <a href="https://radius.earendil.com/artifact/01m5nc9s24e9kscppen2fxgwye">How folding works</a>.</p>
+</section>
+
+<section class="chapter" id="calls"><header class="opener"><div class="numeral">IV</div><h2>Calls Get Their Own Window</h2><p class="lede">Why acknowledged state does not protect against a call flood.</p></header>
+<p class="dropcap">Calls are small and the provider acknowledges nothing until they finish, so a byte or message window on state says
+nothing about how many handlers run. A tab with a bug:</p>
+<pre><code><span class="tk-k">for</span> (<span class="tk-k">const</span> note <span class="tk-k">of</span> notes) ref.<span class="tk-f">add</span>(note, ctx);   <span class="tk-c">// 100,000 calls, none awaited</span></code></pre>
+<table>
+<thead>
+<tr>
+<th>100,000 calls, handlers awaiting 10 ms</th>
+<th>Finished in</th>
+<th>Provider memory</th>
+<th>Another client&#39;s p95 round trip</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>no limit</td>
+<td>0.66 s</td>
+<td>+56.5 MB, 43,824 running</td>
+<td>129 ms (345 ms with trivial handlers)</td>
+</tr>
+<tr>
+<td>provider-side semaphore of 64</td>
+<td>15.9 s</td>
+<td>+42.5 MB, 96,736 queued on the provider</td>
+<td>0.38 ms</td>
+</tr>
+<tr>
+<td>caller-side window of 64</td>
+<td>17.1 s</td>
+<td><strong>+4 MB, nothing queued on the provider</strong></td>
+<td>0.66 ms</td>
+</tr>
+<tr>
+<td>handlers doing 10 ms of CPU work</td>
+<td></td>
+<td></td>
+<td>blocked about 1 s, with or without a limit</td>
+</tr>
+</tbody></table>
+<p>The provider&#39;s <code>hello</code> announces a call window <strong>N</strong> (256 by default) per origin (chapter VI). A consumer keeps at
+most N of its own calls unanswered per link; further calls wait in the link&#39;s call queue, in order. Nothing is refused (K16); a peer that sends
+more than N is a protocol error. The flood waits in the tab that caused it. CPU-heavy handlers block the event loop
+whatever the window: that stays the handler author&#39;s responsibility.</p>
+</section>
+
+<section class="chapter" id="relays"><header class="opener"><div class="numeral">V</div><h2>Relays</h2><p class="lede">One link to a worker carries many tabs. Decided: flow control per origin.</p></header>
+<p class="dropcap">The server relays every tab&#39;s holds to a session&#39;s worker over one link. Three ways to apply the acknowledged window
+across that hop were considered:</p>
+<figure class="fig wide anim"><svg viewBox="0 0 720 378" width="100%" role="img" aria-label="(a) End-to-end acknowledgements: the server acknowledges the worker only after the tab did." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">WORKER</text><text x="16" y="144" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">SERVER</text><text x="16" y="266" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">TABS</text><g class="step" style="--i:1"><rect x="255" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">worker</text><text x="360" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">K = 2 per link</text></g><g class="step" style="--i:3"><rect x="255" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">server</text><text x="360" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">acks upstream after downstream</text></g><g class="step" style="--i:5"><rect x="137" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="242" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">fast tab</text><text x="242" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">desktop</text></g><g class="step" style="--i:7"><rect x="373" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae" stroke-dasharray="3 3"/><text x="478" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">slow tab</text><text x="478" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">phone in a tunnel</text></g><g class="step edge" style="--i:2"><path d="M351 80 L351 156" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><rect x="312.7" y="112" width="34.3" height="13" fill="#fbf8f2" opacity=".92"/><text x="343" y="122" font-size="9.5" fill="#7b7468" text-anchor="end">state</text></g><g class="step edge" style="--i:4"><path d="M360 202 L242 278" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><rect x="305" y="234" width="34.3" height="13" fill="#fbf8f2" opacity=".92"/><text x="309" y="244" font-size="9.5" fill="#7b7468" text-anchor="start">state</text></g><g class="step edge" style="--i:6"><path d="M351 202 L469 278" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><rect x="414" y="234" width="65.9" height="13" fill="#fbf8f2" opacity=".92"/><text x="418" y="244" font-size="9.5" fill="#7b7468" text-anchor="start">state, slow</text></g><g class="step edge" style="--i:8"><path d="M487 280 L369 204" fill="none" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><rect x="432" y="236" width="60.7" height="13" fill="#fbf8f2" opacity=".92"/><text x="436" y="246" font-size="9.5" fill="#7b7468" text-anchor="start">ack (late)</text></g><g class="step edge" style="--i:9"><path d="M369 158 L369 82" fill="none" stroke="#b4472f" marker-end="url(#f2a)"/><rect x="373" y="114" width="160.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="377" y="124" font-size="9.5" fill="#b4472f" text-anchor="start">ack only when every tab acked</text></g><text x="16" y="348" font-size="10.5" fill="#7b7468" text-anchor="start">Simplest, but the slow phone holds the worker's one window, so the fast tab's updates arrive in coarser, later batches</text><text x="16" y="363" font-size="10.5" fill="#7b7468" text-anchor="start">too.</text></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> (a) End-to-end acknowledgements: the server acknowledges the worker only after the tab did.</figcaption></figure>
+<figure class="fig wide anim"><svg viewBox="0 0 720 378" width="100%" role="img" aria-label="(b) Acknowledgements per hop: the server acknowledges at once and resets a slow tab." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f3m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f3a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f3b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">WORKER</text><text x="16" y="144" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">SERVER</text><text x="16" y="266" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">TABS</text><g class="step" style="--i:1"><rect x="255" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">worker</text><text x="360" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">K = 2 per link</text></g><g class="step" style="--i:3"><rect x="255" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">server</text><text x="360" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">acks at once; window per tab</text></g><g class="step" style="--i:6"><rect x="137" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="242" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">fast tab</text><text x="242" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">desktop</text></g><g class="step" style="--i:8"><rect x="373" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae" stroke-dasharray="3 3"/><text x="478" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">slow tab</text><text x="478" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">phone in a tunnel</text></g><g class="step edge" style="--i:2"><path d="M351 80 L351 156" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><rect x="312.7" y="112" width="34.3" height="13" fill="#fbf8f2" opacity=".92"/><text x="343" y="122" font-size="9.5" fill="#7b7468" text-anchor="end">state</text></g><g class="step edge" style="--i:4"><path d="M369 158 L369 82" fill="none" stroke="#b4472f" marker-end="url(#f3a)"/><rect x="373" y="114" width="65.9" height="13" fill="#fbf8f2" opacity=".92"/><text x="377" y="124" font-size="9.5" fill="#b4472f" text-anchor="start">ack at once</text></g><g class="step edge" style="--i:5"><path d="M360 202 L242 278" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><rect x="305" y="234" width="81.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="309" y="244" font-size="9.5" fill="#7b7468" text-anchor="start">state, current</text></g><g class="step edge" style="--i:7"><path d="M360 202 L478 278" fill="none" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f3m)"/><rect x="423" y="234" width="166" height="13" fill="#fbf8f2" opacity=".92"/><text x="427" y="244" font-size="9.5" fill="#7b7468" text-anchor="start">window full: its parts dropped</text></g><g class="step edge" style="--i:9"><path d="M369 158 L369 82" fill="none" stroke="#b4472f" marker-end="url(#f3a)"/><rect x="373" y="114" width="123.9" height="13" fill="#fbf8f2" opacity=".92"/><text x="377" y="124" font-size="9.5" fill="#b4472f" text-anchor="start">reset: fresh snapshots</text></g><text x="16" y="348" font-size="10.5" fill="#7b7468" text-anchor="start">The server cannot fold opaque parts, so it drops them and asks for snapshots. Built and measured in slice 4a: a 1 s</text><text x="16" y="363" font-size="10.5" fill="#7b7468" text-anchor="start">stall cost three full snapshots (~1.5 MiB) and ~24 s to catch up under streaming.</text></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 3.</span> (b) Acknowledgements per hop: the server acknowledges at once and resets a slow tab.</figcaption></figure>
+<figure class="fig wide anim"><svg viewBox="0 0 720 393" width="100%" role="img" aria-label="(c) Flow control per origin (decided 2026-10-24): the worker keeps a window per tab; the relay only forwards." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f4m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f4a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f4b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">WORKER</text><text x="16" y="144" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">SERVER</text><text x="16" y="266" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">TABS</text><g class="step" style="--i:1"><rect x="255" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">worker</text><text x="360" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">K = 2 per (link, origin)</text></g><g class="step" style="--i:3"><rect x="255" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">server</text><text x="360" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">forwards; FIFO of senders</text></g><g class="step" style="--i:5"><rect x="137" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="242" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">fast tab</text><text x="242" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">origin 1</text></g><g class="step" style="--i:7"><rect x="373" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae" stroke-dasharray="3 3"/><text x="478" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">slow tab</text><text x="478" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">origin 2, in a tunnel</text></g><g class="step edge" style="--i:2"><path d="M351 80 L351 156" fill="none" stroke="#7b7468" marker-end="url(#f4m)"/><rect x="244.2" y="112" width="102.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="343" y="122" font-size="9.5" fill="#7b7468" text-anchor="end">state @1, state @2</text></g><g class="step edge" style="--i:4"><path d="M360 202 L242 278" fill="none" stroke="#7b7468" marker-end="url(#f4m)"/><rect x="305" y="234" width="81.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="309" y="244" font-size="9.5" fill="#7b7468" text-anchor="start">state, current</text></g><g class="step edge" style="--i:6"><path d="M351 202 L469 278" fill="none" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f4m)"/><rect x="414" y="234" width="65.9" height="13" fill="#fbf8f2" opacity=".92"/><text x="418" y="244" font-size="9.5" fill="#7b7468" text-anchor="start">state, slow</text></g><g class="step edge" style="--i:8"><path d="M487 280 L369 204" fill="none" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f4m)"/><rect x="432" y="236" width="60.7" height="13" fill="#fbf8f2" opacity=".92"/><text x="436" y="246" font-size="9.5" fill="#7b7468" text-anchor="start">ack (late)</text></g><g class="step edge" style="--i:9"><path d="M369 158 L369 82" fill="none" stroke="#b4472f" marker-end="url(#f4a)"/><rect x="373" y="114" width="139.7" height="13" fill="#fbf8f2" opacity=".92"/><text x="377" y="124" font-size="9.5" fill="#b4472f" text-anchor="start">ack @2 when the tab acked</text></g><text x="16" y="348" font-size="10.5" fill="#7b7468" text-anchor="start">The relay numbers each tab (an origin) and forwards at once; each tab's ack goes back to the worker that sent the</text><text x="16" y="363" font-size="10.5" fill="#7b7468" text-anchor="start">message. The worker folds the slow tab's commits in that origin's pending queues, exactly as for a direct tab; the</text><text x="16" y="378" font-size="10.5" fill="#7b7468" text-anchor="start">fast tab is another origin with its own window.</text></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 4.</span> (c) Flow control per origin (decided 2026-10-24): the worker keeps a window per tab; the relay only forwards.</figcaption></figure>
+<p>How (c) works:</p>
+<ul>
+<li><strong>Origins.</strong> The relay gives each downstream link a number, never reused; every message upstream carries it
+(<code>origin</code>), and the worker keys holds, calls, windows and acks by (link, origin, id). Ids are not renumbered.</li>
+<li><strong>What the relay keeps.</strong> Per relayed hold its upstream link and its original <code>hold</code> message (to route calls and
+hold again after a worker restart); per tab a FIFO of which worker sent each message in flight, so each in-order
+<code>ack</code> goes back to the right worker. Nothing is parsed, folded, dropped or reset.</li>
+<li><strong>Calls.</strong> N is per origin at the worker; the relay forwards calls at once, each tab bounded by its own window.</li>
+<li><strong>A tab leaves.</strong> Its link closes; the relay sends <code>closed { origin }</code> to each worker it relayed to, which releases
+that origin&#39;s holds and aborts its calls.</li>
+<li><strong>Cost.</strong> A tab served by W workers may have 2W messages in flight (plus the relay&#39;s own 2). Two bytes of origin per
+message on the worker link.</li>
+</ul>
+</section>
+
+<section class="chapter epilogue" id="what-changes-in-the-design"><header class="opener"><div class="numeral">∴</div><h2>What Changes in the Design</h2><p class="lede">The converged scheme, what it replaces, and the relay decision.</p></header>
+<p class="dropcap"><strong>Converged</strong> (Astra and Fable, after cross-checking each other&#39;s experiments): at most K = 2 acknowledged state
+messages in flight; pending ops folded per hold member through a leaf index, capped at 10,000; a call window N
+announced in <code>hello</code>, extra calls queued by the caller; holds unlimited; size limits stay a separate check.</p>
+<p><strong>Replaced</strong> from the design (§3, §22): the byte window and its credit messages, snapshot admission and debt (R19, Q3),
+cut C12&#39;s call-credit accounting, any adapter backlog API. IPC and WebSocket behave the same, because acknowledgements
+are messages.</p>
+<p><strong>Relays (owner):</strong> per-hop acknowledgements (b) were decided on 2026-10-23 and built in slice 4a; the benchmarks
+showed a slow tab recovering through resets far worse than a direct tab (24 s and three snapshots after a 1 s stall).
+On 2026-10-24 they were replaced by <strong>flow control per origin</strong> (c): the worker keeps window, pending queues and calls
+per (link, origin), the relay only forwards and returns acks. Measured after the rework: a slow tab through the relay
+catches up exactly like a direct one. The circuit breaker stayed undecided; the heartbeat (15 s ping, 30 s close)
+was built instead.</p>
+</section>
+
+<section class="chapter appendix" id="measurements"><header class="opener"><div class="numeral">A</div><h2>Measurements</h2></header>
+<table>
+<thead>
+<tr>
+<th>Experiment</th>
+<th>Setup</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>normal stream</td>
+<td>50 × 23 B/s through 64 KiB/s</td>
+<td>no buffering, frames ≤ 2 ms old</td>
+</tr>
+<tr>
+<td>flood, no control</td>
+<td>~9,800 × 128 B/s, 10 s</td>
+<td>7.0 MB in <code>bufferedAmount</code>, heap +18.5 MB, newest state 9.4 s old</td>
+</tr>
+<tr>
+<td>flood, <code>bufferedAmount</code> ≤ 64 KiB + merging</td>
+<td>same</td>
+<td>heap +0.46 MB, newest state 9.4 s old</td>
+</tr>
+<tr>
+<td>flood, 1 to 4 acked messages + merging</td>
+<td>same</td>
+<td>heap +0.4 MB, newest state 0.0 s old, 98 % fewer messages</td>
+</tr>
+<tr>
+<td>client stops reading (loopback)</td>
+<td>20k × 90 B/s, 15 s</td>
+<td>23.4 MiB buffered, RSS +121 MB; merging above 1 MiB: flat</td>
+</tr>
+<tr>
+<td>IPC to a busy child</td>
+<td>623k sends</td>
+<td><code>send()</code> false from ~64 KB, parent +1,035 MB; the callback acknowledges the write, not the handler</td>
+</tr>
+<tr>
+<td>call flood</td>
+<td>100,000 calls, see chapter IV</td>
+<td>caller-side window: +4 MB, other client p95 0.66 ms</td>
+</tr>
+<tr>
+<td>slow tab through a relay, (b) resets</td>
+<td>64 KiB/s, 100 tokens/s into a 500 KB view, 1 s stall</td>
+<td>~24 s to catch up, three full snapshots (~1.5 MiB)</td>
+</tr>
+<tr>
+<td>slow tab through a relay, (c) per origin</td>
+<td>same, 1 s / 10 s / 60 s stall</td>
+<td>caught up after 0.02 / 0.08 / 0.38 s, 485 B / 4.1 KiB / 23.7 KiB (same as direct)</td>
+</tr>
+</tbody></table>
+</section>
+
+<p class="colophon">Flow control for Chord links · fourth edition · 2026-10-24 · based on the reviewers&#39; experiments and design §3, §22</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

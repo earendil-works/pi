@@ -6,7 +6,7 @@ owner: davidbrai
 Which models exist and which one is used.
 
 In:
-- Built-in model catalog (generate-models, models.dev, pi.dev registry).
+- Built-in model catalog (packages/ai/catalog, models.dev, pi.dev registry).
 - Model metadata: context window, max tokens, thinking level map, pricing.
 - models.json custom providers and models.
 - Model resolution: --model, --provider, defaultModel, startup fallback, scoped models, virtual models.

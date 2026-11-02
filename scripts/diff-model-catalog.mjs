@@ -63,7 +63,11 @@ const currentThinkingOutput = join(temporaryRoot, "after-thinking");
 let worktreeAdded = false;
 
 function generateCatalog(cwd, outputDir, pretty = false) {
-	const args = ["packages/ai/scripts/generate-models.ts", "--strict", "--json-only", "--json-output", outputDir];
+	// Baselines from before the catalog moved still have the old generator.
+	const generator = existsSync(join(cwd, "packages/ai/catalog/generate.ts"))
+		? "packages/ai/catalog/generate.ts"
+		: "packages/ai/scripts/generate-models.ts";
+	const args = [generator, "--strict", "--json-only", "--json-output", outputDir];
 	if (pretty) args.push("--pretty");
 	run(process.execPath, args, { cwd, capture: true });
 }

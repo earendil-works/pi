@@ -1,4 +1,4 @@
-import type { TSchema } from "typebox";
+import type { Schema } from "@earendil-works/pi-schema";
 import { type Draft, diffRevisions, type JsonValue, type Op, type Tracker, track } from "./delta/index.ts";
 import { ChordError } from "./errors.ts";
 import { enqueue, holdPublications } from "./publish.ts";
@@ -87,7 +87,7 @@ export abstract class Source<T> implements Readable<T> {
 	readonly seq = ++sequence;
 	readonly dependents = new Set<Derived<unknown>>();
 	/** Schemas of remote state members currently exposing this source (checked per write in dev mode). */
-	schemas: readonly TSchema[] = [];
+	schemas: readonly Schema[] = [];
 	protected readonly options: SourceOptions;
 	protected readonly fanout: Fanout<T>;
 
@@ -114,7 +114,7 @@ export abstract class Source<T> implements Readable<T> {
 		for (const schema of this.schemas) assertValid("state", `state ${this.key}`, schema, value);
 	}
 
-	protected ownSchemas(): readonly TSchema[] {
+	protected ownSchemas(): readonly Schema[] {
 		return [];
 	}
 }
@@ -149,7 +149,7 @@ function unbox(ops: readonly Op[], value: unknown): Op[] {
 /** A state cell holding any JSON value, validated against its schema at creation and (dev mode) on writes. */
 export class Cell<T> extends Source<T> {
 	/** Replaced at a reload commit that changes the schema (state-version bump). */
-	schema: TSchema;
+	schema: Schema;
 	#tracker: Tracker<Box<T>>;
 	readonly #guard: WriteGuard;
 	/** False until `initialize` for a cell declared with `init`: reads and writes throw `not_ready`. */
@@ -161,7 +161,7 @@ export class Cell<T> extends Source<T> {
 	 */
 	constructor(
 		key: string,
-		schema: TSchema,
+		schema: Schema,
 		initial: { readonly value: T } | undefined,
 		guard: WriteGuard,
 		options: SourceOptions,
@@ -182,7 +182,7 @@ export class Cell<T> extends Source<T> {
 		this.#initialized = true;
 	}
 
-	protected override ownSchemas(): readonly TSchema[] {
+	protected override ownSchemas(): readonly Schema[] {
 		return [this.schema];
 	}
 
@@ -238,7 +238,7 @@ export class Cell<T> extends Source<T> {
 	 * Installs a migrated value and its schema (reload commit). The caller validated the value and the derivations
 	 * over it against every schema that will apply, so nothing is checked here. Subscribers receive a reset.
 	 */
-	reset(value: T, schema: TSchema): void {
+	reset(value: T, schema: Schema): void {
 		this.schema = schema;
 		this.#publish(this.#tracker.prepareReplace({ v: value }), "reset", false);
 	}

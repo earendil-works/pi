@@ -55,4 +55,26 @@ describe("SettingsList", () => {
 
 		assert.deepStrictEqual(changes, [{ id: "tui-mode", value: "fullscreen" }]);
 	});
+
+	it("moves by one visible page with selection page keys (#7629)", () => {
+		const list = new SettingsList(
+			Array.from({ length: 12 }, (_, index) => ({
+				id: `setting-${index}`,
+				label: `Setting ${index}`,
+				currentValue: String(index),
+			})),
+			5,
+			testTheme,
+			() => {},
+			() => {},
+		);
+
+		list.handleInput("\x1b[6~");
+		assert.match(list.render(80).join("\n"), /> Setting 5/);
+		list.handleInput("\x1b[6~");
+		list.handleInput("\x1b[6~");
+		assert.match(list.render(80).join("\n"), /> Setting 11/);
+		list.handleInput("\x1b[5~");
+		assert.match(list.render(80).join("\n"), /> Setting 6/);
+	});
 });

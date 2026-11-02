@@ -347,6 +347,120 @@ describe("delta tracker transactional overlay lifecycle", () => {
 	});
 });
 
+/** Runs `body` with `WeakRef` construction counted; returns the count. */
+function countWeakRefs(body: () => void): number {
+	const original = globalThis.WeakRef;
+	let created = 0;
+	globalThis.WeakRef = class<T extends WeakKey> extends original<T> {
+		constructor(target: T) {
+			super(target);
+			created += 1;
+		}
+	};
+	try {
+		body();
+	} finally {
+		globalThis.WeakRef = original;
+	}
+	return created;
+}
+
+describe("delta tracker competing changes", () => {
+	it("tracks one change at a time without a WeakRef", () => {
+		const tracker = track({ value: 0, child: { rows: [0] } });
+		const created = countWeakRefs(() => {
+			for (let index = 1; index <= 100; index++) {
+				const change = tracker.beginChange();
+				change.state.value = index;
+				change.state.child.rows.push(index);
+				change.state.child = { rows: [index] };
+				tracker.adopt(change.prepare());
+				tracker.beginChange().abort();
+				const aborted = tracker.beginChange();
+				aborted.state.value = -1;
+				aborted.prepare().abort();
+				tracker.adopt(tracker.prepareReplace({ value: index, child: { rows: [index] } }));
+			}
+		});
+		expect(created).toBe(0);
+		expect(tracker.value).toEqual({ value: 100, child: { rows: [100] } });
+		expect(tracker.revision).toBe(200);
+	});
+
+	it("makes the older of two open drafts stale when the newer is adopted", () => {
+		const tracker = track({ value: 0, child: { value: 0 } });
+		const older = tracker.beginChange();
+		const held = older.state.child;
+		held.value = 1;
+		const newer = tracker.beginChange();
+		newer.state.value = 2;
+		tracker.adopt(newer.prepare());
+		expect(tracker.value).toEqual({ value: 2, child: { value: 0 } });
+		expect(() => held.value).toThrow(/settled/);
+		expect(() => older.state).toThrow(/settled/);
+		expect(() => older.prepare()).toThrow(/settled/);
+		older.abort();
+	});
+
+	it("makes the newer of two open drafts stale when the older is adopted", () => {
+		const tracker = track({ value: 0, child: { value: 0 } });
+		const older = tracker.beginChange();
+		older.state.value = 1;
+		const newer = tracker.beginChange();
+		const held = newer.state.child;
+		held.value = 2;
+		tracker.adopt(older.prepare());
+		expect(tracker.value).toEqual({ value: 1, child: { value: 0 } });
+		expect(() => held.value).toThrow(/settled/);
+		expect(() => newer.prepare()).toThrow(/settled/);
+		// The tracker moved on: the next change is tracked as the only one again.
+		const next = tracker.beginChange();
+		next.state.value = 3;
+		tracker.adopt(next.prepare());
+		expect(tracker.value).toEqual({ value: 3, child: { value: 0 } });
+	});
+
+	it("makes every other of three drafts stale, open or prepared, whichever is adopted", () => {
+		for (const winner of [0, 1, 2]) {
+			const tracker = track({ value: 0, rows: [{ value: 0 }] });
+			const changes = [tracker.beginChange(), tracker.beginChange(), tracker.beginChange()];
+			const held = changes.map((change) => change.state.rows[0]!);
+			held.forEach((row, index) => {
+				row.value = index + 1;
+			});
+			const prepared = changes[(winner + 1) % 3]!.prepare();
+			tracker.adopt(changes[winner]!.prepare());
+			expect(tracker.value).toEqual({ value: 0, rows: [{ value: winner + 1 }] });
+			expect(() => tracker.adopt(prepared)).toThrow(/stale/);
+			const open = changes[(winner + 2) % 3]!;
+			expect(() => held[(winner + 2) % 3]!.value).toThrow(/settled/);
+			expect(() => open.prepare()).toThrow(/settled/);
+			expect(prepared.value).toEqual({ value: 0, rows: [{ value: ((winner + 1) % 3) + 1 }] });
+		}
+	});
+
+	it("keeps an abandoned draft a competitor of the next change, through one WeakRef", () => {
+		const tracker = track({ value: 0, child: { value: 0 } });
+		let abandonedChild: { value: number } | undefined;
+		let abandoned: ReturnType<typeof tracker.beginChange> | undefined;
+		const created = countWeakRefs(() => {
+			abandoned = tracker.beginChange();
+			abandonedChild = abandoned.state.child;
+			abandonedChild.value = 1;
+			const next = tracker.beginChange();
+			next.state.value = 2;
+			tracker.adopt(next.prepare());
+			const after = tracker.beginChange();
+			after.state.value = 3;
+			tracker.adopt(after.prepare());
+		});
+		expect(created).toBe(1);
+		expect(tracker.value).toEqual({ value: 3, child: { value: 0 } });
+		expect(() => abandonedChild!.value).toThrow(/settled/);
+		expect(() => abandoned!.prepare()).toThrow(/settled/);
+	});
+});
+
 describe("delta tracker policy view", () => {
 	it("supports native reads, descriptors, keys, iteration, map, and JSON", () => {
 		const tracker = track({ values: [1, 2, 3], object: { a: 1 } as { a: number; b?: number } });

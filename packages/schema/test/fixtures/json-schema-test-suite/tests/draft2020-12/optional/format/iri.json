@@ -1,0 +1,141 @@
+[
+    {
+        "description": "validation of IRIs",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "format": "iri"
+        },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "a valid IRI with anchor tag",
+                "data": "http://ƒøø.ßår/?∂éœ=πîx#πîüx",
+                "valid": true
+            },
+            {
+                "description": "a valid IRI with anchor tag and parentheses",
+                "data": "http://ƒøø.com/blah_(wîkïpédiå)_blah#ßité-1",
+                "valid": true
+            },
+            {
+                "description": "a valid IRI with URL-encoded stuff",
+                "data": "http://ƒøø.ßår/?q=Test%20URL-encoded%20stuff",
+                "valid": true
+            },
+            {
+                "description": "invalid percent-encoding with non-hex digits",
+                "data": "http://ƒøø.ßår/%6G",
+                "valid": false
+            },
+            {
+                "description": "incomplete percent-encoding triplet",
+                "data": "http://ƒøø.ßår/%A",
+                "valid": false
+            },
+            {
+                "description": "lone percent sign is invalid",
+                "data": "http://ƒøø.ßår/%",
+                "valid": false
+            },
+            {
+                "description": "a valid IRI with many special characters",
+                "data": "http://-.~_!$&'()*+,;=:%40:80%2f::::::@example.com",
+                "valid": true
+            },
+            {
+                "description": "a valid IRI based on IPv6",
+                "data": "http://[2001:0db8:85a3:0000:0000:8a2e:0370:7334]",
+                "valid": true
+            },
+            {
+                "description": "an IPv6 address without enclosing brackets is invalid",
+                "data": "http://2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+                "valid": false
+            },
+            {
+                "description": "an invalid relative IRI Reference",
+                "data": "/abc",
+                "valid": false
+            },
+            {
+                "description": "an invalid IRI",
+                "data": "\\\\WINDOWS\\filëßåré",
+                "valid": false
+            },
+            {
+                "description": "an invalid IRI though valid IRI reference",
+                "data": "âππ",
+                "valid": false
+            },
+            {
+                "description": "an IPv6 host whose embedded IPv4 has a leading zero is invalid",
+                "data": "http://[::ffff:192.168.0.01]",
+                "valid": false
+            },
+            {
+                "description": "a valid IRI with a compressed IPv6 host",
+                "data": "http://[2001:db8::1]",
+                "valid": true
+            },
+            {
+                "description": "a trailing newline after a valid IRI is invalid",
+                "data": "http://ƒøø.ßår/\n",
+                "valid": false
+            },
+            {
+                "description": "a valid IRI with an IPv4 host",
+                "data": "http://192.168.0.1/p",
+                "valid": true
+            },
+            {
+                "description": "a valid IRI with no authority and a rootless path",
+                "data": "urn:example:resource",
+                "valid": true
+            },
+            {
+                "description": "a valid IRI with no authority and an absolute path",
+                "data": "file:/etc/hosts",
+                "valid": true
+            },
+            {
+                "description": "a valid IRI with a supplementary-plane character in the path",
+                "data": "http://ƒøø.ßår/𐌀",
+                "valid": true
+            },
+            {
+                "description": "a valid IRI with a supplementary-plane private-use char in query",
+                "data": "http://ƒøø.ßår/?q=󰀀",
+                "valid": true
+            }
+        ]
+    }
+]

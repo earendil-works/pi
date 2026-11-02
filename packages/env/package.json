@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-env",
-	"version": "1.4.0",
+	"version": "1.5.0",
 	"description": "Remote execution environments for Pi Durable: a small daemon deployed over SSH and its ExecutionEnv client",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -22,7 +22,7 @@
 		"CHANGELOG.md"
 	],
 	"scripts": {
-		"clean": "shx rm -rf dist",
+		"clean": "node ../../scripts/package-files.mjs clean dist",
 		"build": "tsc -p tsconfig.build.json",
 		"build:daemon": "cargo build --manifest-path daemon/Cargo.toml --locked",
 		"test": "vitest --run",
@@ -45,11 +45,10 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/chord": "1.4.0",
-		"@earendil-works/pi-durable": "1.4.0"
+		"@earendil-works/chord": "1.5.0",
+		"@earendil-works/pi-durable": "1.5.0"
 	},
 	"devDependencies": {
-		"shx": "0.3.4",
 		"vitest": "4.1.12"
 	}
 }

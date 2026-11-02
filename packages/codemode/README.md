@@ -275,7 +275,7 @@ import {
 	type CodemodeTool,
 	renderDeclarations,
 } from "@earendil-works/pi-codemode";
-import { Type } from "typebox";
+import { obj, str } from "@earendil-works/pi-schema";
 
 const sandboxTools: CodemodeTool[] = agentTools.map((tool) => ({
 	name: tool.name,
@@ -293,7 +293,7 @@ const codemodeTool: AgentTool = {
 	name: "codemode",
 	label: "Codemode",
 	description: `Run JavaScript that calls tools as \`await tools.<name>(args)\`. Output with text() or return.\n\n${renderDeclarations({ tools: sandboxTools })}`,
-	parameters: Type.Object({ code: Type.String() }),
+	parameters: obj({ code: str() }),
 	execute: async (_toolCallId, { code }, signal) => {
 		const sandbox = new CodemodeSandbox({ tools: sandboxTools });
 		try {

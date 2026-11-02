@@ -6,13 +6,17 @@ For native Windows setup, read [Windows Setup](windows.md). For Android, read [T
 
 ## 1. Install Pi
 
-On macOS or Linux, you can use the installer:
+Install Pi with the installer on macOS, Linux, or Windows:
 
-```bash
+```bash tab="macOS / Linux"
 curl -fsSL https://pi.dev/install.sh | sh
 ```
 
-The installer pins all dependencies and updates Pi with `pi update`. Alternatively, install Pi from npm, which does not pin transitive dependencies. This requires Node.js 22.19 or newer:
+```powershell tab="Windows"
+powershell -c "irm https://pi.dev/install.ps1 | iex"
+```
+
+Both installers pin all dependencies and update Pi with `pi update`. Alternatively, install Pi from npm, which does not pin transitive dependencies. This requires Node.js 22.19 or newer:
 
 ```bash
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent

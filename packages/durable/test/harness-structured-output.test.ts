@@ -8,7 +8,6 @@ import {
 	fauxText,
 	fauxToolCall,
 	type ToolResultMessage,
-	Type,
 } from "@earendil-works/pi-ai";
 import {
 	defineTool,
@@ -20,8 +19,8 @@ import {
 	type ToolRegistration,
 	ToolResultEntry,
 	ToolTask,
-	watchEvents,
 } from "@earendil-works/pi-durable";
+import { nul, num, obj } from "@earendil-works/pi-schema";
 import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { createBashTool } from "../src/tools/index.ts";
@@ -29,14 +28,14 @@ import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.
 import { addHooks, addTool } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 
-const Count = Type.Object({ count: Type.Number() });
+const Count = obj({ count: num() });
 
 /** A tool that returns `result`, with `extra` such as a schema. */
 function returning(name: string, result: ToolExecutionResult, extra: Partial<ToolRegistration> = {}): ToolRegistration {
 	return defineTool({
 		name,
 		description: name,
-		parameters: Type.Object({}),
+		parameters: obj({}),
 		execute: async () => result,
 		...extra,
 	});
@@ -56,7 +55,7 @@ async function nested(setup: ChatSetup, name: string): Promise<NestedToolExecuti
 		defineTool({
 			name: "probe",
 			description: "probe",
-			parameters: Type.Object({}),
+			parameters: obj({}),
 			execute: async (_args, api, callContext) => {
 				received = await api.executeTool(name, {}, callContext);
 				return {};
@@ -133,17 +132,14 @@ describe("structured output", () => {
 	it("stores exactly what callers and events get, without the model's output, and keeps a stored null", async () => {
 		const setup = chatSetup();
 		addTool(setup.registry, returning("plain", { output: [{ type: "text", text: "a" }] }));
-		addTool(
-			setup.registry,
-			returning("nothing", { structuredOutput: null }, { structuredOutputSchema: Type.Null() }),
-		);
+		addTool(setup.registry, returning("nothing", { structuredOutput: null }, { structuredOutputSchema: nul() }));
 		const received: NestedToolExecutionResult[] = [];
 		addTool(
 			setup.registry,
 			defineTool({
 				name: "probe",
 				description: "probe",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async (_args, api, callContext) => {
 					received.push(await api.executeTool("plain", {}, callContext));
 					received.push(await api.executeTool("nothing", {}, callContext));
@@ -156,32 +152,30 @@ describe("structured output", () => {
 		const { harness, root } = await openChat(storage, setup);
 		// The result each nested call's document got, as committed.
 		const stored: JsonValue[] = [];
-		harness.subscribeCommits((publication) => {
-			for (const change of publication.changes) {
-				if (change.type !== "document" || change.record.kind !== NestedCallDoc.definition.kind) continue;
-				const result = (change.value as NestedCallState | null)?.result;
-				if (result !== undefined && change.ops.length > 0) stored.push(result as unknown as JsonValue);
-			}
-		});
-		const stream = await watchEvents(harness, root.id, context);
-		const ends: NestedToolExecutionResult[] = [];
-		stream.start(async (batch) => {
-			for (const event of batch) {
-				if (event.type === "tool_execution_end" && event.parentToolCallId !== undefined) {
-					ends.push(event.result as NestedToolExecutionResult);
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of publication.changes) {
+					if (
+						change.type !== "document" ||
+						change.kind !== "change" ||
+						change.record.kind !== NestedCallDoc.definition.kind
+					)
+						continue;
+					const result = (change.value as NestedCallState)?.result;
+					if (result !== undefined && change.ops.length > 0) stored.push(result as unknown as JsonValue);
 				}
-			}
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		await harness.waitForIdle(context);
-		await stream.stop();
 		await harness.close(context);
 
 		expect(received[0]).toMatchObject({ structuredOutput: "a", isError: false });
 		expect(received[1]).toMatchObject({ structuredOutput: null, isError: false });
 		expect(received[0]).not.toHaveProperty("output");
+		// A client reads a live caller's nested results from the same documents.
 		expect(stored).toEqual(received);
-		expect(ends).toEqual(received);
 	});
 
 	it("gives callers a schema tool's validated structured output, which the transcript does not store", async () => {
@@ -275,7 +269,7 @@ describe("structured output", () => {
 			defineTool({
 				name: "throws",
 				description: "throws",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				structuredOutputSchema: Count,
 				execute: async () => {
 					throw new Error("permission denied");
@@ -347,7 +341,7 @@ describe("structured output", () => {
 			defineTool({
 				name: "probe",
 				description: "probe",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async (_args, api, callContext) => {
 					plain = await api.executeTool("plain", {}, callContext);
 					counter = await api.executeTool("counter", {}, callContext);
@@ -378,7 +372,7 @@ describe("structured output", () => {
 				defineTool({
 					name: "probe",
 					description: "probe",
-					parameters: Type.Object({}),
+					parameters: obj({}),
 					execute: async (_args, api, callContext) => {
 						received.push(await api.executeTool("bash", { command: "printf ok" }, callContext));
 						received.push(await api.executeTool("bash", { command: "printf bad; exit 4" }, callContext));

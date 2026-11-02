@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+import { describe, expect, it, vi } from "vitest";
 import type { SqliteExecutor } from "../../src/sqlite/index.ts";
-import { openNodeSqliteDatabase } from "../../src/sqlite/node.ts";
+import { NodeSqliteDatabase, openNodeSqliteDatabase } from "../../src/sqlite/node.ts";
+import { RUN_CHANGES, runChanges } from "./helpers.ts";
 
 describe("Node SQLite driver", () => {
 	it("configures connection defaults and accepts explicit settings", async () => {
@@ -15,6 +17,35 @@ describe("Node SQLite driver", () => {
 			} finally {
 				await database.close();
 			}
+		}
+	});
+
+	it("keeps the most recently used prepared statements and prepares evicted ones again", async () => {
+		const database = await openNodeSqliteDatabase(":memory:");
+		const prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+		try {
+			for (let i = 0; i < 300; i++) await database.get(`SELECT ${i} AS n`);
+			const prepared = prepare.mock.calls.length;
+			expect(await database.get("SELECT 299 AS n")).toEqual({ n: 299 });
+			expect(prepare.mock.calls.length).toBe(prepared);
+			expect(await database.get("SELECT 0 AS n")).toEqual({ n: 0 });
+			expect(prepare.mock.calls.length).toBe(prepared + 1);
+		} finally {
+			prepare.mockRestore();
+			await database.close();
+		}
+	});
+
+	it("reports the rows a statement changed, without index writes", async () => {
+		const database = await openNodeSqliteDatabase(":memory:");
+		try {
+			expect(await runChanges(database)).toEqual(RUN_CHANGES);
+			const inTransaction = await database.transaction((handle) =>
+				handle.runCounted("INSERT INTO changes_probe VALUES (?, ?, ?)", "t", "t/1", 1),
+			);
+			expect(inTransaction).toBe(1);
+		} finally {
+			await database.close();
 		}
 	});
 
@@ -165,5 +196,50 @@ describe("Node SQLite driver", () => {
 		).rejects.toThrow(AggregateError);
 		expect(await database.get("SELECT value FROM rollback_probe")).toEqual({ value: 1 });
 		await database.close();
+	});
+});
+
+describe("the outcome of a transaction (slice 6b D4)", () => {
+	/** A facade on `:memory:` whose next `statement` throws (and a `ROLLBACK` still rolls back). */
+	function faulty(statement?: "BEGIN IMMEDIATE" | "COMMIT" | "ROLLBACK") {
+		const database = new DatabaseSync(":memory:");
+		const exec = database.exec.bind(database);
+		let failing = statement;
+		database.exec = (sql: string): void => {
+			if (sql !== failing) {
+				exec(sql);
+				return;
+			}
+			failing = undefined;
+			if (sql === "ROLLBACK") exec(sql);
+			throw new Error(`${sql} failed`);
+		};
+		return new NodeSqliteDatabase(database);
+	}
+
+	it("rejects with the callback's own error after a rollback: the caller knows it never committed", async () => {
+		const database = faulty();
+		const own = new Error("refused");
+		await database.exec("CREATE TABLE t (n INTEGER)");
+		const outcome = database.transaction(async (handle) => {
+			await handle.run("INSERT INTO t VALUES (1)");
+			throw own;
+		});
+		await expect(outcome).rejects.toBe(own);
+		expect(await database.all("SELECT n FROM t")).toEqual([]);
+	});
+
+	it.each(["BEGIN IMMEDIATE", "COMMIT"] as const)("rejects with another error when %s fails", async (statement) => {
+		const database = faulty(statement);
+		const outcome = database.transaction(async () => 1);
+		await expect(outcome).rejects.toThrow(`${statement} failed`);
+	});
+
+	it("rejects with an AggregateError, not the callback's error, when its ROLLBACK fails", async () => {
+		const database = faulty("ROLLBACK");
+		const own = new Error("refused");
+		const error = await database.transaction(async () => Promise.reject(own)).catch((thrown: unknown) => thrown);
+		expect(error).toBeInstanceOf(AggregateError);
+		expect(error).not.toBe(own);
 	});
 });

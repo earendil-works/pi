@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { afterEach, describe, expect, it } from "vitest";
-import { getOrThrow, type WatchChange } from "../src/env/index.ts";
+import { type FileChange, getOrThrow } from "../src/env/index.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { registerEnvConformance } from "../src/testing/index.ts";
 
@@ -72,17 +72,17 @@ describe("NodeExecutionEnv watch limits", () => {
 			});
 
 			getOrThrow(await env.remove("tree/c", { recursive: true }, context));
-			const changes: WatchChange[] = [];
+			const changes: FileChange[] = [];
 			const watcher = getOrThrow(
 				await env.watch([{ path: "tree", recursive: true }], (change) => changes.push(change), context),
 			);
 			getOrThrow(await env.createDir("tree/d", undefined, context));
 			const deadline = Date.now() + 3000;
-			while (!changes.some((change) => "error" in change) && Date.now() < deadline) {
+			while (!changes.some((change) => change.kind === "failed") && Date.now() < deadline) {
 				await new Promise((resolve) => setTimeout(resolve, 20));
 			}
-			expect(changes.at(-1)).toMatchObject({ error: { code: "invalid" } });
-			await watcher.close(context);
+			expect(changes.at(-1)).toMatchObject({ kind: "failed", error: { code: "invalid" } });
+			await watcher.stop(context);
 		} finally {
 			await removeTempDir(cwd);
 		}

@@ -1,6 +1,6 @@
 // Regression tests for resolved application requests (#1-#10), numbered as in their test names.
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { arr, num, obj, str, unknown } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import { applyImmutable } from "../src/delta/index.ts";
 import {
@@ -36,19 +36,19 @@ function latch() {
 	return { promise, open };
 }
 
-const View = Type.Object({ text: Type.String() });
+const View = obj({ text: str() }, { open: true });
 
 describe("application requests", () => {
 	it("#1 a held object's state member can be returned as this object's state member", async () => {
 		const Conv = remote("t.conv", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("server"),
-			variants: { main: { state: { view: View }, methods: { set: method(Type.String()) } } },
+			variants: { main: { state: { view: View }, methods: { set: method(str()) } } },
 		});
 		const Chat = remote("t.chat", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("server"),
 			variants: { viewer: { state: { view: View } } },
 		});
@@ -95,11 +95,11 @@ describe("application requests", () => {
 
 	it("#2 facets reach their own host through FacetApi.root and FacetApi.registry", async () => {
 		const Config = defineRegistry<string>("t.config");
-		const Settings = local("t.settings", { version: 1, input: Type.Object({}) });
+		const Settings = local("t.settings", { version: 1, input: obj({}, { open: true }) });
 		const Reader = local("t.reader", {
 			version: 1,
-			input: Type.Object({}),
-			members: { read: method(undefined, Type.String()) },
+			input: obj({}, { open: true }),
+			members: { read: method(undefined, str()) },
 		});
 		const captured: FacetApi[] = [];
 		const facet = (value: string): Facet => ({
@@ -135,8 +135,8 @@ describe("application requests", () => {
 	it("#3 a listener keeps its subscription across reloads when resource and select are unchanged", async () => {
 		const Watcher = local("t.watcher", {
 			version: 1,
-			input: Type.Object({}),
-			members: { seen: Type.Array(Type.String()) },
+			input: obj({}, { open: true }),
+			members: { seen: arr(str()) },
 		});
 		// A source that accepts one subscriber at a time (like a Durable watch).
 		let subscribers = 0;
@@ -155,7 +155,7 @@ describe("application requests", () => {
 			name: "watcher",
 			setup: (api) =>
 				api.serve(Watcher, (_input, _principal, self) => {
-					const seen = self.state("seen", Type.Array(Type.String()), []);
+					const seen = self.state("seen", arr(str()), []);
 					const watchResource = self.resource("watch", { version: 1, open: () => single });
 					// A new adapter object per call, and a new arrow per factory run.
 					self.on(
@@ -181,7 +181,7 @@ describe("application requests", () => {
 	});
 
 	it("#3 a changed select resubscribes", async () => {
-		const Watcher = local("t.watcher2", { version: 1, input: Type.Object({}) });
+		const Watcher = local("t.watcher2", { version: 1, input: obj({}, { open: true }) });
 		let subscribes = 0;
 		const source = {
 			subscribe: () => {
@@ -210,10 +210,10 @@ describe("application requests", () => {
 	it("#4 replace diffs a new revision that shares structure; unrelated values replace", async () => {
 		const Mirror = local("t.mirror", {
 			version: 1,
-			input: Type.Object({}),
-			members: { doc: Type.Unknown(), set: method(Type.Unknown()) },
+			input: obj({}, { open: true }),
+			members: { doc: unknown(), set: method(unknown()) },
 		});
-		const Doc = Type.Object({ entries: Type.Array(Type.String()), status: Type.String() });
+		const Doc = obj({ entries: arr(str()), status: str() }, { open: true });
 		let lastOptions: { diff?: boolean } | undefined;
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
 		host.serve(Mirror, (_input, _principal, self) => {
@@ -256,9 +256,9 @@ describe("application requests", () => {
 	it("#5 roots of a child that connected behind the server are admitted in the server's code version", async () => {
 		const Echo = remote("t.echo", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("server"),
-			variants: { main: { methods: { codeVersion: method(undefined, Type.Number()) } } },
+			variants: { main: { methods: { codeVersion: method(undefined, num()) } } },
 		});
 		const server = createHost({ self: { kind: "host" }, name: "server", onError: () => {} });
 		const echoFacet: Facet = {
@@ -293,7 +293,7 @@ describe("application requests", () => {
 	it("#6 self.expose: an opaque member backed by a resource, readable once live", async () => {
 		const Store = local("t.store", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			members: { db: opaque<{ readonly queries: string[] }>("t.db@1") },
 		});
 		const gate = latch();
@@ -315,7 +315,7 @@ describe("application requests", () => {
 		await ref.ready;
 		assert.equal(ref.db, native);
 
-		const Other = local("t.other", { version: 1, input: Type.Object({}) });
+		const Other = local("t.other", { version: 1, input: obj({}, { open: true }) });
 		host.serve(Other, (_input, _principal, self) => {
 			self.expose({ key: "x", value: 1 });
 			return {};
@@ -326,9 +326,9 @@ describe("application requests", () => {
 	it("#7 a cluster reload reports what each child prepared", async () => {
 		const Greeter = remote("t.greeter", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("session:S1"),
-			variants: { main: { methods: { greet: method(Type.String(), Type.String()) } } },
+			variants: { main: { methods: { greet: method(str(), str()) } } },
 		});
 		const greeter = (text: string): Facet => ({
 			name: "greeter",
@@ -362,13 +362,13 @@ describe("application requests", () => {
 	it("#8 a held remote reference keeps its state without listeners; a later subscriber sees the current value", async () => {
 		const Counter = remote("t.count8", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("server"),
-			variants: { main: { state: { n: Type.Number() }, methods: { set: method(Type.Number()) } } },
+			variants: { main: { state: { n: num() }, methods: { set: method(num()) } } },
 		});
 		const server = createHost({ self: { kind: "host" }, name: "server", onError: () => {} });
 		server.serve(Counter, (_input, _principal, self) => {
-			const n = self.state("n", Type.Number(), 0);
+			const n = self.state("n", num(), 0);
 			return {
 				variant: "main",
 				n,
@@ -404,7 +404,7 @@ describe("application requests", () => {
 	it("#9 references report status changes: live, loading while a link reconnects, gone, released", async () => {
 		const Thing = remote("t.thing9", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("server"),
 			variants: { main: {} },
 		});
@@ -449,9 +449,9 @@ describe("application requests", () => {
 		const log: string[] = [];
 		const Remote = remote("t.remote10", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("server"),
-			variants: { main: { methods: { note: method(Type.String()) } } },
+			variants: { main: { methods: { note: method(str()) } } },
 		});
 		const server = createHost({ self: { kind: "host" }, name: "server", onError: () => {} });
 		server.serve(Remote, () => ({
@@ -462,10 +462,10 @@ describe("application requests", () => {
 		}));
 		const Proc = local("t.proc", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			members: { tracker: opaque<Set<string>>("t.tracker@1") },
 		});
-		const Chat = local("t.chat10", { version: 1, input: Type.Object({}) });
+		const Chat = local("t.chat10", { version: 1, input: obj({}, { open: true }) });
 		const [down, up] = memoryLinkPair();
 		server.accept(down, { principal: { worker: "w" }, kind: "host", name: "w" });
 		const worker = createHost({

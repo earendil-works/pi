@@ -1,0 +1,75 @@
+[
+    {
+        "description": "minimum validation",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "minimum": 1.1
+        },
+        "tests": [
+            {
+                "description": "above the minimum is valid",
+                "data": 2.6,
+                "valid": true
+            },
+            {
+                "description": "boundary point is valid",
+                "data": 1.1,
+                "valid": true
+            },
+            {
+                "description": "below the minimum is invalid",
+                "data": 0.6,
+                "valid": false
+            },
+            {
+                "description": "ignores non-numbers",
+                "data": "x",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "minimum validation with signed integer",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "minimum": -2
+        },
+        "tests": [
+            {
+                "description": "negative above the minimum is valid",
+                "data": -1,
+                "valid": true
+            },
+            {
+                "description": "positive above the minimum is valid",
+                "data": 0,
+                "valid": true
+            },
+            {
+                "description": "boundary point is valid",
+                "data": -2,
+                "valid": true
+            },
+            {
+                "description": "boundary point with float is valid",
+                "data": -2.0,
+                "valid": true
+            },
+            {
+                "description": "float below the minimum is invalid",
+                "data": -2.0001,
+                "valid": false
+            },
+            {
+                "description": "int below the minimum is invalid",
+                "data": -3,
+                "valid": false
+            },
+            {
+                "description": "ignores non-numbers",
+                "data": "x",
+                "valid": true
+            }
+        ]
+    }
+]

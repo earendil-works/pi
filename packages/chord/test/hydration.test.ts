@@ -1,7 +1,7 @@
 // Entry 8: a local object goes live only with its state, also where it forwards or derives from a remote reference's
 // member; activation waits at most `readyTimeout` (a cycle across hosts fails with a hint instead of hanging).
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { num, obj, str } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import {
 	type Ctx,
@@ -20,22 +20,22 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 /** Lives on the worker `w`; its value is set by `set`. */
 const Source = remote("t.e8-source", {
 	version: 1,
-	input: Type.Object({}),
+	input: obj({}, { open: true }),
 	host: hostNamed("w"),
-	variants: { main: { state: { v: Type.String() }, methods: { set: method(Type.String()) } } },
+	variants: { main: { state: { v: str() }, methods: { set: method(str()) } } },
 });
 
 /** Lives on the server; forwards (and derives from) the worker's `Source`. */
 const Forward = remote("t.e8-forward", {
 	version: 1,
-	input: Type.Object({ how: Type.String() }),
+	input: obj({ how: str() }, { open: true }),
 	host: hostNamed("server"),
-	variants: { main: { state: { v: Type.String(), size: Type.Number() } } },
+	variants: { main: { state: { v: str(), size: num() } } },
 });
 
 function serveSource(host: Host): void {
 	host.serve(Source, (_input, _principal, self) => {
-		const v = self.state("v", Type.String(), "from the worker");
+		const v = self.state("v", str(), "from the worker");
 		return {
 			variant: "main",
 			v,
@@ -105,9 +105,9 @@ describe("local hydration", () => {
 
 	it("a member read inside a factory throws not_ready; it is a plain value once live", async () => {
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
-		const Inner = local("t.e8-inner", { version: 1, input: Type.Object({}), members: { n: Type.Number() } });
-		const Outer = local("t.e8-outer", { version: 1, input: Type.Object({}), members: { m: Type.Number() } });
-		host.serve(Inner, (_input, _principal, self) => ({ n: self.state("n", Type.Number(), 7) }));
+		const Inner = local("t.e8-inner", { version: 1, input: obj({}, { open: true }), members: { n: num() } });
+		const Outer = local("t.e8-outer", { version: 1, input: obj({}, { open: true }), members: { m: num() } });
+		host.serve(Inner, (_input, _principal, self) => ({ n: self.state("n", num(), 7) }));
 		const seen: unknown[] = [];
 		host.serve(Outer, (_input, _principal, self) => {
 			const inner = self.get(Inner, {});
@@ -127,15 +127,15 @@ describe("local hydration", () => {
 	it("a host object of a child holding the parent's object goes live once the parent admits the child", async () => {
 		const Settings = remote("t.e8-settings", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("server"),
-			variants: { main: { state: { theme: Type.String() } } },
+			variants: { main: { state: { theme: str() } } },
 		});
-		const Local = local("t.e8-boot", { version: 1, input: Type.Object({}), members: { theme: Type.String() } });
+		const Local = local("t.e8-boot", { version: 1, input: obj({}, { open: true }), members: { theme: str() } });
 		const c = cluster({ delay: 20 });
 		c.server.serve(Settings, (_input, _principal, self) => ({
 			variant: "main",
-			theme: self.state("theme", Type.String(), "dark"),
+			theme: self.state("theme", str(), "dark"),
 		}));
 		await c.worker.install(
 			{
@@ -163,13 +163,13 @@ describe("local hydration", () => {
 	it("a reference cycle across hosts fails at readyTimeout with a cycle hint", async () => {
 		const A = remote("t.e8-cycle-a", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("server"),
 			variants: { main: {} },
 		});
 		const B = remote("t.e8-cycle-b", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("w"),
 			variants: { main: {} },
 		});

@@ -742,8 +742,6 @@ export interface ClassifierResult {
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
-import type { TSchema } from "typebox";
-
 /** OpenAI grammar variants for constrained sampling. */
 export type GrammarFormat = "openai_lark" | "openai_regex";
 
@@ -766,7 +764,11 @@ export type ConstrainedSamplingConfig =
 			variants: GrammarVariants;
 	  };
 
-export interface Tool<TParameters extends TSchema = TSchema> {
+/**
+ * A tool the model may call. `parameters` is the JSON Schema of its arguments: pi-schema's builders (which also type
+ * the arguments, see `Static` in `@earendil-works/pi-schema`), TypeBox schemas, or any JSON Schema object.
+ */
+export interface Tool<TParameters extends object = object> {
 	name: string;
 	description: string;
 	parameters: TParameters;

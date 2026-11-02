@@ -1136,7 +1136,7 @@ export class HostImpl implements Host, HostCore {
 		return best?.[1];
 	}
 
-	/** Authorize, resolve (maybe spawn), authorize again; returns the synced connection to the host. */
+	/** Authorize, resolve (maybe spawn) and admit the host, authorize again; returns the synced connection to the host. */
 	async #resolve(
 		route: Route,
 		hostName: string,
@@ -1148,15 +1148,17 @@ export class HostImpl implements Host, HostCore {
 		if (!(await route.authorize(principal, hostName))) throw refuse();
 		if (!still()) throw revoked();
 		const link = await route.resolve(hostName);
-		if (!still()) throw revoked();
-		if (!(await route.authorize(principal, hostName))) throw refuse();
-		if (!still()) throw revoked();
+		// Admitted before the checks: a host the route spawned for a request that is gone or refused meanwhile still runs,
+		// and its own references to this host would otherwise wait on a link nobody reads until they time out.
 		let connection = [...this.connections].find((candidate) => candidate.link === link);
 		connection ??= this.#addConnection(link, {
 			role: "downstream",
 			principal: route.principal(hostName),
 			peer: { kind: "host", name: hostName },
 		});
+		if (!still()) throw revoked();
+		if (!(await route.authorize(principal, hostName))) throw refuse();
+		if (!still()) throw revoked();
 		await connection.whenSynced();
 		if (!still()) throw revoked();
 		return connection;

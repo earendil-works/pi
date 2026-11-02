@@ -1,4 +1,4 @@
-import type { JsonValue } from "@earendil-works/chord";
+import { copyJson } from "@earendil-works/chord";
 import { type Op, track } from "@earendil-works/chord/delta";
 import {
 	type AssistantMessage,
@@ -7,11 +7,12 @@ import {
 	ToolCallArgumentsStream,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { PartialChanges } from "../src/harness/partial-changes.ts";
+import type { LiveState } from "../src/harness/live.ts";
+import { PartialChanges, type PartialMessage } from "../src/harness/partial-changes.ts";
 
 // #9265: partial commits reassigned the growing strings of a streamed answer, and Chord compared each one whole.
 
-type Live = { generation: Record<string, JsonValue> };
+type Live = { generation: NonNullable<LiveState["generation"]> };
 
 /**
  * A response streaming one text block (started empty) and then one tool call, as a provider produces it: the partial
@@ -63,10 +64,11 @@ function setup() {
 		},
 		/** One partial commit, as the generation's throttle makes it; `fail` aborts it like a rejected commit. */
 		commit(fail = false) {
-			const message = structuredClone(partial) as unknown as { content: JsonValue[] };
+			// As the generation copies it: `copyJson()` returns untyped JSON, here a message's JSON representation.
+			const message = copyJson(partial) as PartialMessage;
 			const taken = changes.take(message);
 			const change = tracker.beginChange();
-			changes.commit(change.state.generation, message as unknown as JsonValue, taken);
+			changes.commit(change.state.generation, message, taken);
 			if (fail) {
 				change.abort();
 				changes.restore(taken);

@@ -195,6 +195,15 @@ function createEventConverter(model: Model<"pi-messages">) {
 	const toolArguments = new Map<number, ToolCallArgumentsStream>();
 
 	return (event: PiMessagesEvent): AssistantMessageEvent => {
+		if ("contentIndex" in event) {
+			// The index comes from the wire and keys the content array: `__proto__` would reach Array.prototype, and a huge
+			// index would make a sparse array of billions of holes. A start adds the next block; other events need one.
+			const index: unknown = event.contentIndex;
+			const limit = event.type.endsWith("_start") ? partial.content.length : partial.content.length - 1;
+			if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > limit) {
+				throw new Error(`Invalid contentIndex ${JSON.stringify(index)} in pi-messages ${event.type} event`);
+			}
+		}
 		switch (event.type) {
 			case "done":
 				Object.assign(partial, {

@@ -1,0 +1,8 @@
+{
+	"name": "@bob/stats",
+	"private": true,
+	"type": "module",
+	"dependencies": {
+		"@bob/words": "git+file:///path/to/words.git#<commit>"
+	}
+}

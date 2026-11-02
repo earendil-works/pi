@@ -15,6 +15,7 @@
 
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
+import { trustedHttpUrl } from "./trusted-url.ts";
 
 // Muse Code CLI client id.
 const CLIENT_ID = "1031625952748946";
@@ -52,18 +53,6 @@ function errorDetail(json: Record<string, unknown> | null): string {
 		if (typeof value === "string" && value.trim()) return `: ${value.trim()}`;
 	}
 	return "";
-}
-
-/** The verification URI is opened in the user's browser; only http(s) URLs are trusted. */
-function trustedHttpUrl(value: unknown): string | null {
-	if (typeof value !== "string" || !value) return null;
-	try {
-		const url = new URL(value);
-		if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-		return url.href;
-	} catch {
-		return null;
-	}
 }
 
 function positiveNumber(value: unknown): number | undefined {

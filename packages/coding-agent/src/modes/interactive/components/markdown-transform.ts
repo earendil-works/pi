@@ -1,8 +1,9 @@
 import type { MarkdownTransformContext, MarkdownTransformer } from "../../../core/extensions/types.ts";
 
+/** Applies extension Markdown transformers. `isStreaming` is read per transform, so a reused component sees a stream end. */
 export function createMarkdownTransform(
 	messageType: MarkdownTransformContext["messageType"],
-	isStreaming: boolean,
+	isStreaming: () => boolean,
 	transformers: readonly MarkdownTransformer[],
 	messageId?: string,
 	timestamp?: string,
@@ -10,7 +11,7 @@ export function createMarkdownTransform(
 	return (markdown, availableWidth) =>
 		applyMarkdownTransformers(
 			markdown,
-			{ messageType, isStreaming, availableWidth, messageId, timestamp },
+			{ messageType, isStreaming: isStreaming(), availableWidth, messageId, timestamp },
 			transformers,
 		);
 }

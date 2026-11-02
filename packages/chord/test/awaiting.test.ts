@@ -1,7 +1,7 @@
 // Entry 8: awaited gets. `host.get` and `ctx.get` resolve once the reference is ready; abort, the ctx closing and the
 // host's `readyTimeout` reject them and release only that reference.
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { num, obj } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import { type Ctx, createHost, type Host, hostNamed, isChordError, memoryLinkPair, remote } from "../src/index.ts";
 import { CountingLink } from "./fixtures/counting.ts";
@@ -14,9 +14,9 @@ async function until(check: () => boolean, attempts = 200): Promise<void> {
 
 const Slow = remote("t.e8-slow", {
 	version: 1,
-	input: Type.Object({}),
+	input: obj({}, { open: true }),
 	host: hostNamed("server"),
-	variants: { main: { state: { n: Type.Number() } } },
+	variants: { main: { state: { n: num() } } },
 });
 
 /** A server whose `Slow` object goes live when `open()` is called; a browser whose link counts frames. */
@@ -28,7 +28,7 @@ function setup(readyTimeout?: number) {
 	const server = createHost({ self: { kind: "host" }, name: "server", onError: () => {} });
 	server.serve(Slow, (_input, _principal, self) => {
 		self.resource("gate", { version: 1, open: () => opened });
-		return { variant: "main", n: self.state("n", Type.Number(), 1) };
+		return { variant: "main", n: self.state("n", num(), 1) };
 	});
 	const [down, up] = memoryLinkPair();
 	server.accept(down, { principal: { user: "u" } });

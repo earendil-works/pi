@@ -1,0 +1,90 @@
+[
+    {
+        "description": "pattern validation",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "pattern": "^a*$"
+        },
+        "tests": [
+            {
+                "description": "a matching pattern is valid",
+                "data": "aaa",
+                "valid": true
+            },
+            {
+                "description": "a non-matching pattern is invalid",
+                "data": "abc",
+                "valid": false
+            },
+            {
+                "description": "ignores booleans",
+                "data": true,
+                "valid": true
+            },
+            {
+                "description": "ignores integers",
+                "data": 123,
+                "valid": true
+            },
+            {
+                "description": "ignores floats",
+                "data": 1.0,
+                "valid": true
+            },
+            {
+                "description": "ignores objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "ignores arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "ignores null",
+                "data": null,
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "pattern is not anchored",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "pattern": "a+"
+        },
+        "tests": [
+            {
+                "description": "matches a substring",
+                "data": "xxaayy",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "pattern with Unicode property escape requires unicode mode",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "string",
+            "pattern": "^\\p{Letter}+$"
+        },
+        "tests": [
+            {
+                "description": "ASCII letters match",
+                "data": "Hello",
+                "valid": true
+            },
+            {
+                "description": "Non-ASCII letters match",
+                "data": "π",
+                "valid": true
+            },
+            {
+                "description": "Digits do not match",
+                "data": "123",
+                "valid": false
+            }
+        ]
+    }
+]

@@ -1,7 +1,7 @@
 // Entry 8: a binding applies a shape only once its new state members have snapshots; members outside the variant
 // throw `not_in_variant`; a re-hold after a link loss keeps the last values readable and sends one fresh unit.
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { num, obj, str } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import {
 	type Ctx,
@@ -24,12 +24,12 @@ async function until(check: () => boolean, attempts = 200): Promise<void> {
 
 const Doc = remote("t.e8-doc", {
 	version: 1,
-	input: Type.Object({}),
+	input: obj({}, { open: true }),
 	host: hostNamed("server"),
 	variants: {
-		a: { state: { x: Type.Number() }, methods: { bump: method() } },
-		b: { state: { x: Type.Number(), y: Type.String() }, methods: { bump: method() } },
-		c: { state: { y: Type.String() }, methods: { bump: method() } },
+		a: { state: { x: num() }, methods: { bump: method() } },
+		b: { state: { x: num(), y: str() }, methods: { bump: method() } },
+		c: { state: { y: str() }, methods: { bump: method() } },
 	},
 });
 
@@ -39,8 +39,8 @@ function docFacet(variant: "a" | "b" | "c"): Facet {
 		name: "doc",
 		setup: (api) =>
 			api.serve(Doc, (_input, _principal, self) => {
-				const x = self.state("x", Type.Number(), 1);
-				const y = self.state("y", Type.String(), "why");
+				const x = self.state("x", num(), 1);
+				const y = self.state("y", str(), "why");
 				const bump = (ctx: Ctx) => {
 					x.replace(ctx, x.value + 1);
 				};

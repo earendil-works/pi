@@ -1,0 +1,293 @@
+[
+    {
+        "description": "oneOf",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "oneOf": [
+                {
+                    "type": "integer"
+                },
+                {
+                    "minimum": 2
+                }
+            ]
+        },
+        "tests": [
+            {
+                "description": "first oneOf valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "second oneOf valid",
+                "data": 2.5,
+                "valid": true
+            },
+            {
+                "description": "both oneOf valid",
+                "data": 3,
+                "valid": false
+            },
+            {
+                "description": "neither oneOf valid",
+                "data": 1.5,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "oneOf with base schema",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "string",
+            "oneOf" : [
+                {
+                    "minLength": 2
+                },
+                {
+                    "maxLength": 4
+                }
+            ]
+        },
+        "tests": [
+            {
+                "description": "mismatch base schema",
+                "data": 3,
+                "valid": false
+            },
+            {
+                "description": "one oneOf valid",
+                "data": "foobar",
+                "valid": true
+            },
+            {
+                "description": "both oneOf valid",
+                "data": "foo",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "oneOf with boolean schemas, all true",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "oneOf": [true, true, true]
+        },
+        "tests": [
+            {
+                "description": "any value is invalid",
+                "data": "foo",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "oneOf with boolean schemas, one true",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "oneOf": [true, false, false]
+        },
+        "tests": [
+            {
+                "description": "any value is valid",
+                "data": "foo",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "oneOf with boolean schemas, more than one true",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "oneOf": [true, true, false]
+        },
+        "tests": [
+            {
+                "description": "any value is invalid",
+                "data": "foo",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "oneOf with boolean schemas, all false",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "oneOf": [false, false, false]
+        },
+        "tests": [
+            {
+                "description": "any value is invalid",
+                "data": "foo",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "oneOf complex types",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "oneOf": [
+                {
+                    "properties": {
+                        "bar": {"type": "integer"}
+                    },
+                    "required": ["bar"]
+                },
+                {
+                    "properties": {
+                        "foo": {"type": "string"}
+                    },
+                    "required": ["foo"]
+                }
+            ]
+        },
+        "tests": [
+            {
+                "description": "first oneOf valid (complex)",
+                "data": {"bar": 2},
+                "valid": true
+            },
+            {
+                "description": "second oneOf valid (complex)",
+                "data": {"foo": "baz"},
+                "valid": true
+            },
+            {
+                "description": "both oneOf valid (complex)",
+                "data": {"foo": "baz", "bar": 2},
+                "valid": false
+            },
+            {
+                "description": "neither oneOf valid (complex)",
+                "data": {"foo": 2, "bar": "quux"},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "oneOf with empty schema",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "oneOf": [
+                { "type": "number" },
+                {}
+            ]
+        },
+        "tests": [
+            {
+                "description": "one valid - valid",
+                "data": "foo",
+                "valid": true
+            },
+            {
+                "description": "both valid - invalid",
+                "data": 123,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "oneOf with required",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "oneOf": [
+                { "required": ["foo", "bar"] },
+                { "required": ["foo", "baz"] }
+            ]
+        },
+        "tests": [
+            {
+                "description": "both invalid - invalid",
+                "data": {"bar": 2},
+                "valid": false
+            },
+            {
+                "description": "first valid - valid",
+                "data": {"foo": 1, "bar": 2},
+                "valid": true
+            },
+            {
+                "description": "second valid - valid",
+                "data": {"foo": 1, "baz": 3},
+                "valid": true
+            },
+            {
+                "description": "both valid - invalid",
+                "data": {"foo": 1, "bar": 2, "baz" : 3},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "oneOf with missing optional property",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "oneOf": [
+                {
+                    "properties": {
+                        "bar": true,
+                        "baz": true
+                    },
+                    "required": ["bar"]
+                },
+                {
+                    "properties": {
+                        "foo": true
+                    },
+                    "required": ["foo"]
+                }
+            ]
+        },
+        "tests": [
+            {
+                "description": "first oneOf valid",
+                "data": {"bar": 8},
+                "valid": true
+            },
+            {
+                "description": "second oneOf valid",
+                "data": {"foo": "foo"},
+                "valid": true
+            },
+            {
+                "description": "both oneOf valid",
+                "data": {"foo": "foo", "bar": 8},
+                "valid": false
+            },
+            {
+                "description": "neither oneOf valid",
+                "data": {"baz": "quux"},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "nested oneOf, to check validation semantics",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "oneOf": [
+                {
+                    "oneOf": [
+                        {
+                            "type": "null"
+                        }
+                    ]
+                }
+            ]
+        },
+        "tests": [
+            {
+                "description": "null is valid",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "anything non-null is invalid",
+                "data": 123,
+                "valid": false
+            }
+        ]
+    }
+]

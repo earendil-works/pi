@@ -1,0 +1,242 @@
+[
+    {
+        "description": "object properties validation",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "properties": {
+                "foo": {"type": "integer"},
+                "bar": {"type": "string"}
+            }
+        },
+        "tests": [
+            {
+                "description": "both properties present and valid is valid",
+                "data": {"foo": 1, "bar": "baz"},
+                "valid": true
+            },
+            {
+                "description": "one property invalid is invalid",
+                "data": {"foo": 1, "bar": {}},
+                "valid": false
+            },
+            {
+                "description": "both properties invalid is invalid",
+                "data": {"foo": [], "bar": {}},
+                "valid": false
+            },
+            {
+                "description": "doesn't invalidate other properties",
+                "data": {"quux": []},
+                "valid": true
+            },
+            {
+                "description": "ignores arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "ignores other non-objects",
+                "data": 12,
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description":
+            "properties, patternProperties, additionalProperties interaction",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "properties": {
+                "foo": {"type": "array", "maxItems": 3},
+                "bar": {"type": "array"}
+            },
+            "patternProperties": {"f.o": {"minItems": 2}},
+            "additionalProperties": {"type": "integer"}
+        },
+        "tests": [
+            {
+                "description": "property validates property",
+                "data": {"foo": [1, 2]},
+                "valid": true
+            },
+            {
+                "description": "property invalidates property",
+                "data": {"foo": [1, 2, 3, 4]},
+                "valid": false
+            },
+            {
+                "description": "patternProperty invalidates property",
+                "data": {"foo": []},
+                "valid": false
+            },
+            {
+                "description": "patternProperty validates nonproperty",
+                "data": {"fxo": [1, 2]},
+                "valid": true
+            },
+            {
+                "description": "patternProperty invalidates nonproperty",
+                "data": {"fxo": []},
+                "valid": false
+            },
+            {
+                "description": "additionalProperty ignores property",
+                "data": {"bar": []},
+                "valid": true
+            },
+            {
+                "description": "additionalProperty validates others",
+                "data": {"quux": 3},
+                "valid": true
+            },
+            {
+                "description": "additionalProperty invalidates others",
+                "data": {"quux": "foo"},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "properties with boolean schema",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "properties": {
+                "foo": true,
+                "bar": false
+            }
+        },
+        "tests": [
+            {
+                "description": "no property present is valid",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "only 'true' property present is valid",
+                "data": {"foo": 1},
+                "valid": true
+            },
+            {
+                "description": "only 'false' property present is invalid",
+                "data": {"bar": 2},
+                "valid": false
+            },
+            {
+                "description": "both properties present is invalid",
+                "data": {"foo": 1, "bar": 2},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "properties with escaped characters",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "properties": {
+                "foo\nbar": {"type": "number"},
+                "foo\"bar": {"type": "number"},
+                "foo\\bar": {"type": "number"},
+                "foo\rbar": {"type": "number"},
+                "foo\tbar": {"type": "number"},
+                "foo\fbar": {"type": "number"}
+            }
+        },
+        "tests": [
+            {
+                "description": "object with all numbers is valid",
+                "data": {
+                    "foo\nbar": 1,
+                    "foo\"bar": 1,
+                    "foo\\bar": 1,
+                    "foo\rbar": 1,
+                    "foo\tbar": 1,
+                    "foo\fbar": 1
+                },
+                "valid": true
+            },
+            {
+                "description": "object with strings is invalid",
+                "data": {
+                    "foo\nbar": "1",
+                    "foo\"bar": "1",
+                    "foo\\bar": "1",
+                    "foo\rbar": "1",
+                    "foo\tbar": "1",
+                    "foo\fbar": "1"
+                },
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "properties with null valued instance properties",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "properties": {
+                "foo": {"type": "null"}
+            }
+        },
+        "tests": [
+            {
+                "description": "allows null values",
+                "data": {"foo": null},
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "properties whose names are Javascript object property names",
+        "comment": "Ensure JS implementations don't universally consider e.g. __proto__ to always be present in an object.",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "properties": {
+                "__proto__": {"type": "number"},
+                "toString": {
+                    "properties": { "length": { "type": "string" } }
+                },
+                "constructor": {"type": "number"}
+            }
+        },
+        "tests": [
+            {
+                "description": "ignores arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "ignores other non-objects",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "none of the properties mentioned",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "__proto__ not valid",
+                "data": { "__proto__": "foo" },
+                "valid": false
+            },
+            {
+                "description": "toString not valid",
+                "data": { "toString": { "length": 37 } },
+                "valid": false
+            },
+            {
+                "description": "constructor not valid",
+                "data": { "constructor": { "length": 37 } },
+                "valid": false
+            },
+            {
+                "description": "all present and valid",
+                "data": { 
+                    "__proto__": 12,
+                    "toString": { "length": "foo" },
+                    "constructor": 37
+                },
+                "valid": true
+            }
+        ]
+    }
+]

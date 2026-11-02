@@ -117,6 +117,8 @@ export default function toolsExtension(pi: ExtensionAPI) {
 				container.addChild(settingsList);
 
 				const component = {
+					// Let PageUp/PageDown page the list instead of scrolling the fullscreen transcript.
+					capturesViewportInput: settingsList.capturesViewportInput,
 					render(width: number) {
 						return container.render(width);
 					},

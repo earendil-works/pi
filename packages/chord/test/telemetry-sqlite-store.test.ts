@@ -59,6 +59,7 @@ describe("SQLite telemetry reads", () => {
 				const counted: SqliteExecutor = {
 					exec: (sql) => tx.exec(sql),
 					run: (sql, ...params) => tx.run(sql, ...params),
+					runCounted: (sql, ...params) => tx.runCounted(sql, ...params),
 					get: <T extends object>(sql: string, ...params: SqliteValue[]) => tx.get<T>(sql, ...params),
 					all: <T extends object>(sql: string, ...params: SqliteValue[]) => {
 						queries++;

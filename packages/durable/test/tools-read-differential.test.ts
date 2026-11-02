@@ -17,8 +17,10 @@ import { DEFAULT_MAX_BYTES, formatSize, truncateHead } from "../src/truncate.ts"
 function referenceRead(bytes: Uint8Array, path: string, offset: number | undefined, limit: number | undefined) {
 	const mimeType = detectSupportedImageMimeType(bytes);
 	if (mimeType) {
+		const block = { type: "image", data: Buffer.from(bytes).toString("base64"), mimeType };
 		return {
-			output: [{ type: "image", data: Buffer.from(bytes).toString("base64"), mimeType }],
+			output: [block],
+			structuredOutput: block,
 			diagnostics: [{ severity: "info", code: "image", message: `Read image file [${mimeType}].` }],
 		};
 	}
@@ -73,6 +75,7 @@ function referenceRead(bytes: Uint8Array, path: string, offset: number | undefin
 	}
 	return {
 		output: outputText === "" ? [] : [{ type: "text", text: outputText }],
+		structuredOutput: outputText,
 		...(details === undefined ? {} : { details }),
 		diagnostics,
 	};

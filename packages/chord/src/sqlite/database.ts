@@ -5,12 +5,15 @@ export type SqliteValue = null | number | bigint | string | Uint8Array;
  * Asynchronous SQL operations shared by a database and its transaction handles.
  *
  * `exec` runs SQL text without bindings and may contain several statements. `run`, `get`, and `all`
- * execute one statement with positional bindings. Adapters may cache prepared statements by SQL text,
- * so callers pass values as bindings instead of interpolating them.
+ * execute one statement with positional bindings. `runCounted` runs one like `run` and resolves with the rows it
+ * inserted, updated or deleted, as SQLite's `changes()` counts them (index writes and rows changed by triggers do not
+ * count); it may cost a statement more than `run`, so callers that need no count use `run`. Adapters may cache
+ * prepared statements by SQL text, so callers pass values as bindings instead of interpolating them.
  */
 export interface SqliteExecutor {
 	exec(sql: string): Promise<void>;
 	run(sql: string, ...params: SqliteValue[]): Promise<void>;
+	runCounted(sql: string, ...params: SqliteValue[]): Promise<number>;
 	get<T extends object>(sql: string, ...params: SqliteValue[]): Promise<T | undefined>;
 	all<T extends object>(sql: string, ...params: SqliteValue[]): Promise<T[]>;
 }

@@ -8,10 +8,11 @@ const sourceDirectory = resolve(packageDirectory, "src");
 const IMPORT_SPECIFIER = /(?:import|export)\s+(?:type\s+)?(?:[^;]*?\sfrom\s*)?["']([^"']+)["']/gu;
 
 describe("package boundary", () => {
-	// pi-telemetry is the one allowed Pi package: a leaf without dependencies, needed for Context.telemetry.
-	const ALLOWED = new Set(["@earendil-works/pi-telemetry"]);
+	// The allowed Pi packages are leaves without dependencies: pi-telemetry for Context.telemetry, pi-schema for schemas
+	// (decision "A schema package beneath pi-ai and Chord").
+	const ALLOWED = new Set(["@earendil-works/pi-telemetry", "@earendil-works/pi-schema"]);
 
-	test("does not depend on Pi packages other than pi-telemetry, or on files outside Chord", async () => {
+	test("does not depend on Pi packages other than pi-telemetry and pi-schema, or on files outside Chord", async () => {
 		const manifest = JSON.parse(await readFile(resolve(packageDirectory, "package.json"), "utf8")) as {
 			dependencies?: Record<string, string>;
 		};

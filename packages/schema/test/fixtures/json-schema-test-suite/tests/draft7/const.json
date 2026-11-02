@@ -1,0 +1,384 @@
+[
+    {
+        "description": "const validation",
+        "schema": {"const": 2},
+        "tests": [
+            {
+                "description": "same value is valid",
+                "data": 2,
+                "valid": true
+            },
+            {
+                "description": "another value is invalid",
+                "data": 5,
+                "valid": false
+            },
+            {
+                "description": "another type is invalid",
+                "data": "a",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "const with object",
+        "schema": {"const": {"foo": "bar", "baz": "bax"}},
+        "tests": [
+            {
+                "description": "same object is valid",
+                "data": {"foo": "bar", "baz": "bax"},
+                "valid": true
+            },
+            {
+                "description": "same object with different property order is valid",
+                "data": {"baz": "bax", "foo": "bar"},
+                "valid": true
+            },
+            {
+                "description": "another object is invalid",
+                "data": {"foo": "bar"},
+                "valid": false
+            },
+            {
+                "description": "another type is invalid",
+                "data": [1, 2],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "const with array",
+        "schema": {"const": [{ "foo": "bar" }]},
+        "tests": [
+            {
+                "description": "same array is valid",
+                "data": [{"foo": "bar"}],
+                "valid": true
+            },
+            {
+                "description": "another array item is invalid",
+                "data": [2],
+                "valid": false
+            },
+            {
+                "description": "array with additional items is invalid",
+                "data": [1, 2, 3],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "const with null",
+        "schema": {"const": null},
+        "tests": [
+            {
+                "description": "null is valid",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "not null is invalid",
+                "data": 0,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "const with false does not match 0",
+        "schema": {"const": false},
+        "tests": [
+            {
+                "description": "false is valid",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "integer zero is invalid",
+                "data": 0,
+                "valid": false
+            },
+            {
+                "description": "float zero is invalid",
+                "data": 0.0,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "const with true does not match 1",
+        "schema": {"const": true},
+        "tests": [
+            {
+                "description": "true is valid",
+                "data": true,
+                "valid": true
+            },
+            {
+                "description": "integer one is invalid",
+                "data": 1,
+                "valid": false
+            },
+            {
+                "description": "float one is invalid",
+                "data": 1.0,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "const with [false] does not match [0]",
+        "schema": {"const": [false]},
+        "tests": [
+            {
+                "description": "[false] is valid",
+                "data": [false],
+                "valid": true
+            },
+            {
+                "description": "[0] is invalid",
+                "data": [0],
+                "valid": false
+            },
+            {
+                "description": "[0.0] is invalid",
+                "data": [0.0],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "const with [true] does not match [1]",
+        "schema": {"const": [true]},
+        "tests": [
+            {
+                "description": "[true] is valid",
+                "data": [true],
+                "valid": true
+            },
+            {
+                "description": "[1] is invalid",
+                "data": [1],
+                "valid": false
+            },
+            {
+                "description": "[1.0] is invalid",
+                "data": [1.0],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "const with {\"a\": false} does not match {\"a\": 0}",
+        "schema": {"const": {"a": false}},
+        "tests": [
+            {
+                "description": "{\"a\": false} is valid",
+                "data": {"a": false},
+                "valid": true
+            },
+            {
+                "description": "{\"a\": 0} is invalid",
+                "data": {"a": 0},
+                "valid": false
+            },
+            {
+                "description": "{\"a\": 0.0} is invalid",
+                "data": {"a": 0.0},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "const with {\"a\": true} does not match {\"a\": 1}",
+        "schema": {"const": {"a": true}},
+        "tests": [
+            {
+                "description": "{\"a\": true} is valid",
+                "data": {"a": true},
+                "valid": true
+            },
+            {
+                "description": "{\"a\": 1} is invalid",
+                "data": {"a": 1},
+                "valid": false
+            },
+            {
+                "description": "{\"a\": 1.0} is invalid",
+                "data": {"a": 1.0},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "const with 0 does not match other zero-like types",
+        "schema": {"const": 0},
+        "tests": [
+            {
+                "description": "false is invalid",
+                "data": false,
+                "valid": false
+            },
+            {
+                "description": "integer zero is valid",
+                "data": 0,
+                "valid": true
+            },
+            {
+                "description": "float zero is valid",
+                "data": 0.0,
+                "valid": true
+            },
+            {
+                "description": "empty object is invalid",
+                "data": {},
+                "valid": false
+            },
+            {
+                "description": "empty array is invalid",
+                "data": [],
+                "valid": false
+            },
+            {
+                "description": "empty string is invalid",
+                "data": "",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "const with 1 does not match true",
+        "schema": {"const": 1},
+        "tests": [
+            {
+                "description": "true is invalid",
+                "data": true,
+                "valid": false
+            },
+            {
+                "description": "integer one is valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "float one is valid",
+                "data": 1.0,
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "const with -2.0 matches integer and float types",
+        "schema": {"const": -2.0},
+        "tests": [
+            {
+                "description": "integer -2 is valid",
+                "data": -2,
+                "valid": true
+            },
+            {
+                "description": "integer 2 is invalid",
+                "data": 2,
+                "valid": false
+            },
+            {
+                "description": "float -2.0 is valid",
+                "data": -2.0,
+                "valid": true
+            },
+            {
+                "description": "float 2.0 is invalid",
+                "data": 2.0,
+                "valid": false
+            },
+            {
+                "description": "float -2.00001 is invalid",
+                "data": -2.00001,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "float and integers are equal up to 64-bit representation limits",
+        "schema": {"const": 9007199254740992},
+        "tests": [
+            {
+                "description": "integer is valid",
+                "data": 9007199254740992,
+                "valid": true
+            },
+            {
+                "description": "integer minus one is invalid",
+                "data": 9007199254740991,
+                "valid": false
+            },
+            {
+                "description": "float is valid",
+                "data": 9007199254740992.0,
+                "valid": true
+            },
+            {
+                "description": "float minus one is invalid",
+                "data": 9007199254740991.0,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "nul characters in strings",
+        "schema": { "const": "hello\u0000there" },
+        "tests": [
+            {
+                "description": "match string with nul",
+                "data": "hello\u0000there",
+                "valid": true
+            },
+            {
+                "description": "do not match string lacking nul",
+                "data": "hellothere",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "characters with the same visual representation but different codepoint",
+        "schema": {
+            "const": "μ",
+            "$comment": "U+03BC"
+        },
+        "tests": [
+            {
+                "description": "character uses the same codepoint",
+                "data": "μ",
+                "comment": "U+03BC",
+                "valid": true
+            },
+            {
+                "description": "character looks the same but uses a different codepoint",
+                "data": "µ",
+                "comment": "U+00B5",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "characters with the same visual representation, but different number of codepoints",
+        "schema": {
+            "const": "ä",
+            "$comment": "U+00E4"
+        },
+        "tests": [
+            {
+                "description": "character uses the same codepoint",
+                "data": "ä",
+                "comment": "U+00E4",
+                "valid": true
+            },
+            {
+                "description": "character looks the same but uses combining marks",
+                "data": "ä",
+                "comment": "a, U+0308",
+                "valid": false
+            }
+        ]
+    }
+]

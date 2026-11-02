@@ -78,6 +78,8 @@ describe("summarizeEvalObservations", () => {
 				lift: 0.5,
 				totalTokens: { eligiblePairs: 2, controlMean: 150, treatmentMean: 150, meanDelta: 0 },
 				toolCalls: { eligiblePairs: 2, controlMean: 2.5, treatmentMean: 2, meanDelta: -0.5 },
+				totalMs: { eligiblePairs: 2, controlMean: 1000, treatmentMean: 900, meanDelta: -100 },
+				estimatedCostUsd: { eligiblePairs: 2, controlMean: 0.01, treatmentMean: 0.01, meanDelta: 0 },
 			}),
 		]);
 	});

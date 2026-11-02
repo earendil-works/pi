@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Plugin Model: what a plugin is, what it may import, and how versions meet</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A design proposal · Chord v2 · 2026-10-31</div>
+  <h1>The Plugin<br>Model</h1>
+  <p class="subtitle">Plugins, base code, versioned APIs and contracts, in one place, as discussed with the owner on 2026-10-31</p>
+  <div class="cover-stats"><div class="stat"><b>4</b><span>kinds of import a plugin may write</span></div><div class="stat"><b>1</b><span>integer per API version, in the import path</span></div><div class="stat"><b>0</b><span>package.json fields Chord reads besides name and dependencies</span></div><div class="stat"><b>0</b><span>type checks in the build</span></div></div>
+  <div class="cover-note"><p>A proposal written by the redesign session after a day of discussion with the owner. It collects what was decided
+and what is proposed into one model. Decided points cite their decision in <code>decisions.md</code>; proposed ones are marked.
+Nothing here is built yet beyond slices 7c and 10.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#plugin">I. What a Plugin Is</a></li>
+<li><a href="#base">II. Base Code: Internal and External</a></li>
+<li><a href="#versions">III. Versions in the Import Path</a></li>
+<li><a href="#contracts">IV. Contracts and Registries</a></li>
+<li><a href="#imports">V. What a Plugin May Import</a></li>
+<li><a href="#settings">VI. Settings and Extensions</a></li>
+<li><a href="#build">VII. Building and Evaluating</a></li>
+<li><a href="#tools">VIII. Types and Tests</a></li>
+<li><a href="#open-questions">Open Questions</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">An app built on Chord is mostly plugins. Its own features are plugins, users add plugins, and agents write plugins
+while the app runs. A plugin uses the app (where things live, who calls, how to declare objects), uses other plugins
+(their objects and extension points), and uses npm packages. Each of those can change on its own schedule: the app
+gets a new version, a plugin it depends on changes its contract, a package publishes a fix.</p>
+<p>The questions the owner kept asking were all versions of one: when a plugin is written against one state of the world
+and runs against another, what does it get, and who notices a mismatch? This model answers it with one rule for each
+kind of import, and versions that sit where the dependency is written: in the code.</p>
+<h3 id="eight-things-to-know">Eight things to know</h3>
+<ol class="findings">
+<li><strong>A plugin is a directory, or a single file.</strong> A directory has a <code>package.json</code> (its name, its npm dependencies)
+and one file per host kind; a single file <code>hello.worker.ts</code> is a plugin named <code>hello</code> with no dependencies.</li>
+<li><strong>Base code is internal unless it is an API.</strong> The app exposes only versioned API modules to plugins; everything
+else is unreachable.</li>
+<li><strong>API versions are in the import path.</strong> <code>import { Session } from &quot;@acme/app/v3&quot;</code>: the plugin says what it was
+written for where it imports it; an unavailable version is a build error.</li>
+<li><strong>APIs are split by host kind.</strong> A shared module holds what every host may use (contracts, registry tokens, host
+kinds); <code>/v3/web</code> and <code>/v3/tui</code> hold UI pieces; a worker never loads React.</li>
+<li><strong>Contracts carry their own versions.</strong> A plugin carries the contract version it was written for; the provider
+binds it if it accepts that version, else the plugin waits with a clear reason.</li>
+<li><strong>A plugin imports four things:</strong> its own files, host packages, its npm dependencies, and the app&#39;s own plugins by
+relative path. Nothing else.</li>
+<li><strong>Settings are arguments, extensions are registries.</strong> What the app decides at startup is passed to its components;
+what plugins add is contributed.</li>
+<li><strong>No type checking in the build.</strong> Types come from where imports come from; editors and agents check, the build
+only builds.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p><strong>Base code</strong> is the app&#39;s own program; its <strong>API</strong> is the part plugins may import, published as <strong>API modules</strong>,
+one per version and host kind. A <strong>host package</strong> is a module the running process provides to every plugin (Chord,
+the app&#39;s API modules). A <strong>contract</strong> is an object type&#39;s declaration; a <strong>registry token</strong> an extension point&#39;s.
+A <strong>facet</strong> is a plugin&#39;s declarations for one host kind.</p>
+</section>
+
+<section class="chapter" id="plugin"><header class="opener"><div class="numeral">I</div><h2>What a Plugin Is</h2><p class="lede">A directory or a single file, named once, with one file per host kind.</p></header>
+<pre class="plain"><code>plugins/notes/                     a directory plugin
+  package.json                     { "name": "@acme/notes", "dependencies": { "slugify": "1.6.6" } }
+  contract.ts                      the object types and registry tokens it offers
+  worker.ts  server.ts  web.tsx    one facet per host kind it needs
+plugins/hello.worker.ts            a single-file plugin "hello" with one worker facet
+plugins/hello.web.tsx              the same plugin's web facet</code></pre>
+<p>A directory plugin&#39;s name is its <code>package.json</code> name; Chord reads only <code>name</code> and <code>dependencies</code> from it. A
+single-file plugin&#39;s name is its file&#39;s base name; it has no dependencies and imports only host packages. When a
+single file needs a package or a second file, it becomes a directory. Two roots with the same name: the first root
+wins, the other is reported (slice 7c).</p>
+</section>
+
+<section class="chapter" id="base"><header class="opener"><div class="numeral">II</div><h2>Base Code: Internal and External</h2><p class="lede">What the app keeps to itself, what it exposes, and how exposure is versioned.</p></header>
+<p class="dropcap">The app&#39;s base code is everything that starts the process: settings, startup, core objects&#39; implementations, the
+session index, migrations. Plugins must not depend on any of it, or every refactoring of the app would break them.
+So the app draws a line and exposes only its <strong>API</strong>:</p>
+<pre class="plain"><code>src/api/v3/index.ts       shared: host kinds, the principal type, defineFacet per kind, core contracts, registry tokens
+src/api/v3/web.ts         web only: shared UI pieces (a Sheet, theme variables), React-typed registry tokens
+src/api/v3/tui.ts         TUI only: its UI pieces
+src/…                     internal: everything else</code></pre>
+<p>Each API module is a host package of the kinds that may use it: <code>@acme/app/v3</code> for every kind, <code>@acme/app/v3/web</code> for
+the web kind only. A worker plugin importing <code>@acme/app/v3/web</code> is a build error, and a worker process never loads
+React. The shared module stays free of runtime imports of UI libraries: a registry token that needs a React type names
+it with <code>import type</code>, which the build erases.</p>
+<div class="note"><b class="tag">Proposed</b><p>The split of the external API into a shared module and per-kind modules answers the owner&#39;s worry about &quot;web, TUI,
+worker, server things all in the same index.ts&quot;. Proposed, not yet decided.</p>
+</div>
+</section>
+
+<section class="chapter" id="versions"><header class="opener"><div class="numeral">III</div><h2>Versions in the Import Path</h2><p class="lede">A plugin says what it was written for where it imports it.</p></header>
+<p class="dropcap">The app&#39;s API changes over time: a host kind is renamed, a principal variant changes. A plugin written for an older
+API must not silently get the new one. So every API module has a version in its path, and the app lists which versions
+it still provides:</p>
+<pre><code><span class="tk-c">// plugins/stats/worker.ts</span>
+<span class="tk-k">import</span> { defineFacet, <span class="tk-t">Session</span>, <span class="tk-t">Panels</span> } <span class="tk-k">from</span> <span class="tk-s">"@acme/app/v3"</span>;
+<span class="tk-k">import</span> { remote, str } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/next/v2"</span>;</code></pre>
+<ul>
+<li>The app provides <code>/v3</code>, its current API. If version 2 plugins still work unchanged against it, <code>/v2</code> is listed too,
+pointing to the same module. An app that needs a compatibility layer makes <code>/v2</code> a thin module over <code>/v3</code>.</li>
+<li>An import of a version the app no longer lists is a build error: &quot;@acme/app/v1 is not available: this app provides
+v3, v2&quot;. The plugin keeps its old code, and the message tells an agent exactly what to change.</li>
+<li>Nothing to fill in elsewhere: no <code>package.json</code> field, no npm ranges. Skeletons and examples import the current
+version, so an agent copies it without thinking.</li>
+<li>Chord&#39;s own surface is versioned the same way (<code>@earendil-works/chord/next/v2</code>).</li>
+</ul>
+<p>Decided: &quot;the API version must be declared by the plugin in code&quot; (owner, 2026-10-31); the import path is how.</p>
+</section>
+
+<section class="chapter" id="contracts"><header class="opener"><div class="numeral">IV</div><h2>Contracts and Registries</h2><p class="lede">Finer versions inside the API, and what crosses between plugins.</p></header>
+<p class="dropcap">Contracts and registry tokens keep their own versions inside the API, because they evolve independently of the API as
+a whole:</p>
+<ul>
+<li><strong>An object type</strong>: the consumer carries the contract version it was written for; the provider binds it at that
+version if it accepts it (<code>accepts</code> maps arguments forward and results and state back), otherwise the consumer waits
+&quot;contract mismatch: v1, served v3&quot;. Shapes are fingerprinted, so a changed shape without a version bump is caught.</li>
+<li><strong>A registry token</strong>: a name, a version and TypeScript types for what is contributed and read. Values are in-process
+things (functions, components), which cannot be fingerprinted: bumping the version when they change is the defining
+plugin&#39;s rule, and its <code>accepts</code> adapts older contributions.</li>
+<li><strong>Host kinds on registries</strong> (proposed): a token names the kinds that serve it (<code>hosts: [&quot;web&quot;]</code>), typed, so a worker
+facet contributing to a web registry is a type error and a load error, not a silent no-op.</li>
+</ul>
+<p>A contract file imports only host packages at runtime (Chord, the app&#39;s API); native types it mentions are type-only.</p>
+</section>
+
+<section class="chapter" id="imports"><header class="opener"><div class="numeral">V</div><h2>What a Plugin May Import</h2><p class="lede">Four kinds of import, each with one rule.</p></header>
+<table>
+<thead>
+<tr>
+<th>Import</th>
+<th>Resolved to</th>
+<th>Versioned by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>its own files (<code>./store.ts</code>)</td>
+<td>copied into its script</td>
+<td>the plugin itself</td>
+</tr>
+<tr>
+<td>host packages (<code>@acme/app/v3</code>, <code>@earendil-works/chord/next/v2</code>, <code>react</code>)</td>
+<td>the running process&#39;s instance, shared</td>
+<td>the path&#39;s version; the app lists what it provides</td>
+</tr>
+<tr>
+<td>npm packages in its <code>dependencies</code> (<code>slugify</code>, a third party&#39;s contracts package)</td>
+<td>its own <code>node_modules</code>, bundled</td>
+<td>the installed version</td>
+</tr>
+<tr>
+<td>the app&#39;s own plugins (<code>../notes/contract.ts</code>), in the same root</td>
+<td>copied into its script</td>
+<td>the same revision: one repository</td>
+</tr>
+</tbody></table>
+<p>A third-party plugin that wants the app&#39;s plugins&#39; contracts gets them through the app&#39;s API (core contracts) or the
+app&#39;s published package, as an npm dependency at the version it was written for, never from the running plugin&#39;s
+files. Anything else (a path into base code, an unlisted version, a package not in its dependencies) is a build error.</p>
+</section>
+
+<section class="chapter" id="settings"><header class="opener"><div class="numeral">VI</div><h2>Settings and Extensions</h2><p class="lede">How the app configures its components without letting plugins override it.</p></header>
+<p class="dropcap">Decided (&quot;Settings are arguments, extensions are registries&quot;): what the app decides at startup is an argument to the
+component&#39;s facet, which base code constructs, and plugins cannot change it:</p>
+<pre><code><span class="tk-k">const</span> http = <span class="tk-f">createHttp</span>(server, { listen: { port: <span class="tk-n">8788</span> }, links: { path: <span class="tk-s">"/chord"</span>, maxPayload: <span class="tk-t">MiB</span> }, closeTimeout: <span class="tk-n">10_000</span>, onError }, ctx);</code></pre>
+<p>What plugins add while the app runs is a registry: routes, authenticators, tools, panels. A component may offer both
+for one thing: the session index takes its indexer as an argument, and may also follow a registry of indexers if
+plugins should supply them.</p>
+</section>
+
+<section class="chapter" id="build"><header class="opener"><div class="numeral">VII</div><h2>Building and Evaluating</h2><p class="lede">Unchanged from slices 7c and 10: one build on the server, evaluation everywhere.</p></header>
+<p class="dropcap">Only the server builds, because only the server has the sources. <code>createPlugins</code> builds every kind and needs only
+names: per kind its platform and its host package names. Each process evaluates the scripts of its kind with its own
+module objects (the server&#39;s at <code>plugins.load</code>, a worker&#39;s in <code>workerMain</code>, a page&#39;s in its base bundle), so a plugin
+shares that process&#39;s Chord and API. Base-code facets are passed beside the plugins; they are not plugins, because
+they close over the process&#39;s own values and never reload.</p>
+</section>
+
+<section class="chapter" id="tools"><header class="opener"><div class="numeral">VIII</div><h2>Types and Tests</h2><p class="lede">Where types come from, and how a plugin is tested alone.</p></header>
+<p class="dropcap">Types come from where imports come from: relative files and npm packages resolve natively in TypeScript; the app&#39;s API
+modules ship <code>.d.ts</code> per version in the app&#39;s package. There is no type checking in the build (the owner: seconds per
+build is too slow); editors check as an author types, and an agent may run <code>tsc</code> as a tool.</p>
+<p>Testing a plugin alone (proposed): <code>testPlugin(dir, { kind, stubs })</code> builds the plugin like production, loads it on an
+in-memory host with the kind&#39;s real host packages, and loads stub facets that serve the contracts it depends on. A stub
+is an ordinary facet; there is no mocking framework.</p>
+</section>
+
+<section class="chapter epilogue" id="open-questions"><header class="opener"><div class="numeral">∴</div><h2>Open Questions</h2><p class="lede">What is proposed here and still to decide.</p></header>
+<ol>
+<li>The external API split by host kind (<code>/v3</code>, <code>/v3/web</code>, <code>/v3/tui</code>).</li>
+<li>Host kinds on registry tokens, typed and checked at load.</li>
+<li>Single-file plugins (<code>hello.worker.ts</code>, named by the file).</li>
+<li>Contracts of the app&#39;s plugins for third parties: through the API modules only, or also the app&#39;s npm package.</li>
+<li><code>testPlugin</code> with stub facets.</li>
+<li>Reversing &quot;Plugins import each other by name&quot; (2026-10-31, morning) in favour of relative paths within the app
+and npm dependencies across it.</li>
+</ol>
+</section>
+
+<p class="colophon">The Plugin Model · proposal · 2026-10-31</p>
+</div></div>
+
+</body></html>

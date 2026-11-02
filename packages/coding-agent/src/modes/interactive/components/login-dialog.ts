@@ -3,7 +3,9 @@ import {
 	Container,
 	type Focusable,
 	getKeybindings,
+	hyperlink,
 	Input,
+	replaceControlCharacters,
 	Spacer,
 	Text,
 	TruncatedText,
@@ -15,6 +17,31 @@ import { theme } from "../theme/theme.ts";
 import { AuthUrlComponent } from "./auth-url.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint } from "./keybinding-hints.ts";
+
+/**
+ * The `http:` or `https:` URL `value` names, normalized, or undefined. The shared launcher also opens files and custom
+ * protocols, so login only opens web URLs. Normalizing percent-encodes control characters, which would otherwise end a
+ * terminal hyperlink early.
+ */
+function webUrl(value: string): string | undefined {
+	if (!URL.canParse(value)) return undefined;
+	const url = new URL(value);
+	return url.protocol === "https:" || url.protocol === "http:" ? url.href : undefined;
+}
+
+/**
+ * `value` normalized as a web URL, else with control characters replaced: an untrusted string printed as is could end a
+ * hyperlink early or send its own escape sequences to the terminal.
+ */
+function displayUrl(value: string): string {
+	return webUrl(value) ?? replaceControlCharacters(value);
+}
+
+/** `text` as a terminal hyperlink to `url` when that is a web URL, else plain `text`. */
+function webLink(text: string, url: string): string {
+	const target = webUrl(url);
+	return target === undefined ? text : hyperlink(text, target);
+}
 
 /**
  * Login dialog component - replaces editor during OAuth login flow
@@ -121,7 +148,8 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.clearDeviceCodeAction();
 		this.contentContainer.clear();
 		this.contentContainer.addChild(new Spacer(1));
-		this.authUrl = new AuthUrlComponent(this.tui, url);
+		const target = webUrl(url);
+		this.authUrl = new AuthUrlComponent(this.tui, target ?? replaceControlCharacters(url));
 		this.contentContainer.addChild(this.authUrl);
 
 		if (instructions) {
@@ -129,7 +157,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 			this.contentContainer.addChild(new Text(theme.fg("warning", instructions), 1, 0));
 		}
 
-		openBrowser(url);
+		if (target !== undefined) openBrowser(target);
 		this.tui.requestRender();
 	}
 
@@ -146,12 +174,11 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.clearDeviceCodeAction();
 		this.contentContainer.clear();
 		this.contentContainer.addChild(new Spacer(1));
-		const linkedUrl = `\x1b]8;;${info.verificationUri}\x07${info.verificationUri}\x1b]8;;\x07`;
-		this.contentContainer.addChild(new Text(theme.fg("accent", linkedUrl), 1, 0));
+		const shownUrl = displayUrl(info.verificationUri);
+		this.contentContainer.addChild(new Text(theme.fg("accent", webLink(shownUrl, shownUrl)), 1, 0));
 
 		const clickHint = process.platform === "darwin" ? "Cmd+click to open" : "Ctrl+click to open";
-		const hyperlink = `\x1b]8;;${info.verificationUri}\x07${clickHint}\x1b]8;;\x07`;
-		this.contentContainer.addChild(new Text(theme.fg("dim", hyperlink), 1, 0));
+		this.contentContainer.addChild(new Text(theme.fg("dim", webLink(clickHint, info.verificationUri)), 1, 0));
 		this.contentContainer.addChild(new Spacer(1));
 		this.contentContainer.addChild(new Text(theme.fg("warning", `Enter code: ${info.userCode}`), 1, 0));
 
@@ -187,11 +214,10 @@ export class LoginDialogComponent extends Container implements Focusable {
 		}
 		if (info.openBrowserOnConfirm) {
 			try {
-				// The shared launcher also opens files; device-code login must only open web URLs.
-				const url = new URL(info.verificationUri);
-				if (url.protocol === "https:" || url.protocol === "http:") openBrowser(url.href);
+				const target = webUrl(info.verificationUri);
+				if (target !== undefined) openBrowser(target);
 			} catch {
-				// Invalid URLs or launcher failures must not interrupt login.
+				// Launcher failures must not interrupt login.
 			}
 		}
 	}
@@ -260,9 +286,9 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.contentContainer.addChild(new Spacer(1));
 		this.contentContainer.addChild(new Text(theme.fg("text", message), 1, 0));
 		for (const link of links) {
-			const text = link.label ? `${link.label}: ${link.url}` : link.url;
-			const hyperlink = `\x1b]8;;${link.url}\x07${text}\x1b]8;;\x07`;
-			this.contentContainer.addChild(new Text(theme.fg("accent", hyperlink), 1, 0));
+			const url = displayUrl(link.url);
+			const text = link.label ? `${link.label}: ${url}` : url;
+			this.contentContainer.addChild(new Text(theme.fg("accent", webLink(text, url)), 1, 0));
 		}
 		if (showCloseHint) {
 			this.contentContainer.addChild(new Spacer(1));

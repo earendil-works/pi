@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { completeSimple, getModel } from "../src/compat.ts";
 import { getEnvApiKey } from "../src/env-api-keys.ts";
 import type { Api, Context, Model, StopReason, Tool, ToolCall, ToolResultMessage } from "../src/types.ts";
-import { StringEnum } from "../src/utils/typebox-helpers.ts";
+import { StringEnum } from "../src/utils/string-enum.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 
 const calculatorSchema = Type.Object({

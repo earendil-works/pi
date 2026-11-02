@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { num, obj, opt, type Schema, str, unknown } from "@earendil-works/pi-schema";
 import { describe, it, onTestFinished, vi } from "vitest";
 import {
 	type Ctx,
@@ -30,15 +30,15 @@ function latch() {
 
 const Greeter = local("t.greeter", {
 	version: 1,
-	input: Type.Object({ id: Type.Optional(Type.String({ default: "a" })) }),
-	members: { greet: method(Type.String(), Type.String()), count: Type.Unknown() },
+	input: obj({ id: opt(str({ default: "a" })) }, { open: true }),
+	members: { greet: method(str(), str()), count: unknown() },
 });
 
-const CountV1 = Type.Object({ n: Type.Number() });
+const CountV1 = obj({ n: num() }, { open: true });
 
 interface GreeterSpec {
 	readonly greeting: string;
-	readonly schema?: typeof CountV1 | ReturnType<typeof Type.Object>;
+	readonly schema?: typeof CountV1 | Schema;
 	readonly initial?: object;
 	readonly bump?: (draft: Record<string, number>) => void;
 	readonly options?: ServeOptions;
@@ -129,7 +129,7 @@ describe("reload", () => {
 		const writing = greeterFacet({
 			greeting: "hi",
 			extra: (self) => {
-				const probe = self.state("probe", Type.Object({}), {});
+				const probe = self.state("probe", obj({}, { open: true }), {});
 				probe.replace(captured!, {});
 			},
 		});
@@ -164,7 +164,7 @@ describe("reload", () => {
 		await host.hold(Greeter, {}).ready;
 		const changed = greeterFacet({
 			greeting: "hi",
-			schema: Type.Object({ total: Type.Number() }),
+			schema: obj({ total: num() }, { open: true }),
 			initial: { total: 0 },
 		});
 		await assert.rejects(
@@ -191,7 +191,7 @@ describe("reload", () => {
 		const froms: number[] = [];
 		const v2 = greeterFacet({
 			greeting: "hi",
-			schema: Type.Object({ total: Type.Number() }),
+			schema: obj({ total: num() }, { open: true }),
 			initial: { total: 0 },
 			bump: (draft) => {
 				draft.total = (draft.total ?? 0) + 1;
@@ -218,16 +218,16 @@ describe("reload", () => {
 		const host = quiet();
 		const Pair = local("t.pair", {
 			version: 1,
-			input: Type.Object({}),
-			members: { a: Type.Unknown(), b: Type.Unknown(), bump: method() },
+			input: obj({}, { open: true }),
+			members: { a: unknown(), b: unknown(), bump: method() },
 		});
 		const migrated: string[] = [];
 		const facet = (version: number): Facet => ({
 			name: "pair",
 			setup: (api) =>
 				api.serve(Pair, (_input, _principal, self) => {
-					const a = self.state("a", Type.Number(), 1);
-					const b = self.state("b", Type.Number(), 1, {
+					const a = self.state("a", num(), 1);
+					const b = self.state("b", num(), 1, {
 						version,
 						migrate: (old, from) => {
 							migrated.push(`b ${from}->${version}`);
@@ -294,7 +294,7 @@ describe("reload", () => {
 						await new Promise<void>((resolve) => ctx.signal.addEventListener("abort", () => resolve()));
 						log.push(`stop ${greeting}`);
 					});
-					const count = self.state("count", Type.Number(), 0, { version });
+					const count = self.state("count", num(), 0, { version });
 					return { count, greet: (name: string) => `${greeting} ${name}` };
 				}),
 		});
@@ -340,7 +340,7 @@ describe("reload", () => {
 						open: () => void log.push(`open cache ${rev}`),
 						close: () => void log.push(`close cache ${rev}`),
 					});
-					const count = self.state("count", Type.Number(), 0);
+					const count = self.state("count", num(), 0);
 					return { count, greet: (name: string) => `${lock.value} ${name}` };
 				}),
 		});
@@ -523,21 +523,21 @@ describe("reload", () => {
 	it("checks contracts at reload: forgotten bumps, live consumers, accepts adapters", async () => {
 		const DocV1 = remote("t.rdoc", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("host"),
-			variants: { main: { methods: { read: method(undefined, Type.Object({ text: Type.String() })) } } },
+			variants: { main: { methods: { read: method(undefined, obj({ text: str() }, { open: true })) } } },
 		});
 		const DocBroken = remote("t.rdoc", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("host"),
-			variants: { main: { methods: { read: method(undefined, Type.Object({ text: Type.Number() })) } } },
+			variants: { main: { methods: { read: method(undefined, obj({ text: num() }, { open: true })) } } },
 		});
 		const DocV2 = remote("t.rdoc", {
 			version: 2,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("host"),
-			variants: { main: { methods: { fetch: method(undefined, Type.Object({ body: Type.String() })) } } },
+			variants: { main: { methods: { fetch: method(undefined, obj({ body: str() }, { open: true })) } } },
 		});
 		const host = quiet();
 		host.install({
@@ -590,14 +590,14 @@ describe("reload", () => {
 		const log: string[] = [];
 		const Sum = local("t.sum", {
 			version: 1,
-			input: Type.Object({}),
-			members: { sum: Type.Object({ v: Type.Number() }) },
+			input: obj({}, { open: true }),
+			members: { sum: obj({ v: num() }, { open: true }) },
 		});
 		const facet = (factor: number): Facet => ({
 			name: "sum",
 			setup: (api) =>
 				api.serve(Sum, (_input, _principal, self) => {
-					const sum = self.state("sum", Type.Object({ v: Type.Number() }), { v: 0 });
+					const sum = self.state("sum", obj({ v: num() }, { open: true }), { v: 0 });
 					self.on(
 						"add",
 						events,
@@ -632,7 +632,7 @@ describe("reload", () => {
 	it("keeps registry tables per code version", async () => {
 		const host = quiet();
 		const Routes = defineRegistry<string>("t.reload-routes");
-		const Router = local("t.router", { version: 1, input: Type.Object({}) });
+		const Router = local("t.router", { version: 1, input: obj({}, { open: true }) });
 		const facet = (value: string): Facet => ({
 			name: "router",
 			setup: (api) =>
@@ -672,8 +672,8 @@ describe("reload", () => {
 		await ref.ready;
 		const Clock = local("t.clock", {
 			version: 1,
-			input: Type.Object({}),
-			members: { now: method(undefined, Type.Number()) },
+			input: obj({}, { open: true }),
+			members: { now: method(undefined, num()) },
 		});
 		const clockFacet: Facet = { name: "clock", setup: (api) => api.serve(Clock, () => ({ now: () => 42 })) };
 		const consumer = (fail: boolean): Facet => ({

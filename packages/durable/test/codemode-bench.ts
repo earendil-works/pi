@@ -5,6 +5,7 @@
  *
  *   node --conditions=source --experimental-strip-types test/codemode-bench.ts [N,...]
  */
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +13,7 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
-import { Type } from "typebox";
+import { num, obj, str } from "@earendil-works/pi-schema";
 import { createCodemodeTool } from "../src/codemode/codemode.ts";
 import { createRegistry, defineExtension, defineTool, Harness } from "../src/index.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
@@ -22,14 +23,14 @@ type Shape = "sequential" | "parallel";
 const echo = defineTool({
 	name: "echo",
 	description: "echo",
-	parameters: Type.Object({ i: Type.Number() }),
+	parameters: obj({ i: num() }),
 	execute: async (args) => ({ output: [{ type: "text", text: String(args.i) }] }),
 });
 
 const plain = defineTool({
 	name: "plain",
 	description: "plain",
-	parameters: Type.Object({ n: Type.Number(), shape: Type.String() }),
+	parameters: obj({ n: num(), shape: str() }),
 	replay: "safe",
 	execute: async (args, api, callContext) => {
 		if (args.shape === "sequential") {
@@ -66,8 +67,11 @@ async function run(mode: "codemode" | "plain", shape: Shape, n: number): Promise
 		const harness = await Harness.open(storage, { models, registry, settings: {} }, context);
 		const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" } } });
 		let commits = 0;
-		harness.subscribeCommits(() => {
-			commits++;
+		harness.observeCommits({
+			advance: () => {
+				commits++;
+			},
+			end: () => {},
 		});
 		const started = performance.now();
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);

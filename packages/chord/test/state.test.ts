@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { arr, num, obj, str } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import { applyImmutable } from "../src/delta/index.ts";
 import { type Ctx, createHost, isChordError, local, method, type StateEvent } from "../src/index.ts";
@@ -22,15 +22,15 @@ function emitter<E>() {
 	};
 }
 
-const Item = Type.Object({ id: Type.Number(), label: Type.String() });
-const Items = Type.Object({ items: Type.Array(Item), count: Type.Number() });
+const Item = obj({ id: num(), label: str() }, { open: true });
+const Items = obj({ items: arr(Item), count: num() }, { open: true });
 
 const List = local("t.list", {
 	version: 1,
-	input: Type.Object({}),
+	input: obj({}, { open: true }),
 	members: {
 		list: Items,
-		labels: Type.Array(Type.String()),
+		labels: arr(str()),
 		push: method(Item),
 		set: method(Items),
 	},
@@ -84,11 +84,11 @@ describe("state cells", () => {
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
 		const Counter = local("t.prim", {
 			version: 1,
-			input: Type.Object({}),
-			members: { n: Type.Number(), inc: method(undefined, Type.Number()) },
+			input: obj({}, { open: true }),
+			members: { n: num(), inc: method(undefined, num()) },
 		});
 		host.serve(Counter, (_input, _principal, self) => {
-			const nState = self.state("n", Type.Number(), 0);
+			const nState = self.state("n", num(), 0);
 			return {
 				n: nState,
 				inc: (ctx: Ctx) => {
@@ -117,11 +117,11 @@ describe("state cells", () => {
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
 		const Box = local("t.box", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			members: { put: method() },
 		});
 		host.serve(Box, (_input, _principal, self) => {
-			const list = self.state("list", Type.Array(Type.Number()), []);
+			const list = self.state("list", arr(num()), []);
 			return {
 				put: (ctx: Ctx) => {
 					// The classic slip: an expression-bodied arrow returns push()'s length.
@@ -133,10 +133,10 @@ describe("state cells", () => {
 	});
 
 	it("validates initial values always and writes only in dev mode", async () => {
-		const Bad = local("t.bad-initial", { version: 1, input: Type.Object({}) });
+		const Bad = local("t.bad-initial", { version: 1, input: obj({}, { open: true }) });
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
 		host.serve(Bad, (_input, _principal, self) => {
-			self.state("x", Type.Object({ n: Type.Number() }), { n: "no" } as never);
+			self.state("x", obj({ n: num() }, { open: true }), { n: "no" } as never);
 			return {};
 		});
 		await assert.rejects(host.hold(Bad, {}).ready, /initial value of state x/);
@@ -157,13 +157,13 @@ describe("state cells", () => {
 
 	it("rejects writes from inside a factory and placeholder use before activation", async () => {
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
-		const Writer = local("t.writer", { version: 1, input: Type.Object({}) });
+		const Writer = local("t.writer", { version: 1, input: obj({}, { open: true }) });
 		let captured: Ctx | undefined;
 		await host.root((ctx) => {
 			captured = ctx;
 		});
 		host.serve(Writer, (_input, _principal, self) => {
-			const x = self.state("x", Type.Object({}), {});
+			const x = self.state("x", obj({}, { open: true }), {});
 			const r = self.resource("r", { version: 1, open: () => 1 });
 			assert.throws(
 				() => r.value,
@@ -180,13 +180,13 @@ describe("state cells", () => {
 		const events = emitter<number>();
 		const Watcher = local("t.watcher", {
 			version: 1,
-			input: Type.Object({}),
-			members: { seen: Type.Object({ sum: Type.Number() }) },
+			input: obj({}, { open: true }),
+			members: { seen: obj({ sum: num() }, { open: true }) },
 		});
 		const roots = new Set<string>();
 		let taskAborted = false;
 		host.serve(Watcher, (_input, _principal, self) => {
-			const seen = self.state("seen", Type.Object({ sum: Type.Number() }), { sum: 0 });
+			const seen = self.state("seen", obj({ sum: num() }, { open: true }), { sum: 0 });
 			const sourceResource = self.resource("source", { version: 1, open: () => events });
 			self.on(
 				"onEvent",
@@ -223,11 +223,11 @@ describe("state cells", () => {
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
 		const Echo = local("t.reentrant", {
 			version: 1,
-			input: Type.Object({}),
-			members: { n: Type.Number(), d: Type.Number(), set: method(Type.Number()) },
+			input: obj({}, { open: true }),
+			members: { n: num(), d: num(), set: method(num()) },
 		});
 		host.serve(Echo, (_input, _principal, self) => {
-			const nState = self.state("n", Type.Number(), 0);
+			const nState = self.state("n", num(), 0);
 			const d = self.derive([nState], (n) => n * 2);
 			// Subscribed first: re-enters the write while revision 1 is being published.
 			self.on("bump", nState, (n, ctx) => {

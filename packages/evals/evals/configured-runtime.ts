@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { type Api, type Context, contentText, type Model, type ModelsSimpleStreamOptions } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
@@ -51,15 +50,6 @@ function modelFields(model: Model<Api>): ModelFields {
 		contextWindow: model.contextWindow,
 		maxTokens: model.maxTokens,
 	};
-}
-
-export function loadConfiguredModelRuntime(agentDir: string): Promise<ModelRuntime> {
-	return ModelRuntime.create({
-		modelsPath: join(agentDir, "models.json"),
-		authPath: join(agentDir, "auth.json"),
-		modelsStorePath: join(agentDir, "models-store.json"),
-		allowModelNetwork: false,
-	});
 }
 
 export async function inspectProvider(

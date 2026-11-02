@@ -35,13 +35,6 @@ const INDEX_NAMES = {
 	documentsByScope: "documents_by_scope",
 	documentsByScopeKind: "documents_by_scope_kind",
 	documentRevisionsByKind: "document_revisions_by_kind",
-	conversationsBySeq: "conversations_by_seq",
-	tasksBySeq: "tasks_by_seq",
-	submissionsBySeq: "submissions_by_seq",
-	entriesBySeq: "entries_by_seq",
-	documentsByCreation: "documents_by_creation",
-	documentsByRetirement: "documents_by_retirement",
-	documentRevisionsBySeq: "document_revisions_by_seq",
 } as const;
 
 type SqliteIdentifiers<T extends Record<string, string>> = { readonly [K in keyof T]: string };

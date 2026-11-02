@@ -1,0 +1,389 @@
+[
+    {
+        "description": "uniqueItems validation",
+        "schema": {"uniqueItems": true},
+        "tests": [
+            {
+                "description": "unique array of integers is valid",
+                "data": [1, 2],
+                "valid": true
+            },
+            {
+                "description": "non-unique array of integers is invalid",
+                "data": [1, 1],
+                "valid": false
+            },
+            {
+                "description": "non-unique array of more than two integers is invalid",
+                "data": [1, 2, 1],
+                "valid": false
+            },
+            {
+                "description": "numbers are unique if mathematically unequal",
+                "data": [1.0, 1.00, 1],
+                "valid": false
+            },
+            {
+                "description": "false is not equal to zero",
+                "data": [0, false],
+                "valid": true
+            },
+            {
+                "description": "true is not equal to one",
+                "data": [1, true],
+                "valid": true
+            },
+            {
+                "description": "unique array of strings is valid",
+                "data": ["foo", "bar", "baz"],
+                "valid": true
+            },
+            {
+                "description": "non-unique array of strings is invalid",
+                "data": ["foo", "bar", "foo"],
+                "valid": false
+            },
+            {
+                "description": "unique array of objects is valid",
+                "data": [{"foo": "bar"}, {"foo": "baz"}],
+                "valid": true
+            },
+            {
+                "description": "non-unique array of objects is invalid",
+                "data": [{"foo": "bar"}, {"foo": "bar"}],
+                "valid": false
+            },
+            {
+                "description": "property order of array of objects is ignored",
+                "data": [{"foo": "bar", "bar": "foo"}, {"bar": "foo", "foo": "bar"}],
+                "valid": false
+            },
+            {
+                "description": "unique array of nested objects is valid",
+                "data": [
+                    {"foo": {"bar" : {"baz" : true}}},
+                    {"foo": {"bar" : {"baz" : false}}}
+                ],
+                "valid": true
+            },
+            {
+                "description": "non-unique array of nested objects is invalid",
+                "data": [
+                    {"foo": {"bar" : {"baz" : true}}},
+                    {"foo": {"bar" : {"baz" : true}}}
+                ],
+                "valid": false
+            },
+            {
+                "description": "unique array of arrays is valid",
+                "data": [["foo"], ["bar"]],
+                "valid": true
+            },
+            {
+                "description": "non-unique array of arrays is invalid",
+                "data": [["foo"], ["foo"]],
+                "valid": false
+            },
+            {
+                "description": "non-unique array of more than two arrays is invalid",
+                "data": [["foo"], ["bar"], ["foo"]],
+                "valid": false
+            },
+            {
+                "description": "[1] and [true] are unique",
+                "data": [[1], [true]],
+                "valid": true
+            },
+            {
+                "description": "[0] and [false] are unique",
+                "data": [[0], [false]],
+                "valid": true
+            },
+            {
+                "description": "nested [1] and [true] are unique",
+                "data": [[[1], "foo"], [[true], "foo"]],
+                "valid": true
+            },
+            {
+                "description": "nested [0] and [false] are unique",
+                "data": [[[0], "foo"], [[false], "foo"]],
+                "valid": true
+            },
+            {
+                "description": "unique heterogeneous types are valid",
+                "data": [{}, [1], true, null, 1, "{}"],
+                "valid": true
+            },
+            {
+                "description": "non-unique heterogeneous types are invalid",
+                "data": [{}, [1], true, null, {}, 1],
+                "valid": false
+            },
+            {
+                "description": "different objects are unique",
+                "data": [{"a": 1, "b": 2}, {"a": 2, "b": 1}],
+                "valid": true
+            },
+            {
+                "description": "objects are non-unique despite key order",
+                "data": [{"a": 1, "b": 2}, {"b": 2, "a": 1}],
+                "valid": false
+            },
+            {
+                "description": "{\"a\": false} and {\"a\": 0} are unique",
+                "data": [{"a": false}, {"a": 0}],
+                "valid": true
+            },
+            {
+                "description": "{\"a\": true} and {\"a\": 1} are unique",
+                "data": [{"a": true}, {"a": 1}],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "uniqueItems with an array of items",
+        "schema": {
+            "items": [{"type": "boolean"}, {"type": "boolean"}],
+            "uniqueItems": true
+        },
+        "tests": [
+            {
+                "description": "[false, true] from items array is valid",
+                "data": [false, true],
+                "valid": true
+            },
+            {
+                "description": "[true, false] from items array is valid",
+                "data": [true, false],
+                "valid": true
+            },
+            {
+                "description": "[false, false] from items array is not valid",
+                "data": [false, false],
+                "valid": false
+            },
+            {
+                "description": "[true, true] from items array is not valid",
+                "data": [true, true],
+                "valid": false
+            },
+            {
+                "description": "unique array extended from [false, true] is valid",
+                "data": [false, true, "foo", "bar"],
+                "valid": true
+            },
+            {
+                "description": "unique array extended from [true, false] is valid",
+                "data": [true, false, "foo", "bar"],
+                "valid": true
+            },
+            {
+                "description": "non-unique array extended from [false, true] is not valid",
+                "data": [false, true, "foo", "foo"],
+                "valid": false
+            },
+            {
+                "description": "non-unique array extended from [true, false] is not valid",
+                "data": [true, false, "foo", "foo"],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "uniqueItems with an array of items and additionalItems=false",
+        "schema": {
+            "items": [{"type": "boolean"}, {"type": "boolean"}],
+            "uniqueItems": true,
+            "additionalItems": false
+        },
+        "tests": [
+            {
+                "description": "[false, true] from items array is valid",
+                "data": [false, true],
+                "valid": true
+            },
+            {
+                "description": "[true, false] from items array is valid",
+                "data": [true, false],
+                "valid": true
+            },
+            {
+                "description": "[false, false] from items array is not valid",
+                "data": [false, false],
+                "valid": false
+            },
+            {
+                "description": "[true, true] from items array is not valid",
+                "data": [true, true],
+                "valid": false
+            },
+            {
+                "description": "extra items are invalid even if unique",
+                "data": [false, true, null],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "uniqueItems=false validation",
+        "schema": { "uniqueItems": false },
+        "tests": [
+            {
+                "description": "unique array of integers is valid",
+                "data": [1, 2],
+                "valid": true
+            },
+            {
+                "description": "non-unique array of integers is valid",
+                "data": [1, 1],
+                "valid": true
+            },
+            {
+                "description": "numbers are unique if mathematically unequal",
+                "data": [1.0, 1.00, 1],
+                "valid": true
+            },
+            {
+                "description": "false is not equal to zero",
+                "data": [0, false],
+                "valid": true
+            },
+            {
+                "description": "true is not equal to one",
+                "data": [1, true],
+                "valid": true
+            },
+            {
+                "description": "unique array of objects is valid",
+                "data": [{"foo": "bar"}, {"foo": "baz"}],
+                "valid": true
+            },
+            {
+                "description": "non-unique array of objects is valid",
+                "data": [{"foo": "bar"}, {"foo": "bar"}],
+                "valid": true
+            },
+            {
+                "description": "unique array of nested objects is valid",
+                "data": [
+                    {"foo": {"bar" : {"baz" : true}}},
+                    {"foo": {"bar" : {"baz" : false}}}
+                ],
+                "valid": true
+            },
+            {
+                "description": "non-unique array of nested objects is valid",
+                "data": [
+                    {"foo": {"bar" : {"baz" : true}}},
+                    {"foo": {"bar" : {"baz" : true}}}
+                ],
+                "valid": true
+            },
+            {
+                "description": "unique array of arrays is valid",
+                "data": [["foo"], ["bar"]],
+                "valid": true
+            },
+            {
+                "description": "non-unique array of arrays is valid",
+                "data": [["foo"], ["foo"]],
+                "valid": true
+            },
+            {
+                "description": "unique heterogeneous types are valid",
+                "data": [{}, [1], true, null, 1],
+                "valid": true
+            },
+            {
+                "description": "non-unique heterogeneous types are valid",
+                "data": [{}, [1], true, null, {}, 1],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "uniqueItems=false with an array of items",
+        "schema": {
+            "items": [{"type": "boolean"}, {"type": "boolean"}],
+            "uniqueItems": false
+        },
+        "tests": [
+            {
+                "description": "[false, true] from items array is valid",
+                "data": [false, true],
+                "valid": true
+            },
+            {
+                "description": "[true, false] from items array is valid",
+                "data": [true, false],
+                "valid": true
+            },
+            {
+                "description": "[false, false] from items array is valid",
+                "data": [false, false],
+                "valid": true
+            },
+            {
+                "description": "[true, true] from items array is valid",
+                "data": [true, true],
+                "valid": true
+            },
+            {
+                "description": "unique array extended from [false, true] is valid",
+                "data": [false, true, "foo", "bar"],
+                "valid": true
+            },
+            {
+                "description": "unique array extended from [true, false] is valid",
+                "data": [true, false, "foo", "bar"],
+                "valid": true
+            },
+            {
+                "description": "non-unique array extended from [false, true] is valid",
+                "data": [false, true, "foo", "foo"],
+                "valid": true
+            },
+            {
+                "description": "non-unique array extended from [true, false] is valid",
+                "data": [true, false, "foo", "foo"],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "uniqueItems=false with an array of items and additionalItems=false",
+        "schema": {
+            "items": [{"type": "boolean"}, {"type": "boolean"}],
+            "uniqueItems": false,
+            "additionalItems": false
+        },
+        "tests": [
+            {
+                "description": "[false, true] from items array is valid",
+                "data": [false, true],
+                "valid": true
+            },
+            {
+                "description": "[true, false] from items array is valid",
+                "data": [true, false],
+                "valid": true
+            },
+            {
+                "description": "[false, false] from items array is valid",
+                "data": [false, false],
+                "valid": true
+            },
+            {
+                "description": "[true, true] from items array is valid",
+                "data": [true, true],
+                "valid": true
+            },
+            {
+                "description": "extra items are invalid even if unique",
+                "data": [false, true, null],
+                "valid": false
+            }
+        ]
+    }
+]

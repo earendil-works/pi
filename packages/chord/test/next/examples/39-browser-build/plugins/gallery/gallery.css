@@ -1,0 +1,8 @@
+.gallery {
+	display: grid;
+	gap: 8px;
+}
+
+.gallery img {
+	width: 64px;
+}

@@ -1,8 +1,8 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Context } from "@earendil-works/chord";
-import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
+import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { type CodemodeRun, CodemodeSandbox } from "@earendil-works/pi-codemode";
 import {
 	defineTool,
@@ -13,6 +13,7 @@ import {
 	ToolTask,
 	type ToolTaskInput,
 } from "@earendil-works/pi-durable";
+import { bool, num, obj, opt, str } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	type CodemodeGlobal,
@@ -24,12 +25,13 @@ import {
 import type { CodemodeNamespace } from "../src/codemode/describe.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import { createReadTool } from "../src/tools/read.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
 import { ControlledStorage, context } from "./session-support.ts";
 import { aborted, type Deferred, deferred, eventually } from "./task-support.ts";
 
-const Parameters = Type.Object({ text: Type.Optional(Type.String()), id: Type.Optional(Type.Number()) });
+const Parameters = obj({ text: opt(str()), id: opt(num()) });
 
 function tool(
 	name: string,
@@ -714,13 +716,13 @@ describe("durable code mode", () => {
 
 	it("resolves a schema tool's error result that carries its value, and rejects one without with its text", async () => {
 		const chat = codemodeChat();
-		const Exit = Type.Object({ output: Type.String(), exitCode: Type.Number() });
+		const Exit = obj({ output: str(), exitCode: num() });
 		addTool(
 			chat.setup.registry,
 			defineTool({
 				name: "run",
 				description: "run",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				structuredOutputSchema: Exit,
 				// Like bash on a nonzero exit: an error result with its value.
 				execute: async () => ({
@@ -735,7 +737,7 @@ describe("durable code mode", () => {
 			defineTool({
 				name: "denied",
 				description: "denied",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				structuredOutputSchema: Exit,
 				execute: async () => ({ output: [{ type: "text", text: "permission denied" }], isError: true }),
 			}),
@@ -766,7 +768,7 @@ describe("durable code mode", () => {
 			defineTool({
 				name: "picture",
 				description: "picture",
-				parameters: Type.Object({ caption: Type.Boolean() }),
+				parameters: obj({ caption: bool() }),
 				execute: async (args) => ({
 					output: [
 						...(args.caption ? [{ type: "text" as const, text: "a cat" }] : []),
@@ -928,10 +930,13 @@ describe("durable code mode", () => {
 		]);
 		const { harness, root } = await openChat(await openNodeSqliteStorage(await sqlitePath()), chat.setup);
 		let journalCommits = 0;
-		harness.subscribeCommits((publication) => {
-			for (const change of publication.changes) {
-				if (change.type === "document" && change.record.kind === "pi.codemode.journal") journalCommits++;
-			}
+		harness.observeCommits({
+			advance: (publication) => {
+				for (const change of publication.changes) {
+					if (change.type === "document" && change.record.kind === "pi.codemode.journal") journalCommits++;
+				}
+			},
+			end: () => {},
 		});
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		expect(await resultText(chat.setup, root)).toEqual({ text: "50", isError: false });
@@ -1044,6 +1049,29 @@ describe("durable code mode output and tool search", () => {
 		expect(message.content.some((item) => item.type === "image")).toBe(true);
 	});
 
+	// #11015
+	it("resolves the built-in read with an image's block, which image() shows, and with a text file's text", async () => {
+		const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+		const files = await mkdtemp(join(tmpdir(), "pi-codemode-read-"));
+		directories.add(files);
+		await writeFile(join(files, "pixel.png"), Buffer.from(png, "base64"));
+		await writeFile(join(files, "note.txt"), "hello");
+		const chat = codemodeChat();
+		addTool(chat.setup.registry, createReadTool());
+		const { text, message } = await runScript(
+			`const picture = await tools.read({ path: ${JSON.stringify(join(files, "pixel.png"))} });
+			text([picture.type, picture.mimeType, picture.data.length].join(" "));
+			image(picture);
+			text(await tools.read({ path: ${JSON.stringify(join(files, "note.txt"))} }));`,
+			chat,
+		);
+		expect(message.isError).toBe(false);
+		expect(text).toContain(`image image/png ${png.length}`);
+		expect(text).toMatch(/\[Image saved to \S+ \(image\/png, \d+ bytes\)\]/);
+		expect(text).toContain("hello");
+		expect(message.content.some((item) => item.type === "image")).toBe(true);
+	});
+
 	it("calls a deferred tool the model is not offered, and finds it in ALL_TOOLS", async () => {
 		const chat = codemodeChat();
 		addTool(
@@ -1051,7 +1079,7 @@ describe("durable code mode output and tool search", () => {
 			defineTool({
 				name: "later",
 				description: "A deferred tool",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				deferred: true,
 				execute: async () => ({ output: [{ type: "text", text: "later ran" }] }),
 			}),

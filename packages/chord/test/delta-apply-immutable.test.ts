@@ -246,6 +246,30 @@ describe("checked immutable operation application", () => {
 	});
 });
 
+describe("immutable container copies", () => {
+	it("keep an own __proto__ member as data and the prototype of the copied object", () => {
+		const plain = JSON.parse('{"__proto__":{"polluted":true},"n":1}') as Record<string, JsonValue>;
+		const bare = Object.assign(Object.create(null) as Record<string, JsonValue>, { n: 1 });
+		for (const base of [plain, bare]) {
+			const checked = applyImmutable(base, [["s", ["n"], 2]]);
+			// Tracker revisions copy through the trusted path.
+			const tracker = track(base);
+			const change = tracker.beginChange();
+			change.state.n = 2;
+			tracker.adopt(change.prepare());
+			for (const copy of [checked, tracker.value]) {
+				expect(copy).not.toBe(base);
+				expect(Object.getPrototypeOf(copy)).toBe(Object.getPrototypeOf(base));
+				expect(Object.keys(copy)).toEqual(Object.keys(base));
+				expect(copy.n).toBe(2);
+				if (base === plain)
+					expect(Object.getOwnPropertyDescriptor(copy, "__proto__")?.value).toEqual({ polluted: true });
+			}
+		}
+		expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
+	});
+});
+
 describe("immutable application complexity", () => {
 	it("appends to an array not yet copied in one copy, sharing everything else", () => {
 		const entries = Array.from({ length: 1_000 }, (_, index) => ({ index }));
@@ -291,18 +315,15 @@ describe("immutable application complexity", () => {
 		const base: Record<string, JsonValue> = {};
 		for (let index = 0; index < width; index++) base[`field${index}`] = index;
 		const operations: Op[] = Array.from({ length: 1_000 }, (_, index): Op => ["s", [`field${index}`], -index]);
-		const originalKeys = Object.keys;
+		// A copy lists the object's keys; the proxy counts the listings.
 		let shallowCopies = 0;
-		Object.keys = ((value: object): string[] => {
-			shallowCopies++;
-			return originalKeys(value);
-		}) as typeof Object.keys;
-		let result: Record<string, JsonValue>;
-		try {
-			result = applyImmutable(base, operations);
-		} finally {
-			Object.keys = originalKeys;
-		}
+		const counted = new Proxy(base, {
+			ownKeys(target) {
+				shallowCopies++;
+				return Reflect.ownKeys(target);
+			},
+		});
+		const result = applyImmutable(counted, operations);
 
 		expect(result.field999).toBe(-999);
 		expect(base.field999).toBe(999);

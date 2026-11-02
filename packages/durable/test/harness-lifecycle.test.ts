@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { withAbortSignal } from "@earendil-works/chord/context";
-import { createModels, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
+import { createModels, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import {
 	type Conversation,
 	type ConversationId,
@@ -17,9 +17,11 @@ import {
 	type Storage,
 	type TaskId,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { describe, expect, it } from "vitest";
 import type { SessionImpl } from "../src/session/session.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import { commitWrites } from "../src/testing/commit-writes.ts";
 import { chatSetup, openChat } from "./chat-support.ts";
 import { addHooks, addTask, addTool } from "./harness-support.ts";
 import { ControlledStorage, context, flush } from "./session-support.ts";
@@ -73,12 +75,12 @@ async function seedRunningTask(storage: Storage): Promise<void> {
 	const id = await storage.mintId<TaskId<JsonValue>>();
 	const state = { status: "running", checkpoint: { phase: "run" } } as const;
 	const task = { id, conversationId, kind: "test.seeded", version: 1, input: null, background: false, state };
-	await storage.commit(
+	await commitWrites(
+		storage,
 		[
 			{ type: "conversation", value: { id: conversationId } },
 			{ type: "task", value: { ...task, abortRequested: false } },
 		],
-		() => {},
 		context,
 	);
 }
@@ -117,7 +119,7 @@ describe("Harness open", () => {
 		const reports: unknown[] = [];
 		const opening = Harness.open(
 			storage,
-			{ models: createModels(), registry: createRegistry(), onReport: (error) => reports.push(error) },
+			{ models: createModels(), registry: createRegistry(), onReport: ({ error }) => reports.push(error) },
 			context,
 		);
 		await expect(opening).rejects.toThrow("disk full");
@@ -167,7 +169,7 @@ describe("Harness close", () => {
 				defineTool({
 					name: "wait",
 					description: "wait",
-					parameters: Type.Object({}),
+					parameters: obj({}),
 					execute: async () => {
 						if (where === "tool") await stubborn();
 						return { output: [] };
@@ -318,9 +320,9 @@ describe("Harness close", () => {
 		expect(docWatch.value).toBe(docValue);
 		expect(viewWatch.value).toBe(viewValue);
 		expect(graphWatch.value).toEqual({ tasks: {} });
-		expect(await graphWatch.closed).toEqual({ reason: "ended" });
-		expect(await docWatch.closed).toEqual({ reason: "ended" });
-		expect(await viewWatch.closed).toEqual({ reason: "ended" });
+		expect(await graphWatch.closed).toEqual({ kind: "ended" });
+		expect(await docWatch.closed).toEqual({ kind: "ended" });
+		expect(await viewWatch.closed).toEqual({ kind: "ended" });
 		// The commit itself settled.
 		expect(storage.commits.at(-1)).toContainEqual(expect.objectContaining({ type: "entry" }));
 	});
@@ -341,8 +343,9 @@ describe("Harness close", () => {
 		}, context);
 		// Count commit subscriptions of document observers.
 		let subscriptions = 0;
-		const subscribe = harness.subscribeCommits.bind(harness);
-		harness.subscribeCommits = (listener) => {
+		const session = harness as unknown as SessionImpl;
+		const subscribe = session.followCommits.bind(session);
+		session.followCommits = (listener) => {
 			subscriptions++;
 			const unsubscribe = subscribe(listener);
 			let active = true;
@@ -586,7 +589,7 @@ describe("registry changes before resume", () => {
 			{ state: { kind: "blocked", reason: "missing_task" } },
 		]);
 		const installed = addTask(first.registry, define("v1"));
-		expect((await first.harness.inspect(context)).tasks).toMatchObject([{ state: { kind: "ready" } }]);
+		expect((await first.harness.inspect(context)).tasks).toMatchObject([{ state: { kind: "pending" } }]);
 		// The same extension name replaces the definition in place, still before resume.
 		installed.dispose();
 		addTask(first.registry, define("v2"));

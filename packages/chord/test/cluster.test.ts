@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { num, obj, str } from "@earendil-works/pi-schema";
 import { describe, it, onTestFinished } from "vitest";
 import {
 	type Ctx,
@@ -30,32 +30,32 @@ function latch() {
 
 const Greeter = remote("t.greeter", {
 	version: 1,
-	input: Type.Object({ session: Type.String() }),
+	input: obj({ session: str() }, { open: true }),
 	host: hostFamily("session:", "session"),
 	variants: {
 		main: {
-			state: { count: Type.Object({ n: Type.Number() }) },
-			methods: { greet: method(Type.String(), Type.String()) },
+			state: { count: obj({ n: num() }, { open: true }) },
+			methods: { greet: method(str(), str()) },
 		},
 	},
 });
 
 const GreeterV2 = remote("t.greeter", {
 	version: 2,
-	input: Type.Object({ session: Type.String() }),
+	input: obj({ session: str() }, { open: true }),
 	host: hostFamily("session:", "session"),
-	variants: { main: { methods: { hello: method(Type.String(), Type.String()) } } },
+	variants: { main: { methods: { hello: method(str(), str()) } } },
 });
 
 /** The server's own greeter: the greeter facet serves this one on the server, `Greeter` on session hosts. */
 const ServerGreeter = remote("t.server-greeter", {
 	version: 1,
-	input: Type.Object({}),
+	input: obj({}, { open: true }),
 	host: hostNamed("server"),
 	variants: {
 		main: {
-			state: { count: Type.Object({ n: Type.Number() }) },
-			methods: { greet: method(Type.String(), Type.String()) },
+			state: { count: obj({ n: num() }, { open: true }) },
+			methods: { greet: method(str(), str()) },
 		},
 	},
 });
@@ -68,7 +68,7 @@ function greeterFacet(greeting: string, options: { fail?: boolean; stateVersion?
 				if (options.fail) throw new Error("worker factory fails");
 				const count = self.state(
 					"count",
-					Type.Object({ n: Type.Number() }),
+					obj({ n: num() }, { open: true }),
 					{ n: 0 },
 					{ version: options.stateVersion ?? 1 },
 				);
@@ -105,9 +105,9 @@ function dropping(link: Link, drop: (frame: Frame) => boolean): Link {
 
 const Ping = remote("t.cluster-ping", {
 	version: 1,
-	input: Type.Object({}),
+	input: obj({}, { open: true }),
 	host: hostNamed("server"),
-	variants: { main: { methods: { ping: method(undefined, Type.String()) } } },
+	variants: { main: { methods: { ping: method(undefined, str()) } } },
 });
 
 function setup() {
@@ -314,7 +314,7 @@ describe("cross-host reload", () => {
 						},
 						close: () => void log.push("closed"),
 					});
-					const count = self.state("count", Type.Object({ n: Type.Number() }), { n: 0 });
+					const count = self.state("count", obj({ n: num() }, { open: true }), { n: 0 });
 					return { variant: "main", count, greet: (name: string) => `slow ${name}` };
 				}),
 		};
@@ -569,7 +569,7 @@ describe("cross-host reload", () => {
 		const never = latch();
 		const Slow = remote("t.cluster-slow", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("session:S1"),
 			variants: { main: { methods: { wait: method() } } },
 		});
@@ -590,7 +590,7 @@ describe("cross-host reload", () => {
 			resolve: async () => watched,
 			principal: (name) => ({ host: name }),
 		});
-		const Store = local("t.cluster-store", { version: 1, input: Type.Object({}) });
+		const Store = local("t.cluster-store", { version: 1, input: obj({}, { open: true }) });
 		const storeFacet = (version: number): Facet => ({
 			name: "store",
 			setup: (api) =>

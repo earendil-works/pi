@@ -1,0 +1,116 @@
+[
+    {
+        "description": "validation of IRI References",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "format": "iri-reference"
+        },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "a valid IRI",
+                "data": "http://ƒøø.ßår/?∂éœ=πîx#πîüx",
+                "valid": true
+            },
+            {
+                "description": "a valid protocol-relative IRI Reference",
+                "data": "//ƒøø.ßår/?∂éœ=πîx#πîüx",
+                "valid": true
+            },
+            {
+                "description": "a valid relative IRI Reference",
+                "data": "/âππ",
+                "valid": true
+            },
+            {
+                "description": "an invalid IRI Reference",
+                "data": "\\\\WINDOWS\\filëßåré",
+                "valid": false
+            },
+            {
+                "description": "a valid IRI Reference",
+                "data": "âππ",
+                "valid": true
+            },
+            {
+                "description": "a valid IRI fragment",
+                "data": "#ƒrägmênt",
+                "valid": true
+            },
+            {
+                "description": "an invalid IRI fragment",
+                "data": "#ƒräg\\mênt",
+                "valid": false
+            },
+            {
+                "description": "an embedded IPv4 with a leading zero is invalid",
+                "data": "//[::ffff:192.168.0.01]/p",
+                "valid": false
+            },
+            {
+                "description": "a valid protocol-relative IRI Reference with a compressed IPv6 host",
+                "data": "//[2001:db8::1]/p",
+                "valid": true
+            },
+            {
+                "description": "a valid relative IRI Reference with a supplementary-plane character",
+                "data": "/âππ/𐌀",
+                "valid": true
+            },
+            {
+                "description": "a query-only IRI Reference with a supplementary private-use char",
+                "data": "?q=󰀀",
+                "valid": true
+            },
+            {
+                "description": "a trailing newline after a valid IRI Reference is invalid",
+                "data": "/âππ\n",
+                "valid": false
+            },
+            {
+                "description": "invalid percent-encoding with non-hex digits",
+                "data": "/%6G",
+                "valid": false
+            },
+            {
+                "description": "incomplete percent-encoding triplet",
+                "data": "/%A",
+                "valid": false
+            },
+            {
+                "description": "lone percent sign is invalid",
+                "data": "/%",
+                "valid": false
+            }
+        ]
+    }
+]

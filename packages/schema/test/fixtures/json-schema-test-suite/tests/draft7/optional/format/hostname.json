@@ -1,0 +1,380 @@
+[
+    {
+        "description": "validation of host names",
+        "schema": { "format": "hostname" },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "a valid host name",
+                "data": "www.example.com",
+                "valid": true
+            },
+            {
+                "description": "single label",
+                "data": "hostname",
+                "valid": true
+            },
+            {
+                "description": "single label with digits",
+                "data": "h0stn4me",
+                "valid": true
+            },
+            {
+                "description": "single label starting with digit",
+                "data": "1host",
+                "valid": true
+            },
+            {
+                "description": "single label ending with digit",
+                "data": "hostnam3",
+                "valid": true
+            },
+            {
+                "description": "empty string",
+                "data": "",
+                "valid": false
+            },
+            {
+                "description": "single dot",
+                "data": ".",
+                "valid": false
+            },
+            {
+                "description": "leading dot",
+                "data": ".example",
+                "valid": false
+            },
+            {
+                "description": "trailing dot",
+                "data": "example.",
+                "valid": false
+            },
+            {
+                "description": "IDN label separator",
+                "data": "example\uff0ecom",
+                "valid": false
+            },
+            {
+                "description": "single label with hyphen",
+                "data": "host-name",
+                "valid": true
+            },
+            {
+                "description": "starts with hyphen",
+                "data": "-hostname",
+                "valid": false
+            },
+            {
+                "description": "ends with hyphen",
+                "data": "hostname-",
+                "valid": false
+            },
+            {
+                "description": "contains underscore",
+                "data": "host_name",
+                "valid": false
+            },
+            {
+                "description": "exceeds maximum overall length (256)",
+                "data": "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk.abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk.abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk.abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk.com",
+                "valid": false
+            },
+            {
+                "description": "maximum label length (63)",
+                "data": "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk.com",
+                "valid": true
+            },
+            {
+                "description": "exceeds maximum label length (63)",
+                "data": "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl.com",
+                "valid": false
+            },
+            {
+                "description": "trailing newline is invalid",
+                "data": "example.com\n",
+                "valid": false
+            },
+            {
+                "description": "leading space is invalid",
+                "data": " example.com",
+                "valid": false
+            },
+            {
+                "description": "space inside a label is invalid",
+                "data": "ex ample.com",
+                "valid": false
+            },
+            {
+                "description": "invalid non-ASCII KELVIN SIGN (U+212A)",
+                "data": "\u212Aelvin.example.com",
+                "valid": false
+            },
+            {
+                "description": "consecutive hyphens inside a label",
+                "data": "a--b.com",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "validation of A-label (punycode) host names",
+        "schema": { "format": "hostname" },
+        "tests": [
+            {
+                "description": "invalid Punycode",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.4 https://tools.ietf.org/html/rfc5890#section-2.3.2.1",
+                "data": "xn--X",
+                "valid": false
+            },
+            {
+                "description": "a valid host name (example.test in Hangul)",
+                "data": "xn--9n2bp8q.xn--9t4b11yi5a",
+                "valid": true
+            },
+            {
+                "description": "contains illegal char U+302E Hangul single dot tone mark",
+                "data": "xn--07jt112bpxg.xn--9t4b11yi5a",
+                "valid": false
+            },
+            {
+                "description": "Begins with a Spacing Combining Mark",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.2",
+                "data": "xn--hello-txk",
+                "valid": false
+            },
+            {
+                "description": "Begins with a Nonspacing Mark",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.2",
+                "data": "xn--hello-zed",
+                "valid": false
+            },
+            {
+                "description": "Begins with an Enclosing Mark",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.2",
+                "data": "xn--hello-6bf",
+                "valid": false
+            },
+            {
+                "description": "Exceptions that are PVALID, left-to-right chars",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.2 https://tools.ietf.org/html/rfc5892#section-2.6",
+                "data": "xn--zca29lwxobi7a",
+                "valid": true
+            },
+            {
+                "description": "Exceptions that are PVALID, right-to-left chars",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.2 https://tools.ietf.org/html/rfc5892#section-2.6",
+                "data": "xn--qmbc",
+                "valid": true
+            },
+            {
+                "description": "Exceptions that are DISALLOWED, right-to-left chars",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.2 https://tools.ietf.org/html/rfc5892#section-2.6",
+                "data": "xn--chb89f",
+                "valid": false
+            },
+            {
+                "description": "Exceptions that are DISALLOWED, left-to-right chars",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.2 https://tools.ietf.org/html/rfc5892#section-2.6 Note: The two combining marks (U+302E and U+302F) are in the middle and not at the start",
+                "data": "xn--07jceefgh4c",
+                "valid": false
+            },
+            {
+                "description": "MIDDLE DOT with no preceding 'l'",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.3",
+                "data": "xn--al-0ea",
+                "valid": false
+            },
+            {
+                "description": "MIDDLE DOT with nothing preceding",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.3",
+                "data": "xn--l-fda",
+                "valid": false
+            },
+            {
+                "description": "MIDDLE DOT with no following 'l'",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.3",
+                "data": "xn--la-0ea",
+                "valid": false
+            },
+            {
+                "description": "MIDDLE DOT with nothing following",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.3",
+                "data": "xn--l-gda",
+                "valid": false
+            },
+            {
+                "description": "MIDDLE DOT with surrounding 'l's",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.3",
+                "data": "xn--ll-0ea",
+                "valid": true
+            },
+            {
+                "description": "Greek KERAIA not followed by Greek",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.4",
+                "data": "xn--S-jib3p",
+                "valid": false
+            },
+            {
+                "description": "Greek KERAIA not followed by anything",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.4",
+                "data": "xn--wva3j",
+                "valid": false
+            },
+            {
+                "description": "Greek KERAIA followed by Greek",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.4",
+                "data": "xn--wva3je",
+                "valid": true
+            },
+            {
+                "description": "Hebrew GERESH not preceded by Hebrew",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.5",
+                "data": "xn--A-2hc5h",
+                "valid": false
+            },
+            {
+                "description": "Hebrew GERESH not preceded by anything",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.5",
+                "data": "xn--5db1e",
+                "valid": false
+            },
+            {
+                "description": "Hebrew GERESH preceded by Hebrew",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.5",
+                "data": "xn--4dbc5h",
+                "valid": true
+            },
+            {
+                "description": "Hebrew GERSHAYIM not preceded by Hebrew",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.6",
+                "data": "xn--A-2hc8h",
+                "valid": false
+            },
+            {
+                "description": "Hebrew GERSHAYIM not preceded by anything",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.6",
+                "data": "xn--5db3e",
+                "valid": false
+            },
+            {
+                "description": "Hebrew GERSHAYIM preceded by Hebrew",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.6",
+                "data": "xn--4dbc8h",
+                "valid": true
+            },
+            {
+                "description": "KATAKANA MIDDLE DOT with no Hiragana, Katakana, or Han",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.7",
+                "data": "xn--defabc-k64e",
+                "valid": false
+            },
+            {
+                "description": "KATAKANA MIDDLE DOT with no other characters",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.7",
+                "data": "xn--vek",
+                "valid": false
+            },
+            {
+                "description": "KATAKANA MIDDLE DOT with Hiragana",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.7",
+                "data": "xn--k8j5u",
+                "valid": true
+            },
+            {
+                "description": "KATAKANA MIDDLE DOT with Katakana",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.7",
+                "data": "xn--bck0j",
+                "valid": true
+            },
+            {
+                "description": "KATAKANA MIDDLE DOT with Han",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.7",
+                "data": "xn--vek778f",
+                "valid": true
+            },
+            {
+                "description": "Arabic-Indic digits mixed with Extended Arabic-Indic digits",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.8",
+                "data": "xn--ngb6iyr",
+                "valid": false
+            },
+            {
+                "description": "Arabic-Indic digits not mixed with Extended Arabic-Indic digits",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.8",
+                "data": "xn--ngba1o",
+                "valid": true
+            },
+            {
+                "description": "Extended Arabic-Indic digits not mixed with Arabic-Indic digits",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.9",
+                "data": "xn--0-gyc",
+                "valid": true
+            },
+            {
+                "description": "ZERO WIDTH JOINER not preceded by Virama",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.2 https://www.unicode.org/review/pr-37.pdf",
+                "data": "xn--11b2er09f",
+                "valid": false
+            },
+            {
+                "description": "ZERO WIDTH JOINER not preceded by anything",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.2 https://www.unicode.org/review/pr-37.pdf",
+                "data": "xn--02b508i",
+                "valid": false
+            },
+            {
+                "description": "ZERO WIDTH JOINER preceded by Virama",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.2 https://www.unicode.org/review/pr-37.pdf",
+                "data": "xn--11b2ezcw70k",
+                "valid": true
+            },
+            {
+                "description": "ZERO WIDTH NON-JOINER preceded by Virama",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.1",
+                "data": "xn--11b2ezcs70k",
+                "valid": true
+            },
+            {
+                "description": "ZERO WIDTH NON-JOINER not preceded by Virama but matches regexp",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.1 https://www.w3.org/TR/alreq/#h_disjoining_enforcement",
+                "data": "xn--ngba5hb2804a",
+                "valid": true
+            },
+            {
+                "description": "contains \"--\" in the 3rd and 4th position",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.1 https://tools.ietf.org/html/rfc5890#section-2.3.2.1",
+                "data": "XN--aa---o47jg78q",
+                "valid": false
+            }
+        ]
+    }
+]

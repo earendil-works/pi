@@ -91,6 +91,14 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(message, 131072)).toBe(true);
 	});
 
+	it("detects LiteLLM pre-call ContextWindowExceededError", () => {
+		// Regression for #11492.
+		const message = createErrorMessage(
+			'400: {"message":"litellm.ContextWindowExceededError: litellm.BadRequestError: litellm._pre_call_checks: Context Window exceeded for given call. No models have context window large enough for this call.\nModel=Qwen3.8-Flash-Next, Max Input Tokens=262144, Got=265262\nmodel=Qwen3.8-Flash-Next. context_window_fallbacks=None. fallbacks=[]."}',
+		);
+		expect(isContextOverflow(message, 262144)).toBe(true);
+	});
+
 	it("detects OpenAI-compatible parenthesized maximum context length errors", () => {
 		const message = createErrorMessage(
 			"Error: 400 Input length (265330) exceeds model's maximum context length (262144).",

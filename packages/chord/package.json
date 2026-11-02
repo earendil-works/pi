@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/chord",
-	"version": "1.4.0",
+	"version": "1.5.0",
 	"description": "Typed host runtime for plugins, contracts, replicated state, and RPC over JSON links",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -36,6 +36,11 @@
 			"types": "./dist/telemetry-sqlite/index.d.ts",
 			"import": "./dist/telemetry-sqlite/index.js"
 		},
+		"./next": {
+			"source": "./src/next/index.ts",
+			"types": "./dist/next/index.d.ts",
+			"import": "./dist/next/index.js"
+		},
 		"./sqlite": {
 			"source": "./src/sqlite/index.ts",
 			"types": "./dist/sqlite/index.d.ts",
@@ -62,7 +67,7 @@
 		"src/delta/README.md"
 	],
 	"scripts": {
-		"clean": "shx rm -rf dist",
+		"clean": "node ../../scripts/package-files.mjs clean dist",
 		"build": "tsc -p tsconfig.build.json",
 		"test": "vitest --run",
 		"prepublishOnly": "npm run clean && npm run build"
@@ -85,12 +90,23 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-telemetry": "1.4.0",
-		"typebox": "1.3.27"
+		"@earendil-works/pi-schema": "1.5.0",
+		"@earendil-works/pi-telemetry": "1.5.0"
+	},
+	"peerDependencies": {
+		"esbuild": "0.28.2",
+		"ws": "8.21.0"
+	},
+	"peerDependenciesMeta": {
+		"esbuild": {
+			"optional": true
+		},
+		"ws": {
+			"optional": true
+		}
 	},
 	"devDependencies": {
 		"@types/ws": "8.18.2",
-		"shx": "0.3.4",
 		"vitest": "4.1.12",
 		"ws": "8.21.0"
 	}

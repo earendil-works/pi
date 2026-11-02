@@ -98,7 +98,7 @@ The dedicated history actions browse prompt history regardless of cursor positio
 
 #### Fullscreen
 
-In fullscreen mode, these actions control the transcript and take precedence over editor actions using the same key.
+In fullscreen mode, these actions control the transcript and take precedence over editor actions using the same key. While an overlay or a scrollable list such as autocomplete, `/settings`, or the model selector has focus, the scrolling and prompt-jump actions go to it instead of the transcript, so `tui.select.pageUp` and `tui.select.pageDown` move the list selection. Transcript search actions keep working.
 
 | Keybinding id | Default | Description |
 |---|---|---|

@@ -229,9 +229,20 @@ class ChangeImpl<T extends object> implements Change<T> {
 	}
 }
 
+/**
+ * Open drafts are tracked so that adopting one change makes its open competitors stale at once. Prepared contexts need
+ * no tracking: `prepare()` releases their overlay, and `adopt()` rejects them by revision.
+ *
+ * The most recent open context is held strongly in `#open`: with one transaction at a time per tracker, the common case,
+ * that is the only one, and it costs no `WeakRef` (each `WeakRef` target survives the scavenges of the current job, and
+ * V8 then pretenures the context allocation site). A second `beginChange()` while one is open moves the older context
+ * into `#competitors` through a `WeakRef`, so a draft the caller drops can be collected. A dropped draft that was never
+ * settled stays held by `#open` until the tracker's next `beginChange()` or `adopt()`: at most one per tracker.
+ */
 class TrackerImpl<T extends object> implements Tracker<T> {
 	readonly #owner = {};
-	readonly #contexts = new Set<WeakRef<OverlayContext>>();
+	#open: OverlayContext | undefined;
+	#competitors: Set<WeakRef<OverlayContext>> | undefined;
 	readonly #selfRef: WeakRef<TrackerImpl<object>>;
 	#value: T;
 	#revision = 0;
@@ -252,14 +263,15 @@ class TrackerImpl<T extends object> implements Tracker<T> {
 
 	beginChange(): Change<T> {
 		const context = createContext(this.#selfRef, this.#owner, this.#revision, this.#value, false, this.#value);
-		this.#register(context);
+		if (this.#open !== undefined) this.#demote(this.#open);
+		this.#open = context;
 		return new ChangeImpl(context);
 	}
 
 	prepareReplace(value: T): Prepared<T> {
+		// Not tracked: materialization below releases the context before this returns, as `prepare()` does.
 		const context = createContext(this.#selfRef, this.#owner, this.#revision, value, true, this.#value);
 		context.status.value = "prepared";
-		this.#register(context);
 		try {
 			return materializePrepared<T>(context);
 		} catch (error) {
@@ -295,44 +307,52 @@ class TrackerImpl<T extends object> implements Tracker<T> {
 	}
 
 	releaseContext(context: OverlayContext): void {
-		if (context.registryRef !== undefined) this.#contexts.delete(context.registryRef);
+		if (this.#open === context) this.#open = undefined;
+		else if (context.registryRef !== undefined) this.#competitors?.delete(context.registryRef);
 		context.registryRef = undefined;
 	}
 
-	#register(context: OverlayContext): void {
+	#demote(context: OverlayContext): void {
 		const reference = new WeakRef(context);
 		context.registryRef = reference;
-		this.#contexts.add(reference);
+		this.#competitors ??= new Set();
+		this.#competitors.add(reference);
 		this.#pruneBudget -= 1;
 		if (this.#pruneBudget === 0) {
-			this.#prune();
-			this.#pruneBudget = Math.max(256, this.#contexts.size);
-		}
-	}
-
-	#prune(): void {
-		for (const reference of this.#contexts) {
-			if (reference.deref() === undefined) this.#contexts.delete(reference);
+			for (const entry of this.#competitors) {
+				if (entry.deref() === undefined) this.#competitors.delete(entry);
+			}
+			this.#pruneBudget = Math.max(256, this.#competitors.size);
 		}
 	}
 
 	#invalidate(winner: OverlayContext): void {
-		for (const reference of this.#contexts) {
-			const context = reference.deref();
-			if (context === undefined || context === winner) continue;
-			if (context.status.value === "open" || context.status.value === "prepared") context.status.value = "stale";
-			// Adoption must not walk every node touched by a competing draft. Drop the
-			// context's strong overlay references in O(1); externally retained proxies
-			// still see the stale status and are reclaimed with their holders.
-			releaseOverlayReferences(context);
-		}
-		this.#contexts.clear();
+		const open = this.#open;
+		const competitors = this.#competitors;
+		this.#open = undefined;
+		this.#competitors = undefined;
 		this.#pruneBudget = 256;
+		if (open !== undefined) staleCompetitor(open, winner);
+		if (competitors === undefined) return;
+		for (const reference of competitors) {
+			const context = reference.deref();
+			if (context !== undefined) staleCompetitor(context, winner);
+		}
 	}
 
 	replacementBase(context: OverlayContext): T | undefined {
 		return context.baseRevision === this.#revision ? this.#value : undefined;
 	}
+}
+
+function staleCompetitor(context: OverlayContext, winner: OverlayContext): void {
+	if (context === winner) return;
+	if (context.status.value === "open" || context.status.value === "prepared") context.status.value = "stale";
+	// Adoption must not walk every node touched by a competing draft. Drop the
+	// context's strong overlay references in O(1); externally retained proxies
+	// still see the stale status and are reclaimed with their holders.
+	context.registryRef = undefined;
+	releaseOverlayReferences(context);
 }
 
 /** Take immutable ownership of an alias-free strict-JSON root in O(1). */
@@ -408,10 +428,10 @@ function createContext<T extends object>(
 		status: { value: "open" },
 		root: undefined,
 		bases: [],
-		stored: [],
+		stored: undefined,
 		dirty: [],
 		nodes: [],
-		rawNodes: new WeakMap(),
+		rawNodes: undefined,
 		ops: undefined,
 		replacement,
 		replacementNoop: false,
@@ -483,7 +503,7 @@ function createNode(
 	parentSource: InsertSource | undefined = undefined,
 	parentPlacement = false,
 ): OverlayNode {
-	const existing = context.rawNodes!.get(base);
+	const existing = context.rawNodes?.get(base);
 	if (existing !== undefined) return existing;
 	const target: object = Array.isArray(base) ? [] : {};
 	const baseIndex = context.bases!.length;
@@ -502,7 +522,12 @@ function createNode(
 	if (parentSource !== undefined) node.parentSource = parentSource;
 	(target as Record<PropertyKey, unknown>)[NODE] = node;
 	node.proxy = new Proxy(target, Array.isArray(base) ? sharedArrayHandler : sharedObjectHandler);
-	context.rawNodes!.set(base, node);
+	// The root is never reached again through a child value (tracked values are alias-free), so a change that touches
+	// only the root needs no map.
+	if (parent !== undefined) {
+		context.rawNodes ??= new WeakMap();
+		context.rawNodes.set(base, node);
+	}
 	context.nodes.push(node);
 	return node;
 }
@@ -517,8 +542,10 @@ function nodeParent(node: OverlayNode): OverlayNode | undefined {
 
 function storeValue(context: OverlayContext, value: Stored): StoredRef {
 	if (!isContainer(value)) return value;
-	const index = context.stored!.length;
-	context.stored!.push(value);
+	// Created on the first container write: primitive writes never store.
+	context.stored ??= [];
+	const index = context.stored.length;
+	context.stored.push(value);
 	return { index };
 }
 
@@ -1121,12 +1148,12 @@ function insertPiece(node: OverlayNode, items: Stored[], start = 0): InsertPiece
 
 function insertPlacementPiece(node: OverlayNode, values: unknown[], start = 0): InsertPiece[] {
 	if (values.length === start) return [];
-	const storedLength = node.context.stored!.length;
+	const storedLength = node.context.stored?.length ?? 0;
 	try {
 		for (let index = start; index < values.length; index++)
 			values[index] = storeValue(node.context, clonePlacement(values[index]));
 	} catch (error) {
-		node.context.stored!.length = storedLength;
+		if (node.context.stored !== undefined) node.context.stored.length = storedLength;
 		throw error;
 	}
 	return [
@@ -1611,7 +1638,7 @@ function cloneNode(node: OverlayNode): Container {
 
 function cloneStored(value: Stored, context: OverlayContext): Stored {
 	if (!isContainer(value)) return value;
-	const node = context.rawNodes!.get(value);
+	const node = context.rawNodes?.get(value);
 	return node === undefined || (!node.dirty && !node.subtreeDirty) ? value : cloneNode(node);
 }
 
@@ -1636,7 +1663,7 @@ function clonePlacementNode(node: OverlayNode): Container {
 
 function clonePlacementStored(value: Stored, context: OverlayContext): Stored {
 	if (!isContainer(value)) return copyJson(value);
-	const node = context.rawNodes!.get(value);
+	const node = context.rawNodes?.get(value);
 	return node === undefined ? copyJson(value) : clonePlacementNode(node);
 }
 

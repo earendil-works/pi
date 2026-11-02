@@ -3,6 +3,7 @@ import {
 	Container,
 	type Focusable,
 	fuzzyFilter,
+	getSelectPageIndex,
 	Input,
 	type SelectItem,
 	SelectList,
@@ -21,8 +22,11 @@ import type { LlamaModelInfo, LlamaProgress } from "./client.ts";
 import type { HuggingFaceModel } from "./huggingface.ts";
 
 const DOWNLOAD_VALUE = "\0download";
+const SEARCH_MAX_VISIBLE = 10;
 
 export type LlamaManagerAction = { type: "model"; model: LlamaModelInfo } | { type: "download" } | { type: "close" };
+
+type InputHandler = Pick<Component, "handleInput" | "capturesViewportInput">;
 
 interface ProgressState extends LlamaProgress {
 	title: string;
@@ -94,6 +98,7 @@ function compactCount(value: number): string {
 }
 
 class HuggingFaceSearch extends Container implements Focusable {
+	readonly capturesViewportInput: boolean = true;
 	private readonly tui: TUI;
 	private readonly theme: Theme;
 	private readonly keybindings: KeybindingsManager;
@@ -145,12 +150,14 @@ class HuggingFaceSearch extends Container implements Focusable {
 
 	private updateResults(): void {
 		this.resultsContainer.clear();
-		const maxVisible = 10;
 		const start = Math.max(
 			0,
-			Math.min(this.selectedIndex - Math.floor(maxVisible / 2), this.filteredResults.length - maxVisible),
+			Math.min(
+				this.selectedIndex - Math.floor(SEARCH_MAX_VISIBLE / 2),
+				this.filteredResults.length - SEARCH_MAX_VISIBLE,
+			),
 		);
-		const end = Math.min(start + maxVisible, this.filteredResults.length);
+		const end = Math.min(start + SEARCH_MAX_VISIBLE, this.filteredResults.length);
 		for (let index = start; index < end; index++) {
 			const model = this.filteredResults[index];
 			if (!model) continue;
@@ -255,6 +262,20 @@ class HuggingFaceSearch extends Container implements Focusable {
 			}
 			return;
 		}
+		const pageIndex = getSelectPageIndex(
+			this.keybindings,
+			data,
+			this.selectedIndex,
+			this.filteredResults.length,
+			SEARCH_MAX_VISIBLE,
+		);
+		if (pageIndex !== undefined) {
+			if (this.filteredResults.length > 0) {
+				this.selectedIndex = pageIndex;
+				this.updateResults();
+			}
+			return;
+		}
 		if (this.keybindings.matches(data, "tui.select.confirm")) {
 			const exact = /^[^/\s]+\/[^:\s]+(?::[^\s:]+)?$/u.test(this.query) ? this.query : undefined;
 			const selected = exact ?? this.filteredResults[this.selectedIndex]?.id;
@@ -279,7 +300,7 @@ class LlamaView implements LlamaUi, Focusable {
 	private readonly keybindings: KeybindingsManager;
 	private readonly searchCache = new Map<string, HuggingFaceModel[]>();
 	private content: Container;
-	private inputHandler: { handleInput?(data: string): void } | undefined;
+	private inputHandler: InputHandler | undefined;
 	private inputTarget: Focusable | undefined;
 	private progressPromise: Promise<void> | undefined;
 	private progressResolver: (() => void) | undefined;
@@ -302,11 +323,11 @@ class LlamaView implements LlamaUi, Focusable {
 		if (this.inputTarget) this.inputTarget.focused = value;
 	}
 
-	private setContent(
-		content: Container,
-		inputHandler?: { handleInput?(data: string): void },
-		inputTarget?: Focusable,
-	): void {
+	get capturesViewportInput(): boolean {
+		return this.inputHandler?.capturesViewportInput === true;
+	}
+
+	private setContent(content: Container, inputHandler?: InputHandler, inputTarget?: Focusable): void {
 		if (this.inputTarget) this.inputTarget.focused = false;
 		this.progressPromise = undefined;
 		this.progressResolver = undefined;

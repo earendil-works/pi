@@ -1,0 +1,301 @@
+[
+    {
+        "description": "not",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "not": {"type": "integer"}
+        },
+        "tests": [
+            {
+                "description": "allowed",
+                "data": "foo",
+                "valid": true
+            },
+            {
+                "description": "disallowed",
+                "data": 1,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "not multiple types",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "not": {"type": ["integer", "boolean"]}
+        },
+        "tests": [
+            {
+                "description": "valid",
+                "data": "foo",
+                "valid": true
+            },
+            {
+                "description": "mismatch",
+                "data": 1,
+                "valid": false
+            },
+            {
+                "description": "other mismatch",
+                "data": true,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "not more complex schema",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "not": {
+                "type": "object",
+                "properties": {
+                    "foo": {
+                        "type": "string"
+                    }
+                }
+             }
+        },
+        "tests": [
+            {
+                "description": "match",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "other match",
+                "data": {"foo": 1},
+                "valid": true
+            },
+            {
+                "description": "mismatch",
+                "data": {"foo": "bar"},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "forbidden property",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "properties": {
+                "foo": { 
+                    "not": {}
+                }
+            }
+        },
+        "tests": [
+            {
+                "description": "property present",
+                "data": {"foo": 1, "bar": 2},
+                "valid": false
+            },
+            {
+                "description": "property absent",
+                "data": {"bar": 1, "baz": 2},
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "forbid everything with empty schema",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "not": {}
+        },
+        "tests": [
+            {
+                "description": "number is invalid",
+                "data": 1,
+                "valid": false
+            },
+            {
+                "description": "string is invalid",
+                "data": "foo",
+                "valid": false
+            },
+            {
+                "description": "boolean true is invalid",
+                "data": true,
+                "valid": false
+            },
+            {
+                "description": "boolean false is invalid",
+                "data": false,
+                "valid": false
+            },
+            {
+                "description": "null is invalid",
+                "data": null,
+                "valid": false
+            },
+            {
+                "description": "object is invalid",
+                "data": {"foo": "bar"},
+                "valid": false
+            },
+            {
+                "description": "empty object is invalid",
+                "data": {},
+                "valid": false
+            },
+            {
+                "description": "array is invalid",
+                "data": ["foo"],
+                "valid": false
+            },
+            {
+                "description": "empty array is invalid",
+                "data": [],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "forbid everything with boolean schema true",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "not": true
+        },
+        "tests": [
+            {
+                "description": "number is invalid",
+                "data": 1,
+                "valid": false
+            },
+            {
+                "description": "string is invalid",
+                "data": "foo",
+                "valid": false
+            },
+            {
+                "description": "boolean true is invalid",
+                "data": true,
+                "valid": false
+            },
+            {
+                "description": "boolean false is invalid",
+                "data": false,
+                "valid": false
+            },
+            {
+                "description": "null is invalid",
+                "data": null,
+                "valid": false
+            },
+            {
+                "description": "object is invalid",
+                "data": {"foo": "bar"},
+                "valid": false
+            },
+            {
+                "description": "empty object is invalid",
+                "data": {},
+                "valid": false
+            },
+            {
+                "description": "array is invalid",
+                "data": ["foo"],
+                "valid": false
+            },
+            {
+                "description": "empty array is invalid",
+                "data": [],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "allow everything with boolean schema false",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "not": false
+        },
+        "tests": [
+            {
+                "description": "number is valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "string is valid",
+                "data": "foo",
+                "valid": true
+            },
+            {
+                "description": "boolean true is valid",
+                "data": true,
+                "valid": true
+            },
+            {
+                "description": "boolean false is valid",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "null is valid",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "object is valid",
+                "data": {"foo": "bar"},
+                "valid": true
+            },
+            {
+                "description": "empty object is valid",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "array is valid",
+                "data": ["foo"],
+                "valid": true
+            },
+            {
+                "description": "empty array is valid",
+                "data": [],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "double negation",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "not": { "not": {} }
+        },
+        "tests": [
+            {
+                "description": "any value is valid",
+                "data": "foo",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "collect annotations inside a 'not', even if collection is disabled",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "not": {
+                "$comment": "this subschema must still produce annotations internally, even though the 'not' will ultimately discard them",
+                "anyOf": [
+                    true,
+                    { "properties": { "foo": true } }
+                ],
+                "unevaluatedProperties": false
+            }
+        },
+        "tests": [
+            {
+                "description": "unevaluated property",
+                "data": { "bar": 1 },
+                "valid": true
+            },
+            {
+                "description": "annotations are still collected inside a 'not'",
+                "data": { "foo": 1 },
+                "valid": false
+            }
+        ]
+     }
+]

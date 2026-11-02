@@ -1,8 +1,9 @@
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { applyImmutableBatches, type Op } from "@earendil-works/chord/delta";
-import { LogInterruptedError, StorageRequestError } from "../errors.ts";
+import { StorageRequestError } from "../errors.ts";
 import { idFromNumber, seqFromNumber } from "../ids.ts";
 import type {
+	CommitResult,
 	ConversationId,
 	ConversationQuery,
 	ConversationRecord,
@@ -19,12 +20,10 @@ import type {
 	EntryRecord,
 	Id,
 	JsonObject,
-	LogRecord,
-	LogWrite,
 	Page,
-	ReplayableStorage,
 	ScanOrder,
 	Seq,
+	Storage,
 	StorageWrite,
 	StoredDocument,
 	SubmissionId,
@@ -34,16 +33,6 @@ import type {
 	TaskQuery,
 	TaskRecord,
 } from "../types.ts";
-import {
-	assertLogRecord,
-	documentWrites,
-	groupLog,
-	isCurrentOnly,
-	LOG_START,
-	type SequencedWrite,
-	sortBySeq,
-	streamOf,
-} from "./log.ts";
 import { nextCursor, type ScanStart, scanStart } from "./scan.ts";
 
 type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>;
@@ -91,8 +80,6 @@ type State = {
 	entryIds: Map<ConversationId, EntryId[]>;
 	headEntryIds: Map<ConversationId, EntryId[]>;
 	entryCommitSeqs: Map<EntryId, Seq>;
-	/** Sequence of the last commit that wrote each conversation, task, and submission. */
-	recordSeqs: Map<Id<string>, Seq>;
 	tasks: Map<TaskId, StoredTask>;
 	taskIds: TaskId[];
 	taskIdsByStatus: Record<TaskStatus, TaskId[]>;
@@ -208,6 +195,9 @@ const isAliveAt = (record: DocumentRecord, at: DocumentPoint): boolean => {
 	return record.createdAt <= at && (record.retiredAt === undefined || at < record.retiredAt);
 };
 
+const isCurrentOnly = (record: DocumentRecord): boolean =>
+	record.scope.kind !== "conversation" || record.history === "latest";
+
 const tableContaining = (state: State, id: Id<string>): TableName | undefined => state.recordTypes.get(id);
 
 const page = <T extends { readonly id: Id<string> }>(
@@ -245,7 +235,7 @@ export interface PreparedMemoryCommit {
  * Reads and retained writes are cloned intentionally to match the ownership boundary
  * of serialization-backed stores. This is backend conformance, not validation.
  */
-export class MemoryStorage implements ReplayableStorage {
+export class MemoryStorage implements Storage {
 	private readonly state: State = {
 		recordTypes: new Map(),
 		conversations: new Map(),
@@ -256,7 +246,6 @@ export class MemoryStorage implements ReplayableStorage {
 		entryIds: new Map(),
 		headEntryIds: new Map(),
 		entryCommitSeqs: new Map(),
-		recordSeqs: new Map(),
 		tasks: new Map(),
 		taskIds: [],
 		taskIdsByStatus: { pending: [], running: [], waiting: [], sleeping: [], completing: [], terminal: [] },
@@ -272,10 +261,35 @@ export class MemoryStorage implements ReplayableStorage {
 	private nextSeq = 1;
 	private closed = false;
 
-	async commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, _context: Context): Promise<Seq> {
-		const seq = this.prepareCommit(writes).apply();
-		adopt(seq);
-		return seq;
+	/**
+	 * Apply `batches` one by one, each checked against the state the earlier ones left (`prepareCommit()`, which only
+	 * checks and detaches, so a batch it refuses changed nothing); stops at the first one refused. Memory is durable at
+	 * once; the receipts follow the last batch.
+	 */
+	async commit(
+		batches: readonly (readonly StorageWrite[])[],
+		receive: (index: number, seq: Seq) => void,
+		_context: Context,
+	): Promise<CommitResult> {
+		this.assertOpen();
+		const seqs: Seq[] = [];
+		let refused: { readonly error: unknown } | undefined;
+		try {
+			for (const writes of batches) {
+				let prepared: PreparedMemoryCommit;
+				try {
+					prepared = this.prepareCommit(writes);
+				} catch (error) {
+					refused = { error };
+					break;
+				}
+				seqs.push(prepared.apply());
+			}
+		} finally {
+			// Also when a batch's apply throws: the batches applied before it are stored, and their receipts stand.
+			for (const [index, seq] of seqs.entries()) receive(index, seq);
+		}
+		return refused === undefined ? { stored: seqs.length } : { stored: seqs.length, refused: refused.error };
 	}
 
 	/** Validate and detach one commit without changing observable state. */
@@ -350,7 +364,6 @@ export class MemoryStorage implements ReplayableStorage {
 			switch (write.type) {
 				case "conversation": {
 					this.state.recordTypes.set(write.value.id, "conversation");
-					this.state.recordSeqs.set(write.value.id, seq);
 					this.state.conversations.set(write.value.id, write.value);
 					insertSorted(this.state.conversationIds, write.value.id);
 					const owner = write.value.owner;
@@ -384,7 +397,6 @@ export class MemoryStorage implements ReplayableStorage {
 				}
 				case "task": {
 					this.state.recordTypes.set(write.value.id, "task");
-					this.state.recordSeqs.set(write.value.id, seq);
 					const previous = this.state.tasks.get(write.value.id);
 					if (previous === undefined) {
 						insertSorted(this.state.taskIds, write.value.id);
@@ -399,7 +411,6 @@ export class MemoryStorage implements ReplayableStorage {
 				}
 				case "submission": {
 					this.state.recordTypes.set(write.value.id, "submission");
-					this.state.recordSeqs.set(write.value.id, seq);
 					const previous = this.state.submissions.get(write.value.id);
 					if (previous === undefined) {
 						insertSorted(this.state.submissionIds, write.value.id);
@@ -445,53 +456,6 @@ export class MemoryStorage implements ReplayableStorage {
 		this.assertOpen();
 		if (!Number.isSafeInteger(this.nextId)) throw new Error("ID space is exhausted");
 		return idFromNumber<I>(this.nextId++);
-	}
-
-	async head(_context: Context): Promise<Seq | undefined> {
-		this.assertOpen();
-		return this.headSeq();
-	}
-
-	async replay(record: LogRecord, _context: Context): Promise<void> {
-		assertLogRecord(record);
-		this.prepareCommit(record.writes, record.seq).apply();
-	}
-
-	/** Builds the log from a consistent view when iteration starts; a later commit makes it reject. */
-	async *log(after: Seq | undefined, _context: Context): AsyncGenerator<LogRecord> {
-		this.assertOpen();
-		const head = this.headSeq();
-		const since = after ?? LOG_START;
-		const writes: SequencedWrite[] = [];
-		const stamped = (id: Id<string>, write: LogWrite): void => {
-			const seq = this.state.recordSeqs.get(id)!;
-			if (seq > since) writes.push({ seq, write });
-		};
-		for (const id of this.state.conversationIds) {
-			stamped(id, { type: "conversation", value: clone(this.state.conversations.get(id)!) });
-		}
-		for (const id of this.state.taskIds) stamped(id, { type: "task", value: clone(this.state.tasks.get(id)!) });
-		for (const id of this.state.submissionIds) {
-			stamped(id, { type: "submission", value: clone(this.state.submissions.get(id)!) });
-		}
-		for (const [id, value] of this.state.entries) {
-			const seq = this.state.entryCommitSeqs.get(id)!;
-			if (seq > since) writes.push({ seq, write: { type: "entry", value: clone(value) } });
-		}
-		for (const stored of this.state.documents.values()) {
-			if (stored.record.createdAt <= since && (stored.record.retiredAt ?? since) <= since) {
-				if (stored.revisions.every((revision) => revision.seq <= since)) continue;
-			}
-			writes.push(...documentWrites(clone(stored.record), clone(stored.revisions), since));
-		}
-		for await (const record of groupLog(head, since, [streamOf(sortBySeq(writes))])) {
-			if (this.headSeq() !== head) throw new LogInterruptedError();
-			yield record;
-		}
-	}
-
-	private headSeq(): Seq | undefined {
-		return this.nextSeq === 1 ? undefined : seqFromNumber(this.nextSeq - 1);
 	}
 
 	async conversation(id: ConversationId, _context: Context): Promise<ConversationRecord | undefined> {

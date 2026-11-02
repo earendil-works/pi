@@ -2,9 +2,10 @@
 
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { apply, type Op } from "@earendil-works/chord/delta";
-import { LogInterruptedError, StorageRequestError } from "../errors.ts";
+import { StorageRequestError } from "../errors.ts";
 import { idFromNumber, seqFromNumber } from "../ids.ts";
 import type {
+	CommitResult,
 	ConversationId,
 	ConversationQuery,
 	ConversationRecord,
@@ -21,11 +22,10 @@ import type {
 	EntryRecord,
 	Id,
 	JsonObject,
-	LogRecord,
 	Page,
-	ReplayableStorage,
 	ScanOrder,
 	Seq,
+	Storage,
 	StorageWrite,
 	StoredDocument,
 	SubmissionId,
@@ -35,18 +35,6 @@ import type {
 	TaskQuery,
 	TaskRecord,
 } from "../types.ts";
-import {
-	assertLogRecord,
-	creationWrite,
-	groupLog,
-	isCurrentOnly,
-	LOG_START,
-	revisionWrite,
-	type SequencedWrite,
-	type StoredRevision,
-	sortBySeq,
-	streamOf,
-} from "./log.ts";
 import { nextCursor, type ScanStart, scanStart } from "./scan.ts";
 
 const DATABASE_VERSION = 1;
@@ -83,13 +71,6 @@ const INDEXES = {
 	documentsByScope: "documents_by_scope",
 	documentsByScopeKind: "documents_by_scope_kind",
 	documentRevisionsByKind: "document_revisions_by_kind",
-	conversationsBySeq: "conversations_by_seq",
-	tasksBySeq: "tasks_by_seq",
-	submissionsBySeq: "submissions_by_seq",
-	entriesBySeq: "entries_by_seq",
-	documentsByCreation: "documents_by_creation",
-	documentsByRetirement: "documents_by_retirement",
-	documentRevisionsBySeq: "document_revisions_by_seq",
 } as const;
 
 type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>;
@@ -110,7 +91,6 @@ type ConversationRow = {
 	readonly id: ConversationId;
 	readonly ownerConversationId?: ConversationId;
 	readonly ownerTaskId?: TaskId;
-	readonly seq: Seq;
 	readonly record: ConversationRecord;
 };
 type EntryRow = {
@@ -127,7 +107,6 @@ type TaskRow = {
 	readonly status: StoredTask["state"]["status"];
 	readonly abortRequested: 0 | 1;
 	readonly background: 0 | 1;
-	readonly seq: Seq;
 	readonly record: StoredTask;
 };
 type SubmissionRow = {
@@ -135,7 +114,6 @@ type SubmissionRow = {
 	readonly conversationId: ConversationId;
 	readonly requestId?: string;
 	readonly status: SubmissionRecord["status"];
-	readonly seq: Seq;
 	readonly record: SubmissionRecord;
 };
 type DocumentRow = {
@@ -161,12 +139,33 @@ type IndexedDbStorageOptions = {
 	readonly indexedDB?: IDBFactory;
 };
 
+/** A failure IndexedDB reported without an error of its own: the database's, like every `DOMException` it throws. */
+class IndexedDbFailure extends Error {}
+
+/**
+ * Whether `error`, or an error it was caused by (a copy's rejection wraps its cause), is IndexedDB's own: a
+ * `DOMException`, or a failure it reported without one. Any other error of a batch's checks is one of Durable's.
+ */
+function fromIndexedDb(error: unknown): boolean {
+	const seen = new Set<unknown>();
+	for (let at: unknown = error; at !== null && typeof at === "object" && !seen.has(at); ) {
+		if (at instanceof DOMException || at instanceof IndexedDbFailure) return true;
+		seen.add(at);
+		at = (at as { cause?: unknown }).cause;
+	}
+	return false;
+}
+
 const requestResult = <T>(request: IDBRequest<T>): Promise<T> =>
 	new Promise<T>((resolve, reject) => {
 		request.addEventListener("success", () => resolve(request.result), { once: true });
-		request.addEventListener("error", () => reject(request.error ?? new Error("IndexedDB request failed")), {
-			once: true,
-		});
+		request.addEventListener(
+			"error",
+			() => reject(request.error ?? new IndexedDbFailure("IndexedDB request failed")),
+			{
+				once: true,
+			},
+		);
 	});
 
 const transactionResult = (transaction: IDBTransaction): Promise<void> =>
@@ -174,12 +173,12 @@ const transactionResult = (transaction: IDBTransaction): Promise<void> =>
 		transaction.addEventListener("complete", () => resolve(), { once: true });
 		transaction.addEventListener(
 			"abort",
-			() => reject(transaction.error ?? new Error("IndexedDB transaction was aborted")),
+			() => reject(transaction.error ?? new IndexedDbFailure("IndexedDB transaction was aborted")),
 			{ once: true },
 		);
 		transaction.addEventListener(
 			"error",
-			() => reject(transaction.error ?? new Error("IndexedDB transaction failed")),
+			() => reject(transaction.error ?? new IndexedDbFailure("IndexedDB transaction failed")),
 			{ once: true },
 		);
 	});
@@ -199,9 +198,13 @@ const cursorValues = <T>(
 	new Promise<T[]>((resolve, reject) => {
 		const values: T[] = [];
 		const request = source.openCursor(range, direction);
-		request.addEventListener("error", () => reject(request.error ?? new Error("IndexedDB cursor failed")), {
-			once: true,
-		});
+		request.addEventListener(
+			"error",
+			() => reject(request.error ?? new IndexedDbFailure("IndexedDB cursor failed")),
+			{
+				once: true,
+			},
+		);
 		request.addEventListener("success", () => {
 			const cursor = request.result;
 			if (cursor === null) {
@@ -226,9 +229,13 @@ const firstCursorValue = <T>(
 ): Promise<T | undefined> =>
 	new Promise<T | undefined>((resolve, reject) => {
 		const request = source.openCursor(range, direction);
-		request.addEventListener("error", () => reject(request.error ?? new Error("IndexedDB cursor failed")), {
-			once: true,
-		});
+		request.addEventListener(
+			"error",
+			() => reject(request.error ?? new IndexedDbFailure("IndexedDB cursor failed")),
+			{
+				once: true,
+			},
+		);
 		request.addEventListener("success", () => {
 			const cursor = request.result;
 			if (cursor === null) {
@@ -336,6 +343,9 @@ const isAliveAt = (record: DocumentRecord, at: DocumentPoint): boolean => {
 	return record.createdAt <= at && (record.retiredAt === undefined || at < record.retiredAt);
 };
 
+const isCurrentOnly = (record: DocumentRecord): boolean =>
+	record.scope.kind !== "conversation" || record.history === "latest";
+
 const writeId = (write: StorageWrite): Id<string> | undefined => {
 	switch (write.type) {
 		case "conversation":
@@ -360,12 +370,10 @@ function createSchema(database: IDBDatabase): void {
 	const conversations = database.createObjectStore(STORES.conversations, { keyPath: "id" });
 	conversations.createIndex(INDEXES.conversationsByOwnerConversation, ["ownerConversationId", "id"]);
 	conversations.createIndex(INDEXES.conversationsByOwnerTask, ["ownerTaskId", "id"]);
-	conversations.createIndex(INDEXES.conversationsBySeq, ["seq", "id"]);
 
 	const entries = database.createObjectStore(STORES.entries, { keyPath: "id" });
 	entries.createIndex(INDEXES.entriesByConversation, ["conversationId", "id"]);
 	entries.createIndex(INDEXES.entryHeadsByConversation, ["headConversationId", "id"]);
-	entries.createIndex(INDEXES.entriesBySeq, ["commitSeq", "id"]);
 
 	const tasks = database.createObjectStore(STORES.tasks, { keyPath: "id" });
 	tasks.createIndex(INDEXES.tasksByStatus, ["status", "id"]);
@@ -373,13 +381,11 @@ function createSchema(database: IDBDatabase): void {
 	tasks.createIndex(INDEXES.tasksByKind, ["kind", "id"]);
 	tasks.createIndex(INDEXES.tasksByAbortRequested, ["abortRequested", "id"]);
 	tasks.createIndex(INDEXES.tasksByBackground, ["background", "id"]);
-	tasks.createIndex(INDEXES.tasksBySeq, ["seq", "id"]);
 
 	const submissions = database.createObjectStore(STORES.submissions, { keyPath: "id" });
 	submissions.createIndex(INDEXES.submissionsByRequest, ["conversationId", "requestId"]);
 	submissions.createIndex(INDEXES.submissionsByConversation, ["conversationId", "id"]);
 	submissions.createIndex(INDEXES.submissionsByStatus, ["status", "id"]);
-	submissions.createIndex(INDEXES.submissionsBySeq, ["seq", "id"]);
 
 	const documents = database.createObjectStore(STORES.documents, { keyPath: "id" });
 	documents.createIndex(INDEXES.documentsByAddress, [
@@ -393,17 +399,13 @@ function createSchema(database: IDBDatabase): void {
 	]);
 	documents.createIndex(INDEXES.documentsByScope, ["scopeKind", "ownerId", "id"]);
 	documents.createIndex(INDEXES.documentsByScopeKind, ["scopeKind", "ownerId", "kind", "id"]);
-	documents.createIndex(INDEXES.documentsByCreation, ["createdAt", "id"]);
-	// Live documents have no `retiredAt`, so only retired ones are in this index.
-	documents.createIndex(INDEXES.documentsByRetirement, ["retiredAt", "id"]);
 
 	const revisions = database.createObjectStore(STORES.documentRevisions, { keyPath: ["documentId", "seq"] });
 	revisions.createIndex(INDEXES.documentRevisionsByKind, ["documentId", "kind", "seq"]);
-	revisions.createIndex(INDEXES.documentRevisionsBySeq, ["seq", "documentId"]);
 }
 
 /** Browser IndexedDB implementation of the durable storage contract. One owner must serialize access to each database. */
-export class IndexedDbStorage implements ReplayableStorage {
+export class IndexedDbStorage implements Storage {
 	private readonly database: IDBDatabase;
 	private closed = false;
 	private closing: Promise<void> | undefined;
@@ -445,115 +447,54 @@ export class IndexedDbStorage implements ReplayableStorage {
 		await requestResult(factory.deleteDatabase(name));
 	}
 
-	async commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, _context: Context): Promise<Seq> {
-		return this.commitAt(writes, undefined, adopt);
-	}
-
-	async head(_context: Context): Promise<Seq | undefined> {
+	/**
+	 * Commit `batches` in one IndexedDB transaction, each with its own seq. Each batch does every read and check, copy
+	 * resolution included, against the state the earlier ones left before it issues its first write; the first one
+	 * refused ends the call, and the transaction commits the ones before it. An error of IndexedDB itself aborts the
+	 * transaction: the call rejects with nothing stored.
+	 */
+	async commit(
+		batches: readonly (readonly StorageWrite[])[],
+		receive: (index: number, seq: Seq) => void,
+		_context: Context,
+	): Promise<CommitResult> {
 		this.assertOpen();
-		return this.transaction(STORES.meta, "readonly", async (transaction) => {
-			const metadata = await requestResult(
-				transaction.objectStore(STORES.meta).get(META_KEY) as IDBRequest<MetaRow>,
-			);
-			if (metadata === undefined) throw new Error("Durable IndexedDB metadata is missing");
-			return metadata.nextSeq === 1 ? undefined : seqFromNumber(metadata.nextSeq - 1);
-		});
-	}
-
-	async replay(record: LogRecord, _context: Context): Promise<void> {
-		assertLogRecord(record);
-		// No Session holds a replayed storage: nothing adopts.
-		await this.commitAt(record.writes, record.seq, () => {});
-	}
-
-	/** Reads the changes after `after` through the sequence indexes in one transaction, then groups them in memory. */
-	async *log(after: Seq | undefined, context: Context): AsyncGenerator<LogRecord> {
-		this.assertOpen();
-		const since = after ?? LOG_START;
-		const read = await this.transaction(ALL_STORES, "readonly", async (transaction) => {
-			// Index keys start with the sequence, so `[since + 1]` sorts before every key of a later sequence.
-			const range = since === LOG_START ? null : keyRanges().lowerBound([since + 1]);
-			const after = <T>(store: string, index: string) =>
-				requestResult(transaction.objectStore(store).index(index).getAll(range) as IDBRequest<T[]>);
-			const metadata = await requestResult(
-				transaction.objectStore(STORES.meta).get(META_KEY) as IDBRequest<MetaRow>,
-			);
-			if (metadata === undefined) throw new Error("Durable IndexedDB metadata is missing");
-			return {
-				head: metadata.nextSeq === 1 ? undefined : seqFromNumber(metadata.nextSeq - 1),
-				conversations: await after<ConversationRow>(STORES.conversations, INDEXES.conversationsBySeq),
-				tasks: await after<TaskRow>(STORES.tasks, INDEXES.tasksBySeq),
-				submissions: await after<SubmissionRow>(STORES.submissions, INDEXES.submissionsBySeq),
-				entries: await after<EntryRow>(STORES.entries, INDEXES.entriesBySeq),
-				created: await after<DocumentRow>(STORES.documents, INDEXES.documentsByCreation),
-				retired: await after<DocumentRow>(STORES.documents, INDEXES.documentsByRetirement),
-				revisions: await after<RevisionRow>(STORES.documentRevisions, INDEXES.documentRevisionsBySeq),
-			};
-		});
-		const writes: SequencedWrite[] = [
-			...read.conversations.map(
-				(row): SequencedWrite => ({ seq: row.seq, write: { type: "conversation", value: row.record } }),
-			),
-			...read.tasks.map((row): SequencedWrite => ({ seq: row.seq, write: { type: "task", value: row.record } })),
-			...read.submissions.map(
-				(row): SequencedWrite => ({ seq: row.seq, write: { type: "submission", value: row.record } }),
-			),
-			...read.entries.map(
-				(row): SequencedWrite => ({ seq: row.commitSeq, write: { type: "entry", value: row.record } }),
-			),
-			...read.retired.map(
-				(row): SequencedWrite => ({ seq: row.retiredAt!, write: { type: "document.retire", id: row.id } }),
-			),
-		];
-		// A document created after `since` has its creation revision among those read: it is at least as late.
-		const created = new Map(read.created.map((row) => [row.id, row.record]));
-		const atCreation = new Map<DocumentId, StoredRevision>();
-		for (const row of read.revisions) {
-			const revision: StoredRevision =
-				row.kind === "base"
-					? { seq: row.seq, kind: "base", version: row.version, value: row.content as JsonObject }
-					: { seq: row.seq, kind: "delta", version: row.version, ops: row.content as readonly Op[] };
-			if (created.get(row.documentId)?.createdAt === row.seq) atCreation.set(row.documentId, revision);
-			else writes.push(revisionWrite(row.documentId, revision));
-		}
-		for (const record of created.values()) writes.push(creationWrite(record, atCreation.get(record.id)));
-		for await (const record of groupLog(read.head, since, [streamOf(sortBySeq(writes))])) {
-			if ((await this.head(context)) !== read.head) throw new LogInterruptedError();
-			yield record;
-		}
-	}
-
-	/** Commit at `seq`, or at the next sequence when it is undefined; `adopt` as for `commit()`. */
-	private async commitAt(
-		writes: readonly StorageWrite[],
-		at: Seq | undefined,
-		adopt: (committed: Seq) => void,
-	): Promise<Seq> {
-		this.assertOpen();
-		const documentActions = this.prepareDocumentActions(writes);
-		const seq = await this.transaction(ALL_STORES, "readwrite", async (transaction) => {
+		const seqs: Seq[] = [];
+		let refused: { readonly error: unknown } | undefined;
+		await this.transaction(ALL_STORES, "readwrite", async (transaction) => {
 			const metaStore = transaction.objectStore(STORES.meta);
 			const metadata = await requestResult(metaStore.get(META_KEY) as IDBRequest<MetaRow>);
 			if (metadata === undefined) throw new Error("Durable IndexedDB metadata is missing");
-			if (at !== undefined && (!Number.isSafeInteger(at) || at < metadata.nextSeq)) {
-				throw new Error(`Commit sequence ${at} does not strictly increase`);
-			}
-			const seq = at ?? seqFromNumber(metadata.nextSeq);
-			await this.checkGlobalIds(transaction, writes);
-			await this.checkDocumentActions(transaction, documentActions);
-			for (const write of writes) await this.applyTableWrite(transaction, write, seq);
-			await this.applyDocumentActions(transaction, documentActions, seq);
+			let next = metadata.nextSeq;
 			let nextId = metadata.nextId;
-			for (const write of writes) {
-				const id = writeId(write);
-				if (id !== undefined) nextId = Math.max(nextId, id + 1);
+			for (const writes of batches) {
+				let documentActions: Map<DocumentId, DocumentAction>;
+				try {
+					documentActions = this.prepareDocumentActions(writes);
+					await this.checkGlobalIds(transaction, writes);
+					await this.checkDocumentActions(transaction, documentActions);
+					await this.resolveCopies(transaction, documentActions);
+				} catch (error) {
+					if (fromIndexedDb(error)) throw error;
+					refused = { error };
+					break;
+				}
+				const seq = seqFromNumber(next++);
+				for (const write of writes) await this.applyTableWrite(transaction, write, seq);
+				await this.applyDocumentActions(transaction, documentActions, seq);
+				for (const write of writes) {
+					const id = writeId(write);
+					if (id !== undefined) nextId = Math.max(nextId, id + 1);
+				}
+				seqs.push(seq);
 			}
-			await requestResult(metaStore.put({ key: META_KEY, nextId, nextSeq: seq + 1 } satisfies MetaRow));
-			return seq;
+			if (seqs.length > 0) {
+				await requestResult(metaStore.put({ key: META_KEY, nextId, nextSeq: next } satisfies MetaRow));
+			}
 		});
-		// The transaction completed: the batch is durable.
-		adopt(seq);
-		return seq;
+		// The transaction completed: the stored batches are durable.
+		for (const [index, seq] of seqs.entries()) receive(index, seq);
+		return refused === undefined ? { stored: seqs.length } : { stored: seqs.length, refused: refused.error };
 	}
 
 	async mintId<I extends Id<string>>(): Promise<I> {
@@ -1188,7 +1129,6 @@ export class IndexedDbStorage implements ReplayableStorage {
 									ownerConversationId: write.value.owner.conversationId,
 									ownerTaskId: write.value.owner.taskId,
 								}),
-						seq,
 						record: write.value,
 					} satisfies ConversationRow),
 				);
@@ -1215,7 +1155,6 @@ export class IndexedDbStorage implements ReplayableStorage {
 						status: write.value.state.status,
 						abortRequested: write.value.abortRequested ? 1 : 0,
 						background: write.value.background ? 1 : 0,
-						seq,
 						record: write.value,
 					} satisfies TaskRow),
 				);
@@ -1228,7 +1167,6 @@ export class IndexedDbStorage implements ReplayableStorage {
 						conversationId: write.value.conversationId,
 						...(write.value.requestId === undefined ? {} : { requestId: write.value.requestId }),
 						status: write.value.status,
-						seq,
 						record: write.value,
 					} satisfies SubmissionRow),
 				);
@@ -1241,6 +1179,31 @@ export class IndexedDbStorage implements ReplayableStorage {
 		}
 	}
 
+	/** Resolve each copy to a base of its source's state before this batch, which may not change the source. */
+	private async resolveCopies(transaction: IDBTransaction, actions: Map<DocumentId, DocumentAction>): Promise<void> {
+		for (const [id, action] of actions) {
+			if (action.copy === undefined) continue;
+			try {
+				const stored = await this.materializeDocument(transaction, action.copy.id, action.copy.at);
+				if (stored === undefined) throw new Error(`Fork source document ${action.copy.id} cannot be read`);
+				const create = action.create!;
+				if (
+					stored.record.scope.kind !== "conversation" ||
+					create.scope.kind !== "conversation" ||
+					stored.record.kind !== create.kind ||
+					stored.record.key !== create.key ||
+					stored.record.history !== create.history ||
+					stored.record.fork !== create.fork
+				) {
+					throw new Error(`Fork source document ${action.copy.id} does not match the copied record`);
+				}
+				action.content = { kind: "base", version: stored.version, value: stored.value };
+			} catch (error) {
+				throw new Error(`Document copy ${id} was rejected`, { cause: error });
+			}
+		}
+	}
+
 	private async applyDocumentActions(
 		transaction: IDBTransaction,
 		actions: ReadonlyMap<DocumentId, DocumentAction>,
@@ -1249,27 +1212,8 @@ export class IndexedDbStorage implements ReplayableStorage {
 		const documents = transaction.objectStore(STORES.documents);
 		const revisions = transaction.objectStore(STORES.documentRevisions);
 		for (const [id, action] of actions) {
-			let content = action.content;
-			if (action.copy !== undefined) {
-				try {
-					const stored = await this.materializeDocument(transaction, action.copy.id, action.copy.at);
-					if (stored === undefined) throw new Error(`Fork source document ${action.copy.id} cannot be read`);
-					const create = action.create!;
-					if (
-						stored.record.scope.kind !== "conversation" ||
-						create.scope.kind !== "conversation" ||
-						stored.record.kind !== create.kind ||
-						stored.record.key !== create.key ||
-						stored.record.history !== create.history ||
-						stored.record.fork !== create.fork
-					) {
-						throw new Error(`Fork source document ${action.copy.id} does not match the copied record`);
-					}
-					content = { kind: "base", version: stored.version, value: stored.value };
-				} catch (error) {
-					throw new Error(`Document copy ${id} was rejected`, { cause: error });
-				}
-			}
+			// Copies are resolved to their content by `resolveCopies()`.
+			const content = action.content;
 			let record: DocumentRecord;
 			if (action.create !== undefined) {
 				record = {

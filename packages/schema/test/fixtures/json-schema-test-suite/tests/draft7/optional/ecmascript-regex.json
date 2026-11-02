@@ -1,0 +1,552 @@
+[
+    {
+        "description": "ECMA 262 regex $ does not match trailing newline",
+        "schema": {
+            "type": "string",
+            "pattern": "^abc$"
+        },
+        "tests": [
+            {
+                "description": "matches in Python, but not in ECMA 262",
+                "data": "abc\\n",
+                "valid": false
+            },
+            {
+                "description": "matches",
+                "data": "abc",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "ECMA 262 regex converts \\t to horizontal tab",
+        "schema": {
+            "type": "string",
+            "pattern": "^\\t$"
+        },
+        "tests": [
+            {
+                "description": "does not match",
+                "data": "\\t",
+                "valid": false
+            },
+            {
+                "description": "matches",
+                "data": "\u0009",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "ECMA 262 regex escapes control codes with \\c and upper letter",
+        "schema": {
+            "type": "string",
+            "pattern": "^\\cC$"
+        },
+        "tests": [
+            {
+                "description": "does not match",
+                "data": "\\cC",
+                "valid": false
+            },
+            {
+                "description": "matches",
+                "data": "\u0003",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "ECMA 262 regex escapes control codes with \\c and lower letter",
+        "schema": {
+            "type": "string",
+            "pattern": "^\\cc$"
+        },
+        "tests": [
+            {
+                "description": "does not match",
+                "data": "\\cc",
+                "valid": false
+            },
+            {
+                "description": "matches",
+                "data": "\u0003",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "ECMA 262 \\d matches ascii digits only",
+        "schema": {
+            "type": "string",
+            "pattern": "^\\d$"
+        },
+        "tests": [
+            {
+                "description": "ASCII zero matches",
+                "data": "0",
+                "valid": true
+            },
+            {
+                "description": "NKO DIGIT ZERO does not match (unlike e.g. Python)",
+                "data": "߀",
+                "valid": false
+            },
+            {
+                "description": "NKO DIGIT ZERO (as \\u escape) does not match",
+                "data": "\u07c0",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "ECMA 262 \\D matches everything but ascii digits",
+        "schema": {
+            "type": "string",
+            "pattern": "^\\D$"
+        },
+        "tests": [
+            {
+                "description": "ASCII zero does not match",
+                "data": "0",
+                "valid": false
+            },
+            {
+                "description": "NKO DIGIT ZERO matches (unlike e.g. Python)",
+                "data": "߀",
+                "valid": true
+            },
+            {
+                "description": "NKO DIGIT ZERO (as \\u escape) matches",
+                "data": "\u07c0",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "ECMA 262 \\w matches ascii letters only",
+        "schema": {
+            "type": "string",
+            "pattern": "^\\w$"
+        },
+        "tests": [
+            {
+                "description": "ASCII 'a' matches",
+                "data": "a",
+                "valid": true
+            },
+            {
+                "description": "latin-1 e-acute does not match (unlike e.g. Python)",
+                "data": "é",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "ECMA 262 \\W matches everything but ascii letters",
+        "schema": {
+            "type": "string",
+            "pattern": "^\\W$"
+        },
+        "tests": [
+            {
+                "description": "ASCII 'a' does not match",
+                "data": "a",
+                "valid": false
+            },
+            {
+                "description": "latin-1 e-acute matches (unlike e.g. Python)",
+                "data": "é",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "ECMA 262 \\s matches whitespace",
+        "schema": {
+            "type": "string",
+            "pattern": "^\\s$"
+        },
+        "tests": [
+            {
+                "description": "ASCII space matches",
+                "data": " ",
+                "valid": true
+            },
+            {
+                "description": "Character tabulation matches",
+                "data": "\t",
+                "valid": true
+            },
+            {
+                "description": "Line tabulation matches",
+                "data": "\u000b",
+                "valid": true
+            },
+            {
+                "description": "Form feed matches",
+                "data": "\u000c",
+                "valid": true
+            },
+            {
+                "description": "latin-1 non-breaking-space matches",
+                "data": "\u00a0",
+                "valid": true
+            },
+            {
+                "description": "zero-width whitespace matches",
+                "data": "\ufeff",
+                "valid": true
+            },
+            {
+                "description": "line feed matches (line terminator)",
+                "data": "\u000a",
+                "valid": true
+            },
+            {
+                "description": "paragraph separator matches (line terminator)",
+                "data": "\u2029",
+                "valid": true
+            },
+            {
+                "description": "EM SPACE matches (Space_Separator)",
+                "data": "\u2003",
+                "valid": true
+            },
+            {
+                "description": "Non-whitespace control does not match",
+                "data": "\u0001",
+                "valid": false
+            },
+            {
+                "description": "Non-whitespace does not match",
+                "data": "\u2013",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "ECMA 262 \\S matches everything but whitespace",
+        "schema": {
+            "type": "string",
+            "pattern": "^\\S$"
+        },
+        "tests": [
+            {
+                "description": "ASCII space does not match",
+                "data": " ",
+                "valid": false
+            },
+            {
+                "description": "Character tabulation does not match",
+                "data": "\t",
+                "valid": false
+            },
+            {
+                "description": "Line tabulation does not match",
+                "data": "\u000b",
+                "valid": false
+            },
+            {
+                "description": "Form feed does not match",
+                "data": "\u000c",
+                "valid": false
+            },
+            {
+                "description": "latin-1 non-breaking-space does not match",
+                "data": "\u00a0",
+                "valid": false
+            },
+            {
+                "description": "zero-width whitespace does not match",
+                "data": "\ufeff",
+                "valid": false
+            },
+            {
+                "description": "line feed does not match (line terminator)",
+                "data": "\u000a",
+                "valid": false
+            },
+            {
+                "description": "paragraph separator does not match (line terminator)",
+                "data": "\u2029",
+                "valid": false
+            },
+            {
+                "description": "EM SPACE does not match (Space_Separator)",
+                "data": "\u2003",
+                "valid": false
+            },
+            {
+                "description": "Non-whitespace control matches",
+                "data": "\u0001",
+                "valid": true
+            },
+            {
+                "description": "Non-whitespace matches",
+                "data": "\u2013",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "patterns always use unicode semantics with pattern",
+        "schema": { "pattern": "\\p{Letter}cole" },
+        "tests": [
+            {
+                "description": "ascii character in json string",
+                "data": "Les hivers de mon enfance etaient des saisons longues, longues. Nous vivions en trois lieux: l'ecole, l'eglise et la patinoire; mais la vraie vie etait sur la patinoire.",
+                "valid": true
+            },
+            {
+                "description": "literal unicode character in json string",
+                "data": "Les hivers de mon enfance étaient des saisons longues, longues. Nous vivions en trois lieux: l'école, l'église et la patinoire; mais la vraie vie était sur la patinoire.",
+                "valid": true
+            },
+            {
+                "description": "unicode character in hex format in string",
+                "data": "Les hivers de mon enfance étaient des saisons longues, longues. Nous vivions en trois lieux: l'\u00e9cole, l'église et la patinoire; mais la vraie vie était sur la patinoire.",
+                "valid": true
+            },
+            {
+                "description": "unicode matching is case-sensitive",
+                "data": "LES HIVERS DE MON ENFANCE ÉTAIENT DES SAISONS LONGUES, LONGUES. NOUS VIVIONS EN TROIS LIEUX: L'ÉCOLE, L'ÉGLISE ET LA PATINOIRE; MAIS LA VRAIE VIE ÉTAIT SUR LA PATINOIRE.",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "\\w in patterns matches [A-Za-z0-9_], not unicode letters",
+        "schema": { "pattern": "\\wcole" },
+        "tests": [
+            {
+                "description": "ascii character in json string",
+                "data": "Les hivers de mon enfance etaient des saisons longues, longues. Nous vivions en trois lieux: l'ecole, l'eglise et la patinoire; mais la vraie vie etait sur la patinoire.",
+                "valid": true
+            },
+            {
+                "description": "literal unicode character in json string",
+                "data": "Les hivers de mon enfance étaient des saisons longues, longues. Nous vivions en trois lieux: l'école, l'église et la patinoire; mais la vraie vie était sur la patinoire.",
+                "valid": false
+            },
+            {
+                "description": "unicode character in hex format in string",
+                "data": "Les hivers de mon enfance étaient des saisons longues, longues. Nous vivions en trois lieux: l'\u00e9cole, l'église et la patinoire; mais la vraie vie était sur la patinoire.",
+                "valid": false
+            },
+            {
+                "description": "unicode matching is case-sensitive",
+                "data": "LES HIVERS DE MON ENFANCE ÉTAIENT DES SAISONS LONGUES, LONGUES. NOUS VIVIONS EN TROIS LIEUX: L'ÉCOLE, L'ÉGLISE ET LA PATINOIRE; MAIS LA VRAIE VIE ÉTAIT SUR LA PATINOIRE.",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "pattern with ASCII ranges",
+        "schema": { "pattern": "[a-z]cole" },
+        "tests": [
+            {
+                "description": "literal unicode character in json string",
+                "data": "Les hivers de mon enfance étaient des saisons longues, longues. Nous vivions en trois lieux: l'école, l'église et la patinoire; mais la vraie vie était sur la patinoire.",
+                "valid": false
+            },
+            {
+                "description": "unicode character in hex format in string",
+                "data": "Les hivers de mon enfance étaient des saisons longues, longues. Nous vivions en trois lieux: l'\u00e9cole, l'église et la patinoire; mais la vraie vie était sur la patinoire.",
+                "valid": false
+            },
+            {
+                "description": "ascii characters match",
+                "data": "Les hivers de mon enfance etaient des saisons longues, longues. Nous vivions en trois lieux: l'ecole, l'eglise et la patinoire; mais la vraie vie etait sur la patinoire.",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "\\d in pattern matches [0-9], not unicode digits",
+        "schema": { "pattern": "^\\d+$" },
+        "tests": [
+            {
+                "description": "ascii digits",
+                "data": "42",
+                "valid": true
+            },
+            {
+                "description": "ascii non-digits",
+                "data": "-%#",
+                "valid": false
+            },
+            {
+                "description": "non-ascii digits (BENGALI DIGIT FOUR, BENGALI DIGIT TWO)",
+                "data": "৪২",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "pattern with non-ASCII digits",
+        "schema": { "pattern": "^\\p{digit}+$" },
+        "tests": [
+            {
+                "description": "ascii digits",
+                "data": "42",
+                "valid": true
+            },
+            {
+                "description": "ascii non-digits",
+                "data": "-%#",
+                "valid": false
+            },
+            {
+                "description": "non-ascii digits (BENGALI DIGIT FOUR, BENGALI DIGIT TWO)",
+                "data": "৪২",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "patterns always use unicode semantics with patternProperties",
+        "schema": {
+            "type": "object",
+            "patternProperties": {
+                "\\p{Letter}cole": true
+            },
+            "additionalProperties": false
+        },
+        "tests": [
+            {
+                "description": "ascii character in json string",
+                "data": { "l'ecole": "pas de vraie vie" },
+                "valid": true
+            },
+            {
+                "description": "literal unicode character in json string",
+                "data": { "l'école": "pas de vraie vie" },
+                "valid": true
+            },
+            {
+                "description": "unicode character in hex format in string",
+                "data": { "l'\u00e9cole": "pas de vraie vie" },
+                "valid": true
+            },
+            {
+                "description": "unicode matching is case-sensitive",
+                "data": { "L'ÉCOLE": "PAS DE VRAIE VIE" },
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "\\w in patternProperties matches [A-Za-z0-9_], not unicode letters",
+        "schema": {
+            "type": "object",
+            "patternProperties": {
+                "\\wcole": true
+            },
+            "additionalProperties": false
+        },
+        "tests": [
+            {
+                "description": "ascii character in json string",
+                "data": { "l'ecole": "pas de vraie vie" },
+                "valid": true
+            },
+            {
+                "description": "literal unicode character in json string",
+                "data": { "l'école": "pas de vraie vie" },
+                "valid": false
+            },
+            {
+                "description": "unicode character in hex format in string",
+                "data": { "l'\u00e9cole": "pas de vraie vie" },
+                "valid": false
+            },
+            {
+                "description": "unicode matching is case-sensitive",
+                "data": { "L'ÉCOLE": "PAS DE VRAIE VIE" },
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "patternProperties with ASCII ranges",
+        "schema": {
+            "type": "object",
+            "patternProperties": {
+                "[a-z]cole": true
+            },
+            "additionalProperties": false
+        },
+        "tests": [
+            {
+                "description": "literal unicode character in json string",
+                "data": { "l'école": "pas de vraie vie" },
+                "valid": false
+            },
+            {
+                "description": "unicode character in hex format in string",
+                "data": { "l'\u00e9cole": "pas de vraie vie" },
+                "valid": false
+            },
+            {
+                "description": "ascii characters match",
+                "data": { "l'ecole": "pas de vraie vie" },
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "\\d in patternProperties matches [0-9], not unicode digits",
+        "schema": {
+            "type": "object",
+            "patternProperties": {
+                "^\\d+$": true
+            },
+            "additionalProperties": false
+        },
+        "tests": [
+            {
+                "description": "ascii digits",
+                "data": { "42": "life, the universe, and everything" },
+                "valid": true
+            },
+            {
+                "description": "ascii non-digits",
+                "data": { "-%#": "spending the year dead for tax reasons" },
+                "valid": false
+            },
+            {
+                "description": "non-ascii digits (BENGALI DIGIT FOUR, BENGALI DIGIT TWO)",
+                "data": { "৪২": "khajit has wares if you have coin" },
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "patternProperties with non-ASCII digits",
+        "schema": {
+            "type": "object",
+            "patternProperties": {
+                "^\\p{digit}+$": true
+            },
+            "additionalProperties": false
+        },
+        "tests": [
+            {
+                "description": "ascii digits",
+                "data": { "42": "life, the universe, and everything" },
+                "valid": true
+            },
+            {
+                "description": "ascii non-digits",
+                "data": { "-%#": "spending the year dead for tax reasons" },
+                "valid": false
+            },
+            {
+                "description": "non-ascii digits (BENGALI DIGIT FOUR, BENGALI DIGIT TWO)",
+                "data": { "৪২": "khajit has wares if you have coin" },
+                "valid": true
+            }
+        ]
+    }
+]

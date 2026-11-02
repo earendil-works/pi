@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getEffortThinkingLevelMap } from "../scripts/models-dev-reasoning-options.ts";
+import { getEffortThinkingLevelMap } from "../catalog/reasoning.ts";
 
 describe("getEffortThinkingLevelMap", () => {
 	it("exposes only verified effort values and none", () => {

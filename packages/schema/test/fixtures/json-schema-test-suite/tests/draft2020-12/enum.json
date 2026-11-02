@@ -1,0 +1,419 @@
+[
+    {
+        "description": "simple enum validation",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "enum": [1, 2, 3]
+        },
+        "tests": [
+            {
+                "description": "one of the enum is valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "something else is invalid",
+                "data": 4,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "heterogeneous enum validation",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "enum": [6, "foo", [], true, {"foo": 12}]
+        },
+        "tests": [
+            {
+                "description": "one of the enum is valid",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "something else is invalid",
+                "data": null,
+                "valid": false
+            },
+            {
+                "description": "objects are deep compared",
+                "data": {"foo": false},
+                "valid": false
+            },
+            {
+                "description": "valid object matches",
+                "data": {"foo": 12},
+                "valid": true
+            },
+            {
+                "description": "extra properties in object is invalid",
+                "data": {"foo": 12, "boo": 42},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "heterogeneous enum-with-null validation",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "enum": [6, null]
+        },
+        "tests": [
+            {
+                "description": "null is valid",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "number is valid",
+                "data": 6,
+                "valid": true
+            },
+            {
+                "description": "something else is invalid",
+                "data": "test",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "enums in properties",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type":"object",
+            "properties": {
+                "foo": {"enum":["foo"]},
+                "bar": {"enum":["bar"]}
+            },
+            "required": ["bar"]
+        },
+        "tests": [
+            {
+                "description": "both properties are valid",
+                "data": {"foo":"foo", "bar":"bar"},
+                "valid": true
+            },
+            {
+                "description": "wrong foo value",
+                "data": {"foo":"foot", "bar":"bar"},
+                "valid": false
+            },
+            {
+                "description": "wrong bar value",
+                "data": {"foo":"foo", "bar":"bart"},
+                "valid": false
+            },
+            {
+                "description": "missing optional property is valid",
+                "data": {"bar":"bar"},
+                "valid": true
+            },
+            {
+                "description": "missing required property is invalid",
+                "data": {"foo":"foo"},
+                "valid": false
+            },
+            {
+                "description": "missing all properties is invalid",
+                "data": {},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "enum with escaped characters",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "enum": ["foo\nbar", "foo\rbar"]
+        },
+        "tests": [
+            {
+                "description": "member 1 is valid",
+                "data": "foo\nbar",
+                "valid": true
+            },
+            {
+                "description": "member 2 is valid",
+                "data": "foo\rbar",
+                "valid": true
+            },
+            {
+                "description": "another string is invalid",
+                "data": "abc",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "enum with false does not match 0",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "enum": [false]
+        },
+        "tests": [
+            {
+                "description": "false is valid",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "integer zero is invalid",
+                "data": 0,
+                "valid": false
+            },
+            {
+                "description": "float zero is invalid",
+                "data": 0.0,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "enum with [false] does not match [0]",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "enum": [[false]]
+        },
+        "tests": [
+            {
+                "description": "[false] is valid",
+                "data": [false],
+                "valid": true
+            },
+            {
+                "description": "[0] is invalid",
+                "data": [0],
+                "valid": false
+            },
+            {
+                "description": "[0.0] is invalid",
+                "data": [0.0],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "enum with true does not match 1",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "enum": [true]
+        },
+        "tests": [
+            {
+                "description": "true is valid",
+                "data": true,
+                "valid": true
+            },
+            {
+                "description": "integer one is invalid",
+                "data": 1,
+                "valid": false
+            },
+            {
+                "description": "float one is invalid",
+                "data": 1.0,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "enum with [true] does not match [1]",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "enum": [[true]]
+        },
+        "tests": [
+            {
+                "description": "[true] is valid",
+                "data": [true],
+                "valid": true
+            },
+            {
+                "description": "[1] is invalid",
+                "data": [1],
+                "valid": false
+            },
+            {
+                "description": "[1.0] is invalid",
+                "data": [1.0],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "enum with 0 does not match false",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "enum": [0]
+        },
+        "tests": [
+            {
+                "description": "false is invalid",
+                "data": false,
+                "valid": false
+            },
+            {
+                "description": "integer zero is valid",
+                "data": 0,
+                "valid": true
+            },
+            {
+                "description": "float zero is valid",
+                "data": 0.0,
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "enum with [0] does not match [false]",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "enum": [[0]]
+        },
+        "tests": [
+            {
+                "description": "[false] is invalid",
+                "data": [false],
+                "valid": false
+            },
+            {
+                "description": "[0] is valid",
+                "data": [0],
+                "valid": true
+            },
+            {
+                "description": "[0.0] is valid",
+                "data": [0.0],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "enum with 1 does not match true",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "enum": [1]
+        },
+        "tests": [
+            {
+                "description": "true is invalid",
+                "data": true,
+                "valid": false
+            },
+            {
+                "description": "integer one is valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "float one is valid",
+                "data": 1.0,
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "enum with [1] does not match [true]",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "enum": [[1]]
+        },
+        "tests": [
+            {
+                "description": "[true] is invalid",
+                "data": [true],
+                "valid": false
+            },
+            {
+                "description": "[1] is valid",
+                "data": [1],
+                "valid": true
+            },
+            {
+                "description": "[1.0] is valid",
+                "data": [1.0],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "nul characters in strings",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "enum": [ "hello\u0000there" ]
+        },
+        "tests": [
+            {
+                "description": "match string with nul",
+                "data": "hello\u0000there",
+                "valid": true
+            },
+            {
+                "description": "do not match string lacking nul",
+                "data": "hellothere",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "empty enum",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "enum": []
+        },
+        "tests": [
+            {
+                "description": "string is invalid",
+                "data": "foo",
+                "valid": false
+            },
+            {
+                "description": "number is invalid",
+                "data": 42,
+                "valid": false
+            },
+            {
+                "description": "null is invalid",
+                "data": null,
+                "valid": false
+            },
+            {
+                "description": "object is invalid",
+                "data": {},
+                "valid": false
+            },
+            {
+                "description": "array is invalid",
+                "data": [],
+                "valid": false
+            },
+            {
+                "description": "boolean is invalid",
+                "data": false,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "characters with the same visual representation, but different number of codepoints",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "enum": ["ä"],
+            "$comment": "U+00E4"
+        },
+        "tests": [
+            {
+                "description": "character uses the same codepoint",
+                "data": "ä",
+                "comment": "U+00E4",
+                "valid": true
+            },
+            {
+                "description": "character looks the same but uses combining marks",
+                "data": "ä",
+                "comment": "a, U+0308",
+                "valid": false
+            }
+        ]
+    }
+]

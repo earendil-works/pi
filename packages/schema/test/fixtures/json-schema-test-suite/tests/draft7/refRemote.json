@@ -1,0 +1,257 @@
+[
+    {
+        "description": "remote ref",
+        "schema": {"$ref": "http://localhost:1234/integer.json"},
+        "tests": [
+            {
+                "description": "remote ref valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "remote ref invalid",
+                "data": "a",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "fragment within remote ref",
+        "schema": {"$ref": "http://localhost:1234/draft7/subSchemas.json#/definitions/integer"},
+        "tests": [
+            {
+                "description": "remote fragment valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "remote fragment invalid",
+                "data": "a",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "ref within remote ref",
+        "schema": {
+            "$ref": "http://localhost:1234/draft7/subSchemas.json#/definitions/refToInteger"
+        },
+        "tests": [
+            {
+                "description": "ref within ref valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "ref within ref invalid",
+                "data": "a",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "base URI change",
+        "schema": {
+            "$id": "http://localhost:1234/",
+            "items": {
+                "$id": "baseUriChange/",
+                "items": {"$ref": "folderInteger.json"}
+            }
+        },
+        "tests": [
+            {
+                "description": "base URI change ref valid",
+                "data": [[1]],
+                "valid": true
+            },
+            {
+                "description": "base URI change ref invalid",
+                "data": [["a"]],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "base URI change - change folder",
+        "schema": {
+            "$id": "http://localhost:1234/scope_change_defs1.json",
+            "type" : "object",
+            "properties": {
+                "list": {"$ref": "#/definitions/baz"}
+            },
+            "definitions": {
+                "baz": {
+                    "$id": "baseUriChangeFolder/",
+                    "type": "array",
+                    "items": {"$ref": "folderInteger.json"}
+                }
+            }
+        },
+        "tests": [
+            {
+                "description": "number is valid",
+                "data": {"list": [1]},
+                "valid": true
+            },
+            {
+                "description": "string is invalid",
+                "data": {"list": ["a"]},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "base URI change - change folder in subschema",
+        "schema": {
+            "$id": "http://localhost:1234/scope_change_defs2.json",
+            "type" : "object",
+            "properties": {
+                "list": {"$ref": "#/definitions/baz/definitions/bar"}
+            },
+            "definitions": {
+                "baz": {
+                    "$id": "baseUriChangeFolderInSubschema/",
+                    "definitions": {
+                        "bar": {
+                            "type": "array",
+                            "items": {"$ref": "folderInteger.json"}
+                        }
+                    }
+                }
+            }
+        },
+        "tests": [
+            {
+                "description": "number is valid",
+                "data": {"list": [1]},
+                "valid": true
+            },
+            {
+                "description": "string is invalid",
+                "data": {"list": ["a"]},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "root ref in remote ref",
+        "schema": {
+            "$id": "http://localhost:1234/object",
+            "type": "object",
+            "properties": {
+                "name": {"$ref": "draft7/name.json#/definitions/orNull"}
+            }
+        },
+        "tests": [
+            {
+                "description": "string is valid",
+                "data": {
+                    "name": "foo"
+                },
+                "valid": true
+            },
+            {
+                "description": "null is valid",
+                "data": {
+                    "name": null
+                },
+                "valid": true
+            },
+            {
+                "description": "object is invalid",
+                "data": {
+                    "name": {
+                        "name": null
+                    }
+                },
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "remote ref with ref to definitions",
+        "schema": {
+            "$id": "http://localhost:1234/schema-remote-ref-ref-defs1.json",
+            "allOf": [
+                { "$ref": "draft7/ref-and-definitions.json" }
+            ]
+        },
+        "tests": [
+            {
+                "description": "invalid",
+                "data": {
+                    "bar": 1
+                },
+                "valid": false
+            },
+            {
+                "description": "valid",
+                "data": {
+                    "bar": "a"
+                },
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "Location-independent identifier in remote ref",
+        "schema": {
+            "$ref": "http://localhost:1234/draft7/locationIndependentIdentifier.json#/definitions/refToInteger"
+        },
+        "tests": [
+            {
+                "description": "integer is valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "string is invalid",
+                "data": "foo",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "retrieved nested refs resolve relative to their URI not $id",
+        "schema": {
+            "$id": "http://localhost:1234/some-id",
+            "properties": {
+                "name": {"$ref": "nested/foo-ref-string.json"}
+            }
+        },
+        "tests": [
+            {
+                "description": "number is invalid",
+                "data": {
+                    "name": {"foo":  1}
+                },
+                "valid": false
+            },
+            {
+                "description": "string is valid",
+                "data": {
+                    "name": {"foo":  "a"}
+                },
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "$ref to $ref finds location-independent $id",
+        "schema": {
+            "$ref": "http://localhost:1234/draft7/detached-ref.json#/definitions/foo"
+        },
+        "tests": [
+            {
+                "description": "number is valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "non-number is invalid",
+                "data": "a",
+                "valid": false
+            }
+        ]
+    }
+]

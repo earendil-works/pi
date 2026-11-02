@@ -325,7 +325,24 @@ const FUNCTIONAL_CODEPOINTS = {
 	pageDown: -13,
 	home: -14,
 	end: -15,
+	f1: -21,
+	f2: -22,
+	f3: -23,
+	f4: -24,
+	f5: -25,
+	f6: -26,
+	f7: -27,
+	f8: -28,
+	f9: -29,
+	f10: -30,
+	f11: -31,
+	f12: -32,
 } as const;
+
+// Kitty reserves this Private Use Area range for functional keys (F13-F35,
+// media keys, modifier keys, ...). CSI-u codepoints in it are never text.
+const KITTY_FUNCTIONAL_PUA_START = 57344;
+const KITTY_FUNCTIONAL_PUA_END = 63743;
 
 const KITTY_FUNCTIONAL_KEY_EQUIVALENTS = new Map<number, number>([
 	[57399, 48], // KP_0 -> 0
@@ -558,7 +575,10 @@ export function isKeyRelease(data: string): boolean {
 		data.includes(":3C") ||
 		data.includes(":3D") ||
 		data.includes(":3H") ||
-		data.includes(":3F")
+		data.includes(":3F") ||
+		data.includes(":3P") ||
+		data.includes(":3Q") ||
+		data.includes(":3S")
 	) {
 		return true;
 	}
@@ -584,7 +604,10 @@ export function isKeyRepeat(data: string): boolean {
 		data.includes(":2C") ||
 		data.includes(":2D") ||
 		data.includes(":2H") ||
-		data.includes(":2F")
+		data.includes(":2F") ||
+		data.includes(":2P") ||
+		data.includes(":2Q") ||
+		data.includes(":2S")
 	) {
 		return true;
 	}
@@ -644,6 +667,18 @@ function parseKittySequence(data: string): ParsedKittySequence | null {
 			6: FUNCTIONAL_CODEPOINTS.pageDown,
 			7: FUNCTIONAL_CODEPOINTS.home,
 			8: FUNCTIONAL_CODEPOINTS.end,
+			11: FUNCTIONAL_CODEPOINTS.f1,
+			12: FUNCTIONAL_CODEPOINTS.f2,
+			13: FUNCTIONAL_CODEPOINTS.f3,
+			14: FUNCTIONAL_CODEPOINTS.f4,
+			15: FUNCTIONAL_CODEPOINTS.f5,
+			17: FUNCTIONAL_CODEPOINTS.f6,
+			18: FUNCTIONAL_CODEPOINTS.f7,
+			19: FUNCTIONAL_CODEPOINTS.f8,
+			20: FUNCTIONAL_CODEPOINTS.f9,
+			21: FUNCTIONAL_CODEPOINTS.f10,
+			23: FUNCTIONAL_CODEPOINTS.f11,
+			24: FUNCTIONAL_CODEPOINTS.f12,
 		};
 		const codepoint = funcCodes[keyNum];
 		if (codepoint !== undefined) {
@@ -660,6 +695,21 @@ function parseKittySequence(data: string): ParsedKittySequence | null {
 		const codepoint = homeEndMatch[3] === "H" ? FUNCTIONAL_CODEPOINTS.home : FUNCTIONAL_CODEPOINTS.end;
 		_lastEventType = eventType;
 		return { codepoint, modifier: modValue - 1, eventType };
+	}
+
+	// F1, F2, F4: \x1b[P/Q/S or \x1b[1;<mod>P/Q/S or \x1b[1;<mod>:<event>P/Q/S
+	// F3 is sent as \x1b[13~ because \x1b[1;<mod>R collides with cursor position reports.
+	const fKeyMatch = data.match(/^\x1b\[(?:1;(\d+)(?::(\d+))?)?([PQS])$/);
+	if (fKeyMatch) {
+		const modValue = fKeyMatch[1] ? parseInt(fKeyMatch[1], 10) : 1;
+		const eventType = parseEventType(fKeyMatch[2]);
+		const fKeyCodes: Record<string, number> = {
+			P: FUNCTIONAL_CODEPOINTS.f1,
+			Q: FUNCTIONAL_CODEPOINTS.f2,
+			S: FUNCTIONAL_CODEPOINTS.f4,
+		};
+		_lastEventType = eventType;
+		return { codepoint: fKeyCodes[fKeyMatch[3]!]!, modifier: modValue - 1, eventType };
 	}
 
 	return null;
@@ -1176,11 +1226,11 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 		case "f10":
 		case "f11":
 		case "f12": {
-			if (modifier !== 0) {
-				return false;
+			const functionKey = key as keyof typeof LEGACY_KEY_SEQUENCES & keyof typeof FUNCTIONAL_CODEPOINTS;
+			if (modifier === 0 && matchesLegacySequence(data, LEGACY_KEY_SEQUENCES[functionKey])) {
+				return true;
 			}
-			const functionKey = key as keyof typeof LEGACY_KEY_SEQUENCES;
-			return matchesLegacySequence(data, LEGACY_KEY_SEQUENCES[functionKey]);
+			return matchesKittySequence(data, FUNCTIONAL_CODEPOINTS[functionKey], modifier);
 		}
 	}
 
@@ -1277,6 +1327,8 @@ function formatParsedKey(codepoint: number, modifier: number, baseLayoutKey?: nu
 	else if (effectiveCodepoint === FUNCTIONAL_CODEPOINTS.end) keyName = "end";
 	else if (effectiveCodepoint === FUNCTIONAL_CODEPOINTS.pageUp) keyName = "pageUp";
 	else if (effectiveCodepoint === FUNCTIONAL_CODEPOINTS.pageDown) keyName = "pageDown";
+	else if (effectiveCodepoint <= FUNCTIONAL_CODEPOINTS.f1 && effectiveCodepoint >= FUNCTIONAL_CODEPOINTS.f12)
+		keyName = `f${FUNCTIONAL_CODEPOINTS.f1 - effectiveCodepoint + 1}`;
 	else if (effectiveCodepoint === ARROW_CODEPOINTS.up) keyName = "up";
 	else if (effectiveCodepoint === ARROW_CODEPOINTS.down) keyName = "down";
 	else if (effectiveCodepoint === ARROW_CODEPOINTS.left) keyName = "left";
@@ -1428,6 +1480,10 @@ export function decodeKittyPrintable(data: string): string | undefined {
 	effectiveCodepoint = normalizeKittyFunctionalCodepoint(effectiveCodepoint);
 	// Drop control characters or invalid codepoints.
 	if (!Number.isFinite(effectiveCodepoint) || effectiveCodepoint < 32) return undefined;
+	// Drop unmapped Kitty functional keys (F13-F35, media keys, ...).
+	if (effectiveCodepoint >= KITTY_FUNCTIONAL_PUA_START && effectiveCodepoint <= KITTY_FUNCTIONAL_PUA_END) {
+		return undefined;
+	}
 
 	try {
 		return String.fromCodePoint(effectiveCodepoint);

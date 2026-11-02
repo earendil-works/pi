@@ -53,3 +53,9 @@ set -g extended-keys on
 Pi supports the xterm `modifyOtherKeys` format used by these versions. Restart tmux and repeat the verification steps.
 
 For older versions, upgrade tmux or use Pi outside tmux rather than relying on modified Enter shortcuts.
+
+## Known issues
+
+| Issue | Affects | Remedy |
+|---|---|---|
+| Text such as `c0c/0c0c/0c0c` appears in the editor at startup ([tmux#4749](https://github.com/tmux/tmux/issues/4749)) | tmux 3.6 | Upgrade tmux. Changing Pi's theme does not help. |

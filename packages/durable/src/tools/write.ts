@@ -1,4 +1,4 @@
-import { type Static, Type } from "typebox";
+import { obj, type Static, str } from "@earendil-works/pi-schema";
 import { getOrThrow } from "../env/index.ts";
 import { defineTool } from "../harness/define.ts";
 import type { ToolRegistration } from "../harness/types.ts";
@@ -6,10 +6,13 @@ import { requireEnv } from "./env.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToolPath } from "./path-utils.ts";
 
-const writeSchema = Type.Object({
-	path: Type.String({ description: "Path to the file to write (relative or absolute)" }),
-	content: Type.String({ description: "Content to write to the file" }),
-});
+const writeSchema = obj(
+	{
+		path: str({ description: "Path to the file to write (relative or absolute)" }),
+		content: str({ description: "Content to write to the file" }),
+	},
+	{ open: true },
+);
 
 export type WriteToolInput = Static<typeof writeSchema>;
 

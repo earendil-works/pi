@@ -11,7 +11,6 @@ import {
 	type Models,
 	type SystemMessage,
 	type ToolResultMessage,
-	Type,
 } from "@earendil-works/pi-ai";
 import {
 	AgentDoc,
@@ -32,6 +31,7 @@ import {
 	ToolResultEntry,
 	ToolTask,
 } from "@earendil-works/pi-durable";
+import { obj, opt, str } from "@earendil-works/pi-schema";
 import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { createBashTool, createEditTool, createReadTool } from "../src/tools/index.ts";
@@ -40,7 +40,7 @@ import { addHooks, addTask, addTool, type Installed } from "./harness-support.ts
 import { context } from "./session-support.ts";
 import { aborted, deferred } from "./task-support.ts";
 
-const EchoParameters = Type.Object({ text: Type.Optional(Type.String()) });
+const EchoParameters = obj({ text: opt(str()) });
 type Echo = ToolRegistration<typeof EchoParameters>;
 type Execute = Echo["execute"];
 
@@ -138,7 +138,7 @@ describe("tool round", () => {
 		await harness.close(context);
 	});
 
-	it("answers calls to tools the request did not offer without a task", async () => {
+	it("answers calls to tools the request did not offer through a flagged tool task", async () => {
 		const setup = chatSetup();
 		addTool(
 			setup.registry,
@@ -157,8 +157,34 @@ describe("tool round", () => {
 		expect(ghostEntry?.data).toEqual({
 			diagnostics: [{ severity: "error", code: "tool_unavailable", message: "Tool ghost is not available" }],
 		});
+		// #11043: the unoffered call has its own task, so `afterTool` and `control` apply to it as to any call.
 		const tasks = await harness.commit((tx) => tx.scanTasks({ conversationId: root.id }, 20), context);
-		expect(tasks.items.filter((task) => task.kind === "pi.tool")).toHaveLength(1);
+		const inputs = tasks.items.filter((task) => task.kind === "pi.tool").map((task) => task.input);
+		expect(inputs).toHaveLength(2);
+		expect(inputs).toContainEqual(expect.objectContaining({ callId: "c1", unoffered: true }));
+		expect(inputs).toContainEqual(expect.not.objectContaining({ unoffered: true }));
+		await harness.close(context);
+	});
+
+	// #11043
+	it("never runs a tool the request did not offer, even when the agent has it", async () => {
+		const setup = chatSetup();
+		let ran = 0;
+		addTool(
+			setup.registry,
+			tool(
+				"hidden",
+				async () => {
+					ran++;
+					return { output: [] };
+				},
+				{ deferred: true },
+			),
+		);
+		const { harness, entries, status } = await run(setup, [calls(["hidden", {}, "c1"]), DONE]);
+		expect(status).toBe("done");
+		expect(ran).toBe(0);
+		expect(resultText(results(entries)[0]!)).toBe("<harness>\n[error] Tool hidden is not available\n</harness>");
 		await harness.close(context);
 	});
 
@@ -726,6 +752,75 @@ describe("generation hooks", () => {
 		await harness.close(context);
 	});
 
+	it("chains beforeProviderRequest over every provider request body", async () => {
+		const setup = chatSetup();
+		const seen: { hook: string; model: string; payload: unknown }[] = [];
+		addHooks(setup.registry, GenerationTask, {
+			beforeProviderRequest: ({ model, payload }) => {
+				seen.push({ hook: "first", model: `${model.provider}/${model.id}`, payload });
+				return { payload: { ...(payload as object), first: true } };
+			},
+		});
+		addHooks(setup.registry, GenerationTask, {
+			beforeProviderRequest: ({ model, payload }) => {
+				seen.push({ hook: "keep", model: `${model.provider}/${model.id}`, payload });
+				return undefined;
+			},
+		});
+		addHooks(setup.registry, GenerationTask, {
+			beforeProviderRequest: ({ payload }) => ({ payload: { ...(payload as object), last: true } }),
+		});
+		const sent: unknown[] = [];
+		// pi-ai builds a body per provider call, and again when it resends within one attempt.
+		const respond: FauxResponseStep = async (_context, options, _state, model) => {
+			sent.push(await options!.onPayload!({ body: 1 }, model));
+			sent.push(await options!.onPayload!({ body: 2 }, model));
+			return DONE;
+		};
+		const { harness, status } = await run(setup, [respond]);
+		expect(status).toBe("done");
+		expect(sent).toEqual([
+			{ body: 1, first: true, last: true },
+			{ body: 2, first: true, last: true },
+		]);
+		expect(seen).toEqual([
+			{ hook: "first", model: "faux/faux-1", payload: { body: 1 } },
+			{ hook: "keep", model: "faux/faux-1", payload: { body: 1, first: true } },
+			{ hook: "first", model: "faux/faux-1", payload: { body: 2 } },
+			{ hook: "keep", model: "faux/faux-1", payload: { body: 2, first: true } },
+		]);
+		await harness.close(context);
+	});
+
+	it("reports a throwing beforeProviderRequest hook and continues the chain", async () => {
+		const setup = chatSetup();
+		addHooks(
+			setup.registry,
+			GenerationTask,
+			{
+				beforeProviderRequest: () => {
+					throw new Error("broken hook");
+				},
+			},
+			"broken",
+		);
+		addHooks(setup.registry, GenerationTask, {
+			beforeProviderRequest: ({ payload }) => ({ payload: { ...(payload as object), after: true } }),
+		});
+		let sent: unknown;
+		const respond: FauxResponseStep = async (_context, options, _state, model) => {
+			sent = await options!.onPayload!({ body: 1 }, model);
+			return DONE;
+		};
+		const { harness, status } = await run(setup, [respond]);
+		expect(status).toBe("done");
+		expect(sent).toEqual({ body: 1, after: true });
+		expect(setup.infos.filter((info) => info.kind === "extension_error")).toEqual([
+			expect.objectContaining({ extension: "broken" }),
+		]);
+		await harness.close(context);
+	});
+
 	it("keeps the run's input open across an onYield continuation and answers it with the final answer", async () => {
 		const setup = chatSetup();
 		let yields = 0;
@@ -1168,7 +1263,9 @@ describe("tool progress and lifetime", () => {
 			}),
 		);
 		addHooks(setup.registry, ToolTask, {
-			afterTool: async (_call, _result, _api, callContext) => {
+			afterTool: async (_call, result, _api, callContext) => {
+				// The abort handler's result runs the hooks too (#11043); only the executed call's waits.
+				if (result.diagnostics?.some((diagnostic) => diagnostic.code === "aborted")) return undefined;
 				inAfterTool.resolve();
 				await aborted(callContext.abortSignal!);
 				return undefined;

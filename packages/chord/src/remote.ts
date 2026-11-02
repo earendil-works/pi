@@ -1,4 +1,3 @@
-import { Value } from "typebox/value";
 import { HYDRATION, type Hydration } from "./cell.ts";
 import { type AnyContract, takesNoArgs } from "./contract.ts";
 import { applyImmutable, type Decoder, decoder } from "./delta/index.ts";
@@ -13,6 +12,7 @@ import {
 	refsByProxy,
 	type StatusListener,
 } from "./object.ts";
+import { cleaned } from "./schema.ts";
 import type { Ctx, Readable, RefStatus, Shape, StateEvent } from "./types.ts";
 import { fromWireError, type RootRef, type WireError } from "./wire.ts";
 
@@ -344,7 +344,7 @@ export class RemoteBinding {
 				throw new ChordError("not_in_variant", `${this.key}: ${name} is not a method of variant ${variant}`);
 			}
 			// Send only what the consumer's own schema knows (the additive rule's premise; see ObjectImpl.call).
-			const sent = description.args === undefined ? undefined : Value.Clean(description.args, Value.Clone(args));
+			const sent = description.args === undefined ? undefined : cleaned(description.args, args);
 			return hold.channel.call(
 				hold.id,
 				name,

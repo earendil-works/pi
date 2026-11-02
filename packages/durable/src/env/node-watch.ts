@@ -3,7 +3,7 @@ import { type FSWatcher, watch as fsWatch, type Stats } from "node:fs";
 import { lstat, readdir, readFile, stat, statfs } from "node:fs/promises";
 import { dirname, relative, sep } from "node:path";
 import type { Context } from "@earendil-works/chord";
-import { FileError, type FileWatcher, type WatchChange, type WatchTarget } from "./index.ts";
+import { type FileChange, FileError, type FileWatcher, type WatchTarget } from "./index.ts";
 
 /** How `NodeExecutionEnv` watches. */
 export interface NodeWatchOptions {
@@ -52,6 +52,8 @@ const DEBOUNCE_MS = 50;
 const FSEVENTS_SETTLE_MS = 500;
 const DEFAULT_POLL_MS = 2000;
 const DEFAULT_MAX_DIRECTORIES = 10_000;
+/** The one `overflow` change; it carries nothing else. */
+const OVERFLOW: FileChange = { kind: "overflow" };
 /** In polling mode, recently modified small files are also compared by content: a second write within the file system's
  * timestamp granularity can keep size and modification time. */
 const HASH_MAX_BYTES = 256 * 1024;
@@ -138,7 +140,7 @@ function excluded(target: ResolvedTarget, name: string): boolean {
  */
 export class NodeFileWatcher implements FileWatcher {
 	readonly #targets: readonly ResolvedTarget[];
-	readonly #onChange: (change: WatchChange) => void;
+	readonly #onChange: (change: FileChange) => void;
 	readonly #pollIntervalMs: number;
 	readonly #maxDirectories: number;
 	readonly #watchers = new Map<string, Installed>();
@@ -149,11 +151,11 @@ export class NodeFileWatcher implements FileWatcher {
 	#settleTimer: ReturnType<typeof setTimeout> | undefined;
 	#running: Promise<void> | undefined;
 	#dirty = false;
-	#closed = false;
+	#stopped = false;
 
 	private constructor(
 		targets: readonly ResolvedTarget[],
-		onChange: (change: WatchChange) => void,
+		onChange: (change: FileChange) => void,
 		mode: "native" | "polling",
 		options: NodeWatchOptions,
 	) {
@@ -168,7 +170,7 @@ export class NodeFileWatcher implements FileWatcher {
 	static async open(
 		targets: readonly WatchTarget[],
 		resolvePath: (path: string) => string,
-		onChange: (change: WatchChange) => void,
+		onChange: (change: FileChange) => void,
 		options: NodeWatchOptions,
 	): Promise<NodeFileWatcher> {
 		const resolved = targets.map((target) => ({
@@ -200,14 +202,14 @@ export class NodeFileWatcher implements FileWatcher {
 		return this.#mode;
 	}
 
-	async close(_context: Context): Promise<void> {
-		if (this.#closed) return;
+	async stop(_context: Context): Promise<void> {
+		if (this.#stopped) return;
 		this.#stop();
 		await this.#running;
 	}
 
 	#stop(): void {
-		this.#closed = true;
+		this.#stopped = true;
 		clearTimeout(this.#timer);
 		this.#timer = undefined;
 		clearTimeout(this.#settleTimer);
@@ -216,8 +218,8 @@ export class NodeFileWatcher implements FileWatcher {
 		this.#watchers.clear();
 	}
 
-	#deliver(change: WatchChange): void {
-		if (this.#closed) return;
+	#deliver(change: FileChange): void {
+		if (this.#stopped) return;
 		try {
 			this.#onChange(change);
 		} catch {
@@ -226,7 +228,7 @@ export class NodeFileWatcher implements FileWatcher {
 	}
 
 	#schedulePoll(): void {
-		if (this.#closed || this.#mode !== "polling") return;
+		if (this.#stopped || this.#mode !== "polling") return;
 		this.#timer = setTimeout(() => {
 			this.#timer = undefined;
 			void this.#flush().finally(() => this.#schedulePoll());
@@ -234,7 +236,7 @@ export class NodeFileWatcher implements FileWatcher {
 	}
 
 	#scheduleFlush(): void {
-		if (this.#closed || this.#timer !== undefined) return;
+		if (this.#stopped || this.#timer !== undefined) return;
 		this.#timer = setTimeout(() => {
 			this.#timer = undefined;
 			void this.#flush();
@@ -242,7 +244,7 @@ export class NodeFileWatcher implements FileWatcher {
 	}
 
 	#scheduleSettle(): void {
-		if (this.#closed) return;
+		if (this.#stopped) return;
 		clearTimeout(this.#settleTimer);
 		this.#settleTimer = setTimeout(() => {
 			this.#settleTimer = undefined;
@@ -263,15 +265,15 @@ export class NodeFileWatcher implements FileWatcher {
 					this.#events.clear();
 					const changed = await this.#sync(true);
 					for (const path of events) changed.add(path);
-					if (changed.size > 0) this.#deliver({ paths: [...changed].sort() });
-				} while (this.#dirty && !this.#closed);
+					if (changed.size > 0) this.#deliver({ kind: "paths", paths: [...changed].sort() });
+				} while (this.#dirty && !this.#stopped);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				const fileError =
 					error instanceof FileError
 						? error
 						: new FileError(isDenied(error) ? "permission_denied" : "invalid", message);
-				this.#deliver({ error: fileError });
+				this.#deliver({ kind: "failed", error: fileError });
 				this.#stop();
 			} finally {
 				this.#running = undefined;
@@ -283,10 +285,10 @@ export class NodeFileWatcher implements FileWatcher {
 	/** Rescan, report differences, and install watchers for new directories, rescanning until none are new. */
 	async #sync(report: boolean): Promise<Set<string>> {
 		const changed = new Set<string>();
-		for (let round = 0; round < 10 && !this.#closed; round++) {
+		for (let round = 0; round < 10 && !this.#stopped; round++) {
 			const scan = await this.#scan();
 			// Closed during the scan: installing watchers now would leak them.
-			if (this.#closed) break;
+			if (this.#stopped) break;
 			const next = scan.snapshot;
 			if (report) for (const path of this.#diff(this.#snapshot, next)) changed.add(path);
 			this.#snapshot = next;
@@ -471,14 +473,14 @@ export class NodeFileWatcher implements FileWatcher {
 		this.#mode = "polling";
 		for (const { watcher } of this.#watchers.values()) watcher.close();
 		this.#watchers.clear();
-		this.#deliver({ overflow: true });
+		this.#deliver(OVERFLOW);
 		clearTimeout(this.#timer);
 		this.#timer = undefined;
 		this.#schedulePoll();
 	}
 
 	#onEvent(directory: string, filename: string | undefined): void {
-		if (this.#closed) return;
+		if (this.#stopped) return;
 		const path =
 			filename === undefined ? directory : `${directory.endsWith(sep) ? directory : directory + sep}${filename}`;
 		// Events about unrelated siblings of an ancestor, or about excluded entries, are ignored.
@@ -489,7 +491,7 @@ export class NodeFileWatcher implements FileWatcher {
 
 	/** The file a target links to changed: report the target. */
 	#onLinkedFileEvent(target: string): void {
-		if (this.#closed) return;
+		if (this.#stopped) return;
 		this.#events.add(target);
 		this.#scheduleFlush();
 	}

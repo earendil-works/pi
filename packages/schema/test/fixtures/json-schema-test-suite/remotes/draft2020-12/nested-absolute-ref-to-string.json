@@ -1,0 +1,9 @@
+{
+    "$defs": {
+        "bar": {
+            "$id": "http://localhost:1234/draft2020-12/the-nested-id.json",
+            "type": "string"
+        }
+    },
+    "$ref": "http://localhost:1234/draft2020-12/the-nested-id.json"
+}

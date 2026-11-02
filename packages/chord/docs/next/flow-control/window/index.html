@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A windowed conversation view</title>
+<style>
+  :root { --bg: #faf8f4; --ink: #222; --muted: #777; --line: #ddd6ca; --win: #2f6fb3; --old: #b8b0a2; --new: #4f8a3c; --drop: #b5562b; --fetch: #7a4fb0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 Georgia, "Times New Roman", serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 26px; margin: 8px 0 4px; }
+  h2 { font-size: 19px; margin: 26px 0 8px; }
+  .lede { color: var(--muted); margin: 0 0 16px; }
+  code { font: 13px/1.3 ui-monospace, Menlo, Consolas, monospace; background: #efe9de; padding: 1px 4px; border-radius: 3px; }
+  pre { font: 12.5px/1.4 ui-monospace, Menlo, Consolas, monospace; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow-x: auto; }
+  .stage { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 12px 0; }
+  .controls { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  button { font: 14px system-ui, sans-serif; border: 1px solid var(--line); background: #f4efe6; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font: 13px system-ui, sans-serif; }
+  .cols > div { min-width: 0; }
+  .colhead { color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+  .list { border: 1px dashed var(--line); border-radius: 8px; padding: 6px; min-height: 120px; display: flex; flex-direction: column; gap: 3px; }
+  .e { font: 12px ui-monospace, Menlo, Consolas, monospace; border-radius: 5px; padding: 3px 6px; color: #fff; transition: opacity .4s, transform .4s, background-color .4s; }
+  .e.store { background: var(--old); }
+  .e.win { background: var(--win); }
+  .e.head { background: #555; }
+  .e.fetched { background: var(--fetch); }
+  .e.enter { opacity: 0; transform: translateX(20px); }
+  .e.leave { opacity: 0; transform: translateX(-20px); }
+  .gap { color: var(--muted); font: 12px system-ui, sans-serif; padding: 2px 4px; }
+  .ops { margin-top: 10px; font: 12px ui-monospace, Menlo, Consolas, monospace; background: #f7f3ec; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; min-height: 64px; max-height: 150px; overflow-y: auto; }
+  .ops div { padding: 1px 0; }
+  .ops .drop { color: var(--drop); }
+  .ops .add { color: var(--new); }
+  .ops .snap { color: var(--win); }
+  .ops .fetch { color: var(--fetch); }
+  .note { font: 13px system-ui, sans-serif; color: var(--muted); margin-top: 8px; min-height: 2.6em; }
+  .stats { display: flex; flex-wrap: wrap; gap: 14px; font: 13px system-ui, sans-serif; color: var(--muted); margin-top: 6px; }
+  .stats b { color: var(--ink); }
+  table { border-collapse: collapse; font: 14px system-ui, sans-serif; margin: 8px 0; width: 100%; }
+  td, th { border-bottom: 1px solid var(--line); padding: 5px 6px; text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>A windowed conversation view</h1>
+  <p class="lede">Proposal for Durable: the view holds a window of the newest entries with a stable start; older entries are fetched in pages; a reconnect resumes after the last entry it saw.</p>
+
+  <pre>type ConversationView = {
+  conversation: ConversationRecord;
+  head?: EntryRecord;               // the current compaction summary, if any
+  entries: readonly EntryRecord[];  // the window: active entries with id >= from
+  earlier: boolean;                 // older active entries exist before it
+  docs: { "pi.live", "pi.agent", "pi.inbox", "pi.provider", "pi.usage" };
+};
+conversation.watch(context, { from?: EntryId, tail?: number });          // default: the last `tail`
+conversation.entries({ before, order: "descending" }, limit, cursor, ctx); // exists today</pre>
+
+  <h2>Watch it work</h2>
+  <p>Shown with <code>tail = 4</code> (the proposal: about 50). The window grows by appends until it holds twice <code>tail</code>; then the oldest half leaves in one splice.</p>
+  <div class="stage">
+    <div class="controls">
+      <button id="add">new entry</button>
+      <button id="play">play</button>
+      <button id="fetch">fetch earlier (page of 4)</button>
+      <button id="reconnect">reconnect (resume)</button>
+      <button id="reset">reset</button>
+    </div>
+    <div class="cols">
+      <div><div class="colhead">store: every active entry</div><div class="list" id="store"></div></div>
+      <div><div class="colhead">client: view window (blue), kept or fetched (purple)</div><div class="list" id="client"></div></div>
+    </div>
+    <div class="stats">
+      <span>window <b id="wsize">0</b> entries</span>
+      <span>ops sent <b id="opcount">0</b></span>
+      <span>last snapshot <b id="snap">-</b></span>
+    </div>
+    <div class="ops" id="ops"></div>
+    <div class="note" id="note"></div>
+  </div>
+
+  <h2>What each step costs</h2>
+  <table>
+    <tr><th>step</th><th>wire</th></tr>
+    <tr><td>a new entry</td><td>one append splice: <code>p entries &lt;len&gt; 0 [entry]</code></td></tr>
+    <tr><td>window reaches 2 × tail</td><td>one splice removing the oldest half: <code>p entries 0 &lt;tail&gt; []</code>, once every <code>tail</code> entries</td></tr>
+    <tr><td>streaming into the newest message</td><td>appends on <code>docs["pi.live"].generation.message</code>, unchanged</td></tr>
+    <tr><td>hold, re-hold, overflow</td><td>a snapshot of at most 2 × tail entries plus the live documents, never the whole transcript</td></tr>
+    <tr><td>scroll up</td><td>a page from <code>entries()</code>, outside the view: the client keeps it, the view never grows</td></tr>
+    <tr><td>reconnect with <code>from: lastSeen + 1</code></td><td>only the entries it missed plus the documents (issue #11327)</td></tr>
+  </table>
+  <p>Why a stable start instead of “always the last 50”: a sliding window would remove one entry at the front for every entry appended at the back, two ops per entry, and every index in the window would shift. With a stable start, entries only append, and the front moves in one splice now and then.</p>
+</main>
+
+<script>
+const TAIL = 4;
+const $ = (id) => document.getElementById(id);
+let store = [], from = 1, fetched = [], ops = [], opCount = 0, next = 1, timer;
+const headEntry = { id: 0, label: "head: compaction summary" };
+
+function windowEntries() { return store.filter((e) => e.id >= from); }
+
+function log(text, cls) {
+  ops.push({ text, cls });
+  const box = $("ops");
+  const line = document.createElement("div");
+  line.className = cls;
+  line.textContent = text;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+function entryEl(e, cls) {
+  const el = document.createElement("div");
+  el.className = `e ${cls}`;
+  el.textContent = e.id === 0 ? e.label : `#${e.id} ${e.label}`;
+  el.dataset.id = String(e.id);
+  return el;
+}
+
+function render(animateId) {
+  const win = windowEntries();
+  const s = $("store");
+  s.replaceChildren(...store.map((e) => entryEl(e, e.id >= from ? "win" : "store")));
+  const c = $("client");
+  const children = [entryEl(headEntry, "head")];
+  const firstWin = win[0]?.id ?? from;
+  const loaded = fetched.filter((e) => e.id < firstWin);
+  const earliestLoaded = loaded[0]?.id ?? firstWin;
+  if (earliestLoaded > 1 && store.length > 0) {
+    const gap = document.createElement("div");
+    gap.className = "gap";
+    gap.textContent = `… ${earliestLoaded - 1} earlier entries (earlier: true)`;
+    children.push(gap);
+  }
+  children.push(...loaded.map((e) => entryEl(e, "fetched")));
+  for (const e of win) {
+    const el = entryEl(e, "win");
+    if (e.id === animateId) { el.classList.add("enter"); requestAnimationFrame(() => el.classList.remove("enter")); }
+    children.push(el);
+  }
+  c.replaceChildren(...children);
+  $("wsize").textContent = win.length;
+  $("opcount").textContent = opCount;
+}
+
+const LABELS = ["user: fix the test", "assistant: reading files", "tool: read", "tool: bash", "assistant: the cookie expires", "user: thanks", "assistant: patch", "tool: edit"];
+
+function add() {
+  const e = { id: next, label: LABELS[(next - 1) % LABELS.length] };
+  next++;
+  store.push(e);
+  const win = windowEntries();
+  opCount++;
+  log(`p entries ${win.length - 1} 0 [#${e.id}]   append`, "add");
+  render(e.id);
+  if (win.length >= 2 * TAIL) {
+    setTimeout(() => {
+      const leaving = win.slice(0, TAIL);
+      for (const el of $("client").querySelectorAll(".e.win")) {
+        if (leaving.some((x) => String(x.id) === el.dataset.id)) el.classList.add("leave");
+      }
+      setTimeout(() => {
+        from = win[TAIL].id;
+        opCount++;
+        log(`p entries 0 ${TAIL} []   window full: oldest ${TAIL} leave in one splice`, "drop");
+        $("note").textContent = `The window reached ${2 * TAIL} entries: one splice drops the oldest ${TAIL}. The client keeps them only if it fetched them; the view itself stays small.`;
+        render();
+      }, 450);
+    }, 500);
+  } else {
+    $("note").textContent = "A new entry is one append; nothing in the window moves.";
+  }
+}
+
+function fetchEarlier() {
+  const win = windowEntries();
+  const firstLoaded = Math.min(win[0]?.id ?? from, ...fetched.map((e) => e.id));
+  const page = store.filter((e) => e.id < firstLoaded).slice(-TAIL);
+  if (page.length === 0) { $("note").textContent = "Nothing earlier: the transcript starts here."; return; }
+  fetched = [...page, ...fetched].sort((a, b) => a.id - b.id);
+  log(`entries({ before: ${firstLoaded}, descending }, ${TAIL}) -> #${page[0].id}..#${page.at(-1).id}   a call, not the view`, "fetch");
+  $("note").textContent = "Scrolling up fetches a page with the existing entries() call. The page lives in the client; the view does not grow.";
+  render();
+}
+
+function reconnect() {
+  const win = windowEntries();
+  const lastSeen = win.at(-1)?.id ?? 0;
+  log(`--- link drops; 2 entries are committed meanwhile ---`, "snap");
+  for (let i = 0; i < 2; i++) { const e = { id: next, label: LABELS[(next - 1) % LABELS.length] }; next++; store.push(e); }
+  const missed = store.filter((e) => e.id > lastSeen);
+  // The client keeps what it had; the new watch's window starts after it.
+  fetched = [...fetched, ...win].sort((a, b) => a.id - b.id);
+  from = lastSeen + 1;
+  log(`watch(ctx, { from: ${lastSeen + 1} }) -> snapshot: ${missed.map((e) => "#" + e.id).join(", ")} + docs`, "snap");
+  $("snap").textContent = `${missed.length} entries + docs`;
+  $("note").textContent = `The client resumes after #${lastSeen}: the snapshot holds only the ${missed.length} entries it missed and the live documents, not the transcript.`;
+  render(missed.at(-1)?.id);
+}
+
+function reset() {
+  clearInterval(timer); timer = undefined; $("play").textContent = "play";
+  store = []; from = 1; fetched = []; ops = []; opCount = 0; next = 1;
+  for (let i = 0; i < 6; i++) { store.push({ id: next, label: LABELS[(next - 1) % LABELS.length] }); next++; }
+  from = Math.max(1, store.length - TAIL + 1);
+  $("ops").replaceChildren();
+  log(`watch(ctx) -> snapshot of the last ${TAIL}: #${from}..#${store.length} + docs`, "snap");
+  $("snap").textContent = `${TAIL} entries + docs`;
+  $("note").textContent = "A new watch starts with the last tail entries; earlier ones are not in the view.";
+  render();
+}
+
+$("add").onclick = () => { clearInterval(timer); timer = undefined; $("play").textContent = "play"; add(); };
+$("play").onclick = () => {
+  if (timer) { clearInterval(timer); timer = undefined; $("play").textContent = "play"; return; }
+  $("play").textContent = "pause";
+  timer = setInterval(add, 1400);
+};
+$("fetch").onclick = fetchEarlier;
+$("reconnect").onclick = reconnect;
+$("reset").onclick = reset;
+reset();
+</script>
+</body>
+</html>

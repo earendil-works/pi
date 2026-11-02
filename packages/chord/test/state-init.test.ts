@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { arr, bool, num, obj, str } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import { type Ctx, createHost, type Facet, isChordError, local, method } from "../src/index.ts";
 
@@ -19,16 +19,16 @@ function latch<T>() {
 
 const Notes = local("t.notes", {
 	version: 1,
-	input: Type.Object({}),
+	input: obj({}, { open: true }),
 	members: {
-		notes: Type.Array(Type.String()),
-		count: Type.Number(),
-		has: method(Type.String(), Type.Boolean()),
-		add: method(Type.String()),
+		notes: arr(str()),
+		count: num(),
+		has: method(str(), bool()),
+		add: method(str()),
 	},
 });
 
-const NotesSchema = Type.Array(Type.String());
+const NotesSchema = arr(str());
 
 describe("state init", () => {
 	it("runs after the resources are open and before the object goes live: nothing sees another value", async () => {
@@ -124,7 +124,7 @@ describe("state init", () => {
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
 		const Source = local("t.source", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			members: { all: method(undefined, NotesSchema) },
 		});
 		host.serve(Source, () => ({ all: () => ["from source"] }));
@@ -155,7 +155,7 @@ describe("state init", () => {
 							return ["loaded"];
 						},
 					});
-					const counter = self.state("counter", Type.Number(), 0, { version: spec.countVersion ?? 1 });
+					const counter = self.state("counter", num(), 0, { version: spec.countVersion ?? 1 });
 					const extra = spec.extra;
 					const more =
 						extra === undefined

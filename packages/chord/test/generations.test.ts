@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import { Type } from "typebox";
+import { num, obj } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import { createHost, defineRegistry, type Facet, local, method } from "../src/index.ts";
 
@@ -41,8 +41,8 @@ function tracker() {
 
 const Store = local("t.gen-store", {
 	version: 1,
-	input: Type.Object({}),
-	members: { get: method(undefined, Type.Number()), count: Type.Number() },
+	input: obj({}, { open: true }),
+	members: { get: method(undefined, num()), count: num() },
 });
 const Routes = defineRegistry<() => number>("t.gen-routes");
 const RELOADS = 6;
@@ -57,7 +57,7 @@ describe("generation GC", () => {
 				name: "store",
 				setup: (api) =>
 					api.serve(Store, (_input, _principal, self) => {
-						const count = self.state("count", Type.Number(), 0);
+						const count = self.state("count", num(), 0);
 						return { count, get: () => sentinel.generation };
 					}),
 			};
@@ -84,7 +84,7 @@ describe("generation GC", () => {
 					api.serve(
 						Store,
 						(_input, _principal, self) => {
-							const count = self.state("count", Type.Number(), 0);
+							const count = self.state("count", num(), 0);
 							// Kept across reloads (same version): adopts each new declaration's close.
 							self.resource("conn", {
 								version: 1,
@@ -123,7 +123,7 @@ describe("generation GC", () => {
 					api.serve(
 						Store,
 						(_input, _principal, self) => {
-							const count = self.state("count", Type.Number(), 0);
+							const count = self.state("count", num(), 0);
 							self.task(async (ctx) => {
 								await new Promise<void>((resolve) => ctx.signal.addEventListener("abort", () => resolve()));
 								void sentinel.generation;
@@ -153,8 +153,8 @@ describe("generation GC", () => {
 		const objects = tracker();
 		const Item = local("t.gen-item", {
 			version: 1,
-			input: Type.Object({ id: Type.Number() }),
-			members: { id: method(undefined, Type.Number()) },
+			input: obj({ id: num() }, { open: true }),
+			members: { id: method(undefined, num()) },
 		});
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
 		host.serve(Item, (input) => {

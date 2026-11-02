@@ -255,13 +255,6 @@
                           "type": "array",
                           "items": {
                             "type": "object",
-                            "required": [
-                              "inputTokensAbove",
-                              "input",
-                              "output",
-                              "cacheRead",
-                              "cacheWrite"
-                            ],
                             "properties": {
                               "inputTokensAbove": {
                                 "type": "number",
@@ -283,7 +276,14 @@
                                 "type": "number",
                                 "description": "Cache-write cost in USD per million tokens."
                               }
-                            }
+                            },
+                            "required": [
+                              "inputTokensAbove",
+                              "input",
+                              "output",
+                              "cacheRead",
+                              "cacheWrite"
+                            ]
                           },
                           "description": "Request-wide pricing tiers. The highest matching input threshold applies to the full request."
                         }
@@ -383,12 +383,6 @@
   "$defs": {
     "ModelCost": {
       "type": "object",
-      "required": [
-        "input",
-        "output",
-        "cacheRead",
-        "cacheWrite"
-      ],
       "properties": {
         "input": {
           "type": "number",
@@ -410,13 +404,6 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": [
-              "inputTokensAbove",
-              "input",
-              "output",
-              "cacheRead",
-              "cacheWrite"
-            ],
             "properties": {
               "inputTokensAbove": {
                 "type": "number",
@@ -438,11 +425,24 @@
                 "type": "number",
                 "description": "Cache-write cost in USD per million tokens."
               }
-            }
+            },
+            "required": [
+              "inputTokensAbove",
+              "input",
+              "output",
+              "cacheRead",
+              "cacheWrite"
+            ]
           },
           "description": "Request-wide pricing tiers. The highest matching input threshold applies to the full request."
         }
-      }
+      },
+      "required": [
+        "input",
+        "output",
+        "cacheRead",
+        "cacheWrite"
+      ]
     },
     "ModelInputLimits": {
       "type": "object",
@@ -628,9 +628,6 @@
                 },
                 {
                   "type": "object",
-                  "required": [
-                    "$var"
-                  ],
                   "properties": {
                     "$var": {
                       "anyOf": [
@@ -651,7 +648,10 @@
                     "omitWhenOff": {
                       "type": "boolean"
                     }
-                  }
+                  },
+                  "required": [
+                    "$var"
+                  ]
                 }
               ]
             }
@@ -677,9 +677,6 @@
                 },
                 {
                   "type": "object",
-                  "required": [
-                    "$var"
-                  ],
                   "properties": {
                     "$var": {
                       "anyOf": [
@@ -700,7 +697,10 @@
                     "omitWhenOff": {
                       "type": "boolean"
                     }
-                  }
+                  },
+                  "required": [
+                    "$var"
+                  ]
                 }
               ]
             }
@@ -1085,11 +1085,6 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": [
-              "provider",
-              "model",
-              "cost"
-            ],
             "properties": {
               "provider": {
                 "type": "string",
@@ -1103,6 +1098,11 @@
                 "$ref": "#/$defs/ModelCost"
               }
             },
+            "required": [
+              "provider",
+              "model",
+              "cost"
+            ],
             "description": "An Anthropic server-side refusal fallback model with local pricing metadata."
           },
           "maxItems": 3,

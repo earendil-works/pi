@@ -117,6 +117,31 @@ describe("RemoteExecutionEnv", () => {
 		expect(Date.now() - started).toBeLessThan(3000);
 	});
 
+	// The daemon used to die on Connection.close()'s SIGTERM before killing its commands.
+	it.skipIf(process.platform === "win32")("kills running commands when the connection closes", async () => {
+		const { env, connection } = environment();
+		const pid = Promise.withResolvers<number>();
+		const running = env.exec(
+			["sh", "-c", "echo $$; exec sleep 30"],
+			{ onOutput: (text: string) => pid.resolve(Number.parseInt(text, 10)) },
+			context,
+		);
+		const command = await pid.promise;
+		connection.close();
+		await running;
+		const alive = () => {
+			try {
+				process.kill(command, 0);
+				return true;
+			} catch {
+				return false;
+			}
+		};
+		const deadline = Date.now() + 5000;
+		while (alive() && Date.now() < deadline) await new Promise((done) => setTimeout(done, 50));
+		expect(alive()).toBe(false);
+	});
+
 	it("fails requests on handles of a lost connection instead of reaching the new daemon", async () => {
 		const { env, connection } = environment();
 		getOrThrow(await env.writeFile("a.txt", "AAA", context));

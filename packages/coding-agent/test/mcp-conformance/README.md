@@ -39,7 +39,7 @@ node packages/coding-agent/test/mcp-conformance/run.ts --update-baseline
 ## Known failures
 
 - `elicitation-sep1034-client-defaults`: pi does not support elicitation.
-- `auth/basic-cimd`: pi registers clients dynamically instead of using a Client ID Metadata Document.
+- `auth/basic-cimd`: pi uses its Client ID Metadata Document on pi.dev, not the suite's `https://conformance-test.local/client-metadata.json`.
 - `auth/scope-retry-limit`: `pi-client` fails by design; the server never accepts the granted scope.
 
 2026-07-28 is not covered: it is a stateless protocol pi does not implement.

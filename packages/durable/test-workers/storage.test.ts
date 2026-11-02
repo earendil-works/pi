@@ -18,7 +18,7 @@ registerStorageConformance({ describe, expect, it }, "SqliteStorage on Durable O
 );
 
 describe("Durable Object SQLite schema", () => {
-	it("migrates a version 1 schema to admit sleeping tasks, keeping tasks and indexes, then adds sequence indexes", async () => {
+	it("migrates a version 1 schema to admit sleeping tasks, keeping tasks and indexes", async () => {
 		await runInDurableObject(fresh(), async (_instance, state) => {
 			const database = new DurableObjectSqliteDatabase(state.storage);
 			const schema = createSqliteSchema("legacy_");
@@ -35,7 +35,7 @@ describe("Durable Object SQLite schema", () => {
 			await expect(insert(6, "sleeping")).rejects.toThrow();
 
 			await openDurableObjectSqliteStorage(state.storage, { prefix: "legacy_" });
-			expect(await database.get(`SELECT version FROM ${schema.tables.durableSchema}`)).toEqual({ version: 3 });
+			expect(await database.get(`SELECT version FROM ${schema.tables.durableSchema}`)).toEqual({ version: 2 });
 			expect(await database.get(`SELECT status FROM ${tasks} WHERE id = 5`)).toEqual({ status: "waiting" });
 			await insert(6, "sleeping");
 			const indexes = await database.all<{ name: string }>(
@@ -47,9 +47,28 @@ describe("Durable Object SQLite schema", () => {
 				schema.indexes.tasksByBackground,
 				schema.indexes.tasksByConversation,
 				schema.indexes.tasksByKind,
-				schema.indexes.tasksBySeq,
 				schema.indexes.tasksByStatus,
 			]);
+		});
+	});
+});
+
+describe("Durable Object SQLite driver in workerd", () => {
+	// The cursor's `rowsWritten` counts index writes too (3 for this insert, 20 for the bulk update); `runCounted` must not.
+	it("reports the rows a statement changed, without index writes", async () => {
+		await runInDurableObject(fresh(), async (_instance, state) => {
+			const database = new DurableObjectSqliteDatabase(state.storage);
+			await database.exec("CREATE TABLE probe (id TEXT PRIMARY KEY, path TEXT NOT NULL, n INTEGER NOT NULL) STRICT, WITHOUT ROWID");
+			await database.exec("CREATE INDEX probe_path ON probe (path, id)");
+			await database.exec("CREATE INDEX probe_n ON probe (n, id)");
+			for (let i = 0; i < 10; i++) await database.run("INSERT INTO probe VALUES (?, ?, ?)", `k${i}`, `a/${i}`, i);
+			// Outside the bulk statements' range below.
+			expect(await database.runCounted("INSERT INTO probe VALUES (?, ?, ?)", "x", "b/x", 99)).toBe(1);
+			expect(await database.runCounted("UPDATE probe SET n = 0 WHERE id = ?", "absent")).toBe(0);
+			expect(
+				await database.runCounted("UPDATE probe SET path = 'c/' || substr(path, 3) WHERE path >= 'a/' AND path < 'a0'"),
+			).toBe(10);
+			expect(await database.runCounted("DELETE FROM probe WHERE path >= 'c/' AND path < 'c0'")).toBe(10);
 		});
 	});
 });

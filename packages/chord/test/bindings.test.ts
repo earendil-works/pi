@@ -1,7 +1,7 @@
 // Entry 8: one shared binding per host and key; a hold implies the state of its variant (units: shape, then
 // snapshots); method-only references; origins of client holds; protocol version 4.
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { arr, nul, num, obj, opt, str, unknown } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import { HostImpl } from "../src/host.ts";
 import {
@@ -28,15 +28,15 @@ async function until(check: () => boolean, attempts = 200): Promise<void> {
 	assert.ok(check(), "condition not reached");
 }
 
-const NoteSchema = Type.Array(Type.String());
+const NoteSchema = arr(str());
 const Notes = remote("t.e8-notes", {
 	version: 1,
-	input: Type.Object({ list: Type.Optional(Type.String({ default: "main" })) }),
+	input: obj({ list: opt(str({ default: "main" })) }, { open: true }),
 	host: hostNamed("server"),
 	variants: {
 		main: {
-			state: { notes: NoteSchema, title: Type.String() },
-			methods: { add: method(Type.String()), rename: method(Type.String()) },
+			state: { notes: NoteSchema, title: str() },
+			methods: { add: method(str()), rename: method(str()) },
 		},
 	},
 });
@@ -44,7 +44,7 @@ const Notes = remote("t.e8-notes", {
 function serveNotes(host: Host): void {
 	host.serve(Notes, (_input, _principal, self) => {
 		const notes = self.state("notes", NoteSchema, []);
-		const title = self.state("title", Type.String(), "untitled");
+		const title = self.state("title", str(), "untitled");
 		return {
 			variant: "main",
 			notes,
@@ -88,7 +88,7 @@ function setup(
 describe("shared bindings: traffic", () => {
 	it("N references to one object: one hold, one snapshot per member, one frame per change, one release", async () => {
 		const { server, browser, link } = setup();
-		const Panel = local("t.e8-panel", { version: 1, input: Type.Object({}), members: { count: Type.Number() } });
+		const Panel = local("t.e8-panel", { version: 1, input: obj({}, { open: true }), members: { count: num() } });
 		browser.serve(Panel, (_input, _principal, self) => {
 			const notes = self.get(Notes, {});
 			return { count: self.derive([notes.notes], (list) => list.length) };
@@ -183,12 +183,12 @@ describe("shared bindings: identity", () => {
 		});
 		const NotesV2 = remote("t.e8-notes", {
 			version: 2,
-			input: Type.Object({ list: Type.Optional(Type.String({ default: "main" })) }),
+			input: obj({ list: opt(str({ default: "main" })) }, { open: true }),
 			host: hostNamed("server"),
 			variants: {
 				main: {
-					state: { notes: NoteSchema, title: Type.String() },
-					methods: { add: method(Type.String()), rename: method(Type.String()), clear: method() },
+					state: { notes: NoteSchema, title: str() },
+					methods: { add: method(str()), rename: method(str()), clear: method() },
 				},
 			},
 		});
@@ -196,7 +196,7 @@ describe("shared bindings: identity", () => {
 			NotesV2,
 			(_input, _principal, self) => {
 				const notes = self.state("notes", NoteSchema, []);
-				const title = self.state("title", Type.String(), "untitled");
+				const title = self.state("title", str(), "untitled");
 				return { variant: "main", notes, title, add: () => {}, rename: () => {}, clear: () => {} };
 			},
 			{ accepts: { 1: (current) => current } },
@@ -230,12 +230,12 @@ describe("shared bindings: identity", () => {
 describe("hydration over a link", () => {
 	const Matrix = remote("t.e8-matrix", {
 		version: 1,
-		input: Type.Object({ variant: Type.String() }),
+		input: obj({ variant: str() }, { open: true }),
 		host: hostNamed("server"),
 		variants: {
-			values: { state: { none: Type.Null(), empty: Type.Array(Type.String()), maybe: Type.Unknown() } },
-			bare: { methods: { ping: method(undefined, Type.String()) } },
-			broken: { state: { n: Type.Number() } },
+			values: { state: { none: nul(), empty: arr(str()), maybe: unknown() } },
+			bare: { methods: { ping: method(undefined, str()) } },
+			broken: { state: { n: num() } },
 		},
 	});
 
@@ -243,12 +243,12 @@ describe("hydration over a link", () => {
 		host.serve(Matrix, ({ variant }, _principal, self) => {
 			if (variant === "bare") return { variant: "bare", ping: () => "pong" };
 			if (variant === "broken") {
-				const source = self.state("source", Type.String(), "not a number");
+				const source = self.state("source", str(), "not a number");
 				// A derivation exposed under a number schema: its snapshot fails validation.
 				return { variant: "broken", n: self.derive([source], (text) => text as unknown as number) };
 			}
-			const none = self.state("none", Type.Null(), null);
-			const empty = self.state("empty", Type.Array(Type.String()), []);
+			const none = self.state("none", nul(), null);
+			const empty = self.state("empty", arr(str()), []);
 			return { variant: "values", none, empty, maybe: self.derive([none], () => undefined as unknown) };
 		});
 	}
@@ -332,9 +332,9 @@ describe("method-only references (state: false)", () => {
 describe("origins of client holds", () => {
 	const Counter = remote("t.e8-counter", {
 		version: 1,
-		input: Type.Object({ session: Type.String() }),
+		input: obj({ session: str() }, { open: true }),
 		host: hostFamily("session:", "session"),
-		variants: { main: { state: { n: Type.Number() }, methods: { add: method(Type.Number()) } } },
+		variants: { main: { state: { n: num() }, methods: { add: method(num()) } } },
 	});
 
 	function cluster() {
@@ -354,7 +354,7 @@ describe("origins of client holds", () => {
 					onError: () => {},
 				});
 				created.serve(Counter, (_input, _principal, self) => {
-					const n = self.state("n", Type.Number(), 0);
+					const n = self.state("n", num(), 0);
 					return {
 						variant: "main",
 						n,

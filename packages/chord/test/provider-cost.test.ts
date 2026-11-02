@@ -1,7 +1,7 @@
 // Entry 8: what a change costs the provider. The diff is computed once per change; each feed (one per connection and
 // member) encodes it with its own stateful encoder and its link serializes it.
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { arr, obj, str } from "@earendil-works/pi-schema";
 import { describe, it, vi } from "vitest";
 import type * as delta from "../src/delta/index.ts";
 import { type Ctx, createHost, hostNamed, memoryLinkPair, method, remote } from "../src/index.ts";
@@ -30,16 +30,16 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const List = remote("t.e8-cost", {
 	version: 1,
-	input: Type.Object({}),
+	input: obj({}, { open: true }),
 	host: hostNamed("server"),
-	variants: { main: { state: { items: Type.Array(Type.String()) }, methods: { add: method(Type.String()) } } },
+	variants: { main: { state: { items: arr(str()) }, methods: { add: method(str()) } } },
 });
 
 describe("provider cost", () => {
 	it("one change to K clients: K encodes (one per feed), one frame per link, the same ops on every link", async () => {
 		const server = createHost({ self: { kind: "host" }, name: "server", onError: () => {} });
 		server.serve(List, (_input, _principal, self) => {
-			const items = self.state("items", Type.Array(Type.String()), []);
+			const items = self.state("items", arr(str()), []);
 			return {
 				variant: "main",
 				items,

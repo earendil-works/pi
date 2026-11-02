@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Context, JsonValue } from "@earendil-works/chord";
-import { createModels, Type } from "@earendil-works/pi-ai";
+import { createModels } from "@earendil-works/pi-ai";
 import {
 	createRegistry,
 	defineDoc,
@@ -15,6 +15,7 @@ import {
 	type TaskId,
 	type TaskRuntime,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { addTask, addTool } from "./harness-support.ts";
@@ -482,7 +483,7 @@ describe("blocked tasks", () => {
 			defineTool({
 				name: "unrelated",
 				description: "unrelated",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async () => ({}),
 			}),
 		);
@@ -644,11 +645,11 @@ describe("definition handover", () => {
 		});
 	}
 
-	async function startHandover(log: string[], gates: Gates, storage = new MemoryStorage()) {
+	async function startHandover(log: string[], gates: Gates, storage = new MemoryStorage(), version = 1) {
 		const registry = createRegistry();
-		const old = addTask(registry, handoverTask("old", 1, log, { gates }));
+		const old = addTask(registry, handoverTask("old", version, log, { gates }));
 		const opened = await openTasks(storage, [], { registry });
-		const id = await createIn(opened.harness, handoverTask("old", 1, log));
+		const id = await createIn(opened.harness, handoverTask("old", version, log));
 		opened.harness.resume();
 		await eventually(() => log.length === 1);
 		return { ...opened, old, id };
@@ -734,7 +735,7 @@ describe("definition handover", () => {
 		);
 		gate.resolve();
 		await eventually(() => infos.length === 1);
-		expect(infos).toMatchObject([{ type: "migration_failed", task: { id } }]);
+		expect(infos).toMatchObject([{ kind: "migration_failed", task: { id } }]);
 		await flush();
 		expect(await harness.getTask(id, context)).toMatchObject({
 			version: 1,
@@ -753,14 +754,27 @@ describe("definition handover", () => {
 		gateA.resolve();
 		await eventually(() => log.includes("old:b start"));
 		// A newer definition without a migration cannot take the task either.
-		addTask(registry, handoverTask("incompatible", 2, log));
+		addTask(registry, handoverTask("unmigratable", 2, log));
 		gateB.resolve();
 		await harness.waitForTask(id, context);
 		expect(log).toEqual(["old:a start", "old:a end", "old:b start", "old:b end", "old:c"]);
 		expect(infos).toMatchObject([
-			{ type: "task_outdated", task: { id }, reason: "missing_task" },
-			{ type: "task_outdated", task: { id }, reason: "incompatible_task" },
+			{ kind: "task_outdated", task: { id }, reason: "missing_task" },
+			{ kind: "task_outdated", task: { id }, reason: "migration_failed" },
 		]);
+		await harness.close(context);
+	});
+
+	it("reports a replacement older than the running task as `task_too_old` and keeps the old definition", async () => {
+		const log: string[] = [];
+		const gate = deferred();
+		const { harness, registry, id, infos } = await startHandover(log, { a: gate.promise }, new MemoryStorage(), 2);
+		// The same extension name replaces the running definition with an older version.
+		addTask(registry, handoverTask("older", 1, log));
+		gate.resolve();
+		await harness.waitForTask(id, context);
+		expect(log).toEqual(["old:a start", "old:a end", "old:b start", "old:b end", "old:c"]);
+		expect(infos).toMatchObject([{ kind: "task_outdated", task: { id }, reason: "task_too_old" }]);
 		await harness.close(context);
 	});
 

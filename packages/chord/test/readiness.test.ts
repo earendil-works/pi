@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { obj } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import {
 	createHost,
@@ -15,8 +15,8 @@ import {
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 const unexpectedError = (error: unknown) => assert.fail(String(error));
-const Eager = local("ready.eager", { version: 1, input: Type.Object({}) });
-const Lazy = local("ready.lazy", { version: 1, input: Type.Object({}) });
+const Eager = local("ready.eager", { version: 1, input: obj({}, { open: true }) });
+const Lazy = local("ready.lazy", { version: 1, input: obj({}, { open: true }) });
 
 // Startup must not report ready while an eager object has failed.
 describe("host: eager readiness", () => {
@@ -162,7 +162,7 @@ describe("host: eager readiness", () => {
 
 	it("ready includes direct host serves, but not later serves", async () => {
 		const host = createHost({ self: { kind: "host" }, onError: () => {} });
-		const First = local("ready.first", { version: 1, input: Type.Object({}) });
+		const First = local("ready.first", { version: 1, input: obj({}, { open: true }) });
 		let created = 0;
 		try {
 			host.serve(
@@ -201,7 +201,7 @@ describe("host: eager readiness", () => {
 			});
 			const Status = remote("ready.status", {
 				version: 1,
-				input: Type.Object({}),
+				input: obj({}, { open: true }),
 				host: hostNamed("server"),
 				variants: { default: {} },
 			});

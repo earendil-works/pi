@@ -5,16 +5,17 @@
 // Uses OpenAI when OPENAI_API_KEY is set, and a scripted faux model otherwise.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/22-subagent-background.ts
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { type AssistantMessage, type FauxResponseStep, Type } from "@earendil-works/pi-ai";
+import type { AssistantMessage, FauxResponseStep } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { bool, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import {
-	type AgentEvent,
 	AssistantEntry,
 	type ConversationId,
 	configure,
@@ -27,7 +28,6 @@ import {
 	Harness,
 	LiveDoc,
 	type TaskId,
-	watchEvents,
 } from "../../src/index.ts";
 import { openNodeSqliteStorage } from "../../src/storage/sqlite/node.ts";
 
@@ -136,11 +136,11 @@ const subagentTool = defineTool({
 		"Manage persistent subagents that work in the background. Actions: spawn (name, message), send (name, message; " +
 		"followUp: true queues it after the current answer instead of steering), stop (name: aborts its current work), " +
 		"status (name, or all subagents without one). Answers are reported back to you when they arrive.",
-	parameters: Type.Object({
-		action: Type.Union([Type.Literal("spawn"), Type.Literal("send"), Type.Literal("stop"), Type.Literal("status")]),
-		name: Type.Optional(Type.String()),
-		message: Type.Optional(Type.String()),
-		followUp: Type.Optional(Type.Boolean()),
+	parameters: obj({
+		action: oneOf(["spawn", "send", "stop", "status"]),
+		name: opt(str()),
+		message: opt(str()),
+		followUp: opt(bool()),
 	}),
 	// A call interrupted by a crash is not rerun: repeating `stop` could stop newer work. The model sees that the call
 	// was interrupted and can check with `status`.
@@ -284,11 +284,15 @@ function contentText(content: string | readonly { type: string; text?: string }[
 
 /** Print the main conversation's messages as they are committed. Subagents work in their own conversations. */
 async function follow(harness: Harness, id: ConversationId): Promise<void> {
-	const stream = await watchEvents(harness, id, context);
-	stream.start(async (events: readonly AgentEvent[]) => {
-		for (const event of events) {
-			if (event.type !== "message_end") continue;
-			const message = event.entry.model?.[0];
+	const watch = await (await harness.conversation(id, context))!.watch(context);
+	let newest = watch.value.entries.at(-1)?.id ?? 0;
+	watch.start(async (call) => {
+		if (call.kind !== "value") return;
+		const { value } = call;
+		const entries = value.entries.filter((entry) => entry.id > newest);
+		newest = value.entries.at(-1)?.id ?? newest;
+		for (const entry of entries) {
+			const message = entry.model?.[0];
 			if (message?.role === "user") {
 				const text = contentText(message.content);
 				// Input is either the user or a subagent's report, which arrives whenever the subagent is done.

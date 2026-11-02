@@ -1,25 +1,25 @@
 // Entry 8: reference types. State members are plain values (a reference you hold has its state); a remote reference is a
 // union discriminated by `variant`, so another variant's members are reachable only after narrowing. Checked by tsc.
-import { Type } from "typebox";
+import { num, obj, str } from "@earendil-works/pi-schema";
 import { describe, expectTypeOf, it } from "vitest";
 import { type Ctx, type Host, hostNamed, local, method, type Readable, type Ref, remote } from "../src/index.ts";
 
 const Doc = remote("t.e8-types-doc", {
 	version: 1,
-	input: Type.Object({}),
+	input: obj({}, { open: true }),
 	host: hostNamed("server"),
 	variants: {
-		reader: { state: { text: Type.String() } },
-		editor: { state: { text: Type.String() }, methods: { edit: method(Type.String()) } },
+		reader: { state: { text: str() } },
+		editor: { state: { text: str() }, methods: { edit: method(str()) } },
 	},
 });
 const Single = remote("t.e8-types-single", {
 	version: 1,
-	input: Type.Object({}),
+	input: obj({}, { open: true }),
 	host: hostNamed("server"),
-	variants: { main: { state: { n: Type.Number() }, methods: { bump: method() } } },
+	variants: { main: { state: { n: num() }, methods: { bump: method() } } },
 });
-const Local = local("t.e8-types-local", { version: 1, input: Type.Object({}), members: { n: Type.Number() } });
+const Local = local("t.e8-types-local", { version: 1, input: obj({}, { open: true }), members: { n: num() } });
 
 describe("reference types", () => {
 	it("state members are T; other variants' members need narrowing; gets are awaited", () => {

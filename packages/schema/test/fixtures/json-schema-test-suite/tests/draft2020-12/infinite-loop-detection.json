@@ -1,0 +1,37 @@
+[
+    {
+        "description": "evaluating the same schema location against the same data location twice is not a sign of an infinite loop",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": {
+                "int": { "type": "integer" }
+            },
+            "allOf": [
+                {
+                    "properties": {
+                        "foo": {
+                            "$ref": "#/$defs/int"
+                        }
+                    }
+                },
+                {
+                    "additionalProperties": {
+                        "$ref": "#/$defs/int"
+                    }
+                }
+            ]
+        },
+        "tests": [
+            {
+                "description": "passing case",
+                "data": { "foo": 1 },
+                "valid": true
+            },
+            {
+                "description": "failing case",
+                "data": { "foo": "a string" },
+                "valid": false
+            }
+        ]
+    }
+]

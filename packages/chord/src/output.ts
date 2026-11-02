@@ -32,13 +32,16 @@ export interface OutputSkip {
 
 const NEWLINE = 0x0a;
 const INVALID_OUTPUT = /[\x00-\x08\x0b-\x1f\ufff9-\ufffb]/g;
+/** Whole 7-bit escape sequences: strings (OSC, DCS, APC, PM, SOS) up to BEL or ST, CSI, and short `ESC x` forms. */
+const ESCAPE_SEQUENCE =
+	/\x1b[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]|\x1b[\x20-\x2f]*[\x30-\x7e]/g;
 const encoder = new TextEncoder();
 /** Slices decode exactly: a U+FEFF at a slice's start is text, not a byte-order mark. */
 const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
-/** Remove control characters that break display and transcripts; tabs and newlines stay. */
+/** Remove escape sequences and control characters that break display and transcripts; tabs and newlines stay. */
 export function sanitizeOutput(text: string): string {
-	return text.replace(INVALID_OUTPUT, "");
+	return text.replace(ESCAPE_SEQUENCE, "").replace(INVALID_OUTPUT, "");
 }
 
 /**

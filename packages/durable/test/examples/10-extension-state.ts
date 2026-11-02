@@ -1,10 +1,11 @@
 // An extension that keeps its own per-conversation document.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/10-extension-state.ts
+
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { Type } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import { obj, str } from "@earendil-works/pi-schema";
 import {
 	createRegistry,
 	defineDoc,
@@ -38,7 +39,7 @@ const Todo = defineExtension({
 		defineTool({
 			name: "todo",
 			description: "Add an item to your todo list",
-			parameters: Type.Object({ item: Type.String() }),
+			parameters: obj({ item: str() }),
 			execute: async (args, api, callContext) => {
 				await api.commit(async (tx) => {
 					(await tx.doc(Todos, api.conversationId)).items.push(args.item);

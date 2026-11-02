@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Serving and Spawning: HTTP and workers in Chord v2</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">An explainer · Chord v2 slice 10 · 2026-10-31</div>
+  <h1>Serving<br>and Spawning</h1>
+  <p class="subtitle">How a request reaches a plugin&#39;s route, who it acts as, and how a worker process per session starts, stops and fails</p>
+  <div class="cover-stats"><div class="stat"><b>1</b><span>registry plugins contribute routes, wraps, sockets and hosts to</span></div><div class="stat"><b>0</b><span>automatic worker restarts</span></div><div class="stat"><b>5 min</b><span>idle before a worker stops (default)</span></div><div class="stat"><b>6</b><span>security rules on by default</span></div></div>
+  <div class="cover-note"><p>Written by the redesign session from <code>slice-10.md</code>, the decision entries &quot;Slice 10&#39;s points&quot;, &quot;Origins only from
+relays&quot;, &quot;The HTTP component&#39;s security baseline&quot; and their neighbours in <code>decisions.md</code>, design §3 and §23, and the
+build after its four fix rounds (security baseline, <code>fetch</code> core, error boundaries).</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#app">I. The App We Build</a></li>
+<li><a href="#request">II. A Request, Start to End</a></li>
+<li><a href="#responses">III. What a Route Returns</a></li>
+<li><a href="#who">IV. Who Is Asking</a></li>
+<li><a href="#sockets">V. Sockets and Links</a></li>
+<li><a href="#worker">VI. A Worker&#39;s Life</a></li>
+<li><a href="#failure">VII. When a Worker Fails</a></li>
+<li><a href="#ship">VIII. Shipping Plugins to Workers</a></li>
+<li><a href="#runtime">IX. Changing It at Runtime</a></li>
+<li><a href="#what-s-next">What&#39;s Next</a></li>
+<li><a href="#api-in-brief">Appendix A: API in Brief</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Mario runs a small chat app on his laptop. Each conversation is a <strong>session</strong>, and each session runs in its own
+process, a <strong>worker</strong>, so a session that crashes or eats memory takes nothing else down. A browser tab talks to the
+server; the server talks to the workers. Plugins add features: one adds a chat panel, one adds file downloads, one
+adds a terminal. Mario edits plugins while the app runs, and sometimes an agent edits them for him.</p>
+<p>Three things have to work for him without thought. A plugin adds an HTTP route, and it is served safely: no other
+website open in his browser can read his data or act as him through it. A session&#39;s worker exists exactly while
+someone uses it. And when a worker crashes, nothing restarts it in a loop: he sees why it failed and decides.</p>
+<p>Slice 10 builds two components for this: <code>chord/next/http</code> (the server&#39;s HTTP and WebSocket entry) and
+<code>chord/next/workers</code> (a worker process per session). Both are Node code on top of Chord&#39;s kernel; the kernel itself
+stays portable.</p>
+<h3 id="eight-things-to-know">Eight things to know</h3>
+<ol class="findings">
+<li><strong>Plugins contribute routes, Chord serves them.</strong> The HTTP component defines one registry, <code>Http</code>; plugins
+contribute routes, wraps (middleware), WebSocket handlers and allowed hosts to it, and every reload swaps them.</li>
+<li><strong>A route returns a description.</strong> JSON, HTML, bytes, a redirect or an error; the component writes it, with ranges,
+<code>HEAD</code>, download headers and backpressure done once for every plugin.</li>
+<li><strong>Security is built in.</strong> Where a request came from, whether another website sent it, and which headers every
+response carries are decided by the component before any plugin code runs. The app only says who someone is.</li>
+<li><strong>A worker starts on the first use of its session</strong> and stops after five idle minutes. The server forks it; the
+worker connects back and loads its plugins.</li>
+<li><strong>A worker never restarts by itself.</strong> A crash or a failed start leaves the session failed with its error until a
+person presses Retry or rolls out new code.</li>
+<li><strong>Workers never build plugins.</strong> The server builds every plugin once; a worker evaluates the scripts it is sent.</li>
+<li><strong>A rollout reaches every host.</strong> The server reloads first, then every running worker, each reporting its result.</li>
+<li><strong>Everything but the bootstrap is changeable by plugins.</strong> Routes, hosts, start data, idle times: contributions or
+functions read at each use.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>A <strong>route</strong> is a function a plugin contributes for a method and path pattern. A <strong>wrap</strong> runs around routes. A
+<strong>socket</strong> is a WebSocket a plugin handles with its own protocol; a <strong>link</strong> is Chord&#39;s own WebSocket at <code>/chord</code>,
+over which tabs hold objects. <strong>Admission</strong> is what the component checks before any plugin code. <strong>Provenance</strong> is
+where a request came from (local, an allowed host, a relay). A request is <strong>foreign</strong> when a browser sent it for
+another website. A <strong>worker</strong> is a process serving one <strong>address</strong> (<code>Session({ id })</code>). A worker&#39;s <strong>start message</strong>
+carries its start data and its plugins&#39; <strong>scripts</strong>. A <strong>rollout</strong> applies a build to the server and then the workers.</p>
+</section>
+
+<section class="chapter" id="app"><header class="opener"><div class="numeral">I</div><h2>The App We Build</h2><p class="lede">A server, workers, two plugins: the files a reader needs to follow the rest.</p></header>
+<p class="dropcap">The whole app is four files of its own plus its plugins. The server creates its host, the HTTP component and the
+workers component, then loads its plugins:</p>
+<pre><code><span class="tk-c">// server.ts</span>
+<span class="tk-k">const</span> server = <span class="tk-f">createHost</span>&lt;P&gt;({ address: <span class="tk-t">Server</span>(), principal: { kind: <span class="tk-s">"server"</span> }, onError });
+<span class="tk-k">const</span> plugins = <span class="tk-f">createPlugins</span>({
+	roots: [<span class="tk-s">"./plugins"</span>],
+	kinds: {
+		server: { platform: <span class="tk-s">"node"</span>, hostPackages: [<span class="tk-s">"@earendil-works/chord/next"</span>, <span class="tk-s">"@app/core"</span>] },
+		worker: { platform: <span class="tk-s">"node"</span>, hostPackages: [<span class="tk-s">"@earendil-works/chord/next"</span>, <span class="tk-s">"@app/core"</span>] },
+	},
+	onError,
+}, ctx);
+<span class="tk-k">const</span> http = <span class="tk-f">createHttp</span>(server, { listen: { host: <span class="tk-s">"127.0.0.1"</span>, port: <span class="tk-n">8788</span> }, onError }, ctx);   <span class="tk-c">// settings are arguments</span>
+<span class="tk-k">const</span> workers = <span class="tk-f">createWorkers</span>(server, <span class="tk-t">Session</span>, {
+	kind: <span class="tk-s">"worker"</span>, entry: <span class="tk-s">"./worker.ts"</span>, plugins, principal: (a) =&gt; ({ kind: <span class="tk-s">"worker"</span>, session: a.params.id }),
+	start: (address, ctx) =&gt; ({ id: address.params.id, dir: <span class="tk-f">sessionDir</span>(address) }),
+	lock: (address) =&gt; <span class="tk-s">`chat:${dataDir}:${address.key}`</span>, authorize: mayReach, onError,
+}, ctx);
+<span class="tk-k">await</span> plugins.<span class="tk-f">load</span>(server, { kind: <span class="tk-s">"server"</span>, core: [core, { name: <span class="tk-s">"chord.http"</span>, facet: http.facet }], modules }, ctx);
+<span class="tk-c">// `core` contributes the app's authenticator: self.contribute(Authenticators, authenticate)</span></code></pre>
+<pre><code><span class="tk-c">// worker.ts: one per session</span>
+<span class="tk-k">await</span> <span class="tk-f">workerMain</span>(<span class="tk-k">async</span> ({ address, start, parent, plugins, onClose }, ctx) =&gt; {
+	<span class="tk-k">const</span> store = <span class="tk-k">await</span> <span class="tk-f">openStore</span>(<span class="tk-f">sqliteBackend</span>(<span class="tk-k">await</span> <span class="tk-f">openNodeSqliteDatabase</span>(<span class="tk-f">join</span>(start.dir, <span class="tk-s">"session.sqlite"</span>))), ctx);
+	<span class="tk-f">onClose</span>((ctx) =&gt; store.<span class="tk-f">close</span>(ctx));
+	<span class="tk-k">const</span> worker = <span class="tk-f">createHost</span>&lt;P&gt;({ address, principal: { kind: <span class="tk-s">"worker"</span>, session: start.id }, store, onError });
+	<span class="tk-f">onClose</span>((ctx) =&gt; worker.<span class="tk-f">close</span>(ctx));
+	worker.<span class="tk-f">connect</span>(parent, { principal: { kind: <span class="tk-s">"server"</span> }, trusted: <span class="tk-k">true</span> }, ctx);
+	<span class="tk-k">await</span> plugins.<span class="tk-f">load</span>(worker, { kind: <span class="tk-s">"worker"</span>, core: [<span class="tk-f">workerCore</span>(start)] }, ctx);
+	<span class="tk-k">return</span> { busy: { tasks: <span class="tk-n">0</span> } };
+}, { hostPackages: modules, redact: (error) =&gt; ({ message: <span class="tk-s">"worker failed"</span> }), onError });</code></pre>
+<p>A plugin is a directory with a <code>package.json</code> and one file per kind it needs. The chat plugin keeps its messages in a
+worker (each session has its own) and contributes one route on the server for exporting them:</p>
+<pre><code><span class="tk-c">// plugins/chat/server.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Http</span>, {
+		routes: {
+			<span class="tk-s">"GET /s/:session/export"</span>: <span class="tk-k">async</span> (request, ctx) =&gt; {
+				<span class="tk-k">if</span> (!(<span class="tk-k">await</span> <span class="tk-f">mayView</span>(ctx.principal, request.params.session, ctx))) <span class="tk-k">return</span> { kind: <span class="tk-s">"error"</span>, status: <span class="tk-n">403</span> };
+				<span class="tk-k">const</span> chat = <span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(<span class="tk-t">Chat</span>, { session: request.params.session });   <span class="tk-c">// reaches the session's worker</span>
+				<span class="tk-k">return</span> { kind: <span class="tk-s">"json"</span>, value: <span class="tk-k">await</span> chat.<span class="tk-k">export</span>(ctx) };
+			},
+		},
+	});
+});</code></pre>
+<p><code>ctx.get(Chat, { session })</code> is the one line that connects the two halves: <code>Chat</code>&#39;s host address is the session&#39;s
+worker, the server&#39;s route for <code>Session</code> finds (or starts) that worker, and the call goes over its link.</p>
+</section>
+
+<section class="chapter" id="request"><header class="opener"><div class="numeral">II</div><h2>A Request, Start to End</h2><p class="lede">What happens between a TCP connection and the route&#39;s response, in order.</p></header>
+<p class="dropcap">Every request takes the same path. The order matters: nothing a plugin wrote runs before the component decided that
+the request may run at all, and as whom.</p>
+<figure class="fig wide anim"><svg viewBox="0 0 720 475" width="100%" role="img" aria-label="One request through the HTTP component. Everything left of authenticate is the component's own; plugins start at the router." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">ADMISSION</text><text x="16" y="155" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">WHO</text><text x="16" y="277" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">PLUGINS</text><text x="16" y="399" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">ANSWER</text><g class="step" style="--i:1"><rect x="19" y="36" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="124" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">Provenance</text><text x="124" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle">local, allowed host or relay; else</text><text x="124" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle">403</text></g><g class="step" style="--i:3"><rect x="255" y="36" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="60.8" font-size="11" fill="#2a2723" text-anchor="middle">Foreign?</text><text x="360" y="74.8" font-size="9.5" fill="#7b7468" text-anchor="middle">another website's browser request</text></g><g class="step" style="--i:5"><rect x="491" y="36" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="596" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">Origin</text><text x="596" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle">foreign Origin 403; unsafe methods</text><text x="596" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle">need ours</text></g><g class="step" style="--i:7"><rect x="137" y="169" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="242" y="188.3" font-size="11" fill="#2a2723" text-anchor="middle">authenticate</text><text x="242" y="202.3" font-size="9.5" fill="#7b7468" text-anchor="middle">the app: cookies, devices</text></g><g class="step" style="--i:9"><rect x="373" y="169" width="210" height="44" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="478" y="188.3" font-size="11" fill="#2a2723" text-anchor="middle">anonymous</text><text x="478" y="202.3" font-size="9.5" fill="#7b7468" text-anchor="middle">foreign or no credential</text></g><g class="step" style="--i:11"><rect x="19" y="291" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="124" y="310.3" font-size="11" fill="#2a2723" text-anchor="middle">Router</text><text x="124" y="324.3" font-size="9.5" fill="#7b7468" text-anchor="middle">pattern → route, as of now</text></g><g class="step" style="--i:13"><rect x="255" y="291" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="310.3" font-size="11" fill="#2a2723" text-anchor="middle">Wraps</text><text x="360" y="324.3" font-size="9.5" fill="#7b7468" text-anchor="middle">observe, headers, transform</text></g><g class="step" style="--i:15"><rect x="491" y="291" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="596" y="310.3" font-size="11" fill="#2a2723" text-anchor="middle">Route</text><text x="596" y="324.3" font-size="9.5" fill="#7b7468" text-anchor="middle">returns a description</text></g><g class="step" style="--i:17"><rect x="255" y="413" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="432.3" font-size="11" fill="#2a2723" text-anchor="middle">Write</text><text x="360" y="446.3" font-size="9.5" fill="#7b7468" text-anchor="middle">headers, ranges, chunks, backpressure</text></g><g class="step edge" style="--i:2"><path d="M229 63.5 L253 63.5" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/></g><g class="step edge" style="--i:4"><path d="M465 63.5 L489 63.5" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/></g><g class="step edge" style="--i:6"><path d="M596 91 L242 167" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/></g><g class="step edge" style="--i:8"><path d="M596 91 L478 167" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="541" y="123" width="44.9" height="13" fill="#fbf8f2" opacity=".92"/><text x="545" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">foreign</text></g><g class="step edge" style="--i:10"><path d="M242 213 L124 289" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/></g><g class="step edge" style="--i:12"><path d="M229 313 L253 313" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/></g><g class="step edge" style="--i:14"><path d="M465 313 L489 313" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/></g><g class="step edge" style="--i:16"><path d="M596 335 L360 411" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> One request through the HTTP component. Everything left of <code>authenticate</code> is the component&#39;s own; plugins start at the router.</figcaption></figure>
+<p><strong>Provenance</strong> answers &quot;where from&quot;. A request is local only if three things hold: the socket arrived on a loopback
+address, the <code>Host</code> header names loopback with the port, and no proxy header (<code>Forwarded</code>, <code>X-Forwarded-*</code>) is present.
+Anything else must name a host the app allowed (a tunnel&#39;s public name) and is then treated as remote https. Anything
+else is refused before a single plugin line runs. The security audit found that checking the <code>Host</code> header alone let
+anyone reaching the port claim to be local: the socket address is the part a remote client cannot fake.</p>
+<p><strong>Foreign</strong> answers &quot;did another website make the browser send this&quot;. Browsers say so in <code>Sec-Fetch-Site</code>. A foreign
+request never reaches <code>authenticate</code>: it runs anonymous, whatever cookies it carries. That one rule stops a page on
+another site from reading Mario&#39;s data through an <code>&lt;img&gt;</code> or <code>&lt;script src&gt;</code>, from driving his session through a hidden
+form or <code>fetch</code>, and from opening his WebSocket. The single exception is a top-level navigation (Mario clicks a link
+to the app from his mail) to a route marked <code>page: true</code>.</p>
+<p><strong>Origin</strong> closes what is left: a request whose <code>Origin</code> header names another site is refused, and a state-changing
+request from a browser must name the app&#39;s own origin. A webhook that other sites must reach opts out
+(<code>crossSite: true</code>) and then always runs anonymous, checking its own signature.</p>
+<p>Then the app&#39;s <code>authenticate</code> says who the request is. The <strong>router</strong> picks the most specific route for the method
+and path, from the router as it was when the request started. <strong>Wraps</strong> run around it, and the route returns a
+description that the component writes.</p>
+</section>
+
+<section class="chapter" id="responses"><header class="opener"><div class="numeral">III</div><h2>What a Route Returns</h2><p class="lede">Five kinds of response, and why routes never touch Node&#39;s response object.</p></header>
+<p class="dropcap">In p2 every plugin wrote Node&#39;s <code>ServerResponse</code> itself, so each one implemented ranges, download headers and <code>HEAD</code>
+by hand, or forgot to. In Chord a route returns data:</p>
+<pre><code><span class="tk-k">type</span> <span class="tk-t">HttpResponse</span> = { <span class="tk-k">readonly</span> headers?: <span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, string&gt;&gt; } &amp; (
+	| { kind: <span class="tk-s">"json"</span>; value: <span class="tk-t">JsonValue</span>; status?: number }
+	| { kind: <span class="tk-s">"html"</span>; body: string; status?: number }
+	| { kind: <span class="tk-s">"bytes"</span>; mime: string; size?: number; <span class="tk-f">read</span>(offset: number, length: number, ctx: <span class="tk-t">Ctx</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">Uint8Array</span>&gt;;
+	    download?: string; ranges?: boolean }
+	| { kind: <span class="tk-s">"redirect"</span>; to: string; status?: <span class="tk-n">302</span> | <span class="tk-n">303</span> | <span class="tk-n">307</span> }
+	| { kind: <span class="tk-s">"error"</span>; status: number; message?: string });</code></pre>
+<p>The component turns a <code>bytes</code> response with a <code>size</code> into <code>Content-Length</code>, a range request into 206 (or 416 when it
+cannot be satisfied), <code>HEAD</code> into headers only, and <code>download</code> into a safe <code>Content-Disposition</code>. It reads in 64 KiB
+pieces and waits whenever the client is slower, so a large file never piles up in memory, and it stops reading the
+moment the client disconnects. Without a <code>size</code> it sends the body chunked until <code>read</code> returns an empty piece: a zip
+built on the fly, or an export paged from a worker one call per piece.</p>
+<p><code>fileResponse(path, options)</code> is a <code>bytes</code> response over a file: it opens the file only when the first byte is
+needed and closes it when the request ends, so a <code>HEAD</code> or a disconnect leaves no open handle behind. Request bodies
+work the same way in reverse: <code>await request.json()</code> reads at most 1 MiB and parses it; <code>request.body(limit)</code> yields
+chunks for an upload streamed to disk. A body past its limit gets 413; nothing is read until a route asks.</p>
+<p>A route that throws is a 500 without its message: error text often holds paths or tokens, so it goes to the server&#39;s
+<code>onError</code>, never to the client.</p>
+</section>
+
+<section class="chapter" id="who"><header class="opener"><div class="numeral">IV</div><h2>Who Is Asking</h2><p class="lede">The app&#39;s one security function, and everything the component does so the app does not have to.</p></header>
+<p class="dropcap">The app writes one function about identity and contributes it to the registry <code>Authenticators</code> (plugins may add
+more, a device pairing for instance; the first principal wins):</p>
+<pre><code><span class="tk-k">const</span> authenticate: <span class="tk-t">Authenticator</span> = <span class="tk-k">async</span> (request, ctx) =&gt; {
+	<span class="tk-k">const</span> device = <span class="tk-f">readCookie</span>(request, <span class="tk-s">"device"</span>, secret);       <span class="tk-c">// signature and expiry checked</span>
+	<span class="tk-k">if</span> (device) <span class="tk-k">return</span> { kind: <span class="tk-s">"owner"</span>, access: <span class="tk-s">"device"</span>, device };
+	<span class="tk-k">const</span> guest = <span class="tk-f">readCookie</span>(request, <span class="tk-s">"guest"</span>, secret);
+	<span class="tk-k">if</span> (guest) <span class="tk-k">return</span> { kind: <span class="tk-s">"guest"</span>, grant: guest };
+	<span class="tk-k">if</span> (request.provenance.kind === <span class="tk-s">"local"</span>) <span class="tk-k">return</span> { kind: <span class="tk-s">"owner"</span>, access: <span class="tk-s">"local"</span> };
+	<span class="tk-k">return</span> <span class="tk-k">undefined</span>;                                             <span class="tk-c">// anonymous</span>
+};
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Authenticators</span>, authenticate);                    <span class="tk-c">// in the app's core facet</span></code></pre>
+<p>It never parses <code>Host</code>, never checks <code>Origin</code> and never sees a foreign request: the component already did all of it.
+It may read <code>request.provenance</code> (<code>local</code>, <code>remote</code> with the host, or <code>relayed</code> through a verified relay such as
+Radius). Cookies are written with <code>cookie(name, value, { secret, request, maxAge })</code>, which sets <code>HttpOnly</code>,
+<code>SameSite</code>, <code>Secure</code> on a remote origin, and signs the value with its expiry.</p>
+<p>Every response, the component&#39;s own 404s and 403s included, carries the same headers: no caching, no MIME sniffing, no
+referrer, no framing (<code>X-Frame-Options: DENY</code> and <code>frame-ancestors &#39;none&#39;</code>, except for framers the app allowed), and a
+Content Security Policy with a fresh script nonce per response (<code>request.nonce</code>), so an injected <code>&lt;script&gt;</code> does not run.</p>
+<table>
+<thead>
+<tr>
+<th>Attack</th>
+<th>What stops it</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>a website points its domain at 127.0.0.1 (DNS rebinding)</td>
+<td>provenance: <code>Host</code> must be loopback or allowed</td>
+</tr>
+<tr>
+<td>a request from the LAN or a proxy claims to be local</td>
+<td>provenance: the socket&#39;s own address, no proxy headers</td>
+</tr>
+<tr>
+<td>another site reads private data through <code>&lt;img&gt;</code>, <code>&lt;script src&gt;</code>, <code>fetch</code></td>
+<td>foreign requests run anonymous</td>
+</tr>
+<tr>
+<td>another site posts a form or opens the WebSocket as Mario</td>
+<td>foreign <code>Origin</code> refused; anonymous anyway</td>
+</tr>
+<tr>
+<td>another site frames the app to trick clicks</td>
+<td><code>frame-ancestors &#39;none&#39;</code>, <code>X-Frame-Options: DENY</code></td>
+</tr>
+<tr>
+<td>a path like <code>/files/..%2F..%2Fsecret</code></td>
+<td>decoded <code>/</code>, <code>.</code>, <code>..</code>, <code>\</code> in a path segment are 400</td>
+</tr>
+<tr>
+<td>a crafted request target crashes the server</td>
+<td>the target is parsed by the component, a failure is 400</td>
+</tr>
+</tbody></table>
+<p>The core is a Web <code>fetch</code> handler, so an app with its own server (Hono, Express, plain Node with <code>nodeRequest</code>) mounts
+it and gets the same checks; without the socket&#39;s addresses a mounted request is never local.</p>
+</section>
+
+<section class="chapter" id="sockets"><header class="opener"><div class="numeral">V</div><h2>Sockets and Links</h2><p class="lede">Chord&#39;s own WebSocket for tabs, a plugin&#39;s own WebSocket for its protocol, and what closes them.</p></header>
+<p class="dropcap">A tab holds objects over <code>/chord</code>, a <strong>link</strong>: the component authenticates the upgrade and calls <code>host.accept</code> with
+the principal. A link has Chord&#39;s heartbeat: silent for 30 seconds, it closes.</p>
+<p>A plugin with its own protocol, a terminal for instance, contributes a <strong>socket</strong>:</p>
+<pre><code>self.<span class="tk-f">contribute</span>(<span class="tk-t">Http</span>, { sockets: { <span class="tk-s">"/terminal"</span>: (socket, request, ctx) =&gt; terminals.<span class="tk-f">attach</span>(socket, ctx) } });</code></pre>
+<p>The component upgrades after admission and <code>authenticate</code> (no principal: refused before the plugin sees it) and hands
+the plugin a ready WebSocket. It pings it after 15 seconds of silence and terminates it after 30, so a phone that
+vanished does not hold a terminal open for hours.</p>
+<p>What was removed is closed at once. When a reload changes or removes the plugin that handed out a socket, the socket
+is terminated: old code does not keep serving it. When an allowed host is removed, every link and socket that came
+through it is terminated. &quot;Terminated&quot; means immediately, not a polite close a hostile client could ignore.</p>
+</section>
+
+<section class="chapter" id="worker"><header class="opener"><div class="numeral">VI</div><h2>A Worker&#39;s Life</h2><p class="lede">Started by the first use, connected before it loads, stopped when nobody needs it.</p></header>
+<p class="dropcap">Nothing starts a worker but a use of its session. A tab opens session S1 and holds <code>Chat { session: S1 }</code>:</p>
+<figure class="fig anim"><svg viewBox="0 0 720 422" width="100%" role="img" aria-label="The first hold of a session starts its worker. The link exists before the worker loads, so it serves while loading." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="130.7" y1="52" x2="130.7" y2="414" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="45.7" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="130.7" y="30" font-size="11" fill="#2a2723" text-anchor="middle">tab</text><line x1="360" y1="52" x2="360" y2="414" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="275" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="30" font-size="11" fill="#2a2723" text-anchor="middle">server</text><line x1="589.3" y1="52" x2="589.3" y2="414" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="504.3" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="589.3" y="27" font-size="11" fill="#2a2723" text-anchor="middle">worker S1</text><text x="589.3" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">forked</text><g class="step edge" style="--i:1"><line x1="130.7" y1="78" x2="357" y2="78" stroke="#7b7468" marker-end="url(#f2m)"/><text x="245.3" y="72" font-size="10" fill="#2a2723" text-anchor="middle">hold Chat { session: S1 }</text></g><g class="step edge" style="--i:2"><path d="M360 104 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="402" y="114" font-size="10" fill="#2a2723" text-anchor="start">route Session(S1): resolve</text></g><g class="step edge" style="--i:3"><line x1="360" y1="150" x2="586.3" y2="150" stroke="#b4472f" marker-end="url(#f2a)"/><text x="474.7" y="144" font-size="10" fill="#b4472f" text-anchor="middle">fork, start message (start data, scripts)</text></g><g class="step edge" style="--i:4"><path d="M589.3 176 h-34 v14 h32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="547.3" y="186" font-size="10" fill="#2a2723" text-anchor="end">take the lock for S1</text></g><g class="step edge" style="--i:5"><line x1="589.3" y1="222" x2="363" y2="222" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="474.7" y="216" font-size="10" fill="#2a2723" text-anchor="middle">started (connected)</text></g><g class="step edge" style="--i:6"><line x1="360" y1="254" x2="586.3" y2="254" stroke="#7b7468" marker-end="url(#f2m)"/><text x="474.7" y="248" font-size="10" fill="#2a2723" text-anchor="middle">hold Chat (relayed for the tab)</text></g><g class="step edge" style="--i:7"><path d="M589.3 280 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="631.3" y="290" font-size="10" fill="#2a2723" text-anchor="start">load plugins</text></g><g class="step edge" style="--i:8"><line x1="589.3" y1="326" x2="363" y2="326" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="474.7" y="320" font-size="10" fill="#2a2723" text-anchor="middle">bound (Chat's state)</text></g><g class="step edge" style="--i:9"><line x1="360" y1="358" x2="133.7" y2="358" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="245.3" y="352" font-size="10" fill="#2a2723" text-anchor="middle">bound</text></g><g class="step edge" style="--i:10"><line x1="589.3" y1="390" x2="363" y2="390" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="474.7" y="384" font-size="10" fill="#2a2723" text-anchor="middle">ready { idle: false }</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> The first hold of a session starts its worker. The link exists before the worker loads, so it serves while loading.</figcaption></figure>
+<p><code>started</code> comes as soon as the worker connected; the server then talks to it while it loads. The 60-second start
+timer covers only fork, lock and connect: a session with a long migration loads as long as it needs, its objects
+<code>loading</code> meanwhile. <code>ready</code> comes after the load and lets idle stops begin.</p>
+<p>The <strong>lock</strong> makes sure one live worker serves an address, even across a server restart while an old worker still
+closes its store: the new one waits for the old one to let go.</p>
+<p><strong>Idle</strong> means nothing uses the worker: no holds arriving over its link, no jobs, no lingering objects, and none of the
+app&#39;s own busy counts (its running agent tasks). Local calls inside the worker do not count; they come from work that
+is counted elsewhere. The worker reports only when that flips between idle and busy. After five idle minutes the
+server sends <code>shutdown</code>; the worker closes its host and store in reverse order of opening and exits.</p>
+<p><code>workers.stop(address)</code> is the archive button: it stops the worker and keeps it stopped while a tab still holds the
+session (the tab sees &quot;suspended&quot;). With the last holder gone, the next use starts it again.</p>
+</section>
+
+<section class="chapter" id="failure"><header class="opener"><div class="numeral">VII</div><h2>When a Worker Fails</h2><p class="lede">No automatic restarts: why, and how a failure is shown and cleared.</p></header>
+<p class="dropcap">A worker crashes: an out-of-memory kill, a bug in a native addon. The obvious design restarts it. Mario rejected that
+on 2026-10-30: a crash usually has a reason, and the same code on the same data crashes again, while the agent task
+that caused it is resumed by the restart and runs into it again. A timer only makes the loop slower.</p>
+<div class="steps"><div class="steps-head"><span class="title">A crash and its recovery</span><span class="count"></span><button class="prev" type="button">Back</button><button class="next" type="button">Next</button></div><div class="step-panel"><h4>The crash</h4><p>Worker S1 exits unasked. The server records the session as failed with the error, and reports the full error and the
+end of the worker&#39;s stderr to its own <code>onError</code>, for Mario&#39;s logs.</p>
+</div><div class="step-panel"><h4>Holders see it</h4><p>Every tab holding S1&#39;s objects sees <code>failed { waiting }</code> with a fixed message (&quot;worker exited (SIGSEGV)&quot;), never the
+raw error: it may hold paths or secrets, and guests see it too. A new tab opening S1 sees the same and forks nothing.</p>
+</div><div class="step-panel"><h4>Retry</h4><p>Mario presses Retry (<code>workers.retry(Session({ id: &quot;S1&quot; }))</code>). The server starts the worker; the tabs&#39; references bind
+to it without reloading the page.</p>
+</div><div class="step-panel"><h4>Or a fix</h4><p>Mario fixes the plugin and rolls out. The rollout clears the failures from before it and starts the failed sessions
+that tabs still hold, once, with the new code. A session that fails again stays failed.</p>
+</div></div>
+<p>Every way a worker can fail ends the same: a crash, a <code>fatal</code> from the worker, a start that throws or times out, and a
+link lost while the process lives (the heartbeat after a blocked event loop), which the server ends by killing the
+process after five seconds.</p>
+</section>
+
+<section class="chapter" id="ship"><header class="opener"><div class="numeral">VIII</div><h2>Shipping Plugins to Workers</h2><p class="lede">One build on the server, scripts sent to every worker, a result per host.</p></header>
+<p class="dropcap">Building a plugin takes esbuild a few milliseconds per facet, but a cold build of twenty plugins takes a quarter of a
+second. Doing that in every worker that starts would slow every session&#39;s start and let workers see different
+code. So the server builds every plugin, once, and a worker only evaluates.</p>
+<p>A worker&#39;s start message carries the complete current set of worker scripts. When Mario edits a plugin and rolls out,
+the rollout runs its steps in order:</p>
+<pre><code><span class="tk-k">const</span> built = <span class="tk-k">await</span> plugins.<span class="tk-f">build</span>(plugins.state.value.dirty, ctx);
+<span class="tk-k">const</span> result = <span class="tk-k">await</span> plugins.<span class="tk-f">rollout</span>([plugins.<span class="tk-f">step</span>(<span class="tk-s">"server"</span>, server), workers.<span class="tk-f">step</span>(<span class="tk-s">"workers"</span>)], built, ctx);
+<span class="tk-c">// result.steps[1].hosts: [{ host: "session|S1", report }, { host: "session|S2", stopped: true }, { host: "session|S3", error }]</span></code></pre>
+<p>The workers step sends the complete new set to every running worker in parallel; each reloads per plugin (a broken
+plugin keeps its old code, as on the server) and answers with its report. A worker stopped cleanly during the step
+is listed <code>stopped</code> and gets the new set at its next start. A plugin&#39;s &quot;dirty&quot; mark clears only when it was applied
+on every host of every step, so a plugin that failed anywhere stays marked for the next try.</p>
+</section>
+
+<section class="chapter" id="runtime"><header class="opener"><div class="numeral">IX</div><h2>Changing It at Runtime</h2><p class="lede">What plugins can change while the app runs, and what needs a restart.</p></header>
+<p class="dropcap">The app is meant to modify itself, so every option that is not needed to start the process is changeable by plugins.
+Routes, wraps, sockets, allowed hosts and trusted framers are contributions to <code>Http</code>; a contribution that changes is a
+writable, and the router recomposes on each change:</p>
+<pre><code><span class="tk-k">const</span> hosts = self.<span class="tk-f">writable</span>({ hosts: [] <span class="tk-k">as</span> string[] });
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Http</span>, hosts);
+self.<span class="tk-f">on</span>(tunnel.publicHost, ({ value }) =&gt; hosts.<span class="tk-f">set</span>({ hosts: value ? [value] : [] }));</code></pre>
+<p>Authenticators, framers and extra CSP sources are contributions too; functions the workers component calls at each
+use (a worker&#39;s start data, its idle time) can read the app&#39;s own registries, which plugins contribute to. What needs a restart is only the
+bootstrap: the port, the <code>/chord</code> path, the worker&#39;s entry file and its Node flags.</p>
+</section>
+
+<section class="chapter epilogue" id="what-s-next"><header class="opener"><div class="numeral">∴</div><h2>What&#39;s Next</h2><p class="lede">What the reviews found, and what comes after this slice.</p></header>
+<p class="dropcap">Four build reviews, three security audits and three rounds of rechecks shaped the slice. They found a malformed request
+crashing the server, <code>Host</code>-only provenance, origins invented by a tab (a kernel hole since slice 4a, now refused on tab
+links), secrets reaching guests through worker errors, close and shutdown races, and leaks of request scopes; each is
+fixed with a regression test. A route costs about 20 µs more than a plain Node handler (12 µs warmed), accepted for
+what it buys: a scope per request, admission and the baseline headers.</p>
+<p>Next comes the app kit (<code>chord/next/app</code>), which wires these components with Chord&#39;s conventions so an app writes
+<code>startApp</code> and <code>startWorker</code>, then slice 11: the browser page and the terminal UI as hosts.</p>
+</section>
+
+<section class="chapter appendix" id="api-in-brief"><header class="opener"><div class="numeral">A</div><h2>API in Brief</h2></header>
+<table>
+<thead>
+<tr>
+<th>Call</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>createHttp(host, { listen?, links?, closeTimeout?, onError }, ctx)</code></td>
+<td>the component: <code>facet</code>, <code>fetch</code>, <code>upgrade</code>, <code>close</code></td>
+</tr>
+<tr>
+<td><code>Authenticators</code> contribution</td>
+<td><code>(request, ctx) =&gt; P | undefined</code>: who a request is</td>
+</tr>
+<tr>
+<td><code>nodeRequest(message, res)</code></td>
+<td>a Node request as a Web <code>Request</code>, with the listener&#39;s checks</td>
+</tr>
+<tr>
+<td><code>http.facet</code></td>
+<td>the facet serving <code>Http</code>; load it with the plugins (in <code>core</code>)</td>
+</tr>
+<tr>
+<td><code>Http</code> contribution</td>
+<td><code>{ routes?, wraps?, sockets?, maxPayload?, hosts?, framers?, relays?, csp? }</code></td>
+</tr>
+<tr>
+<td>route</td>
+<td><code>(request, ctx) =&gt; Promise&lt;HttpResponse&gt;</code>, or <code>{ handler, page?, crossSite? }</code></td>
+</tr>
+<tr>
+<td><code>fileResponse(path, options)</code>, <code>cookie(name, value, options)</code></td>
+<td>a file as bytes; a safe cookie</td>
+</tr>
+<tr>
+<td><code>createWorkers(host, Kind, { kind, entry, start, lock, principal, authorize, plugins, idleMs?, onError }, ctx)</code></td>
+<td>a worker per address</td>
+</tr>
+<tr>
+<td><code>workers.state</code>, <code>stop</code>, <code>retry</code>, <code>close</code>, <code>step(name)</code></td>
+<td>status per address; archive; Retry; shutdown; a rollout step</td>
+</tr>
+<tr>
+<td><code>workerMain(fn, { hostPackages, redact, onError })</code></td>
+<td>the worker process&#39;s side</td>
+</tr>
+<tr>
+<td><code>RouteHandle.retry(address)</code>, <code>suspend(address)</code></td>
+<td>the kernel&#39;s route, as <code>host.route</code> returns it</td>
+</tr>
+</tbody></table>
+</section>
+
+<p class="colophon">Serving and Spawning · first edition · 2026-10-31 · Chord v2 slice 10</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

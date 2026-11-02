@@ -7,7 +7,15 @@ import {
 	type StorageWrite,
 } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
-import { context, createConversation, documentChanges, flush, openTestSession } from "./session-support.ts";
+import {
+	context,
+	createConversation,
+	documentChanges,
+	documentValues,
+	flush,
+	onValue,
+	openTestSession,
+} from "./session-support.ts";
 
 function documentWrites(writes: readonly StorageWrite[]): readonly StorageWrite[] {
 	return writes.filter(
@@ -94,7 +102,7 @@ describe("Session document checkpoints", () => {
 		expect(falseCalls).toHaveLength(1);
 		const snapshot = (await session.snapshot(BaseDoc, context))!;
 		const deltaSnapshot = (await session.snapshot(DeltaDoc, context))!;
-		const [published, publishedDelta] = documentChanges(publications.at(-1)!);
+		const [published, publishedDelta] = documentValues(publications.at(-1)!);
 		expect(calls[0]!.value).toBe(snapshot);
 		expect(calls[0]!.ops).toBe(published!.ops);
 		expect(falseCalls[0]!.value).toBe(deltaSnapshot);
@@ -402,17 +410,21 @@ describe("Session document migrations", () => {
 		// An observer of the older shape.
 		const watch = (await session.watchDoc(Old, context))!;
 		const frames: unknown[] = [];
-		watch.start(async (value, ops) => {
-			frames.push({ value, ops });
-		});
+		watch.start(
+			onValue(async ({ value, ops }) => {
+				frames.push({ value, ops });
+			}),
+		);
 		expect(await session.snapshot(Current, context)).toEqual({ count: 4 });
 		const snapshot = await session.snapshot(Current, context);
 		// An observer of the new shape: the migration changes nothing it sees.
 		const current = (await session.watchDoc(Current, context))!;
 		const currentFrames: unknown[] = [];
-		current.start(async (value) => {
-			currentFrames.push(value);
-		});
+		current.start(
+			onValue(async ({ value }) => {
+				currentFrames.push(value);
+			}),
+		);
 
 		await session.commit((tx) => tx.doc(Current).then(() => undefined), context);
 		await flush();
@@ -488,7 +500,7 @@ describe("Session document migrations", () => {
 			}),
 		]);
 		await flush();
-		const published = documentChanges(publications.at(-1)!)[0]!;
+		const published = documentValues(publications.at(-1)!)[0]!;
 		const admitted = storage.admittedCommits.at(-1)![0]!;
 		if (admitted.type !== "document.change" || admitted.content.kind !== "base") {
 			throw new Error("Expected migration base");
@@ -836,10 +848,12 @@ describe("Session tracker cache across definition versions", () => {
 		const watch = (await session.watchDoc(V1Doc, context))!;
 		const frames: (readonly unknown[])[] = [];
 		const delivered = new Promise<void>((resolve) => {
-			watch.start(async (_value, ops) => {
-				frames.push(ops);
-				resolve();
-			});
+			watch.start(
+				onValue(async ({ ops }) => {
+					frames.push(ops);
+					resolve();
+				}),
+			);
 		});
 		await session.commit(async (tx) => {
 			(await tx.doc(V2Doc)).names.push("second");

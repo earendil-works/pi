@@ -1,0 +1,57 @@
+[
+    {
+        "description": "schema that uses custom metaschema with with no validation vocabulary",
+        "schema": {
+            "$id": "https://schema/using/no/validation",
+            "$schema": "http://localhost:1234/draft2020-12/metaschema-no-validation.json",
+            "properties": {
+                "badProperty": false,
+                "numberProperty": {
+                    "minimum": 10
+                }
+            }
+        },
+        "tests": [
+            {
+                "description": "applicator vocabulary still works",
+                "data": {
+                    "badProperty": "this property should not exist"
+                },
+                "valid": false
+            },
+            {
+                "description": "no validation: valid number",
+                "data": {
+                    "numberProperty": 20
+                },
+                "valid": true
+            },
+            {
+                "description": "no validation: invalid number, but it still validates",
+                "data": {
+                    "numberProperty": 1
+                },
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "ignore unrecognized optional vocabulary",
+        "schema": {
+            "$schema": "http://localhost:1234/draft2020-12/metaschema-optional-vocabulary.json",
+            "type": "number"
+        },
+        "tests": [
+            {
+                "description": "string value",
+                "data": "foobar",
+                "valid": false
+            },
+            {
+                "description": "number value",
+                "data": 20,
+                "valid": true
+            }
+        ]
+    }
+]

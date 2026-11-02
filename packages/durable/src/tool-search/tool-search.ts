@@ -3,7 +3,7 @@
  * and the matches are loaded with `control.addTools`, so the next request offers them. Loading writes the
  * conversation's `modelTools` (its `add`), so loaded tools stay offered on that branch, also after a compaction.
  */
-import { Type } from "@earendil-works/pi-ai";
+import { num, obj, opt, str } from "@earendil-works/pi-schema";
 import { defineExtension, defineTool } from "../harness/define.ts";
 import type { ToolRegistration } from "../harness/types.ts";
 import { rankDocuments } from "../search.ts";
@@ -14,12 +14,13 @@ export const DEFAULT_TOOL_SEARCH_LIMIT = 8;
 /** Fixed, so it does not change while deferred tools are registered, for example as MCP servers connect. */
 const TOOL_SEARCH_DESCRIPTION = `# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call.\n\nSome of the tools, such as tools of MCP servers, may not have been provided to you upfront, and you should use this tool (\`${TOOL_SEARCH_TOOL_NAME}\`) to search for the required tools. For MCP tool discovery, always use \`${TOOL_SEARCH_TOOL_NAME}\`.`;
 
-const toolSearchSchema = Type.Object({
-	query: Type.String({ description: "Search query for deferred tools." }),
-	limit: Type.Optional(
-		Type.Number({ description: `Maximum number of tools to return. Defaults to ${DEFAULT_TOOL_SEARCH_LIMIT}.` }),
-	),
-});
+const toolSearchSchema = obj(
+	{
+		query: str({ description: "Search query for deferred tools." }),
+		limit: opt(num({ description: `Maximum number of tools to return. Defaults to ${DEFAULT_TOOL_SEARCH_LIMIT}.` })),
+	},
+	{ open: true },
+);
 
 /** `tool_search` result details: the tools it loaded. */
 export type ToolSearchToolDetails = { loaded: string[] };
@@ -45,9 +46,9 @@ function schemaText(schema: unknown, parts: string[]): void {
 	}
 }
 
-/** Search text of a tool: its name, the name with `_` as spaces, its description, and its parameters' text. */
+/** Search text of a tool: its description and its parameters' names and descriptions; the ranker reads the name. */
 function searchText(tool: ToolRegistration): string {
-	const parts = [tool.name, tool.name.replaceAll("_", " "), tool.description];
+	const parts = [tool.description];
 	schemaText(tool.parameters, parts);
 	return parts.filter((part) => part.trim() !== "").join(" ");
 }

@@ -1,0 +1,120 @@
+[
+    {
+        "description": "Location-independent identifier",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "#foo",
+            "$defs": {
+                "A": {
+                    "$anchor": "foo",
+                    "type": "integer"
+                }
+            }
+        },
+        "tests": [
+            {
+                "data": 1,
+                "description": "match",
+                "valid": true
+            },
+            {
+                "data": "a",
+                "description": "mismatch",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "Location-independent identifier with absolute URI",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "http://localhost:1234/draft2020-12/bar#foo",
+            "$defs": {
+                "A": {
+                    "$id": "http://localhost:1234/draft2020-12/bar",
+                    "$anchor": "foo",
+                    "type": "integer"
+                }
+            }
+        },
+        "tests": [
+            {
+                "data": 1,
+                "description": "match",
+                "valid": true
+            },
+            {
+                "data": "a",
+                "description": "mismatch",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "Location-independent identifier with base URI change in subschema",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "http://localhost:1234/draft2020-12/root",
+            "$ref": "http://localhost:1234/draft2020-12/nested.json#foo",
+            "$defs": {
+                "A": {
+                    "$id": "nested.json",
+                    "$defs": {
+                        "B": {
+                            "$anchor": "foo",
+                            "type": "integer"
+                        }
+                    }
+                }
+            }
+        },
+        "tests": [
+            {
+                "data": 1,
+                "description": "match",
+                "valid": true
+            },
+            {
+                "data": "a",
+                "description": "mismatch",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "same $anchor with different base uri",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "http://localhost:1234/draft2020-12/foobar",
+            "$defs": {
+                "A": {
+                    "$id": "child1",
+                    "allOf": [
+                        {
+                            "$id": "child2",
+                            "$anchor": "my_anchor",
+                            "type": "number"
+                        },
+                        {
+                            "$anchor": "my_anchor",
+                            "type": "string"
+                        }
+                    ]
+                }
+            },
+            "$ref": "child1#my_anchor"
+        },
+        "tests": [
+            {
+                "description": "$ref resolves to /$defs/A/allOf/1",
+                "data": "a",
+                "valid": true
+            },
+            {
+                "description": "$ref does not resolve to /$defs/A/allOf/0",
+                "data": 1,
+                "valid": false
+            }
+        ]
+    }
+]

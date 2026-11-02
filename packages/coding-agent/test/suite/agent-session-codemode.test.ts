@@ -18,7 +18,10 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import type { CustomEntry } from "../../src/core/session-manager.ts";
-import { createToolDefinitionFromAgentTool } from "../../src/core/tools/tool-definition-wrapper.ts";
+import {
+	createToolDefinitionFromAgentTool,
+	type TypeBoxAgentTool,
+} from "../../src/core/tools/tool-definition-wrapper.ts";
 import { readCodemodeStore } from "../../src/extensions/codemode/execute.ts";
 import { createCodemodeExtension } from "../../src/extensions/codemode/index.ts";
 import {
@@ -33,7 +36,7 @@ const TINY_PNG_BASE64 =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
 
 const echoSchema = Type.Object({ text: Type.String({ description: "Text to echo" }) });
-const echoTool: AgentTool<typeof echoSchema> = {
+const echoTool: TypeBoxAgentTool<typeof echoSchema> = {
 	name: "echo",
 	label: "Echo",
 	description: "Echo text back.\n\nSecond paragraph.",
@@ -182,6 +185,49 @@ describe("AgentSession codemode tool", () => {
 		// Without codemode, tools keep their plain descriptions.
 		harness.session.setActiveToolsByName(["echo"]);
 		expect(description("echo")).toBe("Echo text back.\n\nSecond paragraph.");
+	});
+
+	// #11501
+	it("summarizes union and multi-line output types instead of inlining them", async () => {
+		const outputTool = (name: string, outputSchema: AgentTool["outputSchema"]): AgentTool => ({
+			name,
+			label: name,
+			description: `${name} tool`,
+			parameters: Type.Object({}),
+			outputSchema,
+			execute: async () => ({ content: [], details: {} }),
+		});
+		const process = outputTool(
+			"process",
+			Type.Union([
+				Type.Object({
+					action: Type.Literal("start"),
+					process: Type.Object({ id: Type.String({ description: "Process id" }), pid: Type.Integer() }),
+				}),
+				Type.Object({
+					action: Type.Literal("list"),
+					processes: Type.Array(Type.Object({ id: Type.String() })),
+					truncated: Type.Optional(Type.Boolean()),
+				}),
+			]),
+		);
+		const entries = outputTool("entries", Type.Array(Type.Object({ id: Type.String(), size: Type.Integer() })));
+		const count = outputTool("count", Type.Number());
+		const harness = await setup([
+			(pi: ExtensionAPI) => {
+				for (const tool of [process, entries, count]) pi.registerTool(createToolDefinitionFromAgentTool(tool));
+			},
+		]);
+		harness.session.setActiveToolsByName(["process", "entries", "count", "codemode"]);
+		const description = (name: string) =>
+			harness.session.agent.state.tools.find((tool) => tool.name === name)?.description ?? "";
+		expect(description("process")).toBe(
+			'process tool\n\nCodemode: `tools.process(args)` resolves to `{ action: "start", process } | { action: "list", processes, truncated? }`.',
+		);
+		expect(description("entries")).toBe(
+			'entries tool\n\nCodemode: `tools.entries(args)` resolves to a value; `await describeTool("entries")` shows its type.',
+		);
+		expect(description("count")).toBe("count tool\n\nCodemode: `tools.count(args)` resolves to `number`.");
 	});
 
 	// #10343

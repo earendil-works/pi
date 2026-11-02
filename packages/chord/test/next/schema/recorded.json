@@ -1,0 +1,1143 @@
+{
+	"fingerprints": {
+		"contracts": {
+			"everything": {
+				"params": [
+					[
+						"id",
+						{
+							"type": "string"
+						}
+					],
+					[
+						"shard",
+						{
+							"type": "integer"
+						}
+					]
+				],
+				"versions": [
+					{
+						"fingerprint": "3861c5a457ef4aa3",
+						"variants": {
+							"members": {
+								"state": {
+									"profile": {
+										"additionalProperties": false,
+										"properties": {
+											"active": {
+												"type": "boolean"
+											},
+											"age": {
+												"maximum": 150,
+												"minimum": 0,
+												"type": "integer"
+											},
+											"choice": {
+												"anyOf": [
+													{
+														"type": "string"
+													},
+													{
+														"type": "integer"
+													},
+													{
+														"additionalProperties": false,
+														"properties": {
+															"deep": {
+																"items": {
+																	"additionalProperties": false,
+																	"properties": {
+																		"x": {
+																			"type": "number"
+																		}
+																	},
+																	"required": [
+																		"x"
+																	],
+																	"type": "object"
+																},
+																"type": "array"
+															}
+														},
+														"required": [
+															"deep"
+														],
+														"type": "object"
+													}
+												]
+											},
+											"count": {
+												"default": 0,
+												"type": "integer"
+											},
+											"extra": {
+												"patternProperties": {
+													"^.*$": {
+														"type": "integer"
+													}
+												},
+												"type": "object"
+											},
+											"kind": {
+												"const": "person",
+												"type": "string"
+											},
+											"level": {
+												"anyOf": [
+													{
+														"const": 1,
+														"type": "number"
+													},
+													{
+														"const": 2,
+														"type": "number"
+													},
+													{
+														"const": 3,
+														"type": "number"
+													}
+												]
+											},
+											"name": {
+												"maxLength": 40,
+												"minLength": 1,
+												"pattern": "^[a-z ]+$",
+												"type": "string"
+											},
+											"nested": {
+												"additionalProperties": false,
+												"properties": {
+													"inner": {
+														"additionalProperties": false,
+														"properties": {
+															"v": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"v"
+														],
+														"type": "object"
+													}
+												},
+												"type": "object"
+											},
+											"nick": {
+												"default": "x",
+												"type": "string"
+											},
+											"note": {
+												"type": "string"
+											},
+											"nothing": {
+												"type": "null"
+											},
+											"one": {
+												"const": 1,
+												"type": "number"
+											},
+											"points": {
+												"items": {
+													"type": "integer"
+												},
+												"type": "array"
+											},
+											"ratio": {
+												"default": 0.5,
+												"type": "number"
+											},
+											"role": {
+												"anyOf": [
+													{
+														"const": "admin",
+														"type": "string"
+													},
+													{
+														"const": "user",
+														"type": "string"
+													},
+													{
+														"const": "guest",
+														"type": "string"
+													}
+												]
+											},
+											"score": {
+												"maximum": 100,
+												"minimum": 0,
+												"type": "number"
+											},
+											"tags": {
+												"items": {
+													"type": "string"
+												},
+												"maxItems": 5,
+												"minItems": 0,
+												"type": "array"
+											},
+											"verified": {
+												"default": false,
+												"type": "boolean"
+											},
+											"yes": {
+												"const": true,
+												"type": "boolean"
+											}
+										},
+										"required": [
+											"active",
+											"age",
+											"choice",
+											"count",
+											"extra",
+											"kind",
+											"level",
+											"name",
+											"nested",
+											"nick",
+											"nothing",
+											"one",
+											"points",
+											"ratio",
+											"role",
+											"score",
+											"tags",
+											"verified",
+											"yes"
+										],
+										"type": "object"
+									}
+								},
+								"keyed": {
+									"notes": {
+										"additionalProperties": false,
+										"properties": {
+											"body": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"body"
+										],
+										"type": "object"
+									}
+								},
+								"methods": {
+									"plain": {
+										"args": {
+											"type": "null"
+										},
+										"result": {
+											"type": "null"
+										}
+									},
+									"args": {
+										"args": {
+											"additionalProperties": false,
+											"properties": {
+												"a": {
+													"type": "string"
+												},
+												"any": {},
+												"b": {
+													"type": "integer"
+												}
+											},
+											"required": [
+												"a",
+												"any"
+											],
+											"type": "object"
+										},
+										"result": {
+											"type": "null"
+										}
+									},
+									"result": {
+										"args": {
+											"type": "null"
+										},
+										"result": {
+											"items": {
+												"type": "string"
+											},
+											"type": "array"
+										}
+									},
+									"both": {
+										"args": {
+											"additionalProperties": false,
+											"properties": {
+												"when": {
+													"minimum": 0,
+													"type": "integer"
+												}
+											},
+											"required": [
+												"when"
+											],
+											"type": "object"
+										},
+										"result": {
+											"anyOf": [
+												{
+													"const": "ok",
+													"type": "string"
+												},
+												{
+													"additionalProperties": false,
+													"properties": {
+														"error": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"error"
+													],
+													"type": "object"
+												}
+											]
+										}
+									},
+									"blob": {
+										"args": {
+											"additionalProperties": false,
+											"properties": {
+												"data": {
+													"maxLength": 1024,
+													"type": "bytes"
+												}
+											},
+											"required": [
+												"data"
+											],
+											"type": "object"
+										},
+										"result": {
+											"type": "bytes"
+										}
+									}
+								}
+							}
+						}
+					}
+				]
+			},
+			"account": {
+				"params": [
+					[
+						"user",
+						{
+							"minLength": 1,
+							"type": "string"
+						}
+					]
+				],
+				"versions": [
+					{
+						"fingerprint": "821be6a79fbe350a",
+						"variants": {
+							"owner": {
+								"state": {
+									"balance": {
+										"type": "number"
+									}
+								},
+								"keyed": {},
+								"methods": {
+									"pay": {
+										"args": {
+											"additionalProperties": false,
+											"properties": {
+												"amount": {
+													"minimum": 0,
+													"type": "number"
+												}
+											},
+											"required": [
+												"amount"
+											],
+											"type": "object"
+										},
+										"result": {
+											"type": "boolean"
+										}
+									}
+								}
+							},
+							"guest": {
+								"state": {
+									"balance": {
+										"type": "number"
+									}
+								},
+								"keyed": {},
+								"methods": {}
+							}
+						}
+					}
+				]
+			},
+			"owner": {
+				"params": [],
+				"versions": [
+					{
+						"fingerprint": "b01eec2d4e2311b0",
+						"variants": {
+							"members": {
+								"state": {
+									"profile": {
+										"additionalProperties": false,
+										"properties": {
+											"active": {
+												"type": "boolean"
+											},
+											"age": {
+												"maximum": 150,
+												"minimum": 0,
+												"type": "integer"
+											},
+											"choice": {
+												"anyOf": [
+													{
+														"type": "string"
+													},
+													{
+														"type": "integer"
+													},
+													{
+														"additionalProperties": false,
+														"properties": {
+															"deep": {
+																"items": {
+																	"additionalProperties": false,
+																	"properties": {
+																		"x": {
+																			"type": "number"
+																		}
+																	},
+																	"required": [
+																		"x"
+																	],
+																	"type": "object"
+																},
+																"type": "array"
+															}
+														},
+														"required": [
+															"deep"
+														],
+														"type": "object"
+													}
+												]
+											},
+											"count": {
+												"default": 0,
+												"type": "integer"
+											},
+											"extra": {
+												"patternProperties": {
+													"^.*$": {
+														"type": "integer"
+													}
+												},
+												"type": "object"
+											},
+											"kind": {
+												"const": "person",
+												"type": "string"
+											},
+											"level": {
+												"anyOf": [
+													{
+														"const": 1,
+														"type": "number"
+													},
+													{
+														"const": 2,
+														"type": "number"
+													},
+													{
+														"const": 3,
+														"type": "number"
+													}
+												]
+											},
+											"name": {
+												"maxLength": 40,
+												"minLength": 1,
+												"pattern": "^[a-z ]+$",
+												"type": "string"
+											},
+											"nested": {
+												"additionalProperties": false,
+												"properties": {
+													"inner": {
+														"additionalProperties": false,
+														"properties": {
+															"v": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"v"
+														],
+														"type": "object"
+													}
+												},
+												"type": "object"
+											},
+											"nick": {
+												"default": "x",
+												"type": "string"
+											},
+											"note": {
+												"type": "string"
+											},
+											"nothing": {
+												"type": "null"
+											},
+											"one": {
+												"const": 1,
+												"type": "number"
+											},
+											"points": {
+												"items": {
+													"type": "integer"
+												},
+												"type": "array"
+											},
+											"ratio": {
+												"default": 0.5,
+												"type": "number"
+											},
+											"role": {
+												"anyOf": [
+													{
+														"const": "admin",
+														"type": "string"
+													},
+													{
+														"const": "user",
+														"type": "string"
+													},
+													{
+														"const": "guest",
+														"type": "string"
+													}
+												]
+											},
+											"score": {
+												"maximum": 100,
+												"minimum": 0,
+												"type": "number"
+											},
+											"tags": {
+												"items": {
+													"type": "string"
+												},
+												"maxItems": 5,
+												"minItems": 0,
+												"type": "array"
+											},
+											"verified": {
+												"default": false,
+												"type": "boolean"
+											},
+											"yes": {
+												"const": true,
+												"type": "boolean"
+											}
+										},
+										"required": [
+											"active",
+											"age",
+											"choice",
+											"count",
+											"extra",
+											"kind",
+											"level",
+											"name",
+											"nested",
+											"nick",
+											"nothing",
+											"one",
+											"points",
+											"ratio",
+											"role",
+											"score",
+											"tags",
+											"verified",
+											"yes"
+										],
+										"type": "object"
+									}
+								},
+								"keyed": {},
+								"methods": {
+									"write": {
+										"args": {
+											"additionalProperties": false,
+											"properties": {
+												"body": {
+													"type": "string"
+												},
+												"id": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"body",
+												"id"
+											],
+											"type": "object"
+										},
+										"result": {
+											"type": "null"
+										}
+									},
+									"read": {
+										"args": {
+											"type": "string"
+										},
+										"result": {
+											"type": "string"
+										}
+									},
+									"dump": {
+										"args": {
+											"additionalProperties": false,
+											"properties": {},
+											"type": "object"
+										},
+										"result": {}
+									}
+								}
+							}
+						}
+					}
+				]
+			}
+		},
+		"documents": {
+			"profile": {
+				"fingerprint": "f345152aff1bb993",
+				"normal": {
+					"additionalProperties": false,
+					"properties": {
+						"active": {
+							"type": "boolean"
+						},
+						"age": {
+							"maximum": 150,
+							"minimum": 0,
+							"type": "integer"
+						},
+						"choice": {
+							"anyOf": [
+								{
+									"type": "string"
+								},
+								{
+									"type": "integer"
+								},
+								{
+									"additionalProperties": false,
+									"properties": {
+										"deep": {
+											"items": {
+												"additionalProperties": false,
+												"properties": {
+													"x": {
+														"type": "number"
+													}
+												},
+												"required": [
+													"x"
+												],
+												"type": "object"
+											},
+											"type": "array"
+										}
+									},
+									"required": [
+										"deep"
+									],
+									"type": "object"
+								}
+							]
+						},
+						"count": {
+							"default": 0,
+							"type": "integer"
+						},
+						"extra": {
+							"patternProperties": {
+								"^.*$": {
+									"type": "integer"
+								}
+							},
+							"type": "object"
+						},
+						"kind": {
+							"const": "person",
+							"type": "string"
+						},
+						"level": {
+							"anyOf": [
+								{
+									"const": 1,
+									"type": "number"
+								},
+								{
+									"const": 2,
+									"type": "number"
+								},
+								{
+									"const": 3,
+									"type": "number"
+								}
+							]
+						},
+						"name": {
+							"maxLength": 40,
+							"minLength": 1,
+							"pattern": "^[a-z ]+$",
+							"type": "string"
+						},
+						"nested": {
+							"additionalProperties": false,
+							"properties": {
+								"inner": {
+									"additionalProperties": false,
+									"properties": {
+										"v": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"v"
+									],
+									"type": "object"
+								}
+							},
+							"type": "object"
+						},
+						"nick": {
+							"default": "x",
+							"type": "string"
+						},
+						"note": {
+							"type": "string"
+						},
+						"nothing": {
+							"type": "null"
+						},
+						"one": {
+							"const": 1,
+							"type": "number"
+						},
+						"points": {
+							"items": {
+								"type": "integer"
+							},
+							"type": "array"
+						},
+						"ratio": {
+							"default": 0.5,
+							"type": "number"
+						},
+						"role": {
+							"anyOf": [
+								{
+									"const": "admin",
+									"type": "string"
+								},
+								{
+									"const": "user",
+									"type": "string"
+								},
+								{
+									"const": "guest",
+									"type": "string"
+								}
+							]
+						},
+						"score": {
+							"maximum": 100,
+							"minimum": 0,
+							"type": "number"
+						},
+						"tags": {
+							"items": {
+								"type": "string"
+							},
+							"maxItems": 5,
+							"minItems": 0,
+							"type": "array"
+						},
+						"verified": {
+							"default": false,
+							"type": "boolean"
+						},
+						"yes": {
+							"const": true,
+							"type": "boolean"
+						}
+					},
+					"required": [
+						"active",
+						"age",
+						"choice",
+						"count",
+						"extra",
+						"kind",
+						"level",
+						"name",
+						"nested",
+						"nick",
+						"nothing",
+						"one",
+						"points",
+						"ratio",
+						"role",
+						"score",
+						"tags",
+						"verified",
+						"yes"
+					],
+					"type": "object"
+				}
+			},
+			"notes": "bd44e8ea54b8f283",
+			"importState": "53d035820123516d"
+		},
+		"tables": {
+			"rows": {
+				"fingerprint": "a8a7a46b1d1b5058",
+				"record": {
+					"id": {
+						"type": "str"
+					},
+					"n": {
+						"type": "int",
+						"default": 0
+					},
+					"flag": {
+						"type": "bool",
+						"default": false
+					},
+					"label": {
+						"type": "str",
+						"optional": true
+					},
+					"data": {
+						"type": "json",
+						"version": 1,
+						"fingerprint": "595acb546ede10d5"
+					},
+					"maybe": {
+						"type": "json",
+						"optional": true,
+						"version": 1,
+						"fingerprint": "27fc51c99dad9a88"
+					}
+				}
+			},
+			"editsV1": {
+				"fingerprint": "b6a64f82180e9b7f",
+				"record": {
+					"id": {
+						"type": "str"
+					},
+					"file": {
+						"type": "str"
+					},
+					"at": {
+						"type": "int"
+					}
+				}
+			},
+			"editsV2": {
+				"fingerprint": "2fbd0130077d5eed",
+				"record": {
+					"id": {
+						"type": "str"
+					},
+					"path": {
+						"type": "str"
+					},
+					"at": {
+						"type": "int"
+					},
+					"dir": {
+						"type": "str",
+						"default": ""
+					}
+				}
+			},
+			"editsV3": {
+				"fingerprint": "303055ac505946c3",
+				"record": {
+					"id": {
+						"type": "str"
+					},
+					"path": {
+						"type": "str"
+					},
+					"at": {
+						"type": "int"
+					}
+				}
+			}
+		},
+		"job": "c280624818bc83ab"
+	},
+	"stored": {
+		"store": {
+			"dump": {
+				"profile": {
+					"name": "ada",
+					"nick": "x",
+					"age": 36,
+					"count": 3,
+					"score": 1,
+					"ratio": 0.5,
+					"active": true,
+					"verified": false,
+					"role": "admin",
+					"level": 1,
+					"kind": "person",
+					"one": 1,
+					"yes": true,
+					"tags": [
+						"a",
+						"b",
+						"c"
+					],
+					"points": [],
+					"extra": {
+						"a": 10,
+						"b": 6,
+						"c": 9
+					},
+					"nothing": null,
+					"choice": {
+						"deep": [
+							{
+								"x": 3
+							}
+						]
+					},
+					"nested": {
+						"inner": {
+							"v": "third one"
+						}
+					}
+				},
+				"notes": {
+					"a": {
+						"body": "first note"
+					},
+					"b": {
+						"body": "second"
+					}
+				},
+				"rows": [
+					{
+						"id": "a",
+						"n": 0,
+						"flag": false,
+						"label": "first note",
+						"data": {
+							"a": 10,
+							"b": [
+								"a"
+							]
+						},
+						"maybe": {
+							"n": 1.5
+						}
+					},
+					{
+						"id": "b",
+						"n": 0,
+						"flag": false,
+						"label": "second",
+						"data": {
+							"a": 6,
+							"b": [
+								"b"
+							]
+						}
+					},
+					{
+						"id": "c",
+						"n": 0,
+						"flag": false,
+						"label": "third one",
+						"data": {
+							"a": 9,
+							"b": [
+								"c"
+							]
+						}
+					}
+				],
+				"edits": [
+					{
+						"id": "a",
+						"path": "/notes/a.md",
+						"at": 10
+					},
+					{
+						"id": "b",
+						"path": "/notes/b.md",
+						"at": 6
+					},
+					{
+						"id": "c",
+						"path": "/notes/c.md",
+						"at": 9
+					}
+				],
+				"runs": 0
+			},
+			"finished": [
+				{
+					"count": 2
+				},
+				{
+					"count": 2
+				},
+				{
+					"count": 2
+				}
+			],
+			"note": "second"
+		},
+		"archive": {
+			"dump": {
+				"profile": {
+					"name": "ada",
+					"nick": "x",
+					"age": 36,
+					"count": 3,
+					"score": 1,
+					"ratio": 0.5,
+					"active": true,
+					"verified": false,
+					"role": "admin",
+					"level": 1,
+					"kind": "person",
+					"one": 1,
+					"yes": true,
+					"tags": [
+						"a",
+						"b",
+						"c"
+					],
+					"points": [],
+					"extra": {
+						"a": 10,
+						"b": 6,
+						"c": 9
+					},
+					"nothing": null,
+					"choice": {
+						"deep": [
+							{
+								"x": 3
+							}
+						]
+					},
+					"nested": {
+						"inner": {
+							"v": "third one"
+						}
+					}
+				},
+				"notes": {
+					"a": {
+						"body": "first note"
+					},
+					"b": {
+						"body": "second"
+					}
+				},
+				"rows": [
+					{
+						"id": "a",
+						"n": 0,
+						"flag": false,
+						"label": "first note",
+						"data": {
+							"a": 10,
+							"b": [
+								"a"
+							]
+						},
+						"maybe": {
+							"n": 1.5
+						}
+					},
+					{
+						"id": "b",
+						"n": 0,
+						"flag": false,
+						"label": "second",
+						"data": {
+							"a": 6,
+							"b": [
+								"b"
+							]
+						}
+					},
+					{
+						"id": "c",
+						"n": 0,
+						"flag": false,
+						"label": "third one",
+						"data": {
+							"a": 9,
+							"b": [
+								"c"
+							]
+						}
+					}
+				],
+				"edits": [
+					{
+						"id": "a",
+						"path": "/notes/a.md",
+						"at": 10
+					},
+					{
+						"id": "b",
+						"path": "/notes/b.md",
+						"at": 6
+					},
+					{
+						"id": "c",
+						"path": "/notes/c.md",
+						"at": 9
+					}
+				],
+				"runs": 0
+			},
+			"finished": [
+				{
+					"count": 2
+				},
+				{
+					"count": 2
+				},
+				{
+					"count": 2
+				}
+			],
+			"note": "second"
+		}
+	}
+}

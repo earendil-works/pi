@@ -110,26 +110,9 @@ export function createSqliteMigrations(schema: SqliteSchema): readonly SqliteMig
 		`CREATE INDEX ${indexes.tasksByAbortRequested} ON ${tables.tasks} (abort_requested, id)`,
 		`CREATE INDEX ${indexes.tasksByBackground} ON ${tables.tasks} (background, id)`,
 	];
-	// Version 3 stamps conversations (their creation), tasks and submissions (their last write) with a commit sequence,
-	// as entries, documents and revisions already are, and orders every stamp by an index, so a log of the changes
-	// after a sequence is read in ranges instead of whole tables. Rows stored before carry stamp 0: they precede any
-	// sequence a log can be read after.
-	const sequenceStamps: readonly string[] = [
-		`ALTER TABLE ${tables.conversations} ADD COLUMN seq INTEGER NOT NULL DEFAULT 0`,
-		`ALTER TABLE ${tables.tasks} ADD COLUMN seq INTEGER NOT NULL DEFAULT 0`,
-		`ALTER TABLE ${tables.submissions} ADD COLUMN seq INTEGER NOT NULL DEFAULT 0`,
-		`CREATE INDEX ${indexes.conversationsBySeq} ON ${tables.conversations} (seq, id)`,
-		`CREATE INDEX ${indexes.tasksBySeq} ON ${tables.tasks} (seq, id)`,
-		`CREATE INDEX ${indexes.submissionsBySeq} ON ${tables.submissions} (seq, id)`,
-		`CREATE INDEX ${indexes.entriesBySeq} ON ${tables.entries} (commit_seq, id)`,
-		`CREATE INDEX ${indexes.documentsByCreation} ON ${tables.documents} (created_at, id)`,
-		`CREATE INDEX ${indexes.documentsByRetirement} ON ${tables.documents} (retired_at, id) WHERE retired_at IS NOT NULL`,
-		`CREATE INDEX ${indexes.documentRevisionsBySeq} ON ${tables.documentRevisions} (seq, document_id)`,
-	];
 	return [
 		{ version: 1, statements: initialSchema },
 		{ version: 2, statements: sleepingStatus },
-		{ version: 3, statements: sequenceStamps },
 	];
 }
 

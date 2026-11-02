@@ -1,0 +1,5 @@
+{
+	"name": "@example/notes",
+	"private": true,
+	"type": "module"
+}

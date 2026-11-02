@@ -267,6 +267,34 @@ describe("pi-messages", () => {
 		expect(message.errorMessage).toContain("No API key provided");
 	});
 
+	it("rejects content indexes that are not the next or an existing block", async () => {
+		const cases: unknown[][] = [
+			[{ type: "text_start", contentIndex: 4294967000 }],
+			[{ type: "text_start", contentIndex: "__proto__" }],
+			[
+				{ type: "text_start", contentIndex: 0 },
+				{
+					type: "toolcall_end",
+					contentIndex: "__proto__",
+					toolCall: { polluted: true },
+				},
+			],
+			[{ type: "text_delta", contentIndex: 0, delta: "x" }],
+		];
+		for (const events of cases) {
+			const { baseUrl } = await startServer({
+				events: [{ type: "start" }, ...events, { type: "done", reason: "stop", usage }],
+			});
+			const message = await stream(createModel(baseUrl), normalizeContext(context), { apiKey: "test-key" }).result();
+			server?.close();
+
+			expect(message.stopReason).toBe("error");
+			expect(message.errorMessage).toContain("Invalid contentIndex");
+			expect(message.content.length).toBeLessThanOrEqual(1);
+		}
+		expect(([] as unknown as Record<string, unknown>).polluted).toBeUndefined();
+	});
+
 	it("errors when the stream ends without a terminal event", async () => {
 		const { baseUrl } = await startServer({
 			events: [

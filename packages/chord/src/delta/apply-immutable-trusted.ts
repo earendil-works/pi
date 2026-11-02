@@ -86,12 +86,9 @@ function copyPath(root: JsonValue, path: Path, length: number, owned: WeakSet<ob
 
 function shallowCopy(value: JsonContainer): JsonContainer {
 	if (Array.isArray(value)) return Array.from(value);
-	const result = Object.create(Object.getPrototypeOf(value) === null ? null : Object.prototype) as Record<
-		string,
-		JsonValue
-	>;
-	for (const key of Object.keys(value)) defineData(result, key, value[key]!);
-	return result;
+	// Spread and `Object.assign()` onto a null-prototype object define own data properties, `__proto__` included, as
+	// `defineData()` per key does, at a fraction of its cost.
+	return Object.getPrototypeOf(value) === null ? Object.assign(Object.create(null), value) : { ...value };
 }
 
 function read(target: JsonContainer, key: Seg): JsonValue {

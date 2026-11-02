@@ -11,11 +11,11 @@ const reportAttributes = {
 	type: {
 		type: "string",
 		required: true,
-		description: "ReportInfo type.",
+		description: "Report kind (`Report.kind`).",
 		values: [
-			"session_failed",
+			"storage_failed",
 			"task_faulted",
-			"task_parked",
+			"task_interrupted",
 			"migration_failed",
 			"task_outdated",
 			"task_error",
@@ -28,7 +28,7 @@ const reportAttributes = {
 		type: "string",
 		required: false,
 		description: "Fixed report reason, when present.",
-		values: ["threw", "restart_limit", "missing_task", "incompatible_task"],
+		values: ["threw", "restart_limit", "interrupted", "missing_task", "task_too_old", "migration_failed"],
 	},
 	extension: { type: "string", required: false, description: "Registered extension name, when present." },
 	"task.id": { type: "number", required: false, description: "Task ID, when present.", cardinality: "high" },
@@ -52,13 +52,13 @@ export const DURABLE_TELEMETRY_SCHEMA = defineTelemetrySchema({
 	spans: {
 		"pi.durable.submit": {
 			description:
-				"Public submission admission and its commit. Inputs start root traces linked to their callers; writes are children. Internal admissions emit phase events only.",
+				"Public submission admission: with its commit for submit(draft, context); the admission only for submit(tx, draft), whose result is provisional (a later throw or storage failure of the caller's commit leaves no submission) and whose commit events go to the caller's commit context. Inputs and continues start root traces linked to their callers; writes are children. Internal admissions emit phase events only.",
 			parents: { kind: "any" },
 			startAttributes: {
 				"submission.type": {
 					type: "string",
 					required: true,
-					values: ["input", "write"],
+					values: ["input", "write", "continue"],
 					description: "Submission type.",
 				},
 				"conversation.id": { type: "number", required: true, description: "Conversation ID.", cardinality: "high" },
@@ -117,7 +117,7 @@ export const DURABLE_TELEMETRY_SCHEMA = defineTelemetrySchema({
 	metrics: {
 		"pi.durable.reports": {
 			kind: "counter",
-			description: "Reports raised, grouped by their fixed ReportInfo type.",
+			description: "Reports raised, grouped by their fixed kind.",
 			attributes: { type: reportAttributes.type },
 		},
 		"pi.durable.phase.duration": {

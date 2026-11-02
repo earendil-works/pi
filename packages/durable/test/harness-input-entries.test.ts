@@ -1,4 +1,5 @@
 // Inputs placed as application entries, and data-only writes appended at once (#10407).
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,10 +10,8 @@ import {
 	fauxText,
 	fauxToolCall,
 	type Context as ModelContext,
-	Type,
 } from "@earendil-works/pi-ai";
 import {
-	type AgentEvent,
 	type Conversation,
 	ConversationBusy,
 	defineTool,
@@ -20,14 +19,16 @@ import {
 	type Harness,
 	InboxDoc,
 	LiveDoc,
+	type LiveState,
 	MemoryStorage,
 	type SubmissionDraft,
-	watchEvents,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf, waitFor } from "./chat-support.ts";
 import { addSection, addTool } from "./harness-support.ts";
+import { viewHistory } from "./live-support.ts";
 import { context } from "./session-support.ts";
 import { aborted, type Deferred, deferred } from "./task-support.ts";
 
@@ -54,7 +55,7 @@ function holdTool(setup: ChatSetup, gate: Deferred): void {
 		defineTool({
 			name: "hold",
 			description: "Waits for the test",
-			parameters: Type.Object({}),
+			parameters: obj({}),
 			execute: async () => {
 				await gate.promise;
 				return { output: [{ type: "text", text: "held" }] };
@@ -263,11 +264,7 @@ describe("data-only writes", () => {
 		const requests: string[][] = [];
 		setup.faux.setResponses([requestLog(requests, HOLD), requestLog(requests, answer("done"))]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		const events: AgentEvent[] = [];
-		const stream = await watchEvents(harness, root.id, context);
-		stream.start(async (batch) => {
-			events.push(...batch);
-		});
+		const history = await viewHistory(harness, root.id);
 		const input = await root.submit({ type: "input", content: "a" }, context);
 		await toolRunning(harness, root);
 		const chat = { kind: "chat.message", data: { author: "bob", text: "lunch?" } };
@@ -281,12 +278,13 @@ describe("data-only writes", () => {
 			["pi.assistant"],
 			["chat.message", { author: "bob", text: "lunch?" }],
 		]);
-		await waitFor(() => events.some((event) => event.type === "entry_appended"));
-		const appended = events.find((event) => event.type === "entry_appended");
-		expect(appended).toMatchObject({
-			entry: { kind: "chat.message", id: settled.status === "done" && settled.entry },
+		// The view shows it while the run goes on.
+		const shown = history.views.find((view) => view.entries.some((entry) => entry.kind === "chat.message"));
+		expect(shown?.entries.at(-1)).toMatchObject({
+			kind: "chat.message",
+			id: settled.status === "done" && settled.entry,
 		});
-		expect(events.some((event) => event.type === "run_end")).toBe(false);
+		expect((shown?.docs["pi.live"] as LiveState).run?.inputs).toEqual([input.id]);
 		// A repeated request ID returns the same write without a second entry.
 		expect((await root.submit({ type: "write", entry: chat, requestId: "bob:1" }, context)).id).toBe(write.id);
 
@@ -303,7 +301,7 @@ describe("data-only writes", () => {
 			["system:", "user:a"],
 			["system:", "user:a", "assistant:", "toolResult:held"],
 		]);
-		await stream.stop();
+		history.detach();
 		await harness.close(context);
 	});
 
@@ -374,7 +372,15 @@ describe("data-only writes", () => {
 		await harness.waitForIdle(context);
 		expect((await f.status(context)).status).toBe("queued");
 		expect((await inboxItems(harness, root)).map((item) => item.id)).toEqual([f.id]);
-		expect(await harness.snapshot(LiveDoc, root.id, context)).toEqual({});
+		expect(await harness.snapshot(LiveDoc, root.id, context)).toEqual({
+			runFailure: {
+				taskId: expect.any(Number),
+				inputs: [input.id],
+				reason: "model_error",
+				detail: "invalid request",
+				first: expect.any(Number),
+			},
+		});
 		expect(setup.faux.state.callCount).toBe(1);
 		// The next input places the waiting mention first.
 		const g = await root.submit({ type: "input", content: "g" }, context);

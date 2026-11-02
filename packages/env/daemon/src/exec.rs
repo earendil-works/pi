@@ -217,8 +217,8 @@ fn spawn_reader(
     sender: Sender<Message>,
     stop: Arc<AtomicBool>,
     output: Option<Arc<Output>>,
-) -> JoinHandle<()> {
-    thread::spawn(move || {
+) -> std::io::Result<JoinHandle<()>> {
+    thread::Builder::new().spawn(move || {
         sys::read_pipe(pipe, &stop, |bytes| {
             let delivered = sender.send(Message::Data(stream, bytes.to_vec())).is_ok();
             if let Some(output) = &output {
@@ -298,29 +298,46 @@ pub fn run(
     } else {
         None
     };
-    let readers = [
-        spawn_reader(
-            0,
-            child.stdout.take().unwrap(),
-            sender.clone(),
-            stop.clone(),
-            gate.clone(),
-        ),
-        spawn_reader(
-            1,
-            child.stderr.take().unwrap(),
-            sender.clone(),
-            stop.clone(),
-            gate,
-        ),
-    ];
+    // A thread that cannot start (a task limit) fails the command; the started child is killed and reaped.
+    let abandon = |mut child: Child, readers: &[JoinHandle<()>], error: std::io::Error| {
+        stop.store(true, Ordering::SeqCst);
+        for reader in readers {
+            sys::interrupt_reader(reader);
+        }
+        kill_group(pid);
+        // On Windows the group kill spawns taskkill, which can fail under the same limit; kill the child directly.
+        let _ = child.kill();
+        let _ = child.wait();
+        groups.lock().unwrap().remove(&pid);
+        Failure::new("spawn_error", error.to_string())
+    };
+    let mut readers = Vec::with_capacity(2);
+    let stdout = child.stdout.take().unwrap();
+    match spawn_reader(0, stdout, sender.clone(), stop.clone(), gate.clone()) {
+        Ok(reader) => readers.push(reader),
+        Err(error) => return Err(abandon(child, &readers, error)),
+    }
+    let stderr = child.stderr.take().unwrap();
+    match spawn_reader(1, stderr, sender.clone(), stop.clone(), gate) {
+        Ok(reader) => readers.push(reader),
+        Err(error) => return Err(abandon(child, &readers, error)),
+    }
+    // The waiter receives the child once it runs, so a waiter that cannot start leaves the child here to reap.
+    let (give, take) = mpsc::channel::<Child>();
     let waiter = sender.clone();
-    thread::spawn(move || {
+    let started = thread::Builder::new().spawn(move || {
+        let Ok(mut child) = take.recv() else {
+            return;
+        };
         let _ = waiter.send(match child.wait() {
             Ok(status) => Message::Exit(status),
             Err(error) => Message::WaitFailed(error.to_string()),
         });
     });
+    if let Err(error) = started {
+        return Err(abandon(child, &readers, error));
+    }
+    let _ = give.send(child);
     drop(sender);
 
     let mut decoders = [StreamDecoder::new(), StreamDecoder::new()];

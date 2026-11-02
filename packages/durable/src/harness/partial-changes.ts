@@ -1,18 +1,25 @@
 // What a streamed answer changed in its partial message between two partial commits, so a commit costs the new text.
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonRepresentation, JsonValue } from "@earendil-works/chord";
 import { appendText, type Draft } from "@earendil-works/chord/delta";
-import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
+import type { AssistantMessage, AssistantMessageEvent, ToolCall } from "@earendil-works/pi-ai";
 import { type JsonChange, StreamingJsonParser } from "@earendil-works/pi-ai/utils/streaming-json";
 import { type AssignPlan, assignJson } from "./json.ts";
+import type { LiveState } from "./live.ts";
 
 type JsonContainer = Record<string, JsonValue> | JsonValue[];
+
+/** A partial message as `pi.live.generation.message` holds it. */
+export type PartialMessage = JsonRepresentation<AssistantMessage>;
+
+/** Committed arguments of a streamed tool call. */
+type Arguments = JsonRepresentation<ToolCall>["arguments"];
 
 /** What one partial commit writes besides the partial message itself; from `PartialChanges.take()`. */
 export type PartialCommit = {
 	/** The plan `assignJson()` writes the message with: text appends, and the arguments it leaves to `changes`. */
 	readonly plan: AssignPlan;
 	/** Each tracked tool call by content index: its argument changes since the last commit, in order, and its snapshot. */
-	readonly toolCalls: ReadonlyMap<number, { readonly changes: readonly JsonChange[]; readonly snapshot: JsonValue }>;
+	readonly toolCalls: ReadonlyMap<number, { readonly changes: readonly JsonChange[]; readonly snapshot: Arguments }>;
 };
 
 /** What a tracked tool call changed since the last commit, and whether any commit took its changes yet. */
@@ -80,16 +87,18 @@ export class PartialChanges {
 	 * Take what changed since the last call, for a commit of `message`, a copy of the partial. Clears the arguments of
 	 * tracked tool calls in `message`: the commit writes them from the changes. Call `restore()` if the commit fails.
 	 */
-	take(message: { readonly content: readonly JsonValue[] }): PartialCommit {
+	take(message: PartialMessage): PartialCommit {
 		const blocks = new Map<string | number, AssignPlan>();
 		for (const [index, { field, text }] of this.#text) {
 			blocks.set(index, { kind: "fields", fields: new Map([[field, { kind: "append", text }]]) });
 		}
 		this.#text = new Map();
-		const toolCalls = new Map<number, { readonly changes: readonly JsonChange[]; readonly snapshot: JsonValue }>();
+		const toolCalls = new Map<number, { readonly changes: readonly JsonChange[]; readonly snapshot: Arguments }>();
 		for (const [index, call] of this.#toolCalls) {
-			const block = message.content[index] as Record<string, JsonValue>;
-			toolCalls.set(index, { changes: call.changes, snapshot: block.arguments! });
+			const block = message.content[index];
+			// A tracked call is the tool call its `toolcall_start` named; the narrowing only tells TypeScript.
+			if (block?.type !== "toolCall") continue;
+			toolCalls.set(index, { changes: call.changes, snapshot: block.arguments });
 			block.arguments = {};
 			blocks.set(index, { kind: "fields", fields: new Map([["arguments", { kind: "keep" }]]) });
 			call.changes = [];
@@ -106,25 +115,32 @@ export class PartialChanges {
 	 * its first piece; when the committed message lost a call whose changes were already committed (another writer reset
 	 * it), the call falls back to its snapshot from now on.
 	 */
-	commit(generation: Draft<Record<string, JsonValue>>, message: JsonValue, commit: PartialCommit): void {
-		const committedBlocks = (generation.message as { content?: unknown[] } | undefined)?.content?.length ?? 0;
+	commit(
+		generation: Draft<NonNullable<LiveState["generation"]>>,
+		message: PartialMessage,
+		commit: PartialCommit,
+	): void {
+		const committedBlocks = generation.message?.content.length ?? 0;
 		const apply: [number, readonly JsonChange[]][] = [];
 		for (const [index, { changes, snapshot }] of commit.toolCalls) {
 			const call = this.#toolCalls.get(index);
 			if (call === undefined) continue;
-			if (index >= committedBlocks && call.committed) {
+			const block = message.content[index];
+			if (index >= committedBlocks && call.committed && block?.type === "toolCall") {
 				// The earlier changes are not in the committed message: commit the snapshot and stop tracking the call.
 				this.#toolCalls.delete(index);
-				(message as { content: Record<string, JsonValue>[] }).content[index]!.arguments = snapshot;
+				block.arguments = snapshot;
 				continue;
 			}
 			call.committed = true;
 			apply.push([index, changes]);
 		}
 		assignJson(generation, "message", message, commit.plan);
-		const content = (generation.message as unknown as { content: Draft<Record<string, JsonValue>>[] }).content;
+		const content = generation.message?.content ?? [];
 		for (const [index, changes] of apply) {
-			for (const change of changes) applyChange(content[index]!, change);
+			const block = content[index];
+			if (block?.type !== "toolCall") continue;
+			for (const change of changes) applyChange(block, change);
 		}
 	}
 
@@ -138,13 +154,15 @@ export class PartialChanges {
 }
 
 /** Apply one argument change to the committed arguments of `block`. */
-function applyChange(block: Draft<Record<string, JsonValue>>, change: JsonChange): void {
+function applyChange(block: Draft<JsonRepresentation<ToolCall>>, change: JsonChange): void {
 	const key = change.path.at(-1);
 	if (key === undefined) {
-		// Only an object root is tracked, and only `set` starts it.
-		if (change.kind === "set") block.arguments = value(change);
+		// Only an object root is tracked (`observe()` drops any other), and only `set` starts it.
+		const root = change.kind === "set" ? value(change) : undefined;
+		if (isRecord(root)) block.arguments = root;
 		return;
 	}
+	// The path follows the parsed argument text, not a type: each segment names a container `observe()` saw set.
 	let parent = block.arguments as Draft<JsonContainer>;
 	for (const segment of change.path.slice(0, -1)) {
 		parent = (parent as Record<string | number, Draft<JsonContainer>>)[segment]!;
@@ -161,6 +179,6 @@ function value(change: Extract<JsonChange, { kind: "set" }>): JsonValue {
 	return change.value as JsonValue;
 }
 
-function isRecord(value: JsonValue | undefined): boolean {
+function isRecord(value: JsonValue | undefined): value is Record<string, JsonValue> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }

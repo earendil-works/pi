@@ -117,14 +117,17 @@ export interface WatchTarget {
 }
 
 /**
- * What changed:
+ * What changed, tagged by `kind`:
  * - `paths`: something at or below each path may have changed (a directory path covers its whole subtree). Calls may be
  *   spurious; a change is never missed while the watcher is healthy.
  * - `overflow`: coverage was uncertain for a while (lost events, reconnect); rescan everything that is watched.
- * - `error`: the watcher stopped, for example because the watched tree grew past the environment's limit; no calls
- *   follow.
+ * - `failed`: the watcher stopped with `error`, for example because the watched tree grew past the environment's limit;
+ *   no calls follow.
  */
-export type WatchChange = { paths: string[] } | { overflow: true } | { error: FileError };
+export type FileChange =
+	| { readonly kind: "paths"; readonly paths: string[] }
+	| { readonly kind: "overflow" }
+	| { readonly kind: "failed"; readonly error: FileError };
 
 export interface FileWatcher {
 	/**
@@ -134,7 +137,7 @@ export interface FileWatcher {
 	 */
 	readonly mode: "native" | "polling";
 	/** Stop watching; no `onChange` call starts after this resolves. Idempotent. */
-	close(context: Context): Promise<void>;
+	stop(context: Context): Promise<void>;
 }
 
 /** Where lines of a file are, as `BinaryReader.scanLines` found them. */
@@ -257,11 +260,11 @@ export interface FileSystem {
 	/**
 	 * Report changes to files and directories, for hosts that load resources from the environment. When the returned
 	 * watcher exists, coverage is established: a host that watches before it loads cannot miss a change made during the
-	 * load. See `WatchChange` for what is reported and `FileWatcher.mode` for how reliably.
+	 * load. See `FileChange` for what is reported and `FileWatcher.mode` for how reliably.
 	 */
 	watch(
 		targets: readonly WatchTarget[],
-		onChange: (change: WatchChange) => void,
+		onChange: (change: FileChange) => void,
 		context: Context,
 	): Promise<Result<FileWatcher, FileError>>;
 	canonicalPath(path: string, context: Context): Promise<Result<string, FileError>>;

@@ -1,0 +1,171 @@
+[
+    {
+        "description": "single dependency",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "dependentSchemas": {
+                "bar": {
+                    "properties": {
+                        "foo": {"type": "integer"},
+                        "bar": {"type": "integer"}
+                    }
+                }
+            }
+        },
+        "tests": [
+            {
+                "description": "valid",
+                "data": {"foo": 1, "bar": 2},
+                "valid": true
+            },
+            {
+                "description": "no dependency",
+                "data": {"foo": "quux"},
+                "valid": true
+            },
+            {
+                "description": "wrong type",
+                "data": {"foo": "quux", "bar": 2},
+                "valid": false
+            },
+            {
+                "description": "wrong type other",
+                "data": {"foo": 2, "bar": "quux"},
+                "valid": false
+            },
+            {
+                "description": "wrong type both",
+                "data": {"foo": "quux", "bar": "quux"},
+                "valid": false
+            },
+            {
+                "description": "ignores arrays",
+                "data": ["bar"],
+                "valid": true
+            },
+            {
+                "description": "ignores strings",
+                "data": "foobar",
+                "valid": true
+            },
+            {
+                "description": "ignores other non-objects",
+                "data": 12,
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "boolean subschemas",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "dependentSchemas": {
+                "foo": true,
+                "bar": false
+            }
+        },
+        "tests": [
+            {
+                "description": "object with property having schema true is valid",
+                "data": {"foo": 1},
+                "valid": true
+            },
+            {
+                "description": "object with property having schema false is invalid",
+                "data": {"bar": 2},
+                "valid": false
+            },
+            {
+                "description": "object with both properties is invalid",
+                "data": {"foo": 1, "bar": 2},
+                "valid": false
+            },
+            {
+                "description": "empty object is valid",
+                "data": {},
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "dependencies with escaped characters",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "dependentSchemas": {
+                "foo\tbar": {"minProperties": 4},
+                "foo'bar": {"required": ["foo\"bar"]}
+            }
+        },
+        "tests": [
+            {
+                "description": "quoted tab",
+                "data": {
+                    "foo\tbar": 1,
+                    "a": 2,
+                    "b": 3,
+                    "c": 4
+                },
+                "valid": true
+            },
+            {
+                "description": "quoted quote",
+                "data": {
+                    "foo'bar": {"foo\"bar": 1}
+                },
+                "valid": false
+            },
+            {
+                "description": "quoted tab invalid under dependent schema",
+                "data": {
+                    "foo\tbar": 1,
+                    "a": 2
+                },
+                "valid": false
+            },
+            {
+                "description": "quoted quote invalid under dependent schema",
+                "data": {"foo'bar": 1},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "dependent subschema incompatible with root",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "properties": {
+                "foo": {}
+            },
+            "dependentSchemas": {
+                "foo": {
+                    "properties": {
+                        "bar": {}
+                    },
+                    "additionalProperties": false
+                }
+            }
+        },
+        "tests": [
+            {
+                "description": "matches root",
+                "data": {"foo": 1},
+                "valid": false
+            },
+            {
+                "description": "matches dependency",
+                "data": {"bar": 1},
+                "valid": true
+            },
+            {
+                "description": "matches both",
+                "data": {"foo": 1, "bar": 2},
+                "valid": false
+            },
+            {
+                "description": "no dependency",
+                "data": {"baz": 1},
+                "valid": true
+            }
+        ]
+    }
+]

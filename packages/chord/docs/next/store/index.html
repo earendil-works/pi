@@ -1,0 +1,861 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>One Store: how a p3 session keeps, exports and syncs everything it owns</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A design book · Chord v2 and p3 · 2026-10-21</div>
+  <h1>One<br>Store</h1>
+  <p class="subtitle">Why Durable&#39;s transcript, Chord&#39;s documents and every plugin&#39;s own tables live in one transactional store, and how that store moves a session to another machine without coming apart</p>
+  <div class="cover-stats"><div class="stat"><b>17</b><span>review items decided (S1–S17)</span></div><div class="stat"><b>1</b><span>commit queue per store, one seq for every owner</span></div><div class="stat"><b>~150 B</b><span>outbox record for renaming 10,000 rows (instead of ~40 MB)</span></div><div class="stat"><b>0</b><span>lines of plugin code a replica needs</span></div></div>
+  <div class="cover-note"><p>Written for the owner from the discussion of 2026-10-21 and the store review by Fable and Astra. Every decision is in
+the decision log (<code>packages/chord/docs/next/decisions.md</code>, entries &quot;The store&quot;, &quot;S1&quot; to &quot;S17&quot;, &quot;Context last&quot;); the
+review is summarized in <code>apps/p2/docs/p3-reviews/store-review-summary.md</code>, bulk operations and migrations in
+<code>store-bulk-migrations.md</code>, the earlier discussion with measurements in <code>session-data-scenarios.md</code>. Numbers were
+measured on slayer with Node 24.4.1 and <code>node:sqlite</code> unless marked as estimates. Nothing here is built yet. Notes
+marked <em>review</em> are points the reviewers raised that the design answers.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#problem">I. A Session Is More Than Its Transcript</a></li>
+<li><a href="#dropped">II. What We Tried and Dropped</a></li>
+<li><a href="#store">III. The Store</a></li>
+<li><a href="#commit">IV. Writing It Down</a></li>
+<li><a href="#reading">V. Reading</a></li>
+<li><a href="#documents">VI. Documents</a></li>
+<li><a href="#bulk">VII. Writing Many Rows</a></li>
+<li><a href="#easy">VIII. The Easy Parts</a></li>
+<li><a href="#sync">IX. Moving a Session</a></li>
+<li><a href="#rules">X. Rules for Plugin Authors</a></li>
+<li><a href="#what-s-next">What&#39;s Next</a></li>
+<li><a href="#decisions">Appendix A: Decisions</a></li>
+<li><a href="#glossary">Appendix B: Glossary</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Mario works in session S1 on his laptop. The agent edits files, and a plugin called <strong>file-history</strong> remembers every
+edit: which file, which conversation entry made it, the content before and after. It keeps those rows in its own table,
+because it needs queries: every version of <code>src/app.ts</code>, every file the last turn touched, every edit under <code>a/</code>. When
+Mario renames the directory <code>a/</code> to <code>b/</code>, ten thousand rows change.</p>
+<p>In the evening he wants to continue S1 on his desktop. Another day he exports S1 to a file and imports it into a
+colleague&#39;s p3. Each time the other machine must end up with the conversation (Durable), the plugins&#39; documents (Chord)
+and the file-history table, and all three must agree: a row that says &quot;entry 812 made this edit&quot; must find entry 812,
+the same entry 812.</p>
+<p>Copying files does not do that, and neither does syncing each storage on its own. This book explains the problem, the
+solutions that were tried and dropped, and the design that came out: one transactional store per session, under
+Durable, Chord and every plugin.</p>
+<h3 id="eight-things-to-know">Eight things to know</h3>
+<ol class="findings">
+<li><strong>A session is self-contained.</strong> Everything it owns lives in its store and its directory; it can be exported from
+the session alone, imported elsewhere, synced and continued on another machine (P1).</li>
+<li><strong>One store holds everything.</strong> Durable&#39;s records (through an adapter), Chord&#39;s persisted documents and plugin
+tables commit into one store, through one commit queue, numbered by one seq.</li>
+<li><strong>Order is guaranteed where it is observable.</strong> Disk, outbox and export follow the seq; in-memory adoption runs
+inside the commit step (S1), so no reader ever sees seq 41 without seq 40.</li>
+<li><strong>The outbox records what changed, not code.</strong> Rows, column updates, bulk operations and table changes, written in
+the same transaction as the data. A replica applies them without any plugin code.</li>
+<li><strong>Tables are real tables with a small query language.</strong> Keys and indexed columns are typed; text is UTF-8 and
+compares by code point on every backend.</li>
+<li><strong>Bulk writes stay small.</strong> <code>updateWhere</code> records one operation instead of one row per change, and every replica runs
+the same operation.</li>
+<li><strong>Migrations run only where the code is.</strong> Changes inside <code>json(...)</code> columns migrate on access; key and index changes run eagerly on the
+driver and ship as ordinary writes.</li>
+<li><strong>Losing control never rolls back.</strong> A device that learns another one took over turns its copy into a separate
+session.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>A <strong>session</strong> is one agent workspace: its conversations, tasks and plugin data. An <strong>owner</strong> is the code that writes a
+piece of data: Durable&#39;s Session, a Chord object, a plugin&#39;s object. The <strong>store</strong> is the transactional store of one
+session; a <strong>backend</strong> is what it runs on (SQLite, including in the browser as WebAssembly, or a memory backend for tests). A <strong>table</strong> is a set of
+rows owned by one object. A <strong>commit</strong> is one atomic write; the <strong>commit step</strong> is the short, serialized part of a commit
+in which the store checks, writes and numbers it; the <strong>seq</strong> is that number. The <strong>outbox</strong> holds a record of every
+commit, written in the same backend transaction. The <strong>driver</strong> is the machine that writes a session; a <strong>replica</strong> is
+a copy on another machine that applies the driver&#39;s records. <strong>Adoption</strong> is an owner updating its in-memory state to a
+committed write.</p>
+</section>
+
+<section class="chapter" id="problem"><header class="opener"><div class="numeral">I</div><h2>A Session Is More Than Its Transcript</h2><p class="lede">What has to travel with a session, and why separate storages cannot keep it consistent.</p></header>
+<p class="dropcap">A p3 session holds three kinds of data written by three kinds of owners. Durable writes the transcript: conversations,
+entries, tasks and its own documents. Chord objects write persisted documents: settings, drafts, plugin state. And a
+plugin may need data shaped for queries, like file-history&#39;s edits.</p>
+<p>The owner&#39;s rule for p3 (<strong>P1</strong>) is that a session is self-contained. Everything of it lives in its storage plus its
+directory; the server only mirrors it (the session catalog) and keeps instance data (shares, devices, settings). That
+makes three things possible: export a session from its files alone, import it into another p3, and sync it to Radius
+so another device can continue it.</p>
+<p>Durable alone already supports that shape: one storage, every change in an atomic commit, numbered by a seq. Armin&#39;s
+sync design builds on it: a decorator captures each committed batch into an outbox, batches go to Radius, a replica
+replays them. It breaks as soon as a session has a second storage.</p>
+<div class="steps"><div class="steps-head"><span class="title">One edit, two storages, synced separately</span><span class="count"></span><button class="prev" type="button">Back</button><button class="next" type="button">Next</button></div><div class="step-panel"><h4>On the laptop</h4><p>The edit tool records the edit in file-history&#39;s own <code>history.sqlite</code> (row: path <code>x.ts</code>, entry 812). Durable commits
+the tool&#39;s result. Both exist and agree.</p>
+</div><div class="step-panel"><h4>The history arrives first</h4><p>The desktop has received <code>history.sqlite</code> up to the edit, but Durable&#39;s log only up to the commit before. The row says
+entry 812 made the edit; the desktop has no entry 812.</p>
+</div><div class="step-panel"><h4>Mario takes over now</h4><p>The laptop is closed; the desktop becomes the driver and writes its next entry, which gets id 812: a different
+message. The row now points to the wrong entry, for good.</p>
+</div></div>
+<p>Each storage is consistent on its own. What is missing is one order across them: which change of <code>history.sqlite</code>
+happened before which commit of the transcript. Every solution below is judged by whether it provides that order,
+lets a replica work without the plugin&#39;s code, and keeps plugins able to model what they need.</p>
+</section>
+
+<section class="chapter" id="dropped"><header class="opener"><div class="numeral">II</div><h2>What We Tried and Dropped</h2><p class="lede">The solutions discussed on the way, and the reason each one failed.</p></header>
+<p class="dropcap">The first answers tried to avoid giving plugins storage at all. The later ones gave them storage and tried to sync it.</p>
+<table>
+<thead>
+<tr>
+<th>Idea</th>
+<th>Why it was dropped</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Plugins&#39; own databases hold only derived data (indexes, caches), rebuilt after an import</td>
+<td>too limiting: some plugins need their own write model and queries (owner)</td>
+</tr>
+<tr>
+<td>Export plugin directories as opaque files</td>
+<td>needs a stopped session; a changing database cannot sync in small pieces</td>
+</tr>
+<tr>
+<td>Plugin export and import hooks</td>
+<td>every plugin would build its own incremental log for sync</td>
+</tr>
+<tr>
+<td>Plugin record logs in the session log, the plugin&#39;s database rebuilt from them by an <code>apply</code> function</td>
+<td>the plugin must keep <code>apply</code> deterministic and every record version forever</td>
+</tr>
+<tr>
+<td>Several storages, each with an outbox inside its own transaction, ordered by one shared position counter</td>
+<td>works (prototype), but many outboxes and a &quot;safe cut&quot; rule; SQLite&#39;s row-change records are per row (a 10k-row rename is 259–418 KB); schema changes are not captured</td>
+</tr>
+<tr>
+<td>A SQLite store that records the plugin&#39;s SQL statements, checked by a hash of their effect</td>
+<td>SQLite only; arbitrary SQL can give different results on replicas (<code>random()</code>, unordered <code>INSERT … SELECT</code>, SQLite versions)</td>
+</tr>
+<tr>
+<td>Raw SQL reads with controlled writes</td>
+<td>ties every backend to SQLite and needs a guard against SQL that writes</td>
+</tr>
+<tr>
+<td>An IndexedDB-shaped API only (keys, indexes, ranges)</td>
+<td>too weak for real queries (owner)</td>
+</tr>
+<tr>
+<td>Chord&#39;s documents inside Durable&#39;s existing storage</td>
+<td>covers Chord, not plugin tables</td>
+</tr>
+</tbody></table>
+<p>The store design kept something from almost each: one order for everything (from the shared counter), recorded
+operations instead of rows where possible (from the statement idea, made safe because the operations are the store&#39;s
+own), and a small query language (from the IndexedDB shape, but over real tables).</p>
+<p>Inside the store, more choices were dropped during the review:</p>
+<table>
+<thead>
+<tr>
+<th>Choice</th>
+<th>Why dropped</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>all rows of all tables in one generic table <code>rows(tbl, key, v, row JSON)</code></td>
+<td>the owner wants real tables; with table definitions in the outbox a replica needs no plugin code anyway</td>
+</tr>
+<tr>
+<td>index entries maintained by the store in a separate table</td>
+<td>an extra row per index per write; SQLite could no longer filter natively</td>
+</tr>
+<tr>
+<td>code point order (SQLite&#39;s native order) with lone surrogates replaced</td>
+<td>lossy (<code>&quot;\uD800&quot;</code> and <code>&quot;\uFFFD&quot;</code> collide) and needs a comparator in JS</td>
+</tr>
+<tr>
+<td>text only for equality, order only over integers (Durable&#39;s own approach)</td>
+<td>ordered text, ranges and prefixes must be possible (owner)</td>
+</tr>
+<tr>
+<td>JSON-field operands in bulk updates</td>
+<td>they lean on SQLite&#39;s JSON functions; added only when a real case needs them</td>
+</tr>
+</tbody></table>
+</section>
+
+<section class="chapter" id="store"><header class="opener"><div class="numeral">III</div><h2>The Store</h2><p class="lede">Layers, tables owned by objects, and the one transaction API.</p></header>
+<p class="dropcap">The store sits between the backends and everything that persists data in a session.</p>
+<figure class="fig wide"><svg viewBox="0 0 720 389" width="100%" role="img" aria-label="The layers. Durable keeps its existing storages and gets one more, the adapter; Chord and plugins use the store directly." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">OWNERS</text><text x="16" y="144" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">STORE</text><text x="16" y="266" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">BACKENDS</text><rect x="19" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="124" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">Durable Session</text><text x="124" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">`StoreStorage` adapter</text><rect x="255" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">Chord objects</text><text x="360" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">persisted documents</text><rect x="491" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="596" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">plugin objects</text><text x="596" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">self.table(...)</text><rect x="19" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="124" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">documents engine</text><text x="124" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">records, revisions, versions</text><rect x="255" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">tables</text><text x="360" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">query language, writes</text><rect x="491" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="596" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">commit step</text><text x="596" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">seq, outbox, adoption</text><rect x="137" y="280" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="242" y="298.5" font-size="11" fill="#2a2723" text-anchor="middle">SQLite</text><text x="242" y="312.5" font-size="9.5" fill="#7b7468" text-anchor="middle">Node, Durable Objects, browser</text><text x="242" y="325" font-size="9.5" fill="#7b7468" text-anchor="middle">(WebAssembly)</text><rect x="373" y="280" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="478" y="304.8" font-size="11" fill="#2a2723" text-anchor="middle">memory</text><text x="478" y="318.8" font-size="9.5" fill="#7b7468" text-anchor="middle">tests</text><path d="M124 80 L124 156" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><path d="M360 80 L124 156" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><path d="M596 80 L360 156" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><path d="M124 154 Q360 110 596 154" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><path d="M465 180 L489 180" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><path d="M596 202 L242 278" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><text x="16" y="359" font-size="10.5" fill="#7b7468" text-anchor="start">Durable's memory, SQLite and JSONL storages stay (S15), with only the adopt argument added (S1); StoreStorage joins</text><text x="16" y="374" font-size="10.5" fill="#7b7468" text-anchor="start">them.</text></svg><figcaption><span class="fignum">Figure 1.</span> The layers. Durable keeps its existing storages and gets one more, the adapter; Chord and plugins use the store directly.</figcaption></figure>
+<p><strong>A table belongs to one object</strong>, like a document: only that object reads and writes it; its address is (host kind,
+object type, table name), never a host instance such as the session id (W7), so a params change, a split or an import
+never orphans data; other plugins see the data only through the object&#39;s
+state and methods.</p>
+<pre><code><span class="tk-k">const</span> <span class="tk-t">Edits</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"edits"</span>, {
+  version: <span class="tk-n">2</span>,
+  columns: { id: <span class="tk-f">str</span>(), path: <span class="tk-f">str</span>(), entry: <span class="tk-f">int</span>(), at: <span class="tk-f">int</span>(), meta: <span class="tk-f">json</span>&lt;<span class="tk-t">EditMeta</span>&gt;() },   <span class="tk-c">// flat</span>
+  key: [<span class="tk-s">"id"</span>],
+  indexes: { byPath: [<span class="tk-s">"path"</span>, <span class="tk-s">"at"</span>], byEntry: [<span class="tk-s">"entry"</span>] },
+});
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">FileHistoryStore</span>, (_, self) =&gt; {          <span class="tk-c">// a local object with empty params</span>
+  <span class="tk-k">const</span> edits = self.<span class="tk-f">table</span>(<span class="tk-t">Edits</span>);
+  <span class="tk-k">return</span> {
+    record: (edit, ctx) =&gt; self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; { <span class="tk-k">await</span> tx.<span class="tk-f">put</span>(edits, edit); }, ctx),
+    versions: ({ path }, ctx) =&gt;
+      edits.<span class="tk-f">page</span>(<span class="tk-f">query</span>(<span class="tk-t">Edits</span>).<span class="tk-f">where</span>((e) =&gt; <span class="tk-f">eq</span>(e.path, path)).<span class="tk-f">orderBy</span>((e) =&gt; e.at, <span class="tk-s">"desc"</span>), <span class="tk-n">20</span>, ctx),
+  };
+});</code></pre>
+<ul>
+<li>A table&#39;s <code>columns</code> are a flat record: each column is a scalar (<code>str</code>, <code>int</code>, <code>bool</code>, <code>num</code>) or <code>json(...)</code>; nesting
+exists only inside <code>json(...)</code>. Every column is a real SQLite column. Scalars can be filtered and ordered; keys and
+indexed columns must be <code>str</code> or <code>int</code>. A <code>json(...)</code> column holds JSON text: typed when read, never queryable or
+indexable (the type checker refuses it).</li>
+<li>Tables and documents of an object are written in the same transaction API, <code>self.tx(fn, ctx)</code> (S14). The context
+comes last in every signature (owner&#39;s rule).</li>
+<li>Index <strong>definitions</strong> are recorded like other table changes: when the owning object starts on the driver, the store
+creates or drops the difference between declared and existing indexes, and every replica applies it. Index contents
+never travel; every backend maintains them from the rows. So every copy of the store is the same file.</li>
+</ul>
+</section>
+
+<section class="chapter" id="commit"><header class="opener"><div class="numeral">IV</div><h2>Writing It Down</h2><p class="lede">One commit queue per store, one seq for every owner, and adoption inside the step.</p></header>
+<p class="dropcap">Two different things are serialized, and they must not be confused. A <strong>line</strong> serializes a whole transaction
+callback: read, decide, write. Chord has one line per object, Durable one per Session. The <strong>commit queue</strong> serializes
+only the final step: checks, writes, seq, outbox record. It is short and there is one per store.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 414" width="100%" role="img" aria-label="Two Chord objects and a Durable turn commit at the same time. Their callbacks never wait for each other; only the short commit steps queue." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="406" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="102" y="27" font-size="11" fill="#2a2723" text-anchor="middle">object A</text><text x="102" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">its own line</text><line x1="274" y1="52" x2="274" y2="406" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="274" y="27" font-size="11" fill="#2a2723" text-anchor="middle">object B</text><text x="274" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">its own line</text><line x1="446" y1="52" x2="446" y2="406" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="446" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Durable Session</text><text x="446" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">its own line</text><line x1="618" y1="52" x2="618" y2="406" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="618" y="27" font-size="11" fill="#2a2723" text-anchor="middle">commit queue</text><text x="618" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">one per store</text><g class="step edge" style="--i:1"><path d="M102 72 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="144" y="82" font-size="10" fill="#2a2723" text-anchor="start">draft notes …</text></g><g class="step edge" style="--i:2"><path d="M274 112 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="316" y="122" font-size="10" fill="#2a2723" text-anchor="start">draft drafts …</text></g><g class="step edge" style="--i:3"><path d="M446 152 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="488" y="162" font-size="10" fill="#2a2723" text-anchor="start">phase writes …</text></g><g class="step edge" style="--i:4"><line x1="102" y1="198" x2="615" y2="198" stroke="#7b7468" marker-end="url(#f2m)"/><text x="360" y="192" font-size="10" fill="#2a2723" text-anchor="middle">commit</text></g><g class="step edge" style="--i:5"><path d="M618 224 h-34 v14 h32" fill="none" stroke="#b4472f" marker-end="url(#f2a)"/><text x="576" y="234" font-size="10" fill="#b4472f" text-anchor="end">seq 41: write, outbox, adopt A</text></g><g class="step edge" style="--i:6"><line x1="274" y1="270" x2="615" y2="270" stroke="#7b7468" marker-end="url(#f2m)"/><text x="446" y="264" font-size="10" fill="#2a2723" text-anchor="middle">commit</text></g><g class="step edge" style="--i:7"><path d="M618 296 h-34 v14 h32" fill="none" stroke="#b4472f" marker-end="url(#f2a)"/><text x="576" y="306" font-size="10" fill="#b4472f" text-anchor="end">seq 42: write, outbox, adopt B</text></g><g class="step edge" style="--i:8"><line x1="446" y1="342" x2="615" y2="342" stroke="#7b7468" marker-end="url(#f2m)"/><text x="532" y="336" font-size="10" fill="#2a2723" text-anchor="middle">commit</text></g><g class="step edge" style="--i:9"><path d="M618 368 h-34 v14 h32" fill="none" stroke="#b4472f" marker-end="url(#f2a)"/><text x="576" y="378" font-size="10" fill="#b4472f" text-anchor="end">seq 43: write, outbox, adopt Durable</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> Two Chord objects and a Durable turn commit at the same time. Their callbacks never wait for each other; only the short commit steps queue.</figcaption></figure>
+<p>Durable&#39;s seq is the store&#39;s seq. Durable sees gaps (other owners&#39; commits in between), and that is harmless: every use
+of a seq in Durable compares (<code>created_at &lt;= at</code>, <code>seq &gt; base</code>); nothing computes <code>seq + 1</code> to find a neighbour (checked
+in the storages and the Session).</p>
+<h3 id="adoption-inside-the-step-s1">Adoption inside the step (S1)</h3>
+<p>After a commit is on disk, each owner swaps its in-memory state to the committed version. If that happens later, in
+the owner&#39;s own continuation, the order can flip:</p>
+<pre><code>disk:    40 file-history, 41 Durable
+memory:  Durable adopts 41 first (one await fewer)
+         a routine on "entry 812 committed" reads file-history → still at 39</code></pre>
+<p>So adoption runs inside the commit step, synchronously, before the next commit starts. Durable&#39;s storage interface
+carries it as a new required argument:</p>
+<pre><code><span class="tk-f">commit</span>(writes: <span class="tk-k">readonly</span> <span class="tk-t">StorageWrite</span>[], adopt: (seq: <span class="tk-t">Seq</span>) =&gt; <span class="tk-k">void</span>, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">Seq</span>&gt;;</code></pre>
+<p>Every storage calls <code>adopt(seq)</code> once its commit is durable and before its next commit. The Session catches its own
+adoption errors; a rejection after adoption fails the Session without discarding the adopted changes.</p>
+<h3 id="adopt-and-mark-in-the-step-flush-right-after-w1">Adopt and mark in the step, flush right after (W1)</h3>
+<p>The step itself stays short: it writes, adopts (pointer swaps of every changed value, including Durable&#39;s views the
+commit touched) and <strong>marks</strong> (dependent derives dirty, ops appended by reference to each touched hold&#39;s batch and each
+watch&#39;s queue). Right after the step, synchronously and before any other code runs, the committing owner <strong>flushes</strong>:
+it recomputes the dirty derives someone holds or watches, encodes one part per touched hold into one message per link,
+and queues watch callbacks. So a source and the derives over it always travel in one message; a throwing derive fails
+only its own member, never the commit.</p>
+<pre><code>step 40:  write · adopt notes · mark count dirty, notes' ops into tab 1's batch
+flush 40: count = 3 → its ops join the batch · ONE message to tab 1 { notes: +1, count: 3 }
+step 41:  write · adopt Durable's view · mark lastReply …</code></pre>
+<p>Watch listeners run afterwards, each in order; their order across owners may differ from the seq, but every listener
+reads a complete prefix of the log.</p>
+<h3 id="when-a-commit-counts-as-done-s3">When a commit counts as done (S3)</h3>
+<p>The step ends only on the backend&#39;s terminal success: SQLite&#39;s <code>COMMIT</code> returned (with an asynchronous backend, the
+transaction&#39;s final completion event, not its individual requests). The memory backend stages a
+commit and swaps it in at the end. An ambiguous outcome, an error during <code>COMMIT</code>, stops the store
+(<code>storage_failed</code>): nobody knows whether the commit landed, so nothing more is written or published.</p>
+<div class="note review"><b class="tag">Review: request success is not commit completion</b><p>Astra&#39;s trace: IndexedDB reports the puts of seq 40 successful, the store publishes 40, the transaction aborts later
+(quota), 50 commits on top: memory has 40, disk does not. The rule above is the answer.</p>
+</div>
+<h3 id="ids">Ids</h3>
+<p>Each owner&#39;s id counter starts, when the store opens, above that owner&#39;s highest stored id: one index lookup per table
+(S10). An id handed out to a transaction that never committed may be handed out again after a restart. Nobody can
+notice, because nothing leaves a transaction before it commits (S2), so Durable&#39;s <code>mintId</code> contract is narrowed to say
+exactly that.</p>
+</section>
+
+<section class="chapter" id="reading"><header class="opener"><div class="numeral">V</div><h2>Reading</h2><p class="lede">A small query language, one text order on every backend, and cursors.</p></header>
+<p class="dropcap">Queries are immutable data built in TanStack DB&#39;s style; S12 starts without joins, grouping and projections:</p>
+<pre><code><span class="tk-f">query</span>(<span class="tk-t">Edits</span>).<span class="tk-f">where</span>((e) =&gt; <span class="tk-f">eq</span>(e.path, <span class="tk-s">"src/app.ts"</span>)).<span class="tk-f">orderBy</span>((e) =&gt; e.at, <span class="tk-s">"desc"</span>)
+<span class="tk-f">query</span>(<span class="tk-t">Edits</span>).<span class="tk-f">where</span>((e) =&gt; <span class="tk-f">and</span>(<span class="tk-f">gte</span>(e.at, <span class="tk-k">from</span>), <span class="tk-f">lt</span>(e.at, to)))
+<span class="tk-f">query</span>(<span class="tk-t">Edits</span>).<span class="tk-f">where</span>((e) =&gt; <span class="tk-f">prefix</span>(e.path, <span class="tk-s">"a/"</span>))</code></pre>
+<p><code>where</code> takes <code>eq ne lt lte gt gte inArray isNull prefix and or not</code>. <code>limit</code> and the cursor are arguments of the
+runner, not part of the query. <code>count(q)</code> is the one aggregate; others are computed in JavaScript over indexed scans
+until a real case needs more.</p>
+<h3 id="one-text-order">One text order</h3>
+<p>Text compares by Unicode code point on every backend (owner, 2026-10-26; this replaced the first design, UTF-16 BLOBs
+in JavaScript order, S16 and W8). That is the order SQLite compares UTF-8 text in natively, and Durable Objects,
+sqlite-wasm, Postgres (<code>COLLATE &quot;C&quot;</code>) and MySQL (<code>utf8mb4_0900_bin</code>) do too. Every <code>str()</code> column is plain UTF-8
+<code>TEXT</code>: strings go to the driver and come back as they are, readable in <code>sqlite3</code> and in any other tool.</p>
+<p>It differs from JavaScript&#39;s <code>&lt;</code> and <code>sort()</code> in one range only: characters U+E000-U+FFFF (fullwidth forms such as
+<code>～</code>, private use, U+FFFD) against characters above U+FFFF (emoji):</p>
+<pre><code>JS sort():    "测试😀" &lt; "测试（一）"
+store order:  "测试（一）" &lt; "测试😀"</code></pre>
+<p>The store exports <code>compareText(a, b)</code> for plugins that sort store text themselves; the memory backend uses it for
+ordering, ranges, <code>max</code> and <code>min</code>. Page with the store&#39;s cursors and use <code>prefix()</code>; a hand-built bound such as
+<code>p + &quot;\uffff&quot;</code> misses every <code>p</code> followed by an emoji.</p>
+<p>UTF-8 cannot hold a lone surrogate, so every <code>str()</code> value written, and every query operand, goes through
+<code>toWellFormed()</code>: a lone surrogate becomes U+FFFD, as <code>TextEncoder</code> does. A string cut in the middle of an emoji by
+<code>slice()</code> is stored with U+FFFD in its place; cut text with <code>[...s].slice()</code> to keep it whole. A <code>str()</code> value may not
+contain NUL (<code>invalid/args</code>); content belongs in <code>json(...)</code> columns, which escape both. There is no Unicode
+normalization: &quot;é&quot; written as one code point and &quot;e&quot; plus a combining accent are two keys.</p>
+<table>
+<thead>
+<tr>
+<th>100k path-like keys</th>
+<th>UTF-16 BLOB (the first design)</th>
+<th>UTF-8 TEXT</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>insert, one transaction</td>
+<td>125 ms</td>
+<td>113 ms</td>
+</tr>
+<tr>
+<td>read</td>
+<td>106 ms</td>
+<td>32 ms</td>
+</tr>
+<tr>
+<td>bytes of an 18-character ASCII path</td>
+<td>36</td>
+<td>18</td>
+</tr>
+</tbody></table>
+<h3 id="running-queries">Running queries</h3>
+<p>A query is immutable data; the table handle runs it, and the context comes last:</p>
+<pre><code><span class="tk-k">const</span> edits = self.<span class="tk-f">table</span>(<span class="tk-t">Edits</span>);
+<span class="tk-k">const</span> byPath = <span class="tk-f">query</span>(<span class="tk-t">Edits</span>).<span class="tk-f">where</span>((e) =&gt; <span class="tk-f">prefix</span>(e.path, <span class="tk-s">"src/"</span>)).<span class="tk-f">orderBy</span>((e) =&gt; e.path);
+
+<span class="tk-k">const</span> page = <span class="tk-k">await</span> edits.<span class="tk-f">page</span>(byPath, <span class="tk-n">100</span>, ctx, { after: cursor });   <span class="tk-c">// { rows, next? }</span>
+<span class="tk-k">for</span> <span class="tk-k">await</span> (<span class="tk-k">const</span> row <span class="tk-k">of</span> edits.<span class="tk-f">rows</span>(byPath, ctx)) { … }                 <span class="tk-c">// all pages</span>
+<span class="tk-k">const</span> e1 = <span class="tk-k">await</span> edits.<span class="tk-f">get</span>([<span class="tk-s">"e1"</span>], ctx);
+
+<span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; {
+  <span class="tk-k">for</span> <span class="tk-k">await</span> (<span class="tk-k">const</span> row <span class="tk-k">of</span> tx.<span class="tk-f">rows</span>(edits, byPath)) {                    <span class="tk-c">// committed rows, stable during the tx</span>
+    <span class="tk-k">await</span> tx.<span class="tk-f">update</span>(edits, [row.id], { dir: <span class="tk-f">dirname</span>(row.path) });
+  }
+  <span class="tk-k">const</span> again = <span class="tk-k">await</span> tx.<span class="tk-f">get</span>(edits, [<span class="tk-s">"e1"</span>]);                           <span class="tk-c">// sees this transaction's own writes</span>
+}, ctx);</code></pre>
+<p>Inside a transaction, <code>tx.page</code> and <code>tx.rows</code> return committed rows: a stable view, because only the owning object
+writes its tables and its transactions run one at a time. They do not show the transaction&#39;s own writes; <code>tx.get</code> does.
+The rule in one sentence: queries inside a transaction see the state before it; your own writes become visible after
+the commit. After an <code>updateWhere</code> or <code>deleteWhere</code> on a table, <code>tx.get</code> on that table throws <code>read_after_bulk</code>
+(W10): the store would need a second evaluator to know what a bulk operation did to one row.</p>
+<h3 id="cursors-and-consistent-reads">Cursors and consistent reads</h3>
+<p>Every index ends with the primary key, so order is total and cursors are stable. A cursor is opaque, carries its
+direction and its last key as logical values, is bound to its query&#39;s order, and is refused by another query or the
+other direction.</p>
+<p>Reads outside a transaction see committed state, one query at a time. A read that needs several queries, like a
+document assembled from its base and later revisions, runs in one backend read transaction (S4). Two separately
+awaited reads in object code are not a snapshot, and the guide says so.</p>
+</section>
+
+<section class="chapter" id="documents"><header class="opener"><div class="numeral">VI</div><h2>Documents</h2><p class="lede">One documents engine in the store, used by Durable&#39;s adapter and by Chord.</p></header>
+<p class="dropcap">Durable and Chord both persist documents the same way: a record per incarnation, revisions made of a base and later
+deltas, versions, <code>checkpointWhen</code>, one live document per address. The store implements it once (S13):</p>
+<pre><code><span class="tk-k">type</span> <span class="tk-t">DocAddress</span> = { namespace: string; owner: string; kind: string; key?: string };
+
+<span class="tk-k">interface</span> <span class="tk-t">Documents</span> {                                   <span class="tk-c">// reads, committed state</span>
+  <span class="tk-f">find</span>(address: <span class="tk-t">DocAddress</span>, at: <span class="tk-t">At</span>, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">DocRecord</span> | <span class="tk-k">undefined</span>&gt;;
+  <span class="tk-f">load</span>(id: number, at: <span class="tk-t">At</span>, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">StoredDoc</span> | <span class="tk-k">undefined</span>&gt;;   <span class="tk-c">// base + deltas, applied once</span>
+  <span class="tk-f">list</span>(query: <span class="tk-t">DocListQuery</span>, limit: number, cursor: <span class="tk-t">Cursor</span> | <span class="tk-k">undefined</span>, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">Page</span>&lt;<span class="tk-t">DocRecord</span>&gt;&gt;;
+}
+<span class="tk-k">interface</span> <span class="tk-t">DocumentWrites</span> {                              <span class="tk-c">// inside the commit step</span>
+  <span class="tk-f">create</span>(record: <span class="tk-t">NewDocRecord</span>, base: <span class="tk-t">BaseContent</span>): number;
+  <span class="tk-f">change</span>(id: number, content: <span class="tk-t">DocContent</span>): <span class="tk-k">void</span>;
+  <span class="tk-f">retire</span>(id: number): <span class="tk-k">void</span>;
+}</code></pre>
+<p>The <code>owner</code> string is opaque to the engine; each adapter fills it:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>namespace</th>
+<th>owner</th>
+<th>kind</th>
+<th>key</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Durable session document</td>
+<td><code>pi-durable</code></td>
+<td><code>session</code></td>
+<td><code>pi.settings</code></td>
+<td></td>
+</tr>
+<tr>
+<td>Durable conversation document</td>
+<td><code>pi-durable</code></td>
+<td><code>conversation:7</code></td>
+<td><code>pi.provider</code></td>
+<td></td>
+</tr>
+<tr>
+<td>Durable task document</td>
+<td><code>pi-durable</code></td>
+<td><code>task:31</code></td>
+<td><code>pi.codemode</code></td>
+<td></td>
+</tr>
+<tr>
+<td>Chord persisted document</td>
+<td><code>chord</code></td>
+<td><code>session/notes.store</code></td>
+<td><code>notes</code></td>
+<td><code>n-42</code></td>
+</tr>
+</tbody></table>
+<p>What the owner string means (a conversation&#39;s documents fork and rewind with it, a task&#39;s are retired with the task)
+stays in the adapter. The engine keeps nothing in memory; Durable&#39;s Session and Chord&#39;s objects keep their Delta
+trackers, cache, pin and evict exactly as Durable does today. A fork&#39;s document copies are reconstructed by
+<code>StoreStorage</code> before it enters the commit step (S11), so the step never replays revisions while every owner waits;
+the outbox only ever carries the resulting documents.</p>
+</section>
+
+<section class="chapter" id="bulk"><header class="opener"><div class="numeral">VII</div><h2>Writing Many Rows</h2><p class="lede">Bulk operations recorded as operations, and migrations that run only where the code is.</p></header>
+<p class="dropcap">A full-row put per changed row makes the rename of <code>a/</code> to <code>b/</code> over ten thousand 4 KB rows cost about 40 MB in the
+outbox. The store&#39;s writes are therefore five:</p>
+<table>
+<thead>
+<tr>
+<th>Write</th>
+<th>Records</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>tx.put(table, row)</code></td>
+<td>the whole row</td>
+</tr>
+<tr>
+<td><code>tx.update(table, key, set)</code></td>
+<td>the changed columns of one row</td>
+</tr>
+<tr>
+<td><code>tx.delete(table, key)</code></td>
+<td>the key</td>
+</tr>
+<tr>
+<td><code>tx.updateWhere(table, where, set)</code></td>
+<td>one operation, plus the affected row count</td>
+</tr>
+<tr>
+<td><code>tx.deleteWhere(table, where)</code></td>
+<td>one operation, plus the affected row count</td>
+</tr>
+</tbody></table>
+<pre><code><span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; {
+  <span class="tk-k">await</span> tx.<span class="tk-f">updateWhere</span>(<span class="tk-t">Edits</span>, (e) =&gt; <span class="tk-f">prefix</span>(e.path, <span class="tk-s">"a/"</span>), { path: <span class="tk-f">replacePrefix</span>(<span class="tk-s">"a/"</span>, <span class="tk-s">"b/"</span>) });
+}, ctx);</code></pre>
+<pre class="plain"><code>-- on SQLite: one statement; path is UTF-8 TEXT, "a/" is 2 code points
+UPDATE "file-history/edits" SET path = :to || substr(path, 3) WHERE path &gt;= :lo AND path &lt; :hi</code></pre>
+<pre><code>outbox, seq 57 (about 150 bytes):
+{ op: "update", table: "file-history/edits", where: { prefix: ["path", "a/"] },
+  set: { path: { replacePrefix: ["a/", "b/"] } }, count: 10000 }</code></pre>
+<p>A replica runs the same operation, without plugin code, and compares the number of affected rows. A different number
+means divergence: it stops applying that store and restores it from a snapshot. The <code>set</code> expressions touch only real
+columns: <code>value</code>, <code>col</code>, <code>add</code>, <code>sub</code>, <code>max</code>, <code>min</code>, <code>concat</code>, <code>replacePrefix</code>, <code>coalesce</code>, <code>when</code>. They are the store&#39;s
+own, specified once and checked on every backend by one conformance suite, which is why there are no SQL subqueries,
+joins, case folding or floats: each of those behaves differently somewhere.</p>
+<h3 id="migrations-s17">Migrations (S17)</h3>
+<p>Adding, renaming or dropping a column is a recorded table change (<code>alter</code>); a new column gets its default without a
+bulk rewrite. A change of the shape <strong>inside a <code>json(...)</code> column</strong> (a field added, renamed, restructured) <strong>migrates on
+access</strong> (W11): each <code>json(...)</code> column has its own version and a value-only migration,
+<code>json(MetaV2, { version: 2, migrate: (old, from) =&gt; … })</code>, stored with its value; reading an older value migrates it,
+writing the column stores the new shape and version. Nothing is rewritten in bulk and indexes are unaffected. The row&#39;s
+<code>v</code> counts only eager steps (below); <code>update</code>, <code>updateWhere</code> and <code>deleteWhere</code> never set it. Old code refuses a newer
+row <code>v</code> or a newer JSON column version.</p>
+<p>A change to a key or an indexed column must be <strong>eager</strong>, because an index over a column filled only on access would
+silently miss rows. It runs when the owning object starts on the driver, before the object goes live:</p>
+<pre><code>migrations: {
+  <span class="tk-n">4</span>: { alter: { add: { dir: { <span class="tk-k">type</span>: <span class="tk-s">"text"</span> } } },
+       rows: (row) =&gt; ({ dir: <span class="tk-f">dirname</span>(row.path) }) },                         <span class="tk-c">// scan + tx.update, in chunks</span>
+  <span class="tk-n">5</span>: { alter: { add: { size: { <span class="tk-k">type</span>: <span class="tk-s">"int"</span>, <span class="tk-k">default</span>: <span class="tk-n">0</span> } } },
+       update: { where: (e) =&gt; <span class="tk-f">isNull</span>(e.size), set: { size: <span class="tk-f">value</span>(<span class="tk-n">0</span>) } } },     <span class="tk-c">// one updateWhere</span>
+},</code></pre>
+<div class="steps"><div class="steps-head"><span class="title">Migration 4 on the driver</span><span class="count"></span><button class="prev" type="button">Back</button><button class="next" type="button">Next</button></div><div class="step-panel"><h4>The table change</h4><p>Commit 80 records <code>alter: add column dir</code> and marks table version 4 as <code>migrating</code>. Every replica adds the column
+from the record.</p>
+</div><div class="step-panel"><h4>The scan</h4><p>The store reads rows with <code>v &lt; 4</code> in key order, 500 at a time, applies <code>rows</code> to each and writes the changed columns
+plus <code>v = 4</code> in the same write. One commit per chunk, so other owners&#39; commits interleave and the commit step stays
+short. (A full-row <code>put</code> also sets <code>v</code>; partial and bulk writes never do.)</p>
+</div><div class="step-panel"><h4>Ready</h4><p>The last chunk marks version 4 <code>ready</code>. The store creates the <code>byDir</code> index and records it, and <code>FileHistoryStore</code>
+goes live.</p>
+</div><div class="step-panel"><h4>After a crash in the middle</h4><p>The next start finds <code>migrating</code>, scans again from the first key and skips rows with <code>v &gt;= 4</code>. Each row is
+transformed exactly once, even when the transform is not idempotent. A key change is never a <code>rows</code> step: it is a
+recorded <code>rebuild</code> that every replica performs itself.</p>
+</div></div>
+<p>A replica without the plugin applies the column change and the column updates; a replica with the plugin&#39;s code treats
+the table as not ready while it is <code>migrating</code>. Chord documents keep their own per-document <code>migrate</code> on access, and
+Durable versions its records itself.</p>
+</section>
+
+<section class="chapter" id="easy"><header class="opener"><div class="numeral">VIII</div><h2>The Easy Parts</h2><p class="lede">Blobs and derived data: why they need none of the store&#39;s ordering machinery.</p></header>
+<p class="dropcap">Two kinds of session data stay outside the store&#39;s tables, and both are easy for the same reason: nothing about them
+ever changes in place. A blob is final once written; derived data has no data of its own.</p>
+<h3 id="blobs">Blobs</h3>
+<p>Artifact versions, uploads and sent files are <strong>blobs</strong>: files in the session directory, named by the hash of their
+content (<code>blobs/sha256/9f/9f3a…</code>), never changed. They are app layer, not store: any process may write one, because a
+file named by its content cannot conflict with another writer. The order is the whole trick: the blob is written first,
+then the row or document that names it.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 164" width="100%" role="img" aria-label="Saving artifact &quot;chart&quot; version 3. The blob exists before anything refers to it." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f3m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f3a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f3b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="130.7" y1="42" x2="130.7" y2="156" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="45.7" y="10" width="170" height="32" rx="4" fill="#fff" stroke="#c9bfae"/><text x="130.7" y="30" font-size="11" fill="#2a2723" text-anchor="middle">artifact tool</text><line x1="360" y1="42" x2="360" y2="156" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="275" y="10" width="170" height="32" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="360" y="30" font-size="11" fill="#2a2723" text-anchor="middle">blobs/</text><line x1="589.3" y1="42" x2="589.3" y2="156" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="504.3" y="10" width="170" height="32" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="589.3" y="30" font-size="11" fill="#2a2723" text-anchor="middle">store</text><g class="step edge" style="--i:1"><line x1="130.7" y1="68" x2="357" y2="68" stroke="#7b7468" marker-end="url(#f3m)"/><text x="245.3" y="62" font-size="10" fill="#2a2723" text-anchor="middle">write sha256:9f3a… (tmp, fsync, rename)</text></g><g class="step edge" style="--i:2"><line x1="130.7" y1="100" x2="586.3" y2="100" stroke="#b4472f" marker-end="url(#f3a)"/><text x="360" y="94" font-size="10" fill="#b4472f" text-anchor="middle">seq 41: chart.versions[2] = { blob: &quot;sha256:9f3a…&quot; }</text></g><g class="step edge" style="--i:3"><line x1="130.7" y1="132" x2="586.3" y2="132" stroke="#b4472f" marker-end="url(#f3a)"/><text x="360" y="126" font-size="10" fill="#b4472f" text-anchor="middle">seq 42: entry 812 &quot;chart v3 saved&quot; (Durable)</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 3.</span> Saving artifact &quot;chart&quot; version 3. The blob exists before anything refers to it.</figcaption></figure>
+<ul>
+<li><strong>Export</strong> copies <code>blobs/</code> together with the store snapshot. Every blob a record up to the export&#39;s head names was
+written before that record, so it is in the directory. <strong>Import</strong> copies them back and checks each hash.</li>
+<li><strong>Sync:</strong> before uploading a batch, the sync layer uploads every blob file that is present and not yet uploaded. No
+reference tracking is needed: a blob is always written before the commit that names it, so a replica never sees a
+hash whose file is missing.</li>
+<li><strong>Deleting:</strong> no blob is deleted before its session is deleted. A blob that nothing references any more (a crash
+between the write and the commit, a retired document) only costs disk; a garbage collector would have to know every
+reference in every table.</li>
+</ul>
+<h3 id="derived-data">Derived data</h3>
+<p>A full-text index, a cache, a plugin&#39;s own search database: <strong>derived data</strong> can be recomputed from the store and the
+blobs, so it is never exported or synced. Its owner keeps it current with a routine that compares it with the store.
+The artifacts plugin&#39;s full-text index in its own SQLite file:</p>
+<pre><code>host.<span class="tk-f">serve</span>(<span class="tk-t">ArtifactStore</span>, (_, self) =&gt; {
+  <span class="tk-k">const</span> artifacts = self.<span class="tk-f">state</span>(<span class="tk-t">Artifact</span>);                         <span class="tk-c">// keyed documents in the store</span>
+  <span class="tk-k">const</span> blobs = self.<span class="tk-f">get</span>(<span class="tk-t">SessionBlobs</span>, {});
+  <span class="tk-k">const</span> index = self.<span class="tk-f">open</span>(<span class="tk-k">async</span> () =&gt; <span class="tk-f">openIndex</span>(<span class="tk-f">join</span>(dir, <span class="tk-s">"derived/artifacts/index.sqlite"</span>)), (db) =&gt; db.<span class="tk-f">close</span>());
+
+  self.routines.<span class="tk-f">loop</span>(<span class="tk-s">"catch-up"</span>, <span class="tk-k">async</span> (ctx) =&gt; {                 <span class="tk-c">// the index repairs itself</span>
+    <span class="tk-k">for</span> <span class="tk-k">await</span> (<span class="tk-k">const</span> name <span class="tk-k">of</span> artifacts.<span class="tk-f">keys</span>()) {
+      <span class="tk-k">const</span> a = <span class="tk-k">await</span> artifacts.<span class="tk-f">get</span>(name);
+      <span class="tk-k">if</span> (a &amp;&amp; index.value.<span class="tk-f">versions</span>(name) !== a.versions.length)
+        index.value.<span class="tk-f">put</span>(name, a.versions.length, <span class="tk-k">await</span> blobs.<span class="tk-f">read</span>(a.versions.<span class="tk-f">at</span>(-<span class="tk-n">1</span>)!.blob, ctx));
+    }
+  });
+  …
+});</code></pre>
+<div class="steps"><div class="steps-head"><span class="title">One routine, three situations</span><span class="count"></span><button class="prev" type="button">Back</button><button class="next" type="button">Next</button></div><div class="step-panel"><h4>Normal save</h4><p><code>save</code> writes the blob, commits the document, then updates the index. The routine finds nothing to do.</p>
+</div><div class="step-panel"><h4>Crash after the commit</h4><p>The process dies between the commit and the index update. The document says version 3, the index still has version 2.
+On the next start the routine sees the difference, reads the blob of version 3 and indexes it.</p>
+</div><div class="step-panel"><h4>Import or sync</h4><p>On the desktop <code>derived/artifacts/</code> does not exist. The routine finds every artifact missing and indexes them all from
+the documents and blobs that came with the session.</p>
+</div></div>
+<p>This routine visits every artifact on each start: fine for hundreds, slow for millions. A large derived store keeps
+the last seq it applied and reads only what changed after it.</p>
+</section>
+
+<section class="chapter" id="sync"><header class="opener"><div class="numeral">IX</div><h2>Moving a Session</h2><p class="lede">Outbox, replicas (no compaction yet), takeover, export and import.</p></header>
+<p class="dropcap">Every commit&#39;s outbox record is written in the same backend transaction as its data, so a crash keeps both or
+neither. Sync is a layer above the store; it follows Armin&#39;s transport and fencing with the rules the review added.</p>
+<ul>
+<li><strong>Uploading:</strong> the driver may upload batches in parallel, resubmits each until Radius acknowledges it, and trims a
+batch from its outbox only after its acknowledgement (S5).</li>
+<li><strong>Applying:</strong> every batch carries <code>from</code> and <code>to</code>. A replica applies a batch only when its <code>from</code> equals the
+replica&#39;s applied head, as a whole, in one backend transaction together with the new applied head. A later batch
+waits for a missing one. A crash leaves all of a batch or none of it.</li>
+<li><strong>No compaction at first (W9):</strong> batches carry the ordered operations exactly as committed. &quot;Keep the last write per
+row&quot; would lose rows built from <code>put</code> plus partial <code>update</code>s; a later compaction must merge those and treat bulk
+operations as barriers.</li>
+<li><strong>After a power loss</strong> the driver&#39;s local head may be behind what Radius has; it first pulls back its own uploaded
+batches, then continues (S3).</li>
+<li><strong>Blobs</strong> go up before the batch that may name them: every blob file present and not yet uploaded (chapter VIII).</li>
+</ul>
+<h3 id="losing-the-driver-role-s7">Losing the driver role (S7)</h3>
+<figure class="fig anim"><svg viewBox="0 0 720 323" width="100%" role="img" aria-label="The laptop learns the desktop took over. Nothing is rolled back." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f4m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f4a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f4b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="130.7" y1="52" x2="130.7" y2="315" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="45.7" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="130.7" y="27" font-size="11" fill="#2a2723" text-anchor="middle">laptop</text><text x="130.7" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">driver, epoch 3</text><line x1="360" y1="52" x2="360" y2="315" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="275" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="360" y="30" font-size="11" fill="#2a2723" text-anchor="middle">Radius</text><line x1="589.3" y1="52" x2="589.3" y2="315" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="504.3" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="589.3" y="30" font-size="11" fill="#2a2723" text-anchor="middle">desktop</text><g class="step edge" style="--i:1"><line x1="589.3" y1="78" x2="363" y2="78" stroke="#7b7468" marker-end="url(#f4m)"/><text x="474.7" y="72" font-size="10" fill="#2a2723" text-anchor="middle">take over S1</text></g><g class="step edge" style="--i:2"><line x1="360" y1="110" x2="586.3" y2="110" stroke="#b4472f" marker-end="url(#f4a)"/><text x="474.7" y="104" font-size="10" fill="#b4472f" text-anchor="middle">epoch 4</text></g><g class="step edge" style="--i:3"><path d="M130.7 136 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f4m)"/><text x="172.7" y="146" font-size="10" fill="#2a2723" text-anchor="start">commits 40, 41 locally (a routine, a late tool result)</text></g><g class="step edge" style="--i:4"><line x1="130.7" y1="182" x2="357" y2="182" stroke="#7b7468" marker-end="url(#f4m)"/><text x="245.3" y="176" font-size="10" fill="#2a2723" text-anchor="middle">upload 40–41 (epoch 3)</text></g><g class="step edge" style="--i:5"><line x1="360" y1="214" x2="133.7" y2="214" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f4m)"/><text x="245.3" y="208" font-size="10" fill="#2a2723" text-anchor="middle">refused: epoch 4</text></g><g class="step edge" style="--i:6"><path d="M130.7 240 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f4a)"/><text x="172.7" y="250" font-size="10" fill="#b4472f" text-anchor="start">the copy becomes session S1′ (new id)</text></g><g class="step" style="--i:7"><rect x="26" y="272" width="668" height="23" rx="3" fill="#f4eee2" stroke="#c2b18c"/><text x="360" y="286" font-size="10" fill="#5b5549" text-anchor="middle">S1 continues on the desktop; S1′ on the laptop; they never sync again</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 4.</span> The laptop learns the desktop took over. Nothing is rolled back.</figcaption></figure>
+<p>Rolling back is not possible: tools ran, files were written, natives and derived data followed the tail. The laptop&#39;s
+copy becomes a separate session with a new id and keeps running; commits in flight land in it. The catalog shows both,
+the split-off copy marked with its origin.</p>
+<h3 id="export-and-import-s4">Export and import (S4)</h3>
+<p>An export holds the commit queue while it reads, so the archive is the state at one head: Durable&#39;s records, Chord&#39;s
+documents and every plugin table, including tables of plugins that are not installed, plus the session directory&#39;s
+blobs (chapter VIII). An import restores the archive into a fresh store; the server then mirrors the session into its catalog.
+Derived data (full-text indexes, caches) is never exported; it is rebuilt where it is needed.</p>
+</section>
+
+<section class="chapter" id="rules"><header class="opener"><div class="numeral">X</div><h2>Rules for Plugin Authors</h2><p class="lede">What the store does not do for you.</p></header>
+<p class="dropcap"><strong>Nothing leaves a transaction before it commits (S2).</strong> Ids are handed out inside the transaction that creates them.
+Reference what is committed: the file-history plugin references the tool-call entry, which is committed before the tool
+runs, never the tool-result entry, which does not exist yet.</p>
+<p><strong>Work that finishes out of order is yours (S8).</strong> A routine that starts a slow job per change can let an old result
+overwrite a newer one. The handler calls of one routine never overlap, so either chain through the routine or drop
+stale results inside the destination&#39;s transaction:</p>
+<pre><code>self.routines.<span class="tk-f">on</span>(conversation.entries, <span class="tk-k">async</span> (entries, ops, ctx) =&gt; {
+  <span class="tk-k">const</span> run = <span class="tk-k">await</span> summarize.<span class="tk-f">start</span>({ upTo: entries.<span class="tk-f">at</span>(-<span class="tk-n">1</span>)!.id }, ctx);
+  <span class="tk-k">await</span> run.<span class="tk-f">outcome</span>(ctx);                                  <span class="tk-c">// the next handler waits for this run</span>
+});</code></pre>
+<p><strong>Text compares by code point.</strong> Do not sort keys yourself to page through a table; use the store&#39;s cursors, or
+<code>compareText</code>. Normalize text yourself if two spellings must be one key.</p>
+<p><strong>Bulk changes are operations.</strong> Prefer <code>updateWhere</code> and <code>deleteWhere</code> over loops of puts; a loop records every row.</p>
+</section>
+
+<section class="chapter epilogue" id="what-s-next"><header class="opener"><div class="numeral">∴</div><h2>What&#39;s Next</h2><p class="lede">What is decided, and the order in which it gets built.</p></header>
+<p class="dropcap">The direction and all seventeen review items are decided (decision log, 2026-10-21). The store is new code; the parts
+outside it are small changes in pi:</p>
+<ul>
+<li><strong>pi, one change:</strong> <code>Storage.commit(writes, adopt, context)</code> with every storage calling <code>adopt</code> (S1), the
+Session&#39;s handling of rejections after adoption, the narrowed <code>mintId</code> comment (S10), <code>traceIn(options, fn, context)</code> (context last), Durable&#39;s <code>WatchHandle</code>/<code>WatchEnd</code> moved into Chord with generic end reasons and explicit
+retirement (W2), and Durable&#39;s state getters and the <code>replicatedState</code> family removed (W14).</li>
+<li><strong>The store</strong> in <code>packages/chord/src/next</code>: commit step and outbox, tables and the query language, the SQLite and
+memory backends with the text encoding, the documents engine, bulk operations and migrations, export and import;
+about 1,650 lines by Fable&#39;s estimate, plus the conformance suite.</li>
+<li><strong><code>StoreStorage</code></strong>, passing Durable&#39;s existing storage conformance suite.</li>
+<li><strong>The sync layer</strong> (upload, apply, pull-back, epochs, splitting a session) on top, when Radius sync is built.</li>
+</ul>
+<p>Open, to settle while building: how a split-off session gets its new id (store metadata, directory, catalog), the
+chunk size of row migrations, and a Postgres backend once a serverless target needs one (W14).</p>
+</section>
+
+<section class="chapter appendix" id="decisions"><header class="opener"><div class="numeral">A</div><h2>Decisions</h2></header>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>The store</td>
+<td>one transactional store per session under Durable (adapter), Chord documents and plugin tables</td>
+</tr>
+<tr>
+<td>S1</td>
+<td>adoption inside the commit step; <code>Storage.commit(writes, adopt, context)</code></td>
+</tr>
+<tr>
+<td>S2</td>
+<td>nothing leaves a transaction before it commits; no mechanism</td>
+</tr>
+<tr>
+<td>S3</td>
+<td>a commit is done on the backend&#39;s terminal success; ambiguous outcomes stop the store; pull-back after restart</td>
+</tr>
+<tr>
+<td>S4</td>
+<td>export holds the commit queue; multi-query reads in one read transaction; no global snapshots</td>
+</tr>
+<tr>
+<td>S5</td>
+<td>parallel uploads, resubmit until acknowledged, trim after acknowledgement; apply whole batches in order</td>
+</tr>
+<tr>
+<td>S6</td>
+<td>(superseded by W9)</td>
+</tr>
+<tr>
+<td>S7</td>
+<td>losing the driver role splits the session; no rollback</td>
+</tr>
+<tr>
+<td>S8</td>
+<td>out-of-order work is an app concern; routine handlers never overlap</td>
+</tr>
+<tr>
+<td>S9</td>
+<td>the head is persisted with every commit</td>
+</tr>
+<tr>
+<td>S10</td>
+<td>id counters derived at open; <code>mintId</code> contract narrowed</td>
+</tr>
+<tr>
+<td>S11</td>
+<td>fork copies reconstructed by <code>StoreStorage</code> before the commit step</td>
+</tr>
+<tr>
+<td>S12</td>
+<td>the query language starts without joins, grouping and projections</td>
+</tr>
+<tr>
+<td>S13</td>
+<td>one documents engine in the store, opaque owner</td>
+</tr>
+<tr>
+<td>S14</td>
+<td>one transaction API, <code>self.tx(fn, ctx)</code></td>
+</tr>
+<tr>
+<td>S15</td>
+<td>Durable&#39;s existing storages are kept</td>
+</tr>
+<tr>
+<td>S16, text</td>
+<td>real tables; text as plain UTF-8 in code point order (replaced W8&#39;s UTF-16 BLOBs)</td>
+</tr>
+<tr>
+<td>S17, W11</td>
+<td>five writes, bulk operations recorded with a row count; JSON columns migrate on access with their own version; eager steps by scan with row <code>v</code></td>
+</tr>
+<tr>
+<td>W1</td>
+<td>adopt and mark in the commit step, one synchronous flush right after (derives, wire, watches)</td>
+</tr>
+<tr>
+<td>W6, W7</td>
+<td>workers connect before loading; store addresses carry the host kind, never an instance</td>
+</tr>
+<tr>
+<td>W9, W10</td>
+<td>no compaction at first; no <code>tx.get</code> on a table after a bulk operation in the same transaction</td>
+</tr>
+<tr>
+<td>W14</td>
+<td>no IndexedDB backend (SQLite in WebAssembly in the browser); no <code>replicatedState</code></td>
+</tr>
+<tr>
+<td>index definitions</td>
+<td>recorded in the outbox and applied by every replica; contents never travel</td>
+</tr>
+<tr>
+<td>blobs, derived data</td>
+<td>blobs are app-layer files named by hash, written before what names them, uploaded before each batch, deleted only with the session; derived data is rebuilt, never shipped</td>
+</tr>
+</tbody></table>
+</section>
+
+<section class="chapter appendix" id="glossary"><header class="opener"><div class="numeral">B</div><h2>Glossary</h2></header>
+<p><strong>Adoption:</strong> an owner updating its in-memory state to a committed write. <strong>Blob:</strong> a file in the session directory
+named by the hash of its content, never changed. <strong>Derived data:</strong> data recomputed from the store and blobs, never
+shipped. <strong>Backend:</strong> what the store runs on (SQLite,
+memory). <strong>Batch:</strong> a range of outbox records from <code>from</code> to <code>to</code>, uploaded and applied as a whole.
+<strong>Commit step:</strong> the short, serialized part of a commit in which the store checks, writes, numbers and records it, and
+owners adopt. <strong>Driver:</strong> the machine that writes a session. <strong>Line:</strong> the serialization of one owner&#39;s transactions
+(per Chord object, per Durable Session). <strong>Outbox:</strong> the record of every commit, written in the same transaction.
+<strong>Owner:</strong> the code that writes a piece of data. <strong>Replica:</strong> a copy of a session that applies the driver&#39;s batches.
+<strong>Seq:</strong> the number of a commit, one sequence per store. <strong>Store:</strong> the transactional store of one session.
+<strong>Table:</strong> a set of rows owned by one object, with a flat record of typed columns (scalars or <code>json(...)</code>).</p>
+</section>
+
+<p class="colophon">One Store · first edition · 2026-10-21 · based on the redesign decision log and the store review</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

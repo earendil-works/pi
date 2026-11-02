@@ -14,6 +14,7 @@ import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../typ
 import { startOAuthCallbackServer } from "./callback-server.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 import { generatePKCE } from "./pkce.ts";
+import { trustedHttpUrl } from "./trusted-url.ts";
 
 const CALLBACK_HOST = "127.0.0.1";
 const CALLBACK_PORT = 1456;
@@ -51,10 +52,11 @@ async function loadRadiusOAuthDiscovery(gateway: string, signal: AbortSignal): P
 	}
 
 	const discovery = (await response.json()) as Partial<RadiusOAuthDiscovery>;
-	if (typeof discovery.authorizationEndpoint !== "string") {
+	const authorizationEndpoint = trustedHttpUrl(discovery.authorizationEndpoint);
+	if (!authorizationEndpoint) {
 		throw new Error(`Invalid Radius OAuth config from ${gateway}`);
 	}
-	return { authorizationEndpoint: discovery.authorizationEndpoint };
+	return { authorizationEndpoint };
 }
 
 class OAuthResponseError extends Error {
@@ -210,11 +212,15 @@ async function requestDeviceAuthorization(gateway: string, signal: AbortSignal):
 	if (!data.device_code || !data.user_code || !data.verification_uri || !data.expires_in) {
 		throw new Error("Radius OAuth device authorization response is missing required fields");
 	}
+	const verificationUri = trustedHttpUrl(data.verification_uri);
+	if (!verificationUri) {
+		throw new Error("Untrusted verification_uri in Radius OAuth device authorization response");
+	}
 
 	return {
 		device_code: data.device_code,
 		user_code: data.user_code,
-		verification_uri: data.verification_uri,
+		verification_uri: verificationUri,
 		expires_in: data.expires_in,
 		interval: data.interval,
 	};

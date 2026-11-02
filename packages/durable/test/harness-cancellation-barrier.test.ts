@@ -1,5 +1,6 @@
 import type { Context } from "@earendil-works/chord";
 import {
+	type CommitResult,
 	createSession,
 	defineTask,
 	MemoryStorage,
@@ -8,6 +9,7 @@ import {
 	type TaskId,
 } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
+import { commitWrites } from "../src/testing/commit-writes.ts";
 import { context, flush } from "./session-support.ts";
 import { aborted, deferred, eventually, openTasks } from "./task-support.ts";
 
@@ -26,19 +28,25 @@ const Dormant = defineTask<null, { phase: "work" }, null>({
 	},
 });
 
-/** Holds every commit that abort-marks `target`, while set, until released. */
+/** Holds every commit call that abort-marks `target`, while set, until released. */
 class HoldMarks extends MemoryStorage {
 	target: TaskId | undefined;
 	readonly held = deferred();
 	readonly release = deferred();
-	override async commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, commitContext: Context) {
+	override async commit(
+		batches: readonly (readonly StorageWrite[])[],
+		receive: (index: number, seq: Seq) => void,
+		commitContext: Context,
+	): Promise<CommitResult> {
 		if (
-			writes.some((write) => write.type === "task" && write.value.id === this.target && write.value.abortRequested)
+			batches
+				.flat()
+				.some((write) => write.type === "task" && write.value.id === this.target && write.value.abortRequested)
 		) {
 			this.held.resolve();
 			await this.release.promise;
 		}
-		return super.commit(writes, adopt, commitContext);
+		return super.commit(batches, receive, commitContext);
 	}
 }
 
@@ -127,7 +135,8 @@ describe("work below a cancelled owner", () => {
 			policy: "failFast",
 		} as const;
 		const failure = { status: "failed", error: { message: "failed" } } as const;
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{ type: "task", value: { ...owner, abortRequested: true, abortReason: "restart", state: waiting } },
 				{
@@ -135,7 +144,6 @@ describe("work below a cancelled owner", () => {
 					value: { ...failedRecord, state: { status: "terminal", outcome: failure } } as typeof failedRecord,
 				},
 			],
-			() => {},
 			context,
 		);
 		// The child's definition is missing: a restart mark would keep it waiting, a request orphans it.
@@ -217,9 +225,9 @@ describe("work below a cancelled owner", () => {
 		);
 		const record = (await storage.task(holder, context))!;
 		const completing = { status: "completing", outcome: { status: "completed", result: null } } as const;
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[{ type: "task", value: { ...record, state: completing } as typeof record }],
-			() => {},
 			context,
 		);
 		const { harness } = await openTasks(storage, [Dormant]);

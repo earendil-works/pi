@@ -1,0 +1,247 @@
+[
+    {
+        "description": "validation of date-time strings",
+        "schema": { "format": "date-time" },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "a valid date-time string",
+                "data": "1963-06-19T08:30:06.283185Z",
+                "valid": true
+            },
+            {
+                "description": "a valid date-time string without second fraction",
+                "data": "1963-06-19T08:30:06Z",
+                "valid": true
+            },
+            {
+                "description": "a valid date-time string with plus offset",
+                "data": "1937-01-01T12:00:27.87+00:20",
+                "valid": true
+            },
+            {
+                "description": "a valid date-time string with minus offset",
+                "data": "1990-12-31T15:59:50.123-08:00",
+                "valid": true
+            },
+            {
+                "description": "a valid date-time with a leap second, UTC",
+                "data": "1998-12-31T23:59:60Z",
+                "valid": true
+            },
+            {
+                "description": "a valid date-time with a leap second, with minus offset",
+                "data": "1998-12-31T15:59:60.123-08:00",
+                "valid": true
+            },
+            {
+                "description": "an invalid date-time past leap second, UTC",
+                "data": "1998-12-31T23:59:61Z",
+                "valid": false
+            },
+            {
+                "description": "an invalid date-time with leap second on a wrong minute, UTC",
+                "data": "1998-12-31T23:58:60Z",
+                "valid": false
+            },
+            {
+                "description": "an invalid date-time with leap second on a wrong hour, UTC",
+                "data": "1998-12-31T22:59:60Z",
+                "valid": false
+            },
+            {
+                "description": "an invalid hour in date-time string",
+                "data": "1990-12-31T24:00:00Z",
+                "valid": false
+            },
+            {
+                "description": "an invalid minute in date-time string",
+                "data": "1990-12-31T15:60:00Z",
+                "valid": false
+            },
+            {
+                "description": "an invalid offset minute in date-time string",
+                "data": "1990-12-31T10:00:00+10:60",
+                "valid": false
+            },
+            {
+                "description": "an invalid day in date-time string",
+                "data": "1990-02-31T15:59:59.123-08:00",
+                "valid": false
+            },
+            {
+                "description": "an invalid offset in date-time string",
+                "data": "1990-12-31T15:59:59-24:00",
+                "valid": false
+            },
+            {
+                "description": "an invalid closing Z after time-zone offset",
+                "data": "1963-06-19T08:30:06.28123+01:00Z",
+                "valid": false
+            },
+            {
+                "description": "an invalid date-time string",
+                "data": "06/19/1963 08:30:06 PST",
+                "valid": false
+            },
+            {
+                "description": "case-insensitive T and Z",
+                "data": "1963-06-19t08:30:06.283185z",
+                "valid": true
+            },
+            {
+                "description": "only RFC3339 not all of ISO 8601 are valid",
+                "data": "2013-350T01:01:01",
+                "valid": false
+            },
+            {
+                "description": "invalid non-padded month dates",
+                "data": "1963-6-19T08:30:06.283185Z",
+                "valid": false
+            },
+            {
+                "description": "invalid non-padded day dates",
+                "data": "1963-06-1T08:30:06.283185Z",
+                "valid": false
+            },
+            {
+                "description": "invalid non-ASCII '৪' (a Bengali 4) in date portion",
+                "data": "1963-06-1৪T00:00:00Z",
+                "valid": false
+            },
+            {
+                "description": "invalid non-ASCII '৪' (a Bengali 4) in time portion",
+                "data": "1963-06-11T0৪:00:00Z",
+                "valid": false
+            },
+            {
+                "description": "invalid extended year",
+                "data": "+11963-06-19T08:30:06.283185Z",
+                "valid": false
+            },
+            {
+                "description": "a numeric offset without minutes is invalid",
+                "data": "1985-04-12T23:20:50+01",
+                "valid": false
+            },
+            {
+                "description": "hour 24 is invalid even with a leap second",
+                "data": "2016-12-31T24:59:60+01:00",
+                "valid": false
+            },
+            {
+                "description": "a second fraction of fifteen nines is valid",
+                "data": "1985-04-12T00:59:59.999999999999999Z",
+                "valid": true
+            },
+            {
+                "description": "a trailing newline is invalid",
+                "data": "1985-04-12T23:20:50Z\n",
+                "valid": false
+            },
+            {
+                "description": "an invalid date-time string without seconds",
+                "data": "1985-04-12T23:20Z",
+                "valid": false
+            },
+            {
+                "description": "an invalid date-time string with trailing content after the offset",
+                "data": "1985-04-12T23:20:50Ztail",
+                "valid": false
+            },
+            {
+                "description": "an invalid minute in date-time string, with a numeric offset",
+                "data": "1985-04-12T23:60:00+00:01",
+                "valid": false
+            },
+            {
+                "description": "a valid date-time string with 28 days in February (normal)",
+                "data": "2021-02-28T00:00:00Z",
+                "valid": true
+            },
+            {
+                "description": "an invalid date-time string with 30 days in February (leap)",
+                "data": "2020-02-30T00:00:00Z",
+                "valid": false
+            },
+            {
+                "description": "2021 is not a leap year",
+                "data": "2021-02-29T00:00:00Z",
+                "valid": false
+            },
+            {
+                "description": "2020 is a leap year",
+                "data": "2020-02-29T00:00:00Z",
+                "valid": true
+            },
+            {
+                "description": "century year 0100 is not a leap year",
+                "data": "0100-02-29T00:00:00Z",
+                "valid": false
+            },
+            {
+                "description": "century year 0400 is a leap year",
+                "data": "0400-02-29T00:00:00Z",
+                "valid": true
+            },
+            {
+                "description": "century year 2100 is not a leap year",
+                "data": "2100-02-29T00:00:00Z",
+                "valid": false
+            },
+            {
+                "description": "a second fraction with no digits",
+                "comment": "RFC 3339 section 5.6: time-secfrac = \".\" 1*DIGIT requires at least one digit",
+                "data": "1985-04-12T23:20:50.Z",
+                "valid": false
+            },
+            {
+                "description": "a comma decimal separator with a time-offset",
+                "comment": "RFC 3339 section 5.6: the decimal separator in time-secfrac is \".\" - the ISO 8601 comma is not part of this profile",
+                "data": "1985-04-12T23:20:50,5Z",
+                "valid": false
+            },
+            {
+                "description": "leading whitespace before a valid date-time",
+                "comment": "RFC 3339 section 5.6: no production of date-time emits whitespace",
+                "data": " 1985-04-12T23:20:50Z",
+                "valid": false
+            },
+            {
+                "description": "trailing whitespace after a valid date-time",
+                "comment": "RFC 3339 section 5.6: no production of date-time emits whitespace",
+                "data": "1985-04-12T23:20:50Z ",
+                "valid": false
+            }
+        ]
+    }
+]

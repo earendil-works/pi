@@ -70,12 +70,14 @@ function frame(theme: Theme, title: string, body: Component[], footer?: string):
 
 const MAX_VISIBLE_ITEMS = 12;
 
+type InputHandler = Pick<Component, "handleInput" | "capturesViewportInput">;
+
 export class McpManagerView implements McpUi, Component, Focusable {
 	private readonly tui: TUI;
 	private readonly theme: Theme;
 	private readonly keybindings: KeybindingsManager;
 	private content: Container;
-	private inputHandler: ((data: string) => void) | undefined;
+	private inputHandler: InputHandler | undefined;
 	private inputTarget: Focusable | undefined;
 	private _focused = false;
 
@@ -95,7 +97,11 @@ export class McpManagerView implements McpUi, Component, Focusable {
 		if (this.inputTarget) this.inputTarget.focused = value;
 	}
 
-	private setContent(content: Container, inputHandler?: (data: string) => void, inputTarget?: Focusable): void {
+	get capturesViewportInput(): boolean {
+		return this.inputHandler?.capturesViewportInput === true;
+	}
+
+	private setContent(content: Container, inputHandler?: InputHandler, inputTarget?: Focusable): void {
 		if (this.inputTarget) this.inputTarget.focused = false;
 		this.content = content;
 		this.inputHandler = inputHandler;
@@ -125,12 +131,11 @@ export class McpManagerView implements McpUi, Component, Focusable {
 				const footer = `${keyHint("tui.select.confirm", menu.confirmLabel)} • ${keyHint("tui.select.cancel", menu.cancelLabel)}`;
 				if (menu.items.length === 0) {
 					body.push(new Text(this.theme.fg("muted", menu.empty ?? "Nothing to show."), 1, 0));
-					this.setContent(
-						frame(this.theme, menu.title, body, keyHint("tui.select.cancel", menu.cancelLabel)),
-						(data) => {
+					this.setContent(frame(this.theme, menu.title, body, keyHint("tui.select.cancel", menu.cancelLabel)), {
+						handleInput: (data) => {
 							if (this.keybindings.matches(data, "tui.select.cancel")) finish(undefined);
 						},
-					);
+					});
 					return;
 				}
 				const list = new SelectList(
@@ -147,7 +152,7 @@ export class McpManagerView implements McpUi, Component, Focusable {
 				list.onSelect = (item) => finish(item.value);
 				list.onCancel = () => finish(undefined);
 				body.push(list);
-				this.setContent(frame(this.theme, menu.title, body, footer), (data) => list.handleInput(data));
+				this.setContent(frame(this.theme, menu.title, body, footer), list);
 			};
 			render();
 			unsubscribe = subscribe?.(() => {
@@ -162,8 +167,10 @@ export class McpManagerView implements McpUi, Component, Focusable {
 			this.setContent(frame(this.theme, title, body));
 			return;
 		}
-		this.setContent(frame(this.theme, title, body, keyHint("tui.select.cancel", "cancel")), (data) => {
-			if (this.keybindings.matches(data, "tui.select.cancel")) onCancel();
+		this.setContent(frame(this.theme, title, body, keyHint("tui.select.cancel", "cancel")), {
+			handleInput: (data) => {
+				if (this.keybindings.matches(data, "tui.select.cancel")) onCancel();
+			},
 		});
 	}
 
@@ -203,21 +210,23 @@ export class McpManagerView implements McpUi, Component, Focusable {
 					body,
 					`${keyHint("tui.select.confirm", "submit")} • ${keyHint("tui.select.cancel", "cancel")}`,
 				),
-				(data) => {
-					if (this.keybindings.matches(data, "tui.select.confirm")) {
-						const value = input.getValue().trim();
-						if (value) finish(value);
-						return;
-					}
-					if (this.keybindings.matches(data, "tui.select.cancel")) {
-						finish(undefined);
-						return;
-					}
-					if (this.keybindings.matches(data, "app.message.copy")) {
-						void link.copy();
-						return;
-					}
-					input.handleInput(data);
+				{
+					handleInput: (data) => {
+						if (this.keybindings.matches(data, "tui.select.confirm")) {
+							const value = input.getValue().trim();
+							if (value) finish(value);
+							return;
+						}
+						if (this.keybindings.matches(data, "tui.select.cancel")) {
+							finish(undefined);
+							return;
+						}
+						if (this.keybindings.matches(data, "app.message.copy")) {
+							void link.copy();
+							return;
+						}
+						input.handleInput(data);
+					},
 				},
 				input,
 			);
@@ -225,7 +234,7 @@ export class McpManagerView implements McpUi, Component, Focusable {
 	}
 
 	handleInput(data: string): void {
-		this.inputHandler?.(data);
+		this.inputHandler?.handleInput?.(data);
 		this.tui.requestRender();
 	}
 

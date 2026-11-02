@@ -1,0 +1,100 @@
+[
+    {
+        "description": "validation of regular expressions",
+        "schema": { "format": "regex" },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "a valid regular expression",
+                "data": "([abc])+\\s+$",
+                "valid": true
+            },
+            {
+                "description": "a regular expression with unclosed parens is invalid",
+                "data": "^(abc]",
+                "valid": false
+            },
+            {
+                "description": "a quantifier with nothing to repeat is invalid",
+                "comment": "https://tc39.es/ecma262/#sec-patterns a Quantifier follows something (Term :: Atom Quantifier), so a pattern cannot begin with one",
+                "data": "*a",
+                "valid": false
+            },
+            {
+                "description": "a character class range in reverse order is invalid",
+                "comment": "https://tc39.es/ecma262/#sec-patterns-static-semantics-early-errors it is a Syntax Error if the first ClassAtom of a range has a greater CharacterValue than the second",
+                "data": "[z-a]",
+                "valid": false
+            },
+            {
+                "description": "a trailing backslash is invalid",
+                "data": "\\",
+                "valid": false
+            },
+            {
+                "description": "an unmatched closing parenthesis is invalid",
+                "data": "a)",
+                "valid": false
+            },
+            {
+                "description": "an unterminated character class is invalid",
+                "data": "[abc",
+                "valid": false
+            },
+            {
+                "description": "an empty regular expression is valid",
+                "data": "",
+                "valid": true
+            },
+            {
+                "description": "alternation is valid",
+                "data": "a|b",
+                "valid": true
+            },
+            {
+                "description": "a bounded quantifier is valid",
+                "data": "a{2,3}",
+                "valid": true
+            },
+            {
+                "description": "a negated range character class is valid",
+                "data": "[^a-z]",
+                "valid": true
+            },
+            {
+                "description": "a lazy quantifier is valid",
+                "data": "a+?",
+                "valid": true
+            }
+        ]
+    }
+]
