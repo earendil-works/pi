@@ -1,0 +1,45 @@
+# NLT-Pi adaptation of the NeuroLift Technologies public minimum governance baseline.
+# Organizational baseline: ORG-DEV-OTOI-1.0.4
+governance:
+  document_id: NLT-PI-PUBLIC-GOVERNANCE-1.0.0
+  organizational_baseline: ORG-DEV-OTOI-1.0.4
+  repository: NeuroLift-Technologies/nlt-pi
+  visibility: public
+  source:
+    repository: NeuroLift-Technologies/.github
+    type: public_minimum_requirements_and_templates
+    url: https://github.com/NeuroLift-Technologies/.github
+    automatic_sync: false
+  purpose: >-
+    Repository-specific adoption and adaptation of the minimum public
+    NeuroLift Technologies governance requirements for the NLT-Pi runtime.
+  authority:
+    final_decision_maker: Joshua W. Dorsey, Sr.
+    principle: Capability does not equal authority
+    escalation: Escalate, do not guess
+  minimum_requirements:
+    feature_branch_and_pull_request: true
+    commit_format: "[AGENT_NAME] type(scope): description"
+    session_registration_for_substantive_work: true
+    handoff_record_for_significant_work: true
+    active_threads_maintained: true
+    no_secrets_in_source_control: true
+    human_approval_for_architecture_and_deployment: true
+    agent_escalation_template: .github/ISSUE_TEMPLATE/agent-escalation.md
+    pull_request_template: PULL_REQUEST_TEMPLATE.md
+  repository_specific_controls:
+    local_contract: NLT-DEV-OTOI.md
+    local_manifest: nltotoi.json
+    review_standard: REVIEW.md
+    validator: .nltotoi/scripts/validate-governance.sh
+    governance_layers:
+      - development
+      - asfdk_foundation
+      - asfdk_harness
+      - asfdk_mcp
+      - agentos_execution_boundary
+  adaptation_policy:
+    may_extend_baseline: true
+    may_weaken_baseline: false
+    upstream_changes_overwrite_local_files: false
+    local_changes_propagate_upstream_automatically: false
