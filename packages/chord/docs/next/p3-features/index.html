@@ -1,0 +1,832 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3: Feature Set and Work Packages (prep for the design meeting)</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">Meeting prep · p3 on Chord v2 · 2026-11-03</div>
+  <h1>p3<br>Features</h1>
+  <p class="subtitle">What p2 does today, what p3 should ship first, how hands, sync and the plugin API fit, and a first cut into work packages</p>
+  <div class="cover-stats"><div class="stat"><b>28</b><span>feature areas in p2 today</span></div><div class="stat"><b>21</b><span>model-facing tools in p2</span></div><div class="stat"><b>78</b><span>coding-agent extension examples checked against the p3 plugin API</span></div><div class="stat"><b>12</b><span>proposed work packages</span></div></div>
+  <div class="cover-note"><p>Written by the redesign session for the meeting on 2026-11-03, from three research passes over p2
+(<code>apps/p2</code> at <code>b7af55ace</code>), the coding agent&#39;s extension examples and p2&#39;s environments and Radius code
+(<code>/tmp/p3-prep/features.md</code>, <code>extensions.md</code>, <code>envs.md</code>), the owner&#39;s notes and Armin&#39;s summary of the 2026-11-02
+meeting. Chord v2&#39;s slices 1-13 are built (the app kit included); slice 11 (web and TUI) is building. Everything
+marked &quot;proposed&quot; is for the meeting to decide.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#features">I. p2 Today, and the Proposed Cut</a></li>
+<li><a href="#hands">II. Hands</a></li>
+<li><a href="#sync">III. Session Sync and the Index</a></li>
+<li><a href="#tools">IV. Tools Built In</a></li>
+<li><a href="#running">V. Running p3</a></li>
+<li><a href="#api">VI. The Plugin API</a></li>
+<li><a href="#packages">VII. Work Packages</a></li>
+<li><a href="#open-questions">Open Questions</a></li>
+<li><a href="#sources">Appendix A: Sources</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">p2 grew feature by feature on the phone: 33 plugins, about 65,000 lines, a web shell and a TUI. p3 is its rewrite on
+Chord v2, with an app kit that already gives hosts, workers, HTTP with sessions and pairing, plugins with versioned
+APIs, files and export. The meeting&#39;s job is to decide what p3 ships first, what waits, and how the work splits.</p>
+<p>Some of it was settled yesterday (Armin&#39;s summary): sessions sync to R2 through Radius by commit log, the session index
+is a replicated Chord table, every host kind loads plugins through registries, hands connect proactively. The owner
+added: voice waits; environments turn around into hands; continuing a local session on Radius is core; subagents and
+handoff are in, artifacts are questionable; the plugin API stays small enough to evolve.</p>
+<h3 id="ten-things-to-know">Ten things to know</h3>
+<ol class="findings">
+<li><strong>Proposed base:</strong> sessions (with delete), the agent and conversations, subagents, history and handoff, code mode,
+shell commands, models and login, prompt resources, workspace (read and review), file index, status and notices,
+search through the index, the web shell and the TUI, hands, session sync and continue-on-Radius.</li>
+<li><strong>Proposed later:</strong> voice, terminals (need channels and hands), artifacts, port forwards, chat mode and guest
+sharing, MCP and <code>tool_search</code>.</li>
+<li><strong>Hands replace SSH-dialled daemons:</strong> a long-lived daemon dials the server (or Radius), is enrolled once by a
+pairing code, and carries p2&#39;s existing daemon protocol over one multiplexed WebSocket.</li>
+<li><strong>The sync handshake needs a driver identity.</strong> Two machines writing one session both push &quot;from Radius&#39;s last
+seq&quot; and silently diverge; an epoch or lease per session (Chord&#39;s rule S7) closes it.</li>
+<li><strong>The index has two writers</strong> once a session continues on Radius; three options, one recommended (derive rows from
+session stores).</li>
+<li><strong>Tools in base:</strong> <code>read</code>, <code>write</code>, <code>edit</code>, <code>bash</code>, <code>codemode</code>, <code>subagent</code>, <code>team</code>, <code>agent</code>, <code>conversations</code>,
+<code>history_*</code>, location tools, <code>rename_session</code>, <code>send_file</code>; artifacts, ports and <code>reload_plugins</code> wait or change.</li>
+<li><strong>One CLI, no environment variables:</strong> <code>p3 serve</code>, <code>p3 tui</code>, <code>p3 hand</code>, <code>p3 owner-link</code>, <code>p3 install</code>; settings as
+arguments and files, per the app kit.</li>
+<li><strong>The plugin API v1 is seven clusters,</strong> almost all already existing: Durable&#39;s extension, a <code>Conversation</code>
+contract, input transforms, environments and models, questions, UI registries, objects for state.</li>
+<li><strong>Litmus test:</strong> all 78 coding-agent extension examples are expressible; Doom needs two small fixes (frame splitting
+in the TUI bridge, a path for large plugin assets); streaming frames from a worker and raw terminal ownership do
+not fit, by design.</li>
+<li><strong>Twelve work packages,</strong> with p3&#39;s skeleton on the app kit and the session/index/sync core first.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>A <strong>hand</strong> is a daemon on a machine that connects out to a p3 server or to Radius and offers execution (commands,
+files, watching, terminals). A <strong>driver</strong> is the single host allowed to write a session&#39;s store at a time; a
+<strong>replica</strong> follows its commits. An <strong>epoch</strong> numbers driver changes. The <strong>index</strong> is the table of session metadata
+(title, status, idle state) the session list reads. The <strong>app kit</strong> is Chord&#39;s <code>startApp</code>/<code>startWorker</code> layer.</p>
+</section>
+
+<section class="chapter" id="features"><header class="opener"><div class="numeral">I</div><h2>p2 Today, and the Proposed Cut</h2><p class="lede">Every feature area, what it is, and where it goes in p3.</p></header>
+<p class="dropcap">Sizes are non-test lines in p2. &quot;Base&quot; means p3&#39;s first release; &quot;later&quot; means designed for, built after; &quot;drop&quot; means
+not carried over.</p>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>What it does</th>
+<th align="right">p2 size</th>
+<th>Proposed</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Sessions</td>
+<td>list by machine and directory, create, rename, pin, archive, relocate, clone, fork, unread, automatic titles</td>
+<td align="right">2,186</td>
+<td><strong>base</strong>, plus delete; clone and fork in the web too</td>
+</tr>
+<tr>
+<td>Conversations and agent</td>
+<td>transcript, send, steer, follow-up, outbox, stop, model and thinking, cost, compaction</td>
+<td align="right">3,682 + web 2,700</td>
+<td><strong>base</strong></td>
+</tr>
+<tr>
+<td>Subagents, one-shot agents, cross-session messages</td>
+<td>named background agents, <code>team</code>, <code>agent</code> from scripts, <code>conversations</code></td>
+<td align="right">2,182</td>
+<td><strong>base</strong> (owner: &quot;awesome&quot;)</td>
+</tr>
+<tr>
+<td>History and handoff</td>
+<td>re-read earlier entries after compaction, hand off with a continuation</td>
+<td align="right">533</td>
+<td><strong>base</strong></td>
+</tr>
+<tr>
+<td>Code mode</td>
+<td>scripts calling tools as nested durable calls</td>
+<td align="right">155 + Durable</td>
+<td><strong>base</strong> (small, Durable owns it)</td>
+</tr>
+<tr>
+<td>Shell commands</td>
+<td><code>!cmd</code> and <code>!!cmd</code> in the conversation&#39;s environment</td>
+<td align="right">in chat</td>
+<td><strong>base</strong>, web too (TUI only today)</td>
+</tr>
+<tr>
+<td>Chat mode</td>
+<td>people talk without a turn, <code>@pi</code> mentions</td>
+<td align="right">876</td>
+<td>later</td>
+</tr>
+<tr>
+<td>Sharing and guests</td>
+<td>share links, guest names, revocation</td>
+<td align="right">1,047</td>
+<td>later (the app kit&#39;s users and invites cover the start)</td>
+</tr>
+<tr>
+<td>Devices and owner login</td>
+<td>owner links, device cookies</td>
+<td align="right">684</td>
+<td><strong>base</strong>, replaced by the app kit&#39;s sessions and pairing</td>
+</tr>
+<tr>
+<td>Models, credentials, provider login</td>
+<td>picker, scope, API keys, OAuth flows</td>
+<td align="right">3,828</td>
+<td><strong>base</strong></td>
+</tr>
+<tr>
+<td>Settings</td>
+<td><code>settings.json</code>, hot reload</td>
+<td align="right">87</td>
+<td><strong>base</strong></td>
+</tr>
+<tr>
+<td>Prompt resources</td>
+<td>AGENTS.md, skills, templates, read in the session&#39;s environment</td>
+<td align="right">958</td>
+<td><strong>base</strong></td>
+</tr>
+<tr>
+<td>Workspace</td>
+<td>files, git status, diffs, search, review comments</td>
+<td align="right">2,655 + web 1,341</td>
+<td><strong>base</strong> (read and review; uploads later)</td>
+</tr>
+<tr>
+<td>File index and <code>@</code></td>
+<td>ranked file completion</td>
+<td align="right">242</td>
+<td><strong>base</strong></td>
+</tr>
+<tr>
+<td>Terminals</td>
+<td>detached PTYs, ghostty-vt in the web</td>
+<td align="right">3,518</td>
+<td>later (channels, hands)</td>
+</tr>
+<tr>
+<td>Environments and locations</td>
+<td>SSH environments, directory picker, agents moving themselves</td>
+<td align="right">2,546</td>
+<td><strong>base, redesigned as hands</strong></td>
+</tr>
+<tr>
+<td>Artifacts and files</td>
+<td>attachments, <code>send_file</code>, versioned artifacts with previews</td>
+<td align="right">1,713</td>
+<td>attachments and <code>send_file</code> base (app kit <code>Files</code>); artifacts later</td>
+</tr>
+<tr>
+<td>Search</td>
+<td>sidebar search over titles and messages (FTS5)</td>
+<td align="right">775</td>
+<td><strong>base</strong> over the index; message text search through the same sync mechanism later</td>
+</tr>
+<tr>
+<td>Status and presence</td>
+<td>busy, tasks, usage, viewers, worker failures</td>
+<td align="right">566</td>
+<td><strong>base</strong> (feeds the index)</td>
+</tr>
+<tr>
+<td>Logs and notices</td>
+<td>owner log viewer, notices</td>
+<td align="right">487</td>
+<td><strong>base</strong></td>
+</tr>
+<tr>
+<td>Voice</td>
+<td>rooms, barge-in, speech service</td>
+<td align="right">3,770 + Python</td>
+<td>later (owner)</td>
+</tr>
+<tr>
+<td>Radius relay and port forwards</td>
+<td>brain WebSocket, up to 50 forwards</td>
+<td align="right">2,000</td>
+<td>relay <strong>base</strong> (as the hands/sync link), forwards later</td>
+</tr>
+<tr>
+<td>Web shell</td>
+<td>PWA, sheets, navigation, reconnect</td>
+<td align="right">9,252</td>
+<td><strong>base</strong>, rebuilt on slice 11 (&quot;look and feel great&quot;)</td>
+</tr>
+<tr>
+<td>TUI</td>
+<td>launcher, sandbox, 40 commands, themes, keybindings</td>
+<td align="right">6,720 + launcher</td>
+<td><strong>base</strong> on slice 11</td>
+</tr>
+<tr>
+<td>Dev and reload</td>
+<td>supervisor, dirty marks, reload tool</td>
+<td align="right">468 + scripts</td>
+<td><strong>base</strong> as the app kit&#39;s &quot;apply changes&quot;; the supervisor goes</td>
+</tr>
+<tr>
+<td>Fake provider, <code>PI_MOBILE_*</code> aliases, <code>P2_DEV_RESUME</code></td>
+<td>test and legacy leftovers</td>
+<td align="right">218</td>
+<td>drop</td>
+</tr>
+<tr>
+<td><code>tool_search</code>, MCP</td>
+<td>not installed in p2</td>
+<td align="right">-</td>
+<td>later</td>
+</tr>
+</tbody></table>
+<p>Rough edges p3 should not inherit: features only in the TUI (shell commands, clone, fork, compact, new context), no
+session delete, terminals and voice without a TUI side, docs that drifted from code (voice routes, TUI notes), the
+plugin loader&#39;s module leak on reload (solved by Chord&#39;s plugin component).</p>
+</section>
+
+<section class="chapter" id="hands"><header class="opener"><div class="numeral">II</div><h2>Hands</h2><p class="lede">Environments turned around: the machine connects to the server, not the other way.</p></header>
+<h3 id="what-p2-does">What p2 does</h3>
+<p>p2&#39;s server and workers start a daemon (<code>pi-env</code>) over SSH on demand, one connection per session and per use (four
+connection pools: each worker, the directory picker, the connection test, the terminal host). The daemon is
+stateless and kills its commands 30 seconds after its connection goes quiet. Its frame protocol (exec, files, watch,
+file listing, PTYs) does not depend on SSH.</p>
+<h3 id="what-a-hand-is-proposed">What a hand is (proposed)</h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>p2&#39;s daemon</th>
+<th>hand</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>who dials</td>
+<td>the server, over SSH</td>
+<td>the hand, over WSS, to the server or to Radius</td>
+</tr>
+<tr>
+<td>needs</td>
+<td>sshd, a key, a network path to the machine</td>
+<td>outbound HTTPS only</td>
+</tr>
+<tr>
+<td>lifetime</td>
+<td>per connection</td>
+<td>a service (systemd, launchd, Termux:Boot), reconnecting</td>
+</tr>
+<tr>
+<td>install</td>
+<td>deployed and verified at each start</td>
+<td>installed once, signed updates</td>
+</tr>
+<tr>
+<td>machine identity</td>
+<td>SSH host key</td>
+<td>a hand key pair, enrolled once</td>
+</tr>
+<tr>
+<td>connections</td>
+<td>one per session and use</td>
+<td>one per hand and server, multiplexed</td>
+</tr>
+</tbody></table>
+<ul>
+<li><strong>Enrollment:</strong> <code>p3 hand enroll &lt;server&gt;</code> shows a code; the owner approves it in the UI (the app kit&#39;s device
+pairing); the server pins the hand&#39;s public key; fingerprints shown on both sides. Revocation in a Hands panel.</li>
+<li><strong>Reachability:</strong> a hand reaches the owner&#39;s own server directly (LAN, own tunnel) or through Radius, which relays
+hands to whichever host drives a session (the upsell: no tunnel to set up; Radius can also offer sandboxed machines
+and hands of its own).</li>
+<li><strong>Protocol:</strong> p2&#39;s daemon protocol over the WebSocket, unchanged in shape; two changes: several sessions share one
+connection (cancellation, handles and backpressure per session), and a disconnect starts a grace period instead of
+killing everything (detached commands and PTYs reattach on reconnect; this moves the terminal host&#39;s job into the
+hand).</li>
+<li><strong>Binding:</strong> a session&#39;s location becomes <code>{ hand, cwd }</code>; one server object holds the hand connections and the
+<code>HarnessEnvironments</code> entry resolves a hand id to an execution environment; workers reach hands through the server&#39;s
+links. An SSH machine stays possible as a hand kind the server dials.</li>
+<li><strong>Offline:</strong> an operation needing an offline hand fails with a clear error the model sees; the hand&#39;s status shows
+in the session list.</li>
+</ul>
+</section>
+
+<section class="chapter" id="sync"><header class="opener"><div class="numeral">III</div><h2>Session Sync and the Index</h2><p class="lede">What was decided yesterday, and the three gaps it leaves.</p></header>
+<h3 id="decided">Decided</h3>
+<p>The worker updates the session index from events and sends it to the server; sessions sync to R2 through Radius:
+Radius reports per session its last sequence number, pi uploads the commit log from there; R2 holds the SQLite file
+and the commit log, a SQLite Durable Object applies them; sessions have an owner id; the index is a Chord table
+replicated like a session, its row updated only on metadata, session idle and subagent idle changes.</p>
+<p>Chord v2 has the pieces: a versioned outbox written in each commit&#39;s transaction, export archives, batch apply that
+refuses gaps and divergence, export and import per address (app kit). Missing (the sync layer): upload and trim,
+epochs, pull-back after a power loss, the split, starting from an archive.</p>
+<h3 id="gap-1-who-is-the-driver">Gap 1: who is the driver</h3>
+<p>Two machines both write session X (the laptop resumed it while Radius continued it). Both ask Radius for its last
+seq, both upload from there; Radius applies whichever arrives first and refuses the other as &quot;not following&quot;. The
+copies have now diverged and nobody knows.</p>
+<p><strong>Proposed:</strong> a driver epoch per session, handed out by Radius. An upload names its epoch; an old epoch is refused;
+the refused copy becomes a new session (Chord&#39;s rule S7: a split, never a rollback, because tools already ran).
+&quot;Continue on Radius&quot; is an epoch change: the local driver waits for idle, uploads the tail and the session&#39;s files,
+Radius bumps the epoch and starts the agent from its store, the local side becomes a replica or closes. Back is the
+reverse.</p>
+<h3 id="gap-2-two-writers-of-the-index">Gap 2: two writers of the index</h3>
+<p>When a session continues on Radius, Radius writes its index row, and so does the local server.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>How</th>
+<th>Cost</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>a. one index per writer</td>
+<td>each host keeps its own index, Radius merges per owner, newest epoch wins per row</td>
+<td>a second merge rule</td>
+</tr>
+<tr>
+<td>b. rows derived from session stores</td>
+<td>every host computes a session&#39;s row from the session&#39;s own commits</td>
+<td>no index sync at all; each host needs the session&#39;s commits</td>
+</tr>
+<tr>
+<td>c. rows tagged <code>{ epoch, seq }</code></td>
+<td>Radius keeps the highest per row</td>
+<td>rows must carry their source position</td>
+</tr>
+</tbody></table>
+<p><strong>Recommended:</strong> (b) where the session&#39;s commits are present (Radius has them all), with (c)&#39;s tag on the rows a local
+server writes for sessions it drives, so a list without the session store still sorts correctly.</p>
+<h3 id="gap-3-what-else-moves">Gap 3: what else moves</h3>
+<p>Files outside the store (uploads, sent files, the app kit&#39;s <code>Files</code>) must sync as blobs before the batches naming
+them, R2 as their home. Model access and secrets for a session continued on Radius: Radius&#39;s own models, or the
+owner&#39;s provider keys stored on Radius (decide). Local prompt resources (the device&#39;s <code>AGENTS.md</code>, skills) must be read
+through a hand or synced. Closed sessions have no worker: the server reads a session&#39;s outbox without starting it, or
+starts it to sync.</p>
+</section>
+
+<section class="chapter" id="tools"><header class="opener"><div class="numeral">IV</div><h2>Tools Built In</h2><p class="lede">p2&#39;s 21 model-facing tools, and which ship with p3.</p></header>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>p2 plugin</th>
+<th>Proposed</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>read</code>, <code>write</code>, <code>edit</code>, <code>bash</code></td>
+<td>coding-tools (Durable)</td>
+<td>base</td>
+</tr>
+<tr>
+<td><code>powershell</code></td>
+<td>powershell</td>
+<td>base (deferred tool, Windows hands)</td>
+</tr>
+<tr>
+<td><code>codemode</code></td>
+<td>codemode</td>
+<td>base</td>
+</tr>
+<tr>
+<td><code>agent</code> (from scripts)</td>
+<td>agent</td>
+<td>base</td>
+</tr>
+<tr>
+<td><code>subagent</code>, <code>team</code></td>
+<td>subagents</td>
+<td>base</td>
+</tr>
+<tr>
+<td><code>conversations</code></td>
+<td>conversations</td>
+<td>base</td>
+</tr>
+<tr>
+<td><code>history_search</code>, <code>history_read</code>, <code>history_handoff</code></td>
+<td>history</td>
+<td>base</td>
+</tr>
+<tr>
+<td><code>location_envs</code>, <code>location_dirs</code>, <code>location_move</code></td>
+<td>locations</td>
+<td>base, renamed around hands (<code>hands</code>, <code>hand_dirs</code>, <code>move</code>)</td>
+</tr>
+<tr>
+<td><code>rename_session</code></td>
+<td>sessions</td>
+<td>base</td>
+</tr>
+<tr>
+<td><code>send_file</code></td>
+<td>send-file</td>
+<td>base (on the app kit&#39;s <code>Files</code>)</td>
+</tr>
+<tr>
+<td><code>artifact</code></td>
+<td>artifacts</td>
+<td>later (owner: maybe not as useful)</td>
+</tr>
+<tr>
+<td><code>ports</code></td>
+<td>ports</td>
+<td>later (with forwards)</td>
+</tr>
+<tr>
+<td><code>reload_plugins</code></td>
+<td>dev-tools</td>
+<td>base as an &quot;apply changes&quot; tool for the owner, not tied to a checkout</td>
+</tr>
+<tr>
+<td><code>tool_search</code></td>
+<td>Durable</td>
+<td>later (with MCP)</td>
+</tr>
+</tbody></table>
+<p>Every tool is a plugin in the app&#39;s own root, so any of them can be removed, replaced or added without touching base
+code (the app kit&#39;s rule: base code is the API, bootstrap and a start-data facet).</p>
+</section>
+
+<section class="chapter" id="running"><header class="opener"><div class="numeral">V</div><h2>Running p3</h2><p class="lede">Starting the server, the CLI, themes and keybindings.</p></header>
+<h3 id="the-cli-proposed">The CLI (proposed)</h3>
+<p>One binary, <code>p3</code>, and no environment variables (app kit decision); settings are arguments or files in the data
+directory.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>p3 serve [--data-dir &lt;dir&gt;] [--host &lt;addr&gt;] [--port &lt;n&gt;]</code></td>
+<td>starts the server (<code>startApp</code>); prints the one-time owner link</td>
+</tr>
+<tr>
+<td><code>p3 owner-link</code></td>
+<td>prints a new owner link for a running server (through the owner token file)</td>
+</tr>
+<tr>
+<td><code>p3 tui [url] [--pair]</code></td>
+<td>the sandboxed TUI; on the same machine it uses the owner token file, elsewhere device pairing</td>
+</tr>
+<tr>
+<td><code>p3 hand enroll &lt;url&gt;</code>, <code>p3 hand run</code></td>
+<td>enrolls this machine as a hand, runs it (or installs a service)</td>
+</tr>
+<tr>
+<td><code>p3 radius login</code></td>
+<td>signs the server into Radius (device code)</td>
+</tr>
+<tr>
+<td>`p3 install &lt;git:...</td>
+<td>npm:...&gt;`</td>
+</tr>
+<tr>
+<td><code>p3 export &lt;session&gt; &lt;file&gt;</code>, <code>p3 import &lt;file&gt;</code></td>
+<td>the app kit&#39;s export per address</td>
+</tr>
+</tbody></table>
+<p>The data directory defaults to <code>~/.p3</code>. Its files: <code>settings.json</code>, <code>models.json</code>, <code>auth.json</code> (locked),
+<code>AGENTS.md</code>, <code>skills/</code>, <code>prompts/</code>, <code>plugins/</code> (the user&#39;s root), the server store, a directory per session worker,
+<code>owner-token</code>, <code>logs/</code>. Plugin-specific configuration moves into plugin objects (documents) instead of more files.</p>
+<h3 id="themes-and-keybindings">Themes and keybindings</h3>
+<p>Themes follow the looks-and-themes proposal (decided 2026-11-02): design tokens as CSS variables on the web, roles in
+the TUI, one <code>Themes</code> registry plugins contribute to, one dark and one light choice per user. Keybindings: commands are
+registry entries with default keys (p2&#39;s <code>TuiCommands</code> with <code>when</code> conditions, 78 binding ids); the user&#39;s overrides
+live in a preferences document (per user, synced like any data), not in files on each client; the web gets the same
+command registry with its own key handling.</p>
+</section>
+
+<section class="chapter" id="api"><header class="opener"><div class="numeral">VI</div><h2>The Plugin API</h2><p class="lede">The smallest surface that still expresses everything the coding agent&#39;s extensions do.</p></header>
+<h3 id="the-rule">The rule</h3>
+<p>Offer few things, each stable: what an API offers, it must keep (versioned in the import path, <code>@p3/app/v1</code>). Every
+cluster below is a registry or a contract that already exists in Chord, Durable or p2; p3 v1 publishes those and
+nothing else. Legacy concepts of the old extension API are not carried: CLI flags, an event bus, RPC-mode UI, <code>hasUI</code>
+checks, &quot;destructive switch&quot; gates, <code>pi.exec</code> running locally regardless of the environment.</p>
+<h3 id="seven-clusters">Seven clusters</h3>
+<table>
+<thead>
+<tr>
+<th>Cluster</th>
+<th>Host</th>
+<th>Mechanism</th>
+<th>Covers</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>A. The agent&#39;s turn</td>
+<td>worker</td>
+<td>Durable&#39;s <code>Extension</code> in <code>HarnessExtensions</code>: tools, <code>beforeTool</code>/<code>afterTool</code>, <code>beforeRequest</code>, sections, wraps, <code>onYield</code>, <code>afterRun</code>, <code>beforeCompact</code></td>
+<td>20 examples: hello, permission-gate, protected-paths, tool-override, plan-mode, todo, custom-compaction, ...</td>
+</tr>
+<tr>
+<td>B. Conversation control</td>
+<td>worker object</td>
+<td>a <code>Conversation</code> contract: <code>submit</code>, <code>configure</code>, <code>append</code> (typed entries), <code>compact</code>, <code>fork</code>, <code>rename</code>; state: busy, agent, usage</td>
+<td>send-user-message, file-trigger, session-name, preset, handoff, qna, ...</td>
+</tr>
+<tr>
+<td>C. Input</td>
+<td>worker</td>
+<td><code>InputTransforms</code> registry (rewrite or answer input before the model)</td>
+<td>input-transform, inline-bash</td>
+</tr>
+<tr>
+<td>D. Environments and models</td>
+<td>worker, server</td>
+<td><code>HarnessEnvironments</code> (ssh, gondolin, hands as kinds), <code>HarnessModels</code> (providers, virtual models), <code>LoginProviders</code></td>
+<td>ssh, gondolin, custom providers, jev-router</td>
+</tr>
+<tr>
+<td>E. Asking the user</td>
+<td>server object, UI renderers</td>
+<td><code>Questions.ask</code> from worker code; <code>QuestionKinds</code> per UI kind</td>
+<td>permission-gate, question, questionnaire, timed-confirm, project-trust</td>
+</tr>
+<tr>
+<td>F. UI</td>
+<td>tui, web</td>
+<td>registries: <code>Commands</code> (slash, palette, keys), <code>ToolRenderers</code>, <code>EntryRenderers</code>, <code>Slots</code> (header, footer, status, widgets), overlays through the UI context, editor extension points</td>
+<td>every UI-only example, the games</td>
+</tr>
+<tr>
+<td>G. State and standing behaviour</td>
+<td>any</td>
+<td><code>local</code> objects owning natives, documents for state</td>
+<td>file-trigger&#39;s watcher, gondolin&#39;s VM, game saves</td>
+</tr>
+</tbody></table>
+<pre><code><span class="tk-c">// a plugin with a tool, a gate and a renderer: plugins/todo/</span>
+<span class="tk-c">// worker.ts</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">HarnessExtensions</span>, { name: <span class="tk-s">"todo"</span>, tools: [todoTool], hooks: [<span class="tk-f">hook</span>(<span class="tk-t">ToolTask</span>, { beforeTool: guard })] });
+<span class="tk-c">// tui.ts</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">TuiToolRenderers</span>, { todo: { call: (args) =&gt; <span class="tk-f">todoCall</span>(args), result: (r) =&gt; <span class="tk-f">todoList</span>(r.details) } });
+self.<span class="tk-f">contribute</span>(<span class="tk-t">TuiCommands</span>, { <span class="tk-s">"todo.show"</span>: { slash: { name: <span class="tk-s">"todos"</span> }, run: (ui) =&gt; ui.<span class="tk-f">overlay</span>(<span class="tk-s">"todos"</span>, <span class="tk-k">new</span> <span class="tk-t">TodoView</span>(ui)) } });
+<span class="tk-c">// web.tsx: the same registries with React components</span></code></pre>
+<h3 id="the-litmus-test">The litmus test</h3>
+<p>All 78 examples map onto the seven clusters (table in <code>/tmp/p3-prep/extensions.md</code>). The examples that mix agent and
+UI split into a worker facet and a tui/web facet sharing a contract file: a tool that wants a dialog asks the
+<code>Questions</code> object, which works from any client, several clients or none.</p>
+<ul>
+<li><strong>Snake, Space Invaders, tic-tac-toe:</strong> a command plus an overlay in <code>tui.ts</code> and a canvas in <code>web.tsx</code>, engine in a
+shared file, saves in a user-keyed document. Fit today.</li>
+<li><strong>Doom:</strong> fits with two fixes in the TUI: the sandbox bridge caps a frame at 64 KiB and a Doom frame is about 160 KB
+(split writes at escape boundaries), and the sandbox has no files or network, so large plugin assets (a 4 MB WAD)
+need a documented &quot;asset of my plugin&quot; path (chunked reads through the plugin&#39;s server facet).</li>
+<li><strong>Does not fit, by design:</strong> streaming 35 FPS frames from a worker to clients (objects carry state; needs channels),
+engine state surviving an in-place reload (needs an explicit save), raw terminal ownership (<code>interactive-shell</code>
+becomes a terminal view; terminal notifications need a launcher action).</li>
+</ul>
+<h3 id="what-v1-leaves-out">What v1 leaves out</h3>
+<p>Editor replacement (extension points only), raw provider stream events and response headers, a fork hook, a
+<code>turn_start</code> hook, an event bus. Each has one or two examples; add when a real plugin needs it.</p>
+</section>
+
+<section class="chapter" id="packages"><header class="opener"><div class="numeral">VII</div><h2>Work Packages</h2><p class="lede">A first cut, in dependency order, for the meeting to rearrange.</p></header>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Package</th>
+<th>Contains</th>
+<th>Depends on</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>p3 skeleton</td>
+<td><code>startApp</code> with p3&#39;s API v1 modules (shared, web, tui, worker), core plugins in the app&#39;s root, <code>p3</code> CLI</td>
+<td>Chord slices 11-13</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Sessions and conversations</td>
+<td>Durable on the Chord store, session lifecycle with delete, the conversation contract, subagents, history and handoff, code mode, shell commands</td>
+<td>1</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Session index</td>
+<td>the index table, worker-to-server updates on metadata and idle changes, the session list, search over it</td>
+<td>2</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Session sync to Radius</td>
+<td>outbox upload and trim, epochs, pull-back, split, files as blobs, continue on Radius and back</td>
+<td>2, 3, Radius side</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Radius side</td>
+<td>per-session SQLite DO, commit log and SQLite on R2, epochs, the sync handshake, hand relay</td>
+<td>with 4</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Hands</td>
+<td>daemon as an outbound service, enrollment by pairing, multiplexed protocol, reattach after disconnects, server hand pool, <code>HarnessEnvironments</code> kind, SSH as a hand kind</td>
+<td>1</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Web shell</td>
+<td>p2&#39;s layout and flows rebuilt on slice 11 (&quot;look and feel great&quot;), themes</td>
+<td>1, slice 11</td>
+</tr>
+<tr>
+<td>8</td>
+<td>TUI</td>
+<td>p2&#39;s TUI on slice 11&#39;s sandbox, frame splitting, plugin assets path, keybindings and themes</td>
+<td>1, slice 11</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Models and settings</td>
+<td>catalog, credentials, provider login flows, settings, prompt resources</td>
+<td>1</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Workspace</td>
+<td>files, git, diffs, search, review comments, file index and <code>@</code>, through hands</td>
+<td>6</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Plugin API v1 and docs</td>
+<td>the seven clusters published in <code>@p3/app/v1</code>, authoring guide, ported examples as the litmus (hello, permission-gate, todo, plan-mode, snake, doom)</td>
+<td>1, 2, 7, 8</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Access and status</td>
+<td>owner, devices and pairing (app kit), notices, logs, status and presence</td>
+<td>1</td>
+</tr>
+</tbody></table>
+<p>Later: voice, terminals (channels and hands), artifacts, port forwards, chat mode and guest sharing, MCP and
+<code>tool_search</code>.</p>
+</section>
+
+<section class="chapter epilogue" id="open-questions"><header class="opener"><div class="numeral">∴</div><h2>Open Questions</h2><p class="lede">To decide in the meeting.</p></header>
+<ol>
+<li>The proposed cut: base versus later per area (first table).</li>
+<li>Driver identity: epochs per session, handed out by Radius, with splits on conflict?</li>
+<li>The index with two writers: derived rows plus <code>{ epoch, seq }</code> tags, or one of the other options?</li>
+<li>Who syncs a closed session (the server reading its outbox, or starting its worker)?</li>
+<li>Files outside the store as blobs on R2, uploaded before their batch?</li>
+<li>Models and secrets for sessions continued on Radius: Radius&#39;s own models, or the owner&#39;s keys stored there?</li>
+<li>Hands: through Radius as a relay to the driver, and may one hand serve the local server and Radius at once?</li>
+<li>Do hands keep commands and terminals alive across disconnects (absorbing p2&#39;s terminal host)?</li>
+<li>Hand install and updates: signed binary, service install, version negotiation.</li>
+<li>Is SSH kept as a hand kind for machines without a service?</li>
+<li>Plugin API v1: the seven clusters as listed, and what is explicitly left out?</li>
+<li>Work package owners and order.</li>
+</ol>
+</section>
+
+<section class="chapter appendix" id="sources"><header class="opener"><div class="numeral">A</div><h2>Sources</h2></header>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>What</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/tmp/p3-prep/features.md</code></td>
+<td>p2&#39;s feature areas with files, sizes, tools, rough edges; the CLI, environment variables and data files</td>
+</tr>
+<tr>
+<td><code>/tmp/p3-prep/extensions.md</code></td>
+<td>all 78 extension examples, the capability matrix, the clusters with sketches, the hard cases</td>
+</tr>
+<tr>
+<td><code>/tmp/p3-prep/envs.md</code></td>
+<td>p2&#39;s environments and Radius link, Chord&#39;s sync pieces, the sync and hands sketches, open questions</td>
+</tr>
+<tr>
+<td><code>apps/p2/docs/p3-functions/</code></td>
+<td>the functionality map (partly outdated)</td>
+</tr>
+<tr>
+<td><code>packages/chord/docs/next/</code></td>
+<td>design, decisions (2026-11-02 meeting summary), app kit and plugin model, theming</td>
+</tr>
+</tbody></table>
+</section>
+
+<p class="colophon">p3 Feature Set and Work Packages · meeting prep · 2026-11-03</p>
+</div></div>
+
+</body></html>
