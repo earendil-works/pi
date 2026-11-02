@@ -1,3 +1,22 @@
+# Agent Pull Request Template
+
+**Purpose:** Repository-adapted pull request template for NLT-Pi contributions, aligned with the NeuroLift Technologies public governance baseline.
+
+**Governed by:** `governance.yaml` (ORG-DEV-OTOI-1.0.4)
+
+> **Start here:** [`governance.yaml`](governance.yaml) is the authoritative machine-readable contract and [`AGENTS.md`](AGENTS.md) is the agent-facing guide. If anything in this template disagrees with `governance.yaml`, `governance.yaml` wins.
+
+## PR Metadata
+
+**Agent:** [Name / platform]
+**Branch:** [feature/...]
+**Working repo:** [Repository name]
+**PR Type:** [feat | fix | docs | refactor | chore | test | ci]
+**Governance Version:** ORG-DEV-OTOI-1.0.4
+**Repository Adaptation Contract:** NLT-PI-DEV-OTOI-1.0.1
+
+---
+
 ## Change summary
 [What changed and why.]
 
