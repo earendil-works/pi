@@ -12,8 +12,8 @@
 **Branch:** `fix/public-governance-baseline-alignment`  
 **Agent registration:** `docs/agent-log/registrations/2026-11-01-chatgpt-gpt6-governance.json`  
 **Intent record:** `docs/agent-log/intent/2026-11-01-public-governance-alignment.md`  
-**Verification:** Static repository inspection and content changes only. Governance validator and repository test suite have not yet been executed in this environment; CI should provide the executable verification.  
-**Next action:** Review PR, inspect CI results, and merge only after human approval.
+**Verification:** GitHub Actions governance workflow run [#46](https://github.com/NeuroLift-Technologies/nlt-pi/actions/runs/41384933614) completed successfully. Both the repository governance validator and its Node test passed. General repository CI run [#40](https://github.com/NeuroLift-Technologies/nlt-pi/actions/runs/41384933576) is still in progress.  
+**Next action:** Inspect general CI run #40, review the PR, and merge only after human approval.
 
 ### NLTPI-SEC-001 — Align security policy with NLT governance
 **Status:** in_review  
