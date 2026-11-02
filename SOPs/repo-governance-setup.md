@@ -3,13 +3,14 @@
 **Version:** 1.1.0  
 **Scope:** Governance scaffolding and validation for this repository  
 **Public minimum-requirements and template source:** [NeuroLift-Technologies/.github](https://github.com/NeuroLift-Technologies/.github)  
-**Baseline contract:** ORG-DEV-OTOI-1.0.4
+**Baseline contract:** ORG-DEV-OTOI-1.0.4  
+**Local implementation:** NLT-PI-DEV-OTOI-1.0.1
 
 ## Purpose
 
 Define NLT-Pi's repository-specific governance implementation. The public `.github` repository supplies minimum governance requirements and reusable templates for public repositories. NLT-Pi adopts the applicable baseline and adapts it to this repository's architecture, risks, tools, and operational requirements.
 
-The public templates are a minimum baseline, not a complete implementation and not a requirement to duplicate generic files unchanged. Repository-specific controls may extend the baseline but must not silently weaken or contradict it. Local adaptations are owned here; no downstream sync or automatic upstream propagation is configured.
+The public templates are a minimum baseline, not a complete implementation and not a demand for unchanged duplication. Repository-specific controls may extend the baseline but must not silently weaken or contradict it. Local adaptations are owned here; no downstream sync or automatic upstream propagation is configured.
 
 ## Public baseline requirements
 
