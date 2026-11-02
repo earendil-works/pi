@@ -2153,6 +2153,18 @@ validation and copies the v2 kernel added around Delta.
   consumer waits "contract mismatch". Which package carries the app's contracts is point 5. The by-name lookup and the
   `tsconfig` path aliases go; built in the plugin slice (examples 35-38, fixtures, design §21, the plugins README, the
   guide's chapter "Plugins Using Plugins").
+- **Plugins import only the app's versioned API; Chord is re-exported in it (owner, 2026-11-01: "makes sense";
+  plugin model point 2):** a plugin never imports Chord directly: Chord is not a host package plugins may name, so a
+  direct import is a build error pointing to the app's API. The app's API module per version (`@acme/app/v3`)
+  re-exports the Chord surface the app supports (contract and schema builders, `defineFacet`, `defineRegistry`, the
+  types plugins see) next to its own small part (host kinds, the principal type, `defineFacet` bound to it, core
+  contracts, registry tokens). One version number, the app's, describes everything a plugin gets from its host. The
+  process runs one Chord: an older API version still listed is a layer over today's Chord; when Chord breaks its
+  API it keeps its previous API as a compatibility module for a while, which the app's older version re-exports;
+  once that is dropped the app drops the version and old plugins fail at build naming the available versions.
+  Contracts are data and bind through `accepts` whatever Chord runs. One facet imports from one API version only
+  (checked at build). Only base code imports Chord directly. Bundling is slice 10's host packages: the version is part
+  of the name (`kinds.hostPackages` lists `@acme/app/v3`, `@acme/app/v2`), each process provides its own modules.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
