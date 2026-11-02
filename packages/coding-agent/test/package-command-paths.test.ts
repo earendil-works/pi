@@ -369,6 +369,54 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		}
 	});
 
+	/** Install `npm:fake-package` at `installedVersion` with an npm whose registry reports `registryVersion`. */
+	function prepareStaleNpmPackage(installedVersion: string, registryVersion: string): void {
+		const installedPath = join(agentDir, "npm", "node_modules", "fake-package");
+		mkdirSync(installedPath, { recursive: true });
+		writeFileSync(
+			join(installedPath, "package.json"),
+			JSON.stringify({ name: "fake-package", version: installedVersion }),
+		);
+		// `npm view` reports the newer version, but `npm install` succeeds without changing anything.
+		const fakeNpmPath = join(tempDir, "fake-stale-npm.cjs");
+		writeFileSync(
+			fakeNpmPath,
+			`if (process.argv.includes("view")) console.log(${JSON.stringify(JSON.stringify(registryVersion))});`,
+		);
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:fake-package"], npmCommand: [originalExecPath, fakeNpmPath] }),
+		);
+	}
+
+	it("does not report packages as up to date when npm left an older version installed", async () => {
+		prepareStaleNpmPackage("1.2.0", "1.3.0");
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+		await expect(main(["update", "--extensions"])).resolves.toBeUndefined();
+
+		const progress = stdoutSpy.mock.calls.map(([chunk]) => String(chunk)).join("");
+		const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(progress).toContain("npm:fake-package is still 1.2.0 (registry reports 1.3.0)");
+		expect(stdout).toContain("No packages were updated, see the warnings above");
+		expect(stdout).not.toContain("up to date");
+	});
+
+	it("does not report packages as up to date in offline mode", async () => {
+		prepareStaleNpmPackage("1.2.0", "1.3.0");
+		// main() writes both variables in offline mode; stubbing them lets afterEach restore them.
+		vi.stubEnv("PI_OFFLINE", "1");
+		vi.stubEnv("PI_SKIP_VERSION_CHECK", "1");
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		await expect(main(["update", "--extensions"])).resolves.toBeUndefined();
+
+		const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(stdout).toContain("Skipped package updates (offline mode)");
+		expect(stdout).not.toContain("up to date");
+	});
+
 	it("uses saved project trust during update", async () => {
 		mkdirSync(join(projectDir, ".pi"), { recursive: true });
 		const fakeNpmPath = join(tempDir, "fake-trusted-project-npm.cjs");
