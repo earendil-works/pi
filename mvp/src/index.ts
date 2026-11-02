@@ -226,7 +226,7 @@ export async function runNltCodingTurn(input: GovernedTurnInput & { cwd?: string
       ...governed,
       response: null,
       postTurn: {
-        governance: governed.governance,
+        governance: { ...governed.governance, response: null },
         continuity: governed.continuity,
         governedAt: new Date(),
       },
