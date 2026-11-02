@@ -216,6 +216,18 @@ registry rule for conflicts).</li>
 <li>A plugin&#39;s own catalogs are its built-in contributions; a translation plugin can also override one of them (a
 better German), contributed explicitly with <code>override: true</code>.</li>
 </ul>
+<h3 id="one-file-every-host">One file, every host</h3>
+<p>Registries are per host: a contribution lives on the host whose facet made it. A French catalog contributed from the
+web facet exists in browser pages only. So a plugin keeps its messages in one shared file, <code>messages.ts</code>, which every
+facet that renders text imports (the web and TUI facets; the worker&#39;s too when it builds messages with <code>t.message</code>),
+and a translation plugin keeps its catalog in one shared file too and contributes it from each facet that renders:</p>
+<pre><code><span class="tk-c">// plugins/french/fr.ts: the catalogs, written once</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> notesFr: <span class="tk-t">MessagesOf</span>&lt;<span class="tk-k">typeof</span> notes&gt; = { newNote: <span class="tk-s">"Nouvelle note"</span>, <span class="tk-c">/* ... */</span> };
+<span class="tk-c">// plugins/french/web.ts and plugins/french/tui.ts: the same two lines each</span>
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; self.<span class="tk-f">contribute</span>(<span class="tk-t">Translations</span>, { namespace: <span class="tk-s">"notes"</span>, locale: <span class="tk-s">"fr"</span>, messages: notesFr }));</code></pre>
+<p>The server and workers need catalogs only when they produce final text themselves (an email, a push notification);
+then their facets contribute them too, and the text is rendered in the recipient&#39;s language from their preference.
+Catalogs never travel over links: they contain functions.</p>
 </section>
 
 <section class="chapter" id="locale"><header class="opener"><div class="numeral">III</div><h2>Choosing a Language</h2><p class="lede">Per viewer, defaulted from the device, switched live.</p></header>
@@ -242,14 +254,20 @@ both look at the same object state.</p>
 <pre><code><span class="tk-c">// plugins/notes/contract.ts: a member of the Notes object's state holds a message as data</span>
 lastSaved: <span class="tk-f">opt</span>(<span class="tk-f">obj</span>({ namespace: <span class="tk-f">str</span>(), key: <span class="tk-f">str</span>(), params: <span class="tk-f">arr</span>(<span class="tk-k">unknown</span>()) })),
 
-<span class="tk-c">// plugins/notes/worker.ts: the object writes the key and its parameters, never a sentence</span>
+<span class="tk-c">// plugins/notes/worker.ts: the object writes the key and its parameters, never a sentence; the same `t` builds it</span>
+<span class="tk-k">import</span> { t } <span class="tk-k">from</span> <span class="tk-s">"./messages.ts"</span>;
 <span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; {
-	(<span class="tk-k">await</span> tx.<span class="tk-f">draft</span>(status)).lastSaved = { namespace: <span class="tk-s">"notes"</span>, key: <span class="tk-s">"saved"</span>, params: [note.title, note.at] };
+	(<span class="tk-k">await</span> tx.<span class="tk-f">draft</span>(status)).lastSaved = t.<span class="tk-f">message</span>(<span class="tk-s">"saved"</span>, note.title, note.at);   <span class="tk-c">// typed: key and arguments checked</span>
 }, ctx);
 
 <span class="tk-c">// plugins/notes/web.tsx: each viewer renders it in its own language</span>
 <span class="tk-k">const</span> notes = <span class="tk-f">useHold</span>(<span class="tk-t">Notes</span>, { session });
 <span class="tk-k">const</span> text = notes.lastSaved &amp;&amp; t.<span class="tk-f">render</span>(notes.lastSaved);   <span class="tk-c">// typed against the notes catalog</span></code></pre>
+<p><code>t.message</code> returns a <code>Message&lt;&quot;notes&quot;&gt;</code>, plain data <code>{ namespace, key, params }</code>, typed against the first catalog:
+<code>t.message(&quot;saved&quot;, 42)</code> and <code>t.message(&quot;svaed&quot;, ...)</code> are type errors. <code>t.render</code> takes only <code>Message&lt;&quot;notes&quot;&gt;</code>. Across a
+link the contract&#39;s member is a generic message schema, so <code>t.render</code> checks the namespace and key at runtime and
+shows the key for an unknown one. The writer and the reader are type-checked; the hop between them is checked at
+runtime.</p>
 <p>The same holds for anything else that reaches people: an app&#39;s notices object stores <code>{ namespace, key, params }</code>
 per notice, a tool card&#39;s summary carries one, an error shown to a user carries a code and parameters.</p>
 <p>Parameters are plain data (strings, numbers, ISO dates), so they cross links like any state. What is never

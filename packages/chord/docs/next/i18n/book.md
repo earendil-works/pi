@@ -117,6 +117,24 @@ export default defineFacet((_host, self) => {
 - A plugin's own catalogs are its built-in contributions; a translation plugin can also override one of them (a
   better German), contributed explicitly with `override: true`.
 
+## One file, every host
+
+Registries are per host: a contribution lives on the host whose facet made it. A French catalog contributed from the
+web facet exists in browser pages only. So a plugin keeps its messages in one shared file, `messages.ts`, which every
+facet that renders text imports (the web and TUI facets; the worker's too when it builds messages with `t.message`),
+and a translation plugin keeps its catalog in one shared file too and contributes it from each facet that renders:
+
+```ts
+// plugins/french/fr.ts: the catalogs, written once
+export const notesFr: MessagesOf<typeof notes> = { newNote: "Nouvelle note", /* ... */ };
+// plugins/french/web.ts and plugins/french/tui.ts: the same two lines each
+export default defineFacet((_host, self) => self.contribute(Translations, { namespace: "notes", locale: "fr", messages: notesFr }));
+```
+
+The server and workers need catalogs only when they produce final text themselves (an email, a push notification);
+then their facets contribute them too, and the text is rendered in the recipient's language from their preference.
+Catalogs never travel over links: they contain functions.
+
 # Choosing a Language {#locale lede="Per viewer, defaulted from the device, switched live."}
 
 The language is a user preference, kept with the user's other preferences (the kit's per-principal document, like
@@ -148,15 +166,22 @@ So objects carry messages as data, and each client renders them:
 // plugins/notes/contract.ts: a member of the Notes object's state holds a message as data
 lastSaved: opt(obj({ namespace: str(), key: str(), params: arr(unknown()) })),
 
-// plugins/notes/worker.ts: the object writes the key and its parameters, never a sentence
+// plugins/notes/worker.ts: the object writes the key and its parameters, never a sentence; the same `t` builds it
+import { t } from "./messages.ts";
 await self.tx(async (tx) => {
-	(await tx.draft(status)).lastSaved = { namespace: "notes", key: "saved", params: [note.title, note.at] };
+	(await tx.draft(status)).lastSaved = t.message("saved", note.title, note.at);   // typed: key and arguments checked
 }, ctx);
 
 // plugins/notes/web.tsx: each viewer renders it in its own language
 const notes = useHold(Notes, { session });
 const text = notes.lastSaved && t.render(notes.lastSaved);   // typed against the notes catalog
 ```
+
+`t.message` returns a `Message<"notes">`, plain data `{ namespace, key, params }`, typed against the first catalog:
+`t.message("saved", 42)` and `t.message("svaed", ...)` are type errors. `t.render` takes only `Message<"notes">`. Across a
+link the contract's member is a generic message schema, so `t.render` checks the namespace and key at runtime and
+shows the key for an unknown one. The writer and the reader are type-checked; the hop between them is checked at
+runtime.
 
 The same holds for anything else that reaches people: an app's notices object stores `{ namespace, key, params }`
 per notice, a tool card's summary carries one, an error shown to a user carries a code and parameters.
