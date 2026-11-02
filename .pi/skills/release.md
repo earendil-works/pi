@@ -7,7 +7,9 @@ description: Prepare, publish, verify, and recover pi releases. Use for release 
 
 Run repository commands from the repo root (two directories above this skill), unless instructed otherwise.
 
-**Lockstep versioning**: all packages share one version; every release updates all together. `patch` = fixes + additions, `minor` = breaking changes. No major releases.
+**Lockstep versioning**: all packages share one version; every release updates all together. `patch` = fixes + additions, `minor` = larger non-breaking changes, `major` = breaking changes.
+
+**Major releases**: before releasing, consider removing code marked `remove-in-next-major` (`rg remove-in-next-major`) and documenting the removals under `### Breaking Changes`.
 
 1. **Update CHANGELOGs**: ask the user whether they ran the `/cl` prompt on the latest commit on `main`. If not, they must run `/cl` first to audit and update each package's `[Unreleased]` section before releasing.
 
@@ -37,7 +39,8 @@ Run repository commands from the repo root (two directories above this skill), u
 3. **Run the release script**:
    ```bash
    PI_ALLOW_LOCKFILE_CHANGE=1 npm_config_min_release_age=0 npm run release:patch    # fixes + additions
-   PI_ALLOW_LOCKFILE_CHANGE=1 npm_config_min_release_age=0 npm run release:minor    # breaking changes
+   PI_ALLOW_LOCKFILE_CHANGE=1 npm_config_min_release_age=0 npm run release:minor    # larger non-breaking changes
+   PI_ALLOW_LOCKFILE_CHANGE=1 npm_config_min_release_age=0 npm run release:major    # breaking changes
    ```
    If the test suite already passed in `npm run release:local` and only fails from machine load, `PI_RELEASE_SKIP_TESTS=1` skips `./test.sh` in the release script; checks and the packed install check still run. Use it only with the user's approval.
 
@@ -49,4 +52,4 @@ Run repository commands from the repo root (two directories above this skill), u
 
 5. **CI builds the Nix release**: the tag push also triggers `.github/workflows/nix.yml`, which builds the tagged flake on Linux and macOS and then fast-forwards the `stable` branch to the release commit. `nix run github:earendil-works/pi/stable` runs the latest release. If the Nix build fails, `stable` stays on the previous release; the tag cannot be fixed, so fix `main` and ship the fix in the next release.
 
-6. **If CI publish or announcement fails**: inspect the failed job. The publish helper is idempotent and skips package versions already present on npm; the announcement job rechecks availability before updating the R2 marker. Rerun the failed job or workflow after fixing CI or transient npm issues. Do not rerun `npm run release:patch` or `npm run release:minor` for the same version.
+6. **If CI publish or announcement fails**: inspect the failed job. The publish helper is idempotent and skips package versions already present on npm; the announcement job rechecks availability before updating the R2 marker. Rerun the failed job or workflow after fixing CI or transient npm issues. Do not rerun `npm run release:patch`, `npm run release:minor`, or `npm run release:major` for the same version.
