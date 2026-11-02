@@ -10,7 +10,8 @@
 **Summary:** Remove the fork-inherited contributor auto-close/approval mechanism from NLT-Pi so normal GitHub contribution behavior applies. Deleted the PR Gate, Issue Gate, and Approve Contributor workflows first, then their `.github/APPROVED_CONTRIBUTORS` data file, then the local `CONTRIBUTING.md` so GitHub can surface the organization-level default guide from `NeuroLift-Technologies/.github`.  
 **PR:** https://github.com/NeuroLift-Technologies/nlt-pi/pull/4  
 **Branch:** `governance/remove-contributor-gates`  
-**Next action:** Confirm the two requested repository settings and verify that `main` requires approving review(s) and required status checks. Branch-protection read currently returns HTTP 403 for this integration; do not infer protection from the branch's `protected` flag alone.
+**Verification:** PR #4 is open. Both CI and governance workflow runs ended in `startup_failure` with zero jobs created; this is an Actions startup/infrastructure failure, not a reported test assertion failure. Main currently reports `protected: false` and no repository rulesets.  
+**Next action:** Confirm the two requested repository settings and establish branch protection requiring approving review(s) and required status checks through an authorized admin surface.
 
 ### NLTPI-ARCH-001 — ASFDK three-layer governance alignment
 **Status:** active  
