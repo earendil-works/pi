@@ -2299,6 +2299,11 @@ validation and copies the v2 kernel added around Delta.
   `useHold(Type, params)`, `useWatch(watchable)`, `useRegistry(R)`, `useRefState(ref)`; releasing holds on unmount,
   and a component unmounted by a reload never counts as leaving (design §21). No components, no styling; non-React apps
   never load it.
+- **Slice 11, P8: the terminal client always runs sandboxed (owner, 2026-11-01: "the terminal should always use the
+  sandbox approach"):** `chord/next/tui` is a Node client host that connects with a token (decision "The app kit, point
+  3", (c)), downloads the base bundle and the TUI plugin scripts from the server and runs the app's TUI entry, always
+  inside p2's sandbox: a permission-dropped worker thread with a bridge terminal, the trusted launcher outside it
+  holding the credentials, the terminal and local preferences. No unsandboxed mode, also for the owner's own server.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
