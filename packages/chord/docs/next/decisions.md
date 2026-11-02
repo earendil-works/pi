@@ -2261,6 +2261,17 @@ validation and copies the v2 kernel added around Delta.
   with its store in it; the kit opens and closes them. Plugins never use paths of the data directory: their state is
   in their objects' documents and tables; a plugin that needs raw files gets a subdirectory of its own, owned by one of
   its objects.
+- **The app kit, point 5: plugins, files and export (owner, 2026-11-01: "okay", "yeah"):** two plugin roots: the
+  app's built-in `plugins/` (required: a plugin failing at startup stops the app with its error) and the user's in the
+  data directory (failures reported). Installs from git or npm into the user's root. One "apply changes" call builds the
+  dirty plugins and rolls them out to the server, then every running worker; the app exposes it as a button, a
+  command or an agent tool; changes are never applied by themselves. **Files:** the kit ships a files plugin, one owner
+  per address (`self.get(Files, { scope })`: `put`, chunked transfers for large files (design §23), a watchable
+  index, caps), its files in that worker's directory; apps build on it (p3's artifacts: versions, previews, sharing;
+  design §26 #17). Raw directories only where a real path is needed (a git checkout, a library writing its own
+  database), each owned by one object, under the worker's directory. **Export and import per address:** the store's
+  archive plus the worker's directory as one archive; importing it under another address copies or moves it.
+  Refines point 4 (storage): plugins use the files plugin instead of raw subdirectories of their own.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
