@@ -1,5 +1,6 @@
 // The chat's page (the web base bundle): the channels as tabs, the current room's messages (images inline, other files
-// as links), a message box and a file picker. A file goes up in chunks through the room (into its worker's files).
+// as links; older ones a page at a time with "Load older"), a message box and a file picker. A file goes up in chunks
+// through the room (into its worker's files).
 
 import * as React from "react";
 import { createElement as h, useState } from "react";
@@ -40,7 +41,17 @@ function Message({ channel, message }: { channel: string; message: v1.Message })
 
 function RoomView({ channel }: { channel: string }) {
 	const room = useHold(Room, { id: channel });
-	const messages = useWatch(room?.messages) ?? [];
+	const live = useWatch(room?.messages) ?? [];
+	// Pages of history before the live window, and whether there may be more.
+	const [older, setOlder] = useState<readonly v1.Message[]>([]);
+	const [more, setMore] = useState(true);
+	const messages = [...older, ...live.filter((message) => message.id > (older.at(-1)?.id ?? 0))];
+	const loadOlder = async () => {
+		if (room === undefined || messages.length === 0) return;
+		const page = await room.history({ before: messages[0]!.id }, context);
+		setOlder([...page, ...older]);
+		setMore(page.length === 100);
+	};
 	const [text, setText] = useState("");
 	const send = (event: { preventDefault(): void }) => {
 		event.preventDefault();
@@ -51,6 +62,9 @@ function RoomView({ channel }: { channel: string }) {
 	return h(
 		"section",
 		null,
+		more && live.length === 100
+			? h("button", { type: "button", onClick: () => void loadOlder() }, "Load older")
+			: null,
 		h("ul", null, ...messages.map((message) => h(Message, { key: message.id, channel, message }))),
 		h(
 			"form",

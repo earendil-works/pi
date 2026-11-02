@@ -1,8 +1,9 @@
 // A chat (slice 11 with the app kit): one worker per channel (`Channel({ id })`), each channel's `Room` on its worker
-// with the messages in the worker's store and the attachments in its files (the kit's `Files`, sent in chunks); the
-// server keeps the channel list and serves the page (`/chat`, after picking a name at `/`) and the terminal client. A
-// browser and a terminal are live in the same room. Here a user who picked a name ("ada") joins over the same Chord
-// link a page uses, and with Node 26.5.1 or later the owner's terminal client joins too.
+// with every message in a table of the worker's store (the newest 100 live, older ones by page: `history`) and the
+// attachments in its files (the kit's `Files`, sent in chunks); the server keeps the channel list and serves the page
+// (`/chat`, after picking a name at `/`) and the terminal client. A browser and a terminal are live in the same room.
+// Here a user who picked a name ("ada") joins over the same Chord link a page uses, and with Node 26.5.1 or later the
+// owner's terminal client joins too.
 // Run from packages/chord (`--serve` keeps it running: open the printed URL, and run the terminal with 57-tui's
 // `terminal.ts` and the owner token file):
 //   node --conditions=source --experimental-strip-types test/examples/59-chat/main.ts
@@ -58,14 +59,23 @@ console.log(
 );
 console.log("   one worker per channel:", Object.keys(app.workers.get("channel")!.state.value).join(", "));
 
-// 4. The owner's terminal client in the same room (Node 26.5.1 or later): it shows ada's messages; its post and an
-//    attached file (the launcher asks before it reads the file) reach ada at once.
+// 4. Every message is kept in the channel's table: the room shows the newest 100 live and pages older ones.
+for (let n = 1; n <= 120; n++) await random.post(`message ${n}`, context);
+while (random.messages.value.at(-1)?.text !== "message 120") await new Promise((resolve) => setTimeout(resolve, 20));
+const live = random.messages.value;
+const older = await random.history({ before: live[0]!.id }, context);
+console.log(
+	`4. #random keeps ${older.length + live.length} messages: ${live.length} live (from "${live[0]!.text}"), ${older.length} older by history (from "${older[0]!.text}")`,
+);
+
+// 5. The owner's terminal client in the same room (Node 26.5.1 or later): it shows ada's messages; its post and an
+//    attached file (the launcher asks before it reads the file) reach ada at once; PgUp in #random loads older ones.
 let sandboxed = true;
 try {
 	requireSandboxNode();
 } catch (error) {
 	sandboxed = false;
-	console.log(`4. (${(error as Error).message})`);
+	console.log(`5. (${(error as Error).message})`);
 }
 if (sandboxed) {
 	const input = new PassThrough();
@@ -86,7 +96,7 @@ if (sandboxed) {
 	};
 	await shows("[image: dot.png]");
 	console.log(
-		"4. the terminal shows:",
+		"5. the terminal shows:",
 		JSON.stringify(
 			screen
 				.split("\x1b[2J\x1b[H")
@@ -113,6 +123,14 @@ if (sandboxed) {
 		.slice(-2)
 		.map((message) => `${message.author}: ${message.text || message.file?.name}`);
 	console.log("   ada sees:", last.join(" | "));
+	// #random, then PgUp to its first message: the terminal loads the page before the live window.
+	input.write("\t");
+	for (let n = 0; n < 8; n++) {
+		input.write("\x1b[5~");
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	await shows("ada anyone here?");
+	console.log("   PgUp in #random reaches its first message: anyone here?");
 	input.write("\x03");
 	await terminal.exited;
 }

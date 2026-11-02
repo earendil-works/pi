@@ -28,7 +28,7 @@ export default defineFacet((host, self) => {
 			"GET /": { public: true, handler: async (request) => ({ kind: "html", body: signIn(request.nonce) }) },
 			"GET /files/:channel/:id": async (request, ctx) => {
 				const room = await ctx.get(Room, { id: request.params.channel! });
-				const file = room.messages.value.find((message) => message.file?.id === request.params.id)?.file;
+				const file = await room.attachment(request.params.id!, BACKGROUND_CONTEXT).catch(() => undefined);
 				if (file === undefined) return { kind: "error", status: 404 };
 				return {
 					kind: "bytes",
