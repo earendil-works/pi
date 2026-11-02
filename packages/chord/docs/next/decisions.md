@@ -2309,6 +2309,15 @@ validation and copies the v2 kernel added around Delta.
   `watch` and `registry`, releasing everything on dispose, calling one `changed` callback the app wires to its redraw
   (one line with pi-tui; any library works). p2's retry with backoff for gone references is not carried over (v2
   references wait and rebind by themselves). No pi-tui dependency.
+- **`chord.plugins` is a package's manifest of plugins, as pi's (owner, 2026-11-01: "yes"; slice 12 review, Opus H1;
+  refines "The plugin model ... imports and builds" (Imports) and `slice-12.md` §2, §5):** a package (npm, git, local)
+  declares the plugins it provides in its `package.json`, `"chord": { "plugins": ["./notes", "./search"] }` (globs and
+  exclusions as pi's `pi.extensions`); installing it picks up exactly those folders. Without the field discovery is
+  conventional: the package is one plugin when its top has facet files, else its subfolders with a `package.json`.
+  Depending on a plugin inside a multi-plugin repository is an ordinary dependency on the whole repository (npm version
+  or `github:bob/plugins#<commit>`, installed by plain npm), imported by path into it (`@bob/plugins/notes/contract.ts`)
+  or through its `exports`. Removed: the dependency form of `chord.plugins` (`"name": "github:...#ref:subfolder"`) and
+  its own clone-and-link installer (it could delete outside `node_modules`).
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a

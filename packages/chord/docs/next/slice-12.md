@@ -47,10 +47,11 @@ const plugins = createPlugins({
 - **Package names across repositories:** an import of a package in the plugin's `dependencies` resolves as npm does
   through that package's `exports` (`@bob/notes` → its `contract.ts`, `@bob/notes/web` → `contract.web.tsx`), inlined
   at the installed version. A dependency may be an npm version or a git URL with a ref (`github:bob/notes#<commit>`,
-  `git+https://...#<tag>`); `installDependencies` installs it with npm as today. A package from a subfolder of a git
-  repository (which npm cannot install) is declared as `"chord": { "plugins": { "@bob/notes": "github:bob/plugins#<ref>:notes" } }`
-  and installed by `installDependencies` itself: a shallow clone at the ref into the plugin's `node_modules/.chord-git/`
-  and a link `node_modules/@bob/notes` to the subfolder.
+  `git+https://...#<tag>`); `installDependencies` installs it with npm as today. A plugin inside a multi-plugin
+  repository is reached through a dependency on the whole repository, by path into it (`@bob/plugins/notes/contract.ts`)
+  or its `exports` (decision "`chord.plugins` is a package's manifest of plugins").
+- **`chord.plugins`** in a package's `package.json` lists the plugin folders it provides (globs, exclusions); used by
+  discovery of a root's packages and by `installPlugin`; without it, conventional discovery.
 - The by-name lookup (`build.ts` `#byName`), its error texts and the six `tsconfig.json` path aliases go; fixtures and
   examples 35-38 import relatively again.
 
