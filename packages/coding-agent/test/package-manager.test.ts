@@ -2612,9 +2612,15 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			const runCommandCaptureSpy = vi
 				.spyOn(packageManager as any, "runCommandCapture")
 				.mockResolvedValue('["1.0.0","1.2.0"]');
-			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
+			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockImplementation(async () => {
+				writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.2.0" }));
+			});
 
-			await packageManager.update("npm:example");
+			const updated = await packageManager.update("npm:example");
+
+			expect(updated).toEqual([
+				{ source: "npm:example@^1.0.0", type: "npm", scope: "project", from: "1.0.0", to: "1.2.0" },
+			]);
 
 			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
 				"npm",
@@ -2647,7 +2653,9 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 				.mockResolvedValue('["1.0.0","1.3.1","1.0.2"]');
 			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
 
-			await packageManager.update("npm:example");
+			const updated = await packageManager.update("npm:example");
+
+			expect(updated).toEqual([]);
 
 			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
 				"npm",

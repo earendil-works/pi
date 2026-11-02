@@ -1098,11 +1098,21 @@ export async function handlePackageCommand(
 				}
 				if (updateTargetIncludesExtensions(target)) {
 					const updateSource = target.type === "extensions" ? target.source : undefined;
-					await packageManager.update(updateSource);
-					if (updateSource) {
-						console.log(chalk.green(`Updated ${updateSource}`));
+					const updated = await packageManager.update(updateSource);
+					if (updated.length === 0) {
+						console.log(
+							chalk.green(
+								updateSource ? `${updateSource} is already up to date` : "Packages are already up to date",
+							),
+						);
 					} else {
-						console.log(chalk.green("Updated packages"));
+						console.log(chalk.green(`Updated ${updated.length} package${updated.length === 1 ? "" : "s"}:`));
+						for (const pkg of updated) {
+							const format = (value: string | undefined) =>
+								value === undefined ? "(none)" : pkg.type === "git" ? value.slice(0, 7) : value;
+							const scope = pkg.scope === "project" ? chalk.dim(" (project)") : "";
+							console.log(`  ${pkg.source}${scope} ${format(pkg.from)} -> ${format(pkg.to)}`);
+						}
 					}
 				}
 				if (updateTargetIncludesSelf(target)) {

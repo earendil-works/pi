@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `PackageManager.update()` now returns `UpdatedPackage[]`, the packages whose installed npm version or git commit changed, instead of `void`.
+
+### Added
+
+- `pi update` now lists each updated package with its npm version or git commit change, for example `npm:foo 1.2.0 -> 1.3.0`, and prints `Packages are already up to date` when nothing changed.
+
 ## [1.5.0] - 2026-11-02
 
 ### New Features

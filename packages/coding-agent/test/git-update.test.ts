@@ -150,8 +150,9 @@ describe("DefaultPackageManager git update", () => {
 				}
 			};
 
-			await packageManager.update();
+			const updated = await packageManager.update();
 
+			expect(updated).toEqual([]);
 			expect(executedCommands).toContain(
 				"git fetch --prune --no-tags origin +refs/heads/main:refs/remotes/origin/main",
 			);
@@ -165,14 +166,16 @@ describe("DefaultPackageManager git update", () => {
 		it("should update to latest commit when remote has new commits", async () => {
 			setupRemoteAndInstall();
 			expect(getFileContent(installedDir, "extension.ts")).toBe("// v1");
+			const oldCommit = getCurrentCommit(installedDir);
 
 			// Add a new commit to remote
 			const newCommit = createCommit(remoteDir, "extension.ts", "// v2", "Second commit");
 
 			// Update via package manager (no args = uses settings)
-			await packageManager.update();
+			const updated = await packageManager.update();
 
 			// Verify update succeeded
+			expect(updated).toEqual([{ source: gitSource, type: "git", scope: "user", from: oldCommit, to: newCommit }]);
 			expect(getCurrentCommit(installedDir)).toBe(newCommit);
 			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
 		});

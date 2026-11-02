@@ -123,6 +123,17 @@ export interface PackageUpdate {
 	scope: Exclude<SourceScope, "temporary">;
 }
 
+/** A configured package whose installed version changed during update(). */
+export interface UpdatedPackage {
+	source: string;
+	type: "npm" | "git";
+	scope: Exclude<SourceScope, "temporary">;
+	/** npm version or git commit before the update; undefined if it was not installed. */
+	from?: string;
+	/** npm version or git commit after the update. */
+	to?: string;
+}
+
 export interface ConfiguredPackage {
 	source: string;
 	scope: "user" | "project";
@@ -136,7 +147,7 @@ export interface PackageManager {
 	installAndPersist(source: string, options?: { local?: boolean }): Promise<void>;
 	remove(source: string, options?: { local?: boolean }): Promise<void>;
 	removeAndPersist(source: string, options?: { local?: boolean }): Promise<boolean>;
-	update(source?: string): Promise<void>;
+	update(source?: string): Promise<UpdatedPackage[]>;
 	listConfiguredPackages(): ConfiguredPackage[];
 	resolveExtensionSources(
 		sources: string[],
@@ -1141,7 +1152,7 @@ export class DefaultPackageManager implements PackageManager {
 		return this.removeSourceFromSettings(source, options);
 	}
 
-	async update(source?: string): Promise<void> {
+	async update(source?: string): Promise<UpdatedPackage[]> {
 		const globalSettings = this.settingsManager.getGlobalSettings();
 		const projectSettings = this.settingsManager.getProjectSettings();
 		const identity = source ? this.getPackageIdentity(source) : undefined;
@@ -1170,12 +1181,12 @@ export class DefaultPackageManager implements PackageManager {
 			);
 		}
 
-		await this.updateConfiguredSources(updateSources);
+		return this.updateConfiguredSources(updateSources);
 	}
 
-	private async updateConfiguredSources(sources: ConfiguredUpdateSource[]): Promise<void> {
+	private async updateConfiguredSources(sources: ConfiguredUpdateSource[]): Promise<UpdatedPackage[]> {
 		if (isOfflineModeEnabled() || sources.length === 0) {
-			return;
+			return [];
 		}
 
 		const npmCandidates: NpmUpdateTarget[] = [];
@@ -1204,10 +1215,8 @@ export class DefaultPackageManager implements PackageManager {
 		const npmCheckResults = await this.runWithConcurrency(npmCheckTasks, UPDATE_CHECK_CONCURRENCY);
 		const userNpmUpdates: NpmUpdateTarget[] = [];
 		const projectNpmUpdates: NpmUpdateTarget[] = [];
-		for (const result of npmCheckResults) {
-			if (!result.shouldUpdate) {
-				continue;
-			}
+		const npmUpdates = npmCheckResults.filter((result) => result.shouldUpdate);
+		for (const result of npmUpdates) {
 			if (result.entry.scope === "user") {
 				userNpmUpdates.push(result.entry);
 			} else {
@@ -1222,17 +1231,52 @@ export class DefaultPackageManager implements PackageManager {
 		if (projectNpmUpdates.length > 0) {
 			tasks.push(this.updateNpmBatch(projectNpmUpdates, "project"));
 		}
+		const gitUpdates: UpdatedPackage[] = [];
 		if (gitCandidates.length > 0) {
 			const gitTasks = gitCandidates.map(
 				(entry) => async () =>
 					this.withProgress("update", entry.source, `Updating ${entry.source}...`, async () => {
+						const targetDir = this.getGitInstallPath(entry.parsed, entry.scope);
+						const from = await this.getGitHead(targetDir);
 						await this.updateGit(entry.parsed, entry.scope);
+						const to = await this.getGitHead(targetDir);
+						if (from !== to) {
+							gitUpdates.push({ source: entry.source, type: "git", scope: entry.scope, from, to });
+						}
 					}),
 			);
 			tasks.push(this.runWithConcurrency(gitTasks, GIT_UPDATE_CONCURRENCY).then(() => {}));
 		}
 
 		await Promise.all(tasks);
+
+		const updated: UpdatedPackage[] = [];
+		for (const { entry } of npmUpdates) {
+			const installedPath = this.getManagedNpmInstallPath(entry.parsed, entry.scope);
+			const to = existsSync(installedPath) ? this.getInstalledNpmVersion(installedPath) : undefined;
+			if (to !== entry.installedVersion) {
+				updated.push({ source: entry.source, type: "npm", scope: entry.scope, from: entry.installedVersion, to });
+			}
+		}
+		// Keep git results in configured order, independent of completion order.
+		for (const entry of gitCandidates) {
+			const update = gitUpdates.find((u) => u.source === entry.source && u.scope === entry.scope);
+			if (update) updated.push(update);
+		}
+		return updated;
+	}
+
+	private async getGitHead(targetDir: string): Promise<string | undefined> {
+		if (!existsSync(targetDir)) return undefined;
+		try {
+			const head = await this.runCommandCapture("git", ["rev-parse", "HEAD"], {
+				cwd: targetDir,
+				timeoutMs: NETWORK_TIMEOUT_MS,
+			});
+			return head.trim() || undefined;
+		} catch {
+			return undefined;
+		}
 	}
 
 	private async shouldUpdateNpmSource(
