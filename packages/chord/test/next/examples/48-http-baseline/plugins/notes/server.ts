@@ -1,5 +1,6 @@
 // The notes plugin's server facet: the notes page (a link from another site may open it), the notes as JSON, adding
-// a note, and a webhook another site calls (cross-site: it always runs anonymous).
+// a note, and a webhook another site calls (cross-site: it always runs anonymous, so it is public). Nothing else is
+// public: a request nobody signed in gets 401 before this code runs (deny by default).
 
 import { defineFacet } from "@earendil-works/chord/next";
 import { Http } from "@earendil-works/chord/next/http";
@@ -14,8 +15,7 @@ export default defineFacet((_host, self) =>
 				handler: async (_request, ctx) => ({ kind: "html", body: `hi ${who(ctx.principal)}` }),
 			},
 			"GET /notes": async (_request, ctx) => ({ kind: "json", value: { notes, as: who(ctx.principal) } }),
-			"POST /notes": async (request, ctx) => {
-				if (ctx.principal === undefined) return { kind: "error", status: 401 };
+			"POST /notes": async (request) => {
 				notes.push(String(await request.json()));
 				return { kind: "json", value: notes };
 			},

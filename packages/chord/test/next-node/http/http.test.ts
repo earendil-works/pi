@@ -16,7 +16,12 @@ import { context, contributing, send, served, type TestPrincipal } from "./suppo
 
 /** A route answering who it runs as. */
 const whoami = contributing({
-	routes: { "GET /whoami": async (_request, ctx) => ({ kind: "json", value: ctx.principal ?? null }) },
+	routes: {
+		"GET /whoami": {
+			public: true,
+			handler: async (_request, ctx) => ({ kind: "json", value: ctx.principal ?? null }),
+		},
+	},
 });
 
 /** A loopback request to `fetch` directly, as a mounted server would make it. */
@@ -138,11 +143,17 @@ describe("Host and principals", () => {
 		const server = await served({
 			"@app/notes": contributing({
 				routes: {
-					"POST /delete": async (_request, ctx) => {
-						if (ctx.principal?.kind === "owner") deleted++;
-						return { kind: "json", value: deleted };
+					"POST /delete": {
+						public: true,
+						handler: async (_request, ctx) => {
+							if (ctx.principal?.kind === "owner") deleted++;
+							return { kind: "json", value: deleted };
+						},
 					},
-					"GET /whoami": async (_request, ctx) => ({ kind: "json", value: ctx.principal ?? null }),
+					"GET /whoami": {
+						public: true,
+						handler: async (_request, ctx) => ({ kind: "json", value: ctx.principal ?? null }),
+					},
 				},
 			}),
 		});
@@ -173,6 +184,7 @@ describe("Host and principals", () => {
 			"@app/pages": contributing({
 				routes: {
 					"GET /app": {
+						public: true,
 						page: true,
 						handler: async (_request, ctx) => {
 							seen.push(ctx.principal ?? null);
@@ -180,6 +192,7 @@ describe("Host and principals", () => {
 						},
 					},
 					"POST /hook": {
+						public: true,
 						crossSite: true,
 						handler: async (_request, ctx) => {
 							seen.push(ctx.principal ?? null);
@@ -205,15 +218,48 @@ describe("Host and principals", () => {
 	});
 });
 
+describe("deny by default (slice 13 §2)", () => {
+	it("answers 401 to a request nobody authenticates before a route not marked public runs; serves a public one", async () => {
+		let ran = 0;
+		const server = await served({
+			"@app/notes": contributing({
+				routes: {
+					"GET /private": async () => {
+						ran++;
+						return { kind: "json", value: "private" };
+					},
+					"GET /public": { public: true, handler: async () => ({ kind: "json", value: "public" }) },
+					"POST /hook": { public: true, crossSite: true, handler: async () => ({ kind: "json", value: "hook" }) },
+				},
+			}),
+		});
+		const nobody = await send(server.port, "GET", "/private");
+		expect(nobody.status).toBe(401);
+		expect(nobody.headers["cache-control"]).toBe("no-store");
+		expect(ran).toBe(0);
+		expect((await send(server.port, "GET", "/private", { headers: { "x-principal": "owner" } })).status).toBe(200);
+		expect((await send(server.port, "GET", "/public")).body.toString()).toBe('"public"');
+		// A cross-site route always runs anonymous: public by being one.
+		const hook = await send(server.port, "POST", "/hook", {
+			headers: { "sec-fetch-site": "cross-site", origin: "https://ci.example.com" },
+		});
+		expect(hook.body.toString()).toBe('"hook"');
+		await server.close();
+	});
+});
+
 describe("default headers", () => {
 	it("sends the baseline on every answer, a CSP with the response's own nonce and the contributed framers and sources", async () => {
 		let nonce = "";
 		const server = await served({
 			"@app/page": contributing({
 				routes: {
-					"GET /page": async (request) => {
-						nonce = request.nonce;
-						return { kind: "html", body: `<script nonce="${request.nonce}"></script>` };
+					"GET /page": {
+						public: true,
+						handler: async (request) => {
+							nonce = request.nonce;
+							return { kind: "html", body: `<script nonce="${request.nonce}"></script>` };
+						},
 					},
 				},
 				framers: ["https://shell.example.com"],
@@ -273,16 +319,22 @@ describe("routes and wraps failing", () => {
 		const server = await served({
 			"@app/a": contributing({
 				routes: {
-					"GET /throws": async () => {
-						throw new Error("secret");
+					"GET /throws": {
+						public: true,
+						handler: async () => {
+							throw new Error("secret");
+						},
 					},
-					"GET /failure": async () => {
-						throw new HttpFailure(422, "no");
+					"GET /failure": {
+						public: true,
+						handler: async () => {
+							throw new HttpFailure(422, "no");
+						},
 					},
 				},
 			}),
 			"@app/b": contributing({
-				routes: { "GET /wrapped": async () => ({ kind: "json", value: 1 }) },
+				routes: { "GET /wrapped": { public: true, handler: async () => ({ kind: "json", value: 1 }) } },
 				wraps: [
 					{
 						name: "broken",
@@ -310,9 +362,12 @@ describe("routes and wraps failing", () => {
 		const server = await served({
 			"@app/a": contributing({
 				routes: {
-					"GET /r": async (_request, ctx) => {
-						order.push(`route as ${ctx.principal?.kind ?? "anonymous"}`);
-						return { kind: "json", value: 1 };
+					"GET /r": {
+						public: true,
+						handler: async (_request, ctx) => {
+							order.push(`route as ${ctx.principal?.kind ?? "anonymous"}`);
+							return { kind: "json", value: 1 };
+						},
 					},
 				},
 				wraps: [
@@ -347,16 +402,21 @@ describe("reloads and close", () => {
 		const gate = Promise.withResolvers<void>();
 		const old = contributing({
 			routes: {
-				"GET /v": async () => {
-					await gate.promise;
-					return { kind: "html", body: "old" };
+				"GET /v": {
+					public: true,
+					handler: async () => {
+						await gate.promise;
+						return { kind: "html", body: "old" };
+					},
 				},
 			},
 		});
 		const server = await served({ "@app/v": old });
 		const running = send(server.port, "GET", "/v");
 		await new Promise((resolve) => setTimeout(resolve, 50));
-		const next = contributing({ routes: { "GET /v": async () => ({ kind: "html", body: "new" }) } });
+		const next = contributing({
+			routes: { "GET /v": { public: true, handler: async () => ({ kind: "html", body: "new" }) } },
+		});
 		await server.host.reload(server.facets({ "@app/v": next }), context);
 		expect((await send(server.port, "GET", "/v")).body.toString()).toBe("new");
 		gate.resolve();
@@ -370,13 +430,19 @@ describe("reloads and close", () => {
 			{
 				"@app/slow": contributing({
 					routes: {
-						"GET /quick": async () => {
-							await new Promise((resolve) => setTimeout(resolve, 30));
-							return { kind: "html", body: "done" };
+						"GET /quick": {
+							public: true,
+							handler: async () => {
+								await new Promise((resolve) => setTimeout(resolve, 30));
+								return { kind: "html", body: "done" };
+							},
 						},
-						"GET /stuck": async (_request, ctx: Ctx) => {
-							sealed = ctx.abortSignal;
-							return new Promise(() => {});
+						"GET /stuck": {
+							public: true,
+							handler: async (_request, ctx: Ctx) => {
+								sealed = ctx.abortSignal;
+								return new Promise(() => {});
+							},
 						},
 					},
 				}),
@@ -405,9 +471,12 @@ describe("reloads and close", () => {
 			{
 				"@app/r": contributing({
 					routes: {
-						"GET /": async () => {
-							calls++;
-							return { kind: "json", value: 1 };
+						"GET /": {
+							public: true,
+							handler: async () => {
+								calls++;
+								return { kind: "json", value: 1 };
+							},
 						},
 					},
 				}),
@@ -446,7 +515,9 @@ describe("cancellation", () => {
 		let later = 0;
 		const server = await served(
 			{
-				"@app/r": contributing({ routes: { "GET /": async () => ({ kind: "html", body: "ok" }) } }),
+				"@app/r": contributing({
+					routes: { "GET /": { public: true, handler: async () => ({ kind: "html", body: "ok" }) } },
+				}),
 				"@app/z-later": defineFacet<TestPrincipal>((_host, self) =>
 					self.contribute(Authenticators, () => {
 						later++;
@@ -476,7 +547,11 @@ describe("cancellation", () => {
 	it("asks no authenticator for a request aborted before it arrived", async () => {
 		let calls = 0;
 		const server = await served(
-			{ "@app/r": contributing({ routes: { "GET /": async () => ({ kind: "html", body: "ok" }) } }) },
+			{
+				"@app/r": contributing({
+					routes: { "GET /": { public: true, handler: async () => ({ kind: "html", body: "ok" }) } },
+				}),
+			},
 			{
 				config: { listen: undefined },
 				authenticate: () => {
@@ -503,18 +578,21 @@ describe("cancellation", () => {
 				{
 					"@app/b": contributing({
 						routes: {
-							"GET /": async (_request, ctx) => {
-								entered.resolve();
-								if (when === "inside the route") abort.abort(new Error("client gone"));
-								bornSealed = ctx.abortSignal?.aborted;
-								return {
-									kind: "bytes",
-									mime: "application/octet-stream",
-									read: async () => {
-										reads++;
-										return new Uint8Array([1]);
-									},
-								};
+							"GET /": {
+								public: true,
+								handler: async (_request, ctx) => {
+									entered.resolve();
+									if (when === "inside the route") abort.abort(new Error("client gone"));
+									bornSealed = ctx.abortSignal?.aborted;
+									return {
+										kind: "bytes",
+										mime: "application/octet-stream",
+										read: async () => {
+											reads++;
+											return new Uint8Array([1]);
+										},
+									};
+								},
 							},
 						},
 					}),
@@ -539,11 +617,14 @@ describe("cancellation", () => {
 			{
 				"@app/b": contributing({
 					routes: {
-						"GET /": async () => ({
-							kind: "bytes",
-							mime: "application/octet-stream",
-							read: async () => new Uint8Array([1]),
-						}),
+						"GET /": {
+							public: true,
+							handler: async () => ({
+								kind: "bytes",
+								mime: "application/octet-stream",
+								read: async () => new Uint8Array([1]),
+							}),
+						},
 					},
 				}),
 			},
@@ -587,10 +668,13 @@ describe("cancellation", () => {
 			{
 				"@app/wait": contributing({
 					routes: {
-						"GET /wait": async () => {
-							entered.resolve();
-							await gate.promise;
-							return { kind: "html", body: "done" };
+						"GET /wait": {
+							public: true,
+							handler: async () => {
+								entered.resolve();
+								await gate.promise;
+								return { kind: "html", body: "done" };
+							},
 						},
 					},
 				}),
@@ -612,7 +696,11 @@ describe("cancellation", () => {
 		const entered = Promise.withResolvers<void>();
 		const gate = Promise.withResolvers<void>();
 		const server = await served(
-			{ "@app/r": contributing({ routes: { "GET /": async () => ({ kind: "html", body: "ok" }) } }) },
+			{
+				"@app/r": contributing({
+					routes: { "GET /": { public: true, handler: async () => ({ kind: "html", body: "ok" }) } },
+				}),
+			},
 			{
 				config: { listen: undefined, closeTimeout: 10 },
 				authenticate: async () => {
@@ -640,15 +728,18 @@ describe("cancellation", () => {
 			{
 				"@app/bytes": contributing({
 					routes: {
-						"GET /stream": async () => ({
-							kind: "bytes",
-							mime: "application/octet-stream",
-							read: async (_offset, _length, ctx) => {
-								reads++;
-								readAfterSeal ||= ctx.abortSignal?.aborted ?? false;
-								return new Uint8Array([reads]);
-							},
-						}),
+						"GET /stream": {
+							public: true,
+							handler: async () => ({
+								kind: "bytes",
+								mime: "application/octet-stream",
+								read: async (_offset, _length, ctx) => {
+									reads++;
+									readAfterSeal ||= ctx.abortSignal?.aborted ?? false;
+									return new Uint8Array([reads]);
+								},
+							}),
+						},
 					},
 				}),
 			},
@@ -672,10 +763,13 @@ describe("cancellation", () => {
 			{
 				"@app/body": contributing({
 					routes: {
-						"POST /body": async (request) => {
-							const value = await request.json();
-							writes++;
-							return { kind: "json", value };
+						"POST /body": {
+							public: true,
+							handler: async (request) => {
+								const value = await request.json();
+								writes++;
+								return { kind: "json", value };
+							},
 						},
 					},
 				}),
@@ -700,7 +794,11 @@ describe("answers", () => {
 	// Sol's recheck N8: `Response` threw on a body for these statuses.
 	it.each([204, 205, 304])("answers %s without a body", async (status) => {
 		const server = await served(
-			{ "@app/s": contributing({ routes: { "GET /": async () => ({ kind: "json", value: null, status }) } }) },
+			{
+				"@app/s": contributing({
+					routes: { "GET /": { public: true, handler: async () => ({ kind: "json", value: null, status }) } },
+				}),
+			},
 			{ config: { listen: undefined } },
 		);
 		const response = await server.http.fetch(loopback("/"), LOOPBACK);
@@ -714,8 +812,11 @@ describe("answers", () => {
 			{
 				"@app/r": contributing({
 					routes: {
-						"GET /": async () => {
-							throw new ChordError({ code: "forbidden", message: "no" });
+						"GET /": {
+							public: true,
+							handler: async () => {
+								throw new ChordError({ code: "forbidden", message: "no" });
+							},
 						},
 					},
 				}),
@@ -731,7 +832,12 @@ describe("answers", () => {
 	it("sends several Set-Cookie headers", async () => {
 		const server = await served({
 			"@app/r": contributing({
-				routes: { "GET /": async () => ({ kind: "json", value: 1, headers: { "Set-Cookie": ["a=1", "b=2"] } }) },
+				routes: {
+					"GET /": {
+						public: true,
+						handler: async () => ({ kind: "json", value: 1, headers: { "Set-Cookie": ["a=1", "b=2"] } }),
+					},
+				},
 			}),
 		});
 		expect((await send(server.port, "GET", "/")).headers["set-cookie"]).toEqual(["a=1", "b=2"]);
@@ -752,9 +858,16 @@ describe("GC", () => {
 			{
 				"@app/b": contributing({
 					routes: {
-						"GET /": async (_request, ctx) => {
-							refs.push(new WeakRef(ctx));
-							return { kind: "bytes", mime: "application/octet-stream", read: async () => new Uint8Array([1]) };
+						"GET /": {
+							public: true,
+							handler: async (_request, ctx) => {
+								refs.push(new WeakRef(ctx));
+								return {
+									kind: "bytes",
+									mime: "application/octet-stream",
+									read: async () => new Uint8Array([1]),
+								};
+							},
 						},
 					},
 				}),
@@ -777,10 +890,17 @@ describe("GC", () => {
 			{
 				"@app/b": contributing({
 					routes: {
-						"GET /": async (_request, ctx) => {
-							refs.push(new WeakRef(ctx));
-							aborts.at(-1)?.abort(new Error("client gone"));
-							return { kind: "bytes", mime: "application/octet-stream", read: async () => new Uint8Array([1]) };
+						"GET /": {
+							public: true,
+							handler: async (_request, ctx) => {
+								refs.push(new WeakRef(ctx));
+								aborts.at(-1)?.abort(new Error("client gone"));
+								return {
+									kind: "bytes",
+									mime: "application/octet-stream",
+									read: async () => new Uint8Array([1]),
+								};
+							},
 						},
 					},
 				}),
@@ -804,9 +924,12 @@ describe("GC", () => {
 		const server = await served({
 			"@app/a": contributing({
 				routes: {
-					"GET /r": async (request, ctx) => {
-						refs.push(new WeakRef(ctx), new WeakRef(request));
-						return { kind: "json", value: 1 };
+					"GET /r": {
+						public: true,
+						handler: async (request, ctx) => {
+							refs.push(new WeakRef(ctx), new WeakRef(request));
+							return { kind: "json", value: 1 };
+						},
 					},
 				},
 			}),

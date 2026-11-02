@@ -97,8 +97,11 @@ describe("fileResponse", () => {
 			const server = await served({
 				"@app/a": contributing({
 					routes: {
-						"GET /f": async () => fileResponse(path, { ranges: true, download: "big.bin" }),
-						"GET /wrapped": async () => fileResponse(path),
+						"GET /f": {
+							public: true,
+							handler: async () => fileResponse(path, { ranges: true, download: "big.bin" }),
+						},
+						"GET /wrapped": { public: true, handler: async () => fileResponse(path) },
 					},
 					wraps: [
 						{

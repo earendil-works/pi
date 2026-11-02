@@ -147,6 +147,7 @@ pattern, no code. Decided cuts are noted where they apply.
 | 22 | relays, size limits per part, compression at the origin, adapted bindings get diffs | 4a (relays), 4b (limits, compression), 7b |
 | 22 | trace carriers (R5) | 9 |
 | 23 | HTTP (routes, wraps, responses as descriptions, request bodies, plugin sockets), workers; channels and chunked transfers stay owner patterns until a second user | 10 |
+| 23 | the app kit: `startApp`, `startWorker`, start-data objects, deny by default, sessions, owner link and token file, device pairing, files (with chunked transfers), export and import per address, plugin roots and "apply changes", optional users, invite and ephemeral-login plugins | 13 |
 | 24 | Durable integration: `chord(fn, context)` (Q6), a `RegistryReader` over composed registries; the harness object and its model and env registries are p3's (base code, owner, 2026-10-27) | 8 (Chord parts), p3 |
 | 24 | `StoreStorage` | 6b |
 | 27 | versions table: contracts (L1 done), registries 8, documents 6, jobs 5, link protocol 3a | as listed |
@@ -183,14 +184,13 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 - **`rebuild` of tables** (key and column-type changes): `evolveTable` has no edit for them; build one only when a
   real case needs it. (Slice 6a's second spec review; out of slice 7b's scope, `slice-7b.md` §12.)
 
-### Slice 13: the app kit
+### Slice 11: web and TUI
 
-- **Deny by default in the HTTP component** (decision "The app kit, point 3: authentication"): routes and sockets
-  refuse requests without a principal unless marked public; the owner link with a one-time token; a session helper.
-- **Base code reduced to the API, bootstrap and a start-data facet** (decision "The plugin model, points 3, 4, 5 and
-  8, imports and builds", point 8): the harness and the providers of core registries as plugins of the app's required
-  root, the kit's start-data objects serving process values. (Slice 12 built the required root, the API checks and
-  the agents' document `plugin-authoring.md`; the reduction itself is the kit's. Owner's main agent, 2026-11-01.)
+- **Ephemeral sessions end with the connection** (slice 13 §3): the kit's ephemeral login drops its sessions when the
+  server starts and gives the browser a cookie without a lifetime; ending a session when its client's last link
+  closes needs the clients' connection loop, which slice 11 builds. (Slice 13 build.)
+- **`startApp` gains the web surface** (slice 13 §6): serving the clients' bundles from the kit, behind its sessions.
+  (Slice 13 spec.)
 
 ### After slice 11
 

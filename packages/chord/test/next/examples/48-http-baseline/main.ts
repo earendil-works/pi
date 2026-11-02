@@ -1,7 +1,8 @@
 // The security baseline (slice 10): on by default, the app decides only who someone is. Here the app signs people in
 // with a signed cookie (`cookie`, `readCookie`) and the notes plugin contributes a page, routes and a webhook. Requests
-// another site's page makes in a browser (Fetch Metadata says so) are never authenticated, a foreign `Origin` is
-// refused, but a link to a page still opens it signed in, and a cross-site webhook runs anonymous.
+// another site's page makes in a browser (Fetch Metadata says so) are never authenticated (so a route not marked
+// public answers them 401: deny by default, slice 13), a foreign `Origin` is refused, but a link to a page still opens
+// it signed in, and a cross-site webhook runs anonymous.
 // Run from packages/chord:
 //   node --conditions=source --experimental-strip-types test/next/examples/48-http-baseline/main.ts
 import { request } from "node:http";
@@ -21,9 +22,12 @@ const http = chordHttp.createHttp(server, { listen: { host: "127.0.0.1", port: 0
 const app = defineFacet<Principal>((_host, self) => {
 	self.contribute(chordHttp.Http, {
 		routes: {
-			"POST /sign-in": async (request) => {
-				const set = chordHttp.cookie("user", String(await request.json()), { secret, request, sameSite: "Lax" });
-				return { kind: "json", value: "signed in", headers: { "Set-Cookie": set } };
+			"POST /sign-in": {
+				public: true,
+				handler: async (request) => {
+					const set = chordHttp.cookie("user", String(await request.json()), { secret, request, sameSite: "Lax" });
+					return { kind: "json", value: "signed in", headers: { "Set-Cookie": set } };
+				},
 			},
 		},
 	});

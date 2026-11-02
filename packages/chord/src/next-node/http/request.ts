@@ -22,6 +22,11 @@ export interface HttpRequest {
 	readonly provenance: Provenance;
 	/** The server's script nonce: a page's inline scripts carry it (`<script nonce="…">`), the CSP allows them. */
 	readonly nonce: string;
+	/**
+	 * The peer's address as the listener knows it (a relayed request: the relay's; `fetch` without a connection: none),
+	 * for limits per client; never an identity.
+	 */
+	readonly remoteAddress: string | undefined;
 	/** The body as JSON, at most `limit` bytes (1 MiB by default): `HttpFailure` 400 when malformed, 413 when larger. */
 	json(limit?: number): Promise<JsonValue>;
 	/** The body's chunks, at most `limit` bytes (1 MiB by default): `HttpFailure` 413 past it, 400 when cut short. */
@@ -53,6 +58,7 @@ export class WebRequest implements HttpRequest {
 	readonly origin: string;
 	readonly provenance: Provenance;
 	readonly nonce: string;
+	readonly remoteAddress: string | undefined;
 	readonly #incoming: Incoming;
 	/** The query string (without `?`), parsed when first read. */
 	readonly #search: string;
@@ -64,6 +70,7 @@ export class WebRequest implements HttpRequest {
 		incoming: Incoming,
 		admitted: { readonly origin: string; readonly provenance: Provenance },
 		nonce: string,
+		remoteAddress: string | undefined,
 	) {
 		this.method = incoming.method;
 		// The URL is parsed and serialized already (dot segments resolved, `\` as `/`): only split it here.
@@ -73,6 +80,7 @@ export class WebRequest implements HttpRequest {
 		this.origin = admitted.origin;
 		this.provenance = admitted.provenance;
 		this.nonce = nonce;
+		this.remoteAddress = remoteAddress;
 		this.#incoming = incoming;
 	}
 

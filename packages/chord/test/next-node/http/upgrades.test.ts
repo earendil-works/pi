@@ -75,7 +75,7 @@ describe("the links endpoint", () => {
 		await server.close();
 	});
 
-	it("refuses a socket without a principal, from another Origin or Host, foreign, or whose links.options throws (403)", async () => {
+	it("refuses a socket without a principal (401), from another Origin or Host, foreign, or whose links.options throws (403)", async () => {
 		const server = await served(
 			{ "@app/hosts": contributing({ hosts: ["a.example.com"] }) },
 			{
@@ -92,8 +92,9 @@ describe("the links endpoint", () => {
 		);
 		const { port } = server;
 		const owner = { "x-principal": "owner" };
+		// Nobody: the links endpoint needs a principal (deny by default, slice 13).
+		await expect(socketTo(port, "/chord")).rejects.toThrow("refused 401");
 		const refusals = [
-			socketTo(port, "/chord"),
 			socketTo(port, "/chord", { ...owner, origin: "http://evil.com" }),
 			socketTo(port, "/chord", { ...owner, origin: "null" }),
 			socketTo(port, "/chord", { ...owner, origin: `HTTP://127.0.0.1:${port}` }),
@@ -139,12 +140,28 @@ describe("the links endpoint", () => {
 describe("plugin sockets", () => {
 	it("hands the socket and its request to the handler in a scope with its principal; no principal is refused", async () => {
 		const server = await served({ "@app/echo": echo });
-		await expect(socketTo(server.port, "/echo/lobby")).rejects.toThrow("refused 403");
+		await expect(socketTo(server.port, "/echo/lobby")).rejects.toThrow("refused 401");
 		await expect(socketTo(server.port, "/nope", { "x-principal": "owner" })).rejects.toThrow("refused 404");
 		const socket = await socketTo(server.port, "/echo/lobby", { "x-principal": "owner" });
 		expect(await nextMessage(socket)).toBe("lobby as owner");
 		socket.send("hi");
 		expect(await nextMessage(socket)).toBe("hi");
+		socket.close();
+		await server.close();
+	});
+
+	it("accepts a public socket without a principal, its scope anonymous (deny by default, slice 13 §2)", async () => {
+		const lobby = contributing({
+			sockets: {
+				"/lobby": {
+					public: true,
+					handler: (socket, _request, ctx) => socket.send(`as ${ctx.principal?.kind ?? "nobody"}`),
+				},
+			},
+		});
+		const server = await served({ "@app/lobby": lobby });
+		const socket = await socketTo(server.port, "/lobby");
+		expect(await nextMessage(socket)).toBe("as nobody");
 		socket.close();
 		await server.close();
 	});

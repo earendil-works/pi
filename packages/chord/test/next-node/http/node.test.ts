@@ -27,8 +27,8 @@ async function raw(port: number, text: string): Promise<{ readonly status: strin
 /** A route answering its path and params, under `GET /who` and `GET /n/:name`. */
 const echo = contributing({
 	routes: {
-		"GET /who": async (request) => ({ kind: "json", value: request.path }),
-		"GET /n/:name": async (request) => ({ kind: "json", value: request.params }),
+		"GET /who": { public: true, handler: async (request) => ({ kind: "json", value: request.path }) },
+		"GET /n/:name": { public: true, handler: async (request) => ({ kind: "json", value: request.params }) },
 	},
 });
 
@@ -118,9 +118,15 @@ describe("Web requests", () => {
 			{
 				"@app/r": contributing({
 					routes: {
-						"GET /plain": async (request) => ({ kind: "json", value: request.path }),
-						"GET /headers": async (request) => ({ kind: "json", value: request.headers.get("x-thing") }),
-						"POST /body": async (request) => ({ kind: "json", value: await request.json() }),
+						"GET /plain": { public: true, handler: async (request) => ({ kind: "json", value: request.path }) },
+						"GET /headers": {
+							public: true,
+							handler: async (request) => ({ kind: "json", value: request.headers.get("x-thing") }),
+						},
+						"POST /body": {
+							public: true,
+							handler: async (request) => ({ kind: "json", value: await request.json() }),
+						},
 					},
 				}),
 			},
@@ -157,9 +163,12 @@ describe("the request's scope", () => {
 			{
 				"@app/large": contributing({
 					routes: {
-						"GET /large": async (_request, ctx) => {
-							signal = ctx.abortSignal;
-							return { kind: "html", body: "x".repeat(size) };
+						"GET /large": {
+							public: true,
+							handler: async (_request, ctx) => {
+								signal = ctx.abortSignal;
+								return { kind: "html", body: "x".repeat(size) };
+							},
 						},
 					},
 				}),
@@ -195,9 +204,12 @@ describe("the request's scope", () => {
 		const server = await served({
 			"@app/slow": contributing({
 				routes: {
-					"GET /slow": async (_request, ctx) => {
-						entered.resolve(ctx.abortSignal!);
-						return new Promise(() => {});
+					"GET /slow": {
+						public: true,
+						handler: async (_request, ctx) => {
+							entered.resolve(ctx.abortSignal!);
+							return new Promise(() => {});
+						},
 					},
 				},
 			}),

@@ -12,7 +12,12 @@ export const Tunnel = local("example.tunnel", {
 
 export default defineFacet((host, self) => {
 	self.contribute(Http, {
-		routes: { "GET /hello": async (request) => ({ kind: "json", value: { origin: request.origin } }) },
+		routes: {
+			"GET /hello": {
+				public: true,
+				handler: async (request) => ({ kind: "json", value: { origin: request.origin } }),
+			},
+		},
 	});
 	host.serve(Tunnel, (_params, tunnel) => {
 		const allowed = tunnel.writable<HttpContribution>({ hosts: [] });

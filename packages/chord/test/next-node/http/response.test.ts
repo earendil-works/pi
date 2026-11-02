@@ -11,7 +11,7 @@ import { contributing, send, served } from "./support.ts";
 
 /** A server answering `GET /r` with `response`. */
 async function answering(response: HttpResponse) {
-	return served({ "@app/r": contributing({ routes: { "GET /r": async () => response } }) });
+	return served({ "@app/r": contributing({ routes: { "GET /r": { public: true, handler: async () => response } } }) });
 }
 
 /** A `bytes` response over `data` that records its reads. */
@@ -64,8 +64,11 @@ describe("descriptions", () => {
 		const server = await served({
 			"@app/r": contributing({
 				routes: {
-					"GET /header": async () => ({ kind: "json", value: 1, headers: { "X-Split": "a\r\nSet-Cookie: x=1" } }),
-					"GET /bigint": async () => ({ kind: "json", value: { n: 1n } as never }),
+					"GET /header": {
+						public: true,
+						handler: async () => ({ kind: "json", value: 1, headers: { "X-Split": "a\r\nSet-Cookie: x=1" } }),
+					},
+					"GET /bigint": { public: true, handler: async () => ({ kind: "json", value: { n: 1n } as never }) },
 				},
 			}),
 		});
@@ -185,21 +188,27 @@ describe("bytes", () => {
 		const server = await served({
 			"@app/r": contributing({
 				routes: {
-					"GET /short": async () => ({
-						kind: "bytes",
-						mime: "text/plain",
-						size: 10,
-						read: async () => Buffer.from("abc"),
-					}),
+					"GET /short": {
+						public: true,
+						handler: async () => ({
+							kind: "bytes",
+							mime: "text/plain",
+							size: 10,
+							read: async () => Buffer.from("abc"),
+						}),
+					},
 					// Astra's build review: a throwing read hung the response, unreported.
-					"GET /throws": async () => ({
-						kind: "bytes",
-						mime: "text/plain",
-						size: 10,
-						read: async () => {
-							throw new Error("read failed");
-						},
-					}),
+					"GET /throws": {
+						public: true,
+						handler: async () => ({
+							kind: "bytes",
+							mime: "text/plain",
+							size: 10,
+							read: async () => {
+								throw new Error("read failed");
+							},
+						}),
+					},
 				},
 			}),
 		});

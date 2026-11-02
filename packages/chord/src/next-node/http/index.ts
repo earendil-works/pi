@@ -5,7 +5,7 @@
 
 export type { Connection, Provenance } from "./admission.ts";
 export { type Authenticator, Authenticators } from "./authenticate.ts";
-export { type CookieOptions, cookie, readCookie } from "./cookies.ts";
+export { type CookieOptions, cookie, readCookie, readSignedCookie } from "./cookies.ts";
 export { type FileResponseOptions, fileResponse } from "./file.ts";
 export {
 	createHttp,

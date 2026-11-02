@@ -104,18 +104,25 @@ describe("patterns and precedence (D8)", () => {
 		expect(matched(router, "GET", "/v/b")).toEqual({ pattern: "GET /:name/b", params: { name: "v" } });
 	});
 
-	it("takes a route with options: page and crossSite", () => {
+	it("takes a route with options: page, crossSite and public (a cross-site route is public: always anonymous)", () => {
 		const { router } = compose([
 			"@app/a",
 			{
 				routes: {
 					"GET /p": { handler: route("p"), page: true },
 					"POST /hook": { handler: route("h"), crossSite: true },
+					"GET /open": { handler: route("o"), public: true },
+					"GET /closed": route("c"),
 				},
+				sockets: { "/s": { handler: () => {}, public: true }, "/t": () => {} },
 			},
 		]);
-		expect(router.route("GET", "/p")).toMatchObject({ page: true, crossSite: false });
-		expect(router.route("POST", "/hook")).toMatchObject({ page: false, crossSite: true });
+		expect(router.route("GET", "/p")).toMatchObject({ page: true, crossSite: false, public: false });
+		expect(router.route("POST", "/hook")).toMatchObject({ page: false, crossSite: true, public: true });
+		expect(router.route("GET", "/open")).toMatchObject({ public: true });
+		expect(router.route("GET", "/closed")).toMatchObject({ public: false });
+		expect(router.socket("/s")).toMatchObject({ public: true });
+		expect(router.socket("/t")).toMatchObject({ public: false });
 		expect(router.route("GET", "/notes")).toBeUndefined();
 	});
 });

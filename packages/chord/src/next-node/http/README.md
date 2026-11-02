@@ -35,12 +35,16 @@ await server.close(ctx);
 // a plugin's server facet
 self.contribute(Http, {
 	routes: {
-		"GET /notes/:id": async (request, ctx) => ({ kind: "json", value: … }),
+		"GET /notes/:id": async (request, ctx) => ({ kind: "json", value: … }),     // needs a principal (else 401)
+		"GET /status": { public: true, handler: async () => ({ kind: "json", value: "ok" }) },
 		"GET /": { page: true, handler: async (request) => ({ kind: "html", body: `<script nonce="${request.nonce}">…` }) },
 		"POST /hooks/ci": { crossSite: true, handler: async (request) => … },        // always anonymous
 	},
 	wraps: [{ name: "audit", phase: "observe", scope: "all", wrap: async (request, next, ctx) => next(request) }],
-	sockets: { "/terminal/:id": (socket, request, ctx) => attach(socket, ctx) },
+	sockets: {
+		"/terminal/:id": (socket, request, ctx) => attach(socket, ctx),            // needs a principal (else 401)
+		"/lobby": { public: true, handler: (socket, request, ctx) => join(socket, ctx) },
+	},
 	maxPayload: 1024 * 1024,                     // its sockets' largest frame
 	hosts: ["notes.example.com"],                // a writable (`self.writable`) to change it
 	framers: ["https://shell.example.com"],      // who may frame the app's pages
@@ -88,9 +92,13 @@ await http.close(ctx);   // before host.close
 - **Who:** the authenticators in contributor order (plugin name: an order that means nothing, so an app needing
   precedence between credentials contributes one authenticator that decides); the first principal wins, a throwing one
   is reported `hook_failed` and skipped; none: anonymous; once the request is gone or sealed no further one starts.
+- **Deny by default** (slice 13 §2): an anonymous request to a route or socket not marked `public: true` answers 401
+  before any plugin code runs (wraps included); a `crossSite` route is public (it is always anonymous). The links
+  endpoint refuses anonymous upgrades with 401. A foreign request stays anonymous, so it reaches public routes only.
   `cookie(name, value, { secret, request, sameSite?, maxAge? })` makes a signed `HttpOnly`, `Path=/`, `SameSite=Strict`
   (or `Lax`) cookie, `Secure` on a remote origin, its expiry (`maxAge`) signed with it; `readCookie(request, name,
-  secret)` reads it back, its signature and expiry checked. A cookie without `maxAge` holds until the secret changes.
+  secret)` reads it back, its signature and expiry checked; `readSignedCookie` gives the value with its signed expiry
+  (to renew a cookie before it runs out). A cookie without `maxAge` holds until the secret changes.
   Authenticators run raced against the request's signal: a client gone or `close`'s seal answers 503 (or refuses the
   upgrade) without waiting for them.
 - **A request's scope:** one `host.root` scope with its principal (an explicit `undefined`: anonymous) spans matching,
@@ -100,7 +108,9 @@ await http.close(ctx);   // before host.close
   object it calls acts as its handler is written: a local helper calling remote types runs them as the host. A socket
   handler's scope lasts until its socket closes.
 - **`HttpRequest`:** `method`, `path` (dot segments resolved), `params`, `query`, `headers` (Web `Headers`), `origin`,
-  `provenance`, `nonce` (fresh for every response), `json(limit?)` (1 MiB; malformed 400, too large 413),
+  `provenance`, `nonce` (fresh for every response), `remoteAddress` (the peer's address as the listener knows it, a
+  relay's for a relayed request, none through `fetch` without a connection: for limits per client, never an
+  identity), `json(limit?)` (1 MiB; malformed 400, too large 413),
   `body(limit?)` (chunks, 413 past the limit; a body cut short, by a disconnect or a broken stream, is a 400: a prefix
   never parses as the whole). An `HttpFailure` escaping a route answers its status. Chord's listener drains a body
   nobody read after the response up to 64 KiB, else closes the connection.
@@ -129,7 +139,8 @@ await http.close(ctx);   // before host.close
   'none'`, `form-action 'self'`, `frame-ancestors` the framers or `'none'`, plus contributed sources). A response's own
   headers replace same-named ones (a list sends one line per value: several `Set-Cookie`); a header with a CR, LF or
   NUL, or a value that is no JSON, is a 500 reported `response_failed`.
-- **Sockets:** after admission, the origin checks and the authenticators (no principal: 403 before plugin code), a
+- **Sockets:** after admission, the origin checks and the authenticators (no principal and not public: 401 before
+  plugin code), a
   `ws` WebSocket (its own server per upgrade, no compression) with an `error` listener attached (an oversized frame
   closes it, 1009); a throwing handler is reported `socket_failed` and closes it (1011). Pinged after 15 s of silence,
   terminated 15 s later without an answer. A client gone while its upgrade authenticates aborts that work.

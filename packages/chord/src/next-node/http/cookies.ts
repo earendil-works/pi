@@ -9,8 +9,8 @@ import type { HttpRequest } from "./request.ts";
 export type CookieOptions = {
 	/** The key it is signed with (HMAC-SHA256). */
 	readonly secret: string;
-	/** The request it answers: a remote one gets `Secure`. */
-	readonly request: HttpRequest;
+	/** The request it answers (its provenance): a remote one gets `Secure`. */
+	readonly request: Pick<HttpRequest, "provenance">;
 	/** `Strict` by default; `Lax` lets a top-level navigation from another site carry it. */
 	readonly sameSite?: "Strict" | "Lax";
 	/** Seconds until it expires; none: a session cookie. */
@@ -42,6 +42,18 @@ export function cookie(name: string, value: string, options: CookieOptions): str
  * `undefined` otherwise.
  */
 export function readCookie(request: HttpRequest, name: string, secret: string): string | undefined {
+	return readSignedCookie(request, name, secret)?.value;
+}
+
+/**
+ * Cookie `name` on `request` as `readCookie` checks it, with its signed expiry (milliseconds since the epoch; none for
+ * a cookie without `maxAge`): what renewing a cookie before it expires needs.
+ */
+export function readSignedCookie(
+	request: HttpRequest,
+	name: string,
+	secret: string,
+): { readonly value: string; readonly expires: number | undefined } | undefined {
 	for (const pair of (request.headers.get("cookie") ?? "").split(";")) {
 		const equals = pair.indexOf("=");
 		if (equals < 0 || pair.slice(0, equals).trim() !== name) continue;
@@ -54,10 +66,11 @@ export function readCookie(request: HttpRequest, name: string, secret: string): 
 		const given = Buffer.from(signed.slice(dot + 1));
 		const expected = Buffer.from(signature(name, payload, secret));
 		if (given.length !== expected.length || !timingSafeEqual(given, expected)) return undefined;
-		const expires = payload.slice(expiresAt + 1);
-		if (expires !== "" && Number(expires) * 1000 <= Date.now()) return undefined;
+		const stamp = payload.slice(expiresAt + 1);
+		const expires = stamp === "" ? undefined : Number(stamp) * 1000;
+		if (expires !== undefined && expires <= Date.now()) return undefined;
 		try {
-			return decodeURIComponent(payload.slice(0, expiresAt));
+			return { value: decodeURIComponent(payload.slice(0, expiresAt)), expires };
 		} catch {
 			return undefined;
 		}

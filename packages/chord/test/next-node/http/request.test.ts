@@ -12,9 +12,12 @@ describe("the request a route gets", () => {
 		const server = await served({
 			"@app/a": contributing({
 				routes: {
-					"GET /notes/:id": async (request) => {
-						seen = request;
-						return { kind: "json", value: null };
+					"GET /notes/:id": {
+						public: true,
+						handler: async (request) => {
+							seen = request;
+							return { kind: "json", value: null };
+						},
 					},
 				},
 			}),
@@ -39,11 +42,17 @@ describe("bodies", () => {
 		served({
 			"@app/a": contributing({
 				routes: {
-					"POST /json": async (request) => ({ kind: "json", value: await request.json(16) }),
-					"POST /body": async (request) => {
-						let bytes = 0;
-						for await (const chunk of request.body(16)) bytes += chunk.byteLength;
-						return { kind: "json", value: bytes };
+					"POST /json": {
+						public: true,
+						handler: async (request) => ({ kind: "json", value: await request.json(16) }),
+					},
+					"POST /body": {
+						public: true,
+						handler: async (request) => {
+							let bytes = 0;
+							for await (const chunk of request.body(16)) bytes += chunk.byteLength;
+							return { kind: "json", value: bytes };
+						},
 					},
 				},
 			}),
@@ -91,7 +100,9 @@ describe("bodies", () => {
 
 	it("drains a small body nobody read and keeps the connection; a large one closes it", async () => {
 		const server = await served({
-			"@app/a": contributing({ routes: { "POST /ignore": async () => ({ kind: "json", value: 1 }) } }),
+			"@app/a": contributing({
+				routes: { "POST /ignore": { public: true, handler: async () => ({ kind: "json", value: 1 }) } },
+			}),
 		});
 		const agent = new Agent({ keepAlive: true, maxSockets: 1 });
 		const post = (body: string) =>

@@ -233,7 +233,7 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 			return { answer: this.refusal(403, undefined, router, head) };
 		}
 		// A fresh script nonce per response (decision "A CSP nonce per response").
-		const webRequest = new WebRequest(request, admission, this.#nonces.next());
+		const webRequest = new WebRequest(request, admission, this.#nonces.next(), connection.remoteAddress);
 		const match = router.route(request.method, webRequest.path);
 		if (match === "bad_path" || match === undefined) {
 			return { answer: this.refusal(match === undefined ? 404 : 400, admission, router, head) };
@@ -256,6 +256,8 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 				return { answer: this.refusal(503, admission, router, head) };
 			}
 		}
+		// Deny by default (decision "The app kit, point 3"): no plugin code runs for nobody unless the route is public.
+		if (principal === undefined && !match.public) return { answer: this.refusal(401, admission, router, head) };
 		const answered = Promise.withResolvers<Answer>();
 		const scope = this.#host
 			.root(
@@ -402,17 +404,17 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 		}
 		if (this.#closing.signal.aborted || signal.aborted) return refuse(stream, 503);
 		const before = registries.router.value;
-		const admission = admit(request, connectionOf(message), before.hosts, before.relays);
+		const connection = connectionOf(message);
+		const admission = admit(request, connection, before.hosts, before.relays);
 		if (refused(admission)) {
 			if (admission.failed !== undefined) this.#hookFailed("relay", admission.failed.relay, admission.failed.error);
 			return refuse(stream, 403);
 		}
 		const sent = request.header("origin");
 		if (isForeign(request) || (sent !== null && sent !== admission.origin)) return refuse(stream, 403);
-		const webRequest = new WebRequest(request, admission, this.#nonces.next());
+		const webRequest = new WebRequest(request, admission, this.#nonces.next(), connection.remoteAddress);
 		const principal = await this.#principal(registries, webRequest, signal);
 		if (this.#closing.signal.aborted || signal.aborted) return refuse(stream, 503);
-		if (principal === undefined) return refuse(stream, 403);
 		// The router now: a host, a relay or a socket removed while authenticating refuses the upgrade.
 		const router = registries.router.value;
 		const { allowed, relay } = admission;
@@ -424,6 +426,8 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 		}
 		const { links } = this.#options;
 		if (links !== undefined && webRequest.path === links.path) {
+			// The links endpoint always needs a principal: a link acts as one.
+			if (principal === undefined) return refuse(stream, 401);
 			let options: LinkOptions;
 			try {
 				options =
@@ -438,6 +442,7 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 		const match = router.socket(webRequest.path);
 		if (match === "bad_path") return refuse(stream, 400);
 		if (match === undefined) return refuse(stream, 404);
+		if (principal === undefined && !match.public) return refuse(stream, 401);
 		webRequest.params = match.params;
 		const fail = ({ pattern, plugin, error }: { pattern: string; plugin: string; error: unknown }) =>
 			this.#onError({ kind: "socket_failed", pattern, plugin, error });
@@ -517,6 +522,7 @@ function refuse(stream: Duplex, status: number): void {
 /** The reason phrases of the statuses an upgrade is refused with. */
 const STATUS: Readonly<Record<number, string>> = {
 	400: "Bad Request",
+	401: "Unauthorized",
 	403: "Forbidden",
 	404: "Not Found",
 	501: "Not Implemented",

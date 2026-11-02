@@ -81,7 +81,12 @@ export class Upgrades {
 		message: IncomingMessage,
 		stream: Duplex,
 		head: Buffer,
-		admission: Admission<P> & { readonly match: SocketMatch; readonly request: HttpRequest },
+		admission: Omit<Admission<P>, "principal"> & {
+			/** Anonymous only for a public socket. */
+			readonly principal: P | undefined;
+			readonly match: SocketMatch;
+			readonly request: HttpRequest;
+		},
 		host: Host<P>,
 		context: Context,
 		failed: (failure: SocketFailure) => void,

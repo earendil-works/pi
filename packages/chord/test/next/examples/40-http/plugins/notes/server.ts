@@ -10,6 +10,7 @@ export default defineFacet((_host, self) =>
 		routes: {
 			// A page: a link from another site may open it. Its inline script carries the server's nonce (the CSP).
 			"GET /": {
+				public: true,
 				page: true,
 				handler: async (request) => ({
 					kind: "html",
@@ -17,13 +18,19 @@ export default defineFacet((_host, self) =>
 				}),
 			},
 			// `:name` is one path segment, decoded.
-			"GET /notes/:name": async (request) => ({ kind: "json", value: { note: request.params.name } }),
+			"GET /notes/:name": {
+				public: true,
+				handler: async (request) => ({ kind: "json", value: { note: request.params.name } }),
+			},
 			// A file of this plugin, saved under its name, with ranges.
-			"GET /notes/:name/download": async (request) =>
-				fileResponse(pluginFile(`files/${request.params.name}.md`), {
-					download: `${request.params.name}.md`,
-					ranges: true,
-				}),
+			"GET /notes/:name/download": {
+				public: true,
+				handler: async (request) =>
+					fileResponse(pluginFile(`files/${request.params.name}.md`), {
+						download: `${request.params.name}.md`,
+						ranges: true,
+					}),
+			},
 		},
 	}),
 );
