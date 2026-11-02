@@ -2,7 +2,7 @@
 title: p3: Feature Set and Work Packages (prep for the design meeting)
 cover: p3 / Features
 kicker: Meeting prep · p3 on Chord v2 · 2026-11-03
-subtitle: What p2 does today, what p3 should ship first, how hands, sync and the plugin API fit, and a first cut into work packages
+subtitle: What p2 does today (in pictures), what p3 should ship first, how hands, sync and the plugin API fit, and a first cut into work packages
 stats:
   - 28 | feature areas in p2 today
   - 21 | model-facing tools in p2
@@ -61,6 +61,86 @@ files, watching, terminals). A **driver** is the single host allowed to write a 
 **replica** follows its commits. An **epoch** numbers driver changes. The **index** is the table of session metadata
 (title, status, idle state) the session list reads. The **app kit** is Chord's `startApp`/`startWorker` layer.
 
+# p2 in Pictures {#pictures lede="What each feature area looks like today, on the web, the phone and in the terminal."}
+
+All content is invented (a small shop project, the owner Dana, a guest), the models are a fake provider's, tools ran
+for real on a demo repository. Stills are from the web on a desktop and a phone and from the TUI; the clips loop.
+
+## Sessions
+
+{{img:sessions-list-desktop.webp|The sidebar: sessions grouped by directory, subagent counts, footer buttons.}}
+{{img:sessions-drawer-phone.webp|The drawer on the phone, a subagent expanded.}} {{img:sessions-create-phone.webp|A new session on the phone.}}
+{{img:sessions-create-directory-picker.webp|The directory picker for a new session: environment, path, folders, recent.}}
+{{img:sessions-options-sheet.webp|The session sheet: title, share, working directory, pin, archive.}}
+{{img:tui-session-selector.webp|The TUI's session selector, subagents threaded under their session.}}
+
+## Conversations and the agent
+
+{{clip:clip-streaming.mp4|Sending a question: thinking, a read card, a table and code stream in.}}
+{{img:conversation-thinking.webp|A turn with thinking expanded and read, write and edit cards.}}
+{{img:conversation-edit-diff-card.webp|An edit card with its diff.}}
+{{img:conversation-bash-card.webp|A bash card with its output, then the answer.}}
+{{img:conversation-streaming.webp|While an answer streams: the busy dot, the Steer composer, the stop button.}}
+{{img:conversation-transcript-phone.webp|The transcript on the phone.}} {{img:conversation-model-picker-phone.webp|The model sheet on the phone.}}
+{{img:conversation-cost-sheet.webp|The cost sheet: totals, cost and cache hits per response.}}
+{{img:tui-transcript-tools.webp|The same agent in the TUI: thinking, tools, the answer, editor and footer.}}
+
+## Subagents, history and handoff, code mode
+
+{{img:subagents-spawn-and-report.webp|A spawned subagent in the parent's transcript, and its report.}}
+{{img:subagents-conversation.webp|The subagent's own conversation, selected in the sidebar.}}
+{{img:history-handoff-card.webp|A handoff: the continuation text, then a new context.}}
+{{img:history-search-card.webp|history_search with its hits.}}
+{{img:codemode-card.webp|A code mode script with three nested tool calls.}}
+
+## Shell commands and chat mode
+
+{{img:shell-command-tui.webp|A shell command run from the TUI with its output (the web can only show it).}}
+{{img:chatmode-two-people.webp|Chat mode: owner and guest talk, an @pi mention gets a digest and an answer.}}
+
+## Sharing, devices, providers
+
+{{img:sharing-sheet.webp|The share sheet: read-only and read/write links, a connected guest.}}
+{{img:sharing-join-page.webp|Joining through a share link.}} {{img:sharing-guest-view-phone.webp|The session as the guest sees it.}}
+{{img:devices-sheet.webp|The devices sheet (the one-time token masked).}}
+{{img:providers-login.webp|A provider's login methods.}}
+
+## Workspace, @ completion, terminals
+
+{{clip:clip-workspace-review.mp4|Changes, a diff, a line comment, Send all; the agent answers the review.}}
+{{img:workspace-files.webp|Files: tree, sizes, upload.}}
+{{img:workspace-changes.webp|Changes: branch, uncommitted files, commits.}}
+{{img:workspace-search.webp|Text search across the project.}}
+{{clip:clip-at-completion.mp4|@ completion in the composer.}}
+{{img:terminals-web.webp|A web terminal panel with tabs and a key row.}}
+{{img:tui-slash-changes-diff.webp|The TUI's /changes diff (read-only).}}
+
+## Environments, artifacts, attachments, search
+
+{{img:environments-panel.webp|The environments sheet: SSH environments and the ports entry.}}
+{{img:artifacts-preview.webp|An artifact in the sandboxed preview.}}
+{{img:attachments-message.webp|A message with an image attachment.}}
+{{img:search-results.webp|Sidebar search: message hits for "rounding".}}
+
+## Status, notices, logs, voice, ports
+
+{{img:status-footer-viewers.webp|The composer footer: model, viewers, cache hit rate, cost, context.}}
+{{img:notices-owner-notice.webp|An owner notice after a worker was killed, with Show logs.}}
+{{img:logs-sheet.webp|The logs sheet following the server's log.}}
+{{img:voice-sheet.webp|The voice sheet (later in p3).}}
+{{img:ports-panel.webp|The ports panel without Radius (later in p3).}}
+
+## The web shell and the TUI
+
+{{clip:clip-phone-sheets.mp4|The phone: drawer, switching sessions, the session sheet, the share sheet, Back.}}
+{{img:webshell-phone-sheet-2-directory.webp|The sheet stack on the phone: a second sheet pushed on the first.}}
+{{clip:clip-tui-palette.mp4|The TUI's F1 palette: filter, run a command, the model selector.}}
+{{img:tui-slash-commands.webp|/ command completion in the TUI.}}
+{{img:tui-theme-picker.webp|The TUI's theme picker with preview.}} {{img:tui-theme-light.webp|The light theme.}}
+
+Not shown: clone and fork (TUI only, not run), SSH environments connected (no network in the capture), Radius and
+public ports (off), voice in use (no microphone), dev mode reload pills, provider OAuth flows.
+
 # p2 Today, and the Proposed Cut {#features lede="Every feature area, what it is, and where it goes in p3."}
 
 Sizes are non-test lines in p2. "Base" means p3's first release; "later" means designed for, built after; "drop" means
@@ -68,7 +148,7 @@ not carried over.
 
 | Area | What it does | p2 size | Proposed |
 | --- | --- | ---: | --- |
-| Sessions | list by machine and directory, create, rename, pin, archive, relocate, clone, fork, unread, automatic titles | 2,186 | **base**, plus delete; clone and fork in the web too |
+| Sessions | list by machine and directory, create, rename, pin, archive, relocate, clone, fork, unread, automatic titles | 2,186 | **base**, plus delete and in-session branches (`/tree`); clone and fork in the web too |
 | Conversations and agent | transcript, send, steer, follow-up, outbox, stop, model and thinking, cost, compaction | 3,682 + web 2,700 | **base** |
 | Subagents, one-shot agents, cross-session messages | named background agents, `team`, `agent` from scripts, `conversations` | 2,182 | **base** (owner: "awesome") |
 | History and handoff | re-read earlier entries after compaction, hand off with a continuation | 533 | **base** |
@@ -181,6 +261,75 @@ owner's provider keys stored on Radius (decide). Local prompt resources (the dev
 through a hand or synced. Closed sessions have no worker: the server reads a session's outbox without starting it, or
 starts it to sync.
 
+## The sync example
+
+`packages/chord/test/next/examples/60-session-sync/` (uncommitted, in `/home/badlogic/pi-sync-ex`) plays the decided
+protocol with Chord's real store pieces (the outbox, `applyBatch`, export archives) and a small in-memory stand-in for
+Radius. Its output, step by step:
+
+```text
+1. laptop s1: lastSeq 4 outbox floor 0
+2. sync: uploaded 1..4, Radius at 4, trimmed through it
+3. laptop s1: lastSeq 6 - sync: uploaded 5..6, Radius at 6, trimmed through it
+4. laptop s2: lastSeq 3 outbox floor 3 - sync: archive uploaded (737 bytes), Radius imported it at 3
+   laptop s2: lastSeq 4 - sync: uploaded 4..4
+5. Radius takes over, epoch 2; Radius writes seq 7
+   stale laptop: lastSeq 7 - push: refused for an old epoch: this copy is now s1~split@6
+5b. no epoch check - stale push: refused: does not follow seq 7
+   stale sync: nothing to send, Radius at 7 - outbox floor 7       (its own commit 7 trimmed)
+   stale:  ... 5 assistant: (stale laptop) added a different test
+   Radius: ... 5 assistant: (on Radius) added a test                (same seq, different data)
+6. laptop takes epoch 3, pulls 7..7: same values: true; its next commit syncs at epoch 3
+```
+
+:::sequence animate | The decided handshake (steps 1-3), then continuing on Radius (5) and back (6).
+actor laptop "laptop" "driver, epoch 1" accent
+actor radius "Radius" "replica per session"
+laptop -> radius: which sessions do you have?
+radius --> laptop: s1 at seq 4, epoch 1
+laptop => radius: commits 5..6 (epoch 1)
+radius --> laptop: s1 at seq 6 (acknowledged: trim through 6)
+divider "continue on Radius"
+radius -> radius: epoch 2, Radius drives, writes seq 7
+laptop -> radius: commit 7 (epoch 1)
+radius --> laptop: refused: old epoch (the copy splits)
+divider "back to the laptop"
+laptop -> radius: take epoch 3
+laptop => radius: pull 7..7, apply
+:::
+
+What it shows: the handshake works and only the tail moves; a session Radius lacks starts from an archive; without
+epochs a second writer's commit is lost silently (5b), with them it splits; taking a session back is a pull plus an
+epoch. One more finding: `applyBatch` refuses while a host holds the store open, so the sync layer stops the session's
+worker, applies, restarts it (decided 2026-11-02: usually nothing runs at that moment). The example lists nine things
+its stand-ins fake that the sync layer must build (authenticated handshake, persisted epochs, the batch wire format,
+retries, streaming bootstrap with files, the DO and R2 side, the continue fence, the split's new id, pull-back after a
+power loss).
+
+# Branches and Subagent Context {#branches lede="pi's /tree, fork and clone, and subagents that start from the parent's context."}
+
+pi branches three ways; p2 has two, in the TUI only:
+
+| pi | What it does | p2 |
+| --- | --- | --- |
+| `/tree` | branch inside the session: pick an earlier message, edit and resubmit; the old branch stays; leaving a branch can summarize it into the one entered | missing |
+| `/fork` | a new session from an earlier user message | TUI only, main conversation only |
+| `/clone` | a copy of the active branch as a new session | TUI only |
+
+Durable already has the building block: `conversation.fork(at)` creates a conversation in the same session store that
+shares every entry up to `at`, without copying. Proposed for p3:
+
+- **Base:** editing an earlier message forks the conversation there (an in-session branch); a branch list switches
+  between them; fork and clone to a new session; all in the web and the TUI.
+- **Later:** a full tree navigator and branch summaries.
+- **Index and sync:** branches are conversations inside one session store, so sync carries them for free; the index
+  marks the active branch and tells branches from subagents.
+
+**Subagents with the parent's context** (owner, 2026-11-02): `subagent({ action: "spawn", ..., context: "inherit" })`
+forks the parent conversation at the last entry before the assistant message holding the spawning call. The child
+knows everything the parent knew; its model, tools and location may differ; with the same model the shared prefix is
+usually a prompt-cache hit, otherwise it is paid in full (the tool's description says so). Base in p3.
+
 # Tools Built In {#tools lede="p2's 21 model-facing tools, and which ship with p3."}
 
 | Tool | p2 plugin | Proposed |
@@ -212,13 +361,13 @@ directory.
 
 | Command | Does |
 | --- | --- |
-| `p3 serve [--data-dir <dir>] [--host <addr>] [--port <n>]` | starts the server (`startApp`); prints the one-time owner link |
+| `p3 serve [--data-dir <dir>] [--host <addr>] [--port <n>]` | starts the server (`startServer`); prints the one-time owner link |
 | `p3 owner-link` | prints a new owner link for a running server (through the owner token file) |
 | `p3 tui [url] [--pair]` | the sandboxed TUI; on the same machine it uses the owner token file, elsewhere device pairing |
 | `p3 hand enroll <url>`, `p3 hand run` | enrolls this machine as a hand, runs it (or installs a service) |
 | `p3 radius login` | signs the server into Radius (device code) |
 | `p3 install <git:...|npm:...>` | installs a plugin into the user's root |
-| `p3 export <session> <file>`, `p3 import <file>` | the app kit's export per address |
+| `p3 export <session> <file>`, `p3 import <file>` | the app kit's `exportData`/`importData` (a running session is not stopped) |
 
 The data directory defaults to `~/.p3`. Its files: `settings.json`, `models.json`, `auth.json` (locked),
 `AGENTS.md`, `skills/`, `prompts/`, `plugins/` (the user's root), the server store, a directory per session worker,
@@ -287,7 +436,7 @@ Editor replacement (extension points only), raw provider stream events and respo
 
 | # | Package | Contains | Depends on |
 | --- | --- | --- | --- |
-| 1 | p3 skeleton | `startApp` with p3's API v1 modules (shared, web, tui, worker), core plugins in the app's root, `p3` CLI | Chord slices 11-13 |
+| 1 | p3 skeleton | `startServer` with p3's API v1 modules (shared, web, tui, worker), core plugins in the app's root, `p3` CLI | Chord slices 11-13 |
 | 2 | Sessions and conversations | Durable on the Chord store, session lifecycle with delete, the conversation contract, subagents, history and handoff, code mode, shell commands | 1 |
 | 3 | Session index | the index table, worker-to-server updates on metadata and idle changes, the session list, search over it | 2 |
 | 4 | Session sync to Radius | outbox upload and trim, epochs, pull-back, split, files as blobs, continue on Radius and back | 2, 3, Radius side |
