@@ -10,12 +10,17 @@
 - [ ] AgentOS execution boundary
 - [ ] Documentation / governance
 
+## Reviewability
+- [ ] This PR addresses one focused, independently reviewable concern.
+- [ ] Any broader scope is explained below.
+
 ## Architecture and trust-boundary impact
 [State which layers and execution paths are affected. Confirm whether ownership boundaries changed.]
 
 ## Verification
 - Commands run:
 - Tests passed:
+- Tests failed:
 - Tests not run:
 - Known limitations:
 
@@ -24,7 +29,14 @@
 - [ ] No unapproved external integration/provider/deployment decision.
 - [ ] Model output remains proposed intent, not authorization.
 - [ ] Human approval/escalation requirements are preserved.
+- [ ] Applicable public baseline requirements are satisfied.
 - [ ] Active threads and handoff records updated where applicable.
+
+## Commit format
+Agent-authored commits must follow:
+`[AGENT_NAME] type(scope): imperative description`
+
+Allowed types: `feat`, `fix`, `docs`, `refactor`, `chore`, `test`, `ci`.
 
 ## Contributing agent
 Complete this block when an AI agent materially contributes to the PR. Use actual session details; write `Unknown` or `Not recorded` rather than guessing. Human contributors may identify themselves here when useful.
