@@ -110,6 +110,7 @@
 - Fixed fullscreen double-click selection splitting paths and tokens at `~`, `.`, `\`, and `+`; word characters now match iTerm2's defaults ([#10980](https://github.com/earendil-works/pi/issues/10980))
 - Fixed display math wider than the content area being split apart by line wrapping; it now falls back to raw LaTeX ([#11483](https://github.com/earendil-works/pi/issues/11483))
 - Fixed styled words ending exactly at the wrap width adding a leading space on the next line, and strikethrough leaking into wrapped-line padding ([#10925](https://github.com/earendil-works/pi/issues/10925))
+- Fixed `/tree` branch summaries including failed assistant replies and original content that context edits had hidden or replaced. Summaries now honor the same context edits as live requests and compaction ([#11602](https://github.com/earendil-works/pi/issues/11602))
 
 ### Removed
 
