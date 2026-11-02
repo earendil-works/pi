@@ -245,6 +245,62 @@ describe("Models with classifier models", () => {
 		expect((await withOAuth.getAvailable("openai")).some((model) => model.id === "gpt-6-luna")).toBe(true);
 	});
 
+	it("routes GitHub Copilot Microsoft-Decision-1 to the account's /v1/systemone endpoint", async () => {
+		const credentials = new InMemoryCredentialStore();
+		await credentials.modify("github-copilot", async () => ({
+			type: "oauth",
+			access: "tid=test;exp=9999999999;proxy-ep=proxy.enterprise.githubcopilot.com;",
+			refresh: "refresh",
+			expires: Date.now() + 3_600_000,
+			// The login records only picker models; classifiers stay listed.
+			availableModelIds: ["gpt-6-luna"],
+		}));
+		const models = builtinModels({ credentials });
+		const decision = models.getModelOfType("classifier", "github-copilot", "microsoft-decision-1");
+		if (!decision) throw new Error("missing GitHub Copilot decision model");
+		expect(decision).toMatchObject({
+			api: "typesafe-system-one",
+			baseUrl: "https://api.individual.githubcopilot.com",
+			input: ["text"],
+			contextWindow: 32768,
+		});
+		expect(models.getModel("github-copilot", "microsoft-decision-1")).toBeUndefined();
+		expect(await models.getAvailableOfType("classifier", "github-copilot")).toEqual([decision]);
+
+		const requests: Array<{ url: string; headers: Headers }> = [];
+		const result = await models.classify(decision, context, {
+			fetch: async (input, init) => {
+				requests.push({ url: String(input), headers: new Headers(init?.headers) });
+				return Response.json({ answers: { approved: { type: "noul", noul: 0.8 } } });
+			},
+		});
+
+		expect(requests.map((request) => request.url)).toEqual(["https://api.enterprise.githubcopilot.com/v1/systemone"]);
+		expect(requests[0].headers.get("authorization")).toBe(
+			"Bearer tid=test;exp=9999999999;proxy-ep=proxy.enterprise.githubcopilot.com;",
+		);
+		// Copilot rejects requests without an editor version.
+		expect(requests[0].headers.get("editor-version")).toBeTruthy();
+		expect(requests[0].headers.get("copilot-integration-id")).toBe("vscode-chat");
+		expect(result.stopReason).toBe("stop");
+		expect(result.answers.approved).toEqual({ type: "bool", probability: 0.8 });
+	});
+
+	it("adds the System One version prefix to the GitHub Copilot catalog base URL", async () => {
+		const models = builtinModels();
+		const decision = models.getModelOfType("classifier", "github-copilot", "microsoft-decision-1");
+		if (!decision) throw new Error("missing GitHub Copilot decision model");
+		const urls: string[] = [];
+		await models.classify(decision, context, {
+			apiKey: "secret",
+			fetch: async (input) => {
+				urls.push(String(input));
+				return Response.json({ answers: { approved: { type: "noul", noul: 0.8 } } });
+			},
+		});
+		expect(urls).toEqual(["https://api.individual.githubcopilot.com/v1/systemone"]);
+	});
+
 	it("routes OpenRouter classifier models through the System One API", () => {
 		const models = builtinModels();
 		for (const model of getBuiltinClassifierModels("openrouter")) {
