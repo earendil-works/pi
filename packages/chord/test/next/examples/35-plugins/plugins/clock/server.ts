@@ -2,7 +2,7 @@
 // this plugin, so a reload leaves it as it is: same script, same facet, same object.
 
 import { constant, defineFacet } from "@earendil-works/chord/next";
-import { Clock } from "@example/contracts/contract";
+import { Clock } from "../contracts/contract.ts";
 
 const evaluatedAt = new Date().toISOString();
 

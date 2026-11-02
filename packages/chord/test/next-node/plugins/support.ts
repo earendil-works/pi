@@ -1,6 +1,7 @@
-// Test support for the plugins component (slice 7c): fixture plugins copied into temporary roots, plugins and npm
-// packages written there, and the host packages the fixtures import.
+// Test support for the plugins component (slice 7c, slice 12): fixture plugins copied into temporary roots, plugins, npm
+// packages and local bare git repositories written there (no network), and the host packages the fixtures import.
 
+import { execFileSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -73,4 +74,31 @@ export async function writePackage(
 	const main = Object.keys(files)[0]!;
 	const json = JSON.stringify({ name, version: "1.0.0", main, ...manifest });
 	await writeFiles(join(dir, "node_modules", name), { "package.json": json, ...files });
+}
+
+/**
+ * A local bare git repository `<name>.git` in a temporary directory with `files` committed (one commit), tagged `tag`:
+ * its `file://` URL and the commit. A call with `previous` adds another commit on top of that repository.
+ */
+export async function gitRepository(
+	name: string,
+	files: Readonly<Record<string, string>>,
+	tag: string,
+	previous?: { readonly work: string; readonly bare: string },
+): Promise<{ readonly url: string; readonly commit: string; readonly work: string; readonly bare: string }> {
+	const git = (cwd: string, ...args: string[]) =>
+		execFileSync("git", ["-c", "user.email=test@example.com", "-c", "user.name=test", ...args], {
+			cwd,
+			encoding: "utf8",
+		}).trim();
+	const work = previous?.work ?? (await tempRoot());
+	if (previous === undefined) git(work, "init", "--quiet");
+	await writeFiles(work, files);
+	git(work, "add", "--all");
+	git(work, "commit", "--quiet", "--message", tag);
+	git(work, "tag", tag);
+	const bare = previous?.bare ?? join(await tempRoot(), `${name}.git`);
+	if (previous === undefined) git(work, "clone", "--quiet", "--bare", work, bare);
+	else git(work, "push", "--quiet", "--tags", bare, "HEAD:refs/heads/master");
+	return { url: `file://${bare}`, commit: git(work, "rev-parse", "HEAD"), work, bare };
 }

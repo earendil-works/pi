@@ -1,7 +1,8 @@
 // Tests of the plugins component (slice 7c §4, §5, §7): per plugin at startup and reload (a failing build, evaluation,
 // setup; unchanged plugins untouched; added and removed plugins; the closure rule through builds), `rollout` (order,
-// stopping at a rejecting step, marks), installs through the component, GC over 200 reloads, and end to end a server
-// and a worker loading plugin directories, an edit rolled out, a broken edit kept old on both hosts.
+// stopping at a rejecting step, marks), installs through the component, the app's API and required roots (slice 12), GC
+// over 200 reloads, and end to end a server and a worker loading plugin directories, an edit rolled out, a broken edit
+// kept old on both hosts.
 
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -14,6 +15,7 @@ import { memoryLinkPair } from "../../../src/next/link/index.ts";
 import { constant } from "../../../src/next/state/index.ts";
 import {
 	createPlugins,
+	type PluginError,
 	type Plugins,
 	type RolloutHost,
 	type RolloutStep,
@@ -27,7 +29,7 @@ import {
 	transported,
 	valuesOf,
 } from "../../next/support.ts";
-import { HOST_PACKAGES, kindsOf, tempRoot, writeFiles, writePackage, writePlugin } from "./support.ts";
+import { gitRepository, HOST_PACKAGES, kindsOf, tempRoot, writeFiles, writePackage, writePlugin } from "./support.ts";
 
 /** The fixtures' contracts, as the `contracts` fixture declares them. */
 const Worker = hostKind("test.worker");
@@ -401,6 +403,138 @@ describe("installs through the component", () => {
 		await plugins.installDependencies("@test/a", context);
 		expect(plugins.state.value).toMatchObject({ install: [], dirty: ["@test/a"] });
 		expect(reported).toEqual([]);
+		plugins.close();
+	});
+});
+
+describe("the app's API, required roots and installs (slice 12 §1, §5)", () => {
+	it("checks plugins' imports against the app's API, and its required root makes load reject", async () => {
+		const app = await tempRoot();
+		const user = await tempRoot();
+		const facet = (version: string) =>
+			`import { defineFacet } from "@acme/app/${version}";\nexport default defineFacet(() => {});`;
+		await writePlugin(app, "core", "@test/core", { "worker.ts": facet("v3") });
+		await writePlugin(app, "old", "@test/old", { "worker.ts": facet("v1") });
+		await writePlugin(user, "mine", "@test/mine", { "worker.ts": facet("v1") });
+		const modules = { "@acme/app/v3": { defineFacet } };
+		const plugins = createPlugins(
+			{
+				roots: [{ path: app, required: true }, user],
+				api: { name: "@acme/app", versions: ["v3"] },
+				kinds: kindsOf(modules),
+				onError: () => {},
+			},
+			context,
+		);
+		const host = createHost({ onError: () => {} });
+		const error = await rejection(plugins.load(host, { kind: "worker", core: [], modules }, context));
+		expect(error).toMatchObject({ name: "PluginError" });
+		expect((error as PluginError).required.map(({ plugin }) => plugin)).toEqual(["@test/old"]);
+		expect((error as PluginError).failed.map(({ plugin }) => plugin).sort()).toEqual(["@test/mine", "@test/old"]);
+		expect(String((error as PluginError).required[0]!.error)).toContain(
+			'"@acme/app/v1": @acme/app/v1 is not available: this app provides v3',
+		);
+		await host.close(context);
+		plugins.close();
+	});
+
+	it("rejects load when a required root is missing, holds a broken package or loses a name to an earlier root (Opus M3)", async () => {
+		const facet = 'import { defineFacet } from "@earendil-works/chord/next";\nexport default defineFacet(() => {});';
+		const broken = await tempRoot();
+		await writePlugin(broken, "core", "@app/core", { "server.ts": facet });
+		await writeFile(join(broken, "core", "package.json"), "{ not json");
+		const user = await tempRoot();
+		const app = await tempRoot();
+		await writePlugin(user, "core", "@app/core", { "server.ts": facet });
+		await writePlugin(app, "core", "@app/core", { "server.ts": facet });
+		const cases = [
+			{ roots: [{ path: broken, required: true }], problem: /package\.json: / },
+			{ roots: [{ path: join(broken, "missing"), required: true }], problem: /the required root does not exist/ },
+			{ roots: [user, { path: app, required: true }], problem: /plugin "@app\/core" is in .* already/ },
+		];
+		for (const { roots, problem } of cases) {
+			const plugins = createPlugins({ roots, kinds: kindsOf(HOST_PACKAGES), onError: () => {} }, context);
+			const host = createHost({ onError: () => {} });
+			const error = await rejection(
+				plugins.load(host, { kind: "server", core: [], modules: HOST_PACKAGES }, context),
+			);
+			expect(error).toMatchObject({ name: "PluginError" });
+			expect((error as PluginError).problems.map(({ error: why }) => why)).toEqual([expect.stringMatching(problem)]);
+			await host.close(context);
+			plugins.close();
+		}
+	});
+
+	it("installs a plugin into one of its roots and marks set; refuses a directory that is no root", async () => {
+		const root = await tempRoot();
+		const repository = await gitRepository(
+			"hello",
+			{ "package.json": JSON.stringify({ name: "@bob/hello" }), "worker.ts": "export default { setup: () => {} };" },
+			"v1",
+		);
+		const tools = await tempRoot();
+		await writeFiles(tools, { "npm.mjs": "process.exit(0);" });
+		const plugins = createPlugins(
+			{
+				roots: [root],
+				kinds: kindsOf(HOST_PACKAGES),
+				install: { npmCommand: [process.execPath, join(tools, "npm.mjs")] },
+				onError: () => {},
+			},
+			context,
+		);
+		await plugins.build([], context);
+		expect(await plugins.installPlugin({ git: repository.url, ref: "v1" }, root, context)).toEqual(["@bob/hello"]);
+		expect(plugins.state.value).toMatchObject({ set: true });
+		const built = await plugins.build([], context);
+		expect(Object.keys(built.plugins)).toEqual(["@bob/hello"]);
+		expect(await rejection(plugins.installPlugin({ git: repository.url, ref: "v1" }, tools, context))).toMatchObject({
+			message: `plugins.installPlugin: ${tools} is not one of the roots`,
+		});
+		plugins.close();
+	});
+});
+
+describe("plugins whose files move, and removed plugins (slice 12 fix round 2, Sol)", () => {
+	it("rebuilds a single-file plugin that gains a same-named directory (the directory wins) without being named", async () => {
+		const root = await tempRoot();
+		const facet = (label: string) =>
+			[
+				'import { constant, defineFacet, local, str } from "@earendil-works/chord/next";',
+				'const Item = local("test.hello", { version: 1, params: {}, members: { label: str() } });',
+				`export default defineFacet((host) => host.serve(Item, () => ({ label: constant(${JSON.stringify(label)}) })));`,
+			].join("\n");
+		await writeFiles(root, { "hello.worker.ts": facet("from a file") });
+		const { plugins } = component(root);
+		const host = createHost({ onError: () => {} });
+		await plugins.load(host, { kind: "worker", core: [], modules: HOST_PACKAGES }, context);
+		const Hello = local("test.hello", { version: 1, params: {}, members: { label: str() } });
+		expect((await host.get(Hello, {}, context)).label.value).toBe("from a file");
+		await writePlugin(root, "hello", "hello", { "worker.ts": facet("from a directory") });
+		const built = await plugins.build([], context);
+		expect(Object.keys(built.plugins)).toEqual(["hello"]);
+		await plugins.rollout([plugins.step("worker", host)], built, context);
+		expect((await host.get(Hello, {}, context)).label.value).toBe("from a directory");
+		await host.close(context);
+		plugins.close();
+	});
+
+	it("forgets what a removed plugin's builds read: a change there no longer dirties it", async () => {
+		const root = await tempRoot();
+		await writePlugin(root, "contracts", "@test/contracts", { "contract.ts": "export const c = 1;" });
+		await writePlugin(root, "user", "@test/user", {
+			"worker.ts": 'import { c } from "../contracts/contract.ts";\nexport default { setup: () => c };',
+		});
+		const { plugins } = component(root);
+		await plugins.build(["@test/user"], context);
+		await rm(join(root, "user"), { recursive: true });
+		await vi.waitFor(() => expect(plugins.state.value).toMatchObject({ set: true }), { timeout: 5_000 });
+		// The removal rolled out (no host here): its mark clears.
+		await plugins.rollout([], await plugins.build([], context), context);
+		expect(plugins.state.value.dirty).toEqual([]);
+		await writeFile(join(root, "contracts", "contract.ts"), "export const c = 2;");
+		await vi.waitFor(() => expect(plugins.state.value.dirty).toContain("@test/contracts"), { timeout: 5_000 });
+		expect(plugins.state.value.dirty).not.toContain("@test/user");
 		plugins.close();
 	});
 });

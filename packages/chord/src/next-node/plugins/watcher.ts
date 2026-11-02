@@ -1,18 +1,19 @@
-// The watcher and its marks (slice 7c §5): `fs.watch` on every directory of the plugin roots and the app's base code,
-// `node_modules` and `.git` never watched (a directory appearing later gets its watch), marks what changed and never
-// applies it. A changed file dirties every plugin whose facets used it (a copied contract every user) or whose directory
-// contains it; a changed `package.json` asks for an install (and for its metadata to be read again); a plugin directory
-// or facet file added or removed asks for discovery again; a file of base code asks the app to restart its hosts. The
+// The watcher and its marks (slice 7c §5, slice 12 §4): `fs.watch` on every directory of the plugin roots and the app's
+// base code, `node_modules` and `.git` never watched (a directory appearing later gets its watch), marks what changed and
+// never applies it. A changed file dirties every plugin whose facets used it (a copied contract every user), whose
+// directory contains it or which is a single-file plugin of it; a changed `package.json` asks for an install (and for
+// its metadata to be read again); a plugin directory, a facet file or a single-file plugin's file added or removed asks
+// for discovery again; a file of base code asks the app to restart its hosts. The
 // marks are a JSON watchable; each mark records the generation of its latest change (generations only increase), so a
 // change during a build keeps its mark, however late an older build's rollout clears.
 
-import { type Dirent, type FSWatcher, lstatSync, readdirSync, realpathSync, watch } from "node:fs";
+import { type Dirent, existsSync, type FSWatcher, lstatSync, readdirSync, realpathSync, watch } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { BACKGROUND_CONTEXT, type Context } from "../../context/index.ts";
 import type { JsonValue } from "../../json.ts";
 import { type Batch, Source } from "../../next/state/internal.ts";
 import { type BuiltFacet, inside } from "./build.ts";
-import { type Discovery, FACET_EXTENSIONS } from "./discover.ts";
+import { type Discovery, FACET_EXTENSIONS, type Plugin, sameFiles } from "./discover.ts";
 
 /** The marks: plugins to rebuild, plugins to install, whether to discover again, whether base code changed. */
 export type PluginsState = {
@@ -106,6 +107,16 @@ export class PluginWatcher extends Source {
 
 	/** The plugins discovery found: marks are for them (a removed one's install clears); the changes it had seen clear. */
 	know(discovery: Discovery, seen: DiscoverySnapshot): void {
+		// A plugin whose files moved (a single file became a directory, a facet file came or went) is dirty.
+		const generation = this.#generation++;
+		for (const plugin of discovery.plugins) {
+			const before = this.#discovery.plugins.find(({ name }) => name === plugin.name);
+			if (before !== undefined && !sameFiles(before, plugin)) this.#dirty.set(plugin.name, generation);
+		}
+		// A plugin no longer discovered: what its builds read no longer dirties anything.
+		for (const [key, { plugin }] of this.#used) {
+			if (!discovery.plugins.some(({ name }) => name === plugin)) this.#used.delete(key);
+		}
 		this.#discovery = discovery;
 		if (this.#set === seen.set) this.#set = 0;
 		if (this.#manifest === seen.manifest) this.#manifest = 0;
@@ -113,7 +124,9 @@ export class PluginWatcher extends Source {
 		for (const name of this.#install)
 			if (!discovery.plugins.some((plugin) => plugin.name === name)) this.#install.delete(name);
 		// A plugin directory linked from outside the roots: a tree of its own (a symlink is not followed).
-		const linked = discovery.plugins.filter(({ dir }) => !this.#roots.some((root) => inside(root, dir)));
+		const linked = discovery.plugins.filter(
+			({ dir, layout }) => layout === "directory" && !this.#roots.some((root) => inside(root, dir)),
+		);
 		for (const { dir } of linked) this.#watchTree(dir);
 		for (const tree of this.#trees) {
 			const kept =
@@ -155,6 +168,12 @@ export class PluginWatcher extends Source {
 		this.#changed();
 	}
 
+	/** Plugins were installed into a root: discovery runs at the next build (without waiting for the watch's events). */
+	added(): void {
+		this.#set = this.#generation++;
+		this.#changed();
+	}
+
 	/** Marks what a change of the file or directory at `path` (absolute) asks for. */
 	mark(path: string): void {
 		if (path.split(sep).some((part) => IGNORED.has(part))) return;
@@ -175,14 +194,18 @@ export class PluginWatcher extends Source {
 
 	/**
 	 * A change under a root, at `generation`: in a plugin's directory, it dirties that plugin (and asks for an install
-	 * and a new reading of its metadata for its `package.json`, for discovery for a facet file at its top); elsewhere
-	 * under a root (a directory added or removed, a directory that is no plugin yet), discovery; every plugin whose
+	 * and a new reading of its metadata for its `package.json`, for discovery for a facet file at its top); a single-file
+	 * plugin's file dirties it (and asks for discovery when it is gone); elsewhere under a root (a directory or a
+	 * single-file plugin's file added or removed, a directory that is no plugin yet), discovery; every plugin whose
 	 * facets read the file is dirty too.
 	 */
 	#markPlugin(path: string, generation: number): void {
-		const plugin = this.#discovery.plugins.find((each) => each.dir === path || inside(each.dir, path));
+		const plugin = this.#discovery.plugins.find((each) => owns(each, path));
 		if (plugin === undefined) {
 			if (this.#roots.some((root) => inside(root, path))) this.#set = generation;
+		} else if (plugin.layout === "file") {
+			if (!existsSync(path)) this.#set = generation;
+			this.#dirty.set(plugin.name, generation);
 		} else if (path === join(plugin.dir, "package.json")) {
 			this.#install.add(plugin.name);
 			this.#manifest = generation;
@@ -276,6 +299,12 @@ export class PluginWatcher extends Source {
 			this.batch.within(() => this.changed(), BACKGROUND_CONTEXT);
 		});
 	}
+}
+
+/** Whether `path` is `plugin`'s: in its directory, or one of a single-file plugin's files. */
+function owns(plugin: Plugin, path: string): boolean {
+	if (plugin.layout === "file") return Object.values(plugin.facets).includes(path);
+	return plugin.dir === path || inside(plugin.dir, path);
 }
 
 /**

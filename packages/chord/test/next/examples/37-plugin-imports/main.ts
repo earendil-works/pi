@@ -1,7 +1,7 @@
-// What a facet may import (slice 7c §2). The build inlines a plugin's own files, files of other plugins (a copied
-// contract) and its npm `dependencies`; it leaves host packages (the app's instances: an ES module's default and named
-// exports, a CommonJS module), `chord.external` packages and Node builtins external, answered when the script runs; a
-// plugin's own files are read through `pluginFile`. Here (`plugins/`): the report plugin uses each of these; its
+// What a facet may import (slice 7c §2, slice 12 §2). The build inlines a plugin's own files, files of other plugins of
+// its root by relative path (a copied contract) and its npm `dependencies`; it leaves host packages (the app's
+// instances: an ES module's default and named exports, a CommonJS module), `chord.external` packages and Node builtins
+// external, answered when the script runs; a plugin's own files are read through `pluginFile`. Here (`plugins/`): the report plugin uses each of these; its
 // dependencies are installed first (`installDependencies`; `fake-npm.mjs` stands in for npm: no network). The ruler
 // plugin copies a file that imports a package, the refused plugin imports what a script may not, and the paths plugin
 // uses `__dirname` and `__filename`: they are left out with their build errors.

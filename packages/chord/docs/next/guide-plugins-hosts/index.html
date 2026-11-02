@@ -152,8 +152,8 @@ connect over links. Tabs and terminal UIs are clients: no address, they connect 
 ask for an object by type and params, and Chord finds where it lives.</li>
 <li><strong>A facet declares, an object acts.</strong> A facet is a plugin&#39;s code for one host kind: it says which object types this
 host serves. The objects hold the state and do the work.</li>
-<li><strong>A plugin is a directory.</strong> A <code>package.json</code> with the plugin&#39;s name, and one file per host kind: <code>server.ts</code>,
-<code>worker.ts</code>, <code>web.tsx</code>.</li>
+<li><strong>A plugin is a directory</strong> (or a single file). A <code>package.json</code> with the plugin&#39;s name, and one file per host kind:
+<code>server.ts</code>, <code>worker.ts</code>, <code>web.tsx</code>. It imports its host only through the app&#39;s versioned API (<code>@app/api/v1</code>).</li>
 <li><strong>The server builds, every host evaluates.</strong> The plugins component builds each facet into a small script; the
 server, workers and tabs load the scripts for their kind.</li>
 <li><strong>Plugins meet through types and registries.</strong> One plugin uses another&#39;s objects through its contract, or
@@ -161,7 +161,7 @@ contributes to a registry another defines. Nothing else crosses between plugins.
 <li><strong>An edit is a rollout.</strong> Change a file, build, roll out: the server, then every worker, swap the plugin&#39;s objects in
 place; a broken edit keeps the old code running and reports why.</li>
 </ol>
-<figure class="fig wide anim"><svg viewBox="0 0 720 396" width="100%" role="img" aria-label="How it all fits: plugins on disk are built once on the server; each host evaluates the facets of its kind; tabs and the TUI are clients that reach workers' objects through the server." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">ON DISK</text><text x="16" y="155" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">SERVER PROCESS</text><text x="16" y="288" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">CLIENTS AND WORKERS</text><g class="step" style="--i:1"><rect x="137" y="36" width="210" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="242" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">plugins/notes/</text><text x="242" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">server.ts`, `worker.ts`,</text><text x="242" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">`web.tsx`, `tui.ts`, `contract.ts</text></g><g class="step" style="--i:4"><rect x="373" y="36" width="210" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="478" y="60.8" font-size="11" fill="#2a2723" text-anchor="middle">src/ (base code)</text><text x="478" y="74.8" font-size="9.5" fill="#7b7468" text-anchor="middle">`@app/core`: host kinds, principals</text></g><g class="step" style="--i:3"><rect x="137" y="169" width="210" height="55" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="242" y="187.5" font-size="11" fill="#2a2723" text-anchor="middle">plugins component</text><text x="242" y="201.5" font-size="9.5" fill="#7b7468" text-anchor="middle">discover, build every facet, watch,</text><text x="242" y="214" font-size="9.5" fill="#7b7468" text-anchor="middle">roll out</text></g><g class="step" style="--i:7"><rect x="373" y="169" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="478" y="187.5" font-size="11" fill="#2a2723" text-anchor="middle">server host</text><text x="478" y="201.5" font-size="9.5" fill="#7b7468" text-anchor="middle">server facets; routes Project →</text><text x="478" y="214" font-size="9.5" fill="#7b7468" text-anchor="middle">workers</text></g><g class="step" style="--i:9"><rect x="137" y="302" width="210" height="55" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="242" y="320.5" font-size="11" fill="#2a2723" text-anchor="middle">client: tab or TUI</text><text x="242" y="334.5" font-size="9.5" fill="#7b7468" text-anchor="middle">web or tui facets, local UI objects;</text><text x="242" y="347" font-size="9.5" fill="#7b7468" text-anchor="middle">holds `Notes { p1 }`</text></g><g class="step" style="--i:12"><rect x="373" y="302" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="478" y="326.8" font-size="11" fill="#2a2723" text-anchor="middle">worker p1</text><text x="478" y="340.8" font-size="9.5" fill="#7b7468" text-anchor="middle">worker facets; serves `Notes { p1 }`</text></g><g class="step edge" style="--i:2"><path d="M242 91 L242 167" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="246" y="123" width="65.9" height="13" fill="#fbf8f2" opacity=".92"/><text x="250" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">read, build</text></g><g class="step edge" style="--i:5"><path d="M478 91 L242 167" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="364" y="123" width="76.5" height="13" fill="#fbf8f2" opacity=".92"/><text x="368" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">host packages</text></g><g class="step edge" style="--i:6"><path d="M347 196.5 L371 196.5" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="319.1" y="179.5" width="81.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="360" y="189.5" font-size="9.5" fill="#7b7468" text-anchor="middle">server scripts</text></g><g class="step edge" style="--i:8"><path d="M242 224 L242 300" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="246" y="256" width="102.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="250" y="266" font-size="9.5" fill="#7b7468" text-anchor="start">web or tui scripts</text></g><g class="step edge" style="--i:10"><path d="M242 302 L478 226" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="364" y="258" width="97.6" height="13" fill="#fbf8f2" opacity=".92"/><text x="368" y="268" font-size="9.5" fill="#7b7468" text-anchor="start">hold Notes { p1 }</text></g><g class="step edge" style="--i:11"><path d="M478 224 L478 300" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="482" y="256" width="160.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="486" y="266" font-size="9.5" fill="#7b7468" text-anchor="start">start (worker scripts), relay</text></g><text x="16" y="381" font-size="10.5" fill="#7b7468" text-anchor="start">Each host loads only its own kind's facets. Plugins meet only through object types and registries.</text></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> How it all fits: plugins on disk are built once on the server; each host evaluates the facets of its kind; tabs and the TUI are clients that reach workers&#39; objects through the server.</figcaption></figure>
+<figure class="fig wide anim"><svg viewBox="0 0 720 396" width="100%" role="img" aria-label="How it all fits: plugins on disk are built once on the server; each host evaluates the facets of its kind; tabs and the TUI are clients that reach workers' objects through the server." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">ON DISK</text><text x="16" y="155" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">SERVER PROCESS</text><text x="16" y="288" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">CLIENTS AND WORKERS</text><g class="step" style="--i:1"><rect x="137" y="36" width="210" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="242" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">plugins/notes/</text><text x="242" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">server.ts`, `worker.ts`,</text><text x="242" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">`web.tsx`, `tui.ts`, `contract.ts</text></g><g class="step" style="--i:4"><rect x="373" y="36" width="210" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="478" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">src/ (base code)</text><text x="478" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle">`@app/api/v1`: Chord's surface, host</text><text x="478" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle">kinds, principals</text></g><g class="step" style="--i:3"><rect x="137" y="169" width="210" height="55" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="242" y="187.5" font-size="11" fill="#2a2723" text-anchor="middle">plugins component</text><text x="242" y="201.5" font-size="9.5" fill="#7b7468" text-anchor="middle">discover, build every facet, watch,</text><text x="242" y="214" font-size="9.5" fill="#7b7468" text-anchor="middle">roll out</text></g><g class="step" style="--i:7"><rect x="373" y="169" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="478" y="187.5" font-size="11" fill="#2a2723" text-anchor="middle">server host</text><text x="478" y="201.5" font-size="9.5" fill="#7b7468" text-anchor="middle">server facets; routes Project →</text><text x="478" y="214" font-size="9.5" fill="#7b7468" text-anchor="middle">workers</text></g><g class="step" style="--i:9"><rect x="137" y="302" width="210" height="55" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="242" y="320.5" font-size="11" fill="#2a2723" text-anchor="middle">client: tab or TUI</text><text x="242" y="334.5" font-size="9.5" fill="#7b7468" text-anchor="middle">web or tui facets, local UI objects;</text><text x="242" y="347" font-size="9.5" fill="#7b7468" text-anchor="middle">holds `Notes { p1 }`</text></g><g class="step" style="--i:12"><rect x="373" y="302" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="478" y="326.8" font-size="11" fill="#2a2723" text-anchor="middle">worker p1</text><text x="478" y="340.8" font-size="9.5" fill="#7b7468" text-anchor="middle">worker facets; serves `Notes { p1 }`</text></g><g class="step edge" style="--i:2"><path d="M242 91 L242 167" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="246" y="123" width="65.9" height="13" fill="#fbf8f2" opacity=".92"/><text x="250" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">read, build</text></g><g class="step edge" style="--i:5"><path d="M478 91 L242 167" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="364" y="123" width="76.5" height="13" fill="#fbf8f2" opacity=".92"/><text x="368" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">host packages</text></g><g class="step edge" style="--i:6"><path d="M347 196.5 L371 196.5" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="319.1" y="179.5" width="81.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="360" y="189.5" font-size="9.5" fill="#7b7468" text-anchor="middle">server scripts</text></g><g class="step edge" style="--i:8"><path d="M242 224 L242 300" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="246" y="256" width="102.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="250" y="266" font-size="9.5" fill="#7b7468" text-anchor="start">web or tui scripts</text></g><g class="step edge" style="--i:10"><path d="M242 302 L478 226" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="364" y="258" width="97.6" height="13" fill="#fbf8f2" opacity=".92"/><text x="368" y="268" font-size="9.5" fill="#7b7468" text-anchor="start">hold Notes { p1 }</text></g><g class="step edge" style="--i:11"><path d="M478 224 L478 300" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="482" y="256" width="160.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="486" y="266" font-size="9.5" fill="#7b7468" text-anchor="start">start (worker scripts), relay</text></g><text x="16" y="381" font-size="10.5" fill="#7b7468" text-anchor="start">Each host loads only its own kind's facets. Plugins meet only through object types and registries.</text></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> How it all fits: plugins on disk are built once on the server; each host evaluates the facets of its kind; tabs and the TUI are clients that reach workers&#39; objects through the server.</figcaption></figure>
 <h3 id="words-used-throughout">Words used throughout</h3>
 <p>A <strong>host</strong> is one participant of the app, made with <code>createHost</code>. A <strong>host kind</strong> (<code>Server</code>, <code>Session</code>) describes
 addressable hosts; an <strong>address</strong> (<code>Session({ id: &quot;p1&quot; })</code>) names one. An <strong>object type</strong> is a contract: <code>local</code> (used
@@ -357,7 +357,7 @@ worker.</p>
 default export a <code>defineFacet(...)</code>. A plugin has only the files it needs: a plugin that only adds a route has a
 <code>server.ts</code> and nothing else.</p>
 <pre><code><span class="tk-c">// plugins/notes/worker.ts</span>
-<span class="tk-k">import</span> { defineFacet } <span class="tk-k">from</span> <span class="tk-s">"@app/core"</span>;
+<span class="tk-k">import</span> { defineFacet } <span class="tk-k">from</span> <span class="tk-s">"@app/api/v1"</span>;
 <span class="tk-k">import</span> { <span class="tk-t">Notes</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;
 
 <span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host) =&gt; {
@@ -366,9 +366,10 @@ default export a <code>defineFacet(...)</code>. A plugin has only the files it n
 		<span class="tk-k">return</span> { variant: <span class="tk-s">"editor"</span>, members: { list: doc, add: <span class="tk-k">async</span> ({ text }, ctx) =&gt; <span class="tk-c">/* … */</span> } };
 	});
 });</code></pre>
-<p><code>@app/core</code> is your app&#39;s <strong>base code</strong>, imported by every plugin as a host package (the plugin&#39;s build leaves it
-out; every host passes its own copy in). It holds what plugins share and never reloads: host kinds, the principal
-type, a <code>defineFacet</code> bound to it.</p>
+<p><code>@app/api/v1</code> is your app&#39;s <strong>API</strong>, version 1: the part of its base code plugins import, as a host package (the
+plugin&#39;s build leaves it out; every host passes its own copy in). It holds what plugins share and never reloads:
+Chord&#39;s builders re-exported (<code>local</code>, <code>remote</code>, <code>obj</code>, <code>str</code>, ...), host kinds, the principal type, a <code>defineFacet</code>
+bound to it. A plugin never imports Chord itself; the version in the path says what it was written against.</p>
 </section>
 
 <section class="chapter" id="loading"><header class="opener"><div class="numeral">VI</div><h2>Loading Plugins</h2><p class="lede">Two steps in two places: building a plugin into a script happens once, on the server; evaluating it happens in every process that runs it.</p></header>
@@ -387,43 +388,47 @@ the web facets.</li>
 <p>The two steps need different things, and that is why the API has two calls.</p>
 <h3 id="host-packages-what-a-script-leaves-out">Host packages: what a script leaves out</h3>
 <p>Look at what <code>notes/worker.ts</code> imports:</p>
-<pre><code><span class="tk-k">import</span> { defineFacet, <span class="tk-t">Session</span> } <span class="tk-k">from</span> <span class="tk-s">"@app/core"</span>;             <span class="tk-c">// the app's base code</span>
-<span class="tk-k">import</span> { obj, str, remote } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/next"</span>;  <span class="tk-c">// Chord itself</span>
-<span class="tk-k">import</span> { <span class="tk-t">Notes</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;                            <span class="tk-c">// the plugin's own file</span>
-<span class="tk-k">import</span> slugify <span class="tk-k">from</span> <span class="tk-s">"slugify"</span>;                                    <span class="tk-c">// an npm package in the plugin's dependencies</span></code></pre>
-<p>The last two go into the script: the plugin&#39;s own files and its npm dependencies are copied in. The first two must
-not. If the script carried its own copy of Chord, the worker would run two Chords: the plugin&#39;s <code>ChordError</code> would not
-be the worker&#39;s <code>ChordError</code>, and the plugin&#39;s <code>defineFacet</code> would make a facet the worker&#39;s host does not recognize.
-The same holds for <code>@app/core</code>: the plugin must see the very <code>Session</code> host kind and the very <code>Panels</code> registry the
-process already has, not a copy.</p>
+<pre><code><span class="tk-k">import</span> { defineFacet, obj, remote, <span class="tk-t">Session</span>, str } <span class="tk-k">from</span> <span class="tk-s">"@app/api/v1"</span>;   <span class="tk-c">// the app's API: its own part and Chord's</span>
+<span class="tk-k">import</span> { <span class="tk-t">Notes</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;                                  <span class="tk-c">// the plugin's own file</span>
+<span class="tk-k">import</span> slugify <span class="tk-k">from</span> <span class="tk-s">"slugify"</span>;                                          <span class="tk-c">// an npm package in its dependencies</span></code></pre>
+<p>The last two go into the script: the plugin&#39;s own files and its npm dependencies are copied in. The first must not.
+If the script carried its own copy of the API, and with it of Chord, the worker would run two Chords: the plugin&#39;s
+<code>ChordError</code> would not be the worker&#39;s <code>ChordError</code>, and the plugin&#39;s <code>defineFacet</code> would make a facet the worker&#39;s host
+does not recognize. The plugin must see the very <code>Session</code> host kind and the very <code>Panels</code> registry the process
+already has, not a copy.</p>
 <p>Packages the process already has, and that every plugin must share, are its <strong>host packages</strong>. A script leaves them
-out and asks for them by name when it runs. Building therefore needs only their <strong>names</strong>: &quot;do not copy
-<code>@earendil-works/chord/next</code> or <code>@app/core</code> into this script&quot;.</p>
+out and asks for them by name when it runs. Building therefore needs only their <strong>names</strong>: &quot;do not copy <code>@app/api/v1</code>
+into this script&quot;.</p>
 <h3 id="building-createplugins-on-the-server">Building: <code>createPlugins</code>, on the server</h3>
 <pre><code><span class="tk-k">const</span> plugins = <span class="tk-f">createPlugins</span>({
-	roots: [<span class="tk-s">"./plugins"</span>],                                 <span class="tk-c">// where the plugin directories are</span>
+	roots: [{ path: <span class="tk-s">"./plugins"</span>, required: <span class="tk-k">true</span> }],      <span class="tk-c">// where the plugin directories are</span>
+	api: { name: <span class="tk-s">"@app/api"</span>, versions: [<span class="tk-s">"v1"</span>] },          <span class="tk-c">// the app's API and the versions it provides</span>
 	kinds: {
-		server: { platform: <span class="tk-s">"node"</span>, hostPackages: [<span class="tk-s">"@earendil-works/chord/next"</span>, <span class="tk-s">"@app/core"</span>] },
-		worker: { platform: <span class="tk-s">"node"</span>, hostPackages: [<span class="tk-s">"@earendil-works/chord/next"</span>, <span class="tk-s">"@app/core"</span>] },
-		web: { platform: <span class="tk-s">"browser"</span>, hostPackages: [<span class="tk-s">"@earendil-works/chord/next"</span>, <span class="tk-s">"@app/core"</span>, <span class="tk-s">"react"</span>, <span class="tk-s">"react/jsx-runtime"</span>] },
+		server: { platform: <span class="tk-s">"node"</span>, hostPackages: [<span class="tk-s">"@app/api/v1"</span>, <span class="tk-s">"@app/api/v1/server"</span>] },
+		worker: { platform: <span class="tk-s">"node"</span>, hostPackages: [<span class="tk-s">"@app/api/v1"</span>, <span class="tk-s">"@app/api/v1/worker"</span>] },
+		web: { platform: <span class="tk-s">"browser"</span>, hostPackages: [<span class="tk-s">"@app/api/v1"</span>, <span class="tk-s">"@app/api/v1/web"</span>, <span class="tk-s">"react"</span>, <span class="tk-s">"react/jsx-runtime"</span>] },
 	},
 	onError,
 }, ctx);</code></pre>
 <p><code>createPlugins</code> is the builder, and it builds for every kind, because only the server has the sources. For each kind
 it needs two facts. The <strong>platform</strong> says where the scripts run: a <code>node</code> script may import <code>node:fs</code>, a <code>browser</code>
 script may import a stylesheet but not <code>node:fs</code>. The <strong>host package names</strong> say what to leave out; they differ per
-kind, because a tab also shares React with its plugins and a worker does not. Nothing here runs a plugin.</p>
+kind, because a tab also shares React with its plugins and a worker does not, and the API&#39;s per-kind modules
+(<code>/v1/web</code>) belong to their kind only. With <code>api</code> set, the build checks every import of the API: a version the app
+does not list, another kind&#39;s module, two versions in one facet, or Chord imported directly is a build error naming
+the file and line. Nothing here runs a plugin.</p>
 <h3 id="evaluating-plugins-load-in-the-process-that-hosts">Evaluating: <code>plugins.load</code>, in the process that hosts</h3>
-<p>Evaluating is where the names become things. When the script runs and asks for <code>@app/core</code>, someone has to hand it
-the actual module, the one this process imported when it started. Only the process itself has it:</p>
+<p>Evaluating is where the names become things. When the script runs and asks for <code>@app/api/v1</code>, someone has to hand
+it the actual module, the one this process imported when it started. Only the process itself has it:</p>
 <pre><code><span class="tk-c">// server.ts</span>
-<span class="tk-k">import</span> * <span class="tk-k">as</span> chord <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/next"</span>;
-<span class="tk-k">import</span> * <span class="tk-k">as</span> core <span class="tk-k">from</span> <span class="tk-s">"./core.ts"</span>;                         <span class="tk-c">// the app's base code, the same module plugins import as "@app/core"</span>
+<span class="tk-k">import</span> * <span class="tk-k">as</span> api <span class="tk-k">from</span> <span class="tk-s">"./api/v1/index.ts"</span>;                 <span class="tk-c">// the app's API, the module plugins import as "@app/api/v1"</span>
+<span class="tk-k">import</span> * <span class="tk-k">as</span> apiServer <span class="tk-k">from</span> <span class="tk-s">"./api/v1/server.ts"</span>;
+<span class="tk-k">import</span> { serverFacet } <span class="tk-k">from</span> <span class="tk-s">"./core.ts"</span>;
 
 <span class="tk-k">const</span> report = <span class="tk-k">await</span> plugins.<span class="tk-f">load</span>(server, {
 	kind: <span class="tk-s">"server"</span>,                                          <span class="tk-c">// evaluate the server kind's scripts</span>
-	modules: { <span class="tk-s">"@earendil-works/chord/next"</span>: chord, <span class="tk-s">"@app/core"</span>: core },   <span class="tk-c">// this process's own instances</span>
-	core: [{ name: <span class="tk-s">"@app/core"</span>, facet: core.serverFacet }],  <span class="tk-c">// base-code facets, loaded beside the plugins</span>
+	modules: { <span class="tk-s">"@app/api/v1"</span>: api, <span class="tk-s">"@app/api/v1/server"</span>: apiServer },   <span class="tk-c">// this process's own instances</span>
+	core: [{ name: <span class="tk-s">"@app/core"</span>, facet: serverFacet }],       <span class="tk-c">// base-code facets, loaded beside the plugins</span>
 }, ctx);</code></pre>
 <p><code>modules</code> is this process&#39;s answer to every host package name. The server passes its own; a worker passes its own in
 <code>workerMain</code>; a page passes its own in <code>startPage</code>. Each process has different instances, which is exactly the point:
@@ -443,11 +448,11 @@ plugin runs, so that a later reload can hand the host its complete new plugin se
 same objects. That memory is why the host is passed to it: <code>plugins.load(server, …)</code> on the server,
 <code>plugins.load(worker, …)</code> in a worker (where <code>workerMain</code> gives it a <code>plugins</code> that only evaluates), the same call
 in every process.</p>
-<figure class="fig wide"><svg viewBox="0 0 720 242" width="100%" role="img" aria-label="Building on the server needs names; evaluating in each process needs that process's modules." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f3m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f3a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f3b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">SERVER: BUILD (ONCE PER EDIT)</text><text x="16" y="155" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">EACH WORKER: EVALUATE</text><rect x="19" y="36" width="210" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="124" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">plugin sources</text><text x="124" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">notes/worker.ts`, imports</text><text x="124" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">`@app/core</text><rect x="255" y="36" width="210" height="55" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">createPlugins</text><text x="360" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle">copies own files and npm deps; leaves</text><text x="360" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle">host packages out</text><rect x="491" y="36" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="596" y="60.8" font-size="11" fill="#2a2723" text-anchor="middle">worker script</text><text x="596" y="74.8" font-size="9.5" fill="#7b7468" text-anchor="middle">`require(&quot;@app/core&quot;)` left as a name</text><rect x="19" y="169" width="210" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="124" y="193.8" font-size="11" fill="#2a2723" text-anchor="middle">the worker's modules</text><text x="124" y="207.8" font-size="9.5" fill="#7b7468" text-anchor="middle">its own `@app/core`, its own Chord</text><rect x="255" y="169" width="210" height="55" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="360" y="193.8" font-size="11" fill="#2a2723" text-anchor="middle">plugins.load(worker, …)</text><text x="360" y="207.8" font-size="9.5" fill="#7b7468" text-anchor="middle">runs the script, answers each name</text><rect x="491" y="169" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="596" y="187.5" font-size="11" fill="#2a2723" text-anchor="middle">the facet</text><text x="596" y="201.5" font-size="9.5" fill="#7b7468" text-anchor="middle">uses the worker's `Session`, the</text><text x="596" y="214" font-size="9.5" fill="#7b7468" text-anchor="middle">worker's `defineFacet`</text><path d="M229 63.5 L253 63.5" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><path d="M465 63.5 L489 63.5" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><path d="M596 91 L360 167" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><rect x="482" y="123" width="44.9" height="13" fill="#fbf8f2" opacity=".92"/><text x="486" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">shipped</text><path d="M229 196.5 L253 196.5" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><path d="M465 196.5 L489 196.5" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/></svg><figcaption><span class="fignum">Figure 3.</span> Building on the server needs names; evaluating in each process needs that process&#39;s modules.</figcaption></figure>
+<figure class="fig wide"><svg viewBox="0 0 720 242" width="100%" role="img" aria-label="Building on the server needs names; evaluating in each process needs that process's modules." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f3m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f3a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f3b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">SERVER: BUILD (ONCE PER EDIT)</text><text x="16" y="155" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">EACH WORKER: EVALUATE</text><rect x="19" y="36" width="210" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="124" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">plugin sources</text><text x="124" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">notes/worker.ts`, imports</text><text x="124" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">`@app/api/v1</text><rect x="255" y="36" width="210" height="55" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">createPlugins</text><text x="360" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle">copies own files and npm deps; leaves</text><text x="360" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle">host packages out</text><rect x="491" y="36" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="596" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">worker script</text><text x="596" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle">`require(&quot;@app/api/v1&quot;)` left as a</text><text x="596" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle">name</text><rect x="19" y="169" width="210" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="124" y="193.8" font-size="11" fill="#2a2723" text-anchor="middle">the worker's modules</text><text x="124" y="207.8" font-size="9.5" fill="#7b7468" text-anchor="middle">its own `@app/api/v1`, its own Chord</text><rect x="255" y="169" width="210" height="55" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="360" y="193.8" font-size="11" fill="#2a2723" text-anchor="middle">plugins.load(worker, …)</text><text x="360" y="207.8" font-size="9.5" fill="#7b7468" text-anchor="middle">runs the script, answers each name</text><rect x="491" y="169" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="596" y="187.5" font-size="11" fill="#2a2723" text-anchor="middle">the facet</text><text x="596" y="201.5" font-size="9.5" fill="#7b7468" text-anchor="middle">uses the worker's `Session`, the</text><text x="596" y="214" font-size="9.5" fill="#7b7468" text-anchor="middle">worker's `defineFacet`</text><path d="M229 63.5 L253 63.5" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><path d="M465 63.5 L489 63.5" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><path d="M596 91 L360 167" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><rect x="482" y="123" width="44.9" height="13" fill="#fbf8f2" opacity=".92"/><text x="486" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">shipped</text><path d="M229 196.5 L253 196.5" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><path d="M465 196.5 L489 196.5" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/></svg><figcaption><span class="fignum">Figure 3.</span> Building on the server needs names; evaluating in each process needs that process&#39;s modules.</figcaption></figure>
 <h3 id="what-happens-step-by-step">What happens, step by step</h3>
-<div class="steps"><div class="steps-head"><span class="title"><code>plugins.load(server, { kind: &quot;server&quot;, … })</code></span><span class="count"></span><button class="prev" type="button">Back</button><button class="next" type="button">Next</button></div><div class="step-panel"><h4>Discover</h4><p>The component lists <code>./plugins</code> one level deep and reads each <code>package.json</code>. Its <code>name</code> is the plugin&#39;s name; the
-files named after a kind are its facets. A directory without a <code>package.json</code>, or with two <code>server</code> files, is reported,
-not loaded.</p>
+<div class="steps"><div class="steps-head"><span class="title"><code>plugins.load(server, { kind: &quot;server&quot;, … })</code></span><span class="count"></span><button class="prev" type="button">Back</button><button class="next" type="button">Next</button></div><div class="step-panel"><h4>Discover</h4><p>The component lists <code>./plugins</code> and reads each <code>package.json</code>. Its <code>name</code> is the plugin&#39;s name; the files named after
+a kind are its facets. A directory without a <code>package.json</code>, or with two <code>server</code> files, is reported, not loaded. Files
+at the root&#39;s top named <code>&lt;name&gt;.&lt;kind&gt;.ts</code> (<code>hello.server.ts</code>) are single-file plugins, grouped by name.</p>
 </div><div class="step-panel"><h4>Build</h4><p>For each plugin with a <code>server</code> facet it builds one script, if no current one exists. A syntax error or an import the
 rules do not allow (a path into base code, a package not in the plugin&#39;s dependencies) is a failed build with the file
 and line, never a crash.</p>
@@ -465,21 +470,39 @@ evaluates them with its own modules (a worker&#39;s from <code>workerMain</code>
 <section class="chapter" id="together"><header class="opener"><div class="numeral">VII</div><h2>Plugins Using Plugins</h2><p class="lede">Two ways one plugin uses another, and the one it may not.</p></header>
 <p class="dropcap">A search plugin wants to search the notes. It <strong>imports the contract</strong> and asks for the object:</p>
 <pre><code><span class="tk-c">// plugins/search/worker.ts</span>
-<span class="tk-k">import</span> { <span class="tk-t">Notes</span> } <span class="tk-k">from</span> <span class="tk-s">"@app/notes/contract"</span>;    <span class="tk-c">// another plugin, by its name: copied into search's script</span>
+<span class="tk-k">import</span> { <span class="tk-t">Notes</span> } <span class="tk-k">from</span> <span class="tk-s">"../notes/contract.ts"</span>;   <span class="tk-c">// a plugin of the same root, by relative path: copied into search's script</span>
 
 host.<span class="tk-f">serve</span>(<span class="tk-t">Search</span>, ({ project }, principal, self) =&gt; {
 	<span class="tk-k">const</span> notes = self.<span class="tk-f">get</span>(<span class="tk-t">Notes</span>, { project });   <span class="tk-c">// a dependency: Search goes live once Notes is</span>
 	<span class="tk-k">const</span> index = self.<span class="tk-f">derive</span>([notes.list], ([list]) =&gt; <span class="tk-f">buildIndex</span>(list.items));
 	<span class="tk-k">return</span> { variant: <span class="tk-s">"main"</span>, members: { find: <span class="tk-k">async</span> ({ q }) =&gt; <span class="tk-f">lookup</span>(index.value, q) } };
 });</code></pre>
-<p>A plugin imports another plugin by its <strong>name</strong>, never by a path: <code>@app/notes/contract</code> is the file <code>contract.ts</code> of
-whichever discovered plugin is named <code>@app/notes</code>, in any root. The file is copied into the importer&#39;s script, so only
-contracts and other side-effect-free files belong there; a missing plugin is a build error naming it.</p>
+<p>Which file a plugin imports decides which version of the contract it claims, so the rule is: <strong>a plugin carries the
+contract it was written against.</strong> Two cases:</p>
+<ul>
+<li><strong>Plugins that change together</strong> (the app&#39;s own, in its repository; a user&#39;s, in one root) import each other by
+relative path, <code>../notes/contract.ts</code>: the same commit holds both sides. The file is copied into the importer&#39;s
+script, so only contracts and other side-effect-free files belong there (a copied file may import only the API and
+files of its own plugin). A relative path leaving the root (into base code, into another root) is a build error.</li>
+<li><strong>Plugins from another repository</strong> take contracts as a dependency at a fixed version, by package name:
+<code>@bob/notes</code> (its <code>contract.ts</code>, through the package&#39;s <code>exports</code>), <code>@bob/notes/web</code> (its <code>contract.web.tsx</code>), pinned
+in <code>package.json</code> by an npm version or a git ref (<code>&quot;@bob/notes&quot;: &quot;github:bob/notes#&lt;commit&gt;&quot;</code>). The build inlines
+the installed version: when Bob&#39;s notes move to contract version 2, a consumer built against version 1 keeps
+claiming version 1, and the provider serves it through <code>accepts</code> or the consumer waits &quot;contract mismatch&quot;, visible,
+never silently wrong. A plugin inside a repository holding several (which lists them in its own <code>package.json</code>,
+<code>&quot;chord&quot;: { &quot;plugins&quot;: [&quot;./notes&quot;, &quot;./search&quot;] }</code>) is a dependency on the whole repository, imported by path into it:
+<code>@bob/plugins/notes/contract.ts</code>.</li>
+</ul>
+<p>A contract file may be for one kind: <code>contract.web.tsx</code> (React components in a type, a panel&#39;s registry token) is a
+<strong>web file</strong>. Importing it, directly or through other files, from a facet of another kind is a build error naming
+the chain (<code>server.ts → view.ts → ../notes/contract.web.tsx</code>). The shared <code>contract.ts</code> mentions native things only
+through <code>import type</code>.</p>
 <p><code>self.get</code> in a factory declares a dependency: Chord makes <code>Search</code> live only once <code>Notes</code> is, and if the notes
 plugin is missing, <code>Search</code> waits with a clear reason (&quot;waiting for notes: not served here&quot;) instead of failing.</p>
-<p>The other way is a <strong>registry</strong>: an extension point one plugin defines and others contribute to. The app&#39;s core
-defines <code>Panels</code>, and every plugin with a UI contributes one:</p>
+<p>The other way is a <strong>registry</strong>: an extension point one plugin defines and others contribute to. The app&#39;s API
+defines <code>Panels</code> in its web module, and every plugin with a UI contributes one:</p>
 <pre><code><span class="tk-c">// plugins/notes/web.tsx</span>
+<span class="tk-k">import</span> { <span class="tk-t">Panels</span> } <span class="tk-k">from</span> <span class="tk-s">"@app/api/v1/web"</span>;
 <span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host, self) =&gt; self.<span class="tk-f">contribute</span>(<span class="tk-t">Panels</span>, { title: <span class="tk-s">"Notes"</span>, <span class="tk-t">Component</span>: <span class="tk-t">NotesPanel</span> }));</code></pre>
 <p>What a plugin may not do is reach into another&#39;s data. Search never reads notes&#39; documents; it uses the <code>Notes</code>
 object&#39;s state. That rule is what lets the notes plugin change its storage without breaking search.</p>
@@ -523,34 +546,51 @@ working if the provider maps the old version (<code>accepts</code>); otherwise i
 
 <section class="chapter" id="base"><header class="opener"><div class="numeral">IX</div><h2>Base Code and Plugins</h2><p class="lede">What goes into the app itself, what goes into plugins, and how an app ships plugins of its own.</p></header>
 <p class="dropcap">Every app has two kinds of code, and the line between them decides what can change while the app runs.</p>
-<p><strong>Base code</strong> is the app&#39;s own program: <code>src/</code>, started by <code>node server.ts</code>. It is what every plugin shares: the host
-kinds (<code>Server</code>, <code>Project</code>), the principal type, the app&#39;s <code>defineFacet</code>, the registries plugins contribute to
-(<code>Panels</code>), and the startup that creates hosts and loads plugins. Plugins import it as a host package (<code>@app/core</code>),
-so inside one process there is exactly one of each. Base code changes only with a restart: if it reloaded, the
-process would hold two <code>Panels</code> registries, and old and new plugins would no longer meet.</p>
-<p><strong>Plugins</strong> are features: notes, search, export, a terminal. They reload on an edit, a broken one is left out alone,
-and an agent can write one while the app runs.</p>
-<p>The rule: <strong>base code is what everything shares, not features.</strong> A feature in base code cannot be edited live, and a
-bug in it needs a restart. Keep base code to host kinds, principals, shared registries and startup.</p>
+<p><strong>Base code</strong> is the app&#39;s own program: <code>src/</code>, started by <code>node server.ts</code>. It shrinks to three things: the <strong>API</strong>
+(the versioned modules plugins import), the <strong>bootstrap</strong> (creating hosts, opening the store, components such as
+<code>createHttp</code> and <code>createWorkers</code>) and one small <strong>start-data facet</strong> serving process values (start data, the opened
+store) as core objects. Base code changes only with a restart: if it reloaded, the process would hold two <code>Panels</code>
+registries, and old and new plugins would no longer meet.</p>
+<p><strong>Plugins</strong> are everything else: notes, search, export, a terminal, the harness, the providers of the app&#39;s core
+registries. They reload on an edit, a broken one is left out alone, and an agent can write one while the app runs.</p>
+<h3 id="the-api-by-version-and-by-kind">The API, by version and by kind</h3>
+<p>Plugins import their host only through the API, a version in the path:</p>
+<pre><code><span class="tk-c">// src/api/v1/index.ts: "@app/api/v1", for every kind</span>
+<span class="tk-k">export</span> { defineRegistry, local, obj, remote, str } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/next"</span>;   <span class="tk-c">// the Chord surface the app supports</span>
+<span class="tk-k">export</span> { defineFacet, <span class="tk-t">Project</span>, <span class="tk-t">Server</span> } <span class="tk-k">from</span> <span class="tk-s">"../../core.ts"</span>;                           <span class="tk-c">// bound to the app's principal</span>
+<span class="tk-c">// src/api/v1/web.ts: "@app/api/v1/web", for pages only</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Panels</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">Panel</span>, <span class="tk-k">readonly</span> <span class="tk-t">Panel</span>[]&gt;(<span class="tk-s">"app.panels"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<p>The app lists the versions it provides, newest first (<code>api: { name: &quot;@app/api&quot;, versions: [&quot;v2&quot;, &quot;v1&quot;] }</code>), and each
+kind&#39;s modules in <code>kinds.&lt;kind&gt;.hostPackages</code>. When the app changes its API in a way that breaks plugins, it adds
+<code>/v2</code> and keeps <code>/v1</code> as a thin layer over it for a while; once <code>/v1</code> goes, a plugin importing it fails to build with
+&quot;@app/api/v1 is not available: this app provides v2&quot;, the plugin alone, the message saying what to change. One facet
+uses one version. Contracts the app promises others are re-exported in the API (<code>export { Notes } from &quot;../../plugins/notes/contract.ts&quot;</code>), so a plugin built against <code>/v1</code> keeps v1&#39;s contract files.</p>
 <h3 id="plugins-the-app-ships">Plugins the app ships</h3>
-<p>An app usually comes with plugins of its own: notes, search, settings. They are still plugins, kept in a root inside
-the app, next to the root where users and agents add theirs:</p>
+<p>An app comes with plugins of its own. They follow the same rules as anyone&#39;s, in a root inside the app, next to the
+root where users and agents add theirs:</p>
 <pre><code><span class="tk-k">const</span> plugins = <span class="tk-f">createPlugins</span>({
-	roots: [<span class="tk-s">"./src/plugins"</span>, <span class="tk-f">join</span>(dataDir, <span class="tk-s">"plugins"</span>)],   <span class="tk-c">// the app's own plugins, then the user's</span>
+	roots: [{ path: <span class="tk-s">"./plugins"</span>, required: <span class="tk-k">true</span> }, <span class="tk-f">join</span>(dataDir, <span class="tk-s">"plugins"</span>)],   <span class="tk-c">// the app's own, then the user's</span>
+	api: { name: <span class="tk-s">"@app/api"</span>, versions: [<span class="tk-s">"v1"</span>] },
 	kinds,
 	onError,
 }, ctx);</code></pre>
-<p>They are built at startup like any plugin (a quarter of a second for twenty), reload like any plugin, and are left
-out alone when broken. If two roots have a plugin with the same name, the first root wins, and the other is reported.</p>
-<h3 id="subpaths-of-host-packages">Subpaths of host packages</h3>
-<p>A host package is matched by its exact name. If base code offers several entry points (<code>@app/core</code> for every host,
-<code>@app/core/web</code> for pages), each is its own host package, listed by name for the build and given as a module when
-evaluating, as <code>react</code> and <code>react/jsx-runtime</code> are. A plugin importing a subpath that is not listed gets a build
-error naming it.</p>
-<h3 id="what-the-app-kit-will-change">What the app kit will change</h3>
-<p>The app kit being designed next (<code>chord/next/app</code>) will make the base code nearly empty: <code>startApp</code> and <code>startWorker</code>
-with Chord&#39;s conventions for hosts, users, authentication and storage. An app is then its plugins, its own ones in
-<code>src/plugins</code> and the user&#39;s beside them.</p>
+<p>They are built at startup like any plugin (a quarter of a second for twenty), reload like any plugin, and are left out
+alone when broken at a reload. The app&#39;s root is <strong>required</strong>: a plugin of it failing at startup makes
+<code>plugins.load</code> reject with a <code>PluginError</code> naming it (after the load settled), so the app stops instead of running
+without its core. A failure in the user&#39;s root is reported and the app runs on. If two roots have a plugin with the
+same name, the first root wins, and the other is reported.</p>
+<h3 id="small-plugins-installed-plugins-tested-plugins">Small plugins, installed plugins, tested plugins</h3>
+<ul>
+<li><strong>A single file</strong> at a root&#39;s top is a plugin: <code>plugins/hello.server.ts</code> and <code>plugins/hello.web.tsx</code> are the plugin
+<code>hello</code> with two facets. It has no <code>package.json</code> and imports only the API; when it needs a second file or a
+package, it becomes the directory <code>hello/</code>, which a reload treats as the same plugin.</li>
+<li><strong>Installing</strong> from git or npm: <code>plugins.installPlugin({ git: url, ref }, root, ctx)</code> clones the ref (a branch, tag
+or commit) into the root, <code>{ npm: name, version }</code> extracts the package; then its dependencies are installed. Removal
+is deleting the directory.</li>
+<li><strong>Testing</strong> a plugin alone: <code>testPlugin(&quot;./plugins/stats&quot;, { kind: &quot;worker&quot;, api, modules, stubs }, ctx)</code> builds it
+as production does, loads it on an in-memory host beside stub facets serving what it uses, collects what it
+contributes to registries nobody serves, and lists the contracts it waits for (<code>docs/next/plugin-authoring.md</code>).</li>
+</ul>
 </section>
 
 <section class="chapter appendix" id="reference"><header class="opener"><div class="numeral">A</div><h2>Reference</h2></header>
@@ -586,12 +626,16 @@ with Chord&#39;s conventions for hosts, users, authentication and storage. An ap
 <td>an object&#39;s parts</td>
 </tr>
 <tr>
-<td><code>createPlugins({ roots, kinds, onError }, ctx)</code></td>
+<td><code>createPlugins({ roots, api, kinds, onError }, ctx)</code></td>
 <td>the plugins component</td>
 </tr>
 <tr>
 <td><code>plugins.load(host, { kind, core, modules }, ctx)</code>, <code>build(names)</code>, <code>rollout(steps, built)</code></td>
 <td>load, build, roll out</td>
+</tr>
+<tr>
+<td><code>plugins.installPlugin(source, root, ctx)</code>, <code>testPlugin(dir, options, ctx)</code></td>
+<td>install a plugin, test one alone</td>
 </tr>
 <tr>
 <td><code>hostKind(name, params?)</code>, <code>Kind(params)</code></td>
@@ -600,7 +644,7 @@ with Chord&#39;s conventions for hosts, users, authentication and storage. An ap
 </tbody></table>
 </section>
 
-<p class="colophon">Hosts and Plugins · first edition · 2026-10-31 · Chord v2 slices 1-10</p>
+<p class="colophon">Hosts and Plugins · second edition · 2026-11-01 · Chord v2 slices 1-10 and 12</p>
 </div></div>
 <script>(function activate(root) {
 	const replay = (f) => {

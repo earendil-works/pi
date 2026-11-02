@@ -63,8 +63,8 @@ telemetry last, since it instruments the app kit too; 2026-11-01: the plugin mod
 | 7b | **Reload in the kernel** | `host.reload`: staging, commit, rollback; swaps, restarts, removal and re-serving; holds and `accepts` across a reload; jobs and registries across a reload; per-name wakes (`slice-7b/` brief) |
 | 7c | **Plugins** | `chord/next/plugins` (discovery, `buildFacet`, `evaluateFacet`, `pluginFile`, `installDependencies`, the watcher, `rollout`, `mapStack`; no dev/prod split; the kernel's `load`/`reload` per plugin; `slice-7c.md`) |
 | 10 | **HTTP and workers** | `chord/next/http` (server, `Http` registry, responses as descriptions, WebSocket entry) and `chord/next/workers` (a worker per address, IPC, idle stop) |
-| 12 | **The plugin model** | imports (relative within a repository, package names pinned across), versioned app API with Chord re-exported, per-kind API modules and contract files with the build's import check, single-file plugins, git installs, `testPlugin`, base code as API, bootstrap and a start-data facet (`slice-12.md`) |
-| 13 | **The app kit** | `chord/next/app`: `startApp`, `startWorker`, layout, worker kinds, owner link, deny by default, sessions, CLI tokens, storage, the files plugin, export per address, plugin roots and "apply changes" (`slice-13.md`) |
+| 12 | **The plugin model** | imports (relative within a repository, package names pinned across), versioned app API with Chord re-exported, per-kind API modules and contract files with the build's import check, single-file plugins, git installs, `testPlugin`, a required root (`slice-12.md`) |
+| 13 | **The app kit** | `chord/next/app`: `startApp`, `startWorker`, layout, worker kinds, owner link, deny by default, sessions, CLI tokens, storage, the files plugin, export per address, plugin roots and "apply changes", base code as API, bootstrap and a start-data facet (`slice-13.md`) |
 | 11 | **Web and TUI** | `chord/next/web` (page host, React hooks) and `chord/next/tui` (launcher, sandbox), from p2's code |
 | 9 | **Telemetry** | spans, events, metrics across hosts |
 
@@ -187,22 +187,10 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 
 - **Deny by default in the HTTP component** (decision "The app kit, point 3: authentication"): routes and sockets
   refuse requests without a principal unless marked public; the owner link with a one-time token; a session helper.
-
-### Slice 12: the plugin model
-
-- **Cross-plugin imports by relative path and npm** (decision "Contracts come from where the plugin's code came
-  from"): remove `build.ts`'s by-name lookup, allow relative imports into another plugin of the same root, refuse
-  paths leaving the root; examples 35-38 and fixtures back to relative imports; drop the six `tsconfig` path aliases;
-  plugins README; the guide's chapter "Plugins Using Plugins". (Slice 10 built by-name imports.)
-- **The plugin model's other points** (decision "The plugin model, points 3, 4, 5 and 8, imports and builds"): per-kind
-  API modules and plugin contract files with the build's per-kind import check; package-name imports with npm or git
-  pins (subfolders of multi-plugin repositories cloned and linked); installing plugins from git; base code reduced to
-  the API, bootstrap and a start-data facet, the harness and core registry providers as plugins, a required root; a
-  skill and documentation for agents on a plugin's layout and build.
-- **Single-file plugins** (decision "Single-file plugins"): discovery of `<name>.<kind>.ts(x)` files, grouped by
-  name; their import rule; the watcher's `set` for them.
-- **`testPlugin`** (decision "Testing a plugin alone"): stub facets, collected contributions, the list of contracts
-  nobody serves.
+- **Base code reduced to the API, bootstrap and a start-data facet** (decision "The plugin model, points 3, 4, 5 and
+  8, imports and builds", point 8): the harness and the providers of core registries as plugins of the app's required
+  root, the kit's start-data objects serving process values. (Slice 12 built the required root, the API checks and
+  the agents' document `plugin-authoring.md`; the reduction itself is the kit's. Owner's main agent, 2026-11-01.)
 
 ### After slice 11
 

@@ -1,6 +1,6 @@
-// Tests of the watcher (slice 7c §5): dirty marks from the files facets used and from plugin directories, `install`,
-// `set`, `base`, a change during a build keeping its mark, `node_modules` and `.git` ignored, real file events, and the
-// marks as a JSON watchable.
+// Tests of the watcher (slice 7c §5, slice 12 §4): dirty marks from the files facets used and from plugin directories,
+// `install`, `set`, `base`, a change during a build keeping its mark, `node_modules` and `.git` ignored, real file
+// events, the marks as a JSON watchable, and single-file plugins' files.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { realpath, rm, symlink, writeFile } from "node:fs/promises";
@@ -116,6 +116,29 @@ describe("the watcher's marks", () => {
 		await vi.waitFor(() => expect(watcher.value).toMatchObject({ dirty: ["@test/a"] }), { timeout: 5_000 });
 		await delivered();
 		expect(changes.at(-1)).toMatchObject({ kind: "value", value: { dirty: ["@test/a"] } });
+		watcher.close();
+	});
+});
+
+describe("the watcher and single-file plugins (slice 12 §4)", () => {
+	it("dirties a single-file plugin for a change of its file; a file appearing or disappearing at a root's top sets set", async () => {
+		const { root, watcher } = await watched();
+		await writeFiles(root, { "hello.server.ts": "" });
+		watcher.mark(join(root, "hello.server.ts"));
+		expect(watcher.value).toMatchObject({ set: true, dirty: [] });
+		const seen = watcher.discoverySnapshot();
+		watcher.know(await discoverPlugins([root], { kinds: KINDS }, context), seen);
+		expect(watcher.value).toMatchObject({ set: false, dirty: [] });
+		// Its own file: only it is dirty (not every plugin of the root its directory is).
+		watcher.mark(join(root, "hello.server.ts"));
+		expect(watcher.value).toMatchObject({ set: false, dirty: ["hello"] });
+		await writeFiles(root, { "hello.web.tsx": "" });
+		watcher.mark(join(root, "hello.web.tsx"));
+		expect(watcher.value).toMatchObject({ set: true });
+		watcher.know(await discoverPlugins([root], { kinds: KINDS }, context), watcher.discoverySnapshot());
+		await rm(join(root, "hello.server.ts"));
+		watcher.mark(join(root, "hello.server.ts"));
+		expect(watcher.value).toMatchObject({ set: true, dirty: ["hello"] });
 		watcher.close();
 	});
 });

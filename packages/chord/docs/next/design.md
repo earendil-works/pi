@@ -1964,8 +1964,8 @@ type ReloadReport = {
   duplicate name). Dependencies between plugins resolve by contract name at runtime; names are prefixed
   (`<plugin>.<name>`; tools `<plugin>_<name>`). A plugin carries the contracts it was written against (decision "Contracts come from where the
   plugin's code came from"): plugins that change together import each other by relative path within a root
-  (copied into the importer's script); others take contracts as an npm dependency at a fixed version (slice 10 still
-  resolves imports by plugin name; the plugin slice changes it).
+  (copied into the importer's script); others take contracts as an npm dependency at a fixed version (built in slice 12,
+  which removed slice 10's imports by plugin name).
 - **Loader D:** one esbuild script per facet (its own files, copied files of other plugins, its npm `dependencies`
   inlined; host packages, `chord.external` packages and Node builtins external, passed in at evaluation); each facet kind is defined once, `kinds: { <kind>: { platform: "node" | "browser", hostPackages } }` (slice 11); evaluated with
   `vm.Script` under a stable filename per (plugin, kind, digest); no module map: old generations are reclaimed by the
@@ -1990,8 +1990,9 @@ rule underneath: a plugin carries what it was written against, never the running
   not a host package plugins may name; the API re-exports the Chord surface the app supports); its npm `dependencies`
   (bundled at the installed version); other plugins' contract files: by relative path within one repository
   (`../notes/contract.ts`, the same commit holds both sides), by package name across repositories (`@bob/notes`,
-  `@bob/notes/web`, pinned by an npm version or a git ref `github:bob/notes#<commit>`; a subfolder of a multi-plugin
-  repository is cloned and linked by the plugins component). One facet imports one API version only.
+  `@bob/notes/web`, pinned by an npm version or a git ref `github:bob/notes#<commit>`; a plugin inside a
+  multi-plugin repository through a dependency on the whole repository, by path into it or its `exports`). A package
+  lists the plugins it provides in `chord.plugins` (as pi's manifest). One facet imports one API version only.
 - **Versions:** the app lists the API versions it provides; an unlisted one is a build error naming the available ones.
   The process runs one Chord: an older API version is a layer over today's, re-exporting Chord's compatibility module
   for its previous API while Chord keeps one; contracts bind through `accepts` whatever Chord runs.

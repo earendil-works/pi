@@ -2,7 +2,8 @@
 // esbuild, no watcher), so a worker evaluates what the server built. Per host it keeps the facet loaded for every plugin
 // and passes the host its complete set at each reload: unchanged plugins (the same digest) as the same facet objects,
 // removed ones (loaded, not shipped) left out; a plugin whose build or evaluation failed keeps its loaded facet (left
-// out at startup) and is reported with the host's report. The plugins component (`createPlugins`) uses one.
+// out at startup) and is reported with the host's report; at startup one of a required root (the app's own) rejects the
+// load once the host's load settled. The plugins component (`createPlugins`) uses one.
 
 import { setFlagsFromString } from "node:v8";
 import type { Context } from "../../context/index.ts";
@@ -17,11 +18,44 @@ import type {
 	ReloadReport,
 } from "../../next/host/index.ts";
 import type { BuiltFacet } from "./build.ts";
-import type { Plugin } from "./discover.ts";
+import type { DiscoveryProblem, Plugin } from "./discover.ts";
 import { evaluateFacet, type HostPackages } from "./evaluate.ts";
 
 /** One plugin's facet of a kind as shipped to a host (plain data): its build and its plugin record. */
 export type PluginScript = { readonly plugin: Plugin; readonly built: BuiltFacet };
+
+/**
+ * `load`'s rejection when a required root did not deliver its plugins: some failed (their build, evaluation or setup),
+ * or discovery reported problems in it (a missing root, an invalid `package.json`, a name another root has). The host's
+ * load settled (the others are loaded); the app decides what follows (stopping, mostly). `failed` is the whole
+ * report's list.
+ */
+export class PluginError extends Error {
+	/** The required plugins that failed, and why. */
+	readonly required: readonly PluginFailure[];
+	/** Every plugin the load left out, required or not. */
+	readonly failed: readonly PluginFailure[];
+	/** What discovery reported in required roots. */
+	readonly problems: readonly DiscoveryProblem[];
+
+	constructor(
+		required: readonly PluginFailure[],
+		failed: readonly PluginFailure[],
+		problems: readonly DiscoveryProblem[] = [],
+	) {
+		const named = [
+			...required.map(
+				({ plugin, error }) => `"${plugin}": ${error instanceof Error ? error.message : String(error)}`,
+			),
+			...problems.map(({ path, error }) => `${path}: ${error}`),
+		];
+		super(`required plugin failed at load: ${named.join("; ")}`);
+		this.name = "PluginError";
+		this.required = required;
+		this.failed = failed;
+		this.problems = problems;
+	}
+}
 
 /** What `PluginRuntime.load` takes besides the host. */
 export type RuntimeLoad<P extends Principal> = {
@@ -36,7 +70,8 @@ export interface PluginRuntime {
 	/**
 	 * Evaluates `scripts` (the complete set of `kind`) with `modules` (the host packages their `require` answers: this
 	 * process's instances, kept for the host's reloads) and loads them on `host` with `core` (the app's own facets): a
-	 * plugin whose build or evaluation failed is left out and reported with the host's report.
+	 * plugin whose build or evaluation failed is left out and reported with the host's report. When plugins of a
+	 * required root are among the failed, it rejects with a `PluginError` naming them after the host's load settled.
 	 */
 	load<P extends Principal>(host: Host<P>, options: RuntimeLoad<P>, context: Context): Promise<LoadReport>;
 	/**
@@ -112,7 +147,13 @@ class Runtime implements PluginRuntime {
 		// The host's own facets, for its later reloads.
 		const core = options.core as unknown as readonly PluginFacet<Principal>[];
 		this.#hosts.set(host, { core, modules, loaded, reloading: Promise.resolve() });
-		return { failed: [...failed, ...report.failed] };
+		const all = [...failed, ...report.failed];
+		const required = new Set(
+			options.scripts.filter(({ plugin }) => plugin.required).map(({ plugin }) => plugin.name),
+		);
+		const fatal = all.filter(({ plugin }) => required.has(plugin));
+		if (fatal.length > 0) throw new PluginError(fatal, all);
+		return { failed: all };
 	}
 
 	reload<P extends Principal>(

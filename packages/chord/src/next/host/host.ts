@@ -969,6 +969,33 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		return this.#roots.run(fn as (ctx: Ctx) => Promise<T>, principal, context);
 	}
 
+	/**
+	 * The names requests here wait for unbound that no plugin here serves (types and registries: `not_served`), sorted;
+	 * a name served at another version (`version`) is not among them.
+	 */
+	unservedNames(): string[] {
+		return this.#unbound
+			.names()
+			.filter((name) => !this.#types.has(name) && this.#registries.get(name)?.providedVersion === undefined);
+	}
+
+	/** How many objects here have an activation under way (`ChordObject.activating`). */
+	activationsUnderWay(): number {
+		let count = 0;
+		for (const object of this.#objects.values()) if (object.activating) count++;
+		return count;
+	}
+
+	/** The registries with contributions here and no provider, each with the newest version contributed, by name. */
+	undeclaredRegistries(): { readonly name: string; readonly version: number }[] {
+		const found: { readonly name: string; readonly version: number }[] = [];
+		for (const record of this.#registries.values()) {
+			const version = record.newestContribution;
+			if (version !== undefined && record.providedVersion === undefined) found.push({ name: record.name, version });
+		}
+		return found.sort((a, b) => (a.name < b.name ? -1 : 1));
+	}
+
 	/** The record of registry `name` on this host, made by its first use. */
 	registryRecord(name: string): RegistryRecord {
 		let record = this.#registries.get(name);

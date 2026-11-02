@@ -1,6 +1,7 @@
-// Benchmark of the plugins component (slice 7c §7): a cold build of a 20-plugin set (one worker facet each, its own
-// files, a copied contract), a rebuild of one facet after an edit, the evaluation of a facet (`vm.Script`), and the heap
-// after 100 reloads of one plugin on a host (old facets collected, V8's compilation cache off). Medians over runs.
+// Benchmark of the plugins component (slice 7c §7, slice 12): a cold build of a 20-plugin set (one worker facet each,
+// its own files, a copied contract, the app's API and kinds checked), a rebuild of one facet after an edit, the
+// evaluation of a facet (`vm.Script`), and the heap after 100 reloads of one plugin on a host (old facets collected,
+// V8's compilation cache off). Medians over runs.
 // Run by hand from packages/chord (not in CI), pinned for comparisons:
 //   taskset -c 6 node --conditions=source --experimental-strip-types --expose-gc test/next/bench/plugins.ts
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -23,14 +24,16 @@ const RUNS = 7;
 const RELOADS = 100;
 
 const gc = (globalThis as { gc?: () => void }).gc!;
-const HOST_PACKAGES = { "@earendil-works/chord/next": chordNext };
+// The app's API (its v1 is Chord's surface here): every import is checked by version and kind, as in an app.
+const HOST_PACKAGES = { "@bench/app/v1": chordNext };
+const API = { name: "@bench/app", versions: ["v1"] } as const;
 const KINDS = ["server", "worker"];
-const NODE = { platform: "node", hostPackages: Object.keys(HOST_PACKAGES) } as const;
+const NODE = { platform: "node", hostPackages: Object.keys(HOST_PACKAGES), api: API, kinds: KINDS } as const;
 
 /** A plugin's worker facet: a store over a document, a derive, a method, a helper module and the shared contract. */
 function worker(index: number, label: string): string {
 	return [
-		'import { constant, defineFacet, defineState, int, local, method, obj, str } from "@earendil-works/chord/next";',
+		'import { constant, defineFacet, defineState, int, local, method, obj, str } from "@bench/app/v1";',
 		'import { Shared } from "../contracts/contract.ts";',
 		'import { format } from "./format.ts";',
 		`const Store = local("bench.store${index}", { version: 1, params: {}, members: { label: str(), n: int(), bump: method(undefined, int()) } });`,
@@ -53,7 +56,7 @@ async function pluginSet(): Promise<string> {
 	await write("contracts", {
 		"package.json": JSON.stringify({ name: "@bench/contracts", type: "module" }),
 		"contract.ts":
-			'import { local, str } from "@earendil-works/chord/next";\nexport const Shared = local("bench.shared", { version: 1, params: {}, members: { name: str() } });',
+			'import { local, str } from "@bench/app/v1";\nexport const Shared = local("bench.shared", { version: 1, params: {}, members: { name: str() } });',
 	});
 	for (let index = 0; index < PLUGINS; index++) {
 		await write(`p${index}`, {
@@ -73,7 +76,7 @@ function median(values: number[]): number {
 
 const root = await pluginSet();
 const { plugins } = await discoverPlugins([root], { kinds: KINDS }, context);
-const options = { hostPackages: Object.keys(HOST_PACKAGES), platform: "node", plugins } as const;
+const options = { ...NODE, plugins } as const;
 const facets = plugins.filter((plugin) => plugin.facets.worker !== undefined);
 
 // A cold build of every worker facet (each its own esbuild build, all at once as the component runs them).
@@ -112,7 +115,11 @@ for (let run = 0; run < RUNS; run++) {
 console.log(`evaluation per facet: ${median(evaluations).toFixed(2)} ms (median of ${RUNS})`);
 
 // The heap after 100 reloads of one plugin on a host, against after a warm-up (two builds alternating).
-const component = createPlugins({ roots: [root], kinds: { server: NODE, worker: NODE }, onError: () => {} }, context);
+const KIND = { platform: "node", hostPackages: Object.keys(HOST_PACKAGES) } as const;
+const component = createPlugins(
+	{ roots: [root], api: API, kinds: { server: KIND, worker: KIND }, onError: () => {} },
+	context,
+);
 const host = createHost({ onError: () => {} });
 await component.load(host, { kind: "worker", core: [], modules: HOST_PACKAGES }, context);
 await writeFile(join(root, "p0", "worker.ts"), worker(0, "a"));

@@ -43,7 +43,7 @@ export function evaluateFacet<P extends Principal = Principal>(built: BuiltScrip
 	const module = { exports: {} as unknown };
 	let facet: unknown;
 	try {
-		wrapper(requireFor(plugin, hostPackages, where), module, module.exports);
+		wrapper(requireFor(plugin, built, hostPackages, where), module, module.exports);
 		// A trust boundary: plugin code; its default export is checked to be a facet (a getter of it may throw too).
 		facet = (module.exports as { readonly default?: unknown } | null)?.default;
 		if (typeof facet !== "object" || facet === null || typeof (facet as { setup?: unknown }).setup !== "function") {
@@ -69,15 +69,33 @@ export function pluginFile(path: string): string {
 /** The one specifier of this component a script imports (`pluginFile`): external always, answered per facet. */
 export const PLUGINS_SPECIFIER = "@earendil-works/chord/next/plugins";
 
-/** The `require` a facet script of `plugin` takes (`where` names the facet in its errors). */
-function requireFor(plugin: Plugin, hostPackages: HostPackages, where: string): (specifier: string) => unknown {
+/**
+ * The `require` a facet script of `plugin` takes (`where` names the facet in its errors). A computed `require(x)`
+ * cannot be seen at build, so it refuses here what the build refuses to imports: another version of the app's API than
+ * the script imports (or, when it imports none, than the first one it requires), Chord itself under an app's API, and
+ * for a single-file plugin anything but host packages.
+ */
+function requireFor(
+	plugin: Plugin,
+	built: BuiltScript,
+	hostPackages: HostPackages,
+	where: string,
+): (specifier: string) => unknown {
 	let fromPlugin: NodeJS.Require | undefined;
 	let plugins: { readonly pluginFile: (path: string) => string } | undefined;
+	// The facet's API version: the one its build saw, else the first one required (one facet, one version).
+	let version = built.api?.version;
 	return (specifier) => {
+		const refused = refusedAtRun(built, version, specifier);
+		if (refused !== undefined) throw new Error(`${where}: "${specifier}": ${refused}`);
+		version ??= versionOf(built, specifier);
 		if (Object.hasOwn(hostPackages, specifier)) return interop(hostPackages[specifier]);
 		if (specifier === PLUGINS_SPECIFIER) {
 			plugins ??= { pluginFile: (path) => fileOf(plugin, path) };
 			return plugins;
+		}
+		if (plugin.layout === "file") {
+			throw new Error(`${where}: "${specifier}": a single-file plugin requires only host packages`);
 		}
 		if (isBuiltin(specifier) || plugin.external.includes(packageName(specifier))) {
 			fromPlugin ??= createRequire(join(plugin.dir, "package.json"));
@@ -89,14 +107,37 @@ function requireFor(plugin: Plugin, hostPackages: HostPackages, where: string): 
 	};
 }
 
+/**
+ * Why a script built against the app's API, using API `version` so far, may not require `specifier` (the build's API
+ * rules), or `undefined`.
+ */
+function refusedAtRun(built: BuiltScript, version: string | undefined, specifier: string): string | undefined {
+	const { api } = built;
+	if (api === undefined || specifier === PLUGINS_SPECIFIER) return undefined;
+	if (packageName(specifier) === "@earendil-works/chord") return "plugins import Chord through the app's API";
+	const required = versionOf(built, specifier);
+	if (required === undefined || version === undefined || required === version) return undefined;
+	return `this script uses ${api.name}/${version}: one facet uses one version of the API`;
+}
+
+/** The API version `specifier` names (`v3` of `@acme/app/v3/web`), when the script was built against an API. */
+function versionOf(built: BuiltScript, specifier: string): string | undefined {
+	const { api } = built;
+	if (api === undefined || (specifier !== api.name && !specifier.startsWith(`${api.name}/`))) return undefined;
+	return specifier.slice(api.name.length + 1).split("/")[0];
+}
+
 /** The package a bare specifier names: `@scope/name` or `name`, without a subpath. */
 export function packageName(specifier: string): string {
 	const parts = specifier.split("/");
 	return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;
 }
 
-/** The absolute path of `path` inside `plugin`'s directory; one out of it is refused. */
+/** The absolute path of `path` inside `plugin`'s directory; one out of it is refused, and so is every one of a single-file plugin. */
 function fileOf(plugin: Plugin, path: string): string {
+	if (plugin.layout === "file") {
+		throw new Error(`pluginFile("${path}"): single-file plugin "${plugin.name}" has no directory of its own`);
+	}
 	const file = resolve(plugin.dir, path);
 	const rest = relative(plugin.dir, file);
 	if (rest.startsWith("..") || isAbsolute(rest)) {

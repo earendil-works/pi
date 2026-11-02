@@ -1,25 +1,35 @@
-// The plugins component (slice 7c §4, §5; decision "Slice 7c's points"; slice 10 D11, D12): discovery, builds and the
-// watcher, and per kind the complete current set of scripts (built on first use, updated by every rollout that ships
-// the kind), which its plugin runtime loads and reloads hosts with: unchanged plugins as the same facet objects, removed
-// ones left out, a failed build or evaluation keeping the plugin's loaded facet. `rollout` runs the app's steps in order
-// (one result per host) and clears the marks of plugins applied on every host of every step.
+// The plugins component (slice 7c §4, §5; decision "Slice 7c's points"; slice 10 D11, D12; slice 12 §1, §5): discovery,
+// builds checked against the app's API, installs and the watcher, and per kind the complete current set of scripts
+// (built on first use, updated by every rollout that ships the kind), which its plugin runtime loads and reloads hosts
+// with: unchanged plugins as the same facet objects, removed ones left out, a failed build or evaluation keeping the
+// plugin's loaded facet. `rollout` runs the app's steps in order (one result per host) and clears the marks of plugins
+// applied on every host of every step.
 
 import type { Context } from "../../context/index.ts";
 import type { Principal } from "../../next/data/index.ts";
 import type { Host, LoadReport, PluginFacet, ReloadReport } from "../../next/host/index.ts";
 import { Batch, type BatchError } from "../../next/state/internal.ts";
 import type { Watchable } from "../../watch.ts";
-import { type BuiltFacet, buildFacet } from "./build.ts";
-import { type Discovery, discoverPlugins, type Plugin } from "./discover.ts";
+import { type AppApi, type BuiltFacet, buildFacet } from "./build.ts";
+import { type Discovery, discoverPlugins, type Plugin, type PluginRoot, sameFiles } from "./discover.ts";
 import type { HostPackages } from "./evaluate.ts";
-import { type InstallOptions, installDependencies } from "./install.ts";
-import { createPluginRuntime, type PluginRuntime, type PluginScript } from "./runtime.ts";
+import { type InstallOptions, installDependencies, installPlugin, type PluginSource } from "./install.ts";
+import { createPluginRuntime, PluginError, type PluginRuntime, type PluginScript } from "./runtime.ts";
 import { type MarkSnapshot, type PluginsState, PluginWatcher } from "./watcher.ts";
 
 /** What `createPlugins` takes. */
 export type PluginsOptions = {
-	/** The directories plugins are listed in, in order: the first root's plugin wins a duplicate name. */
-	readonly roots: readonly string[];
+	/**
+	 * The directories plugins are listed in, in order: the first root's plugin wins a duplicate name. A root marked
+	 * `required` (`{ path, required: true }`, the app's own) makes `load` reject when one of its plugins fails.
+	 */
+	readonly roots: readonly PluginRoot[];
+	/**
+	 * The app's API (`{ name: "@acme/app", versions: ["v3", "v2"] }`, newest first): plugins import it at a listed
+	 * version, its per-kind modules from their kind only, one version per facet, and never Chord directly. Without one,
+	 * plugins import the host packages as listed.
+	 */
+	readonly api?: AppApi;
 	/**
 	 * The app's facet kinds (one file per kind in a plugin), each with where its builds run and the host packages they
 	 * keep external: `{ server: { platform: "node", hostPackages: ["@earendil-works/chord/next", "@app/core"] }, … }`.
@@ -98,7 +108,9 @@ export interface Plugins {
 	/**
 	 * Loads `host` with `kind`'s current set, evaluated with `modules` (the host packages, this process's instances, by
 	 * specifier; kept for the host's reloads), and `core` (the app's own facets): a plugin whose build or evaluation
-	 * fails is left out and reported with the host's report.
+	 * fails is left out and reported with the host's report. A required root's plugin failing, and a problem discovery
+	 * reported in a required root (missing, an invalid package, a name another root has), reject the load with a
+	 * `PluginError` once the host's load settled.
 	 */
 	load<P extends Principal>(
 		host: Host<P>,
@@ -121,6 +133,11 @@ export interface Plugins {
 	rollout(steps: readonly RolloutStep[], built: Built, context: Context): Promise<RolloutResult>;
 	/** Installs plugin `name`'s dependencies (`installDependencies`): its install mark clears, and it is dirty. */
 	installDependencies(name: string, context: Context): Promise<void>;
+	/**
+	 * Installs new plugins from git or npm into `root`, one of the roots (`installPlugin`), and marks `set`: the next
+	 * build discovers and builds them. Returns their names.
+	 */
+	installPlugin(source: PluginSource, root: string, context: Context): Promise<readonly string[]>;
 	/** Stops the watcher. */
 	close(): void;
 }
@@ -151,7 +168,7 @@ class PluginsComponent implements Plugins {
 		const batch = new Batch((error) => options.onError(error), undefined);
 		this.#watcher = new PluginWatcher(
 			{
-				roots: options.roots,
+				roots: options.roots.map((root) => (typeof root === "string" ? root : root.path)),
 				base: options.base ?? [],
 				kinds: Object.keys(options.kinds),
 				failed: (error) => options.onError({ kind: "watch_failed", error }),
@@ -170,11 +187,15 @@ class PluginsComponent implements Plugins {
 	}
 
 	async build(names: readonly string[], context: Context): Promise<Built> {
-		const before = new Set(this.#discovery.plugins.map(({ name }) => name));
+		const before = new Map(this.#discovery.plugins.map((plugin) => [plugin.name, plugin]));
 		if (!this.#discovered || this.#watcher.needsDiscovery) await this.#discover(context);
 		const now = this.#discovery.plugins;
-		const removed = [...before].filter((name) => !now.some((plugin) => plugin.name === name));
-		const wanted = now.filter(({ name }) => names.includes(name) || !before.has(name));
+		const removed = [...before.keys()].filter((name) => !now.some((plugin) => plugin.name === name));
+		// A plugin whose files moved (a single file became a directory, a facet file came or went) is built again too.
+		const wanted = now.filter((plugin) => {
+			const previous = before.get(plugin.name);
+			return names.includes(plugin.name) || previous === undefined || !sameFiles(previous, plugin);
+		});
 		const snapshot = this.#watcher.snapshot([...wanted.map(({ name }) => name), ...removed]);
 		const facets = await Promise.all(
 			wanted.flatMap((plugin) => Object.keys(plugin.facets).map((kind) => this.#buildOne(plugin, kind, context))),
@@ -202,7 +223,17 @@ class PluginsComponent implements Plugins {
 		const { kind, core, modules } = options;
 		const scripts = await this.scripts(kind, context);
 		this.#kinds.set(host, kind);
-		return this.#runtime.load(host, { kind, core, scripts, modules }, context);
+		// A required root guarantees its plugins: what discovery reported in one is as fatal as a plugin that failed.
+		const problems = this.#discovery.problems.filter(({ required }) => required);
+		let report: LoadReport;
+		try {
+			report = await this.#runtime.load(host, { kind, core, scripts, modules }, context);
+		} catch (error) {
+			if (!(error instanceof PluginError) || problems.length === 0) throw error;
+			throw new PluginError(error.required, error.failed, problems);
+		}
+		if (problems.length > 0) throw new PluginError([], report.failed, problems);
+		return report;
 	}
 
 	async reload<P extends Principal>(host: Host<P>, built: Built, context: Context): Promise<ReloadReport> {
@@ -265,6 +296,15 @@ class PluginsComponent implements Plugins {
 		this.#watcher.installed(name);
 	}
 
+	async installPlugin(source: PluginSource, root: string, context: Context): Promise<readonly string[]> {
+		const roots = this.#options.roots.map((each) => (typeof each === "string" ? each : each.path));
+		if (!roots.includes(root)) throw new Error(`plugins.installPlugin: ${root} is not one of the roots`);
+		const options = { ...this.#options.install, kinds: Object.keys(this.#options.kinds), roots: this.#options.roots };
+		const names = await installPlugin(source, root, context, options);
+		this.#watcher.added();
+		return names;
+	}
+
 	close(): void {
 		this.#watcher.close();
 	}
@@ -278,6 +318,11 @@ class PluginsComponent implements Plugins {
 			context,
 		);
 		this.#discovered = true;
+		// A plugin no longer discovered loses its builds: a name added again is built anew, never served an old build.
+		for (const key of this.#built.keys()) {
+			const name = key.slice(0, key.indexOf("\u0000"));
+			if (!this.#discovery.plugins.some((plugin) => plugin.name === name)) this.#built.delete(key);
+		}
 		this.#watcher.know(this.#discovery, seen);
 	}
 
@@ -302,13 +347,15 @@ class PluginsComponent implements Plugins {
 
 	/** Builds `plugin`'s facet of `kind` and keeps it as the latest; the watcher learns what it read. */
 	async #buildOne(plugin: Plugin, kind: string, context: Context): Promise<BuiltFacet> {
-		const { kinds, publicPath } = this.#options;
+		const { kinds, publicPath, api } = this.#options;
 		// Discovery finds facet files of the app's kinds only.
 		const { platform, hostPackages } = kinds[kind]!;
 		const options = {
 			hostPackages,
 			platform,
+			kinds: Object.keys(kinds),
 			plugins: this.#discovery.plugins,
+			...(api === undefined ? {} : { api }),
 			...(publicPath === undefined ? {} : { publicPath }),
 		} as const;
 		const built = await buildFacet(plugin, kind, options, context);

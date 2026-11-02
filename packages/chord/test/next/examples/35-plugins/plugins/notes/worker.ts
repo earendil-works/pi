@@ -1,7 +1,7 @@
 // The notes plugin's worker facet: serves `Notes`, its count kept in a document.
 
 import { constant, defineFacet, defineState, int, obj } from "@earendil-works/chord/next";
-import { Notes } from "@example/contracts/contract";
+import { Notes } from "../contracts/contract.ts";
 import { label } from "./label.ts";
 
 const Count = defineState("count", { schema: obj({ n: int() }), version: 1, initial: () => ({ n: 0 }) });

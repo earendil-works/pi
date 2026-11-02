@@ -276,6 +276,15 @@ export class ChordObject implements Target {
 		return this.#firstOutcome.promise;
 	}
 
+	/**
+	 * Whether an activation is under way: waiting for its previous instance's teardown, or activating and showing
+	 * `loading` (its factory, its natives' opens, a dependency still loading); a parked wait (`failed { waiting }`) is not.
+	 */
+	get activating(): boolean {
+		const state = this.#state;
+		return state.kind === "waiting" || (state.kind === "activating" && state.shown.kind === "loading");
+	}
+
 	/** Whether it holds up the start barrier: it has no first outcome yet. */
 	get blocksFirstPass(): boolean {
 		return !this.#hasFirstOutcome;

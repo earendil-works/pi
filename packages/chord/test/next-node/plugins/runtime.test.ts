@@ -1,6 +1,6 @@
 // Tests of the plugin runtime (slice 10 §3, D11): loading and reloading hosts with complete sets of shipped scripts
 // (unchanged digests kept as the same facet, removed = loaded minus shipped, failed builds and evaluations kept old),
-// and that importing it loads no esbuild.
+// a required root's failed plugin rejecting `load`, and that importing it loads no esbuild.
 
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -12,8 +12,10 @@ import {
 	buildFacet,
 	createPluginRuntime,
 	discoverPlugins,
+	PluginError,
 	type PluginScript,
 } from "../../../src/next-node/plugins/index.ts";
+import { rejection } from "../../next/support.ts";
 import { HOST_PACKAGES, tempRoot, writePlugin } from "./support.ts";
 
 /** Writes plugin `@test/<dir>` serving `test.<dir>` labelled `label` from its worker facet (or `source` as it is). */
@@ -98,6 +100,48 @@ describe("loading and reloading with complete sets", () => {
 		expect(report.failed.map(({ plugin }) => plugin).sort()).toEqual(["@test/a", "@test/new"]);
 		expect(report.plugins).toEqual({ added: [], changed: [], removed: [] });
 		expect(await label(host, "a")).toBe("a1");
+		await host.close(context);
+	});
+});
+
+describe("required roots at load (slice 12 §1)", () => {
+	it("rejects with a PluginError naming a required plugin that failed, after the host's load settled", async () => {
+		const app = await tempRoot();
+		const user = await tempRoot();
+		await plugin(app, "core", "core");
+		await plugin(app, "broken", "", "export const = ;");
+		await plugin(user, "flaky", "", 'throw new Error("at import");');
+		const { plugins } = await discoverPlugins([{ path: app, required: true }, user], { kinds: ["worker"] }, context);
+		const options = { hostPackages: Object.keys(HOST_PACKAGES), platform: "node", plugins } as const;
+		const scripts = await Promise.all(
+			plugins.map(async (each) => ({ plugin: each, built: await buildFacet(each, "worker", options, context) })),
+		);
+		const host = createHost({ onError: () => {} });
+		const error = await rejection(
+			createPluginRuntime().load(host, { kind: "worker", core: [], scripts, modules: HOST_PACKAGES }, context),
+		);
+		expect(error).toBeInstanceOf(PluginError);
+		const failure = error as PluginError;
+		expect(failure.message).toMatch(
+			/^required plugin failed at load: "@test\/broken": plugin "@test\/broken": its worker facet failed to build/,
+		);
+		expect(failure.required.map(({ plugin }) => plugin)).toEqual(["@test/broken"]);
+		expect(failure.failed.map(({ plugin }) => plugin).sort()).toEqual(["@test/broken", "@test/flaky"]);
+		// The load settled: the required root's other plugin is loaded.
+		expect(await label(host, "core")).toBe("core");
+		await host.close(context);
+	});
+
+	it("only reports a failed plugin of a root that is not required", async () => {
+		const user = await tempRoot();
+		await plugin(user, "flaky", "", 'throw new Error("at import");');
+		const host = createHost({ onError: () => {} });
+		const report = await createPluginRuntime().load(
+			host,
+			{ kind: "worker", core: [], scripts: await shipped(user), modules: HOST_PACKAGES },
+			context,
+		);
+		expect(report.failed.map(({ plugin }) => plugin)).toEqual(["@test/flaky"]);
 		await host.close(context);
 	});
 });

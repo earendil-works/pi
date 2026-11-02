@@ -3,6 +3,7 @@ import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { bool, int, local, method, obj } from "../../../src/next/contracts/index.ts";
 import { defineState } from "../../../src/next/documents/index.ts";
 import { createHost, defineFacet, type HostError } from "../../../src/next/host/index.ts";
+import type { ChordHost } from "../../../src/next/host/internal.ts";
 import { ChordObject } from "../../../src/next/host/object.ts";
 import {
 	defineRegistry,
@@ -726,5 +727,26 @@ describe("a reload's new contribution adapter (fix round 1)", () => {
 		const actual = value.value;
 		await host.close(context);
 		expect(actual).toBe(21);
+	});
+});
+
+/** A registry its plugin serves: never listed as undeclared. */
+const Served = defineRegistry<string, readonly string[]>("app.served", { version: 1 });
+
+describe("registries without a provider (slice 12 §6, testPlugin)", () => {
+	it("lists a registry with contributions and no provider, with the newest version contributed", async () => {
+		const Older = defineRegistry<string, readonly string[]>("app.names", { version: 1 });
+		const Newer = defineRegistry<string, readonly string[]>("app.names", { version: 3 });
+		const host = createHost({ onError: () => {} });
+		await host.load(
+			[
+				{ name: "a", facet: defineFacet((_host, self) => self.contribute(Older, "a")) },
+				{ name: "b", facet: defineFacet((_host, self) => self.contribute(Newer, "b")) },
+				{ name: "c", facet: defineFacet((h) => h.serve(Served, { compose: () => [] })) },
+			],
+			context,
+		);
+		expect((host as unknown as ChordHost).undeclaredRegistries()).toEqual([{ name: "app.names", version: 3 }]);
+		await host.close(context);
 	});
 });

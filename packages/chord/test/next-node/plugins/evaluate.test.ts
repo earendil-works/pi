@@ -1,7 +1,7 @@
 // Tests of evaluation (slice 7c §3): host packages as the host's instances (`instanceof ChordError` across a plugin),
 // default and named imports of ESM and CommonJS host packages, chord.external packages and builtins from the plugin,
-// `pluginFile` and its `..` refusal, an import-time throw, a non-facet export, a refused require, a computed import(),
-// the filename.
+// `pluginFile` and its `..` refusal (and a single-file plugin's, slice 12 §4), an import-time throw, a non-facet export,
+// a refused require, a computed import(), the filename.
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
@@ -18,7 +18,7 @@ import {
 } from "../../../src/next-node/plugins/index.ts";
 import { expectCollected } from "../../next/support.ts";
 import * as esmHost from "../fixtures/esm-host.ts";
-import { HOST_PACKAGES, KINDS, tempRoot, writePackage, writePlugin } from "./support.ts";
+import { HOST_PACKAGES, KINDS, tempRoot, writeFiles, writePackage, writePlugin } from "./support.ts";
 
 const HOSTS = { ...HOST_PACKAGES, "esm-host": esmHost, "cjs-host": { named: "cjs named" } };
 
@@ -116,6 +116,19 @@ describe("evaluating a facet", () => {
 		expect(() => pluginFile("x")).toThrow("only a plugin's facet script");
 	});
 
+	it("refuses pluginFile in a single-file plugin: it has no directory of its own (slice 12 §4)", async () => {
+		const root = await tempRoot();
+		await writeFiles(root, {
+			"lone.worker.ts":
+				'import { pluginFile } from "@earendil-works/chord/next/plugins";\nexport default { setup: () => {}, read: () => pluginFile("x.txt") };',
+		});
+		const { script, plugin } = await built(root, "lone");
+		const probe = evaluateFacet(script, { hostPackages: HOSTS, plugin }) as unknown as Probe;
+		expect(() => (probe.read as () => string)()).toThrow(
+			'pluginFile("x.txt"): single-file plugin "lone" has no directory of its own',
+		);
+	});
+
 	it("throws an import-time throw, a non-facet export and a refused require, naming the facet", async () => {
 		const root = await tempRoot();
 		await writePlugin(root, "p", "@test/p", {
@@ -171,6 +184,57 @@ describe("evaluating a facet", () => {
 			stack = (error as Error).stack!;
 		}
 		expect(stack).toContain(`/chord-plugins/@test/p/worker.ts?${script.digest}:`);
+	});
+});
+
+describe("a computed require refuses what the build refuses (slice 12 fix round 1, Sol)", () => {
+	it("refuses another version of the app's API, Chord itself, and builtins in a single-file plugin", async () => {
+		const root = await tempRoot();
+		const api = { name: "@acme/app", versions: ["v3", "v2"] };
+		const modules = { "@acme/app/v3": { value: 3 }, "@acme/app/v2": { value: 2 }, "@earendil-works/chord/next": {} };
+		const join = (...parts: string[]) => `[${parts.map((part) => JSON.stringify(part)).join(", ")}].join("/")`;
+		await writePlugin(root, "mixed", "@test/mixed", {
+			"worker.ts": [
+				'import { value } from "@acme/app/v3";',
+				`export default { setup: () => {}, other: () => require(${join("@acme/app", "v2")}), chord: () => require(${join("@earendil-works", "chord", "next")}), same: () => require(${join("@acme/app", "v3")}).value + value };`,
+			].join("\n"),
+		});
+		await writeFiles(root, {
+			"lone.worker.ts": 'export default { setup: () => {}, builtin: () => require(["node", "path"].join(":")) };',
+		});
+		const { plugins } = await discoverPlugins([root], { kinds: KINDS }, context);
+		const options = { hostPackages: Object.keys(modules), platform: "node", api, kinds: KINDS, plugins } as const;
+		const evaluated = async (name: string) => {
+			const plugin = plugins.find((each) => each.name === name)!;
+			const built = await buildFacet(plugin, "worker", options, context);
+			if (built.kind === "failed") throw new Error(built.errors.join("\n"));
+			return evaluateFacet(built, { hostPackages: modules, plugin }) as unknown as Probe;
+		};
+		const mixed = await evaluated("@test/mixed");
+		expect((mixed.same as () => number)()).toBe(6);
+		expect(() => (mixed.other as () => unknown)()).toThrow(
+			'"@acme/app/v2": this script uses @acme/app/v3: one facet uses one version of the API',
+		);
+		expect(() => (mixed.chord as () => unknown)()).toThrow("plugins import Chord through the app's API");
+		// Without a static import the first version required pins the facet's (Opus N3).
+		await writePlugin(root, "computed", "@test/computed", {
+			"worker.ts": `export default { setup: () => {}, both: () => [require(${join("@acme/app", "v3")}).value, require(${join("@acme/app", "v2")}).value] };`,
+		});
+		const fresh = await discoverPlugins([root], { kinds: KINDS }, context);
+		const computedPlugin = fresh.plugins.find((each) => each.name === "@test/computed")!;
+		const computedBuilt = await buildFacet(computedPlugin, "worker", { ...options, plugins: fresh.plugins }, context);
+		if (computedBuilt.kind === "failed") throw new Error(computedBuilt.errors.join("\n"));
+		const computed = evaluateFacet(computedBuilt, {
+			hostPackages: modules,
+			plugin: computedPlugin,
+		}) as unknown as Probe;
+		expect(() => (computed.both as () => unknown)()).toThrow(
+			'"@acme/app/v2": this script uses @acme/app/v3: one facet uses one version of the API',
+		);
+		const lone = await evaluated("lone");
+		expect(() => (lone.builtin as () => unknown)()).toThrow(
+			'"node:path": a single-file plugin requires only host packages',
+		);
 	});
 });
 

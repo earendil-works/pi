@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Chord v2's plugins component gains the plugin model (slice 12): `createPlugins({ api: { name, versions } })` checks every import of the app's versioned API (`@acme/app/v3`, per-kind modules such as `@acme/app/v3/web`): an unlisted version, another kind's module, two versions in one facet and a direct import of Chord are build errors naming the file and line. Roots may be `{ path, required }`: a required root's plugin failing at `load` rejects it with a `PluginError` after the load settled. Files named `<name>.<kind>.<ext>` (`contract.web.tsx`) are of that kind, refused in facets of another kind with the chain of imports named. Single-file plugins (`hello.server.ts` at a root's top, grouped by name, host packages only). `installPlugin({ git, ref } | { npm, version }, root, ctx)` installs plugins from git (a shallow clone of a branch, tag or commit; a repository of several plugins too) or npm; a package lists the plugin folders it provides in its `package.json` (`"chord": { "plugins": ["./notes", "plugins/*", "!plugins/draft"] }`), used by discovery and `installPlugin` (without it: one plugin when the package's top has facet files, else its subfolders with a `package.json`). `testPlugin(dir, { kind, modules, stubs, principal }, ctx)` builds a plugin as production does and loads it on an in-memory host beside stub facets, collecting its contributions to registries nobody serves and listing the contracts it waits for. Agents' guide: `docs/next/plugin-authoring.md`.
+
+### Changed
+
+- Chord v2 plugins import each other by relative path within a root (copied into the importer's script) and across repositories by package name through the package's `exports`, pinned in `dependencies`; slice 10's imports by plugin name (`@app/notes/contract`) are removed, and a relative path leaving the root is a build error.
+
 ## [1.5.0] - 2026-11-02
 
 ### Breaking Changes

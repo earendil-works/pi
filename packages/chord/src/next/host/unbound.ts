@@ -38,6 +38,11 @@ export class UnboundIndex {
 		if (requests.size === 0) this.#byName.delete(name);
 	}
 
+	/** The names requests wait for, sorted. */
+	names(): string[] {
+		return [...this.#byName.keys()].sort();
+	}
+
 	/** The host's publication: every request indexed (by any name) runs its check again, out of the index first. */
 	wakeAll(): void {
 		const all = [...this.#byName.values()].flatMap((requests) => [...requests]);

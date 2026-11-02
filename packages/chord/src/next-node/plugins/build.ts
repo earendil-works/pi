@@ -1,26 +1,38 @@
-// Building (slice 7c §2): one facet of one plugin as one script, by esbuild from cold. Its own files, files of other
-// discovered plugins imported by name (`@app/notes/contract`: copies; decision "Plugins import each other by name") and
-// its npm `dependencies` are inlined; host packages, this component, `chord.external`
-// packages and Node builtins stay external, answered at evaluation by the `require` the script takes. The result is
-// plain data, the same value a worker or a page evaluates where it runs; a failed build is a result, never a throw.
+// Building (slice 7c §2, slice 12 §1-§4): one facet of one plugin as one script, by esbuild from cold. Its own files,
+// files of other plugins of its root imported by relative path (copies; decision "Contracts come from where the
+// plugin's code came from") and its npm `dependencies` (through their `exports`) are inlined; host packages, this
+// component, `chord.external` packages and Node builtins stay external, answered at evaluation by the `require` the
+// script takes. Every import is checked by the file it resolves to: a per-kind file only for its kind, the app's API
+// only at a listed version the kind provides, one version per facet, never Chord directly. The result is plain data,
+// the same value a worker or a page evaluates where it runs; a failed build is a result, never a throw.
 
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { isBuiltin } from "node:module";
-import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
 import { type BuildFailure, build, type Plugin as EsbuildPlugin, type Loader, type Message } from "esbuild";
 import type { Context } from "../../context/index.ts";
-import type { Plugin } from "./discover.ts";
+import { discoverPackage, type Plugin } from "./discover.ts";
 import { PLUGINS_SPECIFIER, packageName } from "./evaluate.ts";
 import { inlineSourceMap } from "./stack.ts";
 
+/**
+ * The app's API (slice 12 §1): the package plugins import it as and the versions it provides, newest first
+ * (`{ name: "@acme/app", versions: ["v3", "v2"] }`). Its modules are host packages (`@acme/app/v3`, `@acme/app/v3/web`).
+ */
+export type AppApi = { readonly name: string; readonly versions: readonly string[] };
+
 /** What `buildFacet` takes besides the plugin and the kind. */
 export type BuildOptions = {
-	/** The host packages' specifiers (`@earendil-works/chord/next`, `react`, `react/jsx-runtime`, `@app/core`): external. */
+	/** The host packages' specifiers (`@acme/app/v3`, `@acme/app/v3/web`, `react`, `react/jsx-runtime`): external. */
 	readonly hostPackages: readonly string[];
 	/** Where the script runs: Node (a server, a worker, a TUI) or a browser (a page). */
 	readonly platform: "node" | "browser";
-	/** The discovered plugins: a file of one of them may be imported (a copy). */
+	/** The app's API: its imports checked by version and kind, Chord refused. Without one, host packages as listed. */
+	readonly api?: AppApi;
+	/** The app's facet kinds: a file named `<name>.<kind>.<ext>` is one of that kind, refused in a facet of another. */
+	readonly kinds?: readonly string[];
+	/** The discovered plugins: a file of a directory plugin of the same root may be imported by relative path (a copy). */
 	readonly plugins?: readonly Plugin[];
 	/** Where the app serves a browser build's assets: the URL prefix their imports evaluate to (`/` by default). */
 	readonly publicPath?: string;
@@ -47,6 +59,11 @@ export type BuiltFacet =
 			readonly css?: { readonly name: string; readonly text: string };
 			/** A browser build's assets, by content-hashed file name. */
 			readonly assets: readonly { readonly name: string; readonly bytes: Uint8Array }[];
+			/**
+			 * The app's API the build checked against and the version the script imports (when it imports one):
+			 * evaluation refuses other versions and Chord to a computed `require` as the build did to imports.
+			 */
+			readonly api?: { readonly name: string; readonly version: string | undefined };
 	  }
 	| { readonly kind: "failed"; readonly plugin: string; readonly facet: string; readonly errors: readonly string[] };
 
@@ -55,7 +72,7 @@ const GLOBAL_MARKERS = { __dirname: "__chord_plugin_dirname", __filename: "__cho
 
 /**
  * Builds `plugin`'s facet of `kind` (one esbuild build from cold): a script wrapped as `(function (require, module,
- * exports) { … })`, or the errors that refuse it (an import the rules of §2 do not admit, a syntax error, `import.meta`,
+ * exports) { … })`, or the errors that refuse it (an import the rules do not admit, a syntax error, `import.meta`,
  * `__dirname`, `__filename`, a literal dynamic `import("x")`, a top-level `await`), each naming its file and line. A
  * computed `import(x)` becomes a call of the script's `require`.
  */
@@ -71,10 +88,14 @@ export async function buildFacet(
 		facet: kind,
 		errors,
 	});
-	const entry = plugin.facets[kind];
-	if (entry === undefined) return failed([`plugin "${plugin.name}" has no ${kind} facet`]);
+	const named = plugin.facets[kind];
+	if (named === undefined) return failed([`plugin "${plugin.name}" has no ${kind} facet`]);
 	context.abortSignal?.throwIfAborted();
-	const rules = new ImportRules(plugin, options);
+	// A facet file may be a link: its real file must be the plugin's, and of no other kind.
+	const entry = await realpath(named);
+	const rules = new ImportRules(plugin, kind, entry, options, context);
+	const wrongEntry = rules.checkEntry(named, entry);
+	if (wrongEntry !== undefined) return failed([wrongEntry]);
 	const browser = options.platform === "browser";
 	let result: Awaited<ReturnType<typeof build>>;
 	try {
@@ -123,6 +144,9 @@ export async function buildFacet(
 	const source = script.text;
 	const globals = freeGlobals(source);
 	if (globals.length > 0) return failed(globals);
+	const mixed = rules.mixedVersions();
+	if (mixed !== undefined) return failed([mixed]);
+	const api = options.api === undefined ? undefined : { name: options.api.name, version: rules.version() };
 	return {
 		kind: "script",
 		plugin: plugin.name,
@@ -135,6 +159,7 @@ export async function buildFacet(
 		assets: files
 			.filter((file) => file !== script && file !== css)
 			.map((file) => ({ name: relative(plugin.dir, file.path), bytes: file.contents })),
+		...(api === undefined ? {} : { api }),
 	};
 }
 
@@ -166,12 +191,23 @@ function freeGlobals(source: string): string[] {
 	return errors;
 }
 
-/** Where a resolved file lies, from the plugin being built: its own source, another plugin's (a copy), a package. */
+/**
+ * Where a resolved file lies (a real path), from the plugin being built: its own source, another plugin's of its root (a
+ * copy), a package of its own `node_modules`, a plugin of another root, or no plugin.
+ */
 type Place =
 	| { readonly kind: "own" }
 	| { readonly kind: "copied"; readonly plugin: Plugin }
 	| { readonly kind: "package" }
+	| { readonly kind: "other-root"; readonly plugin: Plugin }
 	| { readonly kind: "outside" };
+
+/** What an import resolves to before the rules check the file: external, refused, a package, or a plugin file. */
+type Resolution =
+	| { readonly kind: "external" }
+	| { readonly kind: "package" }
+	| { readonly kind: "path"; readonly path: string; readonly asset: boolean }
+	| { readonly kind: "error"; readonly text: string };
 
 /** What only a browser build imports: stylesheets and wasm assets. */
 const BROWSER_ONLY = new Set([".css", ".wasm"]);
@@ -197,22 +233,45 @@ const LOADERS: Readonly<Record<string, Loader>> = {
 /** What an asset import's resolution carries to its load (the `file` loader whatever its extension). */
 const ASSET = Symbol("chord.plugins.asset");
 
+/** Chord's package: never imported by plugins of an app with an API (only its `/next/plugins` for `pluginFile`). */
+const CHORD_PACKAGE = "@earendil-works/chord";
+
 /**
- * The import rules of one build (§2's table) as an esbuild plugin, and what the build read: every file of a plugin
- * hashed as it is handed to esbuild (the exact bytes built, not a later read racing a save), and the copied files.
+ * The import rules of one build (§2's table, slice 12 §1-§4) as an esbuild plugin, and what the build read: every file
+ * of a plugin hashed as it is handed to esbuild (the exact bytes built, not a later read racing a save), the copied
+ * files, the importer of each file (for the chain a per-kind refusal names) and the API versions imported.
  */
 class ImportRules {
 	readonly plugin: EsbuildPlugin;
 	readonly #own: Plugin;
+	readonly #kind: string;
+	/** The facet file's real path. */
+	readonly #entry: string;
+	/** The plugin's own packages' directory: every package file inlined lies in it. */
+	readonly #modules: string;
+	/** The other directory plugins: a single-file plugin's files are no one's to import. */
 	readonly #others: readonly Plugin[];
 	readonly #options: BuildOptions;
 	readonly #hostPackages: ReadonlySet<string>;
 	readonly #inputs = new Map<string, string>();
 	readonly #copied = new Set<string>();
+	/** The first importer of every file resolved, by file. */
+	readonly #importers = new Map<string, string>();
+	/** The API versions imported, each with its first importer. */
+	readonly #versions = new Map<string, string>();
+	/** Whether a directory of a package has a `package.json`, and whether it has a `chord` field, by directory. */
+	readonly #manifests = new Map<string, Promise<"chord" | "plain" | "none">>();
+	/** The plugin folders a `chord` package lists, by its directory. */
+	readonly #listed = new Map<string, Promise<ReadonlySet<string>>>();
+	readonly #context: Context;
 
-	constructor(own: Plugin, options: BuildOptions) {
+	constructor(own: Plugin, kind: string, entry: string, options: BuildOptions, context: Context) {
+		this.#context = context;
 		this.#own = own;
-		this.#others = (options.plugins ?? []).filter((each) => each.dir !== own.dir);
+		this.#kind = kind;
+		this.#entry = entry;
+		this.#modules = join(own.dir, "node_modules");
+		this.#others = (options.plugins ?? []).filter((each) => each.dir !== own.dir && each.layout === "directory");
 		this.#options = options;
 		this.#hostPackages = new Set(options.hostPackages);
 		this.plugin = {
@@ -222,23 +281,47 @@ class ImportRules {
 					// The plugin's files are resolved here, the entry too: esbuild then gives them no Node module type
 					// (`"type": "module"`), whose interop would read a whole host package for a default import instead
 					// of honouring the `__esModule` an ESM namespace is wrapped with (§3).
-					if (args.kind === "entry-point") return { path: resolve(own.dir, args.path) };
+					if (args.kind === "entry-point") return { path: this.#entry };
 					if (args.pluginData === RESOLVING) return undefined;
-					const resolved = await this.#resolve(args.path, args.importer, args.kind);
+					const resolved = this.#resolve(args.path, args.importer, args.kind);
 					if (resolved.kind === "error") return { errors: [{ text: resolved.text }] };
 					if (resolved.kind === "external") return { path: args.path, external: true };
-					if (resolved.kind === "default") return undefined;
-					const found = await builder.resolve(resolved.path, {
+					const found = await builder.resolve(resolved.kind === "path" ? resolved.path : args.path, {
 						kind: args.kind,
 						importer: args.importer,
 						resolveDir: args.resolveDir,
 						pluginData: RESOLVING,
 					});
 					if (found.errors.length > 0) return { errors: found.errors };
+					// A module a package's `browser` field disables: as esbuild resolved it.
+					if (found.namespace !== "file") return found;
+					// esbuild resolves links: `found.path` is the real file.
+					if (resolved.kind === "package") {
+						if (this.#place(found.path).kind !== "package") {
+							const at = this.#shown(found.path);
+							return {
+								errors: [{ text: `"${args.path}": resolves outside the plugin's node_modules (${at})` }],
+							};
+						}
+						// A package that is plugin code (a `chord` field: a plugin, or a repository of several) keeps
+						// the per-kind rule; an ordinary library names its files as it likes (`pdf.worker.mjs`).
+						const code = await this.#pluginCode(found.path);
+						if (code !== undefined) {
+							if (!this.#importers.has(found.path)) this.#importers.set(found.path, args.importer);
+							const refused = this.#checkKind(found.path, args.path, code.top);
+							if (refused !== undefined) return { errors: [{ text: refused }] };
+						}
+						return { path: found.path, sideEffects: found.sideEffects, suffix: found.suffix };
+					}
+					if (found.path !== this.#entry && !this.#importers.has(found.path)) {
+						this.#importers.set(found.path, args.importer);
+					}
+					const refused = this.#checkKind(found.path, args.path);
+					if (refused !== undefined) return { errors: [{ text: refused }] };
 					if (options.platform === "node" && BROWSER_ONLY.has(extname(found.path))) {
 						return { errors: [{ text: `"${args.path}": stylesheets and assets are for browser builds` }] };
 					}
-					const checked = this.#checkFile(found.path, args.importer, args.path, resolved.named);
+					const checked = this.#checkFile(found.path, args.importer, args.path);
 					if (checked !== undefined) return { errors: [{ text: checked }] };
 					return { path: found.path, pluginData: resolved.asset ? ASSET : undefined };
 				});
@@ -265,26 +348,38 @@ class ImportRules {
 		return [...this.#copied].sort();
 	}
 
+	/** The API version the script imports, if it imports one (one version: `mixedVersions` refuses two). */
+	version(): string | undefined {
+		return [...this.#versions.keys()][0];
+	}
+
 	/**
-	 * What an import of `specifier` from `importer` becomes: external, refused, esbuild's own resolution (a package of
-	 * the plugin's `dependencies`, or anything a package imports), or a path esbuild resolves and the rules check.
+	 * Why the facet file `named` (its real path `entry`) may not be built: a link out of the plugin (a single-file
+	 * plugin's out of its root's top), or to a file of another kind; `undefined` when it may.
 	 */
-	async #resolve(
-		specifier: string,
-		importer: string,
-		kind: string,
-	): Promise<
-		| { readonly kind: "external" }
-		| { readonly kind: "default" }
-		| {
-				readonly kind: "path";
-				readonly path: string;
-				readonly asset: boolean;
-				/** The plugin an import by name named (`@app/notes/contract`). */
-				readonly named?: Plugin;
-		  }
-		| { readonly kind: "error"; readonly text: string }
-	> {
+	checkEntry(named: string, entry: string): string | undefined {
+		const own = this.#own.layout === "file" ? dirname(entry) === this.#own.dir : inside(this.#own.dir, entry);
+		if (!own) return `${basename(named)}: the facet file links out of its plugin (${entry})`;
+		const fileKind = this.#kindOf(entry);
+		if (fileKind === undefined || sameKind(fileKind, this.#kind)) return undefined;
+		return `${basename(named)}: links to a ${fileKind} file (${this.#shown(entry)}), not a ${this.#kind} facet`;
+	}
+
+	/** The error of a facet importing two API versions (both named with an importer), or `undefined`. */
+	mixedVersions(): string | undefined {
+		if (this.#versions.size < 2) return undefined;
+		const name = this.#options.api!.name;
+		const seen = [...this.#versions]
+			.sort(([a], [b]) => (a < b ? -1 : 1))
+			.map(([version, importer]) => `${name}/${version} (${this.#shown(importer)})`);
+		return `one facet imports one version of ${name}: this one imports ${seen.join(" and ")}`;
+	}
+
+	/**
+	 * What an import of `specifier` from `importer` becomes: external, refused, a package esbuild resolves (one of the
+	 * plugin's `dependencies`, or anything a package imports) or a path esbuild resolves and the rules check.
+	 */
+	#resolve(specifier: string, importer: string, kind: string): Resolution {
 		const browser = this.#options.platform === "browser";
 		if (kind === "dynamic-import") {
 			return {
@@ -292,7 +387,22 @@ class ImportRules {
 				text: `import("${specifier}"): a plugin script has no dynamic import (${PLUGIN_FILE_HINT})`,
 			};
 		}
-		if (specifier === PLUGINS_SPECIFIER || this.#hostPackages.has(specifier)) return { kind: "external" };
+		if (specifier === PLUGINS_SPECIFIER) return { kind: "external" };
+		const api = this.#apiImport(specifier, importer);
+		if (api !== undefined) return api;
+		if (this.#hostPackages.has(specifier)) return { kind: "external" };
+		if (this.#own.layout === "file") {
+			const directory = `${this.#own.name}/`;
+			return {
+				kind: "error",
+				text: `"${specifier}": a single-file plugin imports only host packages (the app's API); make it a directory "${directory}" with a package.json`,
+			};
+		}
+		const from = this.#place(importer);
+		// A copied file (another plugin's) imports host packages and its own plugin's files only: no builtins either.
+		if (from.kind === "copied" && !specifier.startsWith(".") && !isAbsolute(specifier)) {
+			return { kind: "error", text: `"${specifier}": ${copiedRule(from.plugin)}` };
+		}
 		if (isBuiltin(specifier)) {
 			if (!browser) return { kind: "external" };
 			return { kind: "error", text: `"${specifier}": a Node builtin in a browser build` };
@@ -301,77 +411,188 @@ class ImportRules {
 			if (browser) return { kind: "path", path: specifier.slice(0, -"?url".length), asset: true };
 			return { kind: "error", text: `"${specifier}": assets by URL are for browser builds (${PLUGIN_FILE_HINT})` };
 		}
-		const from = this.#place(importer);
-		if (from.kind === "package") return { kind: "default" };
+		if (from.kind === "package") return { kind: "package" };
 		if (specifier.startsWith(".") || isAbsolute(specifier)) return { kind: "path", path: specifier, asset: false };
 		const name = packageName(specifier);
-		const named = name === this.#own.name ? this.#own : this.#others.find((each) => each.name === name);
-		if (named !== undefined) return this.#byName(specifier, named, from);
-		if (from.kind === "copied") {
-			return { kind: "error", text: `"${specifier}": ${copiedRule(from.plugin)}` };
-		}
 		if (this.#own.external.includes(name)) {
 			if (!browser) return { kind: "external" };
 			return { kind: "error", text: `"${specifier}": chord.external packages are for Node builds` };
 		}
-		if (this.#own.dependencies.includes(name)) return { kind: "default" };
+		if (this.#own.dependencies.includes(name)) return { kind: "package" };
 		return {
 			kind: "error",
-			text: `"${specifier}": neither a host package, in the dependencies of plugin "${this.#own.name}" nor a discovered plugin "${name}"`,
+			text: `"${specifier}": neither a host package nor in the dependencies of plugin "${this.#own.name}"`,
 		};
 	}
 
 	/**
-	 * An import by name of a file of plugin `named` (`@app/notes/contract`, decision "Plugins import each other by name"):
-	 * its path in that plugin's directory, wherever that is; from a copied file only its own plugin's.
+	 * An import of the app's API or of Chord when the app has an API (slice 12 §1): a listed version the kind provides
+	 * is external (its version recorded); an unlisted version, a module the kind lacks and Chord itself are refused.
+	 * `undefined` for any other specifier.
 	 */
-	#byName(
-		specifier: string,
-		named: Plugin,
-		from: Place,
-	):
-		| { readonly kind: "path"; readonly path: string; readonly asset: false; readonly named: Plugin }
-		| { readonly kind: "error"; readonly text: string } {
-		const file = specifier.slice(named.name.length + 1);
-		if (file === "") {
+	#apiImport(specifier: string, importer: string): Resolution | undefined {
+		const api = this.#options.api;
+		if (api === undefined) return undefined;
+		const newest = `${api.name}/${api.versions[0]}`;
+		if (packageName(specifier) === CHORD_PACKAGE) {
 			return {
 				kind: "error",
-				text: `"${specifier}": names plugin "${named.name}", not a file of it ("${named.name}/contract")`,
+				text: `"${specifier}": plugins import Chord through the app's API ("${newest}"), never directly`,
 			};
 		}
-		if (from.kind === "copied" && from.plugin !== named) {
-			return { kind: "error", text: `"${specifier}": ${copiedRule(from.plugin)}` };
+		if (specifier !== api.name && !specifier.startsWith(`${api.name}/`)) return undefined;
+		const provided = `this app provides ${api.versions.join(", ")}`;
+		const version = specifier.slice(api.name.length + 1).split("/")[0]!;
+		if (version === "") {
+			return { kind: "error", text: `"${specifier}": import a version of the app's API (${provided})` };
 		}
-		return { kind: "path", path: join(named.dir, file), asset: false, named };
+		if (!api.versions.includes(version)) {
+			return { kind: "error", text: `"${specifier}": ${api.name}/${version} is not available: ${provided}` };
+		}
+		if (!this.#hostPackages.has(specifier)) {
+			return { kind: "error", text: `"${specifier}": not available to ${this.#kind} facets` };
+		}
+		if (!this.#versions.has(version)) this.#versions.set(version, importer);
+		return { kind: "external" };
 	}
 
 	/**
-	 * Why the file `path` (resolved from `importer`'s import of `specifier`, by name of plugin `named` or a relative path)
-	 * may not be inlined: a relative path into another plugin's directory, outside every discovered plugin, or, from a
-	 * copied file, outside that file's own plugin; `undefined` when it may (another plugin's file is recorded as copied).
+	 * Why the plugin file `path` (not a package's: npm packages name files as they like, `pdf.worker.mjs`) may not be
+	 * in a facet of this kind: a per-kind file (`contract.web.tsx`) or a facet file (`web.tsx`) of another kind, named
+	 * with the chain of imports that reached it; `undefined` when it may.
 	 */
-	#checkFile(path: string, importer: string, specifier: string, named: Plugin | undefined): string | undefined {
+	#checkKind(path: string, specifier: string, packageTop?: string): string | undefined {
+		const fileKind = this.#kindOf(path, packageTop);
+		if (fileKind === undefined || sameKind(fileKind, this.#kind)) return undefined;
+		const chain = this.#chainOf(path)
+			.map((file) => this.#shown(file))
+			.join(" → ");
+		return `"${specifier}": a ${fileKind} file, imported into a ${this.#kind} facet (${chain})`;
+	}
+
+	/**
+	 * The kind of the plugin file `path`, one of the app's kinds (compared without case): a name `<name>.<kind>.<ext>`,
+	 * or a facet file `<kind>.<ext>` at the top of a directory plugin (or of the plugin package `packageTop`).
+	 */
+	#kindOf(path: string, packageTop?: string): string | undefined {
+		const parts = basename(path).split(".");
+		const kinds = this.#options.kinds ?? [];
+		if (parts.length >= 3) return kinds.find((kind) => sameKind(kind, parts[parts.length - 2]!));
+		const top =
+			dirname(path) === packageTop ||
+			[this.#own, ...this.#others].some((each) => each.layout === "directory" && dirname(path) === each.dir);
+		return parts.length === 2 && top ? kinds.find((kind) => sameKind(kind, parts[0]!)) : undefined;
+	}
+
+	/** The files from the entry to `file`, by their first importers; an import cycle ends the walk. */
+	#chainOf(file: string): string[] {
+		const chain = [file];
+		const seen = new Set(chain);
+		for (let at = this.#importers.get(file); at !== undefined && !seen.has(at); at = this.#importers.get(at)) {
+			seen.add(at);
+			chain.unshift(at);
+		}
+		return chain;
+	}
+
+	/** `file` as an error names it: relative to the plugin's directory. */
+	#shown(file: string): string {
+		return relative(this.#own.dir, file).split(sep).join("/");
+	}
+
+	/**
+	 * Why the plugin file `path` (resolved from `importer`'s import of `specifier`) may not be inlined: outside the
+	 * plugin's root, in no plugin of it, or, from a copied file, outside that file's own plugin; `undefined` when it may
+	 * (another plugin's file of the root is recorded as copied).
+	 */
+	#checkFile(path: string, importer: string, specifier: string): string | undefined {
 		const from = this.#place(importer);
 		const to = this.#place(path);
 		if (to.kind === "own" && from.kind === "own") return undefined;
-		if (to.kind === "copied" && (to.plugin === named || (from.kind === "copied" && from.plugin === to.plugin))) {
+		if (to.kind === "copied" && (from.kind === "own" || (from.kind === "copied" && from.plugin === to.plugin))) {
 			this.#copied.add(path);
 			return undefined;
 		}
 		if (from.kind === "copied") return `"${specifier}": ${copiedRule(from.plugin)}`;
-		if (to.kind === "copied") {
-			return `"${specifier}": a relative path into plugin "${to.plugin.name}" (import its files by name: "${to.plugin.name}/…")`;
+		if (to.kind === "outside" && inside(this.#own.root, path)) {
+			return `"${specifier}": not a file of a plugin in this root`;
 		}
-		return `"${specifier}": outside the plugin (base code is reached through a host package, packages through dependencies)`;
+		const api = this.#options.api;
+		const base = api === undefined ? "a host package" : `the app's API ("${api.name}/${api.versions[0]}")`;
+		return `"${specifier}": outside the plugin's root (base code is reached through ${base}, other repositories' plugins through dependencies)`;
 	}
 
-	/** Where `path` lies. */
-	#place(path: string): Place {
-		if (path.split(sep).includes("node_modules")) return { kind: "package" };
-		if (inside(this.#own.dir, path)) return { kind: "own" };
-		const other = this.#others.find((each) => inside(each.dir, path));
-		return other === undefined ? { kind: "outside" } : { kind: "copied", plugin: other };
+	/**
+	 * Whether the package file `path` is plugin code: its nearest `package.json` (walking up to the plugin's
+	 * `node_modules`) has a `chord` field, or is a plugin folder the next `package.json` above lists in its
+	 * `chord.plugins` (a plugin of a repository of several, reached as a dependency); a library (even one nested in a
+	 * plugin package) is not. `top` the file's own directory when that is the package's (a facet file there is of its
+	 * kind). `undefined` for a library.
+	 */
+	async #pluginCode(path: string): Promise<{ readonly top: string | undefined } | undefined> {
+		let nearest: string | undefined;
+		for (let dir = dirname(path); inside(this.#modules, dir); dir = dirname(dir)) {
+			const manifest = await this.#manifestIn(dir);
+			if (manifest === "none") continue;
+			if (nearest === undefined && manifest === "chord") return { top: dir === dirname(path) ? dir : undefined };
+			if (nearest === undefined) {
+				nearest = dir;
+				continue;
+			}
+			if (manifest === "plain" || !(await this.#listedIn(dir)).has(nearest)) return undefined;
+			return { top: nearest === dirname(path) ? nearest : undefined };
+		}
+		return undefined;
 	}
+
+	/** The plugin folders the package in `dir` lists in `chord.plugins` (discovery's reading of it; once per build). */
+	#listedIn(dir: string): Promise<ReadonlySet<string>> {
+		let listed = this.#listed.get(dir);
+		if (listed === undefined) {
+			const at = { root: dir, required: false, kinds: this.#options.kinds ?? [] };
+			listed = discoverPackage(dir, at, this.#context).then(({ plugins }) => new Set(plugins.map(({ dir }) => dir)));
+			this.#listed.set(dir, listed);
+		}
+		return listed;
+	}
+
+	/** What `dir`'s `package.json` is: absent, without a `chord` field, or with one (read once per build). */
+	#manifestIn(dir: string): Promise<"chord" | "plain" | "none"> {
+		let read = this.#manifests.get(dir);
+		if (read === undefined) {
+			read = readFile(join(dir, "package.json"), "utf8").then(
+				(text) => {
+					try {
+						// A trust boundary: a package's manifest, read only for its `chord` field.
+						return (JSON.parse(text) as { chord?: unknown } | null)?.chord !== undefined ? "chord" : "plain";
+					} catch {
+						return "plain";
+					}
+				},
+				() => "none",
+			);
+			this.#manifests.set(dir, read);
+		}
+		return read;
+	}
+
+	/** Where `path` (a real path) lies; a package is one of the plugin's own `node_modules`, any other is outside. */
+	#place(path: string): Place {
+		if (inside(this.#modules, path)) return { kind: "package" };
+		if (inside(this.#own.dir, path)) return { kind: "own" };
+		// Another plugin's own packages are no one's to import; a root may itself lie under a `node_modules` (an app
+		// installed from npm with its plugins), so only the part below a plugin's directory counts.
+		const other = this.#others.find(
+			(each) => inside(each.dir, path) && !inside(join(each.dir, "node_modules"), path),
+		);
+		if (other === undefined) return { kind: "outside" };
+		return other.root === this.#own.root ? { kind: "copied", plugin: other } : { kind: "other-root", plugin: other };
+	}
+}
+
+/** Whether two kind names are the same kind: compared without case (`contract.Web.ts` is a web file). */
+function sameKind(a: string, b: string): boolean {
+	return a.toLowerCase() === b.toLowerCase();
 }
 
 /** The rule a copied file broke. */

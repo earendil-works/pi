@@ -6,12 +6,12 @@ import { pluginFile } from "@earendil-works/chord/next/plugins";
 // Host packages: an ES module (default and named imports) and a CommonJS one, the app's own instances.
 import app, { currency } from "@example/app";
 import legacy from "@example/legacy";
-// A contract of another plugin: a copy built into this script.
-import { Report } from "@example/shapes/contract";
 // An npm dependency: inlined into this script by the build (installed first).
 import { greet } from "example-greeting";
 // A `chord.external` package: left external, loaded from this plugin's node_modules when the script runs.
 import { where } from "example-native";
+// A contract of another plugin of this root, by relative path: a copy built into this script.
+import { Report } from "../shapes/contract.ts";
 
 // A file of this plugin, read at run time by its absolute path.
 const rates = JSON.parse(readFileSync(pluginFile("data/rates.json"), "utf8")) as { readonly vat: number };

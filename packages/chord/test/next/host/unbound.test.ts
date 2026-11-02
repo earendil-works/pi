@@ -3,6 +3,7 @@ import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { int, local, str } from "../../../src/next/contracts/index.ts";
 import { ChordError, type Principal } from "../../../src/next/data/index.ts";
 import { createHost, defineFacet } from "../../../src/next/host/index.ts";
+import type { ChordHost } from "../../../src/next/host/internal.ts";
 import { Binding } from "../../../src/next/host/reference.ts";
 import { UnboundIndex, type UnboundRequest } from "../../../src/next/host/unbound.ts";
 import { memoryLinkPair } from "../../../src/next/link/index.ts";
@@ -183,5 +184,24 @@ describe("holds waiting in the index", () => {
 		expect([before.host.activity.value.references, after.host.activity.value.references]).toEqual([0, 0]);
 		await expectCollected(...holds);
 		expect([before.host, after.host]).toBeDefined();
+	});
+});
+
+describe("what waits unserved (slice 12 §6, testPlugin)", () => {
+	it("lists the index's names sorted, and the host the names no plugin serves", async () => {
+		const index = new UnboundIndex();
+		index.add("b", request());
+		index.add("a", request());
+		expect(index.names()).toEqual(["a", "b"]);
+		const host = createHost({ onError: () => {} });
+		await host.load(
+			[{ name: "info", facet: defineFacet((h) => h.serve(Info, () => ({ title: constant("t") }))) }],
+			context,
+		);
+		const held = host.hold(Missing, { id: 1 }, context);
+		await delivered();
+		expect((host as unknown as ChordHost).unservedNames()).toEqual(["app.missing"]);
+		held.release();
+		await host.close(context);
 	});
 });

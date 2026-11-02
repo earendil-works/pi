@@ -85,6 +85,12 @@ export class RegistryRecord {
 		this.#report = report;
 	}
 
+	/** The newest registry version its contributions were built against; `undefined` without contributions. */
+	get newestContribution(): number | undefined {
+		if (this.#contributions.length === 0) return undefined;
+		return Math.max(...this.#contributions.map(({ version }) => version));
+	}
+
 	/** The provider's version; `undefined` while none serves it. */
 	get providedVersion(): number | undefined {
 		return this.#provider?.version;

@@ -957,3 +957,18 @@ to frame and encode/decode alike; reconnect of 1 / 100 references 0.94-1.15 / 80
 1,000 parked calls 24.4-25.2 → 24.3-24.6 ms. `reload.ts`: swap of 50 / 1,000 objects 1.44-1.55 / 30.78-31.42 →
 1.32-1.56 / 31.20-31.83 ms, restart 0.96-0.98 / 15.75-16.34 → 0.95-1.10 / 15.91-15.94 ms until the reload resolves.
 `registries.ts` alike (one of 100 contributions set 1.47-2.45 → 1.48-3.41 µs, run to run).
+
+## Slice 12: the plugin model (2026-11-01)
+
+**The build's checks** (`test/next/bench/plugins.ts`, the 7c set: 20 plugins, one worker facet each, a copied contract
+by relative path), Node 24.4.1, CPU 8, medians of seven runs, three alternating runs. HEAD `ebce9debd` (its bench
+importing the contract by plugin name, which HEAD resolves) → this build: cold build of the 20 facets 257.6-257.8 →
+257.2-258.8 ms, rebuild of one facet 13.2-13.5 → 13.3-13.9 ms. With the app's API set and the kinds named (every
+import checked by version and kind, every resolved file by its kind segment; the plugins importing `@bench/app/v1`):
+257.4-258.8 ms cold, 12.9-14.3 ms rebuild, against 258.2-259.7 ms without. The checks cost nothing measurable; no hot
+path changed (the kernel gains two accessors read only by `testPlugin`).
+
+Fix round 1: the bench itself now builds with the app's API and the kinds (its plugins import `@bench/app/v1`; Opus
+L5), and every package file's real path is checked against the plugin's `node_modules`. CPU 8, three runs: cold
+build 261.1-270.2 ms, rebuild 13.6-14.4 ms (the first two runs as before, the third with a slower cold build on a busy
+machine).

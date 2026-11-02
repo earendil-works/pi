@@ -1,7 +1,7 @@
 // Fixture plugin (slice 7c): the worker facet, serving `Notes` with a count document.
 
 import { constant, defineFacet, defineState, int, obj } from "@earendil-works/chord/next";
-import { Notes } from "@test/contracts/contract";
+import { Notes } from "../contracts/contract.ts";
 import { label } from "./label.ts";
 
 const Count = defineState("count", { schema: obj({ n: int() }), version: 1, initial: () => ({ n: 0 }) });
