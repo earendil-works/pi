@@ -1,6 +1,6 @@
 {
   "manifest_version": "1.1.0",
-  "governance_contract": "NLT-PI-DEV-OTOI-1.0.0",
+  "governance_contract": "NLT-PI-DEV-OTOI-1.0.1",
   "organizational_baseline": "ORG-DEV-OTOI-1.0.4",
   "repository": {
     "name": "NeuroLift-Technologies/nlt-pi",
@@ -10,10 +10,7 @@
   },
   "canonical_contract": "NLT-DEV-OTOI.md",
   "agent_gateway": "AGENTS.md",
-  "session_directives": [
-    "CLAUDE.md",
-    "AGENTS.md"
-  ],
+  "session_directives": ["CLAUDE.md", "AGENTS.md"],
   "discovery": {
     "index": ".nltotoi/index/governance-files.md",
     "validation_script": ".nltotoi/scripts/validate-governance.sh",
@@ -68,6 +65,7 @@
     ".github/ISSUE_TEMPLATE/agent-escalation.md",
     ".github/ISSUE_TEMPLATE/governance-proposal.md",
     "PULL_REQUEST_TEMPLATE.md",
+    "scripts/governance-validator.test.mjs",
     ".github/workflows/validate-nlt-governance.yml"
   ],
   "metadata": {
