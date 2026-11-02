@@ -53,7 +53,7 @@
 		"release:minor": "node scripts/release.mjs minor",
 		"release:major": "node scripts/release.mjs major",
 		"release:fix-links": "node scripts/release-notes.mjs fix-github-releases",
-		"prepare": "husky",
+		"prepare": "node scripts/prepare-husky.mjs",
 		"check:mvp": "npm run typecheck --workspace=@neurolift/nlt-pi-mvp"
 	},
 	"devDependencies": {
