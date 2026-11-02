@@ -30,12 +30,19 @@ case "${1:-focused}" in
 			anthropic-thinking-disable anthropic-oauth oauth-callback-server anthropic-sse-parsing
 			google-shared-gemini3-unsigned-tool-call google-shared-convert-tools meta-oauth
 			generic-endpoint-provider openrouter-regional openrouter-user-models
-			openai-responses-mid-convo-effort openai-codex-stream provider-audit-model-generation native-providers-catalog
+			openai-responses-mid-convo-effort openai-codex-stream openai-responses-compat
+			openai-completions-tool-choice images-models
+			provider-audit-model-generation native-providers-catalog native-providers-kimi-wire
 		)
-		agent_tests=(suite/stationarity-extension remote-catalog-names anthropic-oauth-prompt-drift)
+		core_agent_tests=(agent-loop)
+		agent_tests=(
+			suite/stationarity-extension suite/agent-session-codemode
+			add-endpoint-provider remote-catalog-names anthropic-oauth-prompt-drift references
+		)
 		# vitest skips a listed file that does not exist, so a branch missing from next would pass silently.
 		missing=()
 		for t in "${ai_tests[@]}"; do [[ -f "packages/ai/test/$t.test.ts" ]] || missing+=("packages/ai/test/$t.test.ts"); done
+		for t in "${core_agent_tests[@]}"; do [[ -f "packages/agent/test/$t.test.ts" ]] || missing+=("packages/agent/test/$t.test.ts"); done
 		for t in "${agent_tests[@]}"; do [[ -f "packages/coding-agent/test/$t.test.ts" ]] || missing+=("packages/coding-agent/test/$t.test.ts"); done
 		if [[ ${#missing[@]} -gt 0 ]]; then
 			printf 'focused test file missing (is its branch merged into this checkout?): %s\n' "${missing[@]}" >&2
@@ -43,6 +50,7 @@ case "${1:-focused}" in
 		fi
 		ensure_ai_deps_built
 		(cd packages/ai && npx vitest run "${ai_tests[@]/#/test/}")
+		(cd packages/agent && npx vitest run "${core_agent_tests[@]/#/test/}")
 		(cd packages/coding-agent && npx vitest run "${agent_tests[@]/#/test/}")
 		;;
 	all)
