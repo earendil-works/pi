@@ -2251,6 +2251,11 @@ validation and copies the v2 kernel added around Delta.
   marked public (a landing page, a webhook, the ephemeral name login, which hands out a principal). Authenticators stay
   the `Authenticators` registry, filled by the authenticator plugins the app chose; a session helper issues and revokes
   sessions so authenticators do not each reinvent cookies and logout.
+  (c) Command-line clients (owner: "that sounds good"; the TUI client too) connect over the same WebSocket with a
+  token in a header (no Origin, no Fetch Metadata: not a browser request; the token decides): on the same machine an
+  owner token file in the data directory readable only by the OS user running the app; from another machine a device
+  pairing flow (the tool shows a code and a link, the owner approves in a browser, the tool stores the token), the
+  token a session like any other, listed and revocable.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
