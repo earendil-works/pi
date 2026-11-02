@@ -5,13 +5,13 @@
 ## Active
 
 ### NLTPI-MVP-001 — NLT Coding Agent MVP scaffold
-**Status:** scaffolded  
+**Status:** scaffolded; workspace integration and validation wiring added on PR branch  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
-**Summary:** Created an isolated `mvp/` TypeScript application boundary consuming `@earendil-works/pi-coding-agent`. Runtime composition and Vercel deployment are not implemented.  
+**Summary:** Created an isolated `mvp/` TypeScript application boundary consuming the checked-in `packages/coding-agent` workspace. Root npm workspace/lockfile wiring and an explicit MVP typecheck in repository validation are included. Runtime composition and Vercel deployment are not implemented.  
 **PR:** https://github.com/NeuroLift-Technologies/nlt-pi/pull/8  
 **Branch:** `feat/mvp-coding-agent-scaffold`  
-**Verification:** Not run; no local checkout or package installation was available.  
-**Next action:** Review scaffold, select Vercel framework, and implement governed runtime composition.
+**Verification:** Connector-only edits; npm install, lockfile validation, build, typecheck, and tests have not been run locally. PR CI must verify the generated-equivalent lockfile and checks.  
+**Next action:** Verify PR CI, then review Vercel monorepo source inclusion and select the framework before governed runtime composition.
 
 ### NLTPI-GOV-002 — Align repository implementation with public governance baseline
 **Status:** in_review  
