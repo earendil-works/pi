@@ -2304,6 +2304,11 @@ validation and copies the v2 kernel added around Delta.
   3", (c)), downloads the base bundle and the TUI plugin scripts from the server and runs the app's TUI entry, always
   inside p2's sandbox: a permission-dropped worker thread with a bridge terminal, the trusted launcher outside it
   holding the credentials, the terminal and local preferences. No unsandboxed mode, also for the owner's own server.
+- **Slice 11, P9: a terminal component scope, library-agnostic (owner, 2026-11-01: "yeah, sure"; p2's `TuiScope`
+  in `src/runtime/tui.ts`):** the counterpart of the React bindings: a scope tied to a component's life with `hold`,
+  `watch` and `registry`, releasing everything on dispose, calling one `changed` callback the app wires to its redraw
+  (one line with pi-tui; any library works). p2's retry with backoff for gone references is not carried over (v2
+  references wait and rebind by themselves). No pi-tui dependency.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
