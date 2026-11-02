@@ -2212,6 +2212,17 @@ validation and copies the v2 kernel added around Delta.
   (host packages), no other files and no contract files for others; it may serve objects, define contracts for
   itself inline and contribute to registries. When it needs more, it becomes a directory with the same name, which a
   reload treats as the same plugin. The watcher's `set` mark covers files appearing and disappearing at a root's top.
+- **Testing a plugin alone (owner, 2026-11-01: "let's do that"; plugin model point 6):** `testPlugin(dir, { kind,
+  modules, stubs, start?, principal? }, ctx)` builds the plugin as production does and loads it on an in-memory host
+  of that kind with an in-memory store. A plugin depends on four things, each answered without a mocking framework:
+  the app's API and Chord are the real modules (definitions only); other plugins' and core objects are reached
+  through contracts, so the test passes stubs, ordinary facets serving those contracts with fake data; registries
+  the plugin contributes to are served by the helper, which collects the contributions for the test to read (a
+  registry it reads gets fake entries from a stub); process values come as fake start data. The result is a live host:
+  the test gets the plugin's objects, calls them, watches their state, and acts as any principal. A contract no stub
+  serves leaves its requests waiting `not_served`; the helper lists those names, so the test says what to stub.
+  Several hosts at once (a server plugin calling a worker) is a later, larger helper over memory links; the app kit
+  may ship stubs for its core contracts.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a

@@ -194,6 +194,8 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   skill and documentation for agents on a plugin's layout and build.
 - **Single-file plugins** (decision "Single-file plugins"): discovery of `<name>.<kind>.ts(x)` files, grouped by
   name; their import rule; the watcher's `set` for them.
+- **`testPlugin`** (decision "Testing a plugin alone"): stub facets, collected contributions, the list of contracts
+  nobody serves.
 
 ### After slice 11
 
