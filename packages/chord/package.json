@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/chord",
-	"version": "1.4.0",
+	"version": "1.5.0",
 	"description": "Typed host runtime for plugins, contracts, replicated state, and RPC over JSON links",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -90,8 +90,8 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-schema": "1.4.0",
-		"@earendil-works/pi-telemetry": "1.4.0"
+		"@earendil-works/pi-schema": "1.5.0",
+		"@earendil-works/pi-telemetry": "1.5.0"
 	},
 	"peerDependencies": {
 		"esbuild": "0.28.2",
