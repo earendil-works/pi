@@ -5,6 +5,9 @@ on:
     paths:
       - 'AGENTS.md'
       - 'CLAUDE.md'
+      - 'GOVERNANCE.md'
+      - 'governance.yaml'
+      - 'governance.json'
       - 'NLT-DEV-OTOI.md'
       - 'REVIEW.md'
       - 'nltotoi.json'
@@ -24,6 +27,9 @@ on:
     paths:
       - 'AGENTS.md'
       - 'CLAUDE.md'
+      - 'GOVERNANCE.md'
+      - 'governance.yaml'
+      - 'governance.json'
       - 'NLT-DEV-OTOI.md'
       - 'REVIEW.md'
       - 'nltotoi.json'
