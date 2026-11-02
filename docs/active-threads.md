@@ -8,7 +8,7 @@
 **Status:** scaffolded  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
 **Summary:** Created an isolated `mvp/` TypeScript application boundary consuming `@earendil-works/pi-coding-agent`. Runtime composition and Vercel deployment are not implemented.  
-**PR:** pending  
+**PR:** https://github.com/NeuroLift-Technologies/nlt-pi/pull/8  
 **Branch:** `feat/mvp-coding-agent-scaffold`  
 **Verification:** Not run; no local checkout or package installation was available.  
 **Next action:** Review scaffold, select Vercel framework, and implement governed runtime composition.
