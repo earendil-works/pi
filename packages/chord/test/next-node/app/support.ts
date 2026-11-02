@@ -16,7 +16,7 @@ import {
 	type AppOptions,
 	Files,
 	Sessions,
-	startApp,
+	startServer,
 	WorkerInfo,
 } from "../../../src/next-node/app/index.ts";
 import { Http } from "../../../src/next-node/http/index.ts";
@@ -72,7 +72,7 @@ export async function testApp(
 	for (const [dir, files] of Object.entries(options.plugins ?? {}))
 		await writePlugin(root, dir, `@test/${dir}`, files);
 	const errors: unknown[] = [];
-	const app = await startApp<TestPrincipal>(
+	const app = await startServer<TestPrincipal>(
 		{
 			name: "chord-test",
 			dataDir,

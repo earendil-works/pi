@@ -2272,11 +2272,11 @@ fails closed when stale; a start waits for a draining old holder without polling
 
 ### The app kit (`chord/next/app`; slice 13)
 
-Decisions "The app kit, point 1" to "point 5". `startApp(options)` on the server, `startWorker(options)` in a worker
+Decisions "The app kit, point 1" to "point 5". `startServer(options)` on the server, `startWorker(options)` in a worker
 entry. Opinionated and small: an app is its API, its built-in plugins and a start script.
 
 - **Shape:** the app's layout is fixed: `src/api/v<n>/` (shared and per-kind modules) and the built-in plugins root
-  `plugins/`. The data directory is a `startApp` option (no environment variables), default a dot directory named after
+  `plugins/`. The data directory is a `startServer` option (no environment variables), default a dot directory named after
   the app in the home directory. One server; worker kinds are a list the app defines, each a host kind with its own
   params (sharding is the app's) and how it starts (entry, start data, principal, idle time); zero kinds is a server
   with clients only.
@@ -2290,7 +2290,9 @@ entry. Opinionated and small: an app is its API, its built-in plugins and a star
 - **Storage:** one store for the server, a directory per worker under its kind and address with its store; plugins
   never use data-directory paths. A files plugin per address (`put`, chunked transfers, a watchable index, caps) is
   the default file storage; raw directories only where a real path is needed, owned by one object, under the worker's
-  directory. Export and import per address: the store's archive plus the worker's directory.
+  directory. Export and import the data a host created (`exportData`, `importData`): the store's archive plus its
+  files; export stops nothing (a running worker packs its own store; without one the server reads it under the
+  worker's lock), import refuses an address that has data (decision "App kit naming and export").
 - **Plugins:** the app's root (required) and the user's root in the data directory; installs from git or npm; one
   "apply changes" call builds and rolls out to the server, then every running worker, exposed by the app as it likes.
 

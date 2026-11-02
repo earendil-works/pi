@@ -1,6 +1,7 @@
-// Export and import per address (slice 13 §4), with example 53's notes app. `app.exportAddress` stops a project's
-// worker and writes one archive: a manifest (app, API version, format), the project's store export and its files.
-// `app.importAddress` makes another address from it (refusing one that has data) and the next request starts its
+// Export and import a host's data (slice 13 §4, decision "App kit naming and export"), with example 53's notes app.
+// `app.exportData` stops nothing: the project's running worker writes one archive of its own store (one consistent
+// point) and files, with a manifest (app, API version, format); without a worker the server writes it.
+// `app.importData` makes another address from it (refusing one that has data) and the next request starts its
 // worker on the imported store and files. Archives of another app are refused.
 // Run from packages/chord:
 //   node --conditions=source --experimental-strip-types test/next/examples/55-app-export/main.ts
@@ -38,9 +39,9 @@ await p1.write("the plan", context);
 const attachment = await p1.attach({ name: "plan.txt", body: "step 1, step 2" }, context);
 p1.release();
 
-// 2. Export p1: its worker stops, the archive is written (mode 0600), and p1 goes on (the next hold starts it).
+// 2. Export p1 while its worker runs: the worker writes the archive (mode 0600) and goes on.
 const archive = join(base, "p1.tar");
-await app.exportAddress(Project({ id: "p1" }), archive, context);
+await app.exportData(Project({ id: "p1" }), archive, context);
 console.log(
 	"1. exported:",
 	`${(await stat(archive)).size} bytes`,
@@ -48,7 +49,7 @@ console.log(
 );
 
 // 3. Import it as p2: a copy with p1's text and attachment, its own worker and directory.
-await app.importAddress(archive, Project({ id: "p2" }), context);
+await app.importData(archive, Project({ id: "p2" }), context);
 const p2 = await app.host.get(Notes, { id: "p2" }, context);
 console.log("2. p2:", JSON.stringify(p2.text.value), JSON.stringify(await p2.attachment(attachment, context)));
 await p2.write("p2's own plan", context);
@@ -59,7 +60,7 @@ again.release();
 
 // 4. An address that has data is never overwritten.
 await app
-	.importAddress(archive, Project({ id: "p1" }), context)
+	.importData(archive, Project({ id: "p1" }), context)
 	.catch((error: Error) => console.log("3. refused:", error.message.replace(base, "…")));
 
 await app.close(context);

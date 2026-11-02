@@ -95,10 +95,14 @@
 	},
 	"peerDependencies": {
 		"esbuild": "0.28.2",
+		"react": "19.3.0",
 		"ws": "8.21.0"
 	},
 	"peerDependenciesMeta": {
 		"esbuild": {
+			"optional": true
+		},
+		"react": {
 			"optional": true
 		},
 		"ws": {
@@ -106,7 +110,11 @@
 		}
 	},
 	"devDependencies": {
+		"@types/react": "19.2.14",
+		"@types/react-dom": "19.2.3",
 		"@types/ws": "8.18.2",
+		"react": "19.3.0",
+		"react-dom": "19.3.0",
 		"vitest": "4.1.12",
 		"ws": "8.21.0"
 	}

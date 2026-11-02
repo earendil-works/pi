@@ -12,11 +12,12 @@ import { openNodeSqliteDatabase } from "../../sqlite/node.ts";
 import type { Watchable } from "../../watch.ts";
 import { workerMain } from "../workers/index.ts";
 import type { AppApi, AppKind, KitStart } from "./app.ts";
+import { hostDataFacet } from "./data.ts";
 import { filesFacet } from "./files.ts";
 import { workerInfoFacet } from "./info.ts";
 import { privateDirectory, privateStore } from "./layout.ts";
 
-/** What `startWorker` takes: the app's API and kinds as the server's `startApp` has them, this process's modules. */
+/** What `startWorker` takes: the app's API and kinds as the server's `startServer` has them, this process's modules. */
 export type WorkerOptions = {
 	readonly api: AppApi;
 	readonly kinds: Readonly<Record<string, AppKind>>;
@@ -32,7 +33,7 @@ export function startWorker<P extends Principal>(options: WorkerOptions): void {
 	const packages = Object.assign({}, ...Object.values(options.kinds).map((kind) => kind.packages ?? {}));
 	workerMain(
 		async ({ address, start, parent, plugins, onClose }, context) => {
-			// The server's `startApp` sends `{ kit, app }`.
+			// The server's `startServer` sends `{ kit, app }`.
 			const { kit, app } = start as { readonly kit: KitStart; readonly app: JsonValue };
 			await privateDirectory(kit.dir);
 			await privateStore(join(kit.dir, "store.sqlite"));
@@ -58,6 +59,10 @@ export function startWorker<P extends Principal>(options: WorkerOptions): void {
 			const core = [
 				{ name: "chord.app.worker-info", facet: workerInfoFacet<P>(info) },
 				{ name: "chord.app.files", facet: filesFacet<P>(join(kit.dir, "files"), kit.files, kit.uploads) },
+				{
+					name: "chord.app.data",
+					facet: hostDataFacet<P>(store, join(kit.dir, "files"), kit.server as unknown as P),
+				},
 			];
 			await plugins.load(host, { kind: kit.facet, core }, context);
 			return options.busy === undefined ? {} : { busy: options.busy };

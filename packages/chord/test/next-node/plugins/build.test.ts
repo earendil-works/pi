@@ -168,6 +168,65 @@ describe("building a facet: the import table", () => {
 		expect(built.source).toContain('require("react/jsx-runtime")');
 	});
 
+	it("scopes a CSS module's class names to its file, the import giving the mapping (slice 11 §4b)", async () => {
+		const root = await tempRoot();
+		await writePlugin(root, "web", "@test/web", {
+			"web.ts": 'import styles from "./notes.module.css";\nexport default { setup: () => styles.card };',
+			"notes.module.css": ".card { color: var(--accent); }",
+		});
+		const { plugin } = await discovered(root, "@test/web");
+		const built = script(await buildFacet(plugin, "web", BROWSER, context));
+		const scoped = /\.(chord_[0-9a-f]{8}_notes_card)\{color:var\(--accent\)\}/.exec(built.css?.text ?? "");
+		expect(scoped).not.toBeNull();
+		expect(built.source).toContain(`card:"${scoped![1]}"`);
+		// Another plugin's `notes.module.css` gets other names.
+		await writePlugin(root, "other", "@test/other", {
+			"web.ts": 'import styles from "./notes.module.css";\nexport default { setup: () => styles.card };',
+			"notes.module.css": ".card { color: red; }",
+		});
+		const other = script(await buildFacet((await discovered(root, "@test/other")).plugin, "web", BROWSER, context));
+		expect(other.css?.text).toMatch(/\.chord_[0-9a-f]{8}_notes_card\{/);
+		expect(other.css?.text).not.toContain(scoped![1]);
+	});
+
+	it("gives a CSS module's url() assets, its @import, composes and escaped class names (Opus L1)", async () => {
+		const root = await tempRoot();
+		await writePlugin(root, "web", "@test/web", {
+			"web.ts": 'import styles from "./notes.module.css";\nexport default { setup: () => styles };',
+			"notes.module.css": [
+				'@import "./plain.css";',
+				".base { color: red; }",
+				".card { composes: base; background: url(./bg.png); }",
+				".café { color: blue; }",
+			].join("\n"),
+			"plain.css": ".plain { color: green; }",
+			"bg.png": "PNG",
+		});
+		const { plugin } = await discovered(root, "@test/web");
+		const built = script(await buildFacet(plugin, "web", BROWSER, context));
+		const css = built.css?.text ?? "";
+		const card = /\.(chord_[0-9a-f]{8}_notes_card)\{/.exec(css)![1]!;
+		const base = /\.(chord_[0-9a-f]{8}_notes_base)\{/.exec(css)![1]!;
+		// composes: the class names both; the escaped name maps from the real one.
+		expect(built.source).toContain(`card:"${base} ${card}"`);
+		expect(built.source).toMatch(/caf\\u00E9:"chord_[0-9a-f]{8}_notes_caf\\xE9"/);
+		expect(css).toContain(".plain{color:green}");
+		expect(built.assets.map(({ name }) => name)).toEqual([expect.stringMatching(/^bg-[A-Z0-9]+\.png$/)]);
+		expect(css).toContain(`url("/assets/${built.assets[0]!.name}")`);
+	});
+
+	it("gives a plain stylesheet's url() an asset", async () => {
+		const root = await tempRoot();
+		await writePlugin(root, "web", "@test/web", {
+			"web.ts": 'import "./a.css";\nexport default { setup: () => {} };',
+			"a.css": ".x { background: url(./bg.png); }",
+			"bg.png": "PNG",
+		});
+		const { plugin } = await discovered(root, "@test/web");
+		const built = script(await buildFacet(plugin, "web", BROWSER, context));
+		expect(built.css?.text).toContain(`url("/assets/${built.assets[0]!.name}")`);
+	});
+
 	it("refuses CSS and assets in a Node build", async () => {
 		const root = await tempRoot();
 		await writePlugin(root, "n", "@test/n", {

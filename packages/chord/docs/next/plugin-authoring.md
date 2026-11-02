@@ -114,6 +114,18 @@ No type check, no build hooks, no `dist` needed; generated files are committed. 
 process of its kind with that process's API modules. A failed build or evaluation leaves the plugin out (at startup)
 or keeps its old code (at a reload), reported with the error.
 
+## Styles and themes (web and terminal facets)
+
+- A web facet's CSS is served with its script and swapped when the plugin reloads. Scope it with a **CSS module**: a
+  file named `*.module.css` has its class names made unique to the plugin and the file, and its import is the mapping
+  (`import styles from "./notes.module.css"; <div className={styles.card}>`). Plain CSS files still work; their class
+  names should then start with the plugin's name.
+- Read the app's look from its CSS variables (`var(--accent)`, `var(--bg)`, `var(--fg)`, `var(--muted)`, `var(--error)`,
+  `var(--warning)`, `var(--success)`, and the app's own roles), never fixed colours: the active theme sets them.
+- In a terminal facet, ask the app's theme lookup for a role (`theme.fg("accent", "Notes")`); never write raw colours.
+- A theme is data: contribute a `Theme` (`{ id, name, mode, colors, web?, tui? }`) to the kit's `Themes` registry,
+  from a web facet and a terminal facet to reach both. Users pick one dark and one light theme.
+
 ## Installing
 
 - `plugins.installPlugin({ git: "https://github.com/bob/stats.git", ref: "v1.2.0" }, root, ctx)`: a shallow clone of

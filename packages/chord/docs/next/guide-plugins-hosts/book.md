@@ -268,7 +268,7 @@ a `remote` object is made per principal, so a guest can get a read-only variant 
 :::note | The app kit does this wiring
 Starting workers, routing a host kind to them, the WebSocket entry and authentication are slice 10's components
 (`createWorkers`, `chord.http`). An app built with the app kit (`chord/next/app`, the last chapter) does not wire them:
-`startApp(...)` on the server and `startWorker(...)` in a worker's entry do.
+`startServer(...)` on the server and `startWorker(...)` in a worker's entry do.
 :::
 
 # Client Hosts {#clients lede="Browser tabs and terminal UIs are hosts too: what they can do, and what they cannot."}
@@ -633,7 +633,7 @@ same name, the first root wins, and the other is reported.
   as production does, loads it on an in-memory host beside stub facets serving what it uses, collects what it
   contributes to registries nobody serves, and lists the contracts it waits for (`docs/next/plugin-authoring.md`).
 
-# The App Kit {#kit lede="startApp and startWorker: the hosts, stores, sign-in, files and plugin roots every app needs, so an app is its API, its plugins and a start script."}
+# The App Kit {#kit lede="startServer and startWorker: the hosts, stores, sign-in, files and plugin roots every app needs, so an app is its API, its plugins and a start script."}
 
 The chapters so far wired an app by hand: a store, a host, `createHttp`, `createWorkers`, `createPlugins`, an
 authenticator, a worker entry connecting to its parent. Every app needs the same wiring, and most of it has one right
@@ -646,7 +646,7 @@ The notes app of example 53 is four files of base code and two plugins:
 
 ```ts
 // start.ts
-const app = await startApp<NotesPrincipal>({
+const app = await startServer<NotesPrincipal>({
 	name: "notes",                                  // the data directory: ~/.notes unless dataDir says otherwise
 	root: "./plugins",                              // the app's own plugins: a required root
 	api: { name: "@notes/app", versions: ["v1"], modules: { "@notes/app/v1": v1, "@notes/app/v1/server": v1server } },
@@ -666,7 +666,7 @@ console.log(`Open ${app.ownerLink()}`);
 startWorker({ api: API, kinds: KINDS, onError: (error) => log(error) });
 ```
 
-`startApp` creates the data directory (`server/store.sqlite`, `workers/<kind>/<address>/`, `plugins/`, `logs/`,
+`startServer` creates the data directory (`server/store.sqlite`, `workers/<kind>/<address>/`, `plugins/`, `logs/`,
 `owner-token`), opens the server's store, creates the server host, HTTP, a workers component per worker kind and the
 plugins component over two roots: the app's `plugins/` and the user's `<dataDir>/plugins/`. Then it loads the server's
 plugins with the kit's own facets beside them and resolves. `startWorker` does the worker's half: the project's
@@ -707,9 +707,10 @@ Users other than the owner come from optional plugins the app adds: `defineUsers
 The kit never reloads by itself. An edit or an install marks plugins dirty; `app.plugins.state` drives the app's
 "apply changes" button, and `app.applyChanges(ctx)` builds and rolls out to the server, then the workers.
 
-A project's data is its directory. `app.exportAddress(Project({ id }), path, ctx)` stops its worker and writes one
-archive (a manifest, the store's export, the files); `app.importAddress(path, Project({ id: "copy" }), ctx)` makes a new
-project from it and refuses one that already has data (example 55).
+A project's data is what its worker created: its store and its files. `app.exportData(Project({ id }), path, ctx)`
+writes them as one archive (a manifest, the store's export, the files) and stops nothing: a running worker writes its
+own store at one consistent point. `app.importData(path, Project({ id: "copy" }), ctx)` makes a new project from it and
+refuses one that already has data (example 55).
 
 # Reference {.appendix}
 
@@ -725,8 +726,8 @@ project from it and refuses one that already has data (example 55).
 | `plugins.load(host, { kind, core, modules }, ctx)`, `build(names)`, `rollout(steps, built)` | load, build, roll out |
 | `plugins.installPlugin(source, root, ctx)`, `testPlugin(dir, options, ctx)` | install a plugin, test one alone |
 | `hostKind(name, params?)`, `Kind(params)` | host kinds and addresses |
-| `startApp<P>({ name, dataDir?, root?, listen?, api, kinds, principal, workers?, files?, onError }, ctx)` | an app's server, with the kit |
+| `startServer<P>({ name, dataDir?, root?, listen?, api, kinds, principal, workers?, files?, onError }, ctx)` | an app's server, with the kit |
 | `startWorker({ api, kinds, busy?, onError })` | a worker's entry, with the kit |
 | `app.ownerLink()`, `app.applyChanges(ctx)`, `app.plugins.install(source, ctx)` | sign in, apply changes, install |
-| `app.exportAddress(address, path, ctx)`, `app.importAddress(path, address, ctx)` | move a worker's data |
+| `app.exportData(address, path, ctx)`, `app.importData(path, address, ctx)` | move a worker's data |
 | `AppInfo`, `WorkerInfo`, `Files`, `Sessions` | the kit's objects plugins get |

@@ -60,7 +60,9 @@ await plugins.rollout([plugins.step("server", server), workers.step("workers")],
   it; an ordinary library names files as it likes) is refused naming the chain. A plugin's root may lie under a
   `node_modules` (an app installed from npm with its plugins): only the path below a plugin's directory counts. A copied file imports host packages and its own plugin's files only, no builtins. A single-file plugin
   imports host packages only. External: host packages, `@earendil-works/chord/next/plugins`, `chord.external`
-  packages and Node builtins (Node builds; a browser build refuses both). Browser builds collect CSS into one stylesheet (`css`) and
+  packages and Node builtins (Node builds; a browser build refuses both). Browser builds collect CSS into one stylesheet (`css`; a `*.module.css` file scoped to its
+  plugin and file: its classes renamed `chord_<hash>_<file>_<class>`, its import esbuild's mapping, `composes` and
+  escaped names included, `css-modules.ts`; a stylesheet's `url()` is an asset, an `@import`ed file plain CSS) and
   assets (`import url from "./icon.svg?url"`, `.wasm`) into content-hashed files (`assets`) under `publicPath`.
   Refused, with the file and line: `import.meta`, `__dirname`, `__filename` (each use, found through the script's
   source map), a literal dynamic `import("x")` and top-level `await` (pointing to `pluginFile`; a computed `import(x)`
@@ -166,5 +168,6 @@ dependency pinned to a commit, per-kind contract files, a required root), `51-si
 per-kind files, roots, and input capture), `evaluate.ts` (evaluation, the `require` a script gets, `pluginFile`),
 `stack.ts` (the source maps of evaluated scripts while their facets live, `mapStack`), `install.ts` (dependencies,
 git folder packages, plugins from git and npm), `watcher.ts` (the watcher and its marks, a JSON watchable),
-`runtime.ts` (per-host loaded facets, complete-set loads and reloads, required roots, no esbuild), `plugins.ts` (the
+`css-modules.ts` (CSS modules scoped per plugin and file), `runtime.ts` (evaluated scripts as complete sets for the
+portable `LoadedFacets` of `next/surfaces`, required roots, no esbuild), `plugins.ts` (the
 component: kinds, current sets, `build`, `load`, `reload`, `step`, `rollout`, installs), `testing.ts` (`testPlugin`).

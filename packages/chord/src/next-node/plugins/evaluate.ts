@@ -9,6 +9,7 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { Script } from "node:vm";
 import type { Principal } from "../../next/data/index.ts";
 import type { Facet } from "../../next/host/index.ts";
+import { interop } from "../../next/surfaces/registered.ts";
 import type { BuiltFacet } from "./build.ts";
 import type { Plugin } from "./discover.ts";
 import { registerScript } from "./stack.ts";
@@ -144,23 +145,4 @@ function fileOf(plugin: Plugin, path: string): string {
 		throw new Error(`pluginFile("${path}"): outside the directory of plugin "${plugin.name}"`);
 	}
 	return file;
-}
-
-/** ESM namespaces wrapped for a CommonJS script, by namespace: one wrapper per namespace, held as long as it is. */
-const wrapped = new WeakMap<object, object>();
-
-/**
- * A host package as a CommonJS script imports it: an ESM namespace wrapped once with `__esModule` (so esbuild's interop
- * reads its `default` for a default import, its names for named ones), any other value as it is.
- */
-function interop(value: unknown): unknown {
-	if (typeof value !== "object" || value === null || Object.prototype.toString.call(value) !== "[object Module]") {
-		return value;
-	}
-	let made = wrapped.get(value);
-	if (made === undefined) {
-		made = { ...value, __esModule: true };
-		wrapped.set(value, made);
-	}
-	return made;
 }

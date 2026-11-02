@@ -249,6 +249,20 @@ describe("deny by default (slice 13 §2)", () => {
 });
 
 describe("default headers", () => {
+	it("narrows script-src to contributed script paths of the origin (slice 11 fix round 1, Opus L8)", async () => {
+		const server = await served({
+			"@app/page": contributing({
+				routes: { "GET /page": { public: true, handler: async () => ({ kind: "html", body: "<p>x</p>" }) } },
+				scripts: ["/_chord/web/"],
+			}),
+		});
+		const page = await send(server.port, "GET", "/page");
+		expect(String(page.headers["content-security-policy"])).toMatch(
+			new RegExp(`script-src http://127\\.0\\.0\\.1:${server.port}/_chord/web/ 'nonce-[^']+';`),
+		);
+		await server.close();
+	});
+
 	it("sends the baseline on every answer, a CSP with the response's own nonce and the contributed framers and sources", async () => {
 		let nonce = "";
 		const server = await served({

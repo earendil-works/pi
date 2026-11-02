@@ -80,6 +80,12 @@ export type HttpContribution = {
 	readonly relays?: readonly HttpRelay[];
 	/** Extra CSP sources by directive (`{ "img-src": ["https://cdn.example.com"] }`). */
 	readonly csp?: Readonly<Record<string, readonly string[]>>;
+	/**
+	 * The paths scripts load from (`/_chord/web/`): with any, `script-src` is these paths of the request's origin and the
+	 * response's nonce instead of the whole origin, so no other same-origin response (an upload served as JavaScript)
+	 * runs as a script.
+	 */
+	readonly scripts?: readonly string[];
 };
 
 /** The router a request uses: as it was when the request started. */
@@ -96,6 +102,8 @@ export type Router = {
 	readonly relays: readonly HttpRelay[];
 	/** Extra CSP sources by directive. */
 	readonly csp: ReadonlyMap<string, readonly string[]>;
+	/** The paths scripts load from; none: the whole origin. */
+	readonly scripts: readonly string[];
 	/** The socket handlers it serves: a socket handed out by one no longer here is closed. */
 	readonly socketHandlers: ReadonlySet<HttpSocket>;
 };
@@ -147,11 +155,13 @@ export function composeRouter(table: RegistryTable<HttpContribution>, { report }
 	const framers = new Set<string>();
 	const relays: HttpRelay[] = [];
 	const csp = new Map<string, string[]>();
+	const scripts: string[] = [];
 	const socketHandlers = new Set<HttpSocket>();
 	for (const { plugin, value } of table) {
 		for (const host of value.hosts ?? []) hosts.add(host.toLowerCase());
 		for (const framer of value.framers ?? []) framers.add(framer);
 		relays.push(...(value.relays ?? []));
+		scripts.push(...(value.scripts ?? []));
 		for (const [directive, sources] of Object.entries(value.csp ?? {})) {
 			csp.set(directive, [...(csp.get(directive) ?? []), ...sources]);
 		}
@@ -215,6 +225,7 @@ export function composeRouter(table: RegistryTable<HttpContribution>, { report }
 		framers,
 		relays,
 		csp,
+		scripts,
 		socketHandlers,
 	};
 }

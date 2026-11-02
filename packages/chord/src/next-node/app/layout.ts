@@ -38,11 +38,11 @@ export async function openDataDir(path: string): Promise<string> {
 	const home = await realpath(homedir());
 	if (dataDir === home || dataDir === parse(dataDir).root) {
 		const what = dataDir === home ? "the home directory" : "a file system's root";
-		throw new Error(`startApp: the data directory ${dataDir} is ${what}; name a directory of the app's own`);
+		throw new Error(`startServer: the data directory ${dataDir} is ${what}; name a directory of the app's own`);
 	}
 	const { uid } = await stat(dataDir);
 	if (process.getuid !== undefined && uid !== process.getuid()) {
-		throw new Error(`startApp: the data directory ${dataDir} belongs to another user (uid ${uid})`);
+		throw new Error(`startServer: the data directory ${dataDir} belongs to another user (uid ${uid})`);
 	}
 	return dataDir;
 }

@@ -3,8 +3,9 @@
 // the secret's hash is kept. A browser carries its token in the kit's signed session cookie (`HttpOnly`,
 // `SameSite=Strict`), a command-line client in `Authorization: Bearer <token>`. Browser and device sessions persist in
 // the server's store and expire after 400 days unused; ephemeral sessions (a pick-a-name login, a public route) live
-// in memory only, at most `maxEphemeral` of them (past it the oldest ends), so a public login costs the same whatever
-// came before, and none outlives the server's run.
+// in memory only (`EphemeralSessions`), at most `maxEphemeral` of them (past it the oldest ends), so a public login
+// costs the same whatever came before; each ends with its client's connection (its last link closed, a grace period
+// passed: the links endpoint's `opened` hook counts them), and none outlives the server's run.
 
 import type { Context } from "../../context/index.ts";
 import type { JsonValue } from "../../json.ts";
@@ -22,6 +23,7 @@ import {
 	readCookie,
 	readSignedCookie,
 } from "../http/index.ts";
+import { EphemeralSessions } from "./ephemeral-sessions.ts";
 import { hashToken, matchesHash, newToken } from "./secrets.ts";
 
 /** What a session is for: a browser (its cookie), a device (a command-line client's token), an ephemeral login. */
@@ -96,9 +98,6 @@ const SessionsDocument = defineState("chord.app.sessions", {
 	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 50,
 });
 
-/** An ephemeral session, in memory: its secret's hash and its principal. */
-type EphemeralSession = { readonly hash: string; readonly principal: Principal };
-
 /** How often a session's `lastUsed` is written at most: once a minute (not one commit per request). */
 const TOUCH_MS = 60_000;
 
@@ -108,17 +107,33 @@ const SESSION_IDLE_MS = 400 * 24 * 60 * 60_000;
 /** The sessions' limits: how many ephemeral sessions live at once (1,000 by default; past it the oldest ends). */
 export type SessionLimits = { readonly maxEphemeral?: number };
 
+/** The kit's sessions: the facet for the server's core facets, and the links endpoint's `opened` hook. */
+export type KitSessions<P extends Principal> = {
+	readonly facet: Facet<P>;
+	/** A link opened with `request`'s credentials: an ephemeral session's links are counted (it ends with its last). */
+	readonly opened: (request: HttpRequest) => (() => void) | undefined;
+};
+
 /**
- * The kit's facet serving `Sessions` (a host-lifetime object) and contributing its authenticator: the bearer token
- * first, else the session cookie signed with `cookieSecret`.
+ * The kit's sessions: its facet serving `Sessions` (a host-lifetime object) and contributing its authenticator (the
+ * bearer token first, else the session cookie signed with `cookieSecret`), and the links hook ending an ephemeral
+ * session with its client's connection.
  */
-export function sessionsFacet<P extends Principal>(cookieSecret: string, limits: SessionLimits = {}): Facet<P> {
-	const maxEphemeral = limits.maxEphemeral ?? 1000;
+export function createSessions<P extends Principal>(cookieSecret: string, limits: SessionLimits = {}): KitSessions<P> {
+	const ephemeral = new EphemeralSessions(limits.maxEphemeral ?? 1000);
+	const opened = (request: HttpRequest): (() => void) | undefined => {
+		const token = bearerToken(request) ?? readCookie(request, SESSION_COOKIE, cookieSecret);
+		const dot = token?.indexOf(".") ?? -1;
+		return dot > 0 ? ephemeral.linkOpened(token!.slice(0, dot)) : undefined;
+	};
+	return { facet: sessionsFacet<P>(cookieSecret, ephemeral), opened };
+}
+
+/** The facet of `createSessions`. */
+function sessionsFacet<P extends Principal>(cookieSecret: string, ephemeral: EphemeralSessions): Facet<P> {
 	return defineFacet<P>((host) =>
 		host.serve(Sessions, (_params, self) => {
 			const document = self.state(SessionsDocument);
-			// Insertion order is age order: the first entry is the oldest.
-			const ephemeral = new Map<string, EphemeralSession>();
 			const change = (fn: (sessions: Record<string, { lastUsed: number }>) => void, context: Context) =>
 				// Not awaited by authentication: the request goes on; a write that fails is made again by a later request.
 				void document.change((draft) => fn(draft.sessions), context).catch(() => {});
@@ -172,11 +187,7 @@ export function sessionsFacet<P extends Principal>(cookieSecret: string, limits:
 					const secret = newToken(32);
 					if (kind === "ephemeral") {
 						// Principals are the app's: `issue`'s callers pass one of its type.
-						ephemeral.set(id, { hash: hashToken(secret), principal: principal as Principal });
-						for (const [oldest] of ephemeral) {
-							if (ephemeral.size <= maxEphemeral) break;
-							ephemeral.delete(oldest);
-						}
+						ephemeral.issue(id, hashToken(secret), principal as Principal);
 					} else {
 						const now = Date.now();
 						const stored = JSON.stringify(principal);
@@ -199,7 +210,7 @@ export function sessionsFacet<P extends Principal>(cookieSecret: string, limits:
 				},
 				verify: async (token, ctx) => (authenticate(token, ctx) as JsonValue | undefined) ?? null,
 				revoke: async (id, ctx) => {
-					if (ephemeral.delete(id)) return null;
+					if (ephemeral.revoke(id)) return null;
 					await document.change((draft) => {
 						delete draft.sessions[id];
 					}, ctx);

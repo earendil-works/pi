@@ -1,5 +1,5 @@
 // The app kit (slice 13): an app is its API (`app/`), its built-in plugins (`plugins/`: home and notes) and a start
-// script (`start.ts`) calling `startApp`; its workers' entry (`worker.ts`) calls `startWorker`. The kit makes the data
+// script (`start.ts`) calling `startServer`; its workers' entry (`worker.ts`) calls `startWorker`. The kit makes the data
 // directory, the server's store and host, HTTP (deny by default: no session, 401), one worker per project with its own
 // store and files, and the owner's sign-in: a one-time owner link for the browser, an owner token file for command-line
 // clients on the same machine.

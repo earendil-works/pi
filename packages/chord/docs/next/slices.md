@@ -37,6 +37,13 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
 - **Slice 10** (built 2026-10-31, `slice-10.md`): `src/next-node/http/` (a `fetch` core with the security baseline,
   Chord's Node listener, `nodeRequest`, plugin sockets, links), `src/next-node/workers/`, `createPluginRuntime`, kinds,
   the kernel's `RouteHandle` and anonymous `host.root`, origins only from relays; examples 40-48.
+- **Slice 12** (committed 2026-11-01, `slice-12.md`): the plugin model in `src/next-node/plugins/` (the app's versioned
+  API, per-kind files, single-file plugins, installs from git and npm, `testPlugin`); examples 49-52.
+- **Slice 13** (committed 2026-11-02, `slice-13.md`): the app kit, `src/next-node/app/` (`startServer`, `startWorker`,
+  sessions, owner link, pairing, `Files`, `exportData`/`importData`); examples 53-55.
+- **Slice 11** (committed 2026-11-03, `slice-11.md`): `src/next/surfaces/` (scripts objects, registered scripts, the
+  connection loop, clients, themes), `src/next-web/`, `src/next-react/`, `src/next-tui/`, `src/next-node/surfaces/`,
+  `src/next-node/tui/` (the launcher and its child-process sandbox); examples 56-59.
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
@@ -64,7 +71,7 @@ telemetry last, since it instruments the app kit too; 2026-11-01: the plugin mod
 | 7c | **Plugins** | `chord/next/plugins` (discovery, `buildFacet`, `evaluateFacet`, `pluginFile`, `installDependencies`, the watcher, `rollout`, `mapStack`; no dev/prod split; the kernel's `load`/`reload` per plugin; `slice-7c.md`) |
 | 10 | **HTTP and workers** | `chord/next/http` (server, `Http` registry, responses as descriptions, WebSocket entry) and `chord/next/workers` (a worker per address, IPC, idle stop) |
 | 12 | **The plugin model** | imports (relative within a repository, package names pinned across), versioned app API with Chord re-exported, per-kind API modules and contract files with the build's import check, single-file plugins, git installs, `testPlugin`, a required root (`slice-12.md`) |
-| 13 | **The app kit** | `chord/next/app`: `startApp`, `startWorker`, layout, worker kinds, owner link, deny by default, sessions, CLI tokens, storage, the files plugin, export per address, plugin roots and "apply changes", base code as API, bootstrap and a start-data facet (`slice-13.md`) |
+| 13 | **The app kit** | `chord/next/app`: `startServer`, `startWorker`, layout, worker kinds, owner link, deny by default, sessions, CLI tokens, storage, the files plugin, export per address, plugin roots and "apply changes", base code as API, bootstrap and a start-data facet (`slice-13.md`) |
 | 11 | **Web and TUI** | `chord/next/web` (page host, React hooks) and `chord/next/tui` (launcher, sandbox), from p2's code |
 | 9 | **Telemetry** | spans, events, metrics across hosts |
 
@@ -147,7 +154,8 @@ pattern, no code. Decided cuts are noted where they apply.
 | 22 | relays, size limits per part, compression at the origin, adapted bindings get diffs | 4a (relays), 4b (limits, compression), 7b |
 | 22 | trace carriers (R5) | 9 |
 | 23 | HTTP (routes, wraps, responses as descriptions, request bodies, plugin sockets), workers; channels and chunked transfers stay owner patterns until a second user | 10 |
-| 23 | the app kit: `startApp`, `startWorker`, start-data objects, deny by default, sessions, owner link and token file, device pairing, files (with chunked transfers), export and import per address, plugin roots and "apply changes", optional users, invite and ephemeral-login plugins | 13 |
+| 23 | the app kit: `startServer`, `startWorker`, start-data objects, deny by default, sessions, owner link and token file, device pairing, files (with chunked transfers), export and import per address, plugin roots and "apply changes", optional users, invite and ephemeral-login plugins | 13 |
+| 23 | web and TUI: base bundles, registered plugin scripts and the combined file, `WebScripts`/`TuiScripts`, `startPage` with the connection loop and in-place reloads, React bindings, the sandboxed terminal (launcher, sandbox, `TuiScope`), themes (`Themes`, `ThemeChoice`, CSS variables, terminal colours), CSS modules | 11 |
 | 24 | Durable integration: `chord(fn, context)` (Q6), a `RegistryReader` over composed registries; the harness object and its model and env registries are p3's (base code, owner, 2026-10-27) | 8 (Chord parts), p3 |
 | 24 | `StoreStorage` | 6b |
 | 27 | versions table: contracts (L1 done), registries 8, documents 6, jobs 5, link protocol 3a | as listed |
@@ -166,12 +174,6 @@ change; a slice's spec includes every entry of its section, and its build and re
 deleted (the slice's spec and code are the record). Moved here from `carry-over.md` (owner, 2026-10-24).
 
 
-### Slice 11 (with the app kit's follow-ups)
-
-- **App kit renames and export** (decision "App kit naming and export"): `startApp` → `startServer`;
-  `exportAddress`/`importAddress` → `exportData`/`importData`; export without stopping the worker (a kit object on the
-  worker exports its store and finished files; without a worker the server takes the lock and reads the store); import
-  unchanged apart from the name. Examples 53-55, the app README and the guide's app kit chapter follow.
 ### Any slice (protocol and checks)
 
 - **Bump `PROTOCOL_VERSION`** for any message or reason change once p3 has shipped (slice 3b added `retry`, `loading`
@@ -190,14 +192,6 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 
 - **`rebuild` of tables** (key and column-type changes): `evolveTable` has no edit for them; build one only when a
   real case needs it. (Slice 6a's second spec review; out of slice 7b's scope, `slice-7b.md` §12.)
-
-### Slice 11: web and TUI
-
-- **Ephemeral sessions end with the connection** (slice 13 §3): the kit's ephemeral login drops its sessions when the
-  server starts and gives the browser a cookie without a lifetime; ending a session when its client's last link
-  closes needs the clients' connection loop, which slice 11 builds. (Slice 13 build.)
-- **`startApp` gains the web surface** (slice 13 §6): serving the clients' bundles from the kit, behind its sessions.
-  (Slice 13 spec.)
 
 ### After slice 11
 

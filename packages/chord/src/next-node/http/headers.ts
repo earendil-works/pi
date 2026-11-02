@@ -119,7 +119,7 @@ function csp(admitted: Admitted | undefined, router: Router | undefined): readon
 	if (admitted?.framer !== undefined) framers.push(admitted.framer);
 	const directives = new Map<string, string[]>([
 		["default-src", ["'none'"]],
-		["script-src", ["'self'", NONCE]],
+		["script-src", [...scriptSources(admitted, router), NONCE]],
 		["connect-src", ["'self'", ...(admitted === undefined ? [] : [admitted.origin.replace(/^http/, "ws")])]],
 		["base-uri", ["'none'"]],
 		["form-action", ["'self'"]],
@@ -136,6 +136,13 @@ function csp(admitted: Admitted | undefined, router: Router | undefined): readon
 	const text = [...directives].map(([directive, sources]) => `${directive} ${sources.join(" ")}`).join("; ");
 	const at = text.indexOf(NONCE);
 	return [`${text.slice(0, at)}'nonce-`, `'${text.slice(at + NONCE.length)}`];
+}
+
+/** Where scripts may come from: the contributed script paths of the request's origin, else the whole origin. */
+function scriptSources(admitted: Admitted | undefined, router: Router | undefined): string[] {
+	const paths = router?.scripts ?? [];
+	if (admitted === undefined || paths.length === 0) return ["'self'"];
+	return paths.map((path) => `${admitted.origin}${path}`);
 }
 
 /** Where the nonce goes in the CSP's text while it is made. */

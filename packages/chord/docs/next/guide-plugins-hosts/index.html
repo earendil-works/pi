@@ -309,7 +309,7 @@ tab.<span class="tk-f">connect</span>(<span class="tk-f">webSocketLink</span>(<s
 a <code>remote</code> object is made per principal, so a guest can get a read-only variant of the same notes.</p>
 <div class="note"><b class="tag">The app kit does this wiring</b><p>Starting workers, routing a host kind to them, the WebSocket entry and authentication are slice 10&#39;s components
 (<code>createWorkers</code>, <code>chord.http</code>). An app built with the app kit (<code>chord/next/app</code>, the last chapter) does not wire them:
-<code>startApp(...)</code> on the server and <code>startWorker(...)</code> in a worker&#39;s entry do.</p>
+<code>startServer(...)</code> on the server and <code>startWorker(...)</code> in a worker&#39;s entry do.</p>
 </div>
 </section>
 
@@ -594,7 +594,7 @@ contributes to registries nobody serves, and lists the contracts it waits for (<
 </ul>
 </section>
 
-<section class="chapter" id="kit"><header class="opener"><div class="numeral">X</div><h2>The App Kit</h2><p class="lede">startApp and startWorker: the hosts, stores, sign-in, files and plugin roots every app needs, so an app is its API, its plugins and a start script.</p></header>
+<section class="chapter" id="kit"><header class="opener"><div class="numeral">X</div><h2>The App Kit</h2><p class="lede">startServer and startWorker: the hosts, stores, sign-in, files and plugin roots every app needs, so an app is its API, its plugins and a start script.</p></header>
 <p class="dropcap">The chapters so far wired an app by hand: a store, a host, <code>createHttp</code>, <code>createWorkers</code>, <code>createPlugins</code>, an
 authenticator, a worker entry connecting to its parent. Every app needs the same wiring, and most of it has one right
 answer. The <strong>app kit</strong> (<code>chord/next/app</code>) is that answer, opinionated on purpose: one data directory layout, one way
@@ -602,7 +602,7 @@ to sign in, one place for files.</p>
 <h3 id="a-whole-app">A whole app</h3>
 <p>The notes app of example 53 is four files of base code and two plugins:</p>
 <pre><code><span class="tk-c">// start.ts</span>
-<span class="tk-k">const</span> app = <span class="tk-k">await</span> <span class="tk-f">startApp</span>&lt;<span class="tk-t">NotesPrincipal</span>&gt;({
+<span class="tk-k">const</span> app = <span class="tk-k">await</span> <span class="tk-f">startServer</span>&lt;<span class="tk-t">NotesPrincipal</span>&gt;({
 	name: <span class="tk-s">"notes"</span>,                                  <span class="tk-c">// the data directory: ~/.notes unless dataDir says otherwise</span>
 	root: <span class="tk-s">"./plugins"</span>,                              <span class="tk-c">// the app's own plugins: a required root</span>
 	api: { name: <span class="tk-s">"@notes/app"</span>, versions: [<span class="tk-s">"v1"</span>], modules: { <span class="tk-s">"@notes/app/v1"</span>: v1, <span class="tk-s">"@notes/app/v1/server"</span>: v1server } },
@@ -620,7 +620,7 @@ console.<span class="tk-f">log</span>(<span class="tk-s">`Open ${app.ownerLink()
 
 <span class="tk-c">// worker.ts</span>
 <span class="tk-f">startWorker</span>({ api: API, kinds: KINDS, onError: (error) =&gt; <span class="tk-f">log</span>(error) });</code></pre>
-<p><code>startApp</code> creates the data directory (<code>server/store.sqlite</code>, <code>workers/&lt;kind&gt;/&lt;address&gt;/</code>, <code>plugins/</code>, <code>logs/</code>,
+<p><code>startServer</code> creates the data directory (<code>server/store.sqlite</code>, <code>workers/&lt;kind&gt;/&lt;address&gt;/</code>, <code>plugins/</code>, <code>logs/</code>,
 <code>owner-token</code>), opens the server&#39;s store, creates the server host, HTTP, a workers component per worker kind and the
 plugins component over two roots: the app&#39;s <code>plugins/</code> and the user&#39;s <code>&lt;dataDir&gt;/plugins/</code>. Then it loads the server&#39;s
 plugins with the kit&#39;s own facets beside them and resolves. <code>startWorker</code> does the worker&#39;s half: the project&#39;s
@@ -652,9 +652,10 @@ returns its token (example 54).</p>
 <h3 id="applying-changes-moving-projects">Applying changes, moving projects</h3>
 <p>The kit never reloads by itself. An edit or an install marks plugins dirty; <code>app.plugins.state</code> drives the app&#39;s
 &quot;apply changes&quot; button, and <code>app.applyChanges(ctx)</code> builds and rolls out to the server, then the workers.</p>
-<p>A project&#39;s data is its directory. <code>app.exportAddress(Project({ id }), path, ctx)</code> stops its worker and writes one
-archive (a manifest, the store&#39;s export, the files); <code>app.importAddress(path, Project({ id: &quot;copy&quot; }), ctx)</code> makes a new
-project from it and refuses one that already has data (example 55).</p>
+<p>A project&#39;s data is what its worker created: its store and its files. <code>app.exportData(Project({ id }), path, ctx)</code>
+writes them as one archive (a manifest, the store&#39;s export, the files) and stops nothing: a running worker writes its
+own store at one consistent point. <code>app.importData(path, Project({ id: &quot;copy&quot; }), ctx)</code> makes a new project from it and
+refuses one that already has data (example 55).</p>
 </section>
 
 <section class="chapter appendix" id="reference"><header class="opener"><div class="numeral">A</div><h2>Reference</h2></header>
@@ -706,7 +707,7 @@ project from it and refuses one that already has data (example 55).</p>
 <td>host kinds and addresses</td>
 </tr>
 <tr>
-<td><code>startApp&lt;P&gt;({ name, dataDir?, root?, listen?, api, kinds, principal, workers?, files?, onError }, ctx)</code></td>
+<td><code>startServer&lt;P&gt;({ name, dataDir?, root?, listen?, api, kinds, principal, workers?, files?, onError }, ctx)</code></td>
 <td>an app&#39;s server, with the kit</td>
 </tr>
 <tr>
@@ -718,7 +719,7 @@ project from it and refuses one that already has data (example 55).</p>
 <td>sign in, apply changes, install</td>
 </tr>
 <tr>
-<td><code>app.exportAddress(address, path, ctx)</code>, <code>app.importAddress(path, address, ctx)</code></td>
+<td><code>app.exportData(address, path, ctx)</code>, <code>app.importData(path, address, ctx)</code></td>
 <td>move a worker&#39;s data</td>
 </tr>
 <tr>

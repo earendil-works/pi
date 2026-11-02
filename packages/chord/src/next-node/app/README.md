@@ -1,7 +1,7 @@
 # app
 
 The app kit (slice 13, design §23 "The app kit", decisions "The app kit, point 1" to "point 5"): an opinionated layer
-over `http`, `workers` and `plugins` so an app is its API, its built-in plugins and a start script. `startApp` on the
+over `http`, `workers` and `plugins` so an app is its API, its built-in plugins and a start script. `startServer` on the
 server, `startWorker` in a worker's entry; the kit makes the data directory, the stores, the hosts, HTTP with deny by
 default, sessions and the owner's sign-in, device pairing, each host's files, export and import per address, and the
 plugin roots with "apply changes". Node-only. Exported as `@earendil-works/chord/next/app` once v2 has its entry
@@ -11,7 +11,7 @@ point. Examples 53 (`53-app/`, a whole small app), 54 (sessions and pairing) and
 
 ```ts
 // start.ts (the app's start script)
-const app = await startApp<P>({
+const app = await startServer<P>({
 	name: "acme",                                   // the default data directory: ~/.acme
 	dataDir: process.argv[2],                       // optional; no environment variables
 	root: "./plugins",                              // the app's built-in plugins (required root); this is the default
@@ -31,14 +31,16 @@ const app = await startApp<P>({
 	install: { npmCommand: ["npm"] },               // how installs run npm
 	limits: { ephemeralSessions: 1000, pendingPairings: 100, pairingsPerAddress: 10,   // the defaults
 		uploads: 64, importBytes: 4 * 2 ** 30, importEntries: 100_000 },
+	web: { entry: "./src/web/main.tsx", page: (request, assets) => shell(request.nonce, assets) },   // slice 11
+	tui: { entry: "./src/tui/main.ts" },
 	onError: (error) => log(error),                 // AppError: { kind: "host" | "http" | "workers" | "plugins", error }
 }, ctx);
 console.log(`Open ${app.ownerLink()}`);
 app.host; app.http; app.workers.get("project"); app.plugins.state; app.dataDir; app.ownerTokenFile;
 await app.plugins.install({ git: url, ref: "v1" }, ctx);   // into <dataDir>/plugins/
 await app.applyChanges(ctx);                                // build the dirty plugins, roll out: server, then workers
-await app.exportAddress(Project({ id }), "p.tar", ctx);
-await app.importAddress("p.tar", Project({ id: "copy" }), ctx);
+await app.exportData(Project({ id }), "p.tar", ctx);
+await app.importData("p.tar", Project({ id: "copy" }), ctx);
 await app.close(ctx);                                       // http, workers, host, store, plugins, the lock
 
 // worker.ts
@@ -50,7 +52,7 @@ startWorker<P>({ api, kinds, busy, onError });
 - **The API's modules** are named by convention: `<api>/<version>` for every kind and `<api>/<version>/<kind>` for a
   kind's own; a kind's `packages` (React for a web kind) are host packages besides. The modules are this process's
   instances; the worker's entry passes the same `api` and `kinds`.
-- **`startApp`**, in order: the data directory, by its real path (refused when it is the home directory, a file
+- **`startServer`**, in order: the data directory, by its real path (refused when it is the home directory, a file
   system's root, or another user's: the kit would make it private), its lock (one server per data directory, also
   through a symbolic link: a second is refused after a second's wait), the layout made private (below), the cookie secret, the server's store, the host (address `Server()`,
   `principal.server`), `createHttp` (the links endpoint at `/chord`), the plugins component with the two roots, one
@@ -94,9 +96,12 @@ and reads `AppInfo`.
   an ephemeral one only while the browser runs); a malformed token or an id that is no session (a prototype
   key included) is a plain 401. Browser and device sessions persist in the server's store; `lastUsed` is written at
   most once a minute, and a session unused for 400 days ends (checked when it is used, removed then). Ephemeral
-  sessions (a public login) live in memory only, never listed: at most `limits.ephemeralSessions`, none outliving the
-  server's run, so a login costs the same whatever came before. Past the cap the oldest ends: a flood of logins signs
-  out the earliest ephemeral users (the trade for bounded memory).
+  sessions (a public login) live in memory only (`ephemeral-sessions.ts`), never listed: at most
+  `limits.ephemeralSessions`, none outliving the server's run, so a login costs the same whatever came before. Past
+  the cap the oldest ends: a flood of logins signs out the earliest ephemeral users (the trade for bounded memory). An
+  ephemeral session ends with its client's connection (slice 11): once the last Chord link opened with it closed and
+  none opened for a minute (a reload, a reconnect), or when none opened within a minute of the login; the links
+  endpoint's `opened` hook counts them.
 - **The owner link:** each start makes a one-time token (single use, 10 minutes, the previous start's no longer
   valid), `app.ownerLink()` is `http://<the address listened on>:<port>/_chord/owner#<token>` (`127.0.0.1` for
   `0.0.0.0`, `[::1]` for `::`, an IPv6 address in brackets). The page at `GET /_chord/owner` posts
@@ -170,13 +175,17 @@ plugin's own remote methods, which call it.
 
 ## Export and import
 
-`exportAddress(address, path, ctx)` stops the address's worker (`workers.stop`) and takes its process lock (the one a
-worker takes at start) for the whole pack, writes the archive to `path` (mode 0600, staged and renamed), then releases
-the lock and lets the address start again (`workers.retry`): a hold arriving meanwhile starts a worker that waits for
-the lock, then opens the unchanged state. `importAddress` holds the same lock while it unpacks. A failed address (a
-crashed worker nobody retried) is not stopped or retried: it stays failed. The archive is a ustar of
+`exportData(address, path, ctx)` writes the data the worker at `address` created (its store and finished files) to
+`path` (mode 0600, staged and renamed), stopping nothing (decision "App kit naming and export"): a running worker packs
+its own open store (`HostData`, `data.ts`, a kit object only the server's principal may use; the store's export holds
+the commit queue while it reads, so the archive is one consistent point) and its files; with no worker running, the
+server takes the worker's process lock (no worker starts meanwhile) and packs the store itself. A file added or removed
+while the export runs may be outside that point (the index is the store's): each file is opened when the archive
+comes to it (one descriptor at a time), one deleted meanwhile skipped or read from its open handle. `importData` takes the same lock (held: a
+worker runs, so the address has data: refused) and changes nothing else. Registering an imported host in the app's own
+index is the app's. The archive is a ustar of
 `manifest.json` (`{ format: 1, app, api, address }`), `store.archive` (the store's export, JSONL) and `files/…`.
-`importAddress(archive, address, ctx)` refuses an address that has a directory, unpacks beside it and renames into
+`importData(archive, address, ctx)` refuses an address that has a directory, unpacks beside it and renames into
 place: the manifest must come first and name this app and format 1; only regular files and directories under
 `manifest.json`, `store.archive` and `files/` are taken; absolute paths, `..`, `.`, empty segments, backslashes, NULs,
 links, devices and bad checksums are refused (the kit's own tar reader, `tar.ts`); past `limits.importBytes` unpacked
@@ -185,14 +194,25 @@ archive leaves nothing. The next hold starts the worker on the imported store an
 
 ## Plugins
 
-Roots: the app's `root` (required: a plugin of it failing stops `startApp`) and `<dataDir>/plugins/` (the user's:
+Roots: the app's `root` (required: a plugin of it failing stops `startServer`) and `<dataDir>/plugins/` (the user's:
 installs go there). `app.plugins.state` is the plugins component's marks for the app's "apply changes" button;
 `applyChanges` builds the dirty plugins (and installed ones) and rolls out to the server, then each worker kind;
 nothing is applied by itself.
 
 ## Internals
 
-`app.ts` (`startApp`, the `App`), `worker.ts` (`startWorker`), `layout.ts` (the layout, private directories and
+`app.ts` (`startServer`, the `App`), `worker.ts` (`startWorker`), `layout.ts` (the layout, private directories and
 stores), `secrets.ts` (tokens, hashes, files of mode 0600), `sessions.ts`, `owner.ts` (owner link and token file),
 `pairing.ts`, `files.ts` and `uploads.ts` (chunked uploads), `info.ts` (start-data objects), `archive.ts` and `tar.ts`
-(export and import), and the optional plugins `users.ts`, `invite.ts`, `ephemeral.ts`.
+(export and import), `ephemeral-sessions.ts`, and the optional plugins `users.ts`, `invite.ts`, `ephemeral.ts`.
+
+## Web and terminal (slice 11)
+
+With `web` the kit builds the page's base bundle from `web.entry`, publishes the `web` kind's plugin scripts and serves
+the page through `web.page` at `web.paths` (`["/"]`), signed in unless `web.public` (`webSurface`,
+`next-node/surfaces`); with `tui` the terminal's base bundle and the `tui` kind's scripts for launchers
+(`tuiSurface`). Plugin assets are served under `/_chord/web/assets/` (the plugins component's `publicPath`).
+`applyChanges` rolls out to the server, the workers, then the surfaces (`web`, `tui`: the new set published, clients
+not waited for). `app.web` and `app.tui` give the base bundles' hashes. The server also serves the `Themes` registry and
+`ThemeChoice` (each principal's dark and light pick, kept in its store). Without `web` and `tui` an app has no client
+surface (API only).

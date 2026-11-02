@@ -109,6 +109,31 @@ describe("the links endpoint", () => {
 		await server.close();
 	});
 
+	it("calls links.opened for each accepted link and what it returned when that link closes (slice 11)", async () => {
+		const events: string[] = [];
+		const server = await served(
+			{},
+			{
+				config: {
+					links: {
+						path: "/chord",
+						opened: (request, principal) => {
+							events.push(`opened ${request.path} ${principal.kind}`);
+							return () => events.push("closed");
+						},
+					},
+				},
+			},
+		);
+		const socket = await socketTo(server.port, "/chord", { "x-principal": "owner" });
+		for (let index = 0; index < 100 && events.length === 0; index++) await new Promise((r) => setTimeout(r, 5));
+		expect(events).toEqual(["opened /chord owner"]);
+		socket.close();
+		for (let index = 0; index < 100 && events.length === 1; index++) await new Promise((r) => setTimeout(r, 5));
+		expect(events).toEqual(["opened /chord owner", "closed"]);
+		await server.close();
+	});
+
 	it("takes frames of at most 1 MiB unless links.options says otherwise (Opus's audit H2)", async () => {
 		const server = await served({}, { config: { links: { path: "/chord" } } });
 		const socket = await socketTo(server.port, "/chord", { "x-principal": "owner" });

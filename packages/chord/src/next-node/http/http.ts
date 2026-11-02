@@ -46,6 +46,11 @@ export type HttpOptions = {
 export type LinksOptions = {
 	readonly path: string;
 	readonly options?: LinkOptions | ((request: HttpRequest, principal: Principal) => LinkOptions);
+	/**
+	 * Called when a link is accepted, with its request and principal; what it returns is called when that link closes
+	 * (the app tracking its clients' links: the kit ends an ephemeral session with its last link).
+	 */
+	readonly opened?: (request: HttpRequest, principal: Principal) => (() => void) | undefined;
 };
 
 /** What the component reports. */
@@ -59,7 +64,7 @@ export type HttpError =
 	| { readonly kind: "hook_failed"; readonly hook: HookName; readonly plugin?: string; readonly error: unknown };
 
 /** The hooks the component calls. */
-export type HookName = "authenticate" | "relay" | "links.options";
+export type HookName = "authenticate" | "relay" | "links.options" | "links.opened";
 
 /** The running component. */
 export interface HttpComponent<P extends Principal> {
@@ -437,7 +442,15 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 				return refuse(stream, 403);
 			}
 			const admitted = { allowed, relay, principal, ...options };
-			return this.#upgrades.link(message, stream, head, admitted, this.#host, this.#context);
+			const opened = (): (() => void) | undefined => {
+				try {
+					return links.opened?.(webRequest, principal);
+				} catch (error) {
+					this.#hookFailed("links.opened", undefined, error);
+					return undefined;
+				}
+			};
+			return this.#upgrades.link(message, stream, head, admitted, this.#host, this.#context, opened);
 		}
 		const match = router.socket(webRequest.path);
 		if (match === "bad_path") return refuse(stream, 400);

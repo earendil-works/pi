@@ -15,7 +15,8 @@ Exported as `@earendil-works/chord/next/http` once v2 has its entry point.
 // the app's settings are arguments, fixed for the component's life (changing one is a restart)
 const http = createHttp(server, {
 	listen: { host: "127.0.0.1", port: 8788 },     // Chord's own listener; port 0 picks one; none: no listener
-	links: { path: "/chord", options: (request, principal) => ({ limits, maxPayload }) },   // or a value
+	links: { path: "/chord", options: (request, principal) => ({ limits, maxPayload }),     // or a value
+		opened: (request, principal) => () => linkClosed() },       // called per accepted link; its return at its close
 	closeTimeout: 30_000,
 	onError: (error) => log(error),                 // HttpError
 }, ctx);
@@ -50,6 +51,7 @@ self.contribute(Http, {
 	framers: ["https://shell.example.com"],      // who may frame the app's pages
 	relays: [{ name: "radius", verify: (request) => verified(request) }],   // { origin, framer? } | undefined
 	csp: { "img-src": ["https://cdn.example.com"] },
+	scripts: ["/_chord/web/"],                   // script-src: these paths of the origin (and the nonce), not all of it
 });
 ```
 
@@ -136,7 +138,8 @@ await http.close(ctx);   // before host.close
 - **Default headers** on every answer, the component's own 403, 404 and 503 included: `Cache-Control: no-store`,
   `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` (without framers), a CSP
   (`default-src 'none'`, scripts `'self'` and the response's own nonce, `connect-src` self and its WebSocket, `base-uri
-  'none'`, `form-action 'self'`, `frame-ancestors` the framers or `'none'`, plus contributed sources). A response's own
+  'none'`, `form-action 'self'`, `frame-ancestors` the framers or `'none'`, plus contributed sources; with contributed
+  `scripts` paths, `script-src` is those paths of the request's origin and the nonce instead of `'self'`). A response's own
   headers replace same-named ones (a list sends one line per value: several `Set-Cookie`); a header with a CR, LF or
   NUL, or a value that is no JSON, is a 500 reported `response_failed`.
 - **Sockets:** after admission, the origin checks and the authenticators (no principal and not public: 401 before

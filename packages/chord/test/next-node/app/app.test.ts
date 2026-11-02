@@ -1,4 +1,4 @@
-// Tests of `startApp` (slice 13 §1, §4, §5): the layout and the start-data object, start and close, a server without
+// Tests of `startServer` (slice 13 §1, §4, §5): the layout and the start-data object, start and close, a server without
 // workers, two worker kinds, `applyChanges`, a required root failing, and export and import per address (documents,
 // tables and files round-trip; an existing address refused).
 
@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { hostKind, local, remote, str, unknown } from "../../../src/next/contracts/index.ts";
+import { addressParam, HostData } from "../../../src/next-node/app/data.ts";
 import { AppInfo } from "../../../src/next-node/app/index.ts";
 import { rejection } from "../../next/support.ts";
 import { send } from "../http/support.ts";
@@ -199,7 +200,50 @@ describe("installs", () => {
 });
 
 describe("export and import per address", () => {
-	it("holds the worker's lock while exporting: a hold arriving meanwhile starts the worker after it (review M1)", async () => {
+	it('exports a running worker\'s data without stopping it: the worker packs its own store (decision "App kit naming and export")', async () => {
+		const base = await tempDir();
+		const root = join(base, "plugins");
+		await writePlugin(root, "notes", "@test/notes", NOTES_PLUGIN);
+		const { app } = await testApp({ root, withWorkers: true });
+		const notes = await app.host.get(Notes, { id: "p1" }, context);
+		await notes.write("before", context);
+		const workers = app.workers.get("project")!;
+		const state = () =>
+			(workers.state.value as Record<string, { status: string; pid?: number } | undefined>)["project|p1"];
+		const pid = state()!.pid;
+		const exporting = app.exportData(Project({ id: "p1" }), join(base, "p1.tar"), context);
+		// The worker goes on meanwhile: a write during the export.
+		await notes.write("during", context);
+		await exporting;
+		expect(state()).toMatchObject({ status: "running", pid });
+		expect(notes.text.value).toBe("during");
+		await notes.write("after", context);
+		await app.importData(join(base, "p1.tar"), Project({ id: "p2" }), context);
+		const copy = await app.host.get(Notes, { id: "p2" }, context);
+		// One consistent point: before or during, never after.
+		expect(["before", "during"]).toContain(copy.text.value);
+		copy.release();
+		notes.release();
+		await app.close(context);
+	}, 60_000);
+
+	it("refuses the worker's data object to any principal but the server's", async () => {
+		const base = await tempDir();
+		const root = join(base, "plugins");
+		await writePlugin(root, "notes", "@test/notes", NOTES_PLUGIN);
+		const { app } = await testApp({ root, withWorkers: true });
+		const notes = await app.host.get(Notes, { id: "p1" }, context);
+		const refused = await rejection(
+			app.host.root(async (ctx) => ctx.get(HostData, { address: addressParam(Project({ id: "p1" })) }), context, {
+				principal: { kind: "owner" },
+			}),
+		);
+		expect(refused).toMatchObject({ code: "forbidden" });
+		notes.release();
+		await app.close(context);
+	}, 60_000);
+
+	it("exports without a worker under its lock: a hold arriving meanwhile starts the worker after it (review M1)", async () => {
 		const base = await tempDir();
 		const root = join(base, "plugins");
 		await writePlugin(root, "notes", "@test/notes", NOTES_PLUGIN);
@@ -207,18 +251,21 @@ describe("export and import per address", () => {
 		const notes = await app.host.get(Notes, { id: "p1" }, context);
 		await notes.write("one", context);
 		notes.release();
+		const workers = app.workers.get("project")!;
+		await workers.stop(Project({ id: "p1" }), context);
+		await workers.retry(Project({ id: "p1" }), context);
 		// A large file makes the pack take a while.
 		const files = join(dataDir, "workers", "project", "project%7Cp1", "files");
 		await mkdir(files, { recursive: true });
 		await writeFile(join(files, "big.bin"), new Uint8Array(200 * 1024 * 1024));
-		const workers = app.workers.get("project")!;
 		const status = () =>
 			(workers.state.value as Record<string, { status: string } | undefined>)["project|p1"]?.status;
+		expect(status()).toBeUndefined();
 		let done = false;
-		const exporting = app.exportAddress(Project({ id: "p1" }), join(base, "p1.tar"), context).then(() => {
+		const exporting = app.exportData(Project({ id: "p1" }), join(base, "p1.tar"), context).then(() => {
 			done = true;
 		});
-		while (status() !== undefined) await new Promise((resolve) => setTimeout(resolve, 5));
+		await new Promise((resolve) => setTimeout(resolve, 50));
 		const holder = app.host.get(Notes, { id: "p1" }, context);
 		let heldWhileExporting = false;
 		let ranWhileExporting = false;
@@ -266,7 +313,7 @@ describe("export and import per address", () => {
 			(workers.state.value as Record<string, { status: string } | undefined>)["project|p1"]?.status;
 		const hold = app.host.hold(Notes, { id: "p1" }, context);
 		while (status() !== "failed") await new Promise((resolve) => setTimeout(resolve, 5));
-		await app.exportAddress(Project({ id: "p1" }), join(base, "p1.tar"), context);
+		await app.exportData(Project({ id: "p1" }), join(base, "p1.tar"), context);
 		expect(status()).toBe("failed");
 		hold.release();
 		await app.close(context);
@@ -283,10 +330,12 @@ describe("export and import per address", () => {
 		const file = await notes.attach("a file of p1", context);
 		notes.release();
 		const archive = join(base, "p1.tar");
-		await app.exportAddress(Project({ id: "p1" }), archive, context);
+		await app.exportData(Project({ id: "p1" }), archive, context);
 		expect((await stat(archive)).mode & 0o777).toBe(0o600);
-		await expect(app.importAddress(archive, Project({ id: "p1" }), context)).rejects.toThrow("exists already");
-		await app.importAddress(archive, Project({ id: "p2" }), context);
+		await expect(app.importData(archive, Project({ id: "p1" }), context)).rejects.toThrow(
+			"has data (its worker runs)",
+		);
+		await app.importData(archive, Project({ id: "p2" }), context);
 		const copy = await app.host.get(Notes, { id: "p2" }, context);
 		expect(copy.text.value).toBe("buy milk");
 		expect(await copy.visit("/", context)).toBe(2);
@@ -300,7 +349,7 @@ describe("export and import per address", () => {
 		await app.close(context);
 		// Another app refuses the archive.
 		const other = await testApp({ name: "other-app", withWorkers: true });
-		await expect(other.app.importAddress(archive, Project({ id: "p1" }), context)).rejects.toThrow(
+		await expect(other.app.importData(archive, Project({ id: "p1" }), context)).rejects.toThrow(
 			'an archive of "chord-test", not "other-app"',
 		);
 		await other.app.close(context);

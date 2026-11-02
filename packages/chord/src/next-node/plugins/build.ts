@@ -10,8 +10,16 @@ import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { isBuiltin } from "node:module";
 import { basename, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
-import { type BuildFailure, build, type Plugin as EsbuildPlugin, type Loader, type Message } from "esbuild";
+import {
+	type BuildFailure,
+	build,
+	type Plugin as EsbuildPlugin,
+	type Loader,
+	type Message,
+	type OnLoadResult,
+} from "esbuild";
 import type { Context } from "../../context/index.ts";
+import { SCOPED_CSS, scopeCssModule } from "./css-modules.ts";
 import { discoverPackage, type Plugin } from "./discover.ts";
 import { PLUGINS_SPECIFIER, packageName } from "./evaluate.ts";
 import { inlineSourceMap } from "./stack.ts";
@@ -255,6 +263,8 @@ class ImportRules {
 	readonly #hostPackages: ReadonlySet<string>;
 	readonly #inputs = new Map<string, string>();
 	readonly #copied = new Set<string>();
+	/** The scoped stylesheet of every CSS module read, by its file. */
+	readonly #scoped = new Map<string, string>();
 	/** The first importer of every file resolved, by file. */
 	readonly #importers = new Map<string, string>();
 	/** The API versions imported, each with its first importer. */
@@ -278,6 +288,9 @@ class ImportRules {
 			name: "chord-plugin-imports",
 			setup: (builder) => {
 				builder.onResolve({ filter: /.*/ }, async (args) => {
+					if (args.path.startsWith(`${SCOPED_CSS}:`)) {
+						return { path: args.path.slice(SCOPED_CSS.length + 1), namespace: SCOPED_CSS };
+					}
 					// The plugin's files are resolved here, the entry too: esbuild then gives them no Node module type
 					// (`"type": "module"`), whose interop would read a whole host package for a default import instead
 					// of honouring the `__esModule` an ESM namespace is wrapped with (§3).
@@ -326,16 +339,32 @@ class ImportRules {
 					return { path: found.path, pluginData: resolved.asset ? ASSET : undefined };
 				});
 				builder.onLoad({ filter: /.*/ }, async (args) => {
+					if (args.namespace === SCOPED_CSS) {
+						// Its `url()` and `@import` resolve relative to the module file.
+						return { contents: this.#scoped.get(args.path) ?? "", loader: "css", resolveDir: dirname(args.path) };
+					}
 					if (args.namespace !== "file") return undefined;
 					const asset = args.pluginData === ASSET;
 					const loader = asset ? "file" : LOADERS[extname(args.path)];
 					if (loader === undefined || this.#place(args.path).kind === "package") return undefined;
 					const contents = await readFile(args.path);
 					this.#inputs.set(args.path, createHash("sha256").update(contents).digest("hex"));
+					if (!asset && args.path.endsWith(".module.css")) return this.#cssModule(args.path, contents);
 					return { contents, loader, resolveDir: dirname(args.path) };
 				});
 			},
 		};
+	}
+
+	/**
+	 * The CSS module `file` with `contents` as the facet imports it: a module whose default export is the class mapping,
+	 * importing the scoped stylesheet (`scopeCssModule`), which the build collects with the facet's other CSS.
+	 */
+	async #cssModule(file: string, contents: Uint8Array): Promise<OnLoadResult> {
+		const scoped = await scopeCssModule(this.#own.name, this.#own.dir, file, new TextDecoder().decode(contents));
+		this.#scoped.set(file, scoped.css);
+		const module = `import ${JSON.stringify(`${SCOPED_CSS}:${file}`)};export default ${JSON.stringify(scoped.classes)};`;
+		return { contents: module, loader: "js", resolveDir: dirname(file) };
 	}
 
 	/** Every plugin file read, sorted by path. */
@@ -412,7 +441,9 @@ class ImportRules {
 			return { kind: "error", text: `"${specifier}": assets by URL are for browser builds (${PLUGIN_FILE_HINT})` };
 		}
 		if (from.kind === "package") return { kind: "package" };
-		if (specifier.startsWith(".") || isAbsolute(specifier)) return { kind: "path", path: specifier, asset: false };
+		// A stylesheet's `url()` names an asset of the plugin (served under `publicPath`).
+		const asset = kind === "url-token" && browser;
+		if (specifier.startsWith(".") || isAbsolute(specifier)) return { kind: "path", path: specifier, asset };
 		const name = packageName(specifier);
 		if (this.#own.external.includes(name)) {
 			if (!browser) return { kind: "external" };
