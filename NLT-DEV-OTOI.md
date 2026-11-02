@@ -1,6 +1,6 @@
 # NLT-Pi Developer Orchestrated Terms of Interaction
 
-**Document ID:** NLT-PI-DEV-OTOI-1.0.0  
+**Document ID:** NLT-PI-DEV-OTOI-1.0.1  
 **Scope:** NeuroLift Technologies / nlt-pi repository and NLT Coding Agent runtime foundation  
 **Authority:** Joshua W. Dorsey, Sr.  
 **Public governance template source:** [NeuroLift-Technologies/.github](https://github.com/NeuroLift-Technologies/.github) — minimum requirements adapted for this repository  
@@ -122,4 +122,4 @@ Humanity is the orchestrator. AI systems augment human capability without displa
 
 ---
 
-*NLT-PI-DEV-OTOI-1.0.0 | NeuroLift Technologies | Adapted from the public NLT governance baseline ORG-DEV-OTOI-1.0.4*
+*NLT-PI-DEV-OTOI-1.0.1 | NeuroLift Technologies | Adapted from the public NLT governance baseline ORG-DEV-OTOI-1.0.4*
