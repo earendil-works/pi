@@ -8,7 +8,7 @@
 
 ### Fixed
 
-- Fixed `pi update` reporting `Updated pi from <old> to <new>` after an npm, pnpm, yarn, or bun self-update that left another version installed, for example when npm resolved stale registry metadata. It now checks the installed version and warns when it differs, as it already did for `selfUpdateCommand`.
+- Fixed `pi update` reporting `Updated pi from <old> to <new>` after an npm, pnpm, yarn, or bun self-update that left another version installed, for example when npm resolved stale registry metadata. It now checks the installed version and warns when it differs, as it already did for `selfUpdateCommand` ([#11709](https://github.com/earendil-works/pi/pull/11709))
 
 ## [1.5.0] - 2026-11-02
 
