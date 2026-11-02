@@ -2232,6 +2232,16 @@ validation and copies the v2 kernel added around Delta.
   defines, each a host kind with the app's own params (sharding is the app's: a project, a tenant, a document; the kit
   knows no sessions) and how to start it (entry, start data per address, principal, idle time: the workers
   component's options); zero kinds is a server with clients only (a chat app).
+- **The app kit, point 2: principals and users (owner, 2026-11-01, by voice: "yeah I guess. just make it nice and
+  concise and easy to use and flexible"; "too opinionated might be a problem"):** three things kept apart. (1) The
+  principal is tiny (a kind and an id: it travels on every call and is part of objects' identity) and the app defines
+  its type; the kit requires only the variants it needs itself (the server and its worker kinds). (2) User data
+  (avatar, bio, availability) is ordinary app data in objects keyed by the user's id, never in the principal. (3)
+  Authentication turns a connection into a principal. The kit ships optional plugins: a users plugin storing accounts
+  with a profile schema the app supplies (a Slack-like profile or just a name), and authenticator plugins (device
+  pairing, invite links, an ephemeral one for an IRC-like "pick a name and you're in": a fresh id with the name, no
+  stored account, gone with the connection); an app picks, replaces or writes its own. Rejected: a fixed principal type
+  with roles.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
