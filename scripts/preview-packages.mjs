@@ -4,8 +4,9 @@
 //
 //   pack        Point internal dependencies at this commit's builds, then `npm pack` every public package.
 //               Runs in the regular CI job after the build.
-//   publish     Upload the packed tarballs and move refs (main, pr-1234). Runs in the trusted workflow_run job and
-//               authenticates with the job's GitHub OIDC token (`permissions: id-token: write`).
+//   publish     Upload the packed tarballs, release a tag (v1.2.3) and move refs (main, latest, pr-1234). Runs in the
+//               trusted workflow_run job and authenticates with the job's GitHub OIDC token
+//               (`permissions: id-token: write`). A release keeps the packages for good under the tag.
 //   delete-ref  Remove a ref, e.g. pr-1234 when the PR closes.
 
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -92,10 +93,15 @@ async function call(method, url, token, body) {
 	return JSON.parse(text);
 }
 
-function renderSummary({ baseUrl, sha, refs, names }) {
+function renderSummary({ baseUrl, sha, release, refs, names }) {
 	const lines = ["### Preview packages", "", `Built from \`${sha.slice(0, 7)}\`.`, ""];
+	if (release) {
+		lines.push(`Release \`${release.tag}\` (kept for good):`, "", "```sh");
+		for (const { name } of release.packages) lines.push(`npm i ${baseUrl}/${name}@${release.tag}`);
+		lines.push("```", "");
+	}
 	if (refs.length > 0) {
-		lines.push(`Latest build of \`${refs[0]}\` (updates with new pushes):`, "", "```sh");
+		lines.push(`Latest build of \`${refs[0]}\` (moves with newer builds):`, "", "```sh");
 		for (const name of names) lines.push(`npm i ${baseUrl}/${name}@${refs[0]}`);
 		lines.push("```", "");
 	}
@@ -112,6 +118,7 @@ async function publish(argv) {
 		options: {
 			dir: { type: "string", default: "preview-packages" },
 			sha: { type: "string" },
+			tag: { type: "string" },
 			ref: { type: "string", multiple: true, default: [] },
 			run: { type: "string" },
 			event: { type: "string" },
@@ -119,7 +126,7 @@ async function publish(argv) {
 		},
 	});
 	assertSha(values.sha);
-	const { sha, ref: refs, event } = values;
+	const { sha, tag, ref: refs, event } = values;
 	const run = Number(values.run);
 	if (!/^\d+$/.test(values.run ?? "") || !Number.isSafeInteger(run)) {
 		throw new UsageError(`--run must be the CI run ID, got ${values.run}`);
@@ -147,18 +154,24 @@ async function publish(argv) {
 		names.push(result.name);
 		console.error(`${result.existing ? "exists" : "uploaded"} ${result.name}@${sha}`);
 	}
+	// Release before moving refs, so `latest` never points at a commit whose release failed.
+	const release = tag && (await call("POST", `${baseUrl}/_/releases`, token, JSON.stringify({ sha, tag })));
+	if (release) console.error(`${release.existing ? "already released" : "released"} ${tag}`);
+	let movedRefs = refs;
 	if (refs.length > 0) {
 		const result = await call("POST", `${baseUrl}/_/refs`, token, JSON.stringify({ sha, refs, run }));
 		const newer = result.refs.filter((ref) => ref.sha !== sha);
 		if (newer.length > 0) {
 			// A newer run already published these refs; its summary has the current install commands.
 			console.error(`a newer run already published ${newer.map((ref) => `${ref.ref} (${ref.sha})`).join(", ")}`);
-			return;
+			if (!tag) return;
+			movedRefs = [];
+		} else {
+			console.error(`moved ${refs.join(", ")} to ${sha}`);
 		}
-		console.error(`moved ${refs.join(", ")} to ${sha}`);
 	}
 
-	const summary = renderSummary({ baseUrl, sha, refs, names: names.sort() });
+	const summary = renderSummary({ baseUrl, sha, release, refs: movedRefs, names: names.sort() });
 	process.stdout.write(summary);
 	if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, summary);
 }
@@ -176,7 +189,7 @@ async function deleteRef(argv) {
 const USAGE = `Usage:
   node scripts/preview-packages.mjs pack --sha <sha> [--out dir]
   node scripts/preview-packages.mjs publish --sha <sha> --run <CI run id> --event <push|pull_request>
-                                            [--dir dir] [--ref name]...
+                                            [--dir dir] [--tag name] [--ref name]...
   node scripts/preview-packages.mjs delete-ref --ref <name>`;
 
 const [command, ...argv] = process.argv.slice(2);

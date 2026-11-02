@@ -26,9 +26,10 @@ function writePackage(repo, directory, manifest) {
 
 /**
  * Stands in for the pkg.earendil.com worker and GitHub's OIDC token endpoint, recording requests. `refsSha` is what the
- * worker reports each ref resolves to after the update; `uploadBody` overrides the upload response.
+ * worker reports each ref resolves to after the update; `uploadBody` overrides the upload response; `releaseStatus`
+ * the release's status.
  */
-async function startServer(t, { refsSha = sha, uploadBody } = {}) {
+async function startServer(t, { refsSha = sha, uploadBody, releaseStatus = 201 } = {}) {
 	const requests = [];
 	const server = createServer(async (req, res) => {
 		let body = "";
@@ -39,6 +40,12 @@ async function startServer(t, { refsSha = sha, uploadBody } = {}) {
 		if (req.method === "PUT") {
 			const name = decodeURIComponent(url.pathname.split("/").slice(4).join("/"));
 			return res.end(uploadBody ?? JSON.stringify({ name, sha, existing: false }));
+		}
+		if (url.pathname === "/_/releases") {
+			const { tag } = JSON.parse(body);
+			res.statusCode = releaseStatus;
+			const packages = [{ name: "@scope/a", url: `http://pkg/@scope/a@${tag}` }];
+			return res.end(JSON.stringify(releaseStatus === 201 ? { tag, sha, packages, existing: false } : { error: "no" }));
 		}
 		const { refs } = JSON.parse(body);
 		res.end(JSON.stringify({ refs: refs.map((ref) => ({ ref, sha: refsSha })) }));
@@ -55,10 +62,10 @@ function writeArtifact(directory) {
 	writeFileSync(join(directory, "manifest.json"), JSON.stringify({ sha, packages }));
 }
 
-function publish(server, dir) {
+function publish(server, dir, args = ["--event", "pull_request", "--ref", "pr-1"]) {
 	const { GITHUB_STEP_SUMMARY: _, ...env } = process.env;
-	const args = ["publish", "--sha", sha, "--run", "7", "--event", "pull_request", "--ref", "pr-1", "--dir", dir];
-	return run(process.execPath, [script, ...args, "--base-url", server.url], {
+	const common = ["publish", "--sha", sha, "--run", "7", "--dir", dir];
+	return run(process.execPath, [script, ...common, ...args, "--base-url", server.url], {
 		env: { ...env, ACTIONS_ID_TOKEN_REQUEST_URL: `${server.url}/token`, ACTIONS_ID_TOKEN_REQUEST_TOKEN: "runner" },
 	});
 }
@@ -124,4 +131,44 @@ test("publish fails on a successful response that is not JSON", async (t) => {
 
 	await assert.rejects(publish(server, dir), /not valid JSON/);
 	assert.equal(server.requests.filter((request) => request.method === "POST").length, 0);
+});
+
+const RELEASE_ARGS = ["--event", "push", "--tag", "v1.2.3", "--ref", "latest"];
+
+test("publish releases a tag before moving refs and prints its install commands", async (t) => {
+	const server = await startServer(t);
+	const dir = join(temporaryDirectory(t), "artifact");
+	writeArtifact(dir);
+
+	const { stdout } = await publish(server, dir, RELEASE_ARGS);
+
+	const posts = server.requests.filter((request) => request.method === "POST");
+	assert.deepEqual(
+		posts.map((request) => [request.url, JSON.parse(request.body)]),
+		[
+			["/_/releases", { sha, tag: "v1.2.3" }],
+			["/_/refs", { sha, refs: ["latest"], run: 7 }],
+		],
+	);
+	assert.match(stdout, new RegExp(`npm i ${server.url}/@scope/a@v1\\.2\\.3`));
+	assert.match(stdout, new RegExp(`npm i ${server.url}/@scope/a@latest`));
+});
+
+test("publish moves no refs when the release fails", async (t) => {
+	const server = await startServer(t, { releaseStatus: 409 });
+	const dir = join(temporaryDirectory(t), "artifact");
+	writeArtifact(dir);
+
+	await assert.rejects(publish(server, dir, RELEASE_ARGS), /409/);
+	assert.equal(server.requests.filter((request) => request.url === "/_/refs").length, 0);
+});
+
+test("publish still prints the release when a newer release owns latest", async (t) => {
+	const server = await startServer(t, { refsSha: newerSha });
+	const dir = join(temporaryDirectory(t), "artifact");
+	writeArtifact(dir);
+
+	const { stdout } = await publish(server, dir, RELEASE_ARGS);
+	assert.match(stdout, /@scope\/a@v1\.2\.3/);
+	assert.doesNotMatch(stdout, /@latest/);
 });

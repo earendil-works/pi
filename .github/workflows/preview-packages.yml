@@ -1,6 +1,9 @@
-# Publishes the preview packages that CI packed for main and for PRs from branches of this repo to pkg.earendil.com,
-# moving the `main` or `pr-<number>` ref, and deletes a PR's ref when the PR closes. It reads the CI artifact as data
-# and never checks out or runs PR code.
+# Publishes the preview packages that CI packed for main, for release tags and for PRs from branches of this repo to
+# pkg.earendil.com, moving the `main` or `pr-<number>` ref, and deletes a PR's ref when the PR closes. A release tag
+# (v1.2.3) is released there: its packages are kept for good under the tag, and the `latest` ref moves to it. Internal
+# users can install a release from there as soon as CI passed, without waiting for the npm release. Releases come from
+# main in version order: `latest` follows the newest tag run, except for pre-releases (v1.2.3-rc.1), and a tag on a
+# commit off main is not released. It reads the CI artifact as data and never checks out or runs PR code.
 #
 # Uploads are only accepted if pkg.earendil.com allows this repository, this workflow on main, and every package it
 # publishes.
@@ -16,14 +19,21 @@ on:
 
 permissions: {}
 
+env:
+  # The release tags preview-packages.mjs releases, as CI builds them (v*.*.*); a suffix marks a pre-release.
+  RELEASE_TAG: '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+
 jobs:
   publish:
-    # Only CI runs for pushes to main and for PRs from branches of this repo. A branch can make its own copy of CI run
-    # on push; such runs are not reviewed and must not be published as push builds.
+    # Only CI runs for pushes to main, passing runs for release tags, and PRs from branches of this repo. A branch can
+    # make its own copy of CI run on push; such runs are not reviewed and must not be published as push builds. A tag
+    # run's head_branch is the tag name, which a branch can also have: scripts/preview-packages-push.sh verifies it.
     if: >-
       github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'cancelled' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
       ((github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main') ||
+      (github.event.workflow_run.event == 'push' && startsWith(github.event.workflow_run.head_branch, 'v') &&
+      github.event.workflow_run.conclusion == 'success') ||
       github.event.workflow_run.event == 'pull_request')
     # Publish and cleanup runs for the same branch execute one at a time, in order. The group is set per job, so runs
     # whose job is skipped (forks) never wait in it. `queue: max` keeps every waiting run instead of replacing one.
@@ -42,9 +52,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          EVENT: ${{ github.event.workflow_run.event }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           count=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" \
             --jq '[.artifacts[] | select(.name == "preview-packages")] | length')
+          # Tag runs are only published when CI passed, so it packed: the artifact expired (after 3 days).
+          if [ "$count" = 0 ] && [ "$EVENT" = push ] && [[ "$HEAD_BRANCH" =~ $RELEASE_TAG ]]; then
+            echo "::error::The CI artifact of $HEAD_BRANCH expired; re-run the tag's CI to release it"
+            exit 1
+          fi
           if [ "$count" = 0 ]; then echo "::notice::CI produced no preview packages (it failed before packing)"; fi
           echo "found=$([ "$count" != 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
@@ -77,8 +94,11 @@ jobs:
           DIR: ${{ runner.temp }}/preview-packages
         run: |
           args=(--dir "$DIR" --sha "$HEAD_SHA" --run "$RUN_ID" --event "$EVENT")
-          if [ "$EVENT" = push ] && [ "$HEAD_BRANCH" = main ]; then
-            args+=(--ref main)
+          if [ "$EVENT" = push ]; then
+            # Checks the run may publish: only commits on main, under main or a release tag (see the script).
+            push_args=$(bash scripts/preview-packages-push.sh)
+            if [ -z "$push_args" ]; then exit 0; fi
+            while IFS= read -r arg; do args+=("$arg"); done <<< "$push_args"
           else
             # The branch's PR into main; a branch can also have PRs into other branches. It may have closed or received
             # new commits since CI ran, so the ref moves only while the PR is open with this commit as its head.
