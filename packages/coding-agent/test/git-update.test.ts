@@ -150,7 +150,11 @@ describe("DefaultPackageManager git update", () => {
 				}
 			};
 
-			const updated = await packageManager.update();
+			const updated: string[] = [];
+			packageManager.setProgressCallback((event) => {
+				if (event.type === "complete" && event.action === "update" && event.message) updated.push(event.message);
+			});
+			await packageManager.update();
 
 			expect(updated).toEqual([]);
 			expect(executedCommands).toContain(
@@ -172,10 +176,14 @@ describe("DefaultPackageManager git update", () => {
 			const newCommit = createCommit(remoteDir, "extension.ts", "// v2", "Second commit");
 
 			// Update via package manager (no args = uses settings)
-			const updated = await packageManager.update();
+			const updated: string[] = [];
+			packageManager.setProgressCallback((event) => {
+				if (event.type === "complete" && event.action === "update" && event.message) updated.push(event.message);
+			});
+			await packageManager.update();
 
 			// Verify update succeeded
-			expect(updated).toEqual([{ source: gitSource, type: "git", scope: "user", from: oldCommit, to: newCommit }]);
+			expect(updated).toEqual([`${gitSource} ${oldCommit.slice(0, 7)} -> ${newCommit.slice(0, 7)}`]);
 			expect(getCurrentCommit(installedDir)).toBe(newCommit);
 			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
 		});

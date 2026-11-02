@@ -2616,11 +2616,13 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 				writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.2.0" }));
 			});
 
-			const updated = await packageManager.update("npm:example");
+			const updated: string[] = [];
+			packageManager.setProgressCallback((event) => {
+				if (event.type === "complete" && event.action === "update" && event.message) updated.push(event.message);
+			});
+			await packageManager.update("npm:example");
 
-			expect(updated).toEqual([
-				{ source: "npm:example@^1.0.0", type: "npm", scope: "project", from: "1.0.0", to: "1.2.0" },
-			]);
+			expect(updated).toEqual(["npm:example@^1.0.0 (project) 1.0.0 -> 1.2.0"]);
 
 			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
 				"npm",
@@ -2653,7 +2655,11 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 				.mockResolvedValue('["1.0.0","1.3.1","1.0.2"]');
 			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
 
-			const updated = await packageManager.update("npm:example");
+			const updated: string[] = [];
+			packageManager.setProgressCallback((event) => {
+				if (event.type === "complete" && event.action === "update" && event.message) updated.push(event.message);
+			});
+			await packageManager.update("npm:example");
 
 			expect(updated).toEqual([]);
 

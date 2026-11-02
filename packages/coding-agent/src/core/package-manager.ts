@@ -123,17 +123,6 @@ export interface PackageUpdate {
 	scope: Exclude<SourceScope, "temporary">;
 }
 
-/** A configured package whose installed version changed during update(). */
-export interface UpdatedPackage {
-	source: string;
-	type: "npm" | "git";
-	scope: Exclude<SourceScope, "temporary">;
-	/** npm version or git commit before the update; undefined if it was not installed. */
-	from?: string;
-	/** npm version or git commit after the update. */
-	to?: string;
-}
-
 export interface ConfiguredPackage {
 	source: string;
 	scope: "user" | "project";
@@ -147,7 +136,7 @@ export interface PackageManager {
 	installAndPersist(source: string, options?: { local?: boolean }): Promise<void>;
 	remove(source: string, options?: { local?: boolean }): Promise<void>;
 	removeAndPersist(source: string, options?: { local?: boolean }): Promise<boolean>;
-	update(source?: string): Promise<UpdatedPackage[]>;
+	update(source?: string): Promise<void>;
 	listConfiguredPackages(): ConfiguredPackage[];
 	resolveExtensionSources(
 		sources: string[],
@@ -202,6 +191,15 @@ interface NpmUpdateTarget extends ConfiguredUpdateSource {
 
 interface GitUpdateTarget extends ConfiguredUpdateSource {
 	parsed: GitSource;
+}
+
+/** A configured package whose installed npm version or git commit changed during update(). */
+interface UpdatedPackage extends ConfiguredUpdateSource {
+	type: "npm" | "git";
+	/** npm version or git commit before the update; undefined if it was not installed. */
+	from?: string;
+	/** npm version or git commit after the update. */
+	to?: string;
 }
 
 interface ResourceAccumulator {
@@ -1152,7 +1150,7 @@ export class DefaultPackageManager implements PackageManager {
 		return this.removeSourceFromSettings(source, options);
 	}
 
-	async update(source?: string): Promise<UpdatedPackage[]> {
+	async update(source?: string): Promise<void> {
 		const globalSettings = this.settingsManager.getGlobalSettings();
 		const projectSettings = this.settingsManager.getProjectSettings();
 		const identity = source ? this.getPackageIdentity(source) : undefined;
@@ -1181,12 +1179,12 @@ export class DefaultPackageManager implements PackageManager {
 			);
 		}
 
-		return this.updateConfiguredSources(updateSources);
+		await this.updateConfiguredSources(updateSources);
 	}
 
-	private async updateConfiguredSources(sources: ConfiguredUpdateSource[]): Promise<UpdatedPackage[]> {
+	private async updateConfiguredSources(sources: ConfiguredUpdateSource[]): Promise<void> {
 		if (isOfflineModeEnabled() || sources.length === 0) {
-			return [];
+			return;
 		}
 
 		const npmCandidates: NpmUpdateTarget[] = [];
@@ -1263,7 +1261,19 @@ export class DefaultPackageManager implements PackageManager {
 			const update = gitUpdates.find((u) => u.source === entry.source && u.scope === entry.scope);
 			if (update) updated.push(update);
 		}
-		return updated;
+
+		// Report each changed package as a completed update, e.g. "npm:foo 1.2.0 -> 1.3.0".
+		for (const pkg of updated) {
+			const format = (value: string | undefined) =>
+				value === undefined ? "(none)" : pkg.type === "git" ? value.slice(0, 7) : value;
+			const scope = pkg.scope === "project" ? " (project)" : "";
+			this.emitProgress({
+				type: "complete",
+				action: "update",
+				source: pkg.source,
+				message: `${pkg.source}${scope} ${format(pkg.from)} -> ${format(pkg.to)}`,
+			});
+		}
 	}
 
 	private async getGitHead(targetDir: string): Promise<string | undefined> {
