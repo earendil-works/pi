@@ -4,16 +4,10 @@
 It uses existing package types as follows:
 
 ```ts
-import type {
-  Context,
-  Draft,
-  JsonRepresentation,
-  JsonValue,
-  WatchCall,
-  WatchEnd,
-  WatchHandle,
-} from "@earendil-works/chord";
-import type { Op } from "@earendil-works/chord/delta";
+import type { Context } from "@earendil-works/chord/context";
+import type { Draft, Op } from "@earendil-works/chord/delta";
+import type { JsonRepresentation, JsonValue } from "@earendil-works/chord/json";
+import type { WatchCall, WatchEnd, WatchHandle } from "@earendil-works/chord/watch";
 import type {
   AssistantMessage,
   CacheRetention,
@@ -5381,7 +5375,7 @@ aborted directly (section 8.3).
 ### 9.1 Watches
 
 Durable exposes committed state only through watches: Chord's `WatchHandle`
-and its end type `WatchEnd`, exported by `@earendil-works/chord` (Durable
+and its end type `WatchEnd`, exported by `@earendil-works/chord/watch` (Durable
 re-exports both):
 
 ```ts

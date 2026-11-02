@@ -1,6 +1,7 @@
-import { type Context, type JsonValue, Watch, type WatchEnd } from "@earendil-works/chord";
-import { awaitWithContext, BACKGROUND_CONTEXT, withoutAbortSignal } from "@earendil-works/chord/context";
+import { awaitWithContext, BACKGROUND_CONTEXT, type Context, withoutAbortSignal } from "@earendil-works/chord/context";
 import { type Op, PendingOps, track } from "@earendil-works/chord/delta";
+import type { JsonValue } from "@earendil-works/chord/json";
+import { Watch, type WatchEnd } from "@earendil-works/chord/watch";
 import type { SpanAttributes } from "@earendil-works/pi-telemetry";
 import {
 	type AnyDocToken,

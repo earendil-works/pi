@@ -1,4 +1,3 @@
-import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import {
 	arr,
 	createHost,
@@ -10,7 +9,8 @@ import {
 	type Native,
 	type RegistryTable,
 	str,
-} from "@earendil-works/chord/next";
+} from "@earendil-works/chord";
+import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { describe, expect, it } from "vitest";
 import {

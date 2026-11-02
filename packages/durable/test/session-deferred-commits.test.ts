@@ -2,8 +2,8 @@
 // each kind of listener then sees.
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import type { JsonValue } from "@earendil-works/chord";
 import { applyImmutable } from "@earendil-works/chord/delta";
+import type { JsonValue } from "@earendil-works/chord/json";
 import {
 	type CommitChange,
 	type CommitOptions,

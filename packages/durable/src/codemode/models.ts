@@ -7,7 +7,8 @@
  * tool listings): a nested durable call with its own task, live row, abort, usage accounting, and replay policy. The
  * code mode tool turns a script's call of the global into a call of that tool.
  */
-import type { Context, JsonValue } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import type {
 	AnyModel,
 	ClassifierContext,

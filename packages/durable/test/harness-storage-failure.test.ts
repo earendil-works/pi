@@ -1,5 +1,5 @@
 import { runInNewContext } from "node:vm";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai";
 import {
 	createRegistry,
