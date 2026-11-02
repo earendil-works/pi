@@ -16,13 +16,14 @@
       "Clarified that prompt injection is assessed by demonstrated security impact rather than categorically excluded",
       "Defined NLT-maintained vulnerability scope, out-of-scope conditions, private reporting guidance, and incident handling",
       "Updated docs/active-threads.md and marked contributor-gate PR #4 resolved because it had merged to main before this work was ported",
-      "Reviewed open escalation issue #5 and aligned SECURITY.md fallback exactly with docs/escalations/README.md: stop and obtain the repository owner's established private reporting route if GitHub private reporting is unavailable; do not fall back to a public issue or invent/publish a contact address."
+      "Reviewed open escalation issue #5 and aligned SECURITY.md fallback exactly with docs/escalations/README.md: stop and obtain the repository owner's established private reporting route if GitHub private reporting is unavailable; do not fall back to a public issue or invent/publish a contact address.",
+      "Inspected NeuroLift-Technologies/.github/SECURITY.md on main and found the established organization-level reporting routes: admin@neuroliftsolutions.com and GitHub Private Vulnerability Reporting; mirrored the email route and published response targets in NLT-Pi SECURITY.md."
     ],
     "changes": [
       {
         "path": "SECURITY.md",
         "action": "updated",
-        "commit": "85ec1868d20ec99a79f57516bd725407543fd60a"
+        "commit": "e3092cdc66317aa01fda42616f5f6dd04090f85d"
       },
       {
         "path": "docs/active-threads.md",
@@ -38,9 +39,9 @@
       "type": "documentation-only",
       "runtime_tests": "Not run; no runtime code changed.",
       "content_review": "Cross-checked policy terminology and response process against repository governance and incident-response documentation.",
-      "disclosure_route": "GitHub private vulnerability reporting / Security Advisories when available; if unavailable, stop and obtain the repository owner's established private reporting route. Do not fall back to a public issue or invent/publish a contact address.",
-      "limitations": "Private vulnerability reporting enablement was not verified. Policy requirements do not assert that every runtime execution path already enforces them.",
-      "related_escalation": "Issue #5: PR #6 addresses disclosure-routing item 1 only. Main branch protection and Actions startup failures remain outstanding."
+      "disclosure_route": "Verified against NeuroLift-Technologies/.github/SECURITY.md: admin@neuroliftsolutions.com and GitHub Private Vulnerability Reporting. Mirrored the organization's 48-hour acknowledgement target and 90-day critical-fix target, qualified as organizational targets.",
+      "limitations": "Repository-level GitHub Private Vulnerability Reporting enablement remains unverified. Policy requirements do not assert that every runtime execution path already enforces them.",
+      "related_escalation": "Issue #5 item 1's missing organizational contact is resolved from the canonical org policy and reflected in PR #6. Main branch protection and Actions startup failures remain outstanding."
     },
     "prior_pr_context": {
       "pr": "https://github.com/NeuroLift-Technologies/nlt-pi/pull/4",
@@ -49,13 +50,13 @@
       "note": "The security policy was not included in PR #4 because that PR merged before this policy change. The policy was therefore ported to a fresh branch from current main."
     },
     "decisions_required": [
-      "Confirm the organization's preferred private security disclosure contact or whether GitHub private vulnerability reporting is enabled.",
-      "Review the scope and policy wording before merge."
+      "Review and approve the policy wording before merge.",
+      "Verify GitHub Private Vulnerability Reporting is enabled for NeuroLift-Technologies/nlt-pi, or rely on the established organizational email route."
     ],
     "next_steps": [
-      "Review PR for SECURITY.md and active-thread changes.",
-      "Confirm GitHub private vulnerability reporting is enabled for NeuroLift-Technologies/nlt-pi.",
-      "After merge, verify SECURITY.md on main."
+      "Review PR #6 for SECURITY.md, active-thread, and handoff updates.",
+      "Verify repository-level GitHub Private Vulnerability Reporting is enabled.",
+      "Resolve main branch protection and Actions startup failures tracked in Issue #5."
     ],
     "pr_url": "https://github.com/NeuroLift-Technologies/nlt-pi/pull/6",
     "no_direct_main_writes": true
