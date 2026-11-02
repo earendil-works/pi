@@ -1,8 +1,9 @@
 // Per-conversation turn limits (`AgentState.maxTurns`) and continuing a run that reached one (#11043).
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
+import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import {
 	type AfterFailedRun,
 	type Conversation,
@@ -16,6 +17,7 @@ import {
 	ToolResultEntry,
 	ToolTask,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf } from "./chat-support.ts";
@@ -33,7 +35,7 @@ afterEach(async () => {
 	directories.clear();
 });
 
-const Parameters = Type.Object({});
+const Parameters = obj({});
 
 function tool(
 	name: string,

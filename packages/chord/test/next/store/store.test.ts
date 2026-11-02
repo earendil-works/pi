@@ -6,18 +6,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context, withCancel } from "../../../src/context/index.ts";
+import { int, str } from "../../../src/next/contracts/index.ts";
 import { isChordError } from "../../../src/next/data/index.ts";
 import { Batch } from "../../../src/next/state/internal.ts";
 import { sqliteBackend } from "../../../src/next/store/backend.ts";
-import { changeDocument, createDocument, retireDocument } from "../../../src/next/store/engine.ts";
+import { changeDocument, createDocument, findDocument, retireDocument } from "../../../src/next/store/engine.ts";
 import { importStore } from "../../../src/next/store/import.ts";
-import type { StagedWrite } from "../../../src/next/store/step.ts";
+import type { StagedWrite, Step } from "../../../src/next/store/step.ts";
 import { type ChordStore, openStore, type Store } from "../../../src/next/store/store.ts";
+import { defineTable } from "../../../src/next/store/table.ts";
+import { stageTable } from "../../../src/next/store/table-writes.ts";
 import { openNodeSqliteDatabase } from "../../../src/sqlite/node.ts";
 import { exported, faultyStore, holdNextCommit, metered, rejection } from "../support.ts";
 
 const ADDRESS = { namespace: "chord", owner: "app.store", kind: "notes", key: "" };
 const BASE = { version: 1, fingerprint: "0000000000000000", value: { n: 0 } };
+
+/** A table a series creates. */
+const Edits = defineTable("edits", { version: 1, columns: { id: str(), at: int() }, key: ["id"] });
+const TABLE = "app.store:edits";
 
 /** A store on a fresh `:memory:` database, as Chord's layers see it. */
 async function memoryStore(options?: { readonly outbox?: boolean }): Promise<ChordStore> {
@@ -333,5 +340,240 @@ describe("close", () => {
 		expect(await rejection(queued)).toMatchObject({ code: "released" });
 		await closed;
 		expect(await rejection(store.read(async () => 1, context))).toMatchObject({ code: "released" });
+	});
+});
+
+describe("a commit series", () => {
+	/** A series commit with no check of its own. */
+	const unchecked = (writes: readonly StagedWrite[]) => ({ check: async () => {}, writes });
+
+	it("stores its commits in one transaction, one seq each, each checked against the ones before it", async () => {
+		const store = await memoryStore({ outbox: true });
+		const seen: (number | undefined)[] = [];
+		const receipts: [number, number, readonly number[]][] = [];
+		const telemetry = await metered();
+		const result = await store.commitSeries(
+			[
+				unchecked([createDocument(ADDRESS, BASE, "{}")]),
+				// No writes: no seq, it stands at the commit before it.
+				unchecked([]),
+				{
+					// The check reads through its step: it sees the first commit's creation.
+					check: async (step) => void seen.push((await findDocument(step, ADDRESS))?.id),
+					writes: [createDocument({ ...ADDRESS, key: "b" }, BASE, "{}")],
+				},
+			],
+			(index, seq, ids) => receipts.push([index, seq, ids]),
+			telemetry.context,
+		);
+		expect(result).toEqual({ stored: 3 });
+		expect(seen).toEqual([2]);
+		expect(receipts).toEqual([
+			[0, 1, [2]],
+			[1, 1, []],
+			[2, 2, [3]],
+		]);
+		expect(store.lastSeq).toBe(2);
+		expect(telemetry.counts()["chord.store.commits"]).toBe(2);
+		const outbox = await store.read(
+			(executor) => executor.all<{ seq: number }>("SELECT seq FROM chord_outbox"),
+			context,
+		);
+		expect(outbox.map((row) => row.seq)).toEqual([1, 2]);
+	});
+
+	it("stops at a check that refuses: the commits before it are stored, it and the ones after are not", async () => {
+		const store = await memoryStore();
+		const refusal = new Error("refused");
+		const receipts: number[] = [];
+		const result = await store.commitSeries(
+			[
+				unchecked([createDocument(ADDRESS, BASE, "{}")]),
+				{
+					check: () => Promise.reject(refusal),
+					writes: [createDocument({ ...ADDRESS, key: "b" }, BASE, "{}")],
+				},
+				unchecked([createDocument({ ...ADDRESS, key: "c" }, BASE, "{}")]),
+			],
+			(index) => receipts.push(index),
+			context,
+		);
+		expect(result).toEqual({ stored: 1, refused: refusal });
+		expect(receipts).toEqual([0]);
+		expect(store.lastSeq).toBe(1);
+		const keys = await store.read(
+			(executor) => executor.all<{ key: string }>("SELECT key FROM chord_documents ORDER BY id"),
+			context,
+		);
+		expect(keys.map((row) => row.key)).toEqual([""]);
+		// The store goes on at the next seq.
+		const { adopted, fence } = recording();
+		await store.commit([createDocument({ ...ADDRESS, key: "b" }, BASE, "{}")], fence, context);
+		expect(adopted).toEqual([[2, [3]]]);
+	});
+
+	it("rolls the whole series back when a check's statement fails, even if the check throws its own error", async () => {
+		const store = await memoryStore();
+		const own = new Error("own");
+		const series = store.commitSeries(
+			[
+				unchecked([createDocument(ADDRESS, BASE, "{}")]),
+				{
+					check: async (step) => {
+						await step.get("SELECT * FROM no_such_table").catch(() => {});
+						throw own;
+					},
+					writes: [],
+				},
+			],
+			() => {},
+			context,
+		);
+		expect(await rejection(series)).toBe(own);
+		expect(store.lastSeq).toBe(0);
+		// A rollback, not a stop: the store goes on; the id the rolled back creation took is not given back (D3).
+		expect(await created(store)).toBe(3);
+	});
+
+	it("rolls the whole series back when a commit's writes throw, the store going on", async () => {
+		const store = await memoryStore();
+		const receipts: number[] = [];
+		const error = await rejection(
+			store.commitSeries(
+				[unchecked([createDocument(ADDRESS, BASE, "{}")]), unchecked([BROKEN])],
+				(index) => receipts.push(index),
+				context,
+			),
+		);
+		expect(String(error)).toContain("no such table");
+		expect([receipts, store.lastSeq]).toEqual([[], 0]);
+		expect(await created(store)).toBe(3);
+	});
+
+	it("writes the metadata once per series: three statements per delta with its outbox commit, plus one (cost guard)", async () => {
+		const store = await memoryStore({ outbox: true });
+		const id = await created(store);
+		const telemetry = await metered();
+		const delta = (n: number) => {
+			const ops = [["s", ["n"], n]] as const;
+			return unchecked([changeDocument(id, n, { kind: "delta", version: 1, ops }, JSON.stringify(ops))]);
+		};
+		await store.commitSeries([delta(1), delta(2), delta(3)], () => {}, telemetry.context);
+		// A delta committed alone is four statements with an outbox, the metadata among them; a series writes it once.
+		expect(telemetry.counts()).toEqual({ "chord.store.commits": 3, "chord.store.statements": 3 * 3 + 1 });
+		const meta = await store.read(
+			(executor) => executor.get<{ last_seq: number }>("SELECT last_seq FROM chord_meta"),
+			context,
+		);
+		expect(meta?.last_seq).toBe(4);
+	});
+
+	it.each([
+		["BEGIN IMMEDIATE", undefined],
+		["COMMIT", undefined],
+		["ROLLBACK", BROKEN],
+	] as const)(
+		"a failed %s is an unknown outcome: nothing is received, the store stops storage_failed",
+		async (at, write) => {
+			const { store, fail } = await faultyStore();
+			const told: unknown[] = [];
+			store.attach({ failed: (error) => told.push(error), batch: new Batch(() => {}, undefined) });
+			fail(at);
+			const receipts: number[] = [];
+			const second = write ?? createDocument({ ...ADDRESS, key: "b" }, BASE, "{}");
+			const series = store.commitSeries(
+				[unchecked([createDocument(ADDRESS, BASE, "{}")]), unchecked([second])],
+				(index) => receipts.push(index),
+				context,
+			);
+			expect(await rejection(series)).toMatchObject({ code: "unavailable", reason: "storage_failed" });
+			expect([receipts, store.lastSeq, told.length]).toEqual([[], 0, 1]);
+			const after = store.commitSeries([unchecked([createDocument(ADDRESS, BASE, "{}")])], () => {}, context);
+			expect(await rejection(after)).toMatchObject({ reason: "storage_failed" });
+		},
+	);
+
+	it("lets a later commit see the table records an earlier one changed; a rollback leaves the catalog as it was", async () => {
+		const store = await memoryStore();
+		const { version, record: columns, key, fingerprint } = Edits;
+		const table = stageTable({ kind: "table", table: TABLE, version, state: "ready", columns, key, fingerprint });
+		await rejection(store.commitSeries([unchecked([table]), unchecked([BROKEN])], () => {}, context));
+		expect(store.table(TABLE)).toBeUndefined();
+		const seen: (number | undefined)[] = [];
+		const sees: StagedWrite = {
+			order: "write",
+			apply: async (step) => {
+				seen.push(step.table(TABLE)?.version);
+				return [];
+			},
+		};
+		const later = { check: async (step: Step) => void seen.push(step.table(TABLE)?.version), writes: [sees] };
+		expect(await store.commitSeries([unchecked([table]), later], () => {}, context)).toEqual({ stored: 2 });
+		expect(seen).toEqual([1, 1]);
+		expect(store.table(TABLE)?.version).toBe(1);
+	});
+
+	it("runs a commit queued behind a series after the series' receipts", async () => {
+		const store = await memoryStore();
+		const events: string[] = [];
+		const series = store.commitSeries(
+			[
+				unchecked([createDocument(ADDRESS, BASE, "{}")]),
+				unchecked([createDocument({ ...ADDRESS, key: "b" }, BASE, "{}")]),
+			],
+			(index, seq) => events.push(`receive ${index} ${seq}`),
+			context,
+		);
+		const fence = {
+			admit: () => {
+				events.push("admit");
+				return true;
+			},
+			adopt: (seq: number) => void events.push(`adopt ${seq}`),
+		};
+		const queued = store.commit([createDocument({ ...ADDRESS, key: "c" }, BASE, "{}")], fence, context);
+		await Promise.all([series, queued]);
+		expect(events).toEqual(["receive 0 1", "receive 1 2", "admit", "adopt 3"]);
+	});
+
+	it("counts only commits with writes against the seq bound: empty ones at Number.MAX_SAFE_INTEGER still stand", async () => {
+		const [manifest, ...rest] = await exported(await memoryStore());
+		const parts = [{ ...manifest!, lastSeq: Number.MAX_SAFE_INTEGER - 1 }, ...rest];
+		const store = (await importStore(
+			sqliteBackend(await openNodeSqliteDatabase(":memory:")),
+			parts,
+			context,
+		)) as ChordStore;
+		await created(store);
+		const receipts: [number, number][] = [];
+		const empty = await store.commitSeries(
+			[unchecked([]), unchecked([])],
+			(index, seq) => receipts.push([index, seq]),
+			context,
+		);
+		expect(empty).toEqual({ stored: 2 });
+		expect(receipts).toEqual([
+			[0, Number.MAX_SAFE_INTEGER],
+			[1, Number.MAX_SAFE_INTEGER],
+		]);
+		const writing = store.commitSeries(
+			[unchecked([createDocument({ ...ADDRESS, key: "b" }, BASE, "{}")])],
+			() => {},
+			context,
+		);
+		expect(await rejection(writing)).toMatchObject({ reason: "storage_failed" });
+	});
+
+	it("stops the store when a receipt throws", async () => {
+		const store = await memoryStore();
+		const series = store.commitSeries(
+			[unchecked([createDocument(ADDRESS, BASE, "{}")])],
+			() => {
+				throw new Error("receipt threw");
+			},
+			context,
+		);
+		expect(await rejection(series)).toMatchObject({ reason: "storage_failed" });
+		expect(await rejection(store.read(async () => 1, context))).toMatchObject({ reason: "storage_failed" });
 	});
 });

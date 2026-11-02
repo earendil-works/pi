@@ -1,26 +1,35 @@
 // Params declarations: the policy for params fields and the closed object schema checked on every get.
 
-import type { TBoolean, TInteger, TLiteral, TString, TUnion } from "typebox";
 import type { JsonValue } from "../../json.ts";
-import type { TSchema } from "./schema.ts";
+import {
+	type BooleanSchema,
+	type IntegerSchema,
+	isOptional,
+	type LiteralsSchema,
+	type Optional,
+	type Schema,
+	type StringSchema,
+} from "./schema.ts";
 import { snapshotSchema } from "./snapshot.ts";
 
-/** A params field: a string, an integer, a boolean or a union of string literals; constraints allowed. */
-type ParamSchema = TString | TInteger | TBoolean | TUnion<TLiteral<string>[]>;
+/** A params field: a string, an integer, a boolean or a union of string literals; constraints allowed, no default. */
+type ParamSchema = (StringSchema | IntegerSchema | BooleanSchema | LiteralsSchema<string>) & {
+	readonly default?: never;
+};
 
 /** Params: a flat record of required fields, in identity order. */
 export type Params = { readonly [field: string]: ParamSchema };
 
 /** Refuses optional params fields, which the field types alone admit. */
 export type RequiredFields<P extends Params> = {
-	[F in keyof P]: P[F] extends { readonly "~optional": true } ? never : P[F];
+	[F in keyof P]: P[F] extends Optional ? never : P[F];
 };
 
 export type ParamsData = {
 	/** Field names in identity order. */
 	readonly fields: readonly string[];
 	/** The closed object schema of all fields. */
-	readonly schema: TSchema;
+	readonly schema: Schema;
 	/** `[field, normal form]` pairs in identity order. */
 	readonly normal: JsonValue;
 };
@@ -29,10 +38,10 @@ export type ParamsData = {
 export function readParams(declared: readonly [string, unknown][], path: string): ParamsData {
 	const fields = declared.map(([field, schema]) => {
 		const fieldPath = `${path}.${field}`;
+		const refused = new Error(`${fieldPath}: a param is a required str(), int(), bool() or oneOf(...) of strings`);
+		if (isOptional(schema)) throw refused;
 		const snapshot = snapshotSchema(schema, fieldPath);
-		if (Object.hasOwn(schema as object, "~optional") || !isParamSchema(snapshot.normal)) {
-			throw new Error(`${fieldPath}: a param is a required str(), int(), bool() or oneOf(...) of strings`);
-		}
+		if (!isParamSchema(snapshot.normal)) throw refused;
 		return [field, snapshot] as const;
 	});
 	const schema = {

@@ -1,0 +1,114 @@
+[
+    {
+        "description": "id inside an enum is not a real identifier",
+        "comment": "the implementation must not be confused by an id buried in the enum",
+        "schema": {
+            "definitions": {
+                "id_in_enum": {
+                    "enum": [
+                        {
+                          "$id": "https://localhost:1234/id/my_identifier.json",
+                          "type": "null"
+                        }
+                    ]
+                },
+                "real_id_in_schema": {
+                    "$id": "https://localhost:1234/id/my_identifier.json",
+                    "type": "string"
+                },
+                "zzz_id_in_const": {
+                    "const": {
+                        "$id": "https://localhost:1234/id/my_identifier.json",
+                        "type": "null"
+                    }
+                }
+            },
+            "anyOf": [
+                { "$ref": "#/definitions/id_in_enum" },
+                { "$ref": "https://localhost:1234/id/my_identifier.json" }
+            ]
+        },
+        "tests": [
+            {
+                "description": "exact match to enum, and type matches",
+                "data": {
+                    "$id": "https://localhost:1234/id/my_identifier.json",
+                    "type": "null"
+                },
+                "valid": true
+            },
+            {
+                "description": "match $ref to id",
+                "data": "a string to match #/definitions/id_in_enum",
+                "valid": true
+            },
+            {
+                "description": "no match on enum or $ref to id",
+                "data": 1,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "non-schema object containing a plain-name $id property",
+        "schema": {
+            "definitions": {
+                "const_not_anchor": {
+                    "const": {
+                        "$id": "#not_a_real_anchor"
+                    }
+                }
+            },
+            "if": {
+                "const": "skip not_a_real_anchor"
+            },
+            "then": true,
+            "else" : {
+                "$ref": "#/definitions/const_not_anchor"
+            }
+        },
+        "tests": [
+            {
+                "description": "skip traversing definition for a valid result",
+                "data": "skip not_a_real_anchor",
+                "valid": true
+            },
+            {
+                "description": "const at const_not_anchor does not match",
+                "data": 1,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "non-schema object containing an $id property",
+        "schema": {
+            "definitions": {
+                "const_not_id": {
+                    "const": {
+                        "$id": "not_a_real_id"
+                    }
+                }
+            },
+            "if": {
+                "const": "skip not_a_real_id"
+            },
+            "then": true,
+            "else" : {
+                "$ref": "#/definitions/const_not_id"
+            }
+        },
+        "tests": [
+            {
+                "description": "skip traversing definition for a valid result",
+                "data": "skip not_a_real_id",
+                "valid": true
+            },
+            {
+                "description": "const at const_not_id does not match",
+                "data": 1,
+                "valid": false
+            }
+        ]
+    }
+]

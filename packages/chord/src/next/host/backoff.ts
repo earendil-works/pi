@@ -58,7 +58,7 @@ export class Backoff {
 		return entry?.timer === undefined ? undefined : entry.until;
 	}
 
-	/** Ends the window at once (its object is retried now, R18); the delay stays for the next failure. */
+	/** Ends the window at once (its object is retried now: `ref.retry()`, a wake); the delay stays for the next failure. */
 	skip(identity: string): void {
 		const entry = this.#entries.get(identity);
 		clearTimeout(entry?.timer);

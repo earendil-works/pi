@@ -8,7 +8,6 @@ import {
 	fauxText,
 	fauxToolCall,
 	type ToolResultMessage,
-	Type,
 } from "@earendil-works/pi-ai";
 import {
 	defineExtension,
@@ -23,6 +22,7 @@ import {
 	ToolTask,
 	type ToolTaskInput,
 } from "@earendil-works/pi-durable";
+import { obj, opt, str } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.ts";
@@ -31,7 +31,7 @@ import { nestedResultOf, nestedResults, viewHistory } from "./live-support.ts";
 import { context } from "./session-support.ts";
 import { aborted, deferred, eventually } from "./task-support.ts";
 
-const Parameters = Type.Object({ text: Type.Optional(Type.String()) });
+const Parameters = obj({ text: opt(str()) });
 
 function tool(
 	name: string,

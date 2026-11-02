@@ -2,8 +2,8 @@
 // subset of L1's helpers a table's `columns` take (`str int num bool`, `opt(...)` of them, `json(...)`, defaults),
 // their types for rows, keys and column references, and the column descriptors and records the store keeps.
 
-import type { TBoolean, TInteger, TNumber, TOptional, TString } from "typebox";
-import type { Static, TSchema } from "../contracts/index.ts";
+import type { BooleanSchema, IntegerSchema, NumberSchema, Schema, Static, StringSchema } from "../contracts/index.ts";
+import { isOptional, type Optional } from "../contracts/schema.ts";
 import { JsonColumn, type JsonColumnSchema } from "./json-column.ts";
 import { storedText } from "./text.ts";
 
@@ -11,9 +11,9 @@ import { storedText } from "./text.ts";
 export type ColumnSchema =
 	| ScalarSchema
 	| JsonColumnSchema<unknown>
-	| TOptional<ScalarSchema | JsonColumnSchema<unknown>>;
+	| Optional<ScalarSchema | JsonColumnSchema<unknown>>;
 
-type ScalarSchema = TString | TInteger | TNumber | TBoolean;
+type ScalarSchema = StringSchema | IntegerSchema | NumberSchema | BooleanSchema;
 
 /** A table's `columns`: a flat record of column schemas. */
 export type Columns = { readonly [name: string]: ColumnSchema };
@@ -22,23 +22,23 @@ export type Columns = { readonly [name: string]: ColumnSchema };
 export type ColumnType = "str" | "int" | "num" | "bool" | "json";
 
 /** The store type of column schema `S`. */
-export type ColumnTypeOf<S> = S extends TOptional<infer I>
+export type ColumnTypeOf<S> = S extends Optional<infer I>
 	? ColumnTypeOf<I>
-	: S extends TString
+	: S extends StringSchema
 		? "str"
-		: S extends TInteger
+		: S extends IntegerSchema
 			? "int"
-			: S extends TNumber
+			: S extends NumberSchema
 				? "num"
-				: S extends TBoolean
+				: S extends BooleanSchema
 					? "bool"
 					: "json";
 
 /** The value type of column schema `S` (without `undefined` for an `opt(...)` one). */
-export type ValueOf<S> = S extends TOptional<infer I> ? ValueOf<I> : S extends TSchema ? Static<S> : never;
+export type ValueOf<S> = S extends Optional<infer I> ? ValueOf<I> : S extends Schema ? Static<S> : never;
 
 /** The names of the columns that are not `opt(...)`. */
-type RequiredNames<C extends Columns> = { [K in keyof C]: C[K] extends TOptional<TSchema> ? never : K }[keyof C];
+type RequiredNames<C extends Columns> = { [K in keyof C]: C[K] extends Optional ? never : K }[keyof C];
 
 /** The names of the columns with a declared default. */
 type DefaultedNames<C extends Columns> = {
@@ -57,7 +57,7 @@ export type PutRowOf<C extends Columns> = { [K in Exclude<RequiredNames<C>, Defa
 
 /** The columns a key, an index or an `orderBy` may use: non-`opt` `str` or `int`. */
 export type OrderColumn<C extends Columns> = {
-	[K in keyof C]: C[K] extends TString | TInteger ? (C[K] extends TOptional<TSchema> ? never : K) : never;
+	[K in keyof C]: C[K] extends Optional ? never : C[K] extends StringSchema | IntegerSchema ? K : never;
 }[keyof C] &
 	string;
 
@@ -112,15 +112,15 @@ const SCALAR_TYPES: { readonly [type: string]: "str" | "int" | "num" | "bool" } 
 	boolean: "bool",
 };
 
-function describeColumn(name: string, schema: ColumnSchema, what: string): Column {
-	const optional = Object.hasOwn(schema, "~optional");
+function describeColumn(name: string, column: ColumnSchema, what: string): Column {
+	const optional = isOptional(column);
 	// Declaration policy: a JavaScript caller may pass any schema, so its fields are read as unknown data.
-	const fields = schema as unknown as { readonly [key: string]: unknown };
+	const fields = (optional ? column.schema : column) as { readonly [key: string]: unknown };
 	const json = fields.json;
 	if (json instanceof JsonColumn) return { name, type: "json", optional, json };
 	const type = SCALAR_TYPES[String(fields.type)];
 	if (type === undefined) throw new Error(`${what}: expected str(), int(), num(), bool(), opt(...) or json(...)`);
-	for (const key of Object.keys(schema)) {
+	for (const key of Object.keys(fields)) {
 		if (key !== "type" && key !== "default") throw new Error(`${what}: "${key}" is not supported in a table column`);
 	}
 	const value = fields.default;

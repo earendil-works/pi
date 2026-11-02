@@ -54,6 +54,7 @@ export {
 } from "./harness/live.ts";
 export { ProviderDoc, type ProviderState } from "./harness/provider.ts";
 export { createRegistry } from "./harness/registry.ts";
+export { registryReader } from "./harness/registry-reader.ts";
 export type { BlockedReason } from "./harness/scheduler.ts";
 export type { TaskGraph, TaskGraphNode, TaskGraphState, TaskGraphWatch } from "./harness/task-graph.ts";
 export { DURABLE_TELEMETRY_SCHEMA } from "./harness/telemetry.ts";
@@ -146,6 +147,7 @@ export type {
 	CommitOptions,
 	CommitPersistence,
 	CommitPublication,
+	CommitResult,
 	CommonDocDefinition,
 	ContextEdit,
 	ConversationDocFamilyToken,

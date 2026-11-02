@@ -2,9 +2,8 @@
 // form"): the builders plugins write `where` and `set` with, and their compilation at staging into one data-only
 // vocabulary (what the outbox and archives carry; `evaluate.ts` runs it in JavaScript, `sql.ts` renders it).
 
-import type { TOptional } from "typebox";
 import type { JsonValue } from "../../json.ts";
-import type { TSchema } from "../contracts/index.ts";
+import type { Optional } from "../contracts/index.ts";
 import { invalid } from "../data/internal.ts";
 import type { Column, Columns, ColumnType, ColumnTypeOf, ValueOf } from "./columns.ts";
 import { checkScalar, encodeCell, type Scalar } from "./rows.ts";
@@ -89,7 +88,7 @@ export class Condition {
  * the column's type; `undefined` clears an `opt(...)` column.
  */
 export type SetOf<C extends Columns, K extends readonly string[]> = {
-	readonly [P in Exclude<keyof C & string, K[number]>]?: C[P] extends TOptional<TSchema>
+	readonly [P in Exclude<keyof C & string, K[number]>]?: C[P] extends Optional
 		? ValueOf<C[P]> | Expression<ValueOf<C[P]>, ColumnTypeOf<C[P]>> | undefined
 		: ValueOf<C[P]> | Expression<ValueOf<C[P]>, ColumnTypeOf<C[P]>>;
 };

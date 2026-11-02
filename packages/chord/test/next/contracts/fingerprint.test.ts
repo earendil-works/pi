@@ -1,12 +1,25 @@
-import Type, { type TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
-import { evolve, int, local, method, obj, remote, str } from "../../../src/next/contracts/index.ts";
+import {
+	evolve,
+	hostKind,
+	int,
+	local,
+	method,
+	obj,
+	remote,
+	type Schema,
+	str,
+	union,
+} from "../../../src/next/contracts/index.ts";
 import { NORMAL_FORM_VERSION } from "../../../src/next/contracts/internal.ts";
 import type { Params } from "../../../src/next/contracts/params.ts";
 
+const Server = hostKind("server");
+
 /** Fingerprint of a one-variant remote contract with state `s` and params `params`. */
-function fingerprintOf(state: TSchema, params: Params = {}): string {
-	return remote("n", { version: 1, params, variants: { a: { state: { s: state } } } }).fingerprint;
+function fingerprintOf(state: Schema, params: Params = {}): string {
+	return remote("n", { version: 1, params, hostAddress: () => Server(), variants: { a: { state: { s: state } } } })
+		.fingerprint;
 }
 
 describe("fingerprints", () => {
@@ -15,6 +28,7 @@ describe("fingerprints", () => {
 		const Notes = remote("notes", {
 			version: 1,
 			params: { session: str() },
+			hostAddress: () => Server(),
 			variants: {
 				editor: { state: { notes: obj({ text: str() }) }, methods: { add: method(obj({ text: str() }), str()) } },
 				reader: { state: { notes: obj({ text: str() }) } },
@@ -43,12 +57,12 @@ describe("fingerprints", () => {
 	});
 
 	it.each([
-		["defaults", Type.String(), Type.String({ default: "x" })],
-		["bounds", Type.String(), Type.String({ maxLength: 3 })],
-		["formats", Type.String(), Type.String({ format: "email" })],
-		["union order", Type.Union([Type.String(), Type.Integer()]), Type.Union([Type.Integer(), Type.String()])],
-		["additionalProperties", Type.Object({}), Type.Object({}, { additionalProperties: false })],
-		["readOnly", Type.String(), Type.String({ readOnly: true })],
+		["defaults", str(), str({ default: "x" })],
+		["bounds", str(), str({ max: 3 })],
+		["formats", str(), { type: "string", format: "email" }],
+		["union order", union([str(), int()]), union([int(), str()])],
+		["additionalProperties", { type: "object", properties: {} }, obj({})],
+		["readOnly", str(), { type: "string", readOnly: true }],
 	])("are sensitive to %s", (_case, a, b) => {
 		expect(fingerprintOf(a)).not.toBe(fingerprintOf(b));
 	});
@@ -58,7 +72,8 @@ describe("fingerprints", () => {
 	});
 
 	it("give the same v1 from a separate declaration, and evolve keeps v1's", () => {
-		const declare = () => remote("n", { version: 1, params: {}, variants: { a: { state: { s: str() } } } });
+		const declare = () =>
+			remote("n", { version: 1, params: {}, hostAddress: () => Server(), variants: { a: { state: { s: str() } } } });
 		const v1 = declare();
 		const v2 = evolve(v1, (e) => e.state("a", "s", int()));
 		expect(declare().fingerprint).toBe(v1.fingerprint);
@@ -67,14 +82,19 @@ describe("fingerprints", () => {
 	});
 
 	it("differ between local and remote", () => {
-		const asRemote = remote("n", { version: 1, params: {}, variants: { members: { state: { s: str() } } } });
+		const asRemote = remote("n", {
+			version: 1,
+			params: {},
+			hostAddress: () => Server(),
+			variants: { members: { state: { s: str() } } },
+		});
 		const asLocal = local("n", { version: 1, params: {}, members: { s: str() } });
 		expect(asLocal.fingerprint).not.toBe(asRemote.fingerprint);
 	});
 
 	it("do not depend on the name or version", () => {
-		const a = remote("a", { version: 1, params: {}, variants: { v: {} } });
-		const b = remote("b", { version: 7, params: {}, variants: { v: {} } });
+		const a = remote("a", { version: 1, params: {}, hostAddress: () => Server(), variants: { v: {} } });
+		const b = remote("b", { version: 7, params: {}, hostAddress: () => Server(), variants: { v: {} } });
 		expect(a.fingerprint).toBe(b.fingerprint);
 	});
 });

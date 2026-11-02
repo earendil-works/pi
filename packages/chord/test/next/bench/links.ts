@@ -8,12 +8,14 @@
 import { GCProfiler } from "node:v8";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { BACKGROUND_CONTEXT, type Context, withTelemetry } from "../../../src/context/index.ts";
-import { arr, bytes, int, local, method, obj, remote, str } from "../../../src/next/contracts/index.ts";
+import { arr, bytes, hostKind, int, local, method, obj, remote, str } from "../../../src/next/contracts/index.ts";
 import { defineState } from "../../../src/next/documents/index.ts";
 import { createHost, defineFacet, type Host, type RefState } from "../../../src/next/host/index.ts";
 import { type Codec, type Link, memoryLinkPair } from "../../../src/next/link/index.ts";
 import { binaryCodec, type Message, textCodec } from "../../../src/next/link/internal.ts";
 import type { NativeWatchable } from "../../../src/watch.ts";
+
+const Server = hostKind("server");
 
 type P = { kind: "owner" } | { kind: "server" };
 
@@ -37,6 +39,7 @@ const Store = local("bench.store", {
 const View = remote("bench.view", {
 	version: 1,
 	params: { name: str() },
+	hostAddress: () => Server(),
 	variants: { owner: { state: { doc: Shape } } },
 });
 
@@ -44,6 +47,7 @@ const View = remote("bench.view", {
 const Files = remote("bench.files", {
 	version: 1,
 	params: {},
+	hostAddress: () => Server(),
 	variants: {
 		owner: { methods: { ping: method(obj({ n: int() }), int()), put: method(obj({ data: bytes() }), int()) } },
 	},
@@ -127,7 +131,7 @@ function entry(id: number, length: number): Entry {
 	return { id, text: "x".repeat(length), author: "mario", at: 1_700_000_000_000 + id };
 }
 
-const notes = (): Entry[] => Array.from({ length: 1_000 }, (_, id) => entry(id, 80));
+const notes = (length = 1_000): Entry[] => Array.from({ length }, (_, id) => entry(id, 80));
 
 const document = (): Entry[] => Array.from({ length: 500 }, (_, id) => entry(id, 960));
 
@@ -138,6 +142,7 @@ const document = (): Entry[] => Array.from({ length: 500 }, (_, id) => entry(id,
 async function setup(name: string, entries: Entry[], codec: Codec, metered = true) {
 	const context = metered ? counting : BACKGROUND_CONTEXT;
 	const server = createHost<P>({
+		address: Server(),
 		principal: { kind: "server" },
 		telemetry: metered ? telemetry : undefined,
 		onError: console.error,
@@ -265,30 +270,49 @@ async function snapshot(label: string, codec: Codec, entries: Entry[]): Promise<
 	await close();
 }
 
-/** One commit per run: commit-to-frame, bytes and messages per commit, encodes per hold; then its message alone. */
+/**
+ * Untimed commits before the timed ones. V8 sizes the young generation from the bytes surviving its collections so
+ * far; with these, the timed loop runs nearer its steady size (its medians match a run with a pinned young generation),
+ * so a scavenge's place and cost depend less on the setup (slice 7b fix round 3, `benchmarks.md`).
+ */
+const WARM_UP_COMMITS = 1_000;
+
+/**
+ * One commit per run, after `WARM_UP_COMMITS` untimed ones: commit-to-frame as the mean, median and p90 of the runs
+ * (the mean carries the scavenges that fall in the loop; the median and p90 do not), bytes and messages per commit,
+ * encodes per hold; then its message alone. `extra` notes more at the start, which the warm-up's writes take (a
+ * removal).
+ */
 async function commits(
 	label: string,
 	codec: Codec,
 	write: (store: Awaited<ReturnType<typeof setup>>["store"], i: number) => Promise<unknown>,
+	extra = 0,
 ): Promise<void> {
-	const { client, store, down, close } = await setup(label, notes(), codec);
+	const { client, store, down, close } = await setup(label, notes(1_000 + extra), codec);
 	const view = await client.get(View, { name: label }, counting);
 	const watch = await view.doc.watch(counting);
 	let frame: () => void = () => {};
 	watch.start(async () => frame());
 	const runs = 1_000;
-	const [messages0, encodes0] = [down.messages, encodes()];
-	let total = 0;
-	for (let i = 0; i < runs; i++) {
+	/** One commit and its frame; its time in milliseconds. */
+	const commit = async (i: number): Promise<number> => {
 		const arrived = new Promise<void>((resolve) => {
 			frame = resolve;
 		});
 		const start = performance.now();
 		await write(store, i);
 		await arrived;
-		total += performance.now() - start;
-	}
-	record(`${label}: commit to frame`, codec, ms(total / runs));
+		return performance.now() - start;
+	};
+	for (let i = 0; i < WARM_UP_COMMITS; i++) await commit(runs + i);
+	const [messages0, encodes0] = [down.messages, encodes()];
+	const times: number[] = [];
+	for (let i = 0; i < runs; i++) times.push(await commit(i));
+	const mean = times.reduce((sum, time) => sum + time, 0) / runs;
+	times.sort((a, b) => a - b);
+	const [median, p90] = [times[runs / 2]!, times[Math.floor(runs * 0.9)]!];
+	record(`${label}: commit to frame (mean, median, p90)`, codec, `${ms(mean)}, ${ms(median)}, ${ms(p90)}`);
 	record(
 		`${label}: messages per commit, encodes per hold`,
 		codec,
@@ -346,7 +370,14 @@ async function holdTrial(
 	return { perHold, messages };
 }
 
-/** Calls: a small argument, and a 1 MiB `bytes()` argument; round trips, then the call and result messages alone. */
+const BIG_CALL_BURSTS = 20;
+
+/**
+ * Calls: a small argument, and a 1 MiB `bytes()` argument; round trips, then the call and result messages alone. The
+ * 1 MiB round trip is the median and p90 of `BIG_CALL_BURSTS` bursts of 50 calls, each from a collected heap: the
+ * arguments fill memory outside the heap, and a full collection (about 0.25 ms per call over a burst) lands in one
+ * burst and not the next, so a single burst measured the collector, not the call.
+ */
 async function calls(codec: Codec): Promise<void> {
 	const { client, down, up, close } = await setup("calls", [], codec);
 	const files = await client.get(Files, {}, counting);
@@ -356,9 +387,16 @@ async function calls(codec: Codec): Promise<void> {
 	await codecRows("call, small argument: call message", codec, codec.decode(up.last!), 10_000);
 	await codecRows("call, small argument: result message", codec, codec.decode(down.last!), 10_000);
 	const data = new Uint8Array(1024 * 1024);
-	start = performance.now();
-	for (let i = 0; i < 50; i++) await files.put({ data }, counting);
-	record("call, 1 MiB bytes argument: round trip", codec, ms((performance.now() - start) / 50));
+	const bursts: number[] = [];
+	for (let burst = 0; burst < BIG_CALL_BURSTS; burst++) {
+		gc();
+		start = performance.now();
+		for (let i = 0; i < 50; i++) await files.put({ data }, counting);
+		bursts.push((performance.now() - start) / 50);
+	}
+	bursts.sort((a, b) => a - b);
+	const [median, p90] = [bursts[BIG_CALL_BURSTS / 2]!, bursts[Math.floor(BIG_CALL_BURSTS * 0.9)]!];
+	record("call, 1 MiB bytes argument: round trip (median, p90)", codec, `${ms(median)}, ${ms(p90)}`);
 	await codecRows("call, 1 MiB bytes argument: call message", codec, codec.decode(up.last!), 1_000);
 	await close();
 }
@@ -444,7 +482,7 @@ for (const codec of CODECS) {
 	await snapshot("500 KB document", codec, document());
 	await commits("one appended item", codec, (store, i) => store.append(entry(10_000 + i, 80), counting));
 	await commits("one changed field", codec, (store, i) => store.edit({ index: 500, text: `edit ${i}` }, counting));
-	await commits("one removed item", codec, (store) => store.remove(0, counting));
+	await commits("one removed item", codec, (store) => store.remove(0, counting), WARM_UP_COMMITS);
 	await stream(codec);
 	for (const holds of [1, 10]) {
 		// The median of seven trials: a single hold is small next to the collector's noise.

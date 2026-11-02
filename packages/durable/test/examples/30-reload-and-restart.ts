@@ -2,13 +2,15 @@
 // with; stored choices are names, so they survive a restart and bind to whatever code the new process installs.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/30-reload-and-restart.ts
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { type ToolResultMessage, Type } from "@earendil-works/pi-ai";
+import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import { obj } from "@earendil-works/pi-schema";
 import { createRegistry, defineExtension, defineTool, Harness, ToolResultEntry } from "../../src/index.ts";
 import { openNodeSqliteStorage } from "../../src/storage/sqlite/node.ts";
 
@@ -24,7 +26,7 @@ function loadVersioned(version: string) {
 			defineTool({
 				name: "version",
 				description: "Report the tool's code version",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async () => {
 					started();
 					await gate;

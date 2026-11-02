@@ -3,7 +3,9 @@ import {
 	type AcceptsTable,
 	arr,
 	evolve,
+	hostKind,
 	int,
+	keyed,
 	local,
 	method,
 	nul,
@@ -13,12 +15,15 @@ import {
 } from "../../../src/next/contracts/index.ts";
 import { checkAccepts } from "../../../src/next/contracts/internal.ts";
 
+const Server = hostKind("server");
+
 const Note = obj({ text: str() });
 const NoteV2 = obj({ text: str(), tag: str() });
 
 const NotesV1 = remote("notes", {
 	version: 1,
 	params: { session: str() },
+	hostAddress: () => Server(),
 	variants: {
 		editor: { state: { notes: arr(Note), count: int() }, methods: { add: method(Note, str()), clear: method() } },
 		reader: { state: { notes: arr(Note) }, methods: { add: method(Note, str()) } },
@@ -183,6 +188,23 @@ describe("method mappings", () => {
 			'notes accepts[1]: unknown key "extra"',
 		);
 		expect(() => checkUntyped(v2, null)).toThrow("notes accepts: expected an object");
+	});
+});
+
+describe("keyed mappings (slice 7b)", () => {
+	const Store = local("store", { version: 1, params: {}, members: { notes: keyed(Note), drafts: keyed(Note) } });
+	const V2 = evolve(Store, (e) => e.keyed("notes", NoteV2).removeKeyed("drafts"));
+
+	it("needs a function or refuse for a changed keyed member, refuse for a removed one", () => {
+		expect(checkAccepts(V2, { 1: { keyed: { notes: toV1, drafts: "refuse" } } }).versions).toHaveLength(1);
+		expect(checkAccepts(V2, { 1: { keyed: { notes: "refuse", drafts: "refuse" } } }).versions).toHaveLength(1);
+		expect(() => checkUntyped(V2, { 1: { keyed: { notes: toV1 } } })).toThrow(
+			"accepts[1].keyed.drafts: missing mapping",
+		);
+		expect(() => checkUntyped(V2, { 1: { keyed: { notes: toV1, drafts: toV1 } } })).toThrow(
+			'accepts[1].keyed.drafts: expected "refuse"',
+		);
+		expect(() => checkUntyped(Store, {})).not.toThrow();
 	});
 });
 

@@ -1,11 +1,11 @@
-import { Type } from "typebox";
+import { num, obj, str } from "@earendil-works/pi-schema";
 import { hostNamed, method, remote } from "../../src/index.ts";
 
 export const Echo = remote("t.echo", {
 	version: 1,
-	input: Type.Object({}),
+	input: obj({}, { open: true }),
 	host: hostNamed("w1"),
 	variants: {
-		main: { methods: { echo: method(Type.String(), Type.String()), pid: method(undefined, Type.Number()) } },
+		main: { methods: { echo: method(str(), str()), pid: method(undefined, num()) } },
 	},
 });

@@ -14,7 +14,7 @@ checked, what a principal key is, what an error is. Pure functions, types and we
 Source: `packages/chord/src/next/contracts/` (declarations) and `packages/chord/src/next/data/` (per-call checks,
 principals, errors), split into files by concept. Everything else under `src/next/` is the frozen old kernel: never
 imported, never edited. Reused: `src/context/` (`Context`, `BACKGROUND_CONTEXT`, `context.telemetry`) and
-`src/json.ts` (`JsonValue`), both unchanged. Schemas are TypeBox 1.3 (`typebox` in `node_modules`).
+`src/json.ts` (`JsonValue`), both unchanged. Schemas were TypeBox 1.3 when L1 was built; since the schema switch (2026-11-01) they are pi-schema's plain JSON Schema (design §3 "Values"). The TypeBox details below are historical.
 
 ## 1. Values
 

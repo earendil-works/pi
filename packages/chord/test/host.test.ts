@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { bool, num, obj, opt, str } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import {
 	type Ctx,
@@ -27,10 +27,10 @@ async function until(check: () => boolean): Promise<void> {
 
 const Counter = local("t.counter", {
 	version: 1,
-	input: Type.Object({ name: Type.String() }),
+	input: obj({ name: str() }, { open: true }),
 	members: {
-		count: Type.Object({ n: Type.Number() }),
-		add: method(Type.Number(), Type.Number()),
+		count: obj({ n: num() }, { open: true }),
+		add: method(num(), num()),
 	},
 });
 
@@ -39,7 +39,7 @@ function serveCounter(host: Host, log: string[] = [], options: { linger?: number
 		Counter,
 		({ name }, _principal, self) => {
 			log.push(`factory ${name}`);
-			const count = self.state("count", Type.Object({ n: Type.Number() }), { n: 0 });
+			const count = self.state("count", obj({ n: num() }, { open: true }), { n: 0 });
 			const conn = self.resource("conn", {
 				version: 1,
 				open: async () => {
@@ -123,7 +123,7 @@ describe("host: activation and lifetime", () => {
 		const host = quiet();
 		const log: string[] = [];
 		let release = () => {};
-		const Slow = local("t.slow", { version: 1, input: Type.Object({}) });
+		const Slow = local("t.slow", { version: 1, input: obj({}, { open: true }) });
 		host.serve(Slow, (_input, _principal, self) => {
 			self.resource("r", {
 				version: 1,
@@ -156,8 +156,8 @@ describe("host: activation and lifetime", () => {
 	it("propagates activation failures to dependents and retries on the next get", async () => {
 		const host = quiet();
 		let fail = true;
-		const Leaf = local("t.leaf", { version: 1, input: Type.Object({}) });
-		const Parent = local("t.parent", { version: 1, input: Type.Object({}) });
+		const Leaf = local("t.leaf", { version: 1, input: obj({}, { open: true }) });
+		const Parent = local("t.parent", { version: 1, input: obj({}, { open: true }) });
 		host.serve(Leaf, (_input, _principal, self) => {
 			self.resource("r", {
 				version: 1,
@@ -184,8 +184,8 @@ describe("host: activation and lifetime", () => {
 
 	it("unwinds declarations when a factory throws and rejects async factories", async () => {
 		const host = quiet();
-		const Leaf = local("t.leaf2", { version: 1, input: Type.Object({}) });
-		const Bad = local("t.bad", { version: 1, input: Type.Object({ async: Type.Boolean() }) });
+		const Leaf = local("t.leaf2", { version: 1, input: obj({}, { open: true }) });
+		const Bad = local("t.bad", { version: 1, input: obj({ async: bool() }, { open: true }) });
 		let leafLive = 0;
 		host.serve(Leaf, (_input, _principal, self) => {
 			self.resource("r", {
@@ -213,10 +213,10 @@ describe("host: activation and lifetime", () => {
 
 	it("rejects duplicate declaration names", async () => {
 		const host = quiet();
-		const Dup = local("t.dup", { version: 1, input: Type.Object({}) });
+		const Dup = local("t.dup", { version: 1, input: obj({}, { open: true }) });
 		host.serve(Dup, (_input, _principal, self) => {
-			self.state("a", Type.Object({}), {});
-			self.state("a", Type.Object({}), {});
+			self.state("a", obj({}, { open: true }), {});
+			self.state("a", obj({}, { open: true }), {});
 			return {};
 		});
 		await assert.rejects(host.hold(Dup, {}).ready, /duplicate state name a/);
@@ -224,8 +224,8 @@ describe("host: activation and lifetime", () => {
 
 	it("detects hold cycles", async () => {
 		const host = quiet();
-		const A = local("t.cycle-a", { version: 1, input: Type.Object({}) });
-		const B = local("t.cycle-b", { version: 1, input: Type.Object({}) });
+		const A = local("t.cycle-a", { version: 1, input: obj({}, { open: true }) });
+		const B = local("t.cycle-b", { version: 1, input: obj({}, { open: true }) });
 		host.serve(A, (_input, _principal, self) => {
 			self.get(B, {});
 			return {};
@@ -241,7 +241,7 @@ describe("host: activation and lifetime", () => {
 		const errors: unknown[] = [];
 		const host = quiet(errors);
 		const log: string[] = [];
-		const Multi = local("t.multi", { version: 1, input: Type.Object({}) });
+		const Multi = local("t.multi", { version: 1, input: obj({}, { open: true }) });
 		host.serve(Multi, (_input, _principal, self) => {
 			const a = self.resource("a", { version: 1, open: () => "a", close: () => void log.push("close a") });
 			self.resource("b", {
@@ -291,15 +291,15 @@ describe("host: activation and lifetime", () => {
 describe("host: declarations and methods", () => {
 	it("refuses a second declaration of one name per kind; kinds have their own names", async () => {
 		const host = quiet();
-		const Twice = local("t.twice", { version: 1, input: Type.Object({ kind: Type.String() }) });
+		const Twice = local("t.twice", { version: 1, input: obj({ kind: str() }, { open: true }) });
 		host.serve(Twice, ({ kind }, _principal, self) => {
 			const open = { version: 1, open: () => null };
-			self.state("x", Type.Number(), 0);
+			self.state("x", num(), 0);
 			self.resource("x", open);
-			self.on("x", self.state("y", Type.Number(), 0), () => {});
-			if (kind === "state") self.state("x", Type.Number(), 1);
+			self.on("x", self.state("y", num(), 0), () => {});
+			if (kind === "state") self.state("x", num(), 1);
 			if (kind === "resource") self.resource("x", open);
-			if (kind === "listener") self.on("x", self.state("z", Type.Number(), 0), () => {});
+			if (kind === "listener") self.on("x", self.state("z", num(), 0), () => {});
 			return {};
 		});
 		await host.hold(Twice, { kind: "none" }).ready;
@@ -318,11 +318,11 @@ describe("host: declarations and methods", () => {
 		const host = quiet();
 		const Tool = local("t.tool", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			members: {
 				ping: method(),
-				count: method(undefined, Type.Number()),
-				note: method(Type.String()),
+				count: method(undefined, num()),
+				note: method(str()),
 			},
 		});
 		const seen: unknown[] = [];
@@ -348,8 +348,8 @@ describe("host: declarations and methods", () => {
 		const host = quiet();
 		const Doubled = local("t.doubled", {
 			version: 1,
-			input: Type.Object({}),
-			members: { set: method(Type.Number()) },
+			input: obj({}, { open: true }),
+			members: { set: method(num()) },
 		});
 		const seen: number[] = [];
 		const facet = (label: string): Facet => ({
@@ -358,7 +358,7 @@ describe("host: declarations and methods", () => {
 				api.serve(
 					Doubled,
 					(_input, _principal, self) => {
-						const n = self.state("n", Type.Number(), 1);
+						const n = self.state("n", num(), 1);
 						const doubled = self.derive([n], (value) => value * 2);
 						self.on("doubled", doubled, (value) => {
 							seen.push(value);
@@ -389,7 +389,7 @@ describe("host: declarations and methods", () => {
 describe("host: lifetime", () => {
 	const Store = local("t.store", {
 		version: 1,
-		input: Type.Object({ scope: Type.Optional(Type.String({ default: "all" })) }),
+		input: obj({ scope: opt(str({ default: "all" })) }, { open: true }),
 		members: { seen: opaque<unknown>("t.seen@1") },
 	});
 
@@ -397,11 +397,11 @@ describe("host: lifetime", () => {
 		const host = quiet();
 		const Remote = remote("t.remote-store", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("host"),
 			variants: { main: {} },
 		});
-		const Keyed = local("t.keyed", { version: 1, input: Type.Object({ id: Type.String() }) });
+		const Keyed = local("t.keyed", { version: 1, input: obj({ id: str() }, { open: true }) });
 		// Each refused call is also a type error; the runtime check is the backstop for untyped callers.
 		const refused: [() => void, RegExp][] = [
 			// @ts-expect-error: a remote type is never of lifetime "host"
@@ -415,7 +415,7 @@ describe("host: lifetime", () => {
 		];
 		for (const [serve, error] of refused) assert.throws(serve, error);
 		// Allowed: a local type whose input has only optional fields, and any type with the default lifetime.
-		const Optional = local("t.optional", { version: 1, input: Type.Object({ id: Type.Optional(Type.String()) }) });
+		const Optional = local("t.optional", { version: 1, input: obj({ id: opt(str()) }, { open: true }) });
 		host.serve(Optional, () => ({}), { lifetime: "host" });
 		host.serve(Keyed, () => ({}), { lifetime: "referenced", linger: 10 });
 		host.serve(Remote, () => ({ variant: "main" }), { linger: 10 });
@@ -462,13 +462,13 @@ describe("host: lifetime", () => {
 describe("host: principals, variants and disposal", () => {
 	const Doc = remote("t.doc", {
 		version: 1,
-		input: Type.Object({ id: Type.String() }),
+		input: obj({ id: str() }, { open: true }),
 		host: hostNamed("host"),
 		variants: {
-			viewer: { state: { view: Type.Object({ text: Type.String() }) } },
+			viewer: { state: { view: obj({ text: str() }, { open: true }) } },
 			editor: {
-				state: { view: Type.Object({ text: Type.String() }) },
-				methods: { edit: method(Type.Object({ text: Type.String() }), Type.Object({ ok: Type.Boolean() })) },
+				state: { view: obj({ text: str() }, { open: true }) },
+				methods: { edit: method(obj({ text: str() }, { open: true }), obj({ ok: bool() }, { open: true })) },
 			},
 		},
 	});
@@ -476,7 +476,7 @@ describe("host: principals, variants and disposal", () => {
 	function serveDoc(host: Host, principals: unknown[] = []) {
 		host.serve(Doc, (_input, principal, self) => {
 			principals.push(principal);
-			const view = self.state("view", Type.Object({ text: Type.String() }), { text: "" });
+			const view = self.state("view", obj({ text: str() }, { open: true }), { text: "" });
 			if ((principal as { role?: string }).role !== "editor") return { variant: "viewer", view };
 			return {
 				variant: "editor",
@@ -531,7 +531,7 @@ describe("host: principals, variants and disposal", () => {
 		let seenAbort = false;
 		const Slow = local("t.inflight", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			members: { wait: method() },
 		});
 		host.serve(Slow, () => ({
@@ -585,8 +585,8 @@ describe("host: registries", () => {
 
 	it('only objects of lifetime "host" register; tables follow registration order', async () => {
 		const host = quiet();
-		const RoutesA = local("t.routes-a", { version: 1, input: Type.Object({}) });
-		const RoutesB = local("t.routes-b", { version: 1, input: Type.Object({}) });
+		const RoutesA = local("t.routes-a", { version: 1, input: obj({}, { open: true }) });
+		const RoutesB = local("t.routes-b", { version: 1, input: obj({}, { open: true }) });
 		host.serve(
 			RoutesA,
 			(_input, _principal, self) => {
@@ -611,7 +611,7 @@ describe("host: registries", () => {
 		assert.equal(host.registry(Routes).get("GET /b"), "b");
 		assert.deepEqual(tables.at(-1), ["GET /a", "GET /c", "GET /b"]);
 
-		const Lazy = local("t.lazy-register", { version: 1, input: Type.Object({}) });
+		const Lazy = local("t.lazy-register", { version: 1, input: obj({}, { open: true }) });
 		host.serve(Lazy, (_input, _principal, self) => {
 			self.register(Routes, { x: "x" });
 			return {};
@@ -624,7 +624,7 @@ describe("host: registries", () => {
 		const host = quiet(errors);
 		for (const name of ["t.conflict-a", "t.conflict-b"]) {
 			host.serve(
-				local(name, { version: 1, input: Type.Object({}) }),
+				local(name, { version: 1, input: obj({}, { open: true }) }),
 				(_input, _principal, self) => {
 					self.register(Routes, { same: name });
 					return {};
@@ -641,19 +641,19 @@ describe("host: registries", () => {
 describe("host: composition", () => {
 	const Source = local("t.source", {
 		version: 1,
-		input: Type.Object({}),
-		members: { n: Type.Number(), set: method(Type.Number()) },
+		input: obj({}, { open: true }),
+		members: { n: num(), set: method(num()) },
 	});
 	const Mirror = local("t.mirror", {
 		version: 1,
-		input: Type.Object({}),
-		members: { copy: Type.Number(), doubled: Type.Number() },
+		input: obj({}, { open: true }),
+		members: { copy: num(), doubled: num() },
 	});
 
 	it("reference state members are sources for listeners and derivations", async () => {
 		const host = quiet();
 		host.serve(Source, (_input, _principal, self) => {
-			const n = self.state("n", Type.Number(), 1);
+			const n = self.state("n", num(), 1);
 			return {
 				n,
 				set: (value: number, ctx: Ctx) => {
@@ -663,7 +663,7 @@ describe("host: composition", () => {
 		});
 		host.serve(Mirror, (_input, _principal, self) => {
 			const source = self.get(Source, {});
-			const copy = self.state("copy", Type.Number(), 0);
+			const copy = self.state("copy", num(), 0);
 			self.on("follow", source.n, (value, ctx) => copy.replace(ctx, value ?? 0));
 			const doubled = self.derive([source.n], (n) => (n ?? 0) * 2);
 			return { copy, doubled };
@@ -688,12 +688,12 @@ describe("host: composition", () => {
 		const seen: unknown[] = [];
 		const Who = local("t.who", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			members: { ping: method() },
 		});
 		const Front = local("t.front", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			members: { relay: method() },
 		});
 		host.serve(Who, (_input, principal) => {
@@ -711,10 +711,10 @@ describe("host: composition", () => {
 	it("calling a reference inside a factory throws not_ready", async () => {
 		const host = quiet();
 		host.serve(Source, (_input, _principal, self) => ({
-			n: self.state("n", Type.Number(), 0),
+			n: self.state("n", num(), 0),
 			set: () => {},
 		}));
-		const Eager = local("t.eager-call", { version: 1, input: Type.Object({}) });
+		const Eager = local("t.eager-call", { version: 1, input: obj({}, { open: true }) });
 		host.serve(Eager, (_input, _principal, self) => {
 			const source = self.get(Source, {});
 			void source.set(1);
@@ -725,8 +725,8 @@ describe("host: composition", () => {
 
 	it("a ChordError from a factory keeps its code through dependents", async () => {
 		const host = quiet();
-		const Secret = local("t.secret", { version: 1, input: Type.Object({}) });
-		const Page = local("t.page", { version: 1, input: Type.Object({}) });
+		const Secret = local("t.secret", { version: 1, input: obj({}, { open: true }) });
+		const Page = local("t.page", { version: 1, input: obj({}, { open: true }) });
 		host.serve(Secret, () => {
 			throw forbidden("not for you");
 		});

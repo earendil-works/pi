@@ -19,11 +19,12 @@ import {
 import { checkAccepts, currentVariants, LOCAL, takesNoArgs } from "../../../src/next/contracts/internal.ts";
 import { bindProvider, checkParams } from "../../../src/next/data/internal.ts";
 import type { Watchable } from "../../../src/next/state/index.ts";
-import { expectCollected } from "../support.ts";
+import { expectCollected, Server } from "../support.ts";
 
 const Notes = remote("notes", {
 	version: 1,
 	params: { session: str(), page: int() },
+	hostAddress: () => Server(),
 	variants: {
 		editor: { state: { notes: arr(str()) }, methods: { add: method(obj({ text: str() }), str()), clear: method() } },
 		reader: { state: { notes: arr(str()) } },

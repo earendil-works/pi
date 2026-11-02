@@ -51,6 +51,57 @@ describe("wrapTextWithAnsi", () => {
 		});
 	});
 
+	// #10925
+	describe("styled words at the wrap boundary", () => {
+		it("keeps the closing code on the wrapped line and drops the following space", () => {
+			assert.deepStrictEqual(wrapTextWithAnsi("aaaa \x1b[1mbold\x1b[22m next word", 9), [
+				"aaaa \x1b[1mbold\x1b[22m",
+				"next word",
+			]);
+		});
+
+		it("does not re-open a style closed by the dropped space", () => {
+			assert.deepStrictEqual(wrapTextWithAnsi("aaaa \x1b[31mred\x1b[39m  next", 8), [
+				"aaaa \x1b[31mred\x1b[39m",
+				"next",
+			]);
+		});
+
+		it("does not exceed width for styled whitespace wider than the line", () => {
+			for (const text of [
+				`\x1b[41m${" ".repeat(20)}\x1b[0m`,
+				`ab\x1b[41m${" ".repeat(20)}\x1b[49mcd`,
+				`\x1b[33m${" ".repeat(20)}x\x1b[39m`,
+			]) {
+				for (const line of wrapTextWithAnsi(text, 10)) {
+					assert.ok(visibleWidth(line) <= 10, JSON.stringify(line));
+				}
+			}
+		});
+
+		it("trims trailing spaces before the line-end reset when a long word follows", () => {
+			assert.deepStrictEqual(wrapTextWithAnsi("aaa\x1b[9m    abcdefghij\x1b[29m", 9), [
+				"aaa\x1b[9m\x1b[29m",
+				"\x1b[9mabcdefghi\x1b[29m",
+				"\x1b[9mj\x1b[29m",
+			]);
+		});
+
+		it("resets strikethrough at line end and restores it on the next line", () => {
+			assert.deepStrictEqual(wrapTextWithAnsi("aaaa \x1b[9mstrike me\x1b[29m next", 12), [
+				"aaaa \x1b[9mstrike\x1b[29m",
+				"\x1b[9mme\x1b[29m next",
+			]);
+		});
+
+		it("preserves background when resetting strikethrough at line end", () => {
+			assert.deepStrictEqual(wrapTextWithAnsi("\x1b[41;9mstrike me\x1b[0m", 6), [
+				"\x1b[41;9mstrike\x1b[29m",
+				"\x1b[9;41mme\x1b[0m",
+			]);
+		});
+	});
+
 	describe("background color preservation", () => {
 		it("should preserve background color across wrapped lines without full reset", () => {
 			const bgBlue = "\x1b[44m";

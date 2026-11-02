@@ -3,7 +3,7 @@
 This document specifies the runtime in `src`. Where it and the code disagree, the disagreement is a bug. [Known limitations and decisions](#12-known-limitations-and-decisions) lists what the runtime does not do yet and the choices the sections below leave open.
 
 Hard constraints:
-- Chord's runtime depends only on its own `delta` module (tracker, applyImmutable, encoder/decoder, diff) and Node/browser built-ins plus `typebox` for schemas. No other Pi packages.
+- Chord's runtime depends only on its own `delta` module (tracker, applyImmutable, encoder/decoder, diff) and Node/browser built-ins, plus `@earendil-works/pi-telemetry` for telemetry and `@earendil-works/pi-schema` for schemas. No other Pi packages.
 - Built-in plugins are trusted, loaded from source in-process. The plugin loader uses dynamic `import()` with a cache-busting query (owner-approved exception, `TODO(loader)`: replace with an isolating, evicting loader; old module copies leak; TUI plugins need isolation).
 - Hot reload is required. Host restart only for Chord/runtime code changes or host-level crash recovery.
 
@@ -29,23 +29,23 @@ Contracts are runtime values for every type (shipped bundles have no TypeScript;
 ```ts
 export const Chat = remote("pi.chat", {
 	version: 1,                                   // contract version: a plain number, bumped only on breaking changes
-	input: Type.Object({ session: Type.String(), conversation: Type.Number() }),
+	input: obj({ session: str(), conversation: num() }),
 	host: hostFamily("session:", "session"),       // where its objects live: `session:` + input.session
 	variants: {
 		viewer: { state: { view: ViewSchema } },
 		participant: {
 			state: { view: ViewSchema },
-			methods: { send: method(SendSchema, Type.Object({ submissionId: Type.Number() })) },
+			methods: { send: method(SendSchema, obj({ submissionId: num() })) },
 		},
 	},
 });
 
 export const Index = local("pi.index", {
 	version: 1,
-	input: Type.Object({ session: Type.String() }),
+	input: obj({ session: str() }),
 	members: {
-		search: method(Type.Object({ query: Type.String() }), Type.Array(Hit)),
-		onChange: method(Type.Function([Change], Type.Void()), Unsubscribe),   // non-JSON allowed for locals
+		search: method(obj({ query: str() }), arr(Hit)),
+		onChange: method({ type: "function", parameters: [Change], returnType: { type: "void" } }, Unsubscribe),   // non-JSON allowed for locals
 		harness: opaque("pi.durable-harness@1"),                               // native object, by name+version
 	},
 });
@@ -81,7 +81,7 @@ Factories are synchronous; returning a promise throws. A declaration has a name 
 host.serve(StatusStore, ({ session }, _host, self) => {
 	const status = self.state("status", StatusSchema, { running: false, tasks: 0 },  // schema required, initial value
 		{ version: 2, migrate: (old, from) => upgrade(old, from) });                     // per cell; default version 1
-	const errors = self.state("errors", Type.Array(Type.String()), []);
+	const errors = self.state("errors", arr(str()), []);
 	const catalog = self.get(Catalog, {});                         // reference; identity = canonical address (+ at)
 	const watch = self.resource("watch", {
 		version: 1, deps: [catalog], exclusive: false,
@@ -278,8 +278,8 @@ The tests cover at least: lifetime/references/linger/forced disposal/gone; activ
 - **Joining during a reload.** Participants are the child hosts in step when a reload starts. A child whose hello arrives while it runs is decided when it ends: in step, or reconciled to the committed code version; a child already behind is fenced at once, so the calls its roots make meanwhile are admitted in the parent's code version. A reconciliation that is running when a reload starts syncs its child only after that reload ended, against the code version it committed. A reconciliation announces the parent's retired code versions before its `prepare`.
 - **Two-version rule.** An object of a changed type created after a commit has only new code; a previous-code-version root calling it gets `superseded`.
 - **Validation.** Remote calls are validated at reference dispatch, in-host too: a direct binding against the provider's schema, a binding through an adapter against the consumer's. A provider validates each snapshot and reset of a remote state member once per (re)subscription, against the consumer's contract through an `accepts` adapter and the provider's otherwise; ops are validated only in dev mode. At reload, the new provider's description must cover the old provider's when the version is unchanged, in addition to the check against live consumers and facets' `uses`.
-- **Contracts.** Local contracts list their members, so a loading reference knows whether a member is a method, state or opaque. Canonical identity omits input fields equal to their default; with TypeBox, use `Type.Optional(Type.X({ default }))` to let callers omit them. Provider variants must cover consumer variants; members the consumer's contract does not list are hidden. Schema change detection compares canonical JSON, so reordering `anyOf` branches counts as a change. Fingerprints use a non-cryptographic 64-bit hash: synchronous and browser-safe; contracts are trusted.
-- **Principals.** A root ctx at ingress acts as its principal (`host.root(fn, { principal })`); contexts inside objects act as `host`. The acceptor decides a link's kind and name (`accept(link, { principal, kind, name })`); only configured host links are addressable, carry roots and may vote, and control frames are accepted only from the parent. Clients never carry roots or code versions. Relaying needs a matching `route`; `authorize(principal, hostName)` runs before `resolve` and again after, and revoking or re-stamping a principal closes its relays at once. `invalidatePrincipal(match)` re-stamps or closes matching links and propagates pattern matches to child hosts.
+- **Contracts.** Local contracts list their members, so a loading reference knows whether a member is a method, state or opaque. Canonical identity omits input fields equal to their default; use `opt(str({ default }))` (pi-schema) to let callers omit them. Provider variants must cover consumer variants; members the consumer's contract does not list are hidden. Schema change detection compares canonical JSON, so reordering `anyOf` branches counts as a change. Fingerprints use a non-cryptographic 64-bit hash: synchronous and browser-safe; contracts are trusted.
+- **Principals.** A root ctx at ingress acts as its principal (`host.root(fn, { principal })`); contexts inside objects act as `host`. The acceptor decides a link's kind and name (`accept(link, { principal, kind, name })`); only configured host links are addressable, carry roots and may vote, and control frames are accepted only from the parent. Clients never carry roots or code versions. Relaying needs a matching `route`; `authorize(principal, hostName)` runs before `resolve` and again after, and revoking or re-stamping a principal closes its relays at once. The host `resolve` returns is admitted before that second check, so a refused, revoked or released relay never leaves a spawned host's link unread. `invalidatePrincipal(match)` re-stamps or closes matching links and propagates pattern matches to child hosts.
 - **Cells and readables.** A value returned from `change` replaces the value and is always validated; `replace` transfers ownership without copying; by default (`{ diff }` overrides) it publishes a diff when the new value reuses a container of the old one at the same key, else `r`. `subscribe(fn)` delivers values, starting with the current one; `events(fn)` delivers `snap`, then `ops`, or `reset`. Reference state members are stable readables that throw `not_ready` while loading and `not_in_variant` outside the variant, and reset when their source moves; a listener added before they are readable gets its snapshot then. Remote state members stay hydrated while the reference is held.
 - **References and calls.** A reference's identity is its address; a second `self.get` of the same address in one run returns the same reference. A reference call without ctx, or with a task ctx, starts a fresh root in the current code version; a ctx whose call or root already settled is refused (`aborted/expired`), one from another host `invalid/foreign_ctx`. Calling a reference inside a factory throws `not_ready`.
 - **Resources and disposal.** New and replaced exclusive resources open at the gate, and so do non-exclusive resources of the same object that depend on them. A new object for an address that is still being disposed waits for that disposal. A resource open that completes after its signal aborted closes its value at once.

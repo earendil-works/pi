@@ -49,6 +49,7 @@ import type {
 	Component,
 	EditorComponent,
 	EditorTheme,
+	Keybinding,
 	KeyId,
 	OverlayHandle,
 	OverlayOptions,
@@ -142,6 +143,19 @@ export interface WorkingIndicatorOptions {
 /** Wrap the current autocomplete provider with additional behavior. */
 export type AutocompleteProviderFactory = (current: AutocompleteProvider) => AutocompleteProvider;
 export type EditorFactory = (tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => EditorComponent;
+
+/**
+ * Formats the host's configured keybindings for display.
+ * Extensions should use these instead of importing `keyText`/`keyHint`: an import may resolve to another copy of
+ * pi-coding-agent, which does not see the host's keybindings.
+ */
+export interface KeybindingHints {
+	/** Configured keys for a keybinding id, for example `"ctrl+o"`. Empty when the id has no keys. */
+	keyText(keybinding: Keybinding): string;
+
+	/** Configured keys followed by a description, styled as a hint, for example `"ctrl+o to expand"`. */
+	keyHint(keybinding: Keybinding, description: string): string;
+}
 
 /**
  * UI context for extensions to request interactive UI.
@@ -470,7 +484,7 @@ export interface ToolRenderResultOptions {
 }
 
 /** Context passed to tool renderers. */
-export interface ToolRenderContext<TState = any, TArgs = any> {
+export interface ToolRenderContext<TState = any, TArgs = any> extends KeybindingHints {
 	/** Current tool call arguments. Shared across call/result renders for the same tool call. */
 	args: TArgs;
 	/** Unique id for this tool execution. Stable across call/result renders for the same tool call. */
@@ -1538,7 +1552,7 @@ export interface SessionBeforeTreeResult {
 // Message and Entry Rendering
 // ============================================================================
 
-export interface MessageRenderOptions {
+export interface MessageRenderOptions extends KeybindingHints {
 	expanded: boolean;
 	/** Horizontal padding configured by the outputPad setting. */
 	outputPad: number;
@@ -1556,7 +1570,7 @@ export interface MarkdownTransformContext {
 
 export type MarkdownTransformer = (markdown: string, context: MarkdownTransformContext) => string;
 
-export interface EntryRenderOptions {
+export interface EntryRenderOptions extends KeybindingHints {
 	expanded: boolean;
 }
 

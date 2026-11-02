@@ -6,7 +6,7 @@
 // Run from packages/chord:
 //   node --conditions=source --experimental-strip-types test/next/examples/16-presence-and-activity.ts
 import { BACKGROUND_CONTEXT } from "../../../src/context/index.ts";
-import { int, method, remote, str } from "../../../src/next/contracts/index.ts";
+import { hostKind, int, method, remote, str } from "../../../src/next/contracts/index.ts";
 import { createHost, defineFacet } from "../../../src/next/host/index.ts";
 import { memoryLinkPair } from "../../../src/next/link/index.ts";
 
@@ -14,15 +14,19 @@ const context = BACKGROUND_CONTEXT;
 
 type P = { kind: "user"; name: string } | { kind: "server" };
 
+// The server's host kind: a remote contract's `hostAddress` names the host serving its objects.
+const Server = hostKind("server");
+
 /** A shared document view: who else is looking (`viewers`), and a slow method. */
 const Doc = remote("example.doc", {
 	version: 1,
 	params: { id: str() },
+	hostAddress: () => Server(),
 	variants: { v: { state: { viewers: int() }, methods: { think: method(undefined, int()) } } },
 });
 
 // 1. The server serves `Doc`; its factory derives the viewer count from `host.references(Doc)` (on the facet's host).
-const server = createHost<P>({ principal: { kind: "server" }, onError: console.error });
+const server = createHost<P>({ address: Server(), principal: { kind: "server" }, onError: console.error });
 const facet = defineFacet<P>((host) => {
 	host.serve(
 		Doc,

@@ -1,0 +1,5 @@
+{
+	"name": "@example/shapes",
+	"private": true,
+	"type": "module"
+}

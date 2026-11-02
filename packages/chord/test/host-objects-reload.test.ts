@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { bool, num, obj, str } from "@earendil-works/pi-schema";
 import { onTestFinished, test } from "vitest";
 import { HostImpl } from "../src/host.ts";
 import {
@@ -12,15 +12,16 @@ import {
 	method,
 	type Self,
 } from "../src/index.ts";
+import { record } from "./fixtures/schemas.ts";
 
-const input = Type.Object({});
-const flags = Type.Record(Type.String(), Type.Boolean());
+const input = obj({}, { open: true });
+const flags = record(bool());
 const SwitchV1 = local("t.eager-switch", {
 	version: 1,
 	input,
 	members: {
-		enabled: Type.Boolean(),
-		set: method(Type.Boolean()),
+		enabled: bool(),
+		set: method(bool()),
 	},
 });
 const SwitchV2 = local("t.eager-switch", {
@@ -28,7 +29,7 @@ const SwitchV2 = local("t.eager-switch", {
 	input,
 	members: {
 		enabled: flags,
-		set: method(Type.Object({ conversation: Type.Number(), enabled: Type.Boolean() })),
+		set: method(obj({ conversation: num(), enabled: bool() }, { open: true })),
 	},
 });
 const SwitchV3 = local("t.eager-switch", {
@@ -36,7 +37,7 @@ const SwitchV3 = local("t.eager-switch", {
 	input,
 	members: {
 		enabled: flags,
-		update: method(Type.Object({ conversation: Type.Number(), enabled: Type.Boolean() })),
+		update: method(obj({ conversation: num(), enabled: bool() }, { open: true })),
 	},
 });
 const Read = defineRegistry<() => unknown>("t.eager-switch-read");
@@ -60,7 +61,7 @@ function switchFacets(log: string[]) {
 				SwitchV1,
 				(_input, _principal, self) => {
 					declareResource(self);
-					const enabledState = self.state("enabled", Type.Boolean(), false);
+					const enabledState = self.state("enabled", bool(), false);
 					self.register(Read, { current: () => enabledState.value });
 					return {
 						enabled: enabledState,
@@ -171,13 +172,13 @@ test("the host's reference to a host object follows contract bumps at commit wit
 
 const ReadV1 = local("t.eager-read", {
 	version: 1,
-	input: Type.Object({}),
-	members: { read: method(undefined, Type.String()) },
+	input: obj({}, { open: true }),
+	members: { read: method(undefined, str()) },
 });
 const ReadV2 = local("t.eager-read", {
 	version: 2,
-	input: Type.Object({}),
-	members: { fetch: method(undefined, Type.String()) },
+	input: obj({}, { open: true }),
+	members: { fetch: method(undefined, str()) },
 });
 const readerV1: Facet = {
 	name: "read",
@@ -219,8 +220,8 @@ test("object-owned old-version references still block a host object's upgrade un
 	onTestFinished(() => host.close());
 	const Consumer = local("t.eager-consumer", {
 		version: 1,
-		input: Type.Object({}),
-		members: { read: method(undefined, Type.String()) },
+		input: obj({}, { open: true }),
+		members: { read: method(undefined, str()) },
 	});
 	const oldConsumer: Facet = {
 		name: "consumer",
@@ -254,8 +255,8 @@ test("a forgotten contract bump remains refused even when the only consumer is t
 	await host.load([readerV1]);
 	const incompatible = local(ReadV1.name, {
 		version: 1,
-		input: Type.Object({}),
-		members: { fetch: method(undefined, Type.String()) },
+		input: obj({}, { open: true }),
+		members: { fetch: method(undefined, str()) },
 	});
 	await assert.rejects(
 		host.reload([
@@ -310,7 +311,7 @@ test("a cluster contract upgrade retokens the server's and worker's references t
 
 test("a reload that changes a type's lifetime creates its host object, or lets it go", async () => {
 	const host = createHost({ self: { kind: "host" }, onError: () => {} });
-	const Kept = local("t.lifetime-change", { version: 1, input: Type.Object({}) });
+	const Kept = local("t.lifetime-change", { version: 1, input: obj({}, { open: true }) });
 	const log: string[] = [];
 	const facet = (lifetime: "host" | "referenced"): Facet => ({
 		name: "kept",

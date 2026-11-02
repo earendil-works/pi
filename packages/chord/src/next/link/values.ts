@@ -25,15 +25,17 @@ export function payloadPart(
 ): { readonly json: string; readonly segments: Uint8Array[] | undefined } {
 	if (!bytes) return { json: jsonPart(value), segments: undefined };
 	const segments: Uint8Array[] = [];
-	const json = JSON.stringify(value, (_key, leaf: unknown) => {
-		if (leaf instanceof Uint8Array) {
-			segments.push(leaf);
+	const json = JSON.stringify(value, function (this: Record<string, unknown>, key: string, leaf: unknown) {
+		if (typeof leaf !== "object" || leaf === null) return leaf;
+		// The holder's own value: a `Uint8Array` subclass with a `toJSON` (Node's `Buffer`) reaches the replacer as
+		// what its `toJSON` made (a Buffer pays that copy: 3.6 ms per MiB; a plain `Uint8Array` none).
+		const original = this[key];
+		if (original instanceof Uint8Array) {
+			segments.push(original);
 			return { $bytes: segments.length - 1 };
 		}
 		// The replacer does not see the markers it returns, only their fields.
-		if (typeof leaf === "object" && leaf !== null && Object.hasOwn(leaf, "$bytes")) {
-			throw invalid("args", '"$bytes" is reserved in values crossing a link');
-		}
+		if (Object.hasOwn(leaf, "$bytes")) throw invalid("args", '"$bytes" is reserved in values crossing a link');
 		return leaf;
 	});
 	return { json: json ?? "null", segments };

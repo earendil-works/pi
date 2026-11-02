@@ -68,6 +68,11 @@ export class RelayedHold {
 		if (upstream !== undefined) this.#downstream.upstreamDropped(this, error);
 	}
 
+	/** Its path's address cannot be reached for now: downstream it fails `waiting` with `error` until the next link. */
+	unreachable(error: ChordError): void {
+		this.#downstream.send({ kind: "failed", hold: this.id, cause: { kind: "waiting", error: wireError(error) } });
+	}
+
 	/**
 	 * Whether it waits for its path's link (a route still resolving, or a dropped link's next): a revocation ends it then,
 	 * since the link it is held on next gets no past `revoke` (§4).
@@ -109,10 +114,10 @@ export class RelayedHold {
 		upstream?.link.send({ kind: "abort", origin: upstream.origin, call: id });
 	}
 
-	/** A downstream `retry`, forwarded. */
-	retry(): void {
+	/** A downstream `retry`, forwarded with its hop budget as it is (a relay visits no object). */
+	retry(message: Extract<Message, { readonly kind: "retry" }>): void {
 		const upstream = this.#upstream;
-		upstream?.link.send({ kind: "retry", origin: upstream.origin, hold: this.id });
+		upstream?.link.send({ ...message, origin: upstream.origin });
 	}
 
 	/** Released downstream: released upstream (its calls with it) and no later link holds it. */

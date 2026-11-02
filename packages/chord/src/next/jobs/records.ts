@@ -2,7 +2,10 @@
 // run state documents, `running` and the runs waiting for a live attempt, across the object's attempts. Records and
 // state documents change only in transactions on the object's line (staged changes adopted in the commit step); a
 // persisted job's also in its object's store, in the same commits, loaded once per object, and written back stopped by
-// the close writer when a clean stop cuts its runs off.
+// the close writer when a clean stop cuts its runs off. Across a reload (slice 7b §8) the records take the new
+// declaration's definition and every run keeps its version: an older one is mapped forwards through `accepts`, one
+// without an adapter (or newer, or of a job the code no longer declares) is blocked `version` until a reload brings
+// matching code.
 
 import { type Context, withoutAbortSignal } from "../../context/index.ts";
 import type { Op } from "../../delta/index.ts";
@@ -16,7 +19,7 @@ import { uuidv7 } from "../host/internal.ts";
 import type { StagedWrite } from "../store/step.ts";
 import type { ChordStore } from "../store/store.ts";
 import type { JobDefinition, JobError } from "./definition.ts";
-import type { Job, StartOptions } from "./job.ts";
+import type { CutReason, Job, StartOptions } from "./job.ts";
 import { type LoadedRecord, PersistedRuns } from "./persisted.ts";
 import { type AnyOutcome, type BlockedReason, JobRun, type Phase, type Run } from "./run.ts";
 import { RunStates } from "./run-states.ts";
@@ -60,6 +63,8 @@ type RecordChange =
 	| { readonly kind: "update"; readonly run: JobRun; readonly fields: RunFields }
 	| { readonly kind: "outcome"; readonly run: JobRun; readonly outcome: AnyOutcome }
 	| { readonly kind: "block"; readonly run: JobRun; readonly reason: BlockedReason }
+	/** A blocked run is retried (a reload): back to `phase` (finishing with its outcome, or to be invoked). */
+	| { readonly kind: "unblock"; readonly run: JobRun; readonly phase: Phase }
 	| { readonly kind: "delete"; readonly run: JobRun }
 	| { readonly kind: "drop"; readonly run: JobRun };
 
@@ -77,6 +82,8 @@ export type Staging = Staged & {
 
 const RESTART: Settled = { kind: "failed", error: { kind: "aborted", reason: "restart" } };
 
+const RELOAD: Settled = { kind: "failed", error: { kind: "aborted", reason: "reload" } };
+
 const ABORTED: Settled = { kind: "failed", error: { kind: "aborted", reason: "abort" } };
 
 /** A persisted run cut off this many times in a row ends `restart_limit` (D6, Durable's limit). */
@@ -87,10 +94,13 @@ const RESTART_LIMIT = 5;
  * attempts, committed runs not yet invoked and runs whose outcome is recorded wait for the next one.
  */
 export class JobRecords {
-	readonly definition: JobDefinition<unknown, unknown, unknown>;
+	/** The latest declaration's definition: a reload's new attempt redefines it; each run keeps its own version. */
+	definition: JobDefinition<unknown, unknown, unknown>;
 	readonly running: Running;
 	readonly #owner: RecordsOwner;
-	readonly #states: RunStates | undefined;
+	#states: RunStates | undefined;
+	/** The store side of a persisted job's state documents; `undefined` in memory. */
+	readonly #statePersistence: Persistence | undefined;
 	/** The store side of a persisted job's runs; `undefined` in memory. */
 	readonly #persisted: PersistedRuns | undefined;
 	readonly #runs = new Map<string, JobRun>();
@@ -107,25 +117,178 @@ export class JobRecords {
 	#loaded = false;
 	/** The object's end error, once it ended. */
 	#ended: ChordError | undefined;
+	/** Whether the latest live attempt declares the job: its runs are blocked `version` while it does not. */
+	#declared = true;
 
 	constructor(definition: JobDefinition<unknown, unknown, unknown>, owner: RecordsOwner) {
 		this.definition = definition;
 		this.#owner = owner;
 		const { state, persist, name } = definition;
 		const store = persist === undefined ? undefined : owner.store!;
-		const states = {
-			documents: owner.documents,
-			changed: (id: string, ops: readonly Op[]) => this.#stateChanged(id, ops),
-			held: (deadline: number) => owner.held(deadline),
-		};
 		const persistence =
 			store === undefined ? undefined : new Persistence(store.store, store.owner, "chord.job-states", name);
-		this.#states = state === undefined ? undefined : new RunStates(state, states, persistence);
+		this.#statePersistence = persistence;
+		this.#states = state === undefined ? undefined : this.#runStates(state);
 		this.#persisted =
 			store === undefined
 				? undefined
 				: new PersistedRuns(new Persistence(store.store, store.owner, "chord.jobs", name), persistence!);
 		this.running = new Running(owner.documents.batch, this.name);
+	}
+
+	/** The run state documents of `state`, reporting their changes to `running` and their held deadlines. */
+	#runStates(state: NonNullable<JobDefinition<unknown, unknown, unknown>["state"]>): RunStates {
+		const owner = this.#owner;
+		const states = {
+			documents: owner.documents,
+			changed: (id: string, ops: readonly Op[]) => this.#stateChanged(id, ops),
+			held: (deadline: number) => owner.held(deadline),
+		};
+		return new RunStates(state, states, this.#statePersistence);
+	}
+
+	/**
+	 * Refuses a declaration of this job that its records cannot take (slice 7b §8): the same version with another
+	 * fingerprint (its args, result or state schema changed without a version bump), or a state document definition
+	 * the run documents refuse (`SlotDefinition.check`). A reload's staging checks it too.
+	 */
+	check(definition: JobDefinition<unknown, unknown, unknown>): void {
+		const current = this.definition;
+		if (definition.version === current.version && definition.fingerprint !== current.fingerprint) {
+			throw new Error(`${this.name}: its schema changed without a version bump (version ${definition.version})`);
+		}
+		const { state } = definition;
+		const states = this.#states;
+		if (state !== undefined && states !== undefined && state !== states.definition.current) {
+			states.definition.check(state);
+		}
+	}
+
+	/**
+	 * Takes a new attempt's declaration `definition` (another version after a reload, `ChordObject.checkJob` refused
+	 * the same version with another fingerprint): new runs are of its version; the runs of others keep theirs, their
+	 * `running` entries show their args mapped forwards (or blocked); their state documents keep their version until
+	 * their run settles or moves to the new code.
+	 */
+	redefine(definition: JobDefinition<unknown, unknown, unknown>): void {
+		this.#declared = true;
+		if (definition === this.definition) return;
+		this.definition = definition;
+		const { state } = definition;
+		if (state !== undefined) {
+			if (this.#states === undefined) this.#states = this.#runStates(state);
+			else this.#states.redefine(state);
+		}
+		if (this.#runs.size === 0) return;
+		this.#owner.documents.batch.within(() => {
+			for (const run of this.#runs.values()) if (run.entry !== undefined) this.#replaceEntry(run);
+		}, this.#owner.context);
+	}
+
+	/**
+	 * The latest live attempt does not declare the job (slice 7b §8): its runs not invoked and its finishing runs are
+	 * blocked `version` (kept, not invoked) until a reload declares it again or they are aborted; a running
+	 * invocation finishes and is blocked then.
+	 */
+	undeclare(): void {
+		if (!this.#declared || this.#ended !== undefined) return;
+		this.#declared = false;
+		this.#job = undefined;
+		const waiting = [...this.#waiting];
+		this.#waiting.clear();
+		for (const run of waiting) void this.record(run, { kind: "block", run, reason: "version" });
+	}
+
+	/**
+	 * A reload brought new code (its attempt is live): blocked runs are retried, once: a `finish_failed` one finishes
+	 * again, a `version` one whose version the code now takes (its own, or an older one with an adapter) is invoked or
+	 * finished; the others stay blocked. A persisted run blocked at its load has its state document read first.
+	 */
+	async retryBlocked(context: Context): Promise<void> {
+		if (!this.#declared || this.#ended !== undefined) return;
+		const retried = [...this.#runs.values()].filter(
+			(run) => run.phase === "blocked" && (run.blocked === "finish_failed" || this.#takes(run)),
+		);
+		if (retried.length === 0) return;
+		try {
+			for (const run of retried) if (run.blockedPhase !== undefined) await this.#readBlockedState(run, context);
+		} catch {
+			// Its state document cannot be read: it stays blocked (the next reload tries again).
+			return;
+		}
+		const { documents } = this.#owner;
+		try {
+			await documents.tx(
+				(tx) => {
+					for (const run of retried) {
+						if (this.#runs.get(run.id) !== run || run.phase !== "blocked") continue;
+						const phase =
+							run.outcome !== undefined ? "finishing" : this.#persisted === undefined ? "running" : "pending";
+						this.change(tx, { kind: "unblock", run, phase });
+					}
+				},
+				documents.own,
+				this.#owner.context,
+			);
+		} catch {
+			// The object ended.
+		}
+	}
+
+	/** Reads and decodes the state document of a persisted run blocked at its load, now that the code takes it. */
+	async #readBlockedState(run: JobRun, context: Context): Promise<void> {
+		const states = this.#states;
+		this.#persisted!.forgetBlockedState(run.id);
+		if (states === undefined) return;
+		const document = await states.persistence.read(run.id, context);
+		if (document === undefined) return;
+		const { value, stored } = states.persistence.decode(document, states.definition.current, context);
+		states.create(run.id, value, stored);
+		if (run.outcome !== undefined) run.outcome = { ...run.outcome, state: value };
+	}
+
+	/**
+	 * Whether the current code takes `run`: of its version and fingerprint, or of an older version its `accepts` maps
+	 * forwards; a newer one (a rollback) or an older one without an adapter is not (`blocked { version }`).
+	 */
+	#takes(run: JobRun): boolean {
+		const { definition } = this;
+		if (run.version === definition.version) return run.fingerprint === definition.fingerprint;
+		return run.version < definition.version && definition.accepts[run.version] !== undefined;
+	}
+
+	/**
+	 * `run`'s args as the code of `definition` takes them (the current code's, or an invoking attempt's own): mapped
+	 * forwards once per run and version when older.
+	 */
+	argsOf(run: JobRun, definition: JobDefinition<unknown, unknown, unknown>): JsonValue {
+		if (run.version === definition.version) return run.args;
+		const mapped = run.mapped;
+		if (mapped !== undefined && mapped.version === definition.version) return mapped.args;
+		// `#takes` found the adapter; its result is the current args (the provider's mapping, not validated).
+		const args = definition.accepts[run.version]!.args(run.args as never) as JsonValue;
+		run.mapped = { version: definition.version, args };
+		return args;
+	}
+
+	/**
+	 * `run`'s outcome as the current code's `finish` gets it: an older run's args and result mapped forwards (once per
+	 * run), its state document migrated to the current state definition.
+	 */
+	outcomeOf(run: JobRun, context: Context): AnyOutcome {
+		const outcome = run.outcome!;
+		const { definition } = this;
+		if (run.version === definition.version) return outcome;
+		const args = this.argsOf(run, definition);
+		const mapped = run.mapped!;
+		if (mapped.outcome !== undefined) return mapped.outcome;
+		const result =
+			outcome.kind === "done"
+				? { kind: "done" as const, result: definition.accepts[run.version]!.result(outcome.result as never) }
+				: { kind: "failed" as const, error: outcome.error };
+		const state = this.#states?.migrated(run.id, context) ?? outcome.state;
+		mapped.outcome = { id: outcome.id, args, state, ...result };
+		return mapped.outcome;
 	}
 
 	/** The job in errors: its object and its name. */
@@ -185,6 +348,7 @@ export class JobRecords {
 		const run = new JobRun(
 			uuidv7(),
 			definition.version,
+			definition.fingerprint,
 			key,
 			args as JsonValue,
 			persisted ? "pending" : "running",
@@ -217,7 +381,7 @@ export class JobRecords {
 			return;
 		}
 		const fields = recordFields(change);
-		staging.adopts.push(persisted.stage(run.id, storedRun(run, this.definition.fingerprint, fields), writes));
+		staging.adopts.push(persisted.stage(run.id, storedRun(run, fields), writes));
 	}
 
 	/** This job's changes in `tx`, made on the first. */
@@ -342,11 +506,11 @@ export class JobRecords {
 
 	/**
 	 * A running run whose attempt was sealed: its signal fires with `error`, its invocation is fenced (later state
-	 * changes refused, the open one discarded, its settling ignored). In memory it ends `failed { aborted, reason:
-	 * "restart" }`, finished on the next live attempt; persisted it is stopped (R3), written back by the close writer and
+	 * changes refused, the open one discarded, its settling ignored). In memory it ends `failed { aborted }` with
+	 * `reason` (`reload` for a native restart, slice 7b §8), finished on the next live attempt; persisted it is stopped (R3), written back by the close writer and
 	 * resumed by the next live attempt as after a clean close.
 	 */
-	cut(run: JobRun, error: ChordError): void {
+	cut(run: JobRun, error: ChordError, reason: CutReason): void {
 		// Only an invoked run is cut: its current invocation is the one the seal stops.
 		const invocation = run.invocation!;
 		invocation.settle();
@@ -360,7 +524,7 @@ export class JobRecords {
 			if (this.#ended === undefined) this.#need(run);
 			return;
 		}
-		if (this.#ended === undefined) void this.#recordOutcome(run, RESTART);
+		if (this.#ended === undefined) void this.#recordOutcome(run, reason === "reload" ? RELOAD : RESTART);
 	}
 
 	/**
@@ -393,7 +557,7 @@ export class JobRecords {
 		const writes: StagedWrite[] = [];
 		const adopts: (() => void)[] = [];
 		for (const run of this.#stopped) {
-			adopts.push(persisted.stage(run.id, storedRun(run, this.definition.fingerprint), writes));
+			adopts.push(persisted.stage(run.id, storedRun(run), writes));
 		}
 		this.#stopped.clear();
 		for (const id of this.#states?.heldIds ?? []) {
@@ -506,7 +670,15 @@ export class JobRecords {
 	async #restored(loaded: LoadedRecord, context: Context): Promise<Restored> {
 		const { id, record } = loaded;
 		const { definition } = this;
-		const run = new JobRun(id, record.version, record.key, record.args, record.phase, record.trace);
+		const run = new JobRun(
+			id,
+			record.version,
+			record.fingerprint,
+			record.key,
+			record.args,
+			record.phase,
+			record.trace,
+		);
 		run.restarts = record.restarts;
 		run.finishFailures = record.finishFailures;
 		run.abortMarked = record.abort === true;
@@ -514,6 +686,9 @@ export class JobRecords {
 		if (record.version !== definition.version || record.fingerprint !== definition.fingerprint) {
 			run.phase = "blocked";
 			run.blocked = "version";
+			// What the record says, for the reload that brings its version (`retryBlocked`).
+			run.blockedPhase = record.phase;
+			if (record.outcome !== undefined) run.outcome = outcomeOf(record.outcome, id, record.args, undefined);
 			// What is stored of its state (also when this version declares none), so an abort drops it with the record.
 			await this.#persisted!.findBlockedState(id, context);
 			return { run, change: undefined };
@@ -581,6 +756,11 @@ export class JobRecords {
 	/** `run` needs a live attempt (to be invoked or finished): now, or once one attaches. */
 	#need(run: JobRun): void {
 		if (this.#ended !== undefined || this.#runs.get(run.id) !== run) return;
+		// A job the code no longer declares: blocked `version`, kept (slice 7b §8).
+		if (!this.#declared) {
+			if (run.phase !== "blocked") void this.record(run, { kind: "block", run, reason: "version" });
+			return;
+		}
 		const job = this.#job;
 		if (job === undefined) this.#waiting.add(run);
 		else this.#dispatch(run, job);
@@ -592,12 +772,17 @@ export class JobRecords {
 	 * reason: "restart" }`).
 	 */
 	#dispatch(run: JobRun, job: Job): void {
-		if (this.#runs.get(run.id) !== run) return;
+		if (this.#runs.get(run.id) !== run || run.phase === "blocked") return;
+		// Not of a version the code takes: blocked `version` until a reload brings matching code.
+		if (!this.#takes(run)) {
+			void this.record(run, { kind: "block", run, reason: "version" });
+			return;
+		}
 		if (run.phase === "finishing") {
 			job.finish(run);
 			return;
 		}
-		if (run.phase === "blocked" || run.invoked) return;
+		if (run.invoked) return;
 		if (run.abortMarked) {
 			void this.#recordOutcome(run, ABORTED);
 			return;
@@ -626,7 +811,7 @@ export class JobRecords {
 					this.#active++;
 					this.#owner.countRuns(1);
 				}
-				run.entry = run.entryFor(this.stateOf(run.id));
+				run.entry = this.#entryOf(run);
 				this.running.add(run.entry);
 				return;
 			case "update":
@@ -642,6 +827,17 @@ export class JobRecords {
 				run.phase = "blocked";
 				run.blocked = change.reason;
 				this.#active--;
+				this.#replaceEntry(run);
+				return;
+			case "unblock":
+				run.phase = change.phase;
+				run.blocked = undefined;
+				run.blockedPhase = undefined;
+				run.finishFailures = 0;
+				// A persisted run to be invoked again resumes per its job's `resume`, as after a stop.
+				if (change.phase === "pending") run.resuming = true;
+				this.#active++;
+				this.#owner.countRuns(1);
 				this.#replaceEntry(run);
 				return;
 			case "delete":
@@ -675,6 +871,9 @@ export class JobRecords {
 			case "block":
 				this.#owner.countRuns(-1);
 				return;
+			case "unblock":
+				this.#need(run);
+				return;
 			case "drop":
 				this.report({ kind: "job_dropped", id: run.id });
 				run.reject(new ChordError({ code: "aborted", message: `${this.name}: run ${run.id} dropped` }));
@@ -688,15 +887,31 @@ export class JobRecords {
 		// Its record may not be adopted yet (a start creates both in one commit; its entry takes the state then).
 		if (run?.entry === undefined) return;
 		const before = run.entry;
-		run.entry = run.entryFor(this.stateOf(id));
+		run.entry = this.#entryOf(run);
 		this.running.stateChanged(before, run.entry, ops);
 	}
 
 	/** A run's record changed, inside the commit step: its entry is replaced. */
 	#replaceEntry(run: JobRun): void {
 		const before = run.entry!;
-		run.entry = run.entryFor(this.stateOf(run.id));
+		run.entry = this.#entryOf(run);
 		this.running.replace(before, run.entry);
+	}
+
+	/**
+	 * `run`'s `running` entry: blocked, or with its state and its args as the current code takes them (an older run's
+	 * mapped; one the code does not take, or whose mapping throws, shows its own).
+	 */
+	#entryOf(run: JobRun): JsonValue {
+		let args = run.args;
+		if (run.phase !== "blocked" && run.version !== this.definition.version && this.#takes(run)) {
+			try {
+				args = this.argsOf(run, this.definition);
+			} catch {
+				// The provider's mapping threw: its own args (its finish meets the same throw and is retried).
+			}
+		}
+		return run.entryFor(this.stateOf(run.id), args);
 	}
 
 	#discarded(): ChordError {
@@ -724,5 +939,7 @@ function recordFields(change: Exclude<RecordChange, { kind: "delete" | "drop" }>
 			return { phase: "finishing", outcome: change.outcome };
 		case "block":
 			return { phase: "blocked", blocked: change.reason };
+		case "unblock":
+			return { phase: change.phase, blocked: undefined, finishFailures: 0 };
 	}
 }

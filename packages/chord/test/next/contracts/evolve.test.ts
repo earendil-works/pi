@@ -1,4 +1,3 @@
-import Type from "typebox";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type { Context } from "../../../src/context/index.ts";
 import { type Contract, contractData, type ShapeOf } from "../../../src/next/contracts/contract.ts";
@@ -7,8 +6,10 @@ import {
 	arr,
 	bool,
 	evolve,
+	hostKind,
 	type Implementation,
 	int,
+	keyed,
 	local,
 	method,
 	nul,
@@ -18,11 +19,14 @@ import {
 	str,
 } from "../../../src/next/contracts/index.ts";
 
+const Server = hostKind("server");
+
 const Note = obj({ text: str() });
 
 const NotesV1 = remote("notes", {
 	version: 1,
 	params: { session: str() },
+	hostAddress: () => Server(),
 	variants: {
 		editor: { state: { notes: arr(Note), count: int() }, methods: { add: method(Note, str()), clear: method() } },
 		reader: { state: { notes: arr(Note) }, methods: { add: method(Note, str()) } },
@@ -131,16 +135,47 @@ describe("edits", () => {
 	});
 
 	it("checks every edit: closed arguments and the vocabulary", () => {
-		expect(() => evolve(NotesV1, (e) => e.args("add", Type.Object({ text: str() })))).toThrow(
+		expect(() => evolve(NotesV1, (e) => e.args("add", { type: "object", properties: { text: str() } }))).toThrow(
 			"notes v2.editor.methods.add.args: argument objects must be closed",
 		);
-		expect(() => evolve(InfoV1, (e) => e.addMethod("m", Type.Object({}), nul()))).toThrow(
+		expect(() => evolve(InfoV1, (e) => e.addMethod("m", { type: "object", properties: {} }, nul()))).toThrow(
 			"info v2.members.m.args: argument objects must be closed",
 		);
 		expect(() => evolve(NotesV1, (e) => e.state("editor", "count", { not: {} } as never))).toThrow(
 			'notes v2.editor.state.count: unsupported keyword "not"',
 		);
-		expect(() => evolve(NotesV1, (e) => e.state("editor", "count", Type.Object({})))).not.toThrow();
+		expect(() =>
+			evolve(NotesV1, (e) => e.state("editor", "count", { type: "object", properties: {} })),
+		).not.toThrow();
+	});
+});
+
+describe("keyed edits (slice 7b)", () => {
+	const Store = local("store", { version: 1, params: {}, members: { notes: keyed(Note), n: int() } });
+
+	it("changes, adds and removes a local contract's keyed members, each version fingerprinted", () => {
+		const V2 = evolve(Store, (e) => e.keyed("notes", obj({ text: str(), tag: str() })).addKeyed("drafts", Note));
+		const V3 = evolve(V2, (e) => e.removeKeyed("drafts"));
+		const versions = contractData(V3).versions;
+		expect(versions.map(({ variants }) => [...variants.get("members")!.keyed.keys()])).toEqual([
+			["notes"],
+			["notes", "drafts"],
+			["notes"],
+		]);
+		expect(versions[1]!.changes).toEqual([
+			["members", "notes", "keyed"],
+			["members", "drafts", "keyed"],
+		]);
+		expect(new Set(versions.map(({ fingerprint }) => fingerprint)).size).toBe(3);
+		// The same edits elsewhere give the same fingerprint (an old plugin's copy).
+		const again = evolve(Store, (e) => e.keyed("notes", obj({ text: str(), tag: str() })).addKeyed("drafts", Note));
+		expect(contractData(again).versions[1]!.fingerprint).toBe(versions[1]!.fingerprint);
+	});
+
+	it("refuses an unknown keyed member, one declared already, and a kind change", () => {
+		expect(() => evolve(Store, (e) => e.keyed("missing" as "notes", Note))).toThrow("no such keyed member");
+		expect(() => evolve(Store, (e) => e.addKeyed("n", Note))).toThrow("already declared");
+		expect(() => evolve(Store, (e) => e.removeKeyed("missing" as "notes"))).toThrow("no such keyed member");
 	});
 });
 
@@ -164,7 +199,12 @@ describe("kinds and fixed parts", () => {
 	});
 
 	it("a new base is a full declaration with an explicit version and no older versions", () => {
-		const base = remote("notes", { version: 5, params: { session: str(), tenant: str() }, variants: { editor: {} } });
+		const base = remote("notes", {
+			version: 5,
+			params: { session: str(), tenant: str() },
+			hostAddress: () => Server(),
+			variants: { editor: {} },
+		});
 		expect(contractData(base).versions.map(({ version }) => version)).toEqual([5]);
 		expect(evolve(base, (e) => e).version).toBe(6);
 	});

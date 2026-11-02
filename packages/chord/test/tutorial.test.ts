@@ -1,7 +1,7 @@
 // example:imports
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { type Static, Type } from "typebox";
+import { arr, bool, int, num, obj, type Static, str } from "@earendil-works/pi-schema";
 import { it, onTestFinished } from "vitest";
 import {
 	type Ctx,
@@ -51,23 +51,23 @@ function checkExamples(section: string): void {
 // example:02-contract
 const TodoLabel = local("tutorial.todos", {
 	version: 1,
-	input: Type.Object({ list: Type.String() }),
-	members: { label: method(undefined, Type.String()) },
+	input: obj({ list: str() }, { open: true }),
+	members: { label: method(undefined, str()) },
 });
 // end-example:02-contract
 
 // example:03-contract
-const Todo = Type.Object({ text: Type.String(), done: Type.Boolean() });
-const Rows = Type.Array(Todo);
+const Todo = obj({ text: str(), done: bool() }, { open: true });
+const Rows = arr(Todo);
 const TodoStore = local("tutorial.todos", {
 	version: 1,
-	input: Type.Object({ list: Type.String() }),
+	input: obj({ list: str() }, { open: true }),
 	members: {
-		label: method(undefined, Type.String()),
+		label: method(undefined, str()),
 		rows: Rows,
-		openCount: Type.Number(),
-		add: method(Type.Object({ text: Type.String() })),
-		finish: method(Type.Object({ index: Type.Integer() })),
+		openCount: num(),
+		add: method(obj({ text: str() }, { open: true })),
+		finish: method(obj({ index: int() }, { open: true })),
 		reset: method(Rows),
 	},
 });
@@ -107,13 +107,13 @@ const todoFactory = todoStore();
 // example:05-views
 const Todos = remote("tutorial.todo-view", {
 	version: 1,
-	input: Type.Object({ list: Type.String() }),
+	input: obj({ list: str() }, { open: true }),
 	host: hostNamed("server"),
 	variants: {
 		viewer: { state: { rows: Rows } },
 		editor: {
 			state: { rows: Rows },
-			methods: { add: method(Type.Object({ text: Type.String() })) },
+			methods: { add: method(obj({ text: str() }, { open: true })) },
 		},
 	},
 });
@@ -190,13 +190,13 @@ it("04: holds, asynchronous resources and release", { timeout: 5000 }, async () 
 	// example:04-database
 	const Database = local("tutorial.database", {
 		version: 1,
-		input: Type.Object({}),
+		input: obj({}, { open: true }),
 		members: { db: opaque<{ saved: string[] }>("tutorial.database@1") },
 	});
 	const SavedTodos = local("tutorial.saved-todos", {
 		version: 1,
-		input: Type.Object({ list: Type.String() }),
-		members: { add: method(Type.Object({ text: Type.String() })) },
+		input: obj({ list: str() }, { open: true }),
+		members: { add: method(obj({ text: str() }, { open: true })) },
 	});
 	const host = createHost({ self: "server" });
 	let opens = 0;
@@ -306,8 +306,8 @@ it("07: listeners react and tasks start fresh calls", { timeout: 5000 }, async (
 	// example:07
 	const Activity = local("tutorial.activity", {
 		version: 1,
-		input: Type.Object({}),
-		members: { seen: Type.Number() },
+		input: obj({}, { open: true }),
+		members: { seen: num() },
 	});
 	const host = createHost({ self: "server" });
 	host.serve(TodoStore, todoFactory);
@@ -316,7 +316,7 @@ it("07: listeners react and tasks start fresh calls", { timeout: 5000 }, async (
 	const stopped = Promise.withResolvers<void>();
 	host.serve(Activity, (_input, _principal, self) => {
 		const todos = self.get(TodoStore, { list: "family" });
-		const seen = self.state("seen", Type.Number(), 0);
+		const seen = self.state("seen", num(), 0);
 		self.on("rows", todos.rows, (rows, ctx) => {
 			seen.replace(ctx, rows?.length ?? 0);
 			if (rows?.length === 1) observed.resolve();
@@ -345,7 +345,7 @@ it("08: plugins contribute registry entries and expose callbacks", { timeout: 50
 	onTestFinished(() => host.close());
 	// example:08
 	const Actions = defineRegistry<(ctx: Ctx) => Promise<number>>("tutorial.actions");
-	const Menu = local("tutorial.menu", { version: 1, input: Type.Object({}) });
+	const Menu = local("tutorial.menu", { version: 1, input: obj({}, { open: true }) });
 	let click: (() => Promise<number>) | undefined;
 	const storeFacet: Facet = {
 		name: "todo-store",
@@ -444,7 +444,7 @@ it("09: compatible reload, migration and an old-contract adapter", { timeout: 50
 	const RenamedStore = local("tutorial.todos", {
 		version: 2,
 		input: TodoStore.def.input,
-		members: { ...members, heading: method(undefined, Type.String()) },
+		members: { ...members, heading: method(undefined, str()) },
 	});
 	await host.reload([
 		{

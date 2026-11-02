@@ -35,6 +35,7 @@ import {
 	rawParent,
 	rawProvider,
 	rejection,
+	Server,
 	serveNotes,
 	type TestPrincipal,
 	testCodec,
@@ -48,7 +49,12 @@ const Counter = defineState("counter", { schema: obj({ n: int() }), version: 1, 
 forEachCodec(() => {
 	describe("a hold over the parent link", () => {
 		it("reject a broken failure at once", async () => {
-			const Broken = remote("app.broken", { version: 1, params: {}, variants: { v: { state: { n: int() } } } });
+			const Broken = remote("app.broken", {
+				version: 1,
+				params: {},
+				hostAddress: () => Server(),
+				variants: { v: { state: { n: int() } } },
+			});
 			const { client } = await linked((h) =>
 				h.serve(Broken, () => {
 					throw new Error("factory threw");
@@ -197,6 +203,7 @@ forEachCodec(() => {
 			const Flaky = remote("app.flaky", {
 				version: 1,
 				params: { id: int() },
+				hostAddress: () => Server(),
 				variants: { v: { state: { n: int() } } },
 			});
 			const opens: string[] = [];
@@ -250,6 +257,7 @@ forEachCodec(() => {
 			const Halves = remote("app.halves", {
 				version: 1,
 				params: {},
+				hostAddress: () => Server(),
 				variants: { v: { state: { half: int() }, methods: { set: method(int()) } } },
 			});
 			const { server, client } = await linked((h) =>
@@ -294,16 +302,20 @@ forEachCodec(() => {
 		});
 	});
 
-	describe("self.get of a type over the link (R18)", () => {
-		it("a failed hold fails the dependent transiently; bound retries it at once with a new hold", async () => {
+	describe("self.get of a type over the link (dependency model §3)", () => {
+		it("a failed hold parks the dependent failed { waiting }: no new attempt or hold; bound wakes it", async () => {
 			const View = local("app.view", { version: 1, params: {}, members: { count: int() } });
 			const errors: HostError[] = [];
 			const client = createHost({ onError: (error) => errors.push(error) });
 			const [a, b] = memoryLinkPair();
 			client.connect(a, { principal: { kind: "server" }, codec: testCodec() }, context);
 			const peer = new RawPeer(b);
+			let factories = 0;
 			const facet = defineFacet((h) =>
-				h.serve(View, (_, self) => ({ count: self.get(Notes, { session: "S1" }).count })),
+				h.serve(View, (_, self) => {
+					factories++;
+					return { count: self.get(Notes, { session: "S1" }).count };
+				}),
 			);
 			const loading = client.load([{ name: "@test/view", facet }], context);
 			const { hold } = await peer.next("hold");
@@ -312,25 +324,20 @@ forEachCodec(() => {
 				hold,
 				cause: { kind: "transient", error: { kind: "chord", error: { code: "unavailable", message: "warming" } } },
 			});
+			// Parked on a remote blocker: its first outcome, so the start barrier is over.
 			await loading;
-			expect(errors).toMatchObject([
-				{
-					kind: "activation_failed",
-					object: "app.view",
-					failure: { kind: "transient", error: { code: "unavailable" } },
-				},
-			]);
-			const members = [
-				{ member: EDITOR.state.notes!, value: "[]" },
-				{ member: EDITOR.state.count!, value: "0" },
-			];
-			peer.send({ kind: "bound", holds: [{ hold, variant: EDITOR.variant, members, failed: [] }] });
-			// The retry binds its own hold before the failed attempt's is released.
-			const retried = await bindNext(peer, [{ text: "a" }]);
-			expect(retried).toBe(1);
-			expect(await peer.next("release")).toMatchObject({ hold });
-			const view = await client.get(View, {}, context);
+			await transported();
+			expect(errors).toEqual([]);
+			const view = client.hold(View, {}, context);
+			expect(view.state.value).toMatchObject({
+				kind: "failed",
+				cause: { kind: "waiting", error: { message: "waiting for app.notes(S1): warming" } },
+			});
+			bindHold(peer, hold, [{ text: "a" }]);
+			await transported();
+			expect(view.state.value).toEqual({ kind: "live" });
 			expect(view.count.value).toBe(1);
+			expect([factories, peer.kinds().filter((kind) => kind === "hold" || kind === "release")]).toEqual([1, []]);
 		});
 	});
 
@@ -362,8 +369,13 @@ forEachCodec(() => {
 		// Timers stand still: neither the backoff window nor a readyTimeout ends while the test runs.
 		fakeTimers();
 
-		it("fails at once with the real cause when its load holds it (no wait for a timeout)", async () => {
-			const Flaky = remote("app.flaky", { version: 1, params: {}, variants: { v: { state: { n: int() } } } });
+		it("parks at once on the real cause when its load holds it (no wait for a timeout)", async () => {
+			const Flaky = remote("app.flaky", {
+				version: 1,
+				params: {},
+				hostAddress: () => Server(),
+				variants: { v: { state: { n: int() } } },
+			});
 			const View = local("app.view", { version: 1, params: {}, members: { n: int() } });
 			const { server, client: first } = await linked((h) =>
 				h.serve(Flaky, (_, _principal, self) => {
@@ -386,16 +398,12 @@ forEachCodec(() => {
 			second.connect(b, { principal: { kind: "server" }, codec: testCodec() }, context);
 			const facet = defineFacet((h) => h.serve(View, (_, self) => ({ n: self.get(Flaky, {}).n })));
 			await second.load([{ name: "@test/view", facet }], context);
-			expect(errors).toMatchObject([
-				{
-					kind: "activation_failed",
-					object: "app.view",
-					failure: {
-						kind: "transient",
-						error: { message: "app.view: dependency app.flaky failed", cause: { message: "app.flaky: offline" } },
-					},
-				},
-			]);
+			await transported();
+			expect(errors).toEqual([]);
+			expect(second.hold(View, {}, context).state.value).toMatchObject({
+				kind: "failed",
+				cause: { kind: "waiting", error: { message: "waiting for app.flaky: app.flaky: offline" } },
+			});
 			await first.close(context);
 			await failing;
 		});
@@ -406,6 +414,7 @@ forEachCodec(() => {
 const Shifting = remote("app.shifting", {
 	version: 1,
 	params: {},
+	hostAddress: () => Server(),
 	variants: {
 		a: { state: { x: int(), y: int() }, methods: { m: method() } },
 		b: { state: { y: int(), z: int() } },
@@ -461,7 +470,7 @@ forEachCodec(() => {
 			]);
 		});
 
-		it("apply bound in one batch: each member gets one frame [['r', value]] and a fresh decoder", async () => {
+		it("apply bound in one batch: each member gets one frame (a diff from its last value) and a fresh decoder", async () => {
 			const { client, peer } = await rawProvider();
 			const notes = client.hold(Notes, { session: "S1" }, context);
 			await bindNext(peer, [{ text: "a" }]);
@@ -474,7 +483,8 @@ forEachCodec(() => {
 			const hold = await bindNext(next, [{ text: "a" }, { text: "b" }]);
 			await delivered();
 			const list = [{ text: "a" }, { text: "b" }];
-			expect(frames).toEqual([[list, [["r", list]]]]);
+			// One frame each, a diff from the last value the reference kept while its hold re-bound.
+			expect(frames).toEqual([[list, [["p", [], 1, 0, [{ text: "b" }]]]]]);
 			expect(counts).toEqual([[2, [["r", 2]]]]);
 			// The fresh decoder: the provider's new encoder starts over, interning paths anew.
 			next.send({
@@ -592,10 +602,15 @@ forEachCodec(() => {
 			const NotesV2 = remote("app.notes", {
 				version: 2,
 				params: { session: str() },
+				hostAddress: () => Server(),
 				variants: { editor: { state: { count: int() } } },
 			});
 			const { server, client, links } = await linked((h) => void serveNotes(h));
-			const upgraded = createHost<TestPrincipal>({ principal: { kind: "server" }, onError: () => {} });
+			const upgraded = createHost<TestPrincipal>({
+				address: Server(),
+				principal: { kind: "server" },
+				onError: () => {},
+			});
 			const facet = defineFacet<TestPrincipal>((h) =>
 				h.serve(NotesV2, () => ({ variant: "editor", members: { count: constant(0) } })),
 			);
@@ -614,7 +629,7 @@ forEachCodec(() => {
 			const toUpgraded = await relink(upgraded, links[0]);
 			expect(notes.state.value).toMatchObject({
 				kind: "failed",
-				cause: { kind: "broken", error: { code: "contract_mismatch" } },
+				cause: { kind: "waiting", error: { code: "contract_mismatch" } },
 				retryAt: undefined,
 			});
 			notes.retry();
@@ -633,7 +648,7 @@ forEachCodec(() => {
 			await transported();
 			expect(notes.state.value).toMatchObject({ kind: "failed", cause: { kind: "broken" } });
 			notes.retry();
-			expect(await peer.next("retry")).toEqual({ kind: "retry", hold });
+			expect(await peer.next("retry")).toEqual({ kind: "retry", hold, hops: 16 });
 			bindHold(peer, hold);
 			await transported();
 			expect(notes.state.value).toEqual({ kind: "live" });
@@ -644,6 +659,7 @@ forEachCodec(() => {
 			const Flaky = remote("app.flaky", {
 				version: 1,
 				params: {},
+				hostAddress: () => Server(),
 				variants: { only: { state: {}, methods: { ping: method() } } },
 			});
 			let factories = 0;
@@ -698,7 +714,7 @@ forEachCodec(() => {
 			expect(notes.state.value).toEqual({ kind: "live" });
 		});
 
-		it("a member watch before the first binding waits for it, and rejects when it fails or is released (race 16)", async () => {
+		it("a member watch before the first binding waits for it through a failure, and rejects when released (race 16)", async () => {
 			const { client, peer } = await rawProvider();
 			const bound = client.hold(Notes, { session: "S1" }, context);
 			const failing = client.hold(Notes, { session: "S2" }, context);
@@ -715,8 +731,17 @@ forEachCodec(() => {
 			});
 			released.release();
 			expect((await watches[0]!).value).toBe(1);
-			expect(await rejection(watches[1]!)).toEqual(error);
 			expect(await rejection(watches[2]!)).toEqual({ code: "released", message: "app.notes: released" });
+			// A failure is waited through (Opus G3): the watch rejects only when its reference ends.
+			let settled = false;
+			const settle = (): void => {
+				settled = true;
+			};
+			void watches[1]!.then(settle, settle);
+			await transported();
+			expect([failing.state.value.kind, settled]).toEqual(["failed", false]);
+			failing.release();
+			expect(await rejection(watches[1]!)).toMatchObject({ code: "released" });
 		});
 	});
 
@@ -751,15 +776,6 @@ forEachCodec(() => {
 			h.serve(View, (_, self) => ({ count: self.get(Notes, { session: "S1" }).count })),
 		);
 
-		/** Binds the kept hold (0) on `next`; the retry's own hold (1) is bound and the kept one released (R18). */
-		async function retried(client: Host<TestPrincipal>, next: RawPeer): Promise<void> {
-			expect(await bindNext(next, [{ text: "a" }])).toBe(0);
-			// Retried at once, long before its backoff window (1 s) ends: its new attempt holds anew.
-			expect(await bindNext(next, [{ text: "a" }])).toBe(1);
-			expect(await next.next("release")).toEqual({ kind: "release", hold: 0 });
-			expect((await client.get(View, {}, context, { readyTimeout: 1 })).count.value).toBe(1);
-		}
-
 		it("stays loading through the drop, no failure reported, and goes live when the next link binds it", async () => {
 			const errors: HostError[] = [];
 			const client = createHost<TestPrincipal>({ onError: (error) => errors.push(error) });
@@ -778,28 +794,34 @@ forEachCodec(() => {
 			expect(errors).toEqual([]);
 		});
 
-		it("dropped and never bound again, fails transient at its readyTimeout (the bound of the wait)", async () => {
+		it("dropped and never bound again, stays parked loading: nothing fails, one parked_long (audit A11)", async () => {
 			const errors: HostError[] = [];
 			const client = createHost<TestPrincipal>({ readyTimeout: 1_000, onError: (error) => errors.push(error) });
 			const peer = await rawParent(client);
 			const loading = client.load([{ name: "@test/view", facet }], context);
 			await peer.next("hold");
+			// A remote blocker ends the start barrier's first pass.
+			await loading;
 			peer.close();
 			await transported();
-			expect(errors).toEqual([]);
-			await vi.advanceTimersByTimeAsync(1_000);
-			await loading;
-			expect(failures(errors)).toEqual(["app.view: transient"]);
+			await vi.advanceTimersByTimeAsync(10_000);
+			// A diagnostic whatever the blocker (audit A11): its path without a link too; nothing failed.
+			expect(errors).toEqual([
+				{ kind: "parked_long", object: "app.view", waitingFor: "app.notes(S1)", state: "loading", since: 0 },
+			]);
+			expect(client.hold(View, {}, context).state.value).toEqual({ kind: "loading" });
 		});
 
-		it("without any link fails at its readyTimeout, keeps the reference, and is retried when the first link binds it", async () => {
+		it("without any link stays loading past its readyTimeout and goes live when the first link binds its one hold", async () => {
 			const errors: HostError[] = [];
 			const client = createHost<TestPrincipal>({ readyTimeout: 1_000, onError: (error) => errors.push(error) });
-			const loading = client.load([{ name: "@test/view", facet }], context);
-			await vi.advanceTimersByTimeAsync(1_000);
-			await loading;
-			expect(failures(errors)).toEqual(["app.view: transient"]);
-			await retried(client, await rawParent(client));
+			await client.load([{ name: "@test/view", facet }], context);
+			await vi.advanceTimersByTimeAsync(500);
+			expect(failures(errors)).toEqual([]);
+			const next = await rawParent(client);
+			expect(await bindNext(next, [{ text: "a" }])).toBe(0);
+			expect((await client.get(View, {}, context, { readyTimeout: 1 })).count.value).toBe(1);
+			expect(next.kinds().filter((kind) => kind === "hold" || kind === "release")).toEqual([]);
 		});
 	});
 

@@ -1,14 +1,14 @@
 // Schema snapshots: one schema-aware walk checks an app schema against Chord's vocabulary and produces a
 // Chord-owned copy and its normal form (the fingerprint input).
 
+import type { JsonSchema } from "@earendil-works/pi-schema";
 import { isJsonValue, type JsonValue } from "../../json.ts";
-import { type BytesMarker, type TSchema, withBytesCheck } from "./schema.ts";
 
 /**
  * A Chord-owned copy of an app schema, its normal form, and whether it has a `bytes()` leaf (values crossing a link
  * then carry raw byte segments); immutable by convention.
  */
-export type Snapshot = { readonly schema: TSchema; readonly normal: JsonValue; readonly bytes: boolean };
+export type Snapshot = { readonly schema: JsonSchema; readonly normal: JsonValue; readonly bytes: boolean };
 
 /** Snapshot of a state, result or params schema. Throws an Error naming `path` for anything outside the vocabulary. */
 export function snapshotSchema(source: unknown, path: string): Snapshot {
@@ -51,11 +51,6 @@ const KEYWORDS = new Map(
 
 const TYPES = new Set(["null", "boolean", "number", "integer", "string", "array", "object", "bytes"]);
 
-/** TypeBox's executable features, attached non-enumerably. */
-const EXECUTABLE = ["~refine", "~codec", "~unsafe"];
-
-const BYTES_EXECUTABLE = ["~refine", "~unsafe"];
-
 const BYTES_KEYWORDS = new Set(["type", "minLength", "maxLength"]);
 
 function walk(source: unknown, path: string, objects: Objects, ancestors: Set<object>): Snapshot {
@@ -63,13 +58,6 @@ function walk(source: unknown, path: string, objects: Objects, ancestors: Set<ob
 	if (!isPlainObject(source)) throw new Error(`${path}: expected a schema`);
 	if (ancestors.has(source)) throw new Error(`${path}: cyclic schema; use $defs and $ref for recursion`);
 	const isBytes = source.type === "bytes";
-	// A bytes schema may carry its own check (rebuilt below); no other schema may carry an executable feature.
-	const allowed = isBytes ? BYTES_EXECUTABLE : [];
-	for (const key of EXECUTABLE) {
-		if (Object.hasOwn(source, key) && !allowed.includes(key)) {
-			throw new Error(`${path}: TypeBox refinements, codecs and unsafe types are not supported`);
-		}
-	}
 	ancestors.add(source);
 	const schema: [string, unknown][] = [];
 	const normal: [string, JsonValue][] = [];
@@ -91,11 +79,7 @@ function walk(source: unknown, path: string, objects: Objects, ancestors: Set<ob
 		throw new Error(`${path}: argument objects must be closed (additionalProperties: false)`);
 	}
 	if (isBytes) checkBytesBounds(node, path);
-	return {
-		schema: isBytes ? withBytesCheck(node as BytesMarker) : node,
-		normal: Object.fromEntries(normal),
-		bytes,
-	};
+	return { schema: node, normal: Object.fromEntries(normal), bytes };
 }
 
 function walkKeyword(keyword: Keyword, value: unknown, path: string, objects: Objects, ancestors: Set<object>): Copy {
@@ -167,15 +151,15 @@ function sortedCopy(value: JsonValue): JsonValue {
 	return Object.fromEntries(keys.map((key) => [key, sortedCopy(value[key]!)]));
 }
 
-/** Enumerable data entries sorted by key; symbol keys and accessors are refused. */
+/** Data entries sorted by key; symbol keys, accessors and non-enumerable keys (not data) are refused. */
 function ownEntries(source: object, path: string): [string, unknown][] {
 	const entries: [string, unknown][] = [];
 	for (const key of Reflect.ownKeys(source)) {
 		if (typeof key === "symbol") throw new Error(`${path}: symbol keys are not supported`);
 		const descriptor = Object.getOwnPropertyDescriptor(source, key)!;
 		if (!("value" in descriptor)) throw new Error(`${path}.${key}: accessors are not supported`);
-		// Non-enumerable keys are TypeBox metadata (`~kind`, `~optional`), never schema data.
-		if (descriptor.enumerable) entries.push([key, descriptor.value]);
+		if (!descriptor.enumerable) throw new Error(`${path}.${key}: non-enumerable keys are not supported`);
+		entries.push([key, descriptor.value]);
 	}
 	return entries.sort(([a], [b]) => compare(a, b));
 }

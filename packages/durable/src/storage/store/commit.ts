@@ -1,8 +1,9 @@
-// One Durable commit as one composite write of the store's commit step (slice 6b §2.3): staged before the queue (rows
-// encoded, contents serialized, explicit ids raising the store's allocator, fork copies resolved from their sources),
-// then inside the step what `SqliteStorage` does inside its transaction, with the step's reader: Durable's checks of
-// ids and documents (its messages), the table puts, and the documents in two passes, existing ones first (their content,
-// then their retirement, which frees the addresses this commit's creations take), then the creations and copies.
+// One Durable commit as one commit of the store's series (slice 6b §2.3): staged before the queue (rows encoded,
+// contents serialized, explicit ids raising the store's allocator), then inside the series' transaction what
+// `SqliteStorage` does inside its own, with the step's reader: Durable's checks of ids and documents and the copies
+// resolved from their sources (its messages, a refusal), then its one composite write: the table puts, and the
+// documents in two passes, existing ones first (their content, then their retirement, which frees the addresses this
+// commit's creations take), then the creations and copies.
 
 import type { Context, JsonValue } from "@earendil-works/chord";
 import {
@@ -14,22 +15,23 @@ import {
 	type OwnerTable,
 	readDocument,
 	retireRecord,
+	type SeriesCommit,
 	type StagedWrite,
 	type Step,
 	type StoreWrite,
 	writeContent,
 } from "@earendil-works/chord/next";
+import { StorageRequestError } from "../../errors.ts";
 import type {
 	DocumentContent,
 	DocumentCopySource,
 	DocumentCreate,
 	DocumentId,
-	DocumentRecord,
 	Id,
 	JsonObject,
 	StorageWrite,
 } from "../../types.ts";
-import { addressOf, durableRecord, engineRecord } from "./documents.ts";
+import { addressOf, durableRecord, engineRecord, readAt } from "./documents.ts";
 import { conversationRow, entryRow, submissionRow, taskRow } from "./tables.ts";
 
 /** Durable's record types, as `record_ids` names them. */
@@ -66,14 +68,10 @@ type DocumentAction = {
 	retire: boolean;
 };
 
-/** Reads a copy's source at its point: its stored document, `undefined` when it cannot be read there. */
-export type CopySource = (
-	source: DocumentCopySource,
-) => Promise<{ readonly record: DocumentRecord; readonly version: number; readonly value: JsonObject } | undefined>;
-
-/** A Durable commit staged for the store's step. */
-export class DurableCommit implements StagedWrite {
+/** A Durable commit staged for the store's series: its checks, then itself as its one write. */
+export class DurableCommit implements SeriesCommit, StagedWrite {
 	readonly order = "write";
+	readonly writes: readonly StagedWrite[];
 	readonly #owner: string;
 	readonly #tables: CommitTables;
 	readonly #context: Context;
@@ -81,6 +79,10 @@ export class DurableCommit implements StagedWrite {
 	readonly #claims: { readonly id: number; readonly type: RecordType }[] = [];
 	readonly #rows: RowWrite[] = [];
 	readonly #actions = new Map<DocumentId, DocumentAction>();
+	/** What `check` found for `apply`, in the same step: the stored types of the claimed ids, the changed documents. */
+	#checked:
+		| { readonly claimed: Map<number, RecordType>; readonly existing: Map<DocumentId, EngineRecord> }
+		| undefined;
 
 	/**
 	 * Stages `writes` (rule 8: rows and contents encoded here, before the queue); `raise` makes room above each explicit
@@ -97,19 +99,35 @@ export class DurableCommit implements StagedWrite {
 		this.#tables = tables;
 		this.#context = context;
 		for (const write of writes) this.#stage(write, raise);
+		this.writes = [this];
 	}
 
 	/**
-	 * Resolves the copies before the step (S11): each source read at its point and checked against the copy's record,
-	 * entered as a creation carrying the source's value as its base.
+	 * Durable's checks against the state the series' earlier commits left, writing nothing: the ids, the documents and
+	 * the copies; a throw refuses the commit.
 	 */
-	async resolveCopies(read: CopySource): Promise<void> {
+	async check(step: Step): Promise<void> {
+		const claimed = await this.#checkIds(step);
+		const existing = await this.#checkDocuments(step);
+		await this.#resolveCopies(step);
+		this.#checked = { claimed, existing };
+	}
+
+	/**
+	 * Resolves the copies (S11): each source read at its point and checked against the copy's record, entered as a
+	 * creation carrying the source's value as its base.
+	 */
+	async #resolveCopies(step: Step): Promise<void> {
 		for (const [id, action] of this.#actions) {
 			const source = action.copy;
 			if (source === undefined) continue;
 			if (this.#actions.has(source.id)) throw new Error(`Document copy ${id} source is changed in the copy batch`);
 			try {
-				const stored = await read(source);
+				const read = await readAt(step, source.id, source.at, this.#owner);
+				if (read.kind === "current_only") {
+					throw new StorageRequestError(`Document ${read.id} does not retain historical content`);
+				}
+				const stored = read.document;
 				if (stored === undefined) throw new Error(`Fork source document ${source.id} cannot be read`);
 				const create = action.create!;
 				if (
@@ -129,10 +147,10 @@ export class DurableCommit implements StagedWrite {
 		}
 	}
 
+	/** The commit's writes, after its `check` in the same step. */
 	async apply(step: Step): Promise<readonly StoreWrite[]> {
 		const recorded: StoreWrite[] = [];
-		const claimed = await this.#checkIds(step);
-		const existing = await this.#checkDocuments(step);
+		const { claimed, existing } = this.#checked!;
 		for (const write of this.#rows) {
 			if (claimed.get(write.id) === undefined) recorded.push(await this.#claim(step, write.id, write.type));
 			claimed.set(write.id, write.type);

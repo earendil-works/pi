@@ -32,14 +32,24 @@ import { describe, expect, it } from "vitest";
 import { StorageRequestError } from "../src/errors.ts";
 import { idFromNumber } from "../src/ids.ts";
 import { type CompactionResult, createRegistry, Harness, LiveDoc, type Tx } from "../src/index.ts";
+import { SessionImpl } from "../src/session/session.ts";
 import { StoreStorage } from "../src/storage/store/index.ts";
-import type { ConversationId, DocumentId, EntryId, Id, Seq, Storage, StorageWrite, TaskId } from "../src/types.ts";
+import { commitWrites } from "../src/testing/commit-writes.ts";
+import type {
+	CommitResult,
+	ConversationId,
+	DocumentId,
+	EntryId,
+	Id,
+	Seq,
+	Storage,
+	StorageWrite,
+	TaskId,
+} from "../src/types.ts";
 import { ROOT_CONVERSATION_ID } from "../src/types.ts";
 import { openStoreStorage } from "./store-storage-support.ts";
 
 const context = BACKGROUND_CONTEXT;
-const adopt = (): void => {};
-
 /** A storage that closes and reopens its store file after every commit (Durable's reopen harness). */
 class ReopeningStorage implements Storage {
 	#current: Storage;
@@ -51,10 +61,14 @@ class ReopeningStorage implements Storage {
 		this.#path = path;
 	}
 
-	async commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, commitContext: Context): Promise<Seq> {
-		if (this.#closed) return this.#current.commit(writes, adopt, commitContext);
+	async commit(
+		batches: readonly (readonly StorageWrite[])[],
+		receive: (index: number, seq: Seq) => void,
+		commitContext: Context,
+	): Promise<CommitResult> {
+		if (this.#closed) return this.#current.commit(batches, receive, commitContext);
 		try {
-			return await this.#current.commit(writes, adopt, commitContext);
+			return await this.#current.commit(batches, receive, commitContext);
 		} finally {
 			await this.#current.close(context);
 			this.#current = await openStoreStorage(this.#path);
@@ -127,7 +141,7 @@ describe("claims and close", () => {
 			reason: "args",
 		});
 		const other = await StoreStorage.open(store, "other", context);
-		await first.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], adopt, context);
+		await commitWrites(first, [{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
 		expect(await other.conversation(ROOT_CONVERSATION_ID, context)).toBeUndefined();
 		await first.close(context);
 		await expect(first.conversation(ROOT_CONVERSATION_ID, context)).rejects.toThrow("StoreStorage is closed");
@@ -139,7 +153,7 @@ describe("claims and close", () => {
 	it("waits at close for its calls underway, then releases its claims", async () => {
 		const store = await memoryStore();
 		const storage = await StoreStorage.open(store, "harness", context);
-		const commit = storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], adopt, context);
+		const commit = commitWrites(storage, [{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
 		const closing = storage.close(context);
 		await commit;
 		await closing;
@@ -153,14 +167,14 @@ describe("the store's semantics (D4)", () => {
 		const store = await memoryStore();
 		const storage = await StoreStorage.open(store, "harness", context);
 		const root = { type: "conversation", value: { id: ROOT_CONVERSATION_ID } } as const;
-		await storage.commit([root], adopt, context);
-		await expect(storage.commit([root], adopt, context)).rejects.toThrow("ID 1 already belongs to conversation");
+		await commitWrites(storage, [root], context);
+		await expect(commitWrites(storage, [root], context)).rejects.toThrow("ID 1 already belongs to conversation");
 		const entry = {
 			id: idFromNumber<EntryId>(await storage.mintId()),
 			conversationId: ROOT_CONVERSATION_ID,
 			kind: "m",
 		};
-		await storage.commit([{ type: "entry", value: entry }], adopt, context);
+		await commitWrites(storage, [{ type: "entry", value: entry }], context);
 		expect((await storage.entry(entry.id, context))?.entry).toEqual(entry);
 		await store.close(context);
 	});
@@ -169,12 +183,12 @@ describe("the store's semantics (D4)", () => {
 		const store = await memoryStore();
 		const storage = await StoreStorage.open(store, "harness", context);
 		const entry = { id: idFromNumber<EntryId>(500), conversationId: ROOT_CONVERSATION_ID, kind: "m" };
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } },
 				{ type: "entry", value: entry },
 			],
-			adopt,
 			context,
 		);
 		expect(await storage.mintId()).toBe(501);
@@ -198,7 +212,7 @@ async function recorded() {
 		outbox: true,
 	})) as ChordStore;
 	const storage = await StoreStorage.open(store, "harness", context);
-	await storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], adopt, context);
+	await commitWrites(storage, [{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
 	return { store, storage };
 }
 
@@ -211,7 +225,8 @@ async function history(storage: Storage): Promise<{ readonly rewindable: Documen
 	const seqs: Seq[] = [];
 	const base = (n: number) => ({ kind: "base", version: 1, value: { n } }) as const;
 	seqs.push(
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{
 					type: "document.create",
@@ -224,26 +239,25 @@ async function history(storage: Storage): Promise<{ readonly rewindable: Documen
 					content: base(0),
 				},
 			],
-			adopt,
 			context,
 		),
 	);
 	seqs.push(
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[{ type: "document.change", id: rewindable, content: { kind: "delta", version: 1, ops: [["s", ["n"], 1]] } }],
-			adopt,
 			context,
 		),
 	);
 	seqs.push(
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{ type: "document.change", id: latest, content: { kind: "delta", version: 1, ops: [["s", ["n"], 2]] } },
 				{ type: "document.retire", id: latest },
 				{ type: "document.create", record: { id: empty, kind: "e", scope: { kind: "session" } }, content: base(3) },
 				{ type: "document.retire", id: empty },
 			],
-			adopt,
 			context,
 		),
 	);
@@ -323,11 +337,11 @@ describe("head markers (the entry_heads table)", () => {
 			(await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context, { outbox: true })) as ChordStore;
 		let store = await open();
 		let storage = await StoreStorage.open(store, "harness", context);
-		await storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], adopt, context);
+		await commitWrites(storage, [{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
 		const entry = async (head?: EntryId): Promise<EntryId> => {
 			const id = await storage.mintId<EntryId>();
 			const value = { id, conversationId: ROOT_CONVERSATION_ID, kind: "k", data: {}, ...(head ? { head } : {}) };
-			await storage.commit([{ type: "entry", value }], adopt, context);
+			await commitWrites(storage, [{ type: "entry", value }], context);
 			return id;
 		};
 		const first = await entry();
@@ -372,7 +386,30 @@ describe("reads (slice 6b §1.4, §2.4)", () => {
 });
 
 describe("commits (slice 6b §1.3, §2.5)", () => {
-	it("adopt in the attached host's batch, and count four statements for an entry append and for a delta", async () => {
+	it("publishes each commit of a Session inside the attached host's batch, and plainly without a host", async () => {
+		const store = (await openStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), context)) as ChordStore;
+		const storage = await StoreStorage.open(store, "harness", context);
+		const plain: boolean[] = [];
+		storage.publishing(() => plain.push(store.batch === undefined), context);
+		expect(plain).toEqual([true]);
+		const host = createHost({ store, onError: () => {} });
+		const session = new SessionImpl(storage);
+		const running: boolean[] = [];
+		session.followCommits(() => {
+			running.push(store.batch!.running);
+		});
+		await session.commitWith((tx) => tx.createRootConversation(), context);
+		await Promise.all([
+			session.commit((tx) => tx.appendEntry(ROOT_CONVERSATION_ID, { kind: "a" }), context),
+			session.commit((tx) => tx.appendEntry(ROOT_CONVERSATION_ID, { kind: "b" }), context),
+		]);
+		expect(running).toEqual([true, true, true]);
+		await session.close(context);
+		await host.close(context);
+		await store.close(context);
+	});
+
+	it("counts four statements for an entry append and for a delta, with a host attached", async () => {
 		const telemetry = new InMemoryTelemetryContext();
 		const span = await telemetry.startSpan({ name: "test" }, (each) => each);
 		const metered = withTelemetry(span, context);
@@ -384,34 +421,26 @@ describe("commits (slice 6b §1.3, §2.5)", () => {
 		const store = (await openStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), context)) as ChordStore;
 		const host = createHost({ store, onError: () => {} });
 		const storage = await StoreStorage.open(store, "harness", context);
-		await storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], adopt, context);
-		let running: boolean | undefined;
+		await commitWrites(storage, [{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
 		const entry = {
 			id: idFromNumber<EntryId>(await storage.mintId()),
 			conversationId: ROOT_CONVERSATION_ID,
 			kind: "m",
 		};
 		const before = counts();
-		await storage.commit(
-			[{ type: "entry", value: entry }],
-			() => {
-				running = store.batch!.running;
-			},
-			metered,
-		);
+		await storage.commit([[{ type: "entry", value: entry }]], () => {}, metered);
 		const appended = counts() - before;
-		expect(running).toBe(true);
 		const id = await storage.mintId<DocumentId>();
 		const record = { id, kind: "s", scope: { kind: "session" } } as const;
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[{ type: "document.create", record, content: { kind: "base", version: 1, value: { n: 0 } } }],
-			adopt,
 			context,
 		);
 		const changed = counts();
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[{ type: "document.change", id, content: { kind: "delta", version: 1, ops: [["s", ["n"], 1]] } }],
-			adopt,
 			metered,
 		);
 		expect([appended, counts() - changed]).toEqual([4, 4]);
@@ -539,10 +568,11 @@ describe("Durable's views as Chord sources on the store (slice 6b §3)", () => {
 describe("review regressions", () => {
 	it('a head-marker entry whose kind is "refused" is returned, not taken for a request error', async () => {
 		const storage = await openStoreStorage(":memory:");
-		await storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], adopt, context);
+		await commitWrites(storage, [{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
 		const first = await storage.mintId<EntryId>();
 		const marker = await storage.mintId<EntryId>();
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{ type: "entry", value: { id: first, conversationId: ROOT_CONVERSATION_ID, kind: "message" } },
 				{
@@ -550,23 +580,12 @@ describe("review regressions", () => {
 					value: { id: marker, conversationId: ROOT_CONVERSATION_ID, kind: "refused", head: first },
 				},
 			],
-			adopt,
 			context,
 		);
 		expect((await storage.findLatestHeadMarker(ROOT_CONVERSATION_ID, undefined, context))?.id).toBe(marker);
 		const page = await storage.scanEntries({ conversationId: ROOT_CONVERSATION_ID }, 10, undefined, context);
 		expect(page.items.map(({ kind }) => kind)).toEqual(["refused", "message"]);
 		await storage.close(context);
-	});
-
-	it("an empty commit takes no seq", async () => {
-		const { store, storage } = await recorded();
-		const before = store.lastSeq;
-		const adopted: Seq[] = [];
-		expect(await storage.commit([], (seq) => adopted.push(seq), context)).toBe(before);
-		expect(store.lastSeq).toBe(before);
-		expect(adopted).toEqual([before]);
-		await store.close(context);
 	});
 });
 
@@ -577,7 +596,7 @@ describe("GC", () => {
 		const store = await memoryStore();
 		const opened = async (): Promise<WeakRef<StoreStorage>> => {
 			const storage = await StoreStorage.open(store, "harness", context);
-			await storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], adopt, context);
+			await commitWrites(storage, [{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
 			await storage.close(context);
 			return new WeakRef(storage);
 		};

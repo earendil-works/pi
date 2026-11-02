@@ -163,9 +163,14 @@ describe("submissions", () => {
 			}
 		}
 		const setup = chatSetup();
-		setup.faux.setResponses([unanswered().step]);
-		const { harness, root } = await openChat(new HeldReads(), setup);
-		const submission = await root.submit({ type: "input", content: "hi" }, context);
+		setup.faux.setResponses([unanswered().step, unanswered().step]);
+		const storage = new HeldReads();
+		const first = await openChat(storage, setup);
+		const { id } = await first.root.submit({ type: "input", content: "hi" }, context);
+		await first.harness.close(context);
+		// Reopen: the Session caches the submissions it writes, so only a reopened one reads it from Storage.
+		const { harness } = await openChat(storage.reopen(), setup);
+		const submission = (await harness.submission(id, context))!;
 		hold = true;
 		const waiting = submission.wait(context);
 		await entered.promise;

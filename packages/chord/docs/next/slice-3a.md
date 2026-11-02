@@ -89,7 +89,7 @@ if (notes.variant === "reader") console.log(notes.notes.value);   // narrowed by
 | u32 header length, big-endian | header JSON (UTF-8) | part 0 | part 1 | … |
 ```
 
-- **One format on every link.** The header is a JSON object, a tagged union over `kind`, defined as a TypeBox schema;
+- **One format on every link.** The header is a JSON object, a tagged union over `kind`, defined as a schema (TypeBox then, pi-schema since the schema switch);
   every received header is checked with the compiled schema (the wire is a trust boundary; skipping it on trusted IPC
   links comes with IPC in slice 4). The header lists its parts: `parts: [{ json, bytes }]`, the JSON text's byte length and
   the byte lengths of the segments that follow it (`bytes: []` for state parts and arguments without bytes).
@@ -125,7 +125,7 @@ if (notes.variant === "reader") console.log(notes.notes.value);   // narrowed by
 Replaces the JSON-header framing of section 2 (`| u32 header length | header JSON | parts |`); the message kinds, ids,
 races and rules of section 2 stay.
 
-- **`Message`** is a tagged union defined once as a TypeBox schema (`MESSAGE`; `type Message = Static<typeof
+- **`Message`** is a tagged union defined once as a schema (TypeBox then, pi-schema since the schema switch) (`MESSAGE`; `type Message = Static<typeof
   MESSAGE>`): `hello { protocol, incarnation }`, `hold { hold, type, version, fingerprint, params }`, `release { hold
   }`, `call { call, hold, method, args? }`, `cancel { call }`, `bound { hold, variant, members: [{ member, value }],
   failed: [{ member, error }] }`, `state { holds: [{ hold, members: [{ member, ops }], failed: [...] }] }`, `failed {

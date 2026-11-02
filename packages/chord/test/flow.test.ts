@@ -1,7 +1,7 @@
 // Link flow control: state waits while the peer's acknowledgements lag a window behind, coalesced per subscription;
 // everything else is sent at once.
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { num, obj } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import {
 	type Ctx,
@@ -65,12 +65,12 @@ class AckGate implements Link {
 const counterOn = (name: string, host: string) =>
 	remote(name, {
 		version: 1,
-		input: Type.Object({}),
+		input: obj({}, { open: true }),
 		host: hostNamed(host),
 		variants: {
 			main: {
-				state: { count: Type.Object({ n: Type.Number() }) },
-				methods: { add: method(Type.Number(), Type.Number()), wait: method() },
+				state: { count: obj({ n: num() }, { open: true }) },
+				methods: { add: method(num(), num()), wait: method() },
 			},
 		},
 	});
@@ -89,7 +89,7 @@ const waiting = () =>
 
 function serveCounter(host: Host, type = Counter): void {
 	host.serve(type, (_input, _principal, self) => {
-		const count = self.state("count", Type.Object({ n: Type.Number() }), { n: 0 });
+		const count = self.state("count", obj({ n: num() }, { open: true }), { n: 0 });
 		return {
 			variant: "main",
 			count,

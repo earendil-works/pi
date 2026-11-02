@@ -125,9 +125,9 @@ export class ConsumerSide {
 		this.forget(hold, error);
 	}
 
-	/** `ref.retry()` on a failed hold: the provider is asked for an attempt now. */
-	retry(hold: number): void {
-		this.#link.send({ kind: "retry", hold });
+	/** `ref.retry()` on a failed hold, with `hops` left of its budget: the provider is asked for an attempt now. */
+	retry(hold: number, hops: number): void {
+		this.#link.send({ kind: "retry", hold, hops });
 	}
 
 	/** Drops hold `hold` from the tables; its calls, in flight and waiting, fail with `error` and free their slots. */
@@ -160,7 +160,7 @@ export class ConsumerSide {
 				break;
 			}
 			case "failed":
-				this.#entries.get(message.hold)?.failed(message);
+				this.#failed(message);
 				break;
 			case "loading":
 				this.#loading(message.hold);
@@ -300,6 +300,18 @@ export class ConsumerSide {
 		const error = new ChordError({ code: "unavailable", message: `hold ${hold}: rebinding` });
 		for (const call of this.#window.removeHold(hold)) call.reject(error);
 		holder.loading();
+	}
+
+	/**
+	 * `failed`: its holder fails; its calls still waiting for a slot reject with the cause (a bound hold is unbound by it,
+	 * slice 7b; its calls in flight are rejected by the provider).
+	 */
+	#failed(message: Extract<Message, { readonly kind: "failed" }>): void {
+		const holder = this.#entries.get(message.hold);
+		if (holder === undefined) return;
+		const error = asChordError(errorFromWire(message.cause.error), `hold ${message.hold}`);
+		for (const call of this.#window.removeHold(message.hold)) call.reject(error);
+		holder.failed(message);
 	}
 
 	/**

@@ -1,27 +1,35 @@
-import Type from "typebox";
-import { Compile } from "typebox/compile";
+// Tests of schema snapshots: the vocabulary, closed arguments, copies and their normal forms, bytes leaves.
+
+import { compile } from "@earendil-works/pi-schema";
 import { describe, expect, it } from "vitest";
-import { arr, bytes, int, map, obj, opt, str } from "../../../src/next/contracts/schema.ts";
+import { arr, bytes, int, map, obj, opt, str, union } from "../../../src/next/contracts/schema.ts";
 import { snapshotArguments, snapshotSchema } from "../../../src/next/contracts/snapshot.ts";
 
 describe("vocabulary", () => {
 	it("accepts primitives, arrays, tuples, objects, records, unions, intersections, $defs/$ref, constraints", () => {
-		const recursive = Type.Cyclic(
-			{ Node: Type.Object({ value: Type.Number(), next: Type.Union([Type.Null(), Type.Ref("Node")]) }) },
-			"Node",
-		);
+		const recursive = {
+			$defs: {
+				Node: {
+					type: "object",
+					properties: { value: { type: "number" }, next: { anyOf: [{ type: "null" }, { $ref: "#/$defs/Node" }] } },
+					required: ["value", "next"],
+				},
+			},
+			$ref: "#/$defs/Node",
+		};
 		const schemas = [
-			Type.Tuple([Type.String(), Type.Integer()]),
-			Type.Intersect([Type.Object({ a: Type.String() }), Type.Object({ b: Type.String() })]),
-			Type.Enum(["a", "b"]),
+			{ type: "array", prefixItems: [{ type: "string" }, { type: "integer" }], items: false },
+			{ allOf: [obj({ a: str() }), obj({ b: str() })] },
+			{ enum: ["a", "b"] },
 			recursive,
 			str({ min: 1, pattern: "^x" }),
-			Type.String({ format: "email", default: "a@b.c", readOnly: true, title: "t", description: "d" }),
-			Type.Number({ multipleOf: 2, exclusiveMinimum: 0 }),
-			Type.Array(Type.String(), { uniqueItems: true }),
-			Type.Object({}, { minProperties: 1, maxProperties: 2, $comment: "c", deprecated: true, examples: [{}] }),
+			{ type: "string", format: "email", default: "a@b.c", readOnly: true, title: "t", description: "d" },
+			{ type: "number", multipleOf: 2, exclusiveMinimum: 0 },
+			{ type: "array", items: { type: "string" }, uniqueItems: true },
+			{ type: "object", minProperties: 1, maxProperties: 2, $comment: "c", deprecated: true, examples: [{}] },
 			map(int()),
 			bytes({ max: 4 }),
+			map(bytes()),
 		];
 		for (const schema of schemas) expect(() => snapshotSchema(schema, "s")).not.toThrow();
 	});
@@ -43,18 +51,15 @@ describe("vocabulary", () => {
 		["definitions", { definitions: {} }, 'unsupported keyword "definitions"'],
 		["oneOf", { oneOf: [{ type: "string" }] }, 'unsupported keyword "oneOf"'],
 		["unknown keyword", { type: "string", flavour: "x" }, 'unsupported keyword "flavour"'],
-		["non-JSON type", Type.BigInt(), 'unsupported type "bigint"'],
-		["undefined", Type.Undefined(), 'unsupported type "undefined"'],
-		["function", Type.Function([], Type.Null()), "s: unsupported"],
-		["Unsafe", Type.Unsafe<Date>({ type: "string" }), "unsafe types are not supported"],
-		["refinement", Type.Refine(Type.String(), () => true), "refinements"],
+		["non-JSON type", { type: "bigint" }, 'unsupported type "bigint"'],
+		["undefined", { type: "undefined" }, 'unsupported type "undefined"'],
+		["function", { type: "function", parameters: [], returnType: { type: "null" } }, "s: unsupported"],
 		[
-			"codec",
-			Type.Codec(Type.String())
-				.Decode((v) => v)
-				.Encode((v) => v),
-			"codecs",
+			"non-enumerable key (a TypeBox refinement)",
+			Object.defineProperty({ type: "string" }, "~refine", { value: [{ check: () => true }] }),
+			"s.~refine: non-enumerable keys are not supported",
 		],
+		["opt(...) outside an object", opt(str()), "s: expected a schema"],
 		["non-JSON data", { type: "number", default: Number.NaN }, "s.default: expected JSON data"],
 		["undefined data", { type: "number", maximum: undefined }, "s.maximum: expected JSON data"],
 		["foreign prototype", new (class Schema {})(), "s: expected a schema"],
@@ -86,62 +91,62 @@ describe("vocabulary", () => {
 describe("closed arguments", () => {
 	it("requires every object, nested ones included, to be closed", () => {
 		expect(() => snapshotArguments(obj({ a: obj({ b: str() }) }), "m.args")).not.toThrow();
-		expect(() => snapshotArguments(obj({ a: Type.Object({ b: str() }) }), "m.args")).toThrow(
+		const open = (properties: object) => ({ type: "object", properties });
+		expect(() => snapshotArguments(obj({ a: open({ b: str() }) }), "m.args")).toThrow(
 			"m.args.properties.a: argument objects must be closed (additionalProperties: false)",
 		);
-		expect(() => snapshotArguments(Type.Object({}), "m.args")).toThrow("m.args: argument objects must be closed");
-		expect(() => snapshotArguments(obj({ list: arr(Type.Object({})) }), "m.args")).toThrow(
+		expect(() => snapshotArguments(open({}), "m.args")).toThrow("m.args: argument objects must be closed");
+		expect(() => snapshotArguments(obj({ list: arr(open({})) }), "m.args")).toThrow(
 			"m.args.properties.list.items: argument objects must be closed",
 		);
 		expect(() => snapshotArguments({ type: "object" }, "m.args")).toThrow("argument objects must be closed");
 	});
 
-	it("accepts a raw closed Type.Object and records", () => {
-		expect(() => snapshotArguments(Type.Object({ a: str() }, { additionalProperties: false }), "m")).not.toThrow();
+	it("accepts a raw closed object schema and records", () => {
+		const closed = { type: "object", properties: { a: str() }, additionalProperties: false };
+		expect(() => snapshotArguments(closed, "m")).not.toThrow();
 		expect(() => snapshotArguments(obj({ tags: map(str()) }), "m")).not.toThrow();
 	});
 
 	it("checks objects inside $defs, unions and tuples", () => {
-		const open = Type.Object({ a: str() });
-		expect(() => snapshotArguments(Type.Union([open, str()]), "m")).toThrow("m.anyOf[0]: argument objects");
-		expect(() => snapshotArguments(Type.Tuple([open]), "m")).toThrow("m.items[0]: argument objects");
+		const open = { type: "object", properties: { a: str() } };
+		expect(() => snapshotArguments(union([open, str()]), "m")).toThrow("m.anyOf[0]: argument objects");
+		expect(() => snapshotArguments({ type: "array", items: [open] }, "m")).toThrow("m.items[0]: argument objects");
 		expect(() => snapshotArguments({ $defs: { A: open }, $ref: "A" }, "m")).toThrow("m.$defs.A: argument objects");
 	});
 
 	it("does not apply to state or results", () => {
-		expect(() => snapshotSchema(Type.Object({ a: str() }), "state")).not.toThrow();
+		expect(() => snapshotSchema({ type: "object", properties: { a: str() } }, "state")).not.toThrow();
 	});
 });
 
 describe("snapshots", () => {
 	it("are copies, independent of later changes to the app's schema objects", () => {
-		const app = obj({ text: str(), tags: arr(str()) });
+		const app = obj({ text: str(), tags: arr(str()) }) as { properties: { text: object }; required: string[] };
 		const { schema } = snapshotSchema(app, "s");
 		(app.properties.text as { minLength?: number }).minLength = 5;
-		(app.required as string[]).push("x");
+		app.required.push("x");
 		expect(schema).not.toBe(app);
-		expect(Compile(schema).Check({ text: "", tags: [] })).toBe(true);
+		expect(compile(schema).check({ text: "", tags: [] })).toBe(true);
 	});
 
 	it("copy data values (defaults, consts)", () => {
 		const fallback = { a: [1] };
-		const { schema } = snapshotSchema(Type.Object({}, { default: fallback, additionalProperties: false }), "s");
+		const { schema } = snapshotSchema({ type: "object", default: fallback, additionalProperties: false }, "s");
 		fallback.a.push(2);
 		const copied = (schema as { default: { a: number[] } }).default;
 		expect(copied).toEqual({ a: [1] });
 	});
 
-	it("rebuild the bytes check from the marker; no app callback is copied", () => {
-		const app = bytes({ max: 2 });
-		const appCheck = Object.getOwnPropertyDescriptor(app, "~refine")!.value;
-		const { schema } = snapshotSchema(app, "s");
-		expect(Object.getOwnPropertyDescriptor(schema, "~refine")!.value).not.toBe(appCheck);
-		expect(Compile(schema).Check(new Uint8Array(2))).toBe(true);
-		expect(Compile(schema).Check(new Uint8Array(3))).toBe(false);
-		// A hand-written marker works too: the check comes from the marker, not from the app.
-		const marker = snapshotSchema({ type: "bytes", minLength: 1 }, "s").schema;
-		expect(Compile(marker).Check(new Uint8Array(0))).toBe(false);
-		expect(Compile(marker).Check(new Uint8Array(1))).toBe(true);
+	it("copy a bytes leaf as data: the compiled check comes from its keywords", () => {
+		const { schema } = snapshotSchema(bytes({ max: 2 }), "s");
+		expect(schema).toEqual({ type: "bytes", maxLength: 2 });
+		expect(compile(schema).check(new Uint8Array(2))).toBe(true);
+		expect(compile(schema).check(new Uint8Array(3))).toBe(false);
+		// A record of bytes (slices.md L1 carry-over: refused while bytes carried a TypeBox refinement).
+		const record = snapshotSchema(map(bytes({ min: 1 })), "s").schema;
+		expect(compile(record).check({ a: new Uint8Array(1) })).toBe(true);
+		expect(compile(record).check({ a: new Uint8Array(0) })).toBe(false);
 	});
 
 	it("refuse a bytes marker with other keywords or bad bounds", () => {
@@ -173,10 +178,9 @@ describe("snapshots", () => {
 	});
 
 	it("normal form keeps union and tuple order", () => {
-		const ab = snapshotSchema(Type.Union([str(), int()]), "s").normal;
-		const ba = snapshotSchema(Type.Union([int(), str()]), "s").normal;
+		const ab = snapshotSchema(union([str(), int()]), "s").normal;
+		const ba = snapshotSchema(union([int(), str()]), "s").normal;
 		expect(ab).not.toEqual(ba);
-		expect(snapshotSchema(opt(str()), "s").normal).toEqual({ type: "string" });
 	});
 });
 
@@ -184,7 +188,7 @@ describe("bytes", () => {
 	it("mark a snapshot with a bytes leaf anywhere inside", () => {
 		expect(snapshotSchema(str(), "s").bytes).toBe(false);
 		expect(snapshotSchema(obj({ a: arr(obj({ b: bytes() })) }), "s").bytes).toBe(true);
-		expect(snapshotSchema(Type.Union([str(), bytes()]), "s").bytes).toBe(true);
-		expect(snapshotSchema(Type.Object({ a: str() }, { default: { type: "bytes" } }), "s").bytes).toBe(false);
+		expect(snapshotSchema(union([str(), bytes()]), "s").bytes).toBe(true);
+		expect(snapshotSchema({ type: "object", default: { type: "bytes" } }, "s").bytes).toBe(false);
 	});
 });

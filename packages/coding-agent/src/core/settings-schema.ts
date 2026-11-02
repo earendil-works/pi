@@ -1,5 +1,5 @@
-import { ModelThinkingLevelSchema } from "@earendil-works/pi-ai/providers/model-schema";
 import { type Static, type TSchemaOptions, Type } from "typebox";
+import { ModelThinkingLevelSchema } from "./pi-ai-schemas.ts";
 import { SETTINGS_DEFAULTS } from "./settings-defaults.ts";
 
 function nonNegativeSafeInteger(options: { default?: number } = {}) {
@@ -281,6 +281,13 @@ export const SettingsSchema = Type.Object(
 			Type.Array(Type.String(), {
 				description:
 					'Command used for npm package lookup and installation, in argv form such as ["mise", "exec", "node@20", "--", "npm"].',
+			}),
+		),
+		selfUpdateCommand: Type.Optional(
+			Type.Array(Type.String(), {
+				minItems: 1,
+				description:
+					'Command `pi update` runs to update Pi itself, in argv form such as ["mise", "use", "-g", "npm:{packageName}@{version}"]. Placeholders: {packageName}, {version}, {installSpec}. PI_SELF_UPDATE_COMMAND takes precedence. Global setting only.',
 			}),
 		),
 		collapseChangelog: Type.Optional(

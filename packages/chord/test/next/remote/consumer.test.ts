@@ -23,6 +23,8 @@ import {
 	rawParent,
 	rawProvider,
 	rejection,
+	SERVER_ADDRESS,
+	Server,
 	serveNotes,
 	testCodec,
 	transported,
@@ -287,6 +289,7 @@ forEachCodec(() => {
 				version: Notes.version,
 				fingerprint: Notes.fingerprint,
 				params: jsonPart({ session: "S1" }),
+				address: SERVER_ADDRESS,
 			});
 			const [bound] = (await peer.next("bound")).holds;
 			expect(bound!.variant).toBe(EDITOR.variant);
@@ -415,6 +418,7 @@ forEachCodec(() => {
 			const Echo = remote("app.echo", {
 				version: 1,
 				params: {},
+				hostAddress: () => Server(),
 				variants: { v: { methods: { echo: method(map(int()), map(int())) } } },
 			});
 			const { client } = await linked((h) =>

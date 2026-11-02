@@ -4,12 +4,14 @@
 // Uses OpenAI when OPENAI_API_KEY is set, and a scripted faux model otherwise.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/21-subagent-foreground.ts
+
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { type AssistantMessage, type FauxResponseStep, Type } from "@earendil-works/pi-ai";
+import type { AssistantMessage, FauxResponseStep } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { obj, str } from "@earendil-works/pi-schema";
 import {
 	AssistantEntry,
 	type ConversationId,
@@ -42,7 +44,7 @@ const Subagent: Extension = defineExtension({
 		defineTool({
 			name: "subagent",
 			description: "Delegate a self-contained task to a subagent and get its answer back.",
-			parameters: Type.Object({ task: Type.String({ description: "What the subagent should do" }) }),
+			parameters: obj({ task: str({ description: "What the subagent should do" }) }),
 			// Safe to rerun after a crash: a rerun finds the child it already created and the submission it already made.
 			replay: "safe",
 			execute: async (args, api, callContext) => {

@@ -15,6 +15,7 @@ export {
 	type VariantNames,
 	variantNames,
 	variantOrder,
+	variantsAt,
 } from "./contract.ts";
 export { editWith } from "./evolve.ts";
 export { fingerprintOf, hash64, NORMAL_FORM_VERSION } from "./fingerprint.ts";

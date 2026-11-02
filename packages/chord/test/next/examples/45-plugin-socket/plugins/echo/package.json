@@ -1,0 +1,5 @@
+{
+	"name": "@example/echo",
+	"private": true,
+	"type": "module"
+}

@@ -11,7 +11,8 @@ import {
 } from "@earendil-works/chord/output";
 import type { ImageContent, TextContent, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { validateToolArguments } from "@earendil-works/pi-ai/utils/validation";
-import { Compile } from "typebox/compile";
+import { compile, type Validator } from "@earendil-works/pi-schema";
+import { formats } from "@earendil-works/pi-schema/formats";
 import { defineDocFamily } from "../documents.ts";
 import { AssistantEntry, ToolResultEntry } from "../entries.ts";
 import type { ExecutionEnv } from "../env/index.ts";
@@ -177,13 +178,21 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 			if ("error" in validated) return reject(runtime, task.input, call, tool, invalid(validated.error), context);
 			// Strict JSON: repair may set optional properties to undefined, which the slot and checkpoint cannot hold.
 			const final = copyJson(validated.args, { omitUndefinedProperties: true }) as JsonObject;
-			await runtime.commit(async (tx) => {
-				const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
-				if (slot !== undefined) slot.status = "running";
-				// A nested slot shows the arguments the call runs with, which repair, hooks, and coercion may have changed.
-				// Compared with the input, which the slot got at admission: reading the draft would track every leaf.
-				const changed = task.input.kind === "nested" && !jsonEqual(task.input.call.arguments as JsonValue, final);
-				if (changed && slot !== undefined && "parentTaskId" in slot) slot.arguments = final;
+			// The slot's status and arguments are presentation, stored like progress (`PROGRESS_COMMIT`); the intent is
+			// durable before the tool runs. Parallel calls of one round then share no immediate write to `pi.live`.
+			await runtime.commit(
+				async (tx) => {
+					const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
+					if (slot !== undefined) slot.status = "running";
+					// A nested slot shows the arguments the call runs with, which repair, hooks, and coercion may have changed.
+					// Assigned whole: an equal value records no change, and a rerun corrects what an earlier attempt showed.
+					if (slot !== undefined && "parentTaskId" in slot) slot.arguments = final;
+					return undefined;
+				},
+				context,
+				PROGRESS_COMMIT,
+			);
+			await runtime.commit(() => {
 				const intent = { phase: "execute", arguments: final, replay: tool.replay ?? "unsafe" } as const;
 				return { status: "running", checkpoint: intent };
 			}, context);
@@ -197,10 +206,15 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 			if (cutOffTooOften(task, runtime)) return endCutOff(runtime, task, call, context);
 			const tool = await resolveTool(runtime, task.input, call.name, context);
 			if (replay === "safe" && tool?.replay === "safe") {
-				// The rerun reports from scratch; clear what the interrupted attempt published.
+				// The rerun reports from scratch: clear what the interrupted attempt published, and show the slot running with
+				// the arguments it runs with again, as the deferred commit that showed them may have been lost with the crash.
 				await runtime.commit(async (tx) => {
 					const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
-					if (slot !== undefined) clearProgress(slot);
+					if (slot !== undefined) {
+						clearProgress(slot);
+						slot.status = "running";
+						if ("parentTaskId" in slot) slot.arguments = args;
+					}
 					return undefined;
 				}, context);
 				return run(runtime, task.input, call, tool, args, context);
@@ -757,7 +771,7 @@ async function afterHarnessResult(
 	return { ...rest, ...value, output: bounded.content, diagnostics: [...(rest.diagnostics ?? []), ...harness] };
 }
 
-const structuredValidators = new WeakMap<object, ReturnType<typeof Compile>>();
+const structuredValidators = new WeakMap<object, Validator>();
 
 /** Why a result's `structuredOutput` breaks the tool's contract, or `undefined` when it keeps it. */
 function structuredOutputError(tool: ToolRegistration, result: ToolExecutionResult): string | undefined {
@@ -773,12 +787,17 @@ function structuredOutputError(tool: ToolRegistration, result: ToolExecutionResu
 	}
 	let validator = structuredValidators.get(schema);
 	if (validator === undefined) {
-		validator = Compile(schema);
+		validator = compile(schema, { formats, unresolvedRefs: "reject" });
 		structuredValidators.set(schema, validator);
 	}
-	if (validator.Check(value)) return undefined;
-	const [first] = validator.Errors(value);
-	const path = first?.instancePath.replace(/^\//, "").replace(/\//g, ".") || "root";
+	if (validator.check(value)) return undefined;
+	const [first] = validator.errors(value);
+	const path =
+		first?.path
+			.slice(1)
+			.split("/")
+			.map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"))
+			.join(".") || "root";
 	return `Tool ${tool.name} returned structuredOutput that does not match its schema: ${path}: ${first?.message ?? "invalid"}`;
 }
 

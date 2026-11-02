@@ -39,7 +39,7 @@ const Store = local("bench.store", {
 const View = remote("bench.view", {
 	version: 1,
 	params: { session: str() },
-	placement: ({ session }) => Session({ id: session }),
+	hostAddress: ({ session }) => Session({ id: session }),
 	variants: { owner: { state: { doc: Shape }, methods: { stream: method(str()), ping: method(int(), int()) } } },
 });
 

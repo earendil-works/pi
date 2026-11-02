@@ -3,9 +3,9 @@
 // data step, `drop`, `index` and `dropIndex` after it) and track the columns and key through the chain; at runtime one
 // editor records the edits, checks each as it is made, and materializes the new version at the end.
 
-import type { TOptional } from "typebox";
-import { opt, type TSchema } from "../contracts/index.ts";
+import { opt } from "../contracts/index.ts";
 import { editWith, type Increment } from "../contracts/internal.ts";
+import { isOptional, type Optional } from "../contracts/schema.ts";
 import {
 	type ColumnSchema,
 	type Columns,
@@ -59,7 +59,7 @@ export interface TableEditor<C extends Columns, K extends readonly string[]> ext
 }
 
 /** A column `add` takes: `opt(...)` or one with a `default`. */
-export type AddedColumn = ColumnSchema & (TOptional<TSchema> | { readonly default: unknown });
+export type AddedColumn = ColumnSchema & (Optional | { readonly default: unknown });
 
 /** A `rows` patch: new values of non-key columns; `undefined` clears an `opt(...)` one. */
 export type PatchOf<C extends Columns, K extends readonly string[]> = {
@@ -85,7 +85,7 @@ type JsonNames<C extends Columns> = { [P in keyof C]: ColumnTypeOf<C[P]> extends
 type WithJson<C extends Columns, N extends keyof C & string, S extends ColumnSchema> = With<
 	C,
 	N,
-	C[N] extends TOptional<TSchema> ? TOptional<S> : S
+	C[N] extends Optional ? Optional<Exclude<S, Optional>> : S
 >;
 
 /** `V + 1` for a literal version (contracts' `Increment<N>`); `number` stays `number`. */
@@ -170,7 +170,7 @@ class Editor {
 		this.#assertBefore("json");
 		const existing = describeColumns({ [name]: this.#assertColumn(name, "json") }, this.#what)[0]!;
 		if (existing.type !== "json") throw new Error(`${this.#what}: json: column "${name}" is not a json(...) column`);
-		if (Object.hasOwn(column, "~optional")) {
+		if (isOptional(column)) {
 			throw new Error(`${this.#what}: json: pass json(...) itself; the column keeps its nullability`);
 		}
 		const schema = existing.optional ? opt(column) : column;

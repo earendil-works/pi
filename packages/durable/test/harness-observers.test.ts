@@ -95,7 +95,7 @@ const collect = (() => {
 })();
 
 describe("observeConversation and observeTaskGraph", () => {
-	it("start at the current value and advance inside adopt with the same change a watch gets", async () => {
+	it("start at the current value and advance at the publication with the same change a watch gets", async () => {
 		const storage = new ControlledStorage();
 		const { harness } = await openTasks(storage, []);
 		const root = await harness.root(context);
@@ -113,7 +113,8 @@ describe("observeConversation and observeTaskGraph", () => {
 		const entry = await root.commit((tx) => tx.appendEntry(root.id, { kind: "note", data: {} }), context);
 		expect(view.calls).toHaveLength(1);
 		const [call] = view.calls as [{ advance: WatchValue<ConversationView>; adopting: boolean }];
-		expect(call.adopting).toBe(true);
+		// Published once Storage stored it, outside its call.
+		expect(call.adopting).toBe(false);
 		expect(call.advance.retired).toBe(false);
 		expect(call.advance.value.entries.at(-1)?.id).toBe(entry.id);
 		await flush();
@@ -124,8 +125,11 @@ describe("observeConversation and observeTaskGraph", () => {
 		await root.commit((tx) => tx.appendEntry(root.id, { kind: "note", data: {} }), context);
 		expect(view.calls).toHaveLength(1);
 		await watch.stop();
+		const graphWatch = await harness.watchTaskGraph(context);
 		await harness.close(context);
-		expect(graph.calls).toEqual([{ end: { kind: "ended" } }]);
+		// S1: a Session close fails an observer (it may follow the next Session); a watch ends `ended`.
+		expect(graph.calls).toEqual([{ end: { kind: "failed", error: new Error("session closed") } }]);
+		expect(await graphWatch.closed).toEqual({ kind: "ended" });
 	});
 
 	it("end with the error that failed the Harness", async () => {
@@ -235,7 +239,7 @@ describe("observeConversation and observeTaskGraph", () => {
 					ops: [["s", ["tasks", key], expect.objectContaining({ blocked: "missing_task" })]],
 					retired: false,
 				},
-				adopting: true,
+				adopting: false,
 			},
 		]);
 		registry.install(defineExtension({ name: "late", tasks: [Missing] }));
@@ -301,7 +305,7 @@ describe("task documents", () => {
 		await harness.close(context);
 	});
 
-	it("an observer gets the retirement, then its end, inside the adopt of the commit that ends the task", async () => {
+	it("an observer gets the retirement, then its end, at the publication of the commit that ends the task", async () => {
 		const { harness, storage, id, finish } = await openWriter();
 		const progress = recorder<Readonly<{ lines: string[] }>>(storage);
 		let endedAdopting: boolean | undefined;
@@ -316,10 +320,10 @@ describe("task documents", () => {
 		finish();
 		await harness.waitForTask(id, context);
 		expect(progress.calls).toEqual([
-			{ advance: { kind: "value", value: { lines: ["started"] }, ops: [], retired: true }, adopting: true },
+			{ advance: { kind: "value", value: { lines: ["started"] }, ops: [], retired: true }, adopting: false },
 			{ end: { kind: "ended" } },
 		]);
-		expect(endedAdopting).toBe(true);
+		expect(endedAdopting).toBe(false);
 		await harness.close(context);
 		expect(progress.calls).toHaveLength(2);
 	});

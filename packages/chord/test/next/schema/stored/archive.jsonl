@@ -1,0 +1,36 @@
+{"kind":"manifest","format":1,"schema":2,"lastSeq":13,"nextId":12}
+{"kind":"table","table":"fixture.switch.owner:fixture.switch.edits","version":1,"state":"ready","columns":{"id":{"type":"str"},"file":{"type":"str"},"at":{"type":"int"}},"key":["id"],"fingerprint":"b6a64f82180e9b7f"}
+{"kind":"put","table":"fixture.switch.owner:fixture.switch.edits","row":{"id":"a","file":"/notes/a.md","at":10},"version":1,"columns":{}}
+{"kind":"put","table":"fixture.switch.owner:fixture.switch.edits","row":{"id":"b","file":"/notes/b.md","at":6},"version":1,"columns":{}}
+{"kind":"put","table":"fixture.switch.owner:fixture.switch.edits","row":{"id":"c","file":"/notes/c.md","at":9},"version":1,"columns":{}}
+{"kind":"table","table":"fixture.switch.owner:fixture.switch.rows","version":1,"state":"ready","columns":{"id":{"type":"str"},"n":{"type":"int","default":0},"flag":{"type":"bool","default":false},"label":{"type":"str","optional":true},"data":{"type":"json","version":1,"fingerprint":"595acb546ede10d5"},"maybe":{"type":"json","optional":true,"version":1,"fingerprint":"27fc51c99dad9a88"}},"key":["id"],"fingerprint":"a8a7a46b1d1b5058"}
+{"kind":"put","table":"fixture.switch.owner:fixture.switch.rows","row":{"id":"a","n":0,"flag":false,"label":"first note","data":{"a":10,"b":["a"]},"maybe":{"n":1.5}},"version":1,"columns":{"data":1,"maybe":1}}
+{"kind":"put","table":"fixture.switch.owner:fixture.switch.rows","row":{"id":"b","n":0,"flag":false,"label":"second","data":{"a":6,"b":["b"]}},"version":1,"columns":{"data":1}}
+{"kind":"put","table":"fixture.switch.owner:fixture.switch.rows","row":{"id":"c","n":0,"flag":false,"label":"third one","data":{"a":9,"b":["c"]}},"version":1,"columns":{"data":1}}
+{"kind":"index","table":"fixture.switch.owner:fixture.switch.rows","name":"by_n","columns":["n","id"]}
+{"kind":"document.create","record":{"id":2,"owner":"fixture.switch.owner","namespace":"chord","kind":"fixture.switch.notes","key":"a","history":"none","createdAt":2,"revision":1,"version":1,"fingerprint":"bd44e8ea54b8f283"}}
+{"kind":"document.revision","id":2,"seq":2,"content":{"kind":"base","version":1,"value":{"body":"first note"}}}
+{"kind":"document.create","record":{"id":3,"owner":"fixture.switch.owner","namespace":"chord","kind":"fixture.switch.profile","history":"none","createdAt":2,"revision":3,"version":1,"fingerprint":"f345152aff1bb993"}}
+{"kind":"document.revision","id":3,"seq":2,"content":{"kind":"base","version":1,"value":{"name":"ada","nick":"x","age":36,"count":1,"score":1,"ratio":0.5,"active":true,"verified":false,"role":"admin","level":1,"kind":"person","one":1,"yes":true,"tags":["a"],"points":[],"extra":{"a":10},"nothing":null,"choice":{"deep":[{"x":1}]},"nested":{"inner":{"v":"first note"}}}}}
+{"kind":"document.revision","id":3,"seq":5,"content":{"kind":"delta","version":1,"ops":[["s",["count"],2],["s",["choice"],{"deep":[{"x":2}]}],["s",["nested"],{"inner":{"v":"second"}}],["p",["tags"],1,0,["b"]],["s",["extra","b"],6]]}}
+{"kind":"document.revision","id":3,"seq":9,"content":{"kind":"delta","version":1,"ops":[["s",["count"],3],["s",["choice"],{"deep":[{"x":3}]}],["s",["nested"],{"inner":{"v":"third one"}}],["p",["tags"],2,0,["c"]],["s",["extra","c"],9]]}}
+{"kind":"document.create","record":{"id":4,"owner":"fixture.switch.owner","namespace":"chord.jobs","kind":"fixture.switch.import","key":"01a1943d-176c-71f3-a32c-b9cbc67247a3","history":"none","createdAt":3,"revision":2,"version":1,"fingerprint":"chord.job-run.1"}}
+{"kind":"document.revision","id":4,"seq":4,"content":{"kind":"base","version":1,"value":{"version":1,"fingerprint":"c280624818bc83ab","args":{"path":"a"},"phase":"running","restarts":0,"finishFailures":0}}}
+{"kind":"document.create","record":{"id":5,"owner":"fixture.switch.owner","namespace":"chord.job-states","kind":"fixture.switch.import","key":"01a1943d-176c-71f3-a32c-b9cbc67247a3","history":"none","createdAt":3,"revision":2,"version":1,"fingerprint":"53d035820123516d"}}
+{"kind":"document.revision","id":5,"seq":3,"content":{"kind":"base","version":1,"value":{"done":0}}}
+{"kind":"document.revision","id":5,"seq":6,"content":{"kind":"delta","version":1,"ops":[["s",["done"],1]]}}
+{"kind":"document.create","record":{"id":6,"owner":"fixture.switch.owner","namespace":"chord","kind":"fixture.switch.notes","key":"b","history":"none","createdAt":5,"revision":1,"version":1,"fingerprint":"bd44e8ea54b8f283"}}
+{"kind":"document.revision","id":6,"seq":5,"content":{"kind":"base","version":1,"value":{"body":"second"}}}
+{"kind":"document.create","record":{"id":7,"owner":"fixture.switch.owner","namespace":"chord.jobs","kind":"fixture.switch.import","key":"01a1943d-176e-71f3-a32c-b9cc7f5426c6","history":"none","createdAt":7,"revision":2,"version":1,"fingerprint":"chord.job-run.1"}}
+{"kind":"document.revision","id":7,"seq":8,"content":{"kind":"base","version":1,"value":{"version":1,"fingerprint":"c280624818bc83ab","args":{"path":"b"},"phase":"running","restarts":0,"finishFailures":0}}}
+{"kind":"document.create","record":{"id":8,"owner":"fixture.switch.owner","namespace":"chord.job-states","kind":"fixture.switch.import","key":"01a1943d-176e-71f3-a32c-b9cc7f5426c6","history":"none","createdAt":7,"revision":2,"version":1,"fingerprint":"53d035820123516d"}}
+{"kind":"document.revision","id":8,"seq":7,"content":{"kind":"base","version":1,"value":{"done":0}}}
+{"kind":"document.revision","id":8,"seq":10,"content":{"kind":"delta","version":1,"ops":[["s",["done"],1]]}}
+{"kind":"document.create","record":{"id":9,"owner":"fixture.switch.owner","namespace":"chord","kind":"fixture.switch.notes","key":"c","history":"none","createdAt":9,"revision":1,"version":1,"fingerprint":"bd44e8ea54b8f283"}}
+{"kind":"document.revision","id":9,"seq":9,"content":{"kind":"base","version":1,"value":{"body":"third one"}}}
+{"kind":"document.create","record":{"id":10,"owner":"fixture.switch.owner","namespace":"chord.jobs","kind":"fixture.switch.import","key":"01a1943d-176f-71f3-a32c-b9cf6bb98dc7","history":"none","createdAt":11,"revision":2,"version":1,"fingerprint":"chord.job-run.1"}}
+{"kind":"document.revision","id":10,"seq":12,"content":{"kind":"base","version":1,"value":{"version":1,"fingerprint":"c280624818bc83ab","args":{"path":"c"},"phase":"running","restarts":0,"finishFailures":0}}}
+{"kind":"document.create","record":{"id":11,"owner":"fixture.switch.owner","namespace":"chord.job-states","kind":"fixture.switch.import","key":"01a1943d-176f-71f3-a32c-b9cf6bb98dc7","history":"none","createdAt":11,"revision":2,"version":1,"fingerprint":"53d035820123516d"}}
+{"kind":"document.revision","id":11,"seq":11,"content":{"kind":"base","version":1,"value":{"done":0}}}
+{"kind":"document.revision","id":11,"seq":13,"content":{"kind":"delta","version":1,"ops":[["s",["done"],1]]}}
+{"kind":"end","writes":34}

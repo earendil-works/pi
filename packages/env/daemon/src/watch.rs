@@ -4,7 +4,7 @@
 
 use crate::errors::Failure;
 use crate::exec::Control;
-use crate::frame::{EVENT, Frame};
+use crate::frame::{EVENT, Frame, MAX_PAYLOAD};
 use crate::output::Output;
 use crate::sys;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -662,7 +662,7 @@ impl FileWatcher<'_> {
                 if !changed.is_empty() && !self.cancelled() {
                     let mut paths: Vec<String> = changed.into_iter().collect();
                     sort_like_javascript(&mut paths);
-                    self.send(json!({ "kind": "change", "paths": paths }));
+                    self.send(change_event(paths));
                 }
                 true
             }
@@ -673,6 +673,16 @@ impl FileWatcher<'_> {
             }
         }
     }
+}
+
+/// A `change` event listing `paths`, or an `overflow` one when the list would not fit in a frame: a frame that is too
+/// large would end the connection's output.
+fn change_event(paths: Vec<String>) -> Value {
+    let event = json!({ "kind": "change", "paths": paths });
+    if serde_json::to_vec(&event).map_or(true, |json| json.len() > MAX_PAYLOAD) {
+        return json!({ "kind": "change", "overflow": true });
+    }
+    event
 }
 
 fn parse_targets(json: &Value) -> Result<Vec<Target>, Failure> {
@@ -774,5 +784,24 @@ pub fn run(id: u32, json: &Value, output: &Output, control: &Control) -> Result<
                 poll_at = Instant::now() + watcher.poll_interval;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn change_event_lists_paths_that_fit() {
+        let event = change_event(vec!["/a".to_string(), "/b".to_string()]);
+        assert_eq!(event, json!({ "kind": "change", "paths": ["/a", "/b"] }));
+    }
+
+    #[test]
+    fn change_event_overflows_when_paths_do_not_fit_in_a_frame() {
+        let path = "x".repeat(4096);
+        let count = MAX_PAYLOAD / path.len() + 1;
+        let event = change_event(vec![path; count]);
+        assert_eq!(event, json!({ "kind": "change", "overflow": true }));
     }
 }

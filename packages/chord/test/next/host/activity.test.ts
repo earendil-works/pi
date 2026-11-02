@@ -6,9 +6,14 @@ import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { bool, int, local, method, remote } from "../../../src/next/contracts/index.ts";
 import { createHost, defineFacet } from "../../../src/next/host/index.ts";
 import { constant } from "../../../src/next/state/index.ts";
-import { fakeTimers, flushed, framesOf, linked, loaded, Notes, serveNotes, transported } from "../support.ts";
+import { fakeTimers, flushed, framesOf, linked, loaded, Notes, Server, serveNotes, transported } from "../support.ts";
 
-const Kept = remote("app.kept", { version: 1, params: {}, variants: { v: { state: { n: int() } } } });
+const Kept = remote("app.kept", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	variants: { v: { state: { n: int() } } },
+});
 
 describe("host.activity", () => {
 	it("counts holds arriving over links and served here, not this host's own references", async () => {
@@ -18,6 +23,19 @@ describe("host.activity", () => {
 		await server.get(Notes, { session: "S2" }, context);
 		expect(server.activity.value.references).toBe(1);
 		notes.release();
+		await transported();
+		expect(server.activity.value.references).toBe(0);
+	});
+
+	it("counts a hold placed here from its arrival, bound or not: a missing provider keeps the worker alive (M§10)", async () => {
+		const { server, client } = await linked(() => {});
+		const missing = client.hold(Notes, { session: "S1" }, context);
+		await transported();
+		expect(missing.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
+		expect(server.activity.value.references).toBe(1);
+		// Presence lists bound references only.
+		expect(server.references(Notes).value).toEqual([]);
+		missing.release();
 		await transported();
 		expect(server.activity.value.references).toBe(0);
 	});

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-02
+
 ### Breaking Changes
 
 - `RemoteWatcher` follows Durable's `FileWatcher`: `close(context)` is `stop(context)`, and its changes are tagged (`{ kind: "paths", paths }`, `{ kind: "overflow" }`, `{ kind: "failed", error }`). The daemon's `watch` protocol is unchanged. Migration: `await watcher.close(ctx)` becomes `await watcher.stop(ctx)`; test `change.kind` instead of `"overflow" in change` or `"error" in change`.

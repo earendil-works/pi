@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import { runClipboardCommand } from "../src/utils/clipboard-command.ts";
 
@@ -38,6 +39,11 @@ describe("clipboard commands", () => {
 		expect(childPgid).toMatch(/^\d+$/);
 		expect(ownPgid).toMatch(/^\d+$/);
 		expect(childPgid).not.toBe(ownPgid);
+	});
+	// #11592: WSL cannot start Windows executables from a cwd whose UNC path exceeds MAX_PATH.
+	test("runs commands from the filesystem root", async () => {
+		const cwd = await runClipboardCommand(process.execPath, ["-e", "process.stdout.write(process.cwd())"]);
+		expect(cwd?.toString("utf8")).toBe(resolve("/"));
 	});
 	test("rejects output above the buffer limit", async () => {
 		expect(

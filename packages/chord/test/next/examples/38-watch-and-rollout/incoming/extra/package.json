@@ -1,0 +1,5 @@
+{
+	"name": "@example/extra",
+	"private": true,
+	"type": "module"
+}

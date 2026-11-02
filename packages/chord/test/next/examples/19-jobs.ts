@@ -6,7 +6,7 @@
 // Run from packages/chord:
 //   node --conditions=source --experimental-strip-types test/next/examples/19-jobs.ts
 import { BACKGROUND_CONTEXT, type Context } from "../../../src/context/index.ts";
-import { arr, int, local, method, obj, remote, type Static, str } from "../../../src/next/contracts/index.ts";
+import { arr, hostKind, int, local, method, obj, remote, type Static, str } from "../../../src/next/contracts/index.ts";
 import { defineState } from "../../../src/next/documents/index.ts";
 import { createHost, defineFacet, sleep } from "../../../src/next/host/index.ts";
 import { defineJob } from "../../../src/next/jobs/index.ts";
@@ -56,10 +56,14 @@ const ChatStore = local("example.chat-store", {
 	},
 });
 
+// The server's host kind: a remote contract's `hostAddress` names the host serving its objects.
+const Server = hostKind("server");
+
 /** Per-principal views: the owner runs shells and sees their output, a guest sees which shells run. */
 const Chat = remote("example.chat", {
 	version: 1,
 	params: {},
+	hostAddress: () => Server(),
 	variants: {
 		owner: {
 			state: { entries: arr(str()), shells: arr(Shell) },
@@ -170,7 +174,11 @@ const facet = defineFacet<P>((host) => {
 });
 
 // 2. A server and two tabs, the owner's and a guest's.
-const server = createHost<P>({ principal: { kind: "server" }, onError: (error) => console.error(error) });
+const server = createHost<P>({
+	address: Server(),
+	principal: { kind: "server" },
+	onError: (error) => console.error(error),
+});
 await server.load([{ name: "@example/chat", facet }], context);
 async function tab(principal: P) {
 	const host = createHost<P>({ onError: (error) => console.error(error) });

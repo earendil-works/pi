@@ -30,7 +30,7 @@ describe("host kinds", () => {
 		expect(hostKind("@pi/session.v2_~-").kind).toBe("@pi/session.v2_~-");
 	});
 
-	it("check an address's params where it is routed, with the kind's compiled check: invalid/placement", () => {
+	it("check an address's params where it is routed, with the kind's compiled check: invalid/host_address", () => {
 		const params = kindParams(Session);
 		expect(checkAddress("session", params, { id: "S1" }, context).key).toBe("session|S1");
 		for (const bad of [{ id: 1 }, {}, { id: "S1", extra: 1 }, null]) {
@@ -40,7 +40,7 @@ describe("host kinds", () => {
 			} catch (error) {
 				thrown = error;
 			}
-			expect(isChordError(thrown, "invalid") && thrown.reason).toBe("placement");
+			expect(isChordError(thrown, "invalid") && thrown.reason).toBe("host_address");
 		}
 	});
 
@@ -54,18 +54,22 @@ describe("host kinds", () => {
 	});
 });
 
-describe("placement", () => {
+describe("hostAddress", () => {
 	const variants = { v: { state: { n: int() } } };
 
 	it("is not part of the fingerprint and is carried by evolve", () => {
-		const placement = ({ session }: { session: string }) => Session({ id: session });
-		const placed = remote("app.placed", { version: 1, params: { session: str() }, placement, variants });
-		const unplaced = remote("app.placed", { version: 1, params: { session: str() }, variants });
-		expect(placed.fingerprint).toBe(unplaced.fingerprint);
-		expect(contractData(placed).placement).toBe(placement);
-		expect(contractData(unplaced).placement).toBeUndefined();
-		const next = evolve(placed, (v) => v.addState("v", "m", int()));
-		expect(contractData(next).placement).toBe(placement);
+		const hostAddress = ({ session }: { session: string }) => Session({ id: session });
+		const onSession = remote("app.placed", { version: 1, params: { session: str() }, hostAddress, variants });
+		const onServer = remote("app.placed", {
+			version: 1,
+			params: { session: str() },
+			hostAddress: () => Server(),
+			variants,
+		});
+		expect(onSession.fingerprint).toBe(onServer.fingerprint);
+		expect(contractData(onSession).hostAddress).toBe(hostAddress);
+		const next = evolve(onSession, (v) => v.addState("v", "m", int()));
+		expect(contractData(next).hostAddress).toBe(hostAddress);
 	});
 
 	it("is typed by the contract's params", () => {
@@ -73,7 +77,7 @@ describe("placement", () => {
 			version: 1,
 			params: { session: str() },
 			// @ts-expect-error: the params have no `id`
-			placement: ({ id }) => Session({ id }),
+			hostAddress: ({ id }) => Session({ id }),
 			variants,
 		});
 	});

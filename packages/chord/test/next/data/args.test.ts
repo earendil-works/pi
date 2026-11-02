@@ -15,7 +15,7 @@ import {
 } from "../../../src/next/contracts/index.ts";
 import { isChordError } from "../../../src/next/data/index.ts";
 import { bindProvider, type CheckedArgs, checkArgs, type Value } from "../../../src/next/data/internal.ts";
-import { counted, expectCollected } from "../support.ts";
+import { counted, expectCollected, Server } from "../support.ts";
 
 const Note = obj({ text: str() });
 const NoteV2 = obj({ text: str(), tag: str() });
@@ -23,6 +23,7 @@ const NoteV2 = obj({ text: str(), tag: str() });
 const NotesV1 = remote("notes", {
 	version: 1,
 	params: { session: str() },
+	hostAddress: () => Server(),
 	variants: {
 		editor: {
 			state: { notes: arr(Note) },
@@ -146,8 +147,18 @@ describe("checkArgs", () => {
 		const local1 = bindProvider(Info, {});
 		expect(checkArgs(local1, "save", { title: "t" }, 1, BACKGROUND_CONTEXT).args).toEqual({ title: "t" });
 		expect(refusal(() => checkArgs(local1, "save", { title: 1 }, 1, BACKGROUND_CONTEXT))).toMatchObject({
-			message: "args/title: must be string",
+			message: "args/title: expected string, got integer",
 		});
+	});
+
+	it("treats `format` as an annotation: a contract with format email accepts any string", () => {
+		const Mail = local("mail", {
+			version: 1,
+			params: {},
+			members: { send: method(obj({ to: { type: "string", format: "email" } }), nul()) },
+		});
+		const mail = bindProvider(Mail, {});
+		expect(checkArgs(mail, "send", { to: "nope" }, 1, BACKGROUND_CONTEXT).args).toEqual({ to: "nope" });
 	});
 
 	it("refuses an unknown method, an unaccepted version and a refused method", () => {

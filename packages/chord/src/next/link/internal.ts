@@ -16,6 +16,7 @@ export {
 	NO_RETIRED,
 	type OriginMessage,
 	type ProviderMessage,
+	RETRY_HOPS,
 	type StateEntry,
 	type WireAddress,
 } from "./message.ts";

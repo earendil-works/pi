@@ -10,8 +10,9 @@ import type { StagedWrite } from "../../../src/next/store/step.ts";
 import type { ChordStore } from "../../../src/next/store/store.ts";
 import { defineTable } from "../../../src/next/store/table.ts";
 import { TableChanges } from "../../../src/next/store/table-changes.ts";
+import { evolveTable } from "../../../src/next/store/table-evolve.ts";
 import type { TableHandle } from "../../../src/next/store/table-handle.ts";
-import { memoryStore, rejection, tableIn, tableOwner } from "../support.ts";
+import { holdNextCommit, memoryStore, rejection, tableIn, tableOwner } from "../support.ts";
 
 const Edits = defineTable("edits", {
 	version: 1,
@@ -132,5 +133,35 @@ describe("unreadable cells", () => {
 		expect(await store.read((executor) => executor.get(`SELECT meta FROM "app.store:edits"`), context)).toEqual({
 			meta: '{"a":0}',
 		});
+	});
+});
+
+describe("the version fence of old handles (R15, slice 7b §5)", () => {
+	it("refuses reads through a handle older than the stored table: released/version", async () => {
+		store = await memoryStore();
+		const old = await tableIn(store, Edits);
+		const V2 = evolveTable(Edits, (t) => t.rename("note", "comment"));
+		await tableIn(store, V2);
+		const refused = { code: "released", reason: "version" };
+		expect(await rejection(old.get({ id: "e0" }, context))).toMatchObject(refused);
+		expect(await rejection(old.count(query(Edits), context))).toMatchObject(refused);
+		expect(() => old.assertVersion()).toThrow("the store has version 2");
+	});
+});
+
+describe("the version fence against a migration in flight (fix round 1, Sol 8)", () => {
+	it("refuses an old handle's read made while the migration's commit runs, rather than issuing obsolete SQL", async () => {
+		const V1 = defineTable("race", { version: 1, columns: { id: str(), old: str() }, key: ["id"] });
+		const V2 = evolveTable(V1, (t) => t.rename("old", "new"));
+		store = await memoryStore();
+		const old = await tableIn(store, V1);
+		const held = holdNextCommit(store);
+		const changing = tableIn(store, V2);
+		await held.entered;
+		const reading = rejection(old.get({ id: "x" }, context));
+		held.release();
+		await changing;
+		expect(await reading).toMatchObject({ code: "released", reason: "version" });
+		expect(() => store.assertUsable()).not.toThrow();
 	});
 });

@@ -5,10 +5,14 @@ import type { Context } from "../../context/index.ts";
 import { diffRevisions, type Op } from "../../delta/index.ts";
 import type { JsonValue } from "../../json.ts";
 import type { Batch } from "./batch.ts";
+import { NativeSource } from "./native-source.ts";
 import { type Constant, type Dependent, handedOut, Source, type WatchStart } from "./watchable.ts";
 
-/** What a derive reads: a source it depends on, or a constant. */
+/** A JSON watchable as Chord follows it (a state member, a JSON derive source): a source, or a constant. */
 export type DeriveSource = Source | Constant;
+
+/** What a derive reads: a JSON source or constant, or a native source (a `writable`, a registry value, `ref.state`). */
+export type DeriveInput = DeriveSource | NativeSource;
 
 /**
  * Where a derive stands. `dirty`: a source changed since the last compute (or there was none). A failed derive (its
@@ -34,10 +38,10 @@ const NO_VALUE: unique symbol = Symbol("no value");
  * it.
  */
 export class Derive extends Source implements Dependent {
-	readonly #compute: (values: readonly JsonValue[]) => JsonValue;
+	readonly #compute: (values: readonly unknown[]) => JsonValue;
 	/** The sources as declared, until `attach` resolves them. */
 	#declared: readonly unknown[] | undefined;
-	#sources: readonly DeriveSource[] = [];
+	#sources: readonly DeriveInput[] = [];
 	#state: DeriveState = { kind: "dirty" };
 	/** The value this derive's watches have, kept from its marking to its frame in the batch. */
 	#framed: JsonValue | typeof NO_VALUE | undefined;
@@ -49,7 +53,7 @@ export class Derive extends Source implements Dependent {
 	/** Its last good value, which a watch opened while it is failed starts at (`NO_VALUE` before the first). */
 	#good: JsonValue | typeof NO_VALUE = NO_VALUE;
 
-	constructor(sources: readonly unknown[], compute: (values: readonly JsonValue[]) => JsonValue, batch: Batch) {
+	constructor(sources: readonly unknown[], compute: (values: readonly unknown[]) => JsonValue, batch: Batch) {
 		super(batch);
 		this.#declared = sources;
 		this.#compute = compute;
@@ -77,16 +81,20 @@ export class Derive extends Source implements Dependent {
 	 * `report` gets a throw of its compute, once per failure episode (a value ends it); a failing source's error is its
 	 * source's to report.
 	 */
-	attach(resolve: (source: unknown, index: number) => DeriveSource, report: (error: unknown) => void): void {
+	attach(resolve: (source: unknown, index: number) => DeriveInput, report: (error: unknown) => void): void {
 		this.#report = report;
 		this.#sources = this.#declared!.map(resolve);
 		this.#declared = undefined;
-		for (const source of this.#sources) if (source instanceof Source) source.dependents.add(this);
+		for (const source of this.#sources) {
+			if (source instanceof Source || source instanceof NativeSource) source.dependents.add(this);
+		}
 	}
 
 	/** Its object ended: no source keeps it, its watches end `ended`, reads throw `error` (the object's). */
 	detach(error: Error): void {
-		for (const source of this.#sources) if (source instanceof Source) source.dependents.delete(this);
+		for (const source of this.#sources) {
+			if (source instanceof Source || source instanceof NativeSource) source.dependents.delete(this);
+		}
 		this.#sources = [];
 		this.#declared = undefined;
 		this.#state = { kind: "detached", error };
@@ -146,7 +154,7 @@ export class Derive extends Source implements Dependent {
 	}
 
 	#recompute(): JsonValue {
-		return this.batch.run(() => {
+		return this.batch.compute(() => {
 			try {
 				this.batch.count("chord.derive.computes");
 				// A failing source throws its own error here, so a derive over a failed derive fails with the same error.

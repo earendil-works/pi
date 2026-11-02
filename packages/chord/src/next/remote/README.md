@@ -14,7 +14,9 @@ within each link's limits, compression at the origin, activation chains and revo
   `call`, `abort`, `retry` and `ack` to the provider side of their `origin` (0 when absent; a `hold` makes it, other
   messages for an origin without one are ignored), `closed { origin }` ends that provider side; `bound`, `state`,
   `failed`, `loading`, `result`, `error` and `gone` to the consumer side; `revoke` to the host, from a parent link only
-  (`host.revoke` with this host's own `revokedBy`; anywhere else it is ignored). `origin` is honoured on every link.
+  (`host.revoke` with this host's own `revokedBy`; anywhere else it is ignored). `origin` is honoured only on parent and route links, where a relay's messages arrive; on a child link a message
+  carrying one is a protocol error (decision "Origins only from relays"). A provider side (one per origin) goes once it
+  has no holds, no calls and nothing in flight; its origin's next hold makes a new one (origins are never reused).
   Closing it, from either end, ends both sides: the provider sides release the peer's holds and abort their calls, the
   consumer side's calls reject and its path tells the holders. It makes the parts this host originates (`part`:
   deflated above 16 KiB with the host's compressor) and opens the parts it owns (`openPart`: within the limits its
@@ -55,8 +57,8 @@ within each link's limits, compression at the origin, activation chains and revo
   one, which a relayed hold carries upstream as `limit`. A call on a relayed hold whose arguments are past the link's
   wire limit, or on a served hold whose arguments are past its limits, is answered `too_large/part` and never
   admitted. Compressed params (on any link) and compressed arguments from a child are protocol errors: params are never
-  compressed, and clients never send compressed parts. Holds of a principal being revoked that still wait for `load`
-  end with `gone` (`revokeWaiting`).
+  compressed, and clients never send compressed parts. Holds of a principal being revoked that hold nothing (before the
+  publication, refused, relayed and waiting for their link) end with `gone` (`revokeUnbound`).
 - **The window** (K = 2, `ProviderSide`): at most two of this host's own `bound` and `state` messages unacknowledged
   per origin; every other message is control and never waits. The consumer sends `ack` with the origin after applying
   each. The side keeps the sender of every message in flight in order (`local`, or the upstream link a relayed one came
@@ -81,14 +83,21 @@ within each link's limits, compression at the origin, activation chains and revo
   Trace (tab D through relay R, worker U, a derive over A and B on the tab): U's window for D's origin is full; a
   commit touching A and B joins U's pending queues. D acks one: R returns the `ack` to U, whose freed slot carries one
   `state` with A's and B's entries: the derive sees both at once, never A new with B old.
-- `Hold` (one per `hold` served here, a `Holder` of its object): takes its object once `load` resolved; the hold's
-  `params` part is parsed then (malformed: a protocol error). A refused type, a mismatch, invalid params, a wrong
-  placement or a snapshot that throws is a broken `failed` that ends it (the provider forgets the id). While pending
-  it follows its object's `state`: each failure, transient or broken, is sent as `failed` with `retryIn`, the rest of
-  the object's backoff window (absent when broken), the current one at once when the object is failed already; the
-  next attempt is announced with `loading`; the hold stays, so a `retry` (from any holder) renews even a broken object
-  for every holder. Live, it binds through the window (`boundEntry`: the variant and each member's value as a part,
-  names as indexes into the bound version). Its members' frames arrive as `Subscriber` calls inside the batch; at its
+- `Hold` (one per `hold` served here, a `Holder` of its object, an `UnboundRequest` of the host's index): before the
+  host's publication it waits in the unbound index (`unplaced`, nothing sent: the consumer is `loading`) and the
+  publication starts it; then it takes its object in the turn it arrived; the hold's `params` part is parsed then
+  (malformed: a protocol error). A type not served here (or as a local type), a mismatch, or params the provider's
+  code places on another host leave it refused `failed { waiting }`, indexed under its type until a publication re-runs
+  its start (`loading`, then `bound` or `failed`); invalid params or a cycle leave it refused `failed { broken }`; both
+  are kept for a `retry`, which re-runs the start. While pending it follows its object's `state`: each failure is sent
+  as `failed` (with `retryIn`, the rest of the object's backoff window, for a transient one; absent for broken and
+  waiting), each new cause of an object parked on a failed dependency too, the current one at once when the object is
+  failed already; the next attempt (or the parked object's next `loading`) is announced with `loading`; the hold stays,
+  so a `retry` (from any holder) renews even a broken object for every holder (a parked object passes it on, one walk
+  of this host with one hop less of the message's budget). After a swap in place it gets a fresh `bound` once the new
+  instance is live, answering calls by the names it was bound with until that is sent (the window may hold it). Live,
+  it binds through the window (`boundEntry`: the variant and each member's value as a part, names as indexes into the
+  bound version). Its members' frames arrive as `Subscriber` calls inside the batch; at its
   end the hold's entry lists the members that changed with their ops, each encoded with that member's own Delta
   encoder (`entry`), or queues them (`queue`, later `pendingEntry`). Each entry counts one `chord.link.encodes`. A
   call's method is an index into the bound variant's methods; one outside them is a protocol error, its arguments are
@@ -97,9 +106,10 @@ within each link's limits, compression at the origin, activation chains and revo
   dropping the member's pending ops; a value after it replaces it), and a retirement of a failed member waits for its
   next value (never listed beside its failure). Its
   object's end sends `gone` with its error (`forbidden/revoked` for a revocation; its running calls aborted with it). A
-  released pending hold stops its wait for `load` at once. Params past the link's wire limit, or its decoded one, fail
-  the hold broken `too_large/part`; a cycle its chain closes, broken `invalid/cycle` (`host.serving`). It counts as one
-  of the host's `references` (`host.activity`) while it keeps its object.
+  released hold before the publication leaves the index at once. Params past the link's wire limit, or its decoded
+  one, fail the hold broken `too_large/part`; a cycle its chain closes, broken `invalid/cycle` (`host.serving`). It
+  counts as one of the host's `references` (`host.activity`) from its arrival to its end, bound or not (relayed, it
+  counts at its destination instead).
 - `RelayedHold` (a hold this host neither serves nor parses, `host.place` decided it): id `h` of its downstream
   origin, held with the same id on its path's current link under that origin's number, as the arriving hold's caller,
   from its kept `hold` message (params copied once out of the received message, so no view keeps the buffer). `call`,
@@ -131,12 +141,14 @@ within each link's limits, compression at the origin, activation chains and revo
   waiting when its hold gets `loading` is rejected `unavailable` (it may name a method of the old variant).
 - `Path` (the parent, or one route address): its current link and its holders (`RemoteObject`s and `RelayedHold`s),
   held on that link and again on every next one; when the link drops, every holder is told (`dropped`). `changed`
-  tells its owner (a route) when it needs a link or lost its last holder.
+  tells its owner (a route) what happened without a link: a holder `attached`, the link `dropped`, the last holder
+  `released`. `unreachable(error)` fails every holder `failed { waiting }` (a route's `resolve` failed, a suspension):
+  a `RemoteObject` moves there, a `RelayedHold` sends `failed` downstream; the next link binds them again.
 - `RemoteObject` (one per remote reference, owned by its host across the links of its path): its `state` (`loading`
   until a link's hold is bound and again on every drop or `loading`, `failed` from `failed` with `retryAt = now +
-  retryIn`, `live` on `bound`, `released`), `settled` (pending while loading, resolved while live, rejected while
-  failed and by a drop or a relay's `loading` while loading: a dependent's activation waits for it and fails at once
-  then, R18, and `bound` retries the dependent), `lastFailure`, `variant` (set in `bound`'s batch, before derives recompute) and
+  retryIn` for a transient cause, `retryAt` undefined for a broken or waiting one, `live` on `bound`, `released`;
+  every change tells its binding, whose parked dependent checks again: no new hold, no backoff), `remote` and
+  `blocksFirstPass` (never: a wait on another host ends this host's first pass), `lastFailure`, `variant` (set in `bound`'s batch, before derives recompute) and
   `member` (the last binding's, kept while loading or failed; outside the variant `invalid/member`), `call` (only while
   live; outside the variant `invalid/member`), `retry` (sends `retry` while failed on an open link; after a part past
   the limits, placed anew with `host.pathOf` and held with a new id, now or on that path's next link). Its holds made
@@ -146,7 +158,7 @@ within each link's limits, compression at the origin, activation chains and revo
   until `retry`; the message's other entries apply. Its call arguments go up a parent link
   uncompressed (the parent may have accepted it as a child). It keeps its
   binding's caller: two references with different principals are two remote objects. Its holds carry the params as a
-  part and the address its placement computed. A `bound` (a first binding, a re-hold; also on a live hold)
+  part and the address its `hostAddress` computed. A `bound` (a first binding, a re-hold; also on a live hold)
   replaces the replicas in the message's batch: members it had get the snapshot as one frame `[["r", value]]` and a
   fresh decoder, members outside a new variant vanish (reads throw `invalid/member`, watches get one `failed` call and
   stay open, derives over them fail; a later binding with the member brings it back as `[["r", value]]`, as on the

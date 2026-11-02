@@ -7,14 +7,11 @@ import type { Context } from "../../context/index.ts";
 import type { Op, Prepared } from "../../delta/index.ts";
 import { Source } from "../state/internal.ts";
 import type { JsonObject } from "./definition.ts";
-import type { Documents } from "./documents.ts";
 
 const NO_OPS: readonly Op[] = [];
 
 /** A source following one document address; `value` is the document's, or `initial()` while it is absent. */
 export abstract class AddressSource extends Source {
-	/** The documents of the object whose document this is (a member source asks whose source it follows). */
-	abstract readonly owner: Documents;
 	/** The ops of the current batch's frame, and whether the document was retired in it. */
 	#ops = NO_OPS;
 	#retired = false;

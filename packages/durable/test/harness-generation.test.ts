@@ -119,6 +119,8 @@ describe("generation", () => {
 	it("stores partials as deltas and a complete base once nothing is in flight", async () => {
 		const setup = chatSetup({ tokensPerSecond: 200, tokenSize: { min: 1, max: 1 } });
 		setup.faux.setResponses([fauxAssistantMessage("w".repeat(200))]);
+		// Store deferred partials well within the stream, so some reach Storage before the answer.
+		setup.settings.progress = { persistWithinMs: 100 };
 		const storage = new ControlledStorage();
 		const { harness, root } = await openChat(storage, setup);
 		const record = await storage.findDocument(

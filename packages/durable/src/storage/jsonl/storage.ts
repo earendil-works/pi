@@ -3,6 +3,7 @@ import type { FileError, FileSystem } from "../../env/index.ts";
 import { StorageRequestError } from "../../errors.ts";
 import { idFromNumber, seqFromNumber } from "../../ids.ts";
 import type {
+	CommitResult,
 	ConversationId,
 	ConversationQuery,
 	Cursor,
@@ -249,6 +250,8 @@ export class JsonlStorage implements Storage {
 	private readonly liveTaskSidecars = new Set<TaskId>();
 	private closed = false;
 	private poisonError: JsonlStoragePoisonedError | undefined;
+	/** Settles once the batch being appended is; its batches are in memory already (`commit()`). */
+	private writing: Promise<void> | undefined;
 
 	private constructor(fs: FileSystem, directory: string, mainPath: string, options: JsonlStorageOptions) {
 		this.fs = fs;
@@ -275,19 +278,74 @@ export class JsonlStorage implements Storage {
 		return storage;
 	}
 
-	async commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, context: Context): Promise<Seq> {
+	/**
+	 * Commit `batches` with one append per affected file: every batch's sidecar records first, then their markers in one
+	 * write of `main.jsonl`. Each batch is checked against the state the earlier ones left, so memory applies each one
+	 * as it passes, and reads wait until the appends are done; the first batch refused ends the batch. A torn append of
+	 * the markers recovers a shorter complete prefix; any failure once a batch applied poisons the storage.
+	 */
+	async commit(
+		batches: readonly (readonly StorageWrite[])[],
+		receive: (index: number, seq: Seq) => void,
+		context: Context,
+	): Promise<CommitResult> {
 		this.assertUsable();
-		const prepared = this.memory.prepareCommit(writes);
-		const encoded = this.encodeCommit(prepared.seq, prepared.writes);
-		const reclamations = this.planReclamations(prepared.writes, encoded);
+		const seqs: Seq[] = [];
+		const encoded: EncodedCommit[] = [];
+		const reclamations = new Map<string, string>();
+		let refused: { readonly error: unknown } | undefined;
+		const writing = Promise.withResolvers<void>();
+		this.writing = writing.promise;
+		try {
+			for (const writes of batches) {
+				let prepared: ReturnType<MemoryStorage["prepareCommit"]>;
+				try {
+					prepared = this.memory.prepareCommit(writes);
+				} catch (error) {
+					refused = { error };
+					break;
+				}
+				const commit = this.encodeCommit(prepared.seq, prepared.writes);
+				// A sidecar an earlier batch replaces keeps what the later ones append, unless they replace it again.
+				for (const [file, content] of commit.sidecars) {
+					const replacement = reclamations.get(file);
+					if (replacement !== undefined) reclamations.set(file, replacement + content);
+				}
+				for (const [file, content] of this.planReclamations(prepared.writes, commit))
+					reclamations.set(file, content);
+				seqs.push(prepared.apply());
+				this.adoptSidecarState(prepared.writes);
+				encoded.push(commit);
+			}
+			if (encoded.length > 0) await this.append(encoded, context);
+		} catch (error) {
+			// Memory runs ahead of the file: once a batch applied, any failure poisons the storage before the reads
+			// waiting on the append go on, so none of them returns what is not stored.
+			if (seqs.length === 0) throw error;
+			throw this.poison(error instanceof Error ? error : new Error("JSONL commit failed", { cause: error }));
+		} finally {
+			this.writing = undefined;
+			writing.resolve();
+		}
+		// The markers are appended: the batches are durable. Reclaiming sidecars comes after the receipts.
+		for (const [index, seq] of seqs.entries()) receive(index, seq);
+		await this.reclaimSidecars(reclamations, context);
+		return refused === undefined ? { stored: seqs.length } : { stored: seqs.length, refused: refused.error };
+	}
+
+	/** Append the sidecar records of `commits`, flushed with `fsync`, then their markers in one write of `main.jsonl`. */
+	private async append(commits: readonly EncodedCommit[], context: Context): Promise<void> {
+		const contents = new Map<string, string>();
+		for (const commit of commits) {
+			for (const [file, content] of commit.sidecars) contents.set(file, (contents.get(file) ?? "") + content);
+		}
 		const sidecars = await Promise.all(
-			[...encoded.sidecars].map(async ([file, content]) => ({
+			[...contents].map(async ([file, content]) => ({
 				file,
 				content,
 				path: await this.resolveFile(file, context),
 			})),
 		);
-
 		for (const sidecar of sidecars) {
 			const result = await this.fs.appendFile(sidecar.path, sidecar.content, context);
 			if (!result.ok) throw this.poison(errorFromFile(`append to ${sidecar.file}`, result.error));
@@ -298,14 +356,9 @@ export class JsonlStorage implements Storage {
 				if (!result.ok) throw this.poison(errorFromFile(`flush of ${sidecar.file}`, result.error));
 			}
 		}
-		const marker = await this.fs.appendFile(this.mainPath, encoded.marker, context);
+		const markers = commits.length === 1 ? commits[0]!.marker : commits.map((commit) => commit.marker).join("");
+		const marker = await this.fs.appendFile(this.mainPath, markers, context);
 		if (!marker.ok) throw this.poison(errorFromFile(`append to ${MAIN_FILE}`, marker.error));
-		const seq = prepared.apply();
-		this.adoptSidecarState(prepared.writes);
-		// The marker is appended: the batch is durable. Reclaiming sidecars comes after adoption.
-		adopt(seq);
-		await this.reclaimSidecars(reclamations, context);
-		return seq;
 	}
 
 	async mintId<I extends Id<string>>(): Promise<I> {
@@ -313,20 +366,20 @@ export class JsonlStorage implements Storage {
 	}
 
 	async conversation(id: ConversationId, context: Context) {
-		return this.store.conversation(id, context);
+		return (await this.readable()).conversation(id, context);
 	}
 
 	async scanConversations(query: ConversationQuery, limit: number, cursor: Cursor | undefined, context: Context) {
-		return this.store.scanConversations(query, limit, cursor, context);
+		return (await this.readable()).scanConversations(query, limit, cursor, context);
 	}
 
 	entry(id: EntryId, context: Context): ReturnType<Storage["entry"]>;
 	entry(conversationId: ConversationId, id: EntryId, context: Context): ReturnType<Storage["entry"]>;
 	async entry(idOrConversationId: EntryId | ConversationId, idOrContext: EntryId | Context, context?: Context) {
 		if (context === undefined)
-			return this.store.entry(idFromNumber<EntryId>(idOrConversationId), idOrContext as Context);
+			return (await this.readable()).entry(idFromNumber<EntryId>(idOrConversationId), idOrContext as Context);
 		if (typeof idOrContext !== "number") throw new StorageRequestError("Storage.entry() requires an entry ID");
-		return this.store.entry(
+		return (await this.readable()).entry(
 			idFromNumber<ConversationId>(idOrConversationId),
 			idFromNumber<EntryId>(idOrContext),
 			context,
@@ -338,43 +391,43 @@ export class JsonlStorage implements Storage {
 		atOrBeforeEntryId: EntryId | undefined,
 		context: Context,
 	) {
-		return this.store.findLatestHeadMarker(conversationId, atOrBeforeEntryId, context);
+		return (await this.readable()).findLatestHeadMarker(conversationId, atOrBeforeEntryId, context);
 	}
 
 	async scanEntries(query: EntryQuery, limit: number, cursor: Cursor | undefined, context: Context) {
-		return this.store.scanEntries(query, limit, cursor, context);
+		return (await this.readable()).scanEntries(query, limit, cursor, context);
 	}
 
 	async task(id: TaskId, context: Context) {
-		return this.store.task(id, context);
+		return (await this.readable()).task(id, context);
 	}
 
 	async scanTasks(query: TaskQuery, limit: number, cursor: Cursor | undefined, context: Context) {
-		return this.store.scanTasks(query, limit, cursor, context);
+		return (await this.readable()).scanTasks(query, limit, cursor, context);
 	}
 
 	async submission(id: SubmissionId, context: Context) {
-		return this.store.submission(id, context);
+		return (await this.readable()).submission(id, context);
 	}
 
 	async scanSubmissions(query: SubmissionQuery, limit: number, cursor: Cursor | undefined, context: Context) {
-		return this.store.scanSubmissions(query, limit, cursor, context);
+		return (await this.readable()).scanSubmissions(query, limit, cursor, context);
 	}
 
 	async submissionByRequest(conversationId: ConversationId, requestId: string, context: Context) {
-		return this.store.submissionByRequest(conversationId, requestId, context);
+		return (await this.readable()).submissionByRequest(conversationId, requestId, context);
 	}
 
 	async findDocument(address: DocumentAddress, at: DocumentPoint, context: Context) {
-		return this.store.findDocument(address, at, context);
+		return (await this.readable()).findDocument(address, at, context);
 	}
 
 	async document(id: DocumentId, at: DocumentPoint, context: Context) {
-		return this.store.document(id, at, context);
+		return (await this.readable()).document(id, at, context);
 	}
 
 	async scanDocuments(query: DocumentQuery, limit: number, cursor: Cursor | undefined, context: Context) {
-		return this.store.scanDocuments(query, limit, cursor, context);
+		return (await this.readable()).scanDocuments(query, limit, cursor, context);
 	}
 
 	async close(context: Context): Promise<void> {
@@ -834,6 +887,12 @@ export class JsonlStorage implements Storage {
 	private get store(): MemoryStorage {
 		this.assertUsable();
 		return this.memory;
+	}
+
+	/** The state to read once no batch is being appended: memory runs ahead of the file while one is. */
+	private async readable(): Promise<MemoryStorage> {
+		while (this.writing !== undefined) await this.writing;
+		return this.store;
 	}
 
 	private poison(cause: Error): JsonlStoragePoisonedError {

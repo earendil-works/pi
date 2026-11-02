@@ -41,7 +41,20 @@ type VersionMappings<K extends Kind, Old extends Variants, Current extends Varia
 	"state",
 	K extends "local" ? StateMappings<Old[Local], Current[Local], Local, C> : RemoteStateMappings<Old, Current, C>
 > &
-	Section<"methods", MethodMappings<Old, Current, C>>;
+	Section<"methods", MethodMappings<Old, Current, C>> &
+	Section<"keyed", K extends "local" ? KeyedMappings<Old[Local], Current[Local], C> : Record<never, never>>;
+
+/**
+ * A local contract's keyed members (slice 7b): a changed one maps each document of the current version back, or
+ * refuses; a removed one refuses (no document maps from the whole state).
+ */
+type KeyedMappings<Old extends VariantShape, Current extends VariantShape, C extends Change> = OmitNever<{
+	[S in keyof NonNullable<Old["keyed"]>]: S extends keyof NonNullable<Current["keyed"]>
+		? [Local, S, "keyed"] extends C
+			? ((current: Static<NonNullable<Current["keyed"]>[S]>) => Static<NonNullable<Old["keyed"]>[S]>) | "refuse"
+			: never
+		: "refuse";
+}>;
 
 type Local = typeof LOCAL;
 
@@ -145,6 +158,8 @@ type Needs = {
 	/** Per variant, per state member. */
 	readonly state: ReadonlyMap<string, ReadonlyMap<string, StateNeed>>;
 	readonly methods: ReadonlyMap<string, MethodNeed>;
+	/** Per keyed member (local contracts). */
+	readonly keyed: ReadonlyMap<string, StateNeed>;
 };
 
 type StateNeed = "changed" | "removed";
@@ -160,8 +175,13 @@ function needs(data: ContractData, index: number): Needs {
 	const changed = (...change: Change) => changes.has(changeKey(change));
 	const state = new Map<string, Map<string, StateNeed>>();
 	const methods = new Map<string, { removed: boolean; args: boolean; result: boolean }>();
-	for (const [variant, { state: oldState, methods: oldMethods }] of old.variants) {
+	const keyed = new Map<string, StateNeed>();
+	for (const [variant, { state: oldState, methods: oldMethods, keyed: oldKeyed }] of old.variants) {
 		const now = current.variants.get(variant)!;
+		for (const member of oldKeyed.keys()) {
+			if (!now.keyed.has(member)) keyed.set(member, "removed");
+			else if (changed(variant, member, "keyed")) keyed.set(member, "changed");
+		}
 		const variantNeeds = new Map<string, StateNeed>();
 		for (const member of oldState.keys()) {
 			if (!now.state.has(member)) variantNeeds.set(member, "removed");
@@ -181,7 +201,7 @@ function needs(data: ContractData, index: number): Needs {
 		if (removed) methodNeeds.set(member, { kind: "removed" });
 		else if (args || result) methodNeeds.set(member, { kind: "changed", args, result });
 	}
-	return { state, methods: methodNeeds };
+	return { state, methods: methodNeeds, keyed };
 }
 
 function changeKey(change: Change): string {
@@ -189,14 +209,19 @@ function changeKey(change: Change): string {
 }
 
 function checkMappings(mappings: unknown, needs: Needs, kind: Kind, path: string): void {
-	checkKeys(mappings, ["state", "methods"], path);
-	const { state, methods } = mappings as { readonly state?: unknown; readonly methods?: unknown };
+	checkKeys(mappings, ["state", "methods", "keyed"], path);
+	const { state, methods, keyed } = mappings as {
+		readonly state?: unknown;
+		readonly methods?: unknown;
+		readonly keyed?: unknown;
+	};
 	const checkVariant = (variantMappings: unknown, variantNeeds: ReadonlyMap<string, StateNeed>, at: string) =>
 		checkSection(variantMappings, variantNeeds, at, checkStateMapping);
 	// A local table is flat: its state section is the one variant's.
 	if (kind === "local") checkVariant(state, needs.state.get(LOCAL) ?? new Map(), `${path}.state`);
 	else checkSection(state, needs.state, `${path}.state`, checkVariant);
 	checkSection(methods, needs.methods, `${path}.methods`, checkMethodMapping);
+	checkSection(keyed, needs.keyed, `${path}.keyed`, checkKeyedMapping);
 }
 
 /** Exactly the needed keys: no missing and no unnecessary mapping; absent only when nothing is needed. */
@@ -217,6 +242,11 @@ function checkSection<N>(
 function checkStateMapping(mapping: unknown, need: StateNeed, path: string): void {
 	if (typeof mapping === "function" || (need === "removed" && mapping === "refuse")) return;
 	throw new Error(`${path}: expected ${need === "removed" ? 'a function or "refuse"' : "a function"}`);
+}
+
+function checkKeyedMapping(mapping: unknown, need: StateNeed, path: string): void {
+	if (mapping === "refuse" || (need === "changed" && typeof mapping === "function")) return;
+	throw new Error(`${path}: expected ${need === "changed" ? 'a function or "refuse"' : '"refuse"'}`);
 }
 
 function checkMethodMapping(mapping: unknown, need: MethodNeed, path: string): void {

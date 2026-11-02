@@ -78,9 +78,10 @@ await attempt("bad params", () => host.get(Echo, { id: "one" }, context));
 // An implementation with a member its contract does not declare fails activation.
 await attempt("unknown member", () => host.get(Sloppy, { id: 1 }, context));
 
-// A get needs the provider's version and fingerprint; another declaration of the type does not fit.
+// A get needs the provider's version and fingerprint; another declaration of the type does not fit. That is not the
+// caller's fault (a reload may bring the version): the get waits up to its readyTimeout, then rejects with the cause.
 const EchoV2 = local("example.echo", { version: 2, params: { id: int() }, members: { id: int() } });
-await attempt("contract mismatch", () => host.get(EchoV2, { id: 1 }, context));
+await attempt("contract mismatch", () => host.get(EchoV2, { id: 1 }, context, { readyTimeout: 100 }));
 
 // A factory that throws fails broken: the get rejects at once with its error, and no object is left behind.
 await attempt("throwing factory", () => host.get(Broken, { id: 1 }, context));

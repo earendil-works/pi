@@ -1,24 +1,26 @@
-// Schema helpers: short constructors for TypeBox schemas, the bytes leaf, and method declarations.
+// Schema helpers: Chord's short constructors over pi-schema's builders (plain JSON Schema, typed with the values they
+// accept), and method and keyed member declarations. The helpers keep the shapes contracts were fingerprinted with:
+// literals carry their `type`, `oneOf` is a union of literals, `map` a pattern-property record.
 
-import Type, {
-	type TArray,
-	type TBoolean,
-	type TInteger,
-	type TLiteral,
-	type TNull,
-	type TNumber,
-	type TObject,
-	type TOptional,
-	type TProperties,
-	type TRecord,
-	type TSchema,
-	type TString,
-	type TUnion,
-	type TUnknown,
-	type TUnsafe,
-} from "typebox";
+import {
+	arr as arrSchema,
+	bool as boolSchema,
+	bytes as bytesSchema,
+	int as intSchema,
+	nul as nulSchema,
+	num as numSchema,
+	Optional,
+	obj as objSchema,
+	type Properties,
+	type Schema,
+	type Static,
+	type StaticObject,
+	str as strSchema,
+	union as unionSchema,
+	unknown as unknownSchema,
+} from "@earendil-works/pi-schema";
 
-export type { Static, TSchema } from "typebox";
+export { Optional, opt, type Schema, type Static } from "@earendil-works/pi-schema";
 
 /** Bounds of a string length, a number or an array length. */
 export type Bounds = { readonly min?: number; readonly max?: number };
@@ -26,118 +28,132 @@ export type Bounds = { readonly min?: number; readonly max?: number };
 /** A declared default value: a table column with one may be left out of a `put` (slice 6a §5). */
 export type Defaulted<T> = { readonly default: T };
 
+// Interfaces, not intersections: declarations of apps' exported contracts and tables name them (an intersection with
+// `Schema<T>` would print pi-schema's private brand, which declaration files cannot name).
+
+/** A string schema (`str()`), told apart from the other scalars by its `type`. */
+export interface StringSchema extends Schema<string> {
+	readonly type: "string";
+}
+
+/** A number schema (`num()`). */
+export interface NumberSchema extends Schema<number> {
+	readonly type: "number";
+}
+
+/** An integer schema (`int()`). */
+export interface IntegerSchema extends Schema<number> {
+	readonly type: "integer";
+}
+
+/** A boolean schema (`bool()`). */
+export interface BooleanSchema extends Schema<boolean> {
+	readonly type: "boolean";
+}
+
+/** The `null` schema (`nul()`): also the omitted side of a method. */
+export interface NullSchema extends Schema<null> {
+	readonly type: "null";
+}
+
+/** A union of literals (`oneOf(...)`). */
+export interface LiteralsSchema<V extends Literal> extends Schema<V> {
+	readonly anyOf: readonly Schema<V>[];
+}
+
 /** A string, with optional length bounds, pattern and default. */
 export function str(
 	options: Bounds & { readonly pattern?: string; readonly default: string },
-): TString & Defaulted<string>;
-export function str(options?: Bounds & { readonly pattern?: string }): TString;
-export function str(options: Bounds & { readonly pattern?: string; readonly default?: string } = {}): TString {
+): StringSchema & Defaulted<string>;
+export function str(options?: Bounds & { readonly pattern?: string }): StringSchema;
+export function str(options: Bounds & { readonly pattern?: string; readonly default?: string } = {}): StringSchema {
 	const pattern = options.pattern === undefined ? {} : { pattern: options.pattern };
-	return Type.String({ ...limits(options, "minLength", "maxLength"), ...pattern, ...defaultOf(options) });
+	return strSchema({
+		...limits(options, "minLength", "maxLength"),
+		...pattern,
+		...defaultOf(options),
+	}) as StringSchema;
 }
 
 /** A finite number within optional bounds, with an optional default. */
-export function num(options: Bounds & { readonly default: number }): TNumber & Defaulted<number>;
-export function num(options?: Bounds): TNumber;
-export function num(options: Bounds & { readonly default?: number } = {}): TNumber {
-	return Type.Number({ ...limits(options, "minimum", "maximum"), ...defaultOf(options) });
+export function num(options: Bounds & { readonly default: number }): NumberSchema & Defaulted<number>;
+export function num(options?: Bounds): NumberSchema;
+export function num(options: Bounds & { readonly default?: number } = {}): NumberSchema {
+	return numSchema({ ...limits(options, "minimum", "maximum"), ...defaultOf(options) }) as NumberSchema;
 }
 
 /** An integer within optional bounds, with an optional default. */
-export function int(options: Bounds & { readonly default: number }): TInteger & Defaulted<number>;
-export function int(options?: Bounds): TInteger;
-export function int(options: Bounds & { readonly default?: number } = {}): TInteger {
-	return Type.Integer({ ...limits(options, "minimum", "maximum"), ...defaultOf(options) });
+export function int(options: Bounds & { readonly default: number }): IntegerSchema & Defaulted<number>;
+export function int(options?: Bounds): IntegerSchema;
+export function int(options: Bounds & { readonly default?: number } = {}): IntegerSchema {
+	return intSchema({ ...limits(options, "minimum", "maximum"), ...defaultOf(options) }) as IntegerSchema;
 }
 
 /** A boolean, with an optional default. */
-export function bool(options: { readonly default: boolean }): TBoolean & Defaulted<boolean>;
-export function bool(options?: Record<never, never>): TBoolean;
-export function bool(options: { readonly default?: boolean } = {}): TBoolean {
-	return Type.Boolean(defaultOf(options));
+export function bool(options: { readonly default: boolean }): BooleanSchema & Defaulted<boolean>;
+export function bool(options?: Record<never, never>): BooleanSchema;
+export function bool(options: { readonly default?: boolean } = {}): BooleanSchema {
+	return boolSchema(defaultOf(options)) as BooleanSchema;
 }
 
 /** The `default` keyword of `options`, left out when absent (snapshots refuse `undefined`). */
-function defaultOf(options: { readonly default?: string | number | boolean }): { default?: string | number | boolean } {
+function defaultOf<T extends string | number | boolean>(options: { readonly default?: T }): { default?: T } {
 	return options.default === undefined ? {} : { default: options.default };
 }
 
 /** `null`; also the omitted side of a method. */
-export function nul(): TNull {
-	return Type.Null();
+export function nul(): NullSchema {
+	// The builder's `type: "null"`, typed as such.
+	return nulSchema() as NullSchema;
 }
 
-/** Exactly the given value. */
-export function lit<const V extends Literal>(value: V): TLiteral<V> {
-	return Type.Literal(value);
+/** Exactly the given value, with its JSON type (`{ type: "string", const: "a" }`). */
+export function lit<const V extends Literal>(value: V): Schema<V> {
+	return { type: typeof value, const: value };
 }
 
-/** One of the given literals. */
-export function oneOf<const V extends Literal[]>(...values: V): TUnion<Literals<V>> {
-	// One literal schema per value, in order.
-	return Type.Union(values.map((value) => Type.Literal(value))) as TUnion<Literals<V>>;
+/** A value `lit(...)` and `oneOf(...)` take. */
+export type Literal = string | number | boolean;
+
+/** One of the given literals: a union of `lit(...)` schemas, in order. */
+export function oneOf<const V extends Literal[]>(...values: V): LiteralsSchema<V[number]> {
+	return { anyOf: values.map((value) => lit(value)) };
 }
-
-type Literal = string | number | boolean;
-
-type Literals<V extends Literal[]> = V extends [infer First extends Literal, ...infer Rest extends Literal[]]
-	? [TLiteral<First>, ...Literals<Rest>]
-	: [];
 
 /** Any of the given schemas. */
-export function union<const S extends TSchema[]>(schemas: [...S]): TUnion<S> {
-	return Type.Union(schemas);
+export function union<const S extends readonly Schema[]>(schemas: S): Schema<Static<S[number]>> {
+	return unionSchema(schemas);
 }
 
-/** A closed object: unknown fields are refused. */
-export function obj<P extends TProperties>(properties: P): TObject<P> {
-	return Type.Object(properties, { additionalProperties: false });
+/** A closed object: unknown fields are refused; `opt(...)` marks an optional field. */
+export function obj<const P extends Properties>(properties: P): Schema<StaticObject<P>> {
+	return objSchema(properties);
 }
 
 /** An array, with optional length bounds. */
-export function arr<S extends TSchema>(items: S, options: Bounds = {}): TArray<S> {
-	return Type.Array(items, limits(options, "minItems", "maxItems"));
+export function arr<T>(items: Schema<T>, options: Bounds = {}): Schema<T[]> {
+	return arrSchema(items, limits(options, "minItems", "maxItems"));
 }
 
-/** A string-keyed record. */
-export function map<S extends TSchema>(value: S): TRecord<"^.*$", S> {
-	return Type.Record(Type.String(), value);
-}
-
-/** An optional object field. */
-export function opt<S extends TSchema>(schema: S): TOptional<S> {
-	return Type.Optional(schema) as TOptional<S>;
+/** A string-keyed record: one pattern property matching every key. */
+export function map<T>(value: Schema<T>): Schema<Record<string, T>> {
+	return { type: "object", patternProperties: { "^.*$": value } };
 }
 
 /** Any value. */
-export function unknown(): TUnknown {
-	return Type.Unknown();
+export function unknown(): Schema<unknown> {
+	return unknownSchema();
 }
 
 /**
- * A `Uint8Array` leaf, checked by `instanceof` and length, never enumerated. Its enumerable form is the data marker
- * `{ type: "bytes", minLength?, maxLength? }`.
+ * A `Uint8Array` leaf, checked by `instanceof` and length, never enumerated: `{ type: "bytes", minLength?, maxLength? }`
+ * (pi-schema's extension of JSON Schema for values that never pass through JSON).
  */
-export function bytes(options: Bounds = {}): TUnsafe<Uint8Array> {
-	return withBytesCheck({ type: "bytes", ...limits(options, "minLength", "maxLength") });
+export function bytes(options: Bounds = {}): Schema<Uint8Array> {
+	return bytesSchema(limits(options, "minLength", "maxLength"));
 }
 
-/** The data marker of a bytes schema. */
-export type BytesMarker = { readonly type: "bytes"; readonly minLength?: number; readonly maxLength?: number };
-
-/** Attaches the TypeBox check of a bytes marker, non-enumerably so it is never copied as data. */
-export function withBytesCheck(marker: BytesMarker): TUnsafe<Uint8Array> {
-	const { minLength = 0, maxLength = Number.POSITIVE_INFINITY } = marker;
-	const refinement = {
-		check: (value: unknown) => value instanceof Uint8Array && value.length >= minLength && value.length <= maxLength,
-		error: () => "expected bytes of the declared length",
-	};
-	Object.defineProperty(marker, "~refine", { value: [refinement] });
-	// The marker object is the schema; TypeBox reads the attached check.
-	return marker as unknown as TUnsafe<Uint8Array>;
-}
-
-/** TypeBox options for the given bounds; an absent bound is left out, since snapshots refuse `undefined`. */
+/** Builder options for the given bounds; an absent bound is left out, since snapshots refuse `undefined`. */
 function limits(options: Bounds, min: string, max: string): { [keyword: string]: number } {
 	const result: { [keyword: string]: number } = {};
 	if (options.min !== undefined) result[min] = options.min;
@@ -145,8 +161,13 @@ function limits(options: Bounds, min: string, max: string): { [keyword: string]:
 	return result;
 }
 
+/** Whether a declared object field is `opt(...)`. */
+export function isOptional(value: unknown): value is Optional {
+	return value instanceof Optional;
+}
+
 /** A method declaration: its argument and result schemas; an omitted side is `null` on the wire. */
-export class Method<A extends TSchema = TSchema, R extends TSchema = TSchema> {
+export class Method<A extends Schema = Schema, R extends Schema = Schema> {
 	readonly args: A;
 	readonly result: R;
 
@@ -157,7 +178,7 @@ export class Method<A extends TSchema = TSchema, R extends TSchema = TSchema> {
 }
 
 /** A keyed state member's declaration (slice 6a §12): documents of `schema` by string key; only in `local` contracts. */
-export class KeyedMember<S extends TSchema = TSchema> {
+export class KeyedMember<S extends Schema = Schema> {
 	readonly schema: S;
 
 	constructor(schema: S) {
@@ -166,15 +187,15 @@ export class KeyedMember<S extends TSchema = TSchema> {
 }
 
 /** Declares a keyed state member of a `local` contract: documents of `schema` by string key, each watchable. */
-export function keyed<S extends TSchema>(schema: S): KeyedMember<S> {
+export function keyed<S extends Schema>(schema: S): KeyedMember<S> {
 	return new KeyedMember(schema);
 }
 
 /** Declares a method: `method()`, `method(args)`, `method(args, result)` or `method(undefined, result)`. */
-export function method(): Method<TNull, TNull>;
-export function method<A extends TSchema>(args: A): Method<A, TNull>;
-export function method<R extends TSchema>(args: undefined, result: R): Method<TNull, R>;
-export function method<A extends TSchema, R extends TSchema>(args: A, result: R): Method<A, R>;
-export function method(args?: TSchema, result?: TSchema): Method {
+export function method(): Method<NullSchema, NullSchema>;
+export function method<A extends Schema>(args: A): Method<A, NullSchema>;
+export function method<R extends Schema>(args: undefined, result: R): Method<NullSchema, R>;
+export function method<A extends Schema, R extends Schema>(args: A, result: R): Method<A, R>;
+export function method(args?: Schema, result?: Schema): Method {
 	return new Method(args ?? nul(), result ?? nul());
 }

@@ -1,9 +1,10 @@
 // Per-conversation agent choices and Harness-wide settings.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/06-configuration.ts
+
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { Type } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
+import { obj, str } from "@earendil-works/pi-schema";
 import {
 	AgentDoc,
 	createRegistry,
@@ -25,7 +26,7 @@ function exampleTool(name: string, description: string): AppTool {
 	const tool = defineTool({
 		name,
 		description,
-		parameters: Type.Object({ path: Type.String() }),
+		parameters: obj({ path: str() }),
 		execute: async (args) => ({ output: [{ type: "text", text: `${name} ${args.path}` }] }),
 	});
 	return { ...tool, snippet: `Use ${name} for files.` };

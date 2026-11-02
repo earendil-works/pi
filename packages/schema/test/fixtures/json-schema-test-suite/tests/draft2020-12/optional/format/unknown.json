@@ -1,0 +1,46 @@
+[
+    {
+        "description": "unknown format",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "format": "unknown"
+        },
+        "tests": [
+            {
+                "description": "unknown formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "unknown formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "unknown formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "unknown formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "unknown formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "unknown formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "unknown formats ignore strings",
+                "data": "string",
+                "valid": true
+            }
+        ]
+    }
+]

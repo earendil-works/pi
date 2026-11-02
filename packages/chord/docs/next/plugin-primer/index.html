@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Plugin Model, a Primer: what a plugin depends on, and how mismatches are caught</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A primer · Chord v2 · 2026-10-31</div>
+  <h1>Plugins<br>from the Ground Up</h1>
+  <p class="subtitle">One app, its own plugins and a stranger&#39;s plugin, followed through a year of changes, to show what the open decisions are about</p>
+  <div class="cover-stats"><div class="stat"><b>4</b><span>things a plugin depends on</span></div><div class="stat"><b>3</b><span>of them change without the plugin knowing</span></div><div class="stat"><b>8</b><span>points still to decide</span></div><div class="stat"><b>1</b><span>rule decided for base code: the version is in the import path</span></div></div>
+  <div class="cover-note"><p>Written by the redesign session for the owner, after the proposal <code>docs/next/plugin-model/</code> did not explain enough.
+Everything decided cites its decision in <code>decisions.md</code>; everything open is marked and ends with a recommendation.
+Built behaviour is slice 7c and slice 10 (<code>src/next-node/plugins/</code>).</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#four">I. Four Things a Plugin Depends On</a></li>
+<li><a href="#base">II. Base Code: Versions in the Import Path</a></li>
+<li><a href="#contracts">III. Other Plugins: the Contract Problem</a></li>
+<li><a href="#open">IV. The Open Points</a></li>
+<li><a href="#what-to-decide">What to Decide</a></li>
+<li><a href="#words">Appendix A: Words</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Acme builds a notes app on Chord. The app is a server, a worker per project and browser tabs. Most features are
+plugins: Acme&#39;s own <code>notes</code> plugin keeps the notes, its <code>search</code> plugin searches them. Bob, who does not work at
+Acme, writes a <code>stats</code> plugin that counts words per project and shows a panel. Bob wrote it in March. It is now
+November.</p>
+<p>Between March and November, three things changed without Bob: Acme released a new version of the app, Acme&#39;s <code>notes</code>
+plugin changed what its notes look like, and Chord got a new release. Bob&#39;s plugin is still the March code. The
+question this primer answers is the only question the plugin model has to answer:</p>
+<p><strong>When a plugin written against one state of the world runs against another, what does it get, and who notices the
+mismatch?</strong></p>
+<p>The answer is different for each thing a plugin depends on, so the primer takes them one at a time.</p>
+<h3 id="what-a-plugin-is-in-one-picture">What a plugin is, in one picture</h3>
+<pre class="plain"><code>plugins/stats/                     Bob's plugin
+  package.json                     { "name": "@bob/stats", "dependencies": { "words-count": "2.1.0" } }
+  worker.ts                        runs in each project's worker: counts words
+  web.tsx                          runs in each tab: the panel</code></pre>
+<p>The server builds every plugin&#39;s files into one script per host kind (esbuild, a few milliseconds each). Each
+process evaluates the scripts of its kind: the worker runs <code>worker.ts</code>&#39;s script, a tab runs <code>web.tsx</code>&#39;s. That much
+is built (slices 7c and 10).</p>
+</section>
+
+<section class="chapter" id="four"><header class="opener"><div class="numeral">I</div><h2>Four Things a Plugin Depends On</h2><p class="lede">Who changes each one, and when the plugin finds out.</p></header>
+<p class="dropcap">Look at the top of Bob&#39;s <code>worker.ts</code>:</p>
+<pre><code><span class="tk-k">import</span> countWords <span class="tk-k">from</span> <span class="tk-s">"words-count"</span>;                       <span class="tk-c">// 1. an npm package</span>
+<span class="tk-k">import</span> { defineFacet, <span class="tk-t">Project</span> } <span class="tk-k">from</span> <span class="tk-s">"@acme/app"</span>;           <span class="tk-c">// 2. the app's base code</span>
+<span class="tk-k">import</span> { obj, num, remote } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/next"</span>;   <span class="tk-c">// 3. Chord</span>
+<span class="tk-k">import</span> { <span class="tk-t">Notes</span> } <span class="tk-k">from</span> <span class="tk-s">"@acme/notes/contract"</span>;               <span class="tk-c">// 4. another plugin</span></code></pre>
+<p>Each import is a different kind of dependency, and they behave differently over time:</p>
+<table>
+<thead>
+<tr>
+<th>Import</th>
+<th>Who changes it</th>
+<th>What Bob&#39;s plugin gets today</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>words-count</code></td>
+<td>its npm author</td>
+<td>the version installed in Bob&#39;s plugin directory, copied into his script: frozen until Bob updates it</td>
+</tr>
+<tr>
+<td><code>@acme/app</code></td>
+<td>Acme, when it releases the app</td>
+<td>whatever the running app is: always the newest</td>
+</tr>
+<tr>
+<td><code>@earendil-works/chord/next</code></td>
+<td>Chord, through Acme&#39;s upgrade</td>
+<td>whatever the running app ships: always the newest</td>
+</tr>
+<tr>
+<td><code>@acme/notes/contract</code></td>
+<td>Acme, whenever it edits <code>notes</code></td>
+<td>the running <code>notes</code> plugin&#39;s file, copied at Bob&#39;s next build: always the newest</td>
+</tr>
+</tbody></table>
+<p>The first row is safe: npm packages are copied into the script at the version Bob installed, so they never change
+under him. The other three rows always give the newest, and Bob&#39;s March code meets November&#39;s app. Whether that
+works depends on what changed. The rest of the primer is about those three rows.</p>
+<div class="note"><b class="tag">Why not copy base code and Chord into the script too</b><p>Because they must be shared. If Bob&#39;s script carried its own copy of Chord, its <code>defineFacet</code> would make facets the
+worker&#39;s host does not recognize, and its <code>Project</code> host kind would be a different object from the app&#39;s. Base code
+and Chord are <strong>host packages</strong>: the process provides one instance and every plugin uses it. That is decided and
+built. It is also why they can change under a plugin.</p>
+</div>
+</section>
+
+<section class="chapter" id="base"><header class="opener"><div class="numeral">II</div><h2>Base Code: Versions in the Import Path</h2><p class="lede">Decided: a plugin says which app API it was written for, where it imports it.</p></header>
+<p class="dropcap">In June, Acme renames the host kind <code>Project</code> to <code>Workspace</code>. Bob&#39;s March plugin imports <code>Project</code>; it no longer
+exists. Without any versioning, Bob&#39;s plugin builds (the build does not type check), then fails when it runs with
+something like &quot;Cannot read properties of undefined&quot;, deep inside his code.</p>
+<p>Decided on 2026-10-31 (decision &quot;API versions in the import path&quot;): the app exposes only <strong>API modules</strong>, each with a
+version in its path, and lists the versions it still provides.</p>
+<pre><code><span class="tk-c">// Bob, in March</span>
+<span class="tk-k">import</span> { defineFacet, <span class="tk-t">Project</span> } <span class="tk-k">from</span> <span class="tk-s">"@acme/app/v2"</span>;
+
+<span class="tk-c">// Acme's app, after June</span>
+apiVersions: { <span class="tk-s">"@acme/app/v3"</span>: apiV3, <span class="tk-s">"@acme/app/v2"</span>: apiV2 }   <span class="tk-c">// still provides v2, through a thin layer over v3</span></code></pre>
+<p>Now there are two cases, both visible:</p>
+<ul>
+<li>Acme still provides <code>/v2</code>: Bob&#39;s plugin gets the v2 module, in which <code>Project</code> still exists (Acme&#39;s thin layer maps
+it to <code>Workspace</code>). It works.</li>
+<li>Acme dropped <code>/v2</code>: Bob&#39;s plugin fails to build with &quot;@acme/app/v2 is not available: this app provides v3&quot;. The
+plugin is left out (per plugin: nothing else breaks), and the message tells Bob, or an agent, exactly what to
+change.</li>
+</ul>
+<p>Nothing outside the code says what Bob depends on: no <code>package.json</code> field, no version ranges. The import says it.</p>
+<p><strong>What is still open here</strong> is what goes into the API and how Chord relates to it. That is point 2 below.</p>
+</section>
+
+<section class="chapter" id="contracts"><header class="opener"><div class="numeral">III</div><h2>Other Plugins: the Contract Problem</h2><p class="lede">Why importing another plugin by name gives the wrong answer for a stranger&#39;s plugin.</p></header>
+<p class="dropcap">Bob&#39;s <code>stats</code> asks Acme&#39;s <code>notes</code> for the notes of a project. Plugins talk only through <strong>contracts</strong> (the type of an
+object: its state and methods) and registries. A contract has its own version:</p>
+<pre><code><span class="tk-c">// plugins/notes/contract.ts (Acme), March</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Notes</span> = <span class="tk-f">remote</span>(<span class="tk-s">"notes"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: { project: <span class="tk-f">str</span>() },
+	hostAddress: ({ project }) =&gt; <span class="tk-t">Project</span>({ id: project }),
+	variants: { reader: { state: { list: <span class="tk-f">obj</span>({ items: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()) }) } } },
+});</code></pre>
+<p>Bob&#39;s plugin imports this file, and the build copies it into his script. When his plugin asks for <code>Notes</code>, it says
+&quot;version 1, this shape&quot;; the provider (the <code>notes</code> plugin&#39;s code in the worker) checks that it can serve that version.</p>
+<p>In September Acme changes notes: each note gets a timestamp, <code>items: arr(obj({ text: str(), at: int() }))</code>, and the
+contract becomes version 2. Acme also writes an <code>accepts</code> mapping, so consumers of version 1 still get a list of
+strings. Chord&#39;s contract versioning exists for exactly this case.</p>
+<p>Now the question is: which version of the contract file ends up in Bob&#39;s script?</p>
+<h3 id="today-by-name-the-newest-file">Today: by name, the newest file</h3>
+<p>Decided this morning and built (decision &quot;Plugins import each other by name&quot;): <code>@acme/notes/contract</code> resolves to the
+running <code>notes</code> plugin&#39;s <code>contract.ts</code>. Trace what happens at Bob&#39;s next build after September:</p>
+<div class="steps"><div class="steps-head"><span class="title">A rebuild after Acme&#39;s change</span><span class="count"></span><button class="prev" type="button">Back</button><button class="next" type="button">Next</button></div><div class="step-panel"><h4>The build copies the new file</h4><p>Bob&#39;s <code>stats</code> is rebuilt (a rollout, a restart, any edit anywhere). <code>@acme/notes/contract</code> is now the version 2 file,
+and it is copied into Bob&#39;s script.</p>
+</div><div class="step-panel"><h4>Bob&#39;s plugin claims version 2</h4><p>At runtime his plugin asks for <code>Notes</code> version 2. The provider serves version 2 gladly: no <code>accepts</code> is used.</p>
+</div><div class="step-panel"><h4>Bob&#39;s code reads version 1&#39;s shape</h4><p>Bob&#39;s code does <code>list.items.join(&quot; &quot;)</code> and <code>countWords</code> on it. The items are now objects. He counts the words of
+<code>&quot;[object Object] [object Object]&quot;</code>. Nothing fails; the panel shows wrong numbers.</p>
+</div></div>
+<p>The contract version was supposed to protect Bob, and it did nothing: copying the newest file made Bob&#39;s plugin claim
+a version his code was never written for.</p>
+<h3 id="proposed-the-version-bob-wrote-against">Proposed: the version Bob wrote against</h3>
+<p>The contract file must come from where Bob&#39;s code came from: the state of the world he wrote against. For a stranger&#39;s
+plugin that is an npm dependency at a fixed version:</p>
+<pre><code><span class="tk-c">// plugins/stats/package.json</span>
+{ <span class="tk-s">"name"</span>: <span class="tk-s">"@bob/stats"</span>, <span class="tk-s">"dependencies"</span>: { <span class="tk-s">"@acme/notes-contracts"</span>: <span class="tk-s">"1.0.0"</span> } }</code></pre>
+<p>Now Bob&#39;s script carries the March contract file forever (npm packages are copied at the installed version, as row 1
+of the first table). His plugin asks for version 1; the provider maps it through <code>accepts</code>; Bob gets strings as
+before. If Acme ever stops accepting version 1, Bob&#39;s plugin waits with &quot;contract mismatch: v1, served v3&quot;, visible in
+the UI, never wrong numbers.</p>
+<p>For Acme&#39;s own plugins (<code>search</code> using <code>notes</code>) the problem does not exist: they live in one repository and change in
+the same commit. They import each other by relative path, <code>../notes/contract.ts</code>, the same file at the same revision.
+The by-name rule also needed path aliases in the TypeScript configuration for every plugin (six were added for the
+tests and examples of slice 10); relative paths need none.</p>
+</section>
+
+<section class="chapter" id="open"><header class="opener"><div class="numeral">IV</div><h2>The Open Points</h2><p class="lede">Eight decisions, each with the problem it answers and a recommendation.</p></header>
+<h3 id="1-reverse-quot-import-by-name-quot">1. Reverse &quot;import by name&quot;</h3>
+<p><strong>Problem:</strong> the trace above: a stranger&#39;s plugin silently claims a contract version it was not written for.
+<strong>Proposal:</strong> the app&#39;s own plugins import each other relatively (<code>../notes/contract.ts</code>); everyone else gets
+contracts as an npm dependency at a fixed version. Importing a running plugin by name is removed; a relative path
+leaving the plugin&#39;s root stays a build error.
+<strong>Recommendation:</strong> do it, in the plugin slice (slice 10 is committed with by-name imports; the change is small:
+<code>build.ts</code> and the examples&#39; imports).</p>
+<h3 id="2-what-the-app-39-s-api-is-and-chord-in-it">2. What the app&#39;s API is, and Chord in it</h3>
+<p><strong>Problem:</strong> a plugin imports two host packages that both change, <code>@acme/app/v3</code> and <code>@earendil-works/chord/next/v2</code>.
+Acme must then say which combinations work: does a plugin importing app v3 and Chord v1 still run? Two version
+numbers per plugin, and a matrix nobody tests.
+<strong>Proposal:</strong> plugins import only the app&#39;s API. The app re-exports the part of Chord it supports:</p>
+<pre><code><span class="tk-c">// src/api/v3/index.ts (Acme's base code)</span>
+<span class="tk-k">export</span> { obj, arr, str, int, remote, local, defineRegistry } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/next"</span>;
+<span class="tk-k">export</span> { <span class="tk-t">Workspace</span>, <span class="tk-t">Panels</span>, defineFacet } <span class="tk-k">from</span> <span class="tk-s">"../../core.ts"</span>;</code></pre>
+<p>One number, the app&#39;s, describes everything a plugin gets from its host. When Acme upgrades Chord in a way that
+breaks plugins, Acme bumps its API version, and decides whether <code>/v2</code> survives as a thin layer.
+<strong>Generations:</strong> if the app provides <code>/v3</code> and <code>/v2</code>, a facet must import from one of them only, never both (the
+build checks it), because <code>/v2</code>&#39;s <code>Panels</code> and <code>/v3</code>&#39;s <code>Panels</code> may be different registries.
+<strong>Recommendation:</strong> yes; app kit apps get it for free (<code>chord/next/app</code> provides the API module).</p>
+<h3 id="3-the-api-split-by-host-kind">3. The API split by host kind</h3>
+<p><strong>Problem:</strong> the API module holds everything plugins need, including web things: a <code>Sheet</code> component, a theme, the
+<code>Panels</code> registry whose entries are React components. A worker plugin imports <code>@acme/app/v3</code> for <code>Workspace</code>, and the
+worker process has to load the module, so it loads React.
+<strong>Proposal:</strong> <code>/v3</code> holds what every host may use (contracts, registry tokens, host kinds, principals) and imports no
+UI library at runtime; <code>/v3/web</code> and <code>/v3/tui</code> hold UI pieces. A worker facet importing <code>/v3/web</code> is a build error.
+<strong>Recommendation:</strong> yes.</p>
+<h3 id="4-host-kinds-on-registry-tokens">4. Host kinds on registry tokens</h3>
+<p><strong>Problem:</strong> Bob contributes his panel from <code>worker.ts</code> by mistake (<code>self.contribute(Panels, …)</code>). The worker has no
+<code>Panels</code> registry; the contribution sits in a table nobody reads. Nothing fails; the panel never appears.
+<strong>Proposal:</strong> a token names the kinds that serve it, <code>defineRegistry(&quot;app.panels&quot;, { version: 1, hosts: [&quot;web&quot;] })</code>;
+contributing from another kind is a type error (the facet&#39;s <code>self</code> is typed per kind) and a load error.
+<strong>Recommendation:</strong> yes; together with point 3, <code>Panels</code> lives in <code>/v3/web</code> anyway.</p>
+<h3 id="5-contracts-for-third-parties">5. Contracts for third parties</h3>
+<p><strong>Problem:</strong> with point 1, Bob needs Acme&#39;s plugins&#39; contracts as an npm package. Which package?
+<strong>Options:</strong> (a) the app&#39;s API exports the contracts of its own plugins that others may use (<code>@acme/app/v3</code> has
+<code>Notes</code>): one place, versioned with the app; (b) Acme publishes its app package to npm and Bob depends on it; (c) each
+plugin publishes its own contracts package. (c) is what the owner called unpleasant.
+<strong>Recommendation:</strong> (a) for contracts Acme wants others to use: the API is the app&#39;s promise. Note: in (a) the
+contract file comes with the API version, so Bob&#39;s v2 import keeps v2&#39;s contract files (the thin layer keeps them).</p>
+<h3 id="6-testing-a-plugin-alone">6. Testing a plugin alone</h3>
+<p><strong>Problem:</strong> testing Bob&#39;s <code>stats</code> needs a worker with a <code>Notes</code> provider, an app API, a store.
+<strong>Proposal:</strong> <code>testPlugin(&quot;plugins/stats&quot;, { kind: &quot;worker&quot;, stubs: [notesStub] })</code> builds the plugin as production
+does, loads it on an in-memory host with the kind&#39;s real host packages, and loads stub facets that serve the
+contracts it uses. A stub is an ordinary facet (<code>host.serve(Notes, () =&gt; ({ list: constant({ items: [&quot;a b&quot;] }) }))</code>).
+<strong>Recommendation:</strong> yes, in the app kit.</p>
+<h3 id="7-single-file-plugins">7. Single-file plugins</h3>
+<p><strong>Problem:</strong> a plugin that adds one route needs a directory and a <code>package.json</code> with a name.
+<strong>Proposal:</strong> <code>plugins/hello.server.ts</code> is a plugin named <code>hello</code> with one server facet, no dependencies; when it
+needs a package or a second file, it becomes a directory.
+<strong>Recommendation:</strong> yes, cheap; agents write many such plugins.</p>
+<h3 id="8-the-app-39-s-own-plugins-follow-the-same-rules">8. The app&#39;s own plugins follow the same rules</h3>
+<p><strong>Problem:</strong> are Acme&#39;s built-in plugins special?
+<strong>Proposal:</strong> no. They import the app&#39;s API like everyone (not base code&#39;s internals), import each other relatively
+(point 1), are built at startup and reload like any plugin. The only difference: they change in the same commit as
+base code, so they always use the newest API version.
+<strong>Recommendation:</strong> yes. It keeps base code small and means every built-in plugin is an example of a correct plugin.</p>
+</section>
+
+<section class="chapter epilogue" id="what-to-decide"><header class="opener"><div class="numeral">∴</div><h2>What to Decide</h2><p class="lede">In the order that makes each answer easier.</p></header>
+<ol>
+<li>Reverse &quot;import by name&quot; (recommended: yes, in the plugin slice).</li>
+<li>Plugins import only the app&#39;s API; Chord is re-exported in it; one generation per facet (recommended: yes).</li>
+<li>Split the API by host kind (recommended: yes).</li>
+<li>Host kinds on registry tokens (recommended: yes).</li>
+<li>Contracts for third parties through the app&#39;s API (recommended: (a)).</li>
+<li><code>testPlugin</code> with stub facets (recommended: yes).</li>
+<li>Single-file plugins (recommended: yes).</li>
+<li>Built-in plugins follow the same rules (recommended: yes).</li>
+</ol>
+<p>Later, not part of these: project plugins (per working directory, with trust), and installing plugins from npm or git.</p>
+</section>
+
+<section class="chapter appendix" id="words"><header class="opener"><div class="numeral">A</div><h2>Words</h2></header>
+<table>
+<thead>
+<tr>
+<th>Word</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>base code</td>
+<td>the app&#39;s own program, started by <code>node server.ts</code>; never reloads</td>
+</tr>
+<tr>
+<td>API module</td>
+<td>the part of base code plugins may import, one per version (<code>@acme/app/v3</code>)</td>
+</tr>
+<tr>
+<td>host package</td>
+<td>a module the process provides to every plugin (Chord, the API modules, React on the web)</td>
+</tr>
+<tr>
+<td>contract</td>
+<td>an object type: its state and methods, with a version; consumers name the version they use</td>
+</tr>
+<tr>
+<td><code>accepts</code></td>
+<td>the provider&#39;s mapping that serves an older contract version</td>
+</tr>
+<tr>
+<td>registry token</td>
+<td>an extension point (<code>Panels</code>); plugins contribute to it</td>
+</tr>
+<tr>
+<td>facet</td>
+<td>a plugin&#39;s code for one host kind (<code>worker.ts</code>)</td>
+</tr>
+<tr>
+<td>generation</td>
+<td>one set of API versions provided together (<code>/v3</code> with its web and tui modules)</td>
+</tr>
+</tbody></table>
+</section>
+
+<p class="colophon">The Plugin Model, a Primer · first edition · 2026-10-31</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

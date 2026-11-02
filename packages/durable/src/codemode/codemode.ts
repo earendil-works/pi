@@ -46,7 +46,7 @@ import type {
 	CodemodeSandboxBase,
 } from "@earendil-works/pi-codemode/portable";
 import { CODEMODE_SOURCE_GRAMMAR, parseCodemodeSource } from "@earendil-works/pi-codemode/source";
-import { type Static, Type } from "typebox";
+import { obj, type Static, str } from "@earendil-works/pi-schema";
 import { defineDoc } from "../documents.ts";
 import type { ExecutionEnv } from "../env/index.ts";
 import { errorMessage } from "../errors.ts";
@@ -210,7 +210,7 @@ export type CodemodeGlobal = {
 	execute(args: unknown, api: ToolExecutionApi, context: Context): Promise<JsonValue | undefined>;
 };
 
-const codemodeSchema = Type.Object({ code: Type.String({ description: "Raw JavaScript source." }) });
+const codemodeSchema = obj({ code: str({ description: "Raw JavaScript source." }) }, { open: true });
 
 export type CodemodeToolInput = Static<typeof codemodeSchema>;
 
@@ -946,14 +946,10 @@ class CodemodeCall {
 		const documents = tools.flatMap((tool) => {
 			const own = namespaceOfTool(tool.name);
 			if (typeof namespace === "string" && (own === undefined || !matchesNamespace(own, namespace))) return [];
-			const text = [
-				tool.name,
-				tool.name.replaceAll("_", " "),
-				tool.description,
-				own?.name ?? "",
-				own?.description ?? "",
-			];
-			return [{ name: tool.name, text: text.join(" ") }];
+			const namespaceText =
+				own === undefined ? "" : [own.name, own.description ?? "", own.instructions ?? ""].join(" ");
+			// `description` is the tool's sample: its description and declaration, with the parameters' names and descriptions.
+			return [{ name: tool.name, text: tool.description, namespaceText }];
 		});
 		return rankDocuments(query, documents, limit).map((name) => {
 			const tool = tools.find((candidate) => candidate.name === name)!;

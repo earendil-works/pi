@@ -23,7 +23,7 @@ export interface Ctx<P extends Principal = Principal> extends Context {
 /** Who makes a call: the principal it acts as and its host's incarnation. */
 export type Caller = { readonly principal: Principal | undefined; readonly incarnation: string };
 
-/** The ctx of one handler run: its references are released by `settle` when the handler settled. */
+/** The ctx of one handler run (or root scope): its references are released by `settle` when it settled. */
 export class CallContext implements Ctx {
 	readonly principal: Principal | undefined;
 	readonly incarnation: string;
@@ -58,9 +58,9 @@ export class CallContext implements Ctx {
 	}
 
 	async get<C extends Contract>(Type: C, params: ParamsOf<C>, options: GetOptions = {}): Promise<Reference<C>> {
-		// An ended handler creates nothing: its call's abort signal is checked before anything else.
-		this.#context.abortSignal?.throwIfAborted();
+		// A settled scope refuses `released` whatever aborted it; an aborted call creates nothing.
 		if (this.#references === undefined) throw settled(Type);
+		this.#context.abortSignal?.throwIfAborted();
 		// Made for the caller: its principal and its origin's incarnation travel with the reference's holds.
 		const caller = { principal: this.principal, incarnation: this.incarnation };
 		this.#settling ??= new AbortController();
@@ -96,7 +96,7 @@ function settled(Type: Contract): ChordError {
 	return new ChordError({
 		code: "released",
 		reason: "settled",
-		message: `${Type.name}: ctx.get after its handler settled`,
+		message: `${Type.name}: ctx.get after its call settled`,
 	});
 }
 

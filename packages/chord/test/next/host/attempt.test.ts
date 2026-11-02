@@ -1,8 +1,8 @@
 import { createHook } from "node:async_hooks";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { type Context, BACKGROUND_CONTEXT as context, withCancel } from "../../../src/context/index.ts";
 import { arr, int, local, method, obj, opt, remote, str } from "../../../src/next/contracts/index.ts";
-import { broken, isChordError } from "../../../src/next/data/index.ts";
+import { broken, ChordError, isChordError } from "../../../src/next/data/index.ts";
 import { defineState, type SingletonHandle } from "../../../src/next/documents/index.ts";
 import {
 	createHost,
@@ -12,6 +12,8 @@ import {
 	type Self,
 	type StoreSelf,
 } from "../../../src/next/host/index.ts";
+import { ChordObject } from "../../../src/next/host/object.ts";
+import { defineRegistry } from "../../../src/next/registries/index.ts";
 import { constant } from "../../../src/next/state/index.ts";
 import type { StagedWrite } from "../../../src/next/store/step.ts";
 import type { ChordStore } from "../../../src/next/store/store.ts";
@@ -20,7 +22,21 @@ import { TableChanges } from "../../../src/next/store/table-changes.ts";
 import { evolveTable } from "../../../src/next/store/table-evolve.ts";
 import { TableHandle } from "../../../src/next/store/table-handle.ts";
 import { prepareTables } from "../../../src/next/store/table-migration.ts";
-import { failures, fakeTimers, flushed, loaded, memoryStore, metered, rejection, tableOwner } from "../support.ts";
+import {
+	failLive,
+	failures,
+	fakeTimers,
+	flushed,
+	instancesOf,
+	loaded,
+	memoryStore,
+	metered,
+	rejection,
+	Server,
+	tableOwner,
+} from "../support.ts";
+
+const objects = instancesOf(ChordObject, "attempt");
 
 const List = defineState("list", { schema: obj({ items: arr(str()) }), version: 1, initial: () => ({ items: [] }) });
 const Page = local("app.page", { version: 1, params: { id: int() }, members: { label: str(), slow: method() } });
@@ -425,6 +441,36 @@ describe("declarations", () => {
 				() => {},
 			),
 		).toThrow("self.open is valid only in the factory");
+		const Names = defineRegistry<string, number>("app.names", { version: 1 });
+		expect(() => later!.registry(Names)).toThrow("self.registry is valid only in the factory");
+		expect(() => later!.writable(1)).toThrow("self.writable is valid only in the factory");
+		expect(() => later!.retryOn()).toThrow("self.retryOn is valid only in the factory");
+	});
+
+	it("contribute only in host-lifetime objects (R21): `Self` has no `contribute`, a declaration error at runtime", async () => {
+		expectTypeOf<Self>().not.toHaveProperty("contribute");
+		expectTypeOf<StoreSelf>().toHaveProperty("contribute");
+		const Names = defineRegistry<string, number>("app.names", { version: 1 });
+		const Store = local("app.store", { version: 1, params: {}, members: {} });
+		const { host } = await loaded((h) => {
+			h.serve(Names, { compose: (table) => table.length });
+			h.serve(Page, (_, self) => {
+				(self as unknown as StoreSelf).contribute(Names, "page");
+				return { label: constant(""), slow: async () => null };
+			});
+			h.serve(Store, (_, self) => {
+				self.contribute(Names, "a");
+				self.contribute(Names, "b");
+				return {};
+			});
+		});
+		await expect(host.get(Page, { id: 1 }, context)).rejects.toThrow(
+			"app.page(1): self.contribute is valid only in a local type with empty params",
+		);
+		await expect(host.get(Store, {}, context)).rejects.toThrow(
+			"app.store: registry app.names is contributed to twice",
+		);
+		await host.close(context);
 	});
 
 	it("refuse a document definition declared twice", async () => {
@@ -534,6 +580,7 @@ describe("remote variants", () => {
 	const Two = remote("app.two", {
 		version: 1,
 		params: {},
+		hostAddress: () => Server(),
 		variants: { full: { state: { n: int() }, methods: { bump: method() } }, view: { state: { n: int() } } },
 	});
 	const owner = { kind: "owner" } as const;
@@ -541,7 +588,11 @@ describe("remote variants", () => {
 	/** A host acting as `owner` whose factory for `Two` returns `implementation`. */
 	async function two(implementation: unknown) {
 		const errors: HostError[] = [];
-		const host = createHost<typeof owner>({ principal: owner, onError: (error) => errors.push(error) });
+		const host = createHost<typeof owner>({
+			address: Server(),
+			principal: owner,
+			onError: (error) => errors.push(error),
+		});
 		const facet = defineFacet<typeof owner>((h) => h.serve(Two, () => implementation as never));
 		await host.load([{ name: "@test/app", facet }], context);
 		return { host, errors };
@@ -844,5 +895,99 @@ describe("eager migrations at activation (slice 6a §9)", () => {
 		held.release();
 		await host.close(context);
 		await store.close(context);
+	});
+});
+
+describe("parked attempts (dependency model §3)", () => {
+	fakeTimers();
+	const View = local("app.view", { version: 1, params: {}, members: { n: int() } });
+	const Missing = local("app.missing", { version: 1, params: {}, members: { n: int() } });
+	/** A view with params: no host lifetime, so `load` does not wait for it. */
+	const Viewer = local("app.viewer", { version: 1, params: { id: int() }, members: { n: int() } });
+
+	it("run no timer while parked but parked_long's: no dependency deadline, no backoff, the factory run once", async () => {
+		const factories = vi.fn();
+		const { host, errors } = await loaded((h) =>
+			h.serve(View, (_, self) => {
+				factories();
+				return { n: self.get(Missing, {}).n };
+			}),
+		);
+		const view = host.hold(View, {}, context);
+		await flushed();
+		await vi.advanceTimersByTimeAsync(10 * 60_000);
+		expect(view.state.value).toMatchObject({
+			kind: "failed",
+			cause: { kind: "waiting", error: { message: "waiting for app.missing: app.missing is not served here" } },
+			retryAt: undefined,
+		});
+		// `parked_long`'s one timer fired (once, after readyTimeout); nothing else runs.
+		expect(vi.getTimerCount()).toBe(0);
+		expect([factories.mock.calls.length, errors]).toEqual([
+			1,
+			[{ kind: "parked_long", object: "app.view", waitingFor: "app.missing", state: "failed", since: 0 }],
+		]);
+		view.release();
+	});
+
+	it("pause the readyTimeout deadline while parked: the own steps get the budget left", async () => {
+		const Slow = local("app.slow", { version: 1, params: { id: int() }, members: { n: int() } });
+		const { host, errors } = await loaded(
+			(h) => {
+				h.serve(Slow, (_, self) => {
+					self.open(
+						() => new Promise((resolve) => setTimeout(resolve, 5_000)),
+						() => {},
+					);
+					return { n: constant(1) };
+				});
+				h.serve(Viewer, (_, self) => {
+					const slow = self.get(Slow, { id: 1 });
+					self.open(
+						() => new Promise(() => {}),
+						() => {},
+					);
+					return { n: slow.n };
+				});
+			},
+			{ readyTimeout: 10_000 },
+		);
+		const view = host.hold(Viewer, { id: 1 }, context);
+		// Parked 5 s on its dependency; then its own open hangs: it fails 10 s after the boundary, not 10 s after start.
+		await vi.advanceTimersByTimeAsync(5_000 + 9_999);
+		expect(failures(errors)).toEqual([]);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(failures(errors)).toEqual(["app.viewer(1): transient"]);
+		view.release();
+	});
+
+	it("go on past the dependency check: a dependency leaving live during the own steps changes nothing (R18)", async () => {
+		const Dependency = local("app.dependency", { version: 1, params: {}, members: { n: int() } });
+		const gate = Promise.withResolvers<void>();
+		let dependencySelf: Self | undefined;
+		const { host, errors } = await loaded((h) => {
+			h.serve(Dependency, (_, self) => {
+				dependencySelf = self;
+				return { n: constant(1) };
+			});
+			h.serve(Viewer, (_, self) => {
+				const dependency = self.get(Dependency, {});
+				self.open(
+					() => gate.promise,
+					() => {},
+				);
+				return { n: dependency.n };
+			});
+		});
+		const view = host.hold(Viewer, { id: 1 }, context);
+		await flushed();
+		// The view opens its own native; its dependency fails live meanwhile.
+		failLive(objects, dependencySelf!, new ChordError({ code: "unavailable", message: "offline" }));
+		await flushed();
+		gate.resolve();
+		await flushed();
+		expect(view.state.value).toEqual({ kind: "live" });
+		expect(failures(errors)).toEqual([]);
+		view.release();
 	});
 });

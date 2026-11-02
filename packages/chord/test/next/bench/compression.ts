@@ -4,12 +4,14 @@
 // Run by hand from packages/chord (not in CI):
 //   node --conditions=source --experimental-strip-types --expose-gc test/next/bench/compression.ts
 import { BACKGROUND_CONTEXT } from "../../../src/context/index.ts";
-import { arr, int, local, method, obj, remote, str } from "../../../src/next/contracts/index.ts";
+import { arr, hostKind, int, local, method, obj, remote, str } from "../../../src/next/contracts/index.ts";
 import { defineState } from "../../../src/next/documents/index.ts";
 import { createHost, defineFacet } from "../../../src/next/host/index.ts";
 import { type Compression, type Link, memoryLinkPair } from "../../../src/next/link/index.ts";
 import { DeflatedPart, inflateAsync } from "../../../src/next/link/internal.ts";
 import { nodeCompression } from "../../../src/next-node/compression.ts";
+
+const Server = hostKind("server");
 
 const context = BACKGROUND_CONTEXT;
 
@@ -23,6 +25,7 @@ const Store = local("bench.store", { version: 1, params: {}, members: { doc: obj
 const View = remote("bench.view", {
 	version: 1,
 	params: {},
+	hostAddress: () => Server(),
 	variants: { owner: { state: { doc: obj({ entries: arr(Entry) }) }, methods: { export: method(undefined, str()) } } },
 });
 
@@ -115,7 +118,12 @@ for (const [name, json] of [
 
 /** A server compressing with `server` and a client with `client` (none: it inflates asynchronously). */
 async function linked(server: Compression | undefined, client: Compression | undefined) {
-	const serverHost = createHost<P>({ principal: { kind: "server" }, compression: server, onError: console.error });
+	const serverHost = createHost<P>({
+		address: Server(),
+		principal: { kind: "server" },
+		compression: server,
+		onError: console.error,
+	});
 	await serverHost.load([{ name: "@bench/app", facet }], context);
 	const clientHost = createHost<P>({ compression: client, onError: console.error });
 	await clientHost.load([], context);

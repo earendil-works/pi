@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import type { Context } from "@earendil-works/chord";
 import {
 	type CommitPublication,
+	type CommitResult,
 	defineDoc,
 	MemoryStorage,
 	type Seq,
@@ -41,22 +42,26 @@ class FaultyStorage extends ControlledStorage {
 	fault: "reject_after_adopt" | "skip_adopt" | undefined;
 	readonly order: string[] = [];
 
-	override async commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, callContext: Context) {
+	override async commit(
+		batches: readonly (readonly StorageWrite[])[],
+		receive: (index: number, seq: Seq) => void,
+		callContext: Context,
+	): Promise<CommitResult> {
 		const fault = this.fault;
 		this.fault = undefined;
-		if (fault === "skip_adopt") return super.commit(writes, () => {}, callContext);
-		const seq = await super.commit(
-			writes,
-			(committed) => {
+		if (fault === "skip_adopt") return super.commit(batches, () => {}, callContext);
+		const result = await super.commit(
+			batches,
+			(index, committed) => {
 				this.order.push("adopt");
-				adopt(committed);
+				receive(index, committed);
 				this.order.push("adopted");
 			},
 			callContext,
 		);
 		this.order.push("resolve");
 		if (fault === "reject_after_adopt") throw new Error("reclaim failed");
-		return seq;
+		return result;
 	}
 }
 
@@ -75,8 +80,8 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-describe("Session adoption inside Storage.commit()", () => {
-	it("adopts synchronously inside the commit, before Storage resolves", async () => {
+describe("Session adoption after Storage stored a commit", () => {
+	it("takes the durability receipt inside the commit, and adopts once Storage resolved", async () => {
 		const { storage, session } = open();
 		const adopt = vi.spyOn(Transaction.prototype, "adopt");
 		await bump(session);
@@ -128,8 +133,8 @@ describe("Session adoption inside Storage.commit()", () => {
 	});
 });
 
-describe("publication at adoption", () => {
-	it("runs its own observers inside adopt and host listeners one microtask later, outside it, before Storage resolves", async () => {
+describe("publication after storage", () => {
+	it("runs its own observers once Storage resolved, and host listeners one microtask later", async () => {
 		const { storage, session } = open();
 		session.followCommits(() => {
 			storage.order.push(`observed adopting=${storage.adopting}`);
@@ -141,12 +146,12 @@ describe("publication at adoption", () => {
 			end: () => {},
 		});
 		await bump(session);
-		expect(storage.order).toEqual(["adopt", "observed adopting=true", "adopted", "host adopting=false", "resolve"]);
+		expect(storage.order).toEqual(["adopt", "adopted", "resolve", "observed adopting=false", "host adopting=false"]);
 		await session.close(context);
 	});
 
-	it("calls the host listeners registered when its dispatch runs, and none for a commit adopted without one", async () => {
-		const { storage, session } = open();
+	it("calls the host listeners registered when its dispatch runs, and none for a commit published without one", async () => {
+		const { session } = open();
 		const calls: string[] = [];
 		const removed = session.observeCommits({
 			advance: () => {
@@ -160,7 +165,11 @@ describe("publication at adoption", () => {
 			},
 			end: () => {},
 		});
-		storage.afterAdopt = () => {
+		// During the publication, after the dispatch was queued.
+		let changed = false;
+		session.followCommits(() => {
+			if (changed) return;
+			changed = true;
 			removed.detach();
 			session.observeCommits({
 				advance: () => {
@@ -168,20 +177,23 @@ describe("publication at adoption", () => {
 				},
 				end: () => {},
 			});
-		};
+		});
 		await bump(session);
 		expect(calls).toEqual(["kept", "added"]);
-		// A Session with no host listener at adoption queues no dispatch, so one added before Storage resolves misses it.
+		// A Session with no host listener at the publication queues no dispatch, so one added during it misses it.
 		const bare = open();
 		const late: Seq[] = [];
-		bare.storage.afterAdopt = () => {
+		let added = false;
+		bare.session.followCommits(() => {
+			if (added) return;
+			added = true;
 			bare.session.observeCommits({
 				advance: (publication) => {
 					late.push(publication.seq);
 				},
 				end: () => {},
 			});
-		};
+		});
 		await bump(bare.session);
 		expect(late).toEqual([]);
 		await bump(bare.session);
@@ -210,14 +222,14 @@ describe("publication at adoption", () => {
 			storage.order.push("close");
 		});
 		await expect(bump(session)).resolves.toBeUndefined();
-		// `adopted` and `resolve`: adopt returned to Storage without throwing, and the Session failed only after that.
+		// Published once Storage resolved; the Session failed only after the hosts got the commit.
 		expect(storage.order).toEqual([
 			"adopt",
+			"adopted",
+			"resolve",
 			"observed",
 			"observed after",
-			"adopted",
 			"host failed=false",
-			"resolve",
 			"close",
 		]);
 		expect(await session.closed).toEqual({ kind: "failed", error: bug });
@@ -243,7 +255,7 @@ describe("publication at adoption", () => {
 		storage.order.length = 0;
 		storage.fault = "reject_after_adopt";
 		await expect(bump(session)).rejects.toThrow("reclaim failed");
-		expect(storage.order).toEqual(["adopt", "observed", "adopted", "host", "resolve"]);
+		expect(storage.order).toEqual(["adopt", "adopted", "resolve", "observed", "host"]);
 		expect(stored).toHaveLength(1);
 		expect(await session.closed).toMatchObject({ kind: "failed" });
 		const reopened = new SessionImpl(storage.reopen());
@@ -283,7 +295,7 @@ describe("publication at adoption", () => {
 		await session.commit(async (tx) => {
 			(await tx.doc(NoteDoc, conversationId)).b = 2;
 		}, context);
-		expect(storage.order).toEqual(["observed", "adopt", "observed", "adopted", "host", "resolve"]);
+		expect(storage.order).toEqual(["observed", "adopt", "adopted", "resolve", "observed", "host"]);
 		expect(documentValues(observed[1]!).map((change) => change.ops)).toEqual([[["s", ["b"], 2]]]);
 		expect(stored).toHaveLength(1);
 		expect(documentValues(stored[0]!).map((change) => change.ops)).toEqual([
@@ -296,7 +308,7 @@ describe("publication at adoption", () => {
 		await session.close(context);
 	});
 
-	it("publishes a store of held changes to host listeners one microtask after its adopt", async () => {
+	it("publishes a store of held changes to host listeners once Storage resolved", async () => {
 		const { storage, session } = open();
 		const conversationId = await createConversation(session);
 		await session.commit(async (tx) => {
@@ -317,11 +329,11 @@ describe("publication at adoption", () => {
 		);
 		storage.order.length = 0;
 		await session.unloadDocuments();
-		expect(storage.order).toEqual(["adopt", "adopted", "host adopting=false", "resolve"]);
+		expect(storage.order).toEqual(["adopt", "adopted", "resolve", "host adopting=false"]);
 		await session.close(context);
 	});
 
-	it("publishes a JSONL commit before the storage reclaims its sidecar and resolves", async () => {
+	it("publishes a JSONL commit once the storage reclaimed its sidecar and resolved", async () => {
 		/** Node environment that records each sidecar rename, the last step of a reclaim. */
 		class RenameLog extends NodeExecutionEnv {
 			readonly order: string[] = [];
@@ -360,7 +372,7 @@ describe("publication at adoption", () => {
 			});
 			await count();
 			env.order.push("resolved");
-			expect(env.order).toEqual(["host", expect.stringMatching(/^rename doc-\d+\.jsonl$/), "resolved"]);
+			expect(env.order).toEqual([expect.stringMatching(/^rename doc-\d+\.jsonl$/), "host", "resolved"]);
 		} finally {
 			await session.close(context);
 			await rm(directory, { recursive: true, force: true });

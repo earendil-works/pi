@@ -32,11 +32,11 @@ export function identityKey<C extends Contract>(
 }
 
 /**
- * An address from a kind's name and params as a hold names it or a placement returned it: the params checked against
- * the kind's with one compiled closed-object check (`invalid/placement` on failure), the key computed.
+ * An address from a kind's name and params as a hold names it or a `hostAddress` returned it: the params checked
+ * against the kind's with one compiled closed-object check (`invalid/host_address` on failure), the key computed.
  */
 export function checkAddress(kind: string, params: ParamsData, raw: unknown, context: Context): Address {
-	check(validatorFor(params, context), raw, "placement", context);
+	check(validatorFor(params, context), raw, "host_address", context);
 	// The check above establishes a flat record of the kind's scalar fields.
 	const values = raw as { readonly [field: string]: string | number | boolean };
 	return { kind, params: values, key: addressKey(kind, params, values) };

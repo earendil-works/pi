@@ -32,7 +32,7 @@ import type { ToolDefinition, ToolLoadout, ToolLoadoutChanges, ToolNamespace } f
 import type { ModelRegistry } from "../../core/model-registry.ts";
 import { SETTINGS_DEFAULTS } from "../../core/settings-defaults.ts";
 import type { CodemodeMode } from "../../core/settings-manager.ts";
-import { wrapToolDefinition } from "../../core/tools/tool-definition-wrapper.ts";
+import { type TypeBoxAgentTool, wrapToolDefinition } from "../../core/tools/tool-definition-wrapper.ts";
 import { loadCodemodeExecutor } from "./execute.lazy.ts";
 import { codemodeRenderers } from "./renderer.ts";
 
@@ -422,7 +422,7 @@ export function createCodemodeToolDefinition(
 export function createCodemodeTool(
 	tools: readonly AgentTool<any>[] = [],
 	options: CodemodeToolOptions = {},
-): AgentTool<typeof codemodeSchema> {
+): TypeBoxAgentTool<typeof codemodeSchema> {
 	const definition = createCodemodeToolDefinition(options);
 	const tool = wrapToolDefinition(definition);
 	Object.assign(tool, {

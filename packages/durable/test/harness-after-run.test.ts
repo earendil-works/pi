@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Draft, JsonValue } from "@earendil-works/chord";
-import { fauxAssistantMessage, fauxToolCall, Type } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import {
 	CompactionTask,
 	ConversationBusy,
@@ -25,6 +25,7 @@ import {
 	type TaskId,
 	type Tx,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { endRun } from "../src/harness/live.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
@@ -132,7 +133,7 @@ function install(setup: ChatSetup, state: Probe, afterRun?: GenerationHooks["aft
 	return Tests;
 }
 
-const Parameters = Type.Object({});
+const Parameters = obj({});
 const tools = defineExtension({
 	name: "tools",
 	tools: [

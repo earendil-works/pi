@@ -2,9 +2,21 @@
 // are operations", "Writes carry their versions; archives are lossless"): the parts an export yields and an import
 // takes, their order, and the compiled schemas every imported part and every applied write is checked against first.
 
-import Type, { type TInteger } from "typebox";
 import type { Context } from "../../context/index.ts";
-import { arr, bool, int, lit, num, obj, opt, str, union, unknown } from "../contracts/index.ts";
+import {
+	arr,
+	bool,
+	type IntegerSchema,
+	int,
+	lit,
+	map,
+	num,
+	obj,
+	opt,
+	str,
+	union,
+	unknown,
+} from "../contracts/index.ts";
 import { invalid, validatorFor } from "../data/internal.ts";
 import type { DocumentWrite } from "./engine.ts";
 import type { TableWrite } from "./table-writes.ts";
@@ -34,7 +46,7 @@ export type ArchivePart =
 	| { readonly kind: "end"; readonly writes: number };
 
 /** An integer from `min` up to 2^53 - 1: seqs, ids, versions and counts stay exact (a seq after 2^53 would repeat). */
-function safe(min: number): TInteger {
+function safe(min: number): IntegerSchema {
 	return int({ min, max: Number.MAX_SAFE_INTEGER });
 }
 
@@ -48,14 +60,14 @@ const column = obj({
 	fingerprint: opt(str()),
 });
 
-const versions = Type.Record(Type.String(), version);
+const versions = map(version);
 
 const TABLE = obj({
 	kind: lit("table"),
 	table: str(),
 	version,
 	state: union([lit("ready"), lit("migrating")]),
-	columns: Type.Record(Type.String(), column),
+	columns: map(column),
 	key: arr(str()),
 	fingerprint: str(),
 });
@@ -63,7 +75,7 @@ const TABLE = obj({
 const PUT = obj({
 	kind: lit("put"),
 	table: str(),
-	row: Type.Record(Type.String(), unknown()),
+	row: map(unknown()),
 	version,
 	columns: versions,
 });
@@ -117,7 +129,7 @@ const edit = union([
 	obj({ kind: lit("json"), name: str(), column }),
 ]);
 
-const key = Type.Record(Type.String(), union([str(), num(), bool()]));
+const key = map(union([str(), num(), bool()]));
 
 /** One recorded write of a commit (a batch's); `where` and `set` nodes are checked by the applier. */
 const WRITE = union([
@@ -158,7 +170,7 @@ const WRITE_SCHEMA = { schema: WRITE };
 /** Checks one imported part against the archive schema (a trust boundary); `invalid/args` naming its position. */
 export function checkPart(part: unknown, position: number, context: Context): ArchivePart {
 	context.telemetry.metrics?.counter("chord.data.validations").add(1);
-	if (!validatorFor(PART_SCHEMA, context).Check(part)) {
+	if (!validatorFor(PART_SCHEMA, context).check(part)) {
 		throw invalid("args", `import: part ${position}: not an archive part`);
 	}
 	// The check above establishes the type.
@@ -168,7 +180,7 @@ export function checkPart(part: unknown, position: number, context: Context): Ar
 /** Checks one write of a batch's commit against the write schema (a trust boundary); `what` names its place. */
 export function checkWrite(write: unknown, what: string, context: Context): StoreWrite {
 	context.telemetry.metrics?.counter("chord.data.validations").add(1);
-	if (!validatorFor(WRITE_SCHEMA, context).Check(write)) throw invalid("args", `${what}: not a store write`);
+	if (!validatorFor(WRITE_SCHEMA, context).check(write)) throw invalid("args", `${what}: not a store write`);
 	// The check above establishes the type, the nodes aside (the applier checks them).
 	return write as StoreWrite;
 }

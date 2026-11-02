@@ -4,7 +4,7 @@
 import type { Context } from "../../context/index.ts";
 import type { Op } from "../../delta/index.ts";
 import type { JsonValue } from "../../json.ts";
-import type { Static, TSchema } from "../contracts/index.ts";
+import type { Schema, Static } from "../contracts/index.ts";
 import { checkName, fingerprintOf } from "../contracts/internal.ts";
 import { snapshotSchema } from "../contracts/snapshot.ts";
 import { validatorFor } from "../data/internal.ts";
@@ -31,7 +31,7 @@ export type CheckpointInfo = {
 export type CheckpointWhen<T> = (value: T, ops: readonly Op[], info: CheckpointInfo) => boolean;
 
 /** What `defineState` takes for any document. */
-type StateOptions<S extends TSchema, K extends boolean> = {
+type StateOptions<S extends Schema, K extends boolean> = {
 	readonly schema: S;
 	readonly version: number;
 	readonly initial: () => DocumentOf<S>;
@@ -41,7 +41,7 @@ type StateOptions<S extends TSchema, K extends boolean> = {
 };
 
 /** What a persisted document adds (slice 6a §10): `checkpointWhen` is required. */
-type PersistOptions<S extends TSchema> = {
+type PersistOptions<S extends Schema> = {
 	/** Stored in the host's store; only in `local` types with empty params (P3). */
 	readonly persist: true;
 	/** Called once per commit per changed document; creations and version changes always store a base. */
@@ -52,15 +52,15 @@ type PersistOptions<S extends TSchema> = {
  * Declares a document: a singleton per object, or with `keyed: true` many per object, each by a string key; with
  * `persist: true` stored in the host's store. Its name is a restricted name (lowercase `[a-z0-9@/._~-]`).
  */
-export function defineState<S extends TSchema, K extends boolean = false>(
+export function defineState<S extends Schema, K extends boolean = false>(
 	name: string,
 	options: StateOptions<S, K> & { readonly persist?: false; readonly checkpointWhen?: never },
 ): StateDefinition<DocumentOf<S>, K, false>;
-export function defineState<S extends TSchema, K extends boolean = false>(
+export function defineState<S extends Schema, K extends boolean = false>(
 	name: string,
 	options: StateOptions<S, K> & PersistOptions<S>,
 ): StateDefinition<DocumentOf<S>, K, true>;
-export function defineState<S extends TSchema, K extends boolean>(
+export function defineState<S extends Schema, K extends boolean>(
 	name: string,
 	options: StateOptions<S, K> & {
 		readonly persist?: boolean;
@@ -82,14 +82,14 @@ export function defineState<S extends TSchema, K extends boolean>(
 }
 
 /** The value of a document whose schema is `S`: its static type, which must be a JSON object. */
-type DocumentOf<S extends TSchema> = Static<S> extends JsonObject ? Static<S> : never;
+type DocumentOf<S extends Schema> = Static<S> extends JsonObject ? Static<S> : never;
 
 const NEVER: CheckpointWhen<JsonObject> = () => false;
 
 /** A declared document; `T` is its value, `K` whether it is keyed, `P` whether it is persisted. */
 export class StateDefinition<T extends JsonObject, K extends boolean, P extends boolean = false> {
 	readonly name: string;
-	readonly schema: TSchema;
+	readonly schema: Schema;
 	readonly version: number;
 	readonly keyed: boolean;
 	readonly persist: boolean;
@@ -110,7 +110,7 @@ export class StateDefinition<T extends JsonObject, K extends boolean, P extends 
 
 	constructor(
 		name: string,
-		schema: TSchema,
+		schema: Schema,
 		version: number,
 		initial: () => T,
 		migrate: ((old: JsonObject, from: number) => T) | undefined,
@@ -159,7 +159,7 @@ export class StateDefinition<T extends JsonObject, K extends boolean, P extends 
 
 	#check(value: T, what: string, context: Context): void {
 		context.telemetry.metrics?.counter("chord.data.validations").add(1);
-		if (!validatorFor(this, context).Check(value)) {
+		if (!validatorFor(this, context).check(value)) {
 			throw new Error(`${this.name}: ${what} does not match the schema`);
 		}
 	}

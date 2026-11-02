@@ -11,6 +11,7 @@ import {
 	type SqliteMigration,
 } from "../src/storage/sqlite/index.ts";
 import { openNodeSqliteDatabase, openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import { commitWrites } from "../src/testing/commit-writes.ts";
 import { type EntryId, ROOT_CONVERSATION_ID } from "../src/types.ts";
 
 const directories = new Set<string>();
@@ -115,7 +116,8 @@ describe("durable SQLite migrations", () => {
 	it("rolls a failed migration back and preserves stored data for a successful retry", async () => {
 		const path = await databasePath();
 		const storage = await openNodeSqliteStorage(path);
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } },
 				{
@@ -128,7 +130,6 @@ describe("durable SQLite migrations", () => {
 					},
 				},
 			],
-			() => {},
 			BACKGROUND_CONTEXT,
 		);
 		await storage.close(BACKGROUND_CONTEXT);

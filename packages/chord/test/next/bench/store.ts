@@ -14,6 +14,7 @@ import { performance } from "node:perf_hooks";
 import { defineDoc } from "../../../../durable/src/documents.ts";
 import { createSession } from "../../../../durable/src/session/session.ts";
 import { SqliteStorage } from "../../../../durable/src/storage/sqlite/storage.ts";
+import { commitWrites } from "../../../../durable/src/testing/commit-writes.ts";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { int, local, method, obj, str } from "../../../src/next/contracts/index.ts";
 import { defineState, type SingletonHandle } from "../../../src/next/documents/index.ts";
@@ -111,18 +112,18 @@ async function durableDeltas() {
 	const storage = await SqliteStorage.open(await openNodeSqliteDatabase(path));
 	const id = await storage.mintId();
 	const record = { id, kind: "note", scope: { kind: "session" } } as never;
-	await storage.commit(
+	await commitWrites(
+		storage,
 		[{ type: "document.create", record, content: { kind: "base", version: 1, value: VALUE } }],
-		() => {},
 		context,
 	);
 	return {
 		commit: (index: number) =>
-			storage.commit(
+			commitWrites(
+				storage,
 				[
 					{ type: "document.change", id, content: { kind: "delta", version: 1, ops: [["s", ["n"], index + 1]] } },
 				] as never,
-				() => {},
 				context,
 			),
 		close: async () => {
@@ -178,14 +179,14 @@ function chordPuts(outbox: boolean) {
 async function durableEntries() {
 	const { path, remove } = await file();
 	const storage = await SqliteStorage.open(await openNodeSqliteDatabase(path));
-	await storage.commit([{ type: "conversation", value: { id: 1 } }] as never, () => {}, context);
+	await commitWrites(storage, [{ type: "conversation", value: { id: 1 } }] as never, context);
 	return {
 		commit: async (index: number) => {
 			const id = await storage.mintId();
 			const data = { path: `src/file${index % 50}.ts`, at: index, body: VALUE.body };
-			return storage.commit(
+			return commitWrites(
+				storage,
 				[{ type: "entry", value: { id, conversationId: 1, kind: "edit", data } }] as never,
-				() => {},
 				context,
 			);
 		},

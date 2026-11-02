@@ -502,6 +502,7 @@ export class Transaction implements Tx {
 		if (!(handle instanceof TableHandle) || handle.owner.scope !== this.#documents) {
 			throw new Error(`${this.#documents.label}: a transaction writes only its own object's tables`);
 		}
+		handle.assertVersion();
 		return handle;
 	}
 

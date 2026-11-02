@@ -84,7 +84,7 @@ describe("observeDoc", () => {
 		await session.close(context);
 	});
 
-	it("starts at the committed value and advances inside adopt with each stored commit's ops", async () => {
+	it("starts at the committed value and advances at the publication of each stored commit with its ops", async () => {
 		const { storage, session } = open();
 		await add(session);
 		const { calls, observer } = recorder(storage);
@@ -95,7 +95,7 @@ describe("observeDoc", () => {
 		expect(calls).toEqual([
 			{
 				advance: { kind: "value", value: { count: 3 }, ops: [["s", ["count"], 3]], retired: false },
-				adopting: true,
+				adopting: false,
 			},
 		]);
 		observation.detach();
@@ -146,10 +146,10 @@ describe("observeDoc", () => {
 			(await tx.doc(ConversationCounter, conversationId)).count = 9;
 		}, context);
 		expect(calls).toEqual([
-			{ advance: { kind: "value", value: observation.value, ops: [], retired: true }, adopting: true },
+			{ advance: { kind: "value", value: observation.value, ops: [], retired: true }, adopting: false },
 			{
 				advance: { kind: "value", value: { count: 9 }, ops: [["r", { count: 9 }]], retired: false },
-				adopting: true,
+				adopting: false,
 			},
 		]);
 		expect((calls[0] as { advance: Extract<WatchCall<Counter>, { kind: "value" }> }).advance.value).toBe(
@@ -173,13 +173,31 @@ describe("observeDoc", () => {
 		expect(calls).toEqual([]);
 	});
 
-	it("ends once when the Session closes", async () => {
+	it("ends once when the Session closes, `failed` (S1: an adapter follows the next Session), a watch `ended`", async () => {
 		const { storage, session } = open();
 		await add(session);
 		const { calls, observer } = recorder(storage);
 		await session.observeDoc(SessionCounter, observer, context);
+		const watch = (await session.watchDoc(SessionCounter, context))!;
 		await session.close(context);
-		expect(calls).toEqual([{ end: { kind: "ended" } }]);
+		expect(calls).toEqual([{ end: { kind: "failed", error: new Error("session closed") } }]);
+		expect(await watch.closed).toEqual({ kind: "ended" });
+	});
+
+	it("ends each close's observers with an error of that close, not one shared by every Session", async () => {
+		const errors: unknown[] = [];
+		for (let i = 0; i < 2; i++) {
+			const { session } = open();
+			await add(session);
+			await session.observeDoc(
+				SessionCounter,
+				{ advance: () => {}, end: (end) => errors.push(end.kind === "failed" ? end.error : end) },
+				context,
+			);
+			await session.close(context);
+		}
+		expect(errors).toEqual([new Error("session closed"), new Error("session closed")]);
+		expect(errors[0]).not.toBe(errors[1]);
 	});
 
 	it("ends with the error that failed the Session", async () => {
@@ -368,14 +386,18 @@ describe("observeCommits", () => {
 		return { calls, observer };
 	}
 
-	it("gets every stored commit, then `ended` once the Session closed, after its last publication", async () => {
+	it("gets every stored commit, then `failed` once the Session closed (S1), after its last publication", async () => {
 		const { session } = open();
 		const { calls, observer } = commits();
 		session.observeCommits(observer);
 		await add(session);
 		await add(session);
 		await session.close(context);
-		expect(calls).toEqual([{ seq: expect.any(Number) }, { seq: expect.any(Number) }, { end: { kind: "ended" } }]);
+		expect(calls).toEqual([
+			{ seq: expect.any(Number) },
+			{ seq: expect.any(Number) },
+			{ end: { kind: "failed", error: new Error("session closed") } },
+		]);
 	});
 
 	it("ends `failed` with the error that failed the Session", async () => {

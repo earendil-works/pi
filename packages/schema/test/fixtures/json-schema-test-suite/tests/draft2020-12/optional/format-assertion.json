@@ -1,0 +1,44 @@
+[
+    {
+        "description": "schema that uses custom metaschema with format-assertion: false",
+        "comment": "The true/false boolean in $vocabulary only controls behavior for implementations that do not recognize the vocabulary. For implementations that do understand format-assertion, the boolean has no impact on validation behavior — hence both test groups produce identical results.",
+        "schema": {
+            "$id": "https://schema/using/format-assertion/false",
+            "$schema": "http://localhost:1234/draft2020-12/format-assertion-false.json",
+            "format": "ipv4"
+        },
+        "tests": [
+            {
+                "description": "format-assertion: false: valid string",
+                "data": "127.0.0.1",
+                "valid": true
+            },
+            {
+                "description": "format-assertion: false: invalid string",
+                "comment": "valid: false is intentional — the false value in $vocabulary only affects unknown vocabulary handling, not validation behavior itself",
+                "data": "not-an-ipv4",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "schema that uses custom metaschema with format-assertion: true",
+        "schema": {
+            "$id": "https://schema/using/format-assertion/true",
+            "$schema": "http://localhost:1234/draft2020-12/format-assertion-true.json",
+            "format": "ipv4"
+        },
+        "tests": [
+            {
+                "description": "format-assertion: true: valid string",
+                "data": "127.0.0.1",
+                "valid": true
+            },
+            {
+                "description": "format-assertion: true: invalid string",
+                "data": "not-an-ipv4",
+                "valid": false
+            }
+        ]
+    }
+]

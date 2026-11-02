@@ -33,7 +33,7 @@ const Session = hostKind("session", { id: str() });
 const Notes = remote("example.notes", {
 	version: 1,
 	params: { session: str() },
-	placement: ({ session }) => Session({ id: session }),
+	hostAddress: ({ session }) => Session({ id: session }),
 	variants: {
 		all: { state: { notes: arr(str()) }, methods: { add: method(obj({ text: str() })), follow: method() } },
 	},

@@ -17,11 +17,14 @@ import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
 	APP_NAME,
 	CONFIG_DIR_NAME,
+	detectInstallChange,
 	detectInstallMethod,
 	getAgentDir,
+	getConfiguredSelfUpdateArgv,
 	getPackageDir,
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
+	makeConfiguredSelfUpdateCommand,
 	PACKAGE_NAME,
 	type SelfUpdateCommand,
 	type SelfUpdatePackageTarget,
@@ -29,7 +32,7 @@ import {
 } from "./config.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
-import { DefaultPackageManager } from "./core/package-manager.ts";
+import { DefaultPackageManager, isOfflineModeEnabled } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import { DefaultResourceLoader, formatPackageInstallWarning, isBuiltinExtension } from "./core/resource-loader.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
@@ -638,6 +641,9 @@ function printSelfUpdateUnavailable(
 ): void {
 	console.error(`error: ${APP_NAME} cannot self-update this installation.`);
 	console.error(getSelfUpdateUnavailableInstruction(PACKAGE_NAME, npmCommand, updatePackageTarget));
+	console.error(
+		`To make \`${APP_NAME} update\` run your own update command, set PI_SELF_UPDATE_COMMAND or the selfUpdateCommand setting.`,
+	);
 
 	const entrypoint = process.argv[1];
 	if (entrypoint) {
@@ -733,6 +739,48 @@ async function runSelfUpdate(command: SelfUpdateCommand): Promise<void> {
 			});
 		});
 	}
+}
+
+/** Run the user-configured self-update command, then report the version installed on disk. */
+async function runConfiguredSelfUpdate(argv: string[], plan: SelfUpdatePlan): Promise<void> {
+	const command = makeConfiguredSelfUpdateCommand(argv, plan);
+	if (plan.note) {
+		printSelfUpdateNote(plan.note);
+	}
+	try {
+		await runSelfUpdate(command);
+	} catch (error: unknown) {
+		const message = error instanceof Error ? error.message : "Unknown self-update command error";
+		console.error(chalk.red(`Error: ${message}`));
+		process.exitCode = 1;
+		return;
+	}
+	// Exit code 0 does not prove an update. Wrappers such as mise or Nix install each version into a
+	// new directory and leave this installation untouched, so fall back to the pi on PATH.
+	const change = detectInstallChange();
+	const installedVersion =
+		change?.kind === "updated" && change.version === plan.version ? change.version : readVersionOnPath();
+	if (installedVersion === plan.version) {
+		console.log(chalk.green(`Updated ${APP_NAME} from ${VERSION} to ${plan.version}`));
+		return;
+	}
+	console.log(
+		chalk.yellow(
+			`Ran ${command.display}, but \`${APP_NAME} --version\` reports ${installedVersion ?? "no version"}, not ${plan.version}.`,
+		),
+	);
+}
+
+/** Version printed by `pi --version` as resolved from PATH, the pi the user runs next. */
+function readVersionOnPath(): string | undefined {
+	// PI_PACKAGE_DIR points at this installation and would make the new pi report the old version.
+	const { PI_PACKAGE_DIR: _, ...env } = process.env;
+	const result = spawnProcessSync(APP_NAME, ["--version"], {
+		encoding: "utf-8",
+		stdio: ["ignore", "pipe", "pipe"],
+		env,
+	});
+	return result.status === 0 ? result.stdout.trim() || undefined : undefined;
 }
 
 function prepareWindowsNpmSelfUpdate(): void {
@@ -979,9 +1027,18 @@ export async function handlePackageCommand(
 
 	const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
 
+	// Update result events describe a changed package, e.g. "npm:foo 1.2.0 -> 1.3.0".
+	const updatedPackages: string[] = [];
+	// Progress messages are warnings, e.g. npm reinstalled the old version from stale registry metadata.
+	let warningCount = 0;
 	packageManager.setProgressCallback((event) => {
-		if (event.type === "start") {
+		if (event.type === "result" && event.action === "update" && event.message) {
+			updatedPackages.push(event.message);
+		} else if (event.type === "start") {
 			process.stdout.write(chalk.dim(`${event.message}\n`));
+		} else if (event.type === "progress" && event.message) {
+			warningCount++;
+			process.stdout.write(chalk.yellow(`${event.message}\n`));
 		}
 	});
 
@@ -1049,14 +1106,37 @@ export async function handlePackageCommand(
 				if (updateTargetIncludesExtensions(target)) {
 					const updateSource = target.type === "extensions" ? target.source : undefined;
 					await packageManager.update(updateSource);
-					if (updateSource) {
-						console.log(chalk.green(`Updated ${updateSource}`));
+					// Only claim "up to date" when the update actually checked and nothing warned.
+					if (isOfflineModeEnabled()) {
+						console.log(chalk.yellow("Skipped package updates (offline mode)"));
+					} else if (updatedPackages.length === 0 && warningCount > 0) {
+						console.log(
+							chalk.yellow(
+								updateSource
+									? `${updateSource} was not updated, see the warnings above`
+									: "No packages were updated, see the warnings above",
+							),
+						);
+					} else if (updatedPackages.length === 0) {
+						console.log(
+							chalk.green(
+								updateSource ? `${updateSource} is already up to date` : "Packages are already up to date",
+							),
+						);
 					} else {
-						console.log(chalk.green("Updated packages"));
+						const count = updatedPackages.length;
+						console.log(chalk.green(`Updated ${count} package${count === 1 ? "" : "s"}:`));
+						for (const message of updatedPackages) {
+							console.log(`  ${message}`);
+						}
 					}
 				}
 				if (updateTargetIncludesSelf(target)) {
-					const managedInstallRoot = getActiveManagedInstallRoot();
+					const configuredSelfUpdateArgv = getConfiguredSelfUpdateArgv(
+						settingsManager.getGlobalSettings().selfUpdateCommand,
+					);
+					// A configured command is explicit user intent, so it replaces the managed install path too.
+					const managedInstallRoot = configuredSelfUpdateArgv ? undefined : getActiveManagedInstallRoot();
 					if (managedInstallRoot && options.force) {
 						console.error(
 							chalk.red(
@@ -1068,6 +1148,10 @@ export async function handlePackageCommand(
 					}
 					const selfUpdatePlan = await getSelfUpdatePlan(options.force);
 					if (!selfUpdatePlan.shouldRun) {
+						return true;
+					}
+					if (configuredSelfUpdateArgv) {
+						await runConfiguredSelfUpdate(configuredSelfUpdateArgv, selfUpdatePlan);
 						return true;
 					}
 					if (managedInstallRoot) {

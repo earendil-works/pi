@@ -981,7 +981,8 @@ export type CommitPublication = {
 
 /**
  * Transaction surface of one Session commit callback.
- * Table reads and creation results are trusted immutable values and may be shared with internal commit state.
+ * Table reads and creation results are trusted immutable values and may be shared with internal commit state; the
+ * Session may freeze them (its caches and context ranges keep them), so mutating one can throw.
  */
 export interface Tx {
 	conversation(id: ConversationId): Promise<ConversationRecord | undefined>;
@@ -997,6 +998,8 @@ export interface Tx {
 	scanEntries(query: EntryQuery, limit: number, cursor?: Cursor): Promise<Page<EntryRecord, Cursor>>;
 	/** Newest visible entry of the conversation that carries a `head`. */
 	latestHeadMarker(conversationId: ConversationId): Promise<(EntryRecord & { readonly head: EntryId }) | undefined>;
+	/** ID of the newest entry visible from the conversation; `undefined` when it has none. */
+	latestEntryId(conversationId: ConversationId): Promise<EntryId | undefined>;
 	scanTasks(
 		query: TaskQuery,
 		limit: number,
@@ -1093,16 +1096,18 @@ export type DocumentWatch<T extends JsonObject> = WatchHandle<Readonly<T>>;
 /**
  * A synchronous observer of committed Durable state, for adapters such as a Chord source (`observeDoc()`,
  * `Harness.observeConversation()`, `Harness.observeTaskGraph()`), with the shapes of Chord's watch: `advance` gets a
- * `WatchCall`, `end` a `WatchEnd`. `advance` gets every change, unfolded, as memory adopts it: for a stored commit inside
- * Storage's `adopt`, for a deferred one before it is stored. A view or the graph gets at most one call per commit, a
- * document observer one per change at its address (two for a commit that retires and recreates it); the task graph also
- * advances outside any commit and `adopt`, on the Session line, when a registry change or a failed migration changes a
+ * `WatchCall`, `end` a `WatchEnd`. `advance` gets every change, unfolded, as memory adopts it: for a stored commit at its
+ * publication once Storage stored it, for a deferred one before it is stored. A view or the graph gets at most one call
+ * per commit, a document observer one per change at its address (two for a commit that retires and recreates it); the
+ * task graph also advances outside any commit's publication, on the Session line, when a registry change or a failed
+ * migration changes a
  * `blocked` reason. Durable's failures are final, so every call is a `value` call; a failure ends the observer. Calls
  * may come before the attaching promise resolves; their ops apply from `Observation.value`. `advance` must only record
  * the call, synchronously and quickly, never await, call the Session, or throw. A throw is reported as
  * `listener_error`, detaches the observer, and ends it `listener_error` with the error. `end` is called once: `ended`
- * when the Session closes or the observed scope's owner ends (a task document's task, after its retirement change,
- * inside that commit's `adopt`), `failed` with the error that failed the Session; never after `detach()`.
+ * when the observed scope's owner ends (a task document's task, after its retirement change, inside that commit's
+ * `adopt`), `failed` with "session closed" when the Session closes (an adapter follows the next Session) or with the
+ * error that failed the Session; never after `detach()`.
  */
 export type Observer<T> = {
 	advance(call: WatchCall<T>, context: Context): void;
@@ -1111,7 +1116,7 @@ export type Observer<T> = {
 
 /**
  * A synchronous observer of stored commits (`Session.observeCommits()`): `advance` gets each `CommitPublication`, `end`
- * the Session's close.
+ * the Session's close (`failed` with "session closed", or with the error that failed the Session).
  */
 export type CommitObserver = {
 	advance(publication: CommitPublication, context: Context): void;
@@ -1187,7 +1192,10 @@ export type CommitOptions = { readonly persistence?: CommitPersistence };
 export interface Session extends DocumentObserver {
 	/**
 	 * Run one atomic transaction on the Session mutation line. Inside the callback read only through `tx`: `snapshot()`, `watchDoc()`, `getTask()`, and the other Session and runtime reads may queue on the line the callback holds, and then never resolve.
-	 * `options.persistence` may defer storing it (`CommitPersistence`).
+	 * `options.persistence` may defer storing it (`CommitPersistence`). The callback may run while an earlier commit is
+	 * being stored: at its first read or write of what an unpublished commit wrote, it waits until that commit is stored
+	 * and published; code before that runs early, so act on what it computes only once the commit resolves. Resolves
+	 * once the commit is stored and published, after every earlier commit's outcome.
 	 */
 	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context, options?: CommitOptions): Promise<T>;
 	/** Seal admission, settle admitted commits, then close storage. */
@@ -1242,10 +1250,10 @@ export interface Session extends DocumentObserver {
 	): Promise<Observation<Readonly<T>> | undefined>;
 	/**
 	 * Observe stored commits, each with exactly what it stored, except that a document the commit retires is published
-	 * as its retirement only; a commit held in memory is published when it is stored (`CommitPublication`). Storage's
-	 * adoption of the commit queues one dispatch, which runs a microtask later, before every wait the commit resolves
-	 * and every abort it queues, and calls the observers attached by then; a commit adopted while none was attached has
-	 * no dispatch. There is no order relative to watch listeners. `advance` runs synchronously and must not block or
+	 * as its retirement only; a commit held in memory is published when it is stored (`CommitPublication`). Commits are
+	 * published in line order once Storage stored them, a macrotask apart; a publication queues one dispatch, which runs
+	 * a microtask later, before every wait the commit resolves and every abort it queues, and calls the observers
+	 * attached by then; a commit published while none was attached has no dispatch. There is no order relative to watch listeners. `advance` runs synchronously and must not block or
 	 * call Session APIs; a throw is reported as `listener_error`, detaches the observer, and ends it `listener_error`.
 	 * `end` is called once, when the Session closes (`ended`, after its last publication) or fails (`failed`), never
 	 * after `detach()`. Attaches synchronously; the observation has no `value`: commits are events, not a state, and the
@@ -1302,6 +1310,9 @@ export interface Session extends DocumentObserver {
 	): Promise<Readonly<T> | undefined>;
 }
 
+/** What `Storage.commit()` stored: the number of durable batches, and why the next one was refused, if one was. */
+export type CommitResult = { readonly stored: number; readonly refused?: unknown };
+
 /**
  * Atomic persistence boundary for Session records.
  *
@@ -1317,13 +1328,29 @@ export interface Session extends DocumentObserver {
  */
 export interface Storage {
 	/**
-	 * Atomically persist one batch and return its sequence. Once the batch is durable, call `adopt(seq)` exactly once,
-	 * synchronously and before this storage's next commit starts, then resolve with `seq`; a commit that fails before it
-	 * is durable never calls `adopt`. `adopt` is the caller's in-memory adoption and publication of the batch, so memory
-	 * and the Session's views always show a complete prefix of the log; it runs the Session's own observers, which call
-	 * no Storage method, and never throws. Once resolved, later reads through this storage observe the batch.
+	 * Persist `batches` in order, each as one ordinary atomic commit with its own seq, checked against the state the
+	 * earlier ones left, in as few round trips as the backend can. Every batch has at least one write: a commit without
+	 * writes never reaches Storage, so the Session never sends an empty batch. Stops at the first batch Durable's own checks refuse
+	 * (global IDs, document actions, copy resolution): the batches before it are durable, it and the ones after are not.
+	 * Calls `receive(index, seq)` once per durable batch, in order, synchronously, after all of them are durable and
+	 * before the next commit starts. Resolves with the number of durable batches and the refusal, if any. Rejects for an
+	 * unknown outcome (connection lost, statement or commit failed); `receive` calls made before the rejection still
+	 * stand. `receive` is a durability receipt, not publication: the Session publishes later. Once it resolved, later
+	 * reads through this storage observe the stored batches.
 	 */
-	commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, context: Context): Promise<Seq>;
+	commit(
+		batches: readonly (readonly StorageWrite[])[],
+		receive: (index: number, seq: Seq) => void,
+		context: Context,
+	): Promise<CommitResult>;
+
+	/**
+	 * Optional. Run `publish`, the Session's publication of one stored or held commit (its cache write-through,
+	 * adoption, and observers), inside this storage's own scope, such as a store's attached host batch, so what the
+	 * publication marks lands together. Call `publish` exactly once, now or soon after; the Session publishes the next
+	 * commit only once it ran. Without it, the Session publishes directly.
+	 */
+	publishing?(publish: () => void, context: Context): void;
 
 	/**
 	 * Return a fresh branded candidate from the Session-global numeric ID namespace, greater than every ID minted since

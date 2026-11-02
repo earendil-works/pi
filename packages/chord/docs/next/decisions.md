@@ -1530,7 +1530,7 @@ validation and copies the v2 kernel added around Delta.
 - **Slice 6a build reviews (2026-10-27, under the owner's delegation to the reviewers' majority):** two rounds of four
   build reviews (`/tmp/s6a-build-review{,2}-{astra,fable,opus,sol}.md`), merged into two fix lists
   (`/tmp/s6a-fix{1,2}-brief.md`, 28 and 16 items) by majority, a point raised by one reviewer taking that reviewer's
-  recommendation. Rules they settle beyond fixes of the spec: (1) **members across attempts:** a local object's state
+  recommendation. Rules they settle beyond fixes of the spec: (1) **members across attempts** (**superseded in part** by "References are the only indirection": the reference, not a member source on the object, follows the object across instances): a local object's state
   member is followed by its references and by other objects' derives through one member source per object and member
   name; when a new attempt goes live every member re-binds by name (one diff frame from the last value, consumers'
   derives recompute, a member the new variant lacks fails `invalid/member`), as a remote reference re-holds and gets a
@@ -1763,12 +1763,717 @@ validation and copies the v2 kernel added around Delta.
   back: `host.serve(R, { compose, accepts: { [old]: { contribution?: (old) => current, value?: (current) => old } } })`;
   a reader bundling an older token gets the composed value mapped to its version (computed once per composition and
   version, only while such a reader exists); without a `value` mapping, or for a reader newer than the provider, its
-  value is failed `contract_mismatch` (reported).
+  value is failed `contract_mismatch` (reported); such a reader fails `broken`, not `transient` (nothing heals it before
+  a reload, which retries broken objects; build review 2026-10-27).
 - **Slice 8 S3: `self.registry` is a dependency, as `self.get` (owner, 2026-10-27: "isn't self.registry meant to wait
   like self.get?"; my spec had it as a plain read, a mistake against design §6, §7 and §17):** activation waits until
-  the registry has a value (served and composed once; an empty table composes too, at the serve), bounded by
-  `readyTimeout`; without one in time the object fails `transient` (`unavailable/undeclared`) and is retried when the
-  registry gets its first value (R18); once live, a later failure of the registry changes nothing (last good value).
+  the registry has a value (served and composed once; an empty table composes too, at the serve); after `load`'s
+  setups a registry without a value cannot get one before a reload, so a reader then fails at once `transient`
+  (`unavailable/undeclared`) and is retried when the registry gets its first value (R18), as `self.get` of a type not
+  served here fails at once (refined 2026-10-27 after the second spec review: no `readyTimeout` wait at start); once live, a later failure of the registry changes nothing (last good value).
+- **Slice 7b's open points, as recommended (owner, 2026-10-29: "yes"; brief `slice-7b/`):** (1) the API is
+  `host.reload(facets, ctx)`, by plugin name (added, changed; a plugin missing from the list is removed), resolving with
+  a report of what each object did, rejecting with the code error and nothing changed; `load` stays the first call. (2)
+  A `writable` across a pure swap goes back to its initial value (the new factory makes a new one; no positional
+  matching). (3) The rollout across hosts is the app's: it calls `host.reload` on each host in order (server, workers,
+  clients); Chord guarantees per host (staging, commit, `installing`, rollback). (4) No install watchdog: `reload`
+  takes a context and the app passes its deadline. (5) The loader lives in Chord (`chord/next/loader`, slice 7c). (6)
+  Chord ships the app kit as optional subpaths: `loader` and `dev` (7c), `http` and `workers` (slice 10), `web` and
+  `tui` (slice 11); telemetry (slice 9) last.
+- **Slice 7b's build decisions (owner, 2026-10-29, answering the builder; `slice-7b.md` §13):** a loaded plugin passed
+  as the same facet object (`===`) is unchanged and untouched, any other facet value for a loaded name is changed;
+  activating (not parked) and backoff-waiting objects of a reloaded plugin are retried; the report's `parked` covers
+  swaps and retries (their first dependency check), restarts are reported at once; a swapped-out attempt is sealed
+  once its calls settled (bounded by `closeTimeout`) and the swap ended, its job invocations finishing on their old
+  code; a stuck old routine call is reported `drain_timeout` and fenced by the old routine calls' shared token; a swap
+  to another variant sends holds a fresh `bound`; a native restart ends in-memory runs `aborted { reload }` while
+  persisted ones follow 6b R3 (stopped, resumed per `resume`, no restart counted); staging is synchronous
+  (`installing` tested from a staged factory); a removed object's member sources and pinned keys are handed to the next
+  object of its identity (fix round 3: one hand-over per identity for removal, version refusal and an object ending
+  while requests wait, `slice-7b.md` §13 item 11); keyed members' versions are built in 7b (L1's keyed edits and an accepts `keyed` section,
+  decision "Keyed state members, local contracts only"). The builder's own choice, accepted by the owner (2026-10-29):
+  adapted state members are derives per object and version, not per binding. (**Superseded in part** by "References
+  are the only indirection": the hand-over of member sources and the per-version sources that outlive an object go.)
+- **References are the only indirection (owner, 2026-10-29: "go"; after seven fix rounds of 7b found one edge case after
+  another in sources handed between objects):** supersedes in part 6a's "members across attempts" (one member source
+  per object and member name) and slice 7b decisions 8 and 11 (member sources and pinned keys frozen and handed to the
+  next object of the identity; per-version outward sources owned by (identity, version); `host/handover.ts`). The
+  problem: a consumer's watch or derive over `ref.count` was attached to the referenced object's own document or derive
+  (the reference was bypassed), so every change of what the reference points at needed a stable node somewhere else
+  (`MemberSource` on the object, then sources that outlive the object and move to the next one). The rule: (1) a
+  consumer's watches and derives over a referenced object's member attach through the reference's member, which passes
+  the subscription straight through to the object's own document or derive (no extra hop on commits). (2) When what the
+  reference points at changes (a new object instance after a factory re-run: reload, retry, restart; a new object
+  after the type was removed and served again; another variant), the reference moves its subscriptions to the new one
+  and sends one frame, a diff from the last value. (3) While it points at nothing, its members keep their last values
+  (a pointer, no copy): while loading (a restart, a retry, a swap whose new instance is not live yet) its watches get
+  no call; while failed (a live failure, its version refused, its type removed, a failed dependency) one `failed` call
+  with the cause's error, and they stay open (replaces 6a's "no frames while failed"); a reference that never had a
+  value reads `not_ready` while loading and its failure's error while failed, and its watches wait for its first values
+  (a member the new variant lacks fails `invalid/member`, as before). Keyed watches and pins re-pin on each new instance the same way (the
+  cross-attempt key sources of 6a go; a key keeps its last value until the new instance loaded it; a dependent's
+  factory pin is still loaded before the dependent goes live). Once hydrated, a reference has last values for every state member of its bound variant, read or not: when it
+  detaches it takes them at its version from the outgoing instance (through that instance's mapping for an older
+  version), keeping no node of it. After a `failed` call, the next good value arrives as `[["r", value]]` even when
+  unchanged; a watch opened while failed starts at the last value and gets the failure once. No source, mapping,
+  document handle or pin of an instance outlives it through a reference: a detached reference keeps only plain last
+  values and its failure; releasing it drops them and its bindings; stopping a keyed watch drops its pin. (4) The same rule over a link: a replica keeps its last values
+  readable while its hold is failed. (5) An older consumer (`accepts`) attaches to the object instance's shared mapping
+  for its version: per member one derive `(current) => old`, made on first use, dropped when no reference of that
+  version is left, gone with the instance (one map and one diff per commit per version, whatever the number of old
+  references); a version the instance does not accept gives no member (unbound, last values kept). A reference knows
+  its version from the contract token it was made with. Nothing outlives its object instance; nothing is handed over.
+  Kept: requests never end on a code change, healing on rebind, `accepts` for arguments and results. A simplification
+  audit of slices 6a to 7b follows 7b's commit (owner: "how much other such bullshit was added in the last slices").
+  Refined after the gap checks (Astra, Sol, Opus) and the build (owner, 2026-10-29: "i accept the recommendations"):
+  a detaching reference follows the old instance until it stops changing (its seal after admitted commits, a restart
+  after its drain), then takes its last values for every member of its bound variant, read or not, never from an
+  instance it never followed; after a `failed` call the next good value is `[["r", value]]`; a watch on a reference that
+  never hydrated resolves at its first binding (rejects on release, revocation, close, abort); release drops last
+  values and bindings; registry values and job state are not affected. **Derives over a failed reference member compute
+  on its last value** (G2 (A), as 6a): a contribution built on it stays in its table; only the reference member's own
+  watches get the `failed` call, and `ref.state` shows the failure. **Activation churn +9.6% accepted** (CPU 22, 104.7-107.9
+  → 114.7-118.3 µs, allocation equal): an object whose derive reads another object's member makes one pass-through
+  node per reference member per instance; calls, commits, links and memory are within the bar. Two references to one
+  key hold two pins (counted on the key's one source; the document is loaded and kept once). **Binary append commit-to-frame
+  median +10% accepted** (owner, 2026-10-29; CPU 10, 0.031 → 0.034-0.035 ms): equal with the young generation pinned, fewer
+  scavenges over the whole benchmark (V8's young-generation sizing, slice 7b fix round 3).
+- **Per plugin at startup and reload (owner, 2026-10-30: "yes", "1. lgtm 2. yes"; analyses
+  `/tmp/per-plugin-{opus,fable}.md`):** supersedes "Rollback is all-or-nothing per host" (2026-10-2x, 7b §2, design §21)
+  and 7c's Q2 ("a facet throwing while evaluated fails its host's whole step"). Why all or nothing was chosen: per plugin
+  was decided first and p2's plugin reviewers found counter-traces (a dropped argument field written into a transcript; a
+  copied Durable document written by two versions; a provider's failed factory leaving the harness hanging; mixed copied
+  code and registries); v2 has since closed them (closed argument schemas for every caller, Q12, Q15; version binding
+  with waiting, 7a; ownership of documents; registry versions with `accepts`, Q8; copied cross-plugin files limited to
+  contracts without dependencies, 7c). Rules: (1) **at startup** a plugin whose build, evaluation or setup fails is left
+  out; `load` resolves with a report `{ failed: [{ plugin, error }] }` and never closes the host for it (the core facet
+  included: base code decides whether that is fatal); its consumers wait `failed { waiting }` as for any missing plugin.
+  (2) **At reload** a plugin whose new code fails (build, evaluation, setup, a factory in staging, a declaration error,
+  `checkAccepts`) keeps its old code (its loaded facet, unchanged), and every other plugin of the reload applies; the
+  report lists it (`failed: [{ plugin, error }]`, as `load`'s; an added plugin that fails is left out); staging retries without it. (3) **The closure rule** (Opus): after
+  staging, a changed plugin whose recorded requests would not bind because the plugin they need was kept old or left
+  out is kept old too, so a consumer edited together with a broken provider keeps working on its old code. Its "missing"
+  branch (owner, 2026-10-30: "keep", against narrowing it to names served before): a request nobody serves keeps its
+  plugin old whenever any plugin of the reload failed, since a failed new setup may be what would have served it. (4) What no
+  rule detects: a consumer relying on new behaviour of a kept provider whose contract (version, fingerprint) did not
+  change: the same risk as a rollout across hosts, documented. (5) `rollout` keeps a plugin dirty while it was kept old
+  on any host. Built with slice 7c (the kernel's `load` and `reload` change with it).
+- **Slice 7c's points (owner, 2026-10-30; `slice-7c.md` §5):** (1) esbuild is an optional peer dependency of Chord,
+  imported only by the plugins component. (2) **No dev/prod split** (owner: "chord apps are supposed to not have a
+  prod/dev split. they are supposed to be self modifying applications"): watching, rebuilding and rolling out are core
+  machinery; one component `chord/next/plugins` (discovery, build, evaluation, `pluginFile`, the watcher, `rollout`) in
+  `src/next-node/plugins/`, exported with v2's entry point; it turns V8's compilation cache off when created; reloads
+  stay explicit (the watcher marks, never applies). Supersedes the separate `loader` and `dev` subpaths of "Slice 7b's
+  open points" (5), (6). (3) `installDependencies(plugin, ctx)` as coding-agent installs package dependencies (`npm
+  install --omit=dev --legacy-peer-deps --ignore-scripts --no-audit --no-fund` in the plugin's real directory, the
+  command overridable). (4) Cross-plugin imports: any file of a discovered plugin, copied, documented as contracts and
+  side-effect-free modules only, listed by the build, no static check yet. (5) `pluginFile` answered per facet by the
+  `require` evaluation passes.
+- **Slice 7c build: an abort after the commit names what it applied (owner, 2026-10-30: "yes"; fix round 1, item
+  11, Astra):** `host.reload` still rejects `aborted` when its context aborts after the commit (the commit stands, only
+  the wait ends), and the error carries `details.committed`, a `CommittedReload { added, changed, removed, failed }`
+  (plugin names; `failed`: kept on their old code). Why: the plugins component keeps per host the facet each plugin
+  runs and adopts it when the reload resolves; on this rejection it would keep the old facet and pass it at the next
+  reload, swapping the committed plugin back silently. Rejected: resolving with the report after the commit despite
+  the abort (it would change the rule that an abort after the commit rejects). Examples for 7c (owner): full coverage,
+  each example a folder with the host code and real plugin directories (35-39).
+- **Slice 10's points (owner, 2026-10-30; `slice-10.md`):** (D1, "a"; `httpServer` **superseded** by `createHttp`, decisions "The HTTP core is a fetch handler" and "Settings are arguments") the HTTP component defines the registry `Http`
+  (`"chord.http"`) and serves it through a facet of its own (`http.facet`, plugin name `chord.http`) that the app loads
+  with its plugins; its `compose` builds the router; the server reads it with `host.registry(Http, ctx)` per request.
+  (D2, "a") Wraps are built in slice 10 as designed (decision "HTTP routes and wraps", design §23): a contribution's
+  `wraps` run around routes in the component's phases (`observe`, `headers`, `transform`, outermost first), within a
+  phase in contributor order, by default around their own plugin's routes (`scope: "own"`; `"all"` explicit; `route`
+  narrows to one, a missing one a reported conflict). The server's `headers` option stays for every response, also
+  those no route makes (a 404, a refused request).
+  (D3, "a"; **superseded** by "The HTTP server is a native object": the `Authenticators` registry) Authentication is one app function, `authenticate(request, ctx) => P | undefined`, called once per request
+  and per upgrade; no Chord registry of resolvers (p3 composes its own from sharing, devices and the relay, with its
+  own precedence rules).
+  (D4, "k": a) Request bodies: `request.json(limit?)` (parsed JSON, 1 MiB by default, malformed: 400) and
+  `request.body(limit?)` (an async iterable of byte chunks, for uploads); nothing is read until a route asks; past its
+  limit the read stops and the request is answered 413; a disconnect aborts `ctx` and ends the iteration.
+  (D5, "a") Responses are descriptions: `json`, `html` (a full document; replaces the design's `page { title, body }`),
+  `bytes` (`mime`, `size`, `read(offset, length, ctx)`, `download?`, `ranges?`; 206/416, `HEAD`, safe
+  `Content-Disposition`, 64 KiB reads with backpressure, stopped on disconnect), `redirect`, `error`; `headers` on every
+  kind (cookies, a preview's own CSP); `fileResponse(path, options)` over a file; a throwing route is a 500 without its
+  message.
+  (D6, "a") Plugin WebSockets are `sockets` in the `Http` contribution: `{ "/terminal": (socket, request, ctx) => … }`;
+  the component checks the origin and runs `authenticate` (no principal: refused, 403, before plugin code), upgrades
+  and hands the plugin a `ws` WebSocket for its own protocol; patterns as routes; wraps do not apply; the links path is
+  the component's (`host.accept`). The design's channel component (acknowledged byte channels) waits for a second user
+  and would be built on top of it.
+  (D7, "a") `ws` is an optional peer dependency of Chord (pinned exactly), imported only by `next-node/http`, as
+  esbuild for plugins.
+  (D8, "a") Route patterns: exact segments, `:name` (one non-empty segment, percent-decoded, `params.name`) and a
+  trailing `/*` (the rest, possibly empty, `params["*"]`); the most specific match wins, segment by segment from the
+  left (exact before `:name` before `*`); one pattern from two contributions is a reported conflict, the first by
+  plugin name wins; `HEAD` falls back to the `GET` route.
+  (D9, "a") Worker keep-alive: the child reports `host.activity` and the app's `busy` counts (a JSON watchable of
+  numbers, e.g. Durable's active tasks) whenever they change; the server stops a worker whose counts were all zero for
+  `idleMs` (default 5 min, checked every second), never while it starts; a stop sends `shutdown` (the host closes),
+  the process tree killed after 5 s.
+  (D10, "a"; **superseded** by R2 below: no automatic restarts, no route backoff) A failed worker start uses the kernel's route backoff (1 s doubling to 60 s while holds exist,
+  `resolve_failed` reported); no sticky failure; `workers.state` shows the error and when it is tried again.
+  (D10b, "b") `host.route(Kind, options, ctx)` returns a `RouteHandle` with `retry(address)`: it ends that address's
+  backoff, so `resolve` runs now if the address has holders (a Retry button for a worker that failed to start, wired
+  by the app to the handle; the workers component has no `retry` of its own).
+  (D11, "a") Workers never build: the server's plugins component discovers and builds every plugin; a worker's start
+  message carries its kind's current scripts (`Built`, plain data) and a reload ships new ones (D12); the child's
+  `plugins` only evaluates (no esbuild, no watcher). So plugins are defined where the server can read them, one set for
+  every host (owner: "no cwd specific plugins, which might be alright; that way workers can live anywhere"); project
+  plugins (design §26 #14) would be discovered and built by the server too. A worker on another machine needs the
+  plugin directories there only for `chord.external` packages and `pluginFile`.
+  (D12, "a") A rollout step returns one report per host, `{ hosts: [{ host, report }] }` (7c's `RolloutStep` changes;
+  the in-process server step returns a list of one); the workers step reloads every running worker in parallel; a
+  worker that closed during it is listed with its error and does not stop the rollout; a plugin's dirty mark clears
+  only when it applied on every host of every step.
+  Spec review (Fable, Opus): (R1, "a") `RouteHandle.suspend(address)`: while suspended the route does not resolve the
+  address, its holders stay `loading`; `retry(address)` ends the suspension; `workers.stop` suspends, then stops (an
+  archived session stays stopped while a tab still holds it).
+  (R2, owner: "take it"; **supersedes D10 and the kernel's route backoff**) **Workers start on demand and never
+  restart by themselves** (owner: "if it crashes, chances are it had a good reason to crash, and restarting it won't
+  fix that"; D10 as recommended was a restart loop whenever a consumer holds). A worker starts for a hold of an address
+  that has not failed (the first, or one after an idle stop or `stop`). A crash or a failed start marks the address
+  failed with its error until `workers.retry(address)` (`RouteHandle.retry`) or a rollout that reaches workers (new
+  code may fix it, as a reload retries failed objects); its holders and new holds see `failed` with that error, nothing
+  forks. Kernel: a route has no backoff timer; it resolves only for a hold, on `retry`, or after its link dropped while
+  held, and a rejected `resolve` fails the route's holders with its error (no endless `loading`); a network route that
+  wants to reconnect keeps that policy in its own `resolve`. The workers component owns its route
+  (`createWorkers(host, Kind, options)` calls `host.route` and keeps the handle) and answers a resolve of a failed
+  address with the stored failure at once. A start finding the lock still held by a draining old worker waits for it in
+  the child (bounded by the start timeout). R1's `suspend` and D10b's `retry` stay.
+  Other timed retries (owner, 2026-10-30: "keep them as is for now"): objects' transient failures (1 s to 60 s while
+  held), `self.on` handlers that throw (1 s to 60 s while live) and `self.onLive` restarts (the same, reset after a
+  minute's run) stay; they heal real transient failures (a network down for a while) and cost at most one try a minute
+  each; revisit if one shows up as a loop in practice.
+  (R3, "a"; refines D9) The child reports only the flip: `{ idle: true }` when every count (`host.activity` and `busy`)
+  becomes zero, `{ idle: false }` when one becomes nonzero; the server's idle clock starts at `true` (a status message
+  costs about 6 µs on each side, a local call 2.9 µs: no report per call).
+  (R4; **superseded in part** by "allowed hosts only through contributions" and "The HTTP component's security baseline": no `allowedHosts` option, provenance by the socket; "a if configurable at runtime so allowed domains can be added and removed by a plugin") Before `authenticate`, the
+  component refuses (403) a `Host` that is neither loopback nor allowed, and an upgrade (`/chord`, a plugin socket)
+  whose `Origin` is not the request's own origin; `request.origin` comes only from an accepted `Host` (`http://` on
+  loopback, `https://` for an allowed host); `headers(request, principal)` gets the principal. Allowed hosts are the
+  server option `allowedHosts` plus every `hosts` list in `Http` contributions: a plugin adds and removes its domains
+  at runtime by contributing a writable (`self.writable`, design §17), the router recomposed on each change (a tunnel or
+  relay plugin names its public host).
+  **The app kit is malleable by plugins** (owner, 2026-10-30: "all of this should be malleable via plugins"; "yes"):
+  in `http`, `workers` (and slice 11's components) every option that is not bootstrap is either a contribution to
+  `Http` (routes, wraps, sockets, hosts; writables where it changes at runtime) or a function the component calls per
+  use (`authenticate`, `headers`, a worker's `start`, `idleMs`), which the app backs with its own registries; nothing is
+  copied out of a contribution or an option at startup. Bootstrap stays base code, changed by a restart: the listen
+  address and port, the links path, the worker entry module with its `execArgv` and `env`, the host kind workers serve.
+  (R5, "agree") `workers.state` per address key: `{ status: "starting" | "running" | "stopping", pid, startedAt }` or
+  `{ status: "failed", error: { message, code?, reason? }, at, stderrTail? }`; no entry when stopped or never started
+  (a clean stop removes it); `failed` stays until Retry or a rollout; plain JSON (a core object may serve it).
+  (R6, "b, common enough") `bytes` may omit `size`: chunked transfer encoding, no ranges (no `Accept-Ranges`), `read`
+  called with growing offsets until it returns an empty chunk (a zip built on the fly, a growing log, an export paged
+  from a worker).
+  Spec review round 2 (Fable, Opus, Astra, Sol): (Q1, recommended) holders of a failed worker get `failed { waiting }`
+  with the stored error as cause and stay on the address's path: a later link of the address (Retry, a rollout) binds
+  them without a re-hold; a `get` waits its `readyTimeout` meanwhile.
+  (Q2, "a") A rollout that reaches workers clears the failures from before it, then calls `RouteHandle.retry` for the
+  cleared addresses that have holders (they start with the new code and are listed in the step); an unheld one starts
+  at its next hold; a worker that fails during this rollout stays failed (no loop: one start per held failed address per
+  rollout a person triggers).
+  (Q3, "a"; refines R1) A `stop`'s suspension lasts while the address has holders; they see `failed { waiting }`
+  ("suspended"); with the last holder the record goes, and a later hold starts the worker on demand (as after an idle
+  stop); whether an archived session may be opened is the app's (`authorize`, its views). Memory stays bounded.
+  (Q4, "a") The start timer (60 s) covers fork, lock and connect (`started`) only; after `started` a slow `load` is
+  objects showing `loading`; `ready` sets `state` to `running` and lets idle stops begin; a `load` that never ends
+  shows `starting` until `stop` (no kill, no retry).
+  (Q5, "a"; refines R3) A worker's idleness is `references`, `jobs`, `lingering` and the app's `busy`, not `calls`: a
+  remote call runs on a hold (counted), local calls come from routines (not counted, §14), jobs, Durable tasks (`busy`)
+  and handlers under a hold; no message per local call, no timer. The first report goes with `ready` (`ready { idle }`),
+  so a worker idle from its start is stopped too.
+  (Q6, owner: "if sockets are a contribution, why keep them when the contribution is removed?": design §17's rule, an
+  entry lives as long as its contributor and consumers keep nothing beyond a use) A plugin socket is closed (1012,
+  "service restart") when the contribution that handed it out leaves the table (a reload changing or removing it); a
+  `/chord` link or socket whose `Host` is no longer allowed closes (1008) when the allowed hosts change.
+- **Slice 11's points (owner, 2026-10-30; `slice-11.md`):** the surfaces are generic plumbing; the app keeps
+  everything visible (owner: "this one needs to be generic, so apps can do whatever they want, css, tui components,
+  themes"). (P1, "a") `chord/next/web` ships serving the surface (the base bundle, the plugins' web scripts,
+  stylesheets and assets, the page through the app's template, all as `Http` contributions), the browser's client host
+  with its connection loop, and loading and applying the plugins' web facets; not HTML, CSS, components, themes,
+  navigation, slots or layout.
+  (P2, "script tag") A plugin's web script is served as a file that registers itself
+  (`chordFacet("<plugin>", "<digest>", function (require, module, exports) { … })`) and is loaded with `<script src>`
+  under a `'self'` CSP: no `eval`, no `new Function`.
+  (Kinds, owner: "ya"; changes 7c's `createPlugins` options, built in slice 10) One definition per facet kind:
+  `kinds: { server: { platform: "node", hostPackages: [...names] }, web: { platform: "browser", hostPackages: [...] } }`
+  replaces `kinds` plus `browserKinds` and the component-wide `hostPackages` map. The platform decides the build (Node:
+  builtins and `chord.external` external, no CSS or `?url` assets; browser: CSS and assets collected, builtins and
+  `chord.external` refused); the names keep those imports external. The module objects are given where scripts are
+  evaluated: the server's own at `plugins.load(host, { kind, core, modules })`, a worker's in `workerMain`'s
+  `hostPackages`, a page's in `startPage`.
+- **Slice 10 build: plugin sockets get a heartbeat (owner, 2026-10-30: "does it make sense? then yes"):** the HTTP
+  component pings every plugin socket with WebSocket ping frames after 15 s of silence and terminates one silent for
+  30 s (the link heartbeat's numbers); browsers and `ws` answer pings by themselves, so plugin code is unchanged. A dead
+  peer (a phone that vanished) no longer keeps a plugin's resources (a terminal view) until TCP gives up.
+- **Origins only from relays (owner, 2026-10-31: "why would child links carry origin? the server keeps track of origin
+  per connection and relays that to workers"; slice 10 security audit, Opus K1/K2, a hole since slice 4a):** `origin`
+  is read only on parent and route links (where a relay's messages arrive); on a child link (a tab, a TUI) a message
+  carrying `origin` is a protocol error that closes the link; the server numbers each child connection itself, as it
+  does. Every link drops a per-origin record once it has no holds, no calls and nothing in flight (origins are never
+  reused). Was: honoured on every link, so a tab could invent origins, each with its own call window (5,120 concurrent
+  calls from one guest socket) and a record kept until the socket closed (about 1 KiB each). Supersedes design §3's
+  "`origin` is honoured on every link". Fixed in slice 10's fix round.
+- **Slice 10 fix round, worker errors in public (owner, 2026-10-31: "a"; refines R5):** two levels. Public (`workers.state`
+  and the holders' `failed { waiting }`): a `fatal` as the child's `redact` made it; a start error or a crash as a fixed
+  message with a code (`"worker failed to start"`, `"worker exited (SIGSEGV)"`); no stderr in `state`. Private: the full
+  error and the stderr tail go only to the server's `onError` (`worker_failed { address, error, stderrTail }`), the app's
+  logs to redact. Was: `state.stderrTail` and the raw start error, which leaked secrets to guests (security audit, Astra,
+  Opus H3).
+- **Slice 10 fix round, allowed hosts only through contributions (owner, 2026-10-31: "a, and we close everything that's
+  been removed"; refines R4):** the server option `allowedHosts` goes; the app contributes its hosts like any plugin
+  (fixed ones from its core facet, changing ones from a host-lifetime object's writable). Whatever is removed is closed
+  at once: when a host leaves the allowed set, or a plugin's contribution (its sockets) leaves the table, every link and
+  socket that came through it is terminated immediately (no graceful close the peer could ignore, Astra A1), its scope
+  sealed; an upgrade still authenticating is checked again against the current set and router before it is handed out
+  (Astra A2).
+- **The HTTP component's security baseline (owner, 2026-10-31: "this mechanism should come out of the box in http/app kit;
+  basically encode all the best practices so users never have to think about it again"; "yes"; p2's rules from
+  `hosts/principals.ts`, `hosts/server.ts`, `loopback-cookie.ts`, devices, sharing):** on by default in
+  `chord/next/http`. (1) Provenance: local only when the socket's local address is loopback, `Host` is a loopback
+  form with the port, and no `Forwarded`/`X-Forwarded-*` header; otherwise only an allowed host (https); else 403;
+  duplicate `Host` and absolute-form targets 403; `request.provenance` `{ kind: "local" } | { kind: "remote", host }`.
+  (2) Foreign requests (Fetch Metadata: `Sec-Fetch-Site` `cross-site`/`same-site`, or a frame another site embeds)
+  never reach `authenticate`: they run anonymous, except a top-level navigation (`GET`, `navigate`) to a route marked
+  `page: true`. (3) A foreign `Origin` is 403 on every request and upgrade; unsafe methods from a browser need `Origin`
+  equal to the app's; a route may opt out (`crossSite: true`, a webhook), then it always runs anonymous. (4) Default
+  headers on every response, the component's own included: `Cache-Control: no-store`, `nosniff`,
+  `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, a CSP with a per-server script nonce (`default-src 'none'`,
+  scripts `'self'` and the nonce, `connect-src` self and its WebSocket, `frame-ancestors 'none'` or the contributed
+  `framers`); a route widens its own CSP through its response headers. (5) `cookie(name, value, options)`: `HttpOnly`,
+  `Path=/`, `SameSite=Strict` (or `Lax`), `Secure` on a remote origin, signed with a given secret. (6) `bytes` and
+  `fileResponse` refuse foreign requests, are `attachment` unless the route says inline, and inline ones get a
+  `sandbox` CSP. The app decides only who someone is, which routes are pages, its extra CSP sources and its framers.
+  Replaces the CSRF question of the security audit; extends R4.
+  Relays (owner: "sure"): a contribution may declare `relays: [{ name, verify(request) => { origin, framer } |
+  undefined }]`; admission calls them for a request that would be refused for forwarded headers on loopback (p2's
+  Radius relay); a verified one gets `provenance: { kind: "relayed", relay, origin }` and its framer allowed for it,
+  an unverified one stays refused; `authenticate` decides its principal.
+- **The HTTP server is a native object (owner, 2026-10-31: "still unconvinced the server can't be a native object; it's a
+  singleton, unlikely to change"; supersedes D3 and the `httpServer` function of D1):** `chord.http`'s facet serves the
+  registry `Http` and a host-lifetime object whose native is the listener; its configuration (`HttpConfig`: port,
+  links path) and `Authenticators` are registries the app (or the app kit) contributes to. The facet is passed as the
+  same object at every reload, so the listener never closes before the process ends. The port opens right after
+  `load`'s publication (a few hundred milliseconds later than listening before `load`; a reconnecting tab retries).
+- **The app kit is opinionated (owner, 2026-10-31: "the app kit should be super duper opinionated and make for small
+  app code"; "i suppose"):** after slice 10's fix round and before slice 11, a design pass on `chord/next/app`: one
+  entry (`startApp`, `startWorker`), conventions for layout, hosts, principals, authentication, storage, plugins, web
+  and TUI, decided point by point; the slice 10 components are its inside. Inputs from the owner: user management is
+  part of it ("user management will also need to be a thing we support"), and app shapes without workers (server and
+  clients only: "a chat app doesn't need workers").
+- **Plugins import each other by name (owner, 2026-10-31: "i like it"; changes 7c's cross-plugin rule; **superseded** by "Contracts come from where the plugin's code came from", 2026-11-01):**
+  `import { Notes } from "@app/notes/contract"` resolves to the discovered plugin named `@app/notes`, its file
+  `contract.ts`, wherever its directory is (any root), copied into the importer's script as before (contracts and
+  side-effect-free files only; they may import only host packages and files of their own plugin); a missing plugin is
+  a build error naming it; relative paths into another plugin's directory are refused. Owner's notes for the app kit
+  pass: third-party plugins need the imported plugins' sources or types for type checking (publishing each plugin to
+  npm works but is unpleasant); plugins should be testable on their own, with their dependencies mocked.
+- **The HTTP core is a `fetch` handler; Chord's own Node server is the easy path (owner, 2026-10-31: "could http just plug
+  into hono/express?"; "we should still provide the easy path using just node's shit as well, for small apps or apps
+  where we don't care"):** the component builds one Web-standard handler, `(request: Request) => Promise<Response>`,
+  from `Http` (admission, the security baseline, router, wraps, descriptions), plus per-runtime upgrade adapters for
+  `/chord` and plugin sockets. The default is Chord's own listener, the native host-lifetime object of `chord.http`
+  over Node's `http` (decision "The HTTP server is a native object"); an app with its own server mounts the handler
+  (`hono.all("/*", (c) => http.fetch(c.req.raw))`, an Express adapter) and passes upgrades to the adapter. The same
+  routes then run on other runtimes later (Bun, Durable Objects, design §26 #16). Built in slice 10's fix round
+  (reworks `server.ts`, `request.ts`, `response.ts`; router, admission rules and descriptions stay).
+- **Slice 10 fix round, three small points (owner, 2026-10-31: "yes on fileResponse etc"):** (1) `fileResponse(path, {
+  root? })`: with a `root`, a file whose real path lies outside it (a symlink out) is refused 403; without one the path
+  is trusted (a plugin's own file). (2) The worker lock on macOS and the BSDs fails closed on a stale lock file, with an
+  error naming it (no takeover; Linux and Android use abstract sockets and are unaffected). (3) A route's overhead:
+  Opus's two trims, measured again after the `fetch` rework, and the numbers brought to the owner.
+- **Slice 10: a route's overhead accepted; no header accessor (owner, 2026-10-31: "1 yes, 2 no"):** after the `fetch`
+  rework and the Node fast path a route costs +20-21 µs over a plain Node handler on the standard bench, +12-13 µs warmed
+  (before the rework +4.5 µs): the request's scope (2.1 µs), URL parsing, admission and routing, the baseline's headers,
+  the scope's seal, and about 5 µs of Node's microtask machinery an async path triggers. Accepted against the 10% bar.
+  No `request.header(name)` accessor: an authenticator reading headers builds the Web `Request` (about 3.5 µs more).
+- **A CSP nonce per response (owner, 2026-10-31: "csp ok"; Fable's recheck):** the HTTP component makes a fresh script
+  nonce for every response (`request.nonce`), not one per server: a nonce read from one page cannot be reused by an
+  injected script elsewhere.
+- **Settings are arguments, extensions are registries (owner, 2026-10-31: "making that config a registry is dumb; it's a
+  general problem for all host-lifetime natives that need initialization at host startup"; "k"; supersedes the
+  `HttpConfig` registry of "The HTTP server is a native object"):** what the app decides once at startup (a port, frame
+  limits, a timeout, a data directory, which implementation to use) is an argument to the component's facet, which base
+  code constructs; the facet and its host-lifetime objects close over it; changing it is a restart; no plugin can
+  touch it. What plugins add while the app runs (routes, authenticators, tools, panels, more indexers) is a registry.
+  HTTP: `createHttp(host, { listen, links, closeTimeout, onError }, ctx)`; `Http` and `Authenticators` stay registries.
+  The same for the harness (its store and defaults as arguments; models, environments, extensions as registries) and
+  the app kit's components (a session index takes its indexer as an argument, and may also follow a registry of
+  indexers if plugins should supply them).
+- **API versions in the import path (owner, 2026-10-31: "this sounds about right"; "must be declared by the plugin in
+  code, we do not want to dig around package.json files anymore"):** the app's base code is internal except its API
+  modules, which it exposes as host packages with a version in the path (`@acme/app/v3`; Chord's
+  `@earendil-works/chord/next/v2`); the app lists the versions it still provides (an older one as the same module, or a
+  thin layer); an import of an unlisted version is a build error naming the available ones. No `package.json` field
+  and no npm ranges for this. Contracts and registry tokens inside an API keep their own versions. The rest of the
+  plugin model is a proposal (`docs/next/plugin-model/`).
+- **A schema package beneath pi-ai and Chord (owner, 2026-10-31: "i want the schema package"; "if we keep it a
+  dependency in pi-ai, we must be able to rip it out"; TypeBox is "horrible to treeshake"):** a small package with no
+  dependencies (working name `@earendil-works/schema`) under both pi-ai and Chord (siblings: neither depends on the
+  other): helpers returning plain JSON Schema, a structural `JsonSchema` type, `Static` from the helpers' literal
+  types, and a validator for general JSON Schema (tool schemas from MCP servers and extensions use `$ref`, `anyOf`,
+  `pattern`, ...), without `eval` or `new Function` (CSP-safe). Chord v2 drops TypeBox; pi-ai's core never imports
+  it (TypeBox schemas still pass as JSON Schema; TypeBox-typed extras only in an optional subpath, so ripping it out
+  is deleting that subpath). Not omptype (its validator compiles with `new Function`; its 10.7k lines are mostly
+  ArkType's API). Open: which validator (measure `@cfworker/json-schema` and TypeBox against the official
+  JSON-Schema-Test-Suite and Chord's argument checks first), and moving `Type` out of pi-ai's main export.
+  **Built** (owner, 2026-10-31: "clone pi add the package, done"; pi `fab2c53`): `packages/schema`,
+  `@earendil-works/pi-schema`: `compile(schema, { draft, formats, schemas })` with `check` (narrowing) and `errors`
+  (JSON Pointer paths), Chord-style builders typed with `Static`, formats as the opt-in `./formats` entry, leaf and regex
+  checks shared through weak caches (GC-tested); its own closure-compiled validator, chosen after measuring
+  (`/tmp/schema-measure.md`, Radius 01m69x3dz2fsg9k1r33vde7hv6): 2,222 of 2,223 core suite tests (TypeBox 2,200,
+  cfworker 2,167, omptype 1,522), Chord checks at 0.95-1.3x TypeBox's compiled speed and the same with `new Function`
+  blocked, 7.9 MB for 3,200 distinct schemas (cfworker 7.6, TypeBox 54.7), 8.5 KB gzip. Still open: switching Chord v2
+  and pi-ai to it (`Type` out of pi-ai's main export), formats on by default in pi-ai.
+- **The schema switch (owner, 2026-10-31):** TypeBox leaves Chord (v1 too: "remove typebox wherever we can"),
+  pi-ai, pi-agent-core and pi-durable; extensions must not break ("absolutely 100%"), proven by a guard over our own
+  extensions, built-in tools and generated arguments (verdicts, coerced arguments, provider payloads and inferred
+  parameter types identical; owner: "just use ours", no npm corpus). **Coercion lives in pi-schema** as an opt-in,
+  the superset of TypeBox's `Value.Convert` rules and pi-ai's own (TypeBox's rule first where they conflict):
+  `compile(schema, { coerce: true })` adds `coerce(value)` (a copy, never mutating) and `parse(value)` (`{ ok, value }
+  | { ok, errors }`); pi-ai uses it for every tool, whatever built the schema (so plain-JSON MCP tools gain the
+  TypeBox rules). **Error texts are pi-schema's own** (no mapping to TypeBox's wording). Extensions keep `Type`,
+  `Static`, `TSchema` from the coding agent's bundled TypeBox (the pi-ai they see is compat plus those); an extension
+  author type-checking against the published pi-ai no longer finds them there (accepted: "fine"). **`format` is an
+  annotation in Chord** ("no format check": no format module in Chord's or Durable's entries; pi-ai still checks
+  formats on tool arguments). **Chord's envelope check costs +10 to +100 ns per message** from untrusted links
+  (pi-schema reads fields by name from a list; no eval): accepted ("negligible"), no hand-written check.
+- **Contracts come from where the plugin's code came from (owner, 2026-11-01: "ok"; plugin model point 1, primer
+  `docs/next/plugin-primer/`; supersedes "Plugins import each other by name"):** a plugin carries the contract it was
+  written against, never the running app's newest file. The problem: by name, a third-party plugin's next build copied
+  the provider's newest `contract.ts` (version 2), so its version-1 code claimed version 2, `accepts` was never used
+  and it computed wrong results silently. Rule: (A) plugins that change together, the app's own in its repository or a
+  user's in one root, import each other by relative path (`../notes/contract.ts`), copied into the importer's script
+  and listed in `copied`; a copied file may import only host packages and files of its own plugin; a relative path
+  leaving its root (into base code or another root) is a build error pointing to the API or an npm dependency. (B)
+  Plugins that do not change together take contracts as an npm dependency at a fixed version, bundled at the installed
+  version (decision "A plugin's npm dependencies are bundled"); the provider serves it through `accepts` or the
+  consumer waits "contract mismatch". Which package carries the app's contracts is point 5. The by-name lookup and the
+  `tsconfig` path aliases go; built in the plugin slice (examples 35-38, fixtures, design §21, the plugins README, the
+  guide's chapter "Plugins Using Plugins").
+- **Plugins import only the app's versioned API; Chord is re-exported in it (owner, 2026-11-01: "makes sense";
+  plugin model point 2):** a plugin never imports Chord directly: Chord is not a host package plugins may name, so a
+  direct import is a build error pointing to the app's API. The app's API module per version (`@acme/app/v3`)
+  re-exports the Chord surface the app supports (contract and schema builders, `defineFacet`, `defineRegistry`, the
+  types plugins see) next to its own small part (host kinds, the principal type, `defineFacet` bound to it, core
+  contracts, registry tokens). One version number, the app's, describes everything a plugin gets from its host. The
+  process runs one Chord: an older API version still listed is a layer over today's Chord; when Chord breaks its
+  API it keeps its previous API as a compatibility module for a while, which the app's older version re-exports;
+  once that is dropped the app drops the version and old plugins fail at build naming the available versions.
+  Contracts are data and bind through `accepts` whatever Chord runs. One facet imports from one API version only
+  (checked at build). Only base code imports Chord directly. Bundling is slice 10's host packages: the version is part
+  of the name (`kinds.hostPackages` lists `@acme/app/v3`, `@acme/app/v2`), each process provides its own modules.
+- **The plugin model, points 3, 4, 5 and 8, imports and builds (owner, 2026-11-01, by voice: "yeah that checks out"; "lock the decisions on the
+  points which was discussed"; primer `docs/next/plugin-primer/`):**
+  (3) **Split by host kind, for the app and for plugins alike.** The app's API per version has a shared module
+  (`@acme/app/v3`: Chord's re-exported surface, host kinds, the principal type, `defineFacet` bound to it, contracts
+  and registries that cross hosts) and per-kind modules (`/v3/web`, `/v3/tui`, `/v3/server`, `/v3/worker` where
+  needed: UI components, registries and `local` contracts that live on that kind only). A plugin's contract files
+  mirror it: `contract.ts` (shared) and `contract.server.ts`, `contract.worker.ts`, `contract.web.tsx`,
+  `contract.tui.ts` as needed. A contract file mentions native things (React components, functions) only through
+  `import type`; at runtime it imports only the shared API and its plugin's data-only files (a hard rule). The build
+  checks every import by the file it resolves to: a per-kind file (`.web.` etc.) or per-kind API module only for that
+  kind, and a file importing a package the kind does not provide (React in a worker) refused. Shared UI between
+  plugins: a plain component through an imported file (inlined into the importer's script, frozen at its build), or
+  a registry when one live instance is needed (React contexts, a feature others embed).
+  (4) **Host kinds on registry tokens** are covered by placement: a token used on one kind lives in that kind's file,
+  so other kinds cannot import it; an explicit `hosts` marker only if a shared token must be limited later.
+  Registries version by hand: readers and writers work across versions through the token's version and the defining
+  plugin's `accepts`; no fingerprint for native values (decided earlier, unchanged).
+  (5) **Third parties get the app's contracts through its versioned API:** each built-in plugin keeps its contract
+  files; the API re-exports the ones the app promises (`export { Notes } from "../plugins/notes/contract.ts"`), so a
+  plugin built against `/v2` keeps v2's contracts; the others stay private. No per-area subpackages.
+  (Imports) **Plainly, with no resolution magic:** within one repository (a root, or a repository of several
+  plugins), relative paths to the files (`../notes/contract.web.tsx`); across repositories, the package name with its
+  exports (`@bob/notes`, `@bob/notes/web`), pinned in `dependencies` by an npm version or a git ref
+  (`github:bob/notes#<commit>`; npm's git dependencies, no registry publishing needed; a plugin in a subfolder of a
+  multi-plugin repository is cloned and linked by the plugins component, which npm cannot do). Rejected: one
+  specifier resolving to a sibling or an npm package depending on `dependencies` ("kinda magic"). Plugins are
+  installed from git by cloning a branch, tag or commit into a plugins root (as the coding agent's git packages).
+  (8, base code) **Base code shrinks to the API, bootstrap and a start-data facet:** the vocabulary (the versioned API modules,
+  host packages, never reloaded), bootstrap (creating hosts, opening the store, components such as `createHttp` and
+  `createWorkers`, which take settings and process values and return facets, their natives opened by Chord, passed as
+  the same object at every reload) and one small facet serving process values (start data, the opened store) as core
+  objects. Every implementation, the harness and the providers of core registries included, is a plugin in the app's
+  own root, loaded, reloaded and failing per plugin like any other; the app may mark its root required, so a core
+  plugin failing at startup is fatal. Built-in plugins follow the same rules as any plugin.
+  (Build) **No build hooks from plugins:** the server builds every plugin with one esbuild call from TypeScript source
+  (no `dist` needed; installs run with scripts off); what the build handles (TS, TSX, JS, JSON, CSS, assets and WASM
+  by URL) is the plugin's toolbox, generated files are committed; a CSS preprocessor or similar, if ever needed, is
+  enabled by the app per host kind, never by a plugin (a stranger's web plugin must not run code on the server).
+  To do: a skill and documentation for agents describing a plugin's layout, its contract files, imports and how the
+  host builds it. Open from the primer: (6) `testPlugin` with stub facets, (7) single-file plugins.
+- **Single-file plugins (owner, 2026-11-01: "agreed"; plugin model point 7):** a root may hold plain files named
+  `<name>.<kind>.ts(x)` (`hello.server.ts`, `hello.web.tsx`): files with the same first name are one plugin named
+  after it, one facet per file. The name must be a valid unscoped name; a collision with a directory plugin of the
+  same root is reported like any duplicate. No `package.json`, so no npm dependencies; it imports only the app's API
+  (host packages), no other files and no contract files for others; it may serve objects, define contracts for
+  itself inline and contribute to registries. When it needs more, it becomes a directory with the same name, which a
+  reload treats as the same plugin. The watcher's `set` mark covers files appearing and disappearing at a root's top.
+- **Testing a plugin alone (owner, 2026-11-01: "let's do that"; plugin model point 6):** `testPlugin(dir, { kind,
+  modules, stubs, start?, principal? }, ctx)` builds the plugin as production does and loads it on an in-memory host
+  of that kind with an in-memory store. A plugin depends on four things, each answered without a mocking framework:
+  the app's API and Chord are the real modules (definitions only); other plugins' and core objects are reached
+  through contracts, so the test passes stubs, ordinary facets serving those contracts with fake data; registries
+  the plugin contributes to are served by the helper, which collects the contributions for the test to read (a
+  registry it reads gets fake entries from a stub); process values come as fake start data. The result is a live host:
+  the test gets the plugin's objects, calls them, watches their state, and acts as any principal. A contract no stub
+  serves leaves its requests waiting `not_served`; the helper lists those names, so the test says what to stub.
+  Several hosts at once (a server plugin calling a worker) is a later, larger helper over memory links; the app kit
+  may ship stubs for its core contracts.
+- **The app kit, point 1: its shape (owner, 2026-11-01, by voice: "yeah"; app kit design pass):** the app's own
+  layout is fixed: `src/` with the API versions (`src/api/v3/`, per host kind as decided for the plugin model) and the
+  built-in plugins root (`plugins/`). The data directory is deployment configuration, outside the app: a `startApp`
+  option set by the app's own start script (no environment variables: owner, "no environment variables"), default a
+  dot directory named after the app in the home directory; it holds the store, the user's plugins root, logs and the
+  workers' data. The server is fixed (one per app, clients connect to it). Workers are a list of worker kinds the app
+  defines, each a host kind with the app's own params (sharding is the app's: a project, a tenant, a document; the kit
+  knows no sessions) and how to start it (entry, start data per address, principal, idle time: the workers
+  component's options); zero kinds is a server with clients only (a chat app).
+- **The app kit, point 2: principals and users (owner, 2026-11-01, by voice: "yeah I guess. just make it nice and
+  concise and easy to use and flexible"; "too opinionated might be a problem"):** three things kept apart. (1) The
+  principal is tiny (a kind and an id: it travels on every call and is part of objects' identity) and the app defines
+  its type; the kit requires only the variants it needs itself (the server and its worker kinds). (2) User data
+  (avatar, bio, availability) is ordinary app data in objects keyed by the user's id, never in the principal. (3)
+  Authentication turns a connection into a principal. The kit ships optional plugins: a users plugin storing accounts
+  with a profile schema the app supplies (a Slack-like profile or just a name), and authenticator plugins (device
+  pairing, invite links, an ephemeral one for an IRC-like "pick a name and you're in": a fresh id with the name, no
+  stored account, gone with the connection); an app picks, replaces or writes its own. Rejected: a fixed principal type
+  with roles.
+- **The app kit, point 3: authentication (owner, 2026-11-01, by voice: "yeah, I guess something like that"):** (a)
+  no owner by loopback alone (any local process or OS user could claim it): the start script prints a link with a
+  one-time token (as Jupyter), whose visit sets a signed `HttpOnly` owner cookie for that browser; drive-by requests
+  from pages in that browser stay blocked by the security baseline (foreign requests, also other localhost ports,
+  never authenticated; Host and Origin checks). (b) Deny by default, in the HTTP component itself (a change to slice
+  10's routes and sockets): a request without a principal is refused before plugin code unless its route or socket is
+  marked public (a landing page, a webhook, the ephemeral name login, which hands out a principal). Authenticators stay
+  the `Authenticators` registry, filled by the authenticator plugins the app chose; a session helper issues and revokes
+  sessions so authenticators do not each reinvent cookies and logout.
+  (c) Command-line clients (owner: "that sounds good"; the TUI client too) connect over the same WebSocket with a
+  token in a header (no Origin, no Fetch Metadata: not a browser request; the token decides): on the same machine an
+  owner token file in the data directory readable only by the OS user running the app; from another machine a device
+  pairing flow (the tool shows a code and a link, the owner approves in a browser, the tool stores the token), the
+  token a session like any other, listed and revocable.
+- **The app kit, point 4: storage (owner, 2026-11-01, by voice: "yeah, I suppose that sounds right"):** in the data
+  directory the server has one store; each worker has its own directory under its worker kind, named by its address,
+  with its store in it; the kit opens and closes them. Plugins never use paths of the data directory: their state is
+  in their objects' documents and tables; a plugin that needs raw files gets a subdirectory of its own, owned by one of
+  its objects.
+- **The app kit, point 5: plugins, files and export (owner, 2026-11-01: "okay", "yeah"):** two plugin roots: the
+  app's built-in `plugins/` (required: a plugin failing at startup stops the app with its error) and the user's in the
+  data directory (failures reported). Installs from git or npm into the user's root. One "apply changes" call builds the
+  dirty plugins and rolls them out to the server, then every running worker; the app exposes it as a button, a
+  command or an agent tool; changes are never applied by themselves. **Files:** the kit ships a files plugin, one owner
+  per address (`self.get(Files, { scope })`: `put`, chunked transfers for large files (design §23), a watchable
+  index, caps), its files in that worker's directory; apps build on it (p3's artifacts: versions, previews, sharing;
+  design §26 #17). Raw directories only where a real path is needed (a git checkout, a library writing its own
+  database), each owned by one object, under the worker's directory. **Export and import per address:** the store's
+  archive plus the worker's directory as one archive; importing it under another address copies or moves it.
+  Refines point 4 (storage): plugins use the files plugin instead of raw subdirectories of their own.
+- **Slice 11, P3: the base bundle and plugin scripts (owner, 2026-11-01, by voice: "yep, that sounds good"):** the
+  server builds one base bundle per client kind from an entry in the app's source (the app's web start code, its API
+  with the kind's module, Chord, React), content-hashed and cached by browsers forever; a change of base code reloads
+  the page (as a restart of the server). Plugin scripts: at page load the server serves the current set of the kind's
+  plugins as one combined file named by a hash of the set (one request, cacheable); while a page is open, a rollout's
+  changed plugins are fetched one script each. A fresh page makes two requests, an update downloads only what changed.
+  Rejected: a prebuilt base bundle shipped with the app (could disagree with the plugins' build).
+- **Slice 11, P4: new plugin scripts apply in place (owner, 2026-11-01: "yep, agree"):** a page's host reloads the
+  changed plugins per plugin (`host.reload`, as on the server): objects swap or restart, the UI re-renders from its
+  registries, keeping what is on screen (scroll, a half-typed message). A change of base code still reloads the whole
+  page. Rejected: reloading the page for every plugin change (p2's behaviour, which lost the screen on every agent
+  edit).
+- **Slice 11, P5: pages learn of new scripts through Chord (owner, 2026-11-01: "agree"):** the web component serves a
+  small object whose state is the current set of the kind's plugin scripts (names, digests, URLs); every page holds
+  it; a rollout publishes the new set without waiting for pages; each page gets one frame and fetches what changed;
+  after a reconnect the hold's snapshot brings the current set, so a page catches up on anything it missed. Rejected:
+  polling a manifest (p2: every 5 s while visible).
+- **Slice 11, P6: the connection loop (owner, 2026-11-01: "agree"):** p2's `keepConnected`: after a drop, reconnect
+  with a growing pause (250 ms to 5 s); try at once when the tab becomes visible, the browser comes back online or the
+  network changes; replace a socket open but silent; stop when the server reports an outdated protocol (the page
+  reloads) or the app's `canRetry` says no (a guest's share ended). References keep their last values and wait while
+  down, so the UI shows a banner from the connection state. A network reconnect, not a crash restart.
+- **Slice 11, P7: React bindings (owner, 2026-11-01: "we definitely want something like that"; p2's `useObject`,
+  `useReadable`, `useRegistry` in `runtime/web.tsx`):** an optional subpath (`chord/next/react`): `HostProvider`,
+  `useHold(Type, params)`, `useWatch(watchable)`, `useRegistry(R)`, `useRefState(ref)`; releasing holds on unmount,
+  and a component unmounted by a reload never counts as leaving (design §21). No components, no styling; non-React apps
+  never load it.
+- **Slice 11, P8: the terminal client always runs sandboxed (**superseded in part** by "The terminal's sandbox is a
+  child process", 2026-11-02: no longer a worker thread) (owner, 2026-11-01: "the terminal should always use the
+  sandbox approach"):** `chord/next/tui` is a Node client host that connects with a token (decision "The app kit, point
+  3", (c)), downloads the base bundle and the TUI plugin scripts from the server and runs the app's TUI entry, always
+  inside p2's sandbox: a permission-dropped worker thread with a bridge terminal, the trusted launcher outside it
+  holding the credentials, the terminal and local preferences. No unsandboxed mode, also for the owner's own server.
+- **Slice 11, P9: a terminal component scope, library-agnostic (owner, 2026-11-01: "yeah, sure"; p2's `TuiScope`
+  in `src/runtime/tui.ts`):** the counterpart of the React bindings: a scope tied to a component's life with `hold`,
+  `watch` and `registry`, releasing everything on dispose, calling one `changed` callback the app wires to its redraw
+  (one line with pi-tui; any library works). p2's retry with backoff for gone references is not carried over (v2
+  references wait and rebind by themselves). No pi-tui dependency.
+- **`chord.plugins` is a package's manifest of plugins, as pi's (owner, 2026-11-01: "yes"; slice 12 review, Opus H1;
+  refines "The plugin model ... imports and builds" (Imports) and `slice-12.md` §2, §5):** a package (npm, git, local)
+  declares the plugins it provides in its `package.json`, `"chord": { "plugins": ["./notes", "./search"] }` (globs and
+  exclusions as pi's `pi.extensions`); installing it picks up exactly those folders. Without the field discovery is
+  conventional: the package is one plugin when its top has facet files, else its subfolders with a `package.json`.
+  Depending on a plugin inside a multi-plugin repository is an ordinary dependency on the whole repository (npm version
+  or `github:bob/plugins#<commit>`, installed by plain npm), imported by path into it (`@bob/plugins/notes/contract.ts`)
+  or through its `exports`. Removed: the dependency form of `chord.plugins` (`"name": "github:...#ref:subfolder"`) and
+  its own clone-and-link installer (it could delete outside `node_modules`).
+- **Looks and themes (owner, 2026-11-02: "i suppose", then "do all the things"; proposal `docs/next/theming/`):**
+  shared components come from the app's per-kind API modules (one instance in the base bundle); looks are design
+  tokens, CSS custom properties on `:root` on the web, which the app's components and plugins' CSS read; plugins scope
+  their CSS with CSS modules (`*.module.css`); the terminal gets the app's components and a theme lookup by role. A
+  theme is data in one registry, `Themes`, shipped by the kit in its shared module with the code that writes the active
+  theme as CSS variables (web) and the lookup (TUI): a base set of roles the kit defines (accent, bg, fg, muted, error,
+  warning, success), apps may add roles; a user picks one dark and one light theme, the system preference chooses;
+  `web` extras may name fonts and assets of the plugin under the page's CSP. Plugins contribute themes; they cannot
+  change the app's base CSS or components. The open questions' recommendations taken.
+- **p3 meeting, 2026-11-02 (Mario and Armin; Armin's summary, relayed by the owner):** session sync: the session
+  repository talks to the server process to enumerate sessions; the session index in the server is updated by the
+  worker from events and sent to the server by RPC. Sync to R2 goes through Radius: Radius keys each session by id and
+  keeps its last sequence number, tells pi which sessions it has with their last sequence numbers (optimization: time
+  of last sync), and pi sends the delta commit log from that sequence number; R2 stores the SQLite file and the commit
+  log (SQLite DO to R2); sessions have an owner id. The index is a Chord table replicated like sessions; its entry is
+  updated only on a session metadata change, a session idle-state change and a subagent idle-state change. p3: each
+  host (server, worker, tui, web) has a kernel loading the plugins with contribution points via registries; p2's look
+  and feel made great; new session storage; hands (machine daemons) good, secure and connecting proactively.
+- **App kit naming and export (owner, 2026-11-02: "startApp > startServer?", "am i exporting an address? i'm exporting
+  the store a host created", "export should stop nothing before the export, it slots into the commit queue"; refines
+  slice 13):** `startApp` is `startServer` (the pair `startServer`/`startWorker`; an app always has one server).
+  `exportAddress`/`importAddress` are `exportData(address, path)`/`importData(path, address)`: the data a host created
+  (its store and files directory). Export stops nothing: a running worker exports its own store (`store.export()` holds
+  the commit queue while it reads, so the archive is one consistent point) and its finished files to the given path,
+  asked through a kit object on the worker; with no worker running, the server takes the worker's process lock (no
+  worker can start meanwhile) and reads the store itself. Import still takes the lock and refuses an address whose
+  directory exists (nothing is overwritten; replacing a session is delete, then import; a copy is an import under a new
+  address); registering the imported host in the app's index is the app's.
+- **p3 notes, 2026-11-02 (owner):** subagents may start with the main agent's context: `context: "inherit"` forks the
+  parent conversation (Durable's `conversation.fork`) at the last entry before the assistant message with the spawning
+  call; model, tools and location may differ; the tool's description names the cost (prompt cache only with the same
+  model). pi's `/tree` (in-session branches) is wanted for p3: proposed as forks inside the session's store (edit an
+  earlier message to fork, a branch list to switch; a full navigator and branch summaries later).
+- **Sync applies batches with the host stopped (owner, 2026-11-02: "sure"; sync example `60-session-sync`):**
+  `applyBatch` refuses while a host holds claims on the store; the sync layer stops the session's worker, applies,
+  restarts it. Usually nothing runs: Radius receiving uploads runs no host for a session it does not drive, and taking
+  a session back pulls before its worker starts. A live view of a replica (watching a session continue elsewhere) is a
+  later refinement: fewer pulls while watched, or a read-only view without the worker.
+- **The terminal's sandbox is a child process (owner, 2026-11-02: "yes"; refines "Slice 11, P8"; slice 11 recheck,
+  Opus E1, E2):** the hardened worker thread was escaped twice in one review round, because downloaded code shares
+  one JavaScript realm with Node's internals: E1 replaced `Set.prototype.has`, which the `require` allowlist used, and
+  `require("tty")` wrote raw to the terminal; E2 patched `EventEmitter.prototype.emit` and caught Node's real
+  `process` when Node emitted a warning on it (environment, `kill`, every builtin). Each fix closes one road and the
+  next reachable internal is another. So the sandbox is a child process of the launcher's Node binary: stdin, stdout
+  and stderr are pipes to the launcher (no descriptor is the terminal), its environment empty (only
+  `LD_LIBRARY_PATH` copied when the launcher has one: needed to run the same binary, set by the user), its directory
+  a private empty one, `--permission` with nothing granted (no file system, network, child processes, workers,
+  addons, inspector, WASI), `--no-experimental-sqlite` (SQLite opens files past the permission model, Node gist
+  https://gist.github.com/badlogic/a83cd80d0669dbcf77e029ac7b25ac96). Messages are length-prefixed binary frames on
+  the pipes, not Node's IPC. The JavaScript layer stays as a second barrier (evaluation only through the bootstrap,
+  the builtin allowlist, a frozen substitute `process`); the V8 code-generation toggle goes (the bridge evaluates
+  strings anyway). Known gaps, accepted until Node closes them: the child can signal the user's processes
+  (`process.kill`) and allocate memory outside its heap. Cost: one more Node process per terminal session (measured
+  by the build against the worker). Back to a worker only if Node ships per-worker permissions.
+- **Messages and languages in the app kit (owner, 2026-11-03: "i18n proposal is a go"; proposal `docs/next/i18n/`):**
+  text people read is translated per viewer, never per server. (1) **Messages in code, per plugin:**
+  `defineMessages(namespace, { en: {...}, de: {...} })` in the app's shared API returns a typed `t`; the first catalog
+  defines the keys and argument types, every other catalog must match them (a missing key or a wrong argument is a
+  type error); values may be functions (plurals, parameters in each language's order); dates and numbers through
+  `Intl` helpers (`formatTime`, `formatNumber`) in the viewer's locale. Named keys (`newNote`), the English catalog the
+  source of truth. A plugin keeps its messages in one shared file (`messages.ts`) every facet that renders imports.
+  (2) **Languages are contributions:** a `Translations` registry (`{ namespace, locale, messages, override? }`) in the
+  shared API; `MessagesOf<typeof t>` types a translation; a missing key falls back to the locale's base (`pt-BR` to
+  `pt`), then to the first catalog, key by key, reported once; two contributions for one namespace and locale: the first
+  by plugin name wins, the other reported; a plugin's own catalogs are its built-in contributions, `override: true`
+  replaces one. Contributions are per host, so a translation plugin keeps its catalogs in a shared file and contributes
+  them from each facet that renders (web, tui; server and worker facets only when they render final text, an email or
+  a push notification). Catalogs never cross links (they hold functions). (3) **The locale is a user preference**
+  (kept per principal like the theme choice), defaulting to the browser's `navigator.languages` or the system locale
+  in the terminal, matched against the locales the catalogs offer; switching re-renders live (`useMessages(t)` on the
+  web, the scope's redraw in the terminal), nothing reloads; the kit sets `lang` and `dir` on the page's root
+  (right-to-left through logical CSS properties, the app's components). (4) **Servers and workers send keys, not
+  text:** `t.message(key, ...args)` builds typed data `{ namespace, key, params }` (a `Message<"notes">`) for object
+  state, notices, tool summaries and errors shown to people (a code plus parameters); each client renders it with
+  `t.render` in its own language (checked at runtime across a link: an unknown key shows the key). Never translated:
+  the model's prompts and answers, log lines, error codes. No translator file format now; an export/import tool to JSON
+  when someone needs it. Built after slice 11 (carry-over "After slice 11").
+- **Chord v2 becomes the package's root (owner, 2026-11-03: "src/old", "subpaths", "yes", "yes", "no, chord is
+  wip"; for merging pi-private into pi this week; trial `/home/badlogic/chord-root-move/report.md`):** `src/next` is
+  the package's `src` (its main export), the Node parts `src/next-node` are `src/node` with short subpaths (`/http`,
+  `/workers`, `/plugins`, `/plugins/runtime`, `/app`, and slice 11's `/web`, `/web/server`, `/react`, `/tui`,
+  `/tui/launcher`), the shared foundations Durable and env use get their own subpaths (`/json`, `/watch`, next to
+  `/context`, `/delta`, `/sqlite`), `test/next` and `docs/next` move up (`test/`, `docs/`). Chord v1, which only p2
+  still runs on, moves to `src/old` (exported as `/old`, `/old/node`; its tests `test/old`, its docs `docs/old`), not
+  into p2 (its vitest tests and about 140 imports would need porting); it is deleted in the change that moves p2 to
+  v2. No version bump: Chord is work in progress. Done by a re-runnable script (move, import and link rewrites,
+  generated exports and aliases) on the base that includes slice 11; p2's imports updated in private.
+- **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
+  a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
+  each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
+  plugin may keep named packages external with an explicit list in its `package.json` (`"chord": { "external": [...] }`):
+  server and worker facets then load them from the plugin's `node_modules` (`createRequire`, as pi 1.0 loads extension
+  dependencies), native addons included; they stay in Node's module cache until the process ends, so a new version
+  takes effect after a restart. A browser or TUI facet importing an external package fails to build. Slice 7b
+  (the loader).
+- **The dependency model is decided (owner, 2026-10-29: "just build this"):** `packages/chord/docs/next/dependencies/model.md`
+  (explainer `book.md`, `index.html`) as decided, with its remaining four points taken as recommended: (1) the barrier
+  is (a), `load` resolves at the first outcomes of this host's host-lifetime objects (local blockers still in their
+  first attempt are waited for; waits on other hosts or failed dependencies end the first pass); (3) `waiting` is a new
+  `FailureCause` kind; (4) a pure swap whose new factory needs a missing dependency parks the object, no overlap of old
+  and new code; (5) a registry's last good value is kept only while every contribution it was built from is still in
+  the table. Supersedes R18's dependency deadline and backoff, S2's `broken` and S3's backoff, §7's throw for a missing
+  local type and getters' rejection, §21's `gone` on removal and its rollout `updating` deadline, the start barrier's
+  admission gate (holds wait only for the publication). Built as slice 7a (`slice-7a.md`); design.md is folded with
+  the build.
+- **Cycles across hosts: no probe, a diagnostic (owner, 2026-10-29: "yes"; dependency model, decision 6):** cycles stay
+  found as today: on one host by the walk over waiting edges at `self.get` (exact), across hosts by the activation chain
+  in holds (objects that start one after another). The remaining gap, a ring across hosts whose objects start at the
+  same moment, is not detected: under the dependency model, which has no dependency deadline, such a ring stays parked.
+  It is made visible: an attempt parked longer than its `readyTimeout` on a remote attempt that is itself only
+  `loading` is reported once per parking episode as `HostError` `parked_long { object, waitingFor, since }`; nothing
+  fails or retries. A cycle is a plugin bug (owner: "if no plugin bug, we don't need it"); the guide's rules for plugin
+  authors and agents: (1) a factory declares only what the object needs, never a type that needs it back; (2)
+  back-references and occasional lookups go into methods and routines (`ctx.get`); (3) data flows up through state and
+  registries, not mutual `self.get`; (4) host-lifetime objects on the server never declare worker types in their
+  factory. Rejected: the probe (edge-chasing searches with a check along the recorded trail, `/tmp/model/review*`,
+  seven review rounds; complete only with a re-search timer or a full search lifecycle, the most intricate code in
+  Chord for a plugin bug) and the slice 4b timeout narrowed (it polls chains across hosts again, misses a ring of
+  waiting attempts, and retries in lockstep without finding the ring). Supersedes slice 4b review decision (2)'s
+  timeout once the dependency model is built (slice 7); folded into design §6 with it.
+- **Getters wait through `waiting` (owner, 2026-10-29: "(b) with a default seems fine; UI stays responsive anyways
+  because it usually holds instead of get"; dependency model, decision 2):** `host.get`, `ctx.get` and `host.registry`
+  wait while the reference is `loading`, `failed { transient }` or `failed { waiting }`, bounded by their
+  `readyTimeout` (default 60 s; callers choose their own), and reject at the deadline with the last cause; only
+  `failed { broken }` rejects at once. Calls stay as they are: on a `loading` reference they park, bounded; on a
+  `failed` one (any cause) they reject at once. A UI holds (`host.hold`) and shows `ref.state`; code that needs the
+  object now gets it. Reviewers (`/tmp/model/stw-*.md`): Fable (b, calls included), Opus (a, plus a `whenLive`
+  helper), Sol and Astra (c: callers park until their own context aborts, with caller deadlines and caps on pending
+  calls; (b)'s default deadline is that cap). Sol's p2 note: cleanup in a `finally` after an abort needs its own
+  bounded context, not the aborted one.
+- **Only hosts with an address serve remote types (owner, 2026-10-29: "b"):** a host serving a `remote` type needs an
+  address and a principal; `load` refuses a facet that serves one on a host without an address (until now a host with
+  a principal but no address served remote types and placed every one of them "here"). So "here" is decided by the
+  address alone, as the host address of the type. Holds carry their `address` always (required on the wire).
+- **`hostAddress` instead of `placement` (owner, 2026-10-29: "yes, rename"):** the field of a `remote` contract that
+  computes where its object lives is `hostAddress: (params) => Address` (it returns the address of the host that serves
+  the object, the vocabulary of `createHost({ address })`, routes and holds); supersedes the name of "`placement`, not
+  `host`" (2026-10-21). The error reason `invalid/placement` is `invalid/host_address`; the internal module that decides
+  where a request goes (`host/placement.ts`, `Placement`) is `host/destination.ts`, `Destination`. Earlier entries' and
+  slice specs' "placement" reads "host address"; they keep their wording as history.
+- **Every remote type declares its placement (owner, 2026-10-29: "yes, let's remove it"):** `placement` is required in
+  `remote()` (a type error without it, and a declaration error at runtime); a remote type without placement, a leftover
+  of slice 3a (remote objects over one link, before host kinds in 4a), is gone, and with it the fallback "here if served
+  here, otherwise the parent" and its re-placement at the first parent link. Every remote request is placed by its
+  address alone (dependency model, `packages/chord/docs/next/dependencies/`). Tests and examples get `placement: () =>
+  Server()` or their own host kind.
+- **No client providers for now (owner, 2026-10-28: "yeah, no client providers for now"; reviews
+  `/tmp/barrier-{astra,fable,opus,sol}.md`):** clients stay unaddressable and serve only `local` types (design §3).
+  Client-side capabilities (a phone's camera, clipboard, a page's WebMCP tools) go through an owner's state, as the
+  Questions service: a tool asks an owner store (`request`, `wait`), clients watching its open requests carry them out
+  and answer with a method call (the answer is method arguments, checked against the owner's schema; bytes as `bytes()`
+  leaves, chunked if large); a client may advertise the tools it can run to such a store, tied to its presence. Why:
+  a client as a provider would feed untrusted results, state and ops into server and worker objects (consumers never
+  validate them), needs client addresses, routing down through relays and a principal for clients; the owner pattern
+  needs nothing new in Chord and survives link drops and several devices by the owner's rule.
 - **Design audit of slices 1-6a (owner, 2026-10-27; `/tmp/design-audit-{opus,sol}.md`):** the built code follows the
   design except for five bugs, fixed after 6b's commit with the auditors' reproductions as tests: on a failed
   activation references are released after the natives closed (§6, §13); a dependency going live while the dependent
@@ -2132,6 +2837,81 @@ validation and copies the v2 kernel added around Delta.
   descriptions on the wire (the `describe` message kind of R1 and the per-link description cache go away), R3 is moot,
   the coverage check across fingerprints of one version is gone.
 
+## Simplification audit (2026-10-30)
+
+The owner asked, after slice 7b's seven fix rounds, how many other mechanisms serve a rare case at a high cost. Audits
+by Opus and Sol (`/tmp/audit-{opus,sol}.md`) and this session; each item decided by the owner with its code and case.
+
+- **A1, `installing` is cut (owner, 2026-10-30: "cut"):** model §1's state for a hold or request that does not fit the
+  running code while a reload stages: staging is synchronous (`stagePlugins`, `recordFactory`), so no message or caller
+  can arrive while it runs (the only test reached it from a factory calling back into the host). The `Serving` kind, the
+  host's map, `Hold.start`'s branch and the test go. During the app's bundling before `host.reload` the old code
+  answers a mismatch `failed { waiting }` until the commit wakes the request (model §5's accepted gap). Supersedes
+  model §1's `installing` row and design §21's installing sentences.
+
+- **A2, static registry cycle edges are cut (owner, 2026-10-30: "yeah cut"):** the edges a contribution of another
+  registry's value recorded (`RegistryEdge`, `#reads` counts, `assertNoCycle`, `#reaches`, an attempt's pending edges,
+  staging's edges) go; the runtime guard stays (a registry read while it composes throws `invalid/cycle`; the
+  contribution that read it is left out and reported `contribution_failed`). A ring of registries is caught at its first
+  composition instead of at `self.contribute`: the contributing object goes live, the rest of the registry works.
+  Supersedes slice 8's "a cycle of registries reading each other refused when the second one serves or contributes".
+
+- **A3, routine calls keep their ops (owner, 2026-10-30: "keep"):** `self.on` handlers keep `{ value, ops, retired }`
+  with the routine's own folding (`PendingOps`, the basis after a throw).
+
+- **A4, cross-host activation chains stay (owner, 2026-10-30: "yep keep"):** they catch the common, sequential form of a
+  cross-host dependency ring (one request whose activation creates the other side) with an immediate `invalid/cycle`
+  naming the path; `parked_long` stays the slow net for the rare simultaneous race.
+
+- **A5, retry propagation by a hop budget (owner, 2026-10-30: "b if correct"):** `ref.retry()` still passes on from a
+  parked object to its failed dependencies (model §3.7), but its dedupe is simpler: on one host one retry's walk keeps a
+  visited set (a diamond retries a shared dependency once); across links the `retry` message carries a hop budget (an
+  integer, 16 from the first host, one less per host, dropped at 0) instead of the operation id (uuidv7), the objects'
+  last-8 remembered ids and the `through` list. Bounded effects, both harmless: a diamond across hosts may send a shared
+  dependency two retries (the second meets it activating and is ignored, or starts one more attempt if the first
+  already failed); a waiting ring across hosts (the undetected simultaneous cycle) passes the retry round until the budget
+  runs out, starting no attempt (parked objects only pass it on). Instance ids stay (activation chains, A4).
+
+- **A6, staging factories against a recording `self` stay (owner, 2026-10-30: "keep"):** a throwing new factory keeps
+  rejecting the whole reload (the host stays on its old code), and each object's fate is decided from its recorded
+  declarations before the commit.
+
+- **A7, registry last-good with provenance stays (owner, 2026-10-30: "a").**
+
+- **A8, deferred job-state persistence keeps its held ops (owner, 2026-10-30: "keep").**
+
+- **A9, a pure swap sends holds a fresh `bound` (owner, 2026-10-30: "simplify"):** a hold over a link whose object
+  swaps in place gets a fresh `bound` (one snapshot of its members), the path a restart, a variant change and a version
+  change already take, instead of a re-subscription with `[["r", value]]` per changed member (`Hold.#rebound`, its
+  constant-to-source and failed-member cases, `currentOf`). A tab's watchers may get one frame for an unchanged member;
+  nothing is lost or stale. Supersedes design §21/§22's per-member `r` rule for holds after a swap.
+
+- **A10, one rule after a live failure (owner, 2026-10-30: "simplify"):** every member of a failed live instance keeps
+  being followed (references and holds) until the commits it admitted published (`documents.settled()`), then all stop:
+  the restarts' rule. The "own" against "foreign" split (`#follows === "own"`, `Attempt.owns` and its mapping-derive
+  case, `Hold.#stopForeign`) goes; a re-exposed member of another object may show one more change in that window.
+  Refines 6a's build-review rule "members following another object's sources freeze at once".
+
+- **A11, `parked_long` widened (owner, 2026-10-30: "widen"):** reported once per parking episode when an attempt has been
+  parked longer than its `readyTimeout`, whatever its blocker (the first in declaration order named, with its state);
+  the remote-loading condition, `heldOnLink` and the clock restart at a link go. Also covers a cross-host ring one of
+  whose members waits on a failed dependency. Supersedes decision 6's narrow condition.
+- **A12, the routine fence token folds into the seal (owner, 2026-10-30: "fold"):** one seal token per attempt; after a
+  swap the old routine calls get `closeTimeout` to finish, then the whole old attempt is sealed (its method calls had
+  the same bound). `RoutineContext.fence` and the token choice per transaction go. Supersedes slice 7b decision 4's
+  separate token.
+- **A13, the table version fence stays (owner, 2026-10-30: "keep"):** an old call stuck past a restart's drain never
+  issues SQL against a migrated table (which would stop the store and close the host).
+- **A14, key pins keep their hand-over between instances (owner, 2026-10-30: "keep").**
+
+- **A15, keyed members across objects stay, with their versioning (owner, 2026-10-30: "keep essential"):** they fill
+  the gap P3 creates (a view with params following one entry of a persisted store live); the alternatives (a singleton
+  map, a method) are weaker.
+
+Summary: cut A1 (`installing`), A2 (static registry cycle edges); simplified A5 (retry hop budget), A9 (a fresh `bound`
+after a swap), A10 (one rule after a live failure), A11 (`parked_long` widened), A12 (one seal token); kept A3, A4, A6,
+A7, A8, A13, A14, A15.
+
 ## Portability boundaries in the kernel
 
 From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel because they cost little and help tests:
@@ -2183,7 +2963,7 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
 
 - **Per host:** load (bundle; a load error rejects) → staging (run the facet setup and every live object's new factory
   with a recording `self`, declarations only, nothing activated; a throw rejects) → commit (atomic) → after.
-- **Rollback is all-or-nothing per host:** any load or staging error leaves the host entirely on its previous code.
+- ~~**Rollback is all-or-nothing per host:**~~ (**superseded** by "Per plugin at startup and reload", 2026-10-30) any load or staging error leaves the host entirely on its previous code.
   A host is completely at revision R or R−1, so status per host suffices.
 - **Pure objects** (**superseded in part** by R15 (old code touching a document migrated past its version throws)) (no `self.open`, old or new) are swapped in place: new methods and derives; documents, references
   and jobs stay; routines restart serialized; new references become live; then the object's gate opens. Running calls
@@ -2231,7 +3011,7 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   beyond a use (a pinned Durable phase holding an old table is fine). Natives reach other plugins only this way: no
   `opaque` members, no natives in method results. What a native's old value does after its owner restarts is the
   owner's `close` (a model runtime keeps working until collected; a closed SSH connection fails its in-flight `exec`).
-- **HTTP is an optional Chord component** (`@earendil-works/chord/next/http`): a route gets a plain request summary
+- **HTTP is an optional Chord component** (**superseded in part** by "Slice 10's points": `html` instead of `page`, request bodies through `json`/`body`, authentication one app hook, plugin sockets instead of a channel component until a second user) (`@earendil-works/chord/next/http`): a route gets a plain request summary
   (method, path params, query, principal, selected headers; parsed and capped JSON bodies; uploads handed over in
   chunks) and returns a response description (`json`, `page`, `bytes` with `size`, `mime` and `read(offset, length)`,
   `redirect`, `error`). The component does ranges (206/416), HEAD, download headers, streaming, abort on disconnect and
@@ -2326,6 +3106,16 @@ Everything else from earlier lists is decided (see the entries above and `packag
 - **Future goal: deploy Chord apps to Cloudflare Durable Objects and similar platforms.** Hot reload there is not
   needed; composition through plugins is (plugin set fixed at deploy). Research in `research/chord-on-durable-objects.md`.
 - Deferred until a concrete case: jobs as objects and where a flow lives (when login is ported); project plugins.
+- **Chord from code mode scripts** (owner, 2026-10-30: "something we want"; p3): the agent's code mode scripts get a
+  Chord call scope (`host.root`) to call objects and change things: `chord.get("notes.store", {})` by name, every
+  argument checked by the provider's closed schema. Needs, to design with p3: a principal for the agent (acting as who
+  runs the session, so views apply their authority; never the owner's powers in a guest's session), a by-name `get`
+  and a list of served contracts with their members and schemas (the agent's declarations), values crossing the
+  sandbox boundary as plain data, the scope sealed when the script ends.
+- **Every object may contribute** (owner, 2026-10-29: "note it down as something to consider for the future; can be
+  changed later without a need for migrations"): lift R21 so objects with params and `remote` objects contribute too;
+  the entry lives while the object is live, its identity is the object's (type, params, principal key); `contribute`
+  on every `self`. Not decided; R21 stands.
 - p3 domain points (decided per domain when p3 is designed): `SessionFiles {session}` (proposed), session delete,
   connection pools, config files with a single writer, file formats as versioned interfaces, the terminal host
   process as a revision artifact.

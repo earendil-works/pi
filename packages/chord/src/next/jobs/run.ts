@@ -32,7 +32,11 @@ export type AnyOutcome = Outcome<JsonValue, unknown, JsonValue | undefined>;
  */
 export type Phase = "pending" | "running" | "stopped" | "finishing" | "blocked";
 
-/** Why a run is blocked: its `finish` failed five times in a row, or it was stored by another job version (slice 7). */
+/**
+ * Why a run is blocked: its `finish` failed five times in a row, or its version is not the code's (stored by another
+ * job version or fingerprint, of a newer version or an older one without an adapter, or of a job the code no longer
+ * declares, slice 7b §8).
+ */
 export type BlockedReason = "finish_failed" | "version";
 
 /** How a run settled for its waiters. */
@@ -46,10 +50,17 @@ type Waiter = { readonly settle: (settled: Answer) => void };
 /** One run: changed only by its job, inside its transactions' commit steps (records) and after them (actions). */
 export class JobRun {
 	readonly id: string;
+	/** The job version it was started with: it keeps it across reloads (slice 7b §8). */
 	readonly version: number;
+	/** The fingerprint of its job version (a persisted run's record keeps it). */
+	readonly fingerprint: string;
 	readonly key: string | undefined;
 	readonly args: JsonValue;
 	readonly handle: Run<AnyOutcome>;
+	/** Its args and outcome mapped forwards to the job's current version (once per run and version), when older. */
+	mapped: { readonly version: number; readonly args: JsonValue; outcome?: AnyOutcome } | undefined;
+	/** A persisted run blocked for its version at its load: the phase its record had, resumed when unblocked. */
+	blockedPhase: Phase | undefined;
 	/** Its current invocation, from its reservation (or its start in memory) on; a later one replaces it. */
 	invocation: Invocation | undefined;
 	phase: Phase;
@@ -74,6 +85,7 @@ export class JobRun {
 	constructor(
 		id: string,
 		version: number,
+		fingerprint: string,
 		key: string | undefined,
 		args: JsonValue,
 		phase: Phase,
@@ -81,6 +93,7 @@ export class JobRun {
 	) {
 		this.id = id;
 		this.version = version;
+		this.fingerprint = fingerprint;
 		this.key = key;
 		this.args = args;
 		this.phase = phase;
@@ -90,11 +103,12 @@ export class JobRun {
 	}
 
 	/**
-	 * Its `running` entry for its current record and `state` (the job's state document, `undefined` without one): a
-	 * pending or stopped run shows as `running` (it runs, or will run again).
+	 * Its `running` entry for its current record, `state` (the job's state document, `undefined` without one) and
+	 * `args` (mapped forwards for an older version): a pending or stopped run shows as `running` (it runs, or will run
+	 * again).
 	 */
-	entryFor(state: JsonValue | undefined): JsonValue {
-		const { id, version, key, args, phase } = this;
+	entryFor(state: JsonValue | undefined, args: JsonValue): JsonValue {
+		const { id, version, key, phase } = this;
 		if (phase === "blocked") return { id, version, phase, reason: this.blocked! };
 		return {
 			id,

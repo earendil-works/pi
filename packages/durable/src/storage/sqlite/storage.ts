@@ -4,6 +4,7 @@ import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "@earendil-work
 import { StorageRequestError } from "../../errors.ts";
 import { idFromNumber, seqFromNumber } from "../../ids.ts";
 import type {
+	CommitResult,
 	ConversationId,
 	ConversationQuery,
 	ConversationRecord,
@@ -148,6 +149,31 @@ const writeId = (write: StorageWrite): Id<string> | undefined => {
 	}
 };
 
+/** Whether a database call of the checks failed, whatever it threw or rejected with. */
+type CheckCalls = { failed: boolean };
+
+/**
+ * `executor`, setting `calls.failed` when one of its calls throws, synchronously (a synchronous driver) or by
+ * rejecting, with any value: then a failing check is the database's, not one of Durable's own.
+ */
+function watchCalls(executor: SqliteExecutor, calls: CheckCalls): SqliteExecutor {
+	const watched = async <T>(call: () => Promise<T>): Promise<T> => {
+		try {
+			return await call();
+		} catch (error) {
+			calls.failed = true;
+			throw error;
+		}
+	};
+	return {
+		exec: (sql) => watched(() => executor.exec(sql)),
+		run: (sql, ...params) => watched(() => executor.run(sql, ...params)),
+		runCounted: (sql, ...params) => watched(() => executor.runCounted(sql, ...params)),
+		get: (sql, ...params) => watched(() => executor.get(sql, ...params)),
+		all: (sql, ...params) => watched(() => executor.all(sql, ...params)),
+	};
+}
+
 /** Portable SQLite implementation of the Pico storage contract. */
 export class SqliteStorage implements Storage {
 	private readonly db: SqliteDatabase;
@@ -184,31 +210,89 @@ export class SqliteStorage implements Storage {
 		}
 	}
 
-	async commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, _context: Context): Promise<Seq> {
+	/**
+	 * Commit `batches` in one SQL transaction, each with its own seq. Each batch is checked before it writes anything,
+	 * against the state the earlier ones left, and the first one refused ends the batch: the transaction commits the ones
+	 * before it. No savepoints, which Durable Objects do not allow: the checks run before the writes instead.
+	 */
+	async commit(
+		batches: readonly (readonly StorageWrite[])[],
+		receive: (index: number, seq: Seq) => void,
+		_context: Context,
+	): Promise<CommitResult> {
 		this.assertOpen();
-		const documentActions = this.prepareDocumentActions(writes);
-		const candidateNextId = this.candidateNextId(writes);
-		const seq = await this.db.transaction(async (transaction) => {
-			const metadata = await transaction.get<MetadataRow>(
-				`SELECT next_id, next_seq FROM ${this.schema.tables.durableMetadata} WHERE singleton = 1`,
-			);
-			if (metadata === undefined) throw new Error("Durable SQLite metadata is missing");
-			const committedSeq = seqFromNumber(metadata.next_seq);
-			await this.checkGlobalIds(transaction, writes);
-			await this.checkDocumentActions(transaction, documentActions);
-			for (const write of writes) await this.applyTableWrite(transaction, write, committedSeq);
-			await this.applyDocumentActions(transaction, documentActions, committedSeq);
-			await transaction.run(
-				`UPDATE ${this.schema.tables.durableMetadata} SET next_id = ?, next_seq = ? WHERE singleton = 1`,
-				String(Math.max(Number(metadata.next_id), candidateNextId)),
-				committedSeq + 1,
-			);
-			return committedSeq;
+		const seqs: Seq[] = [];
+		let refused: { readonly error: unknown } | undefined;
+		let candidateNextId = this.nextId;
+		await this.db.transaction(async (transaction) => {
+			const metadata = await this.readMetadata(transaction);
+			let next = metadata.next_seq;
+			// Whether a database call of a batch's checks failed: then the failure is an unknown outcome, not a refusal.
+			const calls: CheckCalls = { failed: false };
+			const checked = watchCalls(transaction, calls);
+			for (const writes of batches) {
+				let documentActions: Map<DocumentId, DocumentAction>;
+				// Only Durable's own checks refuse a batch, before it wrote anything: the ones before it stand. A failure of
+				// the database rejects the call, and rolls back the batches before it with the transaction.
+				calls.failed = false;
+				try {
+					documentActions = this.prepareDocumentActions(writes);
+					await this.checkBatch(checked, writes, documentActions);
+				} catch (error) {
+					if (calls.failed) throw error;
+					refused = { error };
+					break;
+				}
+				const seq = seqFromNumber(next++);
+				await this.applyBatch(transaction, writes, documentActions, seq);
+				seqs.push(seq);
+				candidateNextId = Math.max(candidateNextId, this.candidateNextId(writes));
+			}
+			if (seqs.length > 0) {
+				await this.writeMetadata(transaction, Math.max(Number(metadata.next_id), candidateNextId), next);
+			}
 		});
 		this.nextId = Math.max(this.nextId, candidateNextId);
-		// `COMMIT` returned: the batch is durable.
-		adopt(seq);
-		return seq;
+		// `COMMIT` returned: the stored batches are durable.
+		for (const [index, seq] of seqs.entries()) receive(index, seq);
+		return refused === undefined ? { stored: seqs.length } : { stored: seqs.length, refused: refused.error };
+	}
+
+	private async readMetadata(executor: SqliteExecutor): Promise<MetadataRow> {
+		const metadata = await executor.get<MetadataRow>(
+			`SELECT next_id, next_seq FROM ${this.schema.tables.durableMetadata} WHERE singleton = 1`,
+		);
+		if (metadata === undefined) throw new Error("Durable SQLite metadata is missing");
+		return metadata;
+	}
+
+	private async writeMetadata(executor: SqliteExecutor, nextId: number, nextSeq: number): Promise<void> {
+		await executor.run(
+			`UPDATE ${this.schema.tables.durableMetadata} SET next_id = ?, next_seq = ? WHERE singleton = 1`,
+			String(nextId),
+			nextSeq,
+		);
+	}
+
+	/** Durable's own checks of one batch, copy resolution included, before it writes anything. */
+	private async checkBatch(
+		executor: SqliteExecutor,
+		writes: readonly StorageWrite[],
+		documentActions: Map<DocumentId, DocumentAction>,
+	): Promise<void> {
+		await this.checkGlobalIds(executor, writes);
+		await this.checkDocumentActions(executor, documentActions);
+		await this.resolveCopies(executor, documentActions);
+	}
+
+	private async applyBatch(
+		executor: SqliteExecutor,
+		writes: readonly StorageWrite[],
+		documentActions: ReadonlyMap<DocumentId, DocumentAction>,
+		seq: Seq,
+	): Promise<void> {
+		for (const write of writes) await this.applyTableWrite(executor, write, seq);
+		await this.applyDocumentActions(executor, documentActions, seq);
 	}
 
 	async mintId<I extends Id<string>>(): Promise<I> {
@@ -863,33 +947,39 @@ export class SqliteStorage implements Storage {
 		);
 	}
 
+	/** Resolve each copy to a base of its source's state before this batch, which may not change the source. */
+	private async resolveCopies(executor: SqliteExecutor, actions: Map<DocumentId, DocumentAction>): Promise<void> {
+		for (const [id, action] of actions) {
+			if (action.copy === undefined) continue;
+			try {
+				const stored = await this.materializeDocument(executor, action.copy.id, action.copy.at);
+				if (stored === undefined) throw new Error(`Fork source document ${action.copy.id} cannot be read`);
+				const create = action.create!;
+				if (
+					stored.record.scope.kind !== "conversation" ||
+					create.scope.kind !== "conversation" ||
+					stored.record.kind !== create.kind ||
+					stored.record.key !== create.key ||
+					stored.record.history !== create.history ||
+					stored.record.fork !== create.fork
+				) {
+					throw new Error(`Fork source document ${action.copy.id} does not match the copied record`);
+				}
+				action.content = { kind: "base", version: stored.version, value: stored.value };
+			} catch (error) {
+				throw new Error(`Document copy ${id} was rejected`, { cause: error });
+			}
+		}
+	}
+
 	private async applyDocumentActions(
 		executor: SqliteExecutor,
 		actions: ReadonlyMap<DocumentId, DocumentAction>,
 		seq: Seq,
 	): Promise<void> {
 		for (const [id, action] of actions) {
-			let content = action.content;
-			if (action.copy !== undefined) {
-				try {
-					const stored = await this.materializeDocument(executor, action.copy.id, action.copy.at);
-					if (stored === undefined) throw new Error(`Fork source document ${action.copy.id} cannot be read`);
-					const create = action.create!;
-					if (
-						stored.record.scope.kind !== "conversation" ||
-						create.scope.kind !== "conversation" ||
-						stored.record.kind !== create.kind ||
-						stored.record.key !== create.key ||
-						stored.record.history !== create.history ||
-						stored.record.fork !== create.fork
-					) {
-						throw new Error(`Fork source document ${action.copy.id} does not match the copied record`);
-					}
-					content = { kind: "base", version: stored.version, value: stored.value };
-				} catch (error) {
-					throw new Error(`Document copy ${id} was rejected`, { cause: error });
-				}
-			}
+			// Copies are resolved to their content by `resolveCopies()`.
+			const content = action.content;
 			let record: DocumentRecord;
 			if (action.create !== undefined) {
 				record = {

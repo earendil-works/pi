@@ -8,7 +8,6 @@ import {
 	fauxText,
 	fauxToolCall,
 	type ToolResultMessage,
-	Type,
 } from "@earendil-works/pi-ai";
 import {
 	defineTool,
@@ -21,6 +20,7 @@ import {
 	ToolResultEntry,
 	ToolTask,
 } from "@earendil-works/pi-durable";
+import { nul, num, obj } from "@earendil-works/pi-schema";
 import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { createBashTool } from "../src/tools/index.ts";
@@ -28,14 +28,14 @@ import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.
 import { addHooks, addTool } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 
-const Count = Type.Object({ count: Type.Number() });
+const Count = obj({ count: num() });
 
 /** A tool that returns `result`, with `extra` such as a schema. */
 function returning(name: string, result: ToolExecutionResult, extra: Partial<ToolRegistration> = {}): ToolRegistration {
 	return defineTool({
 		name,
 		description: name,
-		parameters: Type.Object({}),
+		parameters: obj({}),
 		execute: async () => result,
 		...extra,
 	});
@@ -55,7 +55,7 @@ async function nested(setup: ChatSetup, name: string): Promise<NestedToolExecuti
 		defineTool({
 			name: "probe",
 			description: "probe",
-			parameters: Type.Object({}),
+			parameters: obj({}),
 			execute: async (_args, api, callContext) => {
 				received = await api.executeTool(name, {}, callContext);
 				return {};
@@ -132,17 +132,14 @@ describe("structured output", () => {
 	it("stores exactly what callers and events get, without the model's output, and keeps a stored null", async () => {
 		const setup = chatSetup();
 		addTool(setup.registry, returning("plain", { output: [{ type: "text", text: "a" }] }));
-		addTool(
-			setup.registry,
-			returning("nothing", { structuredOutput: null }, { structuredOutputSchema: Type.Null() }),
-		);
+		addTool(setup.registry, returning("nothing", { structuredOutput: null }, { structuredOutputSchema: nul() }));
 		const received: NestedToolExecutionResult[] = [];
 		addTool(
 			setup.registry,
 			defineTool({
 				name: "probe",
 				description: "probe",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async (_args, api, callContext) => {
 					received.push(await api.executeTool("plain", {}, callContext));
 					received.push(await api.executeTool("nothing", {}, callContext));
@@ -272,7 +269,7 @@ describe("structured output", () => {
 			defineTool({
 				name: "throws",
 				description: "throws",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				structuredOutputSchema: Count,
 				execute: async () => {
 					throw new Error("permission denied");
@@ -344,7 +341,7 @@ describe("structured output", () => {
 			defineTool({
 				name: "probe",
 				description: "probe",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async (_args, api, callContext) => {
 					plain = await api.executeTool("plain", {}, callContext);
 					counter = await api.executeTool("counter", {}, callContext);
@@ -375,7 +372,7 @@ describe("structured output", () => {
 				defineTool({
 					name: "probe",
 					description: "probe",
-					parameters: Type.Object({}),
+					parameters: obj({}),
 					execute: async (_args, api, callContext) => {
 						received.push(await api.executeTool("bash", { command: "printf ok" }, callContext));
 						received.push(await api.executeTool("bash", { command: "printf bad; exit 4" }, callContext));

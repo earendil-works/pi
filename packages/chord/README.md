@@ -8,7 +8,7 @@ Chord builds applications out of **objects** that live in several processes (a s
 - **State** is observable JSON. Remote viewers get a snapshot followed by deltas.
 - **Hot reload** swaps code while it runs. Work in flight finishes on the code it started with, state is kept, and incompatible changes migrate at a safe point.
 
-Contracts are runtime values described with [TypeBox](https://github.com/sinclairzx81/typebox) schemas. Hosts exchange JSON frames over links: in memory, a Node IPC channel, or a WebSocket.
+Contracts are runtime values described with JSON Schema, written with the builders of `@earendil-works/pi-schema` (any JSON Schema object works; `format` is an annotation, never checked). Hosts exchange JSON frames over links: in memory, a Node IPC channel, or a WebSocket.
 
 ## Entry points
 
@@ -27,18 +27,18 @@ Contracts are runtime values described with [TypeBox](https://github.com/sinclai
 ## Quick start
 
 ```ts
-import { Type } from "typebox";
+import { num, obj, str } from "@earendil-works/pi-schema";
 import { createHost, hostNamed, method, remote } from "@earendil-works/chord";
 
 // contract.ts: shared by provider and consumers
 export const Counter = remote("demo.counter", {
 	version: 1,
-	input: Type.Object({ name: Type.String() }),
+	input: obj({ name: str() }),
 	host: hostNamed("server"), // where its objects live; callers never name a host
 	variants: {
 		default: {
-			state: { count: Type.Number() },
-			methods: { increment: method(Type.Object({ by: Type.Number() })) },
+			state: { count: num() },
+			methods: { increment: method(obj({ by: num() })) },
 		},
 	},
 });
@@ -46,7 +46,7 @@ export const Counter = remote("demo.counter", {
 const host = createHost({ name: "server", self: { kind: "server" } });
 
 host.serve(Counter, ({ name }, _principal, self) => {
-	const count = self.state("count", Type.Number(), 0);
+	const count = self.state("count", num(), 0);
 	return {
 		variant: "default",
 		count,

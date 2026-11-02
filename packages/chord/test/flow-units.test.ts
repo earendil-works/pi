@@ -1,7 +1,7 @@
 // Entry 8: flow control with units. First units pass the window, so a get never waits behind other streams; waiting
 // ops are capped per link; relays ask downstream for a reset when they drop ops.
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { arr, num, obj, str } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import { HostImpl } from "../src/host.ts";
 import {
@@ -26,12 +26,12 @@ async function until(check: () => boolean, attempts = 400): Promise<void> {
 
 const Blob = remote("t.e8-blob", {
 	version: 1,
-	input: Type.Object({ name: Type.String() }),
+	input: obj({ name: str() }, { open: true }),
 	host: hostNamed("server"),
 	variants: {
 		main: {
-			state: { lines: Type.Array(Type.String()) },
-			methods: { push: method(Type.String()), ping: method(undefined, Type.String()) },
+			state: { lines: arr(str()) },
+			methods: { push: method(str()), ping: method(undefined, str()) },
 		},
 	},
 });
@@ -41,7 +41,7 @@ const lines = (kib: number, tag: string) => Array.from({ length: kib }, (_, i) =
 
 function serveBlob(host: Host, size: (name: string) => number): void {
 	host.serve(Blob, ({ name }, _principal, self) => {
-		const state = self.state("lines", Type.Array(Type.String()), lines(size(name), name));
+		const state = self.state("lines", arr(str()), lines(size(name), name));
 		return {
 			variant: "main",
 			lines: state,
@@ -169,9 +169,9 @@ describe("flow control with units", () => {
 describe("relay topology", () => {
 	const Counter = remote("t.e8-relayed", {
 		version: 1,
-		input: Type.Object({ session: Type.String() }),
+		input: obj({ session: str() }, { open: true }),
 		host: hostFamily("session:", "session"),
-		variants: { main: { state: { n: Type.Number() }, methods: { add: method(Type.Number()) } } },
+		variants: { main: { state: { n: num() }, methods: { add: method(num()) } } },
 	});
 
 	function cluster() {
@@ -191,7 +191,7 @@ describe("relay topology", () => {
 					onError: () => {},
 				});
 				created.serve(Counter, (_input, _principal, self) => {
-					const n = self.state("n", Type.Number(), 0);
+					const n = self.state("n", num(), 0);
 					return {
 						variant: "main",
 						n,

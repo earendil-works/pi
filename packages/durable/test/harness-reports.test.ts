@@ -1,4 +1,4 @@
-import { createModels, fauxAssistantMessage, Type } from "@earendil-works/pi-ai";
+import { createModels, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import {
 	type AnyTask,
 	createRegistry,
@@ -14,6 +14,7 @@ import {
 	section,
 	wrapTool,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { describe, expect, it } from "vitest";
 import { chatSetup } from "./chat-support.ts";
 import { ControlledStorage, context } from "./session-support.ts";
@@ -189,7 +190,7 @@ describe("reports", () => {
 		const echo = defineTool({
 			name: "echo",
 			description: "echo",
-			parameters: Type.Object({}),
+			parameters: obj({}),
 			execute: async () => ({}),
 		});
 		registry.install(defineExtension({ name: "tools", tools: [echo] }));

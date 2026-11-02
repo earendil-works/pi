@@ -1,6 +1,6 @@
 // Arguments: a provider's binding (its dispatch table per accepted version) and the per-call argument check.
 
-import type { Validator } from "typebox/compile";
+import type { Validator } from "@earendil-works/pi-schema";
 import type { Context } from "../../context/index.ts";
 import { type AcceptedVersion, type AcceptsTable, checkAccepts } from "../contracts/accepts.ts";
 import {
@@ -19,8 +19,15 @@ import { check, validatorFor } from "./validator.ts";
 /** JSON plus byte leaves. Same-host values are plain data and immutable once handed over, by convention. */
 export type Value = null | boolean | number | string | Uint8Array | Value[] | { [key: string]: Value };
 
-/** A provider's binding of a contract with the older versions it accepts. */
-export type Provider<C extends Contract> = { readonly contract: C; readonly accepted: readonly AcceptedVersion[] };
+/**
+ * A provider's binding of a contract with the older versions it accepts and their mappings (the table as checked, for
+ * the state mappings of an older consumer's binding).
+ */
+export type Provider<C extends Contract> = {
+	readonly contract: C;
+	readonly accepted: readonly AcceptedVersion[];
+	readonly accepts: AcceptsTable<C>;
+};
 
 /**
  * Checked arguments: a method's arguments in the current shape with the result mapping back to the caller's version,
@@ -49,9 +56,19 @@ export function bindProvider<C extends Contract>(contract: C, accepts: AcceptsTa
 		const data = versions.find((candidate) => candidate.version === version)!;
 		table.set(version, dispatchEntries(data, mappings[version]?.methods));
 	}
-	const provider = { contract, accepted };
+	const provider = { contract, accepted, accepts };
 	dispatchTables.set(provider, table);
 	return provider;
+}
+
+/**
+ * Whether `provider` binds a consumer of `version` with `fingerprint`: its current version and fingerprint, or a
+ * version it accepts with the fingerprint its own history computes (R6, Q10).
+ */
+export function binds(provider: Provider<Contract>, version: number, fingerprint: string): boolean {
+	const { contract } = provider;
+	if (version === contract.version) return fingerprint === contract.fingerprint;
+	return provider.accepted.some((accepted) => accepted.version === version && accepted.fingerprint === fingerprint);
 }
 
 /** An accepts table after `checkAccepts`, as the binding reads it. */

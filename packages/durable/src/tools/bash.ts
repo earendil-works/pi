@@ -1,5 +1,5 @@
 import type { Context } from "@earendil-works/chord";
-import { type Static, Type } from "typebox";
+import { bool, num, obj, opt, type Static, str } from "@earendil-works/pi-schema";
 import { defineTool } from "../harness/define.ts";
 import type { ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "../harness/types.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "../truncate.ts";
@@ -7,23 +7,33 @@ import { requireEnv } from "./env.ts";
 
 const MAX_TIMEOUT_SECONDS = 2_147_483_647 / 1000;
 
-const bashSchema = Type.Object({
-	command: Type.String({ description: "Bash command to execute" }),
-	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
-});
+// Open objects, as the tools accepted extra arguments when their schemas were TypeBox's.
+const bashSchema = obj(
+	{
+		command: str({ description: "Bash command to execute" }),
+		timeout: opt(num({ description: "Timeout in seconds (optional, no default timeout)" })),
+	},
+	{ open: true },
+);
 
-const powershellSchema = Type.Object({
-	command: Type.String({ description: "PowerShell command to execute" }),
-	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
-});
+const powershellSchema = obj(
+	{
+		command: str({ description: "PowerShell command to execute" }),
+		timeout: opt(num({ description: "Timeout in seconds (optional, no default timeout)" })),
+	},
+	{ open: true },
+);
 
 /** What a program that calls `bash` or `powershell` receives. */
-const shellStructuredOutputSchema = Type.Object({
-	output: Type.String({ description: "Combined stdout and stderr: the retained tail, as the model sees it" }),
-	truncated: Type.Boolean({ description: "Whether earlier output was dropped" }),
-	fullOutputPath: Type.Optional(Type.String({ description: "File with the complete output, when it was spilled" })),
-	exitCode: Type.Number(),
-});
+const shellStructuredOutputSchema = obj(
+	{
+		output: str({ description: "Combined stdout and stderr: the retained tail, as the model sees it" }),
+		truncated: bool({ description: "Whether earlier output was dropped" }),
+		fullOutputPath: opt(str({ description: "File with the complete output, when it was spilled" })),
+		exitCode: num(),
+	},
+	{ open: true },
+);
 
 export type BashToolInput = Static<typeof bashSchema>;
 export type PowerShellToolInput = Static<typeof powershellSchema>;

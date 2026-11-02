@@ -73,6 +73,14 @@ export class PersistedRuns {
 		if (found !== undefined) this.#blockedStates.set(id, found.stored);
 	}
 
+	/**
+	 * A run of another job version that a reload's code now takes (`retryBlocked`): its state document is the job's
+	 * again (read, decoded and retired with its record as any run's), no longer one to retire undecoded.
+	 */
+	forgetBlockedState(id: string): void {
+		this.#blockedStates.delete(id);
+	}
+
 	/** Every stored record of the job, in run id order, page by page with plain reads (activation holds the line). */
 	async load(context: Context): Promise<LoadedRecord[]> {
 		const loaded: LoadedRecord[] = [];

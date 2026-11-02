@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-telemetry";
 import { ConversationBusy, ConversationIdle, ReadAfterWrite } from "../errors.ts";
 import type { ObservedCommit, SessionImpl } from "../session/session.ts";
-import type { ConversationId, JsonObject, Storage, SubmissionId, SubmissionRecord, Tx } from "../types.ts";
+import type { ConversationId, JsonObject, SubmissionId, SubmissionRecord, Tx } from "../types.ts";
 import { startRun } from "./generation.ts";
 import {
 	appendInput,
@@ -34,7 +34,6 @@ type Admission = { readonly id: SubmissionId; readonly status: "queued" | "place
 export class Submissions {
 	readonly #telemetry: TelemetryContext;
 	readonly #session: SessionImpl;
-	readonly #storage: Storage;
 	readonly #now: () => number;
 	/** Read at each admission, on the Session line. */
 	readonly #queueModes: () => QueueModes;
@@ -45,7 +44,6 @@ export class Submissions {
 
 	constructor(
 		session: SessionImpl,
-		storage: Storage,
 		now: () => number,
 		queueModes: () => QueueModes,
 		resume: () => void,
@@ -53,7 +51,6 @@ export class Submissions {
 	) {
 		this.#telemetry = telemetry;
 		this.#session = session;
-		this.#storage = storage;
 		this.#now = now;
 		this.#queueModes = queueModes;
 		this.#resume = resume;
@@ -123,12 +120,12 @@ export class Submissions {
 
 	/** Handle for an existing submission, or `undefined`. */
 	async get(id: SubmissionId, context: Context): Promise<Submission | undefined> {
-		const record = await this.#session.readOnLine(() => this.#storage.submission(id, context));
+		const record = await this.#session.readOnLine((storage) => storage.submission(id, context));
 		return record === undefined ? undefined : new SubmissionHandle(record.id, this);
 	}
 
 	async status(id: SubmissionId, context: Context): Promise<SubmissionRecord> {
-		const record = await this.#session.readOnLine(() => this.#storage.submission(id, context));
+		const record = await this.#session.readOnLine((storage) => storage.submission(id, context));
 		if (record === undefined) throw new Error(`Submission ${id} does not exist`);
 		return record;
 	}
@@ -136,8 +133,8 @@ export class Submissions {
 	async wait(id: SubmissionId, context: Context): Promise<SettledSubmissionRecord> {
 		this.#resume();
 		// Check and register on the line so no settling publication falls between them.
-		const found = await this.#session.readOnLine(async () => {
-			const record = await this.#storage.submission(id, context);
+		const found = await this.#session.readOnLine(async (storage) => {
+			const record = await storage.submission(id, context);
 			if (record === undefined) throw new Error(`Submission ${id} does not exist`);
 			if (isSettled(record)) return { promise: Promise.resolve(record) };
 			// Close rejects registered waiters synchronously and may begin during the read.

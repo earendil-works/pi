@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-02
+
+### Changed
+
+- README: the `AgentTool` wrapping example passes the MCP input schema as plain JSON Schema instead of through TypeBox's `Type.Unsafe`.
+
 ### Fixed
 
 - OAuth metadata parsing and `startAuthorization()` now accept only `http:` and `https:` URLs. Before, a server could supply a `file:` or custom protocol authorization endpoint (for example `search-ms:`), which the platform URL handler would launch on sign-in.

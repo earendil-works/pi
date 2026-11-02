@@ -1,28 +1,19 @@
-// Compiled checks: TypeBox validators of Chord-owned schemas, and the `invalid` error of a failed check.
+// Compiled checks: pi-schema validators of Chord-owned schemas, and the `invalid` error of a failed check.
 
-import { Compile, type Validator } from "typebox/compile";
-import type { TLocalizedValidationError } from "typebox/error";
-import { ResetExternal, ResetFunctions } from "typebox/schema";
-import { Errors } from "typebox/value";
+import { compile, type JsonSchema, type Validator } from "@earendil-works/pi-schema";
 import type { Context } from "../../context/index.ts";
-import type { TSchema } from "../contracts/schema.ts";
 import { type ChordError, invalid } from "./errors.ts";
 
 /** A Chord-owned record holding a schema: a snapshot, or a contract's params. */
-type SchemaOwner = { readonly schema: TSchema };
+type SchemaOwner = { readonly schema: JsonSchema };
 
 /** The validator of an owner's schema, compiled on first use (counted) and cached weakly by the owner. */
 export function validatorFor(owner: SchemaOwner, context: Context): Validator {
 	let validator = validators.get(owner);
 	if (validator === undefined) {
 		context.telemetry.metrics?.counter("chord.data.compilations").add(1);
-		try {
-			validator = Compile(owner.schema);
-		} finally {
-			// TypeBox keeps its last build in module-level accumulators; reset them so no build state is retained.
-			ResetFunctions();
-			ResetExternal();
-		}
+		// `format` is an annotation (decided for the schema switch): no format checks are compiled in.
+		validator = compile(owner.schema);
 		validators.set(owner, validator);
 	}
 	return validator;
@@ -34,39 +25,27 @@ const validators = new WeakMap<SchemaOwner, Validator>();
 export function check(
 	validator: Validator,
 	value: unknown,
-	reason: "args" | "params" | "placement",
+	reason: "args" | "params" | "host_address",
 	context: Context,
 ): void {
 	context.telemetry.metrics?.counter("chord.data.validations").add(1);
-	if (!validator.Check(value)) throw failedCheck(validator.Type(), value, reason, context);
+	if (!validator.check(value)) throw failedCheck(validator, value, reason, context);
 }
 
 /**
- * The error of a failed check: TypeBox's first error from its diagnostic walk (counted; it builds the whole list).
- * TypeBox does not escape `~` and `/` in its instance paths, so keys containing them make the path ambiguous.
+ * The error of a failed check: the first error of the validator's explanation (counted: it walks the schema). A
+ * missing field is reported at the field ("missing"), an unknown one at its own path ("unknown field"); the value
+ * itself at `/`.
  */
 function failedCheck(
-	schema: TSchema,
+	validator: Validator,
 	value: unknown,
-	reason: "args" | "params" | "placement",
+	reason: "args" | "params" | "host_address",
 	context: Context,
 ): ChordError {
 	context.telemetry.metrics?.counter("chord.data.walks").add(1);
-	const [error] = Errors(schema, value);
-	const { path, problem } = describe(error);
-	return invalid(reason, `${reason}${path === "/" ? "" : path}: ${problem}`, { path });
-}
-
-/**
- * The path and problem of a TypeBox error: TypeBox reports a missing field at its parent, and an unknown one as a
- * false schema (`additionalProperties: false`) at its own path. Anything else keeps TypeBox's message.
- */
-function describe(error: TLocalizedValidationError): { path: string; problem: string } {
-	if (error.keyword === "required") {
-		return { path: `${error.instancePath}/${error.params.requiredProperties[0]}`, problem: "missing" };
-	}
-	if (error.keyword === "boolean" && error.schemaPath.endsWith("/additionalProperties")) {
-		return { path: error.instancePath, problem: "unknown field" };
-	}
-	return { path: error.instancePath || "/", problem: error.message };
+	// A value that failed the check has at least one error.
+	const error = validator.errors(value)[0]!;
+	const path = error.path || "/";
+	return invalid(reason, `${reason}${path === "/" ? "" : path}: ${error.message}`, { path });
 }

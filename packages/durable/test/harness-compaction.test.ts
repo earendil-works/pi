@@ -9,7 +9,6 @@ import {
 	type Message,
 	type SimpleStreamOptions,
 	type TranscriptContext,
-	Type,
 	type UserMessage,
 } from "@earendil-works/pi-ai";
 import {
@@ -33,6 +32,7 @@ import {
 	type TaskId,
 	UsageDoc,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { selectCut, serializeConversation } from "../src/harness/compaction.ts";
 import { orderToolResults } from "../src/harness/context.ts";
@@ -471,7 +471,7 @@ describe("manual compaction", () => {
 			defineTool({
 				name: "wait",
 				description: "wait",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async () => ({ output: [{ type: "text", text: "waited" }] }),
 			}),
 		);
@@ -886,7 +886,7 @@ describe("compaction outcomes", () => {
 			defineTool({
 				name: "read",
 				description: "read",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async () => ({ output: [] }),
 			}),
 		);
@@ -1343,7 +1343,7 @@ describe("compaction estimates and interactions", () => {
 				defineTool({
 					name: "slow",
 					description: "slow",
-					parameters: Type.Object({}),
+					parameters: obj({}),
 					execute: async () => {
 						toolReached.resolve();
 						await toolGate.promise;

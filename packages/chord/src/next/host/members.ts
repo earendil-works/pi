@@ -1,23 +1,27 @@
 // The member check (Q14): an implementation is one variant with exactly that variant's members, methods being
-// functions and state members JSON watchables; and the resolution of every derive's declared sources.
+// functions and state members JSON watchables; and the resolution of what Chord follows behind every derive's declared
+// sources (JSON and native) and every contribution to a registry (slice 8).
 //
-// The rule for watches across attempts (slice 6a §1.2, §1.4): references and other objects' derives follow a local
-// object's state member through its member source (`member-source.ts`), and a key of a keyed member they hold (`at`,
-// `watch(key)`) through a member source per key (`keyed-members.ts`); both live as long as the object. While the
-// object is failed or activating again they keep their last values and get no frames; when a new attempt goes live
-// they re-bind by name to that attempt's member (a pinned key loaded on it first), whether a document or a derive: one
-// frame from the last value, and every derive downstream recovers, one that failed on the old member's error included
-// (decision "self healing"). A re-exposed member is the re-exposing object's: it freezes with that object, its
-// provider's source goes on. At a live failure, members following another object's sources freeze at once; the
-// object's own documents and derives freeze once its admitted commits adopted, so until then an own derive over
-// another object's member may still change. Holds over a link follow the live attempt's members and take a snapshot at
-// each binding.
+// The rule for watches across attempts (decision "References are the only indirection"): consumers' watches and
+// derives over another object's member follow it through their reference's member (`reference-source.ts`) and keys
+// (`reference-keys.ts`), passed straight through to the instance's own document or derive. While the object points at
+// nothing they keep their last values (one `failed` call for a failure); when a new instance goes live they move by
+// name to its member (a key pinned there again), whether a document or a derive: one frame from the last value, and
+// every derive downstream recovers (decision "self healing"). A re-exposed member is the re-exposing object's
+// reference member: it holds with that object, its provider's source goes on. Holds over a link follow the live
+// instance's members and take a snapshot at each binding.
 
 import type { Context } from "../../context/index.ts";
 import type { Contract } from "../contracts/index.ts";
 import { currentVariants, LOCAL, takesNoArgs, type VariantData } from "../contracts/internal.ts";
 import type { KeyedSlot } from "../documents/internal.ts";
-import type { Derive, DeriveSource } from "../state/internal.ts";
+import {
+	type ContributionContent,
+	type Contributor,
+	RegistryContribution,
+	type RegistryRecord,
+} from "../registries/internal.ts";
+import { type Derive, type DeriveInput, type DeriveSource, NativeSource } from "../state/internal.ts";
 import { type Binding, resolveKeyed, resolveWatchable } from "./reference.ts";
 
 /** A checked implementation, as Chord calls and follows it. */
@@ -39,7 +43,7 @@ export type KeyedBinding =
 	| { readonly kind: "reexposed"; readonly binding: Binding; readonly member: string };
 
 /** A method as Chord calls it. */
-type Method = (args: unknown, context: Context) => Promise<unknown>;
+export type Method = (args: unknown, context: Context) => Promise<unknown>;
 
 /**
  * Checks what a factory returned (plugin code): a local contract's members, or a remote contract's `{ variant,
@@ -114,11 +118,32 @@ export function attachDerives(
 	derives.forEach((derive, position) => {
 		const member = exposed.get(derive);
 		const name = member ?? `derive #${position + 1}`;
-		const resolve = (source: unknown, index: number): DeriveSource => {
-			const resolved = resolveWatchable(source);
-			if (resolved === undefined) throw new Error(`${name}: source ${index} is not a JSON watchable`);
+		const resolve = (source: unknown, index: number): DeriveInput => {
+			const resolved = resolveWatchable(source) ?? (source instanceof NativeSource ? source : undefined);
+			if (resolved === undefined) throw new Error(`${name}: source ${index} is not a Chord watchable`);
 			return resolved;
 		};
 		derive.attach(resolve, report(member));
 	});
+}
+
+/**
+ * A contribution of `contributor` at `version` to `record`, as Chord follows it: a Chord watchable (a source, a
+ * constant, a document handle, a reference member, a native source: another registry's value too) is followed,
+ * anything else is a plain value, whatever methods it has (registries carry natives).
+ */
+export function contributionOf(
+	record: RegistryRecord,
+	contributor: Contributor,
+	version: number,
+	value: unknown,
+): RegistryContribution {
+	return new RegistryContribution(record, contributor, version, contentOf(value));
+}
+
+/** What Chord follows behind a contribution: its JSON or native source when it is a Chord watchable. */
+function contentOf(value: unknown): ContributionContent {
+	if (value instanceof NativeSource) return { kind: "native", source: value };
+	const source = resolveWatchable(value);
+	return source === undefined ? { kind: "plain", value } : { kind: "json", source };
 }

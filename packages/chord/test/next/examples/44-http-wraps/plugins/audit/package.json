@@ -1,0 +1,5 @@
+{
+	"name": "@example/audit",
+	"private": true,
+	"type": "module"
+}

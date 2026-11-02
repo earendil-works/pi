@@ -22,10 +22,10 @@ describe("the member check (Q14)", () => {
 			}),
 		);
 		await expect(host.get(Named, { n: 1 }, context)).rejects.toThrow(
-			"app.named(1): label: source 1 is not a JSON watchable",
+			"app.named(1): label: source 1 is not a Chord watchable",
 		);
 		await expect(host.get(Named, { n: 2 }, context)).rejects.toThrow(
-			"app.named(2): derive #1: source 0 is not a JSON watchable",
+			"app.named(2): derive #1: source 0 is not a Chord watchable",
 		);
 	});
 });

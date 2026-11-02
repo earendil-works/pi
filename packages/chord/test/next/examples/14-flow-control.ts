@@ -28,7 +28,7 @@ const Reply = local("example.reply", {
 const View = remote("example.view", {
 	version: 1,
 	params: { session: str() },
-	placement: ({ session }) => Session({ id: session }),
+	hostAddress: ({ session }) => Session({ id: session }),
 	variants: { owner: { state: { reply: obj({ text: str() }) } } },
 });
 

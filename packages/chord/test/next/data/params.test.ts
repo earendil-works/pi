@@ -5,11 +5,12 @@ import { bool, int, local, oneOf, remote, str } from "../../../src/next/contract
 import { isChordError } from "../../../src/next/data/index.ts";
 import { checkParams, identityKey } from "../../../src/next/data/internal.ts";
 import { validatorFor } from "../../../src/next/data/validator.ts";
-import { counted, expectCollected } from "../support.ts";
+import { counted, expectCollected, Server } from "../support.ts";
 
 const Session = remote("session", {
 	version: 1,
 	params: { id: str({ min: 1 }), mode: oneOf("chat", "agent"), page: int({ min: 0 }), open: bool() },
+	hostAddress: () => Server(),
 	variants: { owner: {} },
 });
 
@@ -58,10 +59,10 @@ describe("checkParams", () => {
 			details: { path: "/extra" },
 		});
 		expect(refusal({ ...valid, page: "2" })).toMatchObject({
-			message: "params/page: must be integer",
+			message: "params/page: expected integer, got string",
 			details: { path: "/page" },
 		});
-		expect(refusal("S1")).toMatchObject({ message: "params: must be object", details: { path: "/" } });
+		expect(refusal("S1")).toMatchObject({ message: "params: expected object, got string", details: { path: "/" } });
 	});
 
 	it("enforces literal membership and constraints", () => {

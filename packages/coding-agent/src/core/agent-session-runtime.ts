@@ -1,6 +1,6 @@
 import { constants, copyFileSync, existsSync, mkdirSync } from "node:fs";
-import { basename, join, parse, resolve } from "node:path";
-import { resolvePath } from "../utils/paths.ts";
+import { basename, join, parse } from "node:path";
+import { pathsEqual, resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
 import type {
@@ -368,7 +368,7 @@ export class AgentSessionRuntime {
 		}
 
 		let destinationPath = join(sessionDir, basename(resolvedPath));
-		const sourceAlreadyStored = resolve(destinationPath) === resolvedPath;
+		const sourceAlreadyStored = pathsEqual(destinationPath, resolvedPath);
 		if (!sourceAlreadyStored) {
 			const { name, ext } = parse(destinationPath);
 			let suffix = 1;

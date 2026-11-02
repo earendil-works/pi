@@ -9,7 +9,7 @@
 // Run from packages/chord:
 //   node --conditions=source --experimental-strip-types test/next/examples/17-limits-and-compression.ts
 import { BACKGROUND_CONTEXT } from "../../../src/context/index.ts";
-import { arr, local, method, obj, remote, str } from "../../../src/next/contracts/index.ts";
+import { arr, hostKind, local, method, obj, remote, str } from "../../../src/next/contracts/index.ts";
 import { isChordError } from "../../../src/next/data/index.ts";
 import { defineState } from "../../../src/next/documents/index.ts";
 import { createHost, defineFacet, type Host } from "../../../src/next/host/index.ts";
@@ -29,10 +29,14 @@ const Store = local("example.store", {
 	members: { entries: arr(Entry), append: method(Entry) },
 });
 
+// The server's host kind: a remote contract's `hostAddress` names the host serving its objects.
+const Server = hostKind("server");
+
 /** What a tab holds: the conversation's entries, and appending. */
 const Conversation = remote("example.conversation", {
 	version: 1,
 	params: { id: str() },
+	hostAddress: () => Server(),
 	variants: { v: { state: { entries: arr(Entry) }, methods: { append: method(Entry) } } },
 });
 
@@ -78,7 +82,12 @@ function counted(link: Link, bytes: { received: number }): Link {
  * `limits`; the tab's own link to the server has `tabLimits`.
  */
 async function setUp(compression: Compression | undefined, limits?: PartLimits, tabLimits?: PartLimits) {
-	const server = createHost<P>({ principal: { kind: "server" }, compression, onError: console.error });
+	const server = createHost<P>({
+		address: Server(),
+		principal: { kind: "server" },
+		compression,
+		onError: console.error,
+	});
 	await server.load([{ name: "@example/conversation", facet }], context);
 	const tab = createHost<P>({ onError: console.error });
 	await tab.load([], context);
@@ -168,6 +177,7 @@ for (const compression of [undefined, nodeCompression]) {
 // child, would refuse a compressed part. Its 100 KB argument arrives as JSON, within the server's default limits.
 {
 	const server = createHost<P>({
+		address: Server(),
 		principal: { kind: "server" },
 		compression: nodeCompression,
 		onError: console.error,

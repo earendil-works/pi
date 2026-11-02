@@ -1,6 +1,6 @@
 // Table handles (slice 6a §6; decision "Query runner"): what `self.table(Def)` returns, one per attempt and table: reads
 // of committed rows (`page`, `rows`, `get`, `count`) through the store's guarded reads, and what a transaction's
-// writes to the table are staged with.
+// writes to the table are staged with; a handle of an older version than the stored table is refused (R15, slice 7b).
 
 import type { Context } from "../../context/index.ts";
 import type { SqliteValue } from "../../sqlite/index.ts";
@@ -66,6 +66,7 @@ export class TableHandle implements Table<Columns, readonly string[]> {
 
 	async page(q: Query, limit: number, context: Context, options: PageOptions = {}): Promise<Page<RowOf<Columns>>> {
 		this.owner.assertLive();
+		this.assertVersion();
 		this.#assertQuery(q);
 		if (!Number.isSafeInteger(limit) || limit < 1)
 			throw invalid("args", `${this.definition.name}: limit is a positive integer`);
@@ -103,6 +104,7 @@ export class TableHandle implements Table<Columns, readonly string[]> {
 
 	async get(key: unknown, context: Context): Promise<RowOf<Columns> | undefined> {
 		this.owner.assertLive();
+		this.assertVersion();
 		const encoded = this.definition.rows.key(key, "get");
 		const stored = await this.store.read(
 			(executor) => executor.get<{ [column: string]: SqliteValue }>(this.sql.get, ...encoded.params),
@@ -113,6 +115,7 @@ export class TableHandle implements Table<Columns, readonly string[]> {
 
 	async count(q: Query, context: Context): Promise<number> {
 		this.owner.assertLive();
+		this.assertVersion();
 		this.#assertQuery(q);
 		const statement = this.sql.count(q.condition);
 		const row = await this.store.read(
@@ -120,6 +123,19 @@ export class TableHandle implements Table<Columns, readonly string[]> {
 			context,
 		);
 		return row?.count ?? 0;
+	}
+
+	/**
+	 * The version fence of old table handles (R15, slice 7b §5): once the store's table is at a newer version than this
+	 * handle's definition (a reload's new code migrated it), old code reads and writes it no more (`released/version`),
+	 * so it never issues SQL for a dropped column.
+	 */
+	assertVersion(): void {
+		const stored = this.store.tableVersion(this.sql.table);
+		if (stored === undefined || stored <= this.definition.version) return;
+		const { name, version } = this.definition;
+		const message = `${this.owner.label}: table "${name}" of version ${version}; the store has version ${stored}`;
+		throw new ChordError({ code: "released", reason: "version", message });
 	}
 
 	/** A stored row as reads return it; one the code cannot read fails the owner and throws. */

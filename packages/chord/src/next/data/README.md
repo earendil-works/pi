@@ -33,7 +33,7 @@ try {
 
 - `checkParams(contract, raw, context)`: one compiled closed-object check of a get's params and their key;
   `identityKey(contract, key, principalKey)` (no principal key for `local`); `checkAddress(kind, params, raw,
-  context)`: the same check of an address's params against its host kind's (`invalid/placement`), and its key.
+  context)`: the same check of an address's params against its host kind's (`invalid/host_address`), and its key.
 - `bindProvider(contract, accepts)` once per registration, then `checkArgs(provider, method, raw, boundVersion,
   context)` per call. It returns `{ kind: "method", args, result? }` (current-shape arguments, and the result mapping
   back to the caller's version) or `{ kind: "call", args, call }` (old arguments for the provider's replacement).
@@ -51,8 +51,9 @@ Rules:
   them. Results and state are never checked. Nothing in L1 is frozen.
 - A method without arguments (argument schema `null`) omits the argument in references and implementations; `null`
   is its internal and wire form, which `checkArgs` checks. Unknown fields fail.
-- A failed check is `invalid/args`, `invalid/params` or `invalid/placement` with `details.path`, a JSON Pointer from TypeBox's first error.
-  TypeBox does not escape `~` and `/`, so keys containing them make the path ambiguous.
+- A failed check is `invalid/args`, `invalid/params` or `invalid/host_address` with `details.path`, the JSON Pointer of
+  the first error pi-schema explains (`~` and `/` in keys escaped as `~0` and `~1`); a missing field is reported at its
+  own path ("missing"), an unknown one too ("unknown field"), the value itself at `/`.
 - `checkArgs` refuses an unknown method with `invalid/member` and an unaccepted version or a refused method with
   `contract_mismatch`. It never invokes a `call` replacement.
 - Error codes, reasons and their pairings are link protocol: changing them bumps `PROTOCOL_VERSION`.

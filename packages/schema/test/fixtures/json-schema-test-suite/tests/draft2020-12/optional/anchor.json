@@ -1,0 +1,60 @@
+[
+    {
+        "description": "$anchor inside an enum is not a real identifier",
+        "comment": "the implementation must not be confused by an $anchor buried in the enum",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": {
+                "anchor_in_enum": {
+                    "enum": [
+                        {
+                            "$anchor": "my_anchor",
+                            "type": "null"
+                        }
+                    ]
+                },
+                "real_identifier_in_schema": {
+                    "$anchor": "my_anchor",
+                    "type": "string"
+                },
+                "zzz_anchor_in_const": {
+                    "const": {
+                        "$anchor": "my_anchor",
+                        "type": "null"
+                    }
+                }
+            },
+            "anyOf": [
+                { "$ref": "#/$defs/anchor_in_enum" },
+                { "$ref": "#my_anchor" }
+            ]
+        },
+        "tests": [
+            {
+                "description": "exact match to enum, and type matches",
+                "data": {
+                    "$anchor": "my_anchor",
+                    "type": "null"
+                },
+                "valid": true
+            },
+            {
+                "description": "in implementations that strip $anchor, this may match either $def",
+                "data": {
+                    "type": "null"
+                },
+                "valid": false
+            },
+            {
+                "description": "match $ref to $anchor",
+                "data": "a string to match #/$defs/anchor_in_enum",
+                "valid": true
+            },
+            {
+                "description": "no match on enum or $ref to $anchor",
+                "data": 1,
+                "valid": false
+            }
+        ]
+    }
+]

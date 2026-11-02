@@ -3,7 +3,7 @@
 // Run from packages/chord:
 //   node --conditions=source --experimental-strip-types test/next/examples/09-calls.ts
 import { BACKGROUND_CONTEXT, withCancel } from "../../../src/context/index.ts";
-import { bytes, int, method, obj, remote, str } from "../../../src/next/contracts/index.ts";
+import { bytes, hostKind, int, method, obj, remote, str } from "../../../src/next/contracts/index.ts";
 import { isChordError, PluginError } from "../../../src/next/data/index.ts";
 import { createHost, defineFacet } from "../../../src/next/host/index.ts";
 import { memoryLinkPair } from "../../../src/next/link/index.ts";
@@ -12,9 +12,13 @@ const context = BACKGROUND_CONTEXT;
 
 type P = { kind: "owner" } | { kind: "server" };
 
+// The server's host kind: a remote contract's `hostAddress` names the host serving its objects.
+const Server = hostKind("server");
+
 const Files = remote("example.files", {
 	version: 1,
 	params: {},
+	hostAddress: () => Server(),
 	variants: {
 		owner: {
 			methods: {
@@ -58,7 +62,11 @@ const facet = defineFacet<P>((host) => {
 	}));
 });
 
-const server = createHost<P>({ principal: { kind: "server" }, onError: (error) => console.error("server:", error) });
+const server = createHost<P>({
+	address: Server(),
+	principal: { kind: "server" },
+	onError: (error) => console.error("server:", error),
+});
 await server.load([{ name: "@example/files", facet }], context);
 const [up, down] = memoryLinkPair();
 server.accept(up, { principal: { kind: "owner" } }, context);

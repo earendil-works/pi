@@ -2,10 +2,10 @@
 // cell with its own version, typed when read, migrated on access (the result checked once, R8), never walked on write
 // (R9).
 
-import Type, { type TUnsafe } from "typebox";
+import type { JsonSchema } from "@earendil-works/pi-schema";
 import type { Context } from "../../context/index.ts";
 import type { JsonValue } from "../../json.ts";
-import type { Static, TSchema } from "../contracts/index.ts";
+import type { Schema, Static } from "../contracts/index.ts";
 import { fingerprintOf } from "../contracts/internal.ts";
 import { snapshotSchema } from "../contracts/snapshot.ts";
 import { ChordError } from "../data/index.ts";
@@ -20,24 +20,25 @@ export type JsonColumnOptions<T> = {
 };
 
 /** A `json(...)` column as `columns` takes it: a schema of the cells' type carrying the column. */
-export type JsonColumnSchema<T> = TUnsafe<T> & { readonly json: JsonColumn };
+export interface JsonColumnSchema<T> extends Schema<T> {
+	readonly json: JsonColumn;
+}
 
 /** A column holding one JSON value of `schema` per row, at `version`; wrap it in `opt(...)` to make it nullable. */
-export function json<S extends TSchema>(schema: S, options: JsonColumnOptions<Static<S>>): JsonColumnSchema<Static<S>> {
-	const column = new JsonColumn(schema, options.version, options.migrate);
-	// A TypeBox schema (so `opt(...)` and `Static` take it) whose enumerable `json` field `opt`'s clone keeps.
-	return Type.Unsafe<Static<S>>({ json: column }) as JsonColumnSchema<Static<S>>;
+export function json<S extends Schema>(schema: S, options: JsonColumnOptions<Static<S>>): JsonColumnSchema<Static<S>> {
+	// Typed as the cells' schema, so `opt(...)` and `Static` take it; the table reads its `json` field.
+	return { json: new JsonColumn(schema, options.version, options.migrate) };
 }
 
 /** A `json(...)` column's definition: its schema snapshot, version and fingerprint, and the read of a stored cell. */
 export class JsonColumn {
-	readonly schema: TSchema;
+	readonly schema: JsonSchema;
 	readonly version: number;
 	/** The fingerprint of the schema's normal form, recorded with the table: the same version with another is `broken`. */
 	readonly fingerprint: string;
 	readonly #migrate: ((old: JsonValue, from: number) => unknown) | undefined;
 
-	constructor(schema: TSchema, version: number, migrate: ((old: JsonValue, from: number) => unknown) | undefined) {
+	constructor(schema: Schema, version: number, migrate: ((old: JsonValue, from: number) => unknown) | undefined) {
 		// Declaration policy: JavaScript callers reach this check.
 		if (!Number.isSafeInteger(version) || version < 1)
 			throw new Error(`json(...): version ${version} is not a positive integer`);
@@ -65,7 +66,7 @@ export class JsonColumn {
 			throw refused(`${what}: migrate from version ${version} threw`, error);
 		}
 		context.telemetry.metrics?.counter("chord.data.validations").add(1);
-		if (!validatorFor(this, context).Check(migrated)) {
+		if (!validatorFor(this, context).check(migrated)) {
 			throw refused(`${what}: migrate from version ${version} does not match the schema`);
 		}
 		return migrated;

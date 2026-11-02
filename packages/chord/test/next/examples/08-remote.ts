@@ -3,7 +3,7 @@
 // Run from packages/chord:
 //   node --conditions=source --experimental-strip-types test/next/examples/08-remote.ts
 import { BACKGROUND_CONTEXT } from "../../../src/context/index.ts";
-import { arr, int, local, method, obj, remote, str } from "../../../src/next/contracts/index.ts";
+import { arr, hostKind, int, local, method, obj, remote, str } from "../../../src/next/contracts/index.ts";
 import { defineState } from "../../../src/next/documents/index.ts";
 import { createHost, defineFacet } from "../../../src/next/host/index.ts";
 import { memoryLinkPair } from "../../../src/next/link/index.ts";
@@ -17,10 +17,14 @@ type P = { kind: "owner" } | { kind: "guest"; session: string } | { kind: "serve
 const Note = obj({ text: str(), author: str() });
 const PublicNote = obj({ text: str() });
 
+// The server's host kind: every remote contract names the address of the host serving its objects.
+const Server = hostKind("server");
+
 // A remote contract: one object per (type, params, principal key), in the variant its factory chooses.
 const Notes = remote("example.notes", {
 	version: 1,
 	params: { session: str() },
+	hostAddress: () => Server(),
 	variants: {
 		editor: { state: { notes: arr(Note), count: int() }, methods: { add: method(obj({ text: str() })) } },
 		reader: { state: { notes: arr(PublicNote), count: int() } },
@@ -68,8 +72,12 @@ const facet = defineFacet<P>((host) => {
 	});
 });
 
-// 1. The server: it acts as `server` for its own requests.
-const server = createHost<P>({ principal: { kind: "server" }, onError: (error) => console.error("server:", error) });
+// 1. The server, at its address: it acts as `server` for its own requests.
+const server = createHost<P>({
+	address: Server(),
+	principal: { kind: "server" },
+	onError: (error) => console.error("server:", error),
+});
 await server.load([{ name: "@example/notes", facet }], context);
 
 // 2. A client (a tab): no principal of its own. The entry point authenticated it as a guest of S1 and stamps that on

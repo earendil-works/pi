@@ -1,0 +1,266 @@
+[
+    {
+        "description": "validation of IPv6 addresses",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "format": "ipv6"
+        },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "a valid IPv6 address",
+                "data": "::1",
+                "valid": true
+            },
+            {
+                "description": "a group with 5 hex digits is invalid",
+                "data": "12345::",
+                "valid": false
+            },
+            {
+                "description": "trailing 4 hex symbols is valid",
+                "data": "::abef",
+                "valid": true
+            },
+            {
+                "description": "trailing 5 hex symbols is invalid",
+                "data": "::abcef",
+                "valid": false
+            },
+            {
+                "description": "an IPv6 address with too many components",
+                "data": "1:1:1:1:1:1:1:1:1:1:1:1:1:1:1:1",
+                "valid": false
+            },
+            {
+                "description": "an IPv6 address containing illegal characters",
+                "data": "::laptop",
+                "valid": false
+            },
+            {
+                "description": "no digits is valid",
+                "data": "::",
+                "valid": true
+            },
+            {
+                "description": "leading colons is valid",
+                "data": "::42:ff:1",
+                "valid": true
+            },
+            {
+                "description": "trailing colons is valid",
+                "data": "d6::",
+                "valid": true
+            },
+            {
+                "description": "missing leading octet is invalid",
+                "data": ":2:3:4:5:6:7:8",
+                "valid": false
+            },
+            {
+                "description": "missing trailing octet is invalid",
+                "data": "1:2:3:4:5:6:7:",
+                "valid": false
+            },
+            {
+                "description": "missing leading octet with omitted octets later",
+                "data": ":2:3:4::8",
+                "valid": false
+            },
+            {
+                "description": "single set of double colons in the middle is valid",
+                "data": "1:d6::42",
+                "valid": true
+            },
+            {
+                "description": "two sets of double colons is invalid",
+                "data": "1::d6::42",
+                "valid": false
+            },
+            {
+                "description": "mixed format with the ipv4 section as decimal octets",
+                "data": "1::d6:192.168.0.1",
+                "valid": true
+            },
+            {
+                "description": "mixed format with double colons between the sections",
+                "data": "1:2::192.168.0.1",
+                "valid": true
+            },
+            {
+                "description": "mixed format with ipv4 section with octet out of range",
+                "data": "1::2:192.168.256.1",
+                "valid": false
+            },
+            {
+                "description": "mixed format with ipv4 section with a hex octet",
+                "data": "1::2:192.168.ff.1",
+                "valid": false
+            },
+            {
+                "description": "mixed format with leading double colons (ipv4-mapped ipv6 address)",
+                "data": "::ffff:192.168.0.1",
+                "valid": true
+            },
+            {
+                "description": "triple colons is invalid",
+                "data": "1:2:3:4:5:::8",
+                "valid": false
+            },
+            {
+                "description": "8 octets",
+                "data": "1:2:3:4:5:6:7:8",
+                "valid": true
+            },
+            {
+                "description": "insufficient octets without double colons",
+                "data": "1:2:3:4:5:6:7",
+                "valid": false
+            },
+            {
+                "description": "no colons is invalid",
+                "data": "1",
+                "valid": false
+            },
+            {
+                "description": "ipv4 is not ipv6",
+                "data": "127.0.0.1",
+                "valid": false
+            },
+            {
+                "description": "ipv4 segment must have 4 octets",
+                "data": "1:2:3:4:1.2.3",
+                "valid": false
+            },
+            {
+                "description": "leading whitespace is invalid",
+                "data": "  ::1",
+                "valid": false
+            },
+            {
+                "description": "trailing whitespace is invalid",
+                "data": "::1  ",
+                "valid": false
+            },
+            {
+                "description": "netmask is not a part of ipv6 address",
+                "data": "fe80::/64",
+                "valid": false
+            },
+            {
+                "description": "zone id is not a part of ipv6 address",
+                "data": "fe80::a%eth1",
+                "valid": false
+            },
+            {
+                "description": "a long valid ipv6",
+                "data": "1000:1000:1000:1000:1000:1000:255.255.255.255",
+                "valid": true
+            },
+            {
+                "description": "a long invalid ipv6, below length limit, first",
+                "data": "100:100:100:100:100:100:255.255.255.255.255",
+                "valid": false
+            },
+            {
+                "description": "a long invalid ipv6, below length limit, second",
+                "data": "100:100:100:100:100:100:100:255.255.255.255",
+                "valid": false
+            },
+            {
+                "description": "invalid non-ASCII '৪' (a Bengali 4)",
+                "data": "1:2:3:4:5:6:7:৪",
+                "valid": false
+            },
+            {
+                "description": "invalid non-ASCII '৪' (a Bengali 4) in the IPv4 portion",
+                "data": "1:2::192.16৪.0.1",
+                "valid": false
+            },
+            {
+                "description": "a bracketed address is invalid",
+                "data": "[::1]",
+                "valid": false
+            },
+            {
+                "description": "a leading zero in the last IPv4 octet is invalid",
+                "data": "::ffff:192.168.0.01",
+                "valid": false
+            },
+            {
+                "description": "uppercase hex digits are valid",
+                "data": "2001:DB8::1",
+                "valid": true
+            },
+            {
+                "description": "leading zeros in every group are valid",
+                "data": "2001:0db8:0000:0000:0000:0000:0000:0001",
+                "valid": true
+            },
+            {
+                "description": "two groups before '::' and four groups after is valid",
+                "data": "1:2::3:4:5:6",
+                "valid": true
+            },
+            {
+                "description": "eight groups alongside '::' is invalid",
+                "data": "1:2:3:4:5:6:7:8::",
+                "valid": false
+            },
+            {
+                "description": "trailing newline is invalid",
+                "data": "::1\n",
+                "valid": false
+            },
+            {
+                "description": "an out-of-range first octet in the embedded IPv4 is invalid",
+                "data": "::ffff:256.1.1.1",
+                "valid": false
+            },
+            {
+                "description": "one group before '::' and five groups after is valid",
+                "data": "1::2:3:4:5:6",
+                "valid": true
+            },
+            {
+                "description": "'::' followed by six groups is valid",
+                "data": "::1:2:3:4:5:6",
+                "valid": true
+            },
+            {
+                "description": "leading '::' before five groups and an embedded IPv4 is valid",
+                "data": "::1:2:3:4:5:1.2.3.4",
+                "valid": true
+            }
+        ]
+    }
+]

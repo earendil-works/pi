@@ -382,7 +382,6 @@ export class KeyedSlot implements DocumentSlot, PersistedSlot {
  * document's value, `initial()` while it is absent; retirements arrive with the `retired` flag.
  */
 export class KeySource extends AddressSource {
-	readonly owner: Documents;
 	readonly #slot: KeyedSlot;
 	readonly key: string;
 	/** Its pins: at 0 the slot forgets it. */
@@ -393,7 +392,6 @@ export class KeySource extends AddressSource {
 
 	constructor(slot: KeyedSlot, key: string, initial: JsonObject, ready: boolean) {
 		super(slot.owner.batch);
-		this.owner = slot.owner;
 		this.#slot = slot;
 		this.key = key;
 		this.#initial = initial;

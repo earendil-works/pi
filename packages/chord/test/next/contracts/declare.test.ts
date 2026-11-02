@@ -1,9 +1,23 @@
-import Type from "typebox";
 import { describe, expect, it } from "vitest";
-import { arr, evolve, int, keyed, local, method, obj, remote, str } from "../../../src/next/contracts/index.ts";
+import {
+	arr,
+	evolve,
+	hostKind,
+	int,
+	keyed,
+	local,
+	method,
+	obj,
+	remote,
+	str,
+} from "../../../src/next/contracts/index.ts";
 import { currentVariants, LOCAL } from "../../../src/next/contracts/internal.ts";
 
 const Note = obj({ text: str() });
+
+const Server = hostKind("server");
+
+const hostAddress = () => Server();
 
 /** Declares through an untyped door, as a JavaScript caller would. */
 const untyped = {
@@ -16,6 +30,7 @@ describe("declaration checks", () => {
 		const Notes = remote("notes", {
 			version: 1,
 			params: { session: str() },
+			hostAddress,
 			variants: {
 				editor: { state: { notes: arr(Note) }, methods: { add: method(Note, str()), clear: method() } },
 				reader: { state: { notes: arr(Note) } },
@@ -31,77 +46,114 @@ describe("declaration checks", () => {
 		expect(Info).toMatchObject({ kind: "local", name: "app.session-info", version: 3 });
 	});
 
+	// Each case declares a valid `hostAddress` unless it checks that one, so the check it names is the one reached.
 	it.each([
-		["empty name", "", { version: 1, params: {}, variants: { a: {} } }, 'A contract name "": expected lowercase'],
+		[
+			"empty name",
+			"",
+			{ version: 1, params: {}, hostAddress, variants: { a: {} } },
+			'A contract name "": expected lowercase',
+		],
 		[
 			"name not a string",
 			1,
-			{ version: 1, params: {}, variants: { a: {} } },
+			{ version: 1, params: {}, hostAddress, variants: { a: {} } },
 			"A contract name 1: expected lowercase",
 		],
-		["an uppercase name", "Notes", { version: 1, params: {}, variants: { a: {} } }, "expected lowercase"],
-		["a name with a colon", "a:b", { version: 1, params: {}, variants: { a: {} } }, "expected lowercase"],
-		["version zero", "n", { version: 0, params: {}, variants: { a: {} } }, "n.version: expected a positive integer"],
+		[
+			"an uppercase name",
+			"Notes",
+			{ version: 1, params: {}, hostAddress, variants: { a: {} } },
+			"expected lowercase",
+		],
+		[
+			"a name with a colon",
+			"a:b",
+			{ version: 1, params: {}, hostAddress, variants: { a: {} } },
+			"expected lowercase",
+		],
+		[
+			"version zero",
+			"n",
+			{ version: 0, params: {}, hostAddress, variants: { a: {} } },
+			"n.version: expected a positive integer",
+		],
 		[
 			"fractional version",
 			"n",
-			{ version: 1.5, params: {}, variants: { a: {} } },
+			{ version: 1.5, params: {}, hostAddress, variants: { a: {} } },
 			"n.version: expected a positive integer",
 		],
 		[
 			"unsafe version",
 			"n",
-			{ version: 2 ** 53, params: {}, variants: { a: {} } },
+			{ version: 2 ** 53, params: {}, hostAddress, variants: { a: {} } },
 			"n.version: expected a positive integer",
 		],
 		[
 			"unknown declaration key",
 			"n",
-			{ version: 1, params: {}, variants: { a: {} }, place: "x" },
+			{ version: 1, params: {}, hostAddress, variants: { a: {} }, place: "x" },
 			'n: unknown key "place"',
 		],
 		[
-			"a placement that is no function",
+			"a host address that is no function",
 			"n",
-			{ version: 1, params: {}, variants: { a: {} }, placement: "x" },
-			"n.placement: expected a function of the params",
+			{ version: 1, params: {}, variants: { a: {} }, hostAddress: "x" },
+			"n.hostAddress: expected a function of the params",
 		],
-		["no variants", "n", { version: 1, params: {}, variants: {} }, "n.variants: at least one variant is required"],
-		["missing params", "n", { version: 1, variants: { a: {} } }, "n.params: expected an object"],
+		[
+			"no host address",
+			"n",
+			{ version: 1, params: {}, variants: { a: {} } },
+			"n.hostAddress: expected a function of the params",
+		],
+		[
+			"no variants",
+			"n",
+			{ version: 1, params: {}, hostAddress, variants: {} },
+			"n.variants: at least one variant is required",
+		],
+		["missing params", "n", { version: 1, hostAddress, variants: { a: {} } }, "n.params: expected an object"],
 		[
 			"unknown variant key",
 			"n",
-			{ version: 1, params: {}, variants: { a: { members: {} } } },
+			{ version: 1, params: {}, hostAddress, variants: { a: { members: {} } } },
 			'n.a: unknown key "members"',
 		],
 		[
 			"a schema under methods",
 			"n",
-			{ version: 1, params: {}, variants: { a: { methods: { m: str() } } } },
+			{ version: 1, params: {}, hostAddress, variants: { a: { methods: { m: str() } } } },
 			"n.a.methods.m: expected method(...)",
 		],
 		[
 			"a method under state",
 			"n",
-			{ version: 1, params: {}, variants: { a: { state: { s: method() } } } },
+			{ version: 1, params: {}, hostAddress, variants: { a: { state: { s: method() } } } },
 			"n.a.state.s: a method belongs in methods",
 		],
 		[
 			"bad state schema",
 			"n",
-			{ version: 1, params: {}, variants: { a: { state: { s: { not: {} } } } } },
+			{ version: 1, params: {}, hostAddress, variants: { a: { state: { s: { not: {} } } } } },
 			'n.a.state.s: unsupported keyword "not"',
 		],
 		[
 			"open arguments",
 			"n",
-			{ version: 1, params: {}, variants: { a: { methods: { m: method(Type.Object({})) } } } },
+			{
+				version: 1,
+				params: {},
+				hostAddress,
+				variants: { a: { methods: { m: method({ type: "object", properties: {} }) } } },
+			},
 			"n.a.methods.m.args: argument objects must be closed",
 		],
 		[
 			"bad result",
 			"n",
-			{ version: 1, params: {}, variants: { a: { methods: { m: method(undefined, { not: {} }) } } } },
+			{ version: 1, params: {}, hostAddress, variants: { a: { methods: { m: method(undefined, { not: {} }) } } } },
 			'n.a.methods.m.result: unsupported keyword "not"',
 		],
 	])("remote refuses %s", (_case, name, declaration, message) => {
@@ -110,7 +162,7 @@ describe("declaration checks", () => {
 
 	it.each([
 		["unknown key", { version: 1, params: {}, members: {}, variants: {} }, 'i: unknown key "variants"'],
-		["a placement", { version: 1, params: {}, members: {}, placement: () => null }, 'i: unknown key "placement"'],
+		["a host address", { version: 1, params: {}, members: {}, hostAddress }, 'i: unknown key "hostAddress"'],
 		[
 			"bad member schema",
 			{ version: 1, params: {}, members: { s: { not: {} } } },
@@ -118,15 +170,28 @@ describe("declaration checks", () => {
 		],
 		[
 			"open arguments",
-			{ version: 1, params: {}, members: { m: method(Type.Object({})) } },
+			{ version: 1, params: {}, members: { m: method({ type: "object", properties: {} }) } },
 			"i.members.m.args: argument objects must be closed",
 		],
 	])("local refuses %s", (_case, declaration, message) => {
 		expect(() => untyped.local("i", declaration)).toThrow(message);
 	});
 
+	it("refuse a remote declaration without a host address at the type level", () => {
+		expect(() =>
+			// @ts-expect-error: every remote type declares its host address
+			remote("n", { version: 1, params: {}, variants: { a: {} } }),
+		).toThrow("n.hostAddress: expected a function of the params");
+	});
+
 	it("does not check state for closed objects", () => {
-		expect(() => local("i", { version: 1, params: {}, members: { s: Type.Object({ a: str() }) } })).not.toThrow();
+		expect(() =>
+			local("i", {
+				version: 1,
+				params: {},
+				members: { s: { type: "object", properties: { a: str() }, required: ["a"] } },
+			}),
+		).not.toThrow();
 	});
 });
 
@@ -136,6 +201,7 @@ describe("D11: members across variants", () => {
 			remote("n", {
 				version: 1,
 				params: {},
+				hostAddress,
 				// @ts-expect-error: `x` is a method in variant b
 				variants: { a: { state: { x: str() } }, b: { methods: { x: method() } } },
 			}),
@@ -147,6 +213,7 @@ describe("D11: members across variants", () => {
 			remote("n", {
 				version: 1,
 				params: {},
+				hostAddress,
 				// @ts-expect-error: `x` is both state and a method
 				variants: { a: { state: { x: str() }, methods: { x: method() } } },
 			}),
@@ -158,6 +225,7 @@ describe("D11: members across variants", () => {
 			remote("n", {
 				version: 1,
 				params: {},
+				hostAddress,
 				// @ts-expect-error: `m` takes a string in a and an integer in b
 				variants: { a: { methods: { m: method(str()) } }, b: { methods: { m: method(int()) } } },
 			}),
@@ -166,6 +234,7 @@ describe("D11: members across variants", () => {
 			remote("n", {
 				version: 1,
 				params: {},
+				hostAddress,
 				variants: {
 					a: { methods: { m: method(str(), str()) } },
 					b: { methods: { m: method(str({ max: 3 }), str()) } },
@@ -179,6 +248,7 @@ describe("D11: members across variants", () => {
 			remote("n", {
 				version: 1,
 				params: {},
+				hostAddress,
 				variants: {
 					editor: { state: { notes: arr(obj({ text: str(), author: str() })) }, methods: { m: method(str()) } },
 					reader: { state: { notes: arr(obj({ text: str() })) }, methods: { m: method(str()) } },
@@ -190,9 +260,9 @@ describe("D11: members across variants", () => {
 
 describe("reserved member names", () => {
 	it.each(["then", "release", "variant", "state", "retry"])("refuses %s in remote, local and evolve", (name) => {
-		expect(() => remote("n", { version: 1, params: {}, variants: { v: { state: { [name]: str() } } } })).toThrow(
-			`n.v.state.${name}: "${name}" is reserved: a reference has it`,
-		);
+		expect(() =>
+			remote("n", { version: 1, params: {}, hostAddress, variants: { v: { state: { [name]: str() } } } }),
+		).toThrow(`n.v.state.${name}: "${name}" is reserved: a reference has it`);
 		expect(() => local("n", { version: 1, params: {}, members: { [name]: method() } })).toThrow(
 			`n.members.${name}: "${name}" is reserved: a reference has it`,
 		);
@@ -220,6 +290,7 @@ describe("keyed members (slice 6a §12)", () => {
 			remote("app.notes", {
 				version: 1,
 				params: {},
+				hostAddress,
 				// @ts-expect-error keyed members are only in local contracts
 				variants: { editor: { state: { notes: keyed(Note) } } },
 			}),

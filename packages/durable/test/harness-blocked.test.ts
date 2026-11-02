@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import { commitWrites } from "../src/testing/commit-writes.ts";
 import { context, flush } from "./session-support.ts";
 import { completed, deferred, eventually, openTasks } from "./task-support.ts";
 
@@ -104,7 +105,7 @@ describe("recovery at open", () => {
 			...rest,
 			state: { status: "completing", outcome: { status: "completed", result: null } },
 		} as const;
-		await raw.commit([{ type: "task", value: completing }], () => {}, context);
+		await commitWrites(raw, [{ type: "task", value: completing }], context);
 		await raw.close(context);
 
 		// That pass's commit fails, as on a platform reset.

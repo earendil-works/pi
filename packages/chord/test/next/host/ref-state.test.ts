@@ -181,7 +181,8 @@ forEachCodec(() => {
 			await transported();
 			expect(notes.state.value).toMatchObject({ kind: "failed", retryAt: undefined });
 			expect(notes.variant).toBe("editor");
-			expect(() => notes.count.value).toThrow("offline");
+			// Its replica's last value stays readable while the hold is failed (rule 5).
+			expect(notes.count.value).toBe(1);
 			notes.release();
 			expect(() => notes.variant).toThrow("app.notes: released");
 		});

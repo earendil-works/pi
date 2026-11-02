@@ -5,6 +5,7 @@ import { apply, type Op } from "@earendil-works/chord/delta";
 import { StorageRequestError } from "../errors.ts";
 import { idFromNumber, seqFromNumber } from "../ids.ts";
 import type {
+	CommitResult,
 	ConversationId,
 	ConversationQuery,
 	ConversationRecord,
@@ -138,12 +139,33 @@ type IndexedDbStorageOptions = {
 	readonly indexedDB?: IDBFactory;
 };
 
+/** A failure IndexedDB reported without an error of its own: the database's, like every `DOMException` it throws. */
+class IndexedDbFailure extends Error {}
+
+/**
+ * Whether `error`, or an error it was caused by (a copy's rejection wraps its cause), is IndexedDB's own: a
+ * `DOMException`, or a failure it reported without one. Any other error of a batch's checks is one of Durable's.
+ */
+function fromIndexedDb(error: unknown): boolean {
+	const seen = new Set<unknown>();
+	for (let at: unknown = error; at !== null && typeof at === "object" && !seen.has(at); ) {
+		if (at instanceof DOMException || at instanceof IndexedDbFailure) return true;
+		seen.add(at);
+		at = (at as { cause?: unknown }).cause;
+	}
+	return false;
+}
+
 const requestResult = <T>(request: IDBRequest<T>): Promise<T> =>
 	new Promise<T>((resolve, reject) => {
 		request.addEventListener("success", () => resolve(request.result), { once: true });
-		request.addEventListener("error", () => reject(request.error ?? new Error("IndexedDB request failed")), {
-			once: true,
-		});
+		request.addEventListener(
+			"error",
+			() => reject(request.error ?? new IndexedDbFailure("IndexedDB request failed")),
+			{
+				once: true,
+			},
+		);
 	});
 
 const transactionResult = (transaction: IDBTransaction): Promise<void> =>
@@ -151,12 +173,12 @@ const transactionResult = (transaction: IDBTransaction): Promise<void> =>
 		transaction.addEventListener("complete", () => resolve(), { once: true });
 		transaction.addEventListener(
 			"abort",
-			() => reject(transaction.error ?? new Error("IndexedDB transaction was aborted")),
+			() => reject(transaction.error ?? new IndexedDbFailure("IndexedDB transaction was aborted")),
 			{ once: true },
 		);
 		transaction.addEventListener(
 			"error",
-			() => reject(transaction.error ?? new Error("IndexedDB transaction failed")),
+			() => reject(transaction.error ?? new IndexedDbFailure("IndexedDB transaction failed")),
 			{ once: true },
 		);
 	});
@@ -176,9 +198,13 @@ const cursorValues = <T>(
 	new Promise<T[]>((resolve, reject) => {
 		const values: T[] = [];
 		const request = source.openCursor(range, direction);
-		request.addEventListener("error", () => reject(request.error ?? new Error("IndexedDB cursor failed")), {
-			once: true,
-		});
+		request.addEventListener(
+			"error",
+			() => reject(request.error ?? new IndexedDbFailure("IndexedDB cursor failed")),
+			{
+				once: true,
+			},
+		);
 		request.addEventListener("success", () => {
 			const cursor = request.result;
 			if (cursor === null) {
@@ -203,9 +229,13 @@ const firstCursorValue = <T>(
 ): Promise<T | undefined> =>
 	new Promise<T | undefined>((resolve, reject) => {
 		const request = source.openCursor(range, direction);
-		request.addEventListener("error", () => reject(request.error ?? new Error("IndexedDB cursor failed")), {
-			once: true,
-		});
+		request.addEventListener(
+			"error",
+			() => reject(request.error ?? new IndexedDbFailure("IndexedDB cursor failed")),
+			{
+				once: true,
+			},
+		);
 		request.addEventListener("success", () => {
 			const cursor = request.result;
 			if (cursor === null) {
@@ -417,29 +447,54 @@ export class IndexedDbStorage implements Storage {
 		await requestResult(factory.deleteDatabase(name));
 	}
 
-	async commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, _context: Context): Promise<Seq> {
+	/**
+	 * Commit `batches` in one IndexedDB transaction, each with its own seq. Each batch does every read and check, copy
+	 * resolution included, against the state the earlier ones left before it issues its first write; the first one
+	 * refused ends the call, and the transaction commits the ones before it. An error of IndexedDB itself aborts the
+	 * transaction: the call rejects with nothing stored.
+	 */
+	async commit(
+		batches: readonly (readonly StorageWrite[])[],
+		receive: (index: number, seq: Seq) => void,
+		_context: Context,
+	): Promise<CommitResult> {
 		this.assertOpen();
-		const documentActions = this.prepareDocumentActions(writes);
-		const seq = await this.transaction(ALL_STORES, "readwrite", async (transaction) => {
+		const seqs: Seq[] = [];
+		let refused: { readonly error: unknown } | undefined;
+		await this.transaction(ALL_STORES, "readwrite", async (transaction) => {
 			const metaStore = transaction.objectStore(STORES.meta);
 			const metadata = await requestResult(metaStore.get(META_KEY) as IDBRequest<MetaRow>);
 			if (metadata === undefined) throw new Error("Durable IndexedDB metadata is missing");
-			const seq = seqFromNumber(metadata.nextSeq);
-			await this.checkGlobalIds(transaction, writes);
-			await this.checkDocumentActions(transaction, documentActions);
-			for (const write of writes) await this.applyTableWrite(transaction, write, seq);
-			await this.applyDocumentActions(transaction, documentActions, seq);
+			let next = metadata.nextSeq;
 			let nextId = metadata.nextId;
-			for (const write of writes) {
-				const id = writeId(write);
-				if (id !== undefined) nextId = Math.max(nextId, id + 1);
+			for (const writes of batches) {
+				let documentActions: Map<DocumentId, DocumentAction>;
+				try {
+					documentActions = this.prepareDocumentActions(writes);
+					await this.checkGlobalIds(transaction, writes);
+					await this.checkDocumentActions(transaction, documentActions);
+					await this.resolveCopies(transaction, documentActions);
+				} catch (error) {
+					if (fromIndexedDb(error)) throw error;
+					refused = { error };
+					break;
+				}
+				const seq = seqFromNumber(next++);
+				for (const write of writes) await this.applyTableWrite(transaction, write, seq);
+				await this.applyDocumentActions(transaction, documentActions, seq);
+				for (const write of writes) {
+					const id = writeId(write);
+					if (id !== undefined) nextId = Math.max(nextId, id + 1);
+				}
+				seqs.push(seq);
 			}
-			await requestResult(metaStore.put({ key: META_KEY, nextId, nextSeq: seq + 1 } satisfies MetaRow));
-			return seq;
+			if (seqs.length > 0) {
+				await requestResult(metaStore.put({ key: META_KEY, nextId, nextSeq: next } satisfies MetaRow));
+			}
 		});
-		// The transaction completed: the batch is durable.
-		adopt(seq);
-		return seq;
+		// The transaction completed: the stored batches are durable.
+		for (const [index, seq] of seqs.entries()) receive(index, seq);
+		return refused === undefined ? { stored: seqs.length } : { stored: seqs.length, refused: refused.error };
 	}
 
 	async mintId<I extends Id<string>>(): Promise<I> {
@@ -1124,6 +1179,31 @@ export class IndexedDbStorage implements Storage {
 		}
 	}
 
+	/** Resolve each copy to a base of its source's state before this batch, which may not change the source. */
+	private async resolveCopies(transaction: IDBTransaction, actions: Map<DocumentId, DocumentAction>): Promise<void> {
+		for (const [id, action] of actions) {
+			if (action.copy === undefined) continue;
+			try {
+				const stored = await this.materializeDocument(transaction, action.copy.id, action.copy.at);
+				if (stored === undefined) throw new Error(`Fork source document ${action.copy.id} cannot be read`);
+				const create = action.create!;
+				if (
+					stored.record.scope.kind !== "conversation" ||
+					create.scope.kind !== "conversation" ||
+					stored.record.kind !== create.kind ||
+					stored.record.key !== create.key ||
+					stored.record.history !== create.history ||
+					stored.record.fork !== create.fork
+				) {
+					throw new Error(`Fork source document ${action.copy.id} does not match the copied record`);
+				}
+				action.content = { kind: "base", version: stored.version, value: stored.value };
+			} catch (error) {
+				throw new Error(`Document copy ${id} was rejected`, { cause: error });
+			}
+		}
+	}
+
 	private async applyDocumentActions(
 		transaction: IDBTransaction,
 		actions: ReadonlyMap<DocumentId, DocumentAction>,
@@ -1132,27 +1212,8 @@ export class IndexedDbStorage implements Storage {
 		const documents = transaction.objectStore(STORES.documents);
 		const revisions = transaction.objectStore(STORES.documentRevisions);
 		for (const [id, action] of actions) {
-			let content = action.content;
-			if (action.copy !== undefined) {
-				try {
-					const stored = await this.materializeDocument(transaction, action.copy.id, action.copy.at);
-					if (stored === undefined) throw new Error(`Fork source document ${action.copy.id} cannot be read`);
-					const create = action.create!;
-					if (
-						stored.record.scope.kind !== "conversation" ||
-						create.scope.kind !== "conversation" ||
-						stored.record.kind !== create.kind ||
-						stored.record.key !== create.key ||
-						stored.record.history !== create.history ||
-						stored.record.fork !== create.fork
-					) {
-						throw new Error(`Fork source document ${action.copy.id} does not match the copied record`);
-					}
-					content = { kind: "base", version: stored.version, value: stored.value };
-				} catch (error) {
-					throw new Error(`Document copy ${id} was rejected`, { cause: error });
-				}
-			}
+			// Copies are resolved to their content by `resolveCopies()`.
+			const content = action.content;
 			let record: DocumentRecord;
 			if (action.create !== undefined) {
 				record = {

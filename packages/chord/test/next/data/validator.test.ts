@@ -1,4 +1,5 @@
-import { GetExternal, GetFunctions } from "typebox/schema";
+// Tests of compiled checks: pi-schema validators of Chord-owned schemas and the `invalid` error of a failed check.
+
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../../src/context/index.ts";
 import { arr, bytes, int, map, obj, str } from "../../../src/next/contracts/schema.ts";
@@ -31,17 +32,21 @@ describe("failed checks", () => {
 		expect(failure(valid)).toBe("passed");
 	});
 
-	it("report TypeBox's first error with its JSON Pointer path", () => {
+	it("report the first error with its JSON Pointer path", () => {
 		expect(failure({ ...valid, text: 1 })).toEqual({
 			reason: "args",
-			message: "args/text: must be string",
+			message: "args/text: expected string, got integer",
 			details: { path: "/text" },
 		});
 		expect(failure({ ...valid, items: [{ n: "x" }] })).toMatchObject({ details: { path: "/items/0/n" } });
-		expect(failure(null)).toEqual({ reason: "args", message: "args: must be object", details: { path: "/" } });
+		expect(failure(null)).toEqual({
+			reason: "args",
+			message: "args: expected object, got null",
+			details: { path: "/" },
+		});
 	});
 
-	it("report a missing field at its own path (TypeBox reports it at the parent)", () => {
+	it("report a missing field at its own path", () => {
 		const { text: _, ...missing } = valid;
 		expect(failure(missing)).toMatchObject({
 			message: "args/text: missing",
@@ -60,14 +65,22 @@ describe("failed checks", () => {
 	});
 
 	it("check bytes by instanceof and length", () => {
-		expect(failure({ ...valid, blob: [1] })).toMatchObject({
-			message: "args/blob: expected bytes of the declared length",
+		expect(failure({ ...valid, blob: [1] })).toMatchObject({ message: "args/blob: expected bytes, got array" });
+		expect(failure({ ...valid, blob: new Uint8Array(3) })).toMatchObject({
+			message: "args/blob: expected at most 2 bytes",
+			details: { path: "/blob" },
 		});
-		expect(failure({ ...valid, blob: new Uint8Array(3) })).toMatchObject({ details: { path: "/blob" } });
 	});
 
-	it("leave keys containing `/` or `~` unescaped (TypeBox's instance path, ambiguous)", () => {
-		expect(failure({ ...valid, tags: { "a/b": 1 } })).toMatchObject({ details: { path: "/tags/a/b" } });
+	it("treat `format` as an annotation: no format is checked", () => {
+		const owner = snapshotArguments(obj({ mail: { type: "string", format: "email" } }), "m");
+		const validator = validatorFor(owner, BACKGROUND_CONTEXT);
+		expect(validator.check({ mail: "a@b.c" })).toBe(true);
+		expect(validator.check({ mail: "nope" })).toBe(true);
+	});
+
+	it("escape `~` and `/` in keys (JSON Pointer), so a path names one place", () => {
+		expect(failure({ ...valid, tags: { "a/b": 1, "c~d": "x" } })).toMatchObject({ details: { path: "/tags/a~1b" } });
 	});
 });
 
@@ -86,20 +99,11 @@ describe("validators", () => {
 		]);
 	});
 
-	it("leave nothing in TypeBox's build accumulators", () => {
-		validatorFor(snapshotArguments(obj({ blob: bytes(), n: int() }), "m"), BACKGROUND_CONTEXT);
-		expect(GetExternal().variables).toEqual([]);
-		expect(GetFunctions()).toEqual([]);
-	});
-
-	it("are collected with their schema owner; TypeBox retains no build state", async () => {
+	it("are collected with their schema owner, the check function too", async () => {
 		const refs = (() => {
-			const owner = snapshotArguments(obj({ blob: bytes() }), "m");
+			const owner = snapshotArguments(obj({ blob: bytes(), n: int() }), "m");
 			const validator = validatorFor(owner, BACKGROUND_CONTEXT);
-			const blob = (owner.schema as { properties: { blob: object } }).properties.blob;
-			// TypeBox's external variables would hold the bytes check if the build state were retained.
-			const [check] = Object.getOwnPropertyDescriptor(blob, "~refine")!.value as object[];
-			return [new WeakRef(owner), new WeakRef(validator), new WeakRef(check!)];
+			return [new WeakRef(owner), new WeakRef(validator), new WeakRef(validator.check)];
 		})();
 		await expectCollected(...refs);
 	});

@@ -22,6 +22,8 @@ import {
 	PlacedNotes,
 	RawPeer,
 	relayed,
+	SERVER_ADDRESS,
+	Server,
 	serveNotes,
 	type TestPrincipal,
 	testCodec,
@@ -84,9 +86,10 @@ describe("host.references", () => {
 		const Shown = remote("app.shown", {
 			version: 1,
 			params: { session: str() },
+			hostAddress: () => Server(),
 			variants: { v: { state: { here: int() } } },
 		});
-		const server = createHost<TestPrincipal>({ principal: { kind: "server" }, onError: () => {} });
+		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		await server.load(
 			[
 				{
@@ -130,9 +133,10 @@ describe("host.references", () => {
 		const Viewed = remote("app.viewed", {
 			version: 1,
 			params: { session: str() },
+			hostAddress: () => Server(),
 			variants: { v: { state: { count: int(), viewers: int() } } },
 		});
-		const server = createHost<TestPrincipal>({ principal: { kind: "server" }, onError: () => {} });
+		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		const facet = defineFacet<TestPrincipal>((host) => {
 			serveNotes(host);
 			host.serve(Viewed, ({ session }, _principal, self) => {
@@ -151,7 +155,15 @@ describe("host.references", () => {
 			server.accept(end, { principal: { kind: "owner" }, codec: testCodec() }, context);
 			const peer = new RawPeer(b);
 			const { name: type, version, fingerprint } = Viewed;
-			peer.send({ kind: "hold", hold: 0, type, version, fingerprint, params: jsonPart({ session: "S1" }) });
+			peer.send({
+				kind: "hold",
+				hold: 0,
+				type,
+				version,
+				fingerprint,
+				params: jsonPart({ session: "S1" }),
+				address: SERVER_ADDRESS,
+			});
 			return peer;
 		};
 		const drop = { armed: false };
@@ -176,9 +188,10 @@ describe("host.references", () => {
 		const Viewed = remote("app.viewed", {
 			version: 1,
 			params: {},
+			hostAddress: () => Server(),
 			variants: { v: { state: { viewers: int() } } },
 		});
-		const server = createHost<TestPrincipal>({ principal: { kind: "server" }, onError: () => {} });
+		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		const facet = defineFacet<TestPrincipal>((host) => {
 			host.serve(
 				Viewed,
@@ -195,13 +208,13 @@ describe("host.references", () => {
 		server.accept(closingOnSend(a, drop), { principal: { kind: "owner" }, codec: testCodec() }, context);
 		const peer = new RawPeer(b);
 		const { name: type, version, fingerprint } = Viewed;
-		peer.send({ kind: "hold", hold: 0, type, version, fingerprint, params: "{}" });
+		peer.send({ kind: "hold", hold: 0, type, version, fingerprint, params: "{}", address: SERVER_ADDRESS });
 		await peer.next("bound");
 		peer.send({ kind: "ack" });
 		await transported();
 		// The second hold's presence entry changes the first's state: sending it closes the link.
 		drop.armed = true;
-		peer.send({ kind: "hold", hold: 1, type, version, fingerprint, params: "{}" });
+		peer.send({ kind: "hold", hold: 1, type, version, fingerprint, params: "{}", address: SERVER_ADDRESS });
 		await transported();
 		expect(peer.closed).toBe(true);
 		expect(server.references(Viewed).value).toEqual([]);
@@ -210,8 +223,13 @@ describe("host.references", () => {
 	});
 
 	it("completes a release's bookkeeping before its departure publishes: a link closing then leaves no lingering", async () => {
-		const Viewed = remote("app.viewed", { version: 1, params: {}, variants: { v: { state: { viewers: int() } } } });
-		const server = createHost<TestPrincipal>({ principal: { kind: "server" }, onError: () => {} });
+		const Viewed = remote("app.viewed", {
+			version: 1,
+			params: {},
+			hostAddress: () => Server(),
+			variants: { v: { state: { viewers: int() } } },
+		});
+		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		const facet = defineFacet<TestPrincipal>((host) => {
 			host.serve(
 				Viewed,
@@ -229,7 +247,7 @@ describe("host.references", () => {
 		const peer = new RawPeer(b);
 		const { name: type, version, fingerprint } = Viewed;
 		for (const hold of [0, 1]) {
-			peer.send({ kind: "hold", hold, type, version, fingerprint, params: "{}" });
+			peer.send({ kind: "hold", hold, type, version, fingerprint, params: "{}", address: SERVER_ADDRESS });
 			await peer.next("bound");
 			peer.send({ kind: "ack" });
 		}
@@ -248,6 +266,7 @@ describe("host.references", () => {
 
 	it("removes a bulk departure with one list and one splice op per entry, in one frame (a revoke of many holds)", async () => {
 		const server = createHost<TestPrincipal, { session: string }>({
+			address: Server(),
 			principal: { kind: "server" },
 			revokedBy: (principal) => (principal.kind === "guest" ? [{ session: principal.session }] : []),
 			onError: () => {},
@@ -258,7 +277,15 @@ describe("host.references", () => {
 		const peer = new RawPeer(b);
 		const { name: type, version, fingerprint } = Notes;
 		for (let hold = 0; hold < 4; hold++) {
-			peer.send({ kind: "hold", hold, type, version, fingerprint, params: jsonPart({ session: "S1" }) });
+			peer.send({
+				kind: "hold",
+				hold,
+				type,
+				version,
+				fingerprint,
+				params: jsonPart({ session: "S1" }),
+				address: SERVER_ADDRESS,
+			});
 		}
 		await transported();
 		const references = server.references(Notes);
@@ -285,7 +312,12 @@ describe("host.references", () => {
 	});
 
 	it("has no entries for lingering objects", async () => {
-		const Kept = remote("app.kept", { version: 1, params: {}, variants: { v: { state: { n: int() } } } });
+		const Kept = remote("app.kept", {
+			version: 1,
+			params: {},
+			hostAddress: () => Server(),
+			variants: { v: { state: { n: int() } } },
+		});
 		const { server, client } = await linked((h) =>
 			h.serve(Kept, () => ({ variant: "v", members: { n: constant(1) } }), { linger: 60_000 }),
 		);

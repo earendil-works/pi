@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { durableObjectStorage } from "../../chord/test/sqlite/helpers.ts";
 import { idFromNumber } from "../src/ids.ts";
 import { DurableObjectSqliteDatabase, openDurableObjectSqliteStorage } from "../src/storage/sqlite/cloudflare.ts";
+import { commitWrites } from "../src/testing/commit-writes.ts";
 import { type EntryId, ROOT_CONVERSATION_ID } from "../src/types.ts";
 
 registerStorageConformance({ describe, expect, it }, "SqliteStorage on a prefixed Durable Object", async (use) =>
@@ -48,20 +49,20 @@ describe("Durable Object SQLite adapter", () => {
 		]);
 		const entryId = idFromNumber<EntryId>(2);
 		await Promise.all([
-			first.commit(
+			commitWrites(
+				first,
 				[
 					{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } },
 					{ type: "entry", value: { id: entryId, conversationId: ROOT_CONVERSATION_ID, kind: "first" } },
 				],
-				() => {},
 				BACKGROUND_CONTEXT,
 			),
-			second.commit(
+			commitWrites(
+				second,
 				[
 					{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } },
 					{ type: "entry", value: { id: entryId, conversationId: ROOT_CONVERSATION_ID, kind: "second" } },
 				],
-				() => {},
 				BACKGROUND_CONTEXT,
 			),
 		]);

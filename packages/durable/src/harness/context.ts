@@ -17,27 +17,31 @@ export type ContextBounds = {
 };
 
 /**
- * Capture the bounds of the current context, or of the context cut off at the visible entry `at`, with two O(1)
- * reads. Run this on the Session line; entries at or below the tail are immutable, so `deriveContext()` can then scan
- * them off the line.
+ * Capture the bounds of the current context, or of the context cut off at the visible entry `at`. The newest entry
+ * and head marker are known from the Session's commits, so the current bounds usually cost no Storage read. Run this
+ * on the Session line; entries at or below the tail are immutable, so `deriveContext()` can then scan them off the
+ * line.
  */
 export async function captureContextBounds(
+	session: SessionImpl,
 	storage: Storage,
 	conversationId: ConversationId,
 	context: Context,
 	at?: EntryId,
+	/** Set when `at` is known to be visible, as an entry of a range of the conversation is. */
+	visible = false,
 ): Promise<ContextBounds | undefined> {
 	let tail: EntryId | undefined;
 	if (at === undefined) {
-		tail = (await storage.scanEntries({ conversationId }, 1, undefined, context)).items[0]?.id;
+		tail = await session.latestEntryId(conversationId, context);
 		if (tail === undefined) return undefined;
 	} else {
-		if ((await storage.entry(conversationId, at, context)) === undefined) {
+		if (!visible && (await storage.entry(conversationId, at, context)) === undefined) {
 			throw new Error(`Entry ${at} is not visible from conversation ${conversationId}`);
 		}
 		tail = at;
 	}
-	return { head: await storage.findLatestHeadMarker(conversationId, tail, context), tail };
+	return { head: await session.latestHeadMarker(conversationId, tail, context), tail };
 }
 
 /**
@@ -60,6 +64,11 @@ export type ContextRange = {
 	readonly open: readonly Message[];
 	/** The baseline's system message; see `findBaseline()`. */
 	readonly baseline: Baseline;
+	/**
+	 * Whether the range reached the conversation's newest entry when it was read, so the entries of later commits extend
+	 * it (`advanceRange()`); a range cut off at an earlier entry is not.
+	 */
+	readonly current: boolean;
 };
 
 /** A baseline's system message, `null` when the range cannot have one, or `undefined` while a later entry may be one. */
@@ -68,7 +77,9 @@ type Baseline = Message | null | undefined;
 /**
  * `readContext()` that reuses `previous`, an earlier range of the same conversation: with the same head marker, only
  * entries after its tail are scanned. Returns the view and the range to pass to the next read. A range outlives the
- * read, so its entries are frozen like `MemoryStorage` records, and the returned view has its own arrays.
+ * read, so its entries are frozen like `MemoryStorage` records, and the returned view has its own arrays. A caller that
+ * keeps the range for `advanceRange()` checks `current` again, synchronously where it installs it: a commit can be
+ * published between this function's return and the caller's continuation.
  */
 export async function readContextFrom(
 	session: SessionImpl,
@@ -78,23 +89,33 @@ export async function readContextFrom(
 	at: EntryId | undefined,
 	previous: ContextRange | undefined,
 ): Promise<{ readonly view: ContextView; readonly range: ContextRange | undefined }> {
-	const bounds = await session.readOnLine(() => captureContextBounds(storage, conversationId, context, at));
+	const visible = at !== undefined && previous !== undefined && rangeEntry(previous, at) !== undefined;
+	const bounds = await session.readOnLine((line) =>
+		captureContextBounds(session, line, conversationId, context, at, visible),
+	);
 	if (bounds === undefined) return { view: emptyView(), range: undefined };
 	freezeJson(bounds.head);
+	const current = at === undefined;
 	let range: ContextRange;
 	if (previous === undefined || previous.bounds.head?.id !== bounds.head?.id) {
-		range = deriveRange(bounds, freezeJson(await scanRange(storage, conversationId, rangeQuery(bounds), context)));
+		const entries = freezeJson(await scanRange(storage, conversationId, rangeQuery(bounds), context));
+		range = deriveRange(bounds, entries, current);
 	} else if (bounds.tail === previous.bounds.tail) {
 		range = previous;
 	} else if (bounds.tail < previous.bounds.tail) {
 		range = deriveRange(
 			bounds,
 			previous.entries.filter((entry) => entry.id <= bounds.tail),
+			false,
 		);
 	} else {
 		const minEntryId = idFromNumber<EntryId>(previous.bounds.tail + 1);
 		const added = await scanRange(storage, conversationId, { minEntryId, maxEntryId: bounds.tail }, context);
-		range = extendRange(previous, bounds, freezeJson(added));
+		range = extendRange(previous, bounds, freezeJson(added), current);
+	}
+	// Entries committed while the scan ran off the line are not in the range: it is current only if none was.
+	if (range.current && session.knownLatestEntryId(conversationId) !== range.bounds.tail) {
+		range = { ...range, current: false };
 	}
 	const { view } = range;
 	return {
@@ -116,7 +137,7 @@ export async function readContext(
 	context: Context,
 	at?: EntryId,
 ): Promise<ContextView> {
-	const bounds = await session.readOnLine(() => captureContextBounds(storage, conversationId, context, at));
+	const bounds = await session.readOnLine((line) => captureContextBounds(session, line, conversationId, context, at));
 	return deriveContext(storage, conversationId, bounds, context);
 }
 
@@ -133,15 +154,49 @@ export async function deriveContext(
 	context: Context,
 ): Promise<ContextView> {
 	if (bounds === undefined) return emptyView();
-	return deriveRange(bounds, await scanRange(storage, conversationId, rangeQuery(bounds), context)).view;
+	return deriveRange(bounds, await scanRange(storage, conversationId, rangeQuery(bounds), context), false).view;
 }
 
 function emptyView(): ContextView {
 	return { head: undefined, entries: [], contributions: [], messages: [] };
 }
 
+/** Entry `id` of `range`, by binary search: a range holds its entries in ID order, every one visible from its conversation. */
+export function rangeEntry(range: ContextRange, id: EntryId): EntryRecord | undefined {
+	const entries = range.entries;
+	let low = 0;
+	let high = entries.length - 1;
+	while (low <= high) {
+		const middle = (low + high) >>> 1;
+		const entry = entries[middle]!;
+		if (entry.id === id) return entry;
+		if (entry.id < id) low = middle + 1;
+		else high = middle - 1;
+	}
+	return undefined;
+}
+
+/**
+ * `range` with the entries one commit appended to its conversation, in ID order, without reading Storage: the
+ * conversation's own new entries are its newest, and a new head marker's head never lies before the range's start.
+ * A range that is not `current` stays as it is; the next read extends it from Storage. `undefined` drops the range.
+ */
+export function advanceRange(range: ContextRange, appended: readonly EntryRecord[]): ContextRange | undefined {
+	if (!range.current || appended.length === 0) return range;
+	const added = freezeJson(appended);
+	let head = range.bounds.head;
+	for (const entry of added) if (entry.head !== undefined) head = entry as typeof head;
+	const bounds = { head, tail: added.at(-1)!.id };
+	if (head?.id === range.bounds.head?.id) return extendRange(range, bounds, added, true);
+	const start = head!.head;
+	// Heads only move forward: compaction keeps a later entry, a reset starts at itself, an older head is stale.
+	if (range.bounds.head !== undefined && start < range.bounds.head.head) return undefined;
+	const entries = [...range.entries, ...added].filter((entry) => entry.id >= start);
+	return deriveRange(bounds, entries, true);
+}
+
 /** Derive the context view from the entries scanned within `bounds`. */
-function deriveRange(bounds: ContextBounds, entries: readonly EntryRecord[]): ContextRange {
+function deriveRange(bounds: ContextBounds, entries: readonly EntryRecord[], current: boolean): ContextRange {
 	const edits = new Map<EntryId, ContextEdit>();
 	// Edits of every entry in the range count, including older head markers that `selectActive()` drops.
 	for (const entry of entries) for (const edit of entry.edits ?? []) edits.set(edit.target, edit);
@@ -151,17 +206,22 @@ function deriveRange(bounds: ContextBounds, entries: readonly EntryRecord[]): Co
 	const baseline = findBaseline(bounds.head, active);
 	const messages = leadWithSystem([...settled, ...orderToolResults(open)], baseline);
 	const view = { head: bounds.head, entries: active, contributions, messages };
-	return { bounds, entries, view, edited: new Set(edits.keys()), settled, open, baseline };
+	return { bounds, entries, view, edited: new Set(edits.keys()), settled, open, baseline, current };
 }
 
 /**
  * `previous` extended by the entries `added` after its tail under the same head marker: only their contributions and
  * the open messages are derived. An added edit can change an earlier entry, so it derives the whole range again.
  */
-function extendRange(previous: ContextRange, bounds: ContextBounds, added: readonly EntryRecord[]): ContextRange {
+function extendRange(
+	previous: ContextRange,
+	bounds: ContextBounds,
+	added: readonly EntryRecord[],
+	current: boolean,
+): ContextRange {
 	const entries = [...previous.entries, ...added];
 	if (added.some((entry) => entry.edits !== undefined || entry.head !== undefined || previous.edited.has(entry.id))) {
-		return deriveRange(bounds, entries);
+		return deriveRange(bounds, entries, current);
 	}
 	const contributions = added.map((entry) => contribute(entry, undefined));
 	const { settled, open } = settle(previous.settled, [...previous.open, ...contributions.flat()]);
@@ -172,7 +232,7 @@ function extendRange(previous: ContextRange, bounds: ContextBounds, added: reado
 		contributions: [...previous.view.contributions, ...contributions],
 		messages: leadWithSystem([...settled, ...orderToolResults(open)], baseline),
 	};
-	return { bounds, entries, view, edited: previous.edited, settled, open, baseline };
+	return { bounds, entries, view, edited: previous.edited, settled, open, baseline, current };
 }
 
 /**

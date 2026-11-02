@@ -5,10 +5,11 @@
  *
  *   node --conditions=source --experimental-strip-types test/scheduler-fanout-bench.ts [calls...]
  */
+
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { Type } from "typebox";
+import { num, obj } from "@earendil-works/pi-schema";
 import { createRegistry, defineExtension, defineTool, Harness, ToolResultEntry } from "../src/index.ts";
 import { MemoryStorage } from "../src/storage/memory.ts";
 
@@ -20,13 +21,13 @@ async function run(calls: number): Promise<{ ms: number; commits: number }> {
 	const leaf = defineTool({
 		name: "leaf",
 		description: "Return at once",
-		parameters: Type.Object({ n: Type.Number() }),
+		parameters: obj({ n: num() }),
 		execute: async () => ({ output: [{ type: "text", text: "ok" }] }),
 	});
 	const fan = defineTool({
 		name: "fan",
 		description: "Call leaf in parallel",
-		parameters: Type.Object({ count: Type.Number() }),
+		parameters: obj({ count: num() }),
 		execute: async (args, api, callContext) => {
 			const results = await Promise.all(
 				Array.from({ length: args.count }, (_, n) =>
@@ -41,9 +42,9 @@ async function run(calls: number): Promise<{ ms: number; commits: number }> {
 	const storage = new MemoryStorage();
 	let commits = 0;
 	const commit = storage.commit.bind(storage);
-	storage.commit = (writes, adopt, commitContext) => {
-		commits++;
-		return commit(writes, adopt, commitContext);
+	storage.commit = (batches, receive, commitContext) => {
+		commits += batches.length;
+		return commit(batches, receive, commitContext);
 	};
 	const harness = await Harness.open(storage, { models, registry }, context);
 	const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" } } });

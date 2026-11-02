@@ -51,9 +51,9 @@ export type StoredFields = {
 	readonly outcome?: AnyOutcome;
 };
 
-/** `run`'s record as stored with `fields` changed, with the job's `fingerprint`. */
-export function storedRun(run: JobRun, fingerprint: string, fields: StoredFields = {}): StoredRun {
-	const { version, args, key, trace } = run;
+/** `run`'s record as stored with `fields` changed (its own version and fingerprint). */
+export function storedRun(run: JobRun, fields: StoredFields = {}): StoredRun {
+	const { version, fingerprint, args, key, trace } = run;
 	const { phase, restarts, finishFailures, abortMarked, blocked, outcome } = { ...pick(run), ...fields };
 	return {
 		version,

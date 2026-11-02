@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Context, JsonValue } from "@earendil-works/chord";
-import { createModels, Type } from "@earendil-works/pi-ai";
+import { createModels } from "@earendil-works/pi-ai";
 import {
 	createRegistry,
 	defineDoc,
@@ -15,6 +15,7 @@ import {
 	type TaskId,
 	type TaskRuntime,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { addTask, addTool } from "./harness-support.ts";
@@ -482,7 +483,7 @@ describe("blocked tasks", () => {
 			defineTool({
 				name: "unrelated",
 				description: "unrelated",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async () => ({}),
 			}),
 		);

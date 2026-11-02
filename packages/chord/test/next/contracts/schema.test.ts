@@ -1,4 +1,6 @@
-import { Compile } from "typebox/compile";
+// Tests of the schema helpers: the JSON Schema they build over pi-schema's builders, their types, `bytes()`, `method`.
+
+import { compile } from "@earendil-works/pi-schema";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
 	arr,
@@ -22,7 +24,7 @@ import { Method } from "../../../src/next/contracts/internal.ts";
 import type { Equal } from "../support.ts";
 
 describe("schema helpers", () => {
-	it("produce ordinary TypeBox schemas with bounds under their JSON Schema names", () => {
+	it("produce plain JSON Schema with bounds under their JSON Schema names", () => {
 		expect(str({ min: 1, max: 3, pattern: "^a" })).toEqual({
 			type: "string",
 			minLength: 1,
@@ -58,34 +60,39 @@ describe("schema helpers", () => {
 			properties: { a: str(), b: int() },
 			additionalProperties: false,
 		});
-		expect(Compile(schema).Check({ a: "x" })).toBe(true);
-		expect(Compile(schema).Check({ a: "x", c: 1 })).toBe(false);
+		expect(compile(schema).check({ a: "x" })).toBe(true);
+		expect(compile(schema).check({ a: "x", c: 1 })).toBe(false);
 	});
 
-	it("Static and TypeBox's compiler work unchanged", () => {
+	it("Static gives the values' type; pi-schema's compiler checks them", () => {
 		const schema = obj({ kind: oneOf("chat", "agent"), n: opt(int()), tags: arr(str()), data: bytes() });
 		type Expected = { kind: "chat" | "agent"; n?: number; tags: string[]; data: Uint8Array };
 		expectTypeOf<Equal<Static<typeof schema>, Expected>>().toEqualTypeOf<true>();
-		expect(Compile(schema).Check({ kind: "chat", tags: [], data: new Uint8Array(1) })).toBe(true);
+		expect(compile(schema).check({ kind: "chat", tags: [], data: new Uint8Array(1) })).toBe(true);
 	});
 });
 
 describe("bytes", () => {
-	it("is the data marker with the check attached non-enumerably", () => {
+	it("is plain data: the marker and nothing else", () => {
 		const schema = bytes({ min: 1, max: 2 });
-		expect(JSON.parse(JSON.stringify(schema))).toEqual({ type: "bytes", minLength: 1, maxLength: 2 });
-		expect(Object.keys(schema)).toEqual(["type", "minLength", "maxLength"]);
-		expect(Object.getOwnPropertyDescriptor(schema, "~refine")?.enumerable).toBe(false);
+		expect(Reflect.ownKeys(schema)).toEqual(["type", "minLength", "maxLength"]);
+		expect(schema).toEqual({ type: "bytes", minLength: 1, maxLength: 2 });
 	});
 
 	it("checks instanceof Uint8Array and the length bounds", () => {
-		const validator = Compile(bytes({ min: 1, max: 2 }));
-		expect(validator.Check(new Uint8Array(1))).toBe(true);
-		expect(validator.Check(new Uint8Array(2))).toBe(true);
-		expect(validator.Check(new Uint8Array(0))).toBe(false);
-		expect(validator.Check(new Uint8Array(3))).toBe(false);
-		expect(validator.Check([1])).toBe(false);
-		expect(validator.Check("ab")).toBe(false);
+		const validator = compile(bytes({ min: 1, max: 2 }));
+		expect(validator.check(new Uint8Array(1))).toBe(true);
+		expect(validator.check(new Uint8Array(2))).toBe(true);
+		expect(validator.check(new Uint8Array(0))).toBe(false);
+		expect(validator.check(new Uint8Array(3))).toBe(false);
+		expect(validator.check([1])).toBe(false);
+		expect(validator.check("ab")).toBe(false);
+	});
+
+	it("checks inside a record (slices.md L1 carry-over)", () => {
+		const validator = compile(map(bytes({ max: 1 })));
+		expect(validator.check({ a: new Uint8Array(1) })).toBe(true);
+		expect(validator.check({ a: new Uint8Array(2) })).toBe(false);
 	});
 });
 

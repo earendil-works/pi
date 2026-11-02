@@ -134,9 +134,11 @@ export async function resizeImageInProcess(
 		let currentHeight = targetHeight;
 
 		while (true) {
-			const candidates = tryEncodings(currentWidth, currentHeight, qualitySteps);
-			for (const candidate of candidates) {
-				if (candidate.encodedSize < opts.maxBytes) {
+			const [png, jpeg, ...lowerQualityJpegs] = tryEncodings(currentWidth, currentHeight, qualitySteps);
+			// Prefer the smaller of PNG and JPEG at the configured quality; lower JPEG quality only if neither fits.
+			const preferred = jpeg && jpeg.encodedSize < png.encodedSize ? [jpeg, png] : [png, jpeg];
+			for (const candidate of [...preferred, ...lowerQualityJpegs]) {
+				if (candidate && candidate.encodedSize < opts.maxBytes) {
 					return {
 						data: candidate.data,
 						mimeType: candidate.mimeType,

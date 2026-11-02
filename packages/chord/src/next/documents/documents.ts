@@ -87,6 +87,14 @@ export class Documents {
 	}
 
 	/**
+	 * Checks a declaration of `definition` as `declare` would, changing nothing (a reload's staging: a recording factory
+	 * declares against the documents the object has).
+	 */
+	check(definition: AnyDefinition): void {
+		this.#slots.get(definition.name)?.definition.check(definition);
+	}
+
+	/**
 	 * Takes an attempt's declarations once its factory returned: its `at(key)` pins replace the previous factory's, the
 	 * slots it no longer declares are dropped (their watches end; persisted ones load again when declared again), every
 	 * declared one hydrated (`initial()`, migrations; a throw fails the activation).

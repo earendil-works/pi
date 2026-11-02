@@ -1,5 +1,5 @@
 // Host kinds and addresses (§3): a kind of addressable host with params like a contract's, and the address of one
-// host of a kind, which a remote contract's placement computes from its params.
+// host of a kind, which a remote contract's `hostAddress` computes from its params.
 
 import { checkName } from "./names.ts";
 import { joinKey, type Params, type ParamsData, type RequiredFields, readParams } from "./params.ts";

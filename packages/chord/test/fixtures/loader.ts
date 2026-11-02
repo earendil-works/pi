@@ -2,11 +2,11 @@
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Type } from "typebox";
+import { bool, obj, str } from "@earendil-works/pi-schema";
 import { createHost, local, method } from "../../src/index.ts";
 import { nodeLoader } from "../../src/loader.ts";
 
-// Plugin modules live under the package so bare imports (typebox) resolve; removed afterwards.
+// Plugin modules live under the package so bare imports (pi-schema) resolve; removed afterwards.
 const dir = fileURLToPath(new URL(`../.tmp-plugins-${process.pid}/`, import.meta.url));
 // Separate from `dir`, which becomes a reload root once its facet loads.
 const plugins = fileURLToPath(new URL(`../.tmp-plugins-${process.pid}-order/`, import.meta.url));
@@ -15,19 +15,19 @@ const chord = new URL("../../src/index.ts", import.meta.url).href;
 // The test's own copy of the plugin's contract: binding is by description, not object identity.
 const Hello = local("t.hello", {
 	version: 1,
-	input: Type.Object({}),
-	members: { greet: method(Type.String(), Type.String()) },
+	input: obj({}, { open: true }),
+	members: { greet: method(str(), str()) },
 });
 
 const facetSource = `
-import { Type } from "typebox";
+import { obj, str } from "@earendil-works/pi-schema";
 import { defineFacet, local, method } from ${JSON.stringify(chord)};
 import { greeting } from "./greeting.ts";
 
 const Hello = local("t.hello", {
 	version: 1,
-	input: Type.Object({}),
-	members: { greet: method(Type.String(), Type.String()) },
+	input: obj({}, { open: true }),
+	members: { greet: method(str(), str()) },
 });
 
 export default defineFacet((host) => {
@@ -55,8 +55,8 @@ try {
 	// A facet listed first that imports a later facet's directory shares that facet's copy of the module.
 	const Shared = local("t.shared", {
 		version: 1,
-		input: Type.Object({}),
-		members: { same: method(undefined, Type.Boolean()) },
+		input: obj({}, { open: true }),
+		members: { same: method(undefined, bool()) },
 	});
 	mkdirSync(`${plugins}a`, { recursive: true });
 	mkdirSync(`${plugins}b`, { recursive: true });
@@ -67,8 +67,8 @@ try {
 	);
 	writeFileSync(
 		`${plugins}a/facet.ts`,
-		`import { Type } from "typebox";\nimport { defineFacet, local, method } from ${JSON.stringify(chord)};\nimport { state } from "../b/state.ts";\n` +
-			`const Shared = local("t.shared", { version: 1, input: Type.Object({}), members: { same: method(undefined, Type.Boolean()) } });\n` +
+		`import { bool, obj } from "@earendil-works/pi-schema";\nimport { defineFacet, local, method } from ${JSON.stringify(chord)};\nimport { state } from "../b/state.ts";\n` +
+			`const Shared = local("t.shared", { version: 1, input: obj({}, { open: true }), members: { same: method(undefined, bool()) } });\n` +
 			`export default defineFacet((host) => host.serve(Shared, () => ({ same: async () => (await import(new URL("../b/facet.ts", import.meta.url).href)).own === state })));\n`,
 	);
 	const ordered = createHost({ self: { kind: "host" }, loader: nodeLoader, onError: () => {} });

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { arr, num, obj, str, unknown } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import {
 	type Ctx,
@@ -25,24 +25,24 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const counterVariants = {
 	main: {
-		state: { count: Type.Object({ n: Type.Number() }) },
+		state: { count: obj({ n: num() }, { open: true }) },
 		methods: {
-			add: method(Type.Number(), Type.Number()),
-			who: method(undefined, Type.Unknown()),
+			add: method(num(), num()),
+			who: method(undefined, unknown()),
 		},
 	},
 };
 /** A counter on the server. */
 const Counter = remote("t.counter", {
 	version: 1,
-	input: Type.Object({ name: Type.String() }),
+	input: obj({ name: str() }, { open: true }),
 	host: hostNamed("server"),
 	variants: counterVariants,
 });
 /** A counter on a session host (`session:` + its `session` field). */
 const SessionCounter = remote("t.session-counter", {
 	version: 1,
-	input: Type.Object({ session: Type.String(), name: Type.String() }),
+	input: obj({ session: str(), name: str() }, { open: true }),
 	host: hostFamily("session:", "session"),
 	variants: counterVariants,
 });
@@ -52,7 +52,7 @@ const SessionCounter = remote("t.session-counter", {
 function serveCounter(host: Host, principals: unknown[] = []) {
 	const counter = (principal: unknown, self: Self) => {
 		principals.push(principal);
-		const count = self.state("count", Type.Object({ n: Type.Number() }), { n: 0 });
+		const count = self.state("count", obj({ n: num() }, { open: true }), { n: 0 });
 		return {
 			variant: "main" as const,
 			count,
@@ -199,7 +199,7 @@ function cluster(options: { pingInterval?: number; pingTimeout?: number } = {}):
 					open: () => void log.push(`open ${input.name}`),
 					close: () => void log.push(`close ${input.name}`),
 				});
-				const count = self.state("count", Type.Object({ n: Type.Number() }), { n: 0 });
+				const count = self.state("count", obj({ n: num() }, { open: true }), { n: 0 });
 				return {
 					variant: "main",
 					count,
@@ -346,9 +346,9 @@ describe("links: relay, stamping, lifetime", () => {
 	it("checks contract tokens across links: contract_mismatch for hosts, upgrade_required for browsers", async () => {
 		const CounterV2 = remote("t.counter", {
 			version: 2,
-			input: Type.Object({ name: Type.String() }),
+			input: obj({ name: str() }, { open: true }),
 			host: hostNamed("server"),
-			variants: { main: { methods: { inc: method(undefined, Type.Number()) } } },
+			variants: { main: { methods: { inc: method(undefined, num()) } } },
 		});
 		const { server, worker } = serverWithWorker();
 		server.serve(CounterV2, () => ({ variant: "main", inc: () => 1 }));
@@ -408,12 +408,12 @@ describe("links: relay, stamping, lifetime", () => {
 
 const Big = remote("t.big", {
 	version: 1,
-	input: Type.Object({}),
+	input: obj({}, { open: true }),
 	host: hostNamed("session:S1"),
 	variants: {
 		main: {
-			state: { notes: Type.Array(Type.String()) },
-			methods: { echo: method(Type.Array(Type.String()), Type.Array(Type.String())) },
+			state: { notes: arr(str()) },
+			methods: { echo: method(arr(str()), arr(str())) },
 		},
 	},
 });
@@ -425,10 +425,10 @@ describe("links: methods without arguments or result", () => {
 	it("travel without args and without a value, and resolve to the result or undefined", async () => {
 		const Tool = remote("t.tool", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("server"),
 			variants: {
-				main: { methods: { ping: method(), count: method(undefined, Type.Number()), note: method(Type.String()) } },
+				main: { methods: { ping: method(), count: method(undefined, num()), note: method(str()) } },
 			},
 		});
 		const server = createHost({ self: { kind: "host" }, name: "server", onError: () => {} });
@@ -551,7 +551,7 @@ describe("links: packed payloads", () => {
 					onError: () => {},
 				});
 				worker.serve(Big, (_input, _principal, self) => {
-					const notesState = self.state("notes", Type.Array(Type.String()), large("a"));
+					const notesState = self.state("notes", arr(str()), large("a"));
 					return { variant: "main", notes: notesState, echo: (notes: string[]) => notes };
 				});
 				return down;

@@ -1,15 +1,14 @@
-import { type Static, type TSchema, Type } from "typebox";
-import { Value } from "typebox/value";
+import { int, lit, map, obj, opt, type Schema, type Static, str, union } from "@earendil-works/pi-schema";
 import { ChordError, invalid } from "./errors.ts";
-import { canonicalJson, fits, hash64 } from "./schema.ts";
+import { canonicalJson, fits, hash64, isValid } from "./schema.ts";
 import type { Ctx, Exposed, Readable, RefBase, StateSource } from "./types.ts";
 
 const MEMBER = Symbol("chord.member");
 
 /** A method's arguments and result; `undefined`: it takes no arguments, or returns nothing (void). */
 export interface MethodSpec<
-	A extends TSchema | undefined = TSchema | undefined,
-	R extends TSchema | undefined = TSchema | undefined,
+	A extends Schema | undefined = Schema | undefined,
+	R extends Schema | undefined = Schema | undefined,
 > {
 	readonly [MEMBER]: "method";
 	readonly args: A;
@@ -29,9 +28,9 @@ export interface OpaqueSpec<T = unknown> {
  * for a method without arguments that returns something.
  */
 export function method(): MethodSpec<undefined, undefined>;
-export function method<A extends TSchema>(args: A): MethodSpec<A, undefined>;
-export function method<A extends TSchema | undefined, R extends TSchema>(args: A, result: R): MethodSpec<A, R>;
-export function method(args?: TSchema, result?: TSchema): MethodSpec {
+export function method<A extends Schema>(args: A): MethodSpec<A, undefined>;
+export function method<A extends Schema | undefined, R extends Schema>(args: A, result: R): MethodSpec<A, R>;
+export function method(args?: Schema, result?: Schema): MethodSpec {
 	return { [MEMBER]: "method", args, result };
 }
 
@@ -42,7 +41,7 @@ export const opaque = <T = unknown>(id: string): OpaqueSpec<T> => {
 };
 
 export interface VariantDef {
-	readonly state?: Readonly<Record<string, TSchema>>;
+	readonly state?: Readonly<Record<string, Schema>>;
 	readonly methods?: Readonly<Record<string, MethodSpec>>;
 }
 
@@ -102,63 +101,59 @@ export const placementText = (placement: Placement): string =>
 
 export interface RemoteDef {
 	readonly version: number;
-	readonly input: TSchema;
+	readonly input: Schema;
 	/** Where its objects live: `hostNamed(…)` or `hostFamily(…)`. Part of the contract (and its fingerprint). */
 	readonly host: Placement;
 	readonly variants: Readonly<Record<string, VariantDef>>;
 }
 
 /** A local member: a method, an opaque native object, or a state member described by its schema. */
-export type LocalMember = MethodSpec | OpaqueSpec | TSchema;
+export type LocalMember = MethodSpec | OpaqueSpec | Schema;
 
 export interface LocalDef {
 	readonly version: number;
-	readonly input: TSchema;
+	readonly input: Schema;
 	readonly members?: Readonly<Record<string, LocalMember>>;
 }
 
 // A description travels as a reference's contract token (wire.ts), so it is declared once, as the schema that validates it.
-// `TSchema` is an empty interface: any object is one, which is all a peer's schema is checked for here.
-const SchemaObject = Type.Unsafe<TSchema>(Type.Object({}));
+// Any object is a schema, which is all a peer's schema is checked for here.
+const SchemaObject = obj({}, { open: true }) as Schema<Schema>;
 
-const MemberDescriptionSchema = Type.Union([
+const MemberDescriptionSchema = union([
 	// Absent `args`: the method takes none. Absent `result`: it returns nothing.
-	Type.Object({
-		kind: Type.Literal("method"),
-		args: Type.Optional(SchemaObject),
-		result: Type.Optional(SchemaObject),
-	}),
-	Type.Object({ kind: Type.Literal("state"), schema: SchemaObject }),
-	Type.Object({ kind: Type.Literal("opaque"), id: Type.String() }),
+	obj({ kind: lit("method"), args: opt(SchemaObject), result: opt(SchemaObject) }, { open: true }),
+	obj({ kind: lit("state"), schema: SchemaObject }, { open: true }),
+	obj({ kind: lit("opaque"), id: str() }, { open: true }),
 ]);
 export type MemberDescription = Static<typeof MemberDescriptionSchema>;
 
 /** Local contracts have one unnamed variant. */
 export const LOCAL_VARIANT = "";
 
-const PlacementSchema = Type.Union([
-	Type.Object({ name: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
-	Type.Object(
-		{ prefix: Type.String({ minLength: 1 }), key: Type.String({ minLength: 1 }) },
-		{ additionalProperties: false },
-	),
+const PlacementSchema = union([
+	obj({ name: str({ minLength: 1 }) }),
+	obj({ prefix: str({ minLength: 1 }), key: str({ minLength: 1 }) }),
 ]);
 
-export const DescriptionSchema = Type.Object({
-	name: Type.String({ minLength: 1 }),
-	scope: Type.Union([Type.Literal("remote"), Type.Literal("local")]),
-	version: Type.Integer(),
-	input: SchemaObject,
-	/** Remote types only (required there): where their objects live. */
-	host: Type.Optional(PlacementSchema),
-	variants: Type.Record(Type.String(), Type.Record(Type.String(), MemberDescriptionSchema)),
-});
+export const DescriptionSchema = obj(
+	{
+		name: str({ minLength: 1 }),
+		scope: union([lit("remote"), lit("local")]),
+		version: int(),
+		input: SchemaObject,
+		/** Remote types only (required there): where their objects live. */
+		host: opt(PlacementSchema),
+		variants: map(map(MemberDescriptionSchema)),
+	},
+	{ open: true },
+);
 export type Description = Static<typeof DescriptionSchema>;
 
 interface ContractBase {
 	readonly name: string;
 	readonly version: number;
-	readonly input: TSchema;
+	readonly input: Schema;
 	readonly description: Description;
 	readonly fingerprint: string;
 }
@@ -204,7 +199,7 @@ function describeMember(name: string, member: unknown, scope: "remote" | "local"
 		if (scope === "remote") throw new TypeError(`remote contracts cannot expose opaque members: ${name}`);
 		return { kind: "opaque", id: (member as OpaqueSpec).id };
 	}
-	return { kind: "state", schema: member as TSchema };
+	return { kind: "state", schema: member as Schema };
 }
 
 function finish<C extends AnyContract>(contract: Omit<C, "fingerprint">): C {
@@ -222,7 +217,7 @@ export function remote<const D extends RemoteDef>(
 ): RemoteContract<D> {
 	checkHeader(name, def.version);
 	const placement = def.host as Placement | undefined;
-	if (placement === undefined || !Value.Check(PlacementSchema, placement))
+	if (placement === undefined || !isValid(PlacementSchema, placement))
 		throw new TypeError(`remote contract ${name} needs \`host\`: hostNamed(…) or hostFamily(…)`);
 	// A JSON copy: the description travels, and a placement object may carry nothing else.
 	const host: Placement =
@@ -353,23 +348,23 @@ export function bind(provider: AnyContract, accepts: Accepts | undefined, consum
 // ─── Static types ────────────────────────────────────────────────────────────
 
 type Empty = Record<never, never>;
-type StateOf<V> = V extends { readonly state: infer S extends Readonly<Record<string, TSchema>> } ? S : Empty;
-type StaticOf<S> = S extends TSchema ? Static<S> : never;
+type StateOf<V> = V extends { readonly state: infer S extends Readonly<Record<string, Schema>> } ? S : Empty;
+type StaticOf<S> = S extends Schema ? Static<S> : never;
 type MethodsOf<V> = V extends { readonly methods: infer M extends Readonly<Record<string, MethodSpec>> } ? M : Empty;
 
 /** What a handler returns: the result's value, or nothing for a void method. */
-type Returned<R> = [R] extends [TSchema] ? Static<R> | Promise<Static<R>> : void | Promise<void>;
+type Returned<R> = [R] extends [Schema] ? Static<R> | Promise<Static<R>> : void | Promise<void>;
 /** What a call resolves to. */
-type Resolved<R> = [R] extends [TSchema] ? Static<R> : undefined;
+type Resolved<R> = [R] extends [Schema] ? Static<R> : undefined;
 
 /** A method's handler; `P` is the app's principal type (`ctx.principal`). */
 export type MethodImplementation<M, P = unknown> = M extends MethodSpec<infer A, infer R>
-	? [A] extends [TSchema]
+	? [A] extends [Schema]
 		? (args: Static<A>, ctx: Ctx<P>) => Returned<R>
 		: (ctx: Ctx<P>) => Returned<R>
 	: never;
 export type Call<M> = M extends MethodSpec<infer A, infer R>
-	? [A] extends [TSchema]
+	? [A] extends [Schema]
 		? (args: Static<A>, ctx?: Ctx) => Promise<Resolved<R>>
 		: (ctx?: Ctx) => Promise<Resolved<R>>
 	: never;
@@ -402,21 +397,21 @@ type LocalImplementationMember<M, P> = M extends MethodSpec
 	? MethodImplementation<M, P>
 	: M extends OpaqueSpec<infer T>
 		? T | Exposed<T>
-		: M extends TSchema
+		: M extends Schema
 			? StateSource<Static<M>>
 			: never;
 type LocalRefMember<M> = M extends MethodSpec
 	? Call<M>
 	: M extends OpaqueSpec<infer T>
 		? T | undefined
-		: M extends TSchema
+		: M extends Schema
 			? Readable<Static<M>>
 			: never;
 type LocalMembers<D> = D extends { readonly members: infer M extends Readonly<Record<string, LocalMember>> }
 	? M
 	: Empty;
 
-export type InputOf<C> = C extends { readonly def: { readonly input: infer I extends TSchema } } ? Static<I> : never;
+export type InputOf<C> = C extends { readonly def: { readonly input: infer I extends Schema } } ? Static<I> : never;
 
 /** What a factory returns for contract C; its methods' `ctx.principal` is `P`. */
 export type ImplementationOf<C, P = unknown> = C extends RemoteContract<infer D>

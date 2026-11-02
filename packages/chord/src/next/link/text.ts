@@ -8,6 +8,7 @@
 
 import {
 	type BoundEntry,
+	CAUSE_KINDS,
 	type Codec,
 	type FailedMember,
 	type Message,
@@ -75,16 +76,10 @@ function ownTuple(message: Message): string {
 			const { address, principal, incarnation, chain, limit } = message;
 			const head = json(["H", message.hold, message.type, message.version, message.fingerprint]).slice(0, -1);
 			// Optional trailing fields: an absent one in the middle is null, absent ones at the end are left out.
-			const optional = [
-				address === undefined ? null : [address.kind, address.params],
-				principal ?? null,
-				incarnation ?? null,
-				chain ?? null,
-				limit ?? null,
-			];
+			const optional = [principal ?? null, incarnation ?? null, chain ?? null, limit ?? null];
 			while (optional.length > 0 && optional.at(-1) === null) optional.pop();
 			const rest = optional.map((field) => `,${json(field)}`).join("");
-			return `${head},${partText(message.params)}${rest}]`;
+			return `${head},${partText(message.params)},${json([address.kind, address.params])}${rest}]`;
 		}
 		case "release":
 			return json(["R", message.hold]);
@@ -97,7 +92,7 @@ function ownTuple(message: Message): string {
 		case "state":
 			return `["s",[${message.holds.map(stateEntry).join(",")}]]`;
 		case "failed": {
-			const kind = message.cause.kind === "transient" ? "t" : "b";
+			const kind = message.cause.kind[0];
 			const retryIn = message.retryIn === undefined ? [] : [message.retryIn];
 			return json(["f", message.hold, kind, message.cause.error, ...retryIn]);
 		}
@@ -110,7 +105,7 @@ function ownTuple(message: Message): string {
 		case "revoke":
 			return json(["V", message.revocation]);
 		case "retry":
-			return json(["T", message.hold]);
+			return json(["T", message.hold, message.hops]);
 		case "loading":
 			return json(["l", message.hold]);
 		case "ack":
@@ -188,14 +183,10 @@ function fromFields(fields: unknown[], rest: Uint8Array): Message {
 			arity(3);
 			return { kind: "hello", protocol: field(0), incarnation: field(1), calls: field(2) };
 		case "H": {
-			arity(5, 6, 7, 8, 9, 10);
-			const [address, principal, incarnation, chain, limit] = [5, 6, 7, 8, 9].map((index) => f[index] ?? null);
-			let wireAddress = {};
-			if (address !== null) {
-				const pair = list(address);
-				if (pair.length !== 2) throw new Error("text: an address is a pair");
-				wireAddress = { address: { kind: pair[0], params: pair[1] } };
-			}
+			arity(6, 7, 8, 9, 10);
+			const address = list(f[5]);
+			if (address.length !== 2) throw new Error("text: an address is a pair");
+			const [principal, incarnation, chain, limit] = [6, 7, 8, 9].map((index) => f[index] ?? null);
 			return {
 				kind: "hold",
 				hold: field(0),
@@ -203,7 +194,7 @@ function fromFields(fields: unknown[], rest: Uint8Array): Message {
 				version: field(2),
 				fingerprint: field(3),
 				params: textPart(f[4]),
-				...wireAddress,
+				address: { kind: address[0] as string, params: address[1] },
 				...(principal === null ? {} : { principal: principal as { kind: string } }),
 				...(incarnation === null ? {} : { incarnation: incarnation as string }),
 				...(chain === null ? {} : { chain: chain as string[] }),
@@ -267,10 +258,11 @@ function fromFields(fields: unknown[], rest: Uint8Array): Message {
 			};
 		case "f": {
 			arity(3, 4);
-			if (f[1] !== "t" && f[1] !== "b") throw new Error("text: an unknown failure kind");
+			const causeKind = CAUSE_KINDS.find((each) => each[0] === f[1]);
+			if (causeKind === undefined) throw new Error("text: an unknown failure kind");
 			// The schema check after decoding establishes the wire error.
 			const error = f[2] as Extract<Message, { kind: "error" }>["error"];
-			const cause = { kind: f[1] === "t" ? "transient" : "broken", error } as const;
+			const cause = { kind: causeKind, error };
 			return { kind: "failed", hold: field(0), cause, ...(f.length === 4 ? { retryIn: field<number>(3) } : {}) };
 		}
 		case "r":
@@ -286,8 +278,8 @@ function fromFields(fields: unknown[], rest: Uint8Array): Message {
 			arity(1);
 			return { kind: "revoke", revocation: f[0] };
 		case "T":
-			arity(1);
-			return { kind: "retry", hold: field(0) };
+			arity(2);
+			return { kind: "retry", hold: field(0), hops: field(1) };
 		case "l":
 			arity(1);
 			return { kind: "loading", hold: field(0) };

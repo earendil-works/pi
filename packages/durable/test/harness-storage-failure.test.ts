@@ -419,6 +419,8 @@ describe("a failed Storage call", () => {
 			}
 		}
 		const { harness, root } = await started(new CancelledRead());
+		// An entry to scan: the Session's cache answers the bounds of the context, not its entries.
+		await root.commit((tx) => tx.appendEntry(root.id, { kind: "note" }), context);
 		const cancelling: Context = { ...context, abortSignal: controller.signal };
 		await expect(root.context(cancelling)).rejects.toBe(cancelled);
 		await expect(root.commit((tx) => tx.appendEntry(root.id, { kind: "note" }), context)).resolves.toBeDefined();

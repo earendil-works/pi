@@ -26,6 +26,7 @@ const WORKSPACE = {
 	"@earendil-works/pi-codemode": "packages/codemode/src",
 	"@earendil-works/pi-telemetry": "packages/telemetry/src",
 	"@earendil-works/pi-mcp": "packages/mcp/src",
+	"@earendil-works/pi-schema": "packages/schema/src",
 	"@earendil-works/pi-tui": "packages/tui/src",
 };
 
@@ -34,15 +35,27 @@ const WORKSPACE = {
  * graph it is allowed to reach.
  */
 const BUDGETS = {
+	"packages/schema": {
+		// The format checks (vendored from TypeBox, about 40 KB) load only through ./formats.
+		".": { maxFiles: 10, forbid: ["schema/src/formats/"] },
+	},
 	"packages/ai": {
 		"./models": {
 			// Request telemetry reaches pi-ai's telemetry.ts and pi-telemetry's root (index, noop, metrics, memory).
 			// Request identity reaches utils/identity.ts and its version constant.
 			maxFiles: 20,
-			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
+			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/string-enum.ts"],
 			allow: ["packages/telemetry/src/index.ts"],
 		},
-		"./utils/*": { maxFiles: 3, forbid: ["providers/", "api/", "index.ts"] },
+		"./utils/*": {
+			maxFiles: 3,
+			forbid: ["providers/", "api/", "index.ts"],
+			overrides: {
+				// Tool argument validation runs on pi-schema: its validator, coercion and format checks (the checks TypeBox's
+				// validator ran by default). TypeBox, an external package, was not counted before.
+				"./utils/validation": { maxFiles: 42, forbid: ["providers/", "api/", "packages/ai/src/index.ts"] },
+			},
+		},
 	},
 	"packages/codemode": {
 		// Node and Bun users never load the Cloudflare entry, which imports the `cloudflare:workers` built-in.
@@ -60,24 +73,30 @@ const BUDGETS = {
 	},
 	"packages/durable": {
 		".": {
-			// Tool argument validation reaches TypeBox; provider-session creation reaches pi-ai's lean UUID utility; the
+			// Tool argument validation reaches pi-schema (validator, coercion and format checks; 39 files that replace
+			// TypeBox, which this walk did not count); provider-session creation reaches pi-ai's lean UUID utility; the
 			// memory and SQLite storages share scan order and cursor handling. Values from Chord's root (copyJson,
 			// replicatedState) reach its host runtime through the root barrel. Chord's context reaches pi-telemetry's root
 			// (index, noop, metrics, memory) for its NOOP telemetry default; harness/telemetry.ts is Durable's schema.
 			// The Harness's request identity reaches pi-ai's utils/identity.ts and its version constant. Partial commits
 			// parse streamed tool-call arguments with pi-ai's utils/streaming-json.ts (and its json-parse.ts) to append what
 			// argument strings grew by (harness/partial-changes.ts). Chord's watches fold pending ops with Delta's
-			// pending queue (delta/pending.ts).
-			maxFiles: 77,
+			// pending queue (delta/pending.ts). `registryReader` (harness/registry-reader.ts) reads a Chord v2 registry
+			// value through type-only imports. The Session caches hot Storage reads (session/cached-storage.ts) and keeps
+			// each conversation's newest entry and head marker (session/conversation-tails.ts). Group commit sends batches
+			// through `commit()`, or one `commit()` each (storage/commit-batch.ts), from a writer off the Session line
+			// (session/writer.ts) that gates reads by the keys of unpublished writes (session/keys.ts).
+			maxFiles: 123,
 			forbid: [
 				"packages/ai/src/index.ts",
-				"packages/ai/src/utils/typebox-helpers.ts",
+				"packages/ai/src/utils/string-enum.ts",
 				// Photon (WebAssembly) loads only through `./images`.
 				"packages/durable/src/images/",
 			],
 		},
-		// The file tools reach their environment helpers and the Harness definitions they need, not the Harness itself.
-		"./tools": { maxFiles: 17, forbid: ["packages/durable/src/images/"] },
+		// The file tools reach their environment helpers and the Harness definitions they need, not the Harness itself,
+		// and pi-schema's root for their schema builders (10 files; its format checks stay out).
+		"./tools": { maxFiles: 27, forbid: ["packages/durable/src/images/", "packages/schema/src/formats/"] },
 	},
 };
 
@@ -147,6 +166,8 @@ for (const [pkgDir, budgets] of Object.entries(BUDGETS)) {
 		}
 		const target = typeof declared === "string" ? declared : declared.import;
 		for (const [name, distPath] of expand(pkgDir, entry, target)) {
+			// A wildcard entry's budget applies to every file it exports, unless `overrides` names that file.
+			const limits = budget.overrides?.[name] ?? budget;
 			const source = sourceFor(pkgDir, distPath);
 			if (!source) {
 				console.error(`${pkgDir} export "${name}" points at ${distPath}, which has no source file`);
@@ -154,15 +175,15 @@ for (const [pkgDir, budgets] of Object.entries(BUDGETS)) {
 				continue;
 			}
 			const graph = [...walk(source)].map((file) => relative(ROOT, file).split(sep).join("/"));
-			if (graph.length > budget.maxFiles) {
+			if (graph.length > limits.maxFiles) {
 				console.error(
-					`${pkgDir} export "${name}" reaches ${graph.length} files, budget ${budget.maxFiles}\n` +
+					`${pkgDir} export "${name}" reaches ${graph.length} files, budget ${limits.maxFiles}\n` +
 						graph.map((file) => `    ${file}`).join("\n"),
 				);
 				failures += 1;
 			}
-			for (const pattern of budget.forbid ?? []) {
-				const hit = graph.filter((file) => file.includes(pattern) && !(budget.allow ?? []).some((allowed) => file.endsWith(allowed)));
+			for (const pattern of limits.forbid ?? []) {
+				const hit = graph.filter((file) => file.includes(pattern) && !(limits.allow ?? []).some((allowed) => file.endsWith(allowed)));
 				if (hit.length > 0) {
 					console.error(`${pkgDir} export "${name}" must not reach ${pattern}:\n${hit.map((f) => `    ${f}`).join("\n")}`);
 					failures += 1;

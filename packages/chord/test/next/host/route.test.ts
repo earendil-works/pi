@@ -12,6 +12,7 @@ import {
 	PlacedNotes,
 	rejection,
 	relayed,
+	Server,
 	Session,
 	serveNotes,
 	type TestPrincipal,
@@ -101,56 +102,88 @@ forEachCodec(() => {
 			});
 		});
 
-		it("fails a hold broken invalid/placement for an address whose params do not fit the kind", async () => {
+		it("fails a hold broken invalid/host_address for an address whose params do not fit the kind", async () => {
 			const Misplaced = remote("app.misplaced", {
 				version: 1,
 				params: { n: int() },
-				// An address of the right kind with params of the wrong type, as a buggy placement could compute.
-				placement: ({ n }) => ({ kind: "session", params: { id: n }, key: "" }) as never,
+				// An address of the right kind with params of the wrong type, as a buggy `hostAddress` could compute.
+				hostAddress: ({ n }) => ({ kind: "session", params: { id: n }, key: "" }) as never,
 				variants: { v: { state: { n: int() } } },
 			});
 			const { tab, resolves } = await relayed();
 			expect(await rejection(tab.get(Misplaced, { n: 1 }, context))).toMatchObject({
 				code: "invalid",
-				reason: "placement",
+				reason: "host_address",
 			});
 			expect(resolves).toEqual([]);
 		});
 	});
 
-	describe("resolve failures and re-resolves", () => {
+	describe("resolve failures and re-resolves (no timer, slice 10 R2)", () => {
 		fakeTimers();
 
-		it("a rejected resolve leaves the holds loading, is reported, and resolves again after the address's backoff (race 2)", async () => {
-			let failures = 2;
-			const { tab, resolves, errors } = await relayed({
+		it("a rejected resolve fails its holders waiting with its error, is reported, and runs no timer (race 2)", async () => {
+			let attempts = 0;
+			const { tab, server, errors } = await relayed({
+				resolve: async () => {
+					attempts++;
+					throw new Error("no worker");
+				},
+			});
+			// One relayed from the tab, one the server's own.
+			const notes = tab.hold(PlacedNotes, { session: "S1" }, context);
+			const own = server.hold(PlacedNotes, { session: "S1" }, context);
+			await transported();
+			for (const ref of [notes, own]) {
+				expect(ref.state.value).toMatchObject({
+					kind: "failed",
+					cause: { kind: "waiting", error: { code: "unavailable", message: "session|S1: no worker" } },
+				});
+			}
+			expect(errors.server).toMatchObject([{ kind: "resolve_failed", address: "session|S1" }]);
+			await elapse(120_000);
+			expect(attempts).toBe(1);
+		});
+
+		it("a new hold resolves a failed address again; the earlier holders bind on its link without a re-hold (Q1)", async () => {
+			let fail = true;
+			const { tab, resolves } = await relayed({
 				resolve: async (_address, worker) => {
-					if (failures-- > 0) throw new Error("no worker yet");
+					if (fail) throw new Error("no worker");
+					return worker();
+				},
+			});
+			const first = tab.hold(PlacedNotes, { session: "S1" }, context);
+			await transported();
+			expect(first.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
+			fail = false;
+			const second = tab.hold(PlacedNotes, { session: "S1" }, context);
+			await transported();
+			expect(resolves).toEqual(["session|S1"]);
+			expect([first.state.value, second.state.value]).toEqual([{ kind: "live" }, { kind: "live" }]);
+		});
+
+		it("RouteHandle.retry resolves a failed address now; a retry of an address nobody holds keeps nothing", async () => {
+			let fail = true;
+			const { tab, route, resolves } = await relayed({
+				resolve: async (_address, worker) => {
+					if (fail) throw new Error("no worker");
 					return worker();
 				},
 			});
 			const notes = tab.hold(PlacedNotes, { session: "S1" }, context);
 			await transported();
-			expect(notes.state.value).toEqual({ kind: "loading" });
-			expect(errors.server).toMatchObject([{ kind: "resolve_failed", address: "session|S1" }]);
-			await elapse(999);
-			expect(errors.server).toHaveLength(1);
-			await elapse(1);
-			// The second failure doubles the window.
-			expect(errors.server).toHaveLength(2);
-			await elapse(1999);
-			expect(notes.state.value).toEqual({ kind: "loading" });
-			await elapse(1);
-			expect(resolves).toEqual(["session|S1"]);
+			fail = false;
+			route.retry(Session({ id: "S1" }));
+			route.retry(Session({ id: "S9" }));
+			await transported();
 			expect(notes.state.value).toEqual({ kind: "live" });
+			expect(resolves).toEqual(["session|S1"]);
 		});
 
-		it("a returned link that is closed already starts the backoff", async () => {
-			let closed = true;
-			const { tab, resolves } = await relayed({
-				resolve: async (address, worker) => {
-					if (!closed) return worker();
-					closed = false;
+		it("a returned link closed already fails the holders", async () => {
+			const { tab } = await relayed({
+				resolve: async (address) => {
 					const [a, b] = memoryLinkPair();
 					b.close();
 					await flushed();
@@ -159,20 +192,35 @@ forEachCodec(() => {
 			});
 			const notes = tab.hold(PlacedNotes, { session: "S1" }, context);
 			await transported();
-			expect(notes.state.value).toEqual({ kind: "loading" });
-			await elapse(1000);
-			expect(resolves).toEqual(["session|S1"]);
-			expect(notes.state.value).toEqual({ kind: "live" });
+			expect(notes.state.value).toMatchObject({
+				kind: "failed",
+				cause: { kind: "waiting", error: { message: "session|S1: the link closed before its handshake" } },
+			});
 		});
 
-		it("a dropped link resolves again while held: references go loading, then live on a fresh worker (race 6)", async () => {
+		it("a link closing before its handshake fails its holders: no re-resolve loop over a worker dying at start", async () => {
+			let attempts = 0;
+			const { tab } = await relayed({
+				resolve: async (address) => {
+					attempts++;
+					const [a, b] = memoryLinkPair();
+					setTimeout(() => b.close(), 10);
+					return { link: a, principal: { kind: "worker", session: address.params.id } };
+				},
+			});
+			const notes = tab.hold(PlacedNotes, { session: "S1" }, context);
+			await elapse(10);
+			expect(notes.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
+			await elapse(120_000);
+			expect(attempts).toBe(1);
+		});
+
+		it("a dropped link that completed its handshake resolves again at once, once (race 6)", async () => {
 			const { tab, resolves, routeLinks, workers } = await relayed();
 			const notes = await tab.get(PlacedNotes, { session: "S1" }, context);
 			const first = workers.get("session|S1")!;
 			routeLinks[0]!.close();
 			await transported();
-			expect(notes.state.value).toEqual({ kind: "loading" });
-			await elapse(1000);
 			expect(resolves).toEqual(["session|S1", "session|S1"]);
 			expect(workers.get("session|S1")).not.toBe(first);
 			expect(notes.state.value).toEqual({ kind: "live" });
@@ -181,42 +229,13 @@ forEachCodec(() => {
 			expect(notes.notes.value).toEqual([{ text: "fresh" }]);
 		});
 
-		it("only a link that completed its handshake resets the backoff", async () => {
-			let silent = 0;
-			const { tab, resolves, routeLinks } = await relayed({
-				resolve: async (address, worker) => {
-					if (silent-- <= 0) return worker();
-					// A link whose other end never greets and closes.
-					const [a, b] = memoryLinkPair();
-					setTimeout(() => b.close(), 10);
-					return { link: a, principal: { kind: "worker", session: address.params.id } };
-				},
-			});
-			const notes = await tab.get(PlacedNotes, { session: "S1" }, context);
-			silent = 1;
-			routeLinks[0]!.close();
-			await elapse(1000);
-			// The silent link closed before its handshake: the window doubles.
-			await elapse(10);
-			await elapse(1999);
-			expect(resolves).toEqual(["session|S1"]);
-			await elapse(1);
-			expect(resolves).toEqual(["session|S1", "session|S1"]);
-			expect(notes.state.value).toEqual({ kind: "live" });
-			// That link greeted: the next drop starts again at 1 s.
-			routeLinks.at(-1)!.close();
-			await elapse(1000);
-			expect(resolves).toHaveLength(3);
-		});
-
-		it("a link whose peer never greets closes after 30 s of silence; the address backs off, then resolves again while held", async () => {
+		it("a link whose peer never greets closes after 30 s of silence and fails its holders", async () => {
 			// The heartbeat's timer too, before the hosts start it.
 			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"], now: 0 });
-			let silent = true;
-			const { tab, resolves } = await relayed({
-				resolve: async (address, worker) => {
-					if (!silent) return worker();
-					silent = false;
+			let attempts = 0;
+			const { tab } = await relayed({
+				resolve: async (address) => {
+					attempts++;
 					// Its other end is never read: no hello, no close.
 					const [a] = memoryLinkPair();
 					return { link: a, principal: { kind: "worker", session: address.params.id } };
@@ -224,14 +243,12 @@ forEachCodec(() => {
 			});
 			const notes = tab.hold(PlacedNotes, { session: "S1" }, context);
 			await elapse(29_000);
-			expect(resolves).toEqual([]);
 			expect(notes.state.value).toEqual({ kind: "loading" });
-			// The heartbeat checks every 1.5 s: the silent link closes within it, then its address waits 1 s.
+			// The heartbeat checks every 1.5 s: the silent link closes within it.
 			await elapse(2_500);
-			await elapse(1_000);
-			expect(resolves).toEqual(["session|S1"]);
-			await transported();
-			expect(notes.state.value).toEqual({ kind: "live" });
+			expect(notes.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
+			await elapse(120_000);
+			expect(attempts).toBe(1);
 		});
 
 		it("an address without holds is not resolved again after its link drops", async () => {
@@ -272,6 +289,42 @@ forEachCodec(() => {
 			expect(resolves).toEqual(["session|S1"]);
 			await server.close(context);
 			expect(closed).toBe(true);
+		});
+	});
+
+	describe("RouteHandle.suspend (R1, Q3)", () => {
+		it("resolves nothing while held: the holders fail waiting suspended once the link is gone; retry lifts it", async () => {
+			const { tab, route, resolves, routeLinks } = await relayed();
+			const notes = await tab.get(PlacedNotes, { session: "S1" }, context);
+			route.suspend(Session({ id: "S1" }));
+			expect(notes.state.value).toEqual({ kind: "live" });
+			routeLinks[0]!.close();
+			await transported();
+			expect(notes.state.value).toMatchObject({
+				kind: "failed",
+				cause: { kind: "waiting", error: { code: "unavailable", message: "session|S1: suspended" } },
+			});
+			const another = tab.hold(PlacedNotes, { session: "S1" }, context);
+			await transported();
+			expect(another.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
+			expect(resolves).toEqual(["session|S1"]);
+			route.retry(Session({ id: "S1" }));
+			await transported();
+			expect(resolves).toEqual(["session|S1", "session|S1"]);
+			expect([notes.state.value, another.state.value]).toEqual([{ kind: "live" }, { kind: "live" }]);
+		});
+
+		it("goes with the last holder: a later hold resolves on demand; an unheld address is never suspended", async () => {
+			const { tab, route, resolves, routeLinks } = await relayed();
+			const notes = await tab.get(PlacedNotes, { session: "S1" }, context);
+			route.suspend(Session({ id: "S1" }));
+			routeLinks[0]!.close();
+			await transported();
+			notes.release();
+			await transported();
+			route.suspend(Session({ id: "S1" }));
+			await tab.get(PlacedNotes, { session: "S1" }, context);
+			expect(resolves).toEqual(["session|S1", "session|S1"]);
 		});
 	});
 
@@ -322,11 +375,16 @@ forEachCodec(() => {
 			const Who = remote("app.who", {
 				version: 1,
 				params: {},
+				hostAddress: () => Server(),
 				variants: { v: { methods: { app: method(undefined, str()) } } },
 			});
 			const resolved: (string | undefined)[] = [];
 			let worker: Host<TestPrincipal> | undefined;
-			const server = createHost<TestPrincipal>({ principal: { kind: "server" }, onError: () => {} });
+			const server = createHost<TestPrincipal>({
+				address: Server(),
+				principal: { kind: "server" },
+				onError: () => {},
+			});
 			server.route(
 				Session,
 				{
@@ -369,6 +427,37 @@ forEachCodec(() => {
 	});
 
 	describe("GC", () => {
+		it("a failed or suspended address keeps no route state once its holders are released", async () => {
+			const { refs, server } = await (async () => {
+				const refs: WeakRef<object>[] = [];
+				const { tab, server, route, routeLinks, workers, errors } = await relayed({
+					authorize: (_principal, address) => {
+						refs.push(new WeakRef(address));
+						return true;
+					},
+					resolve: async (address, worker) => {
+						if (address.params.id === "failed") throw new Error("no worker");
+						return worker();
+					},
+				});
+				const failed = tab.hold(PlacedNotes, { session: "failed" }, context);
+				const held = await tab.get(PlacedNotes, { session: "held" }, context);
+				route.suspend(Session({ id: "held" }));
+				routeLinks[0]!.close();
+				await transported();
+				for (const ref of [failed, held]) ref.release();
+				await transported();
+				// The reported error's stack keeps the test's `resolve` frame (and its address) alive, the worker host its
+				// own address: not the route's.
+				errors.server.length = 0;
+				routeLinks.length = 0;
+				workers.clear();
+				return { refs, server };
+			})();
+			await expectCollected(...refs);
+			expect(server).toBeDefined();
+		});
+
 		it("a closed route link and its released references keep no route state", async () => {
 			const { refs, tab } = await (async () => {
 				const { tab, routeLinks, workers } = await relayed();

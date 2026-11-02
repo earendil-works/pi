@@ -365,7 +365,7 @@ describe("task graph view", () => {
 		await harness.close(context);
 	});
 
-	it("advances with the conversation view inside the one storage commit that changes both", async () => {
+	it("advances with the conversation view at the publication of the one commit that changes both", async () => {
 		const storage = new ControlledStorage();
 		const { Parent, Child } = family(gatesNever());
 		const { harness } = await openTasks(storage, [Parent, Child]);
@@ -383,8 +383,8 @@ describe("task graph view", () => {
 			await tx.appendEntry(root.id, { kind: "note" });
 			await tx.createTask(Parent, null, { ownership: { kind: "conversation" } });
 		}, context);
-		// Both inside the one adopt, in no promised order.
-		expect([...seen].sort()).toEqual(["graph adopting=true", "view adopting=true"]);
+		// Both at the one publication, after Storage stored it, in no promised order.
+		expect([...seen].sort()).toEqual(["graph adopting=false", "view adopting=false"]);
 		view.detach();
 		graph.detach();
 		await harness.close(context);

@@ -6,15 +6,12 @@ import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import type { Op, Prepared } from "../../../src/delta/index.ts";
 import { AddressSource } from "../../../src/next/documents/address-source.ts";
-import type { Documents } from "../../../src/next/documents/documents.ts";
 import type { JsonObject } from "../../../src/next/documents/index.ts";
 import { Batch } from "../../../src/next/state/internal.ts";
 import { changesOf, delivered, expectCollected } from "../support.ts";
 
 /** An address whose value the test sets. */
 class Address extends AddressSource {
-	// No object's documents: the test reads frames only.
-	readonly owner = {} as Documents;
 	current: JsonObject = { n: 0 };
 
 	get value(): JsonObject {

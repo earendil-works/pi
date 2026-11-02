@@ -13,6 +13,7 @@ import {
 	type Self,
 } from "../../../src/next/host/index.ts";
 import { ChordObject } from "../../../src/next/host/object.ts";
+import { Binding } from "../../../src/next/host/reference.ts";
 import { RemoteObject } from "../../../src/next/remote/remote-object.ts";
 import { constant } from "../../../src/next/state/index.ts";
 import type { Store } from "../../../src/next/store/index.ts";
@@ -29,6 +30,7 @@ import {
 	memoryStore,
 	Notes,
 	rejection,
+	Server,
 	settledHeap,
 } from "../support.ts";
 
@@ -338,12 +340,13 @@ describe("remote references", () => {
 		const Two = remote("app.two", {
 			version: 1,
 			params: {},
+			hostAddress: () => Server(),
 			variants: { full: { state: { n: int() }, methods: { bump: method() } }, view: { state: { m: int() } } },
 		});
 		const Holder = local("app.holder", { version: 1, params: {}, members: { n: int() } });
 		const seen: unknown[] = [];
 		const owner = { kind: "owner" } as const;
-		const host = createHost<typeof owner>({ principal: owner, onError: () => {} });
+		const host = createHost<typeof owner>({ address: Server(), principal: owner, onError: () => {} });
 		const facet = defineFacet<typeof owner>((h) => {
 			h.serve(Two, () => ({ variant: "view", members: { m: constant(1) } }));
 			h.serve(Holder, (_, self) => {
@@ -369,6 +372,7 @@ describe("remote reference types", () => {
 		const Two = remote("app.two", {
 			version: 1,
 			params: {},
+			hostAddress: () => Server(),
 			variants: { full: { state: { n: int() }, methods: { bump: method() } }, view: { state: { m: int() } } },
 		});
 		type Ref = Reference<typeof Two>;
@@ -384,6 +388,7 @@ describe("remote reference types", () => {
 		const Two = remote("app.two", {
 			version: 1,
 			params: {},
+			hostAddress: () => Server(),
 			variants: { full: { state: { n: int() }, methods: { bump: method() } }, view: { state: { m: int() } } },
 		});
 		expectTypeOf<Held<typeof Two>["variant"]>().toEqualTypeOf<"full" | "view" | undefined>();
@@ -473,20 +478,20 @@ describe("keyed state members (slice 6a §12)", () => {
 		await host.close(context);
 	});
 
-	it("two consumers of one key share one source and one pin; each hold is released once, with its reference", async () => {
+	it("two consumers of one key each hold their own pin (references own their keys); each released once, with its reference", async () => {
 		const { host, store, memos, pinned } = await notes();
 		await store.write({ id: "a", title: "x" }, context);
 		const first = await host.get(NoteView, { id: "a", copy: 1 }, context);
 		const second = await host.get(NoteView, { id: "a", copy: 2 }, context);
 		const slot = (memos() as unknown as { slot: { source(key: string): { pins: number } | undefined } }).slot;
 		const [one, two] = pinned.map((at) => (at as unknown as { source: object }).source);
-		// The store object's source of the key, which follows its attempts.
-		expect(one).toBe(two);
+		// Each reference's own source of the key, on the store's instance (decision "References are the only indirection").
+		expect(one).not.toBe(two);
 		const shared = slot.source("a")!;
-		expect(shared.pins).toBe(1);
+		expect(shared.pins).toBe(2);
 		first.release();
 		await flushed();
-		expect(slot.source("a")).toBe(shared);
+		expect([slot.source("a"), shared.pins]).toEqual([shared, 1]);
 		second.release();
 		await flushed();
 		expect(slot.source("a")).toBeUndefined();
@@ -609,7 +614,7 @@ describe("keyed state members (slice 6a §12)", () => {
 		await store.close(context);
 	});
 
-	it("a pin load that fails its provider fails the consumer as a dependency failure (transient)", async () => {
+	it("a pin load that fails its provider parks the consumer failed { waiting } on it (a dependency failure)", async () => {
 		const store = await seeded();
 		const { host, errors } = await persistedNotes(store, persistedMemo(2));
 		const provider = await host.get(NoteStore, {}, context);
@@ -617,7 +622,7 @@ describe("keyed state members (slice 6a §12)", () => {
 		await vi.waitFor(() => expect(view.state.value.kind).toBe("failed"));
 		expect(view.state.value).toMatchObject({
 			kind: "failed",
-			cause: { kind: "transient", error: { message: expect.stringContaining("cannot migrate") } },
+			cause: { kind: "waiting", error: { message: expect.stringContaining("cannot migrate") } },
 		});
 		expect(provider.state.value).toMatchObject({ kind: "failed", cause: { kind: "broken" } });
 		expect(errors.map(({ kind }) => kind)).toContain("object_failed");
@@ -651,6 +656,47 @@ describe("keyed state members (slice 6a §12)", () => {
 		expect(await rejection(host.get(NoteStore, {}, context))).toMatchObject({
 			message: expect.stringContaining("notes: a keyed member is a keyed document handle"),
 		});
+		await host.close(context);
+	});
+});
+
+describe("a binding released while it binds (fix round 5)", () => {
+	it("ends cleanly when its object's hold releases it at once, keeping nothing (Sol)", async () => {
+		const Type = local("app.reentrant", { version: 1, params: {}, members: { x: int() } });
+		const facet = defineFacet((h) => h.serve(Type, () => ({ x: constant(1) })));
+		const host = createHost({ onError: () => {} });
+		await host.load([{ name: "@app/reentrant", facet }], context);
+		let ref = await host.get(Type, {}, context);
+		const released = new WeakRef(ref);
+		// The type is removed: the reference waits, with its last values.
+		await host.reload([], context);
+		const bind = Binding.prototype.bind;
+		const failures: unknown[] = [];
+		const binding = vi.spyOn(Binding.prototype, "bind").mockImplementation(function (this: Binding, target) {
+			try {
+				bind.call(this, target);
+			} catch (error) {
+				failures.push(error);
+				throw error;
+			}
+		});
+		// `ChordObject.hold` lets a presence derive release a holder synchronously: the binding ends inside its bind.
+		const hold = ChordObject.prototype.hold;
+		const holding = vi.spyOn(ChordObject.prototype, "hold").mockImplementation(function (this: ChordObject, holder) {
+			hold.call(this, holder);
+			ref.release();
+		});
+		try {
+			await host.reload([{ name: "@app/reentrant", facet }], context);
+			expect(holding).toHaveBeenCalledOnce();
+		} finally {
+			holding.mockRestore();
+			binding.mockRestore();
+		}
+		expect(failures).toEqual([]);
+		expect(ref.state.value.kind).toBe("ended");
+		ref = undefined as never;
+		await expectCollected(released);
 		await host.close(context);
 	});
 });

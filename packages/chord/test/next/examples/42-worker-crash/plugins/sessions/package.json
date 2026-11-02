@@ -1,0 +1,5 @@
+{
+	"name": "@example/sessions",
+	"private": true,
+	"type": "module"
+}

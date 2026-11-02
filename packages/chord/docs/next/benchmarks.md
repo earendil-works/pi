@@ -583,3 +583,392 @@ each; the head lookup and scans under it are at parity or faster in the micro-be
 memory, 55.5 µs persisted (two commits: the record and state created, then the reservation); a state change inside
 `run` 2.7 µs in memory, 21.3 µs persisted (one delta commit, as the gate's (c)), 3.2 µs deferred (stored with the
 outcome).
+
+## Slice 8: registries and `host.root` (2026-10-28)
+
+Node 24.4.1, one CPU (`taskset -c 6`), runs alternating. HEAD is `391e83fb1`, extracted at a path of the same length
+(`/home/badlogic/pi-h8`); the build was measured in the worktree and, where the worktree itself skewed a result (below),
+in an extract of the same sources at `/home/badlogic/pi-x8`.
+
+**Paths under every object** (`test/next/bench/calls.ts`, new: runs on HEAD as it is), median per operation over nine
+bursts, heap allocated per operation, three alternating runs each, HEAD → build:
+
+| Case | HEAD | build |
+| --- | --- | --- |
+| local method call (its ctx) | 2.80-2.81 µs, 6,894 B | 2.81-2.83 µs, 6,894 B |
+| commit through a watched derive (`batch.compute`) | 10.34-10.43 µs, 15,312 B | 10.46-10.51 µs, 15,310 B |
+| activation churn: get, live, release (an object with params) | 57.5-59.3 µs, 43,696-43,717 B | 58.1-58.9 µs, 43,782-43,787 B |
+| retained per live object (10,000 kept) | 6,586 B | 6,602 B |
+
+The attempt keeps its registry reads, contributions, wake signals and writables in one record made by the first such
+declaration, and iterates nothing when there is none: the first build allocated 1,020 B more per activation (six
+arrays per attempt, an array iterator per `for … of` over an empty list, a copy from `splice`) and retained 72 B more
+per live object; now +70 B allocated and +16 B retained (one field on the attempt, one on the object).
+
+**Existing benchmarks**, HEAD → build: the derive diamond (`derives.ts`, three runs) 9.4-9.8 → 9.5-9.9 µs median; its
+pooled p95 16.5-17.1 → 18.4-20.8 µs comes from the run in which V8 tiers the commit path up (per run, after it: HEAD
+10.7-11.3 µs, build 10.1-11.3 µs; the first measured runs 15.0-25.6 µs on either side, in another run each), the same
+with HEAD's `batch.ts` and `derive.ts` in the build. The store gate (`store.ts`, three runs): every median within
+0.4 µs (Chord store 13.0-13.9 → 13.0-14.2 µs, Chord host 17.3-18.2 → 17.3-17.8 µs, in-memory document 2.1 → 2.2 µs),
+heap 3,498 → 3,144 KiB. Jobs (`jobs.ts`): start 8.4 → 8.5 µs in memory, 55.4 → 56.2 µs persisted; state change 2.7 →
+2.7, 21.3 → 21.8, 3.4 → 3.5 µs. Links (`links.ts`, three runs): wire sizes, encodes, decodes and heap per message
+unchanged; its round trips are one cold burst each and vary as much between HEAD runs (commit to frame, text codec,
+0.055-0.076 ms). A warmed remote call (2,000 calls per burst, nine bursts, a memory link): binary 7.16-7.24 → 7.17-7.29
+µs, text 7.66-7.72 → 7.70-7.83 µs in the extracts; the worktree itself runs the same sources at 7.8-7.9 µs (binary),
+an effect of the tree, not the code.
+
+**Registries and writables** (`test/next/bench/registries.ts`, new), median over nine bursts: `writable.set` delivered
+to one watch 0.81-0.91 µs (2.9 KB allocated: the batch and the watch's call); a set of the same value 0.008 µs, 0 B
+(one comparison: its batch work is a method of its own, so `set` allocates no closure context); one of 10 contributions
+changed while the registry is watched 0.74-0.77 µs, of 100 1.52-1.59 µs (the table built again over every entry, one
+compose per set: the counted `chord.registry.composes` is 1.00 per set).
+
+**Fix round 1** (2026-10-28), HEAD extract → build extract (`/home/badlogic/pi-x8`), CPU 6. `calls.ts`, two runs: local
+method call 2.80 → 2.80-2.81 µs, 6,894 B both; commit through a watched derive 10.51-10.65 → 10.72 µs; activation churn
+57.9-59.0 → 59.3-60.0 µs, 43,714 → 43,769-43,787 B. The derive diamond (five runs): median 9.4-9.8 → 9.5 µs, pooled p95
+16.4-16.7 → 19.0-19.2 µs. Per run, both have one slow run while V8 tiers the commit path up (HEAD its second, median/p95
+15.5/22.6-22.9 µs; the build its first, 16.4/26.7-27.2 µs) and equal runs after it (HEAD 8.8-9.6/9.6-11.2 µs, build
+8.9-9.8/9.7-10.6 µs). `batch.compute` is not the cause: HEAD's `batch.ts` and `derive.ts` in the build give the same
+p95, and swapping host files moves it without a pattern (code layout, not work on the path). `registries.ts`:
+`writable.set` 0.87 µs, the same value 0.011-0.016 µs and 0 B (the seal check now comes first: a set of an ended
+attempt's writable throws whatever its value); one of 10 contributions set 0.71-0.78 µs, of 100 1.43-1.61 µs (one run
+in six 3.4 µs on either variant tried: JIT).
+
+## Slice 7a: the dependency model (2026-10-29)
+
+Node 24.4.1, one CPU (`taskset -c 6`), runs alternating. HEAD is `babe30a7e`, extracted at a path of the same length
+(`/home/badlogic/pi-h7`); the build in the worktree (`/home/badlogic/pi-7a`).
+
+**Paths under every object** (`test/next/bench/calls.ts`), median per operation over nine bursts, heap allocated per
+operation, three alternating runs each, HEAD → build:
+
+| Case | HEAD | build |
+| --- | --- | --- |
+| local method call (its ctx) | 2.81-2.82 µs, 6,894 B | 2.80-2.82 µs, 6,894 B |
+| commit through a watched derive | 10.43-10.70 µs, 15,310 B | 10.38-10.53 µs, 15,310 B |
+| activation churn: get, live, release (an object with params and one dependency) | 58.5-59.9 µs, 43,716-43,719 B | 53.7-55.4 µs, 41,540-41,559 B |
+| retained per live object with one dependency (10,000 kept, an ad-hoc probe) | 7,398-7,406 B | 6,931-6,936 B |
+
+An activation whose dependencies are live at the check does not park: one check of its bindings, then its own steps a
+microtask later (as HEAD's wait did). The first build parked every attempt with a dependency (a waiter list, a
+`parked_long` record, a microtask per wake even outside parking) and cost 62.0-63.6 µs and 580 B more per activation;
+now a wake outside parking is a flag, the first-outcome promise is made only for whoever waits (the start barrier),
+and an object keeps no `Set` of waits and no settlement promise per attempt (R18's), hence the lower numbers.
+
+**Links** (`links.ts`, three runs each): wire sizes, encodes, decodes, heap per message and retained heap per hold
+(176.0 → 175.4-176.0 KiB) unchanged. Hold to live over two hops (mean of 100), binary: 1,000-item list 0.781-0.817 →
+0.807-0.811 ms, 500 KB document 1.250-1.278 → 1.289-1.310 ms (+1-3%: the hold counted at its arrival, the index
+check of the publication); text 1.545-1.580 → 1.521-1.573 and 3.299-3.379 → 3.317-3.393 ms. Commits to frames,
+streamed appends, call round trips and reconnects within the runs' spread.
+
+**Existing benchmarks**, HEAD → build: the derive diamond (`derives.ts`, three runs) 9.4-10.1 → 9.5-9.6 µs median,
+p95 19.3-19.9 → 19.3-19.4 µs. Registries (`registries.ts`, three runs): `writable.set` 0.82-0.97 → 0.77-0.87 µs; one of
+10 contributions set 0.72-2.71 → 0.70-1.06 µs; of 100 1.50-3.46 → 1.44-3.40 µs (one slow run per side: JIT);
+allocation within 20 B. A registry's last good composition keeps the list of contributions it was built from: the
+list is replaced (not spliced) when a contributor comes or goes, so a composition costs no copy.
+
+**Fix round 1** (2026-10-29: revocation over paths, retry operations on the wire, the provider's own host-address
+check for same-host remote requests, mapped values' provenance), `calls.ts`, three alternating runs, HEAD → build:
+local call 2.81 → 2.79-2.82 µs (6,894 B both), watched derive commit 10.45-10.70 → 10.35-10.47 µs, activation churn
+58.6-59.8 → 53.9-54.2 µs (43,716-43,720 → 41,559 B); retained per live object with one dependency 7,399-7,405 →
+6,930-6,938 B. The address check runs only for a remote type whose consumer and provider `hostAddress` differ; a
+retry's operation id is made per `ref.retry()`, and an object keeps its handled ids only once it was retried.
+
+## Slice 7b: reload in the kernel (2026-10-29)
+
+Node 24.4.1, one CPU (`taskset -c 6`), runs alternating. HEAD is `0c3675e64`, extracted at a path of the same length
+(`/home/badlogic/pi-hb`); the build in the worktree (`/home/badlogic/pi-7b`).
+
+**Paths under every object** (`test/next/bench/calls.ts`), median per operation over nine bursts, heap allocated per
+operation, alternating runs (the last two after the fixes below), HEAD → build:
+
+| Case | HEAD | build |
+| --- | --- | --- |
+| local method call (its ctx) | 2.80-2.83 µs, 6,894 B | 2.67-2.70 µs, 6,757 B |
+| commit through a watched derive | 10.38-10.69 µs, 15,309 B | 10.22-10.39 µs, 15,312 B |
+| activation churn: get, live, release (an object with params) | 53.6-55.3 µs, 41,539-41,560 B | 54.2-55.6 µs, 41,606-41,630 B |
+| retained per live object with params and one dependency (10,000 kept, an ad-hoc probe, median of 5) | 8,696-8,700 B | 8,761 B |
+
+The first build cost 60.4-62.7 µs and 2,480 B more per activation: every attempt made an `AbortController` for its
+routines and two maps (routine calls, job invocations) whether it had any. Now they are made when routines start or a
+run is admitted, and the first dependency check's answer is a shared constant unless someone asks for it; what a reload
+did to an attempt is one record made by the first such step. What remains: a few fields on the object (its params key)
+and the attempt (its routines, its reload record, its first check), +46-70 B allocated and +61-65 B retained (0.7%).
+A local call allocates 137 B less: the method path is split (`#invoke`) so the current version's call builds no
+mapping closure.
+
+**Links** (`links.ts`, two runs each): wire sizes, encodes, decodes and heap per message unchanged. Hold to live over
+two hops (mean of 100), binary: 1,000-item list 0.780-0.794 → 0.797-0.821 ms (+1-4%), 500 KB document 1.246-1.275 →
+1.270-1.275 ms; commits to frames and streamed appends within the runs' spread. Retained per hold of 10: 175.8 → 176.2-176.5
+KiB (the hold keeps its request, to be placed again after a reload); the single-hold row 176.0 → 180.2 KiB is one
+fixed amount (~4 KiB, code of the new paths), divided by ten in the other row.
+
+**Existing benchmarks**, HEAD → build: the derive diamond (`derives.ts`, two runs) 9.5-9.6 → 9.6 µs median, p95
+16.4-19.3 → 14.1-14.3 µs. Registries (`registries.ts`, two runs): `writable.set` 0.94-0.96 → 0.77-0.86 µs; one of 10
+contributions set 0.77-1.05 → 0.69-0.72 µs; of 100 1.57-1.58 → 1.54-3.30 µs (one slow run: JIT, as in 7a). Jobs
+(`jobs.ts`, two runs): start 8.6-8.7 → 8.5 µs in memory, 55.3-56.1 → 55.3-55.6 µs persisted; state changes within 0.1
+µs. The store (`store.ts`): every median within 0.3 µs. The relay (`relay.ts`, three runs): tab B alone 0.014 ms both;
+10,000 calls at once 530-723 → 491-785 ms (the spread of either side).
+
+**Reload** (`test/next/bench/reload.ts`, new): 20 plugins, 1,000 live objects (with params, a document, a derive and a
+method each), one plugin reloaded 20 times; medians after two warm-up reloads, two runs:
+
+| Case | reload resolves | all live again | heap after 20 reloads, above after the first |
+| --- | --- | --- | --- |
+| swap, 50 of the 1,000 objects in the reloaded plugin | 1.58-1.59 ms | 1.64-1.65 ms | 332-338 KiB |
+| swap, all 1,000 in it | 35.5-36.3 ms | 36.6-37.2 ms | 191-192 KiB |
+| restart (a native each), 50 of 1,000 | 1.20-1.54 ms | 1.90-2.05 ms | 105-106 KiB |
+| restart, all 1,000 | 20.0-20.2 ms | 35.8-40.8 ms | 57-58 KiB |
+
+A swap costs about 36 µs per object (its staging record, the new attempt's activation, the hand-over of its old one),
+a restart about 20 µs until the reload resolves (staging and the start of each fate; the new attempts activate after
+the drains). The heap after reloads levels off (swap, 50 objects: 332 KiB after 20, 437 KiB after 80, 550 KiB after
+300 reloads): compiled code and feedback of the new facets, not objects (the GC tests collect old attempts, removed
+objects, providers and facets).
+
+**Fix round 1**, CPU 6, alternating against HEAD. `calls.ts`, three runs: local call 2.80-2.82 → 2.66-2.68 µs
+(6,894 → 6,757 B); watched derive commit 10.42-10.66 → 10.31-10.47 µs; activation churn 53.7-55.8 → 54.3-55.9 µs,
+41,540-41,560 → 41,566-41,584 B (an `?? []` per end, found here, is gone: the round's first measurement allocated
+41,698 B); retained per live object with one dependency 8,699-8,700 → 8,768 B. Links (a review measured binary
+commit-to-frame +19% and small calls +6% on another CPU): `links.ts`, two runs, binary commit to frame
+0.085/0.097-0.099/0.063-0.065 → 0.087/0.097/0.064 ms (append/change/removal), small call 0.038-0.039 → 0.035 ms. A
+warmed ad-hoc probe (binary memory link, 2,000 calls and 1,000 commits per burst) measures no regression: call round
+trip 9.8-10.2 → 9.9-10.1 µs, commit to frame 60.6-65.1 → 61.0-61.6 µs. Reload benchmark after the round: swap 50 /
+1,000 objects 1.50 / 35.9 ms, restart 1.67 / 21.4 ms until the reload resolves (2.12 / 38.1 ms until all are live);
+heap after 20 reloads 339 / 193 / 104 / 68 KiB.
+
+**Fix round 2**, alternating against HEAD. Stock `links.ts` on CPU 22, six rounds each before and after the fix
+(medians, binary / text): before, small call 0.062 → 0.068 / 0.058 → 0.064 ms (+10%), commit to frame within 1%
+(append 0.156 → 0.156, changed field 0.165 → 0.162, removal 0.120 → 0.119 ms binary). Cut-down copies located it:
+calls alone, or after the snapshot, commit and stream sections, or after the hold-memory trials alone, measured
+equal; only the full sequence showed the gap, and a CPU profile of its calls section put the difference in the
+remote call path (`Hold.call` with the attempt's call inlined, about 6.7 µs per call). The cause was `Attempt.call`
+delegating the invocation to a helper method shared with the older-version path; one body for every version, and
+no `async` (a local call allocated about 250 B more as an async function), fixed it. After: small call 0.063 →
+0.065 / 0.058 → 0.058 ms, append 0.156 → 0.157, changed field 0.164 → 0.163, removal 0.119 → 0.120 ms, hold to live
+(1,000 items) 1.037 → 1.023 ms. `calls.ts` on CPU 6: local call 2.89-2.92 → 2.77-2.85 µs (6,894 → 6,660 B), watched
+derive commit 10.44-10.58 → 10.65-10.81 µs (15,309 → 14,969 B), activation churn 54.8-55.1 → 54.6-54.7 µs (41,560 →
+41,592 B); retained per live object with one dependency 8,700 → 8,777 B. Reload benchmark: swap 50 / 1,000 objects
+1.84 / 33.7 ms, restart 1.31 / 22.3 ms until the reload resolves (2.18 / 41.0 ms all live); heap after 20 reloads
+323 / 200 / 104 / 70 KiB.
+
+**Fix round 3: the commit-to-frame gap is V8's young generation, not frame work.** Astra (CPU 22, five pairs) measured
+binary append commit-to-frame 132 → 161 µs, changed field 148 → 168, removal 112 → 121 on the stock `links.ts`.
+- *Path length.* The HEAD copy `/home/badlogic/pi-hb` measured append 0.155 ms; Astra's `/tmp/s7b-hd-astra`, with
+  identical sources, 0.129 ms. A copy of the same tree at a path of Astra's length (17 characters) measured 0.130 ms,
+  at a longer one 0.155 ms: on the same code the result depends on the checkout path alone. Compare copies at paths of
+  equal length.
+- *Stock numbers, equal paths* (`/tmp/s7b-hd-astra` vs a fresh build copy `/tmp/s7b-xx-astra`, CPU 22, three
+  alternating runs, means): append 0.128-0.129 → 0.155-0.156 ms binary, 0.106-0.107 → 0.116-0.117 text; changed field
+  0.144-0.145 → 0.161-0.162 binary, 0.097-0.098 → 0.107-0.110 text; small call 0.061-0.063 → 0.065-0.066 binary,
+  0.058-0.059 → 0.058-0.059 text.
+- *Same work.* Heap allocated per commit is equal (191.9 vs 191.4 KB including the codec rows); so are the telemetry
+  records per commit (5.012, the same names: two validations, two link checks, one encode).
+- *The difference is scavenges.* In the timed append loop HEAD ran 5 scavenges costing 3.6 ms in total, the build 3
+  costing 21 ms (changed field: 2 for 2.7 ms vs 1 for 10.9 ms). At the loop's start the young generation was 33.5 MB
+  in HEAD and 67 MB in the build (134 MB by the changed-field loop): V8 grows it from the bytes surviving its
+  collections, and the build crossed that threshold a few scavenges earlier. Over the whole run the GC work is equal
+  (scavenge time 1,620 vs 1,605 ms, survived bytes 471 vs 480 MB, 285 vs 284 scavenges); where the expensive
+  scavenges fall relative to the timed loops differs. Tracing the GC (`--trace-gc-nvp`) moves HEAD into the build's
+  pattern by itself.
+- *With the young generation pinned* the two are equal: means 0.139/0.139 ms (append), 0.145/0.144 (changed field),
+  0.116/0.115 (removal), 0.065/0.064 (small call), HEAD/build; per-commit medians and p90s too (three runs, warmed
+  script): append 0.085-0.086 / 0.085-0.086 ms median, 0.101 / 0.101-0.103 p90; changed field 0.073 / 0.072-0.073,
+  0.083-0.084 / 0.083; removal 0.060-0.061 / 0.060-0.061, 0.073 / 0.072-0.073 (binary; text alike, within 1 µs).
+- *The extra live heap is code.* Build minus HEAD after a full collection: +249 KB right after loading the modules
+  (old space +229 KB, before any object), +290 KB after a snapshot section, +296 KB after 1,000 appends, +281 KB after
+  1,000 edits, +345 KB after 70 hold trials (old space +259 KB, the rest bytecode and code as more paths compile). It
+  does not grow with commits or holds beyond the retained-per-hold and per-object figures above.
+
+So `links.ts` changed: each commit section runs 1,000 untimed commits first (`WARM_UP_COMMITS`; the removal section
+starts with 1,000 more notes for them), and reports commit-to-frame as mean, median and p90 of the 1,000 timed commits.
+The warm-up stays because the timed loop then runs nearer the young generation's steady size: the warmed medians
+match the pinned ones (append 0.082 vs 0.085 ms, changed field 0.072 vs 0.073, removal 0.060 vs 0.060), and HEAD and
+build agree in five of six sections, against two of six without it (run-to-run spread is about 1 µs either way). The
+mean still carries the scavenges that fall in the loop. After the change, equal paths, CPU 22, three alternating runs,
+HEAD → build (mean; median; p90, ms):
+
+| Section | binary | text |
+| --- | --- | --- |
+| append | 0.106-0.108 → 0.142-0.144; 0.081-0.083 → 0.090-0.091; 0.093-0.096 → 0.125-0.127 | 0.095-0.119 → 0.121-0.125; 0.078-0.080 → 0.080-0.082; 0.090 → 0.094-0.095 |
+| changed field | 0.084-0.087 → 0.098-0.099; 0.071-0.075 → 0.072-0.073; 0.081-0.084 → 0.081-0.082 | 0.086-0.090 → 0.099-0.101; 0.067-0.071 → 0.070-0.071; 0.079-0.082 → 0.082-0.084 |
+| removal | 0.103-0.104 → 0.107-0.109; 0.060-0.061 → 0.060-0.061; 0.071-0.073 → 0.072-0.073 | 0.100-0.102 → 0.077-0.103; 0.058-0.060 → 0.059; 0.067-0.069 → 0.067-0.070 |
+| small call | 0.052-0.058 → 0.053-0.054 | 0.054-0.065 → 0.059-0.069 |
+
+The binary append differs unpinned (median +11%, p90 +31%) and is equal pinned: the young generation's size in that
+section, not per-append work. To compare commit-to-frame across two copies, run both at paths of equal length, pinned
+to one CPU, alternating, with the young generation pinned:
+
+    taskset -c 22 node --min-semi-space-size=16 --max-semi-space-size=16 --conditions=source --expose-gc test/next/bench/links.ts
+
+Fix round 3 hot paths, `/tmp/s7b-hd-astra` → a build copy at a path of equal length, CPU 22, three alternating runs
+(`calls.ts`): local call 3.69-3.71 → 3.56-3.63 µs (6,894 → 6,660 B), watched derive commit 17.39-17.50 → 17.41-17.53
+µs (15,310 → 14,967 B), activation churn 104.2-104.8 → 107.6-108.3 µs (+3%; 41,526 → 41,426 B); retained per live
+object with one dependency 8,700 → 8,585 B (one table per version replaced the current version's separate member
+map). Reload benchmark, same CPU: swap 50 / 1,000 objects 2.88 / 51.9 ms, restart 2.49 / 35.7 ms until the reload
+resolves (3.22 / 65.7 ms all live); heap after 20 reloads 345 / 188 / 119 / 85 KiB.
+
+Sol's independent runs (CPU 24, five pairs of the stock `links.ts`) show the same commit-to-frame gap (binary append
+135 → 162 µs, changed field 145 → 168, text 109 → 119 and 100 → 108): the young-generation effect above. Sol's
+isolated round trips (`sol-isolated-links.ts`, nine bursts each, no telemetry) measured a binary call at 44.83 → 47.20
+µs (+5.3%) on the round-2 code. On this round's code, `/tmp/s7b-hd-astra` → a build copy at a path of equal length,
+CPU 24, five alternating pairs, medians: binary call 47.23 → 45.74 µs (-3.2%; HEAD's samples are bimodal, 44.3 or
+46.9-47.9), binary commit 92.68 → 93.28 (+0.6%), text call 39.02 → 39.76 (+1.9%), text commit 82.86 → 85.28 (+2.9%);
+with the young generation pinned: binary call 45.45 → 43.85 (-3.5%), binary commit 92.73 → 93.06, text call 39.97 →
+39.65, text commit 83.65 → 85.46 (+2.2%).
+
+**Rework: references are the only indirection** (decision of the same name). `/tmp/s7b-hd-astra` (HEAD) → a build
+copy at a path of equal length, CPU 22, three alternating runs. `calls.ts`: local call 3.72-4.03 → 3.62-3.77 µs
+(6,894 → 6,660 B); watched derive commit 17.46-17.92 → 17.53-18.40 µs (15,310 → 14,900 B); activation churn
+104.7-107.9 → 114.7-118.3 µs (+9.6%, accepted by the owner, 2026-10-29; 41,507-41,526 → 41,473-41,501 B). The churn's object derives over its dependency's
+member: that derive now attaches through its own reference's member (one `ReferenceSource` made, bound and ended per
+cycle) where HEAD shared the provider's one member source; the allocation is HEAD's, the time is the new node's (a
+copy of round 6, before the rework, measured 55.2 µs against HEAD's 53.5-54.6 µs and the rework's 58.4 µs on CPU 6).
+Retained per live object with one dependency (an ad-hoc probe, 2,000 objects, median of five): 6,924 → 6,738 B; a
+first cut made a source for every member at the binding and allocated four sets per source (8,627 B): sources are made
+on first use or when a reference that had values detaches, and a source's watch, subscriber and pass-through sets are
+made by their first user. `links.ts` (warmed, mean / median / p90 in ms), binary: append 0.107-0.113 / 0.082-0.083 /
+0.095-0.097 → 0.141-0.142 / 0.089-0.090 / 0.123-0.124 (the young-generation effect above), changed field 0.084-0.086 /
+0.071-0.072 / 0.081-0.082 → 0.098-0.099 / 0.072-0.073 / 0.081-0.082, removal 0.102-0.108 / 0.060 / 0.071-0.073 →
+0.107-0.109 / 0.060-0.061 / 0.072; with the young generation pinned, append 0.140-0.143 / 0.086 / 0.100-0.102 →
+0.143-0.147 / 0.085-0.087 / 0.101-0.103, changed field 0.091-0.092 / 0.072-0.073 / 0.082-0.084 → 0.091-0.092 /
+0.073-0.074 / 0.082-0.084, removal 0.108-0.111 / 0.061-0.062 / 0.072-0.075 → 0.108-0.110 / 0.060-0.062 / 0.072-0.076;
+text alike within 3 µs. Small call 0.058-0.060 → 0.053-0.056 ms. Retained per hold (both ends): 175.4-176.0 →
+176.4-177.0 KiB with one hold, 175.8 → 176.4 KiB with ten.
+
+The 1 MiB call row (final review): one burst of 50 calls read 0.389 → 1.088 ms (binary, young generation pinned) in
+one review run. Not per-call work: a probe with the row's setup and a collected heap before each of 20 bursts of 50
+(CPU 22, three alternating pairs) measured, per call without the collector's pauses, 0.27-0.31 → 0.30-0.31 ms binary
+and 0.31-0.36 → 0.33-0.36 ms text, heap 23,025 → 22,707 B binary and 23,964 → 23,650 B text. A burst's time is about
+0.3 ms per call plus 0.2-0.27 ms per call when a full collection falls in it (the arguments fill memory outside the
+heap); one burst of 50 sees one or none, in either tree. `links.ts` now collects the heap before each of 20 bursts and
+reports the median and p90; three alternating pairs of the new row, stock, binary median / p90 0.386-0.455 /
+0.409-0.473 → 0.279-0.357 / 0.306-0.394, text 0.344-0.395 / 0.510-0.566 → 0.363-0.500 / 0.522-0.621; pinned,
+binary 0.689-0.910 / 0.738-1.050 → 0.695-0.882 / 0.829-0.992, text 0.415-0.896 / 0.958-1.049 → 0.534-0.864 /
+1.042-1.175. The row still moves by run with the collector's phase; compare it across several runs, not one.
+The small call, measured apart (ten bursts of 1,000 after 3,000 warm-up calls, three alternating pairs): stock, binary
+29.5-30.6 → 27.6-27.9 µs and text 25.1-25.9 → 27.5-28.3 µs; with the young generation pinned, binary 29.7-30.7 →
+30.3-30.7 µs and text 23.6-23.7 → 23.9-24.1 µs. The stock text gap is the young generation's sizing, as for commit to
+frame above (pinned, the two match); the snapshot before the final review's fixes measures the same.
+
+## Simplification audit (2026-10-30)
+
+HEAD `4b535d57e` → the audit build (A1, A2, A5, A9-A12), copies at paths of equal length, CPU 6, alternating.
+`calls.ts`, three runs: local call 2.70-2.73 → 2.69-2.73 µs (6,660 B both), watched derive commit 10.41-10.75 →
+10.42-10.74 µs (14,899 B both), activation churn 59.0-60.9 → 59.1-61.4 µs (41,473-41,482 → 41,478 B). Retained per live
+object with one dependency (10,000 kept) 6,745-6,754 → 6,745-6,752 B; a first cut of the declaration-ordered
+dependency list (A11) kept it on live attempts, +225 B, and is now let go after the dependency check. `links.ts` with
+the young generation pinned: commit to frame, hold to live and retained per hold equal within run spread (176.4 →
+176.2-176.6 KiB per hold).
+
+**Text-codec calls in isolation** (Sol's probe: a remote object over one memory link, 5,000 warm-up calls, ten bursts
+of 1,000 small calls, then 200 warm-up and 30 bursts of 10 calls with a 1 MiB argument; binary first, then text; the
+heap collected before each burst and the collections in it recorded: none in any burst), seven alternating pairs,
+median of the pairs' medians:
+
+| Case | stock | young generation pinned |
+| --- | --- | --- |
+| binary small | 26.53 → 26.37 µs | 25.72 → 25.90 µs |
+| text small | 19.31 → 20.95 µs (+8.5%) | 19.11 → 19.93 µs (+4.3%) |
+| binary 1 MiB | 985 → 993 µs | 539 → 412 µs (bimodal: 187-607 µs per run) |
+| text 1 MiB | 958 → 963 µs | 273 → 284 µs (221-352 µs per run) |
+
+Heap per call is the same (text small 15,171 → 15,160-15,202 B). The text small gap is not per-call work: the codec
+alone (encode, decode and the message check of a call and a result message, 20,000 per burst) measures the same in both
+trees (text call 1.55 µs and 52 B, result 1.52 µs and 171 B), deoptimizations and inlining decisions are the same, and
+the gap follows the shape of the text decoder's `fromFields`, not what runs: the build with HEAD's `text.ts` matches HEAD
+(19.0-19.2 µs), the one change in it that matters is the never-executed `T` (retry) case, and writing that case with an
+object spread again (`...(f.length >= 2 ? { hops } : …)`) restores HEAD's 19.1 µs while other edits of the same size do
+not. With text measured first the gap is 22.4-22.5 → 23.0-23.3 µs (+2-3%). V8 code generation, recorded as noise.
+
+## Slice 7c: plugins (2026-10-30)
+
+**The plugins component** (`test/next/bench/plugins.ts`, new): 20 plugins, one worker facet each (a store object over a
+document, a derive, a method, a helper module and a copied contract; 80.9 KiB of scripts in all), Node 24.4.1. Medians
+of seven runs; three runs pinned to CPU 8, one unpinned:
+
+| Measurement | CPU 8 | unpinned (32 CPUs) |
+| --- | --- | --- |
+| cold build of the 20 worker facets (one esbuild build each, all at once) | 240.1-240.7 ms | 26.4 ms |
+| rebuild of one facet after an edit | 13.1-13.3 ms | 11.0 ms |
+| evaluation of one facet (`vm.Script`, its source map registered) | 0.16-0.27 ms | 0.09 ms |
+| reload of one plugin on a host (evaluation and `host.reload`, a pure swap) | 0.44-0.45 ms | 0.44 ms |
+| heap after 100 reloads of one plugin, against after a warm-up | +230-235 KiB | +229 KiB |
+
+The heap does not grow per reload: 2,000, 4,000 and 8,000 reloads leave +897, +1,186 and +1,432 KiB (sublinear); the
+same evaluations through plain `vm.Script` with V8's compilation cache off leave +420 KiB at 8,000 against +465 KiB
+through `evaluateFacet` (V8's own per-script bookkeeping), and the kernel's reloads alone wander between +200 and
++600 KiB at any count. Old facets and their closures are collected (the GC test: 200 reloads, every facet but the last
+two collected, the heap within 2 MiB of the warm-up).
+
+Fix round 1 (inline source maps without `sourcesContent`: positions only), CPU 8: the 20 scripts take 53.4 KiB (80.9
+KiB before); cold build 241.1 ms, rebuild 13.0 ms, evaluation 0.14 ms per facet, a reload 0.39 ms, heap after 100
+reloads +238 KiB.
+
+**Kernel hot paths** (per plugin at load and reload changes only staging), HEAD `18a155e2f` → build at paths of equal
+length, CPU 6, three alternating runs. `calls.ts`: local call 2.69-2.71 → 2.71-2.75 µs (6,660 B both), watched
+derive commit 10.34-10.36 → 10.43-10.49 µs (14,899 → 14,901 B), activation churn 58.93-59.58 → 59.44-59.73 µs
+(41,452-41,470 → 41,470 B). `links.ts` binary commit to frame (median / p90): append 0.035-0.036 / 0.058-0.059 →
+0.034-0.036 / 0.058-0.060 ms, changed field 0.027-0.028 / 0.031-0.033 → 0.027-0.028 / 0.031-0.033 ms, removal 0.022 /
+0.026-0.028 → 0.022 / 0.026-0.027 ms; with the young generation pinned alike within 2 µs; text alike; small call
+0.026-0.030 → 0.028-0.033 ms (pinned 0.030-0.035 → 0.030-0.032 ms); retained per hold equal (one binary hold 176.2 →
+170.1 KiB). `reload.ts`: swap of 50 / 1,000 objects 1.44-1.73 / 30.83-32.71 → 1.52-1.53 / 30.55-33.25 ms, restart
+1.01-1.05 / 15.54-16.87 → 0.95-0.99 / 15.90-16.02 ms until the reload resolves.
+
+## Slice 10: HTTP and workers (2026-10-31)
+
+`test/next/bench/http.ts` and `test/next/bench/workers.ts`, Node 24.4.1, CPU 6 (the forked workers inherit the pin).
+
+| Measurement | Result |
+| --- | --- |
+| keep-alive round trip, a JSON body: plain Node handler / a route (same process as the client) | build: 42.0-42.5 / 46.4-47.0 µs: +4.2-4.9 µs (9.9-11.7%); fix round 1: 42.5-42.9 / 62.8-64.4 µs: +20.3-21.5 µs |
+| the same after 30,000 warm-up requests (fix round 1) | 30.9-31.3 / 43.4-44.0 µs: +12.1-12.9 µs; with an authenticator reading `request.headers`: +15.9 µs |
+| the same, server and client in two processes (CPU 6 and 8; build) | 36.4-37.0 / 41.7-42.4 µs: +5 µs |
+| 100 MiB file: `pipeline` of a read stream / `fileResponse` | build (64 KiB reads): 602-618 / 487-565 MiB/s; fix round 1 (256 KiB, pulled): 477-751 / 560-611 MiB/s |
+| a worker's cold start with one shipped script: fork to `started` / to `ready` (median of 7) | 531-532 / 538-539 ms |
+| the server's heap per idle worker (20 workers, one reference each) | 49.5 KiB |
+
+A request's overhead was 16 µs at first: `host.root` cost about 7 µs of it per request (a linked abort signal, a
+`Promise.race` and an `awaitWithContext` per scope). Root scopes now take the caller's signal with one listener and
+settle one promise (`root.ts`; behaviour and tests unchanged): 4.2-4.9 µs, about the bar of 10% of a round trip. The
+rest is the request's scope (its abort controller, `CallContext`), admission and the response's header merge. The cold
+start is mostly Node's startup stripping the types of the source tree it imports; the start timer (60 s) is far from
+it.
+
+**Fix round 1** (the `fetch` core, the security baseline, Chord's listener as a native object). A route's overhead in
+the standard run grew from +4.5 µs to +20-21 µs (+41 µs before the Node fast path: the listener reads Node's parsed
+headers and makes a Web `Request` only when something reads `request.headers` or the body or a relay verifies; whole
+bodies are written as strings, in one write with the head). Warmed, +12-13 µs; a CPU profile of the warmed route path
+(per request, `test/next/bench/http.ts`'s route): the listener's request function 13.6 µs inclusive against the plain
+handler's 8.9 µs, of which writing the answer 8.3 µs (the plain handler's `writeHead` and `end`: 9.1 µs); `serve` 4.2
+µs (the root scope 2.1, the URL parse 0.9, default headers 0.6, admission and routing 1.1, the answer 0.7); the root
+scope's seal in a later microtask 0.9 µs. The baseline's extra headers cost 0.4 µs (a plain handler sending them).
+The rest, about 5 µs, sits in no function of the component: Node's tick and microtask machinery (33 µs inclusive
+against 18 µs for the plain handler). Opus's two trims are in (`lookup` decodes only segments with `%`; one abort
+controller per request: the Node side's own is gone). Kernel rows, HEAD `bc9a20f84` → fix round 1, CPU 6, alternating:
+binary 1 MiB call median 0.182-0.220 → 0.196 ms; reconnect of 1 / 100 references 1.02-1.10 / 79.1-80.3 → 1.04-1.05 /
+81.3-81.5 ms; watched `writable.set` 0.836-0.868 → 0.861-0.863 µs; watched derive commit 10.42-10.58 → 10.36-10.60 µs;
+activation churn 58.9-60.5 → 59.1-60.8 µs.
+
+**Kernel hot paths** (routes without a timer, `RouteHandle`, `Path` events, root scopes), HEAD `bc9a20f84` → build at
+paths of equal length, CPU 6, alternating runs. `calls.ts`: local call 2.70-2.83 → 2.70-2.83 µs (6,660 B both),
+watched derive commit 10.36-10.60 → 10.34-10.79 µs, activation churn 59.43-61.30 → 59.48-60.72 µs. `links.ts`: commit
+to frame and encode/decode alike; reconnect of 1 / 100 references 0.94-1.15 / 80.8-84.0 → 0.94-1.15 / 80.6-86.5 ms;
+1,000 parked calls 24.4-25.2 → 24.3-24.6 ms. `reload.ts`: swap of 50 / 1,000 objects 1.44-1.55 / 30.78-31.42 →
+1.32-1.56 / 31.20-31.83 ms, restart 0.96-0.98 / 15.75-16.34 → 0.95-1.10 / 15.91-15.94 ms until the reload resolves.
+`registries.ts` alike (one of 100 contributions set 1.47-2.45 → 1.48-3.41 µs, run to run).
+
+## Slice 12: the plugin model (2026-11-01)
+
+**The build's checks** (`test/next/bench/plugins.ts`, the 7c set: 20 plugins, one worker facet each, a copied contract
+by relative path), Node 24.4.1, CPU 8, medians of seven runs, three alternating runs. HEAD `ebce9debd` (its bench
+importing the contract by plugin name, which HEAD resolves) → this build: cold build of the 20 facets 257.6-257.8 →
+257.2-258.8 ms, rebuild of one facet 13.2-13.5 → 13.3-13.9 ms. With the app's API set and the kinds named (every
+import checked by version and kind, every resolved file by its kind segment; the plugins importing `@bench/app/v1`):
+257.4-258.8 ms cold, 12.9-14.3 ms rebuild, against 258.2-259.7 ms without. The checks cost nothing measurable; no hot
+path changed (the kernel gains two accessors read only by `testPlugin`).
+
+Fix round 1: the bench itself now builds with the app's API and the kinds (its plugins import `@bench/app/v1`; Opus
+L5), and every package file's real path is checked against the plugin's `node_modules`. CPU 8, three runs: cold
+build 261.1-270.2 ms, rebuild 13.6-14.4 ms (the first two runs as before, the third with a slower cold build on a busy
+machine).

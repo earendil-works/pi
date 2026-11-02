@@ -21,6 +21,8 @@ import {
 	rawWorkers,
 	rejection,
 	relayed,
+	Server,
+	Session,
 	serveNotes,
 	type TestPrincipal,
 	testCodec,
@@ -142,8 +144,9 @@ forEachCodec(() => {
 			const result = await raw.next("result");
 			expect(result).toMatchObject({ kind: "result", call: 5 });
 			expect(result.origin).toBeUndefined();
-			raw.send({ kind: "retry", hold: 7 });
-			expect(await worker.next("retry")).toEqual({ kind: "retry", origin: 1, hold: 7 });
+			raw.send({ kind: "retry", hold: 7, hops: 5 });
+			// Forwarded with its budget as it is: a relay visits no object.
+			expect(await worker.next("retry")).toEqual({ kind: "retry", origin: 1, hold: 7, hops: 5 });
 		});
 
 		it("give each downstream link its own origin, never reused", async () => {
@@ -350,8 +353,8 @@ forEachCodec(() => {
 			first.close();
 			expect(await rejection(call)).toMatchObject({ code: "unavailable" });
 			await transported();
+			// The link had completed its handshake: its address resolves again at once (no timer, slice 10 R2).
 			expect(notes.state.value).toEqual({ kind: "loading" });
-			await vi.advanceTimersByTimeAsync(1000);
 			const second = await workerAt(workers, 1);
 			const again = await second.next("hold");
 			expect(again).toMatchObject({ hold: held.hold, origin: held.origin });
@@ -364,7 +367,13 @@ forEachCodec(() => {
 		});
 
 		it("answers a call that crossed the loading notice unavailable (race 13)", async () => {
-			const { raw, workers } = await rawRelay();
+			// The address's next resolve never settles: the relayed hold has no upstream link when the call arrives.
+			const workers: RawPeer[] = [];
+			const resolve = rawWorkers(workers);
+			const relay = await relayed({
+				resolve: (address) => (workers.length === 0 ? resolve(address) : new Promise<never>(() => {})),
+			});
+			const raw = rawTab(relay.server);
 			holdPlaced(raw, 0);
 			const worker = await workerAt(workers);
 			bindPlaced(worker, await worker.next("hold"));
@@ -379,23 +388,48 @@ forEachCodec(() => {
 
 	describe("a parent link that is down (audit)", () => {
 		it("holds a hold arriving meanwhile on the parent path: it waits loading and binds on the next parent link", async () => {
-			const server = createHost<TestPrincipal>({ principal: { kind: "server" }, onError: () => {} });
+			// The middle host relays its tab's holds to its parent, which reaches it over a route: origins arrive only on
+			// parent and route links (decision "Origins only from relays").
+			const middle = createHost<TestPrincipal>({
+				address: Session({ id: "M" }),
+				principal: { kind: "worker", session: "M" },
+				onError: () => {},
+			});
+			await middle.load([], context);
+			const server = createHost<TestPrincipal>({
+				address: Server(),
+				principal: { kind: "server" },
+				onError: () => {},
+			});
+			const links: Link[] = [];
+			let gate = Promise.resolve();
+			server.route(
+				Session,
+				{
+					authorize: () => true,
+					resolve: async () => {
+						await gate;
+						const [a, b] = memoryLinkPair();
+						middle.connect(b, { principal: { kind: "server" }, codec: testCodec() }, context);
+						links.push(a);
+						return { link: a, principal: { kind: "worker", session: "M" }, codec: testCodec() };
+					},
+				},
+				context,
+			);
 			await server.load(
 				[{ name: "@test/app", facet: defineFacet<TestPrincipal>((h) => void serveNotes(h)) }],
 				context,
 			);
-			const middle = createHost<TestPrincipal>({ principal: { kind: "server" }, onError: () => {} });
-			await middle.load([], context);
-			/** Connects the middle host to the server over a new link; returns the server's end. */
-			const up = (): Link => {
-				const [a, b] = memoryLinkPair();
-				server.accept(a, { principal: { kind: "owner" }, codec: testCodec() }, context);
-				middle.connect(b, { principal: { kind: "server" }, codec: testCodec() }, context);
-				return a;
-			};
-			const first = up();
+			// The server holds something at the middle's address: its route link exists while it does.
+			const anchor = server.hold(PlacedNotes, { session: "M" }, context);
 			await transported();
-			first.close();
+			// The next resolve waits: the middle's parent path is down meanwhile.
+			let admit: () => void = () => {};
+			gate = new Promise<void>((resolve) => {
+				admit = resolve;
+			});
+			links[0]!.close();
 			await transported();
 			const tab = createHost<TestPrincipal>({ onError: () => {} });
 			await tab.load([], context);
@@ -405,9 +439,11 @@ forEachCodec(() => {
 			const notes = tab.hold(Notes, { session: "S1" }, context);
 			await transported();
 			expect(notes.state.value).toEqual({ kind: "loading" });
-			up();
+			admit();
+			await transported();
 			await transported();
 			expect(notes.state.value).toEqual({ kind: "live" });
+			anchor.release();
 		});
 	});
 
@@ -441,9 +477,12 @@ forEachCodec(() => {
 			bindPlaced(worker, sent);
 			worker.send(countState([sent], 1));
 			await transported();
-			// The relay no longer relays the hold: dropped there (Q1), each message acknowledged to the worker at once.
+			// The origin held nothing more: its record went and the worker was told `closed` (decision "Origins only from
+			// relays"); what crossed it is dropped (Q1).
 			expect(raw.kinds()).toEqual(["hello"]);
-			expect(worker.received.filter(({ kind }) => kind === "ack")).toHaveLength(2);
+			expect(worker.received.filter(({ kind }) => kind === "closed")).toEqual([
+				{ kind: "closed", origin: sent.origin },
+			]);
 		});
 	});
 

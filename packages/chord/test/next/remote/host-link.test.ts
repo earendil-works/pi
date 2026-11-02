@@ -3,7 +3,7 @@ import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { int, local, method, remote, str } from "../../../src/next/contracts/index.ts";
 import { createHost, defineFacet, type FacetHost, type HostError } from "../../../src/next/host/index.ts";
 import { type Compression, memoryLinkPair, type PartLimits } from "../../../src/next/link/index.ts";
-import { jsonPart } from "../../../src/next/link/internal.ts";
+import { jsonPart, type Message } from "../../../src/next/link/internal.ts";
 import { constant } from "../../../src/next/state/index.ts";
 import { nodeCompression } from "../../../src/next-node/compression.ts";
 import {
@@ -19,11 +19,15 @@ import {
 	partValue,
 	RAW_PEER,
 	RawPeer,
+	rawLinked,
 	rawWorkers,
 	rejection,
 	relayed,
+	SERVER_ADDRESS,
+	Server,
 	Session,
 	serveNotes,
+	settledHeap,
 	type TestPrincipal,
 	testCodec,
 	transported,
@@ -33,6 +37,7 @@ import {
 const ServerWho = remote("app.server-who", {
 	version: 1,
 	params: {},
+	hostAddress: () => Server(),
 	variants: { v: { state: { who: str() }, methods: { echo: method(str(), str()) } } },
 });
 
@@ -40,7 +45,7 @@ const ServerWho = remote("app.server-who", {
 const Asker = remote("app.asker", {
 	version: 1,
 	params: { session: str() },
-	placement: ({ session }) => Session({ id: session }),
+	hostAddress: ({ session }) => Session({ id: session }),
 	variants: { v: { state: { who: str() }, methods: { ask: method(str(), str()) } } },
 });
 
@@ -48,7 +53,7 @@ const Asker = remote("app.asker", {
 const Neighbour = remote("app.neighbour", {
 	version: 1,
 	params: { session: str(), other: str() },
-	placement: ({ session }) => Session({ id: session }),
+	hostAddress: ({ session }) => Session({ id: session }),
 	variants: { v: { state: { count: int() } } },
 });
 
@@ -141,6 +146,7 @@ forEachCodec(() => {
 			const Gateway = remote("app.gateway", {
 				version: 1,
 				params: {},
+				hostAddress: () => Server(),
 				variants: { v: { state: { n: int() }, methods: { open: method(str(), int()) } } },
 			});
 			// With params: not activated by `load`, which would wait for the raw worker.
@@ -342,6 +348,7 @@ async function compressing(options: {
 }) {
 	const errors: HostError[] = [];
 	const server = createHost<TestPrincipal>({
+		address: Server(),
 		principal: { kind: "server" },
 		compression: options.server,
 		onError: (error) => errors.push(error),
@@ -426,4 +433,77 @@ forEachCodec(() => {
 			expect(server.inflates).toBe(0);
 		});
 	});
+});
+
+describe("origins only from relays (decision, slice 10 security audit K1/K2)", () => {
+	const { name: type, version, fingerprint } = Notes;
+	const hold = {
+		kind: "hold",
+		hold: 0,
+		type,
+		version,
+		fingerprint,
+		params: jsonPart({ session: "S1" }),
+		address: SERVER_ADDRESS,
+	};
+	const withOrigin: Record<string, Message> = {
+		hold: { ...hold, origin: 1 } as Message,
+		call: { kind: "call", origin: 1, call: 0, hold: 0, method: EDITOR.methods.wait },
+		release: { kind: "release", origin: 1, hold: 0 },
+		abort: { kind: "abort", origin: 1, call: 0 },
+		retry: { kind: "retry", origin: 1, hold: 0, hops: 1 } as Message,
+		ack: { kind: "ack", origin: 1 },
+		closed: { kind: "closed", origin: 1 },
+	};
+
+	for (const [kind, message] of Object.entries(withOrigin)) {
+		it(`closes a child link sending ${kind} with an origin (a protocol error)`, async () => {
+			const { peer, errors } = await rawLinked((h) => void serveNotes(h));
+			peer.send(message);
+			await transported();
+			expect(peer.closed).toBe(true);
+			expect(errors).toMatchObject([
+				{ kind: "protocol_error", error: { message: `${kind}: an origin on a child link` } },
+			]);
+		});
+	}
+
+	it("honours origins on a parent link (a relay's): one window of calls per origin", async () => {
+		let probe!: ReturnType<typeof serveNotes>;
+		const { peer } = await rawLinked(
+			(h) => {
+				probe = serveNotes(h);
+			},
+			{ role: "parent" },
+		);
+		peer.send({ ...hold, origin: 1 } as Message);
+		peer.send({ ...hold, origin: 2 } as Message);
+		await transported();
+		for (const origin of [1, 2]) peer.send({ kind: "call", origin, call: 0, hold: 0, method: EDITOR.methods.wait });
+		await transported();
+		expect([peer.closed, probe.waits.length]).toEqual([false, 2]);
+	});
+
+	it("keeps no record of an origin that holds nothing: 20,000 fresh origins held and released", async () => {
+		const { peer } = await rawLinked((h) => void serveNotes(h), { role: "parent" });
+		const churn = async (from: number, to: number) => {
+			for (let origin = from; origin <= to; origin++) {
+				peer.send({ ...hold, origin } as Message);
+				peer.send({ kind: "release", origin, hold: 0 });
+				if (origin % 1_000 === 0) {
+					await transported();
+					peer.received.length = 0;
+				}
+			}
+			await transported();
+			peer.received.length = 0;
+		};
+		// A warm-up first: what a first run allocates for good (compiled code, caches) is no record.
+		await churn(1, 2_000);
+		const before = await settledHeap();
+		await churn(2_001, 22_000);
+		// About 1 KiB per origin before: 20 MiB. The bound leaves room for heap noise (CI measured 0.6 MiB).
+		expect((await settledHeap()) - before).toBeLessThan(4 * 1024 * 1024);
+		expect(peer.closed).toBe(false);
+	}, 60_000);
 });

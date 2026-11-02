@@ -218,18 +218,33 @@ describe("eager migrations", () => {
 	});
 });
 
+/**
+ * Records the `setTimeout` calls the migration's own code makes (its stack passes through `table-migration.ts`); timers
+ * of the test runner or other work under load pass through unrecorded (fix round 2: the test watched every timer).
+ */
+function migrationTimers(): { readonly calls: string[]; restore(): void } {
+	const calls: string[] = [];
+	const original = globalThis.setTimeout;
+	const spy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((...args: Parameters<typeof setTimeout>) => {
+		const stack = new Error().stack ?? "";
+		if (stack.includes("src/next/store/table-migration.ts")) calls.push(stack);
+		return original(...args);
+	}) as typeof setTimeout);
+	return { calls, restore: () => spy.mockRestore() };
+}
+
 describe("the chunk yield", () => {
 	it("yields between chunks without Node's setImmediate (Workers, browsers), through a message, not a timer", async () => {
 		await filled(3 * MIGRATION_CHUNK);
 		const saved = globalThis.setImmediate;
 		// Runtimes without it: Cloudflare Workers, browsers.
 		Reflect.deleteProperty(globalThis, "setImmediate");
-		const timers = vi.spyOn(globalThis, "setTimeout");
+		const timers = migrationTimers();
 		try {
 			await prepared(EditsV2);
-			expect(timers).not.toHaveBeenCalled();
+			expect(timers.calls).toEqual([]);
 		} finally {
-			timers.mockRestore();
+			timers.restore();
 			globalThis.setImmediate = saved;
 		}
 		expect(store.table(TABLE)).toMatchObject({ version: 2, state: "ready" });
@@ -242,12 +257,12 @@ describe("the chunk yield", () => {
 		setTimeout(() => {
 			fired = true;
 		}, 0);
-		const timers = vi.spyOn(globalThis, "setTimeout");
+		const timers = migrationTimers();
 		try {
 			await prepared(EditsV2);
-			expect(timers).not.toHaveBeenCalled();
+			expect(timers.calls).toEqual([]);
 		} finally {
-			timers.mockRestore();
+			timers.restore();
 		}
 		expect(fired).toBe(true);
 		expect(store.table(TABLE)).toMatchObject({ version: 2, state: "ready" });

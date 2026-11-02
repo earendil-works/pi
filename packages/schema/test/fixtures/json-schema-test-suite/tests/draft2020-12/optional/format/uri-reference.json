@@ -1,0 +1,182 @@
+[
+    {
+        "description": "validation of URI References",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "format": "uri-reference"
+        },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "a valid URI",
+                "data": "http://foo.bar/?baz=qux#quux",
+                "valid": true
+            },
+            {
+                "description": "a valid protocol-relative URI Reference",
+                "data": "//foo.bar/?baz=qux#quux",
+                "valid": true
+            },
+            {
+                "description": "a valid relative URI Reference",
+                "data": "/abc",
+                "valid": true
+            },
+            {
+                "description": "an invalid URI Reference",
+                "data": "\\\\WINDOWS\\fileshare",
+                "valid": false
+            },
+            {
+                "description": "a valid URI Reference",
+                "data": "abc",
+                "valid": true
+            },
+            {
+                "description": "a valid URI fragment",
+                "data": "#fragment",
+                "valid": true
+            },
+            {
+                "description": "an invalid URI fragment",
+                "data": "#frag\\ment",
+                "valid": false
+            },
+            {
+                "description": "unescaped non US-ASCII characters",
+                "data": "/foobar®.txt",
+                "valid": false
+            },
+            {
+                "description": "invalid backslash character",
+                "data": "https://example.org/foobar\\.txt",
+                "valid": false
+            },
+            {
+                "description": "URI with leading-zero IPv4 is structurally valid as a reg-name",
+                "comment": "RFC 3986, Section 3.2.2: If an IP literal fails strict IPv4address parsing, it falls back to reg-name. A string of digits and dots is valid under unreserved characters. JSON Schema format asserts syntax, not scheme-specific DNS semantics.",
+                "data": "http://087.10.0.1/",
+                "valid": true
+            },
+            {
+                "description": "URI with out-of-bounds IPv4 is structurally valid as a reg-name",
+                "comment": "RFC 3986, Section 3.2.2: Fallback to reg-name allows digits and dots.",
+                "data": "http://999.999.999.999/",
+                "valid": true
+            },
+            {
+                "description": "an empty URI reference",
+                "comment": "RFC 3986, Section 4.2: relative-part includes path-empty, which is zero characters.",
+                "data": "",
+                "valid": true
+            },
+            {
+                "description": "a query-only reference",
+                "comment": "RFC 3986, Section 4.2: relative-ref = relative-part [ \"?\" query ] [ \"#\" fragment ], so a query with an empty path is a reference.",
+                "data": "?query=1",
+                "valid": true
+            },
+            {
+                "description": "a network-path reference with an empty authority",
+                "comment": "RFC 3986, Section 3.2.2: host = IP-literal / IPv4address / reg-name, and reg-name may be empty.",
+                "data": "//",
+                "valid": true
+            },
+            {
+                "description": "an incomplete percent-encoding",
+                "comment": "RFC 3986, Section 2.1: pct-encoded = \"%\" HEXDIG HEXDIG.",
+                "data": "/%zz",
+                "valid": false
+            },
+            {
+                "description": "incomplete percent-encoding triplet",
+                "comment": "RFC 3986, Section 2.1: pct-encoded = \"%\" HEXDIG HEXDIG.",
+                "data": "/%A",
+                "valid": false
+            },
+            {
+                "description": "lone percent sign is invalid",
+                "comment": "RFC 3986, Section 2.1: pct-encoded = \"%\" HEXDIG HEXDIG.",
+                "data": "/%",
+                "valid": false
+            },
+            {
+                "description": "a double quote in a path",
+                "comment": "RFC 3986, Appendix A: pchar = unreserved / pct-encoded / sub-delims / \":\" / \"@\", and the double quote is in none of them.",
+                "data": "/a\"b",
+                "valid": false
+            },
+            {
+                "description": "square brackets outside an authority",
+                "comment": "RFC 3986, Section 3.2.2: square brackets are reserved for an IP-literal inside the authority. path-absolute is built from pchar, which excludes them.",
+                "data": "/[::1]",
+                "valid": false
+            },
+            {
+                "description": "a non-numeric port in a network-path reference",
+                "comment": "RFC 3986, Section 3.2.3: port = *DIGIT. reg-name admits no colon, so the text after the colon can only be a port.",
+                "data": "//example.com:abc/p",
+                "valid": false
+            },
+            {
+                "description": "more than one at-sign in the authority",
+                "comment": "RFC 3986, Section 3.2: authority = [ userinfo \"@\" ] host [ \":\" port ]. Neither userinfo nor host admits a literal at-sign.",
+                "data": "//a@b@example.com/",
+                "valid": false
+            },
+            {
+                "description": "a leading zero in the IPv4 part of an IPv6 literal",
+                "comment": "RFC 3986, Section 3.2.2: inside an IP-literal the dotted quad must be an IPv4address, and dec-octet has no leading-zero alternative. There is no reg-name fallback inside brackets.",
+                "data": "//[::ffff:192.168.0.01]/p",
+                "valid": false
+            },
+            {
+                "description": "a colon in the first segment of a relative-path reference",
+                "comment": "RFC 3986, Section 4.2: relative-part uses path-noscheme, whose first segment is segment-nz-nc - a non-zero-length segment without any colon. A scheme must start with ALPHA, so 1:b cannot be read as a URI either.",
+                "data": "1:b",
+                "valid": false
+            },
+            {
+                "description": "a colon in the first segment preceded by a dot-segment",
+                "comment": "RFC 3986, Section 4.2: \"Such a segment must be preceded by a dot-segment (e.g., \\\"./this:that\\\") to make a relative-path reference.\"",
+                "data": "./this:that",
+                "valid": true
+            },
+            {
+                "description": "a trailing line feed",
+                "comment": "RFC 3986, Appendix A: no production admits %x0A.",
+                "data": "/p\n",
+                "valid": false
+            }
+        ]
+    }
+]

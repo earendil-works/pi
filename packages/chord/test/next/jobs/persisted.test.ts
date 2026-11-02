@@ -1064,3 +1064,36 @@ describe("GC", () => {
 		await hanging.close();
 	});
 });
+
+describe("versions resolved by a reload (slice 7b §8)", () => {
+	it("a persisted run blocked for its version at its load is resumed by the reload that brings its version", async () => {
+		const open = await storeFile();
+		const jobs = await opened(await open(), () => new Promise(() => {}));
+		const run = await jobs.imports.start({ path: "a" }, context);
+		await delivered();
+		await jobs.crash();
+		const store = await open();
+		const finished: ImportOutcome[] = [];
+		const serve = (declared: typeof Import) =>
+			defineFacet((h) =>
+				h.serve(Store, (_, self) => {
+					self.job(declared, {
+						run: async () => ({ count: 7 }),
+						finish: async (outcome) => void finished.push(outcome),
+					});
+					return {};
+				}),
+			);
+		const host = createHost({ store, onError: () => {} });
+		await host.load([{ name: "notes", facet: serve(ImportV2) }], context);
+		await delivered();
+		expect(finished).toEqual([]);
+		expect(await record(store, run.id)).toMatchObject({ version: 1, phase: "running" });
+		await host.reload([{ name: "notes", facet: serve(Import) }], context);
+		await sleepMs(20);
+		expect(finished).toMatchObject([{ id: run.id, kind: "done", result: { count: 7 } }]);
+		expect(await record(store, run.id)).toBeUndefined();
+		await host.close(context);
+		await store.close(context);
+	});
+});

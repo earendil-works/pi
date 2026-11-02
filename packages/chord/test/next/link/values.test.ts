@@ -29,6 +29,14 @@ describe("payloads", () => {
 		expect(read.thumbs).toEqual(thumbs);
 	});
 
+	it("carry any Uint8Array subclass as bytes: a Node Buffer, whose toJSON the replacer never sees (slice 11)", () => {
+		const buffer = Buffer.from([1, 2, 3]);
+		const { json, segments } = payloadPart({ bytes: buffer, at: [buffer] }, true);
+		expect(json).toBe('{"bytes":{"$bytes":0},"at":[{"$bytes":1}]}');
+		expect(segments![0]).toBe(buffer);
+		expect(payloadPart(buffer, true)).toEqual({ json: '{"$bytes":0}', segments: [buffer] });
+	});
+
 	it("marked as carrying bytes refuse the reserved key $bytes with invalid/args", () => {
 		let thrown: unknown;
 		try {

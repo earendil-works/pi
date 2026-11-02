@@ -1,0 +1,189 @@
+[
+    {
+        "description": "anyOf",
+        "schema": {
+            "anyOf": [
+                {
+                    "type": "integer"
+                },
+                {
+                    "minimum": 2
+                }
+            ]
+        },
+        "tests": [
+            {
+                "description": "first anyOf valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "second anyOf valid",
+                "data": 2.5,
+                "valid": true
+            },
+            {
+                "description": "both anyOf valid",
+                "data": 3,
+                "valid": true
+            },
+            {
+                "description": "neither anyOf valid",
+                "data": 1.5,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "anyOf with base schema",
+        "schema": {
+            "type": "string",
+            "anyOf" : [
+                {
+                    "maxLength": 2
+                },
+                {
+                    "minLength": 4
+                }
+            ]
+        },
+        "tests": [
+            {
+                "description": "mismatch base schema",
+                "data": 3,
+                "valid": false
+            },
+            {
+                "description": "one anyOf valid",
+                "data": "foobar",
+                "valid": true
+            },
+            {
+                "description": "both anyOf invalid",
+                "data": "foo",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "anyOf with boolean schemas, all true",
+        "schema": {"anyOf": [true, true]},
+        "tests": [
+            {
+                "description": "any value is valid",
+                "data": "foo",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "anyOf with boolean schemas, some true",
+        "schema": {"anyOf": [true, false]},
+        "tests": [
+            {
+                "description": "any value is valid",
+                "data": "foo",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "anyOf with boolean schemas, all false",
+        "schema": {"anyOf": [false, false]},
+        "tests": [
+            {
+                "description": "any value is invalid",
+                "data": "foo",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "anyOf complex types",
+        "schema": {
+            "anyOf": [
+                {
+                    "properties": {
+                        "bar": {"type": "integer"}
+                    },
+                    "required": ["bar"]
+                },
+                {
+                    "properties": {
+                        "foo": {"type": "string"}
+                    },
+                    "required": ["foo"]
+                }
+            ]
+        },
+        "tests": [
+            {
+                "description": "first anyOf valid (complex)",
+                "data": {"bar": 2},
+                "valid": true
+            },
+            {
+                "description": "second anyOf valid (complex)",
+                "data": {"foo": "baz"},
+                "valid": true
+            },
+            {
+                "description": "both anyOf valid (complex)",
+                "data": {"foo": "baz", "bar": 2},
+                "valid": true
+            },
+            {
+                "description": "neither anyOf valid (complex)",
+                "data": {"foo": 2, "bar": "quux"},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "anyOf with one empty schema",
+        "schema": {
+            "anyOf": [
+                { "type": "number" },
+                {}
+            ]
+        },
+        "tests": [
+            {
+                "description": "string is valid",
+                "data": "foo",
+                "valid": true
+            },
+            {
+                "description": "number is valid",
+                "data": 123,
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "nested anyOf, to check validation semantics",
+        "schema": {
+            "anyOf": [
+                {
+                    "anyOf": [
+                        {
+                            "type": "null"
+                        }
+                    ]
+                }
+            ]
+        },
+        "tests": [
+            {
+                "description": "null is valid",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "anything non-null is invalid",
+                "data": 123,
+                "valid": false
+            }
+        ]
+    }
+]

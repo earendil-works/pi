@@ -1,0 +1,60 @@
+[
+    {
+        "description": "maximum validation",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "maximum": 3.0
+        },
+        "tests": [
+            {
+                "description": "below the maximum is valid",
+                "data": 2.6,
+                "valid": true
+            },
+            {
+                "description": "boundary point is valid",
+                "data": 3.0,
+                "valid": true
+            },
+            {
+                "description": "above the maximum is invalid",
+                "data": 3.5,
+                "valid": false
+            },
+            {
+                "description": "ignores non-numbers",
+                "data": "x",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "maximum validation with unsigned integer",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "maximum": 300
+        },
+        "tests":  [
+            {
+                "description": "below the maximum is valid",
+                "data": 299.97,
+                "valid": true
+            },
+            {
+                "description": "boundary point integer is valid",
+                "data": 300,
+                "valid": true
+            },
+            {
+                "description": "boundary point float is valid",
+                "data": 300.00,
+                "valid": true
+            },
+            {
+                "description": "above the maximum is invalid",
+                "data": 300.5,
+                "valid": false
+            }
+        ]
+    }
+]

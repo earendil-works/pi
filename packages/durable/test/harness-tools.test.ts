@@ -11,7 +11,6 @@ import {
 	type Models,
 	type SystemMessage,
 	type ToolResultMessage,
-	Type,
 } from "@earendil-works/pi-ai";
 import {
 	AgentDoc,
@@ -32,6 +31,7 @@ import {
 	ToolResultEntry,
 	ToolTask,
 } from "@earendil-works/pi-durable";
+import { obj, opt, str } from "@earendil-works/pi-schema";
 import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { createBashTool, createEditTool, createReadTool } from "../src/tools/index.ts";
@@ -40,7 +40,7 @@ import { addHooks, addTask, addTool, type Installed } from "./harness-support.ts
 import { context } from "./session-support.ts";
 import { aborted, deferred } from "./task-support.ts";
 
-const EchoParameters = Type.Object({ text: Type.Optional(Type.String()) });
+const EchoParameters = obj({ text: opt(str()) });
 type Echo = ToolRegistration<typeof EchoParameters>;
 type Execute = Echo["execute"];
 
@@ -749,6 +749,75 @@ describe("generation hooks", () => {
 		expect(entries.map((entry) => entry.kind)).toEqual(["pi.user", "pi.assistant", "pi.user", "pi.assistant"]);
 		// The injected message was used for the request only.
 		expect(entries.some((entry) => textOf(entry.model?.[0]) === "injected")).toBe(false);
+		await harness.close(context);
+	});
+
+	it("chains beforeProviderRequest over every provider request body", async () => {
+		const setup = chatSetup();
+		const seen: { hook: string; model: string; payload: unknown }[] = [];
+		addHooks(setup.registry, GenerationTask, {
+			beforeProviderRequest: ({ model, payload }) => {
+				seen.push({ hook: "first", model: `${model.provider}/${model.id}`, payload });
+				return { payload: { ...(payload as object), first: true } };
+			},
+		});
+		addHooks(setup.registry, GenerationTask, {
+			beforeProviderRequest: ({ model, payload }) => {
+				seen.push({ hook: "keep", model: `${model.provider}/${model.id}`, payload });
+				return undefined;
+			},
+		});
+		addHooks(setup.registry, GenerationTask, {
+			beforeProviderRequest: ({ payload }) => ({ payload: { ...(payload as object), last: true } }),
+		});
+		const sent: unknown[] = [];
+		// pi-ai builds a body per provider call, and again when it resends within one attempt.
+		const respond: FauxResponseStep = async (_context, options, _state, model) => {
+			sent.push(await options!.onPayload!({ body: 1 }, model));
+			sent.push(await options!.onPayload!({ body: 2 }, model));
+			return DONE;
+		};
+		const { harness, status } = await run(setup, [respond]);
+		expect(status).toBe("done");
+		expect(sent).toEqual([
+			{ body: 1, first: true, last: true },
+			{ body: 2, first: true, last: true },
+		]);
+		expect(seen).toEqual([
+			{ hook: "first", model: "faux/faux-1", payload: { body: 1 } },
+			{ hook: "keep", model: "faux/faux-1", payload: { body: 1, first: true } },
+			{ hook: "first", model: "faux/faux-1", payload: { body: 2 } },
+			{ hook: "keep", model: "faux/faux-1", payload: { body: 2, first: true } },
+		]);
+		await harness.close(context);
+	});
+
+	it("reports a throwing beforeProviderRequest hook and continues the chain", async () => {
+		const setup = chatSetup();
+		addHooks(
+			setup.registry,
+			GenerationTask,
+			{
+				beforeProviderRequest: () => {
+					throw new Error("broken hook");
+				},
+			},
+			"broken",
+		);
+		addHooks(setup.registry, GenerationTask, {
+			beforeProviderRequest: ({ payload }) => ({ payload: { ...(payload as object), after: true } }),
+		});
+		let sent: unknown;
+		const respond: FauxResponseStep = async (_context, options, _state, model) => {
+			sent = await options!.onPayload!({ body: 1 }, model);
+			return DONE;
+		};
+		const { harness, status } = await run(setup, [respond]);
+		expect(status).toBe("done");
+		expect(sent).toEqual({ body: 1, after: true });
+		expect(setup.infos.filter((info) => info.kind === "extension_error")).toEqual([
+			expect.objectContaining({ extension: "broken" }),
+		]);
 		await harness.close(context);
 	});
 

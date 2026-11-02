@@ -159,7 +159,7 @@ Settings also accept built-in extensions as `builtin:<name>` entries; see [Setti
 | `@earendil-works/pi-coding-agent` | Extension types (`ExtensionAPI`, `ExtensionContext`, events) and helpers |
 | `@earendil-works/pi-agent-core` | Agent message and tool types |
 | `typebox`, `typebox/compile`, `typebox/value` | Schema definitions for tool parameters |
-| `@earendil-works/pi-ai` | AI utilities (`StringEnum` for string enums, transcript helpers, model types) |
+| `@earendil-works/pi-ai` | AI utilities (`StringEnum` for string enums, transcript helpers, model types). Inside Pi it also exports TypeBox's `Type`, `Static` and `TSchema`, which the published package no longer re-exports; import them from `typebox` in new code |
 | `@earendil-works/pi-ai/compat`, `/models`, `/oauth`, `/providers/all` | Provider construction, built-in APIs, and OAuth helpers |
 | `@earendil-works/pi-tui` | TUI components for custom rendering |
 
@@ -168,6 +168,18 @@ Pi maps these imports to its own copies, so extensions share Pi's classes and re
 npm dependencies work too. Add a `package.json` next to your extension (or in a parent directory), run `npm install`, and imports from `node_modules/` are resolved automatically.
 
 For distributed Pi packages installed with `pi install` (npm or git), runtime deps must be in `dependencies`; `devDependencies` are not installed. Do not list the host-provided packages above in `dependencies`. See [Declare dependencies](packages.md#declare-dependencies).
+
+### Tool parameter schemas and TypeBox
+
+Pi validates tool arguments as JSON Schema with `@earendil-works/pi-schema`, whatever built the schema; TypeBox schemas are JSON Schema and work unchanged. Before validation, loosely typed arguments are coerced: numeric strings to numbers, `"true"` to `true`, a single value to a one-item array, `null` in an optional property dropped. TypeBox features outside JSON Schema do not apply to tool arguments:
+
+- `Type.Refine()` refinements are not run. Check such constraints in `execute()`.
+- `Type.BigInt()`, `Type.Undefined()` and `Type.Void()` reject every argument, since JSON has no such values. Codecs (`Type.Codec()`) do not decode: `execute()` receives the JSON value.
+- Formats registered with TypeBox's `Format.Set()` are not checked. The standard formats are, plus `url` and `json-pointer-uri-fragment`.
+- Property names are matched as names, not as regular expressions, and `additionalProperties` applies only to properties the object does not declare.
+- A `$ref` that names nothing rejects only arguments at its place.
+
+Validation errors the model sees use pi-schema's messages, such as `- path: missing` or `- limit: expected number, got string`.
 
 Node.js built-ins (`node:fs`, `node:path`, etc.) are also available.
 
@@ -1870,12 +1882,14 @@ pi.on("session_start", () => {
 
 ### pi.exec(command, args, options?)
 
-Execute a shell command.
+Execute a command without a shell.
 
 ```typescript
 const result = await pi.exec("git", ["status"], { signal, timeout: 5000 });
-// result.stdout, result.stderr, result.code, result.killed
+// result.stdout, result.stderr, result.code, result.killed, result.truncated
 ```
+
+Options: `signal` and `timeout` terminate the command, `cwd` sets the working directory, and `maxBuffer` limits stdout and stderr combined (default 256 MiB). When output exceeds `maxBuffer`, pi terminates the command and returns the output up to the limit with `truncated: true`, `killed: true`, and a nonzero `code`. `killed` is true whenever pi terminated the command: timeout, abort, or `maxBuffer`. A command that ignores SIGTERM gets SIGKILL after 5 seconds.
 
 ### pi.getActiveTools() / pi.getAllTools() / pi.setActiveTools(names)
 
@@ -2520,6 +2534,7 @@ pi.registerTool({
 - `toolCallId`, `cwd`, `executionStarted`, `argsComplete`, `isPartial`, `expanded`, `showImages`, `isError`
 - `durationMs` - how long execution took, from the final result; `undefined` while running
 - `outputPad` - horizontal padding from the `outputPad` setting; renderers with `renderShell: "self"` apply it themselves
+- `keyText()`, `keyHint()` - format the user's configured keybindings, see [Keybinding Hints](#keybinding-hints)
 
 Use `context.state` for cross-slot shared state. Keep slot-local caches on the returned component instance when you want to reuse and mutate the same component across renders.
 
@@ -2570,24 +2585,24 @@ If a slot intentionally has no visible content, return an empty `Component` such
 
 #### Keybinding Hints
 
-Use `keyHint()` to display keybinding hints that respect the active keybinding configuration:
+Use `keyHint()` and `keyText()` from the render context to display keybinding hints that respect the user's keybinding configuration:
 
 ```typescript
-import { keyHint } from "@earendil-works/pi-coding-agent";
-
 renderResult(result, { expanded }, theme, context) {
   let text = theme.fg("success", "✓ Done");
   if (!expanded) {
-    text += ` (${keyHint("app.tools.expand", "to expand")})`;
+    text += ` (${context.keyHint("app.tools.expand", "to expand")})`;
   }
   return new Text(text, 0, 0);
 }
 ```
 
-Available functions:
-- `keyHint(keybinding, description)` - Formats a configured keybinding id such as `"app.tools.expand"` or `"tui.select.confirm"`
-- `keyText(keybinding)` - Returns the raw configured key text for a keybinding id
-- `rawKeyHint(key, description)` - Format a raw key string
+The same functions are available as `options.keyHint()`/`options.keyText()` in message and entry renderers:
+
+- `keyHint(keybinding, description)` - Formats a configured keybinding id such as `"app.tools.expand"` or `"tui.select.confirm"`, followed by the description
+- `keyText(keybinding)` - Returns the raw configured key text for a keybinding id, or `""` if the id has no keys
+
+In renderers, use these instead of importing `keyHint()` or `keyText()` from `@earendil-works/pi-coding-agent`. An extension can resolve its own copy of the package, for example from its own `node_modules`, and that copy does not see pi's configured keybindings: `app.*` ids then format as `""`. `rawKeyHint(key, description)` formats a literal key string and is safe to import.
 
 Use namespaced keybinding ids:
 - Coding-agent ids use the `app.*` namespace, for example `app.tools.expand`, `app.editor.external`, `app.session.rename`
@@ -3144,6 +3159,8 @@ pi.registerMessageRenderer("my-extension", (message, options, theme) => {
 
   if (expanded && message.details) {
     text += "\n" + theme.fg("dim", JSON.stringify(message.details, null, 2));
+  } else if (message.details) {
+    text += ` (${options.keyHint("app.tools.expand", "to expand")})`;
   }
 
   return new Text(text, outputPad, 0);
@@ -3307,7 +3324,6 @@ All examples in [examples/extensions/](../examples/extensions/).
 | **Remote & Sandbox** |||
 | `ssh.ts` | SSH remote execution | `registerFlag`, `on("user_bash")`, `on("before_agent_start")`, tool operations |
 | `interactive-shell.ts` | Persistent shell session | `on("user_bash")` |
-| `sandbox/` | Sandboxed tool execution | Tool operations |
 | `gondolin/` | Route built-in tools and `!` commands into a Gondolin micro-VM | Tool operations, built-in tool overrides, `on("user_bash")` |
 | `subagent/` | Spawn sub-agents | `registerTool`, `exec` |
 | **Games** |||

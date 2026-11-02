@@ -1,7 +1,7 @@
 // Job definitions (§15): `defineJob(name, …)`, the checks of a declaration, and the types of what a run ends with.
 
 import { checkKeys, entriesOf } from "../contracts/declare.ts";
-import type { Static, TSchema } from "../contracts/index.ts";
+import type { Schema, Static } from "../contracts/index.ts";
 import { checkName, hash64 } from "../contracts/internal.ts";
 import { type Snapshot, snapshotArguments, snapshotSchema } from "../contracts/snapshot.ts";
 import type { ChordError, PluginError } from "../data/index.ts";
@@ -9,8 +9,8 @@ import type { JsonObject, StateDefinition } from "../documents/index.ts";
 
 /** What `defineJob` takes besides the name. */
 export type JobOptions<
-	A extends TSchema,
-	R extends TSchema,
+	A extends Schema,
+	R extends Schema,
 	D extends StateDefinition<JsonObject, false, boolean> | undefined,
 > = {
 	/** The job's version; every change of its args, result or state bumps it. */
@@ -40,7 +40,7 @@ export type JobOptions<
 export type JobPersistence = { readonly resume: "rerun" | "abandon" };
 
 /** Per older version, its mappings forwards: its args to the current args, its result to the current result. */
-export type JobAccepts<A extends TSchema = TSchema, R extends TSchema = TSchema> = {
+export type JobAccepts<A extends Schema = Schema, R extends Schema = Schema> = {
 	readonly [version: number]: { readonly args: (old: never) => Static<A>; readonly result: (old: never) => Static<R> };
 };
 
@@ -66,8 +66,8 @@ export type JobError =
 
 /** Declares a job: owned work a call starts that outlives it (§15). */
 export function defineJob<
-	const A extends TSchema,
-	const R extends TSchema,
+	const A extends Schema,
+	const R extends Schema,
 	D extends StateDefinition<JsonObject, false, boolean> | undefined = undefined,
 >(name: string, options: JobOptions<A, R, D>): JobDefinition<Static<A>, Static<R>, StateOf<D>> {
 	// Declaration policy: JavaScript callers reach every check below.

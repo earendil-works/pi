@@ -13,12 +13,25 @@ import type {
 import { estimateContextTokens } from "../utils/estimate.ts";
 
 const CONTEXT_SAFETY_TOKENS = 4096;
+// OpenRouter counts the input with its own tokenizer and rejects input + max_tokens above the
+// window before routing. It counted prose up to 12% above the provider's count (#10497).
+const CONTEXT_SAFETY_RATIO = 0.15;
+// The 15% margin is kept only while it leaves at least this much output. Otherwise (a nearly full
+// large window, or any small window such as a 32k local model) only the fixed margin is kept, and
+// output is capped at this size so an OpenRouter overcount still fits for a while before compaction.
+const MIN_OUTPUT_WITH_RATIO_MARGIN = 32768;
 const MIN_MAX_TOKENS = 1;
 
+/** Fit maxTokens into the context window, leaving room for the input being counted higher than estimated. */
 export function clampMaxTokensToContext(model: Model<Api>, context: TranscriptContext, maxTokens: number): number {
 	if (model.contextWindow <= 0) return Math.max(MIN_MAX_TOKENS, maxTokens);
-	const available = model.contextWindow - estimateContextTokens(context).tokens - CONTEXT_SAFETY_TOKENS;
-	return Math.min(maxTokens, Math.max(MIN_MAX_TOKENS, available));
+	const input = estimateContextTokens(context).tokens;
+	const margin = Math.max(CONTEXT_SAFETY_TOKENS, Math.ceil(input * CONTEXT_SAFETY_RATIO));
+	let room = model.contextWindow - input - margin;
+	if (room < MIN_OUTPUT_WITH_RATIO_MARGIN) {
+		room = Math.min(MIN_OUTPUT_WITH_RATIO_MARGIN, model.contextWindow - input - CONTEXT_SAFETY_TOKENS);
+	}
+	return Math.min(maxTokens, Math.max(MIN_MAX_TOKENS, room));
 }
 
 export function resolveSamplingParams(

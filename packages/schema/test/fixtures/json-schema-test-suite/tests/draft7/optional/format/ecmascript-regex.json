@@ -1,0 +1,98 @@
+[
+    {
+        "description": "\\a is not an ECMA 262 control escape",
+        "schema": { "format": "regex" },
+        "tests": [
+            {
+                "description": "when used as a pattern",
+                "data": "\\a",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "Python-specific regular expression syntax is not valid ECMA 262",
+        "schema": { "format": "regex" },
+        "tests": [
+            {
+                "description": "Python named group (?P<name>...) is not ECMA 262",
+                "data": "(?P<name>x)",
+                "valid": false
+            },
+            {
+                "description": "Python named backreference (?P=name) is not ECMA 262",
+                "data": "(?P<n>a)(?P=n)",
+                "valid": false
+            },
+            {
+                "description": "inline comment group (?#...) is not ECMA 262",
+                "data": "(?#comment)a",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "global inline flag groups are not valid ECMA 262",
+        "schema": { "format": "regex" },
+        "tests": [
+            {
+                "description": "a single global inline flag (?i)",
+                "data": "(?i)abc",
+                "valid": false
+            },
+            {
+                "description": "multiple global inline flags (?ims)",
+                "data": "(?ims)abc",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "ECMA 262 named groups and backreferences are valid",
+        "schema": { "format": "regex" },
+        "tests": [
+            {
+                "description": "an ECMA 262 named group (?<name>...)",
+                "data": "(?<name>x)",
+                "valid": true
+            },
+            {
+                "description": "an ECMA 262 named backreference \\k<name>",
+                "data": "(?<n>a)\\k<n>",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "ECMA 262 lookbehind is valid, including variable width",
+        "schema": { "format": "regex" },
+        "tests": [
+            {
+                "description": "a variable-width lookbehind (ES2018)",
+                "data": "(?<=a+)b",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "ECMA 262 character classes and escapes",
+        "schema": { "format": "regex" },
+        "tests": [
+            {
+                "description": "an empty character class is valid ECMA 262",
+                "data": "[]",
+                "valid": true
+            },
+            {
+                "description": "a negated empty character class is valid ECMA 262",
+                "data": "[^]",
+                "valid": true
+            },
+            {
+                "description": "a control escape \\cA is valid ECMA 262",
+                "data": "\\cA",
+                "valid": true
+            }
+        ]
+    }
+]

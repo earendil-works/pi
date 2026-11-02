@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { num, obj, opt, str } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import {
 	bind,
@@ -22,17 +22,17 @@ const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 /** Lives on `session:` + its input's `session`. */
 const Note = remote("t.note", {
 	version: 1,
-	input: Type.Object({ session: Type.String(), id: Type.String() }),
+	input: obj({ session: str(), id: str() }, { open: true }),
 	host: hostFamily("session:", "session"),
-	variants: { main: { methods: { where: method(undefined, Type.String()) } } },
+	variants: { main: { methods: { where: method(undefined, str()) } } },
 });
 
 /** Lives on `server`. */
 const Catalog = remote("t.catalog", {
 	version: 1,
-	input: Type.Object({}),
+	input: obj({}, { open: true }),
 	host: hostNamed("server"),
-	variants: { main: { methods: { where: method(undefined, Type.String()) } } },
+	variants: { main: { methods: { where: method(undefined, str()) } } },
 });
 
 /** A server with two session hosts as children; every host serves what it may and reports its name. */
@@ -126,9 +126,9 @@ describe("placement", () => {
 	it("the host comes from the normalized input: unknown fields and defaults do not change it", async () => {
 		const Doc = remote("t.doc-default", {
 			version: 1,
-			input: Type.Object({ session: Type.String({ default: "S1" }) }),
+			input: obj({ session: str({ default: "S1" }) }, { open: true }),
 			host: hostFamily("session:", "session"),
-			variants: { main: { methods: { where: method(undefined, Type.String()) } } },
+			variants: { main: { methods: { where: method(undefined, str()) } } },
 		});
 		const { server, s1, close } = cluster();
 		s1.serve(Doc, () => ({ variant: "main", where: () => "session:S1" }));
@@ -143,7 +143,7 @@ describe("placement", () => {
 		const at = (host: string) =>
 			remote("t.moved", {
 				version: 1,
-				input: Type.Object({}),
+				input: obj({}, { open: true }),
 				host: hostNamed(host),
 				variants: { main: { methods: { ping: method() } } },
 			});
@@ -155,7 +155,7 @@ describe("placement", () => {
 				api.serve(
 					remote("t.moved", {
 						version,
-						input: Type.Object({}),
+						input: obj({}, { open: true }),
 						host: hostNamed(place),
 						variants: { main: { methods: { ping: method() } } },
 					}),
@@ -170,7 +170,7 @@ describe("placement", () => {
 		// A new version that `accepts` version 1 but lives elsewhere: no adapter makes version 1 consumers bind.
 		const moved = remote("t.moved", {
 			version: 2,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("session:S1"),
 			variants: { main: { methods: { ping: method() } } },
 		});
@@ -182,7 +182,7 @@ describe("placement", () => {
 	});
 
 	it("types: the family's field is a required string of the input, and remote contracts need a host", () => {
-		const input = Type.Object({ session: Type.String(), count: Type.Number(), note: Type.Optional(Type.String()) });
+		const input = obj({ session: str(), count: num(), note: opt(str()) }, { open: true });
 		const variants = { main: {} };
 		remote("t.ok", { version: 1, input, host: hostFamily("session:", "session"), variants });
 		// @ts-expect-error: no such field

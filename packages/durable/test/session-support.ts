@@ -3,6 +3,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
 	type CommitChange,
 	type CommitPublication,
+	type CommitResult,
 	type ConversationId,
 	type DocumentAddress,
 	type DocumentCommitChange,
@@ -13,6 +14,7 @@ import {
 	MemoryStorage,
 	type Seq,
 	type Session,
+	type Storage,
 	type StorageWrite,
 } from "@earendil-works/pi-durable";
 import { type ObservedCommit, SessionImpl } from "../src/session/session.ts";
@@ -48,6 +50,24 @@ export type Gate = {
 	release(): void;
 };
 
+/**
+ * Commits `batches` through `commit` up to the first one `refuses` matches, which it refuses with `error`: what a
+ * storage does whose own check refuses that batch.
+ */
+export async function refusingAt(
+	commit: Storage["commit"],
+	batches: readonly (readonly StorageWrite[])[],
+	receive: (index: number, seq: Seq) => void,
+	commitContext: Context,
+	refuses: (writes: readonly StorageWrite[]) => boolean,
+	error: unknown,
+): Promise<CommitResult> {
+	const at = batches.findIndex(refuses);
+	if (at < 0) return commit(batches, receive, commitContext);
+	const result = await commit(batches.slice(0, at), receive, commitContext);
+	return result.stored < at ? result : { stored: at, refused: error };
+}
+
 /** Memory storage with observable commits, held calls, and injected commit failures. */
 export class ControlledStorage extends MemoryStorage {
 	/** Exact borrowed batches admitted by Session. */
@@ -56,9 +76,9 @@ export class ControlledStorage extends MemoryStorage {
 	readonly commits: (readonly StorageWrite[])[] = [];
 	mintCount = 0;
 	documentReadCount = 0;
-	/** Set while `adopt` runs, the storage's synchronous step: code that sees it set runs inside `Storage.commit()`'s adopt. */
+	/** Set while a receipt runs, the storage's synchronous step: code that sees it set runs inside `commit()`'s `receive`. */
 	adopting = false;
-	/** Runs once, in the next commit's synchronous step right after `adopt` returned. */
+	/** Runs once, in the next commit's synchronous step right after its first receipt returned. */
 	afterAdopt: (() => void) | undefined;
 	#commitGate: { gate: Deferred; entered: Deferred } | undefined;
 	#findGate: { gate: Deferred; entered: Deferred } | undefined;
@@ -97,27 +117,33 @@ export class ControlledStorage extends MemoryStorage {
 		held.gate.resolve();
 	}
 
+	/**
+	 * Records and holds the call, then fails its first batch if a failure is set (a refusal: nothing stored), or commits
+	 * it in memory, `adopting` set while each receipt runs and `afterAdopt` run after the first one.
+	 */
 	override async commit(
-		writes: readonly StorageWrite[],
-		adopt: (seq: Seq) => void,
+		batches: readonly (readonly StorageWrite[])[],
+		receive: (index: number, seq: Seq) => void,
 		commitContext: Context,
-	): Promise<Seq> {
-		this.admittedCommits.push(writes);
-		this.commits.push(structuredClone(writes));
+	): Promise<CommitResult> {
 		const held = this.#commitGate;
 		if (held !== undefined) {
 			held.entered.resolve();
 			await held.gate.promise;
 		}
 		const failure = this.#commitFailure;
+		for (const writes of failure === undefined ? batches : batches.slice(0, 1)) {
+			this.admittedCommits.push(writes);
+			this.commits.push(structuredClone(writes));
+		}
 		if (failure !== undefined) {
 			this.#commitFailure = undefined;
-			throw failure;
+			return { stored: 0, refused: failure };
 		}
-		const step = (seq: Seq): void => {
+		const step = (index: number, seq: Seq): void => {
 			this.adopting = true;
 			try {
-				adopt(seq);
+				receive(index, seq);
 			} finally {
 				this.adopting = false;
 			}
@@ -125,7 +151,7 @@ export class ControlledStorage extends MemoryStorage {
 			this.afterAdopt = undefined;
 			after?.();
 		};
-		return super.commit(writes, step, commitContext);
+		return super.commit(batches, step, commitContext);
 	}
 
 	override mintId<I extends Id<string>>(): Promise<I> {
@@ -164,21 +190,26 @@ export class LateResolvingStorage extends ControlledStorage {
 	gap: ((writes: readonly StorageWrite[]) => boolean) | undefined;
 	rejectAfterAdopt: ((writes: readonly StorageWrite[]) => boolean) | undefined;
 
-	override async commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, commitContext: Context) {
+	override async commit(
+		batches: readonly (readonly StorageWrite[])[],
+		receive: (index: number, seq: Seq) => void,
+		commitContext: Context,
+	): Promise<CommitResult> {
 		this.committing = true;
 		try {
-			const seq = await super.commit(writes, adopt, commitContext);
+			const result = await super.commit(batches, receive, commitContext);
+			const stored = batches.slice(0, result.stored);
 			await flush();
-			if (this.gap?.(writes) === true) {
+			if (stored.some((writes) => this.gap?.(writes) === true)) {
 				this.gap = undefined;
 				// What the gap started runs before the commit resolves.
 				await flush();
 			}
-			if (this.rejectAfterAdopt?.(writes) === true) {
+			if (stored.some((writes) => this.rejectAfterAdopt?.(writes) === true)) {
 				this.rejectAfterAdopt = undefined;
 				throw new Error("reclaim failed");
 			}
-			return seq;
+			return result;
 		} finally {
 			this.committing = false;
 		}

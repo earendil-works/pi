@@ -1,0 +1,250 @@
+[
+    {
+        "description": "validation of URIs",
+        "schema": { "format": "uri" },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "a valid URL with anchor tag",
+                "data": "http://foo.bar/?baz=qux#quux",
+                "valid": true
+            },
+            {
+                "description": "a valid URL with anchor tag and parentheses",
+                "data": "http://foo.com/blah_(wikipedia)_blah#cite-1",
+                "valid": true
+            },
+            {
+                "description": "a valid URL with URL-encoded stuff",
+                "data": "http://foo.bar/?q=Test%20URL-encoded%20stuff",
+                "valid": true
+            },
+            {
+                "description": "a valid puny-coded URL ",
+                "data": "http://xn--nw2a.xn--j6w193g/",
+                "valid": true
+            },
+            {
+                "description": "a valid URL with many special characters",
+                "data": "http://-.~_!$&'()*+,;=:%40:80%2f::::::@example.com",
+                "valid": true
+            },
+            {
+                "description": "a valid URL based on IPv4",
+                "data": "http://223.255.255.254",
+                "valid": true
+            },
+            {
+                "description": "a valid URL with ftp scheme",
+                "data": "ftp://ftp.is.co.za/rfc/rfc1808.txt",
+                "valid": true
+            },
+            {
+                "description": "a valid URL for a simple text file",
+                "data": "http://www.ietf.org/rfc/rfc2396.txt",
+                "valid": true
+            },
+            {
+                "description": "a valid URL",
+                "data": "ldap://[2001:db8::7]/c=GB?objectClass?one",
+                "valid": true
+            },
+            {
+                "description": "a valid mailto URI",
+                "data": "mailto:John.Doe@example.com",
+                "valid": true
+            },
+            {
+                "description": "a valid newsgroup URI",
+                "data": "news:comp.infosystems.www.servers.unix",
+                "valid": true
+            },
+            {
+                "description": "a valid tel URI",
+                "data": "tel:+1-816-555-1212",
+                "valid": true
+            },
+            {
+                "description": "a valid URN",
+                "data": "urn:oasis:names:specification:docbook:dtd:xml:4.1.2",
+                "valid": true
+            },
+            {
+                "description": "an invalid protocol-relative URI Reference",
+                "data": "//foo.bar/?baz=qux#quux",
+                "valid": false
+            },
+            {
+                "description": "an invalid relative URI Reference",
+                "data": "/abc",
+                "valid": false
+            },
+            {
+                "description": "an invalid URI",
+                "data": "\\\\WINDOWS\\fileshare",
+                "valid": false
+            },
+            {
+                "description": "an invalid URI though valid URI reference",
+                "data": "abc",
+                "valid": false
+            },
+            {
+                "description": "an invalid URI with spaces",
+                "data": "http:// shouldfail.com",
+                "valid": false
+            },
+            {
+                "description": "an invalid URI with spaces and missing scheme",
+                "data": ":// should fail",
+                "valid": false
+            },
+            {
+                "description": "an invalid URI with comma in scheme",
+                "data": "bar,baz:foo",
+                "valid": false
+            },
+            {
+                "description": "invalid userinfo",
+                "data": "https://[@example.org/test.txt",
+                "valid": false
+            },
+            {
+                "description": "unescaped non US-ASCII characters",
+                "data": "https://example.org/foobar®.txt",
+                "valid": false
+            },
+            {
+                "description": "invalid backslash character",
+                "data": "https://example.org/foobar\\.txt",
+                "valid": false
+            },
+            {
+                "description": "invalid \" character",
+                "data": "https://example.org/foobar\".txt",
+                "valid": false
+            },
+            {
+                "description": "invalid <> characters",
+                "data": "https://example.org/foobar<>.txt",
+                "valid": false
+            },
+            {
+                "description": "invalid {} characters",
+                "data": "https://example.org/foobar{}.txt",
+                "valid": false
+            },
+            {
+                "description": "invalid ^ character",
+                "data": "https://example.org/foobar^.txt",
+                "valid": false
+            },
+            {
+                "description": "invalid ` character",
+                "data": "https://example.org/foobar`.txt",
+                "valid": false
+            },
+            {
+                "description": "invalid SPACE character",
+                "data": "https://example.org/foo bar.txt",
+                "valid": false
+            },
+            {
+                "description": "invalid | character",
+                "data": "https://example.org/foobar|.txt",
+                "valid": false
+            },
+            {
+                "description": "URI with leading-zero IPv4 is structurally valid as a reg-name",
+                "comment": "RFC 3986, Section 3.2.2: If an IP literal fails strict IPv4address parsing, it falls back to reg-name. A string of digits and dots is valid under unreserved characters. JSON Schema format asserts syntax, not scheme-specific DNS semantics.",
+                "data": "http://087.10.0.1/",
+                "valid": true
+            },
+            {
+                "description": "URI with out-of-bounds IPv4 is structurally valid as a reg-name",
+                "comment": "RFC 3986, Section 3.2.2: Fallback to reg-name allows digits and dots.",
+                "data": "http://999.999.999.999/",
+                "valid": true
+            },
+            {
+                "description": "invalid percent-encoding with non-hex digits",
+                "data": "http://example.com/%6G",
+                "valid": false
+            },
+            {
+                "description": "incomplete percent-encoding triplet",
+                "data": "http://example.com/%A",
+                "valid": false
+            },
+            {
+                "description": "lone percent sign is invalid",
+                "data": "http://example.com/%",
+                "valid": false
+            },
+            {
+                "description": "scheme must start with a letter",
+                "data": "1http://example.com",
+                "valid": false
+            },
+            {
+                "description": "invalid character in scheme",
+                "data": "ht_tp://example.com",
+                "valid": false
+            },
+            {
+                "description": "non-numeric port is invalid",
+                "data": "http://example.com:abc/path",
+                "valid": false
+            },
+            {
+                "description": "leading zero in an embedded IPv4 address is invalid",
+                "data": "http://[::ffff:01.2.3.4]",
+                "valid": false
+            },
+            {
+                "description": "square brackets are not allowed in a path segment",
+                "data": "http:/[::1]",
+                "valid": false
+            },
+            {
+                "description": "a trailing newline after a valid URI is invalid",
+                "data": "http://foo.bar/\n",
+                "valid": false
+            },
+            {
+                "description": "an IPv6 address without enclosing brackets is invalid",
+                "data": "http://2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+                "valid": false
+            }
+        ]
+    }
+]

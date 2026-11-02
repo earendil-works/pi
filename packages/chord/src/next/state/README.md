@@ -1,6 +1,7 @@
 # state
 
-Watchables, derives and the batch: how values change, are computed from each other and reach their watches.
+Watchables (JSON and native), derives, writables and the batch: how values change, are computed from each other and
+reach their watches.
 
 ## For apps (`index.ts`)
 
@@ -25,6 +26,17 @@ watch.start(async (call, ctx) => {
   `[["r", value]]`). Values are JSON. A watch ends only for good (its owner ended, `stop()`, an aborted context, a
   throwing listener).
 - `constant(value)`: a watchable that never changes; a state member or a derive source.
+- Native sources (`NativeWatchable<T>`, W4): in-process values compared by identity, never ops, never state members (a
+  factory returning one fails `broken`, Q14): `self.writable(initial)`, a registry's composed value
+  (`self.registry`, `registries/`), and `ref.state`. They are derive sources (`self.derive([writable, doc], …)` takes
+  both kinds; the result is JSON) and `on` sources. A watch gets one call per batch that changed the value, each new
+  value in order; a failure (a registry whose `compose` threw) is one `failed` call per episode, the watch stays open.
+  `observe(observer, ctx)` attaches a synchronous observer (Durable's shape: `advance(call, ctx)` inside the batch,
+  record only; `end(end)`), which counts as watching. `ref.state` gives every state to its watches, not one per batch.
+- `Writable<T>` (`self.writable(initial)`): `set(value)`; the same value (by identity) notifies nobody and costs one
+  comparison; inside a batch it is marked there, outside it opens its own; inside a derive compute or a `compose` it
+  throws `invalid/reentrant`. It belongs to its attempt: `set` after the attempt's end throws `released`, its watches
+  end `ended`, its value stays readable.
 - `mapShared(f)`: maps an array, calling `f` once per object element (by identity) and reusing its result while the
   element stays the same object, so a derive over a list keeps unchanged parts identical and its diff cheap.
 
@@ -55,8 +67,10 @@ Rules:
   the flushes listed with `flushing(flush)` during it (a link sends one state message per batch, W1);
   `within(adopt, ctx)` adopts a change inside the commit running now, or as a commit of its own, or, while a commit's
   flushes send, as the next commit (presence and keep-alive counts: a departure found while sending lands there);
-  `run(work)` sets the reentrancy flag (nested); `assertOutside(operation)`; `count(counter)` counts derive work on
-  the host's metrics (`chord.derive.computes`, `chord.derive.diffs`).
+  `run(work)` sets the reentrancy flag (nested); `compute(work)` also marks a pure compute (derives, `compose`), in
+  which `assertNotComputing(operation)` refuses changes; `assertOutside(operation)`; `count(counter)` counts derive and
+  registry work on the host's metrics (`chord.derive.computes`, `chord.derive.diffs`, `chord.registry.composes`,
+  `chord.registry.adapts`). `changed(source)` takes any `Delivered` (JSON or native source).
 - `Source`: a changing value on a host (a singleton document, a derive, a replica) with its watches, subscribers and
   dependents (`Dependent`: derives, and member sources passing changes on to theirs). Subclasses call `changed()` when
   a commit changes them and implement `deliver(ctx)` (`publish` a value, `failWatches` a recoverable failure,
@@ -67,4 +81,13 @@ Rules:
 - `Derive`: declared with its raw sources; `attach(resolve, report)` resolves them at activation (and drops the raw
   list; `report` gets a failure of its compute, once per episode), `detach(error)` when its object ends (later reads
   throw `error` for good), `invalidate()` from its sources (a failed derive too: it recomputes on its next read).
-- `Constant`: the class behind `constant()`. `DeriveSource` is what a derive reads: a `Source` or a `Constant`.
+- `Constant`: the class behind `constant()`. `DeriveSource` is a JSON watchable as Chord follows it (a state member):
+  a `Source` or a `Constant`; `DeriveInput` is what a derive reads: those and `NativeSource`s.
+- `NativeSource`: the base of native sources, what derives and registry tables read: `dependents`, `start()`
+  (`NativeStart`: a value, or a failure with its last good value), `changed()` (inside a batch: marks the dependents)
+  and `end()` (drops them and the batch). `FollowedSource` adds followers through the batch: `openWatch`, `observe`
+  (its abort listener removed at the end), `subscribe(observer)` (Chord's own followers, also without a value:
+  `retryOn`), `deliver(ctx)` (the new value when its followers have another, a failure once per episode; nothing is
+  kept once nobody follows). `WritableSource` is the writable, its owner (`WritableOwner`) the attempt's context and
+  seal check, let go when the attempt ends; `ref.state` (`host/`) is a plain `NativeSource` giving each state to its
+  own watches.

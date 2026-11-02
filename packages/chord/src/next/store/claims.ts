@@ -30,6 +30,16 @@ export class Claims {
 		this.#claim(`documents ${JSON.stringify([owner, namespace])}`, claimant);
 	}
 
+	/** Throws as `table` would for `claimant`, claiming nothing (a reload's staging checks its declarations). */
+	assertTable(table: string, claimant: Claimant): void {
+		this.#assert(`table ${JSON.stringify(table)}`, claimant);
+	}
+
+	/** Throws as `documents` would for `claimant`, claiming nothing. */
+	assertDocuments(owner: string, namespace: string, claimant: Claimant): void {
+		this.#assert(`documents ${JSON.stringify([owner, namespace])}`, claimant);
+	}
+
 	/** Refuses every claim (`invalid/args`) until the returned unlock: a batch applies meanwhile. */
 	lock(): () => void {
 		this.#locked = true;
@@ -45,13 +55,19 @@ export class Claims {
 	}
 
 	#claim(key: string, claimant: Claimant): void {
-		if (this.#locked) throw invalid("args", `store: ${key} cannot be claimed while a batch applies`);
-		const holder = this.#holders.get(key);
-		if (holder === claimant) return;
-		if (holder !== undefined) throw invalid("args", `store: ${key} is claimed by ${holder.label}`);
+		this.#assert(key, claimant);
+		if (this.#holders.get(key) === claimant) return;
 		this.#holders.set(key, claimant);
 		const keys = this.#keys.get(claimant);
 		if (keys === undefined) this.#keys.set(claimant, [key]);
 		else keys.push(key);
+	}
+
+	/** Refuses `key` to `claimant` while a batch applies or another claimant holds it. */
+	#assert(key: string, claimant: Claimant): void {
+		if (this.#locked) throw invalid("args", `store: ${key} cannot be claimed while a batch applies`);
+		const holder = this.#holders.get(key);
+		if (holder !== undefined && holder !== claimant)
+			throw invalid("args", `store: ${key} is claimed by ${holder.label}`);
 	}
 }

@@ -30,7 +30,7 @@ const SessionInfo = local("example.session-info", { version: 1, params: {}, memb
 const Notes = remote("example.notes", {
 	version: 1,
 	params: { session: str() },
-	placement: ({ session }) => Session({ id: session }),
+	hostAddress: ({ session }) => Session({ id: session }),
 	variants: {
 		owner: { state: { info: Init, notes: arr(str()) }, methods: { add: method(obj({ text: str() }), int()) } },
 	},

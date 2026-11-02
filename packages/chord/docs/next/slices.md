@@ -27,15 +27,32 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
 
 - **L1** (`src/next/contracts`, `src/next/data`): contracts, params and identity, argument checks, principal keys,
   errors. `index.ts` for apps, `internal.ts` for Chord's own code.
-- **Slices 1, 2, 3a, 3b, 4a, 4b, 5, 6a, 6b** (committed; 5 `4a5b45c45`, 6a and 6b 2026-10-27/28): `src/next/documents`, `state`, `host`, `jobs`, `link`,
-  `remote`, `store`; examples 01-25; benchmarks in `benchmarks.md`.
+- **Slices 1, 2, 3a, 3b, 4a, 4b, 5, 6a, 6b, 8, 7a** (committed; 5 `4a5b45c45`, 6a and 6b 2026-10-27/28, 8 2026-10-28, 7a
+  2026-10-29): `src/next/documents`, `state`, `host`, `jobs`, `link`, `remote`, `store`, `registries`; examples 01-32
+  (Durable's 35-37); benchmarks in `benchmarks.md`.
+- **Slice 7b** (built 2026-10-29, `slice-7b.md`): `host.reload`, staging (`host/staging.ts`), fates, adapted members
+  (`host/adapted.ts`), references, jobs and registries across a reload; examples 33-34; `test/next/bench/reload.ts`.
+- **Slice 7c** (committed 2026-10-30, `slice-7c.md`): `src/next-node/plugins/` (discovery, builds, evaluation,
+  `pluginFile`, `mapStack`, `installDependencies`, the watcher, `rollout`), per-plugin `load` and `reload`; examples 35-39.
+- **Slice 10** (built 2026-10-31, `slice-10.md`): `src/next-node/http/` (a `fetch` core with the security baseline,
+  Chord's Node listener, `nodeRequest`, plugin sockets, links), `src/next-node/workers/`, `createPluginRuntime`, kinds,
+  the kernel's `RouteHandle` and anonymous `host.root`, origins only from relays; examples 40-48.
+- **Slice 12** (committed 2026-11-01, `slice-12.md`): the plugin model in `src/next-node/plugins/` (the app's versioned
+  API, per-kind files, single-file plugins, installs from git and npm, `testPlugin`); examples 49-52.
+- **Slice 13** (committed 2026-11-02, `slice-13.md`): the app kit, `src/next-node/app/` (`startServer`, `startWorker`,
+  sessions, owner link, pairing, `Files`, `exportData`/`importData`); examples 53-55.
+- **Slice 11** (committed 2026-11-03, `slice-11.md`): `src/next/surfaces/` (scripts objects, registered scripts, the
+  connection loop, clients, themes), `src/next-web/`, `src/next-react/`, `src/next-tui/`, `src/next-node/surfaces/`,
+  `src/next-node/tui/` (the launcher and its child-process sandbox); examples 56-59.
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
 
 ## The slices
 
-Order (owner, 2026-10-22: routines and jobs before the store and reload).
+Order (owner, 2026-10-22: routines and jobs before the store and reload; 2026-10-27: slice 8 before slice 7, whose
+reload has to reload real registries; 2026-10-29: slice 7 split into 7a, 7b, 7c; the app kit as slices 10 and 11;
+telemetry last, since it instruments the app kit too; 2026-11-01: the plugin model (12) and the app kit (13) before web and TUI (11), which builds into the kit).
 
 | # | Slice | In short |
 | --- | --- | --- |
@@ -43,13 +60,19 @@ Order (owner, 2026-10-22: routines and jobs before the store and reload).
 | 2 | **Failures and natives** | `self.open`, activation failures and recovery, backoff, the drain, timeouts |
 | 3a | **Remote objects over one link** | remote contracts, principals, variants, a memory link, the message format, holds, calls, one message per commit (no relay, no drops) |
 | 3b | **Surviving drops** | re-holds, parking, `ref.state`, `host.hold`, `ref.retry()`, `linger` |
-| 4a | **Links and relays** | host kinds, placement, routes, two-sided links, relays and principals, IPC and WebSocket, flow control, heartbeat |
+| 4a | **Links and relays** | host kinds, host addresses (`placement` then), routes, two-sided links, relays and principals, IPC and WebSocket, flow control, heartbeat |
 | 4b | **Authority and housekeeping** | revocation, cycles across hosts, `host.references`, `host.activity`, size limits, compression |
 | 5 | **Routines and jobs** | `self.routines`, `self.job` |
 | 6a | **The store** | the store (backends, tables, queries, writes, commit queue, outbox, documents engine, migrations, export), persisted documents, `self.table`, keyed watches and retirement |
 | 6b | **Durable and jobs on the store** | persisted jobs, Durable's `StoreStorage`, the Chord source over Durable's views (`self.follow`) |
-| 7 | **Reload and rollout** | plugin loading, staging, swaps and restarts, revisions, `accepts` in use |
-| 8 | **Registries and `host.root`** | registries, `self.writable`, `retryOn`, a `RegistryReader` for Durable, `host.root` (`chord(fn, context)` and the harness object are p3's base code) |
+| 8 | **Registries and `host.root`** | registries, `self.writable`, `retryOn`, Durable's `registryReader`, `host.root` (`chord(fn, context)` and the harness object are p3's base code) |
+| 7a | **The dependency model** | requests that outlive providers, parked attempts without timers, wakes, the publication gate, getters, registries as dependencies, `parked_long` (`slice-7a.md`, `dependencies/model.md`) |
+| 7b | **Reload in the kernel** | `host.reload`: staging, commit, rollback; swaps, restarts, removal and re-serving; holds and `accepts` across a reload; jobs and registries across a reload; per-name wakes (`slice-7b/` brief) |
+| 7c | **Plugins** | `chord/next/plugins` (discovery, `buildFacet`, `evaluateFacet`, `pluginFile`, `installDependencies`, the watcher, `rollout`, `mapStack`; no dev/prod split; the kernel's `load`/`reload` per plugin; `slice-7c.md`) |
+| 10 | **HTTP and workers** | `chord/next/http` (server, `Http` registry, responses as descriptions, WebSocket entry) and `chord/next/workers` (a worker per address, IPC, idle stop) |
+| 12 | **The plugin model** | imports (relative within a repository, package names pinned across), versioned app API with Chord re-exported, per-kind API modules and contract files with the build's import check, single-file plugins, git installs, `testPlugin`, a required root (`slice-12.md`) |
+| 13 | **The app kit** | `chord/next/app`: `startServer`, `startWorker`, layout, worker kinds, owner link, deny by default, sessions, CLI tokens, storage, the files plugin, export per address, plugin roots and "apply changes", base code as API, bootstrap and a start-data facet (`slice-13.md`) |
+| 11 | **Web and TUI** | `chord/next/web` (page host, React hooks) and `chord/next/tui` (launcher, sandbox), from p2's code |
 | 9 | **Telemetry** | spans, events, metrics across hosts |
 
 The playground (`apps/chord-playground`) moves to the new code once slice 4 exists. Round-3 cuts (C3-C16) and
@@ -74,15 +97,17 @@ pattern, no code. Decided cuts are noted where they apply.
 | 3 | park deadline (= `readyTimeout`, C13) | 3b |
 | 3 | `host.activity` (keep-alive counts) | 4b |
 | 3 | `host.root(fn, …)` for code outside objects | 8 |
+| 3 | requests that outlive providers: the destination by address, the publication gate, the unbound index, the check against the selected provider only; the start barrier's first outcomes (decision (a)) | 7a |
 | 4 | principal type `P`, links stamp principals, principal keys in identity | 3a |
 | 4 | revocation (`revokedBy`, `host.revoke`, propagation to children) | 4b |
 | 5 | `local` types: params, members, checked arguments (Q15), results unchecked | 1 |
 | 5 | version and fingerprint match at acquisition; reserved member names (`then`, `release`, `state`, `retry`) | 1 |
 | 5 | `remote` types, variants chosen by the factory (`{ variant, members }`), identity with principal key, calls checked against the binding's variant | 3a |
-| 5 | `accepts` mappings at runtime (old consumers), `contract_mismatch`/`updating` | 7 |
+| 5 | `accepts` mappings at runtime (old consumers), keyed members per key, `contract_mismatch` | 7b |
 | 6 | lifecycle, one object per identity, lifetime from kind and params (Q-A), factory, activation, ending | 1 |
 | 6 | failure causes, backoff per identity, dependency recovery (R18) | 2 |
 | 6 | `retryOn` | 8 (first independently living source: registries) |
+| 6 | parked attempts (no dependency deadline or backoff, wakes on every change, retry passing on), `FailureCause` `waiting`, `parked_long` and the authoring rules against cycles | 7a |
 | 6 | cycle rejection on one host (Q5) | 1 |
 | 6 | cycle rejection across hosts (activation chain in hold headers) | 4b |
 | 6 | shared store with per-principal views; worker-wide native owners; natives following a relocation | doc (1, 3, 2) |
@@ -90,6 +115,7 @@ pattern, no code. Decided cuts are noted where they apply.
 | 7 | per-reference watches (released with their reference) | 1 |
 | 7 | `ctx.get` (call-scoped references) | 3a |
 | 7 | `ref.state` (tagged), `ref.retry()`, `host.hold`, calls parking, failed references | 3b |
+| 7 | getters wait through `waiting`; `host.hold` throws only for invalid params | 7a |
 | 7 | `ref.variant` as discriminant, `RefIn` (C15: no `inVariant`/`expectVariant`) | 3a |
 | 7 | `state: false` (C8: cut) | - |
 | 7 | optional dependencies as registries | doc (8) |
@@ -103,7 +129,7 @@ pattern, no code. Decided cuts are noted where they apply.
 | 9 | `initial()` checked once per definition (R8, D3) | 1 |
 | 9 | `persist`, `checkpointWhen` (required for persisted documents), persisted only in local empty-params objects (P3), eviction | 6a |
 | 9 | keyed watches (`handle.watch(key, ctx)`), `handle.at(key)`, retirement as a flag (decision "One retirement mechanism") | 6a |
-| 9 | versions, `migrate`, schema fingerprints on records | 6a (in-memory migrate on reload: 7) |
+| 9 | versions, `migrate`, schema fingerprints on records | 6a (in-memory migrate on reload: 7b) |
 | 9 | ~~facet documents, a served object's transaction spanning its facet's documents~~ (removed: C16 accepted, owner, 2026-10-26) | 1, removed in 6a |
 | 9 | rules across owners, reconciling routines | doc (5) |
 | 10 | the store: backends, tables, query runner, writes, commit queue, outbox, migrations, export/import | 6a |
@@ -112,20 +138,24 @@ pattern, no code. Decided cuts are noted where they apply.
 | 11 | Durable's views as sources (`self.follow` over Durable's `observeXXX`) | 6b |
 | 12 | `self.derive`, failures per member, lazy when unwatched, `mapShared` | 1 |
 | 12 | container-width benchmark (R24) | 9 |
-| 13 | `self.open`, close reasons, order, restart patterns (R16) | 2 (restarts on reload: 7) |
-| 14 | `self.on` (W2b), `self.onLive`, `sleep`, `untilAborted` (C4 decided); the handover per object on reload | 5 (handover: 7) |
-| 15 | `defineJob`, `self.job`, intent/run/finish, state documents, dedupe (Q9), `busy`, `running`, blocked `finish` (C3 decided); persistence, resume, restart limit; `accepts` in use | 5 (persistence: 6b; `accepts` and reload: 7) |
+| 13 | `self.open`, close reasons, order, restart patterns (R16) | 2 (restarts on reload: 7b) |
+| 14 | `self.on` (W2b), `self.onLive`, `sleep`, `untilAborted` (C4 decided); the handover per object on reload | 5 (handover: 7b) |
+| 15 | `defineJob`, `self.job`, intent/run/finish, state documents, dedupe (Q9), `busy`, `running`, blocked `finish` (C3 decided); persistence, resume, restart limit; `accepts` in use | 5 (persistence: 6b; `accepts` and reload: 7b) |
 | 16 | `defineFacet<P>`, facet as declarations only (documents and routines removed in 6a) | 1, 6a |
 | 17 | registries: `defineRegistry`, contributions, `compose`, versions (Q8), use-site guards | 8 |
+| 17 | registry readers as parked dependencies (`waiting`), `host.registry` waiting, the last good value dropped when a contribution leaves | 7a |
 | 18 | `constant(value)`, start data as a core object (`SessionInfo`) | 1 (core facet pattern: 4a) |
 | 18 | platform bindings as core objects | doc (8) |
 | 19 | `host.references` (presence) | 4b |
 | 20 | flows kept by their owner, the `steps` helper, the Questions service | doc (5); deferred decisions #9, #11 |
-| 21 | loading plugins (loader D), staging, atomic commit, pure swaps, native restarts, rollout, dev loop | 7 |
+| 21 | `host.reload`: staging, atomic commit, pure swaps, native restarts, removal and re-serving | 7b |
+| 21 | loading plugins (loader D), dev loop; the rollout across hosts is the app's (decision "Slice 7b's open points" (3)) | 7c |
 | 22 | message format, header schema, unknown ids, one message per commit per link, consumers apply ops, plugin errors | 3a |
-| 22 | relays, size limits per part, compression at the origin, adapted bindings get diffs | 4a (relays), 4b (limits, compression), 7 |
+| 22 | relays, size limits per part, compression at the origin, adapted bindings get diffs | 4a (relays), 4b (limits, compression), 7b |
 | 22 | trace carriers (R5) | 9 |
-| 23 | HTTP, channels, chunked transfers | after slice 9 (with the first real proof) |
+| 23 | HTTP (routes, wraps, responses as descriptions, request bodies, plugin sockets), workers; channels and chunked transfers stay owner patterns until a second user | 10 |
+| 23 | the app kit: `startServer`, `startWorker`, start-data objects, deny by default, sessions, owner link and token file, device pairing, files (with chunked transfers), export and import per address, plugin roots and "apply changes", optional users, invite and ephemeral-login plugins | 13 |
+| 23 | web and TUI: base bundles, registered plugin scripts and the combined file, `WebScripts`/`TuiScripts`, `startPage` with the connection loop and in-place reloads, React bindings, the sandboxed terminal (launcher, sandbox, `TuiScope`), themes (`Themes`, `ThemeChoice`, CSS variables, terminal colours), CSS modules | 11 |
 | 24 | Durable integration: `chord(fn, context)` (Q6), a `RegistryReader` over composed registries; the harness object and its model and env registries are p3's (base code, owner, 2026-10-27) | 8 (Chord parts), p3 |
 | 24 | `StoreStorage` | 6b |
 | 27 | versions table: contracts (L1 done), registries 8, documents 6, jobs 5, link protocol 3a | as listed |
@@ -143,6 +173,7 @@ Rules (owner, 2026-10-22): whoever defers something (this session, a subagent, a
 change; a slice's spec includes every entry of its section, and its build and review check them off; a done entry is
 deleted (the slice's spec and code are the record). Moved here from `carry-over.md` (owner, 2026-10-24).
 
+
 ### Any slice (protocol and checks)
 
 - **Bump `PROTOCOL_VERSION`** for any message or reason change once p3 has shipped (slice 3b added `retry`, `loading`
@@ -151,74 +182,26 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   slice 3b.)
 - **The park deadline's per-type override** is not built: a parked call waits the reference's `readyTimeout`. Build
   it only if a real case needs it. (Slice 3b spec.)
-- Failed-check paths are TypeBox's instance paths (ambiguous for keys containing `/` or `~`); documented, not fixed.
-  (L1.)
 - No CBOR; revisit only if benchmarks show encoding as a bottleneck (slice 3a's and 4a's do not). (L2 decisions.)
 - **One N on every host:** a relay forwards calls at once, so a worker announcing a smaller N than the relay's could
   see more running calls of one origin than it accepts (a protocol error). Every host announces 256; per-link N, if
   ever needed, must bound the relay's forwarding too. (Slice 4a rework.)
 - **The Durable conversation view's size on re-hold** is a known cost until pi #11327 (windowed view) lands. (Slice 4.)
-- **`map(bytes())` is refused at declaration** ("unsupported keyword `~refine`"): TypeBox's `Record` copies the bytes
-  schema's check as an enumerable key, which the snapshot walk refuses. An L1 bug found in slice 3a, not fixed yet.
 
-### Slice 7: reload and rollout
+### Later: reload (when a case needs it)
 
-- **A native restart drains first** (owner, 2026-10-26): park new calls, await running calls (bounded by
-  `closeTimeout`), then close the natives and restart; a call outliving the drain is cut off by the seal fence. Running
-  job runs on a native restart: decide with the runs now owned by the object.
-- **From slice 6a's second spec review** (decision "Second spec review: the majority"): remote holds and remote objects
-  leaving `live` (`Hold.moved` for bound and binding holds, `RemoteObject.failed` for a live object; not reachable in
-  6a, P3); old table handles' version fence (old code issuing SQL for a dropped column); the routine handover fenced
-  per routine invocation; holds unsubscribed at seal and re-bound by member name; keyed members' versions mapped per
-  key; in-memory `migrate` wired to reload (6a builds the slot version check and the migrate); `rebuild` (key and
-  column-type changes) if a case needs it.
-- **From slice 6b:** a persisted run of another job version or fingerprint stays `blocked { version }` with its record
-  as stored (resolve it on reload); blocked persisted runs are retried on reload; runs of jobs the code no longer
-  declares (below).
-- **A run whose job the new code no longer declares** (slice 6a builder, 2026-10-27): 6a keeps it in its phase,
-  waiting, not invoked (unreachable without reload); slice 7 decides `blocked` with a reason (design §15's
-  `blocked { version }` family).
-- **A job's new version on a live object** (slice 6a build review, 2026-10-27): 6a keeps the first declaration's job
-  definition in the object's records and refuses a later declaration with another version, so a host-lifetime object
-  (`local`, empty params) stays broken until the host restarts; slice 7 maps the records to the new version (or blocks
-  the old runs) on reload.
+- **`rebuild` of tables** (key and column-type changes): `evolveTable` has no edit for them; build one only when a
+  real case needs it. (Slice 6a's second spec review; out of slice 7b's scope, `slice-7b.md` §12.)
 
-- **Routines on reload** (from slice 5): the handover per object, bounded by `closeTimeout`; calls do not wait for it.
-- **Jobs on reload** (from slice 5): `accepts` in use (args and result mapped forwards once per run; `blocked
-  { version }` without an adapter or for a newer version); when an older run's state document may migrate while its
-  old code still writes it, and an older run keeping its old handles valid until it settles; a native restart aborts
-  running runs (`aborted`, reason `reload`) and `finish` runs on the new code; a `finish` in flight across a reload;
-  (run records and state documents belong to the object: built in 6a);
-  blocked runs retried on reload; a job declaration removed while runs exist; a job fingerprint over args, result and
-  state (a schema change without a version bump); an `on` routine whose source failed and recovers after a provider
-  reload.
-- **Instance ids on restart** (from slice 4b): a retry keeps an object's instance id; a reload that restarts an object
-  must give the new instance a new id, so an old chain never matches it.
-- **`host.references` and removed types** (from slice 4b): a type's presence list lives from its first
-  `host.references(Type)` for the host's life; a reload that removes the type drops it.
+### After slice 11
 
-- **Holds across reloads** (from slice 3a): a hold's indexes belong to its bound version. A reload that still accepts
-  that version keeps the hold: a pure object re-subscribes the hold through the version's mappings and sends
-  `[["r", value]]` for each member whose value changed; a restarted object sends a fresh snapshot for the same hold (a
-  second `bound` on a bound hold, which 4a's consumer applies as a re-binding). A served hold whose object leaves
-  `live` while its `bound` waits for a slot goes back to pending (cut from 4a, where nothing leaves `live`; owner,
-  2026-10-24: slice 7 builds and tests it in `Hold.moved` and `ProviderSide.unbind`). A reload
-  that drops the version ends its holds with `gone` (`contract_mismatch`) before the new code serves anything. A
-  consumer whose own code moves to a new version re-holds (new hold id) and releases the old.
-- **Old-version calls** (L1): `checkArgs` returns `{ kind: "method"; args; result? }` or `{ kind: "call"; args; call }`;
-  invoke the handler or the provider's `call`, and map the result back with `result` for an old-version caller.
-- **Derives on reload:** derives have no names (owner, 2026-10-22); exposed derives are matched by their member name,
-  internal ones are rebuilt; add matching only if a real need appears. (W1.)
-- **Retrying broken failures:** reload retries a broken object as `ref.retry()` does (`ChordObject.retry`: the
-  backoff skipped, an attempt now; holders are told `loading`). (Slices 2, 3b.)
-
-### Slice 8: registries and `host.root`
-
-- **Durable's views from other objects** (from slice 6b): the harness carried in a registry entry, so an object other
-  than the one that opened Durable can `self.follow` its views.
-
-- Specified in `slice-8.md` (decided 2026-10-27): `host.root` (D3), `retryOn` (D2), registries recomposing in the
-  owner's flush (W4); `host.activity` on the facet's host dropped (nothing needs it).
+- **Messages and languages in the app kit** (decision "Messages and languages in the app kit", proposal
+  `docs/next/i18n/`): `defineMessages`, `t.message`/`t.render`, `MessagesOf`, the `Translations` registry with
+  fallbacks and conflicts, the locale preference per principal (default from the device, live switch, `lang`/`dir` on
+  the page), `useMessages` and the terminal scope's redraw, `formatTime`/`formatNumber`; tests and an example (the
+  notes plugin in English and German, a French translation plugin, a server message rendered per viewer).
+- **Small examples** (owner, 2026-10-30: the 7c examples are complete but complex): once HTTP, workers, web and TUI
+  exist, a pass of small, easy-to-read examples, each showing one thing a plugin author or app does.
 
 ### Slice 9: telemetry
 

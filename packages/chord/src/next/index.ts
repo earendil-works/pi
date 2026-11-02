@@ -7,6 +7,7 @@ export * from "./documents/index.ts";
 export * from "./host/index.ts";
 export * from "./jobs/index.ts";
 export * from "./link/index.ts";
+export * from "./registries/index.ts";
 export * from "./state/index.ts";
 /** @internal The store's surface for adapters (slice 6b §2.1). */
 export { type DecodedRow, OwnerTable, StoreOwnerTables } from "./store/adapter.ts";
@@ -47,4 +48,5 @@ export type { Order } from "./store/sql.ts";
 /** @internal */
 export type { StagedWrite, Step } from "./store/step.ts";
 /** @internal */
-export type { ChordStore } from "./store/store.ts";
+export type { ChordStore, SeriesCommit, SeriesResult } from "./store/store.ts";
+export * from "./surfaces/index.ts";

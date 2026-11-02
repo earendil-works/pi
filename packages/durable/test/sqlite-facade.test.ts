@@ -11,10 +11,8 @@ import { idFromNumber } from "../src/ids.ts";
 import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "../src/storage/sqlite/index.ts";
 import { SqliteStorage } from "../src/storage/sqlite/index.ts";
 import { NodeSqliteDatabase, openNodeSqliteDatabase } from "../src/storage/sqlite/node.ts";
+import { commitWrites } from "../src/testing/commit-writes.ts";
 import { type DocumentId, type EntryId, ROOT_CONVERSATION_ID } from "../src/types.ts";
-
-/** Storage-level commits here have no in-memory owner to adopt them. */
-const adopt = (): void => {};
 
 type SettlementMode = "immediate" | "delay" | "reject";
 
@@ -101,29 +99,29 @@ describe("portable SQLite facade settlement", () => {
 	it("prepares each storage statement once per connection and reuses it across transactions", async () => {
 		const connection = new PrepareCountingDatabaseSync(":memory:");
 		const storage = await SqliteStorage.open(new NodeSqliteDatabase(connection));
-		await storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], adopt, BACKGROUND_CONTEXT);
-		await storage.commit(
+		await commitWrites(storage, [{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], BACKGROUND_CONTEXT);
+		await commitWrites(
+			storage,
 			Array.from({ length: 100 }, (_, index) => ({
 				type: "entry" as const,
 				value: { id: idFromNumber<EntryId>(index + 2), conversationId: ROOT_CONVERSATION_ID, kind: "cached" },
 			})),
-			adopt,
 			BACKGROUND_CONTEXT,
 		);
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{
 					type: "entry",
 					value: { id: idFromNumber<EntryId>(102), conversationId: ROOT_CONVERSATION_ID, kind: "cached-again" },
 				},
 			],
-			adopt,
 			BACKGROUND_CONTEXT,
 		);
 		expect((await storage.entry(idFromNumber<EntryId>(2), BACKGROUND_CONTEXT))?.entry.kind).toBe("cached");
 		expect((await storage.entry(idFromNumber<EntryId>(102), BACKGROUND_CONTEXT))?.entry.kind).toBe("cached-again");
 		await expect(
-			storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], adopt, BACKGROUND_CONTEXT),
+			commitWrites(storage, [{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], BACKGROUND_CONTEXT),
 		).rejects.toThrow("ID 1 already belongs to conversation");
 		expect((await storage.entry(idFromNumber<EntryId>(2), BACKGROUND_CONTEXT))?.entry.kind).toBe("cached");
 		expect(connection.repeatedPrepares()).toEqual([]);
@@ -133,9 +131,9 @@ describe("portable SQLite facade settlement", () => {
 	it("reads storage commits in call order", async () => {
 		const database = await openNodeSqliteDatabase(":memory:");
 		const storage = await SqliteStorage.open(database);
-		const commit = storage.commit(
+		const commit = commitWrites(
+			storage,
 			[{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }],
-			adopt,
 			BACKGROUND_CONTEXT,
 		);
 		const read = storage.conversation(ROOT_CONVERSATION_ID, BACKGROUND_CONTEXT);
@@ -147,12 +145,12 @@ describe("portable SQLite facade settlement", () => {
 	it("lets admitted multi-query reads finish before storage closes", async () => {
 		const storage = await SqliteStorage.open(await openNodeSqliteDatabase(":memory:"));
 		const entryId = idFromNumber<EntryId>(2);
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } },
 				{ type: "entry", value: { id: entryId, conversationId: ROOT_CONVERSATION_ID, kind: "probe" } },
 			],
-			adopt,
 			BACKGROUND_CONTEXT,
 		);
 		const scan = storage.scanEntries({ conversationId: ROOT_CONVERSATION_ID }, 10, undefined, BACKGROUND_CONTEXT);
@@ -184,14 +182,14 @@ describe("portable SQLite facade settlement", () => {
 		const storage = await opening;
 
 		database.controlNextSettlement("delay");
-		const committing = storage.commit(
+		const committing = commitWrites(
+			storage,
 			[
 				{
 					type: "entry",
 					value: { id: idFromNumber<EntryId>(100), conversationId: ROOT_CONVERSATION_ID, kind: "settled" },
 				},
 			],
-			adopt,
 			BACKGROUND_CONTEXT,
 		);
 		let committed = false;
@@ -206,14 +204,14 @@ describe("portable SQLite facade settlement", () => {
 		expect(await storage.mintId<EntryId>()).toBe(101);
 
 		database.controlNextSettlement("reject");
-		const rejected = storage.commit(
+		const rejected = commitWrites(
+			storage,
 			[
 				{
 					type: "entry",
 					value: { id: idFromNumber<EntryId>(200), conversationId: ROOT_CONVERSATION_ID, kind: "rejected" },
 				},
 			],
-			adopt,
 			BACKGROUND_CONTEXT,
 		);
 		expect(await storage.mintId<EntryId>()).toBe(102);
@@ -229,7 +227,8 @@ describe("portable SQLite facade settlement", () => {
 		// Each yield count starts the commit at a different point of the read's record and revision queries.
 		for (let yields = 0; yields < 16; yields++) {
 			const storage = await SqliteStorage.open(await openNodeSqliteDatabase(":memory:"));
-			await storage.commit(
+			await commitWrites(
+				storage,
 				[
 					{
 						type: "document.create",
@@ -237,14 +236,13 @@ describe("portable SQLite facade settlement", () => {
 						content: { kind: "base", version: 1, value: { value: 1 } },
 					},
 				],
-				adopt,
 				BACKGROUND_CONTEXT,
 			);
 			const read = storage.document(id, "current", BACKGROUND_CONTEXT);
 			for (let index = 0; index < yields; index++) await Promise.resolve();
-			const replace = storage.commit(
+			const replace = commitWrites(
+				storage,
 				[{ type: "document.change", id, content: { kind: "base", version: 1, value: { value: 2 } } }],
-				adopt,
 				BACKGROUND_CONTEXT,
 			);
 			const [stored] = await Promise.all([read, replace]);

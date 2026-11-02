@@ -12,7 +12,7 @@ const Note = obj({ text: str() });
 export const NotesV1 = remote("notes", {
 	version: 1,
 	params: { session: str() },
-	placement: ({ session }) => Session({ id: session }),     // where an object lives; not in the fingerprint
+	hostAddress: ({ session }) => Session({ id: session }),   // where an object lives; not in the fingerprint
 	variants: {
 		editor: { state: { notes: arr(Note) }, methods: { add: method(Note, str()), clear: method() } },
 		reader: { state: { notes: arr(Note) } },
@@ -22,19 +22,24 @@ export const Notes = evolve(NotesV1, (e) => e.args("add", obj({ text: str(), tag
 type NotesProvider = Implementation<typeof Notes>; // { variant: "editor"; members: { notes, add(args, context), clear(context) } } | { variant: "reader"; ... }
 ```
 
-- `remote(name, { version, params, placement?, variants })`: per-principal variants, each with `state` (schemas) and `methods`
+- `remote(name, { version, params, hostAddress, variants })`: per-principal variants, each with `state` (schemas) and `methods`
   (`method(args?, result?)`; an omitted side is `null`, and a method whose arguments are `null` omits them:
   `clear(context)`). `local(name, { version, params, members })`: one flat map,
   where a schema is state and `method(...)` a method.
-- `placement(params) => Address` (remote only, optional): the address of the host that serves the object for these
+- `hostAddress(params) => Address` (remote only, required; a declaration error without it): the address of the host that serves the object for these
   params (`host/`'s routing table). The caller computes it and sends it with its hold, so a relay routes by the address
   alone. It is not part of the normal form or the fingerprint and `evolve` carries it.
 - `hostKind(name, params?)`: a kind of addressable host (`Server = hostKind("server")`, `Session = hostKind("session",
   { id: str() })`); `params` follow the params policy below. Calling it makes an `Address { kind, params, key }`, its
   key built like an identity key (`session|S1`); two addresses are equal when their keys are. The params are checked
-  where the address is routed or served (`invalid/placement`), not when it is made. No host-name strings in app code.
+  where the address is routed or served (`invalid/host_address`), not when it is made. No host-name strings in app code.
 - Schema helpers: `str`, `num`, `int`, `bool`, `nul`, `lit`, `oneOf`, `union`, `obj`, `arr`, `map`, `opt`, `bytes`,
-  `unknown`, and `Static`. They return ordinary TypeBox schemas.
+  `unknown`, `Schema` and `Static`, over `@earendil-works/pi-schema`'s builders: plain JSON Schema typed with the values
+  it accepts. They keep the shapes contracts were fingerprinted with: `lit` carries its JSON `type`, `oneOf(...)` is a
+  union of `lit`s, `map` one pattern property (`^.*$`), `obj` is closed. `opt(...)` marks an object field (or a table
+  column) optional and is no schema elsewhere. Any other JSON Schema object of the vocabulary below works too; a
+  non-enumerable key (a TypeBox schema's metadata) is refused. `format` is an annotation: it is part of the normal form
+  and the fingerprint, but no format is checked.
 - `evolve(previous, (e) => e...)`: the next version from structured edits (`state`, `addState`, `removeState`, `args`,
   `result`, `method`, `addMethod`, `removeMethod`); it must return the editor it was given.
 - Types: `Contract`, `Implementation<C, X>` (what a factory returns: for `local` a `Watchable` per state member and a
@@ -65,7 +70,7 @@ Rules:
 
 - `checkAccepts(contract, accepts)`: validates an accepts table without calling a mapping; returns the accepted
   versions (version and fingerprint).
-- `contractData(contract)`: the Chord-owned data behind a handle (its `placement`, its versions with their
+- `contractData(contract)`: the Chord-owned data behind a handle (its `hostAddress`, its versions with their
   `VariantData`, `MethodData` and schema snapshots, its `ParamsData`); a local contract's members are the variant
   `LOCAL`. Type-level helpers: `ShapeOf`, `CurrentVariants`, `ContractShape`, `Params` and `Method`.
 - `currentVariants(contract)`: the current version's variants (a local contract has the one variant `LOCAL`);

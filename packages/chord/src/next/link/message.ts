@@ -1,9 +1,9 @@
-// Messages (§22, R1, R4, 2b): the one `Message` type every link carries, defined as a TypeBox schema and checked after
-// every decode, and the codecs that turn it into bytes.
+// Messages (§22, R1, R4, 2b): the one `Message` type every link carries, defined as a schema and checked after every
+// decode, and the codecs that turn it into bytes.
 
-import Type from "typebox";
+import { obj as openObj, type Schema } from "@earendil-works/pi-schema";
 import type { Context } from "../../context/index.ts";
-import { arr, int, lit, obj, opt, type Static, str, union, unknown } from "../contracts/index.ts";
+import { arr, int, lit, obj, oneOf, opt, type Static, str, union, unknown } from "../contracts/index.ts";
 import { validatorFor } from "../data/internal.ts";
 import type { Part } from "./part.ts";
 
@@ -30,25 +30,31 @@ const wireError = union([
 const failed = arr(obj({ member: index, error: wireError }));
 
 /** A part's envelope: the codec built it, so any value passes (its content is the owner's to parse). */
-const part = Type.Unsafe<Part>({});
+const part = unknown() as Schema<Part>;
 
 /**
  * The byte segments of a payload part whose method's schema has a `bytes()` leaf, referenced from its JSON by
  * `{"$bytes": i}`; absent for every other payload. Built by the codec, like the part.
  */
-const segments = opt(Type.Unsafe<readonly Uint8Array[]>({}));
+const segments = opt(unknown() as Schema<readonly Uint8Array[]>);
 
 /** An address as a hold names it: its host kind and params, checked against the kind where it is routed. */
 const address = obj({ kind: str(), params: unknown() });
 
 /** A principal on a hold: JSON with a `kind`, honoured only on a parent link. */
-const principal = Type.Object({ kind: str() });
+const principal = openObj({ kind: str() }, { open: true });
 
 /** A uuidv7 as text. */
 const incarnation = str({ pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" });
 
 /** The longest activation chain a hold carries (Q5): a longer one keeps its last entries. */
 export const CHAIN = 32;
+
+/** A `retry`'s hop budget as the first host sends it (dependency model §3.7, audit A5): one less per host after it. */
+export const RETRY_HOPS = 16;
+
+/** The kinds of a `failed` message's cause, in their codes' order (the binary codec's byte, the text codec's letter). */
+export const CAUSE_KINDS: ["transient", "broken", "waiting"] = ["transient", "broken", "waiting"];
 
 /** The protocol's messages, one tagged union. Parts are opaque here (the owners parse them). */
 const MESSAGE = union([
@@ -62,21 +68,23 @@ const MESSAGE = union([
 		version: int({ min: 1 }),
 		fingerprint: str({ pattern: "^[0-9a-f]{16}$" }),
 		params: part,
-		// The address the caller computed (absent for a type without placement).
-		address: opt(address),
+		// The address the caller computed with the type's `hostAddress`: it routes the hold.
+		address,
 		// Whom the hold acts for and the origin's incarnation; read only on a parent link.
 		principal: opt(principal),
 		incarnation: opt(incarnation),
 		// The instance ids of the activations waiting for this hold (Q5); read only on a trusted link.
-		chain: opt(Type.Array(incarnation, { maxItems: CHAIN })),
+		chain: opt(arr(incarnation, { max: CHAIN })),
 		// The decoded limit per part of the link the hold was admitted on (Q2); read only on a parent link.
 		limit: opt(int({ min: 0 })),
 	}),
 	obj({ kind: lit("release"), origin: opt(origin), hold: id }),
 	obj({ kind: lit("call"), origin: opt(origin), call: id, hold: id, method: index, args: opt(part), segments }),
 	obj({ kind: lit("abort"), origin: opt(origin), call: id }),
-	// Asks the provider for an attempt of a failed hold's object now (`ref.retry()`).
-	obj({ kind: lit("retry"), origin: opt(origin), hold: id }),
+	// Asks the provider for an attempt of a failed hold's object now (`ref.retry()`); `hops` is its budget: the host
+	// there passes it on to its remote dependencies with one less, never at 0, so a waiting ring of hosts stops. Relays
+	// forward it as it is.
+	obj({ kind: lit("retry"), origin: opt(origin), hold: id, hops: int({ min: 1, max: RETRY_HOPS }) }),
 	// Binds several holds at once (first bindings, re-holds), applied in one batch.
 	obj({
 		kind: lit("bound"),
@@ -103,8 +111,9 @@ const MESSAGE = union([
 		origin: opt(origin),
 		hold: id,
 		// A failure cause's error in the wire error format (a ChordError, checked by L1's envelope check, or a plugin's).
-		cause: obj({ kind: union([lit("transient"), lit("broken")]), error: wireError }),
-		// The rest of the object's backoff window in milliseconds: when it retries by itself (absent: broken).
+		// `waiting`: not the object's fault (no provider, no fitting version, a dependency failed); an event wakes it.
+		cause: obj({ kind: oneOf(...CAUSE_KINDS), error: wireError }),
+		// The rest of the object's backoff window in milliseconds: when it retries by itself (absent: broken, waiting).
 		retryIn: opt(int({ min: 0 })),
 	}),
 	// The failed object of a hold started a new attempt.
@@ -176,7 +185,7 @@ const MESSAGE_SCHEMA = { schema: MESSAGE };
  */
 export function checkMessage(message: unknown, context: Context): Message {
 	context.telemetry.metrics?.counter("chord.link.checks").add(1);
-	if (!validatorFor(MESSAGE_SCHEMA, context).Check(message)) throw new Error("message: fails the message schema");
+	if (!validatorFor(MESSAGE_SCHEMA, context).check(message)) throw new Error("message: fails the message schema");
 	// The check above establishes the type.
 	return message as Message;
 }

@@ -46,12 +46,19 @@ export class RunStates implements DocumentSlot, PersistedSlot {
 	readonly owner: Documents;
 	/** The store side when the job persists; `undefined` in memory. */
 	readonly persisted: PersistedSlot | undefined;
-	readonly definition: SlotDefinition;
+	/** The definition new documents are of: the job's latest declaration's state. */
+	definition: SlotDefinition;
 	readonly #persistence: Persistence | undefined;
 	readonly #states: RunStatesOwner;
 	readonly #trackers = new Map<string, Tracker<JsonObject>>();
 	readonly #stored = new Map<string, Stored>();
 	readonly #held = new Map<string, HeldState>();
+	/**
+	 * The definitions of documents older than `definition` (runs started before a reload's new job version), by run id:
+	 * the old code keeps writing the version it knows; the document migrates once its run settles or moves to the new
+	 * code (slice 7b §8).
+	 */
+	readonly #older = new Map<string, SlotDefinition>();
 
 	constructor(
 		definition: StateDefinition<JsonObject, false, boolean>,
@@ -68,6 +75,36 @@ export class RunStates implements DocumentSlot, PersistedSlot {
 	get persistence(): Persistence {
 		// Only reached through `persisted`, which a persisted job's states alone have.
 		return this.#persistence!;
+	}
+
+	/**
+	 * Takes a reload's new job version's state `definition` for new documents (`SlotDefinition.check` refuses an older
+	 * version or a schema changed without a bump); the documents there are keep the version they are of.
+	 */
+	redefine(definition: StateDefinition<JsonObject, false, boolean>): void {
+		const current = this.definition;
+		if (definition === current.current) return;
+		current.check(definition);
+		if (definition.version !== current.current.version) {
+			for (const id of this.#trackers.keys()) if (!this.#older.has(id)) this.#older.set(id, current);
+		}
+		this.definition = new SlotDefinition(definition);
+	}
+
+	/**
+	 * Run `id`'s document as the current definition reads it: migrated when it is of an older version (its run's
+	 * outcome on the new code; the document itself is retired with the run), `undefined` once retired.
+	 */
+	migrated(id: string, context: Context): JsonObject | undefined {
+		const value = this.value(id);
+		const older = this.#older.get(id);
+		if (value === undefined || older === undefined) return value;
+		return this.definition.current.migrate(value, older.current.version, context);
+	}
+
+	/** The definition run `key`'s document is of. */
+	#definitionOf(key: string): SlotDefinition {
+		return this.#older.get(key) ?? this.definition;
 	}
 
 	/** The value of run `id`'s document; `undefined` once retired. */
@@ -113,7 +150,7 @@ export class RunStates implements DocumentSlot, PersistedSlot {
 			return { kind: "held", stored: was, withinMs: persistence.withinMs ?? DEFAULT_WITHIN_MS };
 		}
 		const held = this.#held.get(key);
-		return this.persistence.stage(key, this.definition.current, was, change, writes, held && heldOps(held));
+		return this.persistence.stage(key, this.#definitionOf(key).current, was, change, writes, held && heldOps(held));
 	}
 
 	adopt(
@@ -130,6 +167,7 @@ export class RunStates implements DocumentSlot, PersistedSlot {
 
 	/** Retires run `key`'s document (its record's deletion): what is held goes with it. */
 	retire(key: string): void {
+		this.#older.delete(key);
 		this.#trackers.delete(key);
 		this.#stored.delete(key);
 		this.#held.delete(key);
@@ -178,7 +216,7 @@ export class RunStates implements DocumentSlot, PersistedSlot {
 		const stored = this.#stored.get(id);
 		const tracker = this.#trackers.get(id);
 		if (held === undefined || stored === undefined || tracker === undefined) return undefined;
-		const { version, fingerprint } = this.definition.current;
+		const { version, fingerprint } = this.#definitionOf(id).current;
 		const value = tracker.value;
 		const { ops, base: asked } = heldOps(held);
 		const base = asked || stored.version !== version;
@@ -195,6 +233,7 @@ export class RunStates implements DocumentSlot, PersistedSlot {
 
 	/** Drops every document (the object ended): what is held is lost, as a crash loses it. */
 	drop(): void {
+		this.#older.clear();
 		this.#trackers.clear();
 		this.#stored.clear();
 		this.#held.clear();
@@ -215,7 +254,9 @@ export class RunStates implements DocumentSlot, PersistedSlot {
 			deadline: Number.POSITIVE_INFINITY,
 		};
 		const deltasSinceBase = change.stored.deltasSinceBase + (held.pending.size > 0 ? 1 : 0);
-		if (this.definition.current.checkpointWhen(prepared.value, prepared.ops, { deltasSinceBase })) held.base = true;
+		if (this.#definitionOf(key).current.checkpointWhen(prepared.value, prepared.ops, { deltasSinceBase })) {
+			held.base = true;
+		}
 		// A base stores the whole value: no op needs keeping for it.
 		if (held.base) held.pending.take();
 		else held.pending.push(prepared.ops);

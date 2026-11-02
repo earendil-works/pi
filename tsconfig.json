@@ -9,6 +9,20 @@
 			"@earendil-works/chord/context": ["./packages/chord/src/context/index.ts"],
 			"@earendil-works/chord/delta": ["./packages/chord/src/delta/index.ts"],
 			"@earendil-works/chord/next": ["./packages/chord/src/next/index.ts"],
+			"@earendil-works/chord/next/plugins": ["./packages/chord/src/next-node/plugins/index.ts"],
+			"@earendil-works/chord/next/plugins/runtime": ["./packages/chord/src/next-node/plugins/runtime.ts"],
+			"@acme/app/*": ["./packages/chord/test/next/examples/49-plugin-api/app/*.ts"],
+			"@notes/app/*": ["./packages/chord/test/next/examples/53-app/app/*.ts"],
+			"@board/app/*": ["./packages/chord/test/next/examples/56-web/app/*.ts"],
+			"@chat/app/*": ["./packages/chord/test/next/examples/59-chat/app/*.ts"],
+			"@earendil-works/chord/next/http": ["./packages/chord/src/next-node/http/index.ts"],
+			"@earendil-works/chord/next/workers": ["./packages/chord/src/next-node/workers/index.ts"],
+			"@earendil-works/chord/next/app": ["./packages/chord/src/next-node/app/index.ts"],
+			"@earendil-works/chord/next/web": ["./packages/chord/src/next-web/index.ts"],
+			"@earendil-works/chord/next/web/server": ["./packages/chord/src/next-node/surfaces/index.ts"],
+			"@earendil-works/chord/next/react": ["./packages/chord/src/next-react/index.ts"],
+			"@earendil-works/chord/next/tui": ["./packages/chord/src/next-tui/index.ts"],
+			"@earendil-works/chord/next/tui/launcher": ["./packages/chord/src/next-node/tui/index.ts"],
 			"@earendil-works/chord/node": ["./packages/chord/src/node.ts"],
 			"@earendil-works/chord/output": ["./packages/chord/src/output.ts"],
 			"@earendil-works/chord/telemetry-sqlite": ["./packages/chord/src/telemetry-sqlite/index.ts"],
@@ -24,6 +38,8 @@
 			"@earendil-works/pi-codemode/portable": ["./packages/codemode/src/portable.ts"],
 			"@earendil-works/pi-codemode/source": ["./packages/codemode/src/source.ts"],
 			"@earendil-works/pi-codemode/worker": ["./packages/codemode/src/runtime/worker.ts"],
+			"@earendil-works/pi-schema": ["./packages/schema/src/index.ts"],
+			"@earendil-works/pi-schema/formats": ["./packages/schema/src/formats/index.ts"],
 			"@earendil-works/pi-mcp": ["./packages/mcp/src/index.ts"],
 			"@earendil-works/pi-mcp/oauth": ["./packages/mcp/src/oauth/index.ts"],
 			"@earendil-works/pi-mcp/testing": ["./packages/mcp/src/testing/index.ts"],
@@ -51,5 +67,5 @@
 		}
 	},
 	"include": ["scripts/model-catalog-protocol.ts", "scripts/model-catalog-protocol.test.ts", "packages/*/src/**/*", "packages/*/test/**/*", "packages/ai/catalog/**/*", "packages/durable/test-workers/**/*", "packages/coding-agent/examples/**/*", "packages/agent/examples/**/*"],
-	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/gondolin/**"]
+	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/**", "packages/coding-agent/test/suite/regressions/8261-subagent-project-trust.test.ts"]
 }

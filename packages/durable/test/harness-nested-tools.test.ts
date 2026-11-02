@@ -10,7 +10,6 @@ import {
 	fauxText,
 	fauxToolCall,
 	type ToolResultMessage,
-	Type,
 	type Usage,
 } from "@earendil-works/pi-ai";
 import {
@@ -33,15 +32,17 @@ import {
 	type ToolTaskResult,
 	UsageDoc,
 } from "@earendil-works/pi-durable";
+import { obj, opt, str } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import { commitWrites } from "../src/testing/commit-writes.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
 import { endedAt, nestedResultOf, nestedResults, slotsOf, startOrder, viewHistory } from "./live-support.ts";
 import { context, onValue } from "./session-support.ts";
 import { aborted, deferred, eventually } from "./task-support.ts";
 
-const Parameters = Type.Object({ text: Type.Optional(Type.String()) });
+const Parameters = obj({ text: opt(str()) });
 type Tool = ToolRegistration<typeof Parameters>;
 
 function tool(name: string, execute: Tool["execute"], extra: Partial<Tool> = {}): Tool {
@@ -117,11 +118,11 @@ describe("nested tool calls", () => {
 		// Per document written, the keys of the nested calls it holds.
 		const written: { kind: string; key: string | undefined }[] = [];
 		const commit = storage.commit.bind(storage);
-		storage.commit = (writes, adopt, commitContext) => {
-			for (const write of writes) {
+		storage.commit = (batches, receive, commitContext) => {
+			for (const write of batches.flat()) {
 				if (write.type === "document.create") written.push({ kind: write.record.kind, key: write.record.key });
 			}
-			return commit(writes, adopt, commitContext);
+			return commit(batches, receive, commitContext);
 		};
 		const { harness, root } = await openChat(storage, setup);
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
@@ -328,7 +329,7 @@ describe("nested tool calls", () => {
 			defineTool({
 				name: "pair",
 				description: "pair",
-				parameters: Type.Object({ a: Type.String(), b: Type.String() }),
+				parameters: obj({ a: str(), b: str() }),
 				execute: async (args) => {
 					runs++;
 					return { output: [{ type: "text", text: `${args.a}${args.b}` }] };
@@ -1280,9 +1281,9 @@ describe("tool task version 1 and 2 records", () => {
 		const { kind: _kind, ...version1 } = record.input as Extract<ToolTaskInput, { kind: "model" }>;
 		const input = version === 1 ? version1 : record.input;
 		const state = { ...record.state, checkpoint } as typeof record.state;
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[{ type: "task", value: { ...record, version, input, state } as typeof record }],
-			() => {},
 			context,
 		);
 		await storage.close(context);

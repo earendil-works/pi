@@ -4,11 +4,11 @@
 import {
 	type Contract,
 	createContract,
+	type HostAddress,
 	type Kind,
 	LOCAL,
 	type MemberKind,
 	type MethodData,
-	type Placement,
 	type VariantData,
 } from "./contract.ts";
 import { materialize } from "./fingerprint.ts";
@@ -16,11 +16,11 @@ import type { MemberNames, MethodAt, VariantShape } from "./history.ts";
 import type { Address } from "./host-kind.ts";
 import { checkName } from "./names.ts";
 import { type Params, type RequiredFields, readParams } from "./params.ts";
-import { KeyedMember, Method, type Static, type TSchema } from "./schema.ts";
+import { KeyedMember, Method, type Schema, type Static } from "./schema.ts";
 import { type Snapshot, snapshotArguments, snapshotSchema } from "./snapshot.ts";
 
 type VariantDeclaration = {
-	readonly state?: { readonly [member: string]: TSchema };
+	readonly state?: { readonly [member: string]: Schema };
 	readonly methods?: { readonly [member: string]: Method };
 };
 
@@ -42,7 +42,7 @@ type LocalVariants<M extends { readonly [member: string]: LocalMember }> = {
 };
 
 /** A local contract's member: a state schema, `method(...)` or `keyed(schema)`. */
-type LocalMember = TSchema | Method | KeyedMember;
+type LocalMember = Schema | Method | KeyedMember;
 
 type SchemaOf<M> = M extends KeyedMember<infer S> ? S : never;
 
@@ -79,7 +79,7 @@ export function remote<
 		readonly version: V;
 		readonly params: P & NoInfer<RequiredFields<P>>;
 		/** The address of the host serving an object for these params; never part of the fingerprint. */
-		readonly placement?: (params: { [F in keyof P]: Static<P[F]> }) => Address;
+		readonly hostAddress: (params: { [F in keyof P]: Static<P[F]> }) => Address;
 		readonly variants: D & NoInfer<SameMembers<D>>;
 	},
 ): Contract<{
@@ -90,16 +90,14 @@ export function remote<
 }> {
 	// Declaration policy: JavaScript callers reach every check below.
 	checkName(name, "A contract name");
-	checkKeys(declaration, ["version", "params", "placement", "variants"], name);
+	checkKeys(declaration, ["version", "params", "hostAddress", "variants"], name);
 	const variants = entriesOf(declaration.variants, `${name}.variants`);
 	if (variants.length === 0) throw new Error(`${name}.variants: at least one variant is required`);
-	const { placement } = declaration;
-	if (placement !== undefined && typeof placement !== "function") {
-		throw new Error(`${name}.placement: expected a function of the params`);
-	}
+	const { hostAddress } = declaration;
+	if (typeof hostAddress !== "function") throw new Error(`${name}.hostAddress: expected a function of the params`);
 	const read = variants.map(([variant, members]) => [variant, readVariant(members, `${name}.${variant}`)] as const);
-	// The placement gets the checked params of this contract.
-	return declare("remote", name, declaration, new Map(read), placement as Placement | undefined);
+	// The host address gets the checked params of this contract.
+	return declare("remote", name, declaration, new Map(read), hostAddress as HostAddress);
 }
 
 /**
@@ -165,7 +163,7 @@ function declare<C extends Contract>(
 	name: string,
 	declaration: { readonly version: number; readonly params: unknown },
 	variants: ReadonlyMap<string, VariantData>,
-	placement?: Placement,
+	hostAddress?: HostAddress,
 ): C {
 	const { version } = declaration;
 	if (!Number.isSafeInteger(version) || version < 1) throw new Error(`${name}.version: expected a positive integer`);
@@ -173,7 +171,7 @@ function declare<C extends Contract>(
 	checkMembers(variants, kinds, (variant, member, memberKind) => memberPath(name, kind, variant, member, memberKind));
 	const params = readParams(entriesOf(declaration.params, `${name}.params`), `${name}.params`);
 	const versions = [materialize(kind, params, version, variants, [])];
-	return createContract({ kind, name, params, placement, versions, kinds });
+	return createContract({ kind, name, params, hostAddress, versions, kinds });
 }
 
 /**

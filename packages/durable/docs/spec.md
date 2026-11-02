@@ -65,11 +65,15 @@ The core rule is:
 Required invariants:
 
 1. One Session commit is atomic across all record and document writes.
-2. A stored commit is published once Storage made it durable, when Storage
-   adopts it (section 4), also when `Storage.commit()` then rejects; a commit
-   that fails before it is durable publishes nothing. A deferred commit
-   (section 4.1) is published to watches and the conversation view when memory
-   adopts it, and to `observeCommits()` once it is stored.
+2. A stored commit is published once Storage made it durable, after the
+   storage call that stored it settled, in line order (section 4), also when
+   that call then rejects; a commit that fails before it is durable publishes
+   nothing. Once the Session has failed, nothing more is published: a commit
+   whose call settles after another error failed the Session, or whose turn to
+   be published comes after that, is durable but unpublished, and reopening
+   recovers it (section 10.1). A deferred commit (section 4.1) is published to watches and the
+   conversation view when memory adopts it, once the commits before it are
+   published, and to `observeCommits()` once it is stored.
 3. All visible progress is durable, except what a deferred commit holds: what
    watches see can be ahead of Storage by up to that commit's window
    (`withinMs`), and a crash loses it. A commit is deferred only when its caller
@@ -81,15 +85,16 @@ Required invariants:
 6. Document drafts are fully revoked when their transaction callback settles:
    the Session synchronously prepares or aborts every open change at that point.
    Values assigned into a draft are copied by value and must be strict JSON.
-7. The mutation line remains held through storage settlement and committed-state
-   adoption. Commit/close observers run synchronously only to capture immutable
-   state; document-state and watch user callbacks run later, as microtasks the
-   line never waits for, and never inside Storage's synchronous `adopt`. With a
-   storage that works after `adopt` (JSONL), they may run while the line is
-   still held by the commit that published.
+7. The mutation line runs one commit callback at a time; their storage
+   overlaps (group commit, section 4). A callback never observes what an
+   unpublished commit wrote: at its first read or write of such a key it waits
+   until that commit is stored and published. Commits are published in line
+   order, and every outcome is delivered in line order. Commit/close observers
+   run synchronously only to capture immutable state; document-state and watch
+   user callbacks run later, as microtasks the line never waits for.
 8. A storage error is fatal to the open Session (section 10.1), which must be
    reopened. A commit it fails publishes nothing, unless Storage had already
-   made it durable and adopted it. Preparation and checkpoint failures occur before
+   made it durable (a durability receipt). Preparation and checkpoint failures occur before
    storage admission and roll back normally.
 
 ## 2. Core records
@@ -1607,24 +1612,25 @@ callback fails with no pending acquisition
 callback succeeds with no pending acquisition
   prepare every open change -> immutable next revision + self-contained Chord Op[]
   Session evaluates each required/ordinary document write exactly once
-  Storage.commit persists the atomic batch while the Session line remains held
 commit deferred and holdable (section 4.1)
-  adopt every prepared change by pointer swap; queue its ops per document, unstored
-  watches and view mounts capture it synchronously; observeCommits() does not
-  release the line; invoke listeners later
-otherwise, right before Storage admission
+  join the writer's queue unstored; release the line
+  once the commits before it are published: adopt every prepared change by pointer swap;
+    queue its ops per document; watches and view mounts capture it synchronously;
+    observeCommits() does not; invoke listeners later
+otherwise, at logical admission (section 4)
   take the held ops of every document the commit acquired and put them in front of its own
-storage makes it durable and calls adopt(seq), inside Storage.commit() (section 4)
-  adopt every prepared change by pointer swap; record its telemetry events
+  join the writer's pending batch; release the line
+the writer's storage call makes it durable (a receipt) and settles
+  after the commits before it: apply it to the read caches, adopt every prepared change by
+    pointer swap; record its telemetry events
   queue one microtask that calls observeCommits() observers with what was stored
   the Session's own observers, including watches and view mounts (section 9.3), capture it
     synchronously; the waits they resolve and the aborts they queue run after that microtask
-storage resolves
-  fail the Session if an own observer threw (the commit stands); release the line
-storage rejects after adopt(seq)
-  the commit stays adopted and published; the storage error fails the Session (section 10.1),
+  fail the Session if an own observer threw (the commit stands, the rest of the call is not published)
+the call rejects after it stored the commit
+  the commit is published; the storage error rejects it and fails the Session (section 10.1),
     and an own observer's throw is reported
-storage fails before adopt(seq)
+the commit is not stored (refused, rejected, or after a failure)
   abort every prepared change, fail the Session (section 10.1), and publish nothing
 ```
 
@@ -1834,65 +1840,92 @@ granule, a tenth of the retention up to one second. Task documents also retire
 with their task (section 5.5). `createSession(storage, { documentRetentionMs, setTimer })`
 sets them for a plain Session; the Harness reads its settings at each use.
 
-A Session commit callback may be asynchronous. It owns the Session mutation
-line through callback execution, preparation, storage settlement, committed
-baseline adoption, and publication. Adoption runs inside
-`Storage.commit()`: the Session passes an `adopt(seq)` callback, which the
-storage calls synchronously once the batch is durable and before its next
-commit (section 10), so memory always shows a complete prefix of the log, plus
-what deferred commits hold (section 4.1). External model, process, tool,
-network, and human effects run outside the line.
+A Session commit callback may be asynchronous. The Session mutation line runs
+one job at a time: a commit's callback and its settlement, or a read on the
+line. A commit with writes then joins the pending batch (logical admission),
+and the line goes on with the next job. Storage overlaps the line (group
+commit): a writer off the line sends every commit admitted while no storage
+call is in flight as one `Storage.commit()` call (section 10), each with
+its own `seq`, and publishes them one by one, in line order. Memory
+always shows a complete prefix of the log, plus what deferred commits hold
+(section 4.1). External model, process, tool, network, and human effects run
+outside the line.
 
-The commit is published when it is adopted, so every view changes in the same
-step as memory. Inside `adopt`, after the trackers, come the commit's telemetry
+No job observes what an unpublished commit wrote. Every read or write of a job
+touches a key: a record (task, conversation, entry, submission, a
+conversation-scoped request ID), a document address or incarnation, a scope's
+documents, a conversation's newest entries, or, in the scheduler, the live work
+below an ownership node, the ownerless roots, and the cancellation intent set;
+a scan that cannot be keyed touches every key. While an admitted commit that
+writes the key is unpublished, the job waits until it is stored and published,
+then goes on; a job waiting holds the line, so the unpublished writes only
+shrink. Code before a job's first such touch runs early: a callback can run
+while an earlier commit is being stored, and cancellation is checked when the
+job starts. The scheduler decides in regions that record the keys they read and
+run again after such a wait (section 5.4). A commit's outcome is delivered once
+it is published, and every job's outcome (commits with and without writes,
+reads, deferred commits, callback errors) in line order; a scheduler commit
+that writes nothing and waited at no gate delivers to the scheduler at once. A failure that fails
+the Session makes every later outcome `SessionFailed`; a callback's own error,
+a cancellation, or a refused read-only commit affects only its job. At most 256
+admitted jobs wait for their outcome; beyond that the line waits. The bound is a
+count, not bytes: what waits is bounded by what one commit can hold (tool output
+by its output limits), times the count.
+
+A commit is published after the storage call that stored it settled, so every
+view changes in the same step as memory. A Storage with `publishing()` runs each
+commit's publication inside a scope of its own: the store backend runs it in its
+attached host's batch, so Chord sources over Durable's views are marked in one
+batch per commit. Its publication applies it to the Session's read caches and
+adopts it in memory; then come the commit's telemetry
 events (`pi.durable.entry`, `pi.durable.submission`), then the Session's own
 observers, synchronously: document watches, conversation view mounts, the task
 graph, the scheduler, and submission waits, with the observers adapters attach
 (`observeDoc()`, `observeConversation()`, `observeTaskGraph()`, section 9.1). They
 advance watches and resolve waits, but run no task code: the abort signal of a task the commit newly marks
 follows in a microtask. Host `observeCommits()` observers run one microtask
-after `adopt`, outside the storage's synchronous step, before every wait the
-commit resolves and every abort it queues: those continuations are queued by
-the own observers, after the dispatch. There is no order between host listeners
-and watch listeners, nor `onWake`: they are independent observers of the
-commit, and a watch delivery already queued for an earlier frame may deliver
-this commit first. The host listeners run before the Session sees
-`Storage.commit()` resolve, while the line is still held. A storage that works
-after `adopt` before it resolves, as JSONL does when it reclaims sidecars, runs
-what the commit wakes during that work too; its next commit still waits.
+after the publication, before every wait the commit resolves and every abort it
+queues: those continuations are queued by the own observers, after the
+dispatch. There is no order between host listeners and watch listeners, nor
+`onWake`: they are independent observers of the commit, and a watch delivery
+already queued for an earlier frame may deliver this commit first. Two commits
+of one storage call are published a macrotask apart, so the host listeners of
+the first, and the continuations of the waits it resolves (`commit()`,
+`Submission.wait()`, `waitForTask()`), run before the second is published.
 
 ```text
-adopt(41): trackers, telemetry events, own observers (views advance, waits resolve)
+commit([.., 41, 42]) settles
+publish 41: caches, trackers, telemetry events, own observers (views advance, waits resolve)
 microtask: observeCommits() observers
-microtasks after it: wait continuations, abort listeners
+microtasks after it: wait continuations, session.commit() resolves, abort listeners
 microtasks, in no order relative to the above: watch listeners, onWake
-Storage.commit() resolves; session.commit() resolves
+macrotask: publish 42
 ```
 
-`adopt` never throws. A throwing telemetry adapter is reported (`host_error`,
+Publication never throws. A throwing telemetry adapter is reported (`host_error`,
 callback `telemetry`; a plain Session drops it, as it drops every report) and
 the commit resolves; a host listener's throw is reported (section 10.1), and an
 adapter's observer that throws is also detached and ended (section 9.1). The
 first throw of an own observer is kept, the other observers and the host
-listeners still get the commit, and it fails the Session once
-`Storage.commit()` returned; the commit stands and resolves. A throw while
-memory adopts the batch is different: nothing is published, the Session fails
-once `Storage.commit()` returned, and the commit rejects with that error. A
-commit that Storage rejects after its adoption is durable: it stays adopted and
-published, waits it resolved stay resolved, the commit rejects with the storage
-error, and the Session fails with it; an own observer's throw in that commit is
-then reported as a `listener_error`.
+listeners still get the commit, and it fails the Session after the host
+listeners got it; the commit stands and resolves, and the commits after it in
+the same call are not published (section 10.1). A throw while memory adopts
+the commit is different: nothing more of it is published, the Session fails,
+and the commit rejects with that error. A commit Storage stored whose call then
+rejects is durable: it is published, waits it resolved stay resolved, the
+commit rejects with the storage error, and the Session fails with it; an own
+observer's throw in that commit is then reported as a `listener_error`.
 
 `observeCommits(observer)` observes stored commits in one synchronous
 `observer.advance(publication, context)` call per observer, on the line, each with exactly what that storage
 transaction stored (section 4.1). It attaches synchronously and returns a `CommitObservation` with an idempotent
 `detach()`; unlike the other `observeXXX()` it has no `value`: commits are events, not a state, and the Session does
-not know Storage's newest `seq` before its own first commit. Adoption
+not know Storage's newest `seq` before its own first commit. A publication
 queues the one dispatch of a commit only when an observer is attached; the
 dispatch calls the observers attached when it runs. So an observer attached
-between `adopt` and the dispatch gets the commit only when some observer was
-attached at `adopt`; one detached in between does not get it; one attached after
-the dispatch ran misses it. `observer.end(end)` comes once with a `WatchEnd`: `ended` when the Session has closed,
+between the publication and the dispatch gets the commit only when some
+observer was attached at the publication; one detached in between does not get
+it; one attached after the dispatch ran misses it. `observer.end(end)` comes once with a `WatchEnd`: `ended` when the Session has closed,
 after its last publication, or `failed` with the error that failed it; never after `detach()`. An observer whose
 `advance` throws, or returns a promise that rejects, is reported (section 10.1), detached, and ended
 `listener_error`; the others still get the commit. `subscribeClose()` observes close synchronously when it
@@ -1916,9 +1949,15 @@ await session.commit(async tx => {
 ```
 
 Mutation admission occurs on the Session line before a commit callback starts. Closing seals mutation admission and task
-reservation. Already-admitted commits settle before storage closes. Once a
-commit is admitted, caller cancellation does not interrupt storage settlement or
-undo the commit. Cancelling a close wait does not reopen admission.
+reservation, runs the close listeners, and signals every task invocation; the
+callbacks already admitted finish, waits at their touches included, every
+pending and in-flight storage call settles and is published, the writes at
+close and the held changes go through the same writer, and then storage closes.
+Once a commit is admitted, caller cancellation does not interrupt storage
+settlement or undo the commit. Cancelling a close wait does not reopen admission.
+`unloadDocuments()`, a reload for another definition version, and the store at a
+held document's deadline wait until every admitted commit is published, then
+store what is held at that point through the writer.
 
 Table rules:
 
@@ -1991,9 +2030,12 @@ What is held is stored by the first of:
    another definition version, which reloads the document from Storage;
    retirement is case 1.
 
-Held operations leave their queue only at the last step before
-`Storage.commit()`, after every fallible step: a callback, settlement, or
-checkpoint failure of a normal commit keeps them. A store fails like any
+Held operations leave their queue only at the commit's logical admission
+(section 4), after every fallible step: a callback, settlement, or checkpoint
+failure of a normal commit keeps them, and a commit never stores a hold adopted
+after it in line order. A held commit is adopted in memory and published when
+the commits before it are published, and what it writes stays unpublished until
+then: a commit that reads the document waits for it. A store fails like any
 storage write: it fails the Session (section 10.1). Past Chord's
 `MAX_PENDING_OPS` (10,000) held operations, or when a held commit's
 `checkpointWhen` selected a base, the store writes a base of the current value.
@@ -2002,7 +2044,7 @@ A failed Session stores nothing; after a reopen nothing is held.
 Publication: the Session's own observers see each held commit once, when memory
 adopts it, and of a normal commit that stores held changes only its own
 operations. `observeCommits()` sees every storage transaction with exactly
-what it stored, published when Storage adopts it (section 4): nothing for a
+what it stored, published once stored (section 4): nothing for a
 held commit, and the stored operations, held first, for a commit or a deadline
 that stores them. A document the commit retires is published as its retirement
 only: the held operations and the commit's own change stored before the
@@ -2385,7 +2427,16 @@ or its `orphaned` settlement when its definition is unavailable.
 ### 5.4 Scheduler, abort, and ownership
 
 The scheduler serially reserves eligible tasks, then runs handlers off the
-Session line. One in-memory `TaskInvocation` contains mode, abort controller,
+Session line. Its decisions stay serialized on the line while their storage
+overlaps (section 4): each reads the scheduler's memory, which changes as
+commits are published, in a region that records what it reads (a task's
+record, the live work below an ownership node, the ownerless roots, the
+cancellation intent set) and stages nothing; when a commit that writes one of
+those is unpublished, the region waits for it and runs again, so `migrate`,
+registry snapshots, reports, and cleanup run once, after a decision stands.
+Every commit writes the memberships its task changes alter: a task created or
+ended changes the live work of every node from its parent up to the nearest
+live task or the root conversation, and the chain is loaded at its admission. One in-memory `TaskInvocation` contains mode, abort controller,
 and completion promise.
 
 Abort protocol:
@@ -3288,6 +3339,7 @@ consuming commit may rerun them. Abort errors always propagate.
 | hook | composition | ordinary throw |
 |---|---|---|
 | `beforeRequest` | replacement chain | report, continue |
+| `beforeProviderRequest` | replacement chain | report, continue |
 | `afterResponse` | all observers | report, continue |
 | `onYield` | first continuation wins | report, continue |
 | `beforeTool` | argument replacement chain; first block wins | block tool with error text |
@@ -3329,6 +3381,12 @@ interface GenerationHooks {
     api: HookApi,
     context: Context,
   ): HookResult<{ readonly messages: readonly Message[] }>;
+  /** After pi-ai builds the provider request body, before it is sent; replaces the body for that request only. */
+  beforeProviderRequest(
+    request: { readonly model: Model<Api>; readonly payload: unknown },
+    api: HookApi,
+    context: Context,
+  ): HookResult<{ readonly payload: unknown }>;
   /** Every terminal provider message, before classification. */
   afterResponse(message: AssistantMessage, api: HookApi, context: Context): void | Promise<void>;
   /** A final answer; `continue` appends a user message and continues the run. */
@@ -3750,8 +3808,14 @@ declares them, built from the resolved tools. Loaded tools follow the other
 tools in load order, so a load appends declarations to the transcript and the
 cached prefix holds. `@earendil-works/pi-durable/tool-search` provides the
 coding agent's `tool_search` (`createToolSearchExtension()`): it ranks
-`Agent.deferred` with BM25 over the tools' names, descriptions, and parameter
-names and descriptions, and loads the matches. The `codemode` section does not
+`Agent.deferred` with the coding agent's tool ranking and loads the matches.
+The ranking is BM25 over the tools' descriptions and parameter names and
+descriptions, with the name as a separate field: a tool matching more of the
+query's terms ranks above one matching fewer, a query term in the name
+outweighs any number of mentions in the description, a tool whose whole name
+after its last `__` is in the query gets a large bonus, and a query that is
+exactly a tool's name ranks it first. Code mode's `searchTools()` ranks the
+same way, with each tool's namespace text as a further, low-weight field. The `codemode` section does not
 list deferred tools; scripts find them with `searchTools()`.
 
 Tools reach files and processes only through `api.env`, never through an
@@ -4638,9 +4702,10 @@ each commit writes at most one window, and the throttle bounds the rate.
 
 Generation creates `tools` with one `pending` slot per call in the commit that
 appends the tool-calling answer; a call its request did not offer is flagged
-`unoffered`. A tool task sets its slot `running` in its intent commit,
-publishes throttled output and details into it with deferred commits (section
-4.1), and in its terminal commit sets
+`unoffered`. A tool task sets its slot `running` (and a nested slot's final
+arguments) with a deferred commit (section 4.1) right before its intent commit,
+publishes throttled output and details into it with deferred commits, and in its
+terminal commit sets
 `done` and `entry` and removes `output`, `droppedBytes`, `droppedLines`,
 `details`, and `diagnostics`, which the result entry now carries (section 7.3).
 The generation's `tools` phase removes `tools`. Slot updates apply only while a slot with the task's
@@ -4823,7 +4888,9 @@ The run's inputs live in `pi.live.run`, not in the task input.
   `prepare`. `request` converts a leftover partial (below) before it resolves
   the model.
 - `request` first converts a committed partial left in `pi.live` by an
-  interrupted attempt into an aborted `pi.assistant` entry. When the host died
+  interrupted attempt into an aborted `pi.assistant` entry, and sets
+  `pi.live.generation` to the attempt with a deferred commit (section 4.1), which
+  the conversion makes immediate. When the host died
   while this request was in flight (the record's `restarts`, section 5.4), the
   attempt failed: that commit also either sleeps at `retry` until
   `now + retryDelayMs(policy, attempt)`, with `pi.live.generation.retry` saying
@@ -4846,7 +4913,9 @@ The run's inputs live in `pi.live.run`, not in the task input.
   (section 4.1), so Storage gets them at the next commit that reads `pi.live`
   or within `settings.progress.persistWithinMs`.
   Before streaming, the `beforeRequest` chain may
-  replace the messages for this request only. After a close, recovery resends
+  replace the messages for this request only. Once pi-ai has built the provider
+  request body, the `beforeProviderRequest` chain may replace it, again for this
+  request only; it runs each time pi-ai builds a body. After a close, recovery resends
   the same committed messages with the same pinned model, thinking level, and
   stream options, and reruns `beforeRequest`; after a crash the attempt is
   charged instead, as above.
@@ -4993,8 +5062,10 @@ Below, `{ entryId }` is a model-issued call's result.
   phase's agent `tools` (section 7.3), validates
   the arguments with pi-ai
   `validateToolArguments()`, runs the `beforeTool` chain, and validates again
-  (section 7.3). One commit then records intent: it moves to `execute` with the
-  final arguments and the tool's replay policy and sets the slot `running`. The
+  (section 7.3). A deferred commit sets the slot `running`; one commit then
+  records intent: it moves to `execute` with the final arguments and the tool's
+  replay policy. After a crash the slot may still show `pending` while the task's
+  checkpoint is `execute`; a safe rerun sets it `running` again. The
   same handler executes the tool, runs the `afterTool` chain, and commits the
   result; it builds `api.env` with `HarnessOptions.env` right before executing
   (section 2.2). A tool that does not resolve, invalid arguments, or a block
@@ -5422,18 +5493,20 @@ interface Harness {
 Attaching works like acquiring a watch, atomically on the Session line: the
 observation's `value` includes every commit before it, and `advance` gets every
 later change that a watch would get, unfolded, as memory adopts it: for a
-stored commit inside Storage's `adopt` (section 4), for a deferred one when
+stored commit at its publication (section 4), for a deferred one when
 memory adopts it, before it is stored (section 4.1). A commit gives a view or
 the graph at most one call, and a document observer one call per change at its
 address: a commit that retires the document and creates it again gives two, the
 retirement and then the new incarnation's `[["r", value]]`. The task graph also
 advances without a commit, when a registry change or a failed migration changes
 a task's `blocked` reason (section 9.4): that call runs on the Session line,
-outside any `adopt`, with a context of its own. A document observer follows its
+outside any commit's publication, with a context of its own. A document observer follows its
 address as a document watch does, and `observeDoc()` gives `undefined` for an
-absent one. `end` comes once: when the Session closes (`ended`) or fails
-(`failed` with the error), or, for a task document, right after the retirement change of
-the commit that makes its task terminal, inside that commit's `adopt` (`ended`).
+absent one. `end` comes once: when the Session closes (`failed` with the error
+"session closed": an adapter following the Session, such as Chord's `self.follow`,
+fails and follows the next Session; watches end `ended`) or fails (`failed` with
+the error), or, for a task document, right after the retirement change of the
+commit that makes its task terminal, at that commit's publication (`ended`).
 `detach()` is idempotent, and nothing follows it, not even the rest of the
 commit underway; a detached observer is referenced by nothing of the Session.
 `context` governs only the attachment: cancelling it while attaching rejects
@@ -5615,7 +5688,7 @@ The Harness keeps at most one mount per conversation. The first `watch()` or
 observer builds its documents on the Session line, and each attachment reads
 its window there with bounded scans; the mount is dropped when its last
 observer detaches. A mount derives each next revision from the Session's
-commits as memory adopts them, for a stored commit inside Storage's `adopt`
+commits as memory adopts them, for a stored commit at its publication
 (section 4) and for a held one when memory adopts it (section 4.1), like
 `watchDoc()`: it shows committed state, including deferred commits before they
 are stored (section 4.1). One publication that touches the conversation yields
@@ -5785,11 +5858,11 @@ The Harness keeps at most one graph mount. The first `watchTaskGraph()` builds i
 live tasks and the conversations they own, one owner scan per live task, and
 holds the line while it does; the mount is dropped when its last observer
 detaches. It advances from the Session's stored commits as memory adopts them,
-inside Storage's `adopt` (section 4), like the conversation view: a commit that
+at their publication (section 4), like the conversation view: a commit that
 touches a conversation view and the graph changes both in that one step. A
 `blocked` reason that changes without a commit (a registry change, a failed
 migration) is derived again in a job on the Session line and published there,
-outside any `adopt` and any commit, with the background context. One
+outside any commit and its publication, with the background context. One
 publication that changes a node yields one Chord batch
 that sets or deletes `tasks[id]`, or sets a node's `conversations`. A
 publication that changes no node creates no revision. Task and conversation
@@ -5911,12 +5984,27 @@ type StorageWrite =
  */
 interface Storage {
   /**
-   * Persist the batch atomically. Once it is durable, call `adopt(seq)` exactly once, synchronously and before this
-   * storage's next commit starts, then resolve with `seq`; a commit that fails before the batch is durable never calls
-   * it. `adopt` adopts and publishes the batch: it runs the Session's own observers (section 4), which call no Storage
-   * method, and it never throws.
+   * Persist `batches` in order, each as one ordinary atomic commit with its own seq, checked against the state the
+   * earlier ones left, in as few round trips as the backend can. Every batch has at least one write: a commit without
+   * writes never reaches Storage, so the Session never sends an empty batch. Stops at the first batch Durable's own
+   * checks refuse (global IDs, document actions, copy resolution): the batches before it are durable, it and the ones
+   * after are not. Calls `receive(index, seq)` once per durable batch, in order, synchronously, after all of them are
+   * durable and before the next commit starts, and resolves with the number of durable batches and the refusal, if
+   * any. Rejects for an unknown outcome (connection lost, statement or commit failed); `receive` calls made before the
+   * rejection still stand. A receipt is not publication: the Session publishes later; it calls no Storage method and
+   * never throws.
    */
-  commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, context: Context): Promise<Seq>;
+  commit(
+    batches: readonly (readonly StorageWrite[])[],
+    receive: (index: number, seq: Seq) => void,
+    context: Context,
+  ): Promise<{ readonly stored: number; readonly refused?: unknown }>;
+  /**
+   * Optional. Run `publish`, the Session's publication of one commit (cache write-through, adoption, observers),
+   * inside this storage's own scope, such as a store host's batch. Call it exactly once, now or soon after; the
+   * Session publishes the next commit only once it ran.
+   */
+  publishing?(publish: () => void, context: Context): void;
   /**
    * Allocate from the one global numeric namespace, above every ID minted since this storage was opened and every ID
    * stored, also across reopen: scans order by ID as creation order, and the Harness relies on it. The generic brand
@@ -5946,6 +6034,19 @@ interface Storage {
   close(context: Context): Promise<void>;
 }
 ```
+
+Every backend implements `commit()` natively. It checks each batch (global
+IDs, document actions, copy resolution) before that batch writes anything, so
+a refusal leaves the earlier batches stored and nothing of its own; no
+savepoints are needed, which Durable Objects' SQL does not allow. SQLite runs
+one transaction per call. IndexedDB runs one `readwrite` transaction per call:
+on a refusal it stops issuing writes and the transaction commits the prefix;
+an error of IndexedDB itself aborts it, and the call rejects with nothing
+stored. The store backend stores a call as one series of the store's commit
+queue (`ChordStore.commitSeries`): one backend transaction, one seq and one
+outbox commit per batch, the store's metadata written once. JSONL appends every batch's sidecar records and then
+all their markers in one write (a torn append recovers a shorter complete
+prefix), and memory applies them one by one.
 
 Every error a method throws is final for the Session (section 10.1), so a
 backend retries its own transient failures. A read throws `StorageRequestError`
@@ -6058,12 +6159,35 @@ exempt: once a batch is admitted, whether it committed is unknown.
 A commit callback that catches a failed read cannot commit afterwards: the Session
 checks its health after the callback. Adopting a committed batch in memory that
 fails also fails the Session, since memory would be behind storage; so does a
-`Storage.commit()` that resolves without adopting, or rejects after it adopted.
-A batch Storage adopted is durable, so it is not rolled back: it was published
-at adoption (section 4), `observeCommits()` observers get it and the waits it
-settles resolve; then the commit rejects with the storage error and the Session
-fails as above, with the storage error. An own observer that threw on that
-commit is reported as a `listener_error`.
+storage call that resolves without a receipt for a batch it reports stored.
+
+Each commit of one storage call (group commit, section 4) gets its own outcome,
+in line order:
+
+- A commit Storage stored (a receipt) is published, then resolves.
+- A call that stops at a refusal of commit `k`: the commits before `k` are
+  published and resolve; `k` rejects with the refusal; the commits after `k`,
+  and every commit admitted later, reject with `SessionFailed`, unpublished;
+  the Session fails with the refusal once the commits before `k` are
+  published.
+- A call that rejects: the commits it stored are durable, so they are not
+  rolled back: they are published, `observeCommits()` observers get them and
+  the waits they settle resolve, and then they reject with the storage error,
+  as do the commits it did not store; the Session fails with that error. An own
+  observer that threw on such a commit is reported as a `listener_error`.
+- A commit whose adoption or own observer throws: it rejects with the adoption
+  error, or stands and resolves for an observer's throw, and the Session fails;
+  the commits after it in the call are durable but not published, and reject
+  with `SessionFailed`. Reopening recovers them.
+- A call that settles after another error already failed the Session, or a
+  commit of a call whose publication comes after another error failed it: what
+  it stored is durable but not published, and rejects with `SessionFailed`
+  whose cause is the first error, whatever the call returned. Reopening
+  recovers it; an `observeCommits()` consumer, such as a replica, misses it
+  until then.
+
+A job whose outcome comes after the one a failure is gets `SessionFailed`, even
+when its callback ran before the failure; a job before it keeps its own outcome.
 
 **The Session's own bookkeeping fails it too.** A throw in a commit the
 scheduler makes for itself (reconciliation, reservation, a fault or terminal
@@ -6073,9 +6197,9 @@ storage failure, a host callback such as a `RegistryReader` whose `snapshot()`
 throws, or a bug, and running the commit again fixes none of them. A throw in a commit
 listener of the Session's own components (scheduler, submissions, views, task
 graph, document observers) fails it as well, since their memory would fall
-behind storage; the commit itself stands. Those listeners run inside Storage's
-`adopt` (section 4), so the Session fails once `Storage.commit()` returned,
-after the other observers and the `observeCommits()` observers got the commit.
+behind storage; the commit itself stands. Those listeners run at the commit's
+publication (section 4), so the Session fails after the other observers and the
+`observeCommits()` observers got the commit.
 
 **User code fails only its unit.** A task phase that throws ends that task
 `faulted`; a throwing `migrate` blocks it as `migration_failed`; a tool that
@@ -6142,7 +6266,8 @@ after a committed base or retirement.
 
 ### 11.2 SQLite
 
-One SQL transaction is one Session commit. SQLite stores:
+One SQL transaction is one storage call: the batches of a `commit()` call,
+each checked before it writes. SQLite stores:
 
 - conversation, entry, task, and submission records;
 - document records;
@@ -6180,7 +6305,9 @@ Publication protocol:
 2. Append one complete main marker listing those records.
 3. Publish in memory only after the marker write succeeds.
 
-Every commit uses this protocol; there is no standalone-sidecar fast path.
+Every commit uses this protocol; there is no standalone-sidecar fast path. A
+`commit()` call appends every batch's sidecar records first, then all its
+markers in one write of `main.jsonl`; reads wait while it appends.
 JSONL creation accepts an `fsync` option that defaults to `false`. Without
 `fsync`, it guarantees ordinary process-crash consistency, not survival of
 power, host, kernel, or filesystem failure. With `fsync: true`, the backend

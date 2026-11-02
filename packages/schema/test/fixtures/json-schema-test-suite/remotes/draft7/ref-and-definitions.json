@@ -1,0 +1,11 @@
+{
+    "$id": "http://localhost:1234/draft7/ref-and-definitions.json",
+    "definitions": {
+        "inner": {
+            "properties": {
+                "bar": { "type": "string" }
+            }
+        }
+    },
+    "allOf": [ { "$ref": "#/definitions/inner" } ]
+}

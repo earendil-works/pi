@@ -1,0 +1,17 @@
+{
+    "description": "tree schema, extensible",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "http://localhost:1234/draft2020-12/tree.json",
+    "$dynamicAnchor": "node",
+
+    "type": "object",
+    "properties": {
+        "data": true,
+        "children": {
+            "type": "array",
+            "items": {
+                "$dynamicRef": "#node"
+            }
+        }
+    }
+}

@@ -60,8 +60,9 @@ export class HostLink implements ChannelHandler {
 	readonly context: Context;
 	readonly consumer: ConsumerSide;
 	/**
-	 * The provider side of each origin the peer sent holds for, made by its first; `origin` is honoured on every link
-	 * (decision "Relay flow control per origin").
+	 * The provider side of each origin the peer sent holds for, made by its first and dropped once it holds nothing;
+	 * `origin` is honoured only on parent and route links, where a relay's messages arrive (decision "Origins only from
+	 * relays").
 	 */
 	readonly #providers = new Map<number, ProviderSide>();
 	readonly #channel: Channel;
@@ -159,6 +160,10 @@ export class HostLink implements ChannelHandler {
 	 * the channel holds later messages until it settled.
 	 */
 	message(message: Message): void | Promise<void> {
+		// A child (a tab, a TUI) relays nothing: its origins would each get their own call window and record.
+		if (this.role === "child" && "origin" in message && message.origin !== undefined) {
+			throw new Error(`${message.kind}: an origin on a child link`);
+		}
 		switch (message.kind) {
 			case "hold":
 				this.#hold(message);
@@ -193,9 +198,16 @@ export class HostLink implements ChannelHandler {
 		}
 	}
 
-	/** Ends the holds on this link still waiting for `load` that act for a principal `revoked` names (§4). */
-	revokeWaiting(revoked: (principal: Principal) => boolean, error: ChordError): void {
-		for (const provider of this.#providers.values()) provider.revokeWaiting(revoked, error);
+	/** `provider` holds nothing any more: it goes (its relay's upstream links are told `closed`). */
+	drop(provider: ProviderSide): void {
+		if (this.#providers.get(provider.origin) !== provider) return;
+		this.#providers.delete(provider.origin);
+		provider.closed();
+	}
+
+	/** Ends the holds on this link that hold nothing and act for a principal `revoked` names (§4). */
+	revokeUnbound(revoked: (principal: Principal) => boolean, error: ChordError): void {
+		for (const provider of this.#providers.values()) provider.revokeUnbound(revoked, error);
 	}
 
 	closed(): void {

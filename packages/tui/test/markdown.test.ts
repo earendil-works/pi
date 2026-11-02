@@ -1,5 +1,7 @@
 import assert from "node:assert";
 import { afterEach, describe, it } from "node:test";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Chalk } from "chalk";
 import { Markdown, type MarkdownTheme } from "../src/components/markdown.ts";
@@ -62,6 +64,63 @@ describe("Markdown component", () => {
 			markdown.render(60);
 			assert.deepStrictEqual(calls.at(-1), { source: "updated", availableWidth: 56 });
 			assert.strictEqual(calls.length, 4);
+		});
+	});
+
+	describe("Block reuse", () => {
+		afterEach(() => resetCapabilitiesCache());
+
+		function countingTheme(calls: string[]): MarkdownTheme {
+			return {
+				...defaultMarkdownTheme,
+				highlightCode: (code, lang) => {
+					calls.push(`${lang}:${code}`);
+					return code.split("\n").map((line) => chalk.green(line));
+				},
+			};
+		}
+
+		it("highlights a code block once across streamed text and resizes, and again after invalidate", () => {
+			const calls: string[] = [];
+			const markdown = new Markdown("```ts\nx\n```", 0, 0, countingTheme(calls));
+			markdown.render(80);
+			markdown.setText("```ts\nx\n```\n\nafter");
+			markdown.render(40);
+			assert.deepStrictEqual(calls, ["ts:x"]);
+			markdown.invalidate();
+			markdown.render(40);
+			assert.deepStrictEqual(calls, ["ts:x", "ts:x"]);
+		});
+
+		it("holds rendered blocks weakly, so a full garbage collection releases them", async () => {
+			setFlagsFromString("--expose-gc");
+			const gc = runInNewContext("gc") as () => void;
+			const calls: string[] = [];
+			const markdown = new Markdown("```ts\nx\n```", 0, 0, countingTheme(calls));
+			markdown.render(80);
+			// A WeakRef keeps its target alive until the current job ends.
+			await new Promise((resolve) => setImmediate(resolve));
+			gc();
+			markdown.render(40);
+			assert.deepStrictEqual(calls, ["ts:x", "ts:x"]);
+		});
+
+		it("renders a block again when the block after it changes its spacing", () => {
+			const markdown = new Markdown("# Title", 0, 0, defaultMarkdownTheme);
+			markdown.render(80);
+			markdown.setText("# Title\nfoo");
+			assert.deepStrictEqual(
+				markdown.render(80).map((line) => stripAnsi(line).trim()),
+				["Title", "", "foo"],
+			);
+		});
+
+		it("follows changed reference link definitions", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: false });
+			const markdown = new Markdown("[a][x]\n\n[x]: https://one.example", 0, 0, defaultMarkdownTheme);
+			markdown.render(80);
+			markdown.setText("[a][x]\n\n[x]: https://two.example");
+			assert.ok(stripAnsi(markdown.render(80).join("\n")).includes("https://two.example"));
 		});
 	});
 
@@ -1686,6 +1745,22 @@ bar`,
 
 			assert.ok(joinedPlain.includes("~strikethrough~"), "Single-tilde delimiters should remain visible");
 			assert.ok(!joinedOutput.includes("\x1b[9m"), "Single-tilde text should not use strikethrough styling");
+		});
+	});
+
+	// #10925
+	describe("styled words at the wrap boundary", () => {
+		it("should not start the next line with a space or carry styles into padding", () => {
+			const markdown = new Markdown("aaaa **bold** next ~~strk~~ more words", 1, 0, defaultMarkdownTheme, {
+				bgColor: (text) => `\x1b[44m${text}\x1b[49m`,
+			});
+
+			assert.deepStrictEqual(markdown.render(11), [
+				"\x1b[44m aaaa \x1b[1mbold\x1b[22m \x1b[49m",
+				"\x1b[44m next \x1b[9mstrk\x1b[29m \x1b[49m",
+				"\x1b[44m more      \x1b[49m",
+				"\x1b[44m words     \x1b[49m",
+			]);
 		});
 	});
 

@@ -1,6 +1,7 @@
 # Slice 8: registries and `host.root` (spec)
 
-Status: **ready to build** (2026-10-27; D1-D3, the registry failures and S1-S3 decided by the owner; two spec reviews,
+Status: **built** (2026-10-28; build review and two fix rounds by the same four reviewers,
+`/tmp/s8-build-review-*.md`, `/tmp/s8-build-rereview-*.md`). Before: ready to build (2026-10-27; D1-D3, the registry failures and S1-S3 decided by the owner; two spec reviews,
 `/tmp/s8-review{,2}-{astra,fable,opus,sol}.md`, found no remaining blocker; S3 refined after the second: with no value
 after `load`, a reader fails at once, as `self.get` of a type not served here)
 
@@ -58,8 +59,9 @@ await host.root(async (ctx) => (await ctx.get(Notes, { session })).add(note, ctx
   when the table is built, an older one without an adapter or a newer one is left out and reported (`HostError`
   `contribution_refused { registry, plugin, version }`).
 - **Contributions:** a plain value, or a Chord watchable (a `writable`, a derive, a document member; another
-  registry's value too, a cycle of registries reading each other refused when the second one serves or contributes), followed as a dependent of the table (its change recomposes); a foreign watchable (a Durable watch)
-  is refused at `contribute` (declaration policy). The table's entry is `{ plugin, type?, version, value }` (`type` for
+  registry's value too, a cycle of registries reading each other refused when the second one serves or contributes (superseded by audit A2: caught at the first composition by the runtime guard, reported `contribution_failed`)), followed as a dependent of the table (its change recomposes), recognised by Chord's own mark; anything
+  else is a plain value, whatever methods it has (a harness, a conversation handle or a runtime is contributed as a plain
+  value, not followed; build review 2026-10-27, replacing "a foreign watchable is refused"). The table's entry is `{ plugin, type?, version, value }` (`type` for
   an object contributor; served types carry their plugin's name).
 - **`compose(table, { report })`:** pure, lazy as a derive: the registry's value is marked when its table changes (a
   contributor goes live or ends, a watchable contribution changes) and composed when read or, while watched, in the

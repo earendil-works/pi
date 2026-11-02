@@ -1,4 +1,4 @@
-// Routes: host kinds and addresses, a contract's placement, a server routing a session's objects to an in-process
+// Routes: host kinds and addresses, a contract's host address, a server routing a session's objects to an in-process
 // worker (one `resolve` per address, `authorize` per principal), a guest's `ctx.get` on the server reaching the worker
 // as the guest, and a worker that drops and is resolved again.
 // Run from packages/chord:
@@ -26,7 +26,7 @@ const Session = hostKind("session", { id: str() });
 const Notes = remote("example.notes", {
 	version: 1,
 	params: { session: str() },
-	placement: ({ session }) => Session({ id: session }),
+	hostAddress: ({ session }) => Session({ id: session }),
 	variants: {
 		editor: {
 			state: { notes: arr(str()) },
@@ -36,10 +36,11 @@ const Notes = remote("example.notes", {
 	},
 });
 
-// The lobby lives on the server (no placement): its handler gets notes for whoever calls it.
+// The lobby lives on the server: its handler gets notes for whoever calls it.
 const Lobby = remote("example.lobby", {
 	version: 1,
 	params: {},
+	hostAddress: () => Server(),
 	variants: { visitor: { methods: { peek: method(obj({ session: str() }), str()) } } },
 });
 
@@ -143,8 +144,8 @@ await guest.get(Notes, { session: "S2" }, context).catch((error) => {
 const lobby = await guest.get(Lobby, {}, context);
 console.log("guest via the lobby:", await lobby.peek({ session: "S1" }, context));
 
-// 5. The worker drops: references go loading, the route resolves the address again after its backoff (1 s), and
-// the new worker (a fresh run, empty notes here) binds them again.
+// 5. The worker drops: references go loading, the route resolves the address again at once (its link had completed
+// its handshake), and the new worker (a fresh run, empty notes here) binds them again.
 const states: string[] = [];
 const watch = await notes.state.watch(context);
 watch.start(async (call) => {

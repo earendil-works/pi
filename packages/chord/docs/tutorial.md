@@ -45,11 +45,12 @@ shuts down its objects and connections.
 
 Before callers can use an object, they need to agree on its name and members.
 That agreement is a **contract**: a runtime value that also gives TypeScript its
-types. A **schema** describes a value's shape. We use TypeBox's `Type` to write
-schemas. `method(args, result)` declares a method by its argument and result
-schemas: `method()` takes no arguments and returns nothing, and
-`method(undefined, Type.String())`, used below, takes no arguments and returns a
-string.
+types. A **schema** describes a value's shape: plain JSON Schema, which we write
+with the builders of `@earendil-works/pi-schema` (`obj`, `str`, `num`, ...;
+`{ open: true }` lets an object carry fields it does not name).
+`method(args, result)` declares a method by its argument and result schemas:
+`method()` takes no arguments and returns nothing, and
+`method(undefined, str())`, used below, takes no arguments and returns a string.
 
 Start with a label for a named list. `local` means only code inside this host
 can reach it. The input `{ list: "family" }` identifies which list we want;
@@ -59,8 +60,8 @@ it is not an argument to `label`.
 ```ts
 const TodoLabel = local("tutorial.todos", {
 	version: 1,
-	input: Type.Object({ list: Type.String() }),
-	members: { label: method(undefined, Type.String()) },
+	input: obj({ list: str() }, { open: true }),
+	members: { label: method(undefined, str()) },
 });
 ```
 
@@ -116,17 +117,17 @@ name, because it holds nothing a reload must keep.
 
 <!-- example:03-contract -->
 ```ts
-const Todo = Type.Object({ text: Type.String(), done: Type.Boolean() });
-const Rows = Type.Array(Todo);
+const Todo = obj({ text: str(), done: bool() }, { open: true });
+const Rows = arr(Todo);
 const TodoStore = local("tutorial.todos", {
 	version: 1,
-	input: Type.Object({ list: Type.String() }),
+	input: obj({ list: str() }, { open: true }),
 	members: {
-		label: method(undefined, Type.String()),
+		label: method(undefined, str()),
 		rows: Rows,
-		openCount: Type.Number(),
-		add: method(Type.Object({ text: Type.String() })),
-		finish: method(Type.Object({ index: Type.Integer() })),
+		openCount: num(),
+		add: method(obj({ text: str() }, { open: true })),
+		finish: method(obj({ index: int() }, { open: true })),
 		reset: method(Rows),
 	},
 });
@@ -230,13 +231,13 @@ to a declared resource, without reading the resource during the factory.
 ```ts
 const Database = local("tutorial.database", {
 	version: 1,
-	input: Type.Object({}),
+	input: obj({}, { open: true }),
 	members: { db: opaque<{ saved: string[] }>("tutorial.database@1") },
 });
 const SavedTodos = local("tutorial.saved-todos", {
 	version: 1,
-	input: Type.Object({ list: Type.String() }),
-	members: { add: method(Type.Object({ text: Type.String() })) },
+	input: obj({ list: str() }, { open: true }),
+	members: { add: method(obj({ text: str() }, { open: true })) },
 });
 const host = createHost({ self: "server" });
 let opens = 0;
@@ -338,13 +339,13 @@ puts every `Todos` object on the host named `server`. Section 6 uses that.
 ```ts
 const Todos = remote("tutorial.todo-view", {
 	version: 1,
-	input: Type.Object({ list: Type.String() }),
+	input: obj({ list: str() }, { open: true }),
 	host: hostNamed("server"),
 	variants: {
 		viewer: { state: { rows: Rows } },
 		editor: {
 			state: { rows: Rows },
-			methods: { add: method(Type.Object({ text: Type.String() })) },
+			methods: { add: method(obj({ text: str() }, { open: true })) },
 		},
 	},
 });
@@ -499,8 +500,8 @@ test; they are not stored application state.
 ```ts
 const Activity = local("tutorial.activity", {
 	version: 1,
-	input: Type.Object({}),
-	members: { seen: Type.Number() },
+	input: obj({}, { open: true }),
+	members: { seen: num() },
 });
 const host = createHost({ self: "server" });
 host.serve(TodoStore, todoFactory);
@@ -509,7 +510,7 @@ const seeded = Promise.withResolvers<void>();
 const stopped = Promise.withResolvers<void>();
 host.serve(Activity, (_input, _principal, self) => {
 	const todos = self.get(TodoStore, { list: "family" });
-	const seen = self.state("seen", Type.Number(), 0);
+	const seen = self.state("seen", num(), 0);
 	self.on("rows", todos.rows, (rows, ctx) => {
 		seen.replace(ctx, rows?.length ?? 0);
 		if (rows?.length === 1) observed.resolve();
@@ -570,7 +571,7 @@ default lifetime, `"referenced"`, are still created only when referenced.
 <!-- example:08 -->
 ```ts
 const Actions = defineRegistry<(ctx: Ctx) => Promise<number>>("tutorial.actions");
-const Menu = local("tutorial.menu", { version: 1, input: Type.Object({}) });
+const Menu = local("tutorial.menu", { version: 1, input: obj({}, { open: true }) });
 let click: (() => Promise<number>) | undefined;
 const storeFacet: Facet = {
 	name: "todo-store",
@@ -745,7 +746,7 @@ const { label: _label, ...members } = TodoStore.def.members;
 const RenamedStore = local("tutorial.todos", {
 	version: 2,
 	input: TodoStore.def.input,
-	members: { ...members, heading: method(undefined, Type.String()) },
+	members: { ...members, heading: method(undefined, str()) },
 });
 await host.reload([
 	{
@@ -890,7 +891,7 @@ tutorial's source-matching check, not by the application.
 ```ts
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { type Static, Type } from "typebox";
+import { arr, bool, int, num, obj, type Static, str } from "@earendil-works/pi-schema";
 import { it, onTestFinished } from "vitest";
 import {
 	type Ctx,

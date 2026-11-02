@@ -87,7 +87,47 @@ export type CommitFence = {
 	adopt(seq: number, ids: readonly number[]): void;
 };
 
-/** What the open host gives the store: its `storage_failed` listener and its batch, in which adapters adopt (§1.3). */
+/**
+ * One commit of a series (`ChordStore.commitSeries`): its own checks, which write nothing, and its writes. The checks
+ * read through the commit's step, which sees what the series' earlier commits wrote.
+ */
+export type SeriesCommit = {
+	/** Throws to refuse the commit: the series stops before it, the commits before it stand. */
+	check(step: Step): Promise<void>;
+	readonly writes: readonly StagedWrite[];
+};
+
+/** What a series stored: how many of its commits, and why the next one was refused, if one was. */
+export type SeriesResult = { readonly stored: number; readonly refused?: unknown };
+
+/**
+ * A series as its transaction leaves it: each stored commit's seq and created documents; once a commit wrote, the last
+ * seq, the allocator's value after it and the table records the series changed; the commits that wrote and the
+ * statements run.
+ */
+type Series = {
+	readonly stored: readonly { readonly seq: number; readonly created: readonly number[] }[];
+	readonly last:
+		| { readonly seq: number; readonly nextId: number; readonly tables: ReadonlyMap<string, TableRecord> }
+		| undefined;
+	readonly written: number;
+	readonly statements: number;
+};
+
+/**
+ * A series while its transaction runs: each stored commit's seq and created documents, its last step that wrote, the
+ * allocator's value after it, the table records it changed (a copy of the catalog, made once one changed) and the
+ * statements run.
+ */
+type SeriesProgress = {
+	readonly stored: { readonly seq: number; readonly created: readonly number[] }[];
+	last: Step | undefined;
+	nextId: number;
+	changed: Map<string, TableRecord> | undefined;
+	statements: number;
+};
+
+/** What the open host gives the store: its `storage_failed` listener and its batch, in which adapters publish (§1.3). */
 export type Attachment = {
 	readonly failed: (error: unknown) => void;
 	readonly batch: Batch;
@@ -135,6 +175,8 @@ export class ChordStore implements Store {
 	/** The open host's listener for `storage_failed` (told once) and batch; one host per store (rule 7). */
 	#attachment: Attachment | undefined;
 	#closing: Promise<void> | undefined;
+	/** The versions migrations of tables announced (`announceTable`), by SQL name, until their last commit. */
+	readonly #announced = new Map<string, number>();
 	/** The recorded tables, by SQL name; changed only after a step's `COMMIT`. */
 	readonly #catalog: Map<string, TableRecord>;
 	/** The ends of the exports holding the queue or waiting for it, which closing the store calls. */
@@ -173,7 +215,7 @@ export class ChordStore implements Store {
 		return this.#ids.mint();
 	}
 
-	/** The open host's batch, in which an adapter adopts its commits; `undefined` without a host. */
+	/** The open host's batch, in which an adapter publishes its commits; `undefined` without a host. */
 	get batch(): Batch | undefined {
 		return this.#attachment?.batch;
 	}
@@ -217,6 +259,25 @@ export class ChordStore implements Store {
 		return this.#catalog.get(name);
 	}
 
+	/**
+	 * The version table `name` is at or is being migrated to: the recorded one, or a higher one a migration announced
+	 * before its first commit (`announceTable`), so an old handle is refused before its SQL could queue behind the
+	 * migration's DDL (fix round 1, Sol 8).
+	 */
+	tableVersion(name: string): number | undefined {
+		const recorded = this.#catalog.get(name)?.version;
+		const announced = this.#announced.get(name);
+		return announced === undefined || (recorded !== undefined && recorded >= announced) ? recorded : announced;
+	}
+
+	/** Announces a migration of table `name` to `version` until the returned withdrawal (after its last commit). */
+	announceTable(name: string, version: number): () => void {
+		this.#announced.set(name, version);
+		return () => {
+			if (this.#announced.get(name) === version) this.#announced.delete(name);
+		};
+	}
+
 	/** Attaches the open host; a store attached to an open host is refused (rule 7). */
 	attach(attachment: Attachment): void {
 		if (this.#attachment !== undefined) {
@@ -250,20 +311,28 @@ export class ChordStore implements Store {
 	}
 
 	/**
-	 * An adapter's commit (§1.3): `commit` admitting every write, its adoption run in the attached host's batch
-	 * (`batch.within`: it joins a running batch or opens one), plainly without a host. Durable's `adopt` publishes inside
-	 * it, so Chord sources over Durable's views are marked in the step.
+	 * Commits `commits` in one backend transaction when the commit queue reaches them, one seq each, in order: each
+	 * commit's `check`, which writes nothing, then its writes as `commit` writes them, with its own outbox commit and the
+	 * metadata (a commit without writes takes no seq: it stands at the one before). A `check` that throws refuses its
+	 * commit: the series stops there and the transaction commits the ones before it. A check whose backend statement
+	 * failed, and a throw of a commit's writes, roll the whole series back and reject with that error, the store going
+	 * on (D4); any other failure is an unknown outcome that stops the store, as for `commit`. After `COMMIT`,
+	 * `receive(index, seq, ids)` is called per stored commit, in order, before the next step starts (`ids`: its created
+	 * documents). Resolves with what it stored.
 	 */
-	commitInBatch(writes: readonly StagedWrite[], adopt: (seq: number) => void, context: Context): Promise<number> {
-		const fence: CommitFence = {
-			admit: () => true,
-			adopt: (seq) => {
-				const batch = this.#attachment?.batch;
-				if (batch === undefined) adopt(seq);
-				else batch.within(() => adopt(seq), context);
-			},
-		};
-		return this.commit(writes, fence, context);
+	commitSeries(
+		commits: readonly SeriesCommit[],
+		receive: (index: number, seq: number, ids: readonly number[]) => void,
+		context: Context,
+	): Promise<SeriesResult> {
+		try {
+			this.assertUsable();
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		const series = this.#tail.then(() => this.#series(commits, receive, context));
+		this.#tail = series.then(NOTHING, NOTHING);
+		return series;
 	}
 
 	/**
@@ -365,7 +434,10 @@ export class ChordStore implements Store {
 		try {
 			done = await this.#db.transaction(async (executor) => {
 				try {
-					return await this.#write(executor, seq, writes);
+					const step = new Step(executor, seq, this.#ids, this.#catalog);
+					const nextId = await this.#write(step, writes);
+					await writeMeta(step, nextId);
+					return { step, nextId };
 				} catch (error) {
 					thrown = error;
 					throw error;
@@ -393,15 +465,157 @@ export class ChordStore implements Store {
 	}
 
 	/**
-	 * The step's writes inside its backend transaction: each staged write in its phase, the catalog, the outbox commit,
-	 * the metadata. The allocator's value is taken once, after the writes applied (mints meanwhile only raise it).
+	 * A series inside one backend transaction: per commit a step at the next seq, its check (a throw refuses it, unless
+	 * one of its statements failed), then its writes; then, after `COMMIT`, memory and the receipts as after `#step`.
 	 */
-	async #write(
+	async #series(
+		commits: readonly SeriesCommit[],
+		receive: (index: number, seq: number, ids: readonly number[]) => void,
+		context: Context,
+	): Promise<SeriesResult> {
+		this.assertUsable();
+		// Past the safe range seqs stop counting exactly (a later one would repeat): the store cannot number further. Only
+		// a commit with writes takes a seq, as for `commit`.
+		let seqs = 0;
+		for (const commit of commits) if (commit.writes.length > 0) seqs++;
+		if (this.#lastSeq + seqs > Number.MAX_SAFE_INTEGER) {
+			throw this.#fail(new Error("store: no seq past Number.MAX_SAFE_INTEGER"));
+		}
+		let thrown: unknown = NONE;
+		let refused: { readonly error: unknown } | undefined;
+		let done: Series;
+		try {
+			done = await this.#db.transaction(async (executor) => {
+				try {
+					return await this.#writeSeries(executor, commits, (error) => {
+						refused = { error };
+					});
+				} catch (error) {
+					thrown = error;
+					throw error;
+				}
+			});
+		} catch (error) {
+			// The facade rolled back and rejects with the series' own error: the store goes on (D4).
+			if (error === thrown) throw error;
+			throw this.#fail(error);
+		}
+		// `COMMIT` returned: the stored commits are durable, and memory follows.
+		const { stored, last, written, statements } = done;
+		if (last !== undefined) {
+			this.#lastSeq = last.seq;
+			this.#committedNextId = last.nextId;
+			for (const [name, record] of last.tables) this.#catalog.set(name, record);
+		}
+		const metrics = context.telemetry.metrics;
+		metrics?.counter("chord.store.commits").add(written);
+		metrics?.counter("chord.store.statements").add(statements);
+		try {
+			for (const [index, { seq, created }] of stored.entries()) receive(index, seq, created);
+		} catch (error) {
+			throw this.#fail(error);
+		}
+		return refused === undefined ? { stored: stored.length } : { stored: stored.length, refused: refused.error };
+	}
+
+	/**
+	 * The commits of a series in its backend transaction, until one is refused (`refuse`): each commit's check, then its
+	 * writes; the metadata once, at the end.
+	 */
+	async #writeSeries(
 		executor: SqliteExecutor,
-		seq: number,
-		writes: readonly StagedWrite[],
-	): Promise<{ readonly step: Step; readonly nextId: number }> {
-		const step = new Step(executor, seq, this.#ids, this.#catalog);
+		commits: readonly SeriesCommit[],
+		refuse: (error: unknown) => void,
+	): Promise<Series> {
+		const calls = { failed: false };
+		const watched = watchCalls(executor, calls);
+		const progress: SeriesProgress = {
+			stored: [],
+			last: undefined,
+			nextId: this.#ids.value,
+			changed: undefined,
+			statements: 0,
+		};
+		for (const commit of commits) {
+			const refusal = await this.#checkCommit(commit, watched, calls, progress);
+			if (refusal !== undefined) {
+				refuse(refusal.error);
+				break;
+			}
+			await this.#writeCommit(commit, executor, progress);
+		}
+		return this.#closeSeries(progress);
+	}
+
+	/**
+	 * Runs `commit`'s check on a step at the series' next seq whose backend calls are watched; resolves with its refusal,
+	 * if it refused. A check one of whose backend calls failed throws instead: a failure, not a refusal.
+	 */
+	async #checkCommit(
+		commit: SeriesCommit,
+		watched: SqliteExecutor,
+		calls: { failed: boolean },
+		progress: SeriesProgress,
+	): Promise<{ readonly error: unknown } | undefined> {
+		const step = new Step(watched, this.#nextSeq(progress), this.#ids, progress.changed ?? this.#catalog);
+		calls.failed = false;
+		try {
+			await commit.check(step);
+			return undefined;
+		} catch (error) {
+			if (calls.failed) throw error;
+			return { error };
+		} finally {
+			progress.statements += step.statements;
+		}
+	}
+
+	/**
+	 * Writes `commit` on its own step at the series' next seq (`#write`), unwatched, and keeps the table records it
+	 * changed in a copy of the catalog, made only once one changed; a commit without writes takes no seq.
+	 */
+	async #writeCommit(commit: SeriesCommit, executor: SqliteExecutor, progress: SeriesProgress): Promise<void> {
+		const seq = this.#nextSeq(progress);
+		if (commit.writes.length === 0) {
+			progress.stored.push({ seq: seq - 1, created: [] });
+			return;
+		}
+		const step = new Step(executor, seq, this.#ids, progress.changed ?? this.#catalog);
+		progress.nextId = await this.#write(step, commit.writes);
+		progress.statements += step.statements;
+		if (step.tables.size > 0) {
+			progress.changed ??= new Map(this.#catalog);
+			for (const [name, record] of step.tables) progress.changed.set(name, record);
+		}
+		progress.last = step;
+		progress.stored.push({ seq, created: step.created });
+	}
+
+	/** The seq the series' next commit takes. */
+	#nextSeq(progress: SeriesProgress): number {
+		return (progress.last?.seq ?? this.#lastSeq) + 1;
+	}
+
+	/** Ends the series' writes with the metadata, once, after its last commit that wrote; returns what memory takes. */
+	async #closeSeries(progress: SeriesProgress): Promise<Series> {
+		const { stored, last, nextId, changed, statements } = progress;
+		if (last === undefined) return { stored, last: undefined, written: 0, statements };
+		await writeMeta(last, nextId);
+		return {
+			stored,
+			last: { seq: last.seq, nextId, tables: changed ?? new Map() },
+			written: last.seq - this.#lastSeq,
+			statements: statements + 1,
+		};
+	}
+
+	/**
+	 * The step's writes inside its backend transaction: each staged write in its phase, the catalog, the outbox commit.
+	 * Returns the allocator's value, taken once, after the writes applied (mints meanwhile only raise it); the metadata
+	 * (`writeMeta`) is the caller's.
+	 */
+	async #write(step: Step, writes: readonly StagedWrite[]): Promise<number> {
+		const seq = step.seq;
 		const recorded: StoreWrite[] | undefined = this.#outbox !== undefined ? [] : undefined;
 		for (const order of ORDER) {
 			for (const write of writes) {
@@ -421,8 +635,7 @@ export class ChordStore implements Store {
 				JSON.stringify(recorded),
 			);
 		}
-		await step.run(`UPDATE ${TABLES.meta} SET last_seq = ?, next_id = ? WHERE singleton = 1`, seq, nextId);
-		return { step, nextId };
+		return nextId;
 	}
 
 	/**
@@ -514,6 +727,33 @@ export class ChordStore implements Store {
 		}
 		return storageFailed(error);
 	}
+}
+
+/** Records `seq`, the step's, as the store's last, and the allocator's value `nextId`. */
+function writeMeta(step: Step, nextId: number): Promise<void> {
+	return step.run(`UPDATE ${TABLES.meta} SET last_seq = ?, next_id = ? WHERE singleton = 1`, step.seq, nextId);
+}
+
+/**
+ * `executor`, setting `calls.failed` when one of its calls throws, synchronously or by rejecting, with any value: a
+ * check that throws then failed in the backend, not by its own decision.
+ */
+function watchCalls(executor: SqliteExecutor, calls: { failed: boolean }): SqliteExecutor {
+	const watched = async <T>(call: () => Promise<T>): Promise<T> => {
+		try {
+			return await call();
+		} catch (error) {
+			calls.failed = true;
+			throw error;
+		}
+	};
+	return {
+		exec: (sql) => watched(() => executor.exec(sql)),
+		run: (sql, ...params) => watched(() => executor.run(sql, ...params)),
+		runCounted: (sql, ...params) => watched(() => executor.runCounted(sql, ...params)),
+		get: (sql, ...params) => watched(() => executor.get(sql, ...params)),
+		all: (sql, ...params) => watched(() => executor.all(sql, ...params)),
+	};
 }
 
 /** The `unavailable/storage_failed` error of a stopped store, its backend error as the cause. */

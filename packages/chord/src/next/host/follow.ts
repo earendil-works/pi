@@ -136,7 +136,7 @@ export class FollowSource extends Source {
 		return watch;
 	}
 
-	/** A subscriber of an ended source (a reference's watch through its member source) ends `ended` at once. */
+	/** A subscriber of an ended source (a reference's watch through its member) ends `ended` at once. */
 	override subscribe(subscriber: Subscriber): void {
 		if (this.#over) subscriber.end(ENDED);
 		else super.subscribe(subscriber);

@@ -133,7 +133,7 @@ export function toToolDeclaration(tool: Tool): Tool {
  * Whether two tools declare the same interface to the model.
  *
  * Both sides go through {@link toToolDeclaration} first: its JSON round-trip drops the
- * typebox symbol keys and `undefined` fields that a structural comparison would see, and
+ * schema metadata keys (TypeBox's non-enumerable kind marks) and `undefined` fields that a structural comparison would see, and
  * builds both objects with the same key order, so comparing the serialized declarations
  * is exact. This avoids a deep-equal dependency in a browser-safe package.
  */

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { obj, str } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import {
 	type Ctx,
@@ -26,8 +26,8 @@ const principalKey = (principal: Principal): string =>
 
 const Who = local("t.who", {
 	version: 1,
-	input: Type.Object({}),
-	members: { who: method(undefined, Type.String()) },
+	input: obj({}, { open: true }),
+	members: { who: method(undefined, str()) },
 });
 
 describe("principals", () => {
@@ -86,9 +86,9 @@ describe("principals", () => {
 	it("a child's parent acts as the principal the child gave `connect`; relayed callers keep theirs", async () => {
 		const Echo = remote("t.echo", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			host: hostNamed("worker"),
-			variants: { main: { methods: { who: method(undefined, Type.String()) } } },
+			variants: { main: { methods: { who: method(undefined, str()) } } },
 		});
 		const server = createHost<Principal>({ name: "server", self: { kind: "host" }, principalKey });
 		const [down, up] = memoryLinkPair();

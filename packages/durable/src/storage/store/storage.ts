@@ -8,6 +8,7 @@ import {
 	type Claimant,
 	findDocumentEntry,
 	listDocumentEntries,
+	type SeriesCommit,
 	type Store,
 	StoreOwnerTables,
 } from "@earendil-works/chord/next";
@@ -15,12 +16,12 @@ import type { SqliteExecutor } from "@earendil-works/chord/sqlite";
 import { StorageRequestError } from "../../errors.ts";
 import { idFromNumber, seqFromNumber } from "../../ids.ts";
 import type {
+	CommitResult,
 	ConversationId,
 	ConversationQuery,
 	ConversationRecord,
 	Cursor,
 	DocumentAddress,
-	DocumentCopySource,
 	DocumentId,
 	DocumentPoint,
 	DocumentQuery,
@@ -84,8 +85,8 @@ function cursorId(cursor: Cursor | undefined): number | undefined {
 
 /**
  * Durable's `Storage` on Chord's store (slice 6b D1, D2, §2): its records as declared tables under an owner name, its
- * documents in the store's documents engine, its ids from the store's one allocator, its commits as one composite
- * write of the store's commit step, adopted in the host's batch. Several may share a store under distinct owner names
+ * documents in the store's documents engine, its ids from the store's one allocator, each commit call as one series
+ * of the store's commit queue (one backend transaction, one seq per batch), published in the host's batch. Several may share a store under distinct owner names
  * (claims); the app owns the store, and `close` leaves it open.
  */
 export class StoreStorage implements Storage {
@@ -144,15 +145,41 @@ export class StoreStorage implements Storage {
 		}
 	}
 
-	commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, context: Context): Promise<Seq> {
-		return this.#call(async () => {
+	/**
+	 * Commit `batches` as one series of the store (`ChordStore.commitSeries`): one backend transaction, one seq per
+	 * batch, each batch's checks (at staging, then against the state the earlier ones left) before its writes.
+	 */
+	commit(
+		batches: readonly (readonly StorageWrite[])[],
+		receive: (index: number, seq: Seq) => void,
+		context: Context,
+	): Promise<CommitResult> {
+		return this.#call(() => {
 			const store = this.#store;
-			const commit = new DurableCommit(writes, this.#owner, this.#tables, (id) => store.ids.raise(id), context);
-			await commit.resolveCopies((source) => this.#copySource(source, context));
-			// An empty commit stages nothing: it takes no seq, adopted at `lastSeq`.
-			const staged = writes.length === 0 ? [] : [commit];
-			return seqFromNumber(await store.commitInBatch(staged, (seq) => adopt(seqFromNumber(seq)), context));
+			const raise = (id: number): void => store.ids.raise(id);
+			const commits: SeriesCommit[] = [];
+			for (const writes of batches) {
+				try {
+					commits.push(new DurableCommit(writes, this.#owner, this.#tables, raise, context));
+				} catch (error) {
+					// Staging runs Durable's checks of the batch itself: a refusal in its turn, the batches before it stored.
+					commits.push({ check: () => Promise.reject(error), writes: [] });
+					break;
+				}
+			}
+			return store.commitSeries(commits, (index, seq) => receive(index, seqFromNumber(seq)), context);
 		});
+	}
+
+	/**
+	 * Run a commit's publication in the attached host's batch (`batch.within`: it joins a running batch, opens one, or
+	 * runs next while one sends): Chord sources over Durable's views are marked in one batch per commit. Plainly without
+	 * a host.
+	 */
+	publishing(publish: () => void, context: Context): void {
+		const batch = this.#store.batch;
+		if (batch === undefined) publish();
+		else batch.within(publish, context);
 	}
 
 	mintId<I extends Id<string>>(): Promise<I> {
@@ -524,15 +551,6 @@ export class StoreStorage implements Storage {
 				queries.records(rows, values, context);
 				return page(values, limit, start.order);
 			});
-	}
-
-	/** A copy's source read at its point, before the step (S11); a request error is thrown here, outside the read. */
-	async #copySource(source: DocumentCopySource, context: Context) {
-		const read = await this.#store.readTransaction(
-			(executor) => readAt(executor, source.id, source.at, this.#owner),
-			context,
-		);
-		return documentOf(read);
 	}
 }
 

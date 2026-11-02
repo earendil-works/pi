@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ChordError } from "../../../src/next/data/index.ts";
 import type { HostLink } from "../../../src/next/remote/host-link.ts";
 import { Path, type Upstream } from "../../../src/next/remote/path.ts";
 
@@ -66,5 +67,24 @@ describe("a path", () => {
 		expect(path.held).toBe(false);
 		path.connected(linkOf("2"));
 		expect(log).toEqual(["a@1", "b@1"]);
+	});
+
+	it("says what changed: a holder attached without a link, a drop, the last release; fails its holders waiting", () => {
+		const events: string[] = [];
+		const failed: string[] = [];
+		const path = new Path((event) => events.push(event.kind));
+		const a = {
+			attach: () => {},
+			dropped: () => {},
+			unreachable: (error: { readonly message: string }) => void failed.push(error.message),
+		} as unknown as Upstream;
+		path.attach(a);
+		path.unreachable(new ChordError({ code: "unavailable", message: "no worker" }));
+		const link = linkOf("1");
+		path.connected(link);
+		path.disconnected(link);
+		path.detach(a);
+		expect(events).toEqual(["attached", "dropped", "released"]);
+		expect(failed).toEqual(["no worker"]);
 	});
 });

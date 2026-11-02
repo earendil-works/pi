@@ -1,0 +1,21 @@
+[
+    {
+        "description": "validate definition against metaschema",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "https://json-schema.org/draft/2020-12/schema"
+        },
+        "tests": [
+            {
+                "description": "valid definition schema",
+                "data": {"$defs": {"foo": {"type": "integer"}}},
+                "valid": true
+            },
+            {
+                "description": "invalid definition schema",
+                "data": {"$defs": {"foo": {"type": 1}}},
+                "valid": false
+            }
+        ]
+    }
+]

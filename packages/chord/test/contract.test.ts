@@ -1,25 +1,30 @@
 import assert from "node:assert/strict";
-import { Type } from "typebox";
+import { bool, num, obj, opt, str, unknown } from "@earendil-works/pi-schema";
 import { describe, it } from "vitest";
 import { bind, coverage, hostFamily, hostNamed, isChordError, local, method, opaque, remote } from "../src/index.ts";
 import { canonicalIdentity, fits, normalize } from "../src/schema.ts";
 
-const View = Type.Object({ text: Type.String() });
+const View = obj({ text: str() }, { open: true });
 
 const chatV1 = remote("t.chat", {
 	version: 1,
-	input: Type.Object({ session: Type.String(), conversation: Type.Number({ default: 0 }) }),
+	input: obj({ session: str(), conversation: num({ default: 0 }) }, { open: true }),
 	host: hostFamily("session:", "session"),
 	variants: {
 		viewer: { state: { view: View } },
 		participant: {
 			state: { view: View },
-			methods: { send: method(Type.Object({ text: Type.String() }), Type.Object({ id: Type.Number() })) },
+			methods: { send: method(obj({ text: str() }, { open: true }), obj({ id: num() }, { open: true })) },
 		},
 	},
 });
 
 describe("contracts", () => {
+	it("treats `format` as an annotation: an input with format email accepts any string", () => {
+		const Mail = local("t.mail", { version: 1, input: obj({ to: str({ format: "email" }) }) });
+		assert.deepEqual(normalize(Mail.input, { to: "nope" }, "input"), { to: "nope" });
+	});
+
 	it("normalizes input and omits defaults from the identity", () => {
 		const a = normalize(chatV1.input, { session: "s", extra: 1 }, "input");
 		assert.deepEqual(a, { session: "s", conversation: 0 });
@@ -39,12 +44,12 @@ describe("contracts", () => {
 	});
 
 	it("rejects reserved member names and opaque remote members", () => {
-		assert.throws(() => local("t.x", { version: 1, input: Type.Object({}), members: { status: method() } }));
+		assert.throws(() => local("t.x", { version: 1, input: obj({}, { open: true }), members: { status: method() } }));
 		assert.throws(() =>
 			remote("t.x", {
 				host: hostNamed("server"),
 				version: 1,
-				input: Type.Object({}),
+				input: obj({}, { open: true }),
 				variants: { a: { state: { h: opaque("x@1") as never } } },
 			}),
 		);
@@ -56,11 +61,11 @@ describe("contracts", () => {
 			variants: {
 				...chatV1.def.variants,
 				participant: {
-					state: { view: Type.Object({ text: Type.String(), extra: Type.Number() }) },
+					state: { view: obj({ text: str(), extra: num() }, { open: true }) },
 					methods: {
 						send: method(
-							Type.Object({ text: Type.String(), urgent: Type.Optional(Type.Boolean()) }),
-							Type.Object({ id: Type.Number(), at: Type.Number() }),
+							obj({ text: str(), urgent: opt(bool()) }, { open: true }),
+							obj({ id: num(), at: num() }, { open: true }),
 						),
 					},
 				},
@@ -77,8 +82,8 @@ describe("contracts", () => {
 					state: { view: View },
 					methods: {
 						send: method(
-							Type.Object({ text: Type.String(), urgent: Type.Boolean() }),
-							Type.Object({ id: Type.Number() }),
+							obj({ text: str(), urgent: bool() }, { open: true }),
+							obj({ id: num() }, { open: true }),
 						),
 					},
 				},
@@ -92,18 +97,18 @@ describe("contracts", () => {
 
 		const retyped = remote("t.chat", {
 			...chatV1.def,
-			variants: { ...chatV1.def.variants, viewer: { state: { view: Type.Object({ text: Type.Number() }) } } },
+			variants: { ...chatV1.def.variants, viewer: { state: { view: obj({ text: num() }, { open: true }) } } },
 		});
 		assert.match(coverage(retyped.description, chatV1.description) ?? "", /state/);
 	});
 
 	it("methods without arguments or result: described without them; their presence must match, a void consumer accepts a result", () => {
 		const of = (members: Parameters<typeof local>[1]["members"]) =>
-			local("t.methods", { version: 1, input: Type.Object({}), members }).description;
+			local("t.methods", { version: 1, input: obj({}, { open: true }), members }).description;
 		const none = of({ m: method() });
 		assert.deepEqual(none.variants[""]?.m, { kind: "method" });
-		const withArgs = of({ m: method(Type.String()) });
-		const withResult = of({ m: method(undefined, Type.Number()) });
+		const withArgs = of({ m: method(str()) });
+		const withResult = of({ m: method(undefined, num()) });
 		assert.equal(coverage(none, none), undefined);
 		assert.match(coverage(withArgs, none) ?? "", /arguments/, "the consumer sends none, the provider expects some");
 		assert.match(coverage(none, withArgs) ?? "", /arguments/, "the consumer sends some, the provider takes none");
@@ -124,15 +129,25 @@ describe("contracts", () => {
 	it("compares opaque members by name@version and function members structurally", () => {
 		const a = local("t.idx", {
 			version: 1,
-			input: Type.Object({}),
+			input: obj({}, { open: true }),
 			members: {
 				harness: opaque("h@1"),
-				onChange: method(Type.Function([Type.String()], Type.Void())),
+				onChange: method({ type: "function", parameters: [str()], returnType: { type: "void" } }),
 			},
 		});
 		const b = local("t.idx", { ...a.def, members: { ...a.def.members, harness: opaque("h@2") } });
 		assert.match(coverage(b.description, a.description) ?? "", /opaque/);
-		assert.ok(fits(Type.Function([Type.Unknown()], Type.Void()), Type.Function([Type.String()], Type.Void())));
-		assert.ok(!fits(Type.Function([Type.String()], Type.Void()), Type.Function([Type.Unknown()], Type.Void())));
+		assert.ok(
+			fits(
+				{ type: "function", parameters: [unknown()], returnType: { type: "void" } },
+				{ type: "function", parameters: [str()], returnType: { type: "void" } },
+			),
+		);
+		assert.ok(
+			!fits(
+				{ type: "function", parameters: [str()], returnType: { type: "void" } },
+				{ type: "function", parameters: [unknown()], returnType: { type: "void" } },
+			),
+		);
 	});
 });

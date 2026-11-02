@@ -1,5 +1,4 @@
 import type { JsonValue } from "@earendil-works/chord";
-import type { TSchema } from "@earendil-works/pi-ai";
 import type { Task } from "../types.ts";
 import type {
 	AnyTask,
@@ -20,7 +19,7 @@ export function defineExtension<Tool extends ToolRegistration = ToolRegistration
 }
 
 /** Identity function that types a tool: `args` from `parameters`, details from what it reports. */
-export function defineTool<TParameters extends TSchema, TDetails extends JsonValue = JsonValue>(
+export function defineTool<TParameters extends object, TDetails extends JsonValue = JsonValue>(
 	tool: ToolRegistration<TParameters, TDetails>,
 ): ToolRegistration<TParameters, TDetails> {
 	return tool;

@@ -1,4 +1,4 @@
-import { type Static, Type } from "typebox";
+import { obj, opt, type Static, str } from "@earendil-works/pi-schema";
 import type { AgentTool, AgentToolResult } from "../../src/types.ts";
 
 export interface GetCurrentTimeResult extends AgentToolResult<{ utcTimestamp: number }> {}
@@ -27,11 +27,11 @@ export async function getCurrentTime(timezone?: string): Promise<GetCurrentTimeR
 	};
 }
 
-const getCurrentTimeSchema = Type.Object({
-	timezone: Type.Optional(
-		Type.String({ description: "Optional timezone (e.g., 'America/New_York', 'Europe/London')" }),
-	),
-});
+const getCurrentTimeSchema = obj(
+	{ timezone: opt(str({ description: "Optional timezone (e.g., 'America/New_York', 'Europe/London')" })) },
+	// Open, as the tool accepted extra arguments before it moved from TypeBox.
+	{ open: true },
+);
 
 type GetCurrentTimeParams = Static<typeof getCurrentTimeSchema>;
 

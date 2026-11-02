@@ -36,7 +36,8 @@ const facet = defineFacet((host) => {
 		return { status: constant("connected") };
 	});
 	host.serve(Inbox, ({ user }, self) => {
-		// A dependency that fails fails this object transient too; it is retried the moment the dependency is live.
+		// A dependency that fails parks this object (`failed { waiting }`, no timer of its own, the factory not run
+		// again); it goes on the moment the dependency is live (31-parked-dependencies.ts).
 		const remote = self.get(Remote, {});
 		console.log(`${at()}: inbox ${user}, attempt`);
 		return { status: self.derive([remote.status], ([status]) => `${user}: ${status}`) };

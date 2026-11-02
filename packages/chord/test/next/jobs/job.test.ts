@@ -34,6 +34,7 @@ import {
 	loaded,
 	metered,
 	rejection,
+	Server,
 	type TestPrincipal,
 	transported,
 } from "../support.ts";
@@ -1057,11 +1058,12 @@ describe("keep-alive", () => {
 		const View = remote("app.view", {
 			version: 1,
 			params: {},
+			hostAddress: () => Server(),
 			variants: { v: { state: { running: arr(unknown()) } } },
 		});
 		let job: JobHandle<{ text: string }, string, undefined> | undefined;
 		let ran = false;
-		const server = createHost<TestPrincipal>({ principal: { kind: "server" }, onError: () => {} });
+		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		const facet = defineFacet<TestPrincipal>((h) =>
 			h.serve(View, (_, _principal, self) => {
 				job = self.job(Echo, {
@@ -1157,13 +1159,19 @@ describe("keep-alive", () => {
 
 describe("object end", () => {
 	type Revocation = { session: string };
-	const Jobs = remote("app.jobs", { version: 1, params: {}, variants: { v: { state: {} } } });
+	const Jobs = remote("app.jobs", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		variants: { v: { state: {} } },
+	});
 
 	it("revocation (R11): runs' signals fire with the end's error, the drain waits for them, no finish", async () => {
 		let job: JobHandle<{ text: string }, string, undefined> | undefined;
 		const finished: string[] = [];
 		let reason: unknown;
 		const server = createHost<TestPrincipal, Revocation>({
+			address: Server(),
 			principal: { kind: "server" },
 			revokedBy: (p) => (p.kind === "guest" ? [{ session: p.session }] : []),
 			onError: () => {},
@@ -1209,6 +1217,7 @@ describe("object end", () => {
 		const gate = Promise.withResolvers<void>();
 		const events: string[] = [];
 		const server = createHost<TestPrincipal, Revocation>({
+			address: Server(),
 			principal: { kind: "server" },
 			revokedBy: (p) => (p.kind === "guest" ? [{ session: p.session }] : []),
 			onError: () => {},

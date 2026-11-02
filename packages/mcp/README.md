@@ -36,7 +36,6 @@ Wrapping an MCP tool as a `pi-agent-core` `AgentTool`:
 ```typescript
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { toLlmContent } from "@earendil-works/pi-mcp";
-import { Type } from "typebox";
 
 const tools: AgentTool[] = (await client.listTools()).map((tool) => ({
 	// Providers allow at most 64 characters of [A-Za-z0-9_-].
@@ -44,7 +43,7 @@ const tools: AgentTool[] = (await client.listTools()).map((tool) => ({
 	label: tool.title ?? tool.name,
 	description: tool.description ?? tool.name,
 	// Providers require an object schema, and some reject one without `properties`.
-	parameters: Type.Unsafe({ ...tool.inputSchema, type: "object", properties: tool.inputSchema.properties ?? {} }),
+	parameters: { ...tool.inputSchema, type: "object", properties: tool.inputSchema.properties ?? {} },
 	execute: async (_toolCallId, params, signal) => {
 		const result = await client.callTool(tool.name, params as Record<string, unknown>, { signal });
 		// MCP reports tool failures in the result instead of as a protocol error.

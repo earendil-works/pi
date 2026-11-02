@@ -257,15 +257,15 @@ registry.install(createCodingTools({ images: await createNodePhotonImages() }));
 
 A model without image input sees a placeholder instead of the image, and `read` says so in a diagnostic. `/images/node` prepares images in a worker thread, so a large photo (a second or two of work) never blocks the event loop; the worker exits after 30 s without images, freeing Photon's WebAssembly memory (`createNodePhotonImages({ worker: false, idleMs })`). Elsewhere, `createPhotonImages()` and `/images/cloudflare` work on the calling thread, and decoding takes the image's full size in WebAssembly memory, which does not shrink again; leave the processor out on memory-constrained hosts such as Cloudflare Workers unless images stay small.
 
-Define your own tool with a TypeBox schema. `defineTool()` types `args` from `parameters`, which the Harness validates before `execute()`. `api.output()` streams running output, which becomes the result when `execute()` returns no `output`:
+Define your own tool with a JSON Schema, built here with `@earendil-works/pi-schema`. `defineTool()` types `args` from `parameters` (through pi-schema's `Static`; other JSON Schema gives `unknown`), which the Harness coerces and validates before `execute()`. `api.output()` streams running output, which becomes the result when `execute()` returns no `output`:
 
 ```typescript
-import { Type } from "@earendil-works/pi-ai";
+import { num, obj, str } from "@earendil-works/pi-schema";
 
 const count = defineTool({
 	name: "count",
 	description: "Count from 1 to n",
-	parameters: Type.Object({ n: Type.Number() }),
+	parameters: obj({ n: num() }),
 	execute: async (args, api) => {
 		for (let i = 1; i <= args.n; i++) api.output(`${i}\n`);
 		return {};
@@ -282,8 +282,8 @@ A result has three channels: `output` for the model, `structuredOutput` for prog
 const lines = defineTool({
 	name: "lines",
 	description: "Count the lines of a file",
-	parameters: Type.Object({ path: Type.String() }),
-	structuredOutputSchema: Type.Object({ lines: Type.Number() }),
+	parameters: obj({ path: str() }),
+	structuredOutputSchema: obj({ lines: num() }),
 	execute: async (args, api, context) => {
 		const text = await readText(api, args.path, context);
 		const count = text.split("\n").length;
@@ -292,7 +292,7 @@ const lines = defineTool({
 });
 ```
 
-A missing, undeclared, or invalid `structuredOutput` turns a nested call's result into an error result with an `invalid_structured_output` diagnostic; for a call the model made, which never sees it, it is dropped and reported through `onReport`. An error result may omit it, and programs then find its text in a `tool_error` diagnostic; error results the Harness writes itself (blocked, invalid, interrupted, aborted) carry none, even when an `afterTool` hook returns one, and their `diagnostics` say what went wrong; one a hook turns into a success gives a schema-less tool's program its output. An `afterTool` hook that redacts a schema tool's `output` must redact its `structuredOutput` too. The built-in `bash` returns `{ output, truncated, fullOutputPath?, exitCode }`, where `output` is the retained tail the model sees, read with `api.retainedOutput()`, and answers a nonzero exit with an error result that still carries it.
+A missing, undeclared, or invalid `structuredOutput` turns a nested call's result into an error result with an `invalid_structured_output` diagnostic; for a call the model made, which never sees it, it is dropped and reported through `onReport`. An error result may omit it, and programs then find its text in a `tool_error` diagnostic; error results the Harness writes itself (blocked, invalid, interrupted, aborted) carry none, even when an `afterTool` hook returns one, and their `diagnostics` say what went wrong; one a hook turns into a success gives a schema-less tool's program its output. An `afterTool` hook that redacts a schema tool's `output` must redact its `structuredOutput` too. The built-in `bash` returns `{ output, truncated, fullOutputPath?, exitCode }`, where `output` is the retained tail the model sees, read with `api.retainedOutput()`, and answers a nonzero exit with an error result that still carries it. The built-in `read` returns a text file's text as a string and an image as its `ImageContent`, which code mode's `image()` shows.
 
 A later extension's tool with the same name replaces an earlier one where both are selected, and `wrapTool()` decorates whichever tool won:
 
@@ -312,7 +312,7 @@ A tool calls another tool with `api.executeTool()`, as a code mode script or an 
 const testsPass = defineTool({
 	name: "tests_pass",
 	description: "Run the test suite and say whether it passed",
-	parameters: Type.Object({}),
+	parameters: obj({}),
 	execute: async (_args, api, context) => {
 		const run = await api.executeTool("bash", { command: "npm test" }, context, { progress: false });
 		// Absent when bash did not finish, for example on a timeout.
@@ -659,7 +659,7 @@ const Guard = defineExtension({
 });
 ```
 
-- **Generation:** `beforeRequest` (replace the messages of one request), `afterResponse`, `onYield` (continue the run with another user message), `afterTools` (runs once a round's tools are done), and `afterRun` (tasks to run before the run ends, below).
+- **Generation:** `beforeRequest` (replace the messages of one request), `beforeProviderRequest` (replace the provider request body of one request, e.g. to set a provider-specific field), `afterResponse`, `onYield` (continue the run with another user message), `afterTools` (runs once a round's tools are done), and `afterRun` (tasks to run before the run ends, below).
 - **Tools:** `beforeTool` (block or rewrite arguments) and `afterTool` (replace the result). `afterTool` sees every result a tool task writes, also the error results the Harness writes itself (unavailable, invalid, blocked, interrupted, restart limit, aborted), told apart by their diagnostic code; past `settings.restartLimit` it no longer runs. On an abort it runs inside the abort handler, so a slow hook delays `abort()`.
 
 To limit a hook to some conversations, select its extension only there, for example with `configure({ extensions: { add: [Guard] } })`.
@@ -722,7 +722,7 @@ const Subagent: Extension = defineExtension({
 		defineTool({
 			name: "subagent",
 			description: "Delegate a self-contained task to a subagent and get its answer back.",
-			parameters: Type.Object({ task: Type.String() }),
+			parameters: obj({ task: str() }),
 			replay: "safe", // a rerun after a crash finds the same child and submission
 			execute: async (args, api, context) => {
 				const child = await api.commit(async (tx) => {
@@ -889,7 +889,7 @@ await database.transaction(async (transaction) => {
 });
 ```
 
-A custom backend's `commit(writes, adopt, context)` calls `adopt(seq)` once the batch is durable, synchronously and before its next commit starts, and then resolves with `seq`; a commit that fails before the batch is durable never calls it. `adopt` is the Session's in-memory adoption and publication of the batch, so memory and every view never show a partial log: inside it the Session's own observers run (views, task graph, scheduler, waits), and `subscribeCommits()` listeners, watch listeners and the code the commit wakes follow in microtasks, so at the backend's next `await` if it still works after `adopt` (as JSONL reclaims sidecars), before its `commit` resolves. `adopt` calls no Storage method and never throws; once it ran, the commit is published even if the backend then rejects, and the Session then fails. Custom backends can run the shared conformance suite, which checks this too, with any Vitest- or Jest-compatible runner:
+A custom backend's `commit(batches, receive, context)` stores `batches` in order, each as one atomic commit with its own seq, checked against the state the earlier ones left, in as few round trips as it can. It stops at the first batch its own checks refuse (global IDs, document actions, copy resolution): the batches before it stay stored, it and the later ones are not. Once they are durable it calls `receive(index, seq)` per stored batch, in order and synchronously, then resolves with `{ stored, refused? }`; it rejects for an unknown outcome (connection lost, a failed statement or `COMMIT`). `receive` is a durability receipt: the Session publishes each batch later, one at a time, so memory and every view never show a partial log. `receive` calls no Storage method and never throws. Custom backends can run the shared conformance suite, which checks this too, with any Vitest- or Jest-compatible runner:
 
 ```typescript
 import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
@@ -905,7 +905,7 @@ registerStorageConformance({ describe, expect, it }, "My Storage", async (use) =
 });
 ```
 
-The package root loads TypeBox, because the tool task validates arguments with pi-ai's `validateToolArguments()`. That costs about 23 MB of peak RSS unbundled, about 4 MB in a tree-shaken bundle.
+The package root loads pi-schema, because the tool task validates arguments with pi-ai's `validateToolArguments()`.
 
 ## Errors
 

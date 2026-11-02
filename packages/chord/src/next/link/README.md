@@ -51,14 +51,14 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
     fields: unsigned varints (ids, indexes, counts,
     lengths), length-prefixed UTF-8 strings, the incarnation as 16 and the fingerprint as 8 raw bytes, parts as
     length-prefixed bytes (decoded as views of the received message, never parsed), other JSON fields (a hold's
-    address and principal, errors) as length-prefixed JSON; a hold's optional fields behind one flags byte; a payload
+    address params and principal, errors) as length-prefixed JSON; a hold's optional fields behind one flags byte; a payload
     marked as carrying bytes adds its segments (count, lengths, raw bytes); `failed`'s `retryIn` as one more than it
     (0: absent). A part's length prefix is its length doubled, plus one when the part is deflated. A hold's `chain`
     as a count and 16 raw bytes per instance id, its `limit` as a varint. No outer length.
   - `textCodec`, for debugging: one JSON tuple per message with a short kind tag and positional fields (`["R", hold]`,
     `["c", call, hold, method, args?]`, `["b", [[hold, variant, [[member, value]…], [[member, error]…]?]…]]`, `["s",
-    [[hold, [[member, ops]…], [[member, error]…]?]…]]`, `["f", hold, "t" | "b", error, retryIn?]`, `["T", hold]` for
-    `retry`, `["l", hold]` for `loading`, `["a"]` ack, `["C"]` closed, `["p"]` ping, `["P"]` pong, …; a message with an origin wrapped as
+    [[hold, [[member, ops]…], [[member, error]…]?]…]]`, `["f", hold, "t" | "b", error, retryIn?]`, `["T", hold, hops]`
+    for `retry`, `["l", hold]` for `loading`, `["a"]` ack, `["C"]` closed, `["p"]` ping, `["P"]` pong, …; a message with an origin wrapped as
     `["@", origin, tuple]`); parts are
     spliced into the tuple as their JSON text and re-serialized at decode (one parse per part per hop, accepted for a
     debugging codec); a payload marked as carrying bytes ends with its segments' lengths, the segments following the
@@ -72,10 +72,10 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
 
 ## For Chord's layers (`internal.ts`)
 
-- `Message` (`message.ts`): the protocol's one tagged union, from the TypeBox schema `MESSAGE`: `hello { protocol,
+- `Message` (`message.ts`): the protocol's one tagged union, from the schema `MESSAGE`: `hello { protocol,
   incarnation, calls }` (`calls`: how many concurrent calls this side accepts per origin, its call window),
-  `hold { hold, type, version, fingerprint, params, address?, principal?, incarnation? }` (`address`: `{ kind, params }`
-  the caller's placement computed, it routes the hold; the provider places it by its params; absent for a type without placement; `principal` and `incarnation`: whom it acts for, read only
+  `hold { hold, type, version, fingerprint, params, address, principal?, incarnation? }` (`address`: `{ kind, params }`
+  the caller's `hostAddress` computed, it routes the hold; the provider places it by its params; `principal` and `incarnation`: whom it acts for, read only
   on a parent link; `chain?`: the instance ids of the activations waiting for the hold, at most 32, read only on a
   trusted link; `limit?`: the decoded limit per part of the link a relay admitted it on, read only on a parent link), `release`, `call { call, hold, method, args?, segments? }`, `abort`, `bound { holds: [{ hold,
   variant, members: [{ member, value }], failed }] }` (one message may bind several holds: first bindings, re-holds),
@@ -83,9 +83,11 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
   its origin), `closed { origin }` (a relay's downstream origin ended: its holds and calls go), `ping {}`, `pong {}`,
   `revoke { revocation }` (from the parent, applied with the child's own `revokedBy`; no origin), `failed { hold, cause,
   retryIn? }` (`retryIn`: the milliseconds left of the provider's backoff window, absent for a broken failure),
-  `loading { hold }` (the hold's object, or a relay's upstream, starts over), `retry { hold }` (the consumer asks for an
-  attempt now), `result { call, value?, segments? }`, `error`, `gone`. `error`, `gone` and a `failed` cause carry the
-  wire error format (`WireError`: a ChordError's JSON, or a plugin's code and message). `args` absent is a method without arguments,
+  `loading { hold }` (the hold's object, or a relay's upstream, starts over), `retry { hold, hops }` (the consumer
+  asks for an attempt now; `hops`, 1 to 16, is its budget: the first host sends 16, the host there passes it on to its
+  remote dependencies with one less, never at 0; relays forward it as it is), `result { call, value?, segments? }`,
+  `error`, `gone`. `error`, `gone` and a `failed` cause carry the wire error format (`WireError`: a ChordError's JSON,
+  or a plugin's code and message). `args` absent is a method without arguments,
   `value` absent is `null`; `segments` present marks a payload with byte segments (its method's schema has a `bytes()`
   leaf, `Snapshot.bytes`). `member`, `method` and `variant` are indexes into the hold's bound version's names, each
   variant's sorted (`variantNames`, `variantOrder` in contracts). Every kind but `hello`, `revoke`, `ping` and `pong` may carry

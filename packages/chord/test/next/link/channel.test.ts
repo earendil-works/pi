@@ -20,11 +20,18 @@ import {
 	RawPeer,
 	rawLinked,
 	rawProvider,
+	SERVER_ADDRESS,
+	Server,
 	testCodec,
 	transported,
 } from "../support.ts";
 
-const Thing = remote("app.thing", { version: 1, params: {}, variants: { only: { state: { n: int() } } } });
+const Thing = remote("app.thing", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	variants: { only: { state: { n: int() } } },
+});
 
 const hold = {
 	kind: "hold",
@@ -33,6 +40,7 @@ const hold = {
 	version: 1,
 	fingerprint: "0000000000000000",
 	params: "{}",
+	address: SERVER_ADDRESS,
 } as const;
 
 const problems = (errors: readonly HostError[]) =>

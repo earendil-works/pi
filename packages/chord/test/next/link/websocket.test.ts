@@ -4,7 +4,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { createHost, defineFacet } from "../../../src/next/host/index.ts";
 import { type WebSocketLike, webSocketLink } from "../../../src/next/link/index.ts";
-import { Notes, serveNotes, type TestPrincipal, transported } from "../support.ts";
+import { Notes, Server, serveNotes, type TestPrincipal, transported } from "../support.ts";
 
 /** A socket playing a WebSocket by hand. */
 class FakeSocket implements WebSocketLike {
@@ -93,7 +93,7 @@ describe("WebSocket links over a fake socket", () => {
 
 /** A `ws` server on a free loopback port whose connections a server host accepts, and a URL to it. */
 async function loopback(options: { readonly maxPayload?: number } = {}) {
-	const server = createHost<TestPrincipal>({ principal: { kind: "server" }, onError: () => {} });
+	const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 	await server.load([{ name: "@test/app", facet: defineFacet<TestPrincipal>((h) => void serveNotes(h)) }], context);
 	const wss = new WebSocketServer({ port: 0, host: "127.0.0.1", maxPayload: options.maxPayload });
 	await new Promise<void>((resolve) => wss.once("listening", resolve));
