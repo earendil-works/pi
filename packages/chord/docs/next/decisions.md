@@ -2256,6 +2256,11 @@ validation and copies the v2 kernel added around Delta.
   owner token file in the data directory readable only by the OS user running the app; from another machine a device
   pairing flow (the tool shows a code and a link, the owner approves in a browser, the tool stores the token), the
   token a session like any other, listed and revocable.
+- **The app kit, point 4: storage (owner, 2026-11-01, by voice: "yeah, I suppose that sounds right"):** in the data
+  directory the server has one store; each worker has its own directory under its worker kind, named by its address,
+  with its store in it; the kit opens and closes them. Plugins never use paths of the data directory: their state is
+  in their objects' documents and tables; a plugin that needs raw files gets a subdirectory of its own, owned by one of
+  its objects.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
