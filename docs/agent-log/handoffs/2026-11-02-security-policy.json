@@ -15,13 +15,14 @@
       "Defined default-deny, synchronous pre-execution interception, action-bound approval, fail-safe blocking/escalation, independent execution verification, traceability, and human authority as security requirements",
       "Clarified that prompt injection is assessed by demonstrated security impact rather than categorically excluded",
       "Defined NLT-maintained vulnerability scope, out-of-scope conditions, private reporting guidance, and incident handling",
-      "Updated docs/active-threads.md and marked contributor-gate PR #4 resolved because it had merged to main before this work was ported"
+      "Updated docs/active-threads.md and marked contributor-gate PR #4 resolved because it had merged to main before this work was ported",
+      "Reviewed open escalation issue #5 and aligned SECURITY.md fallback exactly with docs/escalations/README.md: stop and obtain the repository owner's established private reporting route if GitHub private reporting is unavailable; do not fall back to a public issue or invent/publish a contact address."
     ],
     "changes": [
       {
         "path": "SECURITY.md",
         "action": "updated",
-        "commit": "9b006018c8a328bfb2977341047e43b4f0b69b1b"
+        "commit": "85ec1868d20ec99a79f57516bd725407543fd60a"
       },
       {
         "path": "docs/active-threads.md",
@@ -37,8 +38,9 @@
       "type": "documentation-only",
       "runtime_tests": "Not run; no runtime code changed.",
       "content_review": "Cross-checked policy terminology and response process against repository governance and incident-response documentation.",
-      "disclosure_route": "GitHub private vulnerability reporting / Security Advisories when available; otherwise request a secure route through a private GitHub channel. No unverified email address added.",
-      "limitations": "Private vulnerability reporting enablement was not verified. Policy requirements do not assert that every runtime execution path already enforces them."
+      "disclosure_route": "GitHub private vulnerability reporting / Security Advisories when available; if unavailable, stop and obtain the repository owner's established private reporting route. Do not fall back to a public issue or invent/publish a contact address.",
+      "limitations": "Private vulnerability reporting enablement was not verified. Policy requirements do not assert that every runtime execution path already enforces them.",
+      "related_escalation": "Issue #5: PR #6 addresses disclosure-routing item 1 only. Main branch protection and Actions startup failures remain outstanding."
     },
     "prior_pr_context": {
       "pr": "https://github.com/NeuroLift-Technologies/nlt-pi/pull/4",
@@ -55,7 +57,7 @@
       "Confirm GitHub private vulnerability reporting is enabled for NeuroLift-Technologies/nlt-pi.",
       "After merge, verify SECURITY.md on main."
     ],
-    "pr_url": null,
+    "pr_url": "https://github.com/NeuroLift-Technologies/nlt-pi/pull/6",
     "no_direct_main_writes": true
   }
 }
