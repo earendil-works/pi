@@ -17,7 +17,8 @@
       "Updated docs/active-threads.md: marked governance adoption PR #3 resolved and opened NLTPI-CONTRIB-001 for this change set"
     ],
     "work_in_progress": [
-      "Repository settings and main branch-protection verification remain outstanding"
+      "Repository settings and main branch-protection verification remain outstanding",
+      "PR #4 opened against main; CI pending"
     ],
     "blockers": [
       "The exact two repository setting names and target values referenced by the instruction were not available in the retrieved context; do not guess them",
@@ -50,6 +51,6 @@
       "Attempted GET /repos/NeuroLift-Technologies/nlt-pi/branches/main/protection; GitHub returned HTTP 403"
     ],
     "tests_passing": false,
-    "pr_url": ""
+    "pr_url": "https://github.com/NeuroLift-Technologies/nlt-pi/pull/4"
   }
 }
