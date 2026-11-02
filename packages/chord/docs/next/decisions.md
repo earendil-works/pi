@@ -2327,6 +2327,15 @@ validation and copies the v2 kernel added around Delta.
   warning, success), apps may add roles; a user picks one dark and one light theme, the system preference chooses;
   `web` extras may name fonts and assets of the plugin under the page's CSP. Plugins contribute themes; they cannot
   change the app's base CSS or components. The open questions' recommendations taken.
+- **p3 meeting, 2026-11-02 (Mario and Armin; Armin's summary, relayed by the owner):** session sync: the session
+  repository talks to the server process to enumerate sessions; the session index in the server is updated by the
+  worker from events and sent to the server by RPC. Sync to R2 goes through Radius: Radius keys each session by id and
+  keeps its last sequence number, tells pi which sessions it has with their last sequence numbers (optimization: time
+  of last sync), and pi sends the delta commit log from that sequence number; R2 stores the SQLite file and the commit
+  log (SQLite DO to R2); sessions have an owner id. The index is a Chord table replicated like sessions; its entry is
+  updated only on a session metadata change, a session idle-state change and a subagent idle-state change. p3: each
+  host (server, worker, tui, web) has a kernel loading the plugins with contribution points via registries; p2's look
+  and feel made great; new session storage; hands (machine daemons) good, secure and connecting proactively.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
