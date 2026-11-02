@@ -925,6 +925,45 @@ describe("Coding Agent Tools", () => {
 			expect(output).toContain("lone-cr.txt-3- after");
 		});
 
+		// https://github.com/earendil-works/pi/issues/9276
+		it("should print overlapping context once and keep the last match's trailing context", async () => {
+			const testFile = join(testDir, "rg-context.txt");
+			writeFileSync(testFile, ["a", "match one", "b", "match two", "c", "d", "e", "match three", "f"].join("\n"));
+
+			const result = await grepTool.execute("test-call-rg-context", {
+				pattern: "match",
+				path: testFile,
+				context: 1,
+				limit: 2,
+			});
+			expect(getTextOutput(result).split("\n\n")[0]).toBe(
+				[
+					"rg-context.txt-1- a",
+					"rg-context.txt:2: match one",
+					"rg-context.txt-3- b",
+					"rg-context.txt:4: match two",
+					"rg-context.txt-5- c",
+				].join("\n"),
+			);
+		});
+
+		// https://github.com/earendil-works/pi/issues/9276
+		// Context lines come from ripgrep, which decodes UTF-16; rereading the file as UTF-8 corrupted them (#11423).
+		it("should decode UTF-16 files the same way with and without context", async () => {
+			const testFile = join(testDir, "utf16.txt");
+			writeFileSync(testFile, Buffer.from("\uFEFFbefore\nneedle 中文\nafter\n", "utf16le"));
+
+			const result = await grepTool.execute("test-call-utf16-context", {
+				pattern: "needle",
+				path: testFile,
+				context: 1,
+			});
+
+			expect(getTextOutput(result)).toBe(
+				["utf16.txt-1- before", "utf16.txt:2: needle 中文", "utf16.txt-3- after"].join("\n"),
+			);
+		});
+
 		// https://github.com/earendil-works/pi/issues/11203
 		it("should ignore RIPGREP_CONFIG_PATH", async () => {
 			const configFile = join(testDir, "rg-config");
