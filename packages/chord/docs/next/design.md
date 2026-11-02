@@ -2311,6 +2311,21 @@ Decision "Slice 11's points" and "Slice 11, P3" to "P9".
   the trusted launcher outside, confirming copy, open and attach on its own prompt); a component scope (`hold`,
   `watch`, `registry`, released on dispose, one `changed` callback for the app's redraw), no pi-tui dependency.
 
+### Messages and languages (after slice 11)
+
+Decision "Messages and languages in the app kit". Text people read is rendered per viewer, never by a server.
+
+- **Messages in code:** `defineMessages(namespace, { en, de, ... })` per plugin, in a shared `messages.ts` every
+  rendering facet imports; typed `t(key, ...args)`, keys and signatures from the first catalog; functions for plurals
+  and word order; `formatTime`, `formatNumber` through `Intl` in the viewer's locale.
+- **Translations** registry (`{ namespace, locale, messages, override? }`), per host: a translation plugin contributes
+  its shared catalog file from each facet that renders. Fallback key by key: the locale's base, then the first catalog
+  (reported once); conflicts: the first by plugin name wins. Catalogs never cross links.
+- **The locale** is a per-principal preference (device default, live switch, `lang` and `dir` on the page).
+- **Messages as data:** `t.message(key, ...args)` gives `{ namespace, key, params }` for state, notices and errors;
+  each client renders it with `t.render` (checked at runtime across a link). Prompts, model output, logs and error
+  codes are never translated.
+
 ### Channels
 
 WebSocket byte channels with acknowledged windows, separate from object links, wait for a second user after the

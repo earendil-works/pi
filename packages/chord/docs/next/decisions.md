@@ -2373,6 +2373,29 @@ validation and copies the v2 kernel added around Delta.
   strings anyway). Known gaps, accepted until Node closes them: the child can signal the user's processes
   (`process.kill`) and allocate memory outside its heap. Cost: one more Node process per terminal session (measured
   by the build against the worker). Back to a worker only if Node ships per-worker permissions.
+- **Messages and languages in the app kit (owner, 2026-11-03: "i18n proposal is a go"; proposal `docs/next/i18n/`):**
+  text people read is translated per viewer, never per server. (1) **Messages in code, per plugin:**
+  `defineMessages(namespace, { en: {...}, de: {...} })` in the app's shared API returns a typed `t`; the first catalog
+  defines the keys and argument types, every other catalog must match them (a missing key or a wrong argument is a
+  type error); values may be functions (plurals, parameters in each language's order); dates and numbers through
+  `Intl` helpers (`formatTime`, `formatNumber`) in the viewer's locale. Named keys (`newNote`), the English catalog the
+  source of truth. A plugin keeps its messages in one shared file (`messages.ts`) every facet that renders imports.
+  (2) **Languages are contributions:** a `Translations` registry (`{ namespace, locale, messages, override? }`) in the
+  shared API; `MessagesOf<typeof t>` types a translation; a missing key falls back to the locale's base (`pt-BR` to
+  `pt`), then to the first catalog, key by key, reported once; two contributions for one namespace and locale: the first
+  by plugin name wins, the other reported; a plugin's own catalogs are its built-in contributions, `override: true`
+  replaces one. Contributions are per host, so a translation plugin keeps its catalogs in a shared file and contributes
+  them from each facet that renders (web, tui; server and worker facets only when they render final text, an email or
+  a push notification). Catalogs never cross links (they hold functions). (3) **The locale is a user preference**
+  (kept per principal like the theme choice), defaulting to the browser's `navigator.languages` or the system locale
+  in the terminal, matched against the locales the catalogs offer; switching re-renders live (`useMessages(t)` on the
+  web, the scope's redraw in the terminal), nothing reloads; the kit sets `lang` and `dir` on the page's root
+  (right-to-left through logical CSS properties, the app's components). (4) **Servers and workers send keys, not
+  text:** `t.message(key, ...args)` builds typed data `{ namespace, key, params }` (a `Message<"notes">`) for object
+  state, notices, tool summaries and errors shown to people (a code plus parameters); each client renders it with
+  `t.render` in its own language (checked at runtime across a link: an unknown key shows the key). Never translated:
+  the model's prompts and answers, log lines, error codes. No translator file format now; an export/import tool to JSON
+  when someone needs it. Built after slice 11 (carry-over "After slice 11").
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
