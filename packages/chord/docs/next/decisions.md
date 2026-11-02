@@ -2242,6 +2242,15 @@ validation and copies the v2 kernel added around Delta.
   pairing, invite links, an ephemeral one for an IRC-like "pick a name and you're in": a fresh id with the name, no
   stored account, gone with the connection); an app picks, replaces or writes its own. Rejected: a fixed principal type
   with roles.
+- **The app kit, point 3: authentication (owner, 2026-11-01, by voice: "yeah, I guess something like that"):** (a)
+  no owner by loopback alone (any local process or OS user could claim it): the start script prints a link with a
+  one-time token (as Jupyter), whose visit sets a signed `HttpOnly` owner cookie for that browser; drive-by requests
+  from pages in that browser stay blocked by the security baseline (foreign requests, also other localhost ports,
+  never authenticated; Host and Origin checks). (b) Deny by default, in the HTTP component itself (a change to slice
+  10's routes and sockets): a request without a principal is refused before plugin code unless its route or socket is
+  marked public (a landing page, a webhook, the ephemeral name login, which hands out a principal). Authenticators stay
+  the `Authenticators` registry, filled by the authenticator plugins the app chose; a session helper issues and revokes
+  sessions so authenticators do not each reinvent cookies and logout.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
