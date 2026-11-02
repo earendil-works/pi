@@ -390,9 +390,10 @@ function getThreadErrorCode(error: InstanceType<typeof Anthropic.APIError>): str
 }
 
 /**
- * Sends a thread request. A rejection (never a started stream) is resent once in full: as a new
- * thread when the old one can't be continued, otherwise without `thread`, which also turns threads
- * off for the session. Returns the response and the thread request that produced it, if any.
+ * Sends a thread request. A rejection about the thread (never a started stream) is resent once in
+ * full: as a new thread when the old one can't be continued, or without `thread` when the endpoint
+ * can't use threads, which also turns threads off for the session. Other errors are passed on.
+ * Returns the response and the thread request that produced it, if any.
  */
 async function sendThreadRequest(
 	thread: PreparedThreadRequest,
@@ -404,17 +405,18 @@ async function sendThreadRequest(
 	try {
 		return { response: await send(thread.body), thread };
 	} catch (error) {
-		// Rate limits and auth errors are not about the thread; strict tool errors go to the
-		// strict tool fallback in the caller.
-		if (
-			signal?.aborted ||
-			!(error instanceof Anthropic.APIError) ||
-			(error.status !== 400 && error.status !== 404) ||
-			isStrictToolLimitErrorMessage(error.message)
-		) {
-			throw error;
-		}
+		if (signal?.aborted || !(error instanceof Anthropic.APIError)) throw error;
 		const errorCode = getThreadErrorCode(error);
+		const startNewThread = errorCode !== undefined && NEW_THREAD_ERRORS.has(errorCode);
+		// The endpoint can't use threads: it can't thread this request, or it doesn't know the
+		// `thread` field and rejects it without a code ("thread: Extra inputs are not permitted"),
+		// e.g. with an `anthropic-beta` header that lacks the threads beta.
+		const threadsUnsupported =
+			errorCode === "thread_unsupported_request" ||
+			(errorCode === undefined && error.status === 400 && error.message.includes("thread"));
+		// Any other error (prompt too long, unknown model, strict tool limits, ...) is not about the
+		// thread, and resending would only fail again.
+		if (!startNewThread && !threadsUnsupported) throw error;
 		// Recorded before the resend, so a failed resend keeps it.
 		appendAssistantMessageDiagnostic(output, {
 			type: "anthropic_thread_fallback",
@@ -422,12 +424,11 @@ async function sendThreadRequest(
 			error: { message: error.message },
 			details: { reason: errorCode ?? String(error.status) },
 		});
-		if (errorCode !== undefined && NEW_THREAD_ERRORS.has(errorCode)) {
+		if (startNewThread) {
 			const created = createThreadRequest(thread.sessionId, params);
 			return { response: await send(created.body), thread: created };
 		}
-		// The endpoint rejects something about threads for this session. With the threads beta, a
-		// request without `thread` is a normal request.
+		// With the threads beta, a request without `thread` is a normal request.
 		const response = await send(params);
 		setThreadState(thread.sessionId, "off");
 		return { response, thread: undefined };

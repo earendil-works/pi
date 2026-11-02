@@ -382,14 +382,14 @@ describe("Anthropic message threads", () => {
 	});
 
 	it.each([
-		["thread_unsupported_request", "thread_unsupported_request"],
-		["a 400 without error code", undefined],
-	])("turns threads off for the session after %s on continue", async (_name, errorCode) => {
+		["thread_unsupported_request", "thread_unsupported_request", "rejected"],
+		["a 400 without error code about the thread field", undefined, "thread: Extra inputs are not permitted"],
+	])("turns threads off for the session after %s on continue", async (_name, errorCode, message) => {
 		const h = harness();
 		const messages = [user("first")];
 		await say(h, messages);
 		messages.push(user("second"));
-		h.queue.push(() => errorResponse(400, "rejected", errorCode));
+		h.queue.push(() => errorResponse(400, message, errorCode));
 		const result = await say(h, messages);
 
 		expect(result.stopReason).toBe("stop");
@@ -411,7 +411,7 @@ describe("Anthropic message threads", () => {
 		await say(h, messages);
 		messages.push(user("second"));
 		h.queue.push(
-			() => errorResponse(400, "rejected"),
+			() => errorResponse(400, "thread: Extra inputs are not permitted"),
 			() => errorResponse(400, "Real problem"),
 		);
 		const failed = await turn(h, messages);
@@ -421,6 +421,26 @@ describe("Anthropic message threads", () => {
 
 		await turn(h, messages);
 		expect(threadOf(h.requests[3])).toEqual({ type: "create" });
+	});
+
+	it.each([
+		[400, "prompt is too long: 250000 tokens > 200000 maximum"],
+		[404, "model: claude-test"],
+	])("passes a %s that is not about the thread on without resending", async (status, message) => {
+		const h = harness();
+		const messages = [user("first")];
+		await say(h, messages);
+		messages.push(user("second"));
+		h.queue.push(() => errorResponse(status, message));
+		const failed = await turn(h, messages);
+		expect(failed.stopReason).toBe("error");
+		expect(failed.errorMessage).toContain(message);
+		expect(h.requests).toHaveLength(2);
+		expect(failed.diagnostics).toBeUndefined();
+
+		// Threads stay on: after a fix such as compaction, the next request starts a new thread.
+		await turn(h, messages);
+		expect(threadOf(h.requests[2])).toEqual({ type: "create" });
 	});
 
 	it("leaves strict tool rejections to the strict tool fallback", async () => {
