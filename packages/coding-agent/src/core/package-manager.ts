@@ -108,7 +108,13 @@ export interface PackageInstallFailure {
 export type MissingSourceAction = "install" | "skip" | "error";
 
 export interface ProgressEvent {
-	type: "start" | "progress" | "complete" | "error";
+	/**
+	 * `start` is followed by exactly one `complete` or `error` for the same source.
+	 * `progress` carries an intermediate message or warning.
+	 * `result` reports an outcome outside that pairing, e.g. one changed package
+	 * after update(): `npm:foo 1.2.0 -> 1.3.0`.
+	 */
+	type: "start" | "progress" | "complete" | "error" | "result";
 	action: "install" | "remove" | "update" | "clone" | "pull";
 	source: string;
 	message?: string;
@@ -1262,13 +1268,13 @@ export class DefaultPackageManager implements PackageManager {
 			if (update) updated.push(update);
 		}
 
-		// Report each changed package as a completed update, e.g. "npm:foo 1.2.0 -> 1.3.0".
+		// Report each changed package, e.g. "npm:foo 1.2.0 -> 1.3.0".
 		for (const pkg of updated) {
 			const format = (value: string | undefined) =>
 				value === undefined ? "(none)" : pkg.type === "git" ? value.slice(0, 7) : value;
 			const scope = pkg.scope === "project" ? " (project)" : "";
 			this.emitProgress({
-				type: "complete",
+				type: "result",
 				action: "update",
 				source: pkg.source,
 				message: `${pkg.source}${scope} ${format(pkg.from)} -> ${format(pkg.to)}`,

@@ -152,7 +152,7 @@ describe("DefaultPackageManager git update", () => {
 
 			const updated: string[] = [];
 			packageManager.setProgressCallback((event) => {
-				if (event.type === "complete" && event.action === "update" && event.message) updated.push(event.message);
+				if (event.type === "result" && event.action === "update" && event.message) updated.push(event.message);
 			});
 			await packageManager.update();
 
@@ -178,7 +178,7 @@ describe("DefaultPackageManager git update", () => {
 			// Update via package manager (no args = uses settings)
 			const updated: string[] = [];
 			packageManager.setProgressCallback((event) => {
-				if (event.type === "complete" && event.action === "update" && event.message) updated.push(event.message);
+				if (event.type === "result" && event.action === "update" && event.message) updated.push(event.message);
 			});
 			await packageManager.update();
 

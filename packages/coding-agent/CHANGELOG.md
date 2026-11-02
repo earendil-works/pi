@@ -4,7 +4,7 @@
 
 ### Added
 
-- `pi update` now lists each updated package with its npm version or git commit change, for example `npm:foo 1.2.0 -> 1.3.0`, and prints `Packages are already up to date` when nothing changed. `PackageManager.update()` reports each changed package as a `complete` progress event whose `message` holds that line ([#11707](https://github.com/earendil-works/pi/pull/11707))
+- `pi update` now lists each updated package with its npm version or git commit change, for example `npm:foo 1.2.0 -> 1.3.0`, and prints `Packages are already up to date` when nothing changed. `PackageManager.update()` reports each changed package as a new `result` progress event whose `message` holds that line ([#11707](https://github.com/earendil-works/pi/pull/11707))
 
 ## [1.5.0] - 2026-11-02
 

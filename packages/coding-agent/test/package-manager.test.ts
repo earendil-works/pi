@@ -2616,13 +2616,16 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 				writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.2.0" }));
 			});
 
-			const updated: string[] = [];
-			packageManager.setProgressCallback((event) => {
-				if (event.type === "complete" && event.action === "update" && event.message) updated.push(event.message);
-			});
+			const events: ProgressEvent[] = [];
+			packageManager.setProgressCallback((event) => events.push(event));
 			await packageManager.update("npm:example");
 
-			expect(updated).toEqual(["npm:example@^1.0.0 (project) 1.0.0 -> 1.2.0"]);
+			// The result is a separate event, so each start still has exactly one complete.
+			expect(events.map((event) => [event.type, event.source, event.message])).toEqual([
+				["start", "npm:example@^1.0.0", "Updating npm:example@^1.0.0..."],
+				["complete", "npm:example@^1.0.0", undefined],
+				["result", "npm:example@^1.0.0", "npm:example@^1.0.0 (project) 1.0.0 -> 1.2.0"],
+			]);
 
 			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
 				"npm",
@@ -2657,7 +2660,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 
 			const updated: string[] = [];
 			packageManager.setProgressCallback((event) => {
-				if (event.type === "complete" && event.action === "update" && event.message) updated.push(event.message);
+				if (event.type === "result" && event.action === "update" && event.message) updated.push(event.message);
 			});
 			await packageManager.update("npm:example");
 

@@ -1027,10 +1027,10 @@ export async function handlePackageCommand(
 
 	const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
 
-	// Completed update events with a message describe a changed package, e.g. "npm:foo 1.2.0 -> 1.3.0".
+	// Update result events describe a changed package, e.g. "npm:foo 1.2.0 -> 1.3.0".
 	const updatedPackages: string[] = [];
 	packageManager.setProgressCallback((event) => {
-		if (event.type === "complete" && event.action === "update" && event.message) {
+		if (event.type === "result" && event.action === "update" && event.message) {
 			updatedPackages.push(event.message);
 		} else if (event.type === "start") {
 			process.stdout.write(chalk.dim(`${event.message}\n`));
