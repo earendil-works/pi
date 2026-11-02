@@ -2272,6 +2272,13 @@ validation and copies the v2 kernel added around Delta.
   database), each owned by one object, under the worker's directory. **Export and import per address:** the store's
   archive plus the worker's directory as one archive; importing it under another address copies or moves it.
   Refines point 4 (storage): plugins use the files plugin instead of raw subdirectories of their own.
+- **Slice 11, P3: the base bundle and plugin scripts (owner, 2026-11-01, by voice: "yep, that sounds good"):** the
+  server builds one base bundle per client kind from an entry in the app's source (the app's web start code, its API
+  with the kind's module, Chord, React), content-hashed and cached by browsers forever; a change of base code reloads
+  the page (as a restart of the server). Plugin scripts: at page load the server serves the current set of the kind's
+  plugins as one combined file named by a hash of the set (one request, cacheable); while a page is open, a rollout's
+  changed plugins are fetched one script each. A fresh page makes two requests, an update downloads only what changed.
+  Rejected: a prebuilt base bundle shipped with the app (could disagree with the plugins' build).
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
