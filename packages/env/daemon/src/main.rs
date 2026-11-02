@@ -8,6 +8,7 @@ mod frame;
 mod fs;
 mod list;
 mod output;
+mod process;
 mod pty;
 mod scan;
 mod sys;
@@ -31,7 +32,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const PROTOCOL: u64 = 1;
 /// Operations added after protocol 1's first release; clients check `hello.features` before using them.
-const FEATURES: &[&str] = &["listFiles"];
+const FEATURES: &[&str] = &["listFiles", "process"];
 /// The npm package version this daemon ships with (build.rs).
 const VERSION: &str = env!("PI_ENV_VERSION");
 const PING_INTERVAL: Duration = Duration::from_secs(5);
@@ -79,6 +80,7 @@ struct Server {
     controls: Mutex<HashMap<u32, Arc<Control>>>,
     groups: exec::Groups,
     terminals: pty::Terminals,
+    processes: process::Processes,
 }
 
 fn now_ms() -> u64 {
@@ -268,6 +270,14 @@ impl Server {
                 &self.groups,
                 &self.terminals,
             )),
+            "process" => plain(process::run(
+                id,
+                process::ProcessRequest::from_json(json)?,
+                &self.output,
+                control,
+                &self.groups,
+                &self.processes,
+            )),
             _ => Err(Failure::new("EINVAL", format!("unknown operation {op}"))),
         }
     }
@@ -360,7 +370,10 @@ fn start_workers() -> Sender<Job> {
 }
 
 fn respond(server: &Server, id: u32, request: Frame, control: Arc<Control>) {
-    let is_exec = matches!(request.json["op"].as_str(), Some("exec" | "pty"));
+    let is_exec = matches!(
+        request.json["op"].as_str(),
+        Some("exec" | "pty" | "process")
+    );
     let reply = match server.dispatch(id, &request.json, request.payload, &control) {
         Ok((json, payload)) => Frame::with_payload(RESULT, id, json, payload),
         Err(failure) => Frame::new(ERROR, id, failure.to_json()),
@@ -408,7 +421,13 @@ fn serve_frames(server: &Arc<Server>, input: &mut impl Read) -> io::Result<()> {
             REQUEST
                 if matches!(
                     request.json["op"].as_str(),
-                    Some("ptyWrite" | "ptyResize" | "ptyForeground")
+                    Some(
+                        "ptyWrite"
+                            | "ptyResize"
+                            | "ptyForeground"
+                            | "processWrite"
+                            | "processCloseStdin"
+                    )
                 ) =>
             {
                 // Answered here, in arrival order: through the worker pool, two writes could swap.
@@ -417,6 +436,12 @@ fn serve_frames(server: &Arc<Server>, input: &mut impl Read) -> io::Result<()> {
                         pty::write(&server.terminals, &request.json, request.payload)
                     }
                     Some("ptyResize") => pty::resize(&server.terminals, &request.json),
+                    Some("processWrite") => {
+                        process::write(&server.processes, &request.json, request.payload)
+                    }
+                    Some("processCloseStdin") => {
+                        process::close_stdin(&server.processes, &request.json)
+                    }
                     _ => pty::foreground(&server.terminals, &request.json),
                 };
                 server.output.control(match reply {
@@ -430,7 +455,10 @@ fn serve_frames(server: &Arc<Server>, input: &mut impl Read) -> io::Result<()> {
                 let control = Arc::new(Control::default());
                 server.controls.lock().unwrap().insert(id, control.clone());
                 // Commands and watchers last; they get their own threads (watchers recurse through trees).
-                if matches!(request.json["op"].as_str(), Some("exec" | "watch" | "pty")) {
+                if matches!(
+                    request.json["op"].as_str(),
+                    Some("exec" | "watch" | "pty" | "process")
+                ) {
                     let worker = server.clone();
                     let spawned = thread::Builder::new()
                         .stack_size(16 * 1024 * 1024)
@@ -499,6 +527,7 @@ fn serve(token: &str) -> io::Result<()> {
         controls: Mutex::new(HashMap::new()),
         groups,
         terminals: Arc::new(Mutex::new(HashMap::new())),
+        processes: Arc::new(Mutex::new(HashMap::new())),
     });
     let last_seen = Arc::new(AtomicU64::new(now_ms()));
     {
