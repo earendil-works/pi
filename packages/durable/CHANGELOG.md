@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `@earendil-works/pi-durable/sync` (experimental) moves sessions between devices through a remote store, from the outbox of the session's Chord store (`openStore(backend, ctx, { outbox: true })`, Durable's records in it through `StoreStorage`). Every device continues a session as its own: `uploadSession()` uploads the outbox commits after the last sequence the copy shares with the remote as one gzip batch into a slot the remote creates once per start sequence, trims the outbox through what the remote acknowledged, and reports a copy as `diverged` when another device's upload created that slot first, or `behind` when its head fell below what it had uploaded. A session whose outbox does not reach back to its first commit starts with an archive slot (`store.export()`). `pullSession()` catches a copy up through `applyBatch()`, resumes an interrupted pull, or restores into an empty backend (`importStore()` for an archive); `foldSession()` folds the history into a snapshot archive, keeping folded slots taken. `FlushScheduler` and `isUrgentCommit()` decide when to upload. `FileSystemSyncRemote` is a remote in a directory; `FileSyncStateStore` keeps sync state in a directory.
+
 ## [1.5.0] - 2026-11-02
 
 ### Breaking Changes

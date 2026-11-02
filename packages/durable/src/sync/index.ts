@@ -1,24 +1,26 @@
-export { decodeBatch, encodeBatch } from "./batch.ts";
+export { decodeBatch, decodeSnapshot, encodeBatch, encodeSnapshot } from "./batch.ts";
 export {
 	FlushScheduler,
 	type FlushSchedulerOptions,
 	foldSession,
 	isUrgentCommit,
-	type LogSource,
+	type LocalCopy,
+	OutboxUnavailableError,
 	pullSession,
-	readLog,
+	readOutbox,
 	type SyncState,
 	type SyncStateStore,
+	storeHead,
 	UnsyncedCommitsError,
 	type UploadResult,
 	uploadSession,
 } from "./client.ts";
-export { type CurrentOnlyLookup, compactRecords } from "./compact.ts";
 export { FileSystemSyncRemote } from "./filesystem.ts";
 export { decodeLogLines, encodeLogLine, LOG_VERSION, LogFormatError } from "./lines.ts";
 export {
 	type BatchInfo,
 	HistoryUnavailableError,
+	LOG_START,
 	type PutBatchResult,
 	type RemoteHistory,
 	type RemoteListing,

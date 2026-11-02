@@ -34,9 +34,9 @@ function unwrap<T>(result: Result<T, FileError>): T {
  * without the atomicity of the real remote across processes: for development and tests, with one process writing.
  *
  * ```text
- * {root}/{session}/slots/{after}.json     { after, to, device, folded? }, written once
- * {root}/{session}/batches/{after}.batch  the records, until folded
- * {root}/{session}/snapshots/{to}.batch
+ * {root}/{session}/slots/{after}.json     { after, to, device, archive?, folded? }, written once
+ * {root}/{session}/batches/{after}.batch  the commits (or an archive), until folded
+ * {root}/{session}/snapshots/{to}.batch   a store archive
  * {root}/{session}/meta.json             the host's description, last write wins
  * ```
  */
@@ -56,6 +56,7 @@ export class FileSystemSyncRemote implements SessionSyncMaintenance {
 		device: string,
 		body: Uint8Array,
 		context: Context,
+		options: { readonly archive?: boolean } = {},
 	): Promise<PutBatchResult> {
 		const existing = await this.#slot(sessionId, after, context);
 		if (existing !== undefined) return { type: "exists", to: existing.to, device: existing.device };
@@ -63,7 +64,7 @@ export class FileSystemSyncRemote implements SessionSyncMaintenance {
 		if (after !== head) return { type: "not_head", head };
 		await this.#write(sessionId, ["batches"], `${pad(after)}.batch`, body, context);
 		// The slot is written last: it is what makes the batch exist.
-		const slot: BatchInfo = { after, to, device };
+		const slot: BatchInfo = { after, to, device, ...(options.archive === true ? { archive: true as const } : {}) };
 		await this.#write(
 			sessionId,
 			["slots"],

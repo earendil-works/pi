@@ -889,6 +889,32 @@ await database.transaction(async (transaction) => {
 });
 ```
 
+### Sync (experimental)
+
+`@earendil-works/pi-durable/sync` moves sessions between devices through a remote store. It syncs a session's Chord
+store, not a `Storage`: open the store with its outbox, `openStore(backend, ctx, { outbox: true })`, and Durable's
+records in it with `StoreStorage.open(store, owner, ctx)`. The outbox holds every commit after its floor, written in
+the commit's own transaction, so an upload reads `outbox.read(after)` and trims what the remote acknowledged.
+
+Every device continues a session as its own. A remote keeps one slot per start sequence and creates it once, and only
+where the history ends, so the device whose upload creates a slot continues the session from there. A device that finds
+the slot taken by another device has diverged: the host renames its copy to a new session and restores the session
+fresh. A session whose outbox does not reach back to its first commit (turned on later, or trimmed) starts with an
+archive (`store.export()`). The remote folds the history into snapshot archives, keeping folded slots taken.
+
+```typescript
+const store = await openStore(sqliteBackend(db), context, { outbox: true });
+const result = await uploadSession({ sessionId, device, source: store, store: remote, state, context });
+if (result.type === "diverged") forkLocalCopy(sessionId, result.at); // host: rename, upload under the new ID
+// Catch up, resume, or restore into an empty backend; nothing may hold the store's claims (no StoreStorage open).
+const { store: pulled } = await pullSession({ sessionId, store: remote, local: { kind: "store", store }, state, context });
+```
+
+Pulling refuses a copy with commits it has not uploaded (`UnsyncedCommitsError`): upload first. Uploading refuses a
+copy that lost commits it had uploaded (`behind`): it pulls them back first. `FlushScheduler` and `isUrgentCommit()`
+decide when to upload; `FileSystemSyncRemote` is a remote in a directory and `FileSyncStateStore` keeps sync state in
+one, for development and tests.
+
 A custom backend's `commit(batches, receive, context)` stores `batches` in order, each as one atomic commit with its own seq, checked against the state the earlier ones left, in as few round trips as it can. It stops at the first batch its own checks refuse (global IDs, document actions, copy resolution): the batches before it stay stored, it and the later ones are not. Once they are durable it calls `receive(index, seq)` per stored batch, in order and synchronously, then resolves with `{ stored, refused? }`; it rejects for an unknown outcome (connection lost, a failed statement or `COMMIT`). `receive` is a durability receipt: the Session publishes each batch later, one at a time, so memory and every view never show a partial log. `receive` calls no Storage method and never throws. Custom backends can run the shared conformance suite, which checks this too, with any Vitest- or Jest-compatible runner:
 
 ```typescript

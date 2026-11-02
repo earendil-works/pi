@@ -1,16 +1,28 @@
 import type { Context } from "@earendil-works/chord";
-import { LogInterruptedError } from "../errors.ts";
-import { LOG_START } from "../storage/log.ts";
-import type { CommitPublication, LogRecord, ReplayableStorage, Seq } from "../types.ts";
-import { decodeBatch, encodeBatch } from "./batch.ts";
-import { compactRecords } from "./compact.ts";
 import {
+	applyBatch,
+	type Backend,
+	type ChordStore,
+	importStore,
+	type OutboxCommit,
+	openStore,
+	type Store,
+} from "@earendil-works/chord/next";
+import { seqFromNumber } from "../ids.ts";
+import type { CommitPublication, Seq } from "../types.ts";
+import { decodeBatch, decodeSnapshot, encodeBatch, encodeSnapshot } from "./batch.ts";
+import {
+	type BatchInfo,
 	HistoryUnavailableError,
+	LOG_START,
 	remoteHead,
 	remoteHistory,
 	type SessionSyncMaintenance,
 	type SessionSyncStore,
 } from "./remote.ts";
+
+/** Commits read from the outbox per uploaded batch. */
+const BATCH_COMMITS = 1000;
 
 /**
  * What a host keeps for each copy of a session it syncs: the last sequence the copy shares with the remote. Commits
@@ -20,16 +32,16 @@ import {
 export type SyncState = {
 	readonly syncedHead: Seq | undefined;
 	/**
-	 * Set while a pull replays a batch or snapshot ending here: a local head up to it holds the remote's records, not
+	 * Set while a pull applies a batch or snapshot ending here: a local head up to it holds the remote's commits, not
 	 * the copy's own, even when the pull stopped partway.
 	 */
 	readonly pulling?: Seq;
 };
 
-/** The last sequence a copy shares with the remote, counting records an interrupted pull replayed. */
-function sharedHead(state: SyncState | undefined, local: Seq | undefined): Seq | undefined {
-	if (state?.pulling !== undefined && local !== undefined && local <= state.pulling) return local;
-	return state?.syncedHead;
+/** The last sequence a copy shares with the remote, counting commits an interrupted pull applied. */
+function sharedHead(state: SyncState | undefined, local: Seq): Seq {
+	if (state?.pulling !== undefined && local <= state.pulling) return local;
+	return state?.syncedHead ?? LOG_START;
 }
 
 export interface SyncStateStore {
@@ -37,25 +49,33 @@ export interface SyncStateStore {
 	set(sessionId: string, state: SyncState, context: Context): Promise<void>;
 }
 
-/** Where the log comes from: the storage, or a host's proxy to the process that owns it. */
-export type LogSource = Pick<ReplayableStorage, "log" | "head">;
+/** A store's head as a sequence: `lastSeq`, 0 for a store without commits. */
+export function storeHead(store: Store): Seq {
+	return seqFromNumber(store.lastSeq);
+}
 
-/** Read the log after `after`, again when a commit interrupts it. */
-export async function readLog(
-	source: LogSource,
-	after: Seq | undefined,
-	context: Context,
-	attempts = 5,
-): Promise<LogRecord[]> {
-	for (let attempt = 1; ; attempt++) {
-		const records: LogRecord[] = [];
-		try {
-			for await (const record of source.log(after, context)) records.push(record);
-			return records;
-		} catch (error) {
-			if (!(error instanceof LogInterruptedError) || attempt >= attempts) throw error;
-		}
+/** The store keeps no outbox, or its outbox no longer holds the commits a sync needs. */
+export class OutboxUnavailableError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "OutboxUnavailableError";
 	}
+}
+
+function outboxOf(store: Store) {
+	if (store.outbox === undefined) {
+		throw new OutboxUnavailableError("The session's store has no outbox: open it with { outbox: true } to sync it");
+	}
+	return store.outbox;
+}
+
+/** The outbox commits after `after`, a page of at most `limit`. */
+export async function readOutbox(store: Store, after: Seq, limit: number, context: Context): Promise<OutboxCommit[]> {
+	const outbox = outboxOf(store);
+	if (after < outbox.floor) {
+		throw new OutboxUnavailableError(`The outbox starts after ${outbox.floor}, past the synced head ${after}`);
+	}
+	return outbox.read(after, limit, context);
 }
 
 export type UploadResult =
@@ -65,19 +85,23 @@ export type UploadResult =
 	/**
 	 * Another device continued the session from `at` first. This copy's commits after `at` are a different history:
 	 * the host renames the copy to a new session (forked from this one at `at`) and uploads it there, and the session
-	 * itself restores into a fresh storage.
+	 * itself restores into a fresh store.
 	 */
 	| { readonly type: "diverged"; readonly at: Seq }
 	/**
 	 * The copy lost commits it had uploaded, for example to a power loss: its head is below `syncedHead`. Its next
 	 * commits would reuse their sequences, so nothing is uploaded. Pull what it lost before the copy commits again; a pull
-	 * replays from the local head.
+	 * applies from the local head.
 	 */
-	| { readonly type: "behind"; readonly head: Seq | undefined; readonly syncedHead: Seq };
+	| { readonly type: "behind"; readonly head: Seq; readonly syncedHead: Seq };
 
 /**
- * Upload what this copy committed since it last shared the remote's history. Every device continues a session as its
- * own; whichever creates the slot first continues the session, so an upload that is acknowledged stays.
+ * Upload what this copy committed since it last shared the remote's history, from the store's outbox, and trim the
+ * outbox through what the remote acknowledged. Every device continues a session as its own; whichever creates the slot
+ * first continues the session, so an upload that is acknowledged stays.
+ *
+ * A session the remote does not have yet, whose outbox does not reach back to its first commit (turned on later, or
+ * trimmed, as for a copy renamed after it diverged), starts with an archive slot: the store's `export()` at its head.
  *
  * A slot this device created already is an upload whose response was lost: the remote has the history up to its end,
  * and the upload goes on from there.
@@ -85,124 +109,205 @@ export type UploadResult =
 export async function uploadSession(options: {
 	readonly sessionId: string;
 	readonly device: string;
-	readonly source: LogSource;
+	readonly source: Store;
 	readonly store: SessionSyncStore;
 	readonly state: SyncStateStore;
 	readonly context: Context;
 }): Promise<UploadResult> {
 	const { sessionId, device, source, store, state, context } = options;
-	let synced = sharedHead(await state.get(sessionId, context), await source.head(context));
+	const outbox = outboxOf(source);
+	let synced = sharedHead(await state.get(sessionId, context), storeHead(source));
+	let uploaded: Seq | undefined;
 	while (true) {
 		// Read again on every pass: a slot this device already holds may end past what the copy still has.
-		const head = await source.head(context);
-		if (synced !== undefined && (head ?? LOG_START) < synced) return { type: "behind", head, syncedHead: synced };
-		const records = await readLog(source, synced, context);
-		if (records.length === 0) return { type: "idle" };
-		const after = synced ?? LOG_START;
-		const to = records.at(-1)!.seq;
-		const result = await store.putBatch(sessionId, after, to, device, await encodeBatch(records), context);
+		const head = storeHead(source);
+		if (head < synced) return { type: "behind", head, syncedHead: synced };
+		let to: Seq;
+		let body: Uint8Array;
+		let archive = false;
+		if (synced === LOG_START && outbox.floor > 0) {
+			const snapshot = await exportSnapshot(source, context);
+			to = snapshot.to;
+			body = snapshot.body;
+			archive = true;
+		} else {
+			const commits = await readOutbox(source, synced, BATCH_COMMITS, context);
+			if (commits.length === 0)
+				return uploaded === undefined ? { type: "idle" } : { type: "uploaded", head: uploaded };
+			to = seqFromNumber(commits.at(-1)!.seq);
+			body = await encodeBatch(commits);
+		}
+		const after = synced;
+		const result = await store.putBatch(sessionId, after, to, device, body, context, archive ? { archive } : {});
 		// A history that does not end at `after` is another one too: the remote never held this copy's past `after`.
 		if (result.type === "not_head") return { type: "diverged", at: after };
 		if (result.type === "exists" && result.device !== device) return { type: "diverged", at: after };
 		synced = result.type === "created" ? to : result.to;
 		await state.set(sessionId, { syncedHead: synced }, context);
-		if (result.type === "created") return { type: "uploaded", head: to };
+		const trimmable = Math.min(synced, source.lastSeq);
+		if (trimmable > outbox.floor) await outbox.trim(trimmable, context);
+		if (result.type === "created") uploaded = to;
 	}
+}
+
+/** The store's state at its head as a snapshot body. `export()` holds the commit queue, so the head cannot move. */
+async function exportSnapshot(
+	store: Store,
+	context: Context,
+): Promise<{ readonly to: Seq; readonly body: Uint8Array }> {
+	let to: Seq | undefined;
+	const parts = store.export(context);
+	const body = await encodeSnapshot(
+		(async function* () {
+			for await (const part of parts) {
+				if (part.kind === "manifest") to = seqFromNumber(part.lastSeq);
+				yield part;
+			}
+		})(),
+	);
+	if (to === undefined) throw new Error("A store export has no manifest");
+	return { to, body };
 }
 
 /** This copy has commits it has not uploaded: upload them first, which may find that the copy diverged. */
 export class UnsyncedCommitsError extends Error {
-	constructor(sessionId: string, localHead: Seq, syncedHead: Seq | undefined) {
+	constructor(sessionId: string, localHead: Seq, syncedHead: Seq) {
 		super(
-			`This copy of session ${sessionId} is at ${localHead}, past what it shares with the remote (${syncedHead ?? 0})`,
+			`This copy of session ${sessionId} is at ${localHead}, past what it shares with the remote (${syncedHead})`,
 		);
 		this.name = "UnsyncedCommitsError";
 	}
 }
 
+/** The copy a pull applies to: an open store, or an empty backend to restore the session into. */
+export type LocalCopy =
+	| { readonly kind: "store"; readonly store: Store }
+	| { readonly kind: "empty"; readonly backend: Backend };
+
 /**
- * Replay what the remote has after the local head into `storage`; into an empty storage, that restores the session.
- * A pull that stopped inside a batch resumes it. No Harness may have the storage open: its memory would be behind.
+ * Apply what the remote has after the local head; into an empty backend, that restores the session (from an archive
+ * when the history starts with one) and opens its store with an outbox. Resolves with the store, which the caller
+ * owns and closes. Nothing may hold the store's claims (no `StoreStorage`, no Harness): `applyBatch()` refuses then.
  *
- * A copy with commits it has not uploaded rejects with `UnsyncedCommitsError` instead of getting the remote's records
+ * A copy with commits it has not uploaded rejects with `UnsyncedCommitsError` instead of getting the remote's commits
  * spliced onto its own. A copy whose history folding removed rejects with `HistoryUnavailableError` and restores into
- * a fresh storage.
+ * a fresh backend.
  */
 export async function pullSession(options: {
 	readonly sessionId: string;
 	readonly store: SessionSyncStore;
-	readonly storage: ReplayableStorage;
+	readonly local: LocalCopy;
 	readonly state: SyncStateStore;
 	readonly context: Context;
-}): Promise<Seq | undefined> {
-	const { sessionId, store, storage, state, context } = options;
-	const listing = await store.list(sessionId, context);
-	const local = await storage.head(context);
-	const synced = sharedHead(await state.get(sessionId, context), local);
-	if (local !== undefined && local > (synced ?? LOG_START)) throw new UnsyncedCommitsError(sessionId, local, synced);
-	const history = remoteHistory(listing, local);
-	const bodies: { readonly to: Seq; read(): Promise<Uint8Array | undefined> }[] = [];
-	if (history.snapshot !== undefined) {
-		const snapshot = history.snapshot;
-		bodies.push({ to: snapshot, read: () => store.getSnapshot(sessionId, snapshot, context) });
-	}
-	for (const batch of history.batches) {
-		bodies.push({ to: batch.to, read: () => store.getBatch(sessionId, batch.after, context) });
-	}
-	for (const body of bodies) {
-		const bytes = await body.read();
-		const at = await storage.head(context);
-		if (bytes === undefined) throw new HistoryUnavailableError(at ?? LOG_START);
-		await state.set(sessionId, { syncedHead: at, pulling: body.to }, context);
-		for (const record of await decodeBatch(bytes)) {
-			if (record.seq > (at ?? LOG_START)) await storage.replay(record, context);
+}): Promise<{ readonly store: Store; readonly head: Seq }> {
+	const { sessionId, store: remote, local, state, context } = options;
+	const listing = await remote.list(sessionId, context);
+	let target: Store | undefined = local.kind === "store" ? local.store : undefined;
+	const at = () => (target === undefined ? LOG_START : storeHead(target));
+	const synced = sharedHead(await state.get(sessionId, context), at());
+	if (at() > synced) throw new UnsyncedCommitsError(sessionId, at(), synced);
+	const history = remoteHistory(listing, at());
+	try {
+		const bodies: { readonly to: Seq; readonly archive: boolean; read(): Promise<Uint8Array | undefined> }[] = [];
+		if (history.snapshot !== undefined) {
+			const snapshot = history.snapshot;
+			bodies.push({ to: snapshot, archive: true, read: () => remote.getSnapshot(sessionId, snapshot, context) });
 		}
-		await state.set(sessionId, { syncedHead: await storage.head(context) }, context);
+		for (const batch of history.batches) {
+			bodies.push({
+				to: batch.to,
+				archive: batch.archive === true,
+				read: () => remote.getBatch(sessionId, batch.after, context),
+			});
+		}
+		for (const body of bodies) {
+			if (body.to <= at()) continue;
+			const bytes = await body.read();
+			if (bytes === undefined) throw new HistoryUnavailableError(at());
+			await state.set(sessionId, { syncedHead: at(), pulling: body.to }, context);
+			if (body.archive) {
+				// An archive restores a whole store: only into an empty backend.
+				if (target !== undefined || local.kind !== "empty") throw new HistoryUnavailableError(at());
+				target = await importStore(local.backend, await decodeSnapshot(bytes), context, { outbox: true });
+			} else {
+				if (target === undefined) {
+					if (local.kind !== "empty") throw new Error("unreachable: a store copy always has a target");
+					target = await openStore(local.backend, context, { outbox: true });
+				}
+				const from = target.lastSeq;
+				const commits = (await decodeBatch(bytes)).filter((commit) => commit.seq > from);
+				if (commits.length > 0) await applyBatch(target as ChordStore, commits, context);
+			}
+			await state.set(sessionId, { syncedHead: at() }, context);
+		}
+		if (target === undefined) {
+			if (local.kind !== "empty") throw new Error("unreachable: a store copy always has a target");
+			target = await openStore(local.backend, context, { outbox: true });
+		}
+		const head = at();
+		if (head < remoteHead(listing)) throw new HistoryUnavailableError(head);
+		await state.set(sessionId, { syncedHead: head }, context);
+		// What the remote holds needs no upload: the outbox keeps only this copy's own commits.
+		const outbox = target.outbox;
+		if (outbox !== undefined && head > outbox.floor) await outbox.trim(head, context);
+		return { store: target, head };
+	} catch (error) {
+		// A store this pull opened is the caller's only on success.
+		if (local.kind === "empty" && target !== undefined) await target.close(context).catch(() => {});
+		throw error;
 	}
-	const head = await storage.head(context);
-	if ((head ?? LOG_START) < remoteHead(listing)) throw new HistoryUnavailableError(head ?? LOG_START);
-	await state.set(sessionId, { syncedHead: head }, context);
-	return head;
 }
 
 /**
- * Fold a session's history into one snapshot: drop the records of the batches it covers, keeping their slots taken,
- * and delete older snapshots. The remote runs this, not clients. The rules of `compactRecords()` need no storage,
- * since a log holds no document copies.
+ * Fold a session's history into one snapshot: restore it into `scratch` (an empty backend, for example an in-memory
+ * SQLite database), upload its `export()` as a snapshot, drop the commits of the batches it covers, keeping their
+ * slots taken, and delete older snapshots. The remote runs this, not clients.
  */
 export async function foldSession(options: {
 	readonly sessionId: string;
 	readonly store: SessionSyncMaintenance;
+	readonly scratch: Backend;
 	readonly context: Context;
 }): Promise<Seq | undefined> {
-	const { sessionId, store, context } = options;
+	const { sessionId, store, scratch, context } = options;
 	const listing = await store.list(sessionId, context);
 	const history = remoteHistory(listing);
 	if (history.batches.length + (history.snapshot === undefined ? 0 : 1) < 2) return undefined;
-	const records: LogRecord[] = [];
-	const read = async (bytes: Uint8Array | undefined, what: string) => {
-		// Only the remote folds, and it folds one session at a time: what it just listed cannot be gone.
-		if (bytes === undefined) throw new Error(`${what} of session ${sessionId} vanished while folding`);
-		records.push(...(await decodeBatch(bytes)));
-	};
-	if (history.snapshot !== undefined) {
-		await read(await store.getSnapshot(sessionId, history.snapshot, context), `Snapshot ${history.snapshot}`);
-	}
-	for (const batch of history.batches) {
-		await read(await store.getBatch(sessionId, batch.after, context), `Batch after ${batch.after}`);
-	}
-	await store.putSnapshot(sessionId, history.head, await encodeBatch(compactRecords(records)), context);
-	await store.foldBatches(
+	const restored = await pullSession({
 		sessionId,
-		history.batches.map((batch) => batch.after),
+		store,
+		local: { kind: "empty", backend: scratch },
+		state: new ScratchState(),
 		context,
-	);
-	await store.deleteSnapshots(
-		sessionId,
-		listing.snapshots.filter((snapshot) => snapshot < history.head),
-		context,
-	);
-	return history.head;
+	});
+	try {
+		const snapshot = await exportSnapshot(restored.store, context);
+		await store.putSnapshot(sessionId, snapshot.to, snapshot.body, context);
+		await store.foldBatches(
+			sessionId,
+			history.batches.filter((batch: BatchInfo) => batch.to <= snapshot.to).map((batch) => batch.after),
+			context,
+		);
+		await store.deleteSnapshots(
+			sessionId,
+			listing.snapshots.filter((at) => at < snapshot.to),
+			context,
+		);
+		return snapshot.to;
+	} finally {
+		await restored.store.close(context);
+	}
+}
+
+/** Sync state for a restore nobody continues. */
+class ScratchState implements SyncStateStore {
+	#state: SyncState | undefined;
+	async get(): Promise<SyncState | undefined> {
+		return this.#state;
+	}
+	async set(_sessionId: string, state: SyncState): Promise<void> {
+		this.#state = state;
+	}
 }
 
 /** Whether a commit should reach the remote soon: what the user typed, a finished answer, a settled submission. */

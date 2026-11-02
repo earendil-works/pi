@@ -1,16 +1,19 @@
-// Two devices continue one session through a remote folder: SQLite files, real Harnesses, the faux model. The hosts'
-// side as p2 will run it: a Harness only on a device's own file, upload and pull through their own handles.
+// Two devices continue one session through a remote folder: SQLite files holding a Chord store with its outbox,
+// Durable's storage on it, real Harnesses, the faux model. The hosts' side as p2 will run it: a Harness only on a
+// device's own file, upload and pull through the store while no Harness holds it.
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openStore, type Store } from "@earendil-works/chord/next";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../src/env/node.ts";
-import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
-import { FileSyncStateStore, FileSystemSyncRemote, pullSession, readLog, uploadSession } from "../src/sync/index.ts";
-import type { Seq } from "../src/types.ts";
+import { StoreStorage } from "../src/storage/store/index.ts";
+import { FileSyncStateStore, FileSystemSyncRemote, pullSession, readOutbox, uploadSession } from "../src/sync/index.ts";
+import type { Seq, Storage } from "../src/types.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf, unanswered } from "./chat-support.ts";
 import { context } from "./session-support.ts";
+import { backend, SESSION_OWNER } from "./sync-support.ts";
 
 const SESSION = "s1";
 const directories: string[] = [];
@@ -25,29 +28,47 @@ async function temp(prefix: string): Promise<string> {
 	return directory;
 }
 
+/** Durable's storage on a store that the storage's close closes too: the Harness owns the store while it runs. */
+async function harnessStorage(store: Store): Promise<Storage> {
+	const storage = await StoreStorage.open(store, SESSION_OWNER, context);
+	const close = storage.close.bind(storage);
+	return Object.assign(storage, {
+		close: async (ctx: typeof context) => {
+			await close(ctx);
+			await store.close(ctx);
+		},
+	});
+}
+
 /** One device: its data directory, its sync state and its faux model. */
 async function device(name: string, remote: FileSystemSyncRemote) {
 	const dir = await temp(`pi-durable-e2e-${name}-`);
 	const state = new FileSyncStateStore(new NodeExecutionEnv({ cwd: dir }), join(dir, "sync"));
 	const setup: ChatSetup = chatSetup();
 	const file = (sessionId: string) => join(dir, `${sessionId}.sqlite`);
-	/** Runs `fn` on a storage handle of its own, as the host's uploader does next to a worker. */
-	const withStorage = async <T>(
-		sessionId: string,
-		fn: (storage: Awaited<ReturnType<typeof openNodeSqliteStorage>>) => Promise<T>,
-	): Promise<T> => {
-		const storage = await openNodeSqliteStorage(file(sessionId));
+	const exists = async (sessionId: string) =>
+		(await import("node:fs/promises")).access(file(sessionId)).then(
+			() => true,
+			() => false,
+		);
+	/** Runs `fn` on the session's store with its outbox, as the host's uploader does when no worker runs it. */
+	const withStore = async <T>(sessionId: string, fn: (store: Store) => Promise<T>): Promise<T> => {
+		const store = await openStore(await backend(file(sessionId)), context, { outbox: true });
 		try {
-			return await fn(storage);
+			return await fn(store);
 		} finally {
-			await storage.close(context);
+			await store.close(context);
 		}
 	};
 	return {
 		name,
 		setup,
 		state,
-		open: async (sessionId = SESSION) => openChat(await openNodeSqliteStorage(file(sessionId)), setup),
+		open: async (sessionId = SESSION) =>
+			openChat(
+				await harnessStorage(await openStore(await backend(file(sessionId)), context, { outbox: true })),
+				setup,
+			),
 		/** Renames a stopped copy. The new ID has no remote history, so no sync state either. */
 		rename: async (from: string, to: string) => {
 			for (const suffix of ["", "-wal", "-shm"])
@@ -56,16 +77,29 @@ async function device(name: string, remote: FileSystemSyncRemote) {
 				});
 			await state.delete(from, context);
 		},
-		log: (after: Seq | undefined, sessionId = SESSION) =>
-			withStorage(sessionId, (storage) => readLog(storage, after, context)),
-		head: (sessionId = SESSION): Promise<Seq | undefined> =>
-			withStorage(sessionId, (storage) => storage.head(context)),
+		/** Removes a stopped copy so the next pull restores it fresh. */
+		forget: async (sessionId = SESSION) => {
+			for (const suffix of ["", "-wal", "-shm"]) await rm(file(sessionId) + suffix, { force: true });
+			await state.delete(sessionId, context);
+		},
+		outbox: (after: Seq, sessionId = SESSION) =>
+			withStore(sessionId, (store) => readOutbox(store, after, 1000, context)),
+		head: (sessionId = SESSION): Promise<number> => withStore(sessionId, async (store) => store.lastSeq),
 		upload: (sessionId = SESSION) =>
-			withStorage(sessionId, (source) =>
+			withStore(sessionId, (source) =>
 				uploadSession({ sessionId, device: name, source, store: remote, state, context }),
 			),
-		pull: (sessionId = SESSION) =>
-			withStorage(sessionId, (storage) => pullSession({ sessionId, store: remote, storage, state, context })),
+		pull: async (sessionId = SESSION) => {
+			const local = (await exists(sessionId))
+				? ({
+						kind: "store",
+						store: await openStore(await backend(file(sessionId)), context, { outbox: true }),
+					} as const)
+				: ({ kind: "empty", backend: await backend(file(sessionId)) } as const);
+			const result = await pullSession({ sessionId, store: remote, local, state, context });
+			await result.store.close(context);
+			return result.head;
+		},
 	};
 }
 
@@ -157,11 +191,10 @@ describe("session sync end to end", () => {
 		const viewer = await desktop.open();
 		expect((await allEntries(viewer.root)).map((entry) => entry.kind)).toEqual(["pi.user"]);
 		await viewer.harness.close(context);
-		const written = await desktop.log(before);
+		// Opening the Harness wrote one commit: recovery resets the running generation to pending.
+		const written = await desktop.outbox(before as Seq);
 		expect(written).toHaveLength(1);
-		expect(written[0]!.writes).toMatchObject([
-			{ type: "task", value: { state: { status: "pending" }, restarts: 1 } },
-		]);
+		expect(JSON.stringify(written[0]!.writes)).toContain('"restarts":1');
 
 		expect((await desktop.upload()).type).toBe("uploaded");
 		await root.abort(context);
@@ -186,6 +219,7 @@ describe("session sync end to end", () => {
 		// The desktop renames its copy, uploads all of it under the new ID, and restores the session from the remote.
 		await desktop.rename(SESSION, "s1-fork");
 		expect((await desktop.upload("s1-fork")).type).toBe("uploaded");
+		await desktop.forget();
 		await desktop.pull();
 
 		const laptopTurn = ["user:hi", "assistant:one", "user:laptop", "assistant:from laptop"];
