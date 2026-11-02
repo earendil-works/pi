@@ -15,7 +15,7 @@
     "next_agent_notes": "",
     "files_modified": [],
     "tests_run": [],
-    "tests_passing": false,
+    "test_result": "not_run",
     "pr_url": ""
   }
 }
