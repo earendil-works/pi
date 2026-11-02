@@ -1,0 +1,55 @@
+{
+  "handoff_record": {
+    "session_id": "governance/remove-contributor-gates",
+    "agent_name": "ChatGPT GPT-6",
+    "date": "2026-11-02T00:56:00Z",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.0",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "governance/remove-contributor-gates",
+    "work_completed": [
+      "Created a feature branch from the current main commit; no direct main writes",
+      "Deleted .github/workflows/pr-gate.yml",
+      "Deleted .github/workflows/issue-gate.yml",
+      "Deleted .github/workflows/approve-contributor.yml",
+      "Deleted .github/APPROVED_CONTRIBUTORS after removing the workflows that consume it",
+      "Deleted the repository-local CONTRIBUTING.md after removing the contributor gates",
+      "Confirmed the organization default CONTRIBUTING.md exists in NeuroLift-Technologies/.github and states it applies when a repository has no local copy",
+      "Updated docs/active-threads.md: marked governance adoption PR #3 resolved and opened NLTPI-CONTRIB-001 for this change set"
+    ],
+    "work_in_progress": [
+      "Repository settings and main branch-protection verification remain outstanding"
+    ],
+    "blockers": [
+      "The exact two repository setting names and target values referenced by the instruction were not available in the retrieved context; do not guess them",
+      "GitHub branch-protection GET endpoint returned HTTP 403 Resource not accessible by integration, so required approving reviews and required status checks on main could not be confirmed"
+    ],
+    "decisions_made": [
+      "Perform all content changes on governance/remove-contributor-gates, never directly on main",
+      "Preserve the requested deletion order: contributor gate workflows first, approval-list data second, local CONTRIBUTING.md last",
+      "Rely on the verified organization default CONTRIBUTING.md after the local copy is removed"
+    ],
+    "decisions_pending": [
+      "Confirm the exact two repository settings and desired values",
+      "Verify or configure main branch protection to require approving review(s) and required status checks"
+    ],
+    "escalations": [],
+    "next_agent_notes": "Review the feature branch diff. Obtain the exact two repository setting names and desired values from Joshua before changing repository settings. The active GitHub connector could not read branch protection (HTTP 403); verify main protection through an authorized GitHub administration surface before claiming that review and status checks are required. Then open/update the PR and run CI.",
+    "files_modified": [
+      ".github/workflows/pr-gate.yml (deleted)",
+      ".github/workflows/issue-gate.yml (deleted)",
+      ".github/workflows/approve-contributor.yml (deleted)",
+      ".github/APPROVED_CONTRIBUTORS (deleted)",
+      "CONTRIBUTING.md (deleted)",
+      "docs/active-threads.md (updated)",
+      "docs/agent-log/handoffs/2026-11-02-remove-contributor-gates.json (created)"
+    ],
+    "tests_run": [
+      "Fetched each target file from main before deletion",
+      "Deleted files sequentially in the requested dependency order",
+      "Verified organization default CONTRIBUTING.md exists and explicitly applies when no repository-local CONTRIBUTING.md is present",
+      "Attempted GET /repos/NeuroLift-Technologies/nlt-pi/branches/main/protection; GitHub returned HTTP 403"
+    ],
+    "tests_passing": false,
+    "pr_url": ""
+  }
+}
