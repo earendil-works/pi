@@ -7,11 +7,12 @@
 ### NLTPI-SEC-001 — Align security policy with NLT governance
 **Status:** in_review  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
-**Summary:** Replace inherited Pi/Earendil-specific security guidance with an NLT-Pi policy. The update preserves the local execution/no-OS-sandbox warning while defining NLT's development, ASFDK foundation, harness, MCP, and AgentOS trust boundaries; enforcement-first requirements; prompt-injection criteria based on demonstrated impact; vulnerability scope; private reporting; and incident handling. The policy explicitly distinguishes documented security requirements from verified implementation.  
-**PR:** Pending creation  
+**Summary:** Replace inherited Pi/Earendil-specific security guidance with an NLT-Pi policy. The update preserves the local execution/no-OS-sandbox warning while defining NLT's development, ASFDK foundation, harness, MCP, and AgentOS trust boundaries; enforcement-first requirements; prompt-injection criteria based on demonstrated impact; vulnerability scope; private reporting; and incident handling. Disclosure fallback now matches `docs/escalations/README.md`: if GitHub private reporting is unavailable, stop and obtain the repository owner's established private reporting route; do not invent an address or fall back to a public issue.  
+**PR:** https://github.com/NeuroLift-Technologies/nlt-pi/pull/6  
+**Related escalation:** https://github.com/NeuroLift-Technologies/nlt-pi/issues/5 (PR #6 addresses item 1 only; branch protection and CI startup failures remain outstanding).  
 **Branch:** `docs/nlt-pi-security-policy`  
-**Verification:** Documentation-only change. No runtime tests were run. Private reporting is directed to GitHub private vulnerability reporting / Security Advisories when available; no unverified email address was added.  
-**Next action:** Review the policy for organizational disclosure contact and confirm private vulnerability reporting is enabled for the repository.
+**Verification:** Documentation-only change. No runtime tests were run. GitHub private vulnerability reporting enablement remains unverified; no unverified email address was added.  
+**Next action:** Owner to confirm private reporting is enabled or supply the established private route; review policy wording. Separately resolve main branch protection and Actions startup failures tracked in Issue #5.
 
 ### NLTPI-ARCH-001 — ASFDK three-layer governance alignment
 **Status:** active  
