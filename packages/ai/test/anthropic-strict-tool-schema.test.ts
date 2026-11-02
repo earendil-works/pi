@@ -98,6 +98,31 @@ describe("Anthropic strict tool schemas", () => {
 		});
 	});
 
+	// https://github.com/earendil-works/pi/issues/9557
+	it("keeps root definitions in non-strict schemas so property refs resolve", async () => {
+		const settings = { type: "object", properties: { verbose: { type: "boolean" } } };
+		const cases = [
+			{ ref: "#/$defs/Settings", definitions: { $defs: { Settings: settings } } },
+			{ ref: "#/definitions/Settings", definitions: { definitions: { Settings: settings } } },
+		];
+		for (const { ref, definitions } of cases) {
+			const parameters = {
+				type: "object",
+				properties: { settings: { $ref: ref } },
+				required: ["settings"],
+				...definitions,
+			} as unknown as Tool["parameters"];
+			const tool = await captureFirstTool(createTool(parameters));
+			expect(tool.strict).toBeUndefined();
+			expect(tool.input_schema).toEqual({
+				type: "object",
+				properties: { settings: { $ref: ref } },
+				required: ["settings"],
+				...definitions,
+			});
+		}
+	});
+
 	// https://github.com/earendil-works/pi/issues/9953
 	it("sends prefer tools non-strict when they use keywords Anthropic strict mode rejects", async () => {
 		const unsupportedParameters: Tool["parameters"][] = [
