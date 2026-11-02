@@ -928,7 +928,7 @@ describe("Coding Agent Tools", () => {
 		// https://github.com/earendil-works/pi/issues/9276
 		it("should print overlapping context once and keep the last match's trailing context", async () => {
 			const testFile = join(testDir, "rg-context.txt");
-			writeFileSync(testFile, ["a", "match one", "b", "match two", "c", "d", "e", "match three", "f"].join("\n"));
+			writeFileSync(testFile, ["a", "match one", "b", "match two", "match three", "c", "match four"].join("\n"));
 
 			const result = await grepTool.execute("test-call-rg-context", {
 				pattern: "match",
@@ -942,12 +942,12 @@ describe("Coding Agent Tools", () => {
 					"rg-context.txt:2: match one",
 					"rg-context.txt-3- b",
 					"rg-context.txt:4: match two",
-					"rg-context.txt-5- c",
+					// A match inside the last allowed match's trailing context is shown as context.
+					"rg-context.txt-5- match three",
 				].join("\n"),
 			);
 		});
 
-		// https://github.com/earendil-works/pi/issues/9276
 		// https://github.com/earendil-works/pi/issues/9276
 		it("should keep counting matches past the byte cap", async () => {
 			const testFile = join(testDir, "byte-cap.txt");
@@ -967,8 +967,40 @@ describe("Coding Agent Tools", () => {
 			expect(result.details?.truncation?.totalLines).toBe(150);
 		});
 
+		// https://github.com/earendil-works/pi/issues/9276
+		it("should report truncation when stored output ends exactly at the byte cap", async () => {
+			const testFile = join(testDir, "x");
+			// 103 rows of 500 bytes plus one of 12 bytes, with newlines, join to exactly 50KB; one more match follows.
+			writeFileSync(testFile, [...Array(103).fill("x".repeat(490)), "x".repeat(7), "extra x"].join("\n"));
+
+			const result = await grepTool.execute("test-call-byte-cap-boundary", {
+				pattern: "x",
+				path: testFile,
+				limit: 1000,
+			});
+
+			expect(getTextOutput(result)).toContain("[50.0KB limit reached]");
+			expect(result.details?.truncation?.totalLines).toBe(105);
+		});
+
+		// https://github.com/earendil-works/pi/issues/9276
+		it("should accept a huge context value", async () => {
+			const testFile = join(testDir, "huge-context.txt");
+			writeFileSync(testFile, "before\nneedle\nafter");
+
+			const result = await grepTool.execute("test-call-huge-context", {
+				pattern: "needle",
+				path: testFile,
+				context: 1e30,
+			});
+
+			expect(getTextOutput(result)).toBe(
+				["huge-context.txt-1- before", "huge-context.txt:2: needle", "huge-context.txt-3- after"].join("\n"),
+			);
+		});
+
 		// Context lines come from ripgrep, which decodes UTF-16; rereading the file as UTF-8 corrupted them (#11423).
-		it("should decode UTF-16 files the same way with and without context", async () => {
+		it("should decode UTF-16 files with context", async () => {
 			const testFile = join(testDir, "utf16.txt");
 			writeFileSync(testFile, Buffer.from("\uFEFFbefore\nneedle 中文\nafter\n", "utf16le"));
 

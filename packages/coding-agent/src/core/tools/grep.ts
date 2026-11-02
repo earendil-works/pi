@@ -47,7 +47,7 @@ export interface GrepToolDetails {
 
 /**
  * Pluggable operations for the grep tool.
- * Override these to delegate search to remote systems (for example SSH).
+ * The search itself always runs the local ripgrep; to search a remote system, override the tool's execute().
  */
 export interface GrepOperations {
 	/** Check if path is a directory. Throws if path does not exist. */
@@ -135,7 +135,9 @@ export function createGrepToolDefinition(
 							return;
 						}
 
-						const contextValue = context && context > 0 ? Math.floor(context) : 0;
+						// Clamp so String() never yields exponent notation, which rg rejects.
+						const contextValue =
+							context && context > 0 ? Math.min(Math.floor(context), Number.MAX_SAFE_INTEGER) : 0;
 						const effectiveLimit = Math.max(1, limit ?? DEFAULT_LIMIT);
 						const formatPath = (filePath: string): string => {
 							if (isDirectory) {
@@ -208,7 +210,8 @@ export function createGrepToolDefinition(
 								? `${relativePath}:${lineNumber}: ${truncatedText}`
 								: `${relativePath}-${lineNumber}- ${truncatedText}`;
 							// Byte truncation below drops everything past the cap, so keep counting but stop storing (#9276).
-							if (outputBytes <= DEFAULT_MAX_BYTES) outputLines.push(line);
+							// outputBytes counts a newline after every line; the joined output has one fewer.
+							if (outputBytes - 1 <= DEFAULT_MAX_BYTES) outputLines.push(line);
 							outputBytes += Buffer.byteLength(line, "utf-8") + 1;
 							outputLineCount++;
 						};

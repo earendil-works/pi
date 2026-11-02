@@ -4,7 +4,7 @@
 
 ### Breaking Changes
 
-- Removed `readFile` from `GrepOperations`. The grep tool now takes context lines from ripgrep and no longer reads matched files itself ([#9276](https://github.com/earendil-works/pi/issues/9276))
+- Removed `readFile` from `GrepOperations`. The grep tool now takes context lines from ripgrep and no longer reads matched files itself. To search a remote system, override grep's `execute()`; see [Remote Execution](docs/extensions.md#remote-execution) ([#9276](https://github.com/earendil-works/pi/issues/9276))
 
 ### Added
 
@@ -21,7 +21,7 @@
 
 ### Fixed
 
-- Fixed the grep tool running out of memory when `context` was set: it read every matched file whole to print the surrounding lines, so a few large log files could exhaust the heap. It now passes `--context` to ripgrep and stores no output past the 50KB cap, so memory follows the output size; match counts and limit notices are unchanged. Overlapping context is printed once, and UTF-16 files show correctly with context ([#9276](https://github.com/earendil-works/pi/issues/9276), [#11423](https://github.com/earendil-works/pi/issues/11423))
+- Fixed the grep tool running out of memory when `context` was set: it read every matched file whole to print the surrounding lines, so a few large log files could exhaust the heap. It now passes `--context` to ripgrep and stores no output past the 50KB cap, so memory no longer grows with file size or match count; match counts and limit notices are unchanged. Overlapping context is printed once, and UTF-16 files show correctly with context ([#9276](https://github.com/earendil-works/pi/issues/9276), [#11423](https://github.com/earendil-works/pi/issues/11423))
 
 ## [1.5.0] - 2026-11-02
 
