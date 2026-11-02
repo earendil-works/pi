@@ -56,7 +56,7 @@ Report vulnerabilities against the latest version or latest commit on the defaul
 
 **Do not disclose suspected vulnerabilities in public GitHub issues, pull requests, discussions, or commits.**
 
-Use GitHub's private vulnerability reporting / Security Advisories for this repository when that feature is available. If private reporting is unavailable, contact the repository maintainers through a private GitHub channel and request a secure reporting route. Do not send exploit details or sensitive evidence through a public channel.
+Use GitHub's private vulnerability reporting / Security Advisories for this repository when that feature is available. If private reporting is unavailable, stop and obtain the repository owner's established private reporting route. Do not fall back to a public issue, and do not invent or publish a contact address. Do not send exploit details or sensitive evidence through a public channel.
 
 Include, where possible:
 
