@@ -176,6 +176,24 @@ describe("schemas", () => {
 		]);
 	});
 
+	// #11697
+	it("applies a relative root $id once when resolving local references", () => {
+		const schema = {
+			$id: "schemas/tool.json",
+			type: "object",
+			properties: { count: { $ref: "#/$defs/count" } },
+			required: ["count"],
+			$defs: { count: { type: "integer" } },
+		};
+		expect(compile(schema).check({ count: 2 })).toBe(true);
+		const validator = compile(schema, { unresolvedRefs: "reject" });
+		expect(validator.check({ count: 2 })).toBe(true);
+		expect(validator.errors({ count: "a" })).toEqual([
+			{ path: "/count", keyword: "type", message: "expected integer, got string" },
+		]);
+		expect(compile(schema, { coerce: true }).parse({ count: "2" })).toEqual({ ok: true, value: { count: 2 } });
+	});
+
 	it("throws for a malformed schema", () => {
 		expect(() => compile({ properties: { a: 1 } })).toThrow(/must be an object or a boolean/);
 	});

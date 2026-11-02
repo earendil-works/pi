@@ -18,7 +18,8 @@ export const DEFAULT_BASE = "https://json-schema.invalid/root.json";
  */
 export class Resolver {
 	readonly draft: "2020-12" | "7";
-	readonly rootBase: string;
+	/** The base URI the root schema is walked from; walkers apply the root's own `$id` through `baseFor`. */
+	readonly rootBase = DEFAULT_BASE;
 	/** Schema object to the base URI it was indexed under. */
 	readonly baseOf = new Map<object, string>();
 	/** URI (with a `#name` fragment) of every `$dynamicAnchor`, to its schema. */
@@ -38,7 +39,6 @@ export class Resolver {
 		this.root = root;
 		this.options = options;
 		this.rejectUnresolved = options.unresolvedRefs === "reject";
-		this.rootBase = isSchemaObject(root) ? this.baseFor(root, DEFAULT_BASE) : DEFAULT_BASE;
 	}
 
 	/**
