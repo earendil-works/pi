@@ -2279,6 +2279,11 @@ validation and copies the v2 kernel added around Delta.
   plugins as one combined file named by a hash of the set (one request, cacheable); while a page is open, a rollout's
   changed plugins are fetched one script each. A fresh page makes two requests, an update downloads only what changed.
   Rejected: a prebuilt base bundle shipped with the app (could disagree with the plugins' build).
+- **Slice 11, P4: new plugin scripts apply in place (owner, 2026-11-01: "yep, agree"):** a page's host reloads the
+  changed plugins per plugin (`host.reload`, as on the server): objects swap or restart, the UI re-renders from its
+  registries, keeping what is on screen (scroll, a half-typed message). A change of base code still reloads the whole
+  page. Rejected: reloading the page for every plugin change (p2's behaviour, which lost the screen on every agent
+  edit).
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
