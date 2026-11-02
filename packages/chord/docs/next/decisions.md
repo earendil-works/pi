@@ -2205,6 +2205,13 @@ validation and copies the v2 kernel added around Delta.
   enabled by the app per host kind, never by a plugin (a stranger's web plugin must not run code on the server).
   To do: a skill and documentation for agents describing a plugin's layout, its contract files, imports and how the
   host builds it. Open from the primer: (6) `testPlugin` with stub facets, (7) single-file plugins.
+- **Single-file plugins (owner, 2026-11-01: "agreed"; plugin model point 7):** a root may hold plain files named
+  `<name>.<kind>.ts(x)` (`hello.server.ts`, `hello.web.tsx`): files with the same first name are one plugin named
+  after it, one facet per file. The name must be a valid unscoped name; a collision with a directory plugin of the
+  same root is reported like any duplicate. No `package.json`, so no npm dependencies; it imports only the app's API
+  (host packages), no other files and no contract files for others; it may serve objects, define contracts for
+  itself inline and contribute to registries. When it needs more, it becomes a directory with the same name, which a
+  reload treats as the same plugin. The watcher's `set` mark covers files appearing and disappearing at a root's top.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a

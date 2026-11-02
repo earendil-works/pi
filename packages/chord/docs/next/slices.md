@@ -192,6 +192,8 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   pins (subfolders of multi-plugin repositories cloned and linked); installing plugins from git; base code reduced to
   the API, bootstrap and a start-data facet, the harness and core registry providers as plugins, a required root; a
   skill and documentation for agents on a plugin's layout and build.
+- **Single-file plugins** (decision "Single-file plugins"): discovery of `<name>.<kind>.ts(x)` files, grouped by
+  name; their import rule; the watcher's `set` for them.
 
 ### After slice 11
 
