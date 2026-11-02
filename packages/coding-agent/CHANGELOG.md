@@ -21,7 +21,7 @@
 
 ### Fixed
 
-- Fixed the grep tool running out of memory when `context` was set: it read every matched file whole to print the surrounding lines, so a few large log files could exhaust the heap. It now passes `--context` to ripgrep, prints overlapping context once, and shows UTF-16 files correctly with context ([#9276](https://github.com/earendil-works/pi/issues/9276), [#11423](https://github.com/earendil-works/pi/issues/11423))
+- Fixed the grep tool running out of memory when `context` was set: it read every matched file whole to print the surrounding lines, so a few large log files could exhaust the heap. It now passes `--context` to ripgrep and stores no output past the 50KB cap, so memory follows the output size; match counts and limit notices are unchanged. Overlapping context is printed once, and UTF-16 files show correctly with context ([#9276](https://github.com/earendil-works/pi/issues/9276), [#11423](https://github.com/earendil-works/pi/issues/11423))
 
 ## [1.5.0] - 2026-11-02
 

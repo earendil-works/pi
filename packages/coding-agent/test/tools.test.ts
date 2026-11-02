@@ -948,6 +948,25 @@ describe("Coding Agent Tools", () => {
 		});
 
 		// https://github.com/earendil-works/pi/issues/9276
+		// https://github.com/earendil-works/pi/issues/9276
+		it("should keep counting matches past the byte cap", async () => {
+			const testFile = join(testDir, "byte-cap.txt");
+			const line = `match ${"x".repeat(400)}`;
+			writeFileSync(testFile, Array.from({ length: 200 }, () => line).join("\n"));
+
+			const result = await grepTool.execute("test-call-byte-cap", {
+				pattern: "match",
+				path: testFile,
+				limit: 150,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("150 matches limit reached");
+			expect(output).toContain("50.0KB limit reached");
+			expect(result.details?.matchLimitReached).toBe(150);
+			expect(result.details?.truncation?.totalLines).toBe(150);
+		});
+
 		// Context lines come from ripgrep, which decodes UTF-16; rereading the file as UTF-8 corrupted them (#11423).
 		it("should decode UTF-16 files the same way with and without context", async () => {
 			const testFile = join(testDir, "utf16.txt");

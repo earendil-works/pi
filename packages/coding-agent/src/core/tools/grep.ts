@@ -186,7 +186,9 @@ export function createGrepToolDefinition(
 							stderr += chunk.toString();
 						});
 
+						// Size of the full output, including lines past the byte cap that are counted but not stored.
 						let outputBytes = 0;
+						let outputLineCount = 0;
 						let lastFile: string | undefined;
 						// After the last allowed match, rg still sends that match's trailing context; keep lines up to here.
 						let trailingContextEnd = 0;
@@ -205,10 +207,10 @@ export function createGrepToolDefinition(
 							const line = isMatch
 								? `${relativePath}:${lineNumber}: ${truncatedText}`
 								: `${relativePath}-${lineNumber}- ${truncatedText}`;
-							outputLines.push(line);
+							// Byte truncation below drops everything past the cap, so keep counting but stop storing (#9276).
+							if (outputBytes <= DEFAULT_MAX_BYTES) outputLines.push(line);
 							outputBytes += Buffer.byteLength(line, "utf-8") + 1;
-							// Byte truncation below drops everything past this point, so stop collecting it.
-							if (outputBytes > DEFAULT_MAX_BYTES) finish();
+							outputLineCount++;
 						};
 
 						rl.on("line", (line) => {
@@ -262,8 +264,7 @@ export function createGrepToolDefinition(
 								settle(() => reject(new Error(errorMsg)));
 								return;
 							}
-							// Check output, not matchCount: with a large context the byte cap can stop rg before the first match line.
-							if (outputLines.length === 0) {
+							if (matchCount === 0) {
 								settle(() =>
 									resolve({ content: [{ type: "text", text: "No matches found" }], details: undefined }),
 								);
@@ -273,6 +274,8 @@ export function createGrepToolDefinition(
 							const rawOutput = outputLines.join("\n");
 							// Apply byte truncation. There is no line limit here because the match limit already capped rows.
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
+							truncation.totalLines = outputLineCount;
+							truncation.totalBytes = outputBytes - 1;
 							let output = truncation.content;
 							const details: GrepToolDetails = {};
 							// Build actionable notices for truncation and match limits.
