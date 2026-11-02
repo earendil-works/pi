@@ -1,6 +1,6 @@
 # NLT Coding Agent MVP
 
-This directory is the application boundary for the NLT Coding Agent MVP and the configured Vercel project root.
+This directory is the application boundary for the first NLT Coding Agent MVP and the configured Vercel project root.
 
 ## Vercel application shell
 
@@ -45,6 +45,18 @@ For the Vercel project using `mvp/` as its Root Directory, **Include source file
 6. Add authenticated sessions and persistence only after their providers and data contracts are explicitly selected.
 
 Do not expose coding-agent tools to requests until the ASFDK harness and execution boundary are integrated and verified. Do not interpret the status endpoint as proof of authorization. Do not treat this scaffold as a production-ready agent.
+
+## Governed turn
+
+`createNltCodingAgent()` exposes a deterministic governed turn surface (`governedTurn`) that runs a user prompt through the ASFDK harness before any coding-agent turn may execute:
+
+- Crisis / emotional assessment (Sleepwalker Protocol + RRT Advocate handoff) via `harness.assessText`.
+- Blocking crisis levels (`RED` / `BLACK`) or failed governance assessments return `allowed: false` with a `blockedReason` — escalation to a human precedes agent execution.
+- Non-blocking assessments return `allowed: true` with the interaction, emotional state, governance, and continuity context needed to feed the subsequent coding-agent turn.
+
+`runNltCodingTurn()` wraps the above into a single governed turn entry point: assess → block-or-run → inject governed system prompt (ASFDK protocol + preflight) → execute through the pi-coding-agent runtime (ASFDK extension loaded) → return the final assistant response plus post-turn governance/continuity bookkeeping.
+
+The MVP does not yet persist continuity or run a separate post-turn response-governance pass; those remain explicit follow-up agent-side work.
 
 ## Current deployment posture
 
