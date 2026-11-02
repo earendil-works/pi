@@ -15,13 +15,13 @@
       "Changed registration acknowledgment default to false and replaced handoff tests_passing with an explicit test_result state.",
       "Extended governance validation and added a Node test to the CI workflow.",
       "Created PR #7 for human review.",
-      "GitHub Actions governance validation run #46 completed successfully; validator and its Node test both passed."
+      "GitHub Actions governance validation run #47 completed successfully; validator and its Node test both passed."
     ],
     "work_in_progress": [
       "General repository CI run #40 remains in progress; inspect its final result before merge recommendation."
     ],
     "blockers": [
-      "General repository CI run #40 has not completed yet."
+      "General repository CI run #41 has not completed yet."
     ],
     "decisions_made": [
       "Treat public .github as the public minimum governance requirements and template source.",
@@ -30,7 +30,7 @@
     ],
     "decisions_pending": [],
     "escalations": [],
-    "next_agent_notes": "Governance validation run #46 passed, including both validator and Node test. General repository CI run #40 was still in progress at handoff update time. Review https://github.com/NeuroLift-Technologies/nlt-pi/pull/7 and wait for run #40 before merge recommendation. Do not merge without explicit human authorization.",
+    "next_agent_notes": "Governance validation run #47 passed, including both validator and Node test. General repository CI run #41 was still pending at handoff update time. Review https://github.com/NeuroLift-Technologies/nlt-pi/pull/7 and inspect run #41 before merge recommendation. Do not merge without explicit human authorization.",
     "files_modified": [
       ".github/ISSUE_TEMPLATE/bug.yml",
       ".github/ISSUE_TEMPLATE/contribution.yml",
@@ -63,7 +63,7 @@
       "JSON.parse validation of templates/agent-registration.json",
       "JSON.parse validation of templates/handoff-record.json",
       "JSON.parse validation of agent registration record",
-      "GitHub Actions Validate NLT-Pi Governance run #46: success (validator step and Node test step both passed)."
+      "GitHub Actions Validate NLT-Pi Governance run #47: success (validator step and Node test step both passed)."
     ],
     "test_result": "partially_passed",
     "pr_url": "https://github.com/NeuroLift-Technologies/nlt-pi/pull/7"
