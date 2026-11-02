@@ -87,8 +87,8 @@ describe("Antigravity native catalog", () => {
 		// retired here because this catalog does not list them.
 		const template = (id: string) => ANTIGRAVITY_MODELS.find((model) => model.id === id)!;
 		expect(pro).toMatchObject({
-			cost: template("gemini-3.1-pro").cost,
-			contextWindow: template("gemini-3.1-pro").contextWindow,
+			cost: template("gemini-4-argon").cost,
+			contextWindow: template("gemini-4-argon").contextWindow,
 			thinkingLevelMap: { low: "low", high: "high", medium: null },
 		});
 		expect(models.getModel("antigravity", "gemini-9-pro-low")).toBeUndefined();
@@ -637,17 +637,14 @@ describe("Antigravity catalog retirement", () => {
 		expect(catalog.retired).not.toContain("gemini-3.7-flash");
 	});
 
-	// The live catalog on 2026-10-25, after Google removed the families it had tagged Leaving Soon.
-	const liveAfterRemoval = () => ({
+	// Live catalog fixture omitting baseline gemini-3.5-flash to verify baseline retirement.
+	const liveWithout35Flash = () => ({
 		"gemini-3.8-flash-low": { ...flash("Fast"), displayName: "Gemini 3.8 Flash (Low)" },
 		"gemini-3.8-flash-medium": { ...flash("Fast"), displayName: "Gemini 3.8 Flash (Medium)" },
 		"gemini-3.8-flash-high": { ...flash("Fast"), displayName: "Gemini 3.8 Flash (High)" },
 		"gemini-4-argon-low": { ...flash("New"), displayName: "Gemini 4 Argon (Low)" },
 		"gemini-4-argon-medium": { ...flash("New"), displayName: "Gemini 4 Argon (Medium)" },
 		"gemini-4-argon-high": { ...flash("New"), displayName: "Gemini 4 Argon (High)" },
-		"gemini-3.5-flash-extra-low": { ...flash(), displayName: "Gemini 3.5 Flash (Low)" },
-		"gemini-3.5-flash-low": { ...flash(), displayName: "Gemini 3.5 Flash (Medium)" },
-		"gemini-3-flash-agent": { ...flash(), displayName: "Gemini 3.5 Flash (High)" },
 		"claude-opus-5-5-low": { ...flash(), displayName: "Claude Opus 5.5 (Low)" },
 		"claude-opus-5-5-high": { ...flash(), displayName: "Claude Opus 5.5 (High)" },
 		"claude-sonnet-5-5-low": { ...flash(), displayName: "Claude Sonnet 5.5 (Low)" },
@@ -655,13 +652,8 @@ describe("Antigravity catalog retirement", () => {
 		"gpt-oss-120b-medium": { ...flash(), displayName: "GPT-OSS 120B (Medium)" },
 	});
 
-	it("retires baseline families the live catalog stopped listing", () => {
-		const catalog = buildAntigravityCatalog(liveAfterRemoval(), {
-			models: ANTIGRAVITY_MODELS,
-			routing: ANTIGRAVITY_ROUTING,
-		});
-		expect(catalog.retired).toEqual(["gemini-3.1-pro", "gemini-3.6-flash", "gemini-3.7-flash"]);
-		expect(catalog.models.map((model) => model.id).sort()).toEqual([
+	it("omits retired Gemini 3.7/3.6 Flash, Gemini 3.1 Pro, and Claude 4.6 from the static baseline", () => {
+		expect(ANTIGRAVITY_MODELS.map((model) => model.id).sort()).toEqual([
 			"claude-opus-5-5",
 			"claude-sonnet-5-5",
 			"gemini-3.5-flash",
@@ -671,17 +663,32 @@ describe("Antigravity catalog retirement", () => {
 		]);
 	});
 
+	it("retires baseline families the live catalog stopped listing", () => {
+		const catalog = buildAntigravityCatalog(liveWithout35Flash(), {
+			models: ANTIGRAVITY_MODELS,
+			routing: ANTIGRAVITY_ROUTING,
+		});
+		expect(catalog.retired).toEqual(["gemini-3.5-flash"]);
+		expect(catalog.models.map((model) => model.id).sort()).toEqual([
+			"claude-opus-5-5",
+			"claude-sonnet-5-5",
+			"gemini-3.8-flash",
+			"gemini-4-argon",
+			"gpt-oss-120b",
+		]);
+	});
+
 	it("keeps removed families hidden after an offline restart from the models store", async () => {
 		const modelsStore = new InMemoryModelsStore();
 		const { models } = await setup("project-a", modelsStore);
-		vi.stubGlobal("fetch", async () => Response.json({ models: liveAfterRemoval() }));
+		vi.stubGlobal("fetch", async () => Response.json({ models: liveWithout35Flash() }));
 		expect((await models.refresh({ allowNetwork: true })).errors.size).toBe(0);
-		for (const id of ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.1-pro"]) {
+		for (const id of ["gemini-3.5-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.1-pro"]) {
 			expect(models.getModel("antigravity", id)).toBeUndefined();
 		}
 		const restored = await setup("project-a", modelsStore);
 		await restored.models.refresh({ allowNetwork: false });
-		for (const id of ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.1-pro"]) {
+		for (const id of ["gemini-3.5-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.1-pro"]) {
 			expect(restored.models.getModel("antigravity", id)).toBeUndefined();
 		}
 		expect(restored.models.getModel("antigravity", "gemini-3.8-flash")).toBeDefined();
@@ -693,13 +700,12 @@ describe("Antigravity catalog retirement", () => {
 		const flash38 = first.models.getModel("antigravity", "gemini-3.8-flash")!;
 		await modelsStore.write("antigravity", {
 			checkedAt: Date.now(),
-			models: [{ ...flash38, antigravityRetired: ["gemini-3.7-flash", "gemini-3.6-flash"] } as AntigravityModel],
+			models: [{ ...flash38, antigravityRetired: ["gemini-3.5-flash"] } as AntigravityModel],
 		});
 		const restored = await setup("project-a", modelsStore);
 		await restored.models.refresh({ allowNetwork: false });
 		expect(restored.models.getModel("antigravity", "gemini-3.8-flash")).toBeDefined();
-		expect(restored.models.getModel("antigravity", "gemini-3.7-flash")).toBeUndefined();
-		expect(restored.models.getModel("antigravity", "gemini-3.6-flash")).toBeUndefined();
+		expect(restored.models.getModel("antigravity", "gemini-3.5-flash")).toBeUndefined();
 	});
 });
 

@@ -387,7 +387,12 @@ describe("google-shared convertTools const handling", () => {
 			type: "object",
 			properties: {
 				origin: { type: "string", enum: ["zq-src-7"] },
-				mode: { type: "string", enum: ["a", "b"] },
+				mode: {
+					anyOf: [
+						{ type: "string", enum: ["a"] },
+						{ type: "string", enum: ["b"] },
+					],
+				},
 				level: { oneOf: [{ enum: [1] }, { enum: [2] }] },
 				flag: { type: "boolean", const: true },
 				list: { type: "array", items: { enum: ["x"] } },

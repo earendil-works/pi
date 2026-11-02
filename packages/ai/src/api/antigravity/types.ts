@@ -140,6 +140,7 @@ export type StreamCandidate = {
 };
 
 export type StreamResponseData = {
+	responseId?: string;
 	candidates?: StreamCandidate[];
 	usageMetadata?: StreamUsageMetadata;
 };

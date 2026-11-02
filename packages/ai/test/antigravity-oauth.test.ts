@@ -2,6 +2,7 @@ import { gzipSync } from "node:zlib";
 import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from "undici";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { antigravityOAuth } from "../src/auth/oauth/antigravity.ts";
+import { startOAuthCallbackServer, waitForCallbackOrManualInput } from "../src/auth/oauth/callback-server.ts";
 import type { OAuthCredential } from "../src/auth/types.ts";
 
 vi.mock("../src/auth/oauth/callback-server.ts", () => ({
@@ -33,6 +34,7 @@ afterEach(async () => {
 	setGlobalDispatcher(originalDispatcher);
 	await mock.close();
 	vi.unstubAllGlobals();
+	vi.unstubAllEnvs();
 });
 
 describe("Antigravity OAuth transport", () => {
@@ -124,5 +126,52 @@ describe("Antigravity OAuth transport", () => {
 		controller.abort(new Error("cancelled"));
 		await expect(antigravityOAuth.refresh(credential, controller.signal)).rejects.toThrow("cancelled");
 		expect(mock.pendingInterceptors()).toHaveLength(0);
+	});
+
+	it("respects PI_OAUTH_CALLBACK_HOST and falls back to manual callback paste when port 51121 is busy", async () => {
+		vi.stubEnv("PI_OAUTH_CALLBACK_HOST", "0.0.0.0");
+		vi.mocked(startOAuthCallbackServer).mockRejectedValueOnce(new Error("EADDRINUSE"));
+		let notifiedUrl = "";
+		vi.mocked(waitForCallbackOrManualInput).mockImplementationOnce(async (_interaction, callback) => {
+			expect(callback).toBeUndefined();
+			const state = new URL(notifiedUrl).searchParams.get("state")!;
+			return {
+				type: "manual",
+				input: `http://localhost:51121/oauth-callback?state=${encodeURIComponent(state)}&code=manual-code`,
+			};
+		});
+		mock
+			.get("https://oauth2.googleapis.com")
+			.intercept({ path: "/token", method: "POST", body: /code=manual-code/ })
+			.reply(
+				200,
+				gzipSync(
+					JSON.stringify({ access_token: "manual-access", refresh_token: "manual-refresh", expires_in: 3600 }),
+				),
+				{ headers },
+			);
+		mock
+			.get("https://www.googleapis.com")
+			.intercept({ path: "/oauth2/v1/userinfo?alt=json", method: "GET" })
+			.reply(200, gzipSync(JSON.stringify({ email: "user@example.test" })), { headers });
+		vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+			if (String(url).endsWith(":loadCodeAssist"))
+				return Response.json({ cloudaicompanionProject: "manual-project" });
+			throw new Error("OAuth must not use native fetch");
+		});
+		const result = await antigravityOAuth.login({
+			signal: new AbortController().signal,
+			notify: (event) => {
+				if (event.type === "auth_url") notifiedUrl = event.url;
+			},
+			prompt: async () => "unused",
+		});
+		expect(startOAuthCallbackServer).toHaveBeenCalledWith(expect.objectContaining({ host: "0.0.0.0", port: 51121 }));
+		expect(result).toMatchObject({
+			access: "manual-access",
+			refresh: "manual-refresh",
+			projectId: "manual-project",
+		});
+		mock.assertNoPendingInterceptors();
 	});
 });

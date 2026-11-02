@@ -221,10 +221,10 @@ export function getMaxOutputTokens(modelId: string, runtimeModel?: string): numb
 	return 8192;
 }
 
-const geminiFlashCost = { input: 0.1, output: 0.4, cacheRead: 0.025, cacheWrite: 0.1 };
-const geminiProCost = { input: 1.25, output: 5.0, cacheRead: 0.3125, cacheWrite: 1.25 };
-const claudeSonnetCost = { input: 3.0, output: 15.0, cacheRead: 0.3, cacheWrite: 3.75 };
-const claudeOpusCost = { input: 15.0, output: 75.0, cacheRead: 1.5, cacheWrite: 18.75 };
+const geminiFlashCost = { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0 };
+const geminiProCost = { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 0 };
+const claudeSonnetCost = { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 };
+const claudeOpusCost = { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 };
 const gptOssCost = { input: 0.6, output: 2.4, cacheRead: 0.15, cacheWrite: 0.6 };
 
 // A null entry is intentionally hidden by Pi. Do not collapse levels that happen to
@@ -281,26 +281,6 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		maxTokens: 65536,
 	},
 	{
-		id: "gemini-3.7-flash",
-		name: "Gemini 3.7 Flash (Antigravity)",
-		reasoning: true,
-		thinkingLevelMap: thinkingLevelMaps.lowMediumHigh,
-		input: ["text", "image"],
-		cost: geminiFlashCost,
-		contextWindow: 1048576,
-		maxTokens: 65536,
-	},
-	{
-		id: "gemini-3.6-flash",
-		name: "Gemini 3.6 Flash (Antigravity)",
-		reasoning: true,
-		thinkingLevelMap: thinkingLevelMaps.lowMediumHigh,
-		input: ["text", "image"],
-		cost: geminiFlashCost,
-		contextWindow: 1048576,
-		maxTokens: 65536,
-	},
-	{
 		id: "claude-opus-5-5",
 		name: "Claude Opus 5.5 (Antigravity)",
 		reasoning: true,
@@ -329,16 +309,6 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		cost: geminiProCost,
 		contextWindow: 1048576,
 		maxTokens: 65536,
-	},
-	{
-		id: "gemini-3.1-pro",
-		name: "Gemini 3.1 Pro (Antigravity)",
-		reasoning: true,
-		thinkingLevelMap: thinkingLevelMaps.lowHigh,
-		input: ["text", "image"],
-		cost: geminiProCost,
-		contextWindow: 1048576,
-		maxTokens: 65535,
 	},
 	{
 		id: "gemini-3.5-flash",

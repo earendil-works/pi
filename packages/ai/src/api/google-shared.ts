@@ -487,33 +487,6 @@ export function rewriteConstAsEnum(schema: unknown, isNameMap = false): unknown 
 			result.enum = [value];
 		}
 	}
-	// The Cloud Code Assist protobuf schema cannot express anyOf. A union of
-	// unconstrained string literals has an equivalent enum representation.
-	if (
-		!isNameMap &&
-		result.enum === undefined &&
-		(result.type === undefined || result.type === "string") &&
-		Array.isArray(result.anyOf) &&
-		result.anyOf.length > 0
-	) {
-		const variants = result.anyOf;
-		if (
-			variants.every(
-				(variant) =>
-					typeof variant === "object" &&
-					variant !== null &&
-					Object.keys(variant).every((key) => key === "type" || key === "enum") &&
-					(variant.type === undefined || variant.type === "string") &&
-					Array.isArray(variant.enum) &&
-					variant.enum.length === 1 &&
-					typeof variant.enum[0] === "string",
-			)
-		) {
-			delete result.anyOf;
-			result.type = "string";
-			result.enum = [...new Set(variants.map((variant) => variant.enum[0]))];
-		}
-	}
 	return result;
 }
 

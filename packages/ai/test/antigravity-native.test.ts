@@ -39,11 +39,11 @@ const context = normalizeContext({
 const apiKey = JSON.stringify({ token: credential.access, projectId: credential.projectId });
 const model = antigravityProvider()
 	.getModels()
-	.find((model) => model.id === "gemini-3.7-flash")!;
+	.find((model) => model.id === "gemini-3.8-flash")!;
 
 function response(parts: unknown[] = [{ text: "native-ok" }], finishReason = "STOP") {
 	return new Response(
-		`data: ${JSON.stringify({ response: { candidates: [{ content: { parts }, finishReason }], usageMetadata: { promptTokenCount: 10, cachedContentTokenCount: 3, candidatesTokenCount: 2, totalTokenCount: 12 } } })}\n\n`,
+		`data: ${JSON.stringify({ response: { responseId: "resp-123", candidates: [{ content: { parts }, finishReason }], usageMetadata: { promptTokenCount: 10, cachedContentTokenCount: 3, candidatesTokenCount: 2, totalTokenCount: 12 } } })}\n\n`,
 		{ headers: { "content-type": "text/event-stream" } },
 	);
 }
@@ -52,9 +52,9 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("native Antigravity", () => {
 	it.each([
-		["gemini-3.7-flash", undefined],
-		["gemini-3.7-flash", "YWJjZA=="],
-		["gemini-3.7-flash", "invalid"],
+		["gemini-3.8-flash", undefined],
+		["gemini-3.8-flash", "YWJjZA=="],
+		["gemini-3.8-flash", "invalid"],
 		["claude-opus-4-6", "YWJjZA=="],
 	] as const)("preserves structured tool history from %s with signature %s", (sourceModel, signature) => {
 		const history = normalizeContext({
@@ -95,7 +95,7 @@ describe("native Antigravity", () => {
 				},
 			],
 		});
-		expect(convertMessages(model, history, "gemini-3.7-flash-low")).toEqual([
+		expect(convertMessages(model, history, "gemini-3.8-flash-low")).toEqual([
 			{ role: "user", parts: [{ text: "Read it" }] },
 			{
 				role: "model",
@@ -145,14 +145,14 @@ describe("native Antigravity", () => {
 			normalizeContext({ systemPrompt: "System", messages: [{ role: "user", content: text, timestamp: 1 }] }),
 			"project",
 			{},
-			"gemini-3.7-flash-low",
+			"gemini-3.8-flash-low",
 		);
 		expect(request.request.contents).toEqual([{ role: "user", parts: [{ text }] }]);
 		expect(request.request.systemInstruction).toEqual({ role: "user", parts: [{ text: "System" }] });
 	});
 	it("is a built-in provider without any extension", () => {
 		const models = builtinModels();
-		expect(models.getModel("antigravity", "gemini-3.7-flash")?.api).toBe("antigravity-api");
+		expect(models.getModel("antigravity", "gemini-3.8-flash")?.api).toBe("antigravity-api");
 		expect(models.getProvider("antigravity")?.auth.oauth?.isSubscription).toBe(true);
 	});
 
@@ -187,10 +187,11 @@ describe("native Antigravity", () => {
 			},
 		}).result();
 		expect(result.stopReason).toBe("stop");
+		expect(result.responseId).toBe("resp-123");
 		expect(result.content[0]).toMatchObject({ type: "text", text: "native-ok" });
 		expect(body).toMatchObject({
 			project: "test-project",
-			model: "gemini-3.7-flash-high",
+			model: "gemini-3.8-flash-high",
 			testMarker: true,
 			request: { systemInstruction: { parts: [{ text: "Be concise." }] } },
 		});
@@ -286,7 +287,7 @@ describe("native Antigravity", () => {
 				},
 			],
 		});
-		const request = await buildRequest(model, next, "test-project", {}, "gemini-3.7-flash-low");
+		const request = await buildRequest(model, next, "test-project", {}, "gemini-3.8-flash-low");
 		expect(JSON.stringify(request.request.contents)).toContain("functionResponse");
 		expect(JSON.stringify(request.request.contents)).toContain("YWJjZA==");
 	});
@@ -452,17 +453,17 @@ describe("Gemini 4 Argon thinking config", () => {
 describe("request-time guards", () => {
 	it("omits thinkingConfig entirely for a model the catalog marks non-thinking", async () => {
 		const plain = { ...model, reasoning: false };
-		const request = await buildRequest(plain, context, "test-project", { reasoning: "low" }, "gemini-3.7-flash-low");
+		const request = await buildRequest(plain, context, "test-project", { reasoning: "low" }, "gemini-3.8-flash-low");
 		expect(request.request.generationConfig?.thinkingConfig).toBeUndefined();
-		const thinking = await buildRequest(model, context, "test-project", { reasoning: "low" }, "gemini-3.7-flash-low");
+		const thinking = await buildRequest(model, context, "test-project", { reasoning: "low" }, "gemini-3.8-flash-low");
 		expect(thinking.request.generationConfig?.thinkingConfig).toBeDefined();
 	});
 
 	it("clamps a caller-supplied maxTokens to the model's advertised output limit", async () => {
 		const small = { ...model, maxTokens: 1000 };
-		const request = await buildRequest(small, context, "test-project", { maxTokens: 50_000 }, "gemini-3.7-flash-low");
+		const request = await buildRequest(small, context, "test-project", { maxTokens: 50_000 }, "gemini-3.8-flash-low");
 		expect(request.request.generationConfig?.maxOutputTokens).toBe(1000);
-		const unchanged = await buildRequest(small, context, "test-project", { maxTokens: 500 }, "gemini-3.7-flash-low");
+		const unchanged = await buildRequest(small, context, "test-project", { maxTokens: 500 }, "gemini-3.8-flash-low");
 		expect(unchanged.request.generationConfig?.maxOutputTokens).toBe(500);
 	});
 });
@@ -513,7 +514,19 @@ it.each(["gemini-3.8-flash", "gemini-4-argon", "gemini-3.1-pro"])(
 	async (id) => {
 		const current = antigravityProvider()
 			.getModels()
-			.find((m) => m.id === id)!;
+			.find((m) => m.id === id) ?? {
+			...model,
+			id,
+			thinkingLevelMap: {
+				off: null,
+				minimal: null,
+				low: "low",
+				medium: null,
+				high: "high",
+				xhigh: null,
+				max: null,
+			},
+		};
 		for (const effort of ["low", "medium", "high"] as const) {
 			const request = await buildRequest(current, context, "project", { reasoning: effort }, id);
 			const expectedLevel = id === "gemini-3.1-pro" && effort === "medium" ? "HIGH" : effort.toUpperCase();
@@ -601,13 +614,13 @@ describe("antigravity convertMessages — unsigned tool calls on the bridge", ()
 
 	it("keeps a valid same-model signature and bypasses only the unsigned sibling", () => {
 		const validSig = "AAAAAAAAAAAAAAAAAAAAAA==";
-		const calls = functionCalls(convertMessages(model, history(model, model.id, validSig), "gemini-3.7-flash-low"));
+		const calls = functionCalls(convertMessages(model, history(model, model.id, validSig), "gemini-3.8-flash-low"));
 		expect(calls.map((p) => p.thoughtSignature)).toEqual([validSig, SKIP_THOUGHT_SIGNATURE_VALIDATOR]);
 	});
 
 	it("treats a same-model call whose signature was lost like a foreign one", () => {
 		const calls = functionCalls(
-			convertMessages(model, history(model, model.id, "not base64!"), "gemini-3.7-flash-low"),
+			convertMessages(model, history(model, model.id, "not base64!"), "gemini-3.8-flash-low"),
 		);
 		expect(calls.map((p) => p.thoughtSignature)).toEqual([
 			SKIP_THOUGHT_SIGNATURE_VALIDATOR,
@@ -743,7 +756,7 @@ describe("antigravity convertMessages — shared normalisation", () => {
 					{ role: "user", content: "Never mind, list the files instead.", timestamp: 3 },
 				],
 			}),
-			"gemini-3.7-flash-low",
+			"gemini-3.8-flash-low",
 		);
 		expect(contents.at(-1)).toEqual({
 			role: "user",
@@ -758,7 +771,7 @@ describe("antigravity convertMessages — shared normalisation", () => {
 		const history = normalizeContext({
 			messages: [{ role: "user", content: "Run it", timestamp: 1 }, codemodeTurn(model)],
 		});
-		const contents = convertMessages(model, history, "gemini-3.7-flash-low");
+		const contents = convertMessages(model, history, "gemini-3.8-flash-low");
 		expect(JSON.stringify(contents.at(-1))).toContain('"functionResponse"');
 	});
 
@@ -779,7 +792,7 @@ describe("antigravity convertMessages — shared normalisation", () => {
 					},
 				],
 			}),
-			"gemini-3.7-flash-low",
+			"gemini-3.8-flash-low",
 		);
 		expect(contents.at(-1)).toEqual({
 			role: "user",
@@ -793,6 +806,88 @@ describe("antigravity convertMessages — shared normalisation", () => {
 					},
 				},
 			],
+		});
+	});
+
+	// https://github.com/earendil-works/pi/issues/8720
+	it("treats whitespace-only tool result text as empty", () => {
+		const contents = convertMessages(
+			model,
+			normalizeContext({
+				messages: [
+					{ role: "user", content: "Run it", timestamp: 1 },
+					{
+						...codemodeTurn(model),
+						content: [
+							{ type: "toolCall", id: "call_1", name: "bash", arguments: {} },
+							{ type: "toolCall", id: "call_2", name: "bash", arguments: {} },
+							{ type: "toolCall", id: "call_3", name: "bash", arguments: {} },
+						],
+					},
+					{
+						role: "toolResult",
+						toolCallId: "call_1",
+						toolName: "bash",
+						content: [{ type: "text", text: "\r\n" }],
+						isError: false,
+						timestamp: 3,
+					},
+					{
+						role: "toolResult",
+						toolCallId: "call_2",
+						toolName: "bash",
+						content: [{ type: "text", text: " \n" }, png],
+						isError: false,
+						timestamp: 4,
+					},
+					{
+						role: "toolResult",
+						toolCallId: "call_3",
+						toolName: "bash",
+						content: [{ type: "text", text: " \t " }],
+						isError: true,
+						timestamp: 5,
+					},
+				],
+			}),
+			"gemini-3.8-flash-low",
+		);
+		const responses = contents
+			.at(-1)
+			?.parts.flatMap((part) => ("functionResponse" in part ? [part.functionResponse.response] : []));
+		expect(responses).toEqual([{ output: "" }, { output: "(see attached image)" }, { error: "Tool failed" }]);
+	});
+
+	// https://github.com/earendil-works/pi/issues/7362
+	it("preserves signed empty thinking blocks and drops unsigned empty ones", () => {
+		const validSig = "YWJjZA==";
+		const contents = convertMessages(
+			model,
+			normalizeContext({
+				messages: [
+					{ role: "user", content: "Think", timestamp: 1 },
+					{
+						role: "assistant",
+						api: model.api,
+						provider: model.provider,
+						model: model.id,
+						content: [
+							{ type: "thinking", thinking: "", thinkingSignature: validSig },
+							{ type: "thinking", thinking: "   " },
+							{ type: "text", text: "Answer" },
+						],
+						usage: zeroUsage,
+						stopReason: "stop",
+						timestamp: 2,
+					},
+					{ role: "user", content: "Next", timestamp: 3 },
+				],
+			}),
+			"gemini-3.8-flash-low",
+		);
+		expect(contents[1]).toEqual({
+			role: "model",
+			parts: [{ thought: true, text: "", thoughtSignature: validSig }, { text: "Answer" }],
 		});
 	});
 
@@ -833,4 +928,44 @@ describe("antigravity convertMessages — shared normalisation", () => {
 			},
 		});
 	});
+
+	// https://github.com/earendil-works/pi/issues/11308
+	it.each([false, true])(
+		"preserves __proto__ property names and collapses string-literal anyOf in convertTools (legacy=%s)",
+		(legacy) => {
+			const parameters = {
+				$schema: "https://json-schema.org/draft/2020-12/schema",
+				$defs: {
+					modeDef: {
+						anyOf: [
+							{ type: "string", const: "fast" },
+							{ type: "string", const: "slow" },
+							{ type: "string", const: "fast" },
+						],
+					},
+				},
+				type: "object",
+				properties: Object.fromEntries([
+					["__proto__", { $ref: "#/$defs/modeDef" }],
+					["anyOf", { type: "string", const: "literal-prop" }],
+				]),
+				required: ["__proto__"],
+			} as unknown as NonNullable<Parameters<typeof convertTools>[0]>[number]["parameters"];
+
+			const decl = convertTools([{ name: "test", description: "Test", parameters }], legacy)?.[0]
+				.functionDeclarations[0];
+			const schema = (legacy ? decl?.parameters : decl?.parametersJsonSchema) as {
+				properties: Record<string, unknown>;
+			};
+			expect(Object.hasOwn(schema.properties, "__proto__")).toBe(true);
+			expect(Object.getOwnPropertyDescriptor(schema.properties, "__proto__")?.value).toEqual({
+				type: "string",
+				enum: ["fast", "slow"],
+			});
+			expect(schema.properties.anyOf).toEqual({
+				type: "string",
+				enum: ["literal-prop"],
+			});
+		},
+	);
 });

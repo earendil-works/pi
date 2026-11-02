@@ -53,6 +53,7 @@ import type {
 import { createAssistantMessageEventStream } from "../../utils/event-stream.ts";
 import { headersToRecord, providerHeadersToRecord } from "../../utils/headers.ts";
 import { sleep } from "../../utils/sleep.ts";
+import { ownedSlice } from "../../utils/text.ts";
 import { getCurrentSystemPrompt, getCurrentTools } from "../../utils/transcript.ts";
 import {
 	getGeminiMajorVersion,
@@ -242,9 +243,12 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 						text: sanitizeText(block.text),
 						...(textSig ? { thoughtSignature: textSig } : {}),
 					});
-				} else if (block.type === "thinking" && String(block.thinking || "").trim()) {
+				} else if (block.type === "thinking") {
 					if (!isSameModel) continue;
 					const thinkingSig = resolveThoughtSignature(isSameModel, block.thinkingSignature);
+					if (!String(block.thinking || "").trim() && !thinkingSig) {
+						continue;
+					}
 					parts.push({
 						thought: true,
 						text: sanitizeText(block.thinking),
@@ -274,8 +278,13 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 				.join("\n");
 			const imageParts = asImageParts(msg.content);
 			// An empty output reads as "the tool returned nothing"; say the result is the image.
-			const responseText =
-				text || (msg.isError ? "Tool failed" : imageParts.length > 0 ? "(see attached image)" : "");
+			const responseText = text.trim()
+				? text
+				: msg.isError
+					? "Tool failed"
+					: imageParts.length > 0
+						? "(see attached image)"
+						: "";
 			const nestedImages = supportsMultimodalFunctionResponse(model.id);
 			const part: GeminiFunctionResponsePart = {
 				functionResponse: {
@@ -324,11 +333,6 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 
 	const lastTurn = contents.at(-1);
 	if (lastTurn?.role === GeminiRole.Model) {
-		if (lastTurn.parts.some((part) => "functionCall" in part)) {
-			throw new Error(
-				"Antigravity request is missing tool result(s) for the final assistant tool call. Provide the corresponding tool result before continuing.",
-			);
-		}
 		appendTurn(contents, GeminiRole.User, [{ text: CONTINUATION_TEXT }]);
 	}
 
@@ -405,14 +409,14 @@ function dereferenceSchemaMap(
 		return dereferenceSchema(schemaMap, rootSchema, refStack, objectStack, state, path, depth);
 	}
 
-	const out: Record<string, unknown> = {};
+	const entries: [string, unknown][] = [];
 	const issues: SchemaReferenceIssue[] = [];
 	for (const [key, value] of Object.entries(schemaMap)) {
 		const result = dereferenceSchema(value, rootSchema, refStack, objectStack, state, `${path}.${key}`, depth);
-		out[key] = result.schema;
+		entries.push([key, result.schema]);
 		issues.push(...result.issues);
 	}
-	return { schema: out, issues };
+	return { schema: Object.fromEntries(entries), issues };
 }
 
 /**
@@ -501,7 +505,7 @@ function dereferenceSchema(
 
 		if (isRecord(resolved.schema) && isRecord(siblingResult.schema)) {
 			return {
-				schema: { ...resolved.schema, ...siblingResult.schema },
+				schema: Object.fromEntries([...Object.entries(resolved.schema), ...Object.entries(siblingResult.schema)]),
 				issues: [...resolved.issues, ...siblingResult.issues],
 			};
 		}
@@ -511,7 +515,7 @@ function dereferenceSchema(
 		};
 	}
 
-	const out: Record<string, unknown> = {};
+	const entries: [string, unknown][] = [];
 	const issues: SchemaReferenceIssue[] = [];
 	for (const [key, value] of Object.entries(s)) {
 		// Definitions are available through rootSchema while resolving $ref, but must
@@ -534,13 +538,13 @@ function dereferenceSchema(
 		}
 
 		if (result) {
-			out[key] = result.schema;
+			entries.push([key, result.schema]);
 			issues.push(...result.issues);
 		} else {
-			out[key] = value;
+			entries.push([key, value]);
 		}
 	}
-	return { schema: out, issues };
+	return { schema: Object.fromEntries(entries), issues };
 }
 
 function ensureRootObjectSchema(schema: unknown): Record<string, unknown> {
@@ -575,18 +579,60 @@ function stripMetaSchema(schema: unknown): unknown {
 	if (!schema || typeof schema !== "object") return schema;
 	if (Array.isArray(schema)) return schema.map(stripMetaSchema);
 
-	const out: Record<string, unknown> = {};
-	for (const [key, value] of Object.entries(schema)) {
-		if (META_SCHEMA_KEYWORDS.has(key)) continue;
-		if (SCHEMA_MAP_KEYWORDS.has(key)) {
-			out[key] = stripMetaSchemaMap(value);
-		} else if (SCHEMA_VALUE_KEYWORDS.has(key) || SCHEMA_ARRAY_KEYWORDS.has(key)) {
-			out[key] = stripMetaSchema(value);
-		} else {
-			out[key] = value;
+	return Object.fromEntries(
+		Object.entries(schema).flatMap(([key, value]): [string, unknown][] => {
+			if (META_SCHEMA_KEYWORDS.has(key)) return [];
+			if (SCHEMA_MAP_KEYWORDS.has(key)) return [[key, stripMetaSchemaMap(value)]];
+			if (SCHEMA_VALUE_KEYWORDS.has(key) || SCHEMA_ARRAY_KEYWORDS.has(key)) return [[key, stripMetaSchema(value)]];
+			return [[key, value]];
+		}),
+	);
+}
+
+/**
+ * The Cloud Code Assist protobuf schema cannot express anyOf. After const -> enum
+ * rewriting, collapse a union of unconstrained string literals into an enum.
+ */
+function collapseStringLiteralAnyOf(schema: unknown, isNameMap = false): unknown {
+	if (Array.isArray(schema)) return schema.map((item) => collapseStringLiteralAnyOf(item));
+	if (!isRecord(schema)) return schema;
+
+	const result: Record<string, unknown> = Object.fromEntries(
+		Object.entries(schema).map(([key, value]) => {
+			if (isNameMap || SCHEMA_VALUE_KEYWORDS.has(key) || SCHEMA_ARRAY_KEYWORDS.has(key)) {
+				return [key, collapseStringLiteralAnyOf(value)];
+			}
+			if (SCHEMA_MAP_KEYWORDS.has(key)) {
+				return [key, collapseStringLiteralAnyOf(value, true)];
+			}
+			return [key, value];
+		}),
+	);
+	if (
+		!isNameMap &&
+		result.enum === undefined &&
+		(result.type === undefined || result.type === "string") &&
+		Array.isArray(result.anyOf) &&
+		result.anyOf.length > 0
+	) {
+		const variants = result.anyOf;
+		if (
+			variants.every(
+				(variant) =>
+					isRecord(variant) &&
+					Object.keys(variant).every((key) => key === "type" || key === "enum") &&
+					(variant.type === undefined || variant.type === "string") &&
+					Array.isArray(variant.enum) &&
+					variant.enum.length === 1 &&
+					typeof variant.enum[0] === "string",
+			)
+		) {
+			delete result.anyOf;
+			result.type = "string";
+			result.enum = [...new Set(variants.map((variant) => (variant as { enum: [string] }).enum[0]))];
 		}
 	}
-	return out;
+	return result;
 }
 
 /**
@@ -611,29 +657,33 @@ function normalizeCustomToolSchema(schema: unknown): unknown {
 	if (!schema || typeof schema !== "object") return schema;
 	if (Array.isArray(schema)) return schema.map(normalizeCustomToolSchema);
 
-	const out: Record<string, unknown> = {};
-	for (const [key, value] of Object.entries(schema)) {
-		if (!CUSTOM_TOOL_SCHEMA_ALLOW.has(key)) continue;
-		if (key === "type") {
-			const normalizedType = normalizeCustomToolType(value);
-			if (normalizedType !== undefined) out.type = normalizedType;
-			continue;
-		}
-		if (key === "properties" && value && typeof value === "object" && !Array.isArray(value)) {
-			// Property names are user-defined, not Schema keywords — never allowlist-filter them.
-			const props: Record<string, unknown> = {};
-			for (const [propName, propSchema] of Object.entries(value as Record<string, unknown>)) {
-				props[propName] = normalizeCustomToolSchema(propSchema);
+	return Object.fromEntries(
+		Object.entries(schema).flatMap(([key, value]): [string, unknown][] => {
+			if (!CUSTOM_TOOL_SCHEMA_ALLOW.has(key)) return [];
+			if (key === "type") {
+				const normalizedType = normalizeCustomToolType(value);
+				return normalizedType !== undefined ? [["type", normalizedType]] : [];
 			}
-			out.properties = props;
-			continue;
-		}
-		if (key === "enum" && Array.isArray(value) && !value.every((entry) => typeof entry === "string")) {
-			continue;
-		}
-		out[key] = normalizeCustomToolSchema(value);
-	}
-	return out;
+			if (key === "properties" && value && typeof value === "object" && !Array.isArray(value)) {
+				// Property names are user-defined, not Schema keywords — never allowlist-filter them.
+				return [
+					[
+						"properties",
+						Object.fromEntries(
+							Object.entries(value as Record<string, unknown>).map(([propName, propSchema]) => [
+								propName,
+								normalizeCustomToolSchema(propSchema),
+							]),
+						),
+					],
+				];
+			}
+			if (key === "enum" && Array.isArray(value) && !value.every((entry) => typeof entry === "string")) {
+				return [];
+			}
+			return [[key, normalizeCustomToolSchema(value)]];
+		}),
+	);
 }
 
 /**
@@ -657,7 +707,7 @@ export function convertTools(
 		}
 
 		const rootObject = ensureRootObjectSchema(dereferenced.schema);
-		const schema = rewriteConstAsEnum(stripMetaSchema(rootObject));
+		const schema = collapseStringLiteralAnyOf(rewriteConstAsEnum(stripMetaSchema(rootObject)));
 		return [
 			{
 				name: tool.name,
@@ -796,7 +846,7 @@ export function mapStopReason(reason: string | undefined): StopReason {
 
 /** Exported for unit tests. */
 export function friendlyAntigravityError(status: number | undefined, text: string): string {
-	const msg = redactSecrets(jsonOrTextError(text)).slice(0, 500);
+	const msg = ownedSlice(redactSecrets(jsonOrTextError(text)), 0, 500);
 	if (status === 400) {
 		if (/Requests ending with a model turn are not supported/i.test(msg)) {
 			return "Antigravity rejected an invalid conversation message boundary. Next: update the extension or add a user message / start a new session, then retry.";
@@ -1121,6 +1171,9 @@ export async function streamResponse(
 				}
 
 				const responseData = chunk.response || chunk;
+				if (responseData.responseId && !output.responseId) {
+					output.responseId = responseData.responseId;
+				}
 				const candidate = responseData.candidates?.[0];
 
 				for (const part of candidate?.content?.parts || []) {
@@ -1398,7 +1451,7 @@ export function streamAntigravity(
 					totalTokens: 0,
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 				};
-				Object.assign(output, { stopReason: "pending", rawStopReason: undefined });
+				Object.assign(output, { stopReason: "pending", rawStopReason: undefined, responseId: undefined });
 
 				output.responseModel = runtimeModel !== model.id ? runtimeModel : undefined;
 				received = await streamResponse(response, stream, output, model, opts);

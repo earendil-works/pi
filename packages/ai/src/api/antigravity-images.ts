@@ -4,6 +4,7 @@ import { calculateCost } from "../models.ts";
 import type { AssistantImages, ImageApi, ImageModel, ImagesContext, ImagesOptions } from "../types.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { ownedSlice } from "../utils/text.ts";
 import { antigravityHeaders, endpointCandidates, jsonOrTextError, parseApiKey } from "./antigravity/client.ts";
 import { safeError } from "./antigravity/security.ts";
 import { fetchWithHeaderDeadline, streamHeaderTimeoutMs, streamStallTimeoutMs } from "./antigravity/stream.ts";
@@ -121,7 +122,7 @@ export async function generateImages(
 					if (response.ok) return response;
 					const error = Object.assign(
 						new Error(
-							`Antigravity image request failed (${response.status}): ${safeError(jsonOrTextError(await response.text())).slice(0, 400)}`,
+							`Antigravity image request failed (${response.status}): ${ownedSlice(safeError(jsonOrTextError(await response.text())), 0, 400)}`,
 						),
 						{ status: response.status, headers: response.headers },
 					);

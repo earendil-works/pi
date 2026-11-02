@@ -4,6 +4,8 @@ import { fetch as oauthFetch } from "undici";
 import { defaultProjectId, loadCodeAssist } from "../../api/antigravity/client.ts";
 import { safeError } from "../../api/antigravity/security.ts";
 import { antigravityEnv, isRecord } from "../../api/antigravity/util.ts";
+import { getProviderEnvValue } from "../../utils/provider-env.ts";
+import { ownedSlice } from "../../utils/text.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { startOAuthCallbackServer, waitForCallbackOrManualInput } from "./callback-server.ts";
 import { generatePKCE } from "./pkce.ts";
@@ -35,7 +37,9 @@ async function exchange(
 		signal,
 	});
 	if (!response.ok)
-		throw new Error(`Antigravity OAuth (${response.status}): ${safeError(await response.text()).slice(0, 300)}`);
+		throw new Error(
+			`Antigravity OAuth (${response.status}): ${ownedSlice(safeError(await response.text()), 0, 300)}`,
+		);
 	const data: unknown = await response.json();
 	if (
 		!isRecord(data) ||
@@ -68,7 +72,7 @@ async function login(interaction: ProviderAuthInteraction): Promise<OAuthCredent
 	const state = crypto.randomUUID();
 	const callback = await startOAuthCallbackServer({
 		providerName: "Antigravity",
-		host: "127.0.0.1",
+		host: getProviderEnvValue("PI_OAUTH_CALLBACK_HOST") || "127.0.0.1",
 		redirectHost: "localhost",
 		port: 51121,
 		path: "/oauth-callback",
@@ -76,7 +80,7 @@ async function login(interaction: ProviderAuthInteraction): Promise<OAuthCredent
 		complete: async (code) => code,
 		signal,
 		timeoutMs: 300_000,
-	});
+	}).catch(() => undefined);
 	try {
 		const query = new URLSearchParams({
 			client_id: antigravityEnv("CLIENT_ID") || CLIENT_ID,
@@ -122,7 +126,7 @@ async function login(interaction: ProviderAuthInteraction): Promise<OAuthCredent
 		const projectId = (await loadCodeAssist(tokens.access, { signal })) || (await defaultProjectId(email));
 		return { type: "oauth", ...tokens, refresh: tokens.refresh, projectId, email };
 	} finally {
-		callback.close();
+		callback?.close();
 	}
 }
 
