@@ -7,7 +7,11 @@ import {
 	modelsDevModels,
 	type ProviderContext,
 } from "../define.ts";
-import { supportsClaudeMidConvoSystemMessages } from "../families/anthropic.ts";
+import {
+	enableClaudeMidConvoEffort,
+	supportsClaudeMidConvoEffort,
+	supportsClaudeMidConvoSystemMessages,
+} from "../families/anthropic.ts";
 import { googleThinkingLevels } from "../families/google.ts";
 import { isKimiK3FamilyId } from "../families/kimi.ts";
 import { enableOpenAiGrammarTools, enableOpenAiMidConvoSystemMessages } from "../families/openai.ts";
@@ -162,6 +166,9 @@ export function finalizeOpencodeModel(model: ChatModel): void {
 		if (model.provider === "opencode" && supportsClaudeMidConvoSystemMessages(model.id)) {
 			mergeCompat(messagesModel, { supportsMidConvoSystemMessages: true });
 		}
+		// Zen and Go forward per-message effort and `thinking.block_binding`. Without
+		// `drop_block`, Go rejects replayed thinking after the system prompt or tools change.
+		if (supportsClaudeMidConvoEffort(model.id)) enableClaudeMidConvoEffort(messagesModel);
 		// OpenCode Qwen 3.8 Flash emits and accepts thinking blocks with empty signatures.
 		if (model.id === "qwen3.8-flash") mergeCompat(messagesModel, { allowEmptySignature: true });
 	}
