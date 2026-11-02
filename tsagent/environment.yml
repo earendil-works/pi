@@ -1,0 +1,11 @@
+name: pi-time
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - nodejs=22.23.4
+  - numpy>=2
+  - pandas>=2
+  - pytest>=8
+  - pip
+  - setuptools

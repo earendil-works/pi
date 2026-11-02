@@ -85,6 +85,12 @@ This monorepo contains the Pi CLI and its supporting libraries.
 
 For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
 
+For a map of the repository — how the packages layer, how one model request flows through them, and where the extension points are — see [docs/project-structure.md](docs/project-structure.md).
+
+## Time-series agent
+
+[`tsagent/`](tsagent/README.md) plans a forecast across Google TimesFM and Amazon Chronos, runs the selected models, and scores a holdout when one is requested. The model APIs are not connected yet. The default execution path is a deterministic stub that keeps the same request and result contract. Use the `pi-time` conda environment, then `python -m tsagent run --task tsagent/examples/task.json`.
+
 ## Permissions & Containerization
 
 Pi does not include a built-in permission system for restricting filesystem, process, network, or credential access. By default, it runs with the permissions of the user and process that launched it.

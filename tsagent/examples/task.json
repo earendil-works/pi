@@ -1,0 +1,14 @@
+{
+  "task_id": "hourly-demo",
+  "series_path": "hourly.csv",
+  "time_column": "timestamp",
+  "target": "load",
+  "freq": "h",
+  "horizon": 24,
+  "quantiles": [0.1, 0.5, 0.9],
+  "holdout": true,
+  "models": "auto",
+  "ensemble": "mean",
+  "fallback": "stub",
+  "covariate_columns": []
+}

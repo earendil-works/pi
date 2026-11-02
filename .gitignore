@@ -1,5 +1,9 @@
 node_modules
 dist/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+.venv/
 .artifacts/
 *.log
 .DS_Store
