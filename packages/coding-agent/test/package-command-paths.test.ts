@@ -785,23 +785,29 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		chmodSync(shimPath, 0o755);
 	}
 
+	/** Put a `pi` that prints `piVersion` first on PATH, the version the update check reads back. */
+	function putFakePiOnPath(piVersion: string): string {
+		const binDir = join(tempDir, "self-update-bin");
+		const piScriptPath = join(tempDir, "fake-pi.cjs");
+		mkdirSync(binDir, { recursive: true });
+		writeFileSync(piScriptPath, `console.log(${JSON.stringify(piVersion)});\n`);
+		writeNodeShim(binDir, "pi", piScriptPath);
+		process.env.PATH = `${binDir}${delimiter}${process.env.PATH ?? ""}`;
+		return binDir;
+	}
+
 	/** Put a `pi-wrapper` update command and a `pi` that prints `piVersion` first on PATH. */
 	function prepareSelfUpdateCommand(piVersion: string, exitCode = 0): { scriptPath: string; recordPath: string } {
-		const binDir = join(tempDir, "self-update-bin");
+		const binDir = putFakePiOnPath(piVersion);
 		const scriptPath = join(tempDir, "self-update.cjs");
-		const piScriptPath = join(tempDir, "fake-pi.cjs");
 		const recordPath = join(tempDir, "self-update-record.json");
-		mkdirSync(binDir, { recursive: true });
 		writeFileSync(
 			scriptPath,
 			`require("node:fs").writeFileSync(${JSON.stringify(recordPath)}, JSON.stringify(process.argv.slice(2)));
 process.exit(${exitCode});
 `,
 		);
-		writeFileSync(piScriptPath, `console.log(${JSON.stringify(piVersion)});\n`);
 		writeNodeShim(binDir, "pi-wrapper", scriptPath);
-		writeNodeShim(binDir, "pi", piScriptPath);
-		process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
 		return { scriptPath, recordPath };
 	}
 
@@ -964,6 +970,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 		});
 		const fetchMock = vi.fn(async () => Response.json({ version: VERSION }));
 		vi.stubGlobal("fetch", fetchMock);
+		putFakePiOnPath(VERSION);
 
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -1012,6 +1019,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 		const targetVersion = getNewerPatchVersion();
 		const fetchMock = vi.fn(async () => Response.json({ version: targetVersion }));
 		vi.stubGlobal("fetch", fetchMock);
+		putFakePiOnPath(targetVersion);
 
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -1031,6 +1039,44 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
 		}
+	});
+
+	it("warns instead of reporting an update when npm installed another version", async () => {
+		const globalPrefix = join(tempDir, "global-prefix");
+		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@earendil-works", "pi-coding-agent");
+		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
+		mkdirSync(selfPackageDir, { recursive: true });
+		// npm exits 0 but, like with stale registry metadata, leaves the old version installed.
+		writeFileSync(
+			fakeNpmPath,
+			`const path=require("node:path"),args=process.argv.slice(2),prefix=args[args.indexOf("--prefix")+1];
+if(args.includes("root")) console.log(path.join(prefix,"lib","node_modules"));
+`,
+		);
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ npmCommand: [originalExecPath, fakeNpmPath, "--prefix", globalPrefix] }, null, 2),
+		);
+		process.env.PI_PACKAGE_DIR = selfPackageDir;
+		Object.defineProperty(process, "execPath", {
+			value: join(selfPackageDir, "dist", "cli.js"),
+			configurable: true,
+		});
+		const targetVersion = getNewerPatchVersion();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json({ version: targetVersion })),
+		);
+		putFakePiOnPath(VERSION);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+		const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(stdout).toContain(`but \`pi --version\` reports ${VERSION}, not ${targetVersion}.`);
+		expect(stdout).not.toContain("Updated pi from");
+		expect(errorSpy).not.toHaveBeenCalled();
 	});
 
 	it("installs the active package name from the update check during self-update", async () => {
@@ -1064,6 +1110,7 @@ else {
 			"fetch",
 			vi.fn(async () => Response.json({ packageName: activePackageName, version: "0.73.0" })),
 		);
+		putFakePiOnPath("0.73.0");
 
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

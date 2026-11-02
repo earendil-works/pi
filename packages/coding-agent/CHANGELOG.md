@@ -6,6 +6,10 @@
 
 - `pi update` now lists each updated package with its npm version or git commit change, for example `npm:foo 1.2.0 -> 1.3.0`, and prints `Packages are already up to date` when nothing changed. `PackageManager.update()` reports each changed package as a new `result` progress event whose `message` holds that line ([#11707](https://github.com/earendil-works/pi/pull/11707))
 
+### Fixed
+
+- Fixed `pi update` reporting `Updated pi from <old> to <new>` after an npm, pnpm, yarn, or bun self-update that left another version installed, for example when npm resolved stale registry metadata. It now checks the installed version and warns when it differs, as it already did for `selfUpdateCommand`.
+
 ## [1.5.0] - 2026-11-02
 
 ### New Features

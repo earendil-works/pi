@@ -755,6 +755,14 @@ async function runConfiguredSelfUpdate(argv: string[], plan: SelfUpdatePlan): Pr
 		process.exitCode = 1;
 		return;
 	}
+	reportSelfUpdateResult(command, plan);
+}
+
+/**
+ * Report the version a successful self-update command actually installed. Returns false when it is not
+ * the planned version, e.g. npm resolved stale registry metadata and reinstalled the old version.
+ */
+function reportSelfUpdateResult(command: SelfUpdateCommand, plan: SelfUpdatePlan): boolean {
 	// Exit code 0 does not prove an update. Wrappers such as mise or Nix install each version into a
 	// new directory and leave this installation untouched, so fall back to the pi on PATH.
 	const change = detectInstallChange();
@@ -762,13 +770,14 @@ async function runConfiguredSelfUpdate(argv: string[], plan: SelfUpdatePlan): Pr
 		change?.kind === "updated" && change.version === plan.version ? change.version : readVersionOnPath();
 	if (installedVersion === plan.version) {
 		console.log(chalk.green(`Updated ${APP_NAME} from ${VERSION} to ${plan.version}`));
-		return;
+		return true;
 	}
 	console.log(
 		chalk.yellow(
 			`Ran ${command.display}, but \`${APP_NAME} --version\` reports ${installedVersion ?? "no version"}, not ${plan.version}.`,
 		),
 	);
+	return false;
 }
 
 /** Version printed by `pi --version` as resolved from PATH, the pi the user runs next. */
@@ -1194,7 +1203,9 @@ export async function handlePackageCommand(
 						process.exitCode = 1;
 						return true;
 					}
-					console.log(chalk.green(`Updated ${APP_NAME} from ${VERSION} to ${selfUpdatePlan.version}`));
+					if (!reportSelfUpdateResult(selfUpdateCommand, selfUpdatePlan) && installMethod === "pnpm") {
+						printPnpmSelfUpdateMetadataHint();
+					}
 					// The pi.dev installer migrates global npm installs to a managed install
 					// that pins all dependencies. It does not migrate pnpm, yarn, or bun installs.
 					if (installMethod === "npm") {
