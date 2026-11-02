@@ -145,12 +145,21 @@ both look at the same object state.
 So objects carry messages as data, and each client renders them:
 
 ```ts
-// plugins/notes/worker.ts: state and notices carry a key and its parameters
-self.notify({ message: { namespace: "notes", key: "saved", params: [note.title, new Date(note.at)] } });
+// plugins/notes/contract.ts: a member of the Notes object's state holds a message as data
+lastSaved: opt(obj({ namespace: str(), key: str(), params: arr(unknown()) })),
 
-// plugins/notes/web.tsx: rendered in the viewer's language
-const text = t.render(notice.message);   // typed against the notes catalog
+// plugins/notes/worker.ts: the object writes the key and its parameters, never a sentence
+await self.tx(async (tx) => {
+	(await tx.draft(status)).lastSaved = { namespace: "notes", key: "saved", params: [note.title, note.at] };
+}, ctx);
+
+// plugins/notes/web.tsx: each viewer renders it in its own language
+const notes = useHold(Notes, { session });
+const text = notes.lastSaved && t.render(notes.lastSaved);   // typed against the notes catalog
 ```
+
+The same holds for anything else that reaches people: an app's notices object stores `{ namespace, key, params }`
+per notice, a tool card's summary carries one, an error shown to a user carries a code and parameters.
 
 Parameters are plain data (strings, numbers, ISO dates), so they cross links like any state. What is never
 translated: the model's prompts and the model's own answers (the conversation's language is the user's business with

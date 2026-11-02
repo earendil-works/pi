@@ -239,11 +239,19 @@ with themes.</p>
 summary, a status line, an error. If the worker formatted &quot;Notiz gespeichert&quot; for Lena, Tom would read German too:
 both look at the same object state.</p>
 <p>So objects carry messages as data, and each client renders them:</p>
-<pre><code><span class="tk-c">// plugins/notes/worker.ts: state and notices carry a key and its parameters</span>
-self.<span class="tk-f">notify</span>({ message: { namespace: <span class="tk-s">"notes"</span>, key: <span class="tk-s">"saved"</span>, params: [note.title, <span class="tk-k">new</span> <span class="tk-t">Date</span>(note.at)] } });
+<pre><code><span class="tk-c">// plugins/notes/contract.ts: a member of the Notes object's state holds a message as data</span>
+lastSaved: <span class="tk-f">opt</span>(<span class="tk-f">obj</span>({ namespace: <span class="tk-f">str</span>(), key: <span class="tk-f">str</span>(), params: <span class="tk-f">arr</span>(<span class="tk-k">unknown</span>()) })),
 
-<span class="tk-c">// plugins/notes/web.tsx: rendered in the viewer's language</span>
-<span class="tk-k">const</span> text = t.<span class="tk-f">render</span>(notice.message);   <span class="tk-c">// typed against the notes catalog</span></code></pre>
+<span class="tk-c">// plugins/notes/worker.ts: the object writes the key and its parameters, never a sentence</span>
+<span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; {
+	(<span class="tk-k">await</span> tx.<span class="tk-f">draft</span>(status)).lastSaved = { namespace: <span class="tk-s">"notes"</span>, key: <span class="tk-s">"saved"</span>, params: [note.title, note.at] };
+}, ctx);
+
+<span class="tk-c">// plugins/notes/web.tsx: each viewer renders it in its own language</span>
+<span class="tk-k">const</span> notes = <span class="tk-f">useHold</span>(<span class="tk-t">Notes</span>, { session });
+<span class="tk-k">const</span> text = notes.lastSaved &amp;&amp; t.<span class="tk-f">render</span>(notes.lastSaved);   <span class="tk-c">// typed against the notes catalog</span></code></pre>
+<p>The same holds for anything else that reaches people: an app&#39;s notices object stores <code>{ namespace, key, params }</code>
+per notice, a tool card&#39;s summary carries one, an error shown to a user carries a code and parameters.</p>
 <p>Parameters are plain data (strings, numbers, ISO dates), so they cross links like any state. What is never
 translated: the model&#39;s prompts and the model&#39;s own answers (the conversation&#39;s language is the user&#39;s business with
 the model), log lines (for developers, in English), error codes. Error <em>messages</em> shown to people follow the same rule
