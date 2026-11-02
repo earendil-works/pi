@@ -1,0 +1,20 @@
+{
+  "name": "@neurolift/nlt-pi-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "NLT Coding Agent MVP application boundary",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
