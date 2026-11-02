@@ -25,7 +25,7 @@
 - Always ask before removing functionality or code that appears intentional.
 - Preserve backward compatibility of public APIs, exports, types, CLI flags, settings, and file formats in minor and patch releases. Breaking changes ship only in major releases.
   - Instead of removing or changing something, keep the old form working (deprecated alias, re-export, shim, fallback) next to the new one.
-  - Mark every such compatibility shim with a `// bc-cleanup-in-major-version: <what to remove and why>` comment so it can be found and deleted in the next major release.
+  - Mark every such compatibility shim with a `// remove-in-next-major: <what to remove and why>` comment so it can be found (`rg remove-in-next-major`) and deleted in the next major release. Exported symbols additionally get a `/** @deprecated Use <replacement>. */` JSDoc so users see the deprecation in their editor.
   - If a change cannot be made backward compatible, stop and ask the user before making it.
 - Never hardcode key checks (e.g. `matchesKey(keyData, "ctrl+x")`). Add defaults to `DEFAULT_EDITOR_KEYBINDINGS` or `DEFAULT_APP_KEYBINDINGS` so they stay configurable.
 - Never modify `packages/ai/src/models.generated.ts` directly; update the catalog definitions in `packages/ai/catalog/` instead (see its README), then regenerate. Including the resulting `models.generated.ts` diff is always OK, even if regeneration includes unrelated upstream model metadata changes. The generated model data in `packages/ai/src/providers/data/` is gitignored: never stage it, and don't look for it in git history.
