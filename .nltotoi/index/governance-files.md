@@ -1,7 +1,7 @@
 # NLT-Pi Governance File Index
 
 **Repository:** NeuroLift-Technologies/nlt-pi  
-**Local contract:** NLT-PI-DEV-OTOI-1.0.0  
+**Local contract:** NLT-PI-DEV-OTOI-1.0.1  
 **Organizational baseline:** ORG-DEV-OTOI-1.0.4  
 **Public minimum-requirements and template source:** [NeuroLift-Technologies/.github](https://github.com/NeuroLift-Technologies/.github)
 
