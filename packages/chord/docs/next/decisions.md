@@ -2223,6 +2223,15 @@ validation and copies the v2 kernel added around Delta.
   serves leaves its requests waiting `not_served`; the helper lists those names, so the test says what to stub.
   Several hosts at once (a server plugin calling a worker) is a later, larger helper over memory links; the app kit
   may ship stubs for its core contracts.
+- **The app kit, point 1: its shape (owner, 2026-11-01, by voice: "yeah"; app kit design pass):** the app's own
+  layout is fixed: `src/` with the API versions (`src/api/v3/`, per host kind as decided for the plugin model) and the
+  built-in plugins root (`plugins/`). The data directory is deployment configuration, outside the app: a `startApp`
+  option set by the app's own start script (no environment variables: owner, "no environment variables"), default a
+  dot directory named after the app in the home directory; it holds the store, the user's plugins root, logs and the
+  workers' data. The server is fixed (one per app, clients connect to it). Workers are a list of worker kinds the app
+  defines, each a host kind with the app's own params (sharding is the app's: a project, a tenant, a document; the kit
+  knows no sessions) and how to start it (entry, start data per address, principal, idle time: the workers
+  component's options); zero kinds is a server with clients only (a chat app).
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
