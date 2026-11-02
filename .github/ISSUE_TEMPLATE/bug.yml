@@ -1,45 +1,44 @@
 name: Bug Report
-description: Report something that's broken
+description: Report something that is not working as expected in NLT-Pi
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        **Before you start:** Read [CONTRIBUTING.md](https://github.com/earendil-works/pi/blob/main/CONTRIBUTING.md).
-
-        New issues from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. Issues that do not meet the quality bar in [CONTRIBUTING.md](https://github.com/earendil-works/pi/blob/main/CONTRIBUTING.md) will not be reopened or receive a reply.
-
-        Keep this short. If it doesn't fit on one screen, it's too long. Write in your own voice.
-
-        **Important:** before reporting an issue in core, please validate first with `pi -ne` that this is not caused by an extension you loaded.
-
+        Report reproducible behavior in NLT-Pi. Search existing issues first.
+        Do not include credentials, private data, or vulnerability details in a public issue.
+        Report security concerns through the private channel in SECURITY.md.
   - type: textarea
     id: description
     attributes:
       label: What happened?
-      description: Be specific. Include error messages if any.
+      description: Describe the observed behavior and include sanitized error messages where useful.
     validations:
       required: true
-
   - type: textarea
     id: repro
     attributes:
       label: Steps to reproduce
-      description: Minimal steps to trigger the bug.
+      description: Provide the smallest reproducible sequence, including relevant configuration with secrets removed.
     validations:
       required: true
-
   - type: textarea
     id: expected
     attributes:
       label: Expected behavior
     validations:
       required: false
-
   - type: input
     id: version
     attributes:
-      label: Version
-      description: e.g. 0.49.0
+      label: NLT-Pi version or commit
+      description: Include the package version or commit SHA where the issue occurs.
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Node.js version, operating system, runtime mode, and relevant extensions or integrations.
     validations:
       required: false
