@@ -23,3 +23,15 @@ For a Vercel project using `mvp/` as its Root Directory, the project must also i
 This change establishes the package boundary and deterministic workspace dependency path only. It does not select a Vercel framework, configure deployment, expose tools, add authentication, choose persistence, or connect an external provider. Those decisions remain explicit follow-up work.
 
 Do not expose coding-agent tools to requests until the ASFDK harness and execution boundary are integrated and verified. Do not treat this scaffold as a deployed or production-ready agent.
+
+## Governed turn
+
+`createNltCodingAgent()` exposes a deterministic governed turn surface (`governedTurn`) that runs a user prompt through the ASFDK harness before any coding-agent turn may execute:
+
+- Crisis / emotional assessment (Sleepwalker Protocol + RRT Advocate handoff) via `harness.assessText`.
+- Blocking crisis levels (`RED` / `BLACK`) or failed governance assessments return `allowed: false` with a `blockedReason` — escalation to a human precedes agent execution.
+- Non-blocking assessments return `allowed: true` with the interaction, emotional state, governance, and continuity context needed to feed the subsequent coding-agent turn.
+
+`runNltCodingTurn()` wraps the above into a single governed turn entry point: assess → block-or-run → execute through the pi-coding-agent runtime (ASFDK extension loaded) → return the final assistant response.
+
+The MVP does not yet execute the coding-agent runtime loop inside this gate; the runtime integration (preflight → agent turn → govern → continuity save) is the next agent-side increment.
