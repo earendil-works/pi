@@ -72,8 +72,9 @@ releases, presence is the app's. No components, no styling.
 
 - **Launcher** (trusted, a Node process): `startTerminal({ url, token | tokenFile, pairing?, ... })` connects (a token
   from the owner token file, slice 13, or device pairing), downloads the base bundle and the TUI kind's plugin scripts
-  over HTTP, and starts the **sandbox**: a worker thread with dropped permissions (Node's permission model: no file
-  system, no child processes, no network except the bridge; p2's `tui-sandbox.ts`), always (P8), whose runtime gets a
+  over HTTP, and starts the **sandbox**: a child process on pipes (decision "The terminal's sandbox is a child
+  process", replacing p2's worker thread: empty environment, Node's permission model granting nothing, no SQLite; no
+  terminal, file system, child processes or network except the bridge), always (P8), whose runtime gets a
   bridge terminal (input events in, frames out), the Chord link (messages relayed by the launcher) and the evaluated
   scripts. The launcher keeps credentials, the real terminal and local preferences, and exposes a small set of actions
   to the sandbox (clipboard, open URL), each confirmed by the launcher's own UI when it touches the machine.
