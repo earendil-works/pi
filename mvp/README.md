@@ -1,37 +1,51 @@
 # NLT Coding Agent MVP
 
-This directory is the application boundary for the first NLT Coding Agent MVP and the intended Vercel project root.
+This directory is the application boundary for the NLT Coding Agent MVP and the configured Vercel project root.
+
+## Vercel application shell
+
+The initial Vercel surface is a read-only status application:
+
+- `public/index.html` provides the accessible, responsive status UI.
+- `api/health.js` reports application-function health.
+- `api/status.js` reports runtime, governance, and execution integration state.
+- `src/status.js` defines the status payload contract.
+- `test/` protects the API methods and fail-closed status contract.
+
+The status API is observability only. It is not an ASFDK authorization decision and must never be used to authorize a tool, model, or execution request. Agent execution is explicitly disabled in this shell.
 
 ## Runtime foundation
 
 The MVP consumes the checked-in `@earendil-works/pi-coding-agent` workspace at `packages/coding-agent`. The root npm workspace and lockfile make this source authoritative; the MVP does not independently install a potentially different registry release.
 
-Run the repository install from the repository root. The MVP typecheck is included in the root `npm run check` command as `check:mvp`.
+Run installation from the repository root. The MVP typecheck is included in the root `npm run check` command as `check:mvp`. Its focused tests run through the workspace test command:
 
-For a Vercel project using `mvp/` as its Root Directory, the project must also include source files outside that directory so the root workspace package at `packages/coding-agent` is available during installation and build. This PR documents that monorepo requirement; it does not change Vercel project settings or deploy anything.
+```bash
+npm run test --workspace=@neurolift/nlt-pi-mvp
+npm run typecheck --workspace=@neurolift/nlt-pi-mvp
+```
+
+For the Vercel project using `mvp/` as its Root Directory, **Include source files outside the Root Directory** must remain enabled so the root workspace and `packages/coding-agent` remain available during installation and build.
 
 ## Ownership boundaries
 
-- **MVP application:** user-facing application and request lifecycle.
+- **MVP application:** user-facing application surface and request lifecycle.
 - **`packages/coding-agent`:** agent runtime, SDK, sessions, and coding-agent capabilities.
 - **ASFDK:** governance and authorization remain separate from model intent and tool availability.
-- **AgentOS:** execution environment ("computer"), not an authority source.
+- **AgentOS:** execution environment (the agent's "computer"), not an authority source.
 - **Human:** final authority for consequential actions.
 
-## Initial scope
+## Integration sequence
 
-This change establishes the package boundary and deterministic workspace dependency path only. It does not select a Vercel framework, configure deployment, expose tools, add authentication, choose persistence, or connect an external provider. Those decisions remain explicit follow-up work.
+1. Establish the application surface and health/status observability.
+2. Compose the checked-in Pi runtime behind a server-only adapter.
+3. Integrate the ASFDK foundation, harness, and MCP layers at their respective boundaries.
+4. Bind every model/tool invocation to an explicit governance decision.
+5. Verify the independent AgentOS execution boundary and approval/escalation behavior.
+6. Add authenticated sessions and persistence only after their providers and data contracts are explicitly selected.
 
-Do not expose coding-agent tools to requests until the ASFDK harness and execution boundary are integrated and verified. Do not treat this scaffold as a deployed or production-ready agent.
+Do not expose coding-agent tools to requests until the ASFDK harness and execution boundary are integrated and verified. Do not interpret the status endpoint as proof of authorization. Do not treat this scaffold as a production-ready agent.
 
-## Governed turn
+## Current deployment posture
 
-`createNltCodingAgent()` exposes a deterministic governed turn surface (`governedTurn`) that runs a user prompt through the ASFDK harness before any coding-agent turn may execute:
-
-- Crisis / emotional assessment (Sleepwalker Protocol + RRT Advocate handoff) via `harness.assessText`.
-- Blocking crisis levels (`RED` / `BLACK`) or failed governance assessments return `allowed: false` with a `blockedReason` — escalation to a human precedes agent execution.
-- Non-blocking assessments return `allowed: true` with the interaction, emotional state, governance, and continuity context needed to feed the subsequent coding-agent turn.
-
-`runNltCodingTurn()` wraps the above into a single governed turn entry point: assess → block-or-run → execute through the pi-coding-agent runtime (ASFDK extension loaded) → return the final assistant response.
-
-The MVP does not yet execute the coding-agent runtime loop inside this gate; the runtime integration (preflight → agent turn → govern → continuity save) is the next agent-side increment.
+The Vercel project is configured with `mvp/` as its root and the repository root included as a source directory. This change does not trigger a deployment, configure production environment variables, select an authentication provider, or provision persistence.
