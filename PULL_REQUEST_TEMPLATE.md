@@ -1,5 +1,7 @@
 # Agent Pull Request Template
 
+> **How to create PR bodies:** This template is applied via `gh pr edit --body-file /tmp/pr_body.md` where the body is written using `cat > /tmp/pr_body.md << 'HEREDOC'` (single-quoted heredoc prevents bash from interpreting special characters like `[ORG-DEV-OTOI-1.0.4]` and arrows `→`). Do not use `gh pr create --body "…"` directly as bash will interpret markdown/JSON characters as commands.
+
 **Purpose:** Repository-adapted pull request template for NLT-Pi contributions, aligned with the NeuroLift Technologies public governance baseline.
 
 **Governed by:** `governance.yaml` (ORG-DEV-OTOI-1.0.4)
@@ -13,7 +15,6 @@
 **Working repo:** [Repository name]
 **PR Type:** [feat | fix | docs | refactor | chore | test | ci]
 **Governance Version:** ORG-DEV-OTOI-1.0.4
-**Repository Adaptation Contract:** NLT-PI-DEV-OTOI-1.0.1
 
 ---
 
@@ -44,6 +45,7 @@
 - Known limitations:
 
 ## Governance
+- Repository adaptation contract: `NLT-PI-DEV-OTOI-1.0.1`.
 - [ ] No secrets or sensitive data added.
 - [ ] No unapproved external integration/provider/deployment decision.
 - [ ] Model output remains proposed intent, not authorization.
