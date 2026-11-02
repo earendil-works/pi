@@ -45,7 +45,7 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
 
 Order (owner, 2026-10-22: routines and jobs before the store and reload; 2026-10-27: slice 8 before slice 7, whose
 reload has to reload real registries; 2026-10-29: slice 7 split into 7a, 7b, 7c; the app kit as slices 10 and 11;
-telemetry last, since it instruments the app kit too).
+telemetry last, since it instruments the app kit too; 2026-11-01: the plugin model (12) and the app kit (13) before web and TUI (11), which builds into the kit).
 
 | # | Slice | In short |
 | --- | --- | --- |
@@ -63,6 +63,8 @@ telemetry last, since it instruments the app kit too).
 | 7b | **Reload in the kernel** | `host.reload`: staging, commit, rollback; swaps, restarts, removal and re-serving; holds and `accepts` across a reload; jobs and registries across a reload; per-name wakes (`slice-7b/` brief) |
 | 7c | **Plugins** | `chord/next/plugins` (discovery, `buildFacet`, `evaluateFacet`, `pluginFile`, `installDependencies`, the watcher, `rollout`, `mapStack`; no dev/prod split; the kernel's `load`/`reload` per plugin; `slice-7c.md`) |
 | 10 | **HTTP and workers** | `chord/next/http` (server, `Http` registry, responses as descriptions, WebSocket entry) and `chord/next/workers` (a worker per address, IPC, idle stop) |
+| 12 | **The plugin model** | imports (relative within a repository, package names pinned across), versioned app API with Chord re-exported, per-kind API modules and contract files with the build's import check, single-file plugins, git installs, `testPlugin`, base code as API, bootstrap and a start-data facet (`slice-12.md`) |
+| 13 | **The app kit** | `chord/next/app`: `startApp`, `startWorker`, layout, worker kinds, owner link, deny by default, sessions, CLI tokens, storage, the files plugin, export per address, plugin roots and "apply changes" (`slice-13.md`) |
 | 11 | **Web and TUI** | `chord/next/web` (page host, React hooks) and `chord/next/tui` (launcher, sandbox), from p2's code |
 | 9 | **Telemetry** | spans, events, metrics across hosts |
 
@@ -181,12 +183,12 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 - **`rebuild` of tables** (key and column-type changes): `evolveTable` has no edit for them; build one only when a
   real case needs it. (Slice 6a's second spec review; out of slice 7b's scope, `slice-7b.md` §12.)
 
-### The app kit
+### Slice 13: the app kit
 
 - **Deny by default in the HTTP component** (decision "The app kit, point 3: authentication"): routes and sockets
   refuse requests without a principal unless marked public; the owner link with a one-time token; a session helper.
 
-### The plugin slice (plugin model)
+### Slice 12: the plugin model
 
 - **Cross-plugin imports by relative path and npm** (decision "Contracts come from where the plugin's code came
   from"): remove `build.ts`'s by-name lookup, allow relative imports into another plugin of the same root, refuse

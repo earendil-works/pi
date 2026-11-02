@@ -1980,6 +1980,39 @@ type ReloadReport = {
 - Project plugins, trust, snapshots, scopes and npm/git package installs: `apps/p2/docs/plugin-loading.md` (still the
   reference for those; not in 7c).
 
+### The plugin model (2026-11-01; slice 12)
+
+Decisions "Contracts come from where the plugin's code came from", "Plugins import only the app's versioned API",
+"The plugin model, points 3, 4, 5 and 8, imports and builds", "Single-file plugins", "Testing a plugin alone". The
+rule underneath: a plugin carries what it was written against, never the running app's newest file.
+
+- **What a plugin may import:** its own files; the app's versioned API (`@acme/app/v3`, never Chord directly: Chord is
+  not a host package plugins may name; the API re-exports the Chord surface the app supports); its npm `dependencies`
+  (bundled at the installed version); other plugins' contract files: by relative path within one repository
+  (`../notes/contract.ts`, the same commit holds both sides), by package name across repositories (`@bob/notes`,
+  `@bob/notes/web`, pinned by an npm version or a git ref `github:bob/notes#<commit>`; a subfolder of a multi-plugin
+  repository is cloned and linked by the plugins component). One facet imports one API version only.
+- **Versions:** the app lists the API versions it provides; an unlisted one is a build error naming the available ones.
+  The process runs one Chord: an older API version is a layer over today's, re-exporting Chord's compatibility module
+  for its previous API while Chord keeps one; contracts bind through `accepts` whatever Chord runs.
+- **Split by host kind:** the API has a shared module and per-kind modules (`/v3/web`, `/v3/tui`, `/v3/server`,
+  `/v3/worker`); a plugin's contract files mirror it (`contract.ts`, `contract.web.tsx`, `contract.tui.ts`, ...). A
+  contract file mentions native things only through `import type`. The build checks every import by the file it
+  resolves to: a per-kind file or module only for its kind, a package the kind does not provide refused. A token or
+  `local` contract used on one kind lives in that kind's file. Shared UI between plugins: an imported file (inlined,
+  frozen at the importer's build) or a registry entry (one live instance).
+- **Base code** is the API modules, bootstrap (hosts, store, components such as `createHttp` and `createWorkers`, which
+  take settings and process values and return facets) and one start-data facet serving process values as core
+  objects. Every implementation, the harness and core registry providers included, is a plugin; the app's own root is
+  required (a failure at startup stops the app).
+- **Single-file plugins:** `<name>.<kind>.ts(x)` at a root's top, grouped by name, no `package.json`, importing only the
+  API; a directory of the same name replaces it as the same plugin.
+- **Installs** from git (a branch, tag or commit cloned into a root) or npm. **Builds** are one esbuild call per facet
+  from source (TS, TSX, JS, JSON, CSS, assets and WASM by URL); plugins bring no build hooks.
+- **`testPlugin(dir, { kind, modules, stubs, start?, principal? }, ctx)`:** the plugin built as in production on an
+  in-memory host and store, its dependencies served by stub facets, contributions to registries collected for the
+  test, the contracts nobody serves listed.
+
 - **UI reload vs. leaving:** "leaving" is never derived from an unmount, only from explicit navigation or presence (a
   dropped reference); a component unmounted by a reload has not left.
 
@@ -2235,6 +2268,45 @@ fails closed when stale; a start waits for a draining old holder without polling
 - **Workers never build** (D11): the server's plugins component builds every plugin; workers evaluate shipped
   complete sets (`createPluginRuntime`, no esbuild); `workers.step(name)` ships a rollout's set to every worker (D12:
   `{ host, report } | { host, stopped: true } | { host, error }` per worker).
+
+### The app kit (`chord/next/app`; slice 13)
+
+Decisions "The app kit, point 1" to "point 5". `startApp(options)` on the server, `startWorker(options)` in a worker
+entry. Opinionated and small: an app is its API, its built-in plugins and a start script.
+
+- **Shape:** the app's layout is fixed: `src/api/v<n>/` (shared and per-kind modules) and the built-in plugins root
+  `plugins/`. The data directory is a `startApp` option (no environment variables), default a dot directory named after
+  the app in the home directory. One server; worker kinds are a list the app defines, each a host kind with its own
+  params (sharding is the app's) and how it starts (entry, start data, principal, idle time); zero kinds is a server
+  with clients only.
+- **Principals and users:** the principal is tiny (a kind and an id) and the app's type; the kit needs only its server
+  and worker variants. User data lives in objects keyed by the user's id. Optional kit plugins: users (accounts with an
+  app-supplied profile schema), authenticators (device pairing, invite links, an ephemeral pick-a-name login).
+- **Authentication:** no owner by loopback alone: the start script prints a link with a one-time token that sets a
+  signed owner cookie; deny by default (the HTTP component refuses requests without a principal unless the route or
+  socket is public); a session helper issues and revokes sessions; command-line clients send a token in a header (an
+  owner token file readable only by the app's OS user; a device pairing flow from other machines).
+- **Storage:** one store for the server, a directory per worker under its kind and address with its store; plugins
+  never use data-directory paths. A files plugin per address (`put`, chunked transfers, a watchable index, caps) is
+  the default file storage; raw directories only where a real path is needed, owned by one object, under the worker's
+  directory. Export and import per address: the store's archive plus the worker's directory.
+- **Plugins:** the app's root (required) and the user's root in the data directory; installs from git or npm; one
+  "apply changes" call builds and rolls out to the server, then every running worker, exposed by the app as it likes.
+
+### Web and TUI (slice 11)
+
+Decision "Slice 11's points" and "Slice 11, P3" to "P9".
+
+- `chord/next/web`: serving the surface, a page's client host with its connection loop (p2's `keepConnected`), loading
+  and applying the plugins' web facets. A base bundle per client kind built on the server from the app's entry
+  (content-hashed); at page load the kind's current plugin set as one combined file named by its hash, later changed
+  plugins one script each, each a script that registers itself (no eval); new scripts apply in place (`host.reload` in
+  the page); pages learn of them through an object the web component serves (the current set); a base code change
+  reloads the page.
+- `chord/next/react`: `HostProvider`, `useHold`, `useWatch`, `useRegistry`, `useRefState`.
+- `chord/next/tui`: a Node client connecting with a token, always running the downloaded code in a sandbox (a
+  permission-dropped worker thread, a bridge terminal, the trusted launcher outside); a component scope (`hold`,
+  `watch`, `registry`, released on dispose, one `changed` callback for the app's redraw), no pi-tui dependency.
 
 ### Channels
 
