@@ -1,13 +1,14 @@
 # AGENTS.md — NLT-Pi Repository Gateway
 
-This repository is the NLT-owned TypeScript runtime and SDK foundation for NLT Coding Agent (NCA). It is not governed by upstream Pi contribution rules. Treat inherited code and notices according to their provenance, but follow NLT-Pi instructions for all development here.
+This repository is the NLT-owned TypeScript runtime and SDK foundation for NLT Coding Agent (NCA). It adopts the minimum public governance requirements and templates from [NeuroLift-Technologies/.github](https://github.com/NeuroLift-Technologies/.github) and adapts them to NLT-Pi. The local implementation is repository-specific; it is not governed by upstream Pi contribution rules. Treat inherited code and notices according to their provenance.
 
 ## Mandatory reading
-1. `NLT-DEV-OTOI.md` — repository governance contract.
-2. `CLAUDE.md` — session and project directives.
-3. `REVIEW.md` — review format.
-4. `docs/active-threads.md` — active work and blockers.
-5. Relevant package documentation and tests before changing implementation.
+1. [Public governance baseline](https://github.com/NeuroLift-Technologies/.github/blob/main/governance.yaml) and [public agent guide](https://github.com/NeuroLift-Technologies/.github/blob/main/AGENTS.md).
+2. `GOVERNANCE.md`, `governance.json`, and `NLT-DEV-OTOI.md` — local governance principles, machine-readable baseline adaptation, and repository contract.
+3. `CLAUDE.md` — session and project directives.
+4. `REVIEW.md` — review format.
+5. `docs/active-threads.md` — active work and blockers.
+6. Relevant package documentation and tests before changing implementation.
 
 ## Architecture and ownership boundaries
 
@@ -54,6 +55,18 @@ There are **no time restraints** for any agent working in this repository.
 - Never push directly to `main`; use feature branches and PRs.
 - Do not force-push or rewrite shared history.
 
+## Commit and contribution rules
+
+Use the organization public baseline commit format:
+
+```
+[AGENT_NAME] type(scope): imperative description
+```
+
+Allowed types: `feat`, `fix`, `docs`, `refactor`, `chore`, `test`, `ci`.
+
+Keep each PR focused on one independently reviewable concern. Repository contribution guidance is inherited from the organization unless explicitly overridden.
+
 ## Governance records
 
 - Register substantive agent sessions under `docs/agent-log/registrations/`.
@@ -64,7 +77,7 @@ There are **no time restraints** for any agent working in this repository.
 
 ## Decision and escalation rules
 
-Escalate to Joshua W. Dorsey, Sr. when scope is unclear, architecture or authority boundaries change, external services/providers are selected, security/privacy controls are affected, deployment is proposed, or an action is irreversible. Stop at the decision boundary; do not guess.
+For non-sensitive blockers, use the repository's Agent Escalation issue template and pause the affected work pending a maintainer decision. For vulnerabilities or sensitive incident details, use the private reporting route in `SECURITY.md`; never disclose them in a public issue. Escalate to Joshua W. Dorsey, Sr. when scope is unclear, architecture or authority boundaries change, external services/providers are selected, security/privacy controls are affected, deployment is proposed, or an action is irreversible. Stop at the decision boundary; do not guess.
 
 ## Pull request requirements
 
