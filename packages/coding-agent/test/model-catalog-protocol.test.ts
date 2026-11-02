@@ -61,8 +61,6 @@ function startCatalogServer(requests: string[]): Promise<Server> {
 		const catalogRequest = parseModelCatalogRequest(url, request.headers["user-agent"]);
 		if (!provider) {
 			response.writeHead(404).end();
-		} else if (catalogRequest.kind === "redirect") {
-			response.writeHead(307, { location: catalogRequest.location, "cache-control": "no-store" }).end();
 		} else if (catalogRequest.kind === "invalid") {
 			response.writeHead(400).end(catalogRequest.error);
 		} else {
@@ -120,7 +118,7 @@ describe("model catalog protocol with the current client", () => {
 		expect([...refresh.errors]).toEqual([]);
 
 		const catalogUrl = "/api/models/providers/openrouter?types=chat%2Cimage%2Cclassifier";
-		expect(requests).toEqual([catalogUrl, `${catalogUrl}&pi-version=${VERSION}`]);
+		expect(requests).toEqual([catalogUrl]);
 
 		const expectedModel =
 			selectModelCatalog(index, VERSION)?.revision === legacyRevision ? legacyModel : mixedApiModel;
