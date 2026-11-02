@@ -2336,6 +2336,21 @@ validation and copies the v2 kernel added around Delta.
   updated only on a session metadata change, a session idle-state change and a subagent idle-state change. p3: each
   host (server, worker, tui, web) has a kernel loading the plugins with contribution points via registries; p2's look
   and feel made great; new session storage; hands (machine daemons) good, secure and connecting proactively.
+- **App kit naming and export (owner, 2026-11-02: "startApp > startServer?", "am i exporting an address? i'm exporting
+  the store a host created", "export should stop nothing before the export, it slots into the commit queue"; refines
+  slice 13):** `startApp` is `startServer` (the pair `startServer`/`startWorker`; an app always has one server).
+  `exportAddress`/`importAddress` are `exportData(address, path)`/`importData(path, address)`: the data a host created
+  (its store and files directory). Export stops nothing: a running worker exports its own store (`store.export()` holds
+  the commit queue while it reads, so the archive is one consistent point) and its finished files to the given path,
+  asked through a kit object on the worker; with no worker running, the server takes the worker's process lock (no
+  worker can start meanwhile) and reads the store itself. Import still takes the lock and refuses an address whose
+  directory exists (nothing is overwritten; replacing a session is delete, then import; a copy is an import under a new
+  address); registering the imported host in the app's index is the app's.
+- **p3 notes, 2026-11-02 (owner):** subagents may start with the main agent's context: `context: "inherit"` forks the
+  parent conversation (Durable's `conversation.fork`) at the last entry before the assistant message with the spawning
+  call; model, tools and location may differ; the tool's description names the cost (prompt cache only with the same
+  model). pi's `/tree` (in-session branches) is wanted for p3: proposed as forks inside the session's store (edit an
+  earlier message to fork, a branch list to switch; a full navigator and branch summaries later).
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a

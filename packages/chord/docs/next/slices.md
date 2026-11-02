@@ -165,6 +165,13 @@ Rules (owner, 2026-10-22): whoever defers something (this session, a subagent, a
 change; a slice's spec includes every entry of its section, and its build and review check them off; a done entry is
 deleted (the slice's spec and code are the record). Moved here from `carry-over.md` (owner, 2026-10-24).
 
+
+### Slice 11 (with the app kit's follow-ups)
+
+- **App kit renames and export** (decision "App kit naming and export"): `startApp` → `startServer`;
+  `exportAddress`/`importAddress` → `exportData`/`importData`; export without stopping the worker (a kit object on the
+  worker exports its store and finished files; without a worker the server takes the lock and reads the store); import
+  unchanged apart from the name. Examples 53-55, the app README and the guide's app kit chapter follow.
 ### Any slice (protocol and checks)
 
 - **Bump `PROTOCOL_VERSION`** for any message or reason change once p3 has shipped (slice 3b added `retry`, `loading`
