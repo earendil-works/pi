@@ -6,7 +6,7 @@
     "session_id": "",
     "entry_date": "",
     "entry_point": "",
-    "acknowledged_otoi": true,
+    "acknowledged_otoi": false,
     "otoi_version": "NLT-PI-DEV-OTOI-1.0.0",
     "working_repo": "NeuroLift-Technologies/nlt-pi",
     "working_branch": "",
