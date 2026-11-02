@@ -7,12 +7,12 @@
 ### NLTPI-SEC-001 — Align security policy with NLT governance
 **Status:** in_review  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
-**Summary:** Replace inherited Pi/Earendil-specific security guidance with an NLT-Pi policy. The update preserves the local execution/no-OS-sandbox warning while defining NLT's development, ASFDK foundation, harness, MCP, and AgentOS trust boundaries; enforcement-first requirements; prompt-injection criteria based on demonstrated impact; vulnerability scope; private reporting; and incident handling. Disclosure fallback now matches `docs/escalations/README.md`: if GitHub private reporting is unavailable, stop and obtain the repository owner's established private reporting route; do not invent an address or fall back to a public issue.  
+**Summary:** Replace inherited Pi/Earendil-specific security guidance with an NLT-Pi policy. The update preserves the local execution/no-OS-sandbox warning while defining NLT's development, ASFDK foundation, harness, MCP, and AgentOS trust boundaries; enforcement-first requirements; prompt-injection criteria based on demonstrated impact; vulnerability scope; private reporting; and incident handling. Disclosure routing now matches the organization's `NeuroLift-Technologies/.github/SECURITY.md`: `admin@neuroliftsolutions.com` and GitHub Private Vulnerability Reporting. If neither private channel is available, stop and obtain an alternative established private route; never fall back to a public issue.  
 **PR:** https://github.com/NeuroLift-Technologies/nlt-pi/pull/6  
 **Related escalation:** https://github.com/NeuroLift-Technologies/nlt-pi/issues/5 (PR #6 addresses item 1 only; branch protection and CI startup failures remain outstanding).  
 **Branch:** `docs/nlt-pi-security-policy`  
-**Verification:** Documentation-only change. No runtime tests were run. GitHub private vulnerability reporting enablement remains unverified; no unverified email address was added.  
-**Next action:** Owner to confirm private reporting is enabled or supply the established private route; review policy wording. Separately resolve main branch protection and Actions startup failures tracked in Issue #5.
+**Verification:** Documentation-only change. No runtime tests were run. The organizational email route is verified from the organization-level SECURITY.md; enablement of repository-level GitHub Private Vulnerability Reporting remains unverified.  
+**Next action:** Owner to review policy wording and verify repository-level GitHub Private Vulnerability Reporting is enabled. The organization-established email route is included. Separately resolve main branch protection and Actions startup failures tracked in Issue #5.
 
 ### NLTPI-ARCH-001 — ASFDK three-layer governance alignment
 **Status:** active  
