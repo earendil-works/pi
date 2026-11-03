@@ -195,6 +195,10 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 
 ### After slice 11
 
+- **Live queries** (decision "Live queries over an object's own tables"): `self.query(table, q)`, re-run per
+  touching commit and diffed; tests (activation before live, swap on reload, a commit not touching the table costs
+  nothing, the limit required, cost guard); the tutorial and 59-chat use it instead of `self.open`; the guide's
+  section with the warning. Later, when a case needs it: incremental maintenance of an ordered, limited result.
 - **Messages and languages in the app kit** (decision "Messages and languages in the app kit", proposal
   `docs/i18n/`): `defineMessages`, `t.message`/`t.render`, `MessagesOf`, the `Translations` registry with
   fallbacks and conflicts, the locale preference per principal (default from the device, live switch, `lang`/`dir` on
