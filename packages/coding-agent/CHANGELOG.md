@@ -10,6 +10,8 @@
 ### Fixed
 
 - A failed token refresh of an MCP connection no longer registers an OAuth client or replaces the PKCE verifier of a sign-in in progress, which made that sign-in fail. MCP sign-in now refreshes the stored tokens with the stored client even when the loopback callback port changed, instead of registering a new client and opening the browser. Ctrl+C in `/mcp` and the `--timeout` of `pi mcp login` now also stop a sign-in while it waits up to 25 seconds for another pi process's token refresh, and a refresh lock that fails for another reason than that wait now fails the sign-in instead of opening the browser.
+- Fixed RPC mode ignoring an extension's `ctx.shutdown()` while idle, for example from a timer: the process kept running until the client sent another command. pi now shuts down right away when idle, and a shutdown requested by an extension command waits until the command's `prompt` response is written ([#11599](https://github.com/earendil-works/pi/issues/11599))
+
 
 ## [1.5.0] - 2026-11-02
 
