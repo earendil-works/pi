@@ -27,6 +27,8 @@ await client.close();
 
 For a remote server, use `new StreamableHttpTransport({ url, headers })`. Fetch can be injected for proxying or custom networking.
 
+An MCP transport owns framing and I/O. It delivers individual JSON-RPC messages to `McpClient`; the client owns request correlation, initialization, timeouts, cancellation, server requests, and protocol-level helpers.
+
 ### Stdio servers started elsewhere
 
 `PipeTransport` speaks MCP's stdio framing over a program that something else starts, for example on another machine. `open` starts the program, connects its stdout and stderr to the given handlers, and returns an `McpPipe` (`write`, `closeStdin`, `close` to kill, and an `exited` promise). `@earendil-works/pi-env`'s `openProcess()` returns one, without an adapter:
@@ -67,6 +69,8 @@ const tools: AgentTool[] = (await client.listTools()).map((tool) => ({
 	},
 }));
 ```
+
+For applications that name tools like pi's coding agent: `createMcpToolName(server, tool, isTaken)` builds `mcp__<server>__<tool>`, limited to the characters and the 64-character length providers accept, with a hash suffix for long names and for names `isTaken` reports as used by another tool. `mcpNamespace(server)` is the prefix of a server's tool names. `normalizeMcpInputSchema()` turns an input schema into an object schema with `properties`, and `limitMcpContent(content, saveOutput)` keeps model-facing text within `MCP_OUTPUT_MAX_BYTES` (20KB) by cutting its middle; `saveOutput`, when given, stores the full text and returns the path the model can read it from.
 
 The [mcp-codemode example](https://github.com/earendil-works/pi/tree/main/packages/agent/examples/mcp-codemode) also forwards progress, passes `structuredContent` through, and lets `@earendil-works/pi-codemode` scripts call the tools.
 
@@ -145,7 +149,23 @@ For a browser on the same machine, `listenForLoopbackSignIn()` starts a loopback
 
 The OAuth implementation is adapted from the MIT-licensed Model Context Protocol TypeScript SDK v1.29.0. Its license is included under `LICENSES/`.
 
-An MCP transport owns framing and I/O. It delivers individual JSON-RPC messages to `McpClient`; the client owns request correlation, initialization, timeouts, cancellation, server requests, and protocol-level helpers.
+### Configuration
+
+`validateMcpServerConfig(name, entry, options)` validates one entry of the `mcpServers` shape that MCP clients share: stdio servers (`command`, `args`, `env`, `cwd`), Streamable HTTP servers (`url`, `headers`, `oauth`), and `enabled`, `description`, and `timeout`. It returns `{ kind: "stdio" | "http", config }` or `{ kind: "invalid", error }`. Fields it does not know stay in `config`, typed `unknown`, for the application to check afterwards, depending on `kind` where it matters. Resolving `${VAR}` references and relative paths is left to the application. `oauth.clientRegistration: "cimd"` is accepted only with `options.checkMetadataDocumentCallback`, which checks that the application's Client ID Metadata Documents list the callback.
+
+```typescript
+import { validateMcpServerConfig } from "@earendil-works/pi-mcp";
+
+for (const [name, entry] of Object.entries(file.mcpServers)) {
+	const result = validateMcpServerConfig(name, entry);
+	if (result.kind === "invalid") errors.push(result.error);
+	else if (result.config.shared !== undefined && typeof result.config.shared !== "boolean") {
+		errors.push(`server "${name}": shared must be a boolean`);
+	} else servers.set(name, result);
+}
+```
+
+`isMcpServerOverride(entry)` is true for entries without `command`, `url`, or `type`, which applications treat as overriding a few fields of a server defined in another file.
 
 ## Supported protocol surface
 

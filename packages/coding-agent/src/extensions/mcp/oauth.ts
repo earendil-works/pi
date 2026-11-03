@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { oauthErrorHtml, oauthSuccessHtml } from "@earendil-works/pi-ai/utils/oauth-page";
+import { mcpNamespace } from "@earendil-works/pi-mcp";
 import {
 	completeMcpSignIn,
 	createMcpAuthProvider as createAuthProvider,
@@ -31,7 +32,7 @@ import {
 import lockfile from "proper-lockfile";
 import { APP_NAME, getAgentDir } from "../../config.ts";
 import { type AuthStorageBackend, FileAuthStorageBackend } from "../../core/auth-storage.ts";
-import { isClientMetadataDocumentCallback, mcpNamespace } from "../../core/mcp-servers.ts";
+import { isClientMetadataDocumentCallback } from "../../core/mcp-servers.ts";
 
 /** A refresh lock that its holder stopped renewing (the process was killed) is taken over after this. */
 const REFRESH_LOCK_STALE_MS = 20_000;
