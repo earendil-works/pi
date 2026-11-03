@@ -639,6 +639,7 @@ export class InteractiveMode {
 		this.runtimeHost.setRebindSession(async () => {
 			await this.rebindCurrentSession({ renderBeforeBind: true });
 			this.themeController.applyFromSettings();
+			this.renderRuntimeDiagnostics();
 		});
 		this.version = VERSION;
 		this.renderer = createInteractiveTui({
@@ -649,6 +650,7 @@ export class InteractiveMode {
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
+			onStderrLine: (line) => this.handleDivertedStderrLine(line),
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
@@ -956,6 +958,7 @@ export class InteractiveMode {
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
+			onStderrLine: (line) => this.handleDivertedStderrLine(line),
 		});
 		nextUi.setClearOnShrink(clearOnShrink);
 		nextUi.onDebug = onDebug;
@@ -2337,6 +2340,24 @@ export class InteractiveMode {
 		this.streamingMessage = undefined;
 		this.pendingTools.clear();
 		this.renderInitialMessages();
+	}
+
+	/**
+	 * Render the fresh runtime's diagnostics after a session switch. Runs from the rebind hook,
+	 * which fires after renderCurrentSessionState cleared the transcript, so switch-time warnings
+	 * (e.g. model-scope patterns matching nothing after re-resolution) survive the reset. Startup
+	 * diagnostics render once through the init loop instead — this never fires at startup.
+	 */
+	private renderRuntimeDiagnostics(): void {
+		for (const diagnostic of this.runtimeHost.diagnostics) {
+			if (diagnostic.type === "error") {
+				this.showError(diagnostic.message);
+			} else if (diagnostic.type === "warning") {
+				this.showWarning(diagnostic.message);
+			} else {
+				this.showStatus(diagnostic.message);
+			}
+		}
 	}
 
 	/**
@@ -4797,6 +4818,17 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new ThemedText(() => theme.fg("error", `Error: ${errorMessage}`), this.outputPad, 0));
 		this.ui.requestRender();
+	}
+
+	/**
+	 * Sink for stderr lines the fullscreen renderer diverted (TuiAltScreen's onStderrLine): raw
+	 * stderr bytes bake into the alt screen behind the row-diff renderer, so they render in-band
+	 * instead. The source line already carries the console severity prefix ("Warning: "), which
+	 * showWarning re-adds — strip it to avoid doubling.
+	 */
+	private handleDivertedStderrLine(line: string): void {
+		const prefix = "Warning: ";
+		this.showWarning(line.startsWith(prefix) ? line.slice(prefix.length) : line);
 	}
 
 	showWarning(warningMessage: string): void {

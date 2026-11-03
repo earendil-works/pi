@@ -13,6 +13,8 @@ export interface InteractiveTuiOptions {
 	readonly onRightClickPaste?: () => void;
 	readonly fullscreenCopyOnSelect?: boolean;
 	readonly fullscreenWheelScrollLines?: WheelScrollLines;
+	/** Sink for stderr lines diverted while the fullscreen TUI owns the terminal. */
+	readonly onStderrLine?: (line: string) => void;
 }
 
 /** Composition root shared by coding-agent presentations. */
@@ -36,6 +38,7 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 			onRightClickPaste: options.onRightClickPaste,
 			copyOnSelect: options.fullscreenCopyOnSelect,
 			wheelScrollLines: options.fullscreenWheelScrollLines ?? "auto",
+			onStderrLine: options.onStderrLine,
 			copySelection: async (text) => {
 				try {
 					await copyToClipboard(text);
