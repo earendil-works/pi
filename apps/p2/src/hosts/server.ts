@@ -707,14 +707,28 @@ function isOwnerNotice(error: HostError): boolean {
 	return !isChordError(failure, "released") && !isChordError(failure, "forbidden");
 }
 
+/** How long a signalled server may take to close before it exits anyway (below `scripts/dev.mjs`'s 10 s SIGKILL). */
+const CLOSE_DEADLINE_MS = 8000;
+
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	// Provider logins and server plugins (e.g. the Radius gateway) fetch in this process too.
 	configureFetch();
 	const server = await startServer();
 	console.log(`p2: http://127.0.0.1:${server.port} (data ${server.dataDir})`);
-	for (const signal of ["SIGINT", "SIGTERM"] as const) {
-		process.once(signal, () => {
-			void server.close().finally(() => process.exit(0));
-		});
-	}
+	// Every way out goes through `process.exit`: a signal's default action skips the exit hooks, which remove the
+	// macOS lock socket file (else the next start refuses) and kill the MCP servers' process groups.
+	let stopping = false;
+	const stop = (signal: NodeJS.Signals): void => {
+		if (stopping) {
+			console.error(`p2: ${signal} again, exiting without finishing the close`);
+			process.exit(1);
+		}
+		stopping = true;
+		setTimeout(() => {
+			console.error(`p2: the close did not finish within ${CLOSE_DEADLINE_MS / 1000} s, exiting`);
+			process.exit(1);
+		}, CLOSE_DEADLINE_MS).unref();
+		void server.close().finally(() => process.exit(0));
+	};
+	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, () => stop(signal));
 }
