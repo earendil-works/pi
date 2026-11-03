@@ -920,9 +920,151 @@ describe("Coding Agent Tools", () => {
 			});
 
 			const output = getTextOutput(result);
-			expect(output).toContain("lone-cr.txt-1- beforeprogress");
+			// A lone CR inside a line is kept, as the read tool shows it, so the text can be copied into edit.
+			expect(output).toContain("lone-cr.txt-1- before\rprogress");
 			expect(output).toContain("lone-cr.txt:2: needle");
 			expect(output).toContain("lone-cr.txt-3- after");
+		});
+
+		// https://github.com/earendil-works/pi/issues/9276
+		it("should print overlapping context once and keep the last match's trailing context", async () => {
+			const testFile = join(testDir, "rg-context.txt");
+			writeFileSync(testFile, ["a", "match one", "b", "match two", "match three", "c", "match four"].join("\n"));
+
+			const result = await grepTool.execute("test-call-rg-context", {
+				pattern: "match",
+				path: testFile,
+				context: 1,
+				limit: 2,
+			});
+			expect(getTextOutput(result).split("\n\n")[0]).toBe(
+				[
+					"rg-context.txt-1- a",
+					"rg-context.txt:2: match one",
+					"rg-context.txt-3- b",
+					"rg-context.txt:4: match two",
+					// A match inside the last allowed match's trailing context is shown as context.
+					"rg-context.txt-5- match three",
+				].join("\n"),
+			);
+		});
+
+		// https://github.com/earendil-works/pi/issues/9276
+		it("should keep counting matches past the byte cap", async () => {
+			const testFile = join(testDir, "byte-cap.txt");
+			const line = `match ${"x".repeat(400)}`;
+			writeFileSync(testFile, Array.from({ length: 200 }, () => line).join("\n"));
+
+			const result = await grepTool.execute("test-call-byte-cap", {
+				pattern: "match",
+				path: testFile,
+				limit: 150,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("150 matches limit reached");
+			expect(output).toContain("50.0KB limit reached");
+			expect(result.details?.matchLimitReached).toBe(150);
+			expect(result.details?.truncation?.totalLines).toBe(150);
+		});
+
+		// https://github.com/earendil-works/pi/issues/9276
+		it("should report truncation when stored output ends exactly at the byte cap", async () => {
+			const testFile = join(testDir, "x");
+			// 103 rows of 500 bytes plus one of 12 bytes, with newlines, join to exactly 50KB; one more match follows.
+			writeFileSync(testFile, [...Array(103).fill("x".repeat(490)), "x".repeat(7), "extra x"].join("\n"));
+
+			const result = await grepTool.execute("test-call-byte-cap-boundary", {
+				pattern: "x",
+				path: testFile,
+				limit: 1000,
+			});
+
+			expect(getTextOutput(result)).toContain("[50.0KB limit reached]");
+			expect(result.details?.truncation?.totalLines).toBe(105);
+		});
+
+		// https://github.com/earendil-works/pi/issues/9276
+		it("should accept a huge context value", async () => {
+			const testFile = join(testDir, "huge-context.txt");
+			writeFileSync(testFile, "before\nneedle\nafter");
+
+			const result = await grepTool.execute("test-call-huge-context", {
+				pattern: "needle",
+				path: testFile,
+				context: 1e30,
+			});
+
+			expect(getTextOutput(result)).toBe(
+				["huge-context.txt-1- before", "huge-context.txt:2: needle", "huge-context.txt-3- after"].join("\n"),
+			);
+		});
+
+		// Context lines come from ripgrep, which decodes UTF-16; rereading the file as UTF-8 corrupted them (#11423).
+		it("should decode UTF-16 files with context", async () => {
+			const testFile = join(testDir, "utf16.txt");
+			writeFileSync(testFile, Buffer.from("\uFEFFbefore\nneedle 中文\nafter\n", "utf16le"));
+
+			const result = await grepTool.execute("test-call-utf16-context", {
+				pattern: "needle",
+				path: testFile,
+				context: 1,
+			});
+
+			expect(getTextOutput(result)).toBe(
+				["utf16.txt-1- before", "utf16.txt:2: needle 中文", "utf16.txt-3- after"].join("\n"),
+			);
+		});
+
+		it("should keep a lone CR inside a line and strip CRLF terminators", async () => {
+			const testFile = join(testDir, "mixed-cr.txt");
+			writeFileSync(testFile, "one\rtwo needle\r\nnext\r\n");
+
+			const plain = await grepTool.execute("test-call-cr-plain", { pattern: "needle", path: testFile });
+			expect(getTextOutput(plain)).toBe("mixed-cr.txt:1: one\rtwo needle");
+
+			const withContext = await grepTool.execute("test-call-cr-context", {
+				pattern: "needle",
+				path: testFile,
+				context: 1,
+			});
+			expect(getTextOutput(withContext)).toBe(
+				["mixed-cr.txt:1: one\rtwo needle", "mixed-cr.txt-2- next"].join("\n"),
+			);
+		});
+
+		it("should not report the match limit when exactly limit matches exist", async () => {
+			const testFile = join(testDir, "exact-limit.txt");
+			writeFileSync(testFile, ["match one", "x", "match two", "y"].join("\n"));
+
+			for (const context of [0, 1]) {
+				const exact = await grepTool.execute("test-call-exact-limit", {
+					pattern: "match",
+					path: testFile,
+					limit: 2,
+					context,
+				});
+				expect(getTextOutput(exact)).not.toContain("limit reached");
+				expect(exact.details?.matchLimitReached).toBeUndefined();
+
+				const over = await grepTool.execute("test-call-over-limit", {
+					pattern: "match",
+					path: testFile,
+					limit: 1,
+					context,
+				});
+				expect(getTextOutput(over)).toContain("[1 matches limit reached. Use limit=2 for more, or refine pattern]");
+				expect(over.details?.matchLimitReached).toBe(1);
+			}
+
+			const fractional = await grepTool.execute("test-call-fractional-limit", {
+				pattern: "match",
+				path: testFile,
+				limit: 1.5,
+			});
+			expect(getTextOutput(fractional)).toContain(
+				"[1 matches limit reached. Use limit=2 for more, or refine pattern]",
+			);
 		});
 
 		// https://github.com/earendil-works/pi/issues/11203
