@@ -2465,6 +2465,16 @@ validation and copies the v2 kernel added around Delta.
   acts as the method's caller (decision of slice 4a, unchanged): a server object acting as itself towards a worker
   takes the reference with `self.get` in its own object or a server root; documented with p2's `Search.rebuildIndex`
   example in the guide and the porting notes.
+- **Tutorial gaps (owner, 2026-11-03: "4. export", "3. ok", "1. b"; the tutorial's findings):** (4) Chord's root
+  exports `invalid` and `forbidden`; an app's API re-exports them, so a plugin throws a decided `ChordError`. (3) An app's
+  API is a real package (`"name": "@acme/app"`, `"exports": { "./v1": ..., "./v1/web": ... }`), so Node,
+  TypeScript and plugin builds resolve it alike and tests import plugins' contract files; the tutorial and
+  `plugin-authoring.md` show it, no Chord change. (1) **Refines "Slice 11, P4":** a component of a reloaded web plugin
+  is a new function and remounts (its `useState` starts over); state that must survive a plugin update (a half-typed
+  message, a scroll position) is kept by the page host: `usePageState(key, initial)` in `chord/react` (and the same
+  per-key store for `TuiScope`), untouched by plugin reloads, gone with the page. Rejected: React Fast Refresh (a Babel
+  or SWC transform in every web build, fragile when hooks change). Open: a live view of table rows (the tutorial's
+  and 59-chat's `self.open` read at activation, which makes every reload a restart): to explain first.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
