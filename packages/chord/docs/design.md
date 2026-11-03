@@ -1,7 +1,6 @@
 # Chord v2: target design
 
-The design of Chord v2 (`packages/chord/src`, the package's root export `@earendil-works/chord`; Chord v1 is kept in
-`src/old`) and of how apps (the playground, p3) use it: **the one current statement of every rule** (owner,
+The design of Chord v2 (`packages/chord/src`, the package's root export `@earendil-works/chord`) and of how apps (the playground, p3) use it: **the one current statement of every rule** (owner,
 2026-10-24). Every decision is recorded in the decision log `packages/chord/docs/decisions.md` (the history and the
 reasons, kept complete) and folded into this document in the same commit. Where a rule is built, the slice is named
 (`slices.md`); the code follows this document. It replaces `apps/p2/docs/target-design.md`.
@@ -390,7 +389,7 @@ host.route(Session, {
   `closed` or the link closing. A call still queued when its hold rebinds (`loading`) is rejected `unavailable` (it may
   name a method of the old variant). A provider seeing more than N running calls of one origin closes the link
   (protocol error); a call naming a hold it does not know is ignored before it is counted (Q1). **There is no limit on
-  calls in progress per link** (owner, 2026-11-03; v1's `maxCalls` has no counterpart): the call window N per origin
+  calls in progress per link** (owner, 2026-11-03; Chord v1's `maxCalls` had no counterpart): the call window N per origin
   and the part limits (section 22) are the bounds; 200 concurrent calls over one socket all run, N at a time in
   flight. A per-link N, if ever needed, must bound a relay's forwarding too.
 - Holds are not limited by count (authorization and params checks protect them); size limits are a separate check

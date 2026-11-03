@@ -14,7 +14,7 @@ Read in full before writing code: this spec; `decisions.md`; `design.md` (§3 ho
 `src/node/plugins/README.md`; the 7b brief `slice-7b/book.md` (chapters "Assets and Files", "HTTP", "A Mini p2
 from Chord"); p2's `src/hosts/server.ts`, `src/runtime/server.ts`, `src/hosts/worker.ts`, `src/hosts/socket-limits.ts`,
 `src/hosts/principals.ts`, `plugins/files/server.ts`, `plugins/terminals/server.ts`, `plugins/radius/server.ts`; Chord
-v1's `src/old/manager.ts` (`processLock`, `forkDriver`, `createHostManager`, `childControl`).
+v1's `src/manager.ts` (`processLock`, `forkDriver`, `createHostManager`, `childControl`; v1 has since been deleted).
 
 ## 1. What p2 has, and what moves into Chord
 

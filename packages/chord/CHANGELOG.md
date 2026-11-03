@@ -5,6 +5,7 @@
 ### Breaking Changes
 
 - Chord v2 is the package's root: `@earendil-works/chord` exports v2 (was `@earendil-works/chord/next`). Chord v1 moved unchanged to `@earendil-works/chord/old` (was the root) and `@earendil-works/chord/old/node` (was `/node`); it stays until p2 runs on v2. The foundations v1's root re-exported have their own subpaths: `@earendil-works/chord/json` (`JsonValue`, `JsonRepresentation`, `copyJson`, `isJsonValue`) and `@earendil-works/chord/watch` (`Watch`, `NativeWatch` and the watch types), beside `/context` and `/delta`. Migration: imports of `@earendil-works/chord/next` drop `/next`; v1's imports of `@earendil-works/chord` become `@earendil-works/chord/old`, and `/node` becomes `/old/node`; imports of `Context`, `Draft`, `JsonValue`, `copyJson` or the watch types from the root move to `/context`, `/delta`, `/json` and `/watch`. In the repository, v2's `src/next` is now `src`, `src/next-node` is `src/node`, `src/next-web`, `src/next-react` and `src/next-tui` are `src/web`, `src/react` and `src/tui`, v1 is in `src/old`, and tests and docs moved likewise (`test/next` to `test`, `docs/next` to `docs`, v1's to `test/old` and `docs/old`).
+- Chord v1 (`@earendil-works/chord/old`, `@earendil-works/chord/old/node`) removed, with its tests and docs (`src/old`, `test/old`, `docs/old`). Apps still on v1 pin `@earendil-works/chord@1.5.0`.
 
 ### Added
 

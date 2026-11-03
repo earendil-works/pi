@@ -361,7 +361,7 @@ own plugin&#39;s directory; nothing gives it another plugin&#39;s files.</p>
 <section class="chapter" id="http"><header class="opener"><div class="numeral">IV</div><h2>HTTP</h2><p class="lede">What Chord provides, what p2 has, and what p3 needs.</p></header>
 <p class="dropcap"><strong>Chord v2 has no HTTP server today.</strong> Design §23 designs one (<code>@earendil-works/chord/http</code>) and defers it until
 &quot;the kernel fixes and a first real proof&quot; are done. p2&#39;s HTTP is its own, about 30 lines of helpers plus the server host:</p>
-<pre><code><span class="tk-c">// apps/p2/src/runtime/server.ts (p2 today, Chord v1)</span>
+<pre><code><span class="tk-c">// apps/p2/src/runtime/server.ts (p2 at the time, on Chord v1)</span>
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Routes</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">RouteHandler</span>&gt;(<span class="tk-s">"p2.routes"</span>, { conflict: <span class="tk-s">"error"</span> });        <span class="tk-c">// "METHOD /path" → handler</span>
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Upgrades</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">UpgradeHandler</span>&gt;(<span class="tk-s">"p2.upgrades"</span>, { conflict: <span class="tk-s">"error"</span> });   <span class="tk-c">// WebSocket upgrades</span>
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">RequestResolvers</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">RequestResolver</span>&gt;(<span class="tk-s">"p2.request-resolvers"</span>, { conflict: <span class="tk-s">"error"</span> });

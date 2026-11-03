@@ -1,5 +1,4 @@
 import { createHost, memoryLinkPair } from "@earendil-works/chord";
-import { createHost as createOldHost, replicatedState } from "@earendil-works/chord/old";
 import { createAssistantMessageEventStream, validateToolArguments } from "@earendil-works/pi-ai";
 import { complete, getModel, getProviders, streamSimple } from "@earendil-works/pi-ai/compat";
 import { Agent, streamProxy } from "@earendil-works/pi-agent-core";
@@ -28,7 +27,5 @@ console.log(
 	agent.hasQueuedMessages(),
 	typeof streamProxy,
 	typeof createHost,
-	typeof createOldHost,
 	typeof memoryLinkPair,
-	replicatedState({ browser: true }).value.browser,
 );

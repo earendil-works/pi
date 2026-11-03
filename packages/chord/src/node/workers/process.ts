@@ -1,4 +1,4 @@
-// A worker process as the server sees it (slice 10 §3, Chord v1's `forkDriver`): forked with V8 serialization as a
+// A worker process as the server sees it (slice 10 §3): forked with V8 serialization as a
 // detached process group (the whole tree can be killed), stdout and stderr piped (the stderr tail kept, both mirrored to
 // the server's own when the app takes no output), its IPC link made at the fork so the child's `hello` and early holds
 // are queued, never lost; control messages, the link's close and the exit are told as they happen.
