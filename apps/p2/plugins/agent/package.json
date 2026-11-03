@@ -1,0 +1,5 @@
+{
+	"name": "agent",
+	"private": true,
+	"type": "module"
+}
