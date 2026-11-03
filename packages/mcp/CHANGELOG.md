@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `PipeTransport`, MCP's stdio transport over a program started by the caller through an `McpPipe` (`write`, `closeStdin`, `close`, `exited`), for example `@earendil-works/pi-env`'s `openProcess()` on another machine. `StdioTransport` and `PipeTransport` share the newline-delimited framing and the stderr tail.
+
 ## [1.5.0] - 2026-11-02
 
 ### Changed

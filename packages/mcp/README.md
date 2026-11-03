@@ -2,7 +2,7 @@
 
 A small, standalone Model Context Protocol client. It does not depend on the official MCP SDK or other pi packages.
 
-The package provides a transport-neutral client core, stdio and Streamable HTTP transports, and an in-memory testing transport.
+The package provides a transport-neutral client core, stdio and Streamable HTTP transports, a stdio transport over a pipe to a program started elsewhere, and an in-memory testing transport.
 
 ## Usage
 
@@ -26,6 +26,22 @@ await client.close();
 ```
 
 For a remote server, use `new StreamableHttpTransport({ url, headers })`. Fetch can be injected for proxying or custom networking.
+
+### Stdio servers started elsewhere
+
+`PipeTransport` speaks MCP's stdio framing over a program that something else starts, for example on another machine. `open` starts the program, connects its stdout and stderr to the given handlers, and returns an `McpPipe` (`write`, `closeStdin`, `close` to kill, and an `exited` promise). `@earendil-works/pi-env`'s `openProcess()` returns one, without an adapter:
+
+```typescript
+import { openProcess } from "@earendil-works/pi-env";
+import { PipeTransport } from "@earendil-works/pi-mcp";
+
+const transport = new PipeTransport({
+	open: (handlers) => openProcess(connection, { cwd, argv, ...handlers }),
+});
+await client.connect(transport);
+```
+
+Closing the transport closes the program's stdin and kills it if it has not exited after `closeTimeoutMs` (default 2000). The transport closes when the program ends.
 
 ### Tools for an LLM
 
@@ -123,6 +139,7 @@ An MCP transport owns framing and I/O. It delivers individual JSON-RPC messages 
 - request cancellation
 - Streamable HTTP sessions, the server-to-client GET stream with reconnection, and resumption of dropped response streams with `Last-Event-ID`
 - stdio shutdown per the spec (close stdin, then SIGTERM, then SIGKILL), applied to the server's whole process group
+- stdio over a caller-provided pipe (`PipeTransport`)
 - server `ping` and `roots/list` requests
 - logging and tool-list-change notifications through the generic notification API
 - OAuth protected-resource and authorization-server discovery

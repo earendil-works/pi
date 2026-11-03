@@ -55,6 +55,12 @@ export {
 	type ToolAnnotations,
 	type ToolExecution,
 } from "./protocol/types.ts";
+export {
+	type McpPipe,
+	type McpPipeHandlers,
+	PipeTransport,
+	type PipeTransportOptions,
+} from "./transports/pipe.ts";
 export { StdioTransport, type StdioTransportOptions } from "./transports/stdio.ts";
 export {
 	McpAuthRequiredError,
