@@ -117,6 +117,28 @@ describe("InteractiveMode extension changelog", () => {
 		expect(display()).toEqual([]);
 	});
 
+	// #11703
+	test("does not repeat entries for a prerelease version", () => {
+		writePackage("1.0.0");
+		display();
+		writePackage("1.2.0-20261020.7");
+
+		expect(display()).toHaveLength(1);
+		expect(display()).toEqual([]);
+	});
+
+	test("shows nothing for an unreadable last seen version and records the current one", () => {
+		const key = getSourcePackageKey(sourceInfo);
+		settingsManager.setExtensionChangelogVersion(key, "latest");
+		writePackage("1.0.0");
+
+		expect(display()).toEqual([]);
+		expect(settingsManager.getExtensionChangelogVersion(key)).toBe("1.0.0");
+
+		writePackage("1.2.0");
+		expect(display()).toHaveLength(1);
+	});
+
 	test("skips resumed sessions", () => {
 		writePackage("1.0.0");
 		display();
