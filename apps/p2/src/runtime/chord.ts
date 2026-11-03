@@ -197,14 +197,17 @@ export function newerPeerProtocol(error: { readonly kind: string; readonly error
 /** A plain listener source outside Chord (a watcher's events): `subscribe` returns its stop. */
 export type Subscribable<T> = { subscribe(listener: (value: T) => void): () => void };
 
-/** Resolves once `source` holds a value `done` accepts (the current one included); aborting `context` rejects. */
-export async function until<T>(source: Watchable<T>, done: (value: T) => boolean, context: Context): Promise<void> {
+/**
+ * Resolves with the first value of `source` that `done` accepts (the current one included); aborting `context`
+ * rejects.
+ */
+export async function until<T>(source: Watchable<T>, done: (value: T) => boolean, context: Context): Promise<T> {
 	const watch = await source.watch(context);
 	try {
-		if (done(watch.value)) return;
-		await new Promise<void>((resolve, reject) => {
+		if (done(watch.value)) return watch.value;
+		return await new Promise<T>((resolve, reject) => {
 			watch.start(async (call) => {
-				if (call.kind === "value" && done(call.value)) resolve();
+				if (call.kind === "value" && done(call.value)) resolve(call.value);
 			});
 			void watch.closed.then((end) => reject(end.kind === "failed" ? end.error : new Error(`watch ${end.kind}`)));
 		});

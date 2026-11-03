@@ -22,8 +22,11 @@ import * as piDurable from "@earendil-works/pi-durable";
 import * as durableCodemode from "@earendil-works/pi-durable/codemode";
 import * as durableEnv from "@earendil-works/pi-durable/env";
 import * as durableEnvNode from "@earendil-works/pi-durable/env/node";
+import * as durableToolSearch from "@earendil-works/pi-durable/tool-search";
 import * as durableTools from "@earendil-works/pi-durable/tools";
 import * as piEnv from "@earendil-works/pi-env";
+import * as piMcp from "@earendil-works/pi-mcp";
+import * as piMcpOauth from "@earendil-works/pi-mcp/oauth";
 import * as piSchema from "@earendil-works/pi-schema";
 import * as schemaFormats from "@earendil-works/pi-schema/formats";
 import * as piTui from "@earendil-works/pi-tui";
@@ -65,8 +68,11 @@ const SHARED = {
 	"@earendil-works/pi-durable/codemode": durableCodemode,
 	"@earendil-works/pi-durable/env": durableEnv,
 	"@earendil-works/pi-durable/env/node": durableEnvNode,
+	"@earendil-works/pi-durable/tool-search": durableToolSearch,
 	"@earendil-works/pi-durable/tools": durableTools,
 	"@earendil-works/pi-env": piEnv,
+	"@earendil-works/pi-mcp": piMcp,
+	"@earendil-works/pi-mcp/oauth": piMcpOauth,
 	"@earendil-works/pi-schema": piSchema,
 	"@earendil-works/pi-schema/formats": schemaFormats,
 	ws,

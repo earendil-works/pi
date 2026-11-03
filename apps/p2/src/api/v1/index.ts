@@ -20,6 +20,7 @@ export {
 	method,
 	type Native,
 	orderedEntries,
+	PluginError,
 	type RefState,
 	type Registry,
 	type RegistryValue,

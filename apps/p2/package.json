@@ -22,6 +22,8 @@
 		"@earendil-works/pi-ai": "1.5.0",
 		"@earendil-works/pi-codemode": "1.5.0",
 		"@earendil-works/pi-durable": "1.5.0",
+		"@earendil-works/pi-env": "1.5.0",
+		"@earendil-works/pi-mcp": "1.5.0",
 		"@earendil-works/pi-schema": "1.5.0",
 		"diff": "8.0.4",
 		"esbuild": "0.28.2",

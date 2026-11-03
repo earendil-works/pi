@@ -27,9 +27,9 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `P2_DATA_DIR` | `~/.pi/p2` | data directory: `catalog.sqlite`, `sessions/<id>.sqlite`, `settings.json`, `models.json`, `envs.json`, `auth.json`, `radius.json`, `forwards.json` |
+| `P2_DATA_DIR` | `~/.pi/p2` | data directory: `catalog.sqlite`, `sessions/<id>.sqlite`, `settings.json`, `models.json`, `envs.json`, `mcp.json`, `auth.json`, `radius.json`, `forwards.json` |
 | `PORT` | `8788` | listen port (loopback only), so p2 never collides with pi-mobile on 8787 |
-| `P2_FAKE` | unset | `1`: the faux provider (`faux/faux-1`, echoes the prompt; `slow …` streams long; `rename-session <title>` calls the tool; `subagent`, `subagent-bad`, `subagent-answer`, `subagent-configure`, `subagent-send`, `subagent-archive`, `subagent-status` exercise subagents, `subagent <json>` calls the tool with those arguments, as do `team <json>`, `history_search|read|handoff <json>` and `location_envs|dirs|move <json>`; `codemode` runs a script calling bash and read, `codemode-restart` one whose slow middle call a restart interrupts, `codemode <script>` runs that script; `json <text>` answers exactly `<text>`; a one-shot agent whose task is not `json …`/`slow…` answers a small value matching its schema) |
+| `P2_FAKE` | unset | `1`: the faux provider (`faux/faux-1`, echoes the prompt; `slow …` streams long; `rename-session <title>` calls the tool; `subagent`, `subagent-bad`, `subagent-answer`, `subagent-configure`, `subagent-send`, `subagent-archive`, `subagent-status` exercise subagents, `subagent <json>` calls the tool with those arguments, as do `team <json>`, `history_search|read|handoff <json>`, `location_envs|dirs|move <json>`, `tool_search <json>` and `mcp__<server>__<tool> <json>`; `codemode` runs a script calling bash and read, `codemode-restart` one whose slow middle call a restart interrupts, `codemode <script>` runs that script; `json <text>` answers exactly `<text>`; a one-shot agent whose task is not `json …`/`slow…` answers a small value matching its schema) |
 | `P2_IDLE_MS` | `300000` | idle time before a session worker stops |
 | `P2_PROVIDER`, `P2_MODEL` | unset | default model for new sessions after settings.json's `defaultModel` (both or neither; Pi Mobile's `PI_MOBILE_PROVIDER`/`PI_MOBILE_MODEL` work too) |
 | `P2_RADIUS` | unset | `0`: disable the outbound Radius brain connection even when signed in |
@@ -972,6 +972,50 @@ translated phone drawer and intercept chat taps.
   reload during a script, SIGKILL and graceful restarts mid-call (finished calls do not rerun; the interrupted unsafe
   `bash` call returns an error the script catches); the removal mid-script (prompt error, turn ends, the script's thread goes); `codemode-plugin.test.ts` the
   sandbox across reload/removal.
+- **MCP servers** (`plugins/mcp`, plan `docs/mcp-durable.md`, WP6 and WP7): the server's `McpManager` (local,
+  host lifetime) owns every MCP process and connection; workers never spawn one or hold a credential. `<P2_DATA_DIR>/mcp.json`
+  is the owner's `mcpServers` (pi-mcp's `validateMcpServerConfig`, plus p2's `shared` and `runOn`; invalid entries are
+  skipped and listed in `errors`, `${VAR}` in headers and env values from the p2 host's environment; watched: an edited
+  server restarts, a removed one closes; an invalid save keeps the last valid servers, also across a reload). Instances (`placement.ts`): stdio per session and location (key: session,
+  location, server, hash of command, args, env, cwd and timeout; roots the location's cwd), `"shared": true` once on
+  the host, HTTP shared unless `"shared": false` (one per session); a 401 shows `sign-in` (OAuth is WP8). Stdio
+  servers on an environment (`runOn: "location"` on a remote location, or `{ env }`) start through its pi-env daemon
+  (`openProcess` behind pi-mcp's `PipeTransport`, `transports.ts`): one connection per environment and revision of its
+  `envs.json` entry, shared by its instances and closed with the last (`environments.ts`), opened through the envs
+  plugin's SSH manager (`EnvManager.connection`); `~` is the remote home, relative paths are relative to the location's
+  cwd when it is on that machine (also the root), else to the home; on Windows everything but `.exe`/`.com` runs through
+  `cmd.exe` with cross-spawn's quoting, the line passed in a variable (`windows-command.ts`); a daemon without the
+  `process` operation fails for good with "update it"; an environment missing from `envs.json` shows `failed`. A lease
+  gets servers only on an environment its session works on as the server records it (the catalog's session, the
+  subagent store's own locations; else "not where this session works"). Projects: the worker reads `<cwd>/.pi/mcp.json`
+  at each location through that location's environment and sends the text with `setLocations` (256 KiB at most); the
+  manager checks it (`project.ts`): stdio servers only, run at that location for that session alone (no `runOn`,
+  `shared`, `auth`, `oauth`, no HTTP, `${VAR}` never expanded), an entry without `command`/`url`/`type` only sets
+  `enabled` of the owner's server of that name (so a disabled owner server can be turned on there), a redefinition of
+  an owner server is refused; refusals and unreadable files are the lease's `errors` (the worker's view, and the
+  owner's prefixed with the session). `Mcp` is the view: a worker
+  principal's `setLocations`/`call` (only the session's running current generation, as the location tools check;
+  session, generation and `ctx.incarnation` filled in by the view; `servers` without the owner's errors), the owner's
+  `instances`, `errors`, `restart`; guests get nothing. Lease rules are pure functions (`leases.ts`): a generation sets
+  exactly its locations (leaving one out ends that lease), a newer generation takes the session over and refuses an
+  older one (decided inside the leases' change), calls go through the setting incarnation's lease, and the view's end
+  (its worker's link went, after a 30 s linger, so a worker object taking it again keeps its processes) releases its
+  generation's leases; a reload keeps them and the last listed tools (in-memory
+  documents of the manager). Unshared instances close with their last lease, shared ones stay while configured. A lost
+  connection reconnects with backoff (`RECONNECT`: 1 s doubling to 60 s, reset after a minute up), tools still listed;
+  `notifications/tools/list_changed` refreshes them; call errors never carry a server's stderr (the owner's `error`
+  does). The worker object (`p2.mcp-worker`) sends `setLocations` with every location its conversations work at (the
+  session's, active subagents' own) at start, after moves and subagent commits, and whenever the view re-activates (a
+  refusal because a newer generation runs ends it), and
+  contributes one Durable extension `mcp` (a `self.writable`, rebuilt only when the tool list changes): deferred tools
+  named by `createMcpToolName` (every tool of a colliding name gets the hash suffix, as in pi), results through
+  `toLlmContent` and `limitMcpContent`, `structuredOutput` only for tools with an output schema. The worker facet also
+  installs `tool_search`. Tests: `mcp.test.ts` (manager and views on a bare host with `test/fixtures/mcp-server.mjs` and
+  an HTTP fixture; projects, where sessions work, and an environment through the debug pi-env daemon, skipped without
+  it: `npm run build:daemon` in `packages/env`, or `PI_ENV_DAEMON`), `mcp-instances.test.ts` (the supervisor with a
+  short backoff), `mcp-leases.test.ts`, `mcp-environments.test.ts`, `mcp-project.test.ts`,
+  `mcp-windows-command.test.ts`, `mcp-tools.test.ts`, `mcp-worker.test.ts` (fake provider: a project file, `tool_search`,
+  a call, a relocation).
 - **One-shot agents** (`plugins/agent`, port of Pi Mobile a9335ebea and 0e238b29f): code mode scripts' `tools.agent({
   prompt, schema, label?, model?, thinkingLevel?, tools? })` (`callers: ["tools"]`, replay-safe). One conversation per
   call, owned by the tool task (abort cascades) and recorded in the task-scoped `p2.agent-run` doc, so a rerun

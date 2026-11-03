@@ -169,7 +169,8 @@ export function createFakeModels(options: CreateModelsOptions = {}) {
 					const task = userText(transcript.messages.find((message) => message.role === "user"));
 					if (schema !== undefined && !task.startsWith("json ") && !task.startsWith("slow"))
 						return fauxAssistantMessage([fauxText(JSON.stringify(sampleOf(schema)))]);
-					const last = transcript.messages.at(-1);
+					// A section that changed during the run (tools loaded by `tool_search`) adds a system message after the result.
+					const last = transcript.messages.findLast((message) => message.role !== "system");
 					if (last?.role !== "toolResult") {
 						const call = Object.hasOwn(SCRIPTED, text)
 							? SCRIPTED[text]?.()
@@ -186,7 +187,9 @@ export function createFakeModels(options: CreateModelsOptions = {}) {
 												? fauxToolCall("subagent", JSON.parse(text.slice("subagent ".length)))
 												: text.startsWith("team ")
 													? fauxToolCall("team", JSON.parse(text.slice("team ".length)))
-													: /^(history_(search|read|handoff)|location_(envs|dirs|move)) /.test(text)
+													: /^(history_(search|read|handoff)|location_(envs|dirs|move)|tool_search|mcp__\w+) /.test(
+																text,
+															)
 														? fauxToolCall(
 																text.slice(0, text.indexOf(" ")),
 																JSON.parse(text.slice(text.indexOf(" ") + 1)),
