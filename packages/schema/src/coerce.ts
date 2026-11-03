@@ -105,7 +105,7 @@ export class Coercer {
 	}
 
 	private baseOf(node: unknown, base: string): string {
-		return isSchemaObject(node) ? (this.c.r.baseOf.get(node) ?? base) : base;
+		return isSchemaObject(node) ? this.c.r.baseFor(node, base) : base;
 	}
 
 	// ---------------------------------------------------------------------------------------------------------------

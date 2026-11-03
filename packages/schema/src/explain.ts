@@ -314,14 +314,15 @@ export class Explainer {
 
 	/** How many of the keys of `v` the branch `s` (through a `$ref`) declares in `properties`. */
 	private declaredKeys(s: unknown, b: string, v: Record<string, unknown>): number {
-		const node = isSchemaObject(s) && typeof s.$ref === "string" ? this.c.r.resolve(s.$ref, b).node : s;
+		const node =
+			isSchemaObject(s) && typeof s.$ref === "string" ? this.c.r.resolve(s.$ref, this.c.r.baseFor(s, b)).node : s;
 		const properties = isSchemaObject(node) && isSchemaObject(node.properties) ? node.properties : {};
 		return Object.keys(v).filter((k) => Object.hasOwn(properties, k)).length;
 	}
 
 	private tagOf(branches: readonly unknown[], b: string): { key: string; values: unknown[] } | undefined {
 		const resolved = branches.map((s) =>
-			isSchemaObject(s) && typeof s.$ref === "string" ? this.c.r.resolve(s.$ref, b).node : s,
+			isSchemaObject(s) && typeof s.$ref === "string" ? this.c.r.resolve(s.$ref, this.c.r.baseFor(s, b)).node : s,
 		);
 		const first = resolved[0];
 		if (!isSchemaObject(first) || !isSchemaObject(first.properties)) return undefined;
@@ -337,7 +338,8 @@ export class Explainer {
 	}
 
 	private walkUnevaluated(node: SchemaObject, b: string, v: unknown, path: string, out: ValidationError[]): void {
-		const { unevaluatedProperties, unevaluatedItems, ...rest } = node;
+		// `b` already applies the node's `$id`; the copy must not apply it again.
+		const { unevaluatedProperties, unevaluatedItems, $id: _id, ...rest } = node;
 		const a = newAnnotations();
 		this.c.annotating(rest, b)(v, a);
 		if (isObject(v) && unevaluatedProperties !== undefined && !a.allProps) {
