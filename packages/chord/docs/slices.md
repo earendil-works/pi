@@ -44,6 +44,8 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
 - **Slice 11** (committed 2026-11-03, `slice-11.md`): `src/surfaces/` (scripts objects, registered scripts, the
   connection loop, clients, themes), `src/web/`, `src/react/`, `src/tui/`, `src/node/surfaces/`, `src/node/tui/` (the
   launcher and its child-process sandbox); examples 56-59.
+- **Live queries** (built 2026-11-03, decision "Live queries over an object's own tables"): `self.query` in
+  `src/store/live-query.ts`; examples 59 and 61 use it; `test/bench/live-query.ts`.
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
@@ -136,6 +138,7 @@ pattern, no code. Decided cuts are noted where they apply.
 | 11 | `Watchable`, watches (Chord's `Watch`), the batch (W1), reentrancy | 1 |
 | 11 | `NativeWatchable`, `self.writable` | 8 |
 | 11 | Durable's views as sources (`self.follow` over Durable's `observeXXX`) | 6b |
+| 11 | live queries (`self.query(table, q, limit)`: run before live, re-run per touching commit, diffed) | after 11 |
 | 12 | `self.derive`, failures per member, lazy when unwatched, `mapShared` | 1 |
 | 12 | container-width benchmark (R24) | 9 |
 | 13 | `self.open`, close reasons, order, restart patterns (R16) | 2 (restarts on reload: 7b) |
@@ -193,12 +196,14 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 - **`rebuild` of tables** (key and column-type changes): `evolveTable` has no edit for them; build one only when a
   real case needs it. (Slice 6a's second spec review; out of slice 7b's scope, `slice-7b.md` §12.)
 
+### Later: live queries (when a case needs it)
+
+- **Incremental maintenance of a live query's result** (decision "Live queries over an object's own tables"): an
+  ordered, limited result kept from row-level changes in memory, re-running only when a removal empties the window
+  or a bulk write hides which rows changed; today every touching commit re-runs the query. (Live queries build.)
+
 ### After slice 11
 
-- **Live queries** (decision "Live queries over an object's own tables"): `self.query(table, q)`, re-run per
-  touching commit and diffed; tests (activation before live, swap on reload, a commit not touching the table costs
-  nothing, the limit required, cost guard); the tutorial and 59-chat use it instead of `self.open`; the guide's
-  section with the warning. Later, when a case needs it: incremental maintenance of an ordered, limited result.
 - **Messages and languages in the app kit** (decision "Messages and languages in the app kit", proposal
   `docs/i18n/`): `defineMessages`, `t.message`/`t.render`, `MessagesOf`, the `Translations` registry with
   fallbacks and conflicts, the locale preference per principal (default from the device, live switch, `lang`/`dir` on

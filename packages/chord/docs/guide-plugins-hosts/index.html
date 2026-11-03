@@ -169,7 +169,7 @@ addressable hosts; an <strong>address</strong> (<code>Session({ id: &quot;p1&quo
 on its own host only) or <code>remote</code> (used from any host). An <strong>object</strong> is one instance of a type, per params. A
 <strong>facet</strong> is a plugin&#39;s declarations for one host kind. A <strong>plugin</strong> is a directory with a <code>package.json</code>. A
 <strong>reference</strong> is what you get when you ask for an object (<code>host.get</code>, <code>self.get</code>, <code>ctx.get</code>). A <strong>document</strong> is data an object
-stores, changed in <strong>transactions</strong>; a <strong>table</strong> holds many records with queries, in the host&#39;s <strong>store</strong>; a <strong>derive</strong> is a value computed from others; a <strong>native</strong> is an outside
+stores, changed in <strong>transactions</strong>; a <strong>table</strong> holds many records with queries, in the host&#39;s <strong>store</strong>, and a <strong>live query</strong> keeps some of its rows current; a <strong>derive</strong> is a value computed from others; a <strong>native</strong> is an outside
 resource an object opens and closes. A <strong>registry</strong> is an
 extension point: one plugin defines it, others contribute. A <strong>rollout</strong> applies a build to the hosts in order.</p>
 </section>
@@ -258,6 +258,15 @@ host.<span class="tk-f">serve</span>(<span class="tk-t">NoteStore</span>, (_para
 <p>Persisted data lives only in <code>local</code> objects with empty params (one per host and type), so its address never depends
 on who asked or with which params; an object with params (a view per project) reads from such a store. Writes go
 through the same transactions as documents: a note row and a document can change in one commit.</p>
+<p>A table has no watch of its own. To show rows live (the newest notes in a tab), the object declares a <strong>live query</strong>
+over its own table, with a limit:</p>
+<pre><code><span class="tk-k">const</span> newest = self.<span class="tk-f">query</span>(rows, recent, <span class="tk-n">50</span>);             <span class="tk-c">// the 50 newest rows, a value like a document's</span>
+<span class="tk-k">return</span> { newest, add, page };                            <span class="tk-c">// a member: tabs watch it and get only the changes</span></code></pre>
+<p>Chord runs the query before the object goes live, and again in every commit of the object that writes <code>rows</code>, and
+sends what changed. Only the object&#39;s own tables: it is their only writer, so its commits are exactly when the rows
+can change, and a commit that writes no such table costs nothing. Each writing commit runs the query once more, at
+most the limit&#39;s rows: right for data people edit, wrong for a table written hundreds of times a second (there may be
+dragons; keep what the tab shows in a document the object writes with each change instead). The limit is required.</p>
 <p>A <strong>derive</strong> is a value computed from other values, recomputed whenever they change. It is how an object offers
 something it does not store:</p>
 <pre><code><span class="tk-k">const</span> count = self.<span class="tk-f">derive</span>([doc], ([notes]) =&gt; notes.items.length);   <span class="tk-c">// 0, 1, 2, … as notes are added</span>
@@ -277,7 +286,8 @@ self.<span class="tk-f">onLive</span>(<span class="tk-k">async</span> (ctx) =&gt
 	<span class="tk-k">for</span> <span class="tk-k">await</span> (<span class="tk-k">const</span> file <span class="tk-k">of</span> inbox.value.<span class="tk-f">files</span>(ctx.abortSignal)) <span class="tk-k">await</span> <span class="tk-f">importNote</span>(file, ctx);
 });</code></pre>
 <p>Natives are why some objects restart when their plugin changes: an open connection cannot be moved to new code, so
-Chord closes it and opens it again. Objects without natives are swapped in place.</p>
+Chord closes it and opens it again. Objects without natives are swapped in place. A first read of a table is no
+native: declare it as a live query, not with <code>self.open</code>, or the object restarts at every change of its plugin.</p>
 <p><strong>Await what you start in a root or a handler.</strong> What is started with a context ends with it. Code outside objects
 gets its <code>ctx</code> from <code>host.root(fn, ctx)</code>, and that scope seals when <code>fn</code> returns; a handler&#39;s context ends when its
 caller cancels or its object ends. A change still waiting when its context ends is cancelled before it commits:</p>

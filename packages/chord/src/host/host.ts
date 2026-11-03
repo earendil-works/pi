@@ -141,6 +141,11 @@ export type HostError =
 	 * creation; a value ends the episode); `member` when it is an exposed state member.
 	 */
 	| { readonly kind: "derive_failed"; readonly object: string; readonly member?: string; readonly error: unknown }
+	/**
+	 * A live query's run in a commit threw (a row its code cannot read), once per failure episode (a good run ends it):
+	 * the query is a failed member until then (`self.query`).
+	 */
+	| { readonly kind: "query_failed"; readonly object: string; readonly table: string; readonly error: unknown }
 	/** A routine's call threw, or its source failed for good; `routine` is its kind and position. */
 	| { readonly kind: "routine_failed"; readonly object: string; readonly routine: Position; readonly error: unknown }
 	/** A job's `run` threw (not after an abort): its outcome is `failed { threw }`. */

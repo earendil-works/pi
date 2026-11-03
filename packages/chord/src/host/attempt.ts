@@ -25,7 +25,9 @@ import type { Contribution, Registry, RegistryValue } from "../registries/index.
 import type { RegistryContribution, RegistryWaiter } from "../registries/internal.ts";
 import type { Writable } from "../state/index.ts";
 import { Derive, type DeriveSource, WritableSource } from "../state/internal.ts";
-import type { Columns } from "../store/columns.ts";
+import type { Columns, RowOf } from "../store/columns.ts";
+import { checkLiveQuery, LiveQuery } from "../store/live-query.ts";
+import type { Query } from "../store/query.ts";
 import { tableSqlName } from "../store/sql.ts";
 import type { ChordStore } from "../store/store.ts";
 import type { TableDefinition } from "../store/table.ts";
@@ -69,8 +71,8 @@ import {
 
 /**
  * What a factory declares with. Declarations (`state`, `derive`, `get`, `registry`, `writable`, `retryOn`, `open`,
- * `on`, `onLive`, `job`) are valid only while it runs. `P` is the app's principal type, which the ctx of routine calls
- * and job runs carry.
+ * `on`, `onLive`, `job`; `table`, `query` and `contribute` in `StoreSelf`) are valid only while it runs. `P` is the
+ * app's principal type, which the ctx of routine calls and job runs carry.
  */
 export interface Self<P extends Principal = Principal> extends RoutineDeclarations<P> {
 	/** This object's documents of `definition`, in memory for its life (across its attempts). */
@@ -146,6 +148,18 @@ export interface StoreSelf<P extends Principal = Principal> extends Self<P> {
 	state<D extends StateDefinition<JsonObject, boolean, boolean>>(definition: D): HandleOf<D>;
 	/** This object's table `definition` in the host's store, once per table name. */
 	table<C extends Columns, K extends readonly string[]>(definition: TableDefinition<C, K>): Table<C, K>;
+	/**
+	 * A live query (decision "Live queries over an object's own tables"): the rows of `q` (at most `limit`, in its
+	 * order) over `table`, a table this factory declared, as a JSON watchable (a state member, a derive source). Run
+	 * before the object goes live, and again in the commit step of every commit of this object that writes `table`
+	 * (one query per such commit, bounded by `limit`; not for tables written hundreds of times a second). A limit is
+	 * required (`invalid/args`).
+	 */
+	query<C extends Columns, K extends readonly string[]>(
+		table: Table<C, K>,
+		q: Query<C, K>,
+		limit: number,
+	): Watchable<RowOf<C>[]>;
 	/**
 	 * Contributes `value` to registry `R` from the moment this object is live until it ends, fails or restarts (R21: a
 	 * host-lifetime object): a plain value, or a Chord watchable of one (followed: its change recomposes). At most one
@@ -224,12 +238,12 @@ export function notLive(label: string, ms: number): ChordError {
 }
 
 /**
- * One attempt of an object. Activation: factory, documents hydrated (the object's slots), references bound, then parked
- * until every dependency is live (no timer: the deadline paused), then its own steps: natives opened one after
- * another, followed sources attached, members checked, derives computed; bounded by the host's `readyTimeout`.
- * Ending: sealed at once (calls aborted, its transactions refused and the one holding the line discarded, its job
- * invocations cut off), then the drain, the closes in reverse, derives detached; its object releases its references.
- * Documents and job runs stay on the object.
+ * One attempt of an object. Activation: factory, documents hydrated (the object's slots), tables prepared and live
+ * queries run, references bound, then parked until every dependency is live (no timer: the deadline paused), then its
+ * own steps: natives opened one after another, followed sources attached, members checked, derives computed; bounded
+ * by the host's `readyTimeout`. Ending: sealed at once (calls aborted, its transactions refused and the one holding the
+ * line discarded, its job invocations cut off), then the drain, the closes in reverse, derives and live queries
+ * detached; its object releases its references. Documents and job runs stay on the object.
  */
 export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	readonly #object: ChordObject;
@@ -264,6 +278,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	readonly #jobs = new Map<string, Job>();
 	/** The tables it declared, by name. */
 	readonly #tables = new Map<string, TableHandle>();
+	/** Its live queries, run at activation (after the tables are prepared), detached at its end. */
+	readonly #queries: LiveQuery[] = [];
 	/** References this attempt declared with `self.get` (params checked), bound during activation. */
 	readonly #references: { readonly binding: Binding; readonly contract: Contract; readonly params: CheckedParams }[] =
 		[];
@@ -347,12 +363,39 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			label,
 			scope: object.documents,
 			assertLive: () => object.documents.assertLive(),
+			queries: object.liveQueries,
 			fail: (error: ChordError) => object.failLive(this, { kind: "broken", error }),
 		};
 		// The handle's rows are the definition's, typed by `C` and `K`.
 		const handle = new TableHandle(definition as unknown as TableDefinition, sqlName, store, owner);
 		this.#tables.set(definition.name, handle);
 		return handle as unknown as Table<C, K>;
+	}
+
+	query<C extends Columns, K extends readonly string[]>(
+		table: Table<C, K>,
+		q: Query<C, K>,
+		limit: number,
+	): Watchable<RowOf<C>[]> {
+		this.#assertDeclaring("query");
+		const { host, label } = this.#object;
+		// Plugin code may pass any table: only a handle this attempt declared is taken (its object's own table).
+		const handle: unknown = table;
+		if (!(handle instanceof TableHandle) || this.#tables.get(handle.definition.name) !== handle) {
+			throw new Error(`${label}: self.query: the table is not one this factory declared`);
+		}
+		checkLiveQuery(handle.definition, q as unknown as Query, limit, label);
+		const owner = {
+			label,
+			report: (error: unknown) =>
+				host.report({ kind: "query_failed", object: label, table: handle.definition.name, error }),
+		};
+		// The query is of `handle`'s table (checked above).
+		const live = new LiveQuery(handle, q as unknown as Query, limit, owner, host.batch);
+		handle.owner.queries.add(live);
+		this.#queries.push(live);
+		// Its rows are the table's, typed by `C`.
+		return live as unknown as Watchable<RowOf<C>[]>;
 	}
 
 	derive<const S extends readonly (Watchable<unknown> | NativeWatchable<unknown>)[], T extends JsonValue>(
@@ -918,14 +961,16 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	}
 
 	/**
-	 * Detaches its derives (once their object no longer needs them: reads throw `released`, their watches end), its
-	 * followed sources (their observers detached, their watches ended) and its writables (their watches ended).
+	 * Detaches its derives and live queries (once their object no longer needs them: reads throw `released`, their
+	 * watches end; no commit re-runs the queries), its followed sources (their observers detached, their watches ended)
+	 * and its writables (their watches ended).
 	 */
 	detach(): void {
 		const ended = this.#object.ended();
 		for (const adapted of this.#adapted?.values() ?? []) adapted.detach(ended);
 		this.#adapted = undefined;
 		for (const derive of this.#derives) derive.detach(ended);
+		for (const query of this.#queries) query.detach(ended);
 		for (const follow of this.#follows) follow.detach();
 		const declarations = this.#registryDeclarations;
 		if (declarations !== undefined) for (const writable of declarations.writables) writable.detach(ended);
@@ -952,6 +997,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			const loading = documents.load(this.#opening);
 			if (loading !== undefined) await loading;
 			if (this.#tables.size > 0) await this.#prepareTables(deadline);
+			for (const query of this.#queries) await query.load(this.#opening);
 			// A persisted job's runs, loaded once per object: rebuilt before anything runs.
 			for (const job of this.#jobs.values()) await job.load(this.#opening);
 			const { host } = this.#object;

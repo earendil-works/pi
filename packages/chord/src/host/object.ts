@@ -21,6 +21,7 @@ import type { JsonValue } from "../json.ts";
 import { CHAIN } from "../link/internal.ts";
 import type { RegistryContribution } from "../registries/internal.ts";
 import type { DeriveSource } from "../state/internal.ts";
+import { LiveQueries } from "../store/live-query.ts";
 import { refusal } from "./adapted.ts";
 import { Attempt, type PinnedKey, type Self } from "./attempt.ts";
 import type { Caller } from "./ctx.ts";
@@ -223,6 +224,8 @@ export class ChordObject implements Target {
 	#wakes: RetryWakes | undefined;
 	/** Its swapped-out attempts while they retire (bounded by `closeTimeout`); made by the first swap. */
 	#retiring: Map<Attempt, Promise<void>> | undefined;
+	/** Its live queries by table, across its attempts; made by the first table it declares. */
+	#liveQueries: LiveQueries | undefined;
 
 	constructor(
 		host: AnyHost,
@@ -543,6 +546,12 @@ export class ChordObject implements Target {
 	 */
 	claimTable(table: string): void {
 		this.host.store!.claims.table(table, this);
+	}
+
+	/** Its live queries by table (`self.query`), across its attempts: what its commits writing a table re-run. */
+	get liveQueries(): LiveQueries {
+		this.#liveQueries ??= new LiveQueries();
+		return this.#liveQueries;
 	}
 
 	/** Claims this object's documents in `namespace` of the host's store, as `claimTable`. */

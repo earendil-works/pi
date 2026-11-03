@@ -972,3 +972,25 @@ Fix round 1: the bench itself now builds with the app's API and the kinds (its p
 L5), and every package file's real path is checked against the plugin's `node_modules`. CPU 8, three runs: cold
 build 261.1-270.2 ms, rebuild 13.6-14.4 ms (the first two runs as before, the third with a slower cold build on a busy
 machine).
+
+## Live queries (2026-11-03)
+
+`test/bench/live-query.ts`, Node 24.4.1, CPU 10, a SQLite `:memory:` store, medians and p95 of seven bursts of 2,000
+commits, three runs (equal to 0.5 µs). Each commit appends one row of a chat table (an int key, a short author, an
+80-character text, a number) through a method call; the live query is the newest 100 rows, so every commit shifts the
+window by one row.
+
+| One-row commit through a call | Median | p95 |
+| --- | --- | --- |
+| no live query | 8.5-8.7 µs | 10.3-10.6 µs |
+| a live query of 100 rows, unwatched | 66.9-67.3 µs | 71.5-72.0 µs |
+| a live query of 100 rows, watched (one insert and one removal published) | 86.3-86.5 µs | 94.4-95.1 µs |
+| a commit of another table beside the watched query | 7.4-7.5 µs | 7.9-8.0 µs |
+
+A touching commit costs about 58 µs more for the run (the `SELECT` of 100 rows in the step, most of it node:sqlite
+building the row objects; rows whose stored columns did not change are not decoded again but reused) and about 19 µs
+more for the diff when watched. A commit of another table costs nothing extra (one map lookup per written table).
+The diff depends on the reuse: with every row decoded anew, `diffRevisions` compared 100 fresh rows against the
+previous 100 by content and the watched commit took 885 µs; with unchanged rows the same objects it compares them by
+identity. "There may be dragons": at 100 rows a table written more than a few thousand times a second spends most of
+its time in the query.

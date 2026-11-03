@@ -9,6 +9,7 @@ import type { JobHandle, Outcome, Run, StartOptions } from "../jobs/index.ts";
 import type { Job } from "../jobs/internal.ts";
 import type { Columns, PutRowOf, RowOf } from "../store/columns.ts";
 import type { Condition, SetOf } from "../store/expression.ts";
+import { refreshOf } from "../store/live-query.ts";
 import type { ColumnRefs, Query } from "../store/query.ts";
 import { refusalOf } from "../store/refusal.ts";
 import type { StagedWrite } from "../store/step.ts";
@@ -332,6 +333,7 @@ export class Transaction implements Tx {
 		this.#assertOpen();
 		if (this.#pending > 0)
 			throw new Error(`${this.#documents.label}: the callback settled before its pending tx operations`);
+		if (this.#tables !== undefined) this.#refreshQueries(this.#tables);
 		this.#state = "committing";
 		this.#context.abortSignal?.throwIfAborted();
 		const adoptions: Adoption[] = [];
@@ -517,6 +519,18 @@ export class Transaction implements Tx {
 			this.#tables.set(handle, changes);
 		}
 		return changes;
+	}
+
+	/**
+	 * Stages the re-run of the live queries over the tables this transaction wrote (decision "Live queries over an
+	 * object's own tables"): read in the commit step after every table write staged so far (the callback's), published
+	 * in the commit's batch. None when no written table has a live query.
+	 */
+	#refreshQueries(tables: ReadonlyMap<TableHandle, TableChanges>): void {
+		const refresh = refreshOf(tables.keys(), this.#context);
+		if (refresh === undefined) return;
+		this.#writes!.staged.push(refresh.write);
+		this.stage(refresh, () => refresh);
 	}
 
 	/** Counts `read` as pending until the operation's promise settles (rule 3). */

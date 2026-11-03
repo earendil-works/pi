@@ -75,7 +75,7 @@ addressable hosts; an **address** (`Session({ id: "p1" })`) names one. An **obje
 on its own host only) or `remote` (used from any host). An **object** is one instance of a type, per params. A
 **facet** is a plugin's declarations for one host kind. A **plugin** is a directory with a `package.json`. A
 **reference** is what you get when you ask for an object (`host.get`, `self.get`, `ctx.get`). A **document** is data an object
-stores, changed in **transactions**; a **table** holds many records with queries, in the host's **store**; a **derive** is a value computed from others; a **native** is an outside
+stores, changed in **transactions**; a **table** holds many records with queries, in the host's **store**, and a **live query** keeps some of its rows current; a **derive** is a value computed from others; a **native** is an outside
 resource an object opens and closes. A **registry** is an
 extension point: one plugin defines it, others contribute. A **rollout** applies a build to the hosts in order.
 
@@ -180,6 +180,20 @@ Persisted data lives only in `local` objects with empty params (one per host and
 on who asked or with which params; an object with params (a view per project) reads from such a store. Writes go
 through the same transactions as documents: a note row and a document can change in one commit.
 
+A table has no watch of its own. To show rows live (the newest notes in a tab), the object declares a **live query**
+over its own table, with a limit:
+
+```ts
+const newest = self.query(rows, recent, 50);             // the 50 newest rows, a value like a document's
+return { newest, add, page };                            // a member: tabs watch it and get only the changes
+```
+
+Chord runs the query before the object goes live, and again in every commit of the object that writes `rows`, and
+sends what changed. Only the object's own tables: it is their only writer, so its commits are exactly when the rows
+can change, and a commit that writes no such table costs nothing. Each writing commit runs the query once more, at
+most the limit's rows: right for data people edit, wrong for a table written hundreds of times a second (there may be
+dragons; keep what the tab shows in a document the object writes with each change instead). The limit is required.
+
 A **derive** is a value computed from other values, recomputed whenever they change. It is how an object offers
 something it does not store:
 
@@ -212,7 +226,8 @@ self.onLive(async (ctx) => {                                  // a routine start
 ```
 
 Natives are why some objects restart when their plugin changes: an open connection cannot be moved to new code, so
-Chord closes it and opens it again. Objects without natives are swapped in place.
+Chord closes it and opens it again. Objects without natives are swapped in place. A first read of a table is no
+native: declare it as a live query, not with `self.open`, or the object restarts at every change of its plugin.
 
 **Await what you start in a root or a handler.** What is started with a context ends with it. Code outside objects
 gets its `ctx` from `host.root(fn, ctx)`, and that scope seals when `fn` returns; a handler's context ends when its

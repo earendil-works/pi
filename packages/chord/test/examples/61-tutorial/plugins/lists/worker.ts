@@ -1,7 +1,7 @@
 // The lists plugin on a list's worker. The todos live in a table of the worker's store (every one kept), written and
-// read by one local object, `Store`. A table has no watch, so the store keeps a live window itself: the newest 50
-// todos, read when it goes live and changed after each write (it is the only writer). Each principal's `Todos` view
-// adds todos as that principal, and gives the owner `clear`. The store refuses a todo without text with Chord's
+// read by one local object, `Store`, which shows the newest 50 live with a live query (`self.query`): Chord runs it
+// before the store goes live and again after every commit that writes the table. Each principal's `Todos` view adds
+// todos as that principal, and gives the owner `clear`. The store refuses a todo without text with Chord's
 // `invalid/args`.
 
 import {
@@ -32,7 +32,7 @@ const Items = defineTable("todo.items", {
 /** The newest todos first. */
 const NEWEST = query(Items).orderBy((item) => item.id, "desc");
 
-/** How many todos the live window holds. */
+/** How many todos the live query holds. */
 const WINDOW = 50;
 
 /** The list's todos, once per worker: empty params, so it lives as long as the worker and may keep data in its store. */
@@ -50,36 +50,27 @@ const Store = local("todo.store", {
 export default defineFacet((host) => {
 	host.serve(Store, (_params, self) => {
 		const items = self.table(Items);
-		// The newest todos, oldest first, and the next todo's number: read once when the store goes live, then kept here.
-		const window = self.writable<Item[]>([]);
-		let next = 1;
-		self.open(
-			async (ctx) => {
-				const { items: newest } = await items.page(NEWEST, WINDOW, ctx);
-				window.set([...newest].reverse());
-				next = (newest[0]?.id ?? 0) + 1;
-			},
-			() => {},
-		);
+		// The newest todos, live: read before the store goes live, read again after every commit writing the table.
+		const newest = self.query(items, NEWEST, WINDOW);
 		return {
-			items: self.derive([window], ([value]) => value),
+			// Oldest first, as the list shows them.
+			items: self.derive([newest], ([rows]) => [...rows].reverse()),
 			add: async ({ text, by }, ctx) => {
 				// Refused as Chord refuses arguments that fail their schema: the caller gets `invalid/args`.
 				if (text === "") throw invalid("args", "a todo needs text");
-				const item = { id: next++, text, done: false, by, at: Date.now() };
-				await self.tx(async (tx) => tx.put(items, item), ctx);
-				// In number order: two adds may commit in either order.
-				window.set([...window.value, item].sort((a, b) => a.id - b.id).slice(-WINDOW));
+				await self.tx(async (tx) => {
+					// The number after the newest todo's: the store's transactions run one after another.
+					const { items: last } = await tx.page(items, NEWEST, 1);
+					tx.put(items, { id: (last[0]?.id ?? 0) + 1, text, done: false, by, at: Date.now() });
+				}, ctx);
 				return null;
 			},
 			tick: async ({ id, done }, ctx) => {
 				await self.tx(async (tx) => tx.updateWhere(items, (item) => eq(item.id, id), { done }), ctx);
-				window.set(window.value.map((item) => (item.id === id ? { ...item, done } : item)));
 				return null;
 			},
 			clear: async (ctx) => {
 				await self.tx(async (tx) => tx.deleteWhere(items, (item) => eq(item.done, true)), ctx);
-				window.set(window.value.filter((item) => !item.done));
 				return null;
 			},
 		};

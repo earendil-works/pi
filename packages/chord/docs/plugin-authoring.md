@@ -64,6 +64,27 @@ A facet only declares (`host.serve`, `self.contribute`, `host.references`), sync
 happens in objects: state in documents and tables, standing behaviour in a `local` object with empty params (it lives
 as long as the host). Names are prefixed by the plugin (`bob.stats`).
 
+## Tables shown live
+
+A table has no watch. To show its rows live, the object owning it declares a live query with a limit:
+
+```ts
+host.serve(Store, (_params, self) => {                 // a local type with empty params: it may have tables
+	const items = self.table(Items);
+	const newest = self.query(items, query(Items).orderBy((i) => i.id, "desc"), 50);
+	return { items: newest, add: async (row, ctx) => self.tx(async (tx) => tx.put(items, row), ctx) };
+});
+```
+
+- Chord runs it before the object goes live and again in each commit of the object that writes the table; watchers get
+  only what changed. A commit writing no such table runs nothing.
+- Only the object's own tables, the query fixed for the object's attempt (decide it from params), the limit required
+  (`invalid/args` without one).
+- One query per writing commit, at most `limit` rows (for 100 rows about 60 µs more per commit, 80 µs when watched;
+  `benchmarks.md`): there may be dragons for a table written hundreds of times a second. Keep a document for those.
+- Never read a table in `self.open` to fill a window: that makes a native, and the object restarts at every reload of
+  its plugin instead of swapping in place. A live query is no native.
+
 ## What a plugin may import
 
 | Import | Resolves to |
@@ -209,5 +230,6 @@ of plugins it has no files of, it declares again, as `Notes` above.
 3. Imports: the app's API at one version, own files, same-root contract files by relative path, other repositories'
    by package name pinned in `dependencies`.
 4. Contracts prefixed with the plugin's name; a version bump for every change of shape.
-5. Files of one kind named `*.<kind>.ts(x)`.
-6. A test with `testPlugin` and stubs for every name `t.unserved()` lists.
+5. Live rows of a table through `self.query(table, q, limit)`, never a read in `self.open`.
+6. Files of one kind named `*.<kind>.ts(x)`.
+7. A test with `testPlugin` and stubs for every name `t.unserved()` lists.

@@ -2476,17 +2476,19 @@ validation and copies the v2 kernel added around Delta.
   or SWC transform in every web build, fragile when hooks change). Open: a live view of table rows (the tutorial's
   and 59-chat's `self.open` read at activation, which makes every reload a restart): to explain first.
 - **Live queries over an object's own tables (owner, 2026-11-03: "if self.query is easy enough, and we document it as
-  'there may be dragons' then i guess it's ok"; resolves the tutorial's gap 2):** `self.query(table, q)` in a factory
-  returns a `Watchable` of the query's rows, usable as a state member and a derive source. Chord runs the query before
-  the object goes live (like loading its documents: no `self.open`, so a reload swaps the object), and again in the
-  publication step of every commit of the object that touched that table, diffing the new rows against the previous
-  ones (ops to watchers and holds, as for any member). Only the object's own tables (only it writes them, so its
-  commits are the exact invalidation); the query is fixed for the attempt (params decide it); it must have a `limit`.
-  Cost: one query per touching commit, bounded by the limit; documented with a warning ("there may be dragons": not
-  for tables written hundreds of times a second). Incremental maintenance of the result (an ordered, limited query
-  with row-level changes kept in memory, re-running only when a removal empties the window or a bulk write hides
-  which rows changed) is carry-over for when a case needs it. Rejected: a window document written beside the table
-  (rows stored twice; app code mirroring every update and delete).
+  'there may be dragons' then i guess it's ok"; resolves the tutorial's gap 2):** `self.query(table, q, limit)` in a
+  factory returns a `Watchable` of the query's rows, usable as a state member and a derive source. Chord runs the
+  query before the object goes live (like loading its documents: no `self.open`, so a reload swaps the object), and
+  again in the publication step of every commit of the object that touched that table, diffing the new rows against
+  the previous ones (ops to watchers and holds, as for any member). Only the object's own tables (only it writes them,
+  so its commits are the exact invalidation); the query is fixed for the attempt (params decide it); a limit is
+  required (the third argument, as `page` takes it: the query language keeps the limit an argument of the runner;
+  refused `invalid/args` at declaration; build, 2026-11-03). Cost: one query per touching commit, bounded by the
+  limit; documented with a warning ("there may be dragons": not for tables written hundreds of times a second).
+  Incremental maintenance of the result (an ordered, limited query with row-level changes kept in memory, re-running
+  only when a removal empties the window or a bulk write hides which rows changed) is carry-over for when a case
+  needs it. Rejected: a window document written beside the table (rows stored twice; app code mirroring every update
+  and delete).
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a

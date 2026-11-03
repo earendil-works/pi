@@ -70,8 +70,8 @@ without one (a **client**: a page, a terminal). A **link** connects two hosts. A
 the app and stamped by links. An **object** is state and methods at one identity; its **contract** (`local` for its own
 host only, `remote` for any host) names its **params** (which instance) and members. A remote contract's **variants**
 are the member sets different principals get. A **factory** declares an object's parts: **documents** and **tables**
-(stored data, changed in **transactions**), **derives** (values computed from others), **natives** (things opened and
-closed, such as a file or a database cursor). A **reference** is what asking for an object returns. A **facet** is a
+(stored data, changed in **transactions**), **live queries** (a table's rows Chord keeps current), **derives**
+(values computed from others), **natives** (things opened and closed, such as a file or a database cursor). A **reference** is what asking for an object returns. A **facet** is a
 plugin's code for one host kind; a **registry** is an extension point plugins **contribute** to. A **rollout** applies
 new plugin code to the hosts in order.
 
@@ -285,7 +285,7 @@ each start. It sits in the URL's fragment, which browsers never send, so it neve
 it and receives a session cookie. A command-line client on the same machine reads `owner-token` instead (mode 0600,
 chapter III). Nothing is the owner because it comes from loopback: any local process could.
 
-# A List on Its Own Worker {#worker lede="A host kind, a remote contract, a worker facet with a table and a live window, and the principal that adds a todo."}
+# A List on Its Own Worker {#worker lede="A host kind, a remote contract, a worker facet with a table and a live query, and the principal that adds a todo."}
 
 Each list gets its own process, a **worker**, with its own store: a list that misbehaves cannot take the others down,
 and an idle list costs nothing. This chapter declares where lists live, what a list offers, and the worker code that
@@ -376,7 +376,7 @@ const Items = defineTable("todo.items", {
 /** The newest todos first. */
 const NEWEST = query(Items).orderBy((item) => item.id, "desc");
 
-/** How many todos the live window holds. */
+/** How many todos the live query holds. */
 const WINDOW = 50;
 ```
 
@@ -406,40 +406,38 @@ of references. Its factory declares its parts and returns its members:
 ```ts
 	host.serve(Store, (_params, self) => {
 		const items = self.table(Items);
-		// The newest todos, oldest first, and the next todo's number: read once when the store goes live, then kept here.
-		const window = self.writable<Item[]>([]);
-		let next = 1;
-		self.open(
-			async (ctx) => {
-				const { items: newest } = await items.page(NEWEST, WINDOW, ctx);
-				window.set([...newest].reverse());
-				next = (newest[0]?.id ?? 0) + 1;
-			},
-			() => {},
-		);
+		// The newest todos, live: read before the store goes live, read again after every commit writing the table.
+		const newest = self.query(items, NEWEST, WINDOW);
 		return {
-			items: self.derive([window], ([value]) => value),
+			// Oldest first, as the list shows them.
+			items: self.derive([newest], ([rows]) => [...rows].reverse()),
 ```
 
 A **factory** is synchronous and only declares; Chord activates the object afterwards. `self.table` declares the
-table. A table has no watch, so the store keeps a **live window** itself: `self.writable` holds the newest 50 todos,
-filled by `self.open`, which runs during activation, and exposed through `self.derive` (a writable is an in-process
-value, not a state member; a derive over it is). `self.open` is meant for **natives**, things opened and closed; the
-window's first read is one, and chapter VIII shows its price.
+table. `self.query(items, NEWEST, WINDOW)` declares a **live query** over it: the rows of `NEWEST`, at most 50, as a
+value the object can expose or derive from. Chord runs it before the store goes live, and again after every commit
+of the store that writes `items`, and sends watchers only what changed. The store's derive turns the rows around,
+oldest first, for the list.
+
+A live query reads only its own object's tables: only the store writes them, so its own commits are exactly the
+moments the rows can change, and a commit that writes no table with a query costs nothing. The limit is required:
+each such commit runs the query once more, at most `WINDOW` rows. That is cheap for a list a person edits and wrong
+for a table written hundreds of times a second (design §11, "there may be dragons").
 
 Writes go through **transactions**: `self.tx(fn, ctx)` runs `fn` with `tx`, and what it stages is committed at once
-when `fn` returns, or not at all if it throws. The window follows after the commit; the store is the table's only
-writer, so it knows every change:
+when `fn` returns, or not at all if it throws. The live query follows in the same commit; the store keeps nothing
+else in memory, not even the next todo's number, which it reads in the transaction:
 
 <!-- quote: plugins/lists/worker.ts -->
 ```ts
 			add: async ({ text, by }, ctx) => {
 				// Refused as Chord refuses arguments that fail their schema: the caller gets `invalid/args`.
 				if (text === "") throw invalid("args", "a todo needs text");
-				const item = { id: next++, text, done: false, by, at: Date.now() };
-				await self.tx(async (tx) => tx.put(items, item), ctx);
-				// In number order: two adds may commit in either order.
-				window.set([...window.value, item].sort((a, b) => a.id - b.id).slice(-WINDOW));
+				await self.tx(async (tx) => {
+					// The number after the newest todo's: the store's transactions run one after another.
+					const { items: last } = await tx.page(items, NEWEST, 1);
+					tx.put(items, { id: (last[0]?.id ?? 0) + 1, text, done: false, by, at: Date.now() });
+				}, ctx);
 				return null;
 ```
 
@@ -1057,7 +1055,7 @@ console.log("   ada adds ' ':", refused);
 <!-- output: main -->
 ```text
 8. lists changed, rolled out to: server, list, web, tui
-   on list|groceries: todo.store restarted, todo.todos(groceries) parked
+   on list|groceries: todo.store swapped, todo.todos(groceries) parked
    ada adds '  tea  ': [ ] tea (ada)
    ada adds ' ': { code: 'invalid', reason: 'args' }
 ```
@@ -1074,9 +1072,21 @@ and rolled it out host by host. On each host Chord stages the new code (it runs 
 | its new code waits for a dependency | **parked** until the dependency is live |
 | its type was removed | **ended**; its holders wait until something serves it again |
 
-The store opens a native (the window's first read), so it restarted and read its window again from the table; the
-views waited for it (parked), then went on with the new code. Ada's reference never noticed more than a moment of
-`loading`, and her next add was trimmed. Her blank one is now empty after trimming, so the store refused it with
+The store opens no natives, and neither does its new factory: its live query is not a native, Chord runs it. So the
+store was **swapped**, not restarted. The sequence on the list's worker:
+
+1. The store's new attempt starts beside the old one: the same object, instance, table and line. Calls arriving now
+   wait at a gate; calls already running finish on the old code.
+2. The new attempt runs its live query (the same read as at the first activation) and goes live; the gate opens,
+   and references move to its members by name, each with one frame from its last value.
+3. The old attempt is sealed once its calls settled; its query leaves with it, so later commits run only the new one.
+
+The views' new attempts need the store, which was still between steps 1 and 2 when they checked it, so they
+**parked** for that moment and went live with the new code right after. Ada's reference waited a moment, and her next add was trimmed.
+Had the store kept its window as a one-time read in `self.open`, it would count as holding a native and **restart**
+at every reload of its plugin: running calls drained, natives closed and opened again, a new instance.
+
+Ada's blank todo is now empty after trimming, so the store refused it with
 `invalid("args", …)` (chapter II): her client got `{ code: "invalid", reason: "args" }`, Chord's own error, which
 crossed the worker's link and the server's as it was. Had the edit broken the plugin, that plugin alone would have kept its old code
 and the report would name the error.
@@ -1364,14 +1374,11 @@ a tutorial.
   `"~kind": "Integer"`, which pi-schema's `int()` lacks, so the key of an `int` key column is typed `string`:
   `tx.get(items, { id })` with a number fails `tsc`. The store here uses `updateWhere` with `eq` instead of
   `tx.update`.
-- **A one-time read at activation is a native.** The live window over a table needs a first read before the object is
-  live; `self.open` is the only place, so the store counts as holding a native and restarts at every reload of its
-  plugin, parking its views, though it holds nothing open. Tables have no watch, so every table-backed live view
-  repeats this pattern (example 59's chat does too).
-
-Three more, found the same way, are fixed: a reloaded web plugin lost its own React state (now `usePageState`,
+Four more, found the same way, are fixed: a reloaded web plugin lost its own React state (now `usePageState`,
 chapter VIII), a plugin's `contract.ts` could not be imported outside builds (the API is now a workspace package,
-chapter I), and plugins could not throw Chord's `invalid` (Chord exports `invalid` and `forbidden`, chapter II).
+chapter I), plugins could not throw Chord's `invalid` (Chord exports `invalid` and `forbidden`, chapter II), and a
+live window over a table needed a one-time read in `self.open`, which made the store restart at every reload of its
+plugin (now `self.query`, a live query Chord runs, chapters II and VIII).
 
 # The App's Files {.appendix}
 
@@ -1399,7 +1406,7 @@ chapter I), and plugins could not throw Chord's `invalid` (Chord exports `invali
 | `startWorker({ api, kinds, onError })` | I | a worker's entry |
 | `app.ownerLink()`, `app.ownerTokenFile` | I, III | the owner's sign-in, for a browser and for local clients |
 | `hostKind(name, params)`, `remote(name, { version, params, hostAddress, variants })`, `local(name, { version, params, members })` | II | host kinds and contracts |
-| `host.serve(Type, factory)`; factory `self`: `table`, `writable`, `open`, `derive`, `tx`, `get`, `contribute` | II | an object's parts |
+| `host.serve(Type, factory)`; factory `self`: `table`, `query`, `derive`, `tx`, `get`, `contribute` | II | an object's parts |
 | `host.root(fn, ctx, { principal })`, `ctx.get(Type, params)` | II | code outside objects, as a principal |
 | `invalid(reason, message, details?)`, `forbidden(message, details?)` | II, VIII | Chord's errors, thrown by a plugin |
 | `self.contribute(Http, { routes })` | III | routes, denied by default |

@@ -181,8 +181,8 @@ without one (a <strong>client</strong>: a page, a terminal). A <strong>link</str
 the app and stamped by links. An <strong>object</strong> is state and methods at one identity; its <strong>contract</strong> (<code>local</code> for its own
 host only, <code>remote</code> for any host) names its <strong>params</strong> (which instance) and members. A remote contract&#39;s <strong>variants</strong>
 are the member sets different principals get. A <strong>factory</strong> declares an object&#39;s parts: <strong>documents</strong> and <strong>tables</strong>
-(stored data, changed in <strong>transactions</strong>), <strong>derives</strong> (values computed from others), <strong>natives</strong> (things opened and
-closed, such as a file or a database cursor). A <strong>reference</strong> is what asking for an object returns. A <strong>facet</strong> is a
+(stored data, changed in <strong>transactions</strong>), <strong>live queries</strong> (a table&#39;s rows Chord keeps current), <strong>derives</strong>
+(values computed from others), <strong>natives</strong> (things opened and closed, such as a file or a database cursor). A <strong>reference</strong> is what asking for an object returns. A <strong>facet</strong> is a
 plugin&#39;s code for one host kind; a <strong>registry</strong> is an extension point plugins <strong>contribute</strong> to. A <strong>rollout</strong> applies
 new plugin code to the hosts in order.</p>
 </section>
@@ -353,7 +353,7 @@ it and receives a session cookie. A command-line client on the same machine read
 chapter III). Nothing is the owner because it comes from loopback: any local process could.</p>
 </section>
 
-<section class="chapter" id="worker"><header class="opener"><div class="numeral">II</div><h2>A List on Its Own Worker</h2><p class="lede">A host kind, a remote contract, a worker facet with a table and a live window, and the principal that adds a todo.</p></header>
+<section class="chapter" id="worker"><header class="opener"><div class="numeral">II</div><h2>A List on Its Own Worker</h2><p class="lede">A host kind, a remote contract, a worker facet with a table and a live query, and the principal that adds a todo.</p></header>
 <p class="dropcap">Each list gets its own process, a <strong>worker</strong>, with its own store: a list that misbehaves cannot take the others down,
 and an idle list costs nothing. This chapter declares where lists live, what a list offers, and the worker code that
 keeps its todos.</p>
@@ -425,7 +425,7 @@ worker&#39;s store:</p>
 <span class="tk-c">/** The newest todos first. */</span>
 <span class="tk-k">const</span> NEWEST = <span class="tk-f">query</span>(<span class="tk-t">Items</span>).<span class="tk-f">orderBy</span>((item) =&gt; item.id, <span class="tk-s">"desc"</span>);
 
-<span class="tk-c">/** How many todos the live window holds. */</span>
+<span class="tk-c">/** How many todos the live query holds. */</span>
 <span class="tk-k">const</span> WINDOW = <span class="tk-n">50</span>;</code></pre>
 <p>A table holds many records with queries and pages; it lives in an object, never in a facet. Persisted data lives only
 in <code>local</code> objects with empty params (one per host and type), so its address never depends on who asked (design §9,
@@ -447,35 +447,32 @@ of references. Its factory declares its parts and returns its members:</p>
 <!-- quote: plugins/lists/worker.ts -->
 <pre><code>	host.<span class="tk-f">serve</span>(<span class="tk-t">Store</span>, (_params, self) =&gt; {
 		<span class="tk-k">const</span> items = self.<span class="tk-f">table</span>(<span class="tk-t">Items</span>);
-		<span class="tk-c">// The newest todos, oldest first, and the next todo's number: read once when the store goes live, then kept here.</span>
-		<span class="tk-k">const</span> window = self.<span class="tk-f">writable</span>&lt;<span class="tk-t">Item</span>[]&gt;([]);
-		<span class="tk-k">let</span> next = <span class="tk-n">1</span>;
-		self.<span class="tk-f">open</span>(
-			<span class="tk-k">async</span> (ctx) =&gt; {
-				<span class="tk-k">const</span> { items: newest } = <span class="tk-k">await</span> items.<span class="tk-f">page</span>(NEWEST, WINDOW, ctx);
-				window.<span class="tk-f">set</span>([...newest].<span class="tk-f">reverse</span>());
-				next = (newest[<span class="tk-n">0</span>]?.id ?? <span class="tk-n">0</span>) + <span class="tk-n">1</span>;
-			},
-			() =&gt; {},
-		);
+		<span class="tk-c">// The newest todos, live: read before the store goes live, read again after every commit writing the table.</span>
+		<span class="tk-k">const</span> newest = self.<span class="tk-f">query</span>(items, NEWEST, WINDOW);
 		<span class="tk-k">return</span> {
-			items: self.<span class="tk-f">derive</span>([window], ([value]) =&gt; value),</code></pre>
+			<span class="tk-c">// Oldest first, as the list shows them.</span>
+			items: self.<span class="tk-f">derive</span>([newest], ([rows]) =&gt; [...rows].<span class="tk-f">reverse</span>()),</code></pre>
 <p>A <strong>factory</strong> is synchronous and only declares; Chord activates the object afterwards. <code>self.table</code> declares the
-table. A table has no watch, so the store keeps a <strong>live window</strong> itself: <code>self.writable</code> holds the newest 50 todos,
-filled by <code>self.open</code>, which runs during activation, and exposed through <code>self.derive</code> (a writable is an in-process
-value, not a state member; a derive over it is). <code>self.open</code> is meant for <strong>natives</strong>, things opened and closed; the
-window&#39;s first read is one, and chapter VIII shows its price.</p>
+table. <code>self.query(items, NEWEST, WINDOW)</code> declares a <strong>live query</strong> over it: the rows of <code>NEWEST</code>, at most 50, as a
+value the object can expose or derive from. Chord runs it before the store goes live, and again after every commit
+of the store that writes <code>items</code>, and sends watchers only what changed. The store&#39;s derive turns the rows around,
+oldest first, for the list.</p>
+<p>A live query reads only its own object&#39;s tables: only the store writes them, so its own commits are exactly the
+moments the rows can change, and a commit that writes no table with a query costs nothing. The limit is required:
+each such commit runs the query once more, at most <code>WINDOW</code> rows. That is cheap for a list a person edits and wrong
+for a table written hundreds of times a second (design §11, &quot;there may be dragons&quot;).</p>
 <p>Writes go through <strong>transactions</strong>: <code>self.tx(fn, ctx)</code> runs <code>fn</code> with <code>tx</code>, and what it stages is committed at once
-when <code>fn</code> returns, or not at all if it throws. The window follows after the commit; the store is the table&#39;s only
-writer, so it knows every change:</p>
+when <code>fn</code> returns, or not at all if it throws. The live query follows in the same commit; the store keeps nothing
+else in memory, not even the next todo&#39;s number, which it reads in the transaction:</p>
 <!-- quote: plugins/lists/worker.ts -->
 <pre><code>			add: <span class="tk-k">async</span> ({ text, by }, ctx) =&gt; {
 				<span class="tk-c">// Refused as Chord refuses arguments that fail their schema: the caller gets `invalid/args`.</span>
 				<span class="tk-k">if</span> (text === <span class="tk-s">""</span>) <span class="tk-k">throw</span> <span class="tk-f">invalid</span>(<span class="tk-s">"args"</span>, <span class="tk-s">"a todo needs text"</span>);
-				<span class="tk-k">const</span> item = { id: next++, text, done: <span class="tk-k">false</span>, by, at: <span class="tk-t">Date</span>.<span class="tk-f">now</span>() };
-				<span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; tx.<span class="tk-f">put</span>(items, item), ctx);
-				<span class="tk-c">// In number order: two adds may commit in either order.</span>
-				window.<span class="tk-f">set</span>([...window.value, item].<span class="tk-f">sort</span>((a, b) =&gt; a.id - b.id).<span class="tk-f">slice</span>(-WINDOW));
+				<span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; {
+					<span class="tk-c">// The number after the newest todo's: the store's transactions run one after another.</span>
+					<span class="tk-k">const</span> { items: last } = <span class="tk-k">await</span> tx.<span class="tk-f">page</span>(items, NEWEST, <span class="tk-n">1</span>);
+					tx.<span class="tk-f">put</span>(items, { id: (last[<span class="tk-n">0</span>]?.id ?? <span class="tk-n">0</span>) + <span class="tk-n">1</span>, text, done: <span class="tk-k">false</span>, by, at: <span class="tk-t">Date</span>.<span class="tk-f">now</span>() });
+				}, ctx);
 				<span class="tk-k">return</span> <span class="tk-k">null</span>;</code></pre>
 <p>A todo without text is refused with <code>invalid(&quot;args&quot;, …)</code>, from the API: the error crosses every link as it is, so a
 caller on a page or in a terminal gets <code>{ code: &quot;invalid&quot;, reason: &quot;args&quot; }</code>, as for arguments that fail the
@@ -959,7 +956,7 @@ console.<span class="tk-f">log</span>(<span class="tk-s">"   ada adds '  tea  ':
 console.<span class="tk-f">log</span>(<span class="tk-s">"   ada adds ' ':"</span>, refused);</code></pre>
 <!-- output: main -->
 <pre class="plain"><code>8. lists changed, rolled out to: server, list, web, tui
-   on list|groceries: todo.store restarted, todo.todos(groceries) parked
+   on list|groceries: todo.store swapped, todo.todos(groceries) parked
    ada adds '  tea  ': [ ] tea (ada)
    ada adds ' ': { code: 'invalid', reason: 'args' }</code></pre>
 <p>The watcher marked <code>@todo/lists</code> dirty when the file changed; <code>applyChanges</code> rebuilt it (one esbuild call per facet)
@@ -990,9 +987,20 @@ and rolled it out host by host. On each host Chord stages the new code (it runs 
 <td><strong>ended</strong>; its holders wait until something serves it again</td>
 </tr>
 </tbody></table>
-<p>The store opens a native (the window&#39;s first read), so it restarted and read its window again from the table; the
-views waited for it (parked), then went on with the new code. Ada&#39;s reference never noticed more than a moment of
-<code>loading</code>, and her next add was trimmed. Her blank one is now empty after trimming, so the store refused it with
+<p>The store opens no natives, and neither does its new factory: its live query is not a native, Chord runs it. So the
+store was <strong>swapped</strong>, not restarted. The sequence on the list&#39;s worker:</p>
+<ol>
+<li>The store&#39;s new attempt starts beside the old one: the same object, instance, table and line. Calls arriving now
+wait at a gate; calls already running finish on the old code.</li>
+<li>The new attempt runs its live query (the same read as at the first activation) and goes live; the gate opens,
+and references move to its members by name, each with one frame from its last value.</li>
+<li>The old attempt is sealed once its calls settled; its query leaves with it, so later commits run only the new one.</li>
+</ol>
+<p>The views&#39; new attempts need the store, which was still between steps 1 and 2 when they checked it, so they
+<strong>parked</strong> for that moment and went live with the new code right after. Ada&#39;s reference waited a moment, and her next add was trimmed.
+Had the store kept its window as a one-time read in <code>self.open</code>, it would count as holding a native and <strong>restart</strong>
+at every reload of its plugin: running calls drained, natives closed and opened again, a new instance.</p>
+<p>Ada&#39;s blank todo is now empty after trimming, so the store refused it with
 <code>invalid(&quot;args&quot;, …)</code> (chapter II): her client got <code>{ code: &quot;invalid&quot;, reason: &quot;args&quot; }</code>, Chord&#39;s own error, which
 crossed the worker&#39;s link and the server&#39;s as it was. Had the edit broken the plugin, that plugin alone would have kept its old code
 and the report would name the error.</p>
@@ -1254,15 +1262,13 @@ a tutorial.</p>
 <li><strong>Integer table keys do not type-check.</strong> <code>KeyOf</code> in <code>src/store/table.ts</code> still tests TypeBox&#39;s
 <code>&quot;~kind&quot;: &quot;Integer&quot;</code>, which pi-schema&#39;s <code>int()</code> lacks, so the key of an <code>int</code> key column is typed <code>string</code>:
 <code>tx.get(items, { id })</code> with a number fails <code>tsc</code>. The store here uses <code>updateWhere</code> with <code>eq</code> instead of
-<code>tx.update</code>.</li>
-<li><strong>A one-time read at activation is a native.</strong> The live window over a table needs a first read before the object is
-live; <code>self.open</code> is the only place, so the store counts as holding a native and restarts at every reload of its
-plugin, parking its views, though it holds nothing open. Tables have no watch, so every table-backed live view
-repeats this pattern (example 59&#39;s chat does too).</li>
-</ul>
-<p>Three more, found the same way, are fixed: a reloaded web plugin lost its own React state (now <code>usePageState</code>,
+<code>tx.update</code>.
+Four more, found the same way, are fixed: a reloaded web plugin lost its own React state (now <code>usePageState</code>,
 chapter VIII), a plugin&#39;s <code>contract.ts</code> could not be imported outside builds (the API is now a workspace package,
-chapter I), and plugins could not throw Chord&#39;s <code>invalid</code> (Chord exports <code>invalid</code> and <code>forbidden</code>, chapter II).</p>
+chapter I), plugins could not throw Chord&#39;s <code>invalid</code> (Chord exports <code>invalid</code> and <code>forbidden</code>, chapter II), and a
+live window over a table needed a one-time read in <code>self.open</code>, which made the store restart at every reload of its
+plugin (now <code>self.query</code>, a live query Chord runs, chapters II and VIII).</li>
+</ul>
 </section>
 
 <section class="chapter appendix" id="the-app-s-files"><header class="opener"><div class="numeral">A</div><h2>The App&#39;s Files</h2></header>
@@ -1372,7 +1378,7 @@ chapter I), and plugins could not throw Chord&#39;s <code>invalid</code> (Chord 
 <td>host kinds and contracts</td>
 </tr>
 <tr>
-<td><code>host.serve(Type, factory)</code>; factory <code>self</code>: <code>table</code>, <code>writable</code>, <code>open</code>, <code>derive</code>, <code>tx</code>, <code>get</code>, <code>contribute</code></td>
+<td><code>host.serve(Type, factory)</code>; factory <code>self</code>: <code>table</code>, <code>query</code>, <code>derive</code>, <code>tx</code>, <code>get</code>, <code>contribute</code></td>
 <td>II</td>
 <td>an object&#39;s parts</td>
 </tr>
