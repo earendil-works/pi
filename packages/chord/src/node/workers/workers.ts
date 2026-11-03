@@ -1,6 +1,7 @@
 // The workers component (slice 10 §3, §4; decision "Slice 10's points"): a forked worker process per address of one
 // host kind, started on demand by the route it owns, stopped when idle, never restarted by itself (R2): a crash, a
-// `fatal`, a link lost while its child lives or a failed start leaves the address failed until `retry` or a rollout.
+// `fatal` or a failed start leaves the address failed until `retry` or a rollout. A running worker's lost link is a
+// stop its holders start a new worker after, once a minute (decision "A lost worker link is recovered from").
 // Per address, a child's events are recorded on that child as they happen; starts and stops run one after another.
 
 import type { Context } from "../../context/index.ts";
@@ -71,6 +72,12 @@ export type WorkersError =
 			readonly code: number | null;
 			readonly signal: string | null;
 	  }
+	| {
+			/** A running worker's link was lost (the heartbeat, a protocol error): it was stopped, its holders start anew. */
+			readonly kind: "worker_link_lost";
+			readonly address: string;
+			readonly error: unknown;
+	  }
 	| BatchError;
 
 /** The workers component. */
@@ -138,6 +145,8 @@ type Cause = {
 	readonly public?: CrossedError;
 	/** The component ended the child itself (a failed start): its exit is no `worker_exited`. */
 	readonly killed?: true;
+	/** A running child's link was lost: its address may recover (`#recovers`) instead of failing. */
+	readonly lost?: true;
 };
 
 /** How a child's reloads end once it is gone: stopped cleanly (a stop's exit) or with an error. */
@@ -181,6 +190,8 @@ type Routed = {
 	failure: Failure | undefined;
 	/** A start was queued and has not settled. */
 	starting: Promise<unknown> | undefined;
+	/** When it last recovered from a lost link (`#recovers`). */
+	recovered: number | undefined;
 };
 
 /** Starts a worker may take until `started` (fork, lock, connect): 60 s. */
@@ -194,6 +205,9 @@ const IDLE_CHECK = 1_000;
 
 /** How long a worker idles before it is stopped unless `idleMs` says otherwise: 5 minutes. */
 const IDLE_MS = 5 * 60_000;
+
+/** How long after a recovered lost link another one fails the address: 1 minute. */
+const RECOVERY_WINDOW = 60_000;
 
 /** The public error of a start that failed. */
 const START_FAILED: CrossedError = { message: "worker failed to start", code: "unavailable" };
@@ -298,6 +312,7 @@ class WorkersComponent implements Workers<HostKind> {
 				child: undefined,
 				failure: undefined,
 				starting: undefined,
+				recovered: undefined,
 			};
 			this.#addresses.set(address.key, routed);
 		}
@@ -463,31 +478,34 @@ class WorkersComponent implements Workers<HostKind> {
 		}
 	}
 
-	/** This side closed `child`'s link (the heartbeat, a protocol error): its child is stopped, its exit a crash. */
+	/** This side closed `child`'s link (the heartbeat, a protocol error): its child is stopped, its exit a lost link. */
 	#linkLost(child: Child): void {
 		this.#ended(child);
 		if (child.stopping) return;
-		child.cause ??= { error: new Error("worker: link lost") };
+		child.cause ??= lostLink(child);
 		this.#shutdown(child);
 		this.#state.refresh();
 	}
 
 	/**
 	 * The child's side closed its link (it is exiting, or it closed its IPC and lives on): its reloads end; one that does
-	 * not exit within the grace is killed, its exit a crash (link lost).
+	 * not exit within the grace is killed, its exit a lost link.
 	 */
 	#linkClosed(child: Child): void {
 		this.#ended(child);
 		if (child.stopping || child.grace !== undefined) return;
+		const lost = lostLink(child);
 		child.grace = setTimeout(() => {
-			child.cause ??= { error: new Error("worker: link lost") };
+			child.cause ??= lost;
 			child.process.kill();
 		}, GRACE);
 	}
 
 	/**
-	 * `child` exited: a stop's exit forgets it; any other is a crash that fails the address (`worker_exited` and
-	 * `worker_failed` once, the full error and stderr tail for the app's logs only), except once the component closes.
+	 * `child` exited: a stop's exit forgets it, as does a lost link the address recovers from (`worker_link_lost`: its
+	 * holders' route resolves again, a start after this exit); any other is a crash that fails the address
+	 * (`worker_exited` and `worker_failed` once, the full error and stderr tail for the app's logs only), except once the
+	 * component closes.
 	 */
 	#exited(routed: Routed, child: Child, exit: Exit): void {
 		clearTimeout(child.grace);
@@ -506,15 +524,30 @@ class WorkersComponent implements Workers<HostKind> {
 		if (routed.child !== child) return;
 		routed.child = undefined;
 		if (!clean && !this.#closing.signal.aborted) {
-			const { code, signal } = exit;
-			// A failed start's kill is the component's own act (Opus's second recheck): only `worker_failed`.
-			if (cause.killed !== true) {
-				this.#options.onError({ kind: "worker_exited", address: routed.address.key, code, signal });
+			if (cause.lost === true && this.#recovers(routed)) {
+				this.#options.onError({ kind: "worker_link_lost", address: routed.address.key, error: cause.error });
+			} else {
+				const { code, signal } = exit;
+				// A failed start's kill is the component's own act (Opus's second recheck): only `worker_failed`.
+				if (cause.killed !== true) {
+					this.#options.onError({ kind: "worker_exited", address: routed.address.key, code, signal });
+				}
+				this.#fail(routed, { ...cause, public: error }, child.process.stderrTail);
 			}
-			this.#fail(routed, { ...cause, public: error }, child.process.stderrTail);
 		}
 		this.#state.refresh();
 		this.#forget(routed);
+	}
+
+	/**
+	 * Whether `routed` recovers from its running child's lost link, recorded when it does: not within a minute of the
+	 * last recovery, so a worker that loses every link fails instead of restarting in a loop.
+	 */
+	#recovers(routed: Routed): boolean {
+		const now = Date.now();
+		if (routed.recovered !== undefined && now - routed.recovered < RECOVERY_WINDOW) return false;
+		routed.recovered = now;
+		return true;
 	}
 
 	/**
@@ -685,6 +718,18 @@ class WorkersComponent implements Workers<HostKind> {
 /** What new starts reject with once the component closes. */
 function closed(): ChordError {
 	return new ChordError({ code: "released", reason: "closed", message: "workers: closed" });
+}
+
+/** The public error of a running worker's lost link that fails its address (a second one within the window). */
+const LINK_LOST: CrossedError = { message: "worker lost its link", code: "unavailable" };
+
+/**
+ * The cause of `child`'s lost link (the heartbeat, a protocol error, its own close of its link) while it lives: after
+ * `ready`, one its address may recover from; before it, a failed start.
+ */
+function lostLink(child: Child): Cause {
+	const error = new Error("worker: link lost");
+	return child.status === "running" ? { error, public: LINK_LOST, lost: true } : { error };
 }
 
 /** The full error of an exit nobody asked for (the app's logs). */

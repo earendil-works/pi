@@ -132,9 +132,12 @@ export class Channel {
 
 	/**
 	 * The heartbeat, at `now`: a link silent for `close` ms (the handshake included) closes; an open one silent for
-	 * `ping` ms sends one `ping`.
+	 * `ping` ms sends one `ping`. `paused` ms this process did not run before it are no silence: what the peer sent
+	 * meanwhile is still unread (timers run before I/O). The silence stays what it was before the pause, at least `ping`
+	 * ms, so a dead peer (a dropped TCP connection) is found `close - ping` ms later.
 	 */
-	tick(now: number, ping: number, close: number): void {
+	tick(now: number, paused: number, ping: number, close: number): void {
+		if (paused > 0) this.#lastReceived = Math.min(this.#lastReceived + paused, now - ping);
 		const silent = now - this.#lastReceived;
 		if (silent >= close) this.close();
 		else if (silent >= ping && !this.#pinged && this.#state.kind === "open") {

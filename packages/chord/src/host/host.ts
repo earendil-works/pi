@@ -1358,10 +1358,16 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		this.#links.add(made);
 		if (this.#ticking === undefined) {
 			const { ping, close } = this.#heartbeat;
+			const every = Math.min(ping, close) / 10;
+			let last = Date.now();
 			this.#ticking = setInterval(() => {
 				const now = Date.now();
-				for (const each of [...this.#links]) each.tick(now, ping, close);
-			}, Math.min(ping, close) / 10);
+				// A tick a whole interval late is time this process did not run (a sleeping laptop, a blocked event loop).
+				const late = now - last - every;
+				const paused = late >= every ? late : 0;
+				last = now;
+				for (const each of [...this.#links]) each.tick(now, paused, ping, close);
+			}, every);
 		}
 		return made;
 	}

@@ -332,7 +332,8 @@ export class SessionWorkers implements SessionWorkerControl {
 
 	/**
 	 * A worker's start, crash or failure: an owner notice (redacted), with the stderr tail as Pi Mobile; a crash is
-	 * "Worker exited (signal): tail" in the notice and the status error too, as in v1.
+	 * "Worker exited (signal): tail" in the notice and the status error too, as in v1. A lost link Chord recovers from
+	 * is only a log event.
 	 */
 	#failed(error: WorkersError): void {
 		if (error.kind === "worker_exited") {
@@ -340,6 +341,15 @@ export class SessionWorkers implements SessionWorkerControl {
 			const session = error.address.slice("session|".length);
 			this.#exits.set(session, `Worker exited (${error.signal ?? error.code})`);
 			this.#crashed(session);
+			return;
+		}
+		if (error.kind === "worker_link_lost") {
+			// Chord stopped the worker and its holders start a new one: an event, no notice.
+			const session = error.address.slice("session|".length);
+			const reason = processLogs.redactor.redact(
+				error.error instanceof Error ? error.error.message : String(error.error),
+			);
+			processLogs.append(`${SESSION_PREFIX}${session}`, "event", `Worker lost its link (${reason}); restarting it`);
 			return;
 		}
 		if (error.kind !== "worker_failed") {

@@ -2093,6 +2093,21 @@ validation and copies the v2 kernel added around Delta.
   address's queue, so never two clears of one name at once. A live holder (an older worker still exiting) accepts and
   is kept. One connect per start on macOS and the BSDs, nothing on Linux, Android and Windows. A taker also treats
   `ENOTSOCK` (a non-socket file at the path on macOS) as stale; before it retried until its context ended.
+- **A pause of the process is no silence (owner, 2026-11-03; refines "Slice 4a spec decisions"):** after a laptop
+  slept, the host's heartbeat timer fires before any I/O is read and found every link silent past `close`: the server
+  closed its worker links (and the worker its parent link) though both peers were fine, and p2's session workers
+  stayed failed ("worker exited (code 0)") until Retry. A tick at least one interval late is time this process did
+  not run (a sleep, a blocked event loop); that time does not count as silence: each link's silence is what it was
+  before the pause, at least `ping`, so an open link pings at once and a dead peer (a TCP connection the sleep
+  dropped) closes `close - ping` later (15 s by default). One subtraction per link on a late tick, nothing otherwise.
+- **A lost worker link is recovered from (owner, 2026-11-03: "should we not auto reconnect?"; refines R2 of "Slice
+  10's points"):** R2 counted a link lost while its child lives (the heartbeat, a protocol error, the child closing its
+  own link) as a crash. A lost link of a `running` worker is now a stop instead: the child is stopped (grace 5 s, then
+  killed), `worker_link_lost { address, error }` is reported, the address does not fail, and its held route resolves
+  again (the kernel resolves once after a held link drops): a new worker starts after the exit. No restart loop: a
+  second lost link within a minute of the address's last recovery fails it as before, with the public error `worker
+  lost its link` (`worker_exited` and `worker_failed` as for a crash). A link lost before `ready` is still a failed
+  start. Crashes, `fatal`s and failed starts stay failed until `retry` or a rollout (R2 unchanged for them).
 - **Slice 10: a route's overhead accepted; no header accessor (owner, 2026-10-31: "1 yes, 2 no"):** after the `fetch`
   rework and the Node fast path a route costs +20-21 µs over a plain Node handler on the standard bench, +12-13 µs warmed
   (before the rework +4.5 µs): the request's scope (2.1 µs), URL parsing, admission and routing, the baseline's headers,

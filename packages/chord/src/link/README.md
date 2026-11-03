@@ -120,8 +120,10 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
   until it settles; they are then handled in order, and dropped when the link closes meanwhile; a rejection is a
   protocol error.
 - The heartbeat, in `Channel`: every received message stamps `lastReceived` (sends do not count); the host's one
-  interval timer calls `tick(now, ping, close)` on every link: a link silent for `close` ms (30 s by default), the
-  handshake included, closes; an open one silent for `ping` ms (15 s) sends one `ping`. A `ping` is answered with
+  interval timer calls `tick(now, paused, ping, close)` on every link: a link silent for `close` ms (30 s by default),
+  the handshake included, closes; an open one silent for `ping` ms (15 s) sends one `ping`. `paused` is the time this
+  process did not run before a tick at least one interval late (a sleep, a blocked event loop): it is no silence, the
+  silence stays what it was before, at least `ping`, so an open link pings at once. A `ping` is answered with
   `pong` at once, never queued behind the window; neither reaches the handler. It detects a silent transport, not a
   peer that answers pings but withholds acks (the window and the pending cap bound that).
 - Who checks what (layers 1-3 failing close the link):

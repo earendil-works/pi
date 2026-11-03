@@ -162,6 +162,30 @@ describe("the heartbeat", () => {
 		expect(notes.state.value).toEqual({ kind: "loading" });
 	});
 
+	it("counts no pause of this process as silence (a sleeping laptop): pings at once, closes 15 s later unanswered", async () => {
+		const { peer } = await rawLinked(() => {});
+		await elapse(3_000);
+		// The process sleeps 10 minutes: no timer runs meanwhile, the clock jumps.
+		vi.setSystemTime(Date.now() + 600_000);
+		await elapse(1_500);
+		expect(peer.closed).toBe(false);
+		expect(peer.kinds()).toEqual(["hello", "ping"]);
+		await elapse(13_500);
+		expect(peer.closed).toBe(false);
+		await elapse(1_500);
+		expect(peer.closed).toBe(true);
+	});
+
+	it("keeps a link through a pause when its peer answers the ping", async () => {
+		const { peer } = await rawLinked(() => {});
+		await elapse(20_000);
+		vi.setSystemTime(Date.now() + 600_000);
+		await elapse(1_500);
+		peer.send({ kind: "pong" });
+		await elapse(25_000);
+		expect(peer.closed).toBe(false);
+	});
+
 	it("sends no pings on a busy link", async () => {
 		const { peer } = await rawLinked(() => {});
 		for (let second = 0; second < 60; second += 5) {

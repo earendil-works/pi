@@ -364,7 +364,10 @@ host.route(Session, {
   behind the window. A link silent for 30 s, the handshake included, is closed (its references go `loading`). Both
   numbers are host options (`heartbeat`). The heartbeat detects a silent transport (TCP does not notice a sleeping
   laptop), not a peer that answers pings but withholds acks (bounded by the window and the pending cap instead). A
-  handler that blocks the event loop longer than 30 s gets its links closed (documented).
+  handler that blocks the event loop longer than 30 s gets its links closed (documented). Time this process did not
+  run (a tick at least one interval late: a sleep, a blocked event loop) is no silence: each link's silence stays
+  what it was before, at least `ping`, so an open link pings at once (decision "A pause of the process is no
+  silence").
 - **Flow control: an ack-clocked window per origin** (owner, 2026-10-23; per origin 2026-10-24). Per (link, origin), at
   most **K = 2** of the provider's own `bound` and `state` messages are unacknowledged; only these two kinds count
   (everything else is control, never queued behind them). The consumer sends `ack` (with the message's origin) after
@@ -2289,10 +2292,11 @@ decision "Stale lock files are cleared by the starter"; a start waits for a drai
 - **Keep-alive** (D9, R3, Q5): the child reports when `host.activity`'s references, jobs and lingering objects and the
   app's `busy` counts flip between all zero and not (local calls do not count; the first state with `ready`, which
   also carries the load report); the server stops a worker idle for `idleMs` (5 min).
-- **Never restarted by itself** (R2): a crash, a `fatal`, a link lost while its child lives (killed after a 5 s grace)
-  or a failed start leaves the address failed; its holders see `failed { waiting }` and stay on the path (Q1);
-  `retry(address)` or a rollout reaching workers clears it and starts the held ones (Q2). `stop` suspends the address
-  while it has holders (R1, Q3).
+- **Never restarted by itself** (R2): a crash, a `fatal` or a failed start leaves the address failed; its holders see
+  `failed { waiting }` and stay on the path (Q1); `retry(address)` or a rollout reaching workers clears it and starts
+  the held ones (Q2). `stop` suspends the address while it has holders (R1, Q3). A running worker's lost link (killed
+  after a 5 s grace) is a stop its holders start a new worker after (`worker_link_lost`); a second within a minute of
+  the last recovery fails the address (`worker lost its link`; decision "A lost worker link is recovered from").
 - **Errors in public and private** (decision "worker errors in public"): `state` and holders get a fixed message
   (`worker failed to start`, `worker exited (SIGSEGV)`) or the child's redacted `fatal`; the full error and the stderr
   tail go only to `onError` (`worker_failed`). Every app hook of a start (`start`, `principal`, `lock`, the fork) is

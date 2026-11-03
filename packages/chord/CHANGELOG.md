@@ -28,6 +28,8 @@
 
 - Chord v2's workers on macOS and the BSDs: a worker killed by a signal (the grace's or the start timer's SIGKILL) left its lock's socket file, and every later start of its address failed with `... is a stale lock file`, `retry` too, until the file was removed by hand. The workers component now removes a lock socket file nobody accepts on before each start and after a child's exit by a signal.
 - Chord v2's `processLock` on macOS spun until its context ended when a regular file sat at the lock's path (`ENOTSOCK`); it now fails closed naming the file, as for a socket file nobody listens on.
+- Chord v2's heartbeat closed every link after the process had slept (a laptop's sleep) or blocked its event loop, before reading what the peer had sent meanwhile. Time the process did not run no longer counts as silence: after such a pause each open link pings at once and closes only if its peer stays silent for `close - ping` (15 s by default).
+- Chord v2's workers no longer leave an address failed when a running worker loses its link (the heartbeat, a protocol error, the worker closing its own link): the worker is stopped, `worker_link_lost { address, error }` is reported, and its holders get a new worker. A second lost link within a minute of the last recovery still fails the address (public error `worker lost its link`). Crashes, `fatal`s and failed starts still stay failed until `retry` or a rollout.
 
 ## [1.5.0] - 2026-11-02
 

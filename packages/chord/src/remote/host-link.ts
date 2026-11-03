@@ -109,8 +109,8 @@ export class HostLink implements ChannelHandler {
 	}
 
 	/** The heartbeat (see `Channel.tick`). */
-	tick(now: number, ping: number, close: number): void {
-		this.#channel.tick(now, ping, close);
+	tick(now: number, paused: number, ping: number, close: number): void {
+		this.#channel.tick(now, paused, ping, close);
 	}
 
 	opened(): void {

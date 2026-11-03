@@ -135,7 +135,8 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   is the default deadline of a `get` and of `host.registry`. `heartbeat: { ping?, close? }`: a link silent for `ping` ms (15 s)
   sends a `ping`, one silent for `close` ms (30 s), its handshake included, is closed (its references go `loading`);
   one interval timer per host (`min(ping, close) / 10`), running only while it has links. A handler that blocks the
-  event loop longer than `close` gets its links closed.
+  event loop longer than `close` gets its links closed by its peers; its own late tick counts the time it did not run
+  (a block, a sleeping laptop) as no silence, so its links ping at once instead of closing.
 - `revokedBy(principal) => R[]`: what revokes a principal; its revocation keys are the canonical JSON of each value,
   computed once per principal object (cached weakly). `host.revoke(r, ctx)`, synchronously: every remote object whose
   principal has `r` among its keys ends at once, whatever references remain (R11): each holder gets `forbidden` with
