@@ -33,7 +33,7 @@ use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_BREAKAWAY_OK,
     JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JobObjectExtendedLimitInformation, SetInformationJobObject,
+    JobObjectExtendedLimitInformation, SetInformationJobObject, TerminateJobObject,
 };
 use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, CreateEventW, WaitForSingleObject};
 use windows_sys::core::BOOL;
@@ -683,6 +683,57 @@ pub fn kill_tree(pid: u32) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn();
+}
+
+/// The job object of a `process` program: what is left in it is killed once the program exits, and when the daemon
+/// ends (the job is closed with it). It is nested in the daemon's job.
+pub struct Group {
+    job: OwnedHandle,
+}
+
+/// Put a program just started into a job object of its own. The program already runs: a child it starts before this
+/// assignment stays outside the job, as one started before `after_spawn` stays outside the daemon's job. Starting it
+/// suspended would close that gap.
+pub fn group(child: &Child) -> io::Result<Group> {
+    // SAFETY: plain Win32 calls with a zeroed, correctly sized information struct; the job handle is owned from here.
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let job = OwnedHandle::from_raw_handle(job as _);
+        let mut information: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        // No breakaway: a child started after the assignment stays in this job, even if the daemon's job allows
+        // breakaway.
+        information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if SetInformationJobObject(
+            job.as_raw_handle() as _,
+            JobObjectExtendedLimitInformation,
+            (&information as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        ) == FALSE
+            || AssignProcessToJobObject(job.as_raw_handle() as _, child.as_raw_handle() as _)
+                == FALSE
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Group { job })
+    }
+}
+
+impl Group {
+    /// Wait until the program has exited; the child's open handle keeps its pid from naming another process.
+    pub fn wait_for_exit(&self, child: &mut Child) -> io::Result<()> {
+        child.wait().map(drop)
+    }
+
+    /// Kill what is left in the job, the program too if it still runs.
+    pub fn end(&self) {
+        // SAFETY: the job handle is valid while `self` lives.
+        unsafe {
+            TerminateJobObject(self.job.as_raw_handle() as _, 1);
+        }
+    }
 }
 
 /// Exit codes are unsigned 32-bit values on Windows (an access violation is 3221225477).

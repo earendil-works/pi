@@ -4,7 +4,8 @@
 
 use crate::errors::Failure;
 use crate::exec::{
-    Control, Groups, Launch, Message, kill_group, running, spawn, spawn_reader, start_waiter,
+    Control, Ending, Groups, Launch, Message, kill_group, running, spawn, spawn_reader,
+    start_waiter,
 };
 use crate::frame::{EVENT, Frame};
 use crate::output::Output;
@@ -118,6 +119,12 @@ pub fn run(
         groups.lock().unwrap().remove(&pid);
         Failure::new("spawn_error", error.to_string())
     };
+    // What the program starts in its group dies when it exits: a wrapper such as `npx` that exits does not leave the
+    // server it started running, out of reach of `close()` and of a lost connection.
+    let group = match sys::group(&child) {
+        Ok(group) => group,
+        Err(error) => return Err(abandon(child, error)),
+    };
     // Like a full pipe: a program that writes faster than the link waits.
     let stdout = child.stdout.take().unwrap();
     if let Err(error) = spawn_reader(
@@ -160,7 +167,14 @@ pub fn run(
     if let Err(error) = started {
         return Err(abandon(child, error));
     }
-    if let Err((child, error)) = start_waiter(child, sender.clone()) {
+    if let Err((child, error)) = start_waiter(
+        child,
+        Some(Ending {
+            group,
+            groups: groups.clone(),
+        }),
+        sender.clone(),
+    ) {
         return Err(abandon(child, error));
     }
     drop(sender);
@@ -184,7 +198,11 @@ pub fn run(
     let kill = |killed: &mut bool| {
         if !*killed {
             *killed = true;
-            kill_group(pid);
+            // Only while the program is in `groups`: the waiter removes it under this lock before reaping it.
+            let groups = groups.lock().unwrap();
+            if groups.contains(&pid) {
+                kill_group(pid);
+            }
         }
     };
     if control.killed.load(Ordering::SeqCst) {
@@ -222,6 +240,8 @@ pub fn run(
             }
             Ok(Message::Eof(stream)) => ended[stream] = true,
             Ok(Message::Exit(exit)) => {
+                // The waiter already ended the group; nothing is left to kill.
+                killed = true;
                 status = Some(Ok(exit));
                 idle_until = Some(Instant::now() + EXIT_STDIO_GRACE);
             }

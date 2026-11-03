@@ -57,10 +57,11 @@ Windows yet.
 
 `openProcess(connection, options)` runs a program with plain pipes, for programs that speak a protocol on stdin and
 stdout, such as an MCP server: `write()` and `closeStdin()` for its input, raw stdout and stderr bytes through
-`onStdout` and `onStderr`, `close()` to kill its process group, and `exited` for its exit code. Nothing is echoed,
-translated or merged, unlike a terminal; it works on every supported system. A daemon released before it fails the open
-with `not_supported`. `argv` runs as an `exec` argv command does: on Windows, batch files such as `npx.cmd` are refused,
-as Node refuses them without a shell, so callers start them through `cmd.exe`.
+`onStdout` and `onStderr`, `close()` to kill its process group, and `exited` for its exit code. When the program exits,
+what it started in its process group is killed too, so a wrapper such as `npx` leaves nothing running. Nothing is
+echoed, translated or merged, unlike a terminal; it works on every supported system. A daemon released before it fails
+the open with `not_supported`. `argv` runs as an `exec` argv command does: on Windows, batch files such as `npx.cmd` are
+refused, as Node refuses them without a shell, so callers start them through `cmd.exe`.
 
 ```ts
 const server = await openProcess(connection, {
