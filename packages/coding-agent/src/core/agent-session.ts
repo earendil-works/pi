@@ -43,6 +43,7 @@ import type {
 	TextContent,
 	ToolResultMessage,
 	Usage,
+	UserMessage,
 } from "@earendil-works/pi-ai/compat";
 import {
 	clampThinkingLevel,
@@ -408,6 +409,8 @@ export class AgentSession {
 	private _steeringMessages: string[] = [];
 	/** Tracks pending follow-up messages for UI display. Removed when delivered. */
 	private _followUpMessages: string[] = [];
+	/** Queued user messages whose images are normalized when they are delivered. */
+	private _queuedMessagesWithImages = new WeakSet<AgentMessage>();
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 	/** Context-only custom messages queued during a run, flushed once the current turn's tool results are in. */
@@ -1152,6 +1155,12 @@ export class AgentSession {
 						this._emitQueueUpdate();
 					}
 				}
+			}
+			// Normalize queued images at delivery, before events and persistence see the message,
+			// so they get the same resize as idle prompts with the current model's limits (#11738).
+			if (this._queuedMessagesWithImages.has(event.message)) {
+				this._queuedMessagesWithImages.delete(event.message);
+				await this._normalizeQueuedMessageImages(event.message);
 			}
 		}
 
@@ -2327,11 +2336,9 @@ export class AgentSession {
 		if (images) {
 			content.push(...images);
 		}
-		this.agent.steer({
-			role: "user",
-			content,
-			timestamp: Date.now(),
-		});
+		const message: AgentMessage = { role: "user", content, timestamp: Date.now() };
+		if (images?.length) this._queuedMessagesWithImages.add(message);
+		this.agent.steer(message);
 	}
 
 	/**
@@ -2344,7 +2351,24 @@ export class AgentSession {
 		if (images) {
 			content.push(...images);
 		}
-		this.agent.followUp({ role: "user", content, timestamp: Date.now() });
+		const message: AgentMessage = { role: "user", content, timestamp: Date.now() };
+		if (images?.length) this._queuedMessagesWithImages.add(message);
+		this.agent.followUp(message);
+	}
+
+	/** Replace a queued user message's images in place with normalized ones, appending hints to its text. */
+	private async _normalizeQueuedMessageImages(message: UserMessage): Promise<void> {
+		if (typeof message.content === "string") return;
+		const [first, ...rest] = message.content;
+		if (first?.type !== "text") return;
+		const images = rest.filter((block): block is ImageContent => block.type === "image");
+		const normalized = await this._normalizePromptImages(images);
+		const text = normalized.hints.length > 0 ? `${first.text}\n\n${normalized.hints.join("\n")}` : first.text;
+		message.content = [
+			{ type: "text", text },
+			...rest.filter((block) => block.type !== "image"),
+			...normalized.images,
+		];
 	}
 
 	/**
