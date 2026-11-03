@@ -195,6 +195,10 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 
 ### After slice 11
 
+- **Mistakes that wait are reported at once** (decision of 2026-11-03): (a) use before `load` throws, (b) an unserved
+  registry with contributions reported at publication, (c) a request waiting unbound reported after 5 s, (d) an
+  invalid plugin name throws; tests for each; the guide documents no per-link call limit and `ctx.get` acting as the
+  caller (the `Search.rebuildIndex` example).
 - **Messages and languages in the app kit** (decision "Messages and languages in the app kit", proposal
   `docs/i18n/`): `defineMessages`, `t.message`/`t.render`, `MessagesOf`, the `Translations` registry with
   fallbacks and conflicts, the locale preference per principal (default from the device, live switch, `lang`/`dir` on
