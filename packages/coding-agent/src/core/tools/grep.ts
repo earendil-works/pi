@@ -192,7 +192,9 @@ export function createGrepToolDefinition(
 						let outputBytes = 0;
 						let outputLineCount = 0;
 						let lastFile: string | undefined;
-						// After the last allowed match, rg still sends that match's trailing context; keep lines up to here.
+						// Set at the last allowed match. rg still sends that match's trailing context, kept up to
+						// trailingContextEnd, and the limit notice waits for proof of one more match.
+						let limitHit = false;
 						let trailingContextEnd = 0;
 						let done = false;
 						const finish = () => {
@@ -202,7 +204,8 @@ export function createGrepToolDefinition(
 						const pushLine = (filePath: string, lineNumber: number, lineText: string, isMatch: boolean) => {
 							lastFile = filePath;
 							const relativePath = formatPath(filePath);
-							const sanitized = lineText.replace(/\r/g, "").replace(/\n$/, "");
+							// Strip only the line terminator: a lone CR inside a line is content, as in the read tool.
+							const sanitized = lineText.replace(/\r?\n?$/, "");
 							// Truncate long lines so grep output stays compact.
 							const { text: truncatedText, wasTruncated } = truncateLine(sanitized);
 							if (wasTruncated) linesTruncated = true;
@@ -225,31 +228,27 @@ export function createGrepToolDefinition(
 								return;
 							}
 							const isMatch = event.type === "match";
-							if (!isMatch && event.type !== "context") {
-								if (trailingContextEnd > 0) finish();
-								return;
-							}
+							if (!isMatch && event.type !== "context") return;
 							const filePath = decodeRgText(event.data?.path);
 							const lineNumber = event.data?.line_number;
 							if (!filePath || typeof lineNumber !== "number") return;
 							const lineText = decodeRgText(event.data?.lines);
-							if (trailingContextEnd > 0) {
-								if (filePath !== lastFile || lineNumber > trailingContextEnd) {
-									finish();
-									return;
+							if (!limitHit) {
+								pushLine(filePath, lineNumber, lineText, isMatch);
+								if (!isMatch) return;
+								matchCount++;
+								if (matchCount >= effectiveLimit) {
+									limitHit = true;
+									trailingContextEnd = lineNumber + contextValue;
 								}
-								pushLine(filePath, lineNumber, lineText, false);
-								if (lineNumber >= trailingContextEnd) finish();
 								return;
 							}
-							pushLine(filePath, lineNumber, lineText, isMatch);
-							if (!isMatch) return;
-							matchCount++;
-							if (matchCount >= effectiveLimit) {
-								matchLimitReached = true;
-								if (contextValue > 0) trailingContextEnd = lineNumber + contextValue;
-								else finish();
-							}
+							const inWindow = filePath === lastFile && lineNumber <= trailingContextEnd;
+							// A match inside the last match's trailing context is shown as context.
+							if (inWindow) pushLine(filePath, lineNumber, lineText, false);
+							// Only another match proves that the limit cut results off.
+							if (isMatch) matchLimitReached = true;
+							if (matchLimitReached && !(inWindow && lineNumber < trailingContextEnd)) finish();
 						});
 
 						child.on("error", (error) => {

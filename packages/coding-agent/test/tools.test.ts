@@ -920,7 +920,8 @@ describe("Coding Agent Tools", () => {
 			});
 
 			const output = getTextOutput(result);
-			expect(output).toContain("lone-cr.txt-1- beforeprogress");
+			// A lone CR inside a line is kept, as the read tool shows it, so the text can be copied into edit.
+			expect(output).toContain("lone-cr.txt-1- before\rprogress");
 			expect(output).toContain("lone-cr.txt:2: needle");
 			expect(output).toContain("lone-cr.txt-3- after");
 		});
@@ -1013,6 +1014,48 @@ describe("Coding Agent Tools", () => {
 			expect(getTextOutput(result)).toBe(
 				["utf16.txt-1- before", "utf16.txt:2: needle 中文", "utf16.txt-3- after"].join("\n"),
 			);
+		});
+
+		it("should keep a lone CR inside a line and strip CRLF terminators", async () => {
+			const testFile = join(testDir, "mixed-cr.txt");
+			writeFileSync(testFile, "one\rtwo needle\r\nnext\r\n");
+
+			const plain = await grepTool.execute("test-call-cr-plain", { pattern: "needle", path: testFile });
+			expect(getTextOutput(plain)).toBe("mixed-cr.txt:1: one\rtwo needle");
+
+			const withContext = await grepTool.execute("test-call-cr-context", {
+				pattern: "needle",
+				path: testFile,
+				context: 1,
+			});
+			expect(getTextOutput(withContext)).toBe(
+				["mixed-cr.txt:1: one\rtwo needle", "mixed-cr.txt-2- next"].join("\n"),
+			);
+		});
+
+		it("should not report the match limit when exactly limit matches exist", async () => {
+			const testFile = join(testDir, "exact-limit.txt");
+			writeFileSync(testFile, ["match one", "x", "match two", "y"].join("\n"));
+
+			for (const context of [0, 1]) {
+				const exact = await grepTool.execute("test-call-exact-limit", {
+					pattern: "match",
+					path: testFile,
+					limit: 2,
+					context,
+				});
+				expect(getTextOutput(exact)).not.toContain("limit reached");
+				expect(exact.details?.matchLimitReached).toBeUndefined();
+
+				const over = await grepTool.execute("test-call-over-limit", {
+					pattern: "match",
+					path: testFile,
+					limit: 1,
+					context,
+				});
+				expect(getTextOutput(over)).toContain("[1 matches limit reached. Use limit=2 for more, or refine pattern]");
+				expect(over.details?.matchLimitReached).toBe(1);
+			}
 		});
 
 		// https://github.com/earendil-works/pi/issues/11203
