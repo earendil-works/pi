@@ -209,8 +209,15 @@ export class ModelSelectorComponent extends Container implements Focusable {
 					this.refreshStatusSuccess = true;
 				}
 			}
+			const selectedModel = this.filteredModels[this.selectedIndex]?.model;
 			this.loadModelsFromSnapshot();
 			this.filterModels(this.searchInput.getValue());
+			// The user may have moved while the refresh was in flight, and the refresh can shift rows.
+			const refreshedIndex = this.filteredModels.findIndex((item) => modelsAreEqual(selectedModel, item.model));
+			if (refreshedIndex >= 0) {
+				this.selectedIndex = refreshedIndex;
+				this.updateList();
+			}
 			this.tui.requestRender();
 		} catch (error) {
 			if (this.closed) return;
