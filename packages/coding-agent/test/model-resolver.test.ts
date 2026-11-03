@@ -14,7 +14,6 @@ import {
 	type ModelReferenceRequest,
 	resolveCliModel,
 	resolveModelReference,
-	resolveModelScope,
 	resolveModelScopeWithDiagnostics,
 } from "../src/core/model-resolver.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -380,18 +379,20 @@ describe("resolveModelScopeWithDiagnostics", () => {
 		}
 	});
 
-	test("resolveModelScope preserves CLI warning output", async () => {
+	test("resolveModelScopeWithDiagnostics collects no-match diagnostics instead of printing them", async () => {
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 		try {
 			const registry = {
 				getAvailable: () => allModels,
-			} as unknown as Parameters<typeof resolveModelScope>[1];
+			} as unknown as Parameters<typeof resolveModelScopeWithDiagnostics>[1];
 
-			const scopedModels = await resolveModelScope(["missing"], registry);
+			const { scopedModels, diagnostics } = await resolveModelScopeWithDiagnostics(["missing"], registry);
 
 			expect(scopedModels).toEqual([]);
-			expect(warn).toHaveBeenCalledOnce();
-			expect(warn.mock.calls[0][0]).toContain('Warning: No models match pattern "missing"');
+			expect(diagnostics).toHaveLength(1);
+			expect(diagnostics[0]?.type).toBe("warning");
+			expect(diagnostics[0]?.message).toContain('No models match pattern "missing"');
+			expect(warn).not.toHaveBeenCalled();
 		} finally {
 			warn.mockRestore();
 		}
