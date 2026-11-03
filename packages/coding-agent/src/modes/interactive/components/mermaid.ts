@@ -60,9 +60,10 @@ function themedLines(art: MermaidArt, theme: Theme): string[] {
 export function createMermaidMarkdownTransformer(options: MermaidTransformerOptions): MarkdownTransformer {
 	return (markdown, context) => {
 		const mode = options.getMode();
+		// Diagrams render in user and assistant text and in model-written summaries, not in thinking or other surfaces.
 		if (
 			mode === "off" ||
-			context.messageType === "assistant-thinking" ||
+			(context.messageType !== "user" && context.messageType !== "assistant" && context.messageType !== "summary") ||
 			(context.isStreaming && mode !== "streaming")
 		) {
 			return markdown;

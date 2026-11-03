@@ -97,12 +97,16 @@ describe("Mermaid rendering", () => {
 		expect(rendered).not.toContain('dropped, expected a link: "also-invalid"');
 	});
 
-	it("respects rendering modes and skips thinking blocks", () => {
+	it("respects rendering modes and skips thinking blocks and non-transcript surfaces", () => {
 		const markdown = "```mermaid\nflowchart LR\n  A --> B\n```";
 
 		expect(transformMermaid(markdown, { mode: "off" })).toBe(markdown);
 		expect(transformMermaid(markdown, { mode: "final", isStreaming: true })).toBe(markdown);
 		expect(transformMermaid(markdown, { mode: "final" })).not.toContain("```mermaid");
 		expect(transformMermaid(markdown, { messageType: "assistant-thinking" })).toBe(markdown);
+		expect(transformMermaid(markdown, { messageType: "user" })).not.toContain("```mermaid");
+		expect(transformMermaid(markdown, { messageType: "summary" })).not.toContain("```mermaid");
+		expect(transformMermaid(markdown, { messageType: "custom" })).toBe(markdown);
+		expect(transformMermaid(markdown, { messageType: "changelog" })).toBe(markdown);
 	});
 });
