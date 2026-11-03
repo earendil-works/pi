@@ -118,6 +118,25 @@ describe("consumeSseStream", () => {
 		);
 		expect(sent).toBeLessThan(100);
 	});
+
+	// Regression test for #11729: a failed stream must be cancelled, not left open.
+	it("cancels the stream when an event exceeds the limit", async () => {
+		const encoder = new TextEncoder();
+		let cancelled = false;
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				// The server keeps the response open after the oversized event.
+				controller.enqueue(encoder.encode(`data: ${"x".repeat(512)}\n\n`));
+			},
+			cancel() {
+				cancelled = true;
+			},
+		});
+		await expect(consumeSseStream(stream, { maxEventBytes: 128, onEvent: () => {} })).rejects.toThrow(
+			"MCP SSE event exceeds 128 bytes",
+		);
+		expect(cancelled).toBe(true);
+	});
 });
 
 describe("StreamableHttpTransport", () => {
