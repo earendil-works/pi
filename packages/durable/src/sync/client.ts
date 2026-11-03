@@ -1,4 +1,3 @@
-import type { Context } from "@earendil-works/chord";
 import {
 	applyBatch,
 	type Backend,
@@ -7,7 +6,8 @@ import {
 	type OutboxCommit,
 	openStore,
 	type Store,
-} from "@earendil-works/chord/next";
+} from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { seqFromNumber } from "../ids.ts";
 import type { CommitPublication, Seq } from "../types.ts";
 import { decodeBatch, decodeSnapshot, encodeBatch, encodeSnapshot } from "./batch.ts";

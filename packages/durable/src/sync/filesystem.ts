@@ -1,4 +1,4 @@
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import type { FileError, FileSystem, Result } from "../env/index.ts";
 import { seqFromNumber } from "../ids.ts";
 import type { JsonObject, Seq } from "../types.ts";

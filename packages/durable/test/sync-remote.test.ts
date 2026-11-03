@@ -3,9 +3,10 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Context, JsonValue } from "@earendil-works/chord";
+import { openStore, type Store } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { openStore, type Store } from "@earendil-works/chord/next";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { afterEach, describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { idFromNumber, seqFromNumber } from "../src/ids.ts";

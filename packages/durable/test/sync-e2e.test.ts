@@ -4,7 +4,7 @@
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openStore, type Store } from "@earendil-works/chord/next";
+import { openStore, type Store } from "@earendil-works/chord";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../src/env/node.ts";

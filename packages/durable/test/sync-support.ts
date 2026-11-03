@@ -1,9 +1,9 @@
 // A session's copy for the sync tests: a Chord store over a SQLite database with its outbox on, and Durable's storage
 // in it under one owner name. The store is what syncs; the storage is opened on it only while something commits.
 
-import type { Context } from "@earendil-works/chord";
+import { type Backend, openStore, type Store, sqliteBackend } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { type Backend, openStore, type Store, sqliteBackend } from "@earendil-works/chord/next";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { StoreStorage } from "../src/storage/store/index.ts";
 import { commitWrites } from "../src/testing/commit-writes.ts";
