@@ -95,10 +95,13 @@ forEachCodec(() =>
 			const [a, b] = memoryLinkPair();
 			client.connect(a, { principal: { kind: "server" }, codec: testCodec() }, context);
 			const peer = new RawPeer(b, { hello: false });
-			const got = client.get(Thing, {}, context, { readyTimeout: 20 });
+			// The expectation is attached at once: on a slow machine the 20 ms pass before `flushed` returns.
+			const failed = expect(client.get(Thing, {}, context, { readyTimeout: 20 })).rejects.toThrow(
+				"app.thing: did not become live within 20 ms",
+			);
 			await flushed();
 			expect(peer.kinds()).toEqual(["hello"]);
-			await expect(got).rejects.toThrow("app.thing: did not become live within 20 ms");
+			await failed;
 			peer.send({ kind: "hello", protocol: PROTOCOL_VERSION, incarnation: RAW_PEER, calls: 256 });
 			await transported();
 			expect(peer.kinds()).toEqual(["hello", "hold", "release"]);
