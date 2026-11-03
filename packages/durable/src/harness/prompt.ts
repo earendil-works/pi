@@ -1,4 +1,4 @@
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import type { Message, SystemMessage, Tool, ToolReference } from "@earendil-works/pi-ai";
 import { declarationsEqual, getCurrentTools, toToolDeclaration } from "@earendil-works/pi-ai/utils/transcript";
 import { SystemEntry } from "../entries.ts";

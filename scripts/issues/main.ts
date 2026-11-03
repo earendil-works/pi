@@ -6,7 +6,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
-import { Corpus, issueStatus, REPO } from "./github.ts";
+import { Corpus, inInbox, issueStatus, REPO } from "./github.ts";
 import { PRIORITIES, type Priority, Triage } from "./triage.ts";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -54,7 +54,7 @@ async function view() {
 	const state = await triage.state();
 	const items = corpus
 		.all()
-		.filter((issue) => issue.createdAt >= state.inboxSince)
+		.filter((issue) => inInbox(issue, state.inboxSince))
 		.sort((a, b) => b.number - a.number)
 		.map((issue) => {
 			const entry = state.issues[issue.number];
@@ -124,6 +124,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 		return send(res, 200, readFileSync(join(scriptDir, "ui.html"), "utf8"), "text/html; charset=utf-8");
 	}
 	if (req.method === "GET" && url.pathname === "/api/state") return send(res, 200, JSON.stringify(await view()));
+	if (req.method === "GET" && url.pathname === "/api/conversation") {
+		const items = await triage.transcript(Number(url.searchParams.get("number")));
+		return items ? send(res, 200, JSON.stringify({ items })) : send(res, 404, '{"error":"no conversation"}');
+	}
 	if (req.method === "POST" && url.pathname === "/api/sync") {
 		void runSync();
 		return send(res, 202, "{}");

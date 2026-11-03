@@ -1,0 +1,5 @@
+{
+	"name": "@acme/mixed",
+	"private": true,
+	"type": "module"
+}

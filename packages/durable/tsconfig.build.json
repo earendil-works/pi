@@ -4,6 +4,14 @@
 		"outDir": "./dist",
 		"paths": {
 			"@earendil-works/chord": ["../chord/dist/index.d.ts"],
+			"@earendil-works/chord/context": ["../chord/dist/context/index.d.ts"],
+			"@earendil-works/chord/delta": ["../chord/dist/delta/index.d.ts"],
+			"@earendil-works/chord/json": ["../chord/dist/json.d.ts"],
+			"@earendil-works/chord/watch": ["../chord/dist/watch.d.ts"],
+			"@earendil-works/chord/output": ["../chord/dist/output.d.ts"],
+			"@earendil-works/chord/sqlite": ["../chord/dist/sqlite/index.d.ts"],
+			"@earendil-works/chord/sqlite/node": ["../chord/dist/sqlite/node.d.ts"],
+			"@earendil-works/chord/sqlite/cloudflare": ["../chord/dist/sqlite/cloudflare.d.ts"],
 			"@earendil-works/pi-ai": ["../ai/dist/index.d.ts"]
 		},
 		"rootDir": "./src"

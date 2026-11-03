@@ -16,6 +16,7 @@ h1{font-size:17px;margin:0 8px 0 0}
 .status{font-size:12px;color:var(--muted);max-width:860px;margin:4px auto 0}
 .tabs{display:flex;gap:2px}
 .tab,.btn,select{font:inherit;font-size:14px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:7px;padding:5px 10px;cursor:pointer}
+.opt{font-size:14px;display:flex;gap:4px;align-items:center;cursor:pointer}
 .tab.on{background:var(--text);color:var(--bg);border-color:var(--text)}
 main{max-width:860px;margin:0 auto;padding:8px 10px 60px}
 .grp{display:flex;justify-content:space-between;align-items:center;margin:18px 4px 6px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
@@ -45,6 +46,18 @@ pre{white-space:pre-wrap;word-break:break-word;font:12.5px/1.45 ui-monospace,Men
 .dec.p0{background:var(--p0)}.dec.p1{background:var(--p1)}.dec.none{background:var(--none)}
 .empty{color:var(--muted);text-align:center;margin:40px 0}
 .err{color:var(--p0)}
+dialog{border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);padding:16px 20px;min-width:280px}
+dialog::backdrop{background:rgb(0 0 0 / .35)}
+dialog h2{font-size:15px;margin:0 0 10px}
+dialog table{border-collapse:collapse;font-size:14px}
+dialog td{padding:3px 12px 3px 0}
+kbd{font:12.5px ui-monospace,Menlo,monospace;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:1px 6px;background:var(--hover)}
+.conv{margin:6px 0 0;display:flex;flex-direction:column;gap:6px}
+.conv .msg{white-space:pre-wrap;word-break:break-word}
+.conv .who{font-size:11px;font-weight:600;text-transform:uppercase;color:var(--muted)}
+.conv .thinking{color:var(--muted);font-style:italic}
+.conv details{margin:0}
+.conv summary code{font:12.5px ui-monospace,Menlo,monospace;color:var(--text)}
 </style>
 </head>
 <body>
@@ -57,13 +70,37 @@ pre{white-space:pre-wrap;word-break:break-word;font:12.5px/1.45 ui-monospace,Men
 			<button class="tab" data-view="all">All</button>
 		</div>
 		<select id="cat"><option value="">All categories</option></select>
+		<select id="sort">
+			<option value="suggestion">By suggestion</option>
+			<option value="desc">Newest first</option>
+			<option value="asc">Oldest first</option>
+		</select>
+		<label class="opt"><input type="checkbox" id="related"> Show related</label>
 		<button class="btn" id="sync">Sync</button>
+		<button class="btn" id="help" title="Keyboard shortcuts">?</button>
 	</div>
 	<div class="status" id="status"></div>
 </header>
 <main id="main"></main>
+<dialog id="keys">
+	<h2>Keyboard shortcuts</h2>
+	<table>
+		<tr><td><kbd>j</kbd> <kbd>k</kbd></td><td>Next / previous issue</td></tr>
+		<tr><td><kbd>0</kbd></td><td>Set p0</td></tr>
+		<tr><td><kbd>1</kbd></td><td>Set p1</td></tr>
+		<tr><td><kbd>n</kbd></td><td>Set none</td></tr>
+		<tr><td><kbd>o</kbd></td><td>Open on GitHub</td></tr>
+		<tr><td><kbd>c</kbd></td><td>Show / hide the conversation</td></tr>
+		<tr><td><kbd>?</kbd></td><td>Show this help</td></tr>
+		<tr><td><kbd>Esc</kbd></td><td>Close</td></tr>
+	</table>
+</dialog>
 <script>
 let data = null, view = "inbox", cat = "", sel = -1, openDetails = new Set();
+let sort = localStorage.getItem("sort") || "suggestion";
+let showRelated = localStorage.getItem("showRelated") !== "0";
+// Fetched transcripts by issue number; refreshed on every load while their section is open.
+const convs = new Map();
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const gh = (n) => `https://github.com/${data.repo}/issues/${n}`;
@@ -76,7 +113,39 @@ async function load() {
 	const res = await fetch("/api/state");
 	if (!res.ok) { $("main").innerHTML = `<p class="empty">${res.status}: ${esc(await res.text())}</p>`; return; }
 	data = await res.json();
+	await Promise.all([...openDetails].filter((k) => k.startsWith("conv:")).map((k) => fetchConv(Number(k.slice(5)))));
 	render();
+}
+
+async function fetchConv(n) {
+	const res = await fetch(`/api/conversation?number=${n}`);
+	convs.set(n, res.ok ? (await res.json()).items : null);
+}
+
+function toolLine(t) {
+	const a = t.args ?? {};
+	if (t.name === "search_issues") return `search_issues "${a.query}"`;
+	if (t.name === "read_issue") return `read_issue #${a.number}`;
+	if (t.name === "submit_triage") return `submit_triage ${a.category}, ${a.suggestion}`;
+	return `${t.name} ${JSON.stringify(a).slice(0, 120)}`;
+}
+
+function transcript(n) {
+	if (!convs.has(n)) return `<p class="ai">Loading…</p>`;
+	const items = convs.get(n);
+	if (!items) return `<p class="ai">No conversation yet.</p>`;
+	return `<div class="conv">${items.map((it, i) => {
+		if (it.type === "tool") {
+			const key = `tool:${n}:${i}`;
+			const out = it.name === "submit_triage" ? JSON.stringify(it.args, null, 2) : it.output ?? "(running…)";
+			return `<details data-key="${key}" ${openDetails.has(key) ? "open" : ""}><summary><code>${esc(toolLine(it))}</code>${it.isError ? ` <span class="err">error</span>` : ""}</summary><pre>${esc(out)}</pre></details>`;
+		}
+		if (it.type === "user") {
+			const key = `prompt:${n}:${i}`;
+			return `<details data-key="${key}" ${openDetails.has(key) ? "open" : ""}><summary><span class="who">user</span> ${esc(it.text.split("\n")[0].slice(0, 100))}</summary><pre>${esc(it.text)}</pre></details>`;
+		}
+		return `<div class="msg ${it.type}"><span class="who">${it.type === "thinking" ? "thinking" : "agent"}</span> ${esc(it.text)}</div>`;
+	}).join("")}</div>`;
 }
 
 async function post(path, body) {
@@ -93,7 +162,8 @@ function visible() {
 }
 
 function groups(items) {
-	if (view !== "inbox") return [["", items]];
+	if (sort === "asc") return [["", [...items].sort((a, b) => a.number - b.number)]];
+	if (view !== "inbox" || sort === "desc") return [["", items]];
 	const by = { p0: [], p1: [], none: [], pending: [] };
 	for (const it of items) by[it.triage?.status === "done" ? it.triage.result.suggestion : "pending"].push(it);
 	return [["Suggested p0", by.p0], ["Suggested p1", by.p1], ["Suggested none", by.none], ["Not triaged yet", by.pending]];
@@ -113,7 +183,8 @@ function card(it, idx) {
 	if (r) {
 		body += `<p class="sum">${esc(r.summary)}</p>`;
 		if (r.signals.length) body += `<div class="chips">${r.signals.map((s) => `<span class="chip ${BAD.has(s) ? "bad" : WARN.has(s) ? "warn" : ""}">${esc(s)}</span>`).join("")}</div>`;
-		if (r.duplicates.length) body += `<ul class="dups">${r.duplicates.map((x) => `<li><span class="k ${x.kind}">${x.kind}</span> <a href="${gh(x.number)}" target="_blank">#${x.number}</a> ${esc(x.title)} <span class="meta" style="display:inline">(${esc(x.status)})</span><br><span class="meta" style="display:inline">${esc(x.reason)}</span></li>`).join("")}</ul>`;
+		const dups = showRelated ? r.duplicates : r.duplicates.filter((x) => x.kind === "duplicate");
+		if (dups.length) body += `<ul class="dups">${dups.map((x) => `<li><span class="k ${x.kind}">${x.kind}</span> <a href="${gh(x.number)}" target="_blank">#${x.number}</a> ${esc(x.title)} <span class="meta" style="display:inline">(${esc(x.status)})</span><br><span class="meta" style="display:inline">${esc(x.reason)}</span></li>`).join("")}</ul>`;
 		body += `<div class="ai">AI: <b>${r.suggestion}</b> — ${esc(r.reason)}</div>`;
 	} else if (it.triage?.status === "failed") {
 		body += `<p class="err">Triage failed: ${esc(it.triage.error)}</p>`;
@@ -129,7 +200,8 @@ function card(it, idx) {
 		<div class="acts">${pri("p0")}${pri("p1")}${pri("none")}
 			<select data-act="cat" data-n="${it.number}">${r ? "" : "<option></option>"}${cats}</select>
 		</div>
-		<details data-n="${it.number}" ${openDetails.has(it.number) ? "open" : ""}><summary>Issue text</summary>
+		${it.triage ? `<details data-key="conv:${it.number}" ${openDetails.has(`conv:${it.number}`) ? "open" : ""}><summary>Conversation</summary>${transcript(it.number)}</details>` : ""}
+		<details data-key="text:${it.number}" ${openDetails.has(`text:${it.number}`) ? "open" : ""}><summary>Issue text</summary>
 			<pre>${esc(it.body) || "(empty)"}</pre>
 			<button class="btn small" data-act="retriage" data-n="${it.number}">Triage again</button>
 		</details>
@@ -144,7 +216,7 @@ function render() {
 	const undecided = data.items.filter((it) => !it.decision?.priority).length;
 	const q = data.queue;
 	$("status").innerHTML = [
-		`${undecided} undecided of ${data.items.length} since ${data.inboxSince.slice(0, 10)}`,
+		`${undecided} undecided of ${data.items.length} (untriaged, or new since ${data.inboxSince.slice(0, 10)})`,
 		q.queued || q.running ? `triaging ${q.running}, ${q.queued} queued` : "",
 		data.sync.running ? "syncing…" : data.sync.lastSync ? `synced ${ago(data.sync.lastSync)} ago` : "",
 		data.sync.lastError ? `<span class="err">sync: ${esc(data.sync.lastError)}</span>` : "",
@@ -177,11 +249,18 @@ document.addEventListener("click", (e) => {
 document.addEventListener("change", (e) => {
 	if (e.target.dataset.act === "cat") post("/api/decide", { number: Number(e.target.dataset.n), category: e.target.value });
 	if (e.target.id === "cat") { cat = e.target.value; sel = -1; render(); }
+	if (e.target.id === "related") { showRelated = e.target.checked; localStorage.setItem("showRelated", showRelated ? "1" : "0"); render(); }
+	if (e.target.id === "sort") { sort = e.target.value; localStorage.setItem("sort", sort); sel = -1; render(); }
 });
 document.addEventListener("toggle", (e) => {
-	if (e.target.tagName !== "DETAILS") return;
-	const n = Number(e.target.dataset.n);
-	e.target.open ? openDetails.add(n) : openDetails.delete(n);
+	const key = e.target.dataset?.key;
+	if (e.target.tagName !== "DETAILS" || !key || e.target.open === openDetails.has(key)) return;
+	if (!e.target.open) { openDetails.delete(key); return; }
+	openDetails.add(key);
+	if (key.startsWith("conv:")) {
+		const n = Number(key.slice(5));
+		fetchConv(n).then(render);
+	}
 }, true);
 document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
 	view = t.dataset.view; sel = -1;
@@ -189,14 +268,22 @@ document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
 	render();
 });
 $("sync").onclick = () => post("/api/sync", {});
+$("help").onclick = () => $("keys").showModal();
+// A click on the backdrop lands on the dialog element itself.
+$("keys").onclick = (e) => { if (e.target === $("keys")) $("keys").close(); };
 
-// Keyboard: j/k select, 0/1/n decide, o open on GitHub.
+// Keyboard: j/k select, 0/1/n decide, o open on GitHub, c show the conversation, ? show the shortcuts.
 document.addEventListener("keydown", (e) => {
-	if (!data || e.target.tagName === "SELECT" || e.metaKey || e.ctrlKey) return;
+	if (e.key === "?" && !$("keys").open) { $("keys").showModal(); return; }
+	if (!data || $("keys").open || e.target.tagName === "SELECT" || e.metaKey || e.ctrlKey) return;
 	const list = flat(), it = list[sel];
 	if (e.key === "j") sel = Math.min(sel + 1, list.length - 1);
 	else if (e.key === "k") sel = Math.max(sel - 1, 0);
 	else if (it && e.key === "o") { window.open(gh(it.number), "_blank"); return; }
+	else if (it && e.key === "c") {
+		document.querySelector(`details[data-key="conv:${it.number}"]`)?.toggleAttribute("open");
+		return;
+	}
 	else if (it && ["0", "1", "n"].includes(e.key)) {
 		const p = { 0: "p0", 1: "p1", n: "none" }[e.key];
 		post("/api/decide", { number: it.number, priority: p });
@@ -206,6 +293,8 @@ document.addEventListener("keydown", (e) => {
 	document.querySelector(".card.sel")?.scrollIntoView({ block: "nearest" });
 });
 
+$("sort").value = sort;
+$("related").checked = showRelated;
 load();
 setInterval(() => { if (!document.hidden && !document.querySelector("select:focus")) load(); }, 8000);
 </script>

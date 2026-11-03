@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Speaking Every Language: i18n in the app kit</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A proposal · Chord v2 app kit · 2026-11-02</div>
+  <h1>i18n<br>in the App Kit</h1>
+  <p class="subtitle">How an app and its plugins write their texts once, in code, and show them in each viewer&#39;s language</p>
+  <div class="cover-stats"><div class="stat"><b>1</b><span>function a plugin calls: t(key, ...args)</span></div><div class="stat"><b>0</b><span>message files outside the code</span></div><div class="stat"><b>0</b><span>page reloads to switch a language</span></div></div>
+  <div class="cover-note"><p>A proposal by the redesign session, asked for by the owner on 2026-11-02 (&quot;i18n also needs to be part of the app
+kit&quot;; &quot;need code example&quot;). It starts from mini-lit&#39;s <code>src/i18n.ts</code> (typed catalogs in code) and adapts it to
+plugins that are built separately, reload live and run on several hosts. Not built; it would land in the app kit
+with slice 11.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#messages">I. Messages in Code</a></li>
+<li><a href="#translations">II. Languages as Contributions</a></li>
+<li><a href="#locale">III. Choosing a Language</a></li>
+<li><a href="#server">IV. Text from the Server</a></li>
+<li><a href="#open-questions">Open Questions</a></li>
+<li><a href="#api-in-brief">Appendix A: API in Brief</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Lena uses p3 in German; her colleague Tom, a guest in her session, reads English. The notes plugin shows &quot;New note&quot;
+to Tom and &quot;Neue Notiz&quot; to Lena, on the same page served by the same server. A French translator later adds French to
+the app and to every plugin, without touching any of them. And when Lena switches to French, nothing reloads: the
+text on her screen changes, the half-written message stays.</p>
+<p>mini-lit already does the first part well: messages are TypeScript objects, keyed and type-checked, so a missing
+German text is a compile error. Three things do not carry over: its messages are one global table extended by
+declaration merging (which separately built plugins cannot share), the language lives in <code>localStorage</code> and switching
+reloads the page, and every text is formatted where it is shown, which breaks when the server formats a message for
+two viewers with two languages.</p>
+<h3 id="five-things-to-know">Five things to know</h3>
+<ol class="findings">
+<li><strong>Messages stay in code,</strong> per plugin: <code>defineMessages(&quot;notes&quot;, { en: {...}, de: {...} })</code> returns a typed <code>t</code>.</li>
+<li><strong>Values may be functions,</strong> for plurals and parameters; dates and numbers go through <code>Intl</code>.</li>
+<li><strong>Languages are contributions:</strong> a <code>Translations</code> registry adds a language to any plugin, the app included.</li>
+<li><strong>The language is a user preference,</strong> from the browser or the system locale by default; switching re-renders live.</li>
+<li><strong>Servers and workers never format text for people:</strong> they send a key and its parameters, and each viewer&#39;s client
+renders them in its own language.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>A <strong>message</strong> is one text with a key (<code>newNote</code>). A <strong>catalog</strong> is the messages of one plugin in one language. A
+<strong>namespace</strong> is the plugin a catalog belongs to. A <strong>locale</strong> is a language tag (<code>de</code>, <code>pt-BR</code>).</p>
+</section>
+
+<section class="chapter" id="messages"><header class="opener"><div class="numeral">I</div><h2>Messages in Code</h2><p class="lede">Each plugin defines its own messages and gets a typed function back.</p></header>
+<pre><code><span class="tk-c">// plugins/notes/messages.ts</span>
+<span class="tk-k">import</span> { defineMessages } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> t = <span class="tk-f">defineMessages</span>(<span class="tk-s">"notes"</span>, {
+	en: {
+		newNote: <span class="tk-s">"New note"</span>,
+		empty: <span class="tk-s">"No notes yet"</span>,
+		count: (n: number) =&gt; (n === <span class="tk-n">1</span> ? <span class="tk-s">"1 note"</span> : <span class="tk-s">`${n} notes`</span>),
+		saved: (title: string, at: <span class="tk-t">Date</span>) =&gt; <span class="tk-s">`Saved "${title}" at ${formatTime(at)}`</span>,
+	},
+	de: {
+		newNote: <span class="tk-s">"Neue Notiz"</span>,
+		empty: <span class="tk-s">"Noch keine Notizen"</span>,
+		count: (n) =&gt; (n === <span class="tk-n">1</span> ? <span class="tk-s">"1 Notiz"</span> : <span class="tk-s">`${n} Notizen`</span>),
+		saved: (title, at) =&gt; <span class="tk-s">`„${title}“ um ${formatTime(at)} gespeichert`</span>,
+	},
+});</code></pre>
+<pre><code><span class="tk-c">// plugins/notes/web.tsx</span>
+<span class="tk-k">import</span> { t } <span class="tk-k">from</span> <span class="tk-s">"./messages.ts"</span>;
+
+<span class="tk-k">function</span> <span class="tk-t">NotesHeader</span>({ count }: { count: number }) {
+	<span class="tk-k">return</span> &lt;h2&gt;{<span class="tk-f">t</span>(<span class="tk-s">"count"</span>, count)} &lt;button&gt;{<span class="tk-f">t</span>(<span class="tk-s">"newNote"</span>)}&lt;/button&gt;&lt;/h2&gt;;
+}</code></pre>
+<p>The first catalog (<code>en</code>) defines the keys and their argument types; every other catalog must have the same keys with
+the same signatures, so a missing German text, a typo in a key or a wrong argument is a type error, not a blank in
+production. <code>t(&quot;count&quot;, &quot;3&quot;)</code> does not compile. The namespace (<code>&quot;notes&quot;</code>) keeps two plugins&#39; <code>empty</code> apart.</p>
+<p>Functions cover what plain strings cannot: plurals (<code>count</code>), parameters in the right word order (<code>saved</code> puts the
+title first in English and German alike, but another language may not), and gender or case where a language needs it.
+Plural rules beyond one and many use <code>Intl.PluralRules</code>; dates, times and numbers use <code>Intl.DateTimeFormat</code> and
+<code>Intl.NumberFormat</code> with the viewer&#39;s locale, through two small helpers (<code>formatTime</code>, <code>formatNumber</code>) that read the
+current locale like <code>t</code>.</p>
+</section>
+
+<section class="chapter" id="translations"><header class="opener"><div class="numeral">II</div><h2>Languages as Contributions</h2><p class="lede">Adding French to the app and every plugin without editing them.</p></header>
+<p class="dropcap">A plugin ships the languages its author speaks. Everything else can come from anyone, as a contribution:</p>
+<pre><code><span class="tk-c">// plugins/french/web.ts (a translation plugin)</span>
+<span class="tk-k">import</span> { defineFacet, <span class="tk-t">Translations</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1"</span>;
+<span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">MessagesOf</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1"</span>;
+<span class="tk-k">import</span> <span class="tk-k">type</span> { t <span class="tk-k">as</span> notes } <span class="tk-k">from</span> <span class="tk-s">"../notes/messages.ts"</span>;   <span class="tk-c">// the notes plugin's keys, for the type check</span>
+
+<span class="tk-k">const</span> notesFr: <span class="tk-t">MessagesOf</span>&lt;<span class="tk-k">typeof</span> notes&gt; = {
+	newNote: <span class="tk-s">"Nouvelle note"</span>,
+	empty: <span class="tk-s">"Aucune note"</span>,
+	count: (n) =&gt; (n &lt;= <span class="tk-n">1</span> ? <span class="tk-s">`${n} note`</span> : <span class="tk-s">`${n} notes`</span>),
+	saved: (title, at) =&gt; <span class="tk-s">`« ${title} » enregistrée à ${formatTime(at)}`</span>,
+};
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Translations</span>, { namespace: <span class="tk-s">"notes"</span>, locale: <span class="tk-s">"fr"</span>, messages: notesFr });
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Translations</span>, { namespace: <span class="tk-s">"app"</span>, locale: <span class="tk-s">"fr"</span>, messages: appFr });
+});</code></pre>
+<ul>
+<li><code>MessagesOf&lt;typeof t&gt;</code> gives a translation plugin the exact keys and signatures to fill, from the plugin it
+translates (an imported type, erased at build).</li>
+<li>A catalog may be partial: a missing key falls back to the plugin&#39;s own catalog for that language&#39;s base (<code>pt-BR</code> to
+<code>pt</code>), then to the first catalog (<code>en</code>), key by key. A fallback is reported once in the logs, so gaps are visible.</li>
+<li>Two contributions for the same namespace and locale: the first by plugin name wins, the other is reported (the
+registry rule for conflicts).</li>
+<li>A plugin&#39;s own catalogs are its built-in contributions; a translation plugin can also override one of them (a
+better German), contributed explicitly with <code>override: true</code>.</li>
+</ul>
+<h3 id="one-file-every-host">One file, every host</h3>
+<p>Registries are per host: a contribution lives on the host whose facet made it. A French catalog contributed from the
+web facet exists in browser pages only. So a plugin keeps its messages in one shared file, <code>messages.ts</code>, which every
+facet that renders text imports (the web and TUI facets; the worker&#39;s too when it builds messages with <code>t.message</code>),
+and a translation plugin keeps its catalog in one shared file too and contributes it from each facet that renders:</p>
+<pre><code><span class="tk-c">// plugins/french/fr.ts: the catalogs, written once</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> notesFr: <span class="tk-t">MessagesOf</span>&lt;<span class="tk-k">typeof</span> notes&gt; = { newNote: <span class="tk-s">"Nouvelle note"</span>, <span class="tk-c">/* ... */</span> };
+<span class="tk-c">// plugins/french/web.ts and plugins/french/tui.ts: the same two lines each</span>
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; self.<span class="tk-f">contribute</span>(<span class="tk-t">Translations</span>, { namespace: <span class="tk-s">"notes"</span>, locale: <span class="tk-s">"fr"</span>, messages: notesFr }));</code></pre>
+<p>The server and workers need catalogs only when they produce final text themselves (an email, a push notification);
+then their facets contribute them too, and the text is rendered in the recipient&#39;s language from their preference.
+Catalogs never travel over links: they contain functions.</p>
+</section>
+
+<section class="chapter" id="locale"><header class="opener"><div class="numeral">III</div><h2>Choosing a Language</h2><p class="lede">Per viewer, defaulted from the device, switched live.</p></header>
+<p class="dropcap">The language is a user preference, kept with the user&#39;s other preferences (the kit&#39;s per-principal document, like
+the theme choice), so it follows a person across devices:</p>
+<ul>
+<li><strong>Default:</strong> the browser&#39;s <code>navigator.languages</code> on the web, the system locale in the TUI, matched against the
+locales any catalog offers.</li>
+<li><strong>Switching:</strong> the app&#39;s settings show the locales available (the union of all catalogs); choosing one writes the
+preference. <code>t</code> reads the current locale from a watchable; React components re-render through a hook, the TUI
+redraws through its scope. Nothing reloads.</li>
+</ul>
+<pre><code><span class="tk-c">// any web component</span>
+<span class="tk-k">const</span> { t, locale } = <span class="tk-f">useMessages</span>(notesMessages);   <span class="tk-c">// re-renders when the locale or a translation changes</span></code></pre>
+<p>When a translation plugin is edited and rolled out, the registry recomposes and the open pages show the new text, as
+with themes.</p>
+</section>
+
+<section class="chapter" id="server"><header class="opener"><div class="numeral">IV</div><h2>Text from the Server</h2><p class="lede">Why the server sends keys, not sentences.</p></header>
+<p class="dropcap">The server and the workers also produce text people read: a notice (&quot;Worker failed to start&quot;), a tool card&#39;s
+summary, a status line, an error. If the worker formatted &quot;Notiz gespeichert&quot; for Lena, Tom would read German too:
+both look at the same object state.</p>
+<p>So objects carry messages as data, and each client renders them:</p>
+<pre><code><span class="tk-c">// plugins/notes/contract.ts: a member of the Notes object's state holds a message as data</span>
+lastSaved: <span class="tk-f">opt</span>(<span class="tk-f">obj</span>({ namespace: <span class="tk-f">str</span>(), key: <span class="tk-f">str</span>(), params: <span class="tk-f">arr</span>(<span class="tk-k">unknown</span>()) })),
+
+<span class="tk-c">// plugins/notes/worker.ts: the object writes the key and its parameters, never a sentence; the same `t` builds it</span>
+<span class="tk-k">import</span> { t } <span class="tk-k">from</span> <span class="tk-s">"./messages.ts"</span>;
+<span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; {
+	(<span class="tk-k">await</span> tx.<span class="tk-f">draft</span>(status)).lastSaved = t.<span class="tk-f">message</span>(<span class="tk-s">"saved"</span>, note.title, note.at);   <span class="tk-c">// typed: key and arguments checked</span>
+}, ctx);
+
+<span class="tk-c">// plugins/notes/web.tsx: each viewer renders it in its own language</span>
+<span class="tk-k">const</span> notes = <span class="tk-f">useHold</span>(<span class="tk-t">Notes</span>, { session });
+<span class="tk-k">const</span> text = notes.lastSaved &amp;&amp; t.<span class="tk-f">render</span>(notes.lastSaved);   <span class="tk-c">// typed against the notes catalog</span></code></pre>
+<p><code>t.message</code> returns a <code>Message&lt;&quot;notes&quot;&gt;</code>, plain data <code>{ namespace, key, params }</code>, typed against the first catalog:
+<code>t.message(&quot;saved&quot;, 42)</code> and <code>t.message(&quot;svaed&quot;, ...)</code> are type errors. <code>t.render</code> takes only <code>Message&lt;&quot;notes&quot;&gt;</code>. Across a
+link the contract&#39;s member is a generic message schema, so <code>t.render</code> checks the namespace and key at runtime and
+shows the key for an unknown one. The writer and the reader are type-checked; the hop between them is checked at
+runtime.</p>
+<p>The same holds for anything else that reaches people: an app&#39;s notices object stores <code>{ namespace, key, params }</code>
+per notice, a tool card&#39;s summary carries one, an error shown to a user carries a code and parameters.</p>
+<p>Parameters are plain data (strings, numbers, ISO dates), so they cross links like any state. What is never
+translated: the model&#39;s prompts and the model&#39;s own answers (the conversation&#39;s language is the user&#39;s business with
+the model), log lines (for developers, in English), error codes. Error <em>messages</em> shown to people follow the same rule
+as notices: a code plus parameters, rendered by the client.</p>
+</section>
+
+<section class="chapter epilogue" id="open-questions"><header class="opener"><div class="numeral">∴</div><h2>Open Questions</h2><p class="lede">To decide.</p></header>
+<ol>
+<li><strong>Keys or English text as keys.</strong> mini-lit keys by the English text (<code>&quot;Copy&quot;</code>), which reads well and needs no key
+names; named keys (<code>newNote</code>) survive rewording the English. Recommendation: named keys, with the English catalog
+as the source of truth.</li>
+<li><strong>A file format for translators.</strong> Code catalogs are best for developers and agents; human translators may want
+JSON or PO files. Recommendation: no files now; a small tool can export a plugin&#39;s catalogs to JSON and import them
+back into a translation plugin when someone needs it.</li>
+<li><strong>Right-to-left languages.</strong> The page sets <code>dir</code> from the locale; the app&#39;s CSS uses logical properties
+(<code>margin-inline-start</code>). Recommendation: the kit sets <code>lang</code> and <code>dir</code> on the root; components are the app&#39;s.</li>
+<li><strong>The TUI&#39;s locale.</strong> From the system locale, overridden by the user&#39;s preference, like the web.</li>
+</ol>
+</section>
+
+<section class="chapter appendix" id="api-in-brief"><header class="opener"><div class="numeral">A</div><h2>API in Brief</h2></header>
+<table>
+<thead>
+<tr>
+<th>Piece</th>
+<th>Where</th>
+<th>What</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>defineMessages(namespace, catalogs)</code></td>
+<td>the app&#39;s API (shared)</td>
+<td>typed <code>t(key, ...args)</code>, <code>t.render(message)</code></td>
+</tr>
+<tr>
+<td><code>MessagesOf&lt;typeof t&gt;</code></td>
+<td>the app&#39;s API (type)</td>
+<td>the keys and signatures a translation must fill</td>
+</tr>
+<tr>
+<td><code>Translations</code></td>
+<td>the app&#39;s API (shared registry)</td>
+<td><code>{ namespace, locale, messages, override? }</code></td>
+</tr>
+<tr>
+<td><code>useMessages(t)</code></td>
+<td>the app&#39;s web module</td>
+<td>the hook re-rendering on locale or translation changes</td>
+</tr>
+<tr>
+<td><code>formatTime</code>, <code>formatNumber</code></td>
+<td>the app&#39;s API</td>
+<td><code>Intl</code> helpers in the viewer&#39;s locale</td>
+</tr>
+<tr>
+<td>the locale preference</td>
+<td>the kit&#39;s per-principal preferences</td>
+<td>default from the device, switched live</td>
+</tr>
+<tr>
+<td><code>{ namespace, key, params }</code></td>
+<td>object state and notices</td>
+<td>a message as data, rendered by each client</td>
+</tr>
+</tbody></table>
+</section>
+
+<p class="colophon">Speaking Every Language · proposal · 2026-11-02</p>
+</div></div>
+
+</body></html>

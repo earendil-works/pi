@@ -10,29 +10,33 @@ use std::hash::{BuildHasher, Hasher};
 use std::io;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::fs::FileExt;
-use std::os::windows::io::{AsRawHandle, FromRawHandle};
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
-use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_IO_PENDING, FALSE, HANDLE, INVALID_HANDLE_VALUE, TRUE, WAIT_OBJECT_0,
+    WAIT_TIMEOUT,
+};
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, CREATE_ALWAYS, CreateFileW, FILE_APPEND_DATA,
     FILE_ATTRIBUTE_NORMAL, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
     FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
     FILE_WRITE_DATA, GetFileInformationByHandle, MOVEFILE_REPLACE_EXISTING, MoveFileExW,
-    OPEN_ALWAYS, OPEN_EXISTING,
+    OPEN_ALWAYS, OPEN_EXISTING, ReadFile, WriteFile,
 };
-use windows_sys::Win32::System::IO::CancelSynchronousIo;
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_BREAKAWAY_OK,
     JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JobObjectExtendedLimitInformation, SetInformationJobObject,
 };
-use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, CreateEventW, WaitForSingleObject};
+use windows_sys::core::BOOL;
 
 /// libuv's `uv_translate_sys_error` for the errors file and process operations produce.
 pub fn os_error_name(error: &io::Error) -> &'static str {
@@ -253,31 +257,146 @@ pub fn remove_file(path: &str) -> io::Result<()> {
     }
 }
 
-/// A pipe a reader thread reads with blocking calls; `interrupt_reader` cancels a blocked read.
-pub trait Pipe: io::Read {}
-impl<T: io::Read> Pipe for T {}
+/// The daemon's end of a child pipe. The standard library opens it for overlapped I/O, so a blocked read or write can only
+/// be cancelled with `CancelIoEx`, not `CancelSynchronousIo`; readers and writers issue their own overlapped operations
+/// and wait for them 100 ms at a time instead, like the Unix side's `poll`.
+pub trait Pipe: AsRawHandle {}
+impl<T: AsRawHandle> Pipe for T {}
 
-/// Read `pipe` until it ends, `on_data` returns false, or `stop` is set; the pipe closes when this returns.
-pub fn read_pipe(mut pipe: impl Pipe, stop: &AtomicBool, mut on_data: impl FnMut(&[u8]) -> bool) {
+/// The writing end, as `Pipe`.
+pub trait WritePipe: AsRawHandle {}
+impl<T: AsRawHandle> WritePipe for T {}
+
+/// How long one wait for an overlapped operation lasts before `stop` is looked at again.
+const STOP_POLL_MS: u32 = 100;
+
+/// Overlapped operations on one pipe handle, each completed or cancelled by the thread that started it, so nothing is
+/// left pending on a buffer that goes away.
+struct Overlapped {
+    handle: HANDLE,
+    event: OwnedHandle,
+}
+
+impl Overlapped {
+    fn new(pipe: &impl AsRawHandle) -> io::Result<Overlapped> {
+        // SAFETY: a manual-reset, unnamed event; ReadFile and WriteFile reset it when they start.
+        let event = unsafe { CreateEventW(std::ptr::null(), TRUE, FALSE, std::ptr::null()) };
+        if event.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Overlapped {
+            handle: pipe.as_raw_handle() as HANDLE,
+            // SAFETY: the event created above, owned from here on.
+            event: unsafe { OwnedHandle::from_raw_handle(event as _) },
+        })
+    }
+
+    /// Run one operation `start` begins with the `OVERLAPPED` it is given; the bytes it transferred, or `None` once
+    /// `stop` was set while it waited, after cancelling it.
+    fn run(
+        &self,
+        stop: &AtomicBool,
+        start: impl FnOnce(*mut OVERLAPPED) -> BOOL,
+    ) -> io::Result<Option<u32>> {
+        // SAFETY: a zeroed OVERLAPPED is valid; only its event is set.
+        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+        overlapped.hEvent = self.event.as_raw_handle() as HANDLE;
+        if start(&mut overlapped) == FALSE {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
+                return Err(error);
+            }
+        }
+        loop {
+            // SAFETY: the event outlives the wait.
+            let waited = unsafe { WaitForSingleObject(overlapped.hEvent, STOP_POLL_MS) };
+            if waited == WAIT_OBJECT_0 {
+                return self.result(&overlapped, FALSE).map(Some);
+            }
+            if waited == WAIT_TIMEOUT && !stop.load(Ordering::SeqCst) {
+                continue;
+            }
+            let failure = (waited != WAIT_TIMEOUT).then(io::Error::last_os_error);
+            // SAFETY: cancels only this operation, then waits for it to finish before `overlapped` and the caller's
+            // buffer go away.
+            unsafe { CancelIoEx(self.handle, &overlapped) };
+            let _ = self.result(&overlapped, TRUE);
+            return failure.map_or(Ok(None), Err);
+        }
+    }
+
+    fn result(&self, overlapped: &OVERLAPPED, wait: BOOL) -> io::Result<u32> {
+        let mut transferred = 0u32;
+        // SAFETY: the OVERLAPPED of an operation started on this handle.
+        if unsafe { GetOverlappedResult(self.handle, overlapped, &mut transferred, wait) } == FALSE
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(transferred)
+    }
+}
+
+/// Read `pipe` until it ends, `on_data` returns false, or `stop` is set (looked at every 100 ms, also while no output
+/// arrives); the pipe closes when this returns.
+pub fn read_pipe(pipe: impl Pipe, stop: &AtomicBool, mut on_data: impl FnMut(&[u8]) -> bool) {
+    let Ok(io) = Overlapped::new(&pipe) else {
+        return;
+    };
     let mut buffer = vec![0u8; 64 * 1024];
     while !stop.load(Ordering::SeqCst) {
-        match pipe.read(&mut buffer) {
-            Ok(0) | Err(_) => return,
-            Ok(read) => {
-                if !on_data(&buffer[..read]) {
+        let read = io.run(stop, |overlapped| {
+            // SAFETY: the buffer outlives the operation, which `run` completes or cancels before returning.
+            unsafe {
+                ReadFile(
+                    io.handle,
+                    buffer.as_mut_ptr(),
+                    buffer.len() as u32,
+                    std::ptr::null_mut(),
+                    overlapped,
+                )
+            }
+        });
+        // A broken pipe (every writer closed) is the end, as for the standard library's reads.
+        match read {
+            Ok(Some(read)) if read > 0 => {
+                if !on_data(&buffer[..read as usize]) {
                     return;
                 }
             }
+            _ => return,
         }
     }
 }
 
-/// Cancel a reader blocked in `ReadFile`, so it sees `stop` and closes its pipe.
-pub fn interrupt_reader(reader: &std::thread::JoinHandle<()>) {
-    // SAFETY: the handle of a live or finished thread; cancelling no pending I/O is harmless.
-    unsafe {
-        CancelSynchronousIo(reader.as_raw_handle() as _);
+/// Write all of `bytes`, waiting while the program does not read; false once the pipe is closed or `stop` is set
+/// (looked at every 100 ms, also while the write waits).
+pub fn write_pipe(pipe: &mut impl WritePipe, mut bytes: &[u8], stop: &AtomicBool) -> bool {
+    let Ok(io) = Overlapped::new(pipe) else {
+        return false;
+    };
+    while !bytes.is_empty() {
+        if stop.load(Ordering::SeqCst) {
+            return false;
+        }
+        let length = bytes.len().min(u32::MAX as usize) as u32;
+        let written = io.run(stop, |overlapped| {
+            // SAFETY: `bytes` outlives the operation, which `run` completes or cancels before returning.
+            unsafe {
+                WriteFile(
+                    io.handle,
+                    bytes.as_ptr(),
+                    length,
+                    std::ptr::null_mut(),
+                    overlapped,
+                )
+            }
+        });
+        match written {
+            Ok(Some(written)) if written > 0 => bytes = &bytes[written as usize..],
+            _ => return false,
+        }
     }
+    true
 }
 
 /// libuv's `search_path` for an argv command: a name with a directory is tried as given, otherwise the working

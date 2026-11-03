@@ -1,8 +1,8 @@
 // A Harness's registry over a Chord registry (Chord v2 slice 8 §5): the composed value of p3's extensions registry,
 // read as Durable's `RegistryReader`.
 
+import type { RegistryValue } from "@earendil-works/chord";
 import type { Context } from "@earendil-works/chord/context";
-import type { RegistryValue } from "@earendil-works/chord/next";
 import type { RegistryReader, RegistrySnapshot, ToolRegistration } from "./types.ts";
 
 /**

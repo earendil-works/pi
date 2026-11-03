@@ -1,0 +1,7 @@
+{
+	"name": "@bob/words",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"exports": { ".": "./words.ts" }
+}

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { copyJson, isJsonValue } from "../src/index.ts";
+import { copyJson, isJsonValue } from "../src/json.ts";
 
 describe("isJsonValue", () => {
 	test("checks strict JSON without normalizing it", () => {

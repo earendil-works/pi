@@ -1,0 +1,5 @@
+{
+	"name": "@acme/hello",
+	"private": true,
+	"type": "module"
+}

@@ -1,6 +1,7 @@
 // What a streamed answer changed in its partial message between two partial commits, so a commit costs the new text.
-import type { JsonRepresentation, JsonValue } from "@earendil-works/chord";
+
 import { appendText, type Draft } from "@earendil-works/chord/delta";
+import type { JsonRepresentation, JsonValue } from "@earendil-works/chord/json";
 import type { AssistantMessage, AssistantMessageEvent, ToolCall } from "@earendil-works/pi-ai";
 import { type JsonChange, StreamingJsonParser } from "@earendil-works/pi-ai/utils/streaming-json";
 import { type AssignPlan, assignJson } from "./json.ts";

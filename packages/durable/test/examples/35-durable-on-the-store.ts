@@ -7,7 +7,6 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
 	createHost,
 	defineFacet,
@@ -17,7 +16,8 @@ import {
 	openStore,
 	sqliteBackend,
 	str,
-} from "@earendil-works/chord/next";
+} from "@earendil-works/chord";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { createModels } from "@earendil-works/pi-ai";
 import { createRegistry, Harness, ROOT_CONVERSATION_ID } from "../../src/index.ts";
