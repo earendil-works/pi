@@ -1,0 +1,84 @@
+{
+	"sessions": {
+		"0abf6d29-bb8a-4c74-9e2b-264ec758348c": {
+			"title": "Alpha",
+			"location": "/",
+			"archived": false,
+			"updatedAt": 1793665283687,
+			"conversations": {
+				"1": {
+					"entries": 17,
+					"newest": 59
+				},
+				"19": {
+					"entries": 3,
+					"newest": 32
+				}
+			},
+			"subagents": [
+				{
+					"name": "worktree",
+					"location": "/",
+					"archived": false
+				}
+			],
+			"shares": {
+				"links": [],
+				"guests": []
+			},
+			"artifacts": {
+				"demo": 1
+			},
+			"uploads": 0,
+			"downloads": 1
+		},
+		"21aba2c9-877c-47f8-b8f8-90182f87cd26": {
+			"title": "Beta",
+			"location": "/",
+			"archived": false,
+			"updatedAt": 1793665284797,
+			"conversations": {
+				"1": {
+					"entries": 3,
+					"newest": 11
+				}
+			},
+			"subagents": [],
+			"shares": {
+				"links": ["view"],
+				"guests": ["view"]
+			},
+			"artifacts": {},
+			"uploads": 1,
+			"downloads": 0
+		},
+		"d2d73884-e8e4-4efb-b3ab-6c717aaca671": {
+			"title": "Archived",
+			"location": "/",
+			"archived": true,
+			"updatedAt": 1793665285792,
+			"conversations": {
+				"1": {
+					"entries": 3,
+					"newest": 11
+				}
+			},
+			"subagents": [],
+			"shares": {
+				"links": [],
+				"guests": []
+			},
+			"artifacts": {},
+			"uploads": 0,
+			"downloads": 0
+		}
+	},
+	"envs": ["gpu"],
+	"forwards": [
+		{
+			"port": 5173,
+			"name": "web",
+			"public": false
+		}
+	]
+}

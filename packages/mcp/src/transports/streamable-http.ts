@@ -103,6 +103,10 @@ export async function consumeSseStream(stream: ReadableStream<Uint8Array>, optio
 		buffered += decoder.decode();
 		if (buffered) processLine(buffered);
 		dispatch();
+	} catch (error) {
+		// Releasing the lock alone leaves the response open; the original error wins over a failed cancel.
+		await reader.cancel().catch(() => {});
+		throw error;
 	} finally {
 		reader.releaseLock();
 	}

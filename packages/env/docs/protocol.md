@@ -64,9 +64,10 @@ command as a full pipe would.
 Each side sends `ping` every 5 seconds. The daemon kills every process group it started and exits after 30 seconds
 without receiving any bytes, when stdin ends, or on `SIGTERM`, `SIGINT` or `SIGHUP`. A dropped connection or a
 stopped daemon therefore stops remote commands. On Windows, a terminated daemon cannot clean up: a job object kills
-each command's own process, but not processes that one started. The client fails requests of a lost connection with
-`{ code: "unknown", lost: true }` and starts a new daemon on the next request; handles belong to the daemon that opened
-them, so requests on them fail instead of reaching the new one.
+each command's own process, but not processes that one started, except for `process` programs, whose own job object
+holds what they start (see `process` for the gap right after the start). The client fails requests of a lost
+connection with `{ code: "unknown", lost: true }` and starts a new daemon on the next request; handles belong to the
+daemon that opened them, so requests on them fail instead of reaching the new one.
 
 ## Operations
 
@@ -155,11 +156,15 @@ build) from the prompt; background jobs are not reported. It fails with `EBADF` 
 `process { argv, cwd, env, inheritEnv }` runs a program with plain pipes for stdin, stdout and stderr (feature
 `process`), for programs that speak a protocol on stdin and stdout, such as MCP servers. `argv` is required and runs
 directly, without a shell, resolved and started as an `exec` argv command is (its own process group, the same
-environment rules, a job object on Windows). Once the program runs, an event `{ kind: "started", pid }` comes first;
-then `{ kind: "output", stream }` events carry raw bytes of `stdout` or `stderr` as payload (not decoded, not
-translated). Output waits while more than 4 MiB of output is unsent, like a full pipe. After the program exits, output
-is collected until both pipes close or 100 ms pass without output. The result is `{ exitCode }`; a program that cannot
-start fails with `spawn_error`.
+environment rules), and on Windows also in a job object of its own. When the program exits, whatever it started in its
+process group (on Windows, its job object) is killed: a wrapper such as `npx` that exits does not leave the server it
+started running. On Unix, a process that moved to a process group or session of its own (`setpgid`, `setsid`) has left
+the group and keeps running. On Windows, the program runs before the daemon assigns it to its job objects: a child it
+starts in that moment stays outside them and keeps running; children started later cannot leave the job. Once the
+program runs, an event `{ kind: "started", pid }` comes first; then `{ kind: "output", stream }` events carry raw bytes
+of `stdout` or `stderr` as payload (not decoded, not translated). Output waits while more than 4 MiB of output is
+unsent, like a full pipe. After the program exits, output is collected until both pipes close or 100 ms pass without
+output. The result is `{ exitCode }`; a program that cannot start fails with `spawn_error`.
 
 While a `process` request runs, `processWrite { target }` writes its payload to the program's stdin and
 `processCloseStdin { target }` closes stdin after the input queued before it; `target` is the id of the `process`

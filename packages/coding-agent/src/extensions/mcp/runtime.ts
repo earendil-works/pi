@@ -28,22 +28,23 @@ import {
 	StdioTransport,
 	StreamableHttpTransport,
 } from "@earendil-works/pi-mcp";
-import { McpOAuthAuthorizationRequiredError, type OAuthChallenge } from "@earendil-works/pi-mcp/oauth";
+import {
+	type McpAuthProvider,
+	McpOAuthAuthorizationRequiredError,
+	type McpOAuthSettings,
+	type OAuthChallenge,
+} from "@earendil-works/pi-mcp/oauth";
 import { VERSION } from "../../config.ts";
 import { resolveConfigValueOrThrow, resolveHeadersOrThrow } from "../../core/resolve-config-value.ts";
 import type { McpServerEntry } from "./config.ts";
 import type { McpServerLog } from "./log.ts";
-import {
-	createMcpAuthProvider,
-	type McpAuthProvider,
-	type McpOAuthCredentialStore,
-	type McpOAuthSettings,
-} from "./oauth.ts";
+import { createMcpAuthProvider, type McpOAuthCredentialStore } from "./oauth.ts";
 import type { McpResourceServer } from "./resources.ts";
 import type { McpToolCaller } from "./tools.ts";
 
+export { McpSignInCancelledError } from "@earendil-works/pi-mcp/oauth";
 export { McpServerLog } from "./log.ts";
-export { McpOAuthCredentialStore, McpSignInCancelledError, signInMcpServer } from "./oauth.ts";
+export { McpOAuthCredentialStore, signInMcpServer } from "./oauth.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 60;
 const STDERR_TAIL_CHARS = 2_000;

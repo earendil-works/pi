@@ -215,16 +215,39 @@ pub fn spawn(
     Ok(child)
 }
 
-/// Reap `child` on a thread of its own, which sends its exit to `sender`. A thread that cannot start hands the child
-/// back with the error, so the caller kills and reaps it.
-pub fn start_waiter(child: Child, sender: Sender<Message>) -> Result<(), (Child, std::io::Error)> {
+/// A `process` program's group, killed once the program exits, and the daemon's groups, which forget the program
+/// before it is reaped.
+pub struct Ending {
+    pub group: sys::Group,
+    pub groups: Groups,
+}
+
+/// Reap `child` on a thread of its own, which sends its exit to `sender`. With `ending`, what the child started in its
+/// group is killed once it exits, before the exit is sent. A thread that cannot start hands the child back with the
+/// error, so the caller kills and reaps it.
+pub fn start_waiter(
+    child: Child,
+    ending: Option<Ending>,
+    sender: Sender<Message>,
+) -> Result<(), (Child, std::io::Error)> {
     // The waiter receives the child once it runs, so a waiter that cannot start leaves the child here to reap.
     let (give, take) = mpsc::channel::<Child>();
     let started = thread::Builder::new().spawn(move || {
         let Ok(mut child) = take.recv() else {
             return;
         };
-        let _ = sender.send(match child.wait() {
+        let status = match &ending {
+            None => child.wait(),
+            Some(ending) => {
+                // After a failed wait, ending the group kills the program, so the reap below still returns.
+                let exited = ending.group.wait_for_exit(&mut child);
+                ending.group.end();
+                // Forgotten before it is reaped: a kill that checks `groups` under its lock never reaches a reused pid.
+                ending.groups.lock().unwrap().remove(&child.id());
+                exited.and(child.wait())
+            }
+        };
+        let _ = sender.send(match status {
             Ok(status) => Message::Exit(status),
             Err(error) => Message::WaitFailed(error.to_string()),
         });
@@ -392,7 +415,7 @@ pub fn run(
     if let Err(error) = spawn_reader(1, stderr, sender.clone(), stop.clone(), gate) {
         return Err(abandon(child, error));
     }
-    if let Err((child, error)) = start_waiter(child, sender.clone()) {
+    if let Err((child, error)) = start_waiter(child, None, sender.clone()) {
         return Err(abandon(child, error));
     }
     drop(sender);

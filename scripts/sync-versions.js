@@ -2,7 +2,8 @@
 
 /**
  * Validates lockstep versions for published packages, then synchronizes
- * exact internal dependency versions in all workspace packages, including private ones.
+ * exact internal dependency versions in all workspace packages, including private ones,
+ * and in the apps next to the packages directory (`apps/*`, never published).
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -11,13 +12,22 @@ import { findPackageDirectories } from "./package-workspaces.mjs";
 
 const GENERATED_PACKAGE_SUFFIXES = [join("coding-agent", "install-lock")];
 
-const packageRoot = process.argv[2] ?? "packages";
-const workspacePackages = findPackageDirectories(packageRoot)
-	.filter((directory) => !GENERATED_PACKAGE_SUFFIXES.some((suffix) => directory.endsWith(suffix)))
-	.map((directory) => {
+function readManifests(directories) {
+	return directories.map((directory) => {
 		const path = join(directory, "package.json");
 		return { data: JSON.parse(readFileSync(path, "utf8")), path };
 	});
+}
+
+const packageRoot = process.argv[2] ?? "packages";
+const workspacePackages = readManifests(
+	findPackageDirectories(packageRoot).filter(
+		(directory) => !GENERATED_PACKAGE_SUFFIXES.some((suffix) => directory.endsWith(suffix)),
+	),
+);
+// Apps pin the workspace packages exactly too; stale pins would make npm install them from the registry.
+const appRoot = join(dirname(packageRoot), "apps");
+const appPackages = existsSync(appRoot) ? readManifests(findPackageDirectories(appRoot)) : [];
 const publishedPackages = workspacePackages.filter((pkg) => pkg.data.private !== true);
 const versionMap = new Map(workspacePackages.map((pkg) => [pkg.data.name, pkg.data.version]));
 
@@ -40,7 +50,7 @@ console.log("\nAll non-private packages are at the same version (lockstep).");
 
 let totalUpdates = 0;
 const updatedPackages = new Set();
-for (const pkg of workspacePackages) {
+for (const pkg of [...workspacePackages, ...appPackages]) {
 	for (const dependencyType of ["dependencies", "devDependencies", "optionalDependencies"]) {
 		const dependencies = pkg.data[dependencyType];
 		if (!dependencies) {
