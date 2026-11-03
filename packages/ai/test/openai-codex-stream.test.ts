@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -318,6 +319,61 @@ describe("openai-codex streaming", () => {
 		expect(result.content.find((c) => c.type === "text")?.text).toBe("Hello");
 		expect(result.stopReason).toBe("stop");
 		expect(result.endTurn).toBe(false);
+	});
+
+	// Regression test for #11708
+	it("removes SSE retry backoff abort listeners after the retry succeeds", async () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
+		process.env.PI_CODING_AGENT_DIR = tempDir;
+		const token = mockToken();
+		let calls = 0;
+		const fetchMock = vi.fn(async (input: string | URL) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url !== "https://chatgpt.com/backend-api/codex/responses") {
+				return new Response("not found", { status: 404 });
+			}
+			calls++;
+			if (calls <= 3) {
+				return new Response(JSON.stringify({ error: { message: "rate limited" } }), {
+					status: 429,
+					headers: { "retry-after": "0" },
+				});
+			}
+			return new Response(buildSSEPayload({ status: "completed" }), {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			});
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const context = normalizeContext({
+			systemPrompt: "You are a helpful assistant.",
+			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+		});
+
+		const controller = new AbortController();
+		const result = await streamOpenAICodexResponses(model, context, {
+			apiKey: token,
+			transport: "sse",
+			maxRetries: 3,
+			signal: controller.signal,
+		}).result();
+
+		expect(result.stopReason).toBe("stop");
+		expect(calls).toBe(4);
+		expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
 	});
 
 	it("maps response.incomplete to stopReason length even when the SSE body stays open", async () => {
