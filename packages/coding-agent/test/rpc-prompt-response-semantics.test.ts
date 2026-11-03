@@ -514,4 +514,39 @@ describe("RPC extension shutdown requests", () => {
 			await cleanup();
 		}
 	});
+
+	it("waits for a command that arrives before an idle shutdown request is processed", async () => {
+		const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+			rpcIo.outputLines.push(`${JSON.stringify({ type: "exit" })}\n`);
+		}) as never);
+		let requestShutdown: (() => void) | undefined;
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: false,
+			responseDelayMs: 0,
+			extensionsResult: await createTestExtensionsResult([
+				(pi) => {
+					pi.on("session_start", (_event, ctx) => {
+						requestShutdown = () => ctx.shutdown();
+					});
+					pi.registerCommand("slow", {
+						handler: async () => {
+							await sleep(50);
+						},
+					});
+				},
+			]),
+		});
+
+		try {
+			await vi.waitFor(() => expect(requestShutdown).toBeDefined());
+			// The idle check is scheduled for the next tick; the command starts before it runs.
+			requestShutdown!();
+			lineHandler(JSON.stringify({ id: "s", type: "prompt", message: "/slow" }));
+			await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledTimes(1));
+			const types = parseOutputLines(rpcIo.outputLines).map((line) => (line.id === "s" ? "response" : line.type));
+			expect(types.filter((type) => type === "response" || type === "exit")).toEqual(["response", "exit"]);
+		} finally {
+			await cleanup();
+		}
+	});
 });

@@ -82,10 +82,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		{ resolve: (value: any) => void; reject: (error: Error) => void }
 	>();
 
-	// Shutdown request flag
+	// Extension shutdown requests (ctx.shutdown()) wait until input is attached, no command is
+	// being handled, and the session is idle. See checkShutdownRequested().
 	let shutdownRequested = false;
 	let shuttingDown = false;
-	// Shutdown requests are only processed once input is attached and no command is being handled.
 	let inputReady = false;
 	let activeCommands = 0;
 	const signalCleanupHandlers: Array<() => void> = [];
@@ -347,10 +347,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			},
 			shutdownHandler: () => {
 				shutdownRequested = true;
-				// When idle, nothing else will check the flag (no command response, no agent_settled).
-				if (inputReady && activeCommands === 0 && session.isIdle) {
-					setImmediate(() => void checkShutdownRequested());
-				}
+				// An idle session has no command response or agent_settled left to check the flag.
+				// Check on the next tick so the requesting handler finishes first.
+				setImmediate(checkShutdownRequested);
 			},
 			onError: (err) => {
 				output({ type: "extension_error", extensionPath: err.extensionPath, event: err.event, error: err.error });
@@ -362,7 +361,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		unsubscribe = session.subscribe((event) => {
 			output(toJsonEvent(event));
 			if (event.type === "agent_settled") {
-				void checkShutdownRequested();
+				checkShutdownRequested();
 			}
 		});
 		unsubscribeBackpressure = session.agent.subscribe(async () => {
@@ -421,9 +420,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					})
 					.finally(() => {
 						activeCommands--;
-						if (activeCommands === 0 && session.isIdle) {
-							void checkShutdownRequested();
-						}
+						checkShutdownRequested();
 					});
 				return undefined;
 			}
@@ -732,10 +729,6 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		}
 	};
 
-	/**
-	 * Check if shutdown was requested and perform shutdown if so.
-	 * Called after handling each command when waiting for the next command.
-	 */
 	let detachInput = () => {};
 
 	async function shutdown(exitCode = 0, signal?: NodeJS.Signals): Promise<never> {
@@ -757,9 +750,15 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		process.exit(exitCode);
 	}
 
-	async function checkShutdownRequested(): Promise<void> {
-		if (!shutdownRequested || shuttingDown) return;
-		await shutdown();
+	/**
+	 * Shut down if an extension requested it and nothing still needs the process: input is attached,
+	 * no command (including a prompt that has not settled) is being handled, and the session is idle.
+	 * Each of those ending calls this again. A shutdown already in progress is left alone, because a
+	 * second shutdown() call exits immediately.
+	 */
+	function checkShutdownRequested(): void {
+		if (!shutdownRequested || shuttingDown || !inputReady || activeCommands > 0 || !session.isIdle) return;
+		void shutdown();
 	}
 
 	const handleInputLine = async (line: string) => {
@@ -807,9 +806,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				output(response);
 				await waitForRawStdoutBackpressure();
 			}
-			if (activeCommands === 0) {
-				await checkShutdownRequested();
-			}
+			checkShutdownRequested();
 		} catch (commandError: unknown) {
 			output(
 				error(
@@ -838,9 +835,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	})();
 	inputReady = true;
 	// Handle a shutdown requested during startup (e.g. from session_start).
-	if (session.isIdle) {
-		void checkShutdownRequested();
-	}
+	checkShutdownRequested();
 
 	// Keep process alive forever
 	return new Promise(() => {});
