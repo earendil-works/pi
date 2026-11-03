@@ -15,6 +15,7 @@ import {
 	registeredRedirectUrls,
 	timedFetch,
 } from "./client-settings.ts";
+import { McpRefreshLockBusyError } from "./errors.ts";
 import { authorizeMcp, type OAuthFlowOptions, stepUpScope } from "./flow.ts";
 import type { McpOAuthState } from "./provider.ts";
 import type { OAuthChallenge } from "./types.ts";
@@ -29,7 +30,10 @@ export interface McpSignInOptions extends McpOAuthClientOptions {
 	redirectUrl: string;
 	/** The server's challenge that asked for the sign-in; its resource metadata URL and scope apply. */
 	challenge?: OAuthChallenge;
-	/** Aborting stops the sign-in with `McpSignInCancelledError`. A refresh already sent still completes. */
+	/**
+	 * Aborting stops the sign-in at once with `McpSignInCancelledError`, also while `startMcpSignIn` waits
+	 * for the store's refresh lock. A refresh already sent still completes and saves its tokens.
+	 */
 	signal?: AbortSignal;
 }
 
@@ -63,10 +67,11 @@ export class McpSignInCancelledError extends Error {
 /**
  * First half of a sign-in. Without a step-up (`insufficient_scope`), it first tries to refresh the stored
  * tokens with the stored client, whatever `redirectUrl` is (`authorized`). The refresh takes the store's
- * refresh lock, so never call this while holding it; when the lock cannot be taken (for example it timed
- * out), the refresh is skipped. Otherwise it prepares the browser step (`redirect`): a fresh `state`, and a
- * stored client that cannot use `redirectUrl` is dropped with its tokens. Requests to the authorization
- * server are time-limited.
+ * refresh lock, so never call this while holding it; when another process holds the lock for the whole
+ * wait (`McpRefreshLockBusyError`), the refresh is skipped, and any other failure of the lock fails the
+ * sign-in. Otherwise it prepares the browser step (`redirect`): a fresh `state`, and a stored client that
+ * cannot use `redirectUrl` is dropped with its tokens. Requests to the authorization server are
+ * time-limited.
  */
 export async function startMcpSignIn(options: McpSignInOptions): Promise<McpSignInStart> {
 	if (options.signal?.aborted) throw new McpSignInCancelledError();
@@ -76,23 +81,40 @@ export async function startMcpSignIn(options: McpSignInOptions): Promise<McpSign
 	return cancellable(options.signal, () => startBrowserStep(options, stepUp));
 }
 
-/** Refresh the stored tokens, unless `cimd` is to replace a registered client. */
+/**
+ * Refresh the stored tokens, unless `cimd` is to replace a registered client. The refresh uses
+ * `redirectUrl` when the tokens came from a Client ID Metadata Document whose documents list it.
+ */
 async function refreshBeforeSignIn(options: McpSignInOptions): Promise<"AUTHORIZED" | "REDIRECT"> {
-	const { store, settings, challenge } = options;
-	let locked = false;
+	const { store, settings, challenge, redirectUrl, signal } = options;
+	const refreshed = store.withRefreshLock(async () => {
+		// The lock may arrive after the sign-in was cancelled: return at once, so it is released.
+		if (signal?.aborted) return "REDIRECT";
+		const state = await store.load();
+		if (!state?.tokens?.refresh_token) return "REDIRECT";
+		if (settings.clientRegistration === "cimd" && state.clientInformation && !settings.clientId) return "REDIRECT";
+		return refreshStoredTokens(options, state, { challenge, redirectUrl });
+	});
 	try {
-		return await store.withRefreshLock(async () => {
-			locked = true;
-			const state = await store.load();
-			if (!state?.tokens?.refresh_token) return "REDIRECT";
-			if (settings.clientRegistration === "cimd" && state.clientInformation && !settings.clientId) return "REDIRECT";
-			return refreshStoredTokens(options, state, { challenge });
-		});
+		return await untilAborted(signal, refreshed);
 	} catch (error) {
-		// The lock's own failure: another process holds it too long. The user signs in instead.
-		if (!locked) return "REDIRECT";
+		// Another process is refreshing and took too long. The user signs in instead.
+		if (error instanceof McpRefreshLockBusyError) return "REDIRECT";
 		throw error;
 	}
+}
+
+/**
+ * `promise`, or `McpSignInCancelledError` as soon as `signal` aborts. `promise` keeps running: a refresh
+ * the server answered must save its tokens.
+ */
+function untilAborted<T>(signal: AbortSignal | undefined, promise: Promise<T>): Promise<T> {
+	if (!signal) return promise;
+	return new Promise<T>((resolve, reject) => {
+		const abort = () => reject(new McpSignInCancelledError());
+		signal.addEventListener("abort", abort, { once: true });
+		promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+	});
 }
 
 async function startBrowserStep(options: McpSignInOptions, stepUp: boolean): Promise<McpSignInRedirect> {

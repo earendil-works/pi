@@ -64,7 +64,9 @@ export interface McpClientMetadataDocuments {
 export interface McpOAuthServerStore extends McpOAuthStateStore {
 	/**
 	 * Run `fn` while no other process refreshes the server's tokens. Not reentrant: `startMcpSignIn` and
-	 * `createMcpAuthProvider` take it themselves, so never call them from `fn`.
+	 * `createMcpAuthProvider` take it themselves, so never call them from `fn`. Throw
+	 * `McpRefreshLockBusyError` when another process holds the lock for the whole wait: `startMcpSignIn`
+	 * then goes to the browser step. Any other error fails the sign-in or refresh.
 	 */
 	withRefreshLock<T>(fn: () => Promise<T>): Promise<T>;
 }

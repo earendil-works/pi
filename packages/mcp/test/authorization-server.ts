@@ -117,29 +117,44 @@ export function memoryStore(): McpOAuthServerStore {
 
 /**
  * An in-memory store that records whether each save happened while the refresh lock was held. With
- * `lockFails`, taking the lock fails like a lock that timed out.
+ * `lockError`, taking the lock fails with it; `hold()` stands for another process holding the lock until
+ * the returned function releases it. `lockRuns` are the calls of `withRefreshLock`.
  */
-export function recordingStore(options: { lockFails?: boolean } = {}) {
+export function recordingStore(options: { lockError?: Error } = {}) {
 	const memory = new MemoryOAuthStateStore();
 	const saves: { locked: boolean; accessToken: string | undefined }[] = [];
+	const lockRuns: Promise<unknown>[] = [];
 	let locked = false;
+	let held: Promise<void> | undefined;
 	const store: McpOAuthServerStore = {
 		load: () => memory.load(),
 		save: (state) => {
 			saves.push({ locked, accessToken: state.tokens?.access_token });
 			memory.save(state);
 		},
-		withRefreshLock: async (fn) => {
-			if (options.lockFails) throw new Error("Lock file is already being held");
-			locked = true;
-			try {
-				return await fn();
-			} finally {
-				locked = false;
-			}
+		withRefreshLock: (fn) => {
+			const run = (async () => {
+				await held;
+				if (options.lockError) throw options.lockError;
+				locked = true;
+				try {
+					return await fn();
+				} finally {
+					locked = false;
+				}
+			})();
+			lockRuns.push(run.catch(() => undefined));
+			return run;
 		},
 	};
-	return { store, saves };
+	const hold = () => {
+		let release = () => {};
+		held = new Promise((resolve) => {
+			release = resolve;
+		});
+		return release;
+	};
+	return { store, saves, lockRuns, hold, isLocked: () => locked };
 }
 
 /** Follows the authorization URL like a browser, up to the redirect back to the application. */

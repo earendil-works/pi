@@ -24,6 +24,7 @@ import {
 	type McpOAuthServerStore,
 	type McpOAuthSettings,
 	type McpOAuthState,
+	McpRefreshLockBusyError,
 	type OAuthCallbackPage,
 	type OAuthChallenge,
 	startMcpSignIn,
@@ -95,23 +96,31 @@ export class McpOAuthCredentialStore {
 	/**
 	 * A lock file per server. When the process exits, proper-lockfile removes the locks it holds; when
 	 * it is killed, the lock goes stale because it is no longer renewed, and the next process takes it over.
+	 * Throws `McpRefreshLockBusyError` when another process holds the lock for the whole wait.
 	 */
 	private async withRefreshLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 		if (!this.lockDir) return fn();
 		mkdirSync(this.lockDir, { recursive: true, mode: 0o700 });
 		const hash = createHash("sha256").update(key).digest("hex").slice(0, 16);
-		const release = await lockfile.lock(join(this.lockDir, `mcp-auth-refresh-${hash}`), {
-			realpath: false,
-			stale: REFRESH_LOCK_STALE_MS,
-			retries: {
-				retries: REFRESH_LOCK_WAIT_MS / REFRESH_LOCK_RETRY_MS,
-				factor: 1,
-				minTimeout: REFRESH_LOCK_RETRY_MS,
-				maxTimeout: REFRESH_LOCK_RETRY_MS,
-			},
-			// The default throws from a timer. A lost lock at worst lets two refreshes overlap.
-			onCompromised: () => {},
-		});
+		const release = await lockfile
+			.lock(join(this.lockDir, `mcp-auth-refresh-${hash}`), {
+				realpath: false,
+				stale: REFRESH_LOCK_STALE_MS,
+				retries: {
+					retries: REFRESH_LOCK_WAIT_MS / REFRESH_LOCK_RETRY_MS,
+					factor: 1,
+					minTimeout: REFRESH_LOCK_RETRY_MS,
+					maxTimeout: REFRESH_LOCK_RETRY_MS,
+				},
+				// The default throws from a timer. A lost lock at worst lets two refreshes overlap.
+				onCompromised: () => {},
+			})
+			.catch((error: unknown) => {
+				// proper-lockfile reports a lock held by another process as `ELOCKED`.
+				if (error instanceof Error && "code" in error && error.code === "ELOCKED")
+					throw new McpRefreshLockBusyError();
+				throw error;
+			});
 		try {
 			return await fn();
 		} finally {
