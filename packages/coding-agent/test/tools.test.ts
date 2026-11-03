@@ -13,10 +13,11 @@ import {
 } from "../src/core/tools/bash.ts";
 import { createEditToolDefinition } from "../src/core/tools/edit.ts";
 import { computeEditsDiff } from "../src/core/tools/edit-diff.ts";
-import { createFindToolDefinition } from "../src/core/tools/find.ts";
+import { createFindToolDefinition, type FindOperations } from "../src/core/tools/find.ts";
 import { createGrepToolDefinition } from "../src/core/tools/grep.ts";
 import { createLsToolDefinition } from "../src/core/tools/ls.ts";
 import { createReadToolDefinition } from "../src/core/tools/read.ts";
+import { truncateHead } from "../src/core/tools/truncate.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
 import {
 	createEditTool,
@@ -1163,6 +1164,93 @@ describe("Coding Agent Tools", () => {
 
 			expect(getTextOutput(result)).toContain("No files found matching pattern");
 		});
+
+		// #7121: exactly `limit` matches must not report that the limit was reached.
+		it("should report the result limit only when more results exist", async () => {
+			for (const name of ["a.txt", "b.txt", "c.txt"]) writeFileSync(join(testDir, name), name);
+
+			const exact = await findTool.execute("test-call-find-exact-limit", {
+				pattern: "*.txt",
+				path: testDir,
+				limit: 3,
+			});
+			expect(getTextOutput(exact).split("\n").sort()).toEqual(["a.txt", "b.txt", "c.txt"]);
+			expect(exact.details).toBeUndefined();
+
+			const over = await findTool.execute("test-call-find-over-limit", {
+				pattern: "*.txt",
+				path: testDir,
+				limit: 2,
+			});
+			const [listing, notice] = getTextOutput(over).split("\n\n");
+			expect(listing.split("\n")).toHaveLength(2);
+			expect(notice).toBe("[2 results limit reached. Use limit=4 for more, or refine pattern]");
+			expect(over.details).toEqual({ resultLimitReached: 2 });
+		});
+
+		it("should treat limits below 1 as 1 and floor fractional limits", async () => {
+			for (const name of ["a.txt", "b.txt", "c.txt"]) writeFileSync(join(testDir, name), name);
+
+			for (const limit of [0, -5, 0.5, 1.9]) {
+				const result = await findTool.execute("test-call-find-small-limit", {
+					pattern: "*.txt",
+					path: testDir,
+					limit,
+				});
+				const [listing, notice] = getTextOutput(result).split("\n\n");
+				expect(listing.split("\n")).toHaveLength(1);
+				expect(notice).toBe("[1 results limit reached. Use limit=2 for more, or refine pattern]");
+				expect(result.details).toEqual({ resultLimitReached: 1 });
+			}
+		});
+
+		it("should report full output totals past the byte cap", async () => {
+			// 300 names of 200 bytes join to about 60KB; equal lengths make the kept prefix independent of fd's order.
+			const names = Array.from({ length: 300 }, (_, i) => `${String(i).padStart(3, "0")}${"x".repeat(193)}.txt`);
+			for (const name of names) writeFileSync(join(testDir, name), "");
+
+			const result = await findTool.execute("test-call-find-byte-cap", { pattern: "*.txt", path: testDir });
+			const expected = truncateHead(names.join("\n"), { maxLines: Number.MAX_SAFE_INTEGER });
+			expect(result.details?.truncation).toEqual({ ...expected, content: result.details?.truncation?.content });
+			expect(result.details?.truncation?.content.split("\n")).toHaveLength(expected.outputLines);
+			expect(result.details?.resultLimitReached).toBeUndefined();
+			expect(getTextOutput(result)).toMatch(/\n\n\[50\.0KB limit reached\]$/);
+		});
+
+		it("should ask custom glob operations for one result past the limit", async () => {
+			const requestedLimits: number[] = [];
+			const createTool = (results: string[]) => {
+				const operations: FindOperations = {
+					exists: () => true,
+					glob: (_pattern, _cwd, options) => {
+						requestedLimits.push(options.limit);
+						return results.slice(0, options.limit);
+					},
+				};
+				return createFindToolDefinition(testDir, { operations });
+			};
+
+			const exact = await createTool(["a.txt", "b.txt"]).execute(
+				"test-call-find-custom-exact",
+				{ pattern: "*.txt", limit: 2 },
+				undefined,
+				undefined,
+				fakeCtx(testDir),
+			);
+			expect(getTextOutput(exact)).toBe("a.txt\nb.txt");
+			expect(exact.details).toBeUndefined();
+
+			const over = await createTool(["a.txt", "b.txt", "c.txt"]).execute(
+				"test-call-find-custom-over",
+				{ pattern: "*.txt", limit: 0 },
+				undefined,
+				undefined,
+				fakeCtx(testDir),
+			);
+			expect(getTextOutput(over)).toBe("a.txt\n\n[1 results limit reached]");
+			expect(over.details).toEqual({ resultLimitReached: 1 });
+			expect(requestedLimits).toEqual([3, 2]);
+		});
 	});
 
 	describe("ls tool", () => {
@@ -1175,6 +1263,24 @@ describe("Coding Agent Tools", () => {
 
 			expect(output).toContain(".hidden-file");
 			expect(output).toContain(".hidden-dir/");
+		});
+
+		it("should treat limits below 1 as 1 and floor fractional limits", async () => {
+			for (const name of ["a.txt", "b.txt", "c.txt"]) writeFileSync(join(testDir, name), name);
+
+			for (const limit of [0, -5, 0.5, 1.9]) {
+				const result = await lsTool.execute("test-call-ls-small-limit", { path: testDir, limit });
+				expect(getTextOutput(result)).toBe("a.txt\n\n[1 entries limit reached. Use limit=2 for more]");
+				expect(result.details).toEqual({ entryLimitReached: 1 });
+			}
+		});
+
+		it("should report the entry limit only when more entries exist", async () => {
+			for (const name of ["a.txt", "b.txt", "c.txt"]) writeFileSync(join(testDir, name), name);
+
+			const result = await lsTool.execute("test-call-ls-exact-limit", { path: testDir, limit: 3 });
+			expect(getTextOutput(result)).toBe("a.txt\nb.txt\nc.txt");
+			expect(result.details).toBeUndefined();
 		});
 	});
 });

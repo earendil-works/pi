@@ -80,7 +80,8 @@ export function createLsToolDefinition(
 				(async () => {
 					try {
 						const dirPath = resolveToCwd(path || ".", ctx?.cwd || cwd);
-						const effectiveLimit = limit ?? DEFAULT_LIMIT;
+						// A limit of 0 would list nothing and report "(empty directory)", so it means 1.
+						const effectiveLimit = Math.max(1, Math.floor(limit ?? DEFAULT_LIMIT));
 
 						// Check if path exists.
 						if (!(await ops.exists(dirPath))) {
