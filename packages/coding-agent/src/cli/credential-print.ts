@@ -6,7 +6,7 @@ import { AuthCommandError, type AuthCommandKind, getAuthCredential, validateAuth
 
 const DEFAULT_BEARER_TOKEN_MIN_EXPIRY_MS = 30 * 60_000;
 
-type CredentialPrintKind = Exclude<AuthCommandKind, "check">;
+type CredentialPrintKind = Exclude<AuthCommandKind, "check" | "continue">;
 
 /**
  * Resolve one configured provider credential.

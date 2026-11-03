@@ -1,9 +1,12 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 
+export type OAuthCallbackResponse = OAuthCallbackPage | { redirectUrl: string };
+
 export interface OAuthCallback {
 	code: string;
 	state: string;
 	iss?: string;
+	respond?: (result: OAuthCallbackResponse) => boolean;
 }
 
 /** Outcome shown on the browser page after the redirect. */
@@ -44,6 +47,7 @@ export class OAuthCallbackServer {
 			reject: (error: Error) => void;
 			timer: ReturnType<typeof setTimeout>;
 			path: string | undefined;
+			deferResponse: boolean;
 		}
 	>();
 
@@ -90,14 +94,14 @@ export class OAuthCallbackServer {
 	 * Wait for the authorization response with `state`. With `path`, a response on another path fails, so
 	 * a server-specific redirect URI can tell authorization servers apart (RFC 9700 section 4.4.2.2).
 	 */
-	waitForCallback(state: string, path?: string): Promise<OAuthCallback> {
+	waitForCallback(state: string, path?: string, options: { deferResponse?: boolean } = {}): Promise<OAuthCallback> {
 		if (this.pending.has(state)) throw new Error("OAuth state is already pending");
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.pending.delete(state);
 				reject(new Error("OAuth callback timed out"));
 			}, this.timeoutMs);
-			this.pending.set(state, { resolve, reject, timer, path });
+			this.pending.set(state, { resolve, reject, timer, path, deferResponse: options.deferResponse === true });
 		});
 	}
 
@@ -119,6 +123,22 @@ export class OAuthCallbackServer {
 		} else {
 			response.writeHead(status, { "content-type": "text/plain; charset=utf-8" }).end(plainText(page));
 		}
+	}
+
+	private complete(response: ServerResponse, result: OAuthCallbackResponse): boolean {
+		if (response.headersSent || response.destroyed) return false;
+		if ("redirectUrl" in result) {
+			response.shouldKeepAlive = false;
+			response.writeHead(302, {
+				location: result.redirectUrl,
+				"cache-control": "no-store",
+				connection: "close",
+			});
+			response.end();
+			return true;
+		}
+		this.reply(response, result.ok ? 200 : 500, result);
+		return true;
 	}
 
 	private handle(rawUrl: string, response: ServerResponse): void {
@@ -158,6 +178,20 @@ export class OAuthCallbackServer {
 			return;
 		}
 		const iss = url.searchParams.get("iss");
+		if (pending.deferResponse) {
+			let responded = false;
+			pending.resolve({
+				code,
+				state,
+				...(iss ? { iss } : {}),
+				respond: (result) => {
+					if (responded) return false;
+					responded = true;
+					return this.complete(response, result);
+				},
+			});
+			return;
+		}
 		pending.resolve({ code, state, ...(iss ? { iss } : {}) });
 		this.reply(response, 200, { ok: true });
 	}
