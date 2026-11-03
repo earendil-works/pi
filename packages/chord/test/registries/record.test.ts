@@ -750,3 +750,69 @@ describe("registries without a provider (slice 12 §6, testPlugin)", () => {
 		await host.close(context);
 	});
 });
+
+describe('registry_undeclared (decision "Mistakes that wait are reported at once" (b))', () => {
+	const undeclared = (errors: readonly HostError[]) => errors.filter(({ kind }) => kind === "registry_undeclared");
+	const contributing = (plugin: string) => ({
+		name: plugin,
+		facet: defineFacet((_host, self) => self.contribute(Names, plugin)),
+	});
+	const serving = { name: "serving", facet: defineFacet((h) => h.serve(Names, { compose: listed })) };
+
+	it("reports at load's publication a registry with contributions and no provider, naming its contributors", async () => {
+		const errors: HostError[] = [];
+		const host = createHost({ onError: (error) => errors.push(error) });
+		const loading = host.load([contributing("b"), contributing("a")], context);
+		// At once: before the start barrier, before any reader waits.
+		expect(undeclared(errors)).toEqual([{ kind: "registry_undeclared", registry: "app.names", plugins: ["a", "b"] }]);
+		await loading;
+		await host.close(context);
+	});
+
+	it("reports again at a reload only when the contributors change; a provider ends the episode", async () => {
+		const errors: HostError[] = [];
+		const host = createHost({ onError: (error) => errors.push(error) });
+		const a = contributing("a");
+		await host.load([a], context);
+		// Unchanged contributors: no repeat per reload.
+		await host.reload([a, { name: "other", facet: defineFacet(() => {}) }], context);
+		expect(undeclared(errors)).toHaveLength(1);
+		const b = contributing("b");
+		await host.reload([a, b], context);
+		expect(undeclared(errors)[1]).toEqual({
+			kind: "registry_undeclared",
+			registry: "app.names",
+			plugins: ["a", "b"],
+		});
+		// Served: nothing reported; removed again: a new episode, reported again.
+		await host.reload([a, b, serving], context);
+		expect(undeclared(errors)).toHaveLength(2);
+		await host.reload([a, b], context);
+		expect(undeclared(errors)[2]).toEqual({
+			kind: "registry_undeclared",
+			registry: "app.names",
+			plugins: ["a", "b"],
+		});
+		await host.close(context);
+	});
+
+	it("reports a host-lifetime object's contribution entering a registry nobody serves, once across its restarts", async () => {
+		const { host, errors } = await loadedPlugins({ "@app/setter": setter(Names, "x", String) });
+		expect(undeclared(errors)).toEqual([
+			{ kind: "registry_undeclared", registry: "app.names", plugins: ["@app/setter"] },
+		]);
+		await host.reload([{ name: "@app/setter", facet: defineFacet(setter(Names, "y", String)) }], context);
+		await flushed();
+		expect(undeclared(errors)).toHaveLength(1);
+		await host.close(context);
+	});
+
+	it("reports nothing for a served registry or one without contributions", async () => {
+		const errors: HostError[] = [];
+		const host = createHost({ onError: (error) => errors.push(error) });
+		await host.load([contributing("a"), serving], context);
+		await host.reload([serving], context);
+		expect(undeclared(errors)).toEqual([]);
+		await host.close(context);
+	});
+});

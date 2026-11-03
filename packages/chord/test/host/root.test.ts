@@ -126,12 +126,12 @@ describe("host.root", () => {
 		await host.close(context);
 	});
 
-	it("a `ctx.get` before `load` resolved parks until it did", async () => {
+	it("a `ctx.get` before `load` throws not_ready (decision (a)); after it, it gets", async () => {
 		const host = createHost({ onError: () => {} });
-		const result = host.root(async (ctx) => (await ctx.get(Info, { id: 3 })).id.value, context);
-		await flushed();
+		const get = (ctx: Ctx) => ctx.get(Info, { id: 3 });
+		expect(await rejection(host.root(get, context))).toMatchObject({ code: "not_ready" });
 		await host.load([{ name: "@app/info", facet: defineFacet(serveInfo) }], context);
-		expect(await result).toBe(3);
+		expect(await host.root(async (ctx) => (await get(ctx)).id.value, context)).toBe(3);
 		await host.close(context);
 	});
 

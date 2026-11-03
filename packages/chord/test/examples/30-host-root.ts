@@ -2,7 +2,9 @@
 // method handler's: the host's principal (or one a trusted caller names), this host's incarnation, the context's
 // telemetry and signal, and `ctx.get` for references. When `fn` settles, or the context aborts, or the host closes, the
 // scope is sealed: its signal aborts, its references are released, and a late `ctx.get` is refused `released`; so code
-// that ignores its signal fails at its next use of Chord. (p3 wraps it as `chord(fn, context)` for Durable's tools.)
+// that ignores its signal fails at its next use of Chord. The rule: await what you start in a root or a handler; a
+// change left running when the scope seals is cancelled, rejects and is reported (`transaction_cancelled`). (p3 wraps
+// it as `chord(fn, context)` for Durable's tools.)
 // Run from packages/chord:
 //   node --conditions=source --experimental-strip-types test/examples/30-host-root.ts
 import { BACKGROUND_CONTEXT, withCancel } from "../../src/context/index.ts";
@@ -41,12 +43,20 @@ const facet = defineFacet<Principal>((host) => {
 	});
 });
 
-const host = createHost<Principal>({ principal: { kind: "server" }, onError: (error) => console.log(error.kind) });
+const host = createHost<Principal>({
+	principal: { kind: "server" },
+	onError: (error) =>
+		console.log(
+			"onError:",
+			error.kind,
+			error.kind === "transaction_cancelled" ? `${error.object}: ${error.error}` : "",
+		),
+});
 
-// 1. A scope made before `load` resolved: its `ctx.get` parks until the host is loaded.
+// 1. A scope made before `load`: its `ctx.get` throws at once (`not_ready`, "call host.load first").
 const early = host.root(async (ctx) => (await ctx.get(Notes, { session: "s1" })).list.value, context);
+await early.catch((error: Error) => console.log("before load:", error.message));
 await host.load([{ name: "@example/notes", facet }], context);
-console.log("before load, read after it:", await early);
 
 // 2. A tool's call: get, call, return plain data. The reference is released when fn settles.
 const addNote = (text: string) =>
@@ -79,7 +89,18 @@ const stubborn = host.root(async (ctx) => {
 cancel(new Error("user pressed stop"));
 await stubborn.catch((error: Error) => console.log("cancelled:", error.message));
 
-// 6. Closing the host seals the scopes still open and rejects their callers at once: an fn sleeping on its ctx ends.
+// 6. The rule: await what you start in a root or a handler. A call left running when fn returns is cancelled with the
+//    scope, and the change it was about to make never commits: it rejects, and onError gets `transaction_cancelled`
+//    naming the object and the scope that ended (an empty `catch` would hide the rejection, not the report).
+let unawaited: Promise<unknown> | undefined;
+await host.root(async (ctx) => {
+	const notes = await ctx.get(Notes, { session: "s1" });
+	unawaited = notes.add({ text: "lost" }, ctx);
+}, context);
+await unawaited!.catch((error: Error) => console.log("the unawaited call:", error.message));
+await new Promise((resolve) => setTimeout(resolve, 0));
+
+// 7. Closing the host seals the scopes still open and rejects their callers at once: an fn sleeping on its ctx ends.
 const sleeping = host.root((ctx) => sleep(60_000, ctx), context).catch((error: Error) => `closed: ${error.message}`);
 await host.close(context);
 console.log(await sleeping);

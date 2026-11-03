@@ -16,7 +16,22 @@ import { Residency } from "./residency.ts";
 import { type AnyDefinition, SingletonSlot } from "./slot.ts";
 import { Transaction } from "./transaction.ts";
 
-/** Who owns an object's documents: the object's name, batch and context, its store address, its live failure. */
+/**
+ * A transaction (a document change or retirement, `self.tx`, a job start) that did not commit because the context it
+ * was started with ended first: a root whose `fn` settled, a handler or routine whose object ended, a caller that
+ * cancelled. `error` is that context's abort reason, naming the scope that ended (decision "Mistakes that wait are
+ * reported at once" (e)).
+ */
+export type TransactionCancelled = {
+	readonly kind: "transaction_cancelled";
+	readonly object: string;
+	readonly error: unknown;
+};
+
+/**
+ * Who owns an object's documents: the object's name, batch and context, its store address, its live failure, and where
+ * a cancelled transaction is reported.
+ */
 export type DocumentsOwner = {
 	/** The owner's name in errors. */
 	readonly label: string;
@@ -27,6 +42,8 @@ export type DocumentsOwner = {
 	readonly store: { readonly store: ChordStore; readonly owner: string } | undefined;
 	/** A document the code cannot read fails the live object `broken` (slice 6a §1.4); ignored when it is not live. */
 	fail(error: ChordError): void;
+	/** Reports a transaction its context's end cancelled (the host's `onError`). */
+	report(error: TransactionCancelled): void;
 };
 
 /**
@@ -145,8 +162,9 @@ export class Documents {
 
 	/**
 	 * Runs `fn` as one transaction on the line under `token` and commits what it drafted (§9): a throw, an abort of
-	 * `context`, the token's seal or the object's end discards everything. `persistence` defers storing a run state's
-	 * change (D8).
+	 * `context`, the token's seal or the object's end discards everything; one that did not commit while `context` was
+	 * aborted is also reported (`transaction_cancelled`): an empty `catch` cannot hide a change that never happened.
+	 * `persistence` defers storing a run state's change (D8).
 	 */
 	async tx<R>(
 		fn: (tx: Transaction) => R | Promise<R>,
@@ -168,6 +186,10 @@ export class Documents {
 			return result;
 		} catch (error) {
 			tx.discard();
+			// Only a transaction that did not commit reads this; Chord's own run under contexts that never abort.
+			const signal = context.abortSignal;
+			if (signal?.aborted)
+				this.#owner.report({ kind: "transaction_cancelled", object: this.label, error: signal.reason });
 			throw error;
 		} finally {
 			if (this.#holder === tx) this.#holder = undefined;

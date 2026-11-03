@@ -24,6 +24,7 @@ import {
 	invalid,
 	principalKey,
 } from "../data/internal.ts";
+import type { TransactionCancelled } from "../documents/internal.ts";
 import type { JsonValue } from "../json.ts";
 import { binaryCodec, type Codec, type Compression, type Link, type PartLimits } from "../link/index.ts";
 import { linkLimits } from "../link/internal.ts";
@@ -58,6 +59,7 @@ import { type RootOptions, RootScopes } from "./root.ts";
 import { Route, type RouteHandle, type RouteOptions } from "./route.ts";
 import {
 	addStaged,
+	checkPluginNames,
 	emptyStaged,
 	type PluginFacet,
 	type Recorded,
@@ -70,6 +72,7 @@ import {
 	stagePlugin,
 } from "./staging.ts";
 import { UnboundIndex, type UnboundRequest } from "./unbound.ts";
+import { UnboundClock, type UnboundLong } from "./unbound-clock.ts";
 import { uuidv7 } from "./uuid.ts";
 
 /** What `createHost` takes; `R` is the app's revocation type (JSON). */
@@ -121,6 +124,8 @@ export type Position = { readonly kind: "on" | "onLive" | "native"; readonly pos
 export type HostError =
 	| BatchError
 	| RegistryError
+	| UnboundLong
+	| TransactionCancelled
 	| { readonly kind: "activation_failed"; readonly object: string; readonly failure: FailureCause }
 	/** A live object failed at runtime (a `migrate` failing on access, a stored version newer than the code). */
 	| { readonly kind: "object_failed"; readonly object: string; readonly failure: FailureCause }
@@ -210,12 +215,13 @@ export type AnyHost = Omit<ChordHost, "load" | "reload" | "accept" | "connect" |
 export interface Host<P extends Principal = Principal, R extends JsonValue = JsonValue> {
 	/**
 	 * Runs every facet's setup and publishes what they declared in one batch (the types and registries served, the
-	 * registries composed once, the contributions); requests that waited for the publication are placed after that
-	 * batch. Then activates every served type with empty params and resolves when each has had its first outcome (the
-	 * start barrier, decision (a)): live, failed by its own cause, parked with no blocker here still without its first
-	 * outcome, or ended (failures go to `onError`). A plugin whose setup throws or is refused at declaration (its name,
-	 * a type or registry another plugin serves, a remote type here without principal or address, `checkAccepts`) is
-	 * left out and reported (`failed`); it never closes the host. Runs once.
+	 * registries composed once, the contributions); holds that waited for the publication are placed after that batch,
+	 * and a registry with contributions and no provider is reported (`registry_undeclared`). Then activates every
+	 * served type with empty params and resolves when each has had its first outcome (the start barrier, decision (a)):
+	 * live, failed by its own cause, parked with no blocker here still without its first outcome, or ended (failures go
+	 * to `onError`). A plugin whose setup throws or is refused at declaration (a name given twice, a type or registry
+	 * another plugin serves, a remote type here without principal or address, `checkAccepts`) is left out and reported
+	 * (`failed`); it never closes the host. A name that is no npm name throws before anything changes. Runs once.
 	 */
 	load(facets: readonly PluginFacet<P>[], context: Context): Promise<LoadReport>;
 	/**
@@ -230,23 +236,24 @@ export interface Host<P extends Principal = Principal, R extends JsonValue = Jso
 	 * contributions; a publication waking the requests for the names it serves) and every object of a changed or
 	 * removed plugin takes its fate: swapped in place, restarted after its drain, retried, or ended (its type
 	 * removed). Resolves with the report once every fate started (swaps and retries checked their dependencies; it
-	 * does not wait for objects to go live). Reloads run one after another. Throws before `load` resolved; rejects
-	 * `released/closed` after `close`; `context`'s abort before the commit rejects `aborted` and changes nothing, after
-	 * it only ends the wait (`aborted`, its `details.committed` naming what the commit applied: `CommittedReload`).
+	 * does not wait for objects to go live). Reloads run one after another. Throws before `load` resolved and for a
+	 * name that is no npm name (before anything changes); rejects `released/closed` after `close`; `context`'s abort
+	 * before the commit rejects `aborted` and changes nothing, after it only ends the wait (`aborted`, its
+	 * `details.committed` naming what the commit applied: `CommittedReload`).
 	 */
 	reload(facets: readonly PluginFacet<P>[], context: Context, options?: ReloadOptions): Promise<ReloadReport>;
 	/**
 	 * A reference once its object is live (and hydrated). It acts as the host's principal and goes where its type's host
 	 * address puts it: here, over a route, or over the parent link (`Destination`). It waits while the reference is
-	 * `loading` (before the host's publication too), `failed { transient }` or `failed { waiting }` until its
-	 * `readyTimeout`, then rejects with the last cause and releases the reference; a broken failure rejects at once.
+	 * `loading`, `failed { transient }` or `failed { waiting }` until its `readyTimeout`, then rejects with the last
+	 * cause and releases the reference; a broken failure rejects at once, and so does a get before `load` (`not_ready`).
 	 */
 	get<C extends Contract>(Type: C, params: ParamsOf<C>, context: Context, options?: GetOptions): Promise<Reference<C>>;
 	/**
 	 * A reference at once, following its object until released: loading, live, failed (retried as its object is) and
-	 * loading again while its link is down; it never rejects. Throws at once only for invalid params (also before
-	 * `load`). A type not served where it goes is `loading` before the host's publication and `failed { waiting }` after
-	 * it (bound when a publication serves it); a `hostAddress` or route that refuses fails it broken. Its `variant` is
+	 * loading again while its link is down; it never rejects. Throws at once only for invalid params and before `load`
+	 * (`not_ready`). A type not served where it goes is `failed { waiting }` (bound when a publication serves it;
+	 * reported `unbound_long` after 5 s); a `hostAddress` or route that refuses fails it broken. Its `variant` is
 	 * `undefined` until its first binding.
 	 */
 	hold<C extends Contract>(Type: C, params: ParamsOf<C>, context: Context, options?: GetOptions): Held<C>;
@@ -293,10 +300,10 @@ export interface Host<P extends Principal = Principal, R extends JsonValue = Jso
 	 */
 	readonly activity: Watchable<ActivityCounts>;
 	/**
-	 * Registry `R`'s composed value as `R`'s version sees it, for code outside objects, once it is usable: waits for the
-	 * host's publication, then while it has no value (`unavailable/undeclared` without a provider, a first `compose`
-	 * that threw, a version not served here: `contract_mismatch`) until its `readyTimeout`, then rejects with the last
-	 * error.
+	 * Registry `R`'s composed value as `R`'s version sees it, for code outside objects, once it is usable: waits while it
+	 * has no value (`unavailable/undeclared` without a provider, a first `compose` that threw, a version not served
+	 * here: `contract_mismatch`) until its `readyTimeout`, then rejects with the last error; before `load` it rejects
+	 * `not_ready` at once.
 	 */
 	registry<C, V>(R: Registry<C, V>, context: Context, options?: GetOptions): Promise<RegistryValue<V>>;
 	/**
@@ -453,8 +460,10 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	readonly #objects = new Map<string, ChordObject>();
 	/** Teardowns still running, by identity: the next instance of an identity waits for its previous ones. */
 	readonly #endings = new Map<string, Promise<void>>();
+	/** The requests waiting unbound after the publication (in the index, and registry readers), reported after 5 s. */
+	readonly #clock = new UnboundClock((error) => this.report(error));
 	/** The requests that cannot bind yet, by name: before the publication all of them, then those left unbound. */
-	readonly #unbound = new UnboundIndex();
+	readonly #unbound = new UnboundIndex(this.#clock);
 	/** Resolved at the host's first publication (`load`'s batch), or its close. */
 	readonly #publication = Promise.withResolvers<void>();
 	#published = false;
@@ -506,6 +515,7 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		this.batch.assertOutside("load");
 		this.#assertOpen();
 		if (this.#state !== "new") throw new Error("load runs once per host");
+		checkPluginNames(facets);
 		this.#state = "loading";
 		const staged = emptyStaged();
 		const loaded = new Map<string, Facet<P>>();
@@ -530,6 +540,7 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		// After the batch: what waited for the publication is placed (the gate lasted only for the setups).
 		this.#published = true;
 		this.#publication.resolve();
+		this.#reportUndeclared();
 		this.#unbound.wakeAll();
 		const objects = [...this.#types.values()]
 			.filter((served) => served.kind === "local" && served.hostLifetime)
@@ -574,6 +585,7 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		this.batch.assertOutside("reload");
 		if (this.#state === "closed") return Promise.reject(this.#closedError());
 		if (this.#state !== "loaded") throw new Error("reload runs after load");
+		checkPluginNames(facets);
 		const reload = this.#reloading.then(() => this.#reload(facets, options.failed ?? [], context));
 		// The tail settles to nothing: a report kept as its value would keep a rejected facet's closure (its error).
 		this.#reloading = reload.then(
@@ -765,6 +777,7 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 				}
 			}
 		}, context);
+		this.#reportUndeclared();
 		for (const name of this.#references.keys()) if (!types.has(name)) this.#references.delete(name);
 		const names = new Set<string>();
 		for (const [name, served] of types) if (published.has(served.plugin)) names.add(name);
@@ -932,6 +945,7 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	async registry<C, V>(R: Registry<C, V>, context: Context, options: GetOptions = {}): Promise<RegistryValue<V>> {
 		this.batch.assertOutside("registry");
 		this.#assertOpen();
+		this.#assertLoadCalled(`registry ${R.name}`);
 		const timeout = options.readyTimeout ?? this.timeouts.ready;
 		const expired = new AbortController();
 		const waiting = withLinkedAbortSignal(expired.signal, context);
@@ -1000,7 +1014,7 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	registryRecord(name: string): RegistryRecord {
 		let record = this.#registries.get(name);
 		if (record === undefined) {
-			record = new RegistryRecord(name, this.batch, (error) => this.report(error));
+			record = new RegistryRecord(name, this.batch, (error) => this.report(error), this.#clock);
 			this.#registries.set(name, record);
 		}
 		return record;
@@ -1020,9 +1034,12 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		return this.#published;
 	}
 
-	/** `request` cannot bind yet: indexed under `name` (the type or registry it waits for) until woken or ended. */
-	index(name: string, request: UnboundRequest): void {
-		this.#unbound.add(name, request);
+	/**
+	 * `request` cannot bind yet: indexed under `name` (the type or registry it waits for) until woken or ended, waiting
+	 * for the publication (no `cause`) or for a provider that fits (`cause`).
+	 */
+	index(name: string, request: UnboundRequest, cause: FailureCause | undefined): void {
+		this.#unbound.add(name, request, cause);
 	}
 
 	/**
@@ -1267,6 +1284,7 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	 */
 	#hold(Type: Contract, params: unknown, caller: Caller, context: Context, options: GetOptions): Binding {
 		this.#assertOpen();
+		this.#assertLoadCalled(Type.name);
 		const checked = checkParams(Type, params, context);
 		const binding = this.#binding(Type, undefined, caller, options);
 		const place = (): void => this.#place(binding, Type, checked, context);
@@ -1308,7 +1326,7 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	/** Leaves `binding` unbound in the index under `name`: `cause` (`waiting`), or none before the publication. */
 	#wait(binding: Binding, name: string, cause: FailureCause | undefined, place: () => void): void {
 		binding.wait(cause, place, () => this.#unbound.delete(name, binding));
-		this.#unbound.add(name, binding);
+		this.#unbound.add(name, binding, cause);
 	}
 
 	/** A new reference's binding made by `caller`; its parked calls wait its `readyTimeout`. */
@@ -1399,6 +1417,7 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		// At the fence too: requests still waiting for a publication or a provider end as the others did, and gets
 		// waiting for a publication that will not come fail now, not after the slow closes below (fix round 1).
 		this.#unbound.close(closed);
+		this.#clock.close();
 		this.#publication.resolve();
 		this.backoff.clear();
 		// Every object is sealed before any teardown releases a reference, so none ends in the background.
@@ -1467,6 +1486,26 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 
 	#assertOpen(): void {
 		if (this.#state === "closed") throw this.#closedError();
+	}
+
+	/**
+	 * A request of this host's own (`get`, `hold`, `registry`, a root's `ctx.get`) for `name` before its first `load`
+	 * would wait for a publication nobody started: it throws `not_ready` at once (decision "Mistakes that wait are
+	 * reported at once" (a)). Holds arriving on its links before `load` still wait for the publication (a worker
+	 * connects first, W6).
+	 */
+	#assertLoadCalled(name: string): void {
+		if (this.#state !== "new") return;
+		const fix = "call host.load first (a host with nothing to load calls load([]))";
+		throw new ChordError({ code: "not_ready", message: `${name}: the host has not loaded; ${fix}` });
+	}
+
+	/**
+	 * At each publication (`load`'s, a reload's commit), after its batch: every registry with contributions and no
+	 * provider here is reported `registry_undeclared`, naming its contributors; again only once they change.
+	 */
+	#reportUndeclared(): void {
+		for (const record of this.#registries.values()) record.reportUndeclared();
 	}
 
 	#closedError(): ChordError {

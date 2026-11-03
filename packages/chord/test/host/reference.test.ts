@@ -236,8 +236,9 @@ describe("GC", () => {
 		expect(reference.state.value).toMatchObject({ kind: "ended", error: { code: "released" } });
 	});
 
-	it("a hold released before load keeps nothing: the reference and its contract go while the host waits", async () => {
+	it("a hold released while it waits unbound keeps nothing: the reference and its contract leave the index and its clock", async () => {
 		const host = createHost({ onError: () => {} });
+		await host.load([], context);
 		const refs = (() => {
 			const Same = local("app.viewer", { version: 1, params: { id: int() }, members: { n: int() } });
 			const reference = host.hold(Same, { id: 1 }, context);

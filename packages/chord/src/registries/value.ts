@@ -3,9 +3,10 @@
 // `accepts[old].value`, once per composition, kept only while someone reads or follows it; a version the provider
 // cannot serve fails `contract_mismatch`. Its readers (attempts that declared it) keep the mapping; its waiters
 // (attempts parked on it, a waiting `host.registry`) are woken at every change of whether it is usable, and of its
-// failure while it is not (dependency model §9).
+// failure while it is not (dependency model §9); waited for while it is not, it is on the host's `UnboundClock`.
 
 import { ChordError, isChordError } from "../data/index.ts";
+import { asChordError } from "../data/internal.ts";
 import { type Batch, FollowedSource, type NativeStart } from "../state/internal.ts";
 import type { RegistryContribution } from "./contribution.ts";
 import type { RegistryRecord } from "./record.ts";
@@ -89,7 +90,7 @@ export class RegistryValueSource extends FollowedSource<unknown> {
 		const registered = this.#registered;
 		if (registered.kind === "closed") return registered.last;
 		const start = this.#start(registered.record);
-		if (this.#waiters.size > 0) this.#tell(start);
+		if (this.#waiters.size > 0) this.#tell(start, registered.record);
 		return start;
 	}
 
@@ -125,7 +126,10 @@ export class RegistryValueSource extends FollowedSource<unknown> {
 		this.#waiters.add(token);
 		return () => {
 			this.#waiters.delete(token);
-			if (this.#waiters.size === 0) this.#told = undefined;
+			if (this.#waiters.size > 0) return;
+			this.#told = undefined;
+			const registered = this.#registered;
+			if (registered.kind === "open") registered.record.clock.stop(this);
 		};
 	}
 
@@ -145,12 +149,15 @@ export class RegistryValueSource extends FollowedSource<unknown> {
 
 	/** The host closed: its watches and observers end, its readers and mapping go; it keeps its last start only. */
 	close(): void {
+		const registered = this.#registered;
 		let last: NativeStart<unknown>;
 		try {
 			last = this.start();
 		} catch (error) {
 			last = { kind: "failed", error, last: undefined };
 		}
+		// After the last start, which a waiter put on the clock again.
+		if (registered.kind === "open") registered.record.clock.stop(this);
 		this.#registered = { kind: "closed", last };
 		this.#readers.clear();
 		const waiters = [...this.#waiters];
@@ -167,12 +174,24 @@ export class RegistryValueSource extends FollowedSource<unknown> {
 		if (this.#readers.size === 0) this.#dropMapping();
 	}
 
-	/** Wakes the waiters when `start` says something else than they were told (by usability, then by the error). */
-	#tell(start: NativeStart<unknown>): void {
+	/**
+	 * Wakes the waiters when `start` says something else than they were told (by usability, then by the error); while
+	 * it is not usable, the wait is on its host's clock (`record.clock`).
+	 */
+	#tell(start: NativeStart<unknown>, record: RegistryRecord): void {
 		const told = this.#told;
-		const usable = start.kind === "value" || start.last !== undefined;
-		if (usable ? told?.kind === "usable" : told?.kind === "failed" && sameError(told.error, start.error)) return;
-		this.#told = usable ? USABLE : { kind: "failed", error: (start as { readonly error: unknown }).error };
+		if (start.kind === "value" || start.last !== undefined) {
+			if (told?.kind === "usable") return;
+			this.#told = USABLE;
+			record.clock.stop(this);
+		} else {
+			if (told?.kind === "failed" && sameError(told.error, start.error)) return;
+			this.#told = { kind: "failed", error: start.error };
+			const label = `registry ${this.name}`;
+			const error = asChordError(start.error, label);
+			if (told?.kind === "failed") record.clock.failed(this, error);
+			else record.clock.start(this, label, error);
+		}
 		// The first start of a wait wakes nobody: the waiter reads it itself.
 		if (told === undefined) return;
 		for (const { waiter } of this.#waiters) waiter.dependencyMoved();

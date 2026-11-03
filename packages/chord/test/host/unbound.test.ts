@@ -6,6 +6,7 @@ import { createHost, defineFacet } from "../../src/host/index.ts";
 import type { ChordHost } from "../../src/host/internal.ts";
 import { Binding } from "../../src/host/reference.ts";
 import { UnboundIndex, type UnboundRequest } from "../../src/host/unbound.ts";
+import { UnboundClock } from "../../src/host/unbound-clock.ts";
 import { memoryLinkPair } from "../../src/link/index.ts";
 import { jsonPart } from "../../src/link/internal.ts";
 import { Hold } from "../../src/remote/hold.ts";
@@ -37,11 +38,11 @@ function request(principal?: Principal): UnboundRequest & { readonly log: string
 
 describe("the index", () => {
 	it("wakes every request at the publication, out of the index first; a deleted one is not woken", () => {
-		const index = new UnboundIndex();
+		const index = new UnboundIndex(new UnboundClock(() => {}));
 		const [a, b, c] = [request(), request(), request()];
-		index.add("app.a", a);
-		index.add("app.a", b);
-		index.add("app.b", c);
+		index.add("app.a", a, undefined);
+		index.add("app.a", b, undefined);
+		index.add("app.b", c, undefined);
 		index.delete("app.a", b);
 		index.wakeAll();
 		expect([a.log, b.log, c.log]).toEqual([["wake"], [], ["wake"]]);
@@ -51,11 +52,11 @@ describe("the index", () => {
 	});
 
 	it("wakes the requests of the names a reload serves only (carry-over: publications wake per name)", () => {
-		const index = new UnboundIndex();
+		const index = new UnboundIndex(new UnboundClock(() => {}));
 		const [a, b, c] = [request(), request(), request()];
-		index.add("app.a", a);
-		index.add("app.b", b);
-		index.add("app.c", c);
+		index.add("app.a", a, undefined);
+		index.add("app.b", b, undefined);
+		index.add("app.c", c, undefined);
 		index.wake(["app.a", "app.c", "app.unknown"]);
 		expect([a.log, b.log, c.log]).toEqual([["wake"], [], ["wake"]]);
 		// The others stay indexed until their own names are served.
@@ -67,11 +68,11 @@ describe("the index", () => {
 	});
 
 	it("ends the requests of a revoked principal only, and every request at the host's close", () => {
-		const index = new UnboundIndex();
+		const index = new UnboundIndex(new UnboundClock(() => {}));
 		const guest = request({ kind: "guest" });
 		const owner = request({ kind: "owner" });
 		const own = request();
-		for (const each of [guest, owner, own]) index.add("app.a", each);
+		for (const each of [guest, owner, own]) index.add("app.a", each, undefined);
 		const revoked = new ChordError({ code: "forbidden", reason: "revoked", message: "revoked" });
 		index.revoke((principal) => principal.kind === "guest", revoked);
 		expect([guest.log, owner.log, own.log]).toEqual([["end revoked"], [], []]);
@@ -81,15 +82,14 @@ describe("the index", () => {
 });
 
 describe("references waiting in the index", () => {
-	it("before the publication: loading, placed by it; a type not served then waits failed { waiting }", async () => {
+	it("after the publication: a type served binds; one not served waits failed { waiting }", async () => {
 		const host = createHost({ onError: () => {} });
-		const info = host.hold(Info, {}, context);
-		const missing = host.hold(Missing, { id: 1 }, context);
-		expect([info.state.value, missing.state.value]).toEqual([{ kind: "loading" }, { kind: "loading" }]);
 		await host.load(
 			[{ name: "@test/a", facet: defineFacet((h) => h.serve(Info, () => ({ title: constant("t") }))) }],
 			context,
 		);
+		const info = host.hold(Info, {}, context);
+		const missing = host.hold(Missing, { id: 1 }, context);
 		await delivered();
 		expect(info.state.value).toEqual({ kind: "live" });
 		expect(missing.state.value).toMatchObject({
@@ -104,9 +104,8 @@ describe("references waiting in the index", () => {
 		expect(missing.state.value).toMatchObject({ kind: "ended", error: { reason: "closed" } });
 	});
 
-	it("leave nothing behind once released, before and after the publication (GC)", async () => {
+	it("leave nothing behind once released (GC)", async () => {
 		const host = createHost({ onError: () => {} });
-		host.hold(Missing, { id: 1 }, context).release();
 		await host.load([], context);
 		host.hold(Missing, { id: 2 }, context).release();
 		const got = host.get(Missing, { id: 3 }, context, { readyTimeout: 1 }).catch(() => {});
@@ -114,6 +113,7 @@ describe("references waiting in the index", () => {
 		await expectCollected(...bindings);
 		expect(host).toBeDefined();
 	});
+
 	it("end at the start of the host's close, not after its slow native closes (fix round 1, Sol 6)", async () => {
 		const Core = local("app.core", { version: 1, params: {}, members: { n: int() } });
 		const closeGate = Promise.withResolvers<void>();
@@ -189,9 +189,9 @@ describe("holds waiting in the index", () => {
 
 describe("what waits unserved (slice 12 §6, testPlugin)", () => {
 	it("lists the index's names sorted, and the host the names no plugin serves", async () => {
-		const index = new UnboundIndex();
-		index.add("b", request());
-		index.add("a", request());
+		const index = new UnboundIndex(new UnboundClock(() => {}));
+		index.add("b", request(), undefined);
+		index.add("a", request(), undefined);
 		expect(index.names()).toEqual(["a", "b"]);
 		const host = createHost({ onError: () => {} });
 		await host.load(

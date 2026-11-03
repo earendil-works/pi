@@ -304,14 +304,6 @@ describe("readers (S3)", () => {
 		await host.close(context);
 	});
 
-	it("host.registry before the publication waits for it, then resolves with the provider it served", async () => {
-		const host = createHost({ onError: () => {} });
-		const waiting = host.registry(Sum, context);
-		await host.load([{ name: "@app/sum", facet: defineFacet((h) => h.serve(Sum, { compose: total })) }], context);
-		expect((await waiting).value).toEqual({ total: 0 });
-		await host.close(context);
-	});
-
 	it("host.registry waits through no value until a first good composition, woken by it, its wait then gone", async () => {
 		const { host } = await loadedPlugins({
 			"@app/sum": (host) => {

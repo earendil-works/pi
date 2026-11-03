@@ -130,6 +130,13 @@ The **facet** says this host serves
 The factory only declares: it is synchronous and opens nothing. Chord activates the object (loads its documents, opens
 what it asked to open) and then serves calls. That is why the same factory can run again when the code changes.
 
+**`load` comes first.** A `get`, `hold` or `registry` on a host whose `load` was not called throws `not_ready` at once
+("call `host.load` first"): it would wait for types nobody published. A client with nothing to load calls
+`load([])`. Mistakes that would otherwise look like slowness are reported through `onError` instead: a request
+waiting for a type or registry nobody serves (`unbound_long`, after 5 s; it keeps waiting until its `readyTimeout`),
+a registry with contributions and no provider (`registry_undeclared`, when `load` publishes), and a plugin name that is
+no npm name makes `load` throw.
+
 # An Object's Parts {#parts lede="Documents, tables, transactions, computed values, watching, and outside resources: the vocabulary of every factory."}
 
 A factory builds an object from a handful of parts, each declared with one call on `self`. The notes object grows to
@@ -207,6 +214,20 @@ self.onLive(async (ctx) => {                                  // a routine start
 Natives are why some objects restart when their plugin changes: an open connection cannot be moved to new code, so
 Chord closes it and opens it again. Objects without natives are swapped in place.
 
+**Await what you start in a root or a handler.** What is started with a context ends with it. Code outside objects
+gets its `ctx` from `host.root(fn, ctx)`, and that scope seals when `fn` returns; a handler's context ends when its
+caller cancels or its object ends. A change still waiting when its context ends is cancelled before it commits:
+
+```ts
+await server.root(async (ctx) => {
+	void notes.add({ text: "lost" }, ctx).catch(() => {});   // fn returns, the scope seals: the call's change is cancelled
+}, ctx);
+await server.root(async (ctx) => notes.add({ text: "kept" }, ctx), ctx);   // awaited: it commits
+```
+
+The cancelled change rejects, and since an empty `catch` would hide that it never happened, Chord also reports it
+through `onError` as `transaction_cancelled`, naming the object and, in its error, the scope that ended.
+
 # Several Hosts {#hosts lede="A server, a worker per project, browser tabs: how they find each other's objects."}
 
 Now give each project its own process. Declare the kinds of addressable host, and make notes a `remote` type that
@@ -264,6 +285,46 @@ tab.connect(webSocketLink(new WebSocket("/chord")), { principal: { kind: "server
 
 `P` is your app's type of **principal**, who is calling: an owner, a guest, the server, a worker. Links stamp it;
 a `remote` object is made per principal, so a guest can get a read-only variant of the same notes.
+
+## Who a reference acts as
+
+A reference acts as whoever made it. `host.get` and `self.get` in a `local` object act as the host; `self.get` in a
+`remote` object acts as that object's principal; **`ctx.get` in a method acts as the method's caller**. That is what
+lets a guest's call reach a worker as the guest and get the guest's variant, never more than the guest may see.
+
+It surprises one case: a server object that should act as itself towards a worker. The owner calls
+`Search.rebuildIndex`, which asks each project's worker to scan its files:
+
+```ts
+// server.ts: wrong, the worker sees the owner
+rebuildIndex: async ({ project }, ctx) => {
+	const scan = await ctx.get(IndexScan, { project });   // acts as ctx.principal: the owner, the method's caller
+	return scan.run(ctx);
+},
+
+// worker.ts: the factory serves only the server
+host.serve(IndexScan, (params, principal, self) => {
+	if (principal.kind !== "server") throw new Error("IndexScan serves the server only");   // refuses the owner
+	…
+});
+```
+
+The worker's factory gets `{ kind: "owner" }` and refuses. To act as the server, take the reference where the server
+is the maker: `self.get(IndexScan, { project })` in a `local` server object of its own (a dependency of that object,
+which acts as the host), or, in base code that has the host, a root of the server's host:
+
+```ts
+// base code: a root acts as the host (the server), not as the method's caller
+rebuildIndex: async ({ project }, ctx) =>
+	server.root(async (own) => (await own.get(IndexScan, { project })).run(own), ctx),
+```
+
+## Calls in progress
+
+There is no limit on calls in progress per link. A tab sending 200 calls at once over its socket gets all 200 run:
+at most N (256 by default, announced in the handshake) are in flight per origin, the rest wait in order in the link's
+call queue, none is refused for being too many. The bounds are that call window and the part limits on what arrives
+(sizes, not counts). An object that must limit work per caller does so in its methods, or runs the work as a job.
 
 :::note | The app kit does this wiring
 Starting workers, routing a host kind to them, the WebSocket entry and authentication are slice 10's components

@@ -79,8 +79,8 @@ const host = createHost({
 	},
 });
 
-// 5. A reader before `load` waits: the provider comes with `load`, which composes every registry before any object.
-const early = host.registry(Http, context);
+// 5. A reader before `load` throws at once ("call host.load first"); `load` composes every registry before any object.
+await host.registry(Http, context).catch((error: Error) => console.log("before load:", error.message));
 await host.load(
 	[
 		{ name: "@example/http", facet: httpPlugin },
@@ -90,7 +90,7 @@ await host.load(
 	],
 	context,
 );
-const router = await early;
+const router = await host.registry(Http, context);
 console.log(
 	"routes:",
 	[...router.value].map(([path, { plugin }]) => `${path} (${plugin})`),

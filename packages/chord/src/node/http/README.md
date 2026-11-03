@@ -72,8 +72,8 @@ await http.close(ctx);   // before host.close
 - **Order:** `http.facet` (plugin `chord.http`) serves `Http` (`compose`: the router), `Authenticators` (every
   contribution in order) and, with `listen`, the listener, a host-lifetime object whose native is Chord's Node server:
   it opens right after the publication. The facet is the same object at every reload, so a reload never closes it.
-  `fetch` resolves the registries once; requests before the publication wait (503 past the host's `readyTimeout`; a
-  `close` meanwhile: 503).
+  `fetch` resolves the registries once; requests before the host's `load` answer 503 at once (`host.registry` throws
+  `not_ready` before it; decision "Mistakes that wait are reported at once" (a)).
 - **Admission** (every request and upgrade, first): local only when the connection's local address is loopback, `Host`
   is a loopback name with the listening port (`127.0.0.1`, `localhost`, `[::1]`; without it on port 80) and no
   `Forwarded`/`X-Forwarded-*` header; a forwarded request on loopback only when a contributed relay verifies it

@@ -1,10 +1,11 @@
 // A registry on a host (slice 8 §1): its provider (replaced or removed by a reload, slice 7b §3), its contributions in table order (`contribution.ts`), the table
 // and its lazy composition (marked when the table changes, composed when read or followed, in the batch's
-// deliveries), the reports of conflicts and failures (once per episode), and the values its readers follow by
-// version.
+// deliveries), the reports of conflicts and failures (once per episode) and of contributions nobody serves, and the
+// values its readers follow by version.
 
 import { ChordError } from "../data/index.ts";
 import { invalid } from "../data/internal.ts";
+import type { UnboundClock } from "../host/unbound-clock.ts";
 import { type Batch, handedOut, type NativeStart } from "../state/internal.ts";
 import type { RegistryContribution } from "./contribution.ts";
 import type { ComposeContext, RegistryConflict, RegistryEntry, RegistryProvider, RegistryTable } from "./registry.ts";
@@ -36,7 +37,13 @@ export type RegistryError =
 			readonly plugin: string;
 			readonly type?: string;
 			readonly version: number;
-	  };
+	  }
+	/**
+	 * At a publication, or when a host-lifetime object's contributions enter, the registry has contributions and no
+	 * plugin here serves it (`unavailable/undeclared` for its readers): its contributing plugins in table order; again
+	 * only once they change.
+	 */
+	| { readonly kind: "registry_undeclared"; readonly registry: string; readonly plugins: readonly string[] };
 
 /** The provider as served: the defining plugin's version, `compose` and adapters. */
 type Provider = { readonly version: number; readonly provider: RegistryProvider<unknown, unknown> };
@@ -78,11 +85,16 @@ export class RegistryRecord {
 	#conflicts = new Set<string>();
 	/** The values readers follow, by version; made by the first reader of a version. */
 	readonly #values = new Map<number, RegistryValueSource>();
+	/** The host's clock of unbound waits: a value of it waited for while it has none is on it. */
+	readonly clock: UnboundClock;
+	/** The contributing plugins `registry_undeclared` named last (joined); `undefined` since a provider served it. */
+	#undeclared: string | undefined;
 
-	constructor(name: string, batch: Batch, report: (error: RegistryError) => void) {
+	constructor(name: string, batch: Batch, report: (error: RegistryError) => void, clock: UnboundClock) {
 		this.name = name;
 		this.#batch = batch;
 		this.#report = report;
+		this.clock = clock;
 	}
 
 	/** The newest registry version its contributions were built against; `undefined` without contributions. */
@@ -131,6 +143,24 @@ export class RegistryRecord {
 	composeServed(): void {
 		if (this.#provider === undefined) return;
 		this.start();
+	}
+
+	/**
+	 * After a publication's batch, or a batch where an object's contributions entered: with contributions and no
+	 * provider, reports `registry_undeclared` naming the contributing plugins, unless the same ones were reported since
+	 * a provider last served it.
+	 */
+	reportUndeclared(): void {
+		if (this.#provider !== undefined) {
+			this.#undeclared = undefined;
+			return;
+		}
+		if (this.#contributions.length === 0) return;
+		const plugins = [...new Set(this.#contributions.map(({ contributor }) => contributor.plugin))];
+		const key = plugins.join("\u0000");
+		if (key === this.#undeclared) return;
+		this.#undeclared = key;
+		this.#report({ kind: "registry_undeclared", registry: this.name, plugins });
 	}
 
 	/** Adds a live contributor's contribution, inside a batch: the table changes. */

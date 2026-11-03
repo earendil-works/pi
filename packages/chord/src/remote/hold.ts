@@ -182,7 +182,7 @@ export class Hold implements Holder, UnboundRequest {
 		const { link } = this.#provider;
 		if (!link.host.published) {
 			this.#state = { kind: "unplaced", request: owned(request) };
-			link.host.index(request.type, this);
+			link.host.index(request.type, this, undefined);
 			return;
 		}
 		let served: Serving;
@@ -592,7 +592,7 @@ export class Hold implements Holder, UnboundRequest {
 	 */
 	#refuse(request: HoldRequest, cause: FailureCause): void {
 		this.#state = { kind: "refused", request: owned(request), cause };
-		if (cause.kind === "waiting") this.#provider.link.host.index(request.type, this);
+		if (cause.kind === "waiting") this.#provider.link.host.index(request.type, this, cause);
 		this.#provider.send({
 			kind: "failed",
 			hold: this.id,

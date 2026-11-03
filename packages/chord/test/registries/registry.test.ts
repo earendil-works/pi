@@ -51,14 +51,13 @@ describe("providers", () => {
 		await host.close(context);
 	});
 
-	it("a registry whose provider comes with `load` heals a `host.registry` made before it", async () => {
+	it("a registry whose provider comes with `load` gives `host.registry` its value", async () => {
 		const host = createHost({ onError: () => {} });
-		const waiting = host.registry(Names, context);
 		await host.load(
 			[{ name: "@app/a", facet: defineFacet((h) => h.serve(Names, { compose: (t) => t.length })) }],
 			context,
 		);
-		const value = await waiting;
+		const value = await host.registry(Names, context);
 		expectTypeOf(value).toEqualTypeOf<RegistryValue<number>>();
 		expect(value.value).toBe(0);
 		await host.close(context);

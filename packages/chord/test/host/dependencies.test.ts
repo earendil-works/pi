@@ -175,7 +175,8 @@ describe("parked_long (dependency model §7, audit A11)", () => {
 			{ kind: "parked_long", object: "app.view(1)", waitingFor: "app.missing", state: "failed", since: 0 },
 		]);
 		await vi.advanceTimersByTimeAsync(60_000);
-		expect(errors).toHaveLength(1);
+		// Its unbound reference was reported too, after 5 s (`unbound_long`, unbound-clock.test.ts); no second parked_long.
+		expect(errors.map(({ kind }) => kind)).toEqual(["parked_long", "unbound_long"]);
 		expect(view.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
 		view.release();
 		await host.close(context);
@@ -313,7 +314,7 @@ describe("parked_long (dependency model §7, audit A11)", () => {
 			readyTimeout: 1_000,
 		});
 		const view = host.hold(View, { id: 1 }, context);
-		await vi.advanceTimersByTimeAsync(5_000);
+		await vi.advanceTimersByTimeAsync(4_000);
 		expect(errors.map(({ kind }) => kind)).toEqual(["parked_long"]);
 		// A reload of its plugin replaces the parked attempt: a new episode, its clock from its own parking.
 		const changed = defineFacet((h) => h.serve(View, (_, self) => ({ n: self.get(Missing, {}).n })));
@@ -326,7 +327,7 @@ describe("parked_long (dependency model §7, audit A11)", () => {
 			object: "app.view(1)",
 			waitingFor: "app.missing",
 			state: "failed",
-			since: 5_000,
+			since: 4_000,
 		});
 		view.release();
 		await host.close(context);

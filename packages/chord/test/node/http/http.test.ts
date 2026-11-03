@@ -41,24 +41,15 @@ function sleepThen<T>(ms: number, value: T): Promise<T> {
 const LOOPBACK = { localAddress: "127.0.0.1", localPort: 8788 };
 
 describe("startup", () => {
-	it("fetch waits for the publication, then serves; the registries are resolved once", async () => {
+	it("fetch answers 503 before load at once, then serves; the registries are resolved once", async () => {
 		const server = await served({ "@app/who": whoami }, { load: false });
 		const registry = vi.spyOn(server.host, "registry");
-		const early = server.http.fetch(loopback("/whoami"), LOOPBACK);
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect((await server.http.fetch(loopback("/whoami"), LOOPBACK)).status).toBe(503);
 		await server.load();
-		expect(await (await early).text()).toBe("null");
+		expect(await (await server.http.fetch(loopback("/whoami"), LOOPBACK)).text()).toBe("null");
 		const calls = registry.mock.calls.length;
 		for (let i = 0; i < 3; i++) await server.http.fetch(loopback("/whoami"), LOOPBACK);
 		expect(registry.mock.calls.length).toBe(calls);
-		await server.close();
-	});
-
-	it("answers 503 to a request waiting past the host's readyTimeout", async () => {
-		const server = await served({}, { load: false, readyTimeout: 50 });
-		expect((await server.http.fetch(loopback("/x"), LOOPBACK)).status).toBe(503);
-		await server.load();
-		expect((await server.http.fetch(loopback("/x"), LOOPBACK)).status).toBe(404);
 		await server.close();
 	});
 
@@ -655,7 +646,7 @@ describe("cancellation", () => {
 	});
 
 	// Astra's recheck R4, Sol's N1: a close before the first resolution started a stopped watch; its throw ended the process.
-	it("a close before the publication leaves nothing running: the waiting request answers 503", async () => {
+	it("a close before load leaves nothing running: the early request answers 503", async () => {
 		const server = await served({}, { load: false, config: { listen: undefined } });
 		const waiting = server.http.fetch(loopback("/x"), LOOPBACK);
 		await server.http.close(withAbortSignal(AbortSignal.abort(), context));

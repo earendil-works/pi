@@ -72,7 +72,7 @@ describe("load", () => {
 		await host.close(context);
 	});
 
-	it("leaves out and reports invalid and duplicate plugin names and double serves (the later); refuses a second load", async () => {
+	it("leaves out and reports duplicate plugin names and double serves (the later); refuses a second load", async () => {
 		const empty = defineFacet(() => {});
 		const info = defineFacet((host) => host.serve(Info, () => ({ title: constant("t") })));
 		const loaded = async (facets: { readonly name: string; readonly facet: typeof empty }[]) => {
@@ -81,9 +81,6 @@ describe("load", () => {
 			await host.close(context);
 			return failed.map(({ plugin, error }) => [plugin, (error as Error).message]);
 		};
-		expect(await loaded([{ name: "Bad Name", facet: empty }])).toEqual([
-			["Bad Name", '"Bad Name" is not a valid plugin name'],
-		]);
 		const twice = [
 			{ name: "a", facet: empty },
 			{ name: "a", facet: empty },
@@ -117,14 +114,47 @@ describe("load", () => {
 		await expect(host.load([], context)).rejects.toThrow("load runs once per host");
 	});
 
-	it("makes a get before it resolves wait for it", async () => {
+	it("throws for an invalid plugin name before it changes anything; the host loads afterwards (decision (d))", async () => {
+		const empty = defineFacet(() => {});
+		const info = defineFacet((h) => h.serve(Info, () => ({ title: constant("t") })));
 		const host = createHost(noErrors);
-		const got = host.get(Info, {}, context);
-		await host.load(
-			[{ name: "a", facet: defineFacet((h) => h.serve(Info, () => ({ title: constant("t") }))) }],
-			context,
+		await expect(
+			host.load(
+				[
+					{ name: "@app/info", facet: info },
+					{ name: "tui:core", facet: empty },
+				],
+				context,
+			),
+		).rejects.toThrow('"tui:core" is not a valid plugin name');
+		// Nothing was staged or published: the same host loads the fixed set.
+		expect(await host.load([{ name: "@app/info", facet: info }], context)).toEqual({ failed: [] });
+		expect(() => host.reload([{ name: "Bad Name", facet: empty }], context)).toThrow(
+			'"Bad Name" is not a valid plugin name',
 		);
-		expect((await got).title.value).toBe("t");
+		// The reload changed nothing: the loaded plugin still serves.
+		expect((await host.get(Info, {}, context)).title.value).toBe("t");
+		await host.close(context);
+	});
+
+	it("is called first: get, hold, registry and a root's ctx.get throw not_ready before it (decision (a))", async () => {
+		const Names = defineRegistry<string, readonly string[]>("app.names", { version: 1 });
+		const host = createHost(noErrors);
+		const fix = "the host has not loaded; call host.load first (a host with nothing to load calls load([]))";
+		await expect(host.get(Info, {}, context)).rejects.toMatchObject({
+			code: "not_ready",
+			message: `app.info: ${fix}`,
+		});
+		expect(() => host.hold(Info, {}, context)).toThrow(`app.info: ${fix}`);
+		await expect(host.registry(Names, context)).rejects.toMatchObject({
+			code: "not_ready",
+			message: `registry app.names: ${fix}`,
+		});
+		await expect(host.root((ctx) => ctx.get(Info, {}), context)).rejects.toMatchObject({ code: "not_ready" });
+		// A client with nothing to load calls `load([])`: then its requests wait as any does.
+		await host.load([], context);
+		expect(host.hold(Info, {}, context).state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
+		await host.close(context);
 	});
 });
 
@@ -393,16 +423,12 @@ describe("startup across hosts (dependency model §6)", () => {
 			params: jsonPart({ session: "S1" }),
 			address: { kind: "session", params: { id: "S1" } },
 		});
-		const mine = worker.hold(PlacedNotes, { session: "S1" }, context);
 		await transported();
-		expect(mine.state.value).toEqual({ kind: "loading" });
 		await worker.load(
 			[{ name: "@test/w", facet: defineFacet<TestPrincipal>((h) => serveNotes(h, PlacedNotes)) }],
 			context,
 		);
 		expect((await child.next("bound")).holds[0]).toMatchObject({ hold: 0 });
-		await transported();
-		expect(mine.state.value).toEqual({ kind: "live" });
 		expect(parent.kinds()).toEqual(["hello"]);
 	});
 
@@ -488,13 +514,6 @@ describe("deadlines of gets", () => {
 		expect(await waiting).toEqual({ code: "unavailable", message: "app.svc(1): did not become live within 500 ms" });
 	});
 
-	it("include the wait for load", async () => {
-		const host = createHost(noErrors);
-		const waiting = rejection(host.get(Info, {}, context, { readyTimeout: 100 }));
-		await vi.advanceTimersByTimeAsync(100);
-		expect(await waiting).toEqual({ code: "unavailable", message: "app.info: did not become live within 100 ms" });
-	});
-
 	it("are per getter: the first to pass releases only its own reference, the attempt goes on for the other", async () => {
 		const gate = Promise.withResolvers<void>();
 		const closes: string[] = [];
@@ -529,13 +548,6 @@ describe("close", () => {
 			message: "the host is closed",
 		});
 		expect(() => info.title.value).toThrow("app.info: ended");
-	});
-
-	it("fails a get waiting for load", async () => {
-		const host = createHost(noErrors);
-		const got = host.get(Info, {}, context);
-		await host.close(context);
-		expect(await rejection(got)).toEqual({ code: "released", reason: "closed", message: "the host is closed" });
 	});
 
 	it("ends every object at once: calls fail released before any close ran", async () => {
@@ -983,13 +995,6 @@ describe("host.registry and the host's close (fix round 1)", () => {
 		await flushed();
 		expect(outcome).toMatchObject({ code: "released", reason: "closed" });
 	});
-
-	it("ends one still waiting for the publication at the close", async () => {
-		const host = createHost(noErrors);
-		const waiting = rejection(host.registry(Absent, context, { readyTimeout: 60_000 }));
-		await host.close(context);
-		expect(await waiting).toMatchObject({ code: "released", reason: "closed" });
-	});
 });
 
 describe("the selected provider's own checks for a request made here (fix round 1)", () => {
@@ -1114,49 +1119,6 @@ describe("acquiring: hold and get", () => {
 		const got = rejection(host.get(Info, {}, context, { readyTimeout: 5 }));
 		await vi.advanceTimersByTimeAsync(5);
 		expect(await got).toEqual(unserved);
-	});
-
-	it("before load resolved: hold is loading, get waits; once it resolved both bind, or an unserved type waits", async () => {
-		const host = createHost(noErrors);
-		const held = host.hold(Info, {}, context);
-		const unserved = host.hold(Page, { id: 1 }, context);
-		const got = host.get(Info, {}, context);
-		const refused = rejection(host.get(Page, { id: 1 }, context, { readyTimeout: 50 }));
-		expect([held.state.value, unserved.state.value]).toEqual([{ kind: "loading" }, { kind: "loading" }]);
-		await host.load(
-			[{ name: "@test/app", facet: defineFacet((h) => h.serve(Info, () => ({ title: constant("t") }))) }],
-			context,
-		);
-		await flushed();
-		expect(held.state.value).toEqual({ kind: "live" });
-		expect((await got).title.value).toBe("t");
-		const error = { code: "unavailable", message: "app.page is not served here" };
-		expect(unserved.state.value).toMatchObject({
-			kind: "failed",
-			cause: { kind: "waiting", error },
-			retryAt: undefined,
-		});
-		await vi.advanceTimersByTimeAsync(50);
-		expect(await refused).toEqual(error);
-	});
-
-	it("invalid params before load resolved: hold throws and get rejects invalid/params at once (audit, 7a)", async () => {
-		const host = createHost(noErrors);
-		expect(() => host.hold(Page, { id: "x" } as never, context)).toThrow("params");
-		expect(await rejection(host.get(Page, { id: "x" } as never, context))).toMatchObject({
-			code: "invalid",
-			reason: "params",
-		});
-		await host.load([], context);
-	});
-
-	it("a hold released before load resolved makes nothing once it did", async () => {
-		const factory = vi.fn(({ id }: { id: number }) => ({ id: constant(id) }));
-		const host = createHost(noErrors);
-		host.hold(Page, { id: 1 }, context).release();
-		await host.load([{ name: "@test/app", facet: defineFacet((h) => h.serve(Page, factory)) }], context);
-		await flushed();
-		expect(factory).not.toHaveBeenCalled();
 	});
 
 	it("through transient failures: hold is failed with retryAt, then loading; get waits, then rejects with the last cause", async () => {

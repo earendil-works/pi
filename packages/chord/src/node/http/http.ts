@@ -76,7 +76,7 @@ export interface HttpComponent<P extends Principal> {
 	/**
 	 * Answers a Web `Request` (an app's own server mounts it: `hono.all("/*", (c) => http.fetch(c.req.raw, …))`);
 	 * `connection` is what the server knows of the socket: without `localAddress` and `localPort` no request is local.
-	 * Requests before the publication wait for it (503 past the host's `readyTimeout`).
+	 * Requests before the host's `load` answer 503 at once (its `host.registry` throws `not_ready` then).
 	 */
 	fetch(request: Request, connection?: Connection): Promise<Response>;
 	/** Node's upgrade adapter (`server.on("upgrade", http.upgrade)`): the links endpoint and plugin sockets. */
@@ -189,7 +189,7 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 
 	/**
 	 * Serves `request`: its answer, and what its consumer calls once the body is written or abandoned. Never throws:
-	 * whatever fails answers (503 before the publication or while closing, 403, 404, 500 reported).
+	 * whatever fails answers (503 before the host's `load` or while closing, 403, 404, 500 reported).
 	 */
 	async serve(request: Incoming, connection: Connection): Promise<Served> {
 		const controller = new AbortController();
@@ -340,7 +340,7 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 		this.#onError({ kind: "hook_failed", hook, ...(plugin === undefined ? {} : { plugin }), error });
 	}
 
-	/** The registries: resolved once, waiting for the publication; a failed try is tried again later. */
+	/** The registries: resolved once, after the host's `load` (`not_ready` before it); a failed try is tried again later. */
 	#resolve(): Promise<Registries> {
 		this.#resolving ??= Promise.all([
 			this.#host.registry(Http, this.#context),

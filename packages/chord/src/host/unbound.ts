@@ -1,11 +1,13 @@
 // The unbound index (dependency model §1, §4): the requests a host decided cannot bind yet, by the name they wait for.
-// Before the host's first publication every request made here, and every hold arriving on its links, waits here
-// (`unpublished`); after it, those its check left unbound (`not_served`, `version`): a reference made here, a hold that
-// arrived over a link and was refused for a name. A publication wakes the requests of the names it serves (`load`'s
-// every one, a reload's those of its names); a request
-// leaves when it ends (released, settled, given up, its link or origin closed, revoked) or binds.
+// Before the host's first publication every hold arriving on its links, and a request made here while `load` runs the
+// setups (before `load` this host's own requests throw), waits here (`unpublished`); after it, those its check left
+// unbound (`not_served`, `version`): a reference made here, a hold that arrived over a link and was refused for a name.
+// A publication wakes the requests of the names it serves (`load`'s every one, a reload's those of its names); a
+// request leaves when it ends (released, settled, given up, its link or origin closed, revoked) or binds. A request
+// waiting with a cause (after the publication) is on the host's `UnboundClock` while it is indexed: reported after 5 s.
 
-import type { ChordError, Principal } from "../data/index.ts";
+import type { ChordError, FailureCause, Principal } from "../data/index.ts";
+import type { UnboundClock } from "./unbound-clock.ts";
 
 /** A request in the index: a reference made here or a hold that arrived over a link. */
 export interface UnboundRequest {
@@ -20,21 +22,31 @@ export interface UnboundRequest {
 /** A host's unbound requests by name. */
 export class UnboundIndex {
 	readonly #byName = new Map<string, Set<UnboundRequest>>();
+	readonly #clock: UnboundClock;
 
-	/** Indexes `request` under `name` (once; again after a wake). */
-	add(name: string, request: UnboundRequest): void {
+	constructor(clock: UnboundClock) {
+		this.#clock = clock;
+	}
+
+	/**
+	 * Indexes `request` under `name` (once; again after a wake), waiting for the publication (no `cause`) or for a
+	 * provider that fits (`cause`, on the clock).
+	 */
+	add(name: string, request: UnboundRequest, cause: FailureCause | undefined): void {
 		let requests = this.#byName.get(name);
 		if (requests === undefined) {
 			requests = new Set();
 			this.#byName.set(name, requests);
 		}
 		requests.add(request);
+		if (cause !== undefined) this.#clock.start(request, name, cause.error);
 	}
 
 	/** `request` ended or binds: it leaves the index. */
 	delete(name: string, request: UnboundRequest): void {
 		const requests = this.#byName.get(name);
 		if (requests === undefined || !requests.delete(request)) return;
+		this.#clock.stop(request);
 		if (requests.size === 0) this.#byName.delete(name);
 	}
 
@@ -47,6 +59,7 @@ export class UnboundIndex {
 	wakeAll(): void {
 		const all = [...this.#byName.values()].flatMap((requests) => [...requests]);
 		this.#byName.clear();
+		for (const request of all) this.#clock.stop(request);
 		for (const request of all) request.wake();
 	}
 
@@ -62,6 +75,7 @@ export class UnboundIndex {
 			this.#byName.delete(name);
 			woken.push(...requests);
 		}
+		for (const request of woken) this.#clock.stop(request);
 		for (const request of woken) request.wake();
 	}
 
@@ -78,6 +92,7 @@ export class UnboundIndex {
 	close(error: ChordError): void {
 		const all = [...this.#byName.values()].flatMap((requests) => [...requests]);
 		this.#byName.clear();
+		for (const request of all) this.#clock.stop(request);
 		for (const request of all) request.end(error);
 	}
 }

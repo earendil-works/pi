@@ -114,8 +114,9 @@ table{max-width:100%}
   <p class="subtitle">Build a small notes app step by step, from one host to plugins on a server and on workers, edited while it runs</p>
   <div class="cover-stats"><div class="stat"><b>3</b><span>kinds of host in an app: server, worker, client</span></div><div class="stat"><b>1</b><span>file per host kind in a plugin</span></div><div class="stat"><b>0</b><span>restarts to apply a plugin edit</span></div><div class="stat"><b>1</b><span>rule: plugins talk only through object types and registries</span></div></div>
   <div class="cover-note"><p>A tutorial for people building apps on Chord v2, written by the redesign session from <code>design.md</code>, <code>slice-7c.md</code>,
-<code>slice-10.md</code>, <code>slice-12.md</code>, <code>slice-13.md</code>, the decision log and the code in <code>packages/chord/src</code>. API names are the current ones. The early chapters wire hosts by hand to show the parts; the last
-chapter shows the app kit (<code>chord/app</code>), which does that wiring for an app.</p>
+<code>slice-10.md</code>, <code>slice-12.md</code>, <code>slice-13.md</code>, the decision log and the code in <code>packages/chord/src</code>. API names
+are the current ones. The early chapters wire hosts by hand to show the parts; the last chapter shows the app kit
+(<code>chord/app</code>), which does that wiring for an app.</p>
 </div>
 </section><div class="inner">
 <nav class="toc"><h2>Contents</h2><ol>
@@ -217,6 +218,12 @@ The <strong>facet</strong> says this host serves
 <code>load</code> publishes the facet. <code>get</code> returns a <strong>reference</strong> once the object is live; its members are the contract&#39;s.</p>
 <p>The factory only declares: it is synchronous and opens nothing. Chord activates the object (loads its documents, opens
 what it asked to open) and then serves calls. That is why the same factory can run again when the code changes.</p>
+<p><strong><code>load</code> comes first.</strong> A <code>get</code>, <code>hold</code> or <code>registry</code> on a host whose <code>load</code> was not called throws <code>not_ready</code> at once
+(&quot;call <code>host.load</code> first&quot;): it would wait for types nobody published. A client with nothing to load calls
+<code>load([])</code>. Mistakes that would otherwise look like slowness are reported through <code>onError</code> instead: a request
+waiting for a type or registry nobody serves (<code>unbound_long</code>, after 5 s; it keeps waiting until its <code>readyTimeout</code>),
+a registry with contributions and no provider (<code>registry_undeclared</code>, when <code>load</code> publishes), and a plugin name that is
+no npm name makes <code>load</code> throw.</p>
 </section>
 
 <section class="chapter" id="parts"><header class="opener"><div class="numeral">II</div><h2>An Object&#39;s Parts</h2><p class="lede">Documents, tables, transactions, computed values, watching, and outside resources: the vocabulary of every factory.</p></header>
@@ -271,6 +278,15 @@ self.<span class="tk-f">onLive</span>(<span class="tk-k">async</span> (ctx) =&gt
 });</code></pre>
 <p>Natives are why some objects restart when their plugin changes: an open connection cannot be moved to new code, so
 Chord closes it and opens it again. Objects without natives are swapped in place.</p>
+<p><strong>Await what you start in a root or a handler.</strong> What is started with a context ends with it. Code outside objects
+gets its <code>ctx</code> from <code>host.root(fn, ctx)</code>, and that scope seals when <code>fn</code> returns; a handler&#39;s context ends when its
+caller cancels or its object ends. A change still waiting when its context ends is cancelled before it commits:</p>
+<pre><code><span class="tk-k">await</span> server.<span class="tk-f">root</span>(<span class="tk-k">async</span> (ctx) =&gt; {
+	<span class="tk-k">void</span> notes.<span class="tk-f">add</span>({ text: <span class="tk-s">"lost"</span> }, ctx).<span class="tk-k">catch</span>(() =&gt; {});   <span class="tk-c">// fn returns, the scope seals: the call's change is cancelled</span>
+}, ctx);
+<span class="tk-k">await</span> server.<span class="tk-f">root</span>(<span class="tk-k">async</span> (ctx) =&gt; notes.<span class="tk-f">add</span>({ text: <span class="tk-s">"kept"</span> }, ctx), ctx);   <span class="tk-c">// awaited: it commits</span></code></pre>
+<p>The cancelled change rejects, and since an empty <code>catch</code> would hide that it never happened, Chord also reports it
+through <code>onError</code> as <code>transaction_cancelled</code>, naming the object and, in its error, the scope that ended.</p>
 </section>
 
 <section class="chapter" id="hosts"><header class="opener"><div class="numeral">III</div><h2>Several Hosts</h2><p class="lede">A server, a worker per project, browser tabs: how they find each other&#39;s objects.</p></header>
@@ -306,6 +322,34 @@ worker.<span class="tk-f">connect</span>(parentLink, { principal: { kind: <span 
 tab.<span class="tk-f">connect</span>(<span class="tk-f">webSocketLink</span>(<span class="tk-k">new</span> <span class="tk-t">WebSocket</span>(<span class="tk-s">"/chord"</span>)), { principal: { kind: <span class="tk-s">"server"</span> } }, ctx);</code></pre>
 <p><code>P</code> is your app&#39;s type of <strong>principal</strong>, who is calling: an owner, a guest, the server, a worker. Links stamp it;
 a <code>remote</code> object is made per principal, so a guest can get a read-only variant of the same notes.</p>
+<h3 id="who-a-reference-acts-as">Who a reference acts as</h3>
+<p>A reference acts as whoever made it. <code>host.get</code> and <code>self.get</code> in a <code>local</code> object act as the host; <code>self.get</code> in a
+<code>remote</code> object acts as that object&#39;s principal; <strong><code>ctx.get</code> in a method acts as the method&#39;s caller</strong>. That is what
+lets a guest&#39;s call reach a worker as the guest and get the guest&#39;s variant, never more than the guest may see.</p>
+<p>It surprises one case: a server object that should act as itself towards a worker. The owner calls
+<code>Search.rebuildIndex</code>, which asks each project&#39;s worker to scan its files:</p>
+<pre><code><span class="tk-c">// server.ts: wrong, the worker sees the owner</span>
+rebuildIndex: <span class="tk-k">async</span> ({ project }, ctx) =&gt; {
+	<span class="tk-k">const</span> scan = <span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(<span class="tk-t">IndexScan</span>, { project });   <span class="tk-c">// acts as ctx.principal: the owner, the method's caller</span>
+	<span class="tk-k">return</span> scan.<span class="tk-f">run</span>(ctx);
+},
+
+<span class="tk-c">// worker.ts: the factory serves only the server</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">IndexScan</span>, (params, principal, self) =&gt; {
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"server"</span>) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">Error</span>(<span class="tk-s">"IndexScan serves the server only"</span>);   <span class="tk-c">// refuses the owner</span>
+	…
+});</code></pre>
+<p>The worker&#39;s factory gets <code>{ kind: &quot;owner&quot; }</code> and refuses. To act as the server, take the reference where the server
+is the maker: <code>self.get(IndexScan, { project })</code> in a <code>local</code> server object of its own (a dependency of that object,
+which acts as the host), or, in base code that has the host, a root of the server&#39;s host:</p>
+<pre><code><span class="tk-c">// base code: a root acts as the host (the server), not as the method's caller</span>
+rebuildIndex: <span class="tk-k">async</span> ({ project }, ctx) =&gt;
+	server.<span class="tk-f">root</span>(<span class="tk-k">async</span> (own) =&gt; (<span class="tk-k">await</span> own.<span class="tk-f">get</span>(<span class="tk-t">IndexScan</span>, { project })).<span class="tk-f">run</span>(own), ctx),</code></pre>
+<h3 id="calls-in-progress">Calls in progress</h3>
+<p>There is no limit on calls in progress per link. A tab sending 200 calls at once over its socket gets all 200 run:
+at most N (256 by default, announced in the handshake) are in flight per origin, the rest wait in order in the link&#39;s
+call queue, none is refused for being too many. The bounds are that call window and the part limits on what arrives
+(sizes, not counts). An object that must limit work per caller does so in its methods, or runs the work as a job.</p>
 <div class="note"><b class="tag">The app kit does this wiring</b><p>Starting workers, routing a host kind to them, the WebSocket entry and authentication are slice 10&#39;s components
 (<code>createWorkers</code>, <code>chord.http</code>). An app built with the app kit (<code>chord/app</code>, the last chapter) does not wire them:
 <code>startServer(...)</code> on the server and <code>startWorker(...)</code> in a worker&#39;s entry do.</p>

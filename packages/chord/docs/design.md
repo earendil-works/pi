@@ -147,9 +147,12 @@ export const Catalog = remote("catalog", { hostAddress: () => Server(), … });
 
   A `hostAddress` or `authorize` that throws fails the request broken with that error; an address whose params fail
   the kind's check is broken `invalid/host_address`.
-- **The publication gate** (slice 7a): a request made on this host, or a hold arriving on its links, before the
-  host's first publication (`load`'s batch of declarations) is not placed yet: it is `loading`, and the publication
-  places it. The gate lasts only for the synchronous setups, never for activation, so it cannot deadlock.
+- **The publication gate** (slice 7a): a hold arriving on its links before the host's first publication (`load`'s
+  batch of declarations) is not placed yet: it is `loading`, and the publication places it (a worker connects first,
+  W6). The gate lasts only for the synchronous setups, never for activation, so it cannot deadlock. **This host's own
+  requests before `load` is called** (`get`, `hold`, `registry`, a root's `ctx.get`) would wait for a publication
+  nobody started: they throw `not_ready` at once, "call `host.load` first"; a client host with nothing to load calls
+  `load([])` (decision "Mistakes that wait are reported at once" (a), 2026-11-03; footgun 1 of the p2 port).
 - **Then the selected provider is checked** (here: served, the version and fingerprint, the params, the provider's
   own host-address check; over a path: at the provider host). Version checks never look at a same-name registration
   elsewhere. What the check finds:
@@ -170,6 +173,17 @@ export const Catalog = remote("catalog", { hostAddress: () => Server(), … });
   the names it serves, slice 7b) wakes its requests, which run their check again
   (a refused hold sends `loading`, then `bound` or `failed`); no new message kind. Index entries go when their request
   ends (GC-tested). The consumer never re-holds a request by itself: no backoff, no polling.
+- **A request waiting unbound is reported** (decision "Mistakes that wait are reported at once" (c), 2026-11-03): one
+  indexed with a cause after the publication (`not_served`, `version`: a reference made here, a hold refused here for a
+  name) and a registry value waited for while it has none (a parked `self.registry`, a `host.registry`: `not_served`,
+  `version`, `compose`; one wait per value, not per waiter) is reported once through `onError` after 5 s as
+  `unbound_long { waitingFor, error, since }` (`waitingFor` the type's name or `registry <name>`, `error` the cause,
+  `since` `Date.now()` time); it keeps waiting until its `readyTimeout` as before. One clock per host, one timer armed for
+  the earliest wait not reported yet (no timer per request); a wait that binds, ends or is woken leaves it, and one
+  woken and left unbound again starts anew. Reported on the host that decided it: a consumer whose hold a provider
+  host refused sees `failed { waiting }`, the provider host reports. Not `parked_long`, which reports an attempt
+  (an object) parked past its `readyTimeout` whatever its blocker (loading included); a `self.get` waiting unbound
+  gets both, `unbound_long` for the request after 5 s and `parked_long` for its object later.
 
 ### The low-level host API
 
@@ -234,17 +248,17 @@ host). The workers component (§23) does this.
 | Call | Meaning |
 | --- | --- |
 | `createHost<P>({ address?, principal?, ...options })` | with an address: addressable, serves only objects placed there, acts as `principal` on its own host; without: a client. `P` is the app's principal type |
-| `load([{ name, facet }], context)` | facets with their plugin names (the plugin's `package.json` name, npm style; duplicates and invalid names are refused); runs every facet's setup, publishes all of them in one batch (types and registries served, registries composed once, contributions; requests waiting for the publication are placed after it), then waits for the start barrier (section 21: the first outcomes of its host-lifetime objects, slice 7a); a plugin whose setup throws is left out and reported (`load` resolves with `{ failed: [{ plugin, error }] }`, decision "Per plugin at startup and reload"); runs once. Loaders are adapters; base code passes its core facet the same way |
-| `reload([{ name, facet }], context)` | the complete new plugin set after `load` (a facet passed as the same object is an unchanged plugin): staging, then one commit, then every object of a changed or removed plugin takes its fate; resolves with a report (a plugin whose new code fails keeps its old code, listed in `failed`); one at a time (section 21, slice 7b) |
+| `load([{ name, facet }], context)` | facets with their plugin names (the plugin's `package.json` name, npm style: an invalid name is a programming error, `load` throws before it changes anything; a duplicate is refused and listed in `failed`); runs every facet's setup, publishes all of them in one batch (types and registries served, registries composed once, contributions; requests waiting for the publication are placed after it; a registry with contributions and no provider is reported `registry_undeclared`), then waits for the start barrier (section 21: the first outcomes of its host-lifetime objects, slice 7a); a plugin whose setup throws is left out and reported (`load` resolves with `{ failed: [{ plugin, error }] }`, decision "Per plugin at startup and reload"); runs once. Loaders are adapters; base code passes its core facet the same way |
+| `reload([{ name, facet }], context)` | the complete new plugin set after `load` (a facet passed as the same object is an unchanged plugin): staging, then one commit, then every object of a changed or removed plugin takes its fate; resolves with a report (a plugin whose new code fails keeps its old code, listed in `failed`); an invalid plugin name throws before anything changes; one at a time (section 21, slice 7b) |
 | `connect(link, { principal, trusted?, codec? }, context)` | the link to the parent, at most one open; once it closed (a drop), `connect` takes the next, and every remote reference over the parent is held again on it. `principal` = who the parent is |
 | `accept(link, { principal, trusted?, codec? }, context)` | a link from a child; holds and calls on it act as `principal` |
 | `route(Kind, { authorize, resolve }, context)` | how to reach hosts of a kind (below); called before `load`, once per kind; work arriving on its links runs under `context`; returns a `RouteHandle`: `retry(address)` resolves the address again (D10b), `suspend(address)` stops resolving it until `retry` (R1) |
-| `get(Type, params, context, { readyTimeout? })` | a reference once its object is live, waiting through `loading`, `failed { transient }` and `failed { waiting }` up to its `readyTimeout` (section 7) |
-| `hold(Type, params, context, { readyTimeout? })` | a reference at once that follows its object until released (section 7) |
+| `get(Type, params, context, { readyTimeout? })` | a reference once its object is live, waiting through `loading`, `failed { transient }` and `failed { waiting }` up to its `readyTimeout` (section 7); before `load` it rejects `not_ready` at once |
+| `hold(Type, params, context, { readyTimeout? })` | a reference at once that follows its object until released (section 7); before `load` it throws `not_ready` |
 | `close(context)` | closes the links (children, routes, then the parent), then ends every object at once and tears them down, the last to go live first (reason `close`); rejects with an `AggregateError` of the native closes that threw |
 | `revoke(r, context)` | revocation (section 4; slice 4b) |
 | `root(fn, context, { principal? })` | a call scope for code outside objects (a Durable hook, a CLI, an HTTP request): `fn` gets a handler's `ctx`, sealed when `fn` settles, `context` aborts or the host closes (slice 8 D3, section 8); an omitted `principal` acts as the host, an explicit `undefined` runs anonymous (slice 10) |
-| `registry(R, context, { readyTimeout? })` | registry `R`'s composed value for code outside objects once it is usable; waits for the publication, then while it has none up to its `readyTimeout`, then rejects with the last error (slice 8, 7a, section 17) |
+| `registry(R, context, { readyTimeout? })` | registry `R`'s composed value for code outside objects once it is usable; while it has none it waits up to its `readyTimeout`, then rejects with the last error (slice 8, 7a, section 17); before `load` it rejects `not_ready` at once |
 
 **Options of `createHost`:** `address`, `principal`, `principalKey` (section 4; the same function on every host),
 `telemetry` (section 29), `onError`, `closeTimeout`, `readyTimeout`, `heartbeat: { ping?, close? }`; later `revokedBy`
@@ -253,7 +267,7 @@ and closed by the app with `store.close(ctx)` after `host.close`; the host never
 background, as a tagged `HostError`: `listener_error` (a watch listener threw), `delivery_failed` (a frame delivery
 threw), `activation_failed { object, failure }`, `close_failed { object, native, error }`, `close_timeout { object,
 native }`, `drain_timeout { object }`, `protocol_error { error }`, `resolve_failed { address, error }`; later routine
-errors (slice 5), `derive_failed { object, member?, error }` (a derive's compute threw, once per failure episode, slice 6a), the registries' `registry_conflict { registry, message, plugins }`, `registry_failed { registry, error }`, `contribution_failed { registry, plugin, type?, error }` and `contribution_refused { registry, plugin, type?, version }` (each once per episode, slice 8), `object_failed { object, failure }` (a live object failing, slice 6a, `broken`; `transient` when a `self.follow` source failed, slice 6b R4; `failure` where the value is a `FailureCause`, `error` otherwise, 2026-10-27), `job_interrupted { object, job, id, restarts }` (a persisted run ended at the restart limit, slice 6b D6), `parked_long { object, waitingFor, state, since }` (an attempt parked longer than its `readyTimeout`, whatever its blocker, once per parking episode: a diagnostic of a ring across hosts started at the same moment or a long wait, slice 7a, audit A11, §6) and `storage_failed { error }`
+errors (slice 5), `derive_failed { object, member?, error }` (a derive's compute threw, once per failure episode, slice 6a), the registries' `registry_conflict { registry, message, plugins }`, `registry_failed { registry, error }`, `contribution_failed { registry, plugin, type?, error }` and `contribution_refused { registry, plugin, type?, version }` (each once per episode, slice 8), `object_failed { object, failure }` (a live object failing, slice 6a, `broken`; `transient` when a `self.follow` source failed, slice 6b R4; `failure` where the value is a `FailureCause`, `error` otherwise, 2026-10-27), `job_interrupted { object, job, id, restarts }` (a persisted run ended at the restart limit, slice 6b D6), `parked_long { object, waitingFor, state, since }` (an attempt parked longer than its `readyTimeout`, whatever its blocker, once per parking episode: a diagnostic of a ring across hosts started at the same moment or a long wait, slice 7a, audit A11, §6), the reports of mistakes that would otherwise look like slowness (decision "Mistakes that wait are reported at once", 2026-11-03): `registry_undeclared { registry, plugins }` (at a publication, or when a host-lifetime object's contributions enter, a registry with contributions and no provider here, naming its contributing plugins; again only once they change), `unbound_long { waitingFor, error, since }` (a request waiting unbound after the publication, below) and `transaction_cancelled { object, error }` (§8), and `storage_failed { error }`
 (slice 6a), which every app must handle: Chord never ends the process,
 the app exits with its own code for its supervisor or reopens.
 
@@ -375,8 +389,10 @@ host.route(Session, {
   `abort` (when sent, at the caller; when received, at the provider), its hold's `release`, `gone`, its origin's
   `closed` or the link closing. A call still queued when its hold rebinds (`loading`) is rejected `unavailable` (it may
   name a method of the old variant). A provider seeing more than N running calls of one origin closes the link
-  (protocol error); a call naming a hold it does not know is ignored before it is counted (Q1). A per-link N, if ever
-  needed, must bound a relay's forwarding too.
+  (protocol error); a call naming a hold it does not know is ignored before it is counted (Q1). **There is no limit on
+  calls in progress per link** (owner, 2026-11-03; v1's `maxCalls` has no counterpart): the call window N per origin
+  and the part limits (section 22) are the bounds; 200 concurrent calls over one socket all run, N at a time in
+  flight. A per-link N, if ever needed, must bound a relay's forwarding too.
 - Holds are not limited by count (authorization and params checks protect them); size limits are a separate check
   (section 22). Byte-heavy traffic (terminals) uses separate channels (section 23), so a large state message never
   holds up keystrokes.
@@ -477,7 +493,11 @@ drops, folds or resets.
   | a relayed hold | the arriving hold's principal | the arriving hold's incarnation |
 
   So a guest's call on the server whose handler `ctx.get`s a worker type reaches the worker as the guest and gets the
-  guest's variant; two references with different principals are two remote objects.
+  guest's variant; two references with different principals are two remote objects. A server object that acts as
+  itself towards a worker takes the reference with `self.get` in its own object or in a server root (`host.root`,
+  acting as the host), never with the method's `ctx.get` (owner, 2026-11-03; p2's footgun 7): the owner calls
+  `Search.rebuildIndex`, whose `ctx.get(IndexScan, { session })` reaches the worker as the owner, and a worker
+  factory checking `principal.kind === "server"` refuses it.
 - **Upward is a boundary:** a worker's hold of a server type goes over its parent link, and the server ignores
   principal fields from a child, so it acts as the worker, whoever the worker's handler serves. A worker that acts for
   a user towards the server passes the user as data and the server object decides.
@@ -794,9 +814,8 @@ location are dropped.
   cause; only `failed { broken }` rejects at once (owner, 2026-10-29, decision "Getters wait through `waiting`"). A
   getter that gives up releases its reference. **`host.hold`** returns a reference at once that follows its object
   until released (loading, live, failed and retried as its object is, loading again while its link is down) and never
-  rejects; only invalid params throw (checked at once, also before `load`: design audit 7, 2026-10-27). A type not
-  served where it goes is `loading` before the host's publication and `failed { waiting }` after it, before and after
-  `load` alike (§3; slice 7a). Its `variant` is `undefined` until its first binding (slice 3b). A UI holds and shows
+  rejects; only invalid params throw (checked at once: design audit 7, 2026-10-27), and a use before `load` (`not_ready`,
+  §3). A type not served where it goes is `failed { waiting }` (§3; slice 7a), reported `unbound_long` after 5 s. Its `variant` is `undefined` until its first binding (slice 3b). A UI holds and shows
   `ref.state`; code that needs the object now gets it, with the patience it passes. There is no `state: false` option
   (C8) and no `optional` flag.
 - **Narrowing by variant:** `ref.variant` is the discriminant (C15: no `inVariant`/`expectVariant`); `RefIn<C, V>`
@@ -894,6 +913,17 @@ local object's handler the host's principal, none on a client), `incarnation` (t
 span (slice 9, cut C11 to decide); in a job's `run` also `jobId` and `state` (slice 5). Pass `ctx` to everything you wait
 on. Code outside objects gets a `ctx` from `host.root` (slice 8). Durable's `Context` is the same module
 (`../context`); bridging is explicit. No code versions, no request ids.
+
+**Await what you start in a root or a handler** (decision "Mistakes that wait are reported at once" (e), owner,
+2026-11-03; footgun 10 of the p2 port). What is started with a context ends with it: a root's scope seals when `fn`
+settles, a handler's context aborts when its caller cancels or its object ends, an attempt's at its seal. A document
+change or transaction (`handle.change`, `retire`, `self.tx`, `job.start`) that did not commit because its context
+ended first (it waited on its object's line, or `fn` returned before it committed) rejects with that context's abort
+reason, and is also reported through `onError` as `transaction_cancelled { object, error }` (`error` the abort
+reason, naming the scope that ended): an empty `catch` cannot hide a change that never happened.
+`host.root(async (ctx) => { void handle.change(fn, ctx).catch(() => {}); }, context)` loses the change and reports it;
+`await handle.change(fn, ctx)` inside `fn` commits it. Only the cancelled path pays (the check runs where the
+transaction failed); Chord's own transactions run under contexts that never abort.
 
 **Contexts are required** (owner, 2026-10-22): every function that takes a context requires it, as the parameter after
 the required ones (context last); optional only on error-reporting paths. A getter that cannot take one (a lazy derive
@@ -1660,8 +1690,9 @@ const router = self.registry(Http);           // a declared dependency; read rou
   never bring their own `compose`). A reload of the defining plugin replaces the declaration atomically (`serve`
   replaces; a removed defining plugin's provider goes, its readers wait `not_served`) and the table
   recomposes. Without a declaration (the defining plugin is not loaded) the registry has no composed value: readers
-  wait `failed { waiting }` (`unavailable/undeclared`), like a request for a type nobody serves; contributions wait in
-  the table.
+  wait `failed { waiting }` (`unavailable/undeclared`), like a request for a type nobody serves, reported
+  `unbound_long` after 5 s (§3); contributions wait in the table, and the registry is reported `registry_undeclared
+  { registry, plugins }` at the publication (decision "Mistakes that wait are reported at once" (b)).
 - **Versions (Q8, the owner-adapter pattern):** a contribution carries the registry version its plugin was built
   against; older ones are adapted with the defining facet's pure `accepts` when the table is built. A contribution
   without a matching version or adapter (older without adapter, or newer) is left out of the table and reported (an
@@ -1823,7 +1854,8 @@ changed (Chord compares no code); one passed as the very same facet object is un
 report once the commit happened and every object took its fate (swaps and retries had their first dependency check;
 it does not wait for objects to go live); a plugin whose new code fails keeps its old code and is listed in the
 report's `failed` (per plugin, below).
-Reloads run one after another per host; before `load` resolved it throws, after `close` it rejects `released/closed`;
+Reloads run one after another per host; before `load` resolved it throws, and so does a plugin set with an invalid
+name (before anything changes); after `close` it rejects `released/closed`;
 `context` bounds it (decision 4: no install watchdog): its abort before the commit rejects `aborted` and changes
 nothing, after the commit it only ends the wait: it rejects `aborted` with `details.committed`, a `CommittedReload`
 `{ added, changed, removed, failed }` naming what the commit applied (the plugins component adopts it, so a later
@@ -2170,7 +2202,7 @@ await http.close(ctx);                                // before host.close: drai
   (`compose` builds the router) and `Authenticators`, and with `listen` the listener: a host-lifetime object whose
   native is Chord's Node server, opened right after `load`'s publication, so a reload never closes it (decisions "The
   HTTP server is a native object", "Settings are arguments, extensions are registries"). `fetch` resolves the
-  registries once; requests before the publication wait (503 past `readyTimeout`).
+  registries once; requests before the host's `load` answer 503 at once (`host.registry` throws `not_ready` then).
 - **Contributions to `Http`:** `{ routes?, wraps?, sockets?, maxPayload?, hosts?, framers?, relays?, csp? }`, a value
   or a writable (a change recomposes the router). A request uses the router as it was when it started.
 - **The security baseline** (decision "The HTTP component's security baseline", on for every request and upgrade

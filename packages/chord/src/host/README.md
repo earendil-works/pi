@@ -202,7 +202,15 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   `job_dropped` (`object`, `job`, `id`: a blocked run dropped without `finish`, by `abort` or its object's end),
   `parked_long` (`object`, `waitingFor`: the first blocker's label in declaration order, a reference's or `registry
   <name>`, `state`: `loading` or `failed`, `since`: when it parked; once per parking episode, its pinned keys' loading
-  included, slice 7a, audit A11), and
+  included, slice 7a, audit A11), `unbound_long` (`waitingFor`: a type's name or `registry <name>`, `error`: the
+  cause, `since`: a request waiting unbound after the publication, once after 5 s: a reference made here or a hold
+  refused here for a name, in the unbound index, and a registry value waited for while it has none, one wait per
+  value; one timer per host, `unbound-clock.ts`), `transaction_cancelled` (`object`, `error`: the abort reason of the
+  context a document change or transaction was started with, which ended before it committed: a root whose `fn`
+  returned, a caller that cancelled, its object's end; besides the rejection), `registry_undeclared` (`registry`,
+  `plugins`: at a publication, or when a host-lifetime object's contributions enter, a registry with contributions and
+  no provider here; again only once its contributing plugins change) (decision "Mistakes that wait are reported at
+  once"), and
   the registries' (slice 8, each once per episode) `registry_conflict` (`registry`, `message`, `plugins`: a conflict
   `compose` resolved), `registry_failed` (`registry`, `error`: `compose` or an older version's `value` adapter threw),
   `contribution_failed` (`registry`, `plugin`, `type?`, `error`: a watchable contribution failed or ended, or its
@@ -221,8 +229,8 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   `self.registry(R)` is a declared dependency: without a usable value at its version (no provider:
   `unavailable/undeclared`; a first `compose` or the version mapping that threw; a version the provider does not serve:
   `contract_mismatch`) the attempt parks `failed { waiting }` naming the registry, and every change of whether the value
-  is usable wakes it. `host.registry(R, ctx, { readyTimeout? })` waits for the publication, then the same way up to its
-  deadline, and rejects with the last error. The last good composition is kept only while every contribution it was
+  is usable wakes it. `host.registry(R, ctx, { readyTimeout? })` waits the same way up to its deadline (before `load`:
+  `not_ready` at once), and rejects with the last error. The last good composition is kept only while every contribution it was
   built from is still in the table (a contributor that fails or ends drops it: `.value` throws until `compose`
   succeeds).
 - **Wake signals** (`self.retryOn(...sources)`, D2): registry values (constants are accepted and never wake; anything
@@ -241,15 +249,17 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   `fn`; `host.close` rejects it at once `released/closed`, as a method's caller when its object ends; after `close`
   it rejects `released/closed`. Not counted in `host.activity`.
 - `host.load([{ name, facet }], ctx)`: once per host; runs every setup and publishes them in one batch (types and
-  registries served, registries composed once, contributions); requests made here and holds arriving before that
-  waited in the unbound index (`loading`) and are placed after the batch (they never wait for the barrier: two hosts
+  registries served, registries composed once, contributions; then every registry with contributions and no provider
+  is reported `registry_undeclared`); holds arriving before that waited in the unbound index (`loading`) and are placed
+  after the batch (they never wait for the barrier: two hosts
   whose objects need each other's types start without a deadlock). Then it activates every type with empty params and
   resolves when each has its first outcome (decision (a)): live, failed by its own cause, parked with no blocker that
   is an object here still without its first outcome (a keyed pin still loading counts as here; a wait on another host
   or on a failed dependency ends the first pass), or ended (`close` settles a waiting `load`); later retries never
   hold it. Per plugin (decision "Per plugin at startup and reload"): a plugin whose setup throws or is refused at
-  declaration (an invalid or repeated name, a type or registry an earlier plugin serves, a remote type here without
-  principal or address, `checkAccepts`) is left out; `load` resolves with `{ failed: [{ plugin, error }] }` and never
+  declaration (a repeated name, a type or registry an earlier plugin serves, a remote type here without principal or
+  address, `checkAccepts`) is left out (a name that is no npm name is a programming error: `load` and `reload` throw
+  before anything changes); `load` resolves with `{ failed: [{ plugin, error }] }` and never
   closes the host; its consumers wait `failed { waiting }`.
 - `host.reload([{ name, facet }], ctx)` (slice 7b, per plugin since 7c): the complete new plugin set; staging runs the
   new code per plugin (unchanged and failed plugins keep their loaded entries, their setups not run again). A plugin
@@ -263,11 +273,13 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   changes nothing; after it, it ends only the wait for the report: `aborted` with `details.committed`
   (`CommittedReload`: `added`, `changed`, `removed`, `failed` by plugin name), the commit standing.
 - `host.hold(Type, params, ctx, { readyTimeout? })`: a reference at once (`Held<C>`: its `variant` is `undefined` until
-  its first binding), which follows its object until released and never rejects: `loading` before the publication,
+  its first binding), which follows its object until released and never rejects: `loading`
   while the object activates, retries or is parked on dependencies under way, while there is no parent link or it is
   down; `failed` while the object is failed and no attempt runs, or while nothing fits it (`waiting`: not served where
   it goes, another version; bound when a publication serves it) or its object is parked on a failed dependency;
-  `live`. Throws at once only for invalid params (`invalid/params`, also before `load`). A `hostAddress` or
+  `live`. Throws at once only for invalid params (`invalid/params`) and before `load` (`not_ready`: "call host.load
+  first"; a client with nothing to load calls `load([])`; the same for `get`, `host.registry` and a root's `ctx.get`).
+  Holds arriving on its links before `load` wait for the publication (`loading`). A `hostAddress` or
   `authorize` that throws or refuses, or a host address whose params fail its kind's check (`invalid/host_address`),
   fails the reference `broken`. A local type never crosses a link. Where a reference made here (`host.get`/`hold`,
   `self.get`, `ctx.get`) or a hold arriving on a link goes, by address alone (`Destination`; the address is the
@@ -425,7 +437,7 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   Calls made after the reference went live never overtake queued ones (a call a handler makes while they are sent
   queues behind them). A parked call is checked against its deadline when it is about to be sent, and against the
   variant it is sent on; it also leaves the queue when its caller cancels (rejected with the reason), the reference
-  fails (the cause's error) or is released (`released`). A `host.hold` released before the publication makes nothing.
+  fails (the cause's error) or is released (`released`).
 - References are the only indirection (decision of 2026-10-29): a consumer's watches and derives over `ref.member`
   attach through the reference's member (`reference-source.ts`), which passes them straight to the object instance's
   own document or derive. When the reference's target changes (a new instance after a reload, retry or restart; a new
@@ -568,6 +580,7 @@ Inside the directory: `ChordHost` (types, objects by identity, facets, the batch
 instances wait for, its links and the heartbeat timer, its routes and the parent path, the publication and the
 unbound index; `reference` makes a request's binding, `bind` binds it to an object here or a remote object over a
 path or leaves it waiting, `acquire` gets one for a caller), `UnboundIndex` (requests that cannot bind yet, by name),
+`UnboundClock` (the `unbound_long` report: the waits not reported yet in start order, one timer for the earliest),
 `checkDependencies` and `ParkedLong` (what a parked attempt's dependencies say; the `parked_long` report),
 `Destination` (where a reference or an arriving hold goes, by address: here, a route's path or the parent's; whether
 a hold served here is placed here), `Route` (one per routed kind: per address its `Path`, at most one running

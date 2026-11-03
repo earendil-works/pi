@@ -68,18 +68,25 @@ export function isPluginName(name: string): boolean {
 	return PLUGIN_NAME.test(name);
 }
 
+/**
+ * Throws for the first plugin of `facets` whose name is no npm package name: a programming error, so `load` and
+ * `reload` throw before they change anything (decision "Mistakes that wait are reported at once" (d)).
+ */
+export function checkPluginNames(facets: readonly { readonly name: string }[]): void {
+	for (const { name } of facets) if (!isPluginName(name)) throw new Error(`"${name}" is not a valid plugin name`);
+}
+
 /** A staged table with nothing in it. */
 export function emptyStaged(): Staged {
 	return { types: new Map(), registries: new Map(), plugins: new Map() };
 }
 
 /**
- * Runs one plugin's setup and checks what it declared: its name (an npm name), a type or registry it serves twice, a
- * remote type on a host without a principal or address, every provider's `accepts` (`checkAccepts`) and every registry
- * provider's shape. Throws the first error, naming the plugin.
+ * Runs one plugin's setup (its name checked by `checkPluginNames` before) and checks what it declared: a type or
+ * registry it serves twice, a remote type on a host without a principal or address, every provider's `accepts`
+ * (`checkAccepts`) and every registry provider's shape. Throws the first error, naming the plugin.
  */
 export function stagePlugin<P extends Principal>({ name, facet }: PluginFacet<P>, host: StagingHost): StagedPlugin {
-	if (!isPluginName(name)) throw new Error(`"${name}" is not a valid plugin name`);
 	// The host's presence lists are typed for its `P`.
 	const references = host.references as <C extends Contract>(Type: C) => Watchable<readonly Presence<C, P>[]>;
 	const types = new Map<string, Served>();

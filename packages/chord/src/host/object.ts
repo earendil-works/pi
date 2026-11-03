@@ -252,6 +252,7 @@ export class ChordObject implements Target {
 			fail: (error) => {
 				if (this.#state.kind === "live") this.failLive(this.#state.attempt, { kind: "broken", error });
 			},
+			report: (error) => host.report(error),
 		});
 	}
 
@@ -917,6 +918,8 @@ export class ChordObject implements Target {
 				for (const contribution of leaving) contribution.record.remove(contribution);
 				for (const contribution of contributions) contribution.record.add(contribution);
 			}, this.#context);
+			// Contributions entering a registry nobody serves are reported as at a publication.
+			for (const contribution of contributions) contribution.record.reportUndeclared();
 		}
 		this.#lastFailure = undefined;
 		this.host.wentLive(this);
