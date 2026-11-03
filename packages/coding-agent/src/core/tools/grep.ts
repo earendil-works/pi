@@ -138,7 +138,7 @@ export function createGrepToolDefinition(
 						// Clamp so String() never yields exponent notation, which rg rejects.
 						const contextValue =
 							context && context > 0 ? Math.min(Math.floor(context), Number.MAX_SAFE_INTEGER) : 0;
-						const effectiveLimit = Math.max(1, limit ?? DEFAULT_LIMIT);
+						const effectiveLimit = Math.max(1, Math.floor(limit ?? DEFAULT_LIMIT));
 						const formatPath = (filePath: string): string => {
 							if (isDirectory) {
 								const relative = path.relative(searchPath, filePath);

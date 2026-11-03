@@ -1056,6 +1056,15 @@ describe("Coding Agent Tools", () => {
 				expect(getTextOutput(over)).toContain("[1 matches limit reached. Use limit=2 for more, or refine pattern]");
 				expect(over.details?.matchLimitReached).toBe(1);
 			}
+
+			const fractional = await grepTool.execute("test-call-fractional-limit", {
+				pattern: "match",
+				path: testFile,
+				limit: 1.5,
+			});
+			expect(getTextOutput(fractional)).toContain(
+				"[1 matches limit reached. Use limit=2 for more, or refine pattern]",
+			);
 		});
 
 		// https://github.com/earendil-works/pi/issues/11203

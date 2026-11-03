@@ -22,7 +22,7 @@
 ### Fixed
 
 - Fixed the grep tool running out of memory when `context` was set: it read every matched file whole to print the surrounding lines, so a few large log files could exhaust the heap. It now passes `--context` to ripgrep and stores no output past the 50KB cap, so memory no longer grows with file size or match count; match counts are unchanged. Overlapping context is printed once, and UTF-16 files show correctly with context ([#9276](https://github.com/earendil-works/pi/issues/9276), [#11423](https://github.com/earendil-works/pi/issues/11423))
-- Fixed the grep tool reporting "N matches limit reached" when exactly N matches exist. It now reports the limit only when a further match exists
+- Fixed the grep tool reporting "N matches limit reached" when exactly N matches exist. It now reports the limit only when a further match exists, and a fractional `limit` is rounded down instead of appearing in the notice as `2.5 matches limit reached`
 - Fixed the grep tool deleting lone CR characters inside matched lines, which glued text such as `one\rtwo` into `onetwo`, so text copied from grep did not match in edit. Lone CRs are now kept, as in the read tool; CRLF line endings are still stripped
 
 ## [1.5.0] - 2026-11-02
