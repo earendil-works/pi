@@ -1,12 +1,13 @@
 // Screenshots of the tutorial's page (`docs/tutorial/screens/`), taken in headless Chromium: the page after the owner
-// signed in with the owner link, the page in the Harbor theme added while it runs, and the page after an edit of the
-// lists plugin's web facet applied in place.
+// signed in with the owner link, the page in the Harbor theme added while it runs, the page after an edit of the
+// lists plugin's web facet applied in place, and the page after the owner chose French, with the list's notice.
 // Run from packages/chord, with Chromium (`CHROMIUM_BIN`, else `chromium-docker` on the `PATH`):
 //   node --conditions=source --experimental-strip-types test/examples/61-tutorial/screenshots.ts docs/tutorial/screens
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
+import { LocaleChoice } from "../../../src/index.ts";
 import { Browser, CHROMIUM } from "../../node/web/browser.ts";
 import { Todos } from "./plugins/lists/contract.ts";
 import { startTodo, todoDirectories } from "./start.ts";
@@ -38,10 +39,10 @@ await app.host.root(
 	{ principal: { kind: "owner" } },
 );
 
-/** The edit of step 3: a line counting the open todos above the list. */
+/** The edit of step 3: a line counting the open todos above the list, in the page's language. */
 const BEFORE = `h(
 			"ul",`;
-const AFTER = `h("p", { className: "lists-open" }, \`\${items.filter((item) => !item.done).length} open\`),
+const AFTER = `h("p", { className: "lists-open" }, t("open", items.filter((item) => !item.done).length)),
 		h(
 			"ul",`;
 
@@ -89,6 +90,24 @@ try {
 	await shoot("edited.png");
 	const after = await browser.evaluate<string>("document.querySelector('.lists-panel input').value");
 	console.log(`typed ${JSON.stringify(typed)}; after the edit: ${JSON.stringify(after)}`);
+
+	// 4. The owner chooses French and clears the done todos: the page re-renders in French with the list's notice, the
+	//    half-typed todo still there.
+	await app.host.root(
+		async (ctx) => {
+			await (await ctx.get(LocaleChoice, {})).choose("fr", ctx);
+			const todos = await ctx.get(Todos, { list: "groceries" });
+			if (todos.variant === "owner") await todos.clear(ctx);
+		},
+		context,
+		{ principal: { kind: "owner" } },
+	);
+	await browser.wait("document.querySelector('.lists-notice')?.textContent === 'owner a retiré les tâches faites'");
+	await browser.evaluate("document.querySelector('.lists-panel input').focus()");
+	await shoot("french.png");
+	const french = await browser.evaluate<string>("document.querySelector('.lists-panel input').value");
+	const lang = await browser.evaluate<string>("document.documentElement.lang");
+	console.log(`after choosing French: lang="${lang}", ${JSON.stringify(french)} still typed`);
 	console.log("the page did not reload:", await browser.evaluate<boolean>("window.marked === true"));
 } finally {
 	await browser.close();

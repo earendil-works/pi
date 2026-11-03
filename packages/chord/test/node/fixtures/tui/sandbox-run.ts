@@ -5,7 +5,7 @@ import { Sandbox } from "../../../../src/node/tui/sandbox.ts";
 
 const sandbox = await Sandbox.start(
 	process.argv[2]!,
-	{ base: "test", combined: "", columns: 80, rows: 24, colors: "truecolor", mode: "dark" },
+	{ base: "test", combined: "", columns: 80, rows: 24, colors: "truecolor", mode: "dark", locales: ["en"] },
 	(message) => {
 		console.log(JSON.stringify({ kind: message.kind, data: (message as { data?: unknown }).data }));
 		if (message.kind === "exit") void sandbox.terminate();

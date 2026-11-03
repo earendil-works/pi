@@ -17,6 +17,8 @@ export type BridgeStart = {
 	readonly colors: "truecolor" | "256";
 	/** The terminal's background: which of the user's two themes applies. */
 	readonly mode: "dark" | "light";
+	/** The user's languages, from the system's locale (`de-DE`), most preferred first. */
+	readonly locales: readonly string[];
 };
 
 /** A request of the sandbox the launcher answers. */

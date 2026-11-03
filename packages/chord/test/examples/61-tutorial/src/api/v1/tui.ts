@@ -5,11 +5,12 @@ import { defineRegistry } from "../../../../../../src/index.ts";
 import type { TerminalTheme, TuiScope } from "../../../../../../src/tui/index.ts";
 
 /**
- * A part of the terminal's screen: its title, and `open`, which holds what the part shows in `scope` (released when the
- * terminal closes it) and returns a reader of its lines, coloured by role with `theme`.
+ * A part of the terminal's screen: its name (a key, never shown), and `open`, which holds what the part shows in
+ * `scope` (released when the terminal closes it) and returns a reader of its lines, its title first, coloured by role
+ * with `theme`.
  */
 export type Screen = {
-	readonly title: string;
+	readonly name: string;
 	readonly open: (scope: TuiScope, theme: TerminalTheme) => () => readonly string[];
 };
 

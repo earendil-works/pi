@@ -204,11 +204,6 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 
 ### After slice 11
 
-- **Messages and languages in the app kit** (decision "Messages and languages in the app kit", proposal
-  `docs/i18n/`): `defineMessages`, `t.message`/`t.render`, `MessagesOf`, the `Translations` registry with
-  fallbacks and conflicts, the locale preference per principal (default from the device, live switch, `lang`/`dir` on
-  the page), `useMessages` and the terminal scope's redraw, `formatTime`/`formatNumber`; tests and an example (the
-  notes plugin in English and German, a French translation plugin, a server message rendered per viewer).
 - **Small examples** (owner, 2026-10-30: the 7c examples are complete but complex): once HTTP, workers, web and TUI
   exist, a pass of small, easy-to-read examples, each showing one thing a plugin author or app does.
 

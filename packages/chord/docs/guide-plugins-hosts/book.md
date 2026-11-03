@@ -13,7 +13,7 @@ note: |
   `slice-10.md`, `slice-12.md`, `slice-13.md`, the decision log and the code in `packages/chord/src`. API names
   are the current ones. The early chapters wire hosts by hand to show the parts; the last chapter shows the app kit
   (`chord/app`), which does that wiring for an app.
-colophon: Hosts and Plugins · third edition · 2026-11-02 · Chord v2 slices 1-10, 12 and 13
+colophon: Hosts and Plugins · third edition · 2026-11-03 · Chord v2 slices 1-10, 12 and 13, messages and languages
 ---
 
 # Before we begin {.preface}
@@ -389,6 +389,21 @@ gets the current value in one frame. The UI shows a banner from `ref.state`, not
 `tui` facets, rendering with whatever terminal library the app chose. **What a client never does**: serve a `remote`
 type, be routed to, or keep data others rely on. Data that must outlive a tab belongs in an object on the server or a
 worker.
+
+**Text in the viewer's language** is a client's job too, because two people looking at the same object may read
+different languages. A plugin writes its texts once, in a shared `messages.ts`; a client renders them in its host's
+language (the user's pick, else the device's), and objects store messages as data, never sentences (design §23,
+"Messages and languages"):
+
+```ts
+// plugins/notes/messages.ts: the first catalog types the others
+export const messages = defineMessages("notes", { en: { empty: "No notes yet" }, de: { empty: "Noch keine Notizen" } });
+// plugins/notes/web.tsx: the facet contributes its catalogs; a component renders in the page's language
+self.contribute(Translations, messages.translations);
+const { t } = useMessages(messages);                       // re-renders when the user picks another language
+// plugins/notes/worker.ts: a notice as data; every client renders it with t.render(notice)
+draft.notice = messages.message("empty");
+```
 
 # Plugins {#plugins lede="Move the code into a directory that can be added, edited and removed while the app runs."}
 

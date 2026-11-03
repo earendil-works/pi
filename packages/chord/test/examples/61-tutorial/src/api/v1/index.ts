@@ -16,13 +16,18 @@ export {
 	arr,
 	bool,
 	type Ctx,
+	defineMessages,
+	defineState,
 	defineTable,
 	eq,
 	forbidden,
 	int,
 	invalid,
 	local,
+	MessageSchema,
+	type MessagesOf,
 	method,
+	nul,
 	num,
 	obj,
 	PluginError,
@@ -32,6 +37,9 @@ export {
 	str,
 	type Theme,
 	Themes,
+	type Translation,
+	Translations,
+	union,
 } from "../../../../../../src/index.ts";
 export type { TodoPrincipal } from "../../principals.ts";
 

@@ -1,10 +1,22 @@
 // Tests of `TuiScope` (slice 11 §4, decision "Slice 11, P9"): references held for a component, watchables and
 // registries followed, one `changed` callback for every change, everything released at `dispose`, and the host's page
-// state shared by every scope (decision "Tutorial gaps" (1)).
+// state shared by every scope (decision "Tutorial gaps" (1)), and messages in the host's language, a change redrawing
+// (decision "Messages and languages in the app kit").
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { createHost, defineFacet, defineRegistry, local, method, str } from "../../src/index.ts";
+import {
+	createHost,
+	createLanguage,
+	defineFacet,
+	defineMessages,
+	defineRegistry,
+	hostLanguage,
+	local,
+	method,
+	str,
+} from "../../src/index.ts";
+import { NO_TRANSLATIONS } from "../../src/surfaces/translations.ts";
 import { TuiScope } from "../../src/tui/scope.ts";
 
 const Notes = local("test.notes", { version: 1, params: {}, members: { text: str(), write: method(str()) } });
@@ -106,6 +118,31 @@ describe("a scope's page state", () => {
 		draft.set("b");
 		expect(calls).toEqual(["first", "second", "second"]);
 		second.dispose();
+		await h.close(context);
+	});
+});
+
+describe("a scope's messages", () => {
+	it("render in the host's language at each call, a change of it calling changed until dispose", async () => {
+		const h = await host();
+		const notes = defineMessages("notes", {
+			en: { title: "Notes", count: (n: number) => `${n} notes` },
+			de: { title: "Notizen", count: (n) => `${n} Notizen` },
+		});
+		let changes = 0;
+		const scope = new TuiScope(h, () => changes++);
+		const t = scope.messages(notes);
+		expect(t("title")).toBe("Notes");
+		hostLanguage(h).set(createLanguage("de", NO_TRANSLATIONS, () => {}));
+		expect(changes).toBe(1);
+		expect([t("title"), t("count", 2), t.render(notes.message("count", 3))]).toEqual([
+			"Notizen",
+			"2 Notizen",
+			"3 Notizen",
+		]);
+		scope.dispose();
+		hostLanguage(h).set(createLanguage("en", NO_TRANSLATIONS, () => {}));
+		expect(changes).toBe(1);
 		await h.close(context);
 	});
 });

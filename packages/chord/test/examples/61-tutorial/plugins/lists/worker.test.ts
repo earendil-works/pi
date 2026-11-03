@@ -1,8 +1,8 @@
 // The lists plugin's worker facet, tested alone with `testPlugin`: built as production builds it, evaluated with the
 // app's real API module and loaded on a host of its own (an in-memory store) at a list's address. Each test runs code
-// as a principal of its choice: a user gets the `member` variant, the owner `owner`; a todo keeps who added it, and one
-// without text is refused. The test imports the app's API by its package name and the plugin's contract from its
-// `contract.ts`, as the facets do.
+// as a principal of its choice: a user gets the `member` variant, the owner `owner`; a todo keeps who added it, one
+// without text is refused, and clearing leaves a notice as data. The test imports the app's API by its package name and
+// the plugin's contract from its `contract.ts`, as the facets do.
 // Run from packages/chord:
 //   node ../../node_modules/vitest/dist/cli.js --run test/examples/61-tutorial/plugins/lists/worker.test.ts
 import { fileURLToPath } from "node:url";
@@ -68,6 +68,7 @@ describe("the lists plugin on a list's worker", () => {
 				await todos.tick({ id: 1, done: true }, ctx);
 				await todos.clear(ctx);
 				expect(todos.items.value.map(({ text }) => text)).toEqual(["eggs"]);
+				expect(todos.notice.value).toEqual({ namespace: "todo.lists", key: "cleared", params: ["owner"] });
 			},
 			context,
 			{ principal: OWNER },

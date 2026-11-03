@@ -19,6 +19,9 @@ startPage<P>({
   each, and resolve the fetch that asked for them; no `eval` (the page's CSP: `'self'` and the nonce).
 - The kit's `Themes` provider is among the core facets; the active theme (the registry, the user's `ThemeChoice`,
   `prefers-color-scheme`) is written as CSS custom properties and `color-scheme` on `:root` (`themes.ts`), no reload.
+- The kit's `Translations` provider is among them too; the active language (the registry, the user's `LocaleChoice`,
+  `navigator.languages`, followed on `languagechange`) is the host's language for `useMessages`, and `lang` and `dir`
+  on the root element (`language.ts`, `followLanguage`); reports reach `onError` as `{ kind: "messages", report }`.
 - A new set's plugin stylesheets replace the old ones (`syncStylesheets`); an outdated page reloads.
 - Wakes (`environment.ts`): visible again, `online`, `pageshow` from the back/forward cache, Chromium's network change.
 

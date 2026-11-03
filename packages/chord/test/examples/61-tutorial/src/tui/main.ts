@@ -24,7 +24,7 @@ void startTerminalRuntime({
 				const scope = new TuiScope(runtime.host, () => draw());
 				opened = { screens: current, scope, lines: current.map((screen) => screen.open(scope, theme)) };
 			}
-			const lines = current.flatMap((screen, n) => [theme.fg("accent", screen.title), ...opened!.lines[n]!()]);
+			const lines = opened.lines.flatMap((read) => read());
 			terminal.write(`\x1b[2J\x1b[H${lines.join("\r\n")}\r\n`);
 		};
 		theme.onChange(draw);

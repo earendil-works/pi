@@ -21,7 +21,7 @@ function Page() {
 		"main",
 		null,
 		h("h1", null, "Todo"),
-		...panels.map(({ title, Component }) => h("section", { key: title }, h("h2", null, title), h(Component))),
+		...panels.map(({ name, Component }) => h("section", { key: name }, h(Component))),
 	);
 }
 

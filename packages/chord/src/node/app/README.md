@@ -58,11 +58,12 @@ startWorker<P>({ api, kinds, busy, onError });
   `principal.server`), `createHttp` (the links endpoint at `/chord`), the plugins component with the two roots, one
   workers component per worker kind (none without worker kinds), the server's plugins loaded with the kit's core
   facets (`chord.http`, `chord.app.info`, `chord.app.sessions`, `chord.app.owner`, `chord.app.pairing`,
-  `chord.app.files`), the owner token file, the listening port, the owner link. A plugin of the required root failing
+  `chord.app.files`, `chord.themes`, `chord.themes.choice`, `chord.translations`, `chord.locale.choice`), the owner token file, the listening port, the owner link. A plugin of the required root failing
   rejects with the plugins component's `PluginError`, everything closed. `close` is idempotent.
 - **`startWorker`** is `workerMain` plus: the worker's directory `workers/<kind>/<key>/` and its store there, the host
   at the address acting as `principal.worker(address)`, connected to the server first (trusted, as the server's
-  principal), its plugins loaded with the worker's core facets (`chord.app.worker-info`, `chord.app.files`), `busy`
+  principal), its plugins loaded with the worker's core facets (`chord.app.worker-info`, `chord.app.files`,
+  `chord.translations`), `busy`
   from the app. A worker's errors reach the server as a fixed "worker failed" (the error stays in the worker's
   `onError`).
 

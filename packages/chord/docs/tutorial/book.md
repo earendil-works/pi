@@ -2,12 +2,12 @@
 title: Together: build a shared todo app with Chord
 cover: Build It / Together
 kicker: A tutorial · Chord v2 and its app kit · 2026-11-03
-subtitle: One small app, built a step at a time, from an empty server to two people, a page, a terminal, a theme and an edit applied while they are connected
+subtitle: One small app, built a step at a time, from an empty server to two people, a page, a terminal, a theme, three languages and an edit applied while they are connected
 stats:
-  - 9 | steps, one runnable example
+  - 10 | steps, one runnable example
   - 4 | host kinds one plugin runs on
   - 1 | worker process per list
-  - 0 | restarts for a new theme or an edit
+  - 0 | restarts for a new theme, a language or an edit
 note: |
   The app is `packages/chord/test/examples/61-tutorial/`, runnable with the line in its `main.ts`. Every code block
   below is quoted from its files, and every console output from what its steps print:
@@ -41,7 +41,7 @@ node --conditions=source --experimental-strip-types test/examples/61-tutorial/ma
 With Node 26.5.1 or later the terminal client of chapter V runs too (its sandbox needs that Node); with an older one,
 that step says so and the rest runs.
 
-## Eight things to know
+## Nine things to know
 
 :::findings
 1. **An app is its API, its plugins and a start script.** `startServer` makes the data directory, the store, the
@@ -59,8 +59,10 @@ that step says so and the rest runs.
    plugins contribute, one plugin (or the entry) composes.
 7. **Changes apply when you say so.** Saving a file marks its plugin dirty; `applyChanges` builds and rolls out to the
    server, the workers, the pages and the terminals, in place.
-8. **Four traps:** load before use; a reference acts as whoever made it; await what you start; a watch starts at the
-   current value.
+8. **Text is rendered per viewer.** A plugin's messages are typed code, a translation is a plugin, each user picks a
+   language, and servers store keys, never sentences.
+9. **Five traps:** load before use; a reference acts as whoever made it; await what you start; a watch starts at the
+   current value; the plain `t` has no language of its own.
 :::
 
 ## Words used throughout
@@ -72,7 +74,8 @@ host only, `remote` for any host) names its **params** (which instance) and memb
 are the member sets different principals get. A **factory** declares an object's parts: **documents** and **tables**
 (stored data, changed in **transactions**), **live queries** (a table's rows Chord keeps current), **derives**
 (values computed from others), **natives** (things opened and closed, such as a file or a database cursor). A **reference** is what asking for an object returns. A **facet** is a
-plugin's code for one host kind; a **registry** is an extension point plugins **contribute** to. A **rollout** applies
+plugin's code for one host kind; a **registry** is an extension point plugins **contribute** to. A **message** is a
+text with a key, a **catalog** a plugin's messages in one language, a **locale** a language tag (`de`, `pt-BR`). A **rollout** applies
 new plugin code to the hosts in order.
 
 # One Server {#server lede="The API, the principals and a start script: the smallest app the kit runs, and who may come in."}
@@ -113,13 +116,18 @@ export {
 	arr,
 	bool,
 	type Ctx,
+	defineMessages,
+	defineState,
 	defineTable,
 	eq,
 	forbidden,
 	int,
 	invalid,
 	local,
+	MessageSchema,
+	type MessagesOf,
 	method,
+	nul,
 	num,
 	obj,
 	PluginError,
@@ -129,13 +137,16 @@ export {
 	str,
 	type Theme,
 	Themes,
+	type Translation,
+	Translations,
+	union,
 } from "../../../../../../src/index.ts";
 export type { TodoPrincipal } from "../../principals.ts";
 ```
 
-`invalid` and `forbidden` make Chord's own errors: a plugin refusing arguments throws `invalid("args", message)`,
+`defineMessages`, `Translations` and the message schema are chapter VIII's. `invalid` and `forbidden` make Chord's own errors: a plugin refusing arguments throws `invalid("args", message)`,
 one refusing a caller `forbidden(message)`, and the caller gets the same `{ code, reason }` Chord's built-in checks
-give (chapter VIII). `PluginError` is for codes of the plugin's own.
+give (chapter IX). `PluginError` is for codes of the plugin's own.
 
 and a `defineFacet` bound to the principal type, so every factory sees a `TodoPrincipal`:
 
@@ -307,7 +318,21 @@ the lists plugin's, in its `contract.ts`, which its facets of every kind import,
 
 <!-- quote: plugins/lists/contract.ts -->
 ```ts
-import { arr, bool, int, List, method, num, obj, remote, type Static, str } from "@todo/app/v1";
+import {
+	arr,
+	bool,
+	int,
+	List,
+	MessageSchema,
+	method,
+	nul,
+	num,
+	obj,
+	remote,
+	type Static,
+	str,
+	union,
+} from "@todo/app/v1";
 
 /** A todo: its number in the list, its text, whether it is done, who added it and when. */
 export const Item = obj({ id: int(), text: str(), done: bool(), by: str(), at: num() });
@@ -315,9 +340,12 @@ export const Item = obj({ id: int(), text: str(), done: bool(), by: str(), at: n
 /** A todo (see `Item`). */
 export type Item = Static<typeof Item>;
 
+/** The list's latest notice, as data each viewer renders in its own language; `null` before the first. */
+export const Notice = union([MessageSchema, nul()]);
+
 /**
- * A list's todos as one principal sees them: the newest 50 (live), adding one and ticking one off (or on again); the
- * owner also clears the done ones.
+ * A list's todos as one principal sees them: the newest 50 (live) and the list's notice, adding one and ticking one off
+ * (or on again); the owner also clears the done ones.
  */
 export const Todos = remote("todo.todos", {
 	version: 1,
@@ -325,18 +353,19 @@ export const Todos = remote("todo.todos", {
 	hostAddress: ({ list }) => List({ id: list }),
 	variants: {
 		member: {
-			state: { items: arr(Item) },
+			state: { items: arr(Item), notice: Notice },
 			methods: { add: method(str()), tick: method(obj({ id: int(), done: bool() })) },
 		},
 		owner: {
-			state: { items: arr(Item) },
+			state: { items: arr(Item), notice: Notice },
 			methods: { add: method(str()), tick: method(obj({ id: int(), done: bool() })), clear: method() },
 		},
 	},
 });
 ```
 
-`params` select the instance: `Todos { list: "groceries" }` is one object per principal. Nobody who asks names a
+Its `notice` is a message as data, which chapter VIII renders in each viewer's language. `params` select the
+instance: `Todos { list: "groceries" }` is one object per principal. Nobody who asks names a
 host: the caller computes the address from the params and sends the request there; a host that cannot serve it passes
 it on to its parent or to a route (design §3, "Host kinds and addresses"). The kit's `workers` option is that route:
 
@@ -392,9 +421,10 @@ const Store = local("todo.store", {
 	params: {},
 	members: {
 		items: arr(Item),
+		notice: Notice,
 		add: method(obj({ text: str(), by: str() })),
 		tick: method(obj({ id: int(), done: bool() })),
-		clear: method(),
+		clear: method(obj({ by: str() })),
 	},
 });
 ```
@@ -408,9 +438,11 @@ of references. Its factory declares its parts and returns its members:
 		const items = self.table(Items);
 		// The newest todos, live: read before the store goes live, read again after every commit writing the table.
 		const newest = self.query(items, NEWEST, WINDOW);
+		const notices = self.state(Notices);
 		return {
 			// Oldest first, as the list shows them.
 			items: self.derive([newest], ([rows]) => [...rows].reverse()),
+			notice: self.derive([notices], ([value]) => value.notice),
 ```
 
 A **factory** is synchronous and only declares; Chord activates the object afterwards. `self.table` declares the
@@ -457,11 +489,12 @@ contract's schema.
 		const by = principal.kind === "user" ? principal.name : principal.kind;
 		const members = {
 			items: self.derive([store.items], ([items]) => items),
+			notice: self.derive([store.notice], ([notice]) => notice),
 			add: (text: string, ctx: Ctx) => store.add({ text, by }, ctx),
 			tick: (tick: { id: number; done: boolean }, ctx: Ctx) => store.tick(tick, ctx),
 		};
 		if (principal.kind !== "owner") return { variant: "member", members };
-		return { variant: "owner", members: { ...members, clear: (ctx: Ctx) => store.clear(ctx) } };
+		return { variant: "owner", members: { ...members, clear: (ctx: Ctx) => store.clear({ by }, ctx) } };
 	});
 ```
 
@@ -611,17 +644,17 @@ for them:
 import type { ComponentType } from "react";
 import { defineRegistry } from "../../../../../../src/index.ts";
 
-export { useHold, usePageState, useWatch } from "../../../../../../src/react/index.ts";
+export { useHold, useMessages, usePageState, useWatch } from "../../../../../../src/react/index.ts";
 
-/** A panel of the page: its title and its React component. */
-export type Panel = { readonly title: string; readonly Component: ComponentType };
+/** A panel of the page: its name (a key, never shown) and its React component, which shows its own title. */
+export type Panel = { readonly name: string; readonly Component: ComponentType };
 
 /** The page's panels, one per contributing plugin, in plugin-name order. */
 export const Panels = defineRegistry<Panel, readonly Panel[]>("todo.panels", { version: 1 });
 ```
 
-The web entry serves `Panels` (its `compose` keeps the contributions in plugin-name order), renders every panel, and
-starts the page's connection:
+A panel shows its own title, in the page's language; its `name` is only a key. The web entry serves `Panels` (its
+`compose` keeps the contributions in plugin-name order), renders every panel, and starts the page's connection:
 
 <!-- quote: src/web/main.ts -->
 ```ts
@@ -634,7 +667,7 @@ function Page() {
 		"main",
 		null,
 		h("h1", null, "Todo"),
-		...panels.map(({ title, Component }) => h("section", { key: title }, h("h2", null, title), h(Component))),
+		...panels.map(({ name, Component }) => h("section", { key: name }, h(Component))),
 	);
 }
 
@@ -657,9 +690,11 @@ when its items change:
 <!-- quote: plugins/lists/web.ts -->
 ```ts
 function TodoList() {
+	const { t } = useMessages(messages);
 	const list = location.hash.slice(1) || "groceries";
 	const todos = useHold(Todos, { list });
 	const items = useWatch(todos?.items) ?? [];
+	const notice = useWatch(todos?.notice);
 	// Kept by the page, not the component: the new code's component finds the half-typed todo.
 	const [text, setText] = usePageState(`lists.draft.${list}`, "");
 	const add = (event: { preventDefault(): void }) => {
@@ -671,6 +706,7 @@ function TodoList() {
 	return h(
 		"div",
 		{ className: "lists-panel" },
+		h("h2", null, t("title")),
 		h(
 			"ul",
 			null,
@@ -692,22 +728,27 @@ function TodoList() {
 			{ onSubmit: add },
 			h("input", {
 				value: text,
-				placeholder: "Add a todo",
+				placeholder: t("placeholder"),
 				onChange: (event: { target: { value: string } }) => setText(event.target.value),
 			}),
 		),
 		todos?.variant === "owner"
-			? h("button", { type: "button", onClick: () => void todos.clear(context) }, "Clear done")
+			? h("button", { type: "button", onClick: () => void todos.clear(context) }, t("clearDone"))
 			: null,
+		notice === undefined || notice === null ? null : h("p", { className: "lists-notice" }, t.render(notice)),
 	);
 }
 
-export default defineFacet((_host, self) => self.contribute(Panels, { title: "Groceries", Component: TodoList }));
+export default defineFacet((_host, self) => {
+	self.contribute(Translations, messages.translations);
+	self.contribute(Panels, { name: "groceries", Component: TodoList });
+});
 ```
 
-`useHold` holds a reference while the component is mounted and releases it on unmount; it is `undefined` on the first
-render. `useWatch` follows a member. `usePageState` is `useState` whose value the page keeps under a key instead of the
-component: chapter VIII shows why the half-typed todo needs it. Clicks call methods with `BACKGROUND_CONTEXT`, which never ends, so a click's call
+`useMessages(messages)` gives the plugin's texts in the page's language (chapter VIII; `messages` is the plugin's
+`messages.ts`, and the facet contributes its catalogs to the page's `Translations`). `useHold` holds a reference while
+the component is mounted and releases it on unmount; it is `undefined` on the first render. `useWatch` follows a member. `usePageState` is `useState` whose value the page keeps under a key instead of the
+component: chapter IX shows why the half-typed todo needs it. Clicks call methods with `BACKGROUND_CONTEXT`, which never ends, so a click's call
 is not cancelled when the handler returns. `todos?.variant === "owner"` narrows the reference: only the owner's has
 `clear`, and TypeScript knows it. The panel's look reads the active theme's CSS variables, with class names prefixed
 by the plugin's name (a `*.module.css` file would scope them instead):
@@ -787,7 +828,7 @@ The API's terminal module declares the parts of the screen:
 <!-- quote: src/api/v1/tui.ts -->
 ```ts
 export type Screen = {
-	readonly title: string;
+	readonly name: string;
 	readonly open: (scope: TuiScope, theme: TerminalTheme) => () => readonly string[];
 };
 
@@ -818,7 +859,7 @@ void startTerminalRuntime({
 				const scope = new TuiScope(runtime.host, () => draw());
 				opened = { screens: current, scope, lines: current.map((screen) => screen.open(scope, theme)) };
 			}
-			const lines = current.flatMap((screen, n) => [theme.fg("accent", screen.title), ...opened!.lines[n]!()]);
+			const lines = opened.lines.flatMap((read) => read());
 			terminal.write(`\x1b[2J\x1b[H${lines.join("\r\n")}\r\n`);
 		};
 		theme.onChange(draw);
@@ -831,25 +872,37 @@ void startTerminalRuntime({
 ```
 
 When a reload changes `Screens`, the entry disposes the old scope and opens the screens again. The lists plugin's
-terminal facet is a few lines:
+terminal facet draws its title, the todos and the list's notice; `scope.messages(messages)` is the terminal's
+`useMessages` (chapter VIII):
 
 <!-- quote: plugins/lists/tui.ts -->
 ```ts
-export default defineFacet((_host, self) =>
+export default defineFacet((_host, self) => {
+	self.contribute(Translations, messages.translations);
 	self.contribute(Screens, {
-		title: "Groceries",
+		name: "groceries",
 		open: (scope, theme) => {
-			const items = scope.watch(scope.hold(Todos, { list: "groceries" }).items);
-			return () =>
-				(items() ?? []).map((item) =>
-					item.done ? theme.fg("muted", `[x] ${item.text}`) : `[ ] ${item.text} ${theme.fg("muted", item.by)}`,
-				);
+			const t = scope.messages(messages);
+			const todos = scope.hold(Todos, { list: "groceries" });
+			const items = scope.watch(todos.items);
+			const notice = scope.watch(todos.notice);
+			return () => {
+				const shown = notice();
+				return [
+					theme.fg("accent", t("title")),
+					...(items() ?? []).map((item) =>
+						item.done ? theme.fg("muted", `[x] ${item.text}`) : `[ ] ${item.text} ${theme.fg("muted", item.by)}`,
+					),
+					...(shown === undefined || shown === null ? [] : [theme.fg("warning", t.render(shown))]),
+				];
+			};
 		},
-	}),
-);
+	});
+});
 ```
 
-`theme.fg("muted", …)` colours by role, never by a fixed colour. Step 5 runs the launcher on a scripted terminal:
+`theme.fg("muted", …)` colours by role, never by a fixed colour. Step 5 runs the launcher on a scripted terminal, its
+languages fixed (by default they are the machine's system locale):
 
 <!-- quote: main.ts -->
 ```ts
@@ -862,6 +915,8 @@ if (sandboxAvailable()) {
 		input: new PassThrough(),
 		output,
 		colors: "truecolor",
+		// The machine's languages (its system locale by default), here fixed for the book's output.
+		locales: ["en-US"],
 	});
 	await until(() => screen(frames).includes("butter"));
 	console.log("5. the terminal shows:");
@@ -932,7 +987,7 @@ scripts.release();
 <!-- output: main -->
 ```text
 6. harbor added, rolled out to: server, list, web, tui
-   the page's plugins: @todo/harbor, @todo/lists
+   the page's plugins: @todo/french, @todo/harbor, @todo/lists
 ```
 
 <!-- output: tui -->
@@ -1023,10 +1078,209 @@ Ada got the `member` variant; her `clear` is refused twice, by TypeScript (the `
 (`invalid/member`), because what a reference offers is decided by the provider's variant, not by the caller's code.
 Her todo is hers: `coffee (ada)`.
 
+# Languages {#languages lede="Messages in code, a French plugin, a language chosen live, and a notice each viewer reads in its own language."}
+
+Mara reads German; Ada would rather read French. Both look at the same list, served by the same worker, so its text
+cannot be formatted once for everyone: **text people read is rendered per viewer, never by a server** (decision
+"Messages and languages in the app kit"). A plugin writes its texts once, in code; languages are contributions; the
+language is a preference of each user.
+
+## Messages in code
+
+The lists plugin keeps its texts in one file, `messages.ts`, which every facet that renders imports (and the worker,
+below):
+
+<!-- quote: plugins/lists/messages.ts -->
+```ts
+export const messages = defineMessages("todo.lists", {
+	en: {
+		title: "Groceries",
+		placeholder: "Add a todo",
+		clearDone: "Clear done",
+		open: (n: number) => (n === 1 ? "1 open" : `${n} open`),
+		cleared: (by: string) => `${by} cleared the done todos`,
+	},
+	de: {
+		title: "Einkäufe",
+		placeholder: "Neues Todo",
+		clearDone: "Erledigte entfernen",
+		open: (n) => `${n} offen`,
+		cleared: (by) => `${by} hat die erledigten Todos entfernt`,
+	},
+});
+```
+
+The first catalog defines the keys and their argument types, and the English catalog is the source of truth; the
+German one gets its functions' parameter types from it, and a missing key, an unknown one or a wrong argument
+(`t("open", "3")`) is a type error, not a blank in production. The namespace (`todo.lists`) keeps two plugins' `title`
+apart. Functions cover plurals and word order; dates and numbers inside them go through `formatTime` and
+`formatNumber`, which use the locale being rendered.
+
+The panel renders with `useMessages(messages)` and the terminal screen with `scope.messages(messages)` (chapters IV
+and V): both give a `t` bound to their host's language, and re-render or redraw when it changes. Each facet that
+renders also contributes the plugin's own catalogs to its host's `Translations`:
+
+<!-- quote: plugins/lists/web.ts -->
+```ts
+export default defineFacet((_host, self) => {
+	self.contribute(Translations, messages.translations);
+	self.contribute(Panels, { name: "groceries", Component: TodoList });
+});
+```
+
+Registries are per host, and a host learns from them which languages its plugins offer: the page matches the
+browser's languages against them before it picks one.
+
+## A translation plugin
+
+French comes from a plugin of its own, written by someone who never touches the lists plugin. Its catalog is typed by
+the lists plugin's messages, a type-only import erased at build:
+
+<!-- quote: plugins/french/fr.ts -->
+```ts
+import type { MessagesOf, Translation } from "@todo/app/v1";
+import type { messages } from "../lists/messages.ts";
+
+const lists: MessagesOf<typeof messages> = {
+	title: "Courses",
+	placeholder: "Nouvelle tâche",
+	clearDone: "Retirer les tâches faites",
+	open: (n) => `${n} à faire`,
+	cleared: (by) => `${by} a retiré les tâches faites`,
+};
+
+export const french: readonly Translation[] = [{ namespace: "todo.lists", locale: "fr", messages: lists }];
+```
+
+and its web and terminal facets contribute that list, the same line in each:
+
+<!-- quote: plugins/french/web.ts -->
+```ts
+export default defineFacet((_host, self) => self.contribute(Translations, french));
+```
+
+A contribution is a list, so one plugin can translate the app and every plugin at once. A catalog may be partial: a
+missing key falls back to the locale's base (`pt-BR` to `pt`), then to the namespace's first catalog, key by key, and
+each fallback is reported once (the page's `onError`, kind `messages`). Two catalogs for one namespace and locale: the
+first by plugin name wins and the other is reported; a translation contributed with `override: true` replaces the
+plugin's own (a better German).
+
+## Choosing a language
+
+The language is a preference each user keeps on the server, `LocaleChoice`, one per principal like the theme choice of
+chapter VI. Until a user chooses, the device decides: the browser's `navigator.languages` on a page, the system locale
+in a terminal (the launcher's `locales`), matched against the languages the catalogs offer, else English. Step 8 has
+the owner choose German while the terminal runs:
+
+<!-- quote: main.ts -->
+```ts
+const ownerChooses = (locale: string) =>
+	app.host.root(async (ctx) => (await ctx.get(LocaleChoice, {})).choose(locale, ctx), context, { principal: OWNER });
+await ownerChooses("de");
+```
+
+<!-- output: main -->
+```text
+8. the owner chooses German
+   ada's pick: fr
+```
+
+<!-- output: tui -->
+```text
+   the terminal shows:
+   Einkäufe
+   [x] milk
+   [x] eggs
+   [ ] bread server
+   [ ] butter owner
+   [ ] coffee ada
+```
+
+Every client of the owner holds the owner's `LocaleChoice`, so the terminal redrew in German at once; nothing
+restarted. Ada's pick (French) is hers and changes nothing for the owner. A page does the same and also sets `lang`
+and `dir` on its root element (right to left for Arabic or Hebrew, through the app's logical CSS properties).
+
+## Text from the server
+
+Clearing the done todos should tell everyone who cleared them. If the worker wrote "owner hat die erledigten Todos
+entfernt", Ada would read German too. So the list's state carries a **message as data**, a key and its parameters,
+declared with the kit's generic schema:
+
+<!-- quote: plugins/lists/contract.ts -->
+```ts
+/** The list's latest notice, as data each viewer renders in its own language; `null` before the first. */
+export const Notice = union([MessageSchema, nul()]);
+```
+
+The store writes it with `messages.message`, typed against the English catalog like `t` (`messages.message("cleared",
+42)` does not compile), and each viewer renders it with `t.render`:
+
+<!-- quote: plugins/lists/worker.ts -->
+```ts
+			clear: async ({ by }, ctx) => {
+				await self.tx(async (tx) => tx.deleteWhere(items, (item) => eq(item.done, true)), ctx);
+				// The key and its parameters, typed against the English catalog: every viewer renders its own text.
+				await notices.change((draft) => {
+					draft.notice = messages.message("cleared", by);
+				}, ctx);
+				return null;
+			},
+```
+
+<!-- output: main -->
+```text
+   the notice: { namespace: 'todo.lists', key: 'cleared', params: [ 'owner' ] }
+   the server renders it: owner cleared the done todos
+```
+
+<!-- output: tui -->
+```text
+   the terminal renders it: owner hat die erledigten Todos entfernt
+```
+
+Parameters are plain data (strings, numbers, ISO dates), so a message crosses links like any state. Across a link
+the member is the generic schema, so `t.render` checks the namespace and the key at runtime: a message of another
+namespace or a key the catalogs no longer have shows the key, reported. Never translated: the model's prompts and
+answers, log lines, error codes.
+
+## Trap: the plain `t`
+
+The server's `messages.render(…)` printed English. **The plain `t` has no language of its own:** inside a render it
+uses the language being rendered (a message function calling another plugin's `t`, `formatTime`), outside one the
+first catalog. That is right for a server, a test or a log line, and wrong in a component: a page or a terminal
+renders with `useMessages(t)` or `scope.messages(t)`, bound to its host's language. There is no module-wide current
+language, because one process runs many hosts and a server renders for many people.
+
+On the page, `screenshots.ts` has the owner choose French and clear the done todos while a todo is half typed:
+
+<!-- quote: screenshots.ts -->
+```ts
+	await app.host.root(
+		async (ctx) => {
+			await (await ctx.get(LocaleChoice, {})).choose("fr", ctx);
+			const todos = await ctx.get(Todos, { list: "groceries" });
+			if (todos.variant === "owner") await todos.clear(ctx);
+		},
+		context,
+		{ principal: { kind: "owner" } },
+	);
+```
+
+<!-- output: screenshots -->
+```text
+wrote docs/tutorial/screens/french.png
+after choosing French: lang="fr", "oat mi" still typed
+the page did not reload: true
+```
+
+:::figure | The page after the owner chose French: the lists plugin's texts from the French plugin, the notice rendered from its key, the half-typed "oat mi" kept; no reload.
+![The page in French](screens/french.png)
+:::
+
 # Changing Code {#reload lede="An edit while Ada is connected: the watcher marks, applyChanges rolls out, every object takes its fate."}
 
 Ada typed "  tea  " with spaces, and a blank todo should be refused like an empty one. The fix is one line of the lists
-plugin's worker facet: the view trims the text before the store sees it. Step 8 makes the edit in the running app's
+plugin's worker facet: the view trims the text before the store sees it. Step 9 makes the edit in the running app's
 copy of the plugins, as an editor or an agent would, and applies it:
 
 <!-- quote: main.ts -->
@@ -1037,7 +1291,7 @@ const workerFile = join(root, "lists", "worker.ts");
 await writeFile(workerFile, (await readFile(workerFile, "utf8")).replace(BEFORE, AFTER));
 await until(() => app.plugins.state.value.dirty.includes("@todo/lists"));
 const applied = await app.applyChanges(context);
-console.log("8. lists changed, rolled out to:", applied.steps.map(({ name }) => name).join(", "));
+console.log("9. lists changed, rolled out to:", applied.steps.map(({ name }) => name).join(", "));
 for (const host of applied.steps.find(({ name }) => name === "list")!.hosts) {
 	const fates = "report" in host ? host.report.objects.map(({ object, kind }) => `${object} ${kind}`) : [];
 	console.log(`   on ${host.host}:`, [...new Set(fates)].join(", "));
@@ -1054,7 +1308,7 @@ console.log("   ada adds ' ':", refused);
 
 <!-- output: main -->
 ```text
-8. lists changed, rolled out to: server, list, web, tui
+9. lists changed, rolled out to: server, list, web, tui
    on list|groceries: todo.store swapped, todo.todos(groceries) parked
    ada adds '  tea  ': [ ] tea (ada)
    ada adds ' ': { code: 'invalid', reason: 'args' }
@@ -1098,7 +1352,8 @@ shape bumps its own version with a migration. Contract versions protect callers,
 ## On the page
 
 An edit of a web facet applies in place too: the page fetches the one changed script and reloads its host, with no
-page reload. `screenshots.ts` adds a count of open todos to the panel while half a todo is typed:
+page reload. `screenshots.ts` adds a count of open todos to the panel (`t("open", n)`, in the page's language) while half a
+todo is typed:
 
 <!-- quote: screenshots.ts -->
 ```ts
@@ -1128,14 +1383,14 @@ value, never sent anywhere, and gone with the page.
 
 # Moving a List {#export lede="Export a worker's data while it runs, import it under another address."}
 
-A list's data is what its worker created: its store and its files. Step 9 exports the groceries list while its worker
+A list's data is what its worker created: its store and its files. Step 10 exports the groceries list while its worker
 runs and imports it as a new list:
 
 <!-- quote: main.ts -->
 ```ts
 const archive = join(base, "groceries.tar");
 await app.exportData(List({ id: "groceries" }), archive, context);
-console.log("9. exported groceries:", (await readFile(archive)).length > 0 ? "an archive" : "nothing");
+console.log("10. exported groceries:", (await readFile(archive)).length > 0 ? "an archive" : "nothing");
 await app.importData(archive, List({ id: "picnic" }), context);
 const picnic = await app.host.get(Todos, { list: "picnic" }, context);
 console.log("   imported as picnic:", show(picnic.items.value));
@@ -1147,8 +1402,8 @@ await app.importData(archive, List({ id: "groceries" }), context).catch((error: 
 
 <!-- output: main -->
 ```text
-9. exported groceries: an archive
-   imported as picnic: [x] milk (owner), [x] eggs (owner), [ ] bread (server), [ ] butter (owner), [ ] coffee (ada), [ ] tea (ada)
+10. exported groceries: an archive
+   imported as picnic: [ ] bread (server), [ ] butter (owner), [ ] coffee (ada), [ ] tea (ada)
    importing over groceries: importData: list|groceries has data (its worker runs)
 ```
 
@@ -1197,6 +1452,7 @@ Each test runs code as a principal of its choice with `t.root`:
 				await todos.tick({ id: 1, done: true }, ctx);
 				await todos.clear(ctx);
 				expect(todos.items.value.map(({ text }) => text)).toEqual(["eggs"]);
+				expect(todos.notice.value).toEqual({ namespace: "todo.lists", key: "cleared", params: ["owner"] });
 			},
 			context,
 			{ principal: OWNER },
@@ -1360,12 +1616,13 @@ p2 with the owner's Reload button or `npm run reload -- scratchpad`; a new plugi
 reload. The trap of chapter II applies with p2's names: a server method that must reach a session's worker as the
 server runs in a root of the server's own (`serverOf(self)().root`), not through its caller's `ctx.get`.
 
-# Traps and Open Questions {.epilogue lede="The four traps once more, and what in Chord v2 was hard to explain while writing this."}
+# Traps and Open Questions {.epilogue lede="The five traps once more, and what in Chord v2 was hard to explain while writing this."}
 
 **The traps.** Load before use: a host binds nothing before `load`; a client with nothing to load calls `load([])`. A
 reference acts as whoever made it: `ctx.get` as the caller, `host.get` and a local object's `self.get` as the host.
 Await what you start: a write started with a context that ends is cancelled and reported `transaction_cancelled`. A
-watch starts at the current value: read `handle.value`, then `start`; the listener gets changes only.
+watch starts at the current value: read `handle.value`, then `start`; the listener gets changes only. The plain `t`
+has no language of its own: components and screens render with `useMessages(t)` and `scope.messages(t)`.
 
 **Hard to explain, found while writing the example.** Each is a candidate for a fix in Chord rather than a paragraph in
 a tutorial.
@@ -1375,10 +1632,10 @@ a tutorial.
   `tx.get(items, { id })` with a number fails `tsc`. The store here uses `updateWhere` with `eq` instead of
   `tx.update`.
 Four more, found the same way, are fixed: a reloaded web plugin lost its own React state (now `usePageState`,
-chapter VIII), a plugin's `contract.ts` could not be imported outside builds (the API is now a workspace package,
+chapter IX), a plugin's `contract.ts` could not be imported outside builds (the API is now a workspace package,
 chapter I), plugins could not throw Chord's `invalid` (Chord exports `invalid` and `forbidden`, chapter II), and a
 live window over a table needed a one-time read in `self.open`, which made the store restart at every reload of its
-plugin (now `self.query`, a live query Chord runs, chapters II and VIII).
+plugin (now `self.query`, a live query Chord runs, chapters II and IX).
 
 # The App's Files {.appendix}
 
@@ -1386,14 +1643,15 @@ plugin (now `self.query`, a live query Chord runs, chapters II and VIII).
 | --- | --- | --- |
 | `src/principals.ts` | base | the principal type |
 | `package.json` | base | the API as the workspace package `@todo/app`, its `exports` |
-| `src/api/v1/index.ts` | base, every kind | `@todo/app/v1`: Chord's part (with `invalid`, `forbidden`), `defineFacet`, `List` |
+| `src/api/v1/index.ts` | base, every kind | `@todo/app/v1`: Chord's part (with `invalid`, `forbidden`, `defineMessages`, `Translations`), `defineFacet`, `List` |
 | `src/api/v1/server.ts` | base, server | `Http`, the ephemeral `login` |
-| `src/api/v1/web.ts` | base, web | `Panels`, `useHold`, `usePageState`, `useWatch` |
+| `src/api/v1/web.ts` | base, web | `Panels`, `useHold`, `useMessages`, `usePageState`, `useWatch` |
 | `src/api/v1/tui.ts` | base, tui | `Screens` |
 | `start.ts`, `worker.ts` | base | `startServer`, `startWorker` |
 | `src/web/main.ts`, `src/web/style.css` | base, web entry | `startPage`, the panels |
 | `src/tui/main.ts` | base, terminal entry | `startTerminalRuntime`, the screens |
-| `plugins/lists/` | plugin | contract (`Item`, `Todos`), worker (table, store, views), server (routes), web (panel), tui (screen), its test |
+| `plugins/lists/` | plugin | contract (`Item`, `Notice`, `Todos`), messages (English, German), worker (table, store, views), server (routes), web (panel), tui (screen), its test |
+| `plugins/french/` | plugin | French for the lists plugin, for pages and terminals |
 | `plugins/login.server.ts` | single-file plugin | the kit's ephemeral login |
 | `later/harbor/` | plugin, added in step 6 | the Harbor theme for pages and terminals |
 | `main.ts`, `screenshots.ts`, `tutorial.test.ts` | example | the steps, the screenshots, the checks |
@@ -1408,13 +1666,16 @@ plugin (now `self.query`, a live query Chord runs, chapters II and VIII).
 | `hostKind(name, params)`, `remote(name, { version, params, hostAddress, variants })`, `local(name, { version, params, members })` | II | host kinds and contracts |
 | `host.serve(Type, factory)`; factory `self`: `table`, `query`, `derive`, `tx`, `get`, `contribute` | II | an object's parts |
 | `host.root(fn, ctx, { principal })`, `ctx.get(Type, params)` | II | code outside objects, as a principal |
-| `invalid(reason, message, details?)`, `forbidden(message, details?)` | II, VIII | Chord's errors, thrown by a plugin |
+| `invalid(reason, message, details?)`, `forbidden(message, details?)` | II, IX | Chord's errors, thrown by a plugin |
 | `self.contribute(Http, { routes })` | III | routes, denied by default |
 | `startPage`, `HostProvider`, `useHold`, `useWatch`, `useRegistry` | IV | the page |
 | `startTerminalRuntime`, `TuiScope`, `startTerminal` | V | the terminal |
-| `usePageState(key, initial)`, `scope.pageState(key, initial)` | IV, VIII | state the page keeps across plugin reloads |
+| `usePageState(key, initial)`, `scope.pageState(key, initial)` | IV, IX | state the page keeps across plugin reloads |
 | `self.contribute(Themes, theme)` | VI | a theme |
 | `ephemeralLoginFacet<P>()`, `host.load([], ctx)`, `host.connect(link, { principal }, ctx)` | VII | a second user's client |
-| `app.plugins.state`, `app.applyChanges(ctx)` | VI, VIII | marks and rollouts |
-| `app.exportData(address, path, ctx)`, `app.importData(path, address, ctx)` | IX | moving a worker's data |
-| `testPlugin(dir, { kind, api, modules, address, principal, stubs }, ctx)` | X | one plugin alone |
+| `defineMessages(namespace, catalogs)`, `t.translations`, `self.contribute(Translations, list)` | IV, V, VIII | a plugin's messages and its catalogs |
+| `useMessages(t)`, `scope.messages(t)`, `t.message(key, ...args)`, `t.render(message)`, `MessageSchema` | IV, V, VIII | texts in the viewer's language, messages as data |
+| `MessagesOf<typeof t>`, `LocaleChoice` | VIII | a translation plugin, the user's language |
+| `app.plugins.state`, `app.applyChanges(ctx)` | VI, IX | marks and rollouts |
+| `app.exportData(address, path, ctx)`, `app.importData(path, address, ctx)` | X | moving a worker's data |
+| `testPlugin(dir, { kind, api, modules, address, principal, stubs }, ctx)` | XI | one plugin alone |

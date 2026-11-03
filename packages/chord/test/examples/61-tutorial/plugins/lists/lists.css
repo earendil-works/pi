@@ -7,3 +7,4 @@
 	border: 1px solid var(--accent); border-radius: var(--radius, 0); }
 .lists-panel button { margin-top: 0.5rem; background: none; color: var(--accent); border: 1px solid var(--accent);
 	border-radius: var(--radius, 0); padding: 0.3rem 0.6rem; }
+.lists-notice { color: var(--warning); font-size: 0.9em; }

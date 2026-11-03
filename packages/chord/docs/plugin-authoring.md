@@ -183,6 +183,37 @@ or keeps its old code (at a reload), reported with the error.
 - A theme is data: contribute a `Theme` (`{ id, name, mode, colors, web?, tui? }`) to the kit's `Themes` registry,
   from a web facet and a terminal facet to reach both. Users pick one dark and one light theme.
 
+## Messages
+
+Text people read is written once, in code, and rendered in each viewer's language (design §23, "Messages and
+languages"). From the app's API:
+
+```ts
+// plugins/stats/messages.ts: imported by every facet that renders, and by the worker when it builds messages as data
+export const messages = defineMessages("bob.stats", {
+	en: { title: "Stats", words: (n: number) => (n === 1 ? "1 word" : `${formatNumber(n)} words`), done: (by: string) => `${by} finished` },
+	de: { title: "Statistik", words: (n) => (n === 1 ? "1 Wort" : `${formatNumber(n)} Wörter`), done: (by) => `${by} ist fertig` },
+});
+```
+
+- The namespace is the plugin's name; keys are names (`title`), never English text; the English catalog comes first and
+  annotates its functions' parameters, the others take them from it. A missing key, an unknown one or a wrong argument
+  is a type error. Plurals and word order are functions; dates, times and numbers go through `formatTime` and
+  `formatNumber` inside them (they follow the language being rendered).
+- Every facet that renders contributes the plugin's own catalogs: `self.contribute(Translations, messages.translations)`
+  (registries are per host; the host learns the languages offered from them).
+- Render in the host's language: `const { t } = useMessages(messages)` in a component, `const t =
+  scope.messages(messages)` in a terminal facet. The plain `messages(key, ...)` has no language of its own (outside a
+  render: the first catalog); never use it in UI code.
+- Objects never store sentences: a member typed `union([MessageSchema, nul()])` holds `messages.message("done", by)`
+  (keys whose arguments are strings, numbers, booleans or `null`; a date as an ISO string), and each client renders it
+  with `t.render(message)`, which shows the key of a message it does not know.
+- A translation is a plugin: its catalogs typed `MessagesOf<typeof messages>` (a type-only import of the other plugin's
+  `messages.ts`), partial allowed, in one shared file contributed as a list from each facet that renders:
+  `self.contribute(Translations, [{ namespace: "bob.stats", locale: "fr", messages: statsFr }])`; `override: true`
+  replaces the plugin's own catalog of that locale.
+- Never translated: the model's prompts and answers, log lines, error codes.
+
 ## Installing
 
 - `plugins.installPlugin({ git: "https://github.com/bob/stats.git", ref: "v1.2.0" }, root, ctx)`: a shallow clone of
@@ -233,3 +264,5 @@ of plugins it has no files of, it declares again, as `Notes` above.
 5. Live rows of a table through `self.query(table, q, limit)`, never a read in `self.open`.
 6. Files of one kind named `*.<kind>.ts(x)`.
 7. A test with `testPlugin` and stubs for every name `t.unserved()` lists.
+8. Texts people read in `messages.ts` (`defineMessages`), its catalogs contributed from each facet that renders, state
+   holding messages as data.

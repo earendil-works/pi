@@ -1,7 +1,7 @@
 // `startWorker` (slice 13 §1): a worker of an app built with the kit, in its entry module. `workerMain` plus the kit's
 // part: the worker's directory under its kind and address with its store, the host at the worker's address acting as
 // the principal the server gave it, connected to the server first, its plugins loaded with the kit's worker facets
-// (`WorkerInfo`, `Files`).
+// (`WorkerInfo`, `Files`, `Translations` for a worker that renders final text).
 
 import { join } from "node:path";
 import type { Principal } from "../../data/index.ts";
@@ -9,6 +9,7 @@ import { createHost } from "../../host/index.ts";
 import type { JsonValue } from "../../json.ts";
 import { openNodeSqliteDatabase } from "../../sqlite/node.ts";
 import { openStore, sqliteBackend } from "../../store/index.ts";
+import { translationsFacet } from "../../surfaces/index.ts";
 import type { Watchable } from "../../watch.ts";
 import { workerMain } from "../workers/index.ts";
 import type { AppApi, AppKind, KitStart } from "./app.ts";
@@ -63,6 +64,7 @@ export function startWorker<P extends Principal>(options: WorkerOptions): void {
 					name: "chord.app.data",
 					facet: hostDataFacet<P>(store, join(kit.dir, "files"), kit.server as unknown as P),
 				},
+				{ name: "chord.translations", facet: translationsFacet<P>() },
 			];
 			await plugins.load(host, { kind: kit.facet, core }, context);
 			return options.busy === undefined ? {} : { busy: options.busy };

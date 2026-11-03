@@ -2419,7 +2419,21 @@ validation and copies the v2 kernel added around Delta.
   state, notices, tool summaries and errors shown to people (a code plus parameters); each client renders it with
   `t.render` in its own language (checked at runtime across a link: an unknown key shows the key). Never translated:
   the model's prompts and answers, log lines, error codes. No translator file format now; an export/import tool to JSON
-  when someone needs it. Built after slice 11 (carry-over "After slice 11").
+  when someone needs it. Built after slice 11 (carry-over "After slice 11"). **Refined in the build (2026-11-03;
+  asked by the build, accepted by the main session):** (1) a `Translations` contribution is a list
+  (`readonly Translation[]`): a contributor contributes once per registry, and the proposal's French plugin
+  contributes `notes/fr` and `app/fr` from one facet. (2) A plugin's own catalogs are its built-in contributions
+  literally: each facet that renders contributes them (`self.contribute(Translations, notes.translations)`), because
+  `defineMessages` runs at module evaluation, tied to no host, and a host must know every locale its catalogs offer
+  (the device default, a settings list); conflicts and `override` as decided (`override: true` wins over a catalog
+  without it), and `t` still renders its own catalogs if a facet forgot the contribution. (3) `t` is per host:
+  `useMessages(t)` returns `{ t, locale }` bound to the `HostProvider`'s host and its language, `scope.messages(t)`
+  likewise (a change redraws); the plain `t(key, ...args)` imported from `messages.ts` renders in the language of the
+  render under way (a synchronous render scope: nested `t` calls, `formatTime` in a message function), outside one in
+  the first catalog (servers, tests, logs); no module-level current locale, since one process may run many hosts and a
+  server renders per recipient. Also from the build: the typed message is `MessageData<N, K>` (the link protocol owns
+  `Message`), `t.message` takes only keys whose arguments are JSON scalars, and the theme choice and the locale choice
+  share one per-principal preference store (`src/surfaces/preference.ts`).
 - **Chord v2 becomes the package's root (owner, 2026-11-03: "src/old", "subpaths", "yes", "yes", "no, chord is
   wip"; for merging pi-private into pi this week; trial `/home/badlogic/chord-root-move/report.md`):** `src/next` is
   the package's `src` (its main export), the Node parts `src/next-node` are `src/node` with short subpaths (`/http`,

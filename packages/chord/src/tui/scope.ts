@@ -2,6 +2,7 @@
 // counterpart of the React bindings for terminal UI libraries. It holds references, follows watchables and registries,
 // calls one `changed` callback (the app's redraw) on every change, and releases everything at `dispose`. Its page state
 // is the host's, shared by every scope (React's `usePageState`): a scope opened again after a plugin reload finds it.
+// Its messages render in the host's language, and a change of the locale or a translation redraws.
 // References wait and rebind by themselves (no retry loop, unlike p2's); no terminal library dependency.
 
 import { BACKGROUND_CONTEXT, withAbortSignal } from "../context/index.ts";
@@ -9,6 +10,7 @@ import type { Contract, ParamsOf } from "../contracts/index.ts";
 import type { Principal } from "../data/index.ts";
 import type { Held, Host } from "../host/index.ts";
 import type { Registry } from "../registries/index.ts";
+import { hostLanguage, type Language, type MessageData, type Messages, type Translator } from "../surfaces/index.ts";
 import { type PageState, pageState } from "../surfaces/page-state.ts";
 import type { NativeWatchable, Watchable } from "../watch.ts";
 
@@ -81,6 +83,28 @@ export class TuiScope<P extends Principal = Principal> {
 		return state;
 	}
 
+	/**
+	 * `messages` in the host's language as it is at each call (the first catalog before the host follows one); a change
+	 * of the locale or a translation calls `changed` until `dispose`.
+	 */
+	messages<N extends string, M>(messages: Messages<N, M>): Translator<N, M> {
+		const language = hostLanguage(this.#host);
+		this.#releases.push(language.subscribe(() => this.#changed()));
+		let bound: { readonly language: Language | undefined; readonly t: PlainTranslator } | undefined;
+		const current = (): PlainTranslator => {
+			const now = language.read();
+			// A translator's overloads are one function's, keyed by the catalog's shape: called here as that function.
+			if (bound === undefined || bound.language !== now) {
+				bound = { language: now, t: messages.in(now) as unknown as PlainTranslator };
+			}
+			return bound.t;
+		};
+		const t: PlainTranslator = Object.assign((key: string, ...args: unknown[]) => current()(key, ...args), {
+			render: (message: MessageData) => current().render(message),
+		});
+		return t as unknown as Translator<N, M>;
+	}
+
 	/** Releases every reference and ends every watch; `changed` is not called after it. */
 	dispose(): void {
 		this.#abort.abort();
@@ -92,3 +116,6 @@ export class TuiScope<P extends Principal = Principal> {
 		return withAbortSignal(this.#abort.signal, BACKGROUND_CONTEXT);
 	}
 }
+
+/** A translator as the function it is: any key, any arguments. */
+type PlainTranslator = ((key: string, ...args: unknown[]) => string) & { render(message: MessageData): string };

@@ -111,8 +111,8 @@ table{max-width:100%}
 <section class="cover">
   <div class="kicker">A tutorial · Chord v2 and its app kit · 2026-11-03</div>
   <h1>Build It<br>Together</h1>
-  <p class="subtitle">One small app, built a step at a time, from an empty server to two people, a page, a terminal, a theme and an edit applied while they are connected</p>
-  <div class="cover-stats"><div class="stat"><b>9</b><span>steps, one runnable example</span></div><div class="stat"><b>4</b><span>host kinds one plugin runs on</span></div><div class="stat"><b>1</b><span>worker process per list</span></div><div class="stat"><b>0</b><span>restarts for a new theme or an edit</span></div></div>
+  <p class="subtitle">One small app, built a step at a time, from an empty server to two people, a page, a terminal, a theme, three languages and an edit applied while they are connected</p>
+  <div class="cover-stats"><div class="stat"><b>10</b><span>steps, one runnable example</span></div><div class="stat"><b>4</b><span>host kinds one plugin runs on</span></div><div class="stat"><b>1</b><span>worker process per list</span></div><div class="stat"><b>0</b><span>restarts for a new theme, a language or an edit</span></div></div>
   <div class="cover-note"><p>The app is <code>packages/chord/test/examples/61-tutorial/</code>, runnable with the line in its <code>main.ts</code>. Every code block
 below is quoted from its files, and every console output from what its steps print:
 <code>test/examples/61-tutorial/tutorial.test.ts</code> fails when a quote or an output drifts. The design is
@@ -129,10 +129,11 @@ chapter is about p2, whose code lives outside this repository.</p>
 <li><a href="#terminal">V. A Terminal</a></li>
 <li><a href="#theme">VI. A Theme</a></li>
 <li><a href="#user">VII. A Second User</a></li>
-<li><a href="#reload">VIII. Changing Code</a></li>
-<li><a href="#export">IX. Moving a List</a></li>
-<li><a href="#testing">X. Testing One Plugin</a></li>
-<li><a href="#p2">XI. Writing a p2 Plugin</a></li>
+<li><a href="#languages">VIII. Languages</a></li>
+<li><a href="#reload">IX. Changing Code</a></li>
+<li><a href="#export">X. Moving a List</a></li>
+<li><a href="#testing">XI. Testing One Plugin</a></li>
+<li><a href="#p2">XII. Writing a p2 Plugin</a></li>
 <li><a href="#traps-and-open-questions">Traps and Open Questions</a></li>
 <li><a href="#the-app-s-files">Appendix A: The App&#39;s Files</a></li>
 <li><a href="#reference">Appendix B: Reference</a></li>
@@ -155,7 +156,7 @@ states the rule behind it. The app is one directory, <code>test/examples/61-tuto
 <pre><code>node --conditions=source --experimental-strip-types test/examples/<span class="tk-n">61</span>-tutorial/main.ts</code></pre>
 <p>With Node 26.5.1 or later the terminal client of chapter V runs too (its sandbox needs that Node); with an older one,
 that step says so and the rest runs.</p>
-<h3 id="eight-things-to-know">Eight things to know</h3>
+<h3 id="nine-things-to-know">Nine things to know</h3>
 <ol class="findings">
 <li><strong>An app is its API, its plugins and a start script.</strong> <code>startServer</code> makes the data directory, the store, the
 server host, HTTP with sign-in, the workers and the plugin roots; <code>startWorker</code> does a worker&#39;s half.</li>
@@ -172,8 +173,10 @@ of host serves and contributes. Plugins import only the app&#39;s API.</li>
 plugins contribute, one plugin (or the entry) composes.</li>
 <li><strong>Changes apply when you say so.</strong> Saving a file marks its plugin dirty; <code>applyChanges</code> builds and rolls out to the
 server, the workers, the pages and the terminals, in place.</li>
-<li><strong>Four traps:</strong> load before use; a reference acts as whoever made it; await what you start; a watch starts at the
-current value.</li>
+<li><strong>Text is rendered per viewer.</strong> A plugin&#39;s messages are typed code, a translation is a plugin, each user picks a
+language, and servers store keys, never sentences.</li>
+<li><strong>Five traps:</strong> load before use; a reference acts as whoever made it; await what you start; a watch starts at the
+current value; the plain <code>t</code> has no language of its own.</li>
 </ol>
 <h3 id="words-used-throughout">Words used throughout</h3>
 <p>A <strong>host</strong> is one participant of the app, with an <strong>address</strong> if others can reach it (the server, <code>List({ id })</code>) or
@@ -183,7 +186,8 @@ host only, <code>remote</code> for any host) names its <strong>params</strong> (
 are the member sets different principals get. A <strong>factory</strong> declares an object&#39;s parts: <strong>documents</strong> and <strong>tables</strong>
 (stored data, changed in <strong>transactions</strong>), <strong>live queries</strong> (a table&#39;s rows Chord keeps current), <strong>derives</strong>
 (values computed from others), <strong>natives</strong> (things opened and closed, such as a file or a database cursor). A <strong>reference</strong> is what asking for an object returns. A <strong>facet</strong> is a
-plugin&#39;s code for one host kind; a <strong>registry</strong> is an extension point plugins <strong>contribute</strong> to. A <strong>rollout</strong> applies
+plugin&#39;s code for one host kind; a <strong>registry</strong> is an extension point plugins <strong>contribute</strong> to. A <strong>message</strong> is a
+text with a key, a <strong>catalog</strong> a plugin&#39;s messages in one language, a <strong>locale</strong> a language tag (<code>de</code>, <code>pt-BR</code>). A <strong>rollout</strong> applies
 new plugin code to the hosts in order.</p>
 </section>
 
@@ -214,13 +218,18 @@ stays small: a kind and an id. A user&#39;s profile, if the app had one, would b
 	arr,
 	bool,
 	<span class="tk-k">type</span> <span class="tk-t">Ctx</span>,
+	defineMessages,
+	defineState,
 	defineTable,
 	eq,
 	forbidden,
 	int,
 	invalid,
 	local,
+	<span class="tk-t">MessageSchema</span>,
+	<span class="tk-k">type</span> <span class="tk-t">MessagesOf</span>,
 	method,
+	nul,
 	num,
 	obj,
 	<span class="tk-t">PluginError</span>,
@@ -230,11 +239,14 @@ stays small: a kind and an id. A user&#39;s profile, if the app had one, would b
 	str,
 	<span class="tk-k">type</span> <span class="tk-t">Theme</span>,
 	<span class="tk-t">Themes</span>,
+	<span class="tk-k">type</span> <span class="tk-t">Translation</span>,
+	<span class="tk-t">Translations</span>,
+	union,
 } <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/index.ts"</span>;
 <span class="tk-k">export</span> <span class="tk-k">type</span> { <span class="tk-t">TodoPrincipal</span> } <span class="tk-k">from</span> <span class="tk-s">"../../principals.ts"</span>;</code></pre>
-<p><code>invalid</code> and <code>forbidden</code> make Chord&#39;s own errors: a plugin refusing arguments throws <code>invalid(&quot;args&quot;, message)</code>,
+<p><code>defineMessages</code>, <code>Translations</code> and the message schema are chapter VIII&#39;s. <code>invalid</code> and <code>forbidden</code> make Chord&#39;s own errors: a plugin refusing arguments throws <code>invalid(&quot;args&quot;, message)</code>,
 one refusing a caller <code>forbidden(message)</code>, and the caller gets the same <code>{ code, reason }</code> Chord&#39;s built-in checks
-give (chapter VIII). <code>PluginError</code> is for codes of the plugin&#39;s own.</p>
+give (chapter IX). <code>PluginError</code> is for codes of the plugin&#39;s own.</p>
 <p>and a <code>defineFacet</code> bound to the principal type, so every factory sees a <code>TodoPrincipal</code>:</p>
 <!-- quote: src/api/v1/index.ts -->
 <pre><code><span class="tk-c">/** Defines a facet of the todo app: its factories get the app's principals. */</span>
@@ -366,7 +378,21 @@ host kinds are base code, in the API:</p>
 <p>A <code>remote</code> contract says, with <code>hostAddress</code>, at which address its objects live. The contract for a list&#39;s todos is
 the lists plugin&#39;s, in its <code>contract.ts</code>, which its facets of every kind import, and so do the steps and its test:</p>
 <!-- quote: plugins/lists/contract.ts -->
-<pre><code><span class="tk-k">import</span> { arr, bool, int, <span class="tk-t">List</span>, method, num, obj, remote, <span class="tk-k">type</span> <span class="tk-t">Static</span>, str } <span class="tk-k">from</span> <span class="tk-s">"@todo/app/v1"</span>;
+<pre><code><span class="tk-k">import</span> {
+	arr,
+	bool,
+	int,
+	<span class="tk-t">List</span>,
+	<span class="tk-t">MessageSchema</span>,
+	method,
+	nul,
+	num,
+	obj,
+	remote,
+	<span class="tk-k">type</span> <span class="tk-t">Static</span>,
+	str,
+	union,
+} <span class="tk-k">from</span> <span class="tk-s">"@todo/app/v1"</span>;
 
 <span class="tk-c">/** A todo: its number in the list, its text, whether it is done, who added it and when. */</span>
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Item</span> = <span class="tk-f">obj</span>({ id: <span class="tk-f">int</span>(), text: <span class="tk-f">str</span>(), done: <span class="tk-f">bool</span>(), by: <span class="tk-f">str</span>(), at: <span class="tk-f">num</span>() });
@@ -374,9 +400,12 @@ the lists plugin&#39;s, in its <code>contract.ts</code>, which its facets of eve
 <span class="tk-c">/** A todo (see `Item`). */</span>
 <span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Item</span> = <span class="tk-t">Static</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">Item</span>&gt;;
 
+<span class="tk-c">/** The list's latest notice, as data each viewer renders in its own language; `null` before the first. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Notice</span> = <span class="tk-f">union</span>([<span class="tk-t">MessageSchema</span>, <span class="tk-f">nul</span>()]);
+
 <span class="tk-c">/**
- * A list's todos as one principal sees them: the newest 50 (live), adding one and ticking one off (or on again); the
- * owner also clears the done ones.
+ * A list's todos as one principal sees them: the newest 50 (live) and the list's notice, adding one and ticking one off
+ * (or on again); the owner also clears the done ones.
  */</span>
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Todos</span> = <span class="tk-f">remote</span>(<span class="tk-s">"todo.todos"</span>, {
 	version: <span class="tk-n">1</span>,
@@ -384,16 +413,17 @@ the lists plugin&#39;s, in its <code>contract.ts</code>, which its facets of eve
 	hostAddress: ({ list }) =&gt; <span class="tk-t">List</span>({ id: list }),
 	variants: {
 		member: {
-			state: { items: <span class="tk-f">arr</span>(<span class="tk-t">Item</span>) },
+			state: { items: <span class="tk-f">arr</span>(<span class="tk-t">Item</span>), notice: <span class="tk-t">Notice</span> },
 			methods: { add: <span class="tk-f">method</span>(<span class="tk-f">str</span>()), tick: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ id: <span class="tk-f">int</span>(), done: <span class="tk-f">bool</span>() })) },
 		},
 		owner: {
-			state: { items: <span class="tk-f">arr</span>(<span class="tk-t">Item</span>) },
+			state: { items: <span class="tk-f">arr</span>(<span class="tk-t">Item</span>), notice: <span class="tk-t">Notice</span> },
 			methods: { add: <span class="tk-f">method</span>(<span class="tk-f">str</span>()), tick: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ id: <span class="tk-f">int</span>(), done: <span class="tk-f">bool</span>() })), clear: <span class="tk-f">method</span>() },
 		},
 	},
 });</code></pre>
-<p><code>params</code> select the instance: <code>Todos { list: &quot;groceries&quot; }</code> is one object per principal. Nobody who asks names a
+<p>Its <code>notice</code> is a message as data, which chapter VIII renders in each viewer&#39;s language. <code>params</code> select the
+instance: <code>Todos { list: &quot;groceries&quot; }</code> is one object per principal. Nobody who asks names a
 host: the caller computes the address from the params and sends the request there; a host that cannot serve it passes
 it on to its parent or to a route (design §3, &quot;Host kinds and addresses&quot;). The kit&#39;s <code>workers</code> option is that route:</p>
 <!-- quote: start.ts -->
@@ -437,9 +467,10 @@ in <code>local</code> objects with empty params (one per host and type), so its 
 	params: {},
 	members: {
 		items: <span class="tk-f">arr</span>(<span class="tk-t">Item</span>),
+		notice: <span class="tk-t">Notice</span>,
 		add: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ text: <span class="tk-f">str</span>(), by: <span class="tk-f">str</span>() })),
 		tick: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ id: <span class="tk-f">int</span>(), done: <span class="tk-f">bool</span>() })),
-		clear: <span class="tk-f">method</span>(),
+		clear: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ by: <span class="tk-f">str</span>() })),
 	},
 });</code></pre>
 <p>A <code>local</code> object with empty params lives as long as its host: it starts with the worker and is never ended by a count
@@ -449,9 +480,11 @@ of references. Its factory declares its parts and returns its members:</p>
 		<span class="tk-k">const</span> items = self.<span class="tk-f">table</span>(<span class="tk-t">Items</span>);
 		<span class="tk-c">// The newest todos, live: read before the store goes live, read again after every commit writing the table.</span>
 		<span class="tk-k">const</span> newest = self.<span class="tk-f">query</span>(items, NEWEST, WINDOW);
+		<span class="tk-k">const</span> notices = self.<span class="tk-f">state</span>(<span class="tk-t">Notices</span>);
 		<span class="tk-k">return</span> {
 			<span class="tk-c">// Oldest first, as the list shows them.</span>
-			items: self.<span class="tk-f">derive</span>([newest], ([rows]) =&gt; [...rows].<span class="tk-f">reverse</span>()),</code></pre>
+			items: self.<span class="tk-f">derive</span>([newest], ([rows]) =&gt; [...rows].<span class="tk-f">reverse</span>()),
+			notice: self.<span class="tk-f">derive</span>([notices], ([value]) =&gt; value.notice),</code></pre>
 <p>A <strong>factory</strong> is synchronous and only declares; Chord activates the object afterwards. <code>self.table</code> declares the
 table. <code>self.query(items, NEWEST, WINDOW)</code> declares a <strong>live query</strong> over it: the rows of <code>NEWEST</code>, at most 50, as a
 value the object can expose or derive from. Chord runs it before the store goes live, and again after every commit
@@ -486,11 +519,12 @@ contract&#39;s schema.</p>
 		<span class="tk-k">const</span> by = principal.kind === <span class="tk-s">"user"</span> ? principal.name : principal.kind;
 		<span class="tk-k">const</span> members = {
 			items: self.<span class="tk-f">derive</span>([store.items], ([items]) =&gt; items),
+			notice: self.<span class="tk-f">derive</span>([store.notice], ([notice]) =&gt; notice),
 			add: (text: string, ctx: <span class="tk-t">Ctx</span>) =&gt; store.<span class="tk-f">add</span>({ text, by }, ctx),
 			tick: (tick: { id: number; done: boolean }, ctx: <span class="tk-t">Ctx</span>) =&gt; store.<span class="tk-f">tick</span>(tick, ctx),
 		};
 		<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"owner"</span>) <span class="tk-k">return</span> { variant: <span class="tk-s">"member"</span>, members };
-		<span class="tk-k">return</span> { variant: <span class="tk-s">"owner"</span>, members: { ...members, clear: (ctx: <span class="tk-t">Ctx</span>) =&gt; store.<span class="tk-f">clear</span>(ctx) } };
+		<span class="tk-k">return</span> { variant: <span class="tk-s">"owner"</span>, members: { ...members, clear: (ctx: <span class="tk-t">Ctx</span>) =&gt; store.<span class="tk-f">clear</span>({ by }, ctx) } };
 	});</code></pre>
 <p><code>self.get(Store, {})</code> declares a dependency: the view goes live once the store is, and holds a <strong>reference</strong> to it
 for its whole life. <code>by</code> comes from the principal. A client could put anything in the arguments of <code>add</code>; it cannot
@@ -606,15 +640,15 @@ for them:</p>
 <pre><code><span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">ComponentType</span> } <span class="tk-k">from</span> <span class="tk-s">"react"</span>;
 <span class="tk-k">import</span> { defineRegistry } <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/index.ts"</span>;
 
-<span class="tk-k">export</span> { useHold, usePageState, useWatch } <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/react/index.ts"</span>;
+<span class="tk-k">export</span> { useHold, useMessages, usePageState, useWatch } <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/react/index.ts"</span>;
 
-<span class="tk-c">/** A panel of the page: its title and its React component. */</span>
-<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Panel</span> = { <span class="tk-k">readonly</span> title: string; <span class="tk-k">readonly</span> <span class="tk-t">Component</span>: <span class="tk-t">ComponentType</span> };
+<span class="tk-c">/** A panel of the page: its name (a key, never shown) and its React component, which shows its own title. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Panel</span> = { <span class="tk-k">readonly</span> name: string; <span class="tk-k">readonly</span> <span class="tk-t">Component</span>: <span class="tk-t">ComponentType</span> };
 
 <span class="tk-c">/** The page's panels, one per contributing plugin, in plugin-name order. */</span>
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Panels</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">Panel</span>, <span class="tk-k">readonly</span> <span class="tk-t">Panel</span>[]&gt;(<span class="tk-s">"todo.panels"</span>, { version: <span class="tk-n">1</span> });</code></pre>
-<p>The web entry serves <code>Panels</code> (its <code>compose</code> keeps the contributions in plugin-name order), renders every panel, and
-starts the page&#39;s connection:</p>
+<p>A panel shows its own title, in the page&#39;s language; its <code>name</code> is only a key. The web entry serves <code>Panels</code> (its
+<code>compose</code> keeps the contributions in plugin-name order), renders every panel, and starts the page&#39;s connection:</p>
 <!-- quote: src/web/main.ts -->
 <pre><code><span class="tk-c">/** The page's own facet: it serves `Panels`, composing the contributions in plugin-name order. */</span>
 <span class="tk-k">const</span> core = <span class="tk-f">defineFacet</span>((host) =&gt; host.<span class="tk-f">serve</span>(v1web.<span class="tk-t">Panels</span>, { compose: (table) =&gt; table.<span class="tk-f">map</span>(({ value }) =&gt; value) }));
@@ -625,7 +659,7 @@ starts the page&#39;s connection:</p>
 		<span class="tk-s">"main"</span>,
 		<span class="tk-k">null</span>,
 		<span class="tk-f">h</span>(<span class="tk-s">"h1"</span>, <span class="tk-k">null</span>, <span class="tk-s">"Todo"</span>),
-		...panels.<span class="tk-f">map</span>(({ title, <span class="tk-t">Component</span> }) =&gt; <span class="tk-f">h</span>(<span class="tk-s">"section"</span>, { key: title }, <span class="tk-f">h</span>(<span class="tk-s">"h2"</span>, <span class="tk-k">null</span>, title), <span class="tk-f">h</span>(<span class="tk-t">Component</span>))),
+		...panels.<span class="tk-f">map</span>(({ name, <span class="tk-t">Component</span> }) =&gt; <span class="tk-f">h</span>(<span class="tk-s">"section"</span>, { key: name }, <span class="tk-f">h</span>(<span class="tk-t">Component</span>))),
 	);
 }
 
@@ -642,9 +676,11 @@ scripts with the entry&#39;s core facets, and keeps them current. <code>HostProv
 when its items change:</p>
 <!-- quote: plugins/lists/web.ts -->
 <pre><code><span class="tk-k">function</span> <span class="tk-t">TodoList</span>() {
+	<span class="tk-k">const</span> { t } = <span class="tk-f">useMessages</span>(messages);
 	<span class="tk-k">const</span> list = location.hash.<span class="tk-f">slice</span>(<span class="tk-n">1</span>) || <span class="tk-s">"groceries"</span>;
 	<span class="tk-k">const</span> todos = <span class="tk-f">useHold</span>(<span class="tk-t">Todos</span>, { list });
 	<span class="tk-k">const</span> items = <span class="tk-f">useWatch</span>(todos?.items) ?? [];
+	<span class="tk-k">const</span> notice = <span class="tk-f">useWatch</span>(todos?.notice);
 	<span class="tk-c">// Kept by the page, not the component: the new code's component finds the half-typed todo.</span>
 	<span class="tk-k">const</span> [text, setText] = <span class="tk-f">usePageState</span>(<span class="tk-s">`lists.draft.${list}`</span>, <span class="tk-s">""</span>);
 	<span class="tk-k">const</span> add = (event: { <span class="tk-f">preventDefault</span>(): <span class="tk-k">void</span> }) =&gt; {
@@ -656,6 +692,7 @@ when its items change:</p>
 	<span class="tk-k">return</span> <span class="tk-f">h</span>(
 		<span class="tk-s">"div"</span>,
 		{ className: <span class="tk-s">"lists-panel"</span> },
+		<span class="tk-f">h</span>(<span class="tk-s">"h2"</span>, <span class="tk-k">null</span>, <span class="tk-f">t</span>(<span class="tk-s">"title"</span>)),
 		<span class="tk-f">h</span>(
 			<span class="tk-s">"ul"</span>,
 			<span class="tk-k">null</span>,
@@ -677,20 +714,25 @@ when its items change:</p>
 			{ onSubmit: add },
 			<span class="tk-f">h</span>(<span class="tk-s">"input"</span>, {
 				value: text,
-				placeholder: <span class="tk-s">"Add a todo"</span>,
+				placeholder: <span class="tk-f">t</span>(<span class="tk-s">"placeholder"</span>),
 				onChange: (event: { target: { value: string } }) =&gt; <span class="tk-f">setText</span>(event.target.value),
 			}),
 		),
 		todos?.variant === <span class="tk-s">"owner"</span>
-			? <span class="tk-f">h</span>(<span class="tk-s">"button"</span>, { <span class="tk-k">type</span>: <span class="tk-s">"button"</span>, onClick: () =&gt; <span class="tk-k">void</span> todos.<span class="tk-f">clear</span>(context) }, <span class="tk-s">"Clear done"</span>)
+			? <span class="tk-f">h</span>(<span class="tk-s">"button"</span>, { <span class="tk-k">type</span>: <span class="tk-s">"button"</span>, onClick: () =&gt; <span class="tk-k">void</span> todos.<span class="tk-f">clear</span>(context) }, <span class="tk-f">t</span>(<span class="tk-s">"clearDone"</span>))
 			: <span class="tk-k">null</span>,
+		notice === <span class="tk-k">undefined</span> || notice === <span class="tk-k">null</span> ? <span class="tk-k">null</span> : <span class="tk-f">h</span>(<span class="tk-s">"p"</span>, { className: <span class="tk-s">"lists-notice"</span> }, t.<span class="tk-f">render</span>(notice)),
 	);
 }
 
-<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; self.<span class="tk-f">contribute</span>(<span class="tk-t">Panels</span>, { title: <span class="tk-s">"Groceries"</span>, <span class="tk-t">Component</span>: <span class="tk-t">TodoList</span> }));</code></pre>
-<p><code>useHold</code> holds a reference while the component is mounted and releases it on unmount; it is <code>undefined</code> on the first
-render. <code>useWatch</code> follows a member. <code>usePageState</code> is <code>useState</code> whose value the page keeps under a key instead of the
-component: chapter VIII shows why the half-typed todo needs it. Clicks call methods with <code>BACKGROUND_CONTEXT</code>, which never ends, so a click&#39;s call
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Translations</span>, messages.translations);
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Panels</span>, { name: <span class="tk-s">"groceries"</span>, <span class="tk-t">Component</span>: <span class="tk-t">TodoList</span> });
+});</code></pre>
+<p><code>useMessages(messages)</code> gives the plugin&#39;s texts in the page&#39;s language (chapter VIII; <code>messages</code> is the plugin&#39;s
+<code>messages.ts</code>, and the facet contributes its catalogs to the page&#39;s <code>Translations</code>). <code>useHold</code> holds a reference while
+the component is mounted and releases it on unmount; it is <code>undefined</code> on the first render. <code>useWatch</code> follows a member. <code>usePageState</code> is <code>useState</code> whose value the page keeps under a key instead of the
+component: chapter IX shows why the half-typed todo needs it. Clicks call methods with <code>BACKGROUND_CONTEXT</code>, which never ends, so a click&#39;s call
 is not cancelled when the handler returns. <code>todos?.variant === &quot;owner&quot;</code> narrows the reference: only the owner&#39;s has
 <code>clear</code>, and TypeScript knows it. The panel&#39;s look reads the active theme&#39;s CSS variables, with class names prefixed
 by the plugin&#39;s name (a <code>*.module.css</code> file would scope them instead):</p>
@@ -747,7 +789,7 @@ server never touches Mara&#39;s machine directly (decision &quot;The terminal&#3
 <p>The API&#39;s terminal module declares the parts of the screen:</p>
 <!-- quote: src/api/v1/tui.ts -->
 <pre><code><span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Screen</span> = {
-	<span class="tk-k">readonly</span> title: string;
+	<span class="tk-k">readonly</span> name: string;
 	<span class="tk-k">readonly</span> open: (scope: <span class="tk-t">TuiScope</span>, theme: <span class="tk-t">TerminalTheme</span>) =&gt; () =&gt; <span class="tk-k">readonly</span> string[];
 };
 
@@ -774,7 +816,7 @@ counterpart of the React hooks, for any terminal library:</p>
 				<span class="tk-k">const</span> scope = <span class="tk-k">new</span> <span class="tk-t">TuiScope</span>(runtime.host, () =&gt; <span class="tk-f">draw</span>());
 				opened = { screens: current, scope, lines: current.<span class="tk-f">map</span>((screen) =&gt; screen.<span class="tk-f">open</span>(scope, theme)) };
 			}
-			<span class="tk-k">const</span> lines = current.<span class="tk-f">flatMap</span>((screen, n) =&gt; [theme.<span class="tk-f">fg</span>(<span class="tk-s">"accent"</span>, screen.title), ...opened!.lines[n]!()]);
+			<span class="tk-k">const</span> lines = opened.lines.<span class="tk-f">flatMap</span>((read) =&gt; <span class="tk-f">read</span>());
 			terminal.<span class="tk-f">write</span>(<span class="tk-s">`\x1b[2J\x1b[H${lines.join("\r\n")}\r\n`</span>);
 		};
 		theme.<span class="tk-f">onChange</span>(draw);
@@ -785,21 +827,33 @@ counterpart of the React hooks, for any terminal library:</p>
 	},
 });</code></pre>
 <p>When a reload changes <code>Screens</code>, the entry disposes the old scope and opens the screens again. The lists plugin&#39;s
-terminal facet is a few lines:</p>
+terminal facet draws its title, the todos and the list&#39;s notice; <code>scope.messages(messages)</code> is the terminal&#39;s
+<code>useMessages</code> (chapter VIII):</p>
 <!-- quote: plugins/lists/tui.ts -->
-<pre><code><span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt;
+<pre><code><span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Translations</span>, messages.translations);
 	self.<span class="tk-f">contribute</span>(<span class="tk-t">Screens</span>, {
-		title: <span class="tk-s">"Groceries"</span>,
+		name: <span class="tk-s">"groceries"</span>,
 		open: (scope, theme) =&gt; {
-			<span class="tk-k">const</span> items = scope.<span class="tk-f">watch</span>(scope.<span class="tk-f">hold</span>(<span class="tk-t">Todos</span>, { list: <span class="tk-s">"groceries"</span> }).items);
-			<span class="tk-k">return</span> () =&gt;
-				(<span class="tk-f">items</span>() ?? []).<span class="tk-f">map</span>((item) =&gt;
-					item.done ? theme.<span class="tk-f">fg</span>(<span class="tk-s">"muted"</span>, <span class="tk-s">`[x] ${item.text}`</span>) : <span class="tk-s">`[ ] ${item.text} ${theme.fg("muted", item.by)}`</span>,
-				);
+			<span class="tk-k">const</span> t = scope.<span class="tk-f">messages</span>(messages);
+			<span class="tk-k">const</span> todos = scope.<span class="tk-f">hold</span>(<span class="tk-t">Todos</span>, { list: <span class="tk-s">"groceries"</span> });
+			<span class="tk-k">const</span> items = scope.<span class="tk-f">watch</span>(todos.items);
+			<span class="tk-k">const</span> notice = scope.<span class="tk-f">watch</span>(todos.notice);
+			<span class="tk-k">return</span> () =&gt; {
+				<span class="tk-k">const</span> shown = <span class="tk-f">notice</span>();
+				<span class="tk-k">return</span> [
+					theme.<span class="tk-f">fg</span>(<span class="tk-s">"accent"</span>, <span class="tk-f">t</span>(<span class="tk-s">"title"</span>)),
+					...(<span class="tk-f">items</span>() ?? []).<span class="tk-f">map</span>((item) =&gt;
+						item.done ? theme.<span class="tk-f">fg</span>(<span class="tk-s">"muted"</span>, <span class="tk-s">`[x] ${item.text}`</span>) : <span class="tk-s">`[ ] ${item.text} ${theme.fg("muted", item.by)}`</span>,
+					),
+					...(shown === <span class="tk-k">undefined</span> || shown === <span class="tk-k">null</span> ? [] : [theme.<span class="tk-f">fg</span>(<span class="tk-s">"warning"</span>, t.<span class="tk-f">render</span>(shown))]),
+				];
+			};
 		},
-	}),
-);</code></pre>
-<p><code>theme.fg(&quot;muted&quot;, …)</code> colours by role, never by a fixed colour. Step 5 runs the launcher on a scripted terminal:</p>
+	});
+});</code></pre>
+<p><code>theme.fg(&quot;muted&quot;, …)</code> colours by role, never by a fixed colour. Step 5 runs the launcher on a scripted terminal, its
+languages fixed (by default they are the machine&#39;s system locale):</p>
 <!-- quote: main.ts -->
 <pre><code><span class="tk-k">if</span> (<span class="tk-f">sandboxAvailable</span>()) {
 	<span class="tk-k">const</span> output = <span class="tk-t">Object</span>.<span class="tk-f">assign</span>(<span class="tk-k">new</span> <span class="tk-t">PassThrough</span>(), { columns: <span class="tk-n">60</span>, rows: <span class="tk-n">12</span> });
@@ -810,6 +864,8 @@ terminal facet is a few lines:</p>
 		input: <span class="tk-k">new</span> <span class="tk-t">PassThrough</span>(),
 		output,
 		colors: <span class="tk-s">"truecolor"</span>,
+		<span class="tk-c">// The machine's languages (its system locale by default), here fixed for the book's output.</span>
+		locales: [<span class="tk-s">"en-US"</span>],
 	});
 	<span class="tk-k">await</span> <span class="tk-f">until</span>(() =&gt; <span class="tk-f">screen</span>(frames).<span class="tk-f">includes</span>(<span class="tk-s">"butter"</span>));
 	console.<span class="tk-f">log</span>(<span class="tk-s">"5. the terminal shows:"</span>);
@@ -863,7 +919,7 @@ console.<span class="tk-f">log</span>(<span class="tk-s">"   the page's plugins:
 scripts.<span class="tk-f">release</span>();</code></pre>
 <!-- output: main -->
 <pre class="plain"><code>6. harbor added, rolled out to: server, list, web, tui
-   the page's plugins: @todo/harbor, @todo/lists</code></pre>
+   the page's plugins: @todo/french, @todo/harbor, @todo/lists</code></pre>
 <!-- output: tui -->
 <pre class="plain"><code>   the terminal redraws its title in Harbor's accent: "\u001b[38;2;242;166;90mGroceries"</code></pre>
 <p>A directory appearing in a plugin root marks the plugin set changed (<code>app.plugins.state.value.set</code>); nothing happens
@@ -930,9 +986,147 @@ a host itself must not forget.</p>
 Her todo is hers: <code>coffee (ada)</code>.</p>
 </section>
 
-<section class="chapter" id="reload"><header class="opener"><div class="numeral">VIII</div><h2>Changing Code</h2><p class="lede">An edit while Ada is connected: the watcher marks, applyChanges rolls out, every object takes its fate.</p></header>
+<section class="chapter" id="languages"><header class="opener"><div class="numeral">VIII</div><h2>Languages</h2><p class="lede">Messages in code, a French plugin, a language chosen live, and a notice each viewer reads in its own language.</p></header>
+<p class="dropcap">Mara reads German; Ada would rather read French. Both look at the same list, served by the same worker, so its text
+cannot be formatted once for everyone: <strong>text people read is rendered per viewer, never by a server</strong> (decision
+&quot;Messages and languages in the app kit&quot;). A plugin writes its texts once, in code; languages are contributions; the
+language is a preference of each user.</p>
+<h3 id="messages-in-code">Messages in code</h3>
+<p>The lists plugin keeps its texts in one file, <code>messages.ts</code>, which every facet that renders imports (and the worker,
+below):</p>
+<!-- quote: plugins/lists/messages.ts -->
+<pre><code><span class="tk-k">export</span> <span class="tk-k">const</span> messages = <span class="tk-f">defineMessages</span>(<span class="tk-s">"todo.lists"</span>, {
+	en: {
+		title: <span class="tk-s">"Groceries"</span>,
+		placeholder: <span class="tk-s">"Add a todo"</span>,
+		clearDone: <span class="tk-s">"Clear done"</span>,
+		open: (n: number) =&gt; (n === <span class="tk-n">1</span> ? <span class="tk-s">"1 open"</span> : <span class="tk-s">`${n} open`</span>),
+		cleared: (by: string) =&gt; <span class="tk-s">`${by} cleared the done todos`</span>,
+	},
+	de: {
+		title: <span class="tk-s">"Einkäufe"</span>,
+		placeholder: <span class="tk-s">"Neues Todo"</span>,
+		clearDone: <span class="tk-s">"Erledigte entfernen"</span>,
+		open: (n) =&gt; <span class="tk-s">`${n} offen`</span>,
+		cleared: (by) =&gt; <span class="tk-s">`${by} hat die erledigten Todos entfernt`</span>,
+	},
+});</code></pre>
+<p>The first catalog defines the keys and their argument types, and the English catalog is the source of truth; the
+German one gets its functions&#39; parameter types from it, and a missing key, an unknown one or a wrong argument
+(<code>t(&quot;open&quot;, &quot;3&quot;)</code>) is a type error, not a blank in production. The namespace (<code>todo.lists</code>) keeps two plugins&#39; <code>title</code>
+apart. Functions cover plurals and word order; dates and numbers inside them go through <code>formatTime</code> and
+<code>formatNumber</code>, which use the locale being rendered.</p>
+<p>The panel renders with <code>useMessages(messages)</code> and the terminal screen with <code>scope.messages(messages)</code> (chapters IV
+and V): both give a <code>t</code> bound to their host&#39;s language, and re-render or redraw when it changes. Each facet that
+renders also contributes the plugin&#39;s own catalogs to its host&#39;s <code>Translations</code>:</p>
+<!-- quote: plugins/lists/web.ts -->
+<pre><code><span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Translations</span>, messages.translations);
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Panels</span>, { name: <span class="tk-s">"groceries"</span>, <span class="tk-t">Component</span>: <span class="tk-t">TodoList</span> });
+});</code></pre>
+<p>Registries are per host, and a host learns from them which languages its plugins offer: the page matches the
+browser&#39;s languages against them before it picks one.</p>
+<h3 id="a-translation-plugin">A translation plugin</h3>
+<p>French comes from a plugin of its own, written by someone who never touches the lists plugin. Its catalog is typed by
+the lists plugin&#39;s messages, a type-only import erased at build:</p>
+<!-- quote: plugins/french/fr.ts -->
+<pre><code><span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">MessagesOf</span>, <span class="tk-t">Translation</span> } <span class="tk-k">from</span> <span class="tk-s">"@todo/app/v1"</span>;
+<span class="tk-k">import</span> <span class="tk-k">type</span> { messages } <span class="tk-k">from</span> <span class="tk-s">"../lists/messages.ts"</span>;
+
+<span class="tk-k">const</span> lists: <span class="tk-t">MessagesOf</span>&lt;<span class="tk-k">typeof</span> messages&gt; = {
+	title: <span class="tk-s">"Courses"</span>,
+	placeholder: <span class="tk-s">"Nouvelle tâche"</span>,
+	clearDone: <span class="tk-s">"Retirer les tâches faites"</span>,
+	open: (n) =&gt; <span class="tk-s">`${n} à faire`</span>,
+	cleared: (by) =&gt; <span class="tk-s">`${by} a retiré les tâches faites`</span>,
+};
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> french: <span class="tk-k">readonly</span> <span class="tk-t">Translation</span>[] = [{ namespace: <span class="tk-s">"todo.lists"</span>, locale: <span class="tk-s">"fr"</span>, messages: lists }];</code></pre>
+<p>and its web and terminal facets contribute that list, the same line in each:</p>
+<!-- quote: plugins/french/web.ts -->
+<pre><code><span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; self.<span class="tk-f">contribute</span>(<span class="tk-t">Translations</span>, french));</code></pre>
+<p>A contribution is a list, so one plugin can translate the app and every plugin at once. A catalog may be partial: a
+missing key falls back to the locale&#39;s base (<code>pt-BR</code> to <code>pt</code>), then to the namespace&#39;s first catalog, key by key, and
+each fallback is reported once (the page&#39;s <code>onError</code>, kind <code>messages</code>). Two catalogs for one namespace and locale: the
+first by plugin name wins and the other is reported; a translation contributed with <code>override: true</code> replaces the
+plugin&#39;s own (a better German).</p>
+<h3 id="choosing-a-language">Choosing a language</h3>
+<p>The language is a preference each user keeps on the server, <code>LocaleChoice</code>, one per principal like the theme choice of
+chapter VI. Until a user chooses, the device decides: the browser&#39;s <code>navigator.languages</code> on a page, the system locale
+in a terminal (the launcher&#39;s <code>locales</code>), matched against the languages the catalogs offer, else English. Step 8 has
+the owner choose German while the terminal runs:</p>
+<!-- quote: main.ts -->
+<pre><code><span class="tk-k">const</span> ownerChooses = (locale: string) =&gt;
+	app.host.<span class="tk-f">root</span>(<span class="tk-k">async</span> (ctx) =&gt; (<span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(<span class="tk-t">LocaleChoice</span>, {})).<span class="tk-f">choose</span>(locale, ctx), context, { principal: OWNER });
+<span class="tk-k">await</span> <span class="tk-f">ownerChooses</span>(<span class="tk-s">"de"</span>);</code></pre>
+<!-- output: main -->
+<pre class="plain"><code>8. the owner chooses German
+   ada's pick: fr</code></pre>
+<!-- output: tui -->
+<pre class="plain"><code>   the terminal shows:
+   Einkäufe
+   [x] milk
+   [x] eggs
+   [ ] bread server
+   [ ] butter owner
+   [ ] coffee ada</code></pre>
+<p>Every client of the owner holds the owner&#39;s <code>LocaleChoice</code>, so the terminal redrew in German at once; nothing
+restarted. Ada&#39;s pick (French) is hers and changes nothing for the owner. A page does the same and also sets <code>lang</code>
+and <code>dir</code> on its root element (right to left for Arabic or Hebrew, through the app&#39;s logical CSS properties).</p>
+<h3 id="text-from-the-server">Text from the server</h3>
+<p>Clearing the done todos should tell everyone who cleared them. If the worker wrote &quot;owner hat die erledigten Todos
+entfernt&quot;, Ada would read German too. So the list&#39;s state carries a <strong>message as data</strong>, a key and its parameters,
+declared with the kit&#39;s generic schema:</p>
+<!-- quote: plugins/lists/contract.ts -->
+<pre><code><span class="tk-c">/** The list's latest notice, as data each viewer renders in its own language; `null` before the first. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Notice</span> = <span class="tk-f">union</span>([<span class="tk-t">MessageSchema</span>, <span class="tk-f">nul</span>()]);</code></pre>
+<p>The store writes it with <code>messages.message</code>, typed against the English catalog like <code>t</code> (<code>messages.message(&quot;cleared&quot;, 42)</code> does not compile), and each viewer renders it with <code>t.render</code>:</p>
+<!-- quote: plugins/lists/worker.ts -->
+<pre><code>			clear: <span class="tk-k">async</span> ({ by }, ctx) =&gt; {
+				<span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; tx.<span class="tk-f">deleteWhere</span>(items, (item) =&gt; <span class="tk-f">eq</span>(item.done, <span class="tk-k">true</span>)), ctx);
+				<span class="tk-c">// The key and its parameters, typed against the English catalog: every viewer renders its own text.</span>
+				<span class="tk-k">await</span> notices.<span class="tk-f">change</span>((draft) =&gt; {
+					draft.notice = messages.<span class="tk-f">message</span>(<span class="tk-s">"cleared"</span>, by);
+				}, ctx);
+				<span class="tk-k">return</span> <span class="tk-k">null</span>;
+			},</code></pre>
+<!-- output: main -->
+<pre class="plain"><code>   the notice: { namespace: 'todo.lists', key: 'cleared', params: [ 'owner' ] }
+   the server renders it: owner cleared the done todos</code></pre>
+<!-- output: tui -->
+<pre class="plain"><code>   the terminal renders it: owner hat die erledigten Todos entfernt</code></pre>
+<p>Parameters are plain data (strings, numbers, ISO dates), so a message crosses links like any state. Across a link
+the member is the generic schema, so <code>t.render</code> checks the namespace and the key at runtime: a message of another
+namespace or a key the catalogs no longer have shows the key, reported. Never translated: the model&#39;s prompts and
+answers, log lines, error codes.</p>
+<h3 id="trap-the-plain-t">Trap: the plain <code>t</code></h3>
+<p>The server&#39;s <code>messages.render(…)</code> printed English. <strong>The plain <code>t</code> has no language of its own:</strong> inside a render it
+uses the language being rendered (a message function calling another plugin&#39;s <code>t</code>, <code>formatTime</code>), outside one the
+first catalog. That is right for a server, a test or a log line, and wrong in a component: a page or a terminal
+renders with <code>useMessages(t)</code> or <code>scope.messages(t)</code>, bound to its host&#39;s language. There is no module-wide current
+language, because one process runs many hosts and a server renders for many people.</p>
+<p>On the page, <code>screenshots.ts</code> has the owner choose French and clear the done todos while a todo is half typed:</p>
+<!-- quote: screenshots.ts -->
+<pre><code>	<span class="tk-k">await</span> app.host.<span class="tk-f">root</span>(
+		<span class="tk-k">async</span> (ctx) =&gt; {
+			<span class="tk-k">await</span> (<span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(<span class="tk-t">LocaleChoice</span>, {})).<span class="tk-f">choose</span>(<span class="tk-s">"fr"</span>, ctx);
+			<span class="tk-k">const</span> todos = <span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(<span class="tk-t">Todos</span>, { list: <span class="tk-s">"groceries"</span> });
+			<span class="tk-k">if</span> (todos.variant === <span class="tk-s">"owner"</span>) <span class="tk-k">await</span> todos.<span class="tk-f">clear</span>(ctx);
+		},
+		context,
+		{ principal: { kind: <span class="tk-s">"owner"</span> } },
+	);</code></pre>
+<!-- output: screenshots -->
+<pre class="plain"><code>wrote docs/tutorial/screens/french.png
+after choosing French: lang="fr", "oat mi" still typed
+the page did not reload: true</code></pre>
+<figure class="fig"><p><img src="screens/french.png" alt="The page in French"></p>
+<figcaption><span class="fignum">Figure 3.</span> The page after the owner chose French: the lists plugin&#39;s texts from the French plugin, the notice rendered from its key, the half-typed &quot;oat mi&quot; kept; no reload.</figcaption></figure>
+</section>
+
+<section class="chapter" id="reload"><header class="opener"><div class="numeral">IX</div><h2>Changing Code</h2><p class="lede">An edit while Ada is connected: the watcher marks, applyChanges rolls out, every object takes its fate.</p></header>
 <p class="dropcap">Ada typed &quot;  tea  &quot; with spaces, and a blank todo should be refused like an empty one. The fix is one line of the lists
-plugin&#39;s worker facet: the view trims the text before the store sees it. Step 8 makes the edit in the running app&#39;s
+plugin&#39;s worker facet: the view trims the text before the store sees it. Step 9 makes the edit in the running app&#39;s
 copy of the plugins, as an editor or an agent would, and applies it:</p>
 <!-- quote: main.ts -->
 <pre><code><span class="tk-k">const</span> BEFORE = <span class="tk-s">"add: (text: string, ctx: Ctx) =&gt; store.add({ text, by }, ctx),"</span>;
@@ -941,7 +1135,7 @@ copy of the plugins, as an editor or an agent would, and applies it:</p>
 <span class="tk-k">await</span> <span class="tk-f">writeFile</span>(workerFile, (<span class="tk-k">await</span> <span class="tk-f">readFile</span>(workerFile, <span class="tk-s">"utf8"</span>)).<span class="tk-f">replace</span>(BEFORE, AFTER));
 <span class="tk-k">await</span> <span class="tk-f">until</span>(() =&gt; app.plugins.state.value.dirty.<span class="tk-f">includes</span>(<span class="tk-s">"@todo/lists"</span>));
 <span class="tk-k">const</span> applied = <span class="tk-k">await</span> app.<span class="tk-f">applyChanges</span>(context);
-console.<span class="tk-f">log</span>(<span class="tk-s">"8. lists changed, rolled out to:"</span>, applied.steps.<span class="tk-f">map</span>(({ name }) =&gt; name).<span class="tk-f">join</span>(<span class="tk-s">", "</span>));
+console.<span class="tk-f">log</span>(<span class="tk-s">"9. lists changed, rolled out to:"</span>, applied.steps.<span class="tk-f">map</span>(({ name }) =&gt; name).<span class="tk-f">join</span>(<span class="tk-s">", "</span>));
 <span class="tk-k">for</span> (<span class="tk-k">const</span> host <span class="tk-k">of</span> applied.steps.<span class="tk-f">find</span>(({ name }) =&gt; name === <span class="tk-s">"list"</span>)!.hosts) {
 	<span class="tk-k">const</span> fates = <span class="tk-s">"report"</span> <span class="tk-k">in</span> host ? host.report.objects.<span class="tk-f">map</span>(({ object, kind }) =&gt; <span class="tk-s">`${object} ${kind}`</span>) : [];
 	console.<span class="tk-f">log</span>(<span class="tk-s">`   on ${host.host}:`</span>, [...<span class="tk-k">new</span> <span class="tk-t">Set</span>(fates)].<span class="tk-f">join</span>(<span class="tk-s">", "</span>));
@@ -955,7 +1149,7 @@ console.<span class="tk-f">log</span>(<span class="tk-s">"   ada adds '  tea  ':
 );
 console.<span class="tk-f">log</span>(<span class="tk-s">"   ada adds ' ':"</span>, refused);</code></pre>
 <!-- output: main -->
-<pre class="plain"><code>8. lists changed, rolled out to: server, list, web, tui
+<pre class="plain"><code>9. lists changed, rolled out to: server, list, web, tui
    on list|groceries: todo.store swapped, todo.todos(groceries) parked
    ada adds '  tea  ': [ ] tea (ada)
    ada adds ' ': { code: 'invalid', reason: 'args' }</code></pre>
@@ -1009,7 +1203,8 @@ and the report would name the error.</p>
 shape bumps its own version with a migration. Contract versions protect callers, storage versions protect data.</p>
 <h3 id="on-the-page">On the page</h3>
 <p>An edit of a web facet applies in place too: the page fetches the one changed script and reloads its host, with no
-page reload. <code>screenshots.ts</code> adds a count of open todos to the panel while half a todo is typed:</p>
+page reload. <code>screenshots.ts</code> adds a count of open todos to the panel (<code>t(&quot;open&quot;, n)</code>, in the page&#39;s language) while half a
+todo is typed:</p>
 <!-- quote: screenshots.ts -->
 <pre><code><span class="tk-k">const</span> BEFORE = <span class="tk-s">`h(
 			"ul",`</span>;</code></pre>
@@ -1020,7 +1215,7 @@ wrote docs/tutorial/screens/edited.png
 typed "oat mi"; after the edit: "oat mi"
 the page did not reload: true</code></pre>
 <figure class="fig"><p><img src="screens/edited.png" alt="The page after the edit"></p>
-<figcaption><span class="fignum">Figure 3.</span> After the edit of the web facet, applied in place: the count appears, and the half-typed &quot;oat mi&quot; is still in the box: the page kept it under its key while React mounted the new component.</figcaption></figure>
+<figcaption><span class="fignum">Figure 4.</span> After the edit of the web facet, applied in place: the count appears, and the half-typed &quot;oat mi&quot; is still in the box: the page kept it under its key while React mounted the new component.</figcaption></figure>
 <p>The page did not reload, and everything outside the changed plugin&#39;s components kept its state. The changed panel
 itself is new code: its component is a new function, which React mounts anew, so its own <code>useState</code> would start over
 (design §21). What must survive a plugin update (a half-typed todo, a scroll position) is <strong>page state</strong>:
@@ -1029,13 +1224,13 @@ component finds it; a terminal&#39;s <code>TuiScope</code> has the same store as
 value, never sent anywhere, and gone with the page.</p>
 </section>
 
-<section class="chapter" id="export"><header class="opener"><div class="numeral">IX</div><h2>Moving a List</h2><p class="lede">Export a worker&#39;s data while it runs, import it under another address.</p></header>
-<p class="dropcap">A list&#39;s data is what its worker created: its store and its files. Step 9 exports the groceries list while its worker
+<section class="chapter" id="export"><header class="opener"><div class="numeral">X</div><h2>Moving a List</h2><p class="lede">Export a worker&#39;s data while it runs, import it under another address.</p></header>
+<p class="dropcap">A list&#39;s data is what its worker created: its store and its files. Step 10 exports the groceries list while its worker
 runs and imports it as a new list:</p>
 <!-- quote: main.ts -->
 <pre><code><span class="tk-k">const</span> archive = <span class="tk-f">join</span>(base, <span class="tk-s">"groceries.tar"</span>);
 <span class="tk-k">await</span> app.<span class="tk-f">exportData</span>(<span class="tk-t">List</span>({ id: <span class="tk-s">"groceries"</span> }), archive, context);
-console.<span class="tk-f">log</span>(<span class="tk-s">"9. exported groceries:"</span>, (<span class="tk-k">await</span> <span class="tk-f">readFile</span>(archive)).length &gt; <span class="tk-n">0</span> ? <span class="tk-s">"an archive"</span> : <span class="tk-s">"nothing"</span>);
+console.<span class="tk-f">log</span>(<span class="tk-s">"10. exported groceries:"</span>, (<span class="tk-k">await</span> <span class="tk-f">readFile</span>(archive)).length &gt; <span class="tk-n">0</span> ? <span class="tk-s">"an archive"</span> : <span class="tk-s">"nothing"</span>);
 <span class="tk-k">await</span> app.<span class="tk-f">importData</span>(archive, <span class="tk-t">List</span>({ id: <span class="tk-s">"picnic"</span> }), context);
 <span class="tk-k">const</span> picnic = <span class="tk-k">await</span> app.host.<span class="tk-f">get</span>(<span class="tk-t">Todos</span>, { list: <span class="tk-s">"picnic"</span> }, context);
 console.<span class="tk-f">log</span>(<span class="tk-s">"   imported as picnic:"</span>, <span class="tk-f">show</span>(picnic.items.value));
@@ -1044,8 +1239,8 @@ picnic.<span class="tk-f">release</span>();
 	console.<span class="tk-f">log</span>(<span class="tk-s">"   importing over groceries:"</span>, error.message.<span class="tk-f">replace</span>(base, <span class="tk-s">"…"</span>));
 });</code></pre>
 <!-- output: main -->
-<pre class="plain"><code>9. exported groceries: an archive
-   imported as picnic: [x] milk (owner), [x] eggs (owner), [ ] bread (server), [ ] butter (owner), [ ] coffee (ada), [ ] tea (ada)
+<pre class="plain"><code>10. exported groceries: an archive
+   imported as picnic: [ ] bread (server), [ ] butter (owner), [ ] coffee (ada), [ ] tea (ada)
    importing over groceries: importData: list|groceries has data (its worker runs)</code></pre>
 <p><code>exportData</code> stops nothing: the running worker writes its own store at one consistent point (the store&#39;s export holds
 its commit queue while it reads) and its files, as one archive with a manifest naming the app. With no worker running,
@@ -1054,7 +1249,7 @@ replacing a list is a delete, then an import (decision &quot;App kit naming and 
 an index of the app&#39;s, if it had one, is the app&#39;s.</p>
 </section>
 
-<section class="chapter" id="testing"><header class="opener"><div class="numeral">X</div><h2>Testing One Plugin</h2><p class="lede">testPlugin builds a plugin as production does and loads it alone on a host of its own.</p></header>
+<section class="chapter" id="testing"><header class="opener"><div class="numeral">XI</div><h2>Testing One Plugin</h2><p class="lede">testPlugin builds a plugin as production does and loads it alone on a host of its own.</p></header>
 <p class="dropcap">The steps above test the whole app. Most rules are checked faster on one plugin. <code>testPlugin</code> builds the plugin as
 production builds it (the same esbuild call, the API&#39;s imports checked), evaluates it with the app&#39;s real API module and
 loads it on a new host with an in-memory store, here at a list&#39;s address so it may serve <code>Todos</code>:</p>
@@ -1086,6 +1281,7 @@ loads it on a new host with an in-memory store, here at a list&#39;s address so 
 				<span class="tk-k">await</span> todos.<span class="tk-f">tick</span>({ id: <span class="tk-n">1</span>, done: <span class="tk-k">true</span> }, ctx);
 				<span class="tk-k">await</span> todos.<span class="tk-f">clear</span>(ctx);
 				<span class="tk-f">expect</span>(todos.items.value.<span class="tk-f">map</span>(({ text }) =&gt; text)).<span class="tk-f">toEqual</span>([<span class="tk-s">"eggs"</span>]);
+				<span class="tk-f">expect</span>(todos.notice.value).<span class="tk-f">toEqual</span>({ namespace: <span class="tk-s">"todo.lists"</span>, key: <span class="tk-s">"cleared"</span>, params: [<span class="tk-s">"owner"</span>] });
 			},
 			context,
 			{ principal: OWNER },
@@ -1108,7 +1304,7 @@ the refusal of chapter II:</p>
 				<span class="tk-f">expect</span>(refused).<span class="tk-f">toMatchObject</span>({ code: <span class="tk-s">"invalid"</span>, reason: <span class="tk-s">"args"</span> });</code></pre>
 </section>
 
-<section class="chapter" id="p2"><header class="opener"><div class="numeral">XI</div><h2>Writing a p2 Plugin</h2><p class="lede">What is different in p2, and one small plugin: a tool for the agent and a chip for the people.</p></header>
+<section class="chapter" id="p2"><header class="opener"><div class="numeral">XII</div><h2>Writing a p2 Plugin</h2><p class="lede">What is different in p2, and one small plugin: a tool for the agent and a chip for the people.</p></header>
 <p class="dropcap">p2, the coding agent&#39;s server with its web page and terminal, runs on Chord v2 but not on the app kit. It is older than
 the kit and keeps its own decisions: its own data directory and SQLite files, its own sign-in, devices and sharing,
 its own page and terminal bundles. It uses Chord&#39;s components directly: <code>createHost</code> with p2&#39;s principals,
@@ -1251,11 +1447,12 @@ reload. The trap of chapter II applies with p2&#39;s names: a server method that
 server runs in a root of the server&#39;s own (<code>serverOf(self)().root</code>), not through its caller&#39;s <code>ctx.get</code>.</p>
 </section>
 
-<section class="chapter epilogue" id="traps-and-open-questions"><header class="opener"><div class="numeral">∴</div><h2>Traps and Open Questions</h2><p class="lede">The four traps once more, and what in Chord v2 was hard to explain while writing this.</p></header>
+<section class="chapter epilogue" id="traps-and-open-questions"><header class="opener"><div class="numeral">∴</div><h2>Traps and Open Questions</h2><p class="lede">The five traps once more, and what in Chord v2 was hard to explain while writing this.</p></header>
 <p class="dropcap"><strong>The traps.</strong> Load before use: a host binds nothing before <code>load</code>; a client with nothing to load calls <code>load([])</code>. A
 reference acts as whoever made it: <code>ctx.get</code> as the caller, <code>host.get</code> and a local object&#39;s <code>self.get</code> as the host.
 Await what you start: a write started with a context that ends is cancelled and reported <code>transaction_cancelled</code>. A
-watch starts at the current value: read <code>handle.value</code>, then <code>start</code>; the listener gets changes only.</p>
+watch starts at the current value: read <code>handle.value</code>, then <code>start</code>; the listener gets changes only. The plain <code>t</code>
+has no language of its own: components and screens render with <code>useMessages(t)</code> and <code>scope.messages(t)</code>.</p>
 <p><strong>Hard to explain, found while writing the example.</strong> Each is a candidate for a fix in Chord rather than a paragraph in
 a tutorial.</p>
 <ul>
@@ -1264,10 +1461,10 @@ a tutorial.</p>
 <code>tx.get(items, { id })</code> with a number fails <code>tsc</code>. The store here uses <code>updateWhere</code> with <code>eq</code> instead of
 <code>tx.update</code>.
 Four more, found the same way, are fixed: a reloaded web plugin lost its own React state (now <code>usePageState</code>,
-chapter VIII), a plugin&#39;s <code>contract.ts</code> could not be imported outside builds (the API is now a workspace package,
+chapter IX), a plugin&#39;s <code>contract.ts</code> could not be imported outside builds (the API is now a workspace package,
 chapter I), plugins could not throw Chord&#39;s <code>invalid</code> (Chord exports <code>invalid</code> and <code>forbidden</code>, chapter II), and a
 live window over a table needed a one-time read in <code>self.open</code>, which made the store restart at every reload of its
-plugin (now <code>self.query</code>, a live query Chord runs, chapters II and VIII).</li>
+plugin (now <code>self.query</code>, a live query Chord runs, chapters II and IX).</li>
 </ul>
 </section>
 
@@ -1293,7 +1490,7 @@ plugin (now <code>self.query</code>, a live query Chord runs, chapters II and VI
 <tr>
 <td><code>src/api/v1/index.ts</code></td>
 <td>base, every kind</td>
-<td><code>@todo/app/v1</code>: Chord&#39;s part (with <code>invalid</code>, <code>forbidden</code>), <code>defineFacet</code>, <code>List</code></td>
+<td><code>@todo/app/v1</code>: Chord&#39;s part (with <code>invalid</code>, <code>forbidden</code>, <code>defineMessages</code>, <code>Translations</code>), <code>defineFacet</code>, <code>List</code></td>
 </tr>
 <tr>
 <td><code>src/api/v1/server.ts</code></td>
@@ -1303,7 +1500,7 @@ plugin (now <code>self.query</code>, a live query Chord runs, chapters II and VI
 <tr>
 <td><code>src/api/v1/web.ts</code></td>
 <td>base, web</td>
-<td><code>Panels</code>, <code>useHold</code>, <code>usePageState</code>, <code>useWatch</code></td>
+<td><code>Panels</code>, <code>useHold</code>, <code>useMessages</code>, <code>usePageState</code>, <code>useWatch</code></td>
 </tr>
 <tr>
 <td><code>src/api/v1/tui.ts</code></td>
@@ -1328,7 +1525,12 @@ plugin (now <code>self.query</code>, a live query Chord runs, chapters II and VI
 <tr>
 <td><code>plugins/lists/</code></td>
 <td>plugin</td>
-<td>contract (<code>Item</code>, <code>Todos</code>), worker (table, store, views), server (routes), web (panel), tui (screen), its test</td>
+<td>contract (<code>Item</code>, <code>Notice</code>, <code>Todos</code>), messages (English, German), worker (table, store, views), server (routes), web (panel), tui (screen), its test</td>
+</tr>
+<tr>
+<td><code>plugins/french/</code></td>
+<td>plugin</td>
+<td>French for the lists plugin, for pages and terminals</td>
 </tr>
 <tr>
 <td><code>plugins/login.server.ts</code></td>
@@ -1389,7 +1591,7 @@ plugin (now <code>self.query</code>, a live query Chord runs, chapters II and VI
 </tr>
 <tr>
 <td><code>invalid(reason, message, details?)</code>, <code>forbidden(message, details?)</code></td>
-<td>II, VIII</td>
+<td>II, IX</td>
 <td>Chord&#39;s errors, thrown by a plugin</td>
 </tr>
 <tr>
@@ -1409,7 +1611,7 @@ plugin (now <code>self.query</code>, a live query Chord runs, chapters II and VI
 </tr>
 <tr>
 <td><code>usePageState(key, initial)</code>, <code>scope.pageState(key, initial)</code></td>
-<td>IV, VIII</td>
+<td>IV, IX</td>
 <td>state the page keeps across plugin reloads</td>
 </tr>
 <tr>
@@ -1423,18 +1625,33 @@ plugin (now <code>self.query</code>, a live query Chord runs, chapters II and VI
 <td>a second user&#39;s client</td>
 </tr>
 <tr>
+<td><code>defineMessages(namespace, catalogs)</code>, <code>t.translations</code>, <code>self.contribute(Translations, list)</code></td>
+<td>IV, V, VIII</td>
+<td>a plugin&#39;s messages and its catalogs</td>
+</tr>
+<tr>
+<td><code>useMessages(t)</code>, <code>scope.messages(t)</code>, <code>t.message(key, ...args)</code>, <code>t.render(message)</code>, <code>MessageSchema</code></td>
+<td>IV, V, VIII</td>
+<td>texts in the viewer&#39;s language, messages as data</td>
+</tr>
+<tr>
+<td><code>MessagesOf&lt;typeof t&gt;</code>, <code>LocaleChoice</code></td>
+<td>VIII</td>
+<td>a translation plugin, the user&#39;s language</td>
+</tr>
+<tr>
 <td><code>app.plugins.state</code>, <code>app.applyChanges(ctx)</code></td>
-<td>VI, VIII</td>
+<td>VI, IX</td>
 <td>marks and rollouts</td>
 </tr>
 <tr>
 <td><code>app.exportData(address, path, ctx)</code>, <code>app.importData(path, address, ctx)</code></td>
-<td>IX</td>
+<td>X</td>
 <td>moving a worker&#39;s data</td>
 </tr>
 <tr>
 <td><code>testPlugin(dir, { kind, api, modules, address, principal, stubs }, ctx)</code></td>
-<td>X</td>
+<td>XI</td>
 <td>one plugin alone</td>
 </tr>
 </tbody></table>

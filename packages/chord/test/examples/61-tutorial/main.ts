@@ -1,8 +1,8 @@
 // The tutorial's app (`docs/tutorial/book.md`): a shared todo app built with the app kit, one worker per list. Each
 // numbered step is the tutorial's chapter of that number: the server and the owner's sign-in, a list on its worker,
-// routes, the page, the terminal, a theme plugin added while the app runs, a second user, an edit applied in place,
-// and a list exported and imported. The lists plugin's own test is `plugins/lists/worker.test.ts`; `screenshots.ts`
-// shows the page in Chromium.
+// routes, the page, the terminal, a theme plugin added while the app runs, a second user, languages, an edit applied in
+// place, and a list exported and imported. The lists plugin's own test is `plugins/lists/worker.test.ts`;
+// `screenshots.ts` shows the page in Chromium.
 // Run from packages/chord (with Node 26.5.1 or later the terminal client runs too; `--serve` keeps the app running):
 //   node --conditions=source --experimental-strip-types test/examples/61-tutorial/main.ts
 import { cp, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -12,9 +12,17 @@ import { fileURLToPath } from "node:url";
 import { List } from "@todo/app/v1";
 import { WebSocket } from "ws";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
-import { type ChordError, createHost, WebScripts, type WebSocketLike, webSocketLink } from "../../../src/index.ts";
+import {
+	type ChordError,
+	createHost,
+	LocaleChoice,
+	WebScripts,
+	type WebSocketLike,
+	webSocketLink,
+} from "../../../src/index.ts";
 import { type RunningTerminal, requireSandboxNode, startTerminal } from "../../../src/node/tui/index.ts";
 import { type Item, Todos } from "./plugins/lists/contract.ts";
+import { messages } from "./plugins/lists/messages.ts";
 import type { TodoPrincipal } from "./src/principals.ts";
 import { startTodo, todoDirectories } from "./start.ts";
 
@@ -107,6 +115,8 @@ if (sandboxAvailable()) {
 		input: new PassThrough(),
 		output,
 		colors: "truecolor",
+		// The machine's languages (its system locale by default), here fixed for the book's output.
+		locales: ["en-US"],
 	});
 	await until(() => screen(frames).includes("butter"));
 	console.log("5. the terminal shows:");
@@ -158,11 +168,44 @@ if (adas.variant === "member") {
 await until(() => groceries.items.value.some(({ by }) => by === "ada"));
 console.log("   the server's reference sees:", show(groceries.items.value.slice(-1)));
 
-// 8. An edit applied in place: the lists plugin's worker facet trims a todo's text, so a blank one is empty and the
+// 8. Languages. The owner chooses German: a preference the server keeps per principal, which every client of the owner
+//    follows, so the terminal redraws in German without restarting. Ada's pick is her own. Clearing the done todos
+//    leaves a notice as data, a key and its parameters: the server's plain render is the English catalog, the
+//    terminal renders the same state in German.
+const ownerChooses = (locale: string) =>
+	app.host.root(async (ctx) => (await ctx.get(LocaleChoice, {})).choose(locale, ctx), context, { principal: OWNER });
+await ownerChooses("de");
+console.log("8. the owner chooses German");
+if (terminal !== undefined) {
+	await until(() => screen(frames).includes("Einkäufe"));
+	console.log("   the terminal shows:");
+	for (const line of screen(frames).trim().split("\r\n")) console.log(`   ${line}`);
+}
+const adasChoice = await ada.get(LocaleChoice, {}, context);
+await adasChoice.choose("fr", context);
+console.log("   ada's pick:", adasChoice.pick.value);
+adasChoice.release();
+await app.host.root(
+	async (ctx) => {
+		const todos = await ctx.get(Todos, { list: "groceries" });
+		if (todos.variant === "owner") await todos.clear(ctx);
+	},
+	context,
+	{ principal: OWNER },
+);
+await until(() => groceries.notice.value !== null);
+console.log("   the notice:", groceries.notice.value);
+console.log("   the server renders it:", messages.render(groceries.notice.value!));
+if (terminal !== undefined) {
+	await until(() => screen(frames).includes("entfernt"));
+	console.log("   the terminal renders it:", screen(frames).trim().split("\r\n").at(-1));
+}
+
+// 9. An edit applied in place: the lists plugin's worker facet trims a todo's text, so a blank one is empty and the
 //    store refuses it with Chord's `invalid/args`, which reaches Ada as it would a refused argument. The
 //    watcher marks the plugin dirty; applying the changes rolls it out to the server, the list's worker, the page and
-//    the terminal. On the worker each object of the plugin takes its fate: the store opens a native, so it restarts
-//    (its todos are in the store, and it reads them again); the views wait for it, then go on with the new code. Ada's
+//    the terminal. On the worker each object of the plugin takes its fate: the store opens no native, so it is swapped
+//    in place (its live query runs again); the views wait for it, then go on with the new code. Ada's
 //    reference follows them.
 // The edit: `add` in the `Todos` view, before and after.
 const BEFORE = "add: (text: string, ctx: Ctx) => store.add({ text, by }, ctx),";
@@ -171,7 +214,7 @@ const workerFile = join(root, "lists", "worker.ts");
 await writeFile(workerFile, (await readFile(workerFile, "utf8")).replace(BEFORE, AFTER));
 await until(() => app.plugins.state.value.dirty.includes("@todo/lists"));
 const applied = await app.applyChanges(context);
-console.log("8. lists changed, rolled out to:", applied.steps.map(({ name }) => name).join(", "));
+console.log("9. lists changed, rolled out to:", applied.steps.map(({ name }) => name).join(", "));
 for (const host of applied.steps.find(({ name }) => name === "list")!.hosts) {
 	const fates = "report" in host ? host.report.objects.map(({ object, kind }) => `${object} ${kind}`) : [];
 	console.log(`   on ${host.host}:`, [...new Set(fates)].join(", "));
@@ -185,11 +228,11 @@ const refused = await adas.add(" ", context).then(
 );
 console.log("   ada adds ' ':", refused);
 
-// 9. Export and import. The list's running worker writes its own store and files as one archive and goes on; importing
+// 10. Export and import. The list's running worker writes its own store and files as one archive and goes on; importing
 //    the archive makes a new list with the same todos. An address that has data is never overwritten.
 const archive = join(base, "groceries.tar");
 await app.exportData(List({ id: "groceries" }), archive, context);
-console.log("9. exported groceries:", (await readFile(archive)).length > 0 ? "an archive" : "nothing");
+console.log("10. exported groceries:", (await readFile(archive)).length > 0 ? "an archive" : "nothing");
 await app.importData(archive, List({ id: "picnic" }), context);
 const picnic = await app.host.get(Todos, { list: "picnic" }, context);
 console.log("   imported as picnic:", show(picnic.items.value));
@@ -207,7 +250,7 @@ if (process.argv.includes("--serve")) {
 	await ada.close(context);
 	await app.close(context);
 	await rm(base, { recursive: true, force: true });
-	console.log("10. closed");
+	console.log("11. closed");
 }
 
 /** Todos as one line: `[x] milk (owner), [ ] eggs (owner)`. */
