@@ -176,6 +176,73 @@ describe("schemas", () => {
 		]);
 	});
 
+	// #11697
+	it("applies a relative root $id once when resolving local references", () => {
+		const schema = {
+			$id: "schemas/tool.json",
+			type: "object",
+			properties: { count: { $ref: "#/$defs/count" } },
+			required: ["count"],
+			$defs: { count: { type: "integer" } },
+		};
+		expect(compile(schema).check({ count: 2 })).toBe(true);
+		const validator = compile(schema, { unresolvedRefs: "reject" });
+		expect(validator.check({ count: 2 })).toBe(true);
+		expect(validator.errors({ count: "a" })).toEqual([
+			{ path: "/count", keyword: "type", message: "expected integer, got string" },
+		]);
+		expect(compile(schema, { coerce: true }).parse({ count: "2" })).toEqual({ ok: true, value: { count: 2 } });
+	});
+
+	it("applies a relative root $id once in schemas with unevaluated keywords", () => {
+		const props = {
+			$id: "schemas/tool.json",
+			type: "object",
+			properties: { count: { $ref: "#/$defs/count" } },
+			$defs: { count: { type: "integer" } },
+			unevaluatedProperties: false,
+		};
+		const validator = compile(props, { unresolvedRefs: "reject" });
+		expect(validator.check({ count: 2 })).toBe(true);
+		expect(validator.errors({ count: 2, extra: 1 })).toEqual([
+			{ path: "/extra", keyword: "unevaluatedProperties", message: "unknown field" },
+		]);
+		const items = {
+			$id: "schemas/list.json",
+			type: "array",
+			prefixItems: [{ $ref: "#/$defs/count" }],
+			$defs: { count: { type: "integer" } },
+			unevaluatedItems: false,
+		};
+		expect(compile(items, { unresolvedRefs: "reject" }).check([2])).toBe(true);
+		expect(compile(items).check([2, 3])).toBe(false);
+	});
+
+	it("explains errors under nested resources with a relative $id", () => {
+		const cloned = {
+			$id: "https://example.com/root.json",
+			allOf: [{ $ref: "#/$defs/child" }],
+			$defs: {
+				child: {
+					$id: "schemas/tool.json",
+					$ref: "#/$defs/props",
+					unevaluatedProperties: false,
+					$defs: { props: { properties: { count: { type: "integer" } } } },
+				},
+			},
+		};
+		expect(compile(cloned).errors({ count: 2, extra: 1 })).toEqual([
+			{ path: "/extra", keyword: "unevaluatedProperties", message: "unknown field" },
+		]);
+		const branch = {
+			$id: "https://example.com/root.json",
+			anyOf: [{ $id: "a/b.json", $ref: "#/$defs/n", $defs: { n: { type: "integer" } } }, { type: "boolean" }],
+		};
+		expect(compile(branch).errors({})).toEqual([
+			{ path: "", keyword: "type", message: "expected integer, got object" },
+		]);
+	});
+
 	it("throws for a malformed schema", () => {
 		expect(() => compile({ properties: { a: 1 } })).toThrow(/must be an object or a boolean/);
 	});
