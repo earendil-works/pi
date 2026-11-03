@@ -33,7 +33,8 @@ const FIELDS: Field[] = [
 		label: "Hide thinking",
 		description: "Hide thinking blocks in assistant responses",
 		path: ["hideThinkingBlock"],
-		fallback: false,
+		// p2 hides thinking until the setting says otherwise (pi shows it by default).
+		fallback: true,
 		values: [true, false],
 	},
 	{

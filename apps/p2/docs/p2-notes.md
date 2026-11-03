@@ -187,7 +187,8 @@ validated whitelist and posts it as data; it watches them, so custom themes and 
 `--no-themes` work as in pi. The launcher also queries the terminal's colors (OSC 10/11/4, mode 2031) and posts
 them with its color depth and platform. `<P2_DATA_DIR>/tui.json` (`TuiPreferences`) only holds server defaults, e.g.
 `{"keybindings":{"app.model.select":"ctrl+k"},"theme":"light","settings":{"hideThinkingBlock":true}}`; privileged
-(launcher-owned) bindings are dropped. Themes are per-runtime instances (`src/tui/theme/`); keys and commands go
+(launcher-owned) bindings are dropped. `hideThinkingBlock` (unset = hidden, unlike pi) sets the thinking view whenever
+its effective value changes; `app.thinking.toggle` overrides it until then, and a reload snapshot keeps the toggle. Themes are per-runtime instances (`src/tui/theme/`); keys and commands go
 through the `TuiCommands` registry (pi ids, contexts, `/hotkeys`, F1 palette, `/` completion).
 
 The unrestricted launcher (`src/hosts/tui.ts`, `tui-client.ts`) owns terminal input/resize, the same `/chord`

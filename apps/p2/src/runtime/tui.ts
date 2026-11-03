@@ -160,6 +160,11 @@ export class TuiRuntime implements Component, Focusable {
 	screen: "sessions" | "chat" | "models" = "sessions";
 	connected = false;
 	showThinking = false;
+	/**
+	 * The `hideThinkingBlock` setting (unset = hidden) that `showThinking` last followed. The toggle command overrides
+	 * it until the setting itself changes; a reload snapshot carries both, so a reload keeps the toggle.
+	 */
+	thinkingSetting = true;
 	expandedTools = false;
 	/** The server origin (from the launcher), shown in the header. */
 	origin: string | undefined;
@@ -218,6 +223,11 @@ export class TuiRuntime implements Component, Focusable {
 		});
 		this.appearance = new TuiAppearance((appearance) => {
 			this.commands.setUserBindings(appearance.keybindings, appearance.keyPlatform);
+			const hide = appearance.settings.hideThinkingBlock ?? true;
+			if (hide !== this.thinkingSetting) {
+				this.thinkingSetting = hide;
+				this.showThinking = !hide;
+			}
 			this.tui.invalidate();
 			this.changed();
 			this.tui.requestRender(true);
