@@ -5,6 +5,7 @@
 ### Added
 
 - Added `PipeTransport`, MCP's stdio transport over a program started by the caller through an `McpPipe` (`write`, `closeStdin`, `close`, `exited`), for example `@earendil-works/pi-env`'s `openProcess()` on another machine. `StdioTransport` and `PipeTransport` share the newline-delimited framing and the stderr tail.
+- Added MCP OAuth sign-in in two halves (`@earendil-works/pi-mcp/oauth`), moved from pi's coding agent: `startMcpSignIn()` refreshes the stored tokens or returns the authorization URL, and `completeMcpSignIn()` exchanges the code later, possibly in another request with the same state store. The code comes from a loopback callback server (`listenForLoopbackSignIn()`, `waitForLoopbackSignIn()`), the application's own callback route, or a pasted redirect URL (`responseFromRedirectUrl()`). Client ID Metadata Documents (`clientMetadataDocuments`) and the client name are the caller's. Also added `createMcpAuthProvider()`, which refreshes tokens once across requests and, through `McpOAuthServerStore.withRefreshLock()`, across processes, and the `refreshOnly` option of `authorizeMcp()`, which refreshes without registering a client or replacing a pending authorization's `state` and PKCE verifier.
 
 ## [1.5.0] - 2026-11-02
 

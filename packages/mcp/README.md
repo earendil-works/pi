@@ -124,6 +124,25 @@ await connected;
 
 Inject `McpOAuthStateStore` into `McpOAuthProvider` for durable credentials. The package does not open a browser or choose where credentials are stored.
 
+#### Sign-in in two halves
+
+`startMcpSignIn()` and `completeMcpSignIn()` run the sign-in pi uses, split so the second half can run in another request with the same state store (an `McpOAuthServerStore`: a state store with a refresh lock). The caller picks the redirect URI: a loopback one, or an https callback route of its own. `startMcpSignIn()` first tries to refresh the stored tokens under the store's refresh lock, so never call it while holding that lock; its `redirect` result is plain data the application can persist until the response arrives. Pass `completeMcpSignIn()` the same options, including the redirect URI you chose (not `started.redirectUrl`, which may be a variant specific to the MCP server).
+
+```typescript
+import { completeMcpSignIn, responseFromRedirectUrl, startMcpSignIn } from "@earendil-works/pi-mcp/oauth";
+
+const signIn = { serverUrl, store, settings: {}, redirectUrl: "https://app.example/mcp/callback", clientName: "My app" };
+const started = await startMcpSignIn(signIn);
+if (started.kind === "redirect") {
+	// Send the browser to started.authorizationUrl; keep `started` until the response arrives.
+	// Later, a callback route builds { code, state, iss } from its query; a pasted URL goes through:
+	const response = responseFromRedirectUrl(pastedUrl, started);
+	await completeMcpSignIn({ ...signIn, authorization: started, response });
+}
+```
+
+For a browser on the same machine, `listenForLoopbackSignIn()` starts a loopback callback server and returns its redirect URI, and `waitForLoopbackSignIn()` waits for the response on it or for a pasted redirect URL. `clientMetadataDocuments` lets authorization servers that support Client ID Metadata Documents identify the application by a document it publishes instead of registering a client. `createMcpAuthProvider()` is the matching `AuthProvider` for connections: it refreshes the stored tokens and throws `McpOAuthAuthorizationRequiredError` when the user has to sign in.
+
 The OAuth implementation is adapted from the MIT-licensed Model Context Protocol TypeScript SDK v1.29.0. Its license is included under `LICENSES/`.
 
 An MCP transport owns framing and I/O. It delivers individual JSON-RPC messages to `McpClient`; the client owns request correlation, initialization, timeouts, cancellation, server requests, and protocol-level helpers.
