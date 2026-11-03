@@ -8,7 +8,7 @@ import {
 	getModel,
 	type Model,
 } from "@earendil-works/pi-ai/compat";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -162,6 +162,7 @@ async function createRuntimeHost(options: {
 
 async function startRpcMode(options: Parameters<typeof createRuntimeHost>[0]): Promise<{
 	lineHandler: (line: string) => void;
+	runtimeHost: AgentSessionRuntime;
 	cleanup: () => Promise<void>;
 }> {
 	rpcIo.outputLines = [];
@@ -171,7 +172,7 @@ async function startRpcMode(options: Parameters<typeof createRuntimeHost>[0]): P
 	void runRpcMode(runtimeHost);
 	await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
 
-	return { lineHandler: rpcIo.lineHandler!, cleanup };
+	return { lineHandler: rpcIo.lineHandler!, runtimeHost, cleanup };
 }
 
 describe("RPC prompt response semantics", () => {
@@ -545,6 +546,97 @@ describe("RPC extension shutdown requests", () => {
 			await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledTimes(1));
 			const types = parseOutputLines(rpcIo.outputLines).map((line) => (line.id === "s" ? "response" : line.type));
 			expect(types.filter((type) => type === "response" || type === "exit")).toEqual(["response", "exit"]);
+		} finally {
+			await cleanup();
+		}
+	});
+});
+
+describe("RPC shutdown triggers", () => {
+	// Earlier tests leave RPC instances listening (process.exit never runs). Detach every signal and
+	// stdin "end" listener so emitted triggers reach only this test's instance, then restore them.
+	const signals: NodeJS.Signals[] = ["SIGTERM", "SIGHUP"];
+	let savedSignalListeners: Array<[NodeJS.Signals, NodeJS.SignalsListener[]]> = [];
+	let savedEndListeners: Array<() => void> = [];
+
+	beforeEach(() => {
+		savedSignalListeners = signals.map((signal) => [signal, process.listeners(signal)]);
+		savedEndListeners = process.stdin.listeners("end") as Array<() => void>;
+		for (const signal of signals) process.removeAllListeners(signal);
+		process.stdin.removeAllListeners("end");
+	});
+
+	afterEach(() => {
+		for (const signal of signals) process.removeAllListeners(signal);
+		process.stdin.removeAllListeners("end");
+		for (const [signal, listeners] of savedSignalListeners) {
+			for (const listener of listeners) process.on(signal, listener);
+		}
+		for (const listener of savedEndListeners) process.stdin.on("end", listener);
+		rpcIo.outputLines = [];
+		rpcIo.lineHandler = undefined;
+		vi.restoreAllMocks();
+	});
+
+	async function startWithSlowDispose() {
+		const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+		vi.spyOn(process.stdin, "pause").mockImplementation(() => process.stdin);
+		const started = await startRpcMode({ withAuth: false, responseDelayMs: 0 });
+		let finishDispose = () => {};
+		const disposeFinished = new Promise<void>((resolve) => {
+			finishDispose = resolve;
+		});
+		vi.mocked(started.runtimeHost.dispose).mockImplementation(() => disposeFinished);
+		return { ...started, exitSpy, finishDispose };
+	}
+
+	// fcatuhe's report on #11599: Paseo closes stdin and sends SIGTERM together.
+	it("lets a shutdown started by stdin EOF finish when one SIGTERM follows", async () => {
+		const { runtimeHost, exitSpy, finishDispose, cleanup } = await startWithSlowDispose();
+		try {
+			process.stdin.emit("end");
+			await vi.waitFor(() => expect(runtimeHost.dispose).toHaveBeenCalledTimes(1));
+			// Without a listener, a real SIGTERM would kill the process mid-dispose.
+			expect(process.listenerCount("SIGTERM")).toBe(1);
+			process.emit("SIGTERM");
+			await sleep(10);
+			expect(exitSpy).not.toHaveBeenCalled();
+
+			finishDispose();
+			await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(0));
+			expect(exitSpy).toHaveBeenCalledTimes(1);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("lets a shutdown started by SIGTERM finish when stdin EOF follows", async () => {
+		const { runtimeHost, exitSpy, finishDispose, cleanup } = await startWithSlowDispose();
+		try {
+			process.emit("SIGTERM");
+			await vi.waitFor(() => expect(runtimeHost.dispose).toHaveBeenCalledTimes(1));
+			process.stdin.emit("end");
+			await sleep(10);
+			expect(exitSpy).not.toHaveBeenCalled();
+
+			finishDispose();
+			await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(143));
+			expect(exitSpy).toHaveBeenCalledTimes(1);
+			expect(runtimeHost.dispose).toHaveBeenCalledTimes(1);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("exits at once on a repeated signal during shutdown", async () => {
+		const { runtimeHost, exitSpy, cleanup } = await startWithSlowDispose();
+		try {
+			process.stdin.emit("end");
+			await vi.waitFor(() => expect(runtimeHost.dispose).toHaveBeenCalledTimes(1));
+			process.emit("SIGTERM");
+			process.emit("SIGTERM");
+			expect(exitSpy).toHaveBeenCalledTimes(1);
+			expect(exitSpy).toHaveBeenCalledWith(143);
 		} finally {
 			await cleanup();
 		}
