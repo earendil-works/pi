@@ -107,9 +107,14 @@ export function createWorkers<P extends Principal, N extends string, Q extends P
 					return false;
 				}
 			},
-			// The principal is `options.principal`'s, a `P`.
+			// The address is the route's, of `Kind` (the component works on any kind's); the principal is
+			// `options.principal`'s, a `P`.
 			resolve: (address, routing) =>
-				component.resolve(address, routing) as Promise<{ link: Link; principal: P; trusted: true }>,
+				component.resolve(address as unknown as Address<HostKind>, routing) as Promise<{
+					link: Link;
+					principal: P;
+					trusted: true;
+				}>,
 		},
 		context,
 	);
