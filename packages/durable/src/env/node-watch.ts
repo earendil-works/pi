@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { type FSWatcher, watch as fsWatch, type Stats } from "node:fs";
 import { lstat, readdir, readFile, stat, statfs } from "node:fs/promises";
 import { dirname, relative, sep } from "node:path";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { type FileChange, FileError, type FileWatcher, type WatchTarget } from "./index.ts";
 
 /** How `NodeExecutionEnv` watches. */

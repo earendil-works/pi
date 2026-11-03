@@ -6,8 +6,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import type { Context } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT, withTelemetry } from "@earendil-works/chord/context";
 import {
 	applyBatch,
 	type ChordStore,
@@ -23,7 +21,9 @@ import {
 	type Store,
 	sqliteBackend,
 	str,
-} from "@earendil-works/chord/next";
+} from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT, withTelemetry } from "@earendil-works/chord/context";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { createModels } from "@earendil-works/pi-ai";
 import { registerStorageConformance } from "@earendil-works/pi-durable/testing";

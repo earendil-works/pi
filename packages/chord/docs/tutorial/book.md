@@ -1,0 +1,1341 @@
+---
+title: Together: build a shared todo app with Chord
+cover: Build It / Together
+kicker: A tutorial · Chord v2 and its app kit · 2026-11-03
+subtitle: One small app, built a step at a time, from an empty server to two people, a page, a terminal, a theme and an edit applied while they are connected
+stats:
+  - 9 | steps, one runnable example
+  - 4 | host kinds one plugin runs on
+  - 1 | worker process per list
+  - 0 | restarts for a new theme or an edit
+note: |
+  The app is `packages/chord/test/examples/61-tutorial/`, runnable with the line in its `main.ts`. Every code block
+  below is quoted from its files, and every console output from what its steps print:
+  `test/examples/61-tutorial/tutorial.test.ts` fails when a quote or an output drifts. The design is
+  `packages/chord/docs/design.md`; where this tutorial says "the rule", design.md has the full statement. The last
+  chapter is about p2, whose code lives outside this repository.
+colophon: Together · first edition · 2026-11-03 · Chord v2 slices 1-13, the app kit, example 61
+---
+
+# Before we begin {.preface}
+
+Mara keeps the household's shopping list on her laptop. She wants it in a browser tab and in a terminal, live in both.
+Ada, her flatmate, should be able to add coffee from her phone without an account: pick a name and go. And Mara wants
+to change the app while it runs: add a dark theme in the evening, fix a small annoyance in how todos are added, without
+anyone being thrown out.
+
+That is four kinds of program (a server, a process per list, a page, a terminal client) and three kinds of change (new
+data, a new person, new code) in one small app. Wiring that by hand means a web server, a socket protocol, a way to
+start and stop processes, sessions, a bundler for the page and a reload story for each. Chord does the wiring, and its
+**app kit** (`@earendil-works/chord/app`) makes the decisions an app would otherwise make itself: where data lives,
+how people sign in, how plugins are found and rolled out.
+
+This tutorial builds that app. Each chapter adds one thing, shows the code, shows what happens when it runs, and
+states the rule behind it. The app is one directory, `test/examples/61-tutorial/`; run every step at once from
+`packages/chord`:
+
+```sh
+node --conditions=source --experimental-strip-types test/examples/61-tutorial/main.ts
+```
+
+With Node 26.5.1 or later the terminal client of chapter V runs too (its sandbox needs that Node); with an older one,
+that step says so and the rest runs.
+
+## Eight things to know
+
+:::findings
+1. **An app is its API, its plugins and a start script.** `startServer` makes the data directory, the store, the
+   server host, HTTP with sign-in, the workers and the plugin roots; `startWorker` does a worker's half.
+2. **A host is one participant.** The server, each list's worker, each browser tab and each terminal are hosts,
+   connected by links. Tabs and terminals are clients: they connect and ask, nobody asks them.
+3. **An object is reached by its contract.** A contract names an object type, its params and its members; a `remote`
+   contract also says which host serves it. Any host asks for `Todos { list: "groceries" }`, and Chord routes the
+   request to that list's worker.
+4. **Who calls is stamped, never sent.** Every call carries a principal the link stamped from the sign-in. A factory
+   picks a variant per principal; a todo records who added it from the principal, not from its arguments.
+5. **A plugin has one file per host kind.** `server.ts`, `worker.ts`, `web.ts`, `tui.ts`: each declares what that kind
+   of host serves and contributes. Plugins import only the app's API.
+6. **Plugins meet in registries.** The page shows `Panels`, the terminal `Screens`, the kit's `Themes` restyle both;
+   plugins contribute, one plugin (or the entry) composes.
+7. **Changes apply when you say so.** Saving a file marks its plugin dirty; `applyChanges` builds and rolls out to the
+   server, the workers, the pages and the terminals, in place.
+8. **Four traps:** load before use; a reference acts as whoever made it; await what you start; a watch starts at the
+   current value.
+:::
+
+## Words used throughout
+
+A **host** is one participant of the app, with an **address** if others can reach it (the server, `List({ id })`) or
+without one (a **client**: a page, a terminal). A **link** connects two hosts. A **principal** is who calls, typed by
+the app and stamped by links. An **object** is state and methods at one identity; its **contract** (`local` for its own
+host only, `remote` for any host) names its **params** (which instance) and members. A remote contract's **variants**
+are the member sets different principals get. A **factory** declares an object's parts: **documents** and **tables**
+(stored data, changed in **transactions**), **derives** (values computed from others), **natives** (things opened and
+closed, such as a file or a database cursor). A **reference** is what asking for an object returns. A **facet** is a
+plugin's code for one host kind; a **registry** is an extension point plugins **contribute** to. A **rollout** applies
+new plugin code to the hosts in order.
+
+# One Server {#server lede="The API, the principals and a start script: the smallest app the kit runs, and who may come in."}
+
+An app built with the kit has a fixed shape: its API in `src/api/v<n>/`, its built-in plugins in `plugins/`, a start
+script and a worker entry (design §23, "The app kit"). Everything else is a plugin. This chapter writes the three
+pieces of base code and starts the server.
+
+## The principals
+
+A **principal** says who is calling. The app defines the type; the kit needs a variant for the server, one for its
+workers, and adds the owner, `{ kind: "owner" }`, which the app's type must include:
+
+<!-- quote: src/principals.ts -->
+```ts
+// The todo app's principals: its server and list workers, the kit's owner, and the users who signed in with a name.
+
+/** Who someone is in the todo app. */
+export type TodoPrincipal =
+	| { readonly kind: "server" }
+	| { readonly kind: "worker"; readonly list: string }
+	| { readonly kind: "owner" }
+	| { readonly kind: "user"; readonly id: string; readonly name: string };
+```
+
+The user variant is for chapter VII. A principal travels with every call and is part of objects' identities, so it
+stays small: a kind and an id. A user's profile, if the app had one, would be data in an object keyed by the id.
+
+## The API
+
+Plugins never import Chord. They import the app's **API**, a module the app names with a version in its path
+(`@todo/app/v1`). It re-exports the part of Chord the app supports and adds what is the app's own:
+
+<!-- quote: src/api/v1/index.ts -->
+```ts
+export { BACKGROUND_CONTEXT } from "../../../../../../src/context/index.ts";
+export {
+	arr,
+	bool,
+	type Ctx,
+	defineTable,
+	eq,
+	int,
+	local,
+	method,
+	num,
+	obj,
+	PluginError,
+	query,
+	str,
+	type Theme,
+	Themes,
+} from "../../../../../../src/index.ts";
+export type { TodoPrincipal } from "../../principals.ts";
+```
+
+and a `defineFacet` bound to the principal type, so every factory sees a `TodoPrincipal`:
+
+<!-- quote: src/api/v1/index.ts -->
+```ts
+/** Defines a facet of the todo app: its factories get the app's principals. */
+export function defineFacet(setup: (host: FacetHost<TodoPrincipal>, self: FacetSelf) => void) {
+	return chordFacet<TodoPrincipal>(setup);
+}
+```
+
+The API is a **host package**: a plugin's build leaves it out, and each process hands the plugin its own instance when
+it evaluates it. The plugin sees the very `Themes` registry and `List` host kind the process has, not a copy. A
+version in the path lets the app ship `v2` beside `v1` later; one facet uses one version (design §21, "The plugin
+model").
+
+## The start script
+
+`startServer` takes what the app decides and does the rest. `start.ts` names the API with this process's modules, the
+facet kinds (which files a plugin may have), and the principals:
+
+<!-- quote: start.ts -->
+```ts
+export const API = {
+	name: "@todo/app",
+	versions: ["v1"],
+	modules: { "@todo/app/v1": v1, "@todo/app/v1/server": v1server },
+};
+
+/** The app's facet kinds: a plugin has one file per kind it runs on (`server.ts`, `worker.ts`, `web.ts`, `tui.ts`). */
+export const KINDS = {
+	server: { platform: "node" },
+	worker: { platform: "node" },
+	web: { platform: "browser", packages: { react: {}, "react/jsx-runtime": {} } },
+	tui: { platform: "node" },
+} as const;
+```
+
+<!-- quote: start.ts -->
+```ts
+export function startTodo(dataDir: string, root: string, context: Context): Promise<App<TodoPrincipal>> {
+	return startServer<TodoPrincipal>(
+		{
+			name: "todo",
+			dataDir,
+			root,
+			listen: { host: "127.0.0.1", port: 0 },
+			api: API,
+			kinds: KINDS,
+			principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", list: address.key }) },
+			workers: [
+				{
+					kind: v1.List,
+					entry: fileURLToPath(new URL("./worker.ts", import.meta.url)),
+					execArgv: ["--conditions=source", "--experimental-strip-types", "--no-warnings"],
+					start: () => ({}),
+					// Who may reach a list's worker: everyone signed in, and the server itself.
+					authorize: (principal) => principal.kind !== "worker",
+				},
+			],
+			web: { entry: fileURLToPath(new URL("./src/web/main.ts", import.meta.url)), page },
+			tui: { entry: fileURLToPath(new URL("./src/tui/main.ts", import.meta.url)) },
+			onError: (error) => console.error("todo:", error.kind, error.error),
+		},
+		context,
+	);
+}
+```
+
+`workers` is chapter II, `web` chapter IV, `tui` chapter V. `listen` asks for a free port on loopback, as the example
+does; a real app picks a port. The worker entry is three lines:
+
+<!-- quote: worker.ts -->
+```ts
+// The todo app's worker entry: one process per list. `startWorker` opens the list's store in its directory, connects
+// to the server and loads the plugins' worker facets.
+
+import { startWorker } from "../../../src/node/app/index.ts";
+import { API, KINDS } from "./start.ts";
+
+startWorker({ api: API, kinds: KINDS, onError: (error) => console.error("list:", error) });
+```
+
+## Running it
+
+Step 1 of `main.ts` starts the app, tries the page without signing in, then does what a browser does with the owner
+link:
+
+<!-- quote: main.ts -->
+```ts
+const app = await startTodo(dataDir, root, context);
+const link = new URL(app.ownerLink());
+const url = link.origin;
+console.log("1. owner link:", `http://127.0.0.1:<port>${link.pathname}#<token>`);
+console.log("   data directory:", (await readdir(dataDir)).sort().join(", "));
+console.log("   GET / signed out:", (await fetch(url)).status);
+const signIn = await fetch(`${url}/_chord/owner`, {
+	method: "POST",
+	headers: { "content-type": "application/json" },
+	body: JSON.stringify({ token: link.hash.slice(1) }),
+});
+const cookie = signIn.headers.get("set-cookie")!.split(";")[0]!;
+console.log("   the owner signs in:", signIn.status, cookie.replace(/=.*/, "=…"));
+console.log("   GET / signed in:", (await fetch(url, { headers: { cookie } })).status);
+```
+
+<!-- output: main -->
+```text
+1. owner link: http://127.0.0.1:<port>/_chord/owner#<token>
+   data directory: logs, owner-token, plugins, server, workers
+   GET / signed out: 401
+   the owner signs in: 200 chord-session=…
+   GET / signed in: 200
+```
+
+`startServer` made the data directory: `server/` (its store, the cookie secret, its files), `workers/` (one directory
+per worker), `plugins/` (the user's plugin root, beside the app's built-in one), `logs/` and `owner-token`. The page
+answered 401: HTTP **denies by default**, before any plugin code runs, unless a route says `public: true`.
+
+The **owner link** (`/_chord/owner#<token>`) is how the owner gets in: a single-use token, valid ten minutes, made at
+each start. It sits in the URL's fragment, which browsers never send, so it never reaches a log; the link's page posts
+it and receives a session cookie. A command-line client on the same machine reads `owner-token` instead (mode 0600,
+chapter III). Nothing is the owner because it comes from loopback: any local process could.
+
+# A List on Its Own Worker {#worker lede="A host kind, a remote contract, a worker facet with a table and a live window, and the principal that adds a todo."}
+
+Each list gets its own process, a **worker**, with its own store: a list that misbehaves cannot take the others down,
+and an idle list costs nothing. This chapter declares where lists live, what a list offers, and the worker code that
+keeps its todos.
+
+## Where a list lives
+
+A **host kind** declares addressable hosts with params; `List({ id: "groceries" })` is an **address**. A `remote`
+contract says, with `hostAddress`, at which address its objects live. Here is the app's contract for a list's todos,
+in the API so that every host kind, the tests and command-line code can name it:
+
+<!-- quote: src/api/v1/index.ts -->
+```ts
+/** A todo list: a worker process of its own, with its own store. */
+export const List = hostKind("list", { id: str() });
+
+/** A todo: its number in the list, its text, whether it is done, who added it and when. */
+export const Item = obj({ id: int(), text: str(), done: bool(), by: str(), at: num() });
+
+/** A todo (see `Item`). */
+export type Item = Static<typeof Item>;
+
+/**
+ * A list's todos as one principal sees them, on the list's worker: the newest 50 (live), adding one and ticking one
+ * off (or on again); the owner also clears the done ones.
+ */
+export const Todos = remote("todo.todos", {
+	version: 1,
+	params: { list: str() },
+	hostAddress: ({ list }) => List({ id: list }),
+	variants: {
+		member: {
+			state: { items: arr(Item) },
+			methods: { add: method(str()), tick: method(obj({ id: int(), done: bool() })) },
+		},
+		owner: {
+			state: { items: arr(Item) },
+			methods: { add: method(str()), tick: method(obj({ id: int(), done: bool() })), clear: method() },
+		},
+	},
+});
+```
+
+`params` select the instance: `Todos { list: "groceries" }` is one object per principal. Nobody who asks names a
+host: the caller computes the address from the params and sends the request there; a host that cannot serve it passes
+it on to its parent or to a route (design §3, "Host kinds and addresses"). The kit's `workers` option is that route:
+
+<!-- quote: start.ts -->
+```ts
+			workers: [
+				{
+					kind: v1.List,
+					entry: fileURLToPath(new URL("./worker.ts", import.meta.url)),
+					execArgv: ["--conditions=source", "--experimental-strip-types", "--no-warnings"],
+					start: () => ({}),
+					// Who may reach a list's worker: everyone signed in, and the server itself.
+					authorize: (principal) => principal.kind !== "worker",
+				},
+			],
+```
+
+`authorize` runs for every request routed to a list before anything starts; the first request for an address starts
+its worker, and a worker idle for five minutes (the default `idleMs`) stops. **Variants** are the member sets a
+contract offers: the owner's `Todos` has `clear`, a member's does not. The factory picks one per principal.
+
+## The worker facet
+
+The lists plugin is a directory with a `package.json` (its name is the plugin's name) and one file per host kind it
+runs on. `worker.ts` is its **worker facet**: what every list's worker serves. It keeps the todos in a **table** of the
+worker's store:
+
+<!-- quote: plugins/lists/worker.ts -->
+```ts
+/** Every todo of the list, by its number. */
+const Items = defineTable("todo.items", {
+	version: 1,
+	columns: { id: int(), text: str(), done: bool(), by: str(), at: num() },
+	key: ["id"],
+});
+
+/** The newest todos first. */
+const NEWEST = query(Items).orderBy((item) => item.id, "desc");
+
+/** How many todos the live window holds. */
+const WINDOW = 50;
+```
+
+A table holds many records with queries and pages; it lives in an object, never in a facet. Persisted data lives only
+in `local` objects with empty params (one per host and type), so its address never depends on who asked (design §9,
+"Lifetime, persistence"). That object is the plugin's store, `Store`, a local contract of its own file:
+
+<!-- quote: plugins/lists/worker.ts -->
+```ts
+/** The list's todos, once per worker: empty params, so it lives as long as the worker and may keep data in its store. */
+const Store = local("todo.store", {
+	version: 1,
+	params: {},
+	members: {
+		items: arr(Item),
+		add: method(obj({ text: str(), by: str() })),
+		tick: method(obj({ id: int(), done: bool() })),
+		clear: method(),
+	},
+});
+```
+
+A `local` object with empty params lives as long as its host: it starts with the worker and is never ended by a count
+of references. Its factory declares its parts and returns its members:
+
+<!-- quote: plugins/lists/worker.ts -->
+```ts
+	host.serve(Store, (_params, self) => {
+		const items = self.table(Items);
+		// The newest todos, oldest first, and the next todo's number: read once when the store goes live, then kept here.
+		const window = self.writable<Item[]>([]);
+		let next = 1;
+		self.open(
+			async (ctx) => {
+				const { items: newest } = await items.page(NEWEST, WINDOW, ctx);
+				window.set([...newest].reverse());
+				next = (newest[0]?.id ?? 0) + 1;
+			},
+			() => {},
+		);
+		return {
+			items: self.derive([window], ([value]) => value),
+```
+
+A **factory** is synchronous and only declares; Chord activates the object afterwards. `self.table` declares the
+table. A table has no watch, so the store keeps a **live window** itself: `self.writable` holds the newest 50 todos,
+filled by `self.open`, which runs during activation, and exposed through `self.derive` (a writable is an in-process
+value, not a state member; a derive over it is). `self.open` is meant for **natives**, things opened and closed; the
+window's first read is one, and chapter VIII shows its price.
+
+Writes go through **transactions**: `self.tx(fn, ctx)` runs `fn` with `tx`, and what it stages is committed at once
+when `fn` returns, or not at all if it throws. The window follows after the commit; the store is the table's only
+writer, so it knows every change:
+
+<!-- quote: plugins/lists/worker.ts -->
+```ts
+			add: async ({ text, by }, ctx) => {
+				const item = { id: next++, text, done: false, by, at: Date.now() };
+				await self.tx(async (tx) => tx.put(items, item), ctx);
+				// In number order: two adds may commit in either order.
+				window.set([...window.value, item].sort((a, b) => a.id - b.id).slice(-WINDOW));
+				return null;
+```
+
+## The view per principal
+
+`Todos` is the remote face of the store, one object per principal. Its factory gets the principal the link stamped:
+
+<!-- quote: plugins/lists/worker.ts -->
+```ts
+	host.serve(Todos, (_params, principal, self) => {
+		const store = self.get(Store, {});
+		// Who adds a todo comes from the principal the link stamped, never from the arguments.
+		const by = principal.kind === "user" ? principal.name : principal.kind;
+		const members = {
+			items: self.derive([store.items], ([items]) => items),
+			add: (text: string, ctx: Ctx) => store.add({ text, by }, ctx),
+			tick: (tick: { id: number; done: boolean }, ctx: Ctx) => store.tick(tick, ctx),
+		};
+		if (principal.kind !== "owner") return { variant: "member", members };
+		return { variant: "owner", members: { ...members, clear: (ctx: Ctx) => store.clear(ctx) } };
+	});
+```
+
+`self.get(Store, {})` declares a dependency: the view goes live once the store is, and holds a **reference** to it
+for its whole life. `by` comes from the principal. A client could put anything in the arguments of `add`; it cannot
+change what its link stamped. That is the rule for every plugin: identity from the principal, never from arguments.
+
+## Running it
+
+Step 2 asks for the groceries list twice, from a root acting as the owner and from a root of the server itself:
+
+<!-- quote: main.ts -->
+```ts
+const OWNER = { kind: "owner" } as const;
+await app.host.root(
+	async (ctx) => {
+		const todos = await ctx.get(Todos, { list: "groceries" });
+		await todos.add("milk", ctx);
+		await todos.add("eggs", ctx);
+		await todos.tick({ id: 1, done: true }, ctx);
+		await until(() => todos.items.value[0]?.done === true);
+		console.log("2. as the owner:", todos.variant, "|", show(todos.items.value));
+	},
+	context,
+	{ principal: OWNER },
+);
+await app.host.root(async (ctx) => {
+	const todos = await ctx.get(Todos, { list: "groceries" });
+	await todos.add("bread", ctx);
+	await until(() => todos.items.value.length === 3);
+	console.log("   as the server:", todos.variant, "|", show(todos.items.value.slice(-1)));
+}, context);
+```
+
+<!-- output: main -->
+```text
+2. as the owner: owner | [x] milk (owner), [ ] eggs (owner)
+   as the server: member | [ ] bread (server)
+   workers: list|groceries
+   workers/list/list%7Cgroceries: store.sqlite, store.sqlite-shm, store.sqlite-wal
+```
+
+A **root** (`host.root(fn, ctx, { principal })`) is a call scope for code outside objects; its `ctx` carries the
+principal and cancellation, and the references `ctx.get` takes end when `fn` settles. The first request started the
+list's worker, `list|groceries`, with its own store in `workers/list/list%7Cgroceries/`.
+
+## Trap: who a reference acts as
+
+The two roots made the same call and got different todos: `milk (owner)` and `bread (server)`. **A reference acts as
+whoever made it.** `ctx.get` in a root or a method acts as that context's principal; `host.get`, and `self.get` in a
+`local` object, act as the host; `self.get` in a remote object acts as that object's principal (design §4). So a route
+whose request came from the owner reaches the worker as the owner (chapter III), and a guest's call cannot borrow the
+server's authority. The surprise is the reverse case: a server method that wants to act as the server towards a worker
+must not use its caller's `ctx.get`; it takes the reference with `self.get` in a local server object, or in a root of
+the server's own.
+
+## Trap: await what you start
+
+Every write above is awaited, and that is not style. What is started with a context ends with it: a root's scope seals
+when `fn` settles, a method's context ends with its call. A `void todos.add(text, ctx)` inside a root that returns at
+once is cancelled before it commits; Chord rejects it and reports `transaction_cancelled` through `onError`, so an
+empty `catch` cannot hide a write that never happened (design §8). Fire and forget only with a context that does not
+end, as the page does with `BACKGROUND_CONTEXT` in chapter IV.
+
+# Routes {#routes lede="A server facet: a JSON API for command-line clients, running as whoever sent the request."}
+
+The page will talk Chord over a WebSocket. A script on Mara's machine is happier with HTTP. A **server facet**
+contributes routes to the kit's `Http` registry, which the API's server module re-exports:
+
+<!-- quote: src/api/v1/server.ts -->
+```ts
+export { Http } from "../../../../../../src/node/http/index.ts";
+```
+
+<!-- quote: plugins/lists/server.ts -->
+```ts
+// The lists plugin on the server: a JSON API for command-line clients. A route runs as whoever sent the request (the
+// kit answered 401 before this code runs when nobody signed in), so its `ctx.get` reaches the list's worker as them.
+
+import { defineFacet, Todos } from "@todo/app/v1";
+import { Http } from "@todo/app/v1/server";
+
+export default defineFacet((_host, self) => {
+	self.contribute(Http, {
+		routes: {
+			"GET /api/lists/:list": async (request, ctx) => {
+				const todos = await ctx.get(Todos, { list: request.params.list! });
+				return { kind: "json", value: todos.items.value };
+			},
+			"POST /api/lists/:list": async (request, ctx) => {
+				const todos = await ctx.get(Todos, { list: request.params.list! });
+				await todos.add(String(await request.json()), ctx);
+				return { kind: "json", value: "added" };
+			},
+		},
+	});
+});
+```
+
+A **registry** is an extension point: one owner declares how contributions combine (here the kit's HTTP component
+builds a router), plugins contribute one value each. `self.contribute` in a facet adds the plugin's routes while the
+plugin is loaded. A route runs in a root with the request's principal, so `ctx.get(Todos, …)` reaches the list's
+worker as whoever signed in, and gets their variant.
+
+Step 3 is a command-line client with the owner token file:
+
+<!-- quote: main.ts -->
+```ts
+const token = (await readFile(app.ownerTokenFile, "utf8")).trim();
+const cli = { authorization: `Bearer ${token}` };
+const posted = await fetch(`${url}/api/lists/groceries`, {
+	method: "POST",
+	headers: { ...cli, "content-type": "application/json" },
+	body: JSON.stringify("butter"),
+});
+console.log("3. POST /api/lists/groceries:", await posted.json());
+const listed = (await (await fetch(`${url}/api/lists/groceries`, { headers: cli })).json()) as Item[];
+console.log("   GET /api/lists/groceries:", show(listed));
+console.log("   GET without a token:", (await fetch(`${url}/api/lists/groceries`)).status);
+```
+
+<!-- output: main -->
+```text
+3. POST /api/lists/groceries: added
+   GET /api/lists/groceries: [x] milk (owner), [ ] eggs (owner), [ ] bread (server), [ ] butter (owner)
+   GET without a token: 401
+```
+
+`butter` is the owner's: the route acted as the request's principal. Without a token the kit answered 401 before the
+route ran. Another machine has no token file; it **pairs** instead: it asks `POST /_chord/pair` for a code, the owner
+approves the code in a signed-in browser, and the client's next poll returns its token (example 54).
+
+# A Page {#page lede="A web entry, a web facet with React, the panels registry, and why a watch starts at the current value."}
+
+A page is a client host in the browser. The kit builds its **base bundle** from the app's web entry at start (Chord,
+React, the app's web modules), serves the plugins' web facets as small scripts beside it, and serves the page through
+the app's template (design §23, "Web and TUI").
+
+## The page's registry
+
+Plugins put panels on the page through a registry the API's web module declares, with Chord's React hooks re-exported
+for them:
+
+<!-- quote: src/api/v1/web.ts -->
+```ts
+import type { ComponentType } from "react";
+import { defineRegistry } from "../../../../../../src/index.ts";
+
+export { useHold, useWatch } from "../../../../../../src/react/index.ts";
+
+/** A panel of the page: its title and its React component. */
+export type Panel = { readonly title: string; readonly Component: ComponentType };
+
+/** The page's panels, one per contributing plugin, in plugin-name order. */
+export const Panels = defineRegistry<Panel, readonly Panel[]>("todo.panels", { version: 1 });
+```
+
+The web entry serves `Panels` (its `compose` keeps the contributions in plugin-name order), renders every panel, and
+starts the page's connection:
+
+<!-- quote: src/web/main.ts -->
+```ts
+/** The page's own facet: it serves `Panels`, composing the contributions in plugin-name order. */
+const core = defineFacet((host) => host.serve(v1web.Panels, { compose: (table) => table.map(({ value }) => value) }));
+
+function Page() {
+	const panels = useRegistry(v1web.Panels) ?? [];
+	return h(
+		"main",
+		null,
+		h("h1", null, "Todo"),
+		...panels.map(({ title, Component }) => h("section", { key: title }, h("h2", null, title), h(Component))),
+	);
+}
+
+void startPage({
+	connect: () => new WebSocket(`${location.origin.replace(/^http/, "ws")}/chord`),
+	modules: { "@todo/app/v1": v1, "@todo/app/v1/web": v1web, react: React, "react/jsx-runtime": jsx },
+	core: [{ name: "@todo/web", facet: core }],
+	render: (host) => createRoot(document.getElementById("root")!).render(h(HostProvider, { host }, h(Page))),
+});
+```
+
+`startPage` makes the page's host, connects it to `/chord` (reconnecting after drops), loads the current plugin
+scripts with the entry's core facets, and keeps them current. `HostProvider` gives the React tree that host.
+
+## The web facet
+
+`plugins/lists/web.ts` contributes a panel. Its component holds the list's `Todos` while it is mounted and re-renders
+when its items change:
+
+<!-- quote: plugins/lists/web.ts -->
+```ts
+function TodoList() {
+	const todos = useHold(Todos, { list: location.hash.slice(1) || "groceries" });
+	const items = useWatch(todos?.items) ?? [];
+	const [text, setText] = useState("");
+	const add = (event: { preventDefault(): void }) => {
+		event.preventDefault();
+		if (todos === undefined || text.trim() === "") return;
+		void todos.add(text, context);
+		setText("");
+	};
+	return h(
+		"div",
+		{ className: "lists-panel" },
+		h(
+			"ul",
+			null,
+			...items.map((item) =>
+				h(
+					"li",
+					{
+						key: item.id,
+						className: item.done ? "lists-done" : undefined,
+						onClick: () => void todos?.tick({ id: item.id, done: !item.done }, context),
+					},
+					item.text,
+					h("span", { className: "lists-by" }, item.by),
+				),
+			),
+		),
+		h(
+			"form",
+			{ onSubmit: add },
+			h("input", {
+				value: text,
+				placeholder: "Add a todo",
+				onChange: (event: { target: { value: string } }) => setText(event.target.value),
+			}),
+		),
+		todos?.variant === "owner"
+			? h("button", { type: "button", onClick: () => void todos.clear(context) }, "Clear done")
+			: null,
+	);
+}
+
+export default defineFacet((_host, self) => self.contribute(Panels, { title: "Groceries", Component: TodoList }));
+```
+
+`useHold` holds a reference while the component is mounted and releases it on unmount; it is `undefined` on the first
+render. `useWatch` follows a member. Clicks call methods with `BACKGROUND_CONTEXT`, which never ends, so a click's call
+is not cancelled when the handler returns. `todos?.variant === "owner"` narrows the reference: only the owner's has
+`clear`, and TypeScript knows it. The panel's look reads the active theme's CSS variables, with class names prefixed
+by the plugin's name (a `*.module.css` file would scope them instead):
+
+<!-- quote: plugins/lists/lists.css -->
+```css
+.lists-panel input { width: 100%; box-sizing: border-box; padding: 0.4rem; background: var(--bg); color: var(--fg);
+	border: 1px solid var(--accent); border-radius: var(--radius, 0); }
+```
+
+The template in `start.ts` puts the assets the kit made into the app's own HTML:
+
+<!-- quote: start.ts -->
+```ts
+function page(request: { readonly nonce: string }, assets: PageAssets): string {
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Todo</title>${pageScripts(assets, request.nonce)}</head><body><div id="root"></div></body></html>`;
+}
+```
+
+## Running it
+
+Step 4 reads the page as a browser gets it and watches the list from the server:
+
+<!-- quote: main.ts -->
+```ts
+const html = await (await fetch(url, { headers: cli })).text();
+console.log("4. the page loads:");
+for (const [, asset] of html.matchAll(/(?:src|href)="([^"]+)"/g)) console.log(`   ${hashless(asset!)}`);
+const groceries = await app.host.get(Todos, { list: "groceries" }, context);
+const watch = await groceries.items.watch(context);
+console.log("   watch.value:", done(watch.value), "done");
+const changed = Promise.withResolvers<readonly Item[]>();
+watch.start(async (call) => {
+	if (call.kind === "value") changed.resolve(call.value);
+});
+await groceries.tick({ id: 2, done: true }, context);
+console.log("   the listener's first call:", done(await changed.promise), "done");
+await watch.stop();
+```
+
+<!-- output: main -->
+```text
+4. the page loads:
+   /_chord/web/base.<hash>.css
+   /_chord/web/plugin/@todo~lists.<hash>.css
+   /_chord/web/plugins.<hash>.js
+   /_chord/web/base.<hash>.js
+   watch.value: 1 done
+   the listener's first call: 2 done
+```
+
+The page is the template, the base bundle (`base.<hash>.js` and `.css`), one combined file with every plugin's web
+script and one stylesheet per plugin with CSS: two scripts on a cold load, cacheable forever by their hashes. After the
+owner opened the owner link in Chromium, the page shows the list:
+
+:::figure | The page after the owner signed in: the groceries list, live, each todo with who added it; the owner's variant shows "Clear done".
+![The todo page](screens/page.png)
+:::
+
+## Trap: a watch starts at the current value
+
+`watch.value` was the value when the watch was taken (one todo done); the listener's first call was the change after
+it (two done). **A watch's listener gets only changes.** Code that renders from a listener alone draws nothing until
+the first change. Read `handle.value` first, then `start` (design §11, "Watchables"). `useWatch` and the terminal's
+`TuiScope.watch` do this for you; `self.on`, an object's routine, is the one consumer whose first call is the current
+value.
+
+# A Terminal {#terminal lede="The same plugin in a terminal: a terminal facet with TuiScope, run in the launcher's sandbox."}
+
+The terminal client is a client host too, run by a **launcher**: a trusted Node program that signs in, downloads the
+terminal's base bundle and the plugins' terminal scripts, and runs them in a **sandbox**, a child process with no file
+system, network, processes or terminal of its own. The launcher relays its link and draws its frames. Code from the
+server never touches Mara's machine directly (decision "The terminal's sandbox is a child process").
+
+The API's terminal module declares the parts of the screen:
+
+<!-- quote: src/api/v1/tui.ts -->
+```ts
+export type Screen = {
+	readonly title: string;
+	readonly open: (scope: TuiScope, theme: TerminalTheme) => () => readonly string[];
+};
+
+/** The terminal's parts, in plugin-name order. */
+export const Screens = defineRegistry<Screen, readonly Screen[]>("todo.screens", { version: 1 });
+```
+
+The terminal entry serves `Screens` and redraws on every change. A **`TuiScope`** holds references, follows values and
+registries, calls one callback on every change, and releases everything when disposed; it is the terminal's
+counterpart of the React hooks, for any terminal library:
+
+<!-- quote: src/tui/main.ts -->
+```ts
+/** The terminal's own facet: it serves `Screens`, composing the contributions in plugin-name order. */
+const core = defineFacet((host) => host.serve(v1tui.Screens, { compose: (table) => table.map(({ value }) => value) }));
+
+void startTerminalRuntime({
+	modules: { "@todo/app/v1": v1, "@todo/app/v1/tui": v1tui },
+	core: [{ name: "@todo/tui", facet: core }],
+	render: (runtime) => {
+		const { terminal, theme } = runtime;
+		const screens = new TuiScope(runtime.host, () => draw()).registry(v1tui.Screens);
+		let opened: { screens: readonly v1tui.Screen[]; scope: TuiScope; lines: (() => readonly string[])[] } | undefined;
+		const draw = (): void => {
+			const current = screens() ?? [];
+			if (opened?.screens !== current) {
+				opened?.scope.dispose();
+				const scope = new TuiScope(runtime.host, () => draw());
+				opened = { screens: current, scope, lines: current.map((screen) => screen.open(scope, theme)) };
+			}
+			const lines = current.flatMap((screen, n) => [theme.fg("accent", screen.title), ...opened!.lines[n]!()]);
+			terminal.write(`\x1b[2J\x1b[H${lines.join("\r\n")}\r\n`);
+		};
+		theme.onChange(draw);
+		terminal.onInput((data) => {
+			if (data === "q") runtime.exit(0);
+		});
+		draw();
+	},
+});
+```
+
+When a reload changes `Screens`, the entry disposes the old scope and opens the screens again. The lists plugin's
+terminal facet is a few lines:
+
+<!-- quote: plugins/lists/tui.ts -->
+```ts
+export default defineFacet((_host, self) =>
+	self.contribute(Screens, {
+		title: "Groceries",
+		open: (scope, theme) => {
+			const items = scope.watch(scope.hold(Todos, { list: "groceries" }).items);
+			return () =>
+				(items() ?? []).map((item) =>
+					item.done ? theme.fg("muted", `[x] ${item.text}`) : `[ ] ${item.text} ${theme.fg("muted", item.by)}`,
+				);
+		},
+	}),
+);
+```
+
+`theme.fg("muted", …)` colours by role, never by a fixed colour. Step 5 runs the launcher on a scripted terminal:
+
+<!-- quote: main.ts -->
+```ts
+if (sandboxAvailable()) {
+	const output = Object.assign(new PassThrough(), { columns: 60, rows: 12 });
+	output.on("data", (chunk: Buffer) => frames.push(chunk.toString()));
+	terminal = await startTerminal({
+		url,
+		credentials: { kind: "file", path: app.ownerTokenFile },
+		input: new PassThrough(),
+		output,
+		colors: "truecolor",
+	});
+	await until(() => screen(frames).includes("butter"));
+	console.log("5. the terminal shows:");
+	for (const line of screen(frames).trim().split("\r\n")) console.log(`   ${line}`);
+} else console.log("5. (the terminal client needs Node 26.5.1 or later for its sandbox)");
+```
+
+<!-- output: tui -->
+```text
+5. the terminal shows:
+   Groceries
+   [x] milk
+   [x] eggs
+   [ ] bread server
+   [ ] butter owner
+```
+
+# A Theme {#theme lede="A theme is data in a registry; a plugin added while the app runs restyles the page and the terminal in place."}
+
+Mara wants the evening look. A theme is data: colours by role, a few web extras, terminal overrides. The kit's `Themes`
+registry collects them; each user picks one dark and one light theme, the system preference chooses (decision "Looks
+and themes"). The Harbor theme is a plugin with its data in one file:
+
+<!-- quote: later/harbor/theme.ts -->
+```ts
+export const harbor: Theme = {
+	id: "harbor",
+	name: "Harbor",
+	mode: "dark",
+	colors: {
+		accent: "#f2a65a",
+		bg: "#12232e",
+		fg: "#d8e2e8",
+		muted: "#6b8796",
+		error: "#e5676b",
+		warning: "#e9c46a",
+		success: "#7fb685",
+	},
+	web: { radius: "6px" },
+	tui: { muted: "66" },
+};
+```
+
+and two facets contributing it, one for pages and one for terminals (registries are per host, so each kind gets its
+own contribution):
+
+<!-- quote: later/harbor/web.ts -->
+```ts
+import { defineFacet, Themes } from "@todo/app/v1";
+import { harbor } from "./theme.ts";
+
+export default defineFacet((_host, self) => self.contribute(Themes, harbor));
+```
+
+The plugin is not in the app's root at start. Step 6 copies it in while everything runs and applies the change:
+
+<!-- quote: main.ts -->
+```ts
+await cp(fileURLToPath(new URL("./later/harbor/", import.meta.url)), join(root, "harbor"), { recursive: true });
+await until(() => app.plugins.state.value.set);
+const added = await app.applyChanges(context);
+console.log("6. harbor added, rolled out to:", added.steps.map(({ name }) => name).join(", "));
+const scripts = await app.host.get(WebScripts, {}, context);
+console.log("   the page's plugins:", scripts.set.value.plugins.map(({ name }) => name).join(", "));
+scripts.release();
+```
+
+<!-- output: main -->
+```text
+6. harbor added, rolled out to: server, list, web, tui
+   the page's plugins: @todo/harbor, @todo/lists
+```
+
+<!-- output: tui -->
+```text
+   the terminal redraws its title in Harbor's accent: "\u001b[38;2;242;166;90mGroceries"
+```
+
+A directory appearing in a plugin root marks the plugin set changed (`app.plugins.state.value.set`); nothing happens
+until `applyChanges`, which builds the new plugin and rolls it out: the server, the list workers, then the page and
+terminal surfaces. The page's host learned of the new script set through Chord, fetched Harbor's web script and loaded
+it in place; the terminal did the same with its terminal script and redrew in Harbor's accent. With the browser
+preferring dark:
+
+:::figure | The same page after the Harbor plugin was added and applied: no reload, the CSS variables on `:root` changed.
+![The page in the Harbor theme](screens/harbor.png)
+:::
+
+# A Second User {#user lede="A one-line login plugin, a client host of Ada's, and why a host must load before it asks."}
+
+Ada joins with a name. The kit ships an ephemeral login as a facet (`POST /_chord/login { name }` signs in as `{ kind:
+"user", id, name }`, no account stored); the API's server module exports it for the app's principal type:
+
+<!-- quote: src/api/v1/server.ts -->
+```ts
+/** The kit's ephemeral login: `POST /_chord/login { name }` signs in as `{ kind: "user", id, name }`. */
+export const login = ephemeralLoginFacet<TodoPrincipal>();
+```
+
+and the app adds it as a **single-file plugin**, a file named `<name>.<kind>.ts` at the root's top:
+
+<!-- quote: plugins/login.server.ts -->
+```ts
+// The kit's pick-a-name login, added to the app as a single-file plugin: a server facet, one line.
+
+import { login } from "@todo/app/v1/server";
+
+export default login;
+```
+
+Step 7 does what Ada's page does: logs in, then connects a client host of her own over the links endpoint with her
+cookie:
+
+<!-- quote: main.ts -->
+```ts
+const login = await fetch(`${url}/_chord/login`, {
+	method: "POST",
+	headers: { "content-type": "application/json" },
+	body: JSON.stringify({ name: "ada" }),
+});
+const adaCookie = login.headers.get("set-cookie")!.split(";")[0]!;
+const ada = createHost<TodoPrincipal>({ onError: (error) => console.error("ada:", error.kind) });
+try {
+	ada.hold(Todos, { list: "groceries" }, context);
+} catch (error) {
+	console.log("7. ada's hold before load:", (error as Error).message);
+}
+await ada.load([], context);
+const socket = new WebSocket(`${url.replace(/^http/, "ws")}/chord`, { headers: { cookie: adaCookie } });
+ada.connect(webSocketLink(socket as unknown as WebSocketLike), { principal: { kind: "server" } }, context);
+const adas = await ada.get(Todos, { list: "groceries" }, context);
+await adas.add("coffee", context);
+console.log("   ada's variant:", adas.variant);
+if (adas.variant === "member") {
+	// @ts-expect-error `clear` is the owner's: TypeScript refuses it, and so does the worker.
+	const clearing: Promise<null> = adas.clear(context);
+	await clearing.catch((error: ChordError) => console.log("   ada's clear:", `${error.code}/${error.reason}`));
+}
+await until(() => groceries.items.value.some(({ by }) => by === "ada"));
+console.log("   the server's reference sees:", show(groceries.items.value.slice(-1)));
+```
+
+<!-- output: main -->
+```text
+7. ada's hold before load: todo.todos: the host has not loaded; call host.load first (a host with nothing to load calls load([]))
+   ada's variant: member
+   ada's clear: invalid/member
+   the server's reference sees: [ ] coffee (ada)
+```
+
+## Trap: load before use
+
+Ada's first `hold` threw at once: **a host serves and binds nothing before `load`.** Requests made before it would wait
+for a publication nobody started, so Chord refuses them with `not_ready` ("call `host.load` first"); a client with no
+plugins of its own calls `load([])` (design §3). `startPage`, the launcher and the kit do it for you; code that makes
+a host itself must not forget.
+
+Ada got the `member` variant; her `clear` is refused twice, by TypeScript (the `@ts-expect-error`) and by the worker
+(`invalid/member`), because what a reference offers is decided by the provider's variant, not by the caller's code.
+Her todo is hers: `coffee (ada)`.
+
+# Changing Code {#reload lede="An edit while Ada is connected: the watcher marks, applyChanges rolls out, every object takes its fate."}
+
+Ada typed "  tea  " with spaces, and an empty add should do nothing. The fix is in the lists plugin's worker facet.
+Step 8 makes the edit in the running app's copy of the plugins, as an editor or an agent would, and applies it:
+
+<!-- quote: main.ts -->
+```ts
+const BEFORE = "add: (text: string, ctx: Ctx) => store.add({ text, by }, ctx),";
+const AFTER = `add: async (text: string, ctx: Ctx) => {
+				if (text.trim() !== "") await store.add({ text: text.trim(), by }, ctx);
+				return null;
+			},`;
+const workerFile = join(root, "lists", "worker.ts");
+await writeFile(workerFile, (await readFile(workerFile, "utf8")).replace(BEFORE, AFTER));
+await until(() => app.plugins.state.value.dirty.includes("@todo/lists"));
+const applied = await app.applyChanges(context);
+console.log("8. lists changed, rolled out to:", applied.steps.map(({ name }) => name).join(", "));
+for (const host of applied.steps.find(({ name }) => name === "list")!.hosts) {
+	const fates = "report" in host ? host.report.objects.map(({ object, kind }) => `${object} ${kind}`) : [];
+	console.log(`   on ${host.host}:`, [...new Set(fates)].join(", "));
+}
+await adas.add("  tea  ", context);
+await until(() => groceries.items.value.at(-1)?.text === "tea");
+console.log("   ada adds '  tea  ':", show(groceries.items.value.slice(-1)));
+const count = groceries.items.value.length;
+await adas.add(" ", context);
+console.log("   ada adds ' ':", groceries.items.value.length === count ? "ignored" : "added");
+```
+
+<!-- output: main -->
+```text
+8. lists changed, rolled out to: server, list, web, tui
+   on list|groceries: todo.store restarted, todo.todos(groceries) parked
+   ada adds '  tea  ': [ ] tea (ada)
+   ada adds ' ': ignored
+```
+
+The watcher marked `@todo/lists` dirty when the file changed; `applyChanges` rebuilt it (one esbuild call per facet)
+and rolled it out host by host. On each host Chord stages the new code (it runs the new factories against a recording
+`self` to see what they declare), commits it in one step, and gives each object of the changed plugin its **fate**
+(design §21):
+
+| The object | Fate |
+| --- | --- |
+| opens no natives, and neither does its new factory | **swapped** in place: new methods, the same documents; running calls finish on the old code |
+| opens natives | **restarted**: calls wait, running ones finish, natives close and open again with the new code |
+| its new code waits for a dependency | **parked** until the dependency is live |
+| its type was removed | **ended**; its holders wait until something serves it again |
+
+The store opens a native (the window's first read), so it restarted and read its window again from the table; the
+views waited for it (parked), then went on with the new code. Ada's reference never noticed more than a moment of
+`loading`, and her next add was trimmed. Had the edit broken the plugin, that plugin alone would have kept its old code
+and the report would name the error.
+
+A contract that changes shape needs a new `version`; old consumers keep working when the provider maps their version
+(`accepts`), otherwise they wait with `contract_mismatch` until they reload. A stored document or table that changes
+shape bumps its own version with a migration. Contract versions protect callers, storage versions protect data.
+
+## On the page
+
+An edit of a web facet applies in place too: the page fetches the one changed script and reloads its host, with no
+page reload. `screenshots.ts` adds a count of open todos to the panel while half a todo is typed:
+
+<!-- quote: screenshots.ts -->
+```ts
+const BEFORE = `h(
+			"ul",`;
+```
+
+<!-- output: screenshots -->
+```text
+wrote docs/tutorial/screens/page.png
+wrote docs/tutorial/screens/harbor.png
+wrote docs/tutorial/screens/edited.png
+typed "oat mi"; after the edit: ""
+the page did not reload: true
+```
+
+:::figure | After the edit of the web facet, applied in place: the count appears; the half-typed "oat mi" is gone, because the panel's component is new code and React mounted it anew.
+![The page after the edit](screens/edited.png)
+:::
+
+The page did not reload, and everything outside the changed plugin's components kept its state. The changed panel's
+own React state did not: a new component function is a new component to React.
+
+# Moving a List {#export lede="Export a worker's data while it runs, import it under another address."}
+
+A list's data is what its worker created: its store and its files. Step 9 exports the groceries list while its worker
+runs and imports it as a new list:
+
+<!-- quote: main.ts -->
+```ts
+const archive = join(base, "groceries.tar");
+await app.exportData(List({ id: "groceries" }), archive, context);
+console.log("9. exported groceries:", (await readFile(archive)).length > 0 ? "an archive" : "nothing");
+await app.importData(archive, List({ id: "picnic" }), context);
+const picnic = await app.host.get(Todos, { list: "picnic" }, context);
+console.log("   imported as picnic:", show(picnic.items.value));
+picnic.release();
+await app.importData(archive, List({ id: "groceries" }), context).catch((error: Error) => {
+	console.log("   importing over groceries:", error.message.replace(base, "…"));
+});
+```
+
+<!-- output: main -->
+```text
+9. exported groceries: an archive
+   imported as picnic: [x] milk (owner), [x] eggs (owner), [ ] bread (server), [ ] butter (owner), [ ] coffee (ada), [ ] tea (ada)
+   importing over groceries: importData: list|groceries has data (its worker runs)
+```
+
+`exportData` stops nothing: the running worker writes its own store at one consistent point (the store's export holds
+its commit queue while it reads) and its files, as one archive with a manifest naming the app. With no worker running,
+the server takes the worker's process lock and reads the store itself. `importData` refuses an address that has data;
+replacing a list is a delete, then an import (decision "App kit naming and export"). Registering an imported list in
+an index of the app's, if it had one, is the app's.
+
+# Testing One Plugin {#testing lede="testPlugin builds a plugin as production does and loads it alone on a host of its own."}
+
+The steps above test the whole app. Most rules are checked faster on one plugin. `testPlugin` builds the plugin as
+production builds it (the same esbuild call, the API's imports checked), evaluates it with the app's real API module and
+loads it on a new host with an in-memory store, here at a list's address so it may serve `Todos`:
+
+<!-- quote: plugins/lists/worker.test.ts -->
+```ts
+	let t: TestedPlugin<TodoPrincipal>;
+	beforeEach(async () => {
+		t = await testPlugin<TodoPrincipal>(
+			fileURLToPath(new URL("./", import.meta.url)),
+			{
+				kind: "worker",
+				api: { name: "@todo/app", versions: ["v1"] },
+				modules: { "@todo/app/v1": v1 },
+				address: v1.List({ id: "groceries" }),
+				principal: { kind: "worker", list: "list|groceries" },
+			},
+			context,
+		);
+	});
+	afterEach(() => t.close(context));
+```
+
+Each test runs code as a principal of its choice with `t.root`:
+
+<!-- quote: plugins/lists/worker.test.ts -->
+```ts
+	it("lets the owner clear the done todos", async () => {
+		await t.root(
+			async (ctx) => {
+				const todos = await ctx.get(v1.Todos, { list: "groceries" });
+				if (todos.variant !== "owner") throw new Error(`the owner got ${todos.variant}`);
+				await todos.add("milk", ctx);
+				await todos.add("eggs", ctx);
+				await todos.tick({ id: 1, done: true }, ctx);
+				await todos.clear(ctx);
+				expect(todos.items.value.map(({ text }) => text)).toEqual(["eggs"]);
+			},
+			context,
+			{ principal: OWNER },
+		);
+		expect(t.unserved()).toEqual([]);
+```
+
+What the plugin uses and no plugin of the test serves would wait unbound; `t.unserved()` lists those names, so a test
+knows which stub facets to add. Registries it contributes to that nobody serves are collected (`t.contributions(R)`).
+Run it like any test:
+
+```sh
+node ../../node_modules/vitest/dist/cli.js --run test/examples/61-tutorial/plugins/lists/worker.test.ts
+```
+
+The test imports `Todos` and `List` from the API module by path. It could not import a contract from a plugin's own
+`contract.ts`: that file imports `@todo/app/v1`, a name only plugin builds resolve. A test of such a contract declares
+it again (contracts are data: the same name, version and schema bind), as `docs/plugin-authoring.md` shows; this app
+keeps the contract it shares in its API instead.
+
+# Writing a p2 Plugin {#p2 lede="What is different in p2, and one small plugin: a tool for the agent and a chip for the people."}
+
+p2, the coding agent's server with its web page and terminal, runs on Chord v2 but not on the app kit. It is older than
+the kit and keeps its own decisions: its own data directory and SQLite files, its own sign-in, devices and sharing,
+its own page and terminal bundles. It uses Chord's components directly: `createHost` with p2's principals,
+`createWorkers` for one worker per session, `createPlugins` to find, build, watch and roll out its plugins. What a
+plugin author sees is the same model: contracts, factories, registries, facets per host kind.
+
+| | The todo app (kit) | p2 |
+| --- | --- | --- |
+| host kinds | `Server`, `List({ id })` | `Server`, `Session({ id })` (`serverHost`, `sessionHost`) |
+| principals | server, worker, owner, user | `owner` (with `access`), `guest` (with `sessions` and `revision`), `worker`, `server`, `host` |
+| API | `@todo/app/v1`, `/server`, `/web`, `/tui` | `@p2/app/v1` (browser-safe), `/node` (server and worker), `/server`, `/worker`, `/web`, `/tui` |
+| other host packages | React for the web | pi-ai, pi-durable, pi-schema, pi-env, pi-tui, `ws`, `yaml`: plugins import them directly |
+| plugins | `plugins/<name>/`, `package.json` named `@todo/<name>` | `apps/p2/plugins/<name>/`, `package.json` named `<name>` |
+| a Chord store | the kit's, per host: persisted documents and tables | none: durable data is Durable's (documents with a conversation) or p2's own files |
+| page and terminal | kit surfaces, `Panels` and `Screens` | p2's bundles; the page's `Slots` registry, `useObject`, `useReadable` |
+| applying changes | `app.applyChanges` | the owner's Reload button, `npm run reload` in `apps/p2`, the `reload_plugins` tool |
+
+## The scratchpad plugin
+
+The example gives the agent a `scratch_note` tool and shows the session's notes to everyone who may see the session.
+Its contract places one object per session on the session's worker:
+
+<!-- p2: apps/p2/plugins/scratchpad/contract.ts -->
+```ts
+export const Scratchpad = remote("p2.scratchpad", {
+	version: 1,
+	params: { session: param.str() },
+	hostAddress: sessionHost,
+	variants: { reader: { state: { notes: arr(str()) } } },
+});
+```
+
+The worker facet holds the notes in a worker-wide store (a local object with empty params, as in chapter II). It gives
+the agent its tool through p2's `Extensions` registry, a keyed registry of Durable extensions, and serves the view to
+whoever `canView` the session:
+
+<!-- p2: apps/p2/plugins/scratchpad/worker.ts -->
+```ts
+const Notes = defineState("p2.scratchpad.notes", {
+	schema: obj({ items: arr(str()) }),
+	version: 1,
+	initial: () => ({ items: [] }),
+});
+```
+<!-- p2: apps/p2/plugins/scratchpad/worker.ts -->
+```ts
+export default defineFacet((host) => {
+	host.serve(ScratchpadStore, (_params, self) => {
+		const notes = self.state(Notes);
+		self.contribute(Extensions, {
+			scratchpad: defineExtension({
+				name: "scratchpad",
+				tools: [
+					defineTool({
+						name: "scratch_note",
+						description:
+							"Keep a short note for this session (a decision, an open question). Everyone viewing the session sees the notes.",
+						parameters: obj({ text: str({ minLength: 1, maxLength: 500 }) }),
+						replay: "unsafe",
+						execute: async ({ text }, _api, context) => {
+							await notes.change((draft) => {
+								draft.items.push(text);
+							}, context);
+							return {
+								output: [{ type: "text" as const, text: `Noted (${notes.value.items.length} in all).` }],
+							};
+						},
+					}),
+				],
+			}),
+		});
+		return { notes: self.derive([notes], ([value]) => value.items) };
+	});
+	host.serve(Scratchpad, ({ session }, principal, self) => {
+		if (!canView(principal, session)) throw forbidden("viewers only");
+		const store = self.get(ScratchpadStore, {});
+		return { variant: "reader", members: { notes: self.derive([store.notes], ([notes]) => notes) } };
+	});
+});
+```
+
+The notes are an in-memory document: p2 opens no Chord store, so `persist: true` is not available, and the notes last
+as long as the session's worker. Data that must outlive it goes into a Durable document (p2's chat-mode keeps its switch
+that way). The tool runs inside Durable with a Durable `Context`, which is Chord's own context type, so the store's
+handle takes it and the write is awaited. The page gets a chip in the composer's bar through `Slots`:
+
+<!-- p2: apps/p2/plugins/scratchpad/web.tsx -->
+```tsx
+function NotesChip() {
+	const { session } = useRoute();
+	const pad = useObject(Scratchpad, session === undefined ? undefined : { session });
+	const notes = useReadable(pad?.notes) ?? [];
+	if (notes.length === 0) return null;
+	return (
+		<span className="chip" title={notes.join("\n")}>
+			Notes · {notes.length}
+		</span>
+	);
+}
+
+export default defineFacet((_host, self) => self.contribute(Slots, { "composer:scratchpad": NotesChip }));
+```
+
+## Testing it in p2
+
+p2's tests load facets on a bare host with `testHost` (`test/p2/helpers.ts`), stub what they need, and reach the host
+as any principal over a memory link with `fixture.client(principal)`:
+
+<!-- p2: apps/p2/test/p2/scratchpad.test.ts -->
+```ts
+	it("keeps the agent's notes and shows them to the session's viewers", async () => {
+		const extensions = await fixture.host.registry(Extensions, BACKGROUND_CONTEXT);
+		const tool = extensions.value.get("scratchpad")!.tools![0]!;
+		await tool.execute({ text: "ship on friday" }, undefined as never, BACKGROUND_CONTEXT);
+		const pad = await fixture.client(OWNER).get(Scratchpad, { session: "s1" }, BACKGROUND_CONTEXT);
+		assert.deepEqual(await until(pad.notes, (notes) => notes?.length === 1), ["ship on friday"]);
+	});
+```
+
+Run from `apps/p2` with `node --import ./src/source.ts --test test/p2/scratchpad.test.ts`. Load the plugin into a running
+p2 with the owner's Reload button or `npm run reload -- scratchpad`; a new plugin directory is picked up by the same
+reload. The trap of chapter II applies with p2's names: a server method that must reach a session's worker as the
+server runs in a root of the server's own (`serverOf(self)().root`), not through its caller's `ctx.get`.
+
+# Traps and Open Questions {.epilogue lede="The four traps once more, and what in Chord v2 was hard to explain while writing this."}
+
+**The traps.** Load before use: a host binds nothing before `load`; a client with nothing to load calls `load([])`. A
+reference acts as whoever made it: `ctx.get` as the caller, `host.get` and a local object's `self.get` as the host.
+Await what you start: a write started with a context that ends is cancelled and reported `transaction_cancelled`. A
+watch starts at the current value: read `handle.value`, then `start`; the listener gets changes only.
+
+**Hard to explain, found while writing the example.** Each is a candidate for a fix in Chord rather than a paragraph in
+a tutorial.
+
+- **Integer table keys do not type-check.** `KeyOf` in `src/store/table.ts` still tests TypeBox's
+  `"~kind": "Integer"`, which pi-schema's `int()` lacks, so the key of an `int` key column is typed `string`:
+  `tx.get(items, { id })` with a number fails `tsc`. The store here uses `updateWhere` with `eq` instead of
+  `tx.update`.
+- **A one-time read at activation is a native.** The live window over a table needs a first read before the object is
+  live; `self.open` is the only place, so the store counts as holding a native and restarts at every reload of its
+  plugin, parking its views, though it holds nothing open. Tables have no watch, so every table-backed live view
+  repeats this pattern (example 59's chat does too).
+- **A reloaded web plugin loses its own React state.** Decision "Slice 11, P4" promises an in-place reload "keeping what
+  is on screen (scroll, a half-typed message)". The page does not reload, but the changed plugin's components are new
+  functions, so React mounts them anew and their state (the half-typed todo) is gone.
+- **Plugin contracts are hard to test from outside builds.** A test or script cannot import a plugin's
+  `contract.ts` (it imports the app's API by a package name only builds resolve), so contracts are declared twice or
+  moved into the API.
+- **No public `invalid`.** Plugins throw `PluginError` with codes of their own; refusing bad arguments with Chord's
+  `invalid/args`, as the built-in checks do, is not open to them.
+
+# The App's Files {.appendix}
+
+| File | Kind | What it is |
+| --- | --- | --- |
+| `src/principals.ts` | base | the principal type |
+| `src/api/v1/index.ts` | base, every kind | `@todo/app/v1`: Chord's part, `defineFacet`, `List`, `Item`, `Todos` |
+| `src/api/v1/server.ts` | base, server | `Http`, the ephemeral `login` |
+| `src/api/v1/web.ts` | base, web | `Panels`, `useHold`, `useWatch` |
+| `src/api/v1/tui.ts` | base, tui | `Screens` |
+| `start.ts`, `worker.ts` | base | `startServer`, `startWorker` |
+| `src/web/main.ts`, `src/web/style.css` | base, web entry | `startPage`, the panels |
+| `src/tui/main.ts` | base, terminal entry | `startTerminalRuntime`, the screens |
+| `plugins/lists/` | plugin | worker (table, store, views), server (routes), web (panel), tui (screen), its test |
+| `plugins/login.server.ts` | single-file plugin | the kit's ephemeral login |
+| `later/harbor/` | plugin, added in step 6 | the Harbor theme for pages and terminals |
+| `main.ts`, `screenshots.ts`, `tutorial.test.ts` | example | the steps, the screenshots, the checks |
+
+# Reference {.appendix}
+
+| Call | Chapter | What it does |
+| --- | --- | --- |
+| `startServer<P>({ name, dataDir, root, listen, api, kinds, principal, workers, web, tui, onError }, ctx)` | I | the app's server, with the kit |
+| `startWorker({ api, kinds, onError })` | I | a worker's entry |
+| `app.ownerLink()`, `app.ownerTokenFile` | I, III | the owner's sign-in, for a browser and for local clients |
+| `hostKind(name, params)`, `remote(name, { version, params, hostAddress, variants })`, `local(name, { version, params, members })` | II | host kinds and contracts |
+| `host.serve(Type, factory)`; factory `self`: `table`, `writable`, `open`, `derive`, `tx`, `get`, `contribute` | II | an object's parts |
+| `host.root(fn, ctx, { principal })`, `ctx.get(Type, params)` | II | code outside objects, as a principal |
+| `self.contribute(Http, { routes })` | III | routes, denied by default |
+| `startPage`, `HostProvider`, `useHold`, `useWatch`, `useRegistry` | IV | the page |
+| `startTerminalRuntime`, `TuiScope`, `startTerminal` | V | the terminal |
+| `self.contribute(Themes, theme)` | VI | a theme |
+| `ephemeralLoginFacet<P>()`, `host.load([], ctx)`, `host.connect(link, { principal }, ctx)` | VII | a second user's client |
+| `app.plugins.state`, `app.applyChanges(ctx)` | VI, VIII | marks and rollouts |
+| `app.exportData(address, path, ctx)`, `app.importData(path, address, ctx)` | IX | moving a worker's data |
+| `testPlugin(dir, { kind, api, modules, address, principal, stubs }, ctx)` | X | one plugin alone |

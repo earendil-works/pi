@@ -1,5 +1,5 @@
-import { copyJson } from "@earendil-works/chord";
 import { type Op, track } from "@earendil-works/chord/delta";
+import { copyJson } from "@earendil-works/chord/json";
 import {
 	type AssistantMessage,
 	type AssistantMessageEvent,

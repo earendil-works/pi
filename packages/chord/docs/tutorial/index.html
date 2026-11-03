@@ -1,0 +1,1378 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Together: build a shared todo app with Chord</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A tutorial · Chord v2 and its app kit · 2026-11-03</div>
+  <h1>Build It<br>Together</h1>
+  <p class="subtitle">One small app, built a step at a time, from an empty server to two people, a page, a terminal, a theme and an edit applied while they are connected</p>
+  <div class="cover-stats"><div class="stat"><b>9</b><span>steps, one runnable example</span></div><div class="stat"><b>4</b><span>host kinds one plugin runs on</span></div><div class="stat"><b>1</b><span>worker process per list</span></div><div class="stat"><b>0</b><span>restarts for a new theme or an edit</span></div></div>
+  <div class="cover-note"><p>The app is <code>packages/chord/test/examples/61-tutorial/</code>, runnable with the line in its <code>main.ts</code>. Every code block
+below is quoted from its files, and every console output from what its steps print:
+<code>test/examples/61-tutorial/tutorial.test.ts</code> fails when a quote or an output drifts. The design is
+<code>packages/chord/docs/design.md</code>; where this tutorial says &quot;the rule&quot;, design.md has the full statement. The last
+chapter is about p2, whose code lives outside this repository.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#server">I. One Server</a></li>
+<li><a href="#worker">II. A List on Its Own Worker</a></li>
+<li><a href="#routes">III. Routes</a></li>
+<li><a href="#page">IV. A Page</a></li>
+<li><a href="#terminal">V. A Terminal</a></li>
+<li><a href="#theme">VI. A Theme</a></li>
+<li><a href="#user">VII. A Second User</a></li>
+<li><a href="#reload">VIII. Changing Code</a></li>
+<li><a href="#export">IX. Moving a List</a></li>
+<li><a href="#testing">X. Testing One Plugin</a></li>
+<li><a href="#p2">XI. Writing a p2 Plugin</a></li>
+<li><a href="#traps-and-open-questions">Traps and Open Questions</a></li>
+<li><a href="#the-app-s-files">Appendix A: The App&#39;s Files</a></li>
+<li><a href="#reference">Appendix B: Reference</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Mara keeps the household&#39;s shopping list on her laptop. She wants it in a browser tab and in a terminal, live in both.
+Ada, her flatmate, should be able to add coffee from her phone without an account: pick a name and go. And Mara wants
+to change the app while it runs: add a dark theme in the evening, fix a small annoyance in how todos are added, without
+anyone being thrown out.</p>
+<p>That is four kinds of program (a server, a process per list, a page, a terminal client) and three kinds of change (new
+data, a new person, new code) in one small app. Wiring that by hand means a web server, a socket protocol, a way to
+start and stop processes, sessions, a bundler for the page and a reload story for each. Chord does the wiring, and its
+<strong>app kit</strong> (<code>@earendil-works/chord/app</code>) makes the decisions an app would otherwise make itself: where data lives,
+how people sign in, how plugins are found and rolled out.</p>
+<p>This tutorial builds that app. Each chapter adds one thing, shows the code, shows what happens when it runs, and
+states the rule behind it. The app is one directory, <code>test/examples/61-tutorial/</code>; run every step at once from
+<code>packages/chord</code>:</p>
+<pre><code>node --conditions=source --experimental-strip-types test/examples/<span class="tk-n">61</span>-tutorial/main.ts</code></pre>
+<p>With Node 26.5.1 or later the terminal client of chapter V runs too (its sandbox needs that Node); with an older one,
+that step says so and the rest runs.</p>
+<h3 id="eight-things-to-know">Eight things to know</h3>
+<ol class="findings">
+<li><strong>An app is its API, its plugins and a start script.</strong> <code>startServer</code> makes the data directory, the store, the
+server host, HTTP with sign-in, the workers and the plugin roots; <code>startWorker</code> does a worker&#39;s half.</li>
+<li><strong>A host is one participant.</strong> The server, each list&#39;s worker, each browser tab and each terminal are hosts,
+connected by links. Tabs and terminals are clients: they connect and ask, nobody asks them.</li>
+<li><strong>An object is reached by its contract.</strong> A contract names an object type, its params and its members; a <code>remote</code>
+contract also says which host serves it. Any host asks for <code>Todos { list: &quot;groceries&quot; }</code>, and Chord routes the
+request to that list&#39;s worker.</li>
+<li><strong>Who calls is stamped, never sent.</strong> Every call carries a principal the link stamped from the sign-in. A factory
+picks a variant per principal; a todo records who added it from the principal, not from its arguments.</li>
+<li><strong>A plugin has one file per host kind.</strong> <code>server.ts</code>, <code>worker.ts</code>, <code>web.ts</code>, <code>tui.ts</code>: each declares what that kind
+of host serves and contributes. Plugins import only the app&#39;s API.</li>
+<li><strong>Plugins meet in registries.</strong> The page shows <code>Panels</code>, the terminal <code>Screens</code>, the kit&#39;s <code>Themes</code> restyle both;
+plugins contribute, one plugin (or the entry) composes.</li>
+<li><strong>Changes apply when you say so.</strong> Saving a file marks its plugin dirty; <code>applyChanges</code> builds and rolls out to the
+server, the workers, the pages and the terminals, in place.</li>
+<li><strong>Four traps:</strong> load before use; a reference acts as whoever made it; await what you start; a watch starts at the
+current value.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>A <strong>host</strong> is one participant of the app, with an <strong>address</strong> if others can reach it (the server, <code>List({ id })</code>) or
+without one (a <strong>client</strong>: a page, a terminal). A <strong>link</strong> connects two hosts. A <strong>principal</strong> is who calls, typed by
+the app and stamped by links. An <strong>object</strong> is state and methods at one identity; its <strong>contract</strong> (<code>local</code> for its own
+host only, <code>remote</code> for any host) names its <strong>params</strong> (which instance) and members. A remote contract&#39;s <strong>variants</strong>
+are the member sets different principals get. A <strong>factory</strong> declares an object&#39;s parts: <strong>documents</strong> and <strong>tables</strong>
+(stored data, changed in <strong>transactions</strong>), <strong>derives</strong> (values computed from others), <strong>natives</strong> (things opened and
+closed, such as a file or a database cursor). A <strong>reference</strong> is what asking for an object returns. A <strong>facet</strong> is a
+plugin&#39;s code for one host kind; a <strong>registry</strong> is an extension point plugins <strong>contribute</strong> to. A <strong>rollout</strong> applies
+new plugin code to the hosts in order.</p>
+</section>
+
+<section class="chapter" id="server"><header class="opener"><div class="numeral">I</div><h2>One Server</h2><p class="lede">The API, the principals and a start script: the smallest app the kit runs, and who may come in.</p></header>
+<p class="dropcap">An app built with the kit has a fixed shape: its API in <code>src/api/v&lt;n&gt;/</code>, its built-in plugins in <code>plugins/</code>, a start
+script and a worker entry (design §23, &quot;The app kit&quot;). Everything else is a plugin. This chapter writes the three
+pieces of base code and starts the server.</p>
+<h3 id="the-principals">The principals</h3>
+<p>A <strong>principal</strong> says who is calling. The app defines the type; the kit needs a variant for the server, one for its
+workers, and adds the owner, <code>{ kind: &quot;owner&quot; }</code>, which the app&#39;s type must include:</p>
+<!-- quote: src/principals.ts -->
+<pre><code><span class="tk-c">// The todo app's principals: its server and list workers, the kit's owner, and the users who signed in with a name.</span>
+
+<span class="tk-c">/** Who someone is in the todo app. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">TodoPrincipal</span> =
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"server"</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"worker"</span>; <span class="tk-k">readonly</span> list: string }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"owner"</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"user"</span>; <span class="tk-k">readonly</span> id: string; <span class="tk-k">readonly</span> name: string };</code></pre>
+<p>The user variant is for chapter VII. A principal travels with every call and is part of objects&#39; identities, so it
+stays small: a kind and an id. A user&#39;s profile, if the app had one, would be data in an object keyed by the id.</p>
+<h3 id="the-api">The API</h3>
+<p>Plugins never import Chord. They import the app&#39;s <strong>API</strong>, a module the app names with a version in its path
+(<code>@todo/app/v1</code>). It re-exports the part of Chord the app supports and adds what is the app&#39;s own:</p>
+<!-- quote: src/api/v1/index.ts -->
+<pre><code><span class="tk-k">export</span> { BACKGROUND_CONTEXT } <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/context/index.ts"</span>;
+<span class="tk-k">export</span> {
+	arr,
+	bool,
+	<span class="tk-k">type</span> <span class="tk-t">Ctx</span>,
+	defineTable,
+	eq,
+	int,
+	local,
+	method,
+	num,
+	obj,
+	<span class="tk-t">PluginError</span>,
+	query,
+	str,
+	<span class="tk-k">type</span> <span class="tk-t">Theme</span>,
+	<span class="tk-t">Themes</span>,
+} <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/index.ts"</span>;
+<span class="tk-k">export</span> <span class="tk-k">type</span> { <span class="tk-t">TodoPrincipal</span> } <span class="tk-k">from</span> <span class="tk-s">"../../principals.ts"</span>;</code></pre>
+<p>and a <code>defineFacet</code> bound to the principal type, so every factory sees a <code>TodoPrincipal</code>:</p>
+<!-- quote: src/api/v1/index.ts -->
+<pre><code><span class="tk-c">/** Defines a facet of the todo app: its factories get the app's principals. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineFacet</span>(setup: (host: <span class="tk-t">FacetHost</span>&lt;<span class="tk-t">TodoPrincipal</span>&gt;, self: <span class="tk-t">FacetSelf</span>) =&gt; <span class="tk-k">void</span>) {
+	<span class="tk-k">return</span> <span class="tk-f">chordFacet</span>&lt;<span class="tk-t">TodoPrincipal</span>&gt;(setup);
+}</code></pre>
+<p>The API is a <strong>host package</strong>: a plugin&#39;s build leaves it out, and each process hands the plugin its own instance when
+it evaluates it. The plugin sees the very <code>Themes</code> registry and <code>List</code> host kind the process has, not a copy. A
+version in the path lets the app ship <code>v2</code> beside <code>v1</code> later; one facet uses one version (design §21, &quot;The plugin
+model&quot;).</p>
+<h3 id="the-start-script">The start script</h3>
+<p><code>startServer</code> takes what the app decides and does the rest. <code>start.ts</code> names the API with this process&#39;s modules, the
+facet kinds (which files a plugin may have), and the principals:</p>
+<!-- quote: start.ts -->
+<pre><code><span class="tk-k">export</span> <span class="tk-k">const</span> API = {
+	name: <span class="tk-s">"@todo/app"</span>,
+	versions: [<span class="tk-s">"v1"</span>],
+	modules: { <span class="tk-s">"@todo/app/v1"</span>: v1, <span class="tk-s">"@todo/app/v1/server"</span>: v1server },
+};
+
+<span class="tk-c">/** The app's facet kinds: a plugin has one file per kind it runs on (`server.ts`, `worker.ts`, `web.ts`, `tui.ts`). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> KINDS = {
+	server: { platform: <span class="tk-s">"node"</span> },
+	worker: { platform: <span class="tk-s">"node"</span> },
+	web: { platform: <span class="tk-s">"browser"</span>, packages: { react: {}, <span class="tk-s">"react/jsx-runtime"</span>: {} } },
+	tui: { platform: <span class="tk-s">"node"</span> },
+} <span class="tk-k">as</span> <span class="tk-k">const</span>;</code></pre>
+<!-- quote: start.ts -->
+<pre><code><span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">startTodo</span>(dataDir: string, root: string, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">App</span>&lt;<span class="tk-t">TodoPrincipal</span>&gt;&gt; {
+	<span class="tk-k">return</span> <span class="tk-f">startServer</span>&lt;<span class="tk-t">TodoPrincipal</span>&gt;(
+		{
+			name: <span class="tk-s">"todo"</span>,
+			dataDir,
+			root,
+			listen: { host: <span class="tk-s">"127.0.0.1"</span>, port: <span class="tk-n">0</span> },
+			api: API,
+			kinds: KINDS,
+			principal: { server: { kind: <span class="tk-s">"server"</span> }, worker: (address) =&gt; ({ kind: <span class="tk-s">"worker"</span>, list: address.key }) },
+			workers: [
+				{
+					kind: v1.<span class="tk-t">List</span>,
+					entry: <span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./worker.ts"</span>, <span class="tk-k">import</span>.meta.url)),
+					execArgv: [<span class="tk-s">"--conditions=source"</span>, <span class="tk-s">"--experimental-strip-types"</span>, <span class="tk-s">"--no-warnings"</span>],
+					start: () =&gt; ({}),
+					<span class="tk-c">// Who may reach a list's worker: everyone signed in, and the server itself.</span>
+					authorize: (principal) =&gt; principal.kind !== <span class="tk-s">"worker"</span>,
+				},
+			],
+			web: { entry: <span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./src/web/main.ts"</span>, <span class="tk-k">import</span>.meta.url)), page },
+			tui: { entry: <span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./src/tui/main.ts"</span>, <span class="tk-k">import</span>.meta.url)) },
+			onError: (error) =&gt; console.<span class="tk-f">error</span>(<span class="tk-s">"todo:"</span>, error.kind, error.error),
+		},
+		context,
+	);
+}</code></pre>
+<p><code>workers</code> is chapter II, <code>web</code> chapter IV, <code>tui</code> chapter V. <code>listen</code> asks for a free port on loopback, as the example
+does; a real app picks a port. The worker entry is three lines:</p>
+<!-- quote: worker.ts -->
+<pre><code><span class="tk-c">// The todo app's worker entry: one process per list. `startWorker` opens the list's store in its directory, connects</span>
+<span class="tk-c">// to the server and loads the plugins' worker facets.</span>
+
+<span class="tk-k">import</span> { startWorker } <span class="tk-k">from</span> <span class="tk-s">"../../../src/node/app/index.ts"</span>;
+<span class="tk-k">import</span> { API, KINDS } <span class="tk-k">from</span> <span class="tk-s">"./start.ts"</span>;
+
+<span class="tk-f">startWorker</span>({ api: API, kinds: KINDS, onError: (error) =&gt; console.<span class="tk-f">error</span>(<span class="tk-s">"list:"</span>, error) });</code></pre>
+<h3 id="running-it">Running it</h3>
+<p>Step 1 of <code>main.ts</code> starts the app, tries the page without signing in, then does what a browser does with the owner
+link:</p>
+<!-- quote: main.ts -->
+<pre><code><span class="tk-k">const</span> app = <span class="tk-k">await</span> <span class="tk-f">startTodo</span>(dataDir, root, context);
+<span class="tk-k">const</span> link = <span class="tk-k">new</span> <span class="tk-f">URL</span>(app.<span class="tk-f">ownerLink</span>());
+<span class="tk-k">const</span> url = link.origin;
+console.<span class="tk-f">log</span>(<span class="tk-s">"1. owner link:"</span>, <span class="tk-s">`http://127.0.0.1:&lt;port&gt;${link.pathname}#&lt;token&gt;`</span>);
+console.<span class="tk-f">log</span>(<span class="tk-s">"   data directory:"</span>, (<span class="tk-k">await</span> <span class="tk-f">readdir</span>(dataDir)).<span class="tk-f">sort</span>().<span class="tk-f">join</span>(<span class="tk-s">", "</span>));
+console.<span class="tk-f">log</span>(<span class="tk-s">"   GET / signed out:"</span>, (<span class="tk-k">await</span> <span class="tk-f">fetch</span>(url)).status);
+<span class="tk-k">const</span> signIn = <span class="tk-k">await</span> <span class="tk-f">fetch</span>(<span class="tk-s">`${url}/_chord/owner`</span>, {
+	method: <span class="tk-s">"POST"</span>,
+	headers: { <span class="tk-s">"content-type"</span>: <span class="tk-s">"application/json"</span> },
+	body: JSON.<span class="tk-f">stringify</span>({ token: link.hash.<span class="tk-f">slice</span>(<span class="tk-n">1</span>) }),
+});
+<span class="tk-k">const</span> cookie = signIn.headers.<span class="tk-f">get</span>(<span class="tk-s">"set-cookie"</span>)!.<span class="tk-f">split</span>(<span class="tk-s">";"</span>)[<span class="tk-n">0</span>]!;
+console.<span class="tk-f">log</span>(<span class="tk-s">"   the owner signs in:"</span>, signIn.status, cookie.<span class="tk-f">replace</span>(/=.*/, <span class="tk-s">"=…"</span>));
+console.<span class="tk-f">log</span>(<span class="tk-s">"   GET / signed in:"</span>, (<span class="tk-k">await</span> <span class="tk-f">fetch</span>(url, { headers: { cookie } })).status);</code></pre>
+<!-- output: main -->
+<pre class="plain"><code>1. owner link: http://127.0.0.1:&lt;port&gt;/_chord/owner#&lt;token&gt;
+   data directory: logs, owner-token, plugins, server, workers
+   GET / signed out: 401
+   the owner signs in: 200 chord-session=…
+   GET / signed in: 200</code></pre>
+<p><code>startServer</code> made the data directory: <code>server/</code> (its store, the cookie secret, its files), <code>workers/</code> (one directory
+per worker), <code>plugins/</code> (the user&#39;s plugin root, beside the app&#39;s built-in one), <code>logs/</code> and <code>owner-token</code>. The page
+answered 401: HTTP <strong>denies by default</strong>, before any plugin code runs, unless a route says <code>public: true</code>.</p>
+<p>The <strong>owner link</strong> (<code>/_chord/owner#&lt;token&gt;</code>) is how the owner gets in: a single-use token, valid ten minutes, made at
+each start. It sits in the URL&#39;s fragment, which browsers never send, so it never reaches a log; the link&#39;s page posts
+it and receives a session cookie. A command-line client on the same machine reads <code>owner-token</code> instead (mode 0600,
+chapter III). Nothing is the owner because it comes from loopback: any local process could.</p>
+</section>
+
+<section class="chapter" id="worker"><header class="opener"><div class="numeral">II</div><h2>A List on Its Own Worker</h2><p class="lede">A host kind, a remote contract, a worker facet with a table and a live window, and the principal that adds a todo.</p></header>
+<p class="dropcap">Each list gets its own process, a <strong>worker</strong>, with its own store: a list that misbehaves cannot take the others down,
+and an idle list costs nothing. This chapter declares where lists live, what a list offers, and the worker code that
+keeps its todos.</p>
+<h3 id="where-a-list-lives">Where a list lives</h3>
+<p>A <strong>host kind</strong> declares addressable hosts with params; <code>List({ id: &quot;groceries&quot; })</code> is an <strong>address</strong>. A <code>remote</code>
+contract says, with <code>hostAddress</code>, at which address its objects live. Here is the app&#39;s contract for a list&#39;s todos,
+in the API so that every host kind, the tests and command-line code can name it:</p>
+<!-- quote: src/api/v1/index.ts -->
+<pre><code><span class="tk-c">/** A todo list: a worker process of its own, with its own store. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">List</span> = <span class="tk-f">hostKind</span>(<span class="tk-s">"list"</span>, { id: <span class="tk-f">str</span>() });
+
+<span class="tk-c">/** A todo: its number in the list, its text, whether it is done, who added it and when. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Item</span> = <span class="tk-f">obj</span>({ id: <span class="tk-f">int</span>(), text: <span class="tk-f">str</span>(), done: <span class="tk-f">bool</span>(), by: <span class="tk-f">str</span>(), at: <span class="tk-f">num</span>() });
+
+<span class="tk-c">/** A todo (see `Item`). */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Item</span> = <span class="tk-t">Static</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">Item</span>&gt;;
+
+<span class="tk-c">/**
+ * A list's todos as one principal sees them, on the list's worker: the newest 50 (live), adding one and ticking one
+ * off (or on again); the owner also clears the done ones.
+ */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Todos</span> = <span class="tk-f">remote</span>(<span class="tk-s">"todo.todos"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: { list: <span class="tk-f">str</span>() },
+	hostAddress: ({ list }) =&gt; <span class="tk-t">List</span>({ id: list }),
+	variants: {
+		member: {
+			state: { items: <span class="tk-f">arr</span>(<span class="tk-t">Item</span>) },
+			methods: { add: <span class="tk-f">method</span>(<span class="tk-f">str</span>()), tick: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ id: <span class="tk-f">int</span>(), done: <span class="tk-f">bool</span>() })) },
+		},
+		owner: {
+			state: { items: <span class="tk-f">arr</span>(<span class="tk-t">Item</span>) },
+			methods: { add: <span class="tk-f">method</span>(<span class="tk-f">str</span>()), tick: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ id: <span class="tk-f">int</span>(), done: <span class="tk-f">bool</span>() })), clear: <span class="tk-f">method</span>() },
+		},
+	},
+});</code></pre>
+<p><code>params</code> select the instance: <code>Todos { list: &quot;groceries&quot; }</code> is one object per principal. Nobody who asks names a
+host: the caller computes the address from the params and sends the request there; a host that cannot serve it passes
+it on to its parent or to a route (design §3, &quot;Host kinds and addresses&quot;). The kit&#39;s <code>workers</code> option is that route:</p>
+<!-- quote: start.ts -->
+<pre><code>			workers: [
+				{
+					kind: v1.<span class="tk-t">List</span>,
+					entry: <span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./worker.ts"</span>, <span class="tk-k">import</span>.meta.url)),
+					execArgv: [<span class="tk-s">"--conditions=source"</span>, <span class="tk-s">"--experimental-strip-types"</span>, <span class="tk-s">"--no-warnings"</span>],
+					start: () =&gt; ({}),
+					<span class="tk-c">// Who may reach a list's worker: everyone signed in, and the server itself.</span>
+					authorize: (principal) =&gt; principal.kind !== <span class="tk-s">"worker"</span>,
+				},
+			],</code></pre>
+<p><code>authorize</code> runs for every request routed to a list before anything starts; the first request for an address starts
+its worker, and a worker idle for five minutes (the default <code>idleMs</code>) stops. <strong>Variants</strong> are the member sets a
+contract offers: the owner&#39;s <code>Todos</code> has <code>clear</code>, a member&#39;s does not. The factory picks one per principal.</p>
+<h3 id="the-worker-facet">The worker facet</h3>
+<p>The lists plugin is a directory with a <code>package.json</code> (its name is the plugin&#39;s name) and one file per host kind it
+runs on. <code>worker.ts</code> is its <strong>worker facet</strong>: what every list&#39;s worker serves. It keeps the todos in a <strong>table</strong> of the
+worker&#39;s store:</p>
+<!-- quote: plugins/lists/worker.ts -->
+<pre><code><span class="tk-c">/** Every todo of the list, by its number. */</span>
+<span class="tk-k">const</span> <span class="tk-t">Items</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"todo.items"</span>, {
+	version: <span class="tk-n">1</span>,
+	columns: { id: <span class="tk-f">int</span>(), text: <span class="tk-f">str</span>(), done: <span class="tk-f">bool</span>(), by: <span class="tk-f">str</span>(), at: <span class="tk-f">num</span>() },
+	key: [<span class="tk-s">"id"</span>],
+});
+
+<span class="tk-c">/** The newest todos first. */</span>
+<span class="tk-k">const</span> NEWEST = <span class="tk-f">query</span>(<span class="tk-t">Items</span>).<span class="tk-f">orderBy</span>((item) =&gt; item.id, <span class="tk-s">"desc"</span>);
+
+<span class="tk-c">/** How many todos the live window holds. */</span>
+<span class="tk-k">const</span> WINDOW = <span class="tk-n">50</span>;</code></pre>
+<p>A table holds many records with queries and pages; it lives in an object, never in a facet. Persisted data lives only
+in <code>local</code> objects with empty params (one per host and type), so its address never depends on who asked (design §9,
+&quot;Lifetime, persistence&quot;). That object is the plugin&#39;s store, <code>Store</code>, a local contract of its own file:</p>
+<!-- quote: plugins/lists/worker.ts -->
+<pre><code><span class="tk-c">/** The list's todos, once per worker: empty params, so it lives as long as the worker and may keep data in its store. */</span>
+<span class="tk-k">const</span> <span class="tk-t">Store</span> = <span class="tk-f">local</span>(<span class="tk-s">"todo.store"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	members: {
+		items: <span class="tk-f">arr</span>(<span class="tk-t">Item</span>),
+		add: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ text: <span class="tk-f">str</span>(), by: <span class="tk-f">str</span>() })),
+		tick: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ id: <span class="tk-f">int</span>(), done: <span class="tk-f">bool</span>() })),
+		clear: <span class="tk-f">method</span>(),
+	},
+});</code></pre>
+<p>A <code>local</code> object with empty params lives as long as its host: it starts with the worker and is never ended by a count
+of references. Its factory declares its parts and returns its members:</p>
+<!-- quote: plugins/lists/worker.ts -->
+<pre><code>	host.<span class="tk-f">serve</span>(<span class="tk-t">Store</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> items = self.<span class="tk-f">table</span>(<span class="tk-t">Items</span>);
+		<span class="tk-c">// The newest todos, oldest first, and the next todo's number: read once when the store goes live, then kept here.</span>
+		<span class="tk-k">const</span> window = self.<span class="tk-f">writable</span>&lt;<span class="tk-t">Item</span>[]&gt;([]);
+		<span class="tk-k">let</span> next = <span class="tk-n">1</span>;
+		self.<span class="tk-f">open</span>(
+			<span class="tk-k">async</span> (ctx) =&gt; {
+				<span class="tk-k">const</span> { items: newest } = <span class="tk-k">await</span> items.<span class="tk-f">page</span>(NEWEST, WINDOW, ctx);
+				window.<span class="tk-f">set</span>([...newest].<span class="tk-f">reverse</span>());
+				next = (newest[<span class="tk-n">0</span>]?.id ?? <span class="tk-n">0</span>) + <span class="tk-n">1</span>;
+			},
+			() =&gt; {},
+		);
+		<span class="tk-k">return</span> {
+			items: self.<span class="tk-f">derive</span>([window], ([value]) =&gt; value),</code></pre>
+<p>A <strong>factory</strong> is synchronous and only declares; Chord activates the object afterwards. <code>self.table</code> declares the
+table. A table has no watch, so the store keeps a <strong>live window</strong> itself: <code>self.writable</code> holds the newest 50 todos,
+filled by <code>self.open</code>, which runs during activation, and exposed through <code>self.derive</code> (a writable is an in-process
+value, not a state member; a derive over it is). <code>self.open</code> is meant for <strong>natives</strong>, things opened and closed; the
+window&#39;s first read is one, and chapter VIII shows its price.</p>
+<p>Writes go through <strong>transactions</strong>: <code>self.tx(fn, ctx)</code> runs <code>fn</code> with <code>tx</code>, and what it stages is committed at once
+when <code>fn</code> returns, or not at all if it throws. The window follows after the commit; the store is the table&#39;s only
+writer, so it knows every change:</p>
+<!-- quote: plugins/lists/worker.ts -->
+<pre><code>			add: <span class="tk-k">async</span> ({ text, by }, ctx) =&gt; {
+				<span class="tk-k">const</span> item = { id: next++, text, done: <span class="tk-k">false</span>, by, at: <span class="tk-t">Date</span>.<span class="tk-f">now</span>() };
+				<span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; tx.<span class="tk-f">put</span>(items, item), ctx);
+				<span class="tk-c">// In number order: two adds may commit in either order.</span>
+				window.<span class="tk-f">set</span>([...window.value, item].<span class="tk-f">sort</span>((a, b) =&gt; a.id - b.id).<span class="tk-f">slice</span>(-WINDOW));
+				<span class="tk-k">return</span> <span class="tk-k">null</span>;</code></pre>
+<h3 id="the-view-per-principal">The view per principal</h3>
+<p><code>Todos</code> is the remote face of the store, one object per principal. Its factory gets the principal the link stamped:</p>
+<!-- quote: plugins/lists/worker.ts -->
+<pre><code>	host.<span class="tk-f">serve</span>(<span class="tk-t">Todos</span>, (_params, principal, self) =&gt; {
+		<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">Store</span>, {});
+		<span class="tk-c">// Who adds a todo comes from the principal the link stamped, never from the arguments.</span>
+		<span class="tk-k">const</span> by = principal.kind === <span class="tk-s">"user"</span> ? principal.name : principal.kind;
+		<span class="tk-k">const</span> members = {
+			items: self.<span class="tk-f">derive</span>([store.items], ([items]) =&gt; items),
+			add: (text: string, ctx: <span class="tk-t">Ctx</span>) =&gt; store.<span class="tk-f">add</span>({ text, by }, ctx),
+			tick: (tick: { id: number; done: boolean }, ctx: <span class="tk-t">Ctx</span>) =&gt; store.<span class="tk-f">tick</span>(tick, ctx),
+		};
+		<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"owner"</span>) <span class="tk-k">return</span> { variant: <span class="tk-s">"member"</span>, members };
+		<span class="tk-k">return</span> { variant: <span class="tk-s">"owner"</span>, members: { ...members, clear: (ctx: <span class="tk-t">Ctx</span>) =&gt; store.<span class="tk-f">clear</span>(ctx) } };
+	});</code></pre>
+<p><code>self.get(Store, {})</code> declares a dependency: the view goes live once the store is, and holds a <strong>reference</strong> to it
+for its whole life. <code>by</code> comes from the principal. A client could put anything in the arguments of <code>add</code>; it cannot
+change what its link stamped. That is the rule for every plugin: identity from the principal, never from arguments.</p>
+<h3 id="running-it">Running it</h3>
+<p>Step 2 asks for the groceries list twice, from a root acting as the owner and from a root of the server itself:</p>
+<!-- quote: main.ts -->
+<pre><code><span class="tk-k">const</span> OWNER = { kind: <span class="tk-s">"owner"</span> } <span class="tk-k">as</span> <span class="tk-k">const</span>;
+<span class="tk-k">await</span> app.host.<span class="tk-f">root</span>(
+	<span class="tk-k">async</span> (ctx) =&gt; {
+		<span class="tk-k">const</span> todos = <span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(<span class="tk-t">Todos</span>, { list: <span class="tk-s">"groceries"</span> });
+		<span class="tk-k">await</span> todos.<span class="tk-f">add</span>(<span class="tk-s">"milk"</span>, ctx);
+		<span class="tk-k">await</span> todos.<span class="tk-f">add</span>(<span class="tk-s">"eggs"</span>, ctx);
+		<span class="tk-k">await</span> todos.<span class="tk-f">tick</span>({ id: <span class="tk-n">1</span>, done: <span class="tk-k">true</span> }, ctx);
+		<span class="tk-k">await</span> <span class="tk-f">until</span>(() =&gt; todos.items.value[<span class="tk-n">0</span>]?.done === <span class="tk-k">true</span>);
+		console.<span class="tk-f">log</span>(<span class="tk-s">"2. as the owner:"</span>, todos.variant, <span class="tk-s">"|"</span>, <span class="tk-f">show</span>(todos.items.value));
+	},
+	context,
+	{ principal: OWNER },
+);
+<span class="tk-k">await</span> app.host.<span class="tk-f">root</span>(<span class="tk-k">async</span> (ctx) =&gt; {
+	<span class="tk-k">const</span> todos = <span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(<span class="tk-t">Todos</span>, { list: <span class="tk-s">"groceries"</span> });
+	<span class="tk-k">await</span> todos.<span class="tk-f">add</span>(<span class="tk-s">"bread"</span>, ctx);
+	<span class="tk-k">await</span> <span class="tk-f">until</span>(() =&gt; todos.items.value.length === <span class="tk-n">3</span>);
+	console.<span class="tk-f">log</span>(<span class="tk-s">"   as the server:"</span>, todos.variant, <span class="tk-s">"|"</span>, <span class="tk-f">show</span>(todos.items.value.<span class="tk-f">slice</span>(-<span class="tk-n">1</span>)));
+}, context);</code></pre>
+<!-- output: main -->
+<pre class="plain"><code>2. as the owner: owner | [x] milk (owner), [ ] eggs (owner)
+   as the server: member | [ ] bread (server)
+   workers: list|groceries
+   workers/list/list%7Cgroceries: store.sqlite, store.sqlite-shm, store.sqlite-wal</code></pre>
+<p>A <strong>root</strong> (<code>host.root(fn, ctx, { principal })</code>) is a call scope for code outside objects; its <code>ctx</code> carries the
+principal and cancellation, and the references <code>ctx.get</code> takes end when <code>fn</code> settles. The first request started the
+list&#39;s worker, <code>list|groceries</code>, with its own store in <code>workers/list/list%7Cgroceries/</code>.</p>
+<h3 id="trap-who-a-reference-acts-as">Trap: who a reference acts as</h3>
+<p>The two roots made the same call and got different todos: <code>milk (owner)</code> and <code>bread (server)</code>. <strong>A reference acts as
+whoever made it.</strong> <code>ctx.get</code> in a root or a method acts as that context&#39;s principal; <code>host.get</code>, and <code>self.get</code> in a
+<code>local</code> object, act as the host; <code>self.get</code> in a remote object acts as that object&#39;s principal (design §4). So a route
+whose request came from the owner reaches the worker as the owner (chapter III), and a guest&#39;s call cannot borrow the
+server&#39;s authority. The surprise is the reverse case: a server method that wants to act as the server towards a worker
+must not use its caller&#39;s <code>ctx.get</code>; it takes the reference with <code>self.get</code> in a local server object, or in a root of
+the server&#39;s own.</p>
+<h3 id="trap-await-what-you-start">Trap: await what you start</h3>
+<p>Every write above is awaited, and that is not style. What is started with a context ends with it: a root&#39;s scope seals
+when <code>fn</code> settles, a method&#39;s context ends with its call. A <code>void todos.add(text, ctx)</code> inside a root that returns at
+once is cancelled before it commits; Chord rejects it and reports <code>transaction_cancelled</code> through <code>onError</code>, so an
+empty <code>catch</code> cannot hide a write that never happened (design §8). Fire and forget only with a context that does not
+end, as the page does with <code>BACKGROUND_CONTEXT</code> in chapter IV.</p>
+</section>
+
+<section class="chapter" id="routes"><header class="opener"><div class="numeral">III</div><h2>Routes</h2><p class="lede">A server facet: a JSON API for command-line clients, running as whoever sent the request.</p></header>
+<p class="dropcap">The page will talk Chord over a WebSocket. A script on Mara&#39;s machine is happier with HTTP. A <strong>server facet</strong>
+contributes routes to the kit&#39;s <code>Http</code> registry, which the API&#39;s server module re-exports:</p>
+<!-- quote: src/api/v1/server.ts -->
+<pre><code><span class="tk-k">export</span> { <span class="tk-t">Http</span> } <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/node/http/index.ts"</span>;</code></pre>
+<!-- quote: plugins/lists/server.ts -->
+<pre><code><span class="tk-c">// The lists plugin on the server: a JSON API for command-line clients. A route runs as whoever sent the request (the</span>
+<span class="tk-c">// kit answered 401 before this code runs when nobody signed in), so its `ctx.get` reaches the list's worker as them.</span>
+
+<span class="tk-k">import</span> { defineFacet, <span class="tk-t">Todos</span> } <span class="tk-k">from</span> <span class="tk-s">"@todo/app/v1"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">Http</span> } <span class="tk-k">from</span> <span class="tk-s">"@todo/app/v1/server"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Http</span>, {
+		routes: {
+			<span class="tk-s">"GET /api/lists/:list"</span>: <span class="tk-k">async</span> (request, ctx) =&gt; {
+				<span class="tk-k">const</span> todos = <span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(<span class="tk-t">Todos</span>, { list: request.params.list! });
+				<span class="tk-k">return</span> { kind: <span class="tk-s">"json"</span>, value: todos.items.value };
+			},
+			<span class="tk-s">"POST /api/lists/:list"</span>: <span class="tk-k">async</span> (request, ctx) =&gt; {
+				<span class="tk-k">const</span> todos = <span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(<span class="tk-t">Todos</span>, { list: request.params.list! });
+				<span class="tk-k">await</span> todos.<span class="tk-f">add</span>(<span class="tk-t">String</span>(<span class="tk-k">await</span> request.<span class="tk-f">json</span>()), ctx);
+				<span class="tk-k">return</span> { kind: <span class="tk-s">"json"</span>, value: <span class="tk-s">"added"</span> };
+			},
+		},
+	});
+});</code></pre>
+<p>A <strong>registry</strong> is an extension point: one owner declares how contributions combine (here the kit&#39;s HTTP component
+builds a router), plugins contribute one value each. <code>self.contribute</code> in a facet adds the plugin&#39;s routes while the
+plugin is loaded. A route runs in a root with the request&#39;s principal, so <code>ctx.get(Todos, …)</code> reaches the list&#39;s
+worker as whoever signed in, and gets their variant.</p>
+<p>Step 3 is a command-line client with the owner token file:</p>
+<!-- quote: main.ts -->
+<pre><code><span class="tk-k">const</span> token = (<span class="tk-k">await</span> <span class="tk-f">readFile</span>(app.ownerTokenFile, <span class="tk-s">"utf8"</span>)).<span class="tk-f">trim</span>();
+<span class="tk-k">const</span> cli = { authorization: <span class="tk-s">`Bearer ${token}`</span> };
+<span class="tk-k">const</span> posted = <span class="tk-k">await</span> <span class="tk-f">fetch</span>(<span class="tk-s">`${url}/api/lists/groceries`</span>, {
+	method: <span class="tk-s">"POST"</span>,
+	headers: { ...cli, <span class="tk-s">"content-type"</span>: <span class="tk-s">"application/json"</span> },
+	body: JSON.<span class="tk-f">stringify</span>(<span class="tk-s">"butter"</span>),
+});
+console.<span class="tk-f">log</span>(<span class="tk-s">"3. POST /api/lists/groceries:"</span>, <span class="tk-k">await</span> posted.<span class="tk-f">json</span>());
+<span class="tk-k">const</span> listed = (<span class="tk-k">await</span> (<span class="tk-k">await</span> <span class="tk-f">fetch</span>(<span class="tk-s">`${url}/api/lists/groceries`</span>, { headers: cli })).<span class="tk-f">json</span>()) <span class="tk-k">as</span> <span class="tk-t">Item</span>[];
+console.<span class="tk-f">log</span>(<span class="tk-s">"   GET /api/lists/groceries:"</span>, <span class="tk-f">show</span>(listed));
+console.<span class="tk-f">log</span>(<span class="tk-s">"   GET without a token:"</span>, (<span class="tk-k">await</span> <span class="tk-f">fetch</span>(<span class="tk-s">`${url}/api/lists/groceries`</span>)).status);</code></pre>
+<!-- output: main -->
+<pre class="plain"><code>3. POST /api/lists/groceries: added
+   GET /api/lists/groceries: [x] milk (owner), [ ] eggs (owner), [ ] bread (server), [ ] butter (owner)
+   GET without a token: 401</code></pre>
+<p><code>butter</code> is the owner&#39;s: the route acted as the request&#39;s principal. Without a token the kit answered 401 before the
+route ran. Another machine has no token file; it <strong>pairs</strong> instead: it asks <code>POST /_chord/pair</code> for a code, the owner
+approves the code in a signed-in browser, and the client&#39;s next poll returns its token (example 54).</p>
+</section>
+
+<section class="chapter" id="page"><header class="opener"><div class="numeral">IV</div><h2>A Page</h2><p class="lede">A web entry, a web facet with React, the panels registry, and why a watch starts at the current value.</p></header>
+<p class="dropcap">A page is a client host in the browser. The kit builds its <strong>base bundle</strong> from the app&#39;s web entry at start (Chord,
+React, the app&#39;s web modules), serves the plugins&#39; web facets as small scripts beside it, and serves the page through
+the app&#39;s template (design §23, &quot;Web and TUI&quot;).</p>
+<h3 id="the-page-39-s-registry">The page&#39;s registry</h3>
+<p>Plugins put panels on the page through a registry the API&#39;s web module declares, with Chord&#39;s React hooks re-exported
+for them:</p>
+<!-- quote: src/api/v1/web.ts -->
+<pre><code><span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">ComponentType</span> } <span class="tk-k">from</span> <span class="tk-s">"react"</span>;
+<span class="tk-k">import</span> { defineRegistry } <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/index.ts"</span>;
+
+<span class="tk-k">export</span> { useHold, useWatch } <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/react/index.ts"</span>;
+
+<span class="tk-c">/** A panel of the page: its title and its React component. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Panel</span> = { <span class="tk-k">readonly</span> title: string; <span class="tk-k">readonly</span> <span class="tk-t">Component</span>: <span class="tk-t">ComponentType</span> };
+
+<span class="tk-c">/** The page's panels, one per contributing plugin, in plugin-name order. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Panels</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">Panel</span>, <span class="tk-k">readonly</span> <span class="tk-t">Panel</span>[]&gt;(<span class="tk-s">"todo.panels"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<p>The web entry serves <code>Panels</code> (its <code>compose</code> keeps the contributions in plugin-name order), renders every panel, and
+starts the page&#39;s connection:</p>
+<!-- quote: src/web/main.ts -->
+<pre><code><span class="tk-c">/** The page's own facet: it serves `Panels`, composing the contributions in plugin-name order. */</span>
+<span class="tk-k">const</span> core = <span class="tk-f">defineFacet</span>((host) =&gt; host.<span class="tk-f">serve</span>(v1web.<span class="tk-t">Panels</span>, { compose: (table) =&gt; table.<span class="tk-f">map</span>(({ value }) =&gt; value) }));
+
+<span class="tk-k">function</span> <span class="tk-t">Page</span>() {
+	<span class="tk-k">const</span> panels = <span class="tk-f">useRegistry</span>(v1web.<span class="tk-t">Panels</span>) ?? [];
+	<span class="tk-k">return</span> <span class="tk-f">h</span>(
+		<span class="tk-s">"main"</span>,
+		<span class="tk-k">null</span>,
+		<span class="tk-f">h</span>(<span class="tk-s">"h1"</span>, <span class="tk-k">null</span>, <span class="tk-s">"Todo"</span>),
+		...panels.<span class="tk-f">map</span>(({ title, <span class="tk-t">Component</span> }) =&gt; <span class="tk-f">h</span>(<span class="tk-s">"section"</span>, { key: title }, <span class="tk-f">h</span>(<span class="tk-s">"h2"</span>, <span class="tk-k">null</span>, title), <span class="tk-f">h</span>(<span class="tk-t">Component</span>))),
+	);
+}
+
+<span class="tk-k">void</span> <span class="tk-f">startPage</span>({
+	connect: () =&gt; <span class="tk-k">new</span> <span class="tk-t">WebSocket</span>(<span class="tk-s">`${location.origin.replace(/^http/, "ws")}/chord`</span>),
+	modules: { <span class="tk-s">"@todo/app/v1"</span>: v1, <span class="tk-s">"@todo/app/v1/web"</span>: v1web, react: <span class="tk-t">React</span>, <span class="tk-s">"react/jsx-runtime"</span>: jsx },
+	core: [{ name: <span class="tk-s">"@todo/web"</span>, facet: core }],
+	render: (host) =&gt; <span class="tk-f">createRoot</span>(document.<span class="tk-f">getElementById</span>(<span class="tk-s">"root"</span>)!).<span class="tk-f">render</span>(<span class="tk-f">h</span>(<span class="tk-t">HostProvider</span>, { host }, <span class="tk-f">h</span>(<span class="tk-t">Page</span>))),
+});</code></pre>
+<p><code>startPage</code> makes the page&#39;s host, connects it to <code>/chord</code> (reconnecting after drops), loads the current plugin
+scripts with the entry&#39;s core facets, and keeps them current. <code>HostProvider</code> gives the React tree that host.</p>
+<h3 id="the-web-facet">The web facet</h3>
+<p><code>plugins/lists/web.ts</code> contributes a panel. Its component holds the list&#39;s <code>Todos</code> while it is mounted and re-renders
+when its items change:</p>
+<!-- quote: plugins/lists/web.ts -->
+<pre><code><span class="tk-k">function</span> <span class="tk-t">TodoList</span>() {
+	<span class="tk-k">const</span> todos = <span class="tk-f">useHold</span>(<span class="tk-t">Todos</span>, { list: location.hash.<span class="tk-f">slice</span>(<span class="tk-n">1</span>) || <span class="tk-s">"groceries"</span> });
+	<span class="tk-k">const</span> items = <span class="tk-f">useWatch</span>(todos?.items) ?? [];
+	<span class="tk-k">const</span> [text, setText] = <span class="tk-f">useState</span>(<span class="tk-s">""</span>);
+	<span class="tk-k">const</span> add = (event: { <span class="tk-f">preventDefault</span>(): <span class="tk-k">void</span> }) =&gt; {
+		event.<span class="tk-f">preventDefault</span>();
+		<span class="tk-k">if</span> (todos === <span class="tk-k">undefined</span> || text.<span class="tk-f">trim</span>() === <span class="tk-s">""</span>) <span class="tk-k">return</span>;
+		<span class="tk-k">void</span> todos.<span class="tk-f">add</span>(text, context);
+		<span class="tk-f">setText</span>(<span class="tk-s">""</span>);
+	};
+	<span class="tk-k">return</span> <span class="tk-f">h</span>(
+		<span class="tk-s">"div"</span>,
+		{ className: <span class="tk-s">"lists-panel"</span> },
+		<span class="tk-f">h</span>(
+			<span class="tk-s">"ul"</span>,
+			<span class="tk-k">null</span>,
+			...items.<span class="tk-f">map</span>((item) =&gt;
+				<span class="tk-f">h</span>(
+					<span class="tk-s">"li"</span>,
+					{
+						key: item.id,
+						className: item.done ? <span class="tk-s">"lists-done"</span> : <span class="tk-k">undefined</span>,
+						onClick: () =&gt; <span class="tk-k">void</span> todos?.<span class="tk-f">tick</span>({ id: item.id, done: !item.done }, context),
+					},
+					item.text,
+					<span class="tk-f">h</span>(<span class="tk-s">"span"</span>, { className: <span class="tk-s">"lists-by"</span> }, item.by),
+				),
+			),
+		),
+		<span class="tk-f">h</span>(
+			<span class="tk-s">"form"</span>,
+			{ onSubmit: add },
+			<span class="tk-f">h</span>(<span class="tk-s">"input"</span>, {
+				value: text,
+				placeholder: <span class="tk-s">"Add a todo"</span>,
+				onChange: (event: { target: { value: string } }) =&gt; <span class="tk-f">setText</span>(event.target.value),
+			}),
+		),
+		todos?.variant === <span class="tk-s">"owner"</span>
+			? <span class="tk-f">h</span>(<span class="tk-s">"button"</span>, { <span class="tk-k">type</span>: <span class="tk-s">"button"</span>, onClick: () =&gt; <span class="tk-k">void</span> todos.<span class="tk-f">clear</span>(context) }, <span class="tk-s">"Clear done"</span>)
+			: <span class="tk-k">null</span>,
+	);
+}
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; self.<span class="tk-f">contribute</span>(<span class="tk-t">Panels</span>, { title: <span class="tk-s">"Groceries"</span>, <span class="tk-t">Component</span>: <span class="tk-t">TodoList</span> }));</code></pre>
+<p><code>useHold</code> holds a reference while the component is mounted and releases it on unmount; it is <code>undefined</code> on the first
+render. <code>useWatch</code> follows a member. Clicks call methods with <code>BACKGROUND_CONTEXT</code>, which never ends, so a click&#39;s call
+is not cancelled when the handler returns. <code>todos?.variant === &quot;owner&quot;</code> narrows the reference: only the owner&#39;s has
+<code>clear</code>, and TypeScript knows it. The panel&#39;s look reads the active theme&#39;s CSS variables, with class names prefixed
+by the plugin&#39;s name (a <code>*.module.css</code> file would scope them instead):</p>
+<!-- quote: plugins/lists/lists.css -->
+<pre class="plain"><code>.lists-panel input { width: 100%; box-sizing: border-box; padding: 0.4rem; background: var(--bg); color: var(--fg);
+	border: 1px solid var(--accent); border-radius: var(--radius, 0); }</code></pre>
+<p>The template in <code>start.ts</code> puts the assets the kit made into the app&#39;s own HTML:</p>
+<!-- quote: start.ts -->
+<pre><code><span class="tk-k">function</span> <span class="tk-f">page</span>(request: { <span class="tk-k">readonly</span> nonce: string }, assets: <span class="tk-t">PageAssets</span>): string {
+	<span class="tk-k">return</span> <span class="tk-s">`&lt;!doctype html&gt;&lt;html lang="en"&gt;&lt;head&gt;&lt;meta charset="utf-8"&gt;&lt;title&gt;Todo&lt;/title&gt;${pageScripts(assets, request.nonce)}&lt;/head&gt;&lt;body&gt;&lt;div id="root"&gt;&lt;/div&gt;&lt;/body&gt;&lt;/html&gt;`</span>;
+}</code></pre>
+<h3 id="running-it">Running it</h3>
+<p>Step 4 reads the page as a browser gets it and watches the list from the server:</p>
+<!-- quote: main.ts -->
+<pre><code><span class="tk-k">const</span> html = <span class="tk-k">await</span> (<span class="tk-k">await</span> <span class="tk-f">fetch</span>(url, { headers: cli })).<span class="tk-f">text</span>();
+console.<span class="tk-f">log</span>(<span class="tk-s">"4. the page loads:"</span>);
+<span class="tk-k">for</span> (<span class="tk-k">const</span> [, asset] <span class="tk-k">of</span> html.<span class="tk-f">matchAll</span>(/(?:src|href)=<span class="tk-s">"([^"</span>]+)"/g)) console.<span class="tk-f">log</span>(<span class="tk-s">`   ${hashless(asset!)}`</span>);
+<span class="tk-k">const</span> groceries = <span class="tk-k">await</span> app.host.<span class="tk-f">get</span>(<span class="tk-t">Todos</span>, { list: <span class="tk-s">"groceries"</span> }, context);
+<span class="tk-k">const</span> watch = <span class="tk-k">await</span> groceries.items.<span class="tk-f">watch</span>(context);
+console.<span class="tk-f">log</span>(<span class="tk-s">"   watch.value:"</span>, <span class="tk-f">done</span>(watch.value), <span class="tk-s">"done"</span>);
+<span class="tk-k">const</span> changed = <span class="tk-t">Promise</span>.<span class="tk-f">withResolvers</span>&lt;<span class="tk-k">readonly</span> <span class="tk-t">Item</span>[]&gt;();
+watch.<span class="tk-f">start</span>(<span class="tk-k">async</span> (call) =&gt; {
+	<span class="tk-k">if</span> (call.kind === <span class="tk-s">"value"</span>) changed.<span class="tk-f">resolve</span>(call.value);
+});
+<span class="tk-k">await</span> groceries.<span class="tk-f">tick</span>({ id: <span class="tk-n">2</span>, done: <span class="tk-k">true</span> }, context);
+console.<span class="tk-f">log</span>(<span class="tk-s">"   the listener's first call:"</span>, <span class="tk-f">done</span>(<span class="tk-k">await</span> changed.promise), <span class="tk-s">"done"</span>);
+<span class="tk-k">await</span> watch.<span class="tk-f">stop</span>();</code></pre>
+<!-- output: main -->
+<pre class="plain"><code>4. the page loads:
+   /_chord/web/base.&lt;hash&gt;.css
+   /_chord/web/plugin/@todo~lists.&lt;hash&gt;.css
+   /_chord/web/plugins.&lt;hash&gt;.js
+   /_chord/web/base.&lt;hash&gt;.js
+   watch.value: 1 done
+   the listener's first call: 2 done</code></pre>
+<p>The page is the template, the base bundle (<code>base.&lt;hash&gt;.js</code> and <code>.css</code>), one combined file with every plugin&#39;s web
+script and one stylesheet per plugin with CSS: two scripts on a cold load, cacheable forever by their hashes. After the
+owner opened the owner link in Chromium, the page shows the list:</p>
+<figure class="fig"><p><img src="screens/page.png" alt="The todo page"></p>
+<figcaption><span class="fignum">Figure 1.</span> The page after the owner signed in: the groceries list, live, each todo with who added it; the owner&#39;s variant shows &quot;Clear done&quot;.</figcaption></figure>
+<h3 id="trap-a-watch-starts-at-the-current-value">Trap: a watch starts at the current value</h3>
+<p><code>watch.value</code> was the value when the watch was taken (one todo done); the listener&#39;s first call was the change after
+it (two done). <strong>A watch&#39;s listener gets only changes.</strong> Code that renders from a listener alone draws nothing until
+the first change. Read <code>handle.value</code> first, then <code>start</code> (design §11, &quot;Watchables&quot;). <code>useWatch</code> and the terminal&#39;s
+<code>TuiScope.watch</code> do this for you; <code>self.on</code>, an object&#39;s routine, is the one consumer whose first call is the current
+value.</p>
+</section>
+
+<section class="chapter" id="terminal"><header class="opener"><div class="numeral">V</div><h2>A Terminal</h2><p class="lede">The same plugin in a terminal: a terminal facet with TuiScope, run in the launcher&#39;s sandbox.</p></header>
+<p class="dropcap">The terminal client is a client host too, run by a <strong>launcher</strong>: a trusted Node program that signs in, downloads the
+terminal&#39;s base bundle and the plugins&#39; terminal scripts, and runs them in a <strong>sandbox</strong>, a child process with no file
+system, network, processes or terminal of its own. The launcher relays its link and draws its frames. Code from the
+server never touches Mara&#39;s machine directly (decision &quot;The terminal&#39;s sandbox is a child process&quot;).</p>
+<p>The API&#39;s terminal module declares the parts of the screen:</p>
+<!-- quote: src/api/v1/tui.ts -->
+<pre><code><span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Screen</span> = {
+	<span class="tk-k">readonly</span> title: string;
+	<span class="tk-k">readonly</span> open: (scope: <span class="tk-t">TuiScope</span>, theme: <span class="tk-t">TerminalTheme</span>) =&gt; () =&gt; <span class="tk-k">readonly</span> string[];
+};
+
+<span class="tk-c">/** The terminal's parts, in plugin-name order. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Screens</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">Screen</span>, <span class="tk-k">readonly</span> <span class="tk-t">Screen</span>[]&gt;(<span class="tk-s">"todo.screens"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<p>The terminal entry serves <code>Screens</code> and redraws on every change. A <strong><code>TuiScope</code></strong> holds references, follows values and
+registries, calls one callback on every change, and releases everything when disposed; it is the terminal&#39;s
+counterpart of the React hooks, for any terminal library:</p>
+<!-- quote: src/tui/main.ts -->
+<pre><code><span class="tk-c">/** The terminal's own facet: it serves `Screens`, composing the contributions in plugin-name order. */</span>
+<span class="tk-k">const</span> core = <span class="tk-f">defineFacet</span>((host) =&gt; host.<span class="tk-f">serve</span>(v1tui.<span class="tk-t">Screens</span>, { compose: (table) =&gt; table.<span class="tk-f">map</span>(({ value }) =&gt; value) }));
+
+<span class="tk-k">void</span> <span class="tk-f">startTerminalRuntime</span>({
+	modules: { <span class="tk-s">"@todo/app/v1"</span>: v1, <span class="tk-s">"@todo/app/v1/tui"</span>: v1tui },
+	core: [{ name: <span class="tk-s">"@todo/tui"</span>, facet: core }],
+	render: (runtime) =&gt; {
+		<span class="tk-k">const</span> { terminal, theme } = runtime;
+		<span class="tk-k">const</span> screens = <span class="tk-k">new</span> <span class="tk-t">TuiScope</span>(runtime.host, () =&gt; <span class="tk-f">draw</span>()).<span class="tk-f">registry</span>(v1tui.<span class="tk-t">Screens</span>);
+		<span class="tk-k">let</span> opened: { screens: <span class="tk-k">readonly</span> v1tui.<span class="tk-t">Screen</span>[]; scope: <span class="tk-t">TuiScope</span>; lines: (() =&gt; <span class="tk-k">readonly</span> string[])[] } | <span class="tk-k">undefined</span>;
+		<span class="tk-k">const</span> draw = (): <span class="tk-k">void</span> =&gt; {
+			<span class="tk-k">const</span> current = <span class="tk-f">screens</span>() ?? [];
+			<span class="tk-k">if</span> (opened?.screens !== current) {
+				opened?.scope.<span class="tk-f">dispose</span>();
+				<span class="tk-k">const</span> scope = <span class="tk-k">new</span> <span class="tk-t">TuiScope</span>(runtime.host, () =&gt; <span class="tk-f">draw</span>());
+				opened = { screens: current, scope, lines: current.<span class="tk-f">map</span>((screen) =&gt; screen.<span class="tk-f">open</span>(scope, theme)) };
+			}
+			<span class="tk-k">const</span> lines = current.<span class="tk-f">flatMap</span>((screen, n) =&gt; [theme.<span class="tk-f">fg</span>(<span class="tk-s">"accent"</span>, screen.title), ...opened!.lines[n]!()]);
+			terminal.<span class="tk-f">write</span>(<span class="tk-s">`\x1b[2J\x1b[H${lines.join("\r\n")}\r\n`</span>);
+		};
+		theme.<span class="tk-f">onChange</span>(draw);
+		terminal.<span class="tk-f">onInput</span>((data) =&gt; {
+			<span class="tk-k">if</span> (data === <span class="tk-s">"q"</span>) runtime.<span class="tk-f">exit</span>(<span class="tk-n">0</span>);
+		});
+		<span class="tk-f">draw</span>();
+	},
+});</code></pre>
+<p>When a reload changes <code>Screens</code>, the entry disposes the old scope and opens the screens again. The lists plugin&#39;s
+terminal facet is a few lines:</p>
+<!-- quote: plugins/lists/tui.ts -->
+<pre><code><span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt;
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Screens</span>, {
+		title: <span class="tk-s">"Groceries"</span>,
+		open: (scope, theme) =&gt; {
+			<span class="tk-k">const</span> items = scope.<span class="tk-f">watch</span>(scope.<span class="tk-f">hold</span>(<span class="tk-t">Todos</span>, { list: <span class="tk-s">"groceries"</span> }).items);
+			<span class="tk-k">return</span> () =&gt;
+				(<span class="tk-f">items</span>() ?? []).<span class="tk-f">map</span>((item) =&gt;
+					item.done ? theme.<span class="tk-f">fg</span>(<span class="tk-s">"muted"</span>, <span class="tk-s">`[x] ${item.text}`</span>) : <span class="tk-s">`[ ] ${item.text} ${theme.fg("muted", item.by)}`</span>,
+				);
+		},
+	}),
+);</code></pre>
+<p><code>theme.fg(&quot;muted&quot;, …)</code> colours by role, never by a fixed colour. Step 5 runs the launcher on a scripted terminal:</p>
+<!-- quote: main.ts -->
+<pre><code><span class="tk-k">if</span> (<span class="tk-f">sandboxAvailable</span>()) {
+	<span class="tk-k">const</span> output = <span class="tk-t">Object</span>.<span class="tk-f">assign</span>(<span class="tk-k">new</span> <span class="tk-t">PassThrough</span>(), { columns: <span class="tk-n">60</span>, rows: <span class="tk-n">12</span> });
+	output.<span class="tk-f">on</span>(<span class="tk-s">"data"</span>, (chunk: <span class="tk-t">Buffer</span>) =&gt; frames.<span class="tk-f">push</span>(chunk.<span class="tk-f">toString</span>()));
+	terminal = <span class="tk-k">await</span> <span class="tk-f">startTerminal</span>({
+		url,
+		credentials: { kind: <span class="tk-s">"file"</span>, path: app.ownerTokenFile },
+		input: <span class="tk-k">new</span> <span class="tk-t">PassThrough</span>(),
+		output,
+		colors: <span class="tk-s">"truecolor"</span>,
+	});
+	<span class="tk-k">await</span> <span class="tk-f">until</span>(() =&gt; <span class="tk-f">screen</span>(frames).<span class="tk-f">includes</span>(<span class="tk-s">"butter"</span>));
+	console.<span class="tk-f">log</span>(<span class="tk-s">"5. the terminal shows:"</span>);
+	<span class="tk-k">for</span> (<span class="tk-k">const</span> line <span class="tk-k">of</span> <span class="tk-f">screen</span>(frames).<span class="tk-f">trim</span>().<span class="tk-f">split</span>(<span class="tk-s">"\r\n"</span>)) console.<span class="tk-f">log</span>(<span class="tk-s">`   ${line}`</span>);
+} <span class="tk-k">else</span> console.<span class="tk-f">log</span>(<span class="tk-s">"5. (the terminal client needs Node 26.5.1 or later for its sandbox)"</span>);</code></pre>
+<!-- output: tui -->
+<pre class="plain"><code>5. the terminal shows:
+   Groceries
+   [x] milk
+   [x] eggs
+   [ ] bread server
+   [ ] butter owner</code></pre>
+</section>
+
+<section class="chapter" id="theme"><header class="opener"><div class="numeral">VI</div><h2>A Theme</h2><p class="lede">A theme is data in a registry; a plugin added while the app runs restyles the page and the terminal in place.</p></header>
+<p class="dropcap">Mara wants the evening look. A theme is data: colours by role, a few web extras, terminal overrides. The kit&#39;s <code>Themes</code>
+registry collects them; each user picks one dark and one light theme, the system preference chooses (decision &quot;Looks
+and themes&quot;). The Harbor theme is a plugin with its data in one file:</p>
+<!-- quote: later/harbor/theme.ts -->
+<pre><code><span class="tk-k">export</span> <span class="tk-k">const</span> harbor: <span class="tk-t">Theme</span> = {
+	id: <span class="tk-s">"harbor"</span>,
+	name: <span class="tk-s">"Harbor"</span>,
+	mode: <span class="tk-s">"dark"</span>,
+	colors: {
+		accent: <span class="tk-s">"#f2a65a"</span>,
+		bg: <span class="tk-s">"#12232e"</span>,
+		fg: <span class="tk-s">"#d8e2e8"</span>,
+		muted: <span class="tk-s">"#6b8796"</span>,
+		error: <span class="tk-s">"#e5676b"</span>,
+		warning: <span class="tk-s">"#e9c46a"</span>,
+		success: <span class="tk-s">"#7fb685"</span>,
+	},
+	web: { radius: <span class="tk-s">"6px"</span> },
+	tui: { muted: <span class="tk-s">"66"</span> },
+};</code></pre>
+<p>and two facets contributing it, one for pages and one for terminals (registries are per host, so each kind gets its
+own contribution):</p>
+<!-- quote: later/harbor/web.ts -->
+<pre><code><span class="tk-k">import</span> { defineFacet, <span class="tk-t">Themes</span> } <span class="tk-k">from</span> <span class="tk-s">"@todo/app/v1"</span>;
+<span class="tk-k">import</span> { harbor } <span class="tk-k">from</span> <span class="tk-s">"./theme.ts"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; self.<span class="tk-f">contribute</span>(<span class="tk-t">Themes</span>, harbor));</code></pre>
+<p>The plugin is not in the app&#39;s root at start. Step 6 copies it in while everything runs and applies the change:</p>
+<!-- quote: main.ts -->
+<pre><code><span class="tk-k">await</span> <span class="tk-f">cp</span>(<span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./later/harbor/"</span>, <span class="tk-k">import</span>.meta.url)), <span class="tk-f">join</span>(root, <span class="tk-s">"harbor"</span>), { recursive: <span class="tk-k">true</span> });
+<span class="tk-k">await</span> <span class="tk-f">until</span>(() =&gt; app.plugins.state.value.set);
+<span class="tk-k">const</span> added = <span class="tk-k">await</span> app.<span class="tk-f">applyChanges</span>(context);
+console.<span class="tk-f">log</span>(<span class="tk-s">"6. harbor added, rolled out to:"</span>, added.steps.<span class="tk-f">map</span>(({ name }) =&gt; name).<span class="tk-f">join</span>(<span class="tk-s">", "</span>));
+<span class="tk-k">const</span> scripts = <span class="tk-k">await</span> app.host.<span class="tk-f">get</span>(<span class="tk-t">WebScripts</span>, {}, context);
+console.<span class="tk-f">log</span>(<span class="tk-s">"   the page's plugins:"</span>, scripts.set.value.plugins.<span class="tk-f">map</span>(({ name }) =&gt; name).<span class="tk-f">join</span>(<span class="tk-s">", "</span>));
+scripts.<span class="tk-f">release</span>();</code></pre>
+<!-- output: main -->
+<pre class="plain"><code>6. harbor added, rolled out to: server, list, web, tui
+   the page's plugins: @todo/harbor, @todo/lists</code></pre>
+<!-- output: tui -->
+<pre class="plain"><code>   the terminal redraws its title in Harbor's accent: "\u001b[38;2;242;166;90mGroceries"</code></pre>
+<p>A directory appearing in a plugin root marks the plugin set changed (<code>app.plugins.state.value.set</code>); nothing happens
+until <code>applyChanges</code>, which builds the new plugin and rolls it out: the server, the list workers, then the page and
+terminal surfaces. The page&#39;s host learned of the new script set through Chord, fetched Harbor&#39;s web script and loaded
+it in place; the terminal did the same with its terminal script and redrew in Harbor&#39;s accent. With the browser
+preferring dark:</p>
+<figure class="fig"><p><img src="screens/harbor.png" alt="The page in the Harbor theme"></p>
+<figcaption><span class="fignum">Figure 2.</span> The same page after the Harbor plugin was added and applied: no reload, the CSS variables on <code>:root</code> changed.</figcaption></figure>
+</section>
+
+<section class="chapter" id="user"><header class="opener"><div class="numeral">VII</div><h2>A Second User</h2><p class="lede">A one-line login plugin, a client host of Ada&#39;s, and why a host must load before it asks.</p></header>
+<p class="dropcap">Ada joins with a name. The kit ships an ephemeral login as a facet (<code>POST /_chord/login { name }</code> signs in as <code>{ kind: &quot;user&quot;, id, name }</code>, no account stored); the API&#39;s server module exports it for the app&#39;s principal type:</p>
+<!-- quote: src/api/v1/server.ts -->
+<pre><code><span class="tk-c">/** The kit's ephemeral login: `POST /_chord/login { name }` signs in as `{ kind: "user", id, name }`. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> login = <span class="tk-f">ephemeralLoginFacet</span>&lt;<span class="tk-t">TodoPrincipal</span>&gt;();</code></pre>
+<p>and the app adds it as a <strong>single-file plugin</strong>, a file named <code>&lt;name&gt;.&lt;kind&gt;.ts</code> at the root&#39;s top:</p>
+<!-- quote: plugins/login.server.ts -->
+<pre><code><span class="tk-c">// The kit's pick-a-name login, added to the app as a single-file plugin: a server facet, one line.</span>
+
+<span class="tk-k">import</span> { login } <span class="tk-k">from</span> <span class="tk-s">"@todo/app/v1/server"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> login;</code></pre>
+<p>Step 7 does what Ada&#39;s page does: logs in, then connects a client host of her own over the links endpoint with her
+cookie:</p>
+<!-- quote: main.ts -->
+<pre><code><span class="tk-k">const</span> login = <span class="tk-k">await</span> <span class="tk-f">fetch</span>(<span class="tk-s">`${url}/_chord/login`</span>, {
+	method: <span class="tk-s">"POST"</span>,
+	headers: { <span class="tk-s">"content-type"</span>: <span class="tk-s">"application/json"</span> },
+	body: JSON.<span class="tk-f">stringify</span>({ name: <span class="tk-s">"ada"</span> }),
+});
+<span class="tk-k">const</span> adaCookie = login.headers.<span class="tk-f">get</span>(<span class="tk-s">"set-cookie"</span>)!.<span class="tk-f">split</span>(<span class="tk-s">";"</span>)[<span class="tk-n">0</span>]!;
+<span class="tk-k">const</span> ada = <span class="tk-f">createHost</span>&lt;<span class="tk-t">TodoPrincipal</span>&gt;({ onError: (error) =&gt; console.<span class="tk-f">error</span>(<span class="tk-s">"ada:"</span>, error.kind) });
+<span class="tk-k">try</span> {
+	ada.<span class="tk-f">hold</span>(<span class="tk-t">Todos</span>, { list: <span class="tk-s">"groceries"</span> }, context);
+} <span class="tk-k">catch</span> (error) {
+	console.<span class="tk-f">log</span>(<span class="tk-s">"7. ada's hold before load:"</span>, (error <span class="tk-k">as</span> <span class="tk-t">Error</span>).message);
+}
+<span class="tk-k">await</span> ada.<span class="tk-f">load</span>([], context);
+<span class="tk-k">const</span> socket = <span class="tk-k">new</span> <span class="tk-t">WebSocket</span>(<span class="tk-s">`${url.replace(/^http/, "ws")}/chord`</span>, { headers: { cookie: adaCookie } });
+ada.<span class="tk-f">connect</span>(<span class="tk-f">webSocketLink</span>(socket <span class="tk-k">as</span> <span class="tk-k">unknown</span> <span class="tk-k">as</span> <span class="tk-t">WebSocketLike</span>), { principal: { kind: <span class="tk-s">"server"</span> } }, context);
+<span class="tk-k">const</span> adas = <span class="tk-k">await</span> ada.<span class="tk-f">get</span>(<span class="tk-t">Todos</span>, { list: <span class="tk-s">"groceries"</span> }, context);
+<span class="tk-k">await</span> adas.<span class="tk-f">add</span>(<span class="tk-s">"coffee"</span>, context);
+console.<span class="tk-f">log</span>(<span class="tk-s">"   ada's variant:"</span>, adas.variant);
+<span class="tk-k">if</span> (adas.variant === <span class="tk-s">"member"</span>) {
+	<span class="tk-c">// @ts-expect-error `clear` is the owner's: TypeScript refuses it, and so does the worker.</span>
+	<span class="tk-k">const</span> clearing: <span class="tk-t">Promise</span>&lt;<span class="tk-k">null</span>&gt; = adas.<span class="tk-f">clear</span>(context);
+	<span class="tk-k">await</span> clearing.<span class="tk-k">catch</span>((error: <span class="tk-t">ChordError</span>) =&gt; console.<span class="tk-f">log</span>(<span class="tk-s">"   ada's clear:"</span>, <span class="tk-s">`${error.code}/${error.reason}`</span>));
+}
+<span class="tk-k">await</span> <span class="tk-f">until</span>(() =&gt; groceries.items.value.<span class="tk-f">some</span>(({ by }) =&gt; by === <span class="tk-s">"ada"</span>));
+console.<span class="tk-f">log</span>(<span class="tk-s">"   the server's reference sees:"</span>, <span class="tk-f">show</span>(groceries.items.value.<span class="tk-f">slice</span>(-<span class="tk-n">1</span>)));</code></pre>
+<!-- output: main -->
+<pre class="plain"><code>7. ada's hold before load: todo.todos: the host has not loaded; call host.load first (a host with nothing to load calls load([]))
+   ada's variant: member
+   ada's clear: invalid/member
+   the server's reference sees: [ ] coffee (ada)</code></pre>
+<h3 id="trap-load-before-use">Trap: load before use</h3>
+<p>Ada&#39;s first <code>hold</code> threw at once: <strong>a host serves and binds nothing before <code>load</code>.</strong> Requests made before it would wait
+for a publication nobody started, so Chord refuses them with <code>not_ready</code> (&quot;call <code>host.load</code> first&quot;); a client with no
+plugins of its own calls <code>load([])</code> (design §3). <code>startPage</code>, the launcher and the kit do it for you; code that makes
+a host itself must not forget.</p>
+<p>Ada got the <code>member</code> variant; her <code>clear</code> is refused twice, by TypeScript (the <code>@ts-expect-error</code>) and by the worker
+(<code>invalid/member</code>), because what a reference offers is decided by the provider&#39;s variant, not by the caller&#39;s code.
+Her todo is hers: <code>coffee (ada)</code>.</p>
+</section>
+
+<section class="chapter" id="reload"><header class="opener"><div class="numeral">VIII</div><h2>Changing Code</h2><p class="lede">An edit while Ada is connected: the watcher marks, applyChanges rolls out, every object takes its fate.</p></header>
+<p class="dropcap">Ada typed &quot;  tea  &quot; with spaces, and an empty add should do nothing. The fix is in the lists plugin&#39;s worker facet.
+Step 8 makes the edit in the running app&#39;s copy of the plugins, as an editor or an agent would, and applies it:</p>
+<!-- quote: main.ts -->
+<pre><code><span class="tk-k">const</span> BEFORE = <span class="tk-s">"add: (text: string, ctx: Ctx) =&gt; store.add({ text, by }, ctx),"</span>;
+<span class="tk-k">const</span> AFTER = <span class="tk-s">`add: async (text: string, ctx: Ctx) =&gt; {
+				if (text.trim() !== "") await store.add({ text: text.trim(), by }, ctx);
+				return null;
+			},`</span>;
+<span class="tk-k">const</span> workerFile = <span class="tk-f">join</span>(root, <span class="tk-s">"lists"</span>, <span class="tk-s">"worker.ts"</span>);
+<span class="tk-k">await</span> <span class="tk-f">writeFile</span>(workerFile, (<span class="tk-k">await</span> <span class="tk-f">readFile</span>(workerFile, <span class="tk-s">"utf8"</span>)).<span class="tk-f">replace</span>(BEFORE, AFTER));
+<span class="tk-k">await</span> <span class="tk-f">until</span>(() =&gt; app.plugins.state.value.dirty.<span class="tk-f">includes</span>(<span class="tk-s">"@todo/lists"</span>));
+<span class="tk-k">const</span> applied = <span class="tk-k">await</span> app.<span class="tk-f">applyChanges</span>(context);
+console.<span class="tk-f">log</span>(<span class="tk-s">"8. lists changed, rolled out to:"</span>, applied.steps.<span class="tk-f">map</span>(({ name }) =&gt; name).<span class="tk-f">join</span>(<span class="tk-s">", "</span>));
+<span class="tk-k">for</span> (<span class="tk-k">const</span> host <span class="tk-k">of</span> applied.steps.<span class="tk-f">find</span>(({ name }) =&gt; name === <span class="tk-s">"list"</span>)!.hosts) {
+	<span class="tk-k">const</span> fates = <span class="tk-s">"report"</span> <span class="tk-k">in</span> host ? host.report.objects.<span class="tk-f">map</span>(({ object, kind }) =&gt; <span class="tk-s">`${object} ${kind}`</span>) : [];
+	console.<span class="tk-f">log</span>(<span class="tk-s">`   on ${host.host}:`</span>, [...<span class="tk-k">new</span> <span class="tk-t">Set</span>(fates)].<span class="tk-f">join</span>(<span class="tk-s">", "</span>));
+}
+<span class="tk-k">await</span> adas.<span class="tk-f">add</span>(<span class="tk-s">"  tea  "</span>, context);
+<span class="tk-k">await</span> <span class="tk-f">until</span>(() =&gt; groceries.items.value.<span class="tk-f">at</span>(-<span class="tk-n">1</span>)?.text === <span class="tk-s">"tea"</span>);
+console.<span class="tk-f">log</span>(<span class="tk-s">"   ada adds '  tea  ':"</span>, <span class="tk-f">show</span>(groceries.items.value.<span class="tk-f">slice</span>(-<span class="tk-n">1</span>)));
+<span class="tk-k">const</span> count = groceries.items.value.length;
+<span class="tk-k">await</span> adas.<span class="tk-f">add</span>(<span class="tk-s">" "</span>, context);
+console.<span class="tk-f">log</span>(<span class="tk-s">"   ada adds ' ':"</span>, groceries.items.value.length === count ? <span class="tk-s">"ignored"</span> : <span class="tk-s">"added"</span>);</code></pre>
+<!-- output: main -->
+<pre class="plain"><code>8. lists changed, rolled out to: server, list, web, tui
+   on list|groceries: todo.store restarted, todo.todos(groceries) parked
+   ada adds '  tea  ': [ ] tea (ada)
+   ada adds ' ': ignored</code></pre>
+<p>The watcher marked <code>@todo/lists</code> dirty when the file changed; <code>applyChanges</code> rebuilt it (one esbuild call per facet)
+and rolled it out host by host. On each host Chord stages the new code (it runs the new factories against a recording
+<code>self</code> to see what they declare), commits it in one step, and gives each object of the changed plugin its <strong>fate</strong>
+(design §21):</p>
+<table>
+<thead>
+<tr>
+<th>The object</th>
+<th>Fate</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>opens no natives, and neither does its new factory</td>
+<td><strong>swapped</strong> in place: new methods, the same documents; running calls finish on the old code</td>
+</tr>
+<tr>
+<td>opens natives</td>
+<td><strong>restarted</strong>: calls wait, running ones finish, natives close and open again with the new code</td>
+</tr>
+<tr>
+<td>its new code waits for a dependency</td>
+<td><strong>parked</strong> until the dependency is live</td>
+</tr>
+<tr>
+<td>its type was removed</td>
+<td><strong>ended</strong>; its holders wait until something serves it again</td>
+</tr>
+</tbody></table>
+<p>The store opens a native (the window&#39;s first read), so it restarted and read its window again from the table; the
+views waited for it (parked), then went on with the new code. Ada&#39;s reference never noticed more than a moment of
+<code>loading</code>, and her next add was trimmed. Had the edit broken the plugin, that plugin alone would have kept its old code
+and the report would name the error.</p>
+<p>A contract that changes shape needs a new <code>version</code>; old consumers keep working when the provider maps their version
+(<code>accepts</code>), otherwise they wait with <code>contract_mismatch</code> until they reload. A stored document or table that changes
+shape bumps its own version with a migration. Contract versions protect callers, storage versions protect data.</p>
+<h3 id="on-the-page">On the page</h3>
+<p>An edit of a web facet applies in place too: the page fetches the one changed script and reloads its host, with no
+page reload. <code>screenshots.ts</code> adds a count of open todos to the panel while half a todo is typed:</p>
+<!-- quote: screenshots.ts -->
+<pre><code><span class="tk-k">const</span> BEFORE = <span class="tk-s">`h(
+			"ul",`</span>;</code></pre>
+<!-- output: screenshots -->
+<pre class="plain"><code>wrote docs/tutorial/screens/page.png
+wrote docs/tutorial/screens/harbor.png
+wrote docs/tutorial/screens/edited.png
+typed "oat mi"; after the edit: ""
+the page did not reload: true</code></pre>
+<figure class="fig"><p><img src="screens/edited.png" alt="The page after the edit"></p>
+<figcaption><span class="fignum">Figure 3.</span> After the edit of the web facet, applied in place: the count appears; the half-typed &quot;oat mi&quot; is gone, because the panel&#39;s component is new code and React mounted it anew.</figcaption></figure>
+<p>The page did not reload, and everything outside the changed plugin&#39;s components kept its state. The changed panel&#39;s
+own React state did not: a new component function is a new component to React.</p>
+</section>
+
+<section class="chapter" id="export"><header class="opener"><div class="numeral">IX</div><h2>Moving a List</h2><p class="lede">Export a worker&#39;s data while it runs, import it under another address.</p></header>
+<p class="dropcap">A list&#39;s data is what its worker created: its store and its files. Step 9 exports the groceries list while its worker
+runs and imports it as a new list:</p>
+<!-- quote: main.ts -->
+<pre><code><span class="tk-k">const</span> archive = <span class="tk-f">join</span>(base, <span class="tk-s">"groceries.tar"</span>);
+<span class="tk-k">await</span> app.<span class="tk-f">exportData</span>(<span class="tk-t">List</span>({ id: <span class="tk-s">"groceries"</span> }), archive, context);
+console.<span class="tk-f">log</span>(<span class="tk-s">"9. exported groceries:"</span>, (<span class="tk-k">await</span> <span class="tk-f">readFile</span>(archive)).length &gt; <span class="tk-n">0</span> ? <span class="tk-s">"an archive"</span> : <span class="tk-s">"nothing"</span>);
+<span class="tk-k">await</span> app.<span class="tk-f">importData</span>(archive, <span class="tk-t">List</span>({ id: <span class="tk-s">"picnic"</span> }), context);
+<span class="tk-k">const</span> picnic = <span class="tk-k">await</span> app.host.<span class="tk-f">get</span>(<span class="tk-t">Todos</span>, { list: <span class="tk-s">"picnic"</span> }, context);
+console.<span class="tk-f">log</span>(<span class="tk-s">"   imported as picnic:"</span>, <span class="tk-f">show</span>(picnic.items.value));
+picnic.<span class="tk-f">release</span>();
+<span class="tk-k">await</span> app.<span class="tk-f">importData</span>(archive, <span class="tk-t">List</span>({ id: <span class="tk-s">"groceries"</span> }), context).<span class="tk-k">catch</span>((error: <span class="tk-t">Error</span>) =&gt; {
+	console.<span class="tk-f">log</span>(<span class="tk-s">"   importing over groceries:"</span>, error.message.<span class="tk-f">replace</span>(base, <span class="tk-s">"…"</span>));
+});</code></pre>
+<!-- output: main -->
+<pre class="plain"><code>9. exported groceries: an archive
+   imported as picnic: [x] milk (owner), [x] eggs (owner), [ ] bread (server), [ ] butter (owner), [ ] coffee (ada), [ ] tea (ada)
+   importing over groceries: importData: list|groceries has data (its worker runs)</code></pre>
+<p><code>exportData</code> stops nothing: the running worker writes its own store at one consistent point (the store&#39;s export holds
+its commit queue while it reads) and its files, as one archive with a manifest naming the app. With no worker running,
+the server takes the worker&#39;s process lock and reads the store itself. <code>importData</code> refuses an address that has data;
+replacing a list is a delete, then an import (decision &quot;App kit naming and export&quot;). Registering an imported list in
+an index of the app&#39;s, if it had one, is the app&#39;s.</p>
+</section>
+
+<section class="chapter" id="testing"><header class="opener"><div class="numeral">X</div><h2>Testing One Plugin</h2><p class="lede">testPlugin builds a plugin as production does and loads it alone on a host of its own.</p></header>
+<p class="dropcap">The steps above test the whole app. Most rules are checked faster on one plugin. <code>testPlugin</code> builds the plugin as
+production builds it (the same esbuild call, the API&#39;s imports checked), evaluates it with the app&#39;s real API module and
+loads it on a new host with an in-memory store, here at a list&#39;s address so it may serve <code>Todos</code>:</p>
+<!-- quote: plugins/lists/worker.test.ts -->
+<pre><code>	<span class="tk-k">let</span> t: <span class="tk-t">TestedPlugin</span>&lt;<span class="tk-t">TodoPrincipal</span>&gt;;
+	<span class="tk-f">beforeEach</span>(<span class="tk-k">async</span> () =&gt; {
+		t = <span class="tk-k">await</span> <span class="tk-f">testPlugin</span>&lt;<span class="tk-t">TodoPrincipal</span>&gt;(
+			<span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./"</span>, <span class="tk-k">import</span>.meta.url)),
+			{
+				kind: <span class="tk-s">"worker"</span>,
+				api: { name: <span class="tk-s">"@todo/app"</span>, versions: [<span class="tk-s">"v1"</span>] },
+				modules: { <span class="tk-s">"@todo/app/v1"</span>: v1 },
+				address: v1.<span class="tk-t">List</span>({ id: <span class="tk-s">"groceries"</span> }),
+				principal: { kind: <span class="tk-s">"worker"</span>, list: <span class="tk-s">"list|groceries"</span> },
+			},
+			context,
+		);
+	});
+	<span class="tk-f">afterEach</span>(() =&gt; t.<span class="tk-f">close</span>(context));</code></pre>
+<p>Each test runs code as a principal of its choice with <code>t.root</code>:</p>
+<!-- quote: plugins/lists/worker.test.ts -->
+<pre><code>	<span class="tk-f">it</span>(<span class="tk-s">"lets the owner clear the done todos"</span>, <span class="tk-k">async</span> () =&gt; {
+		<span class="tk-k">await</span> t.<span class="tk-f">root</span>(
+			<span class="tk-k">async</span> (ctx) =&gt; {
+				<span class="tk-k">const</span> todos = <span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(v1.<span class="tk-t">Todos</span>, { list: <span class="tk-s">"groceries"</span> });
+				<span class="tk-k">if</span> (todos.variant !== <span class="tk-s">"owner"</span>) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">Error</span>(<span class="tk-s">`the owner got ${todos.variant}`</span>);
+				<span class="tk-k">await</span> todos.<span class="tk-f">add</span>(<span class="tk-s">"milk"</span>, ctx);
+				<span class="tk-k">await</span> todos.<span class="tk-f">add</span>(<span class="tk-s">"eggs"</span>, ctx);
+				<span class="tk-k">await</span> todos.<span class="tk-f">tick</span>({ id: <span class="tk-n">1</span>, done: <span class="tk-k">true</span> }, ctx);
+				<span class="tk-k">await</span> todos.<span class="tk-f">clear</span>(ctx);
+				<span class="tk-f">expect</span>(todos.items.value.<span class="tk-f">map</span>(({ text }) =&gt; text)).<span class="tk-f">toEqual</span>([<span class="tk-s">"eggs"</span>]);
+			},
+			context,
+			{ principal: OWNER },
+		);
+		<span class="tk-f">expect</span>(t.<span class="tk-f">unserved</span>()).<span class="tk-f">toEqual</span>([]);</code></pre>
+<p>What the plugin uses and no plugin of the test serves would wait unbound; <code>t.unserved()</code> lists those names, so a test
+knows which stub facets to add. Registries it contributes to that nobody serves are collected (<code>t.contributions(R)</code>).
+Run it like any test:</p>
+<pre><code>node ../../node_modules/vitest/dist/cli.js --run test/examples/<span class="tk-n">61</span>-tutorial/plugins/lists/worker.test.ts</code></pre>
+<p>The test imports <code>Todos</code> and <code>List</code> from the API module by path. It could not import a contract from a plugin&#39;s own
+<code>contract.ts</code>: that file imports <code>@todo/app/v1</code>, a name only plugin builds resolve. A test of such a contract declares
+it again (contracts are data: the same name, version and schema bind), as <code>docs/plugin-authoring.md</code> shows; this app
+keeps the contract it shares in its API instead.</p>
+</section>
+
+<section class="chapter" id="p2"><header class="opener"><div class="numeral">XI</div><h2>Writing a p2 Plugin</h2><p class="lede">What is different in p2, and one small plugin: a tool for the agent and a chip for the people.</p></header>
+<p class="dropcap">p2, the coding agent&#39;s server with its web page and terminal, runs on Chord v2 but not on the app kit. It is older than
+the kit and keeps its own decisions: its own data directory and SQLite files, its own sign-in, devices and sharing,
+its own page and terminal bundles. It uses Chord&#39;s components directly: <code>createHost</code> with p2&#39;s principals,
+<code>createWorkers</code> for one worker per session, <code>createPlugins</code> to find, build, watch and roll out its plugins. What a
+plugin author sees is the same model: contracts, factories, registries, facets per host kind.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>The todo app (kit)</th>
+<th>p2</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>host kinds</td>
+<td><code>Server</code>, <code>List({ id })</code></td>
+<td><code>Server</code>, <code>Session({ id })</code> (<code>serverHost</code>, <code>sessionHost</code>)</td>
+</tr>
+<tr>
+<td>principals</td>
+<td>server, worker, owner, user</td>
+<td><code>owner</code> (with <code>access</code>), <code>guest</code> (with <code>sessions</code> and <code>revision</code>), <code>worker</code>, <code>server</code>, <code>host</code></td>
+</tr>
+<tr>
+<td>API</td>
+<td><code>@todo/app/v1</code>, <code>/server</code>, <code>/web</code>, <code>/tui</code></td>
+<td><code>@p2/app/v1</code> (browser-safe), <code>/node</code> (server and worker), <code>/server</code>, <code>/worker</code>, <code>/web</code>, <code>/tui</code></td>
+</tr>
+<tr>
+<td>other host packages</td>
+<td>React for the web</td>
+<td>pi-ai, pi-durable, pi-schema, pi-env, pi-tui, <code>ws</code>, <code>yaml</code>: plugins import them directly</td>
+</tr>
+<tr>
+<td>plugins</td>
+<td><code>plugins/&lt;name&gt;/</code>, <code>package.json</code> named <code>@todo/&lt;name&gt;</code></td>
+<td><code>apps/p2/plugins/&lt;name&gt;/</code>, <code>package.json</code> named <code>&lt;name&gt;</code></td>
+</tr>
+<tr>
+<td>a Chord store</td>
+<td>the kit&#39;s, per host: persisted documents and tables</td>
+<td>none: durable data is Durable&#39;s (documents with a conversation) or p2&#39;s own files</td>
+</tr>
+<tr>
+<td>page and terminal</td>
+<td>kit surfaces, <code>Panels</code> and <code>Screens</code></td>
+<td>p2&#39;s bundles; the page&#39;s <code>Slots</code> registry, <code>useObject</code>, <code>useReadable</code></td>
+</tr>
+<tr>
+<td>applying changes</td>
+<td><code>app.applyChanges</code></td>
+<td>the owner&#39;s Reload button, <code>npm run reload</code> in <code>apps/p2</code>, the <code>reload_plugins</code> tool</td>
+</tr>
+</tbody></table>
+<h3 id="the-scratchpad-plugin">The scratchpad plugin</h3>
+<p>The example gives the agent a <code>scratch_note</code> tool and shows the session&#39;s notes to everyone who may see the session.
+Its contract places one object per session on the session&#39;s worker:</p>
+<!-- p2: apps/p2/plugins/scratchpad/contract.ts -->
+<pre><code><span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Scratchpad</span> = <span class="tk-f">remote</span>(<span class="tk-s">"p2.scratchpad"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: { session: param.<span class="tk-f">str</span>() },
+	hostAddress: sessionHost,
+	variants: { reader: { state: { notes: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()) } } },
+});</code></pre>
+<p>The worker facet holds the notes in a worker-wide store (a local object with empty params, as in chapter II). It gives
+the agent its tool through p2&#39;s <code>Extensions</code> registry, a keyed registry of Durable extensions, and serves the view to
+whoever <code>canView</code> the session:</p>
+<!-- p2: apps/p2/plugins/scratchpad/worker.ts -->
+<pre><code><span class="tk-k">const</span> <span class="tk-t">Notes</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"p2.scratchpad.notes"</span>, {
+	schema: <span class="tk-f">obj</span>({ items: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()) }),
+	version: <span class="tk-n">1</span>,
+	initial: () =&gt; ({ items: [] }),
+});</code></pre>
+<!-- p2: apps/p2/plugins/scratchpad/worker.ts -->
+<pre><code><span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host) =&gt; {
+	host.<span class="tk-f">serve</span>(<span class="tk-t">ScratchpadStore</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> notes = self.<span class="tk-f">state</span>(<span class="tk-t">Notes</span>);
+		self.<span class="tk-f">contribute</span>(<span class="tk-t">Extensions</span>, {
+			scratchpad: <span class="tk-f">defineExtension</span>({
+				name: <span class="tk-s">"scratchpad"</span>,
+				tools: [
+					<span class="tk-f">defineTool</span>({
+						name: <span class="tk-s">"scratch_note"</span>,
+						description:
+							<span class="tk-s">"Keep a short note for this session (a decision, an open question). Everyone viewing the session sees the notes."</span>,
+						parameters: <span class="tk-f">obj</span>({ text: <span class="tk-f">str</span>({ minLength: <span class="tk-n">1</span>, maxLength: <span class="tk-n">500</span> }) }),
+						replay: <span class="tk-s">"unsafe"</span>,
+						execute: <span class="tk-k">async</span> ({ text }, _api, context) =&gt; {
+							<span class="tk-k">await</span> notes.<span class="tk-f">change</span>((draft) =&gt; {
+								draft.items.<span class="tk-f">push</span>(text);
+							}, context);
+							<span class="tk-k">return</span> {
+								output: [{ <span class="tk-k">type</span>: <span class="tk-s">"text"</span> <span class="tk-k">as</span> <span class="tk-k">const</span>, text: <span class="tk-s">`Noted (${notes.value.items.length} in all).`</span> }],
+							};
+						},
+					}),
+				],
+			}),
+		});
+		<span class="tk-k">return</span> { notes: self.<span class="tk-f">derive</span>([notes], ([value]) =&gt; value.items) };
+	});
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Scratchpad</span>, ({ session }, principal, self) =&gt; {
+		<span class="tk-k">if</span> (!<span class="tk-f">canView</span>(principal, session)) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"viewers only"</span>);
+		<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">ScratchpadStore</span>, {});
+		<span class="tk-k">return</span> { variant: <span class="tk-s">"reader"</span>, members: { notes: self.<span class="tk-f">derive</span>([store.notes], ([notes]) =&gt; notes) } };
+	});
+});</code></pre>
+<p>The notes are an in-memory document: p2 opens no Chord store, so <code>persist: true</code> is not available, and the notes last
+as long as the session&#39;s worker. Data that must outlive it goes into a Durable document (p2&#39;s chat-mode keeps its switch
+that way). The tool runs inside Durable with a Durable <code>Context</code>, which is Chord&#39;s own context type, so the store&#39;s
+handle takes it and the write is awaited. The page gets a chip in the composer&#39;s bar through <code>Slots</code>:</p>
+<!-- p2: apps/p2/plugins/scratchpad/web.tsx -->
+<pre><code><span class="tk-k">function</span> <span class="tk-t">NotesChip</span>() {
+	<span class="tk-k">const</span> { session } = <span class="tk-f">useRoute</span>();
+	<span class="tk-k">const</span> pad = <span class="tk-f">useObject</span>(<span class="tk-t">Scratchpad</span>, session === <span class="tk-k">undefined</span> ? <span class="tk-k">undefined</span> : { session });
+	<span class="tk-k">const</span> notes = <span class="tk-f">useReadable</span>(pad?.notes) ?? [];
+	<span class="tk-k">if</span> (notes.length === <span class="tk-n">0</span>) <span class="tk-k">return</span> <span class="tk-k">null</span>;
+	<span class="tk-k">return</span> (
+		&lt;span className=<span class="tk-s">"chip"</span> title={notes.<span class="tk-f">join</span>(<span class="tk-s">"\n"</span>)}&gt;
+			<span class="tk-t">Notes</span> · {notes.length}
+		&lt;/span&gt;
+	);
+}
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; self.<span class="tk-f">contribute</span>(<span class="tk-t">Slots</span>, { <span class="tk-s">"composer:scratchpad"</span>: <span class="tk-t">NotesChip</span> }));</code></pre>
+<h3 id="testing-it-in-p2">Testing it in p2</h3>
+<p>p2&#39;s tests load facets on a bare host with <code>testHost</code> (<code>test/p2/helpers.ts</code>), stub what they need, and reach the host
+as any principal over a memory link with <code>fixture.client(principal)</code>:</p>
+<!-- p2: apps/p2/test/p2/scratchpad.test.ts -->
+<pre><code>	<span class="tk-f">it</span>(<span class="tk-s">"keeps the agent's notes and shows them to the session's viewers"</span>, <span class="tk-k">async</span> () =&gt; {
+		<span class="tk-k">const</span> extensions = <span class="tk-k">await</span> fixture.host.<span class="tk-f">registry</span>(<span class="tk-t">Extensions</span>, BACKGROUND_CONTEXT);
+		<span class="tk-k">const</span> tool = extensions.value.<span class="tk-f">get</span>(<span class="tk-s">"scratchpad"</span>)!.tools![<span class="tk-n">0</span>]!;
+		<span class="tk-k">await</span> tool.<span class="tk-f">execute</span>({ text: <span class="tk-s">"ship on friday"</span> }, <span class="tk-k">undefined</span> <span class="tk-k">as</span> <span class="tk-k">never</span>, BACKGROUND_CONTEXT);
+		<span class="tk-k">const</span> pad = <span class="tk-k">await</span> fixture.<span class="tk-f">client</span>(OWNER).<span class="tk-f">get</span>(<span class="tk-t">Scratchpad</span>, { session: <span class="tk-s">"s1"</span> }, BACKGROUND_CONTEXT);
+		assert.<span class="tk-f">deepEqual</span>(<span class="tk-k">await</span> <span class="tk-f">until</span>(pad.notes, (notes) =&gt; notes?.length === <span class="tk-n">1</span>), [<span class="tk-s">"ship on friday"</span>]);
+	});</code></pre>
+<p>Run from <code>apps/p2</code> with <code>node --import ./src/source.ts --test test/p2/scratchpad.test.ts</code>. Load the plugin into a running
+p2 with the owner&#39;s Reload button or <code>npm run reload -- scratchpad</code>; a new plugin directory is picked up by the same
+reload. The trap of chapter II applies with p2&#39;s names: a server method that must reach a session&#39;s worker as the
+server runs in a root of the server&#39;s own (<code>serverOf(self)().root</code>), not through its caller&#39;s <code>ctx.get</code>.</p>
+</section>
+
+<section class="chapter epilogue" id="traps-and-open-questions"><header class="opener"><div class="numeral">∴</div><h2>Traps and Open Questions</h2><p class="lede">The four traps once more, and what in Chord v2 was hard to explain while writing this.</p></header>
+<p class="dropcap"><strong>The traps.</strong> Load before use: a host binds nothing before <code>load</code>; a client with nothing to load calls <code>load([])</code>. A
+reference acts as whoever made it: <code>ctx.get</code> as the caller, <code>host.get</code> and a local object&#39;s <code>self.get</code> as the host.
+Await what you start: a write started with a context that ends is cancelled and reported <code>transaction_cancelled</code>. A
+watch starts at the current value: read <code>handle.value</code>, then <code>start</code>; the listener gets changes only.</p>
+<p><strong>Hard to explain, found while writing the example.</strong> Each is a candidate for a fix in Chord rather than a paragraph in
+a tutorial.</p>
+<ul>
+<li><strong>Integer table keys do not type-check.</strong> <code>KeyOf</code> in <code>src/store/table.ts</code> still tests TypeBox&#39;s
+<code>&quot;~kind&quot;: &quot;Integer&quot;</code>, which pi-schema&#39;s <code>int()</code> lacks, so the key of an <code>int</code> key column is typed <code>string</code>:
+<code>tx.get(items, { id })</code> with a number fails <code>tsc</code>. The store here uses <code>updateWhere</code> with <code>eq</code> instead of
+<code>tx.update</code>.</li>
+<li><strong>A one-time read at activation is a native.</strong> The live window over a table needs a first read before the object is
+live; <code>self.open</code> is the only place, so the store counts as holding a native and restarts at every reload of its
+plugin, parking its views, though it holds nothing open. Tables have no watch, so every table-backed live view
+repeats this pattern (example 59&#39;s chat does too).</li>
+<li><strong>A reloaded web plugin loses its own React state.</strong> Decision &quot;Slice 11, P4&quot; promises an in-place reload &quot;keeping what
+is on screen (scroll, a half-typed message)&quot;. The page does not reload, but the changed plugin&#39;s components are new
+functions, so React mounts them anew and their state (the half-typed todo) is gone.</li>
+<li><strong>Plugin contracts are hard to test from outside builds.</strong> A test or script cannot import a plugin&#39;s
+<code>contract.ts</code> (it imports the app&#39;s API by a package name only builds resolve), so contracts are declared twice or
+moved into the API.</li>
+<li><strong>No public <code>invalid</code>.</strong> Plugins throw <code>PluginError</code> with codes of their own; refusing bad arguments with Chord&#39;s
+<code>invalid/args</code>, as the built-in checks do, is not open to them.</li>
+</ul>
+</section>
+
+<section class="chapter appendix" id="the-app-s-files"><header class="opener"><div class="numeral">A</div><h2>The App&#39;s Files</h2></header>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Kind</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>src/principals.ts</code></td>
+<td>base</td>
+<td>the principal type</td>
+</tr>
+<tr>
+<td><code>src/api/v1/index.ts</code></td>
+<td>base, every kind</td>
+<td><code>@todo/app/v1</code>: Chord&#39;s part, <code>defineFacet</code>, <code>List</code>, <code>Item</code>, <code>Todos</code></td>
+</tr>
+<tr>
+<td><code>src/api/v1/server.ts</code></td>
+<td>base, server</td>
+<td><code>Http</code>, the ephemeral <code>login</code></td>
+</tr>
+<tr>
+<td><code>src/api/v1/web.ts</code></td>
+<td>base, web</td>
+<td><code>Panels</code>, <code>useHold</code>, <code>useWatch</code></td>
+</tr>
+<tr>
+<td><code>src/api/v1/tui.ts</code></td>
+<td>base, tui</td>
+<td><code>Screens</code></td>
+</tr>
+<tr>
+<td><code>start.ts</code>, <code>worker.ts</code></td>
+<td>base</td>
+<td><code>startServer</code>, <code>startWorker</code></td>
+</tr>
+<tr>
+<td><code>src/web/main.ts</code>, <code>src/web/style.css</code></td>
+<td>base, web entry</td>
+<td><code>startPage</code>, the panels</td>
+</tr>
+<tr>
+<td><code>src/tui/main.ts</code></td>
+<td>base, terminal entry</td>
+<td><code>startTerminalRuntime</code>, the screens</td>
+</tr>
+<tr>
+<td><code>plugins/lists/</code></td>
+<td>plugin</td>
+<td>worker (table, store, views), server (routes), web (panel), tui (screen), its test</td>
+</tr>
+<tr>
+<td><code>plugins/login.server.ts</code></td>
+<td>single-file plugin</td>
+<td>the kit&#39;s ephemeral login</td>
+</tr>
+<tr>
+<td><code>later/harbor/</code></td>
+<td>plugin, added in step 6</td>
+<td>the Harbor theme for pages and terminals</td>
+</tr>
+<tr>
+<td><code>main.ts</code>, <code>screenshots.ts</code>, <code>tutorial.test.ts</code></td>
+<td>example</td>
+<td>the steps, the screenshots, the checks</td>
+</tr>
+</tbody></table>
+</section>
+
+<section class="chapter appendix" id="reference"><header class="opener"><div class="numeral">B</div><h2>Reference</h2></header>
+<table>
+<thead>
+<tr>
+<th>Call</th>
+<th>Chapter</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>startServer&lt;P&gt;({ name, dataDir, root, listen, api, kinds, principal, workers, web, tui, onError }, ctx)</code></td>
+<td>I</td>
+<td>the app&#39;s server, with the kit</td>
+</tr>
+<tr>
+<td><code>startWorker({ api, kinds, onError })</code></td>
+<td>I</td>
+<td>a worker&#39;s entry</td>
+</tr>
+<tr>
+<td><code>app.ownerLink()</code>, <code>app.ownerTokenFile</code></td>
+<td>I, III</td>
+<td>the owner&#39;s sign-in, for a browser and for local clients</td>
+</tr>
+<tr>
+<td><code>hostKind(name, params)</code>, <code>remote(name, { version, params, hostAddress, variants })</code>, <code>local(name, { version, params, members })</code></td>
+<td>II</td>
+<td>host kinds and contracts</td>
+</tr>
+<tr>
+<td><code>host.serve(Type, factory)</code>; factory <code>self</code>: <code>table</code>, <code>writable</code>, <code>open</code>, <code>derive</code>, <code>tx</code>, <code>get</code>, <code>contribute</code></td>
+<td>II</td>
+<td>an object&#39;s parts</td>
+</tr>
+<tr>
+<td><code>host.root(fn, ctx, { principal })</code>, <code>ctx.get(Type, params)</code></td>
+<td>II</td>
+<td>code outside objects, as a principal</td>
+</tr>
+<tr>
+<td><code>self.contribute(Http, { routes })</code></td>
+<td>III</td>
+<td>routes, denied by default</td>
+</tr>
+<tr>
+<td><code>startPage</code>, <code>HostProvider</code>, <code>useHold</code>, <code>useWatch</code>, <code>useRegistry</code></td>
+<td>IV</td>
+<td>the page</td>
+</tr>
+<tr>
+<td><code>startTerminalRuntime</code>, <code>TuiScope</code>, <code>startTerminal</code></td>
+<td>V</td>
+<td>the terminal</td>
+</tr>
+<tr>
+<td><code>self.contribute(Themes, theme)</code></td>
+<td>VI</td>
+<td>a theme</td>
+</tr>
+<tr>
+<td><code>ephemeralLoginFacet&lt;P&gt;()</code>, <code>host.load([], ctx)</code>, <code>host.connect(link, { principal }, ctx)</code></td>
+<td>VII</td>
+<td>a second user&#39;s client</td>
+</tr>
+<tr>
+<td><code>app.plugins.state</code>, <code>app.applyChanges(ctx)</code></td>
+<td>VI, VIII</td>
+<td>marks and rollouts</td>
+</tr>
+<tr>
+<td><code>app.exportData(address, path, ctx)</code>, <code>app.importData(path, address, ctx)</code></td>
+<td>IX</td>
+<td>moving a worker&#39;s data</td>
+</tr>
+<tr>
+<td><code>testPlugin(dir, { kind, api, modules, address, principal, stubs }, ctx)</code></td>
+<td>X</td>
+<td>one plugin alone</td>
+</tr>
+</tbody></table>
+</section>
+
+<p class="colophon">Together · first edition · 2026-11-03 · Chord v2 slices 1-13, the app kit, example 61</p>
+</div></div>
+
+</body></html>

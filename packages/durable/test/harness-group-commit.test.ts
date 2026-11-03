@@ -1,6 +1,6 @@
 // Group commit and the scheduler (docs/group-commit.md §6): decisions read the scheduler's memory in regions that
 // wait for the unpublished commits whose keys they read, memberships written at admission, outcomes, and close.
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import {
 	type ConversationId,
 	createRegistry,

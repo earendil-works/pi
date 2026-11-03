@@ -1,4 +1,5 @@
-import { copyJson, type Draft, type JsonRepresentation } from "@earendil-works/chord";
+import type { Draft } from "@earendil-works/chord/delta";
+import { copyJson, type JsonRepresentation } from "@earendil-works/chord/json";
 import { defineDoc } from "../documents.ts";
 import { UserEntry } from "../entries.ts";
 import type { ConversationId, EntryDraft, EntryId, EntryRecord, JsonObject, SubmissionId, Tx } from "../types.ts";

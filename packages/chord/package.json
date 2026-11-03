@@ -1,7 +1,7 @@
 {
 	"name": "@earendil-works/chord",
 	"version": "1.5.0",
-	"description": "Typed host runtime for plugins, contracts, replicated state, and RPC over JSON links",
+	"description": "Object runtime for apps across processes: contracts, documents, a store, links, plugins with hot reload, HTTP, workers, web and terminal clients",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -16,30 +16,25 @@
 			"types": "./dist/context/index.d.ts",
 			"import": "./dist/context/index.js"
 		},
-		"./output": {
-			"source": "./src/output.ts",
-			"types": "./dist/output.d.ts",
-			"import": "./dist/output.js"
-		},
 		"./delta": {
 			"source": "./src/delta/index.ts",
 			"types": "./dist/delta/index.d.ts",
 			"import": "./dist/delta/index.js"
 		},
-		"./node": {
-			"source": "./src/node.ts",
-			"types": "./dist/node.d.ts",
-			"import": "./dist/node.js"
+		"./json": {
+			"source": "./src/json.ts",
+			"types": "./dist/json.d.ts",
+			"import": "./dist/json.js"
 		},
-		"./telemetry-sqlite": {
-			"source": "./src/telemetry-sqlite/index.ts",
-			"types": "./dist/telemetry-sqlite/index.d.ts",
-			"import": "./dist/telemetry-sqlite/index.js"
+		"./watch": {
+			"source": "./src/watch.ts",
+			"types": "./dist/watch.d.ts",
+			"import": "./dist/watch.js"
 		},
-		"./next": {
-			"source": "./src/next/index.ts",
-			"types": "./dist/next/index.d.ts",
-			"import": "./dist/next/index.js"
+		"./output": {
+			"source": "./src/output.ts",
+			"types": "./dist/output.d.ts",
+			"import": "./dist/output.js"
 		},
 		"./sqlite": {
 			"source": "./src/sqlite/index.ts",
@@ -55,6 +50,61 @@
 			"source": "./src/sqlite/cloudflare.ts",
 			"types": "./dist/sqlite/cloudflare.d.ts",
 			"import": "./dist/sqlite/cloudflare.js"
+		},
+		"./telemetry-sqlite": {
+			"source": "./src/telemetry-sqlite/index.ts",
+			"types": "./dist/telemetry-sqlite/index.d.ts",
+			"import": "./dist/telemetry-sqlite/index.js"
+		},
+		"./http": {
+			"source": "./src/node/http/index.ts",
+			"types": "./dist/node/http/index.d.ts",
+			"import": "./dist/node/http/index.js"
+		},
+		"./workers": {
+			"source": "./src/node/workers/index.ts",
+			"types": "./dist/node/workers/index.d.ts",
+			"import": "./dist/node/workers/index.js"
+		},
+		"./plugins": {
+			"source": "./src/node/plugins/index.ts",
+			"types": "./dist/node/plugins/index.d.ts",
+			"import": "./dist/node/plugins/index.js"
+		},
+		"./plugins/runtime": {
+			"source": "./src/node/plugins/runtime.ts",
+			"types": "./dist/node/plugins/runtime.d.ts",
+			"import": "./dist/node/plugins/runtime.js"
+		},
+		"./app": {
+			"source": "./src/node/app/index.ts",
+			"types": "./dist/node/app/index.d.ts",
+			"import": "./dist/node/app/index.js"
+		},
+		"./web": {
+			"source": "./src/web/index.ts",
+			"types": "./dist/web/index.d.ts",
+			"import": "./dist/web/index.js"
+		},
+		"./surfaces": {
+			"source": "./src/node/surfaces/index.ts",
+			"types": "./dist/node/surfaces/index.d.ts",
+			"import": "./dist/node/surfaces/index.js"
+		},
+		"./react": {
+			"source": "./src/react/index.ts",
+			"types": "./dist/react/index.d.ts",
+			"import": "./dist/react/index.js"
+		},
+		"./tui": {
+			"source": "./src/tui/index.ts",
+			"types": "./dist/tui/index.d.ts",
+			"import": "./dist/tui/index.js"
+		},
+		"./tui/launcher": {
+			"source": "./src/node/tui/index.ts",
+			"types": "./dist/node/tui/index.d.ts",
+			"import": "./dist/node/tui/index.js"
 		},
 		"./package.json": "./package.json"
 	},
@@ -95,10 +145,14 @@
 	},
 	"peerDependencies": {
 		"esbuild": "0.28.2",
+		"react": "19.3.0",
 		"ws": "8.21.0"
 	},
 	"peerDependenciesMeta": {
 		"esbuild": {
+			"optional": true
+		},
+		"react": {
 			"optional": true
 		},
 		"ws": {
@@ -106,7 +160,11 @@
 		}
 	},
 	"devDependencies": {
+		"@types/react": "19.2.14",
+		"@types/react-dom": "19.2.3",
 		"@types/ws": "8.18.2",
+		"react": "19.3.0",
+		"react-dom": "19.3.0",
 		"vitest": "4.1.12",
 		"ws": "8.21.0"
 	}

@@ -1,6 +1,12 @@
-import { type Context, copyJson, type JsonValue } from "@earendil-works/chord";
-import { awaitWithContext, withAbortSignal, withoutAbortSignal, withTelemetry } from "@earendil-works/chord/context";
+import {
+	awaitWithContext,
+	type Context,
+	withAbortSignal,
+	withoutAbortSignal,
+	withTelemetry,
+} from "@earendil-works/chord/context";
 import { ownedSlice } from "@earendil-works/chord/delta";
+import { copyJson, type JsonValue } from "@earendil-works/chord/json";
 import type { Models } from "@earendil-works/pi-ai";
 import {
 	createTypedMetrics,

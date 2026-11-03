@@ -1,5 +1,5 @@
-import { type Context, copyJson, type JsonRepresentation } from "@earendil-works/chord";
-import { withTelemetry } from "@earendil-works/chord/context";
+import { type Context, withTelemetry } from "@earendil-works/chord/context";
+import { copyJson, type JsonRepresentation } from "@earendil-works/chord/json";
 import {
 	createTypedSpanStarter,
 	NOOP_TELEMETRY_CONTEXT,

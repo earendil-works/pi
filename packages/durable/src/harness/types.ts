@@ -1,4 +1,6 @@
-import type { Context, JsonValue, WatchHandle } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
+import type { WatchHandle } from "@earendil-works/chord/watch";
 import type {
 	Api,
 	AssistantMessage,

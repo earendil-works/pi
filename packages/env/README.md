@@ -55,6 +55,22 @@ daemon: raw output, input, resizing and its exit code, for interactive terminals
 machine, for terminals without SSH (`new Connection({ command: [localDaemon()] })`). Terminals are not supported on
 Windows yet.
 
+`openProcess(connection, options)` runs a program with plain pipes, for programs that speak a protocol on stdin and
+stdout, such as an MCP server: `write()` and `closeStdin()` for its input, raw stdout and stderr bytes through
+`onStdout` and `onStderr`, `close()` to kill its process group, and `exited` for its exit code. Nothing is echoed,
+translated or merged, unlike a terminal; it works on every supported system. A daemon released before it fails the open
+with `not_supported`. `argv` runs as an `exec` argv command does: on Windows, batch files such as `npx.cmd` are refused,
+as Node refuses them without a shell, so callers start them through `cmd.exe`.
+
+```ts
+const server = await openProcess(connection, {
+	cwd: "/home/me/project",
+	argv: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "."],
+	onStdout: (bytes) => parser.push(bytes),
+});
+server.write(`${JSON.stringify(initialize)}\n`);
+```
+
 Supported remote systems: Linux, macOS, Android (Termux) and Windows, on x86-64 and arm64. On Windows, string commands
 run through Git Bash as `NodeExecutionEnv` runs them there; argv commands run directly.
 

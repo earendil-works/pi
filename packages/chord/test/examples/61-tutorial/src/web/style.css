@@ -1,0 +1,5 @@
+/* The page's look: the active theme's colours, which the kit writes on :root as CSS variables. */
+body { margin: 0; font: 15px system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+main { max-width: 26rem; margin: 1.5rem auto; padding: 0 1rem; }
+h1 { color: var(--accent); font-size: 1.4rem; margin: 0 0 1rem; }
+h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
