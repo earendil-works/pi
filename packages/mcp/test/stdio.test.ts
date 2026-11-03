@@ -4,6 +4,25 @@ import { McpClient, StdioTransport } from "../src/index.ts";
 
 const fixture = fileURLToPath(new URL("./fixtures/stdio-server.mjs", import.meta.url));
 const stubborn = fileURLToPath(new URL("./fixtures/stubborn-server.mjs", import.meta.url));
+const exitingParent = fileURLToPath(new URL("./fixtures/exiting-parent-server.mjs", import.meta.url));
+
+function isAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function waitFor(condition: () => boolean, timeoutMs = 2_000): Promise<boolean> {
+	const deadline = Date.now() + timeoutMs;
+	while (!condition()) {
+		if (Date.now() > deadline) return false;
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	return true;
+}
 
 describe("StdioTransport", () => {
 	it("connects to a newline-delimited MCP server and captures stderr", async () => {
@@ -58,6 +77,41 @@ describe("StdioTransport", () => {
 				}
 			}
 			expect(alive).toBe(false);
+		},
+		10_000,
+	);
+
+	it.skipIf(process.platform === "win32")(
+		"kills children still holding the pipes after the server process exited",
+		async () => {
+			const transport = new StdioTransport({
+				command: process.execPath,
+				args: [exitingParent],
+				closeTimeoutMs: 100,
+			});
+			let closeEvents = 0;
+			transport.onClose(() => closeEvents++);
+			await transport.start();
+			const serverPid = transport.pid as number;
+			let helper: number | undefined;
+			await waitFor(() => {
+				const match = /helper (\d+)/.exec(transport.stderr);
+				if (match) helper = Number(match[1]);
+				return helper !== undefined;
+			});
+			expect(helper).toBeTypeOf("number");
+			expect(await waitFor(() => !isAlive(serverPid))).toBe(true);
+			try {
+				expect(isAlive(helper as number)).toBe(true);
+
+				await transport.close();
+				expect(await waitFor(() => !isAlive(helper as number))).toBe(true);
+				expect(closeEvents).toBe(1);
+			} finally {
+				try {
+					process.kill(helper as number, "SIGKILL");
+				} catch {}
+			}
 		},
 		10_000,
 	);
