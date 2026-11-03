@@ -82,6 +82,9 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   `shutdown`, the parent's disconnect, `SIGTERM` and `SIGINT` abort its context and run the closers registered so far,
   also during startup. An uncaught error or a throwing function sends `fatal` with `redact(error)` and exits 1.
 - `processLock(name, ctx)`: the lock (an abstract socket on Linux, a named pipe on Windows, a socket file elsewhere).
+  A taker fails closed on a socket file nobody accepts on; the component clears one (a worker killed by a signal left
+  it) before each start and after a child's exit by a signal, in the address's queue (decision "Stale lock files are
+  cleared by the starter").
 
 ## Examples
 

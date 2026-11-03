@@ -2283,7 +2283,8 @@ connect only (Q4). `workers.state` (a JSON watchable per address key), `stop`, `
 `workerMain(fn, { hostPackages, redact, onError })` is the child's side (`fn({ address, start, parent, plugins,
 onClose }, ctx)`, `plugins` a `WorkerPlugins` evaluating the shipped scripts, closers in reverse order). One live
 worker per address (`processLock`: an abstract socket on Linux, a named pipe on Windows, a socket file elsewhere that
-fails closed when stale; a start waits for a draining old holder without polling).
+fails closed when stale, the stale file cleared by the component before a start and after a child's exit by a signal,
+decision "Stale lock files are cleared by the starter"; a start waits for a draining old holder without polling).
 
 - **Keep-alive** (D9, R3, Q5): the child reports when `host.activity`'s references, jobs and lingering objects and the
   app's `busy` counts flip between all zero and not (local calls do not count; the first state with `ready`, which

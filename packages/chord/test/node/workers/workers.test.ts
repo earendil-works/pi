@@ -1,11 +1,14 @@
 // Tests of the workers component (slice 10 §3, §4): starts on demand (the link made at the fork, `started` on
 // `connect`, the start timer covering only the start), failures that stay (a crash, a `fatal`, a lost link, a failed
 // start: no fork for a new hold, holders `failed { waiting }`) until `retry` or a rollout, idle stops and `busy`, `stop`
-// and its suspension, the per-address queue, `close`, the rollout step, and nothing kept of 1,000 addresses.
+// and its suspension, the per-address queue, `close`, the rollout step, stale lock files cleared, and nothing kept of
+// 1,000 addresses.
 
+import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { withAbortSignal } from "../../../src/context/index.ts";
 import { createHost } from "../../../src/host/index.ts";
@@ -22,6 +25,9 @@ function listed(hosts: readonly RolloutHost[]) {
 		"report" in entry ? entry.report.plugins : "stopped" in entry ? "stopped" : (entry.error as Error).message,
 	]);
 }
+
+/** The process lock module, for a process that takes a lock and is killed holding it. */
+const LOCK_MODULE = fileURLToPath(new URL("../../../src/node/workers/lock.ts", import.meta.url));
 
 /** The state entry of `id`. */
 const stateOf = (state: unknown, id: string) =>
@@ -112,7 +118,7 @@ describe("failures stay until retry or a rollout (R2)", () => {
 		notes.release();
 	});
 
-	it("a link lost while its child lives (a blocked event loop past the heartbeat): killed after the grace, failed", async () => {
+	it("a link lost while its child lives (a blocked event loop past the heartbeat): killed after the grace, failed; retry starts it past the lock file the kill left", async () => {
 		const { server, workers, starts, errors } = await fleet({ heartbeat: { ping: 100, close: 300 } });
 		const notes = await server.get(Notes, { id: "S1" }, context);
 		const control = await server.get(Control, { id: "S1" }, context);
@@ -124,9 +130,15 @@ describe("failures stay until retry or a rollout (R2)", () => {
 			error: { message: "worker: link lost" },
 		});
 		expect(starts).toEqual(["session|S1"]);
+		// SIGKILL skipped the child's exit hooks: on macOS and the BSDs its lock's socket file was left, and the component
+		// cleared it after the exit (else the new child would fail closed on it).
+		await workers.retry(Session({ id: "S1" }), context);
+		await until(() => notes.state.value.kind === "live", 10_000);
+		expect(stateOf(workers.state.value, "S1")?.status).not.toBe("failed");
+		expect(starts).toEqual(["session|S1", "session|S1"]);
 		notes.release();
 		control.release();
-	}, 20_000);
+	}, 30_000);
 
 	it("an exit before started fails the start; a worker that never connects is killed at the start timer", async () => {
 		const { server, workers, behaviours, errors } = await fleet();
@@ -174,6 +186,27 @@ describe("failures stay until retry or a rollout (R2)", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe('stale lock files (macOS, the BSDs; decision "Stale lock files are cleared by the starter")', () => {
+	it("a start clears the lock file a killed worker of an earlier server left: the worker runs", async () => {
+		const { server, workers, root } = await fleet();
+		// What an earlier server's worker SIGKILLed while holding the lock leaves (nothing on Linux: an abstract socket).
+		const name = `chord-test:${root}:${Session({ id: "S1" }).key}`;
+		const script = `const { processLock } = await import(${JSON.stringify(LOCK_MODULE)}); await processLock(${JSON.stringify(name)}, {}); process.kill(process.pid, "SIGKILL");`;
+		const killed = spawnSync(process.execPath, [
+			"--experimental-strip-types",
+			"--no-warnings",
+			"--input-type=module",
+			"-e",
+			script,
+		]);
+		expect(killed.signal).toBe("SIGKILL");
+		const notes = server.hold(Notes, { id: "S1" }, context);
+		await until(() => notes.state.value.kind === "live");
+		expect(stateOf(workers.state.value, "S1")?.status).not.toBe("failed");
+		notes.release();
 	});
 });
 

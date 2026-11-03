@@ -2084,6 +2084,15 @@ validation and copies the v2 kernel added around Delta.
   is trusted (a plugin's own file). (2) The worker lock on macOS and the BSDs fails closed on a stale lock file, with an
   error naming it (no takeover; Linux and Android use abstract sockets and are unaffected). (3) A route's overhead:
   Opus's two trims, measured again after the `fetch` rework, and the numbers brought to the owner.
+- **Stale lock files are cleared by the starter (owner, 2026-11-03: "do both"; refines point (2) of "Slice 10 fix
+  round, three small points"):** on macOS and the BSDs a worker killed by a signal (the grace's SIGKILL, the start
+  timer, a dev supervisor) runs no exit hooks and leaves its lock's socket file; every later start of that address then
+  failed closed on it, also `retry`, until someone removed the file by hand. Takers still fail closed (two takers
+  clearing could race); the workers component, the one process that starts an address's workers, removes a socket file
+  nobody accepts on (`clearStaleLock`) before each start's message and after a child's exit by a signal, both in the
+  address's queue, so never two clears of one name at once. A live holder (an older worker still exiting) accepts and
+  is kept. One connect per start on macOS and the BSDs, nothing on Linux, Android and Windows. A taker also treats
+  `ENOTSOCK` (a non-socket file at the path on macOS) as stale; before it retried until its context ended.
 - **Slice 10: a route's overhead accepted; no header accessor (owner, 2026-10-31: "1 yes, 2 no"):** after the `fetch`
   rework and the Node fast path a route costs +20-21 µs over a plain Node handler on the standard bench, +12-13 µs warmed
   (before the rework +4.5 µs): the request's scope (2.1 µs), URL parsing, admission and routing, the baseline's headers,

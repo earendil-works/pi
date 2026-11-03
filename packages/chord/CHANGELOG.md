@@ -24,6 +24,11 @@
 - Chord v2's `host.load` and `host.reload` throw for a plugin name that is no npm package name, before they change anything (it was listed in the report's `failed`).
 - Chord v2 plugins import each other by relative path within a root (copied into the importer's script) and across repositories by package name through the package's `exports`, pinned in `dependencies`; slice 10's imports by plugin name (`@app/notes/contract`) are removed, and a relative path leaving the root is a build error.
 
+### Fixed
+
+- Chord v2's workers on macOS and the BSDs: a worker killed by a signal (the grace's or the start timer's SIGKILL) left its lock's socket file, and every later start of its address failed with `... is a stale lock file`, `retry` too, until the file was removed by hand. The workers component now removes a lock socket file nobody accepts on before each start and after a child's exit by a signal.
+- Chord v2's `processLock` on macOS spun until its context ended when a regular file sat at the lock's path (`ENOTSOCK`); it now fails closed naming the file, as for a socket file nobody listens on.
+
 ## [1.5.0] - 2026-11-02
 
 ### Breaking Changes

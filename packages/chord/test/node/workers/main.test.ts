@@ -51,7 +51,9 @@ describe("the worker's side", () => {
 		await until(() => control.some(({ kind }) => kind === "ready"));
 		expect(control.map(({ kind }) => kind)).toEqual(["started", "ready"]);
 		expect(control[1]).toMatchObject({ idle: true, report: { plugins: { added: [] }, failed: [] } });
-		child.kill();
+		// Shut down, not killed: a SIGKILL would leave its lock's socket file on macOS and the BSDs.
+		child.send({ kind: "shutdown" });
+		await child.exited;
 	});
 
 	it("shuts down during its startup: aborts it, runs the closers registered so far in reverse order, exits 0", async () => {
