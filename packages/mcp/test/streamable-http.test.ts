@@ -5,6 +5,7 @@ import {
 	type McpAuthRequiredError,
 	McpClient,
 	type McpFetch,
+	McpHttpError,
 	McpSessionExpiredError,
 	StreamableHttpTransport,
 } from "../src/index.ts";
@@ -291,6 +292,7 @@ describe("StreamableHttpTransport", () => {
 		await client.close();
 	});
 
+	// #11335
 	it("applies maxMessageBytes to JSON responses", async () => {
 		const send = async (descriptionBytes: number) => {
 			const body = JSON.stringify({
@@ -317,6 +319,51 @@ describe("StreamableHttpTransport", () => {
 
 		expect(await send(32)).toHaveLength(1);
 		await expect(send(2048)).rejects.toThrow("MCP JSON response exceeds 512 bytes");
+	});
+
+	it("decodes JSON responses split inside a BOM and a multi-byte character", async () => {
+		const bytes = new TextEncoder().encode(
+			`\uFEFF${JSON.stringify({ jsonrpc: "2.0", id: 1, result: { text: "é€" } })}`,
+		);
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const byte of bytes) controller.enqueue(new Uint8Array([byte]));
+				controller.close();
+			},
+		});
+		const transport = new StreamableHttpTransport({
+			url: "http://127.0.0.1/mcp",
+			openGetStream: false,
+			fetch: async () => new Response(body, { headers: { "content-type": "application/json" } }),
+		});
+		const messages: unknown[] = [];
+		transport.onMessage((message) => messages.push(message));
+		await transport.start();
+		await transport.send({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+		await transport.close();
+		expect(messages).toEqual([{ jsonrpc: "2.0", id: 1, result: { text: "é€" } }]);
+	});
+
+	it("reads only an excerpt of HTTP error bodies and cancels the rest", async () => {
+		let cancelled = false;
+		// An endless error body: reading it whole would never finish.
+		const body = new ReadableStream<Uint8Array>({
+			pull: (controller) => controller.enqueue(new TextEncoder().encode("x".repeat(1024))),
+			cancel: () => {
+				cancelled = true;
+			},
+		});
+		const transport = new StreamableHttpTransport({
+			url: "http://127.0.0.1/mcp",
+			openGetStream: false,
+			fetch: async () => new Response(body, { status: 500 }),
+		});
+		await transport.start();
+		const error = await transport.send({ jsonrpc: "2.0", id: 1, method: "tools/list" }).catch((e: unknown) => e);
+		await transport.close();
+		expect(error).toBeInstanceOf(McpHttpError);
+		expect((error as McpHttpError).body).toHaveLength(8 * 1024);
+		expect(cancelled).toBe(true);
 	});
 
 	it("includes the response body in HTTP errors", async () => {

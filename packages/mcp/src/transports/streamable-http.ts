@@ -178,27 +178,31 @@ function discard(response: Response): Promise<void> {
 	return response.body?.cancel().catch(() => {}) ?? Promise.resolve();
 }
 
-/** Reads and parses a JSON response body, cancelling it once it exceeds `maxBytes`. */
-async function readJsonBody(response: Response, maxBytes: number): Promise<unknown> {
-	if (!response.body) return response.json();
+/**
+ * Reads a response body as text, decoding chunks as they arrive. Once the body exceeds `maxBytes`, the rest is
+ * cancelled and the text holds only the first `maxBytes` bytes.
+ */
+async function readBodyText(response: Response, maxBytes: number): Promise<{ text: string; truncated: boolean }> {
+	if (!response.body) return { text: "", truncated: false };
 	const reader = response.body.getReader();
-	const chunks: Uint8Array[] = [];
-	let total = 0;
+	const decoder = new TextDecoder();
+	let text = "";
+	let remaining = maxBytes;
 	try {
 		while (true) {
 			const { done, value } = await reader.read();
-			if (done) break;
-			total += value.byteLength;
-			if (total > maxBytes) {
+			if (done) return { text: text + decoder.decode(), truncated: false };
+			if (value.byteLength > remaining) {
 				await reader.cancel().catch(() => {});
-				throw new Error(`MCP JSON response exceeds ${maxBytes} bytes`);
+				// Decoding a subarray copies only the kept bytes, so the result never references the dropped rest.
+				return { text: text + decoder.decode(value.subarray(0, remaining), { stream: true }), truncated: true };
 			}
-			chunks.push(value);
+			remaining -= value.byteLength;
+			text += decoder.decode(value, { stream: true });
 		}
 	} finally {
 		reader.releaseLock();
 	}
-	return JSON.parse(new TextDecoder().decode(Buffer.concat(chunks)));
 }
 
 function describeHttpFailure(status: number, body: string): string {
@@ -276,7 +280,10 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		}
 		const type = contentType(response);
 		if (type === "application/json") {
-			const body = await readJsonBody(response, this.options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES);
+			const maxBytes = this.options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES;
+			const { text, truncated } = await readBodyText(response, maxBytes);
+			if (truncated) throw new Error(`MCP JSON response exceeds ${maxBytes} bytes`);
+			const body: unknown = JSON.parse(text);
 			for (const item of Array.isArray(body) ? body : [body]) this.emitMessage(parseJsonRpcMessage(item));
 			return;
 		}
@@ -361,8 +368,8 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 
 	private async checkResponse(response: Response): Promise<void> {
 		if (response.ok) return;
-		// A copy, not a slice: V8 slices keep the whole body alive, and the error keeps this excerpt.
-		const body = `${(await response.text().catch(() => "")).slice(0, MAX_ERROR_BODY_BYTES)} `.slice(0, -1);
+		// Reads only the excerpt the error keeps and cancels the rest, so a huge error body is never buffered.
+		const body = (await readBodyText(response, MAX_ERROR_BODY_BYTES).catch(() => ({ text: "" }))).text;
 		if (response.status === 401) throw new McpAuthRequiredError(response, body);
 		if (response.status === 404 && this.sessionIdValue) throw new McpSessionExpiredError(body);
 		throw new McpHttpError(response.status, describeHttpFailure(response.status, body), body);
