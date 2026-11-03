@@ -109,7 +109,7 @@ verifying an agent's files on their own before committing. Node 24: `~/node-v24.
 - **Durable** (`packages/durable`) runs the agent: conversations, inputs as custom entries (`p2.input`,
   `chat.mention`), display-only writes placed immediately, code mode (QuickJS sandbox; scripts call tools as
   `tools.<name>`, one-shot agents via `tools.agent`), compaction with visible failures, deferred tools and
-  `tool_search` (MCP tools are deferred).
+  `tool_search` (MCP tools are for code mode scripts, as in pi; `tool_search` loads them only while code mode is off).
 
 ## The TUI
 
@@ -155,8 +155,8 @@ From `AGENTS.md` and this project's history:
 3. **Cleanup leftovers:** two HTTP helpers were not merged because their semantics differ (byte ranges: files
    serves `bytes=-` whole, workspace answers 416; body readers: sharing answers 400 past the limit, devices 413);
    decide one behavior each.
-4. **MCP:** `plugins/mcp` (WP6 and WP7 of `docs/mcp-durable.md`: owner `mcp.json`, host stdio and HTTP, deferred
-   tools, `tool_search`, servers on environments, project `.pi/mcp.json`); OAuth (WP8) and code mode namespaces (WP9)
+4. **MCP:** `plugins/mcp` (WP6 and WP7 of `docs/mcp-durable.md`: owner `mcp.json`, host stdio and HTTP, code mode
+   tools (`tool_search` without code mode), servers on environments, project `.pi/mcp.json`); OAuth (WP8) and code mode namespaces (WP9)
    are open.
 5. **npm:** deprecate `@earendil-works/pi-client`, `pi-protocol` and `pi-server` (1.1.0), which no longer exist.
 6. `docs/p2-notes.md` TODO: the TypeScript 5.9.3 pin (Termux), an isolating plugin loader, sandboxing third-party

@@ -503,12 +503,18 @@ export const Mcp = remote("p2.mcp", {
   ...)` rebuilds it. Tools:
   - name via `createMcpToolName` (WP4, else copied), description from the MCP tool, `parameters` normalized to an object
     schema;
-  - `deferred: true` (found through `tool_search`);
+  - exposed as pi's default (`"exposure": "codemode"`): `deferred: true` and `callers: ["tools"]`, so only code mode
+    scripts call them (`searchTools()` finds them; neither the `codemode` section nor `tool_search` lists them). While
+    code mode is off or its plugin is not loaded (its `ExtensionSwitches` entry is not `true`), pi's fallback:
+    `deferred: true` alone, loaded through `tool_search`;
+  - the `mcp_servers` section, as pi's: each server's namespace and how its tools are reached (no summaries yet: p2
+    has no `description` field and does not pass on the servers' `instructions`);
   - `execute`: locate the calling conversation (`api.conversationId`, through the harness's environments), pick the
     instance for that location, call `view.call` from Durable code (design §24's helper), convert the result with
     `toLlmContent()`, pass `structuredContent` through as `structuredOutput` only if the tool declares an output schema,
     `isError` from the MCP result; replay stays `unsafe`.
-- Register `createToolSearchExtension()` (nothing installs `tool_search` in p2 today).
+- Install `createToolSearchExtension()` only while it reaches the MCP tools (code mode off, servers present), as pi
+  activates `tool_search` only for `deferred` servers. Per-server `exposure` and `toolExposure` are not read yet.
 
 ### 9.5 Owner configuration (`<P2_DATA_DIR>/mcp.json`)
 

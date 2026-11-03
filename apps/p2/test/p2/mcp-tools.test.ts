@@ -1,13 +1,19 @@
 // MCP tools as Durable tools (plugins/mcp/tools.ts): pi's names, with the hash suffix for every colliding name whatever
-// the order, structured output only for tools with an output schema (error results included), and error results with
-// text.
+// the order, pi's exposures (code mode only by default, `tool_search` without code mode) with the `mcp_servers` section,
+// structured output only for tools with an output schema (error results included), and error results with text.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ToolExecutionApi, ToolRegistration } from "@earendil-works/pi-durable";
 import type { CallToolResult } from "@earendil-works/pi-mcp";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import type { McpTool } from "../../plugins/mcp/contract.ts";
-import { createMcpExtension, type McpCall, type ServerTool } from "../../plugins/mcp/tools.ts";
+import {
+	createMcpExtension,
+	MCP_SERVERS_SECTION,
+	type McpCall,
+	type McpReach,
+	type ServerTool,
+} from "../../plugins/mcp/tools.ts";
 
 const tool = (name: string, extra: Partial<McpTool> = {}): McpTool => ({
 	name,
@@ -15,7 +21,14 @@ const tool = (name: string, extra: Partial<McpTool> = {}): McpTool => ({
 	...extra,
 });
 const names = (tools: readonly ServerTool[]) =>
-	(createMcpExtension(tools, async () => ({ content: [] })).tools ?? []).map((registration) => registration.name);
+	(createMcpExtension(offer(tools), async () => ({ content: [] })).tools ?? []).map(
+		(registration) => registration.name,
+	);
+
+/** What the worker offers for `tools`: their servers, reached from code mode unless `reach` says otherwise. */
+function offer(tools: readonly ServerTool[], reach: McpReach = "codemode") {
+	return { servers: [...new Set(tools.map((entry) => entry.server))].sort(), tools, reach };
+}
 
 test("tool names: pi's, and every tool of a colliding name gets the hash suffix whatever the order", () => {
 	const plain = [
@@ -59,6 +72,44 @@ test("tool names: a collision across servers suffixes both tools too", () => {
 	assert.equal(names([{ server: "a", tool: tool("b__c") }])[0], "mcp__a__b__c");
 });
 
+test("exposure: as pi's default, code mode only, deferred so the codemode section leaves the tools out", async () => {
+	const tools = [{ server: "docs", tool: tool("search") }];
+	const codemode = createMcpExtension(offer(tools), async () => ({ content: [] }));
+	const [scripted] = codemode.tools as ToolRegistration[];
+	assert.deepEqual([scripted!.deferred, scripted!.callers], [true, ["tools"]]);
+	// Without code mode (pi's fallback), `tool_search` loads them for the model.
+	const searched = createMcpExtension(offer(tools, "tool_search"), async () => ({ content: [] }));
+	const [loaded] = searched.tools as ToolRegistration[];
+	assert.deepEqual([loaded!.deferred, loaded!.callers], [true, undefined]);
+});
+
+test("the mcp_servers section names each server's namespace and how its tools are reached, as pi's", async () => {
+	const render = async (extension: ReturnType<typeof createMcpExtension>) => {
+		const [listing] = extension.sections ?? [];
+		assert.equal(listing?.key, MCP_SERVERS_SECTION);
+		// The section renders a constant: it reads nothing of its input.
+		return listing!.render(undefined as never, BACKGROUND_CONTEXT);
+	};
+	const tools = [
+		{ server: "my-docs", tool: tool("search") },
+		{ server: "app", tool: tool("read") },
+	];
+	assert.equal(
+		await render(createMcpExtension(offer(tools), async () => ({ content: [] }))),
+		"MCP servers whose tools are not declared to you. Call the tools of `codemode` servers from codemode scripts.\n- mcp__app (codemode)\n- mcp__my_docs (codemode)",
+	);
+	assert.equal(
+		await render(createMcpExtension(offer(tools, "tool_search"), async () => ({ content: [] }))),
+		"MCP servers whose tools are not declared to you. Load the tools of `tool_search` servers with `tool_search`.\n- mcp__app (tool_search)\n- mcp__my_docs (tool_search)",
+	);
+	// A server still connecting has no tools yet, and is listed; without servers there is no section.
+	const starting = createMcpExtension({ servers: ["slow"], tools: [], reach: "codemode" }, async () => ({
+		content: [],
+	}));
+	assert.match(String(await render(starting)), /- mcp__slow \(codemode\)$/);
+	assert.deepEqual(createMcpExtension(offer([]), async () => ({ content: [] })).sections, []);
+});
+
 /** The registration of `mcpTool` calling a server that answers `result`, and what it was called with. */
 function registration(mcpTool: McpTool, result: CallToolResult) {
 	const calls: Parameters<McpCall>[0][] = [];
@@ -66,7 +117,8 @@ function registration(mcpTool: McpTool, result: CallToolResult) {
 		calls.push(request);
 		return result;
 	};
-	const [registered] = createMcpExtension([{ server: "docs", tool: mcpTool }], call).tools as ToolRegistration[];
+	const [registered] = createMcpExtension(offer([{ server: "docs", tool: mcpTool }]), call)
+		.tools as ToolRegistration[];
 	// The tool reads only the conversation ID and the reader from the API.
 	const api = { conversationId: 1 } as unknown as ToolExecutionApi;
 	return { registered: registered!, calls, run: () => registered!.execute({ q: "x" }, api, BACKGROUND_CONTEXT) };
@@ -77,7 +129,6 @@ test("results: structured output only with an output schema, error results inclu
 	const structured = { content: [{ type: "text" as const, text: "2 hits" }], structuredContent: { hits: 2 } };
 	const withSchema = registration(tool("search", { outputSchema: schema }), structured);
 	assert.deepEqual(withSchema.registered.structuredOutputSchema, schema);
-	assert.equal(withSchema.registered.deferred, true);
 	assert.deepEqual(await withSchema.run(), {
 		output: [{ type: "text", text: "2 hits" }],
 		isError: false,

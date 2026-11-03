@@ -1,8 +1,9 @@
-// The MCP plugin's worker facet: `tool_search` (deferred tools, MCP's among them, are found through it) and the worker
-// object holding the server's `Mcp` view. It sets the locations the session's conversations work at (the session's,
-// active subagents' own), with the project `.pi/mcp.json` read at each through its environment, as its leases, again
-// whenever they may have changed and whenever the view (re)activates, and offers the servers' tools as one Durable
-// extension that follows the view's `servers`. No MCP process or credential is ever in a worker.
+// The MCP plugin's worker facet: the worker object holding the server's `Mcp` view. It sets the locations the session's
+// conversations work at (the session's, active subagents' own), with the project `.pi/mcp.json` read at each through
+// its environment, as its leases, again whenever they may have changed and whenever the view (re)activates, and offers
+// the servers' tools as one Durable extension that follows the view's `servers` and the code mode switch: as in pi,
+// tools are for code mode scripts, and only without code mode does `tool_search` load them for the model. No MCP
+// process or credential is ever in a worker.
 
 import { setTimeout as sleep } from "node:timers/promises";
 import { type ConversationId, type Extension, type Harness, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
@@ -21,12 +22,14 @@ import {
 	signalOf,
 	until,
 	untilAborted,
+	type Watchable,
 	type Writable,
 } from "@p2/app/v1";
 import { durableContext } from "@p2/app/v1/node";
 import {
 	CommitSignal,
 	type ExecutionEnvironments,
+	ExtensionSwitches,
 	Extensions,
 	type HarnessParts,
 	harnessOf,
@@ -34,15 +37,16 @@ import {
 	workerOf,
 } from "@p2/app/v1/worker";
 import { Subagents } from "../subagents/contract.worker.ts";
-import { type Instance, MCP_EXTENSION, Mcp, PROJECT_FILE_MAX_CHARS, type ProjectFile } from "./contract.ts";
-import { createMcpExtension, type McpCall, serverTools } from "./tools.ts";
+import { MCP_EXTENSION, Mcp, PROJECT_FILE_MAX_CHARS, type ProjectFile } from "./contract.ts";
+import { createMcpExtension, type McpCall, type McpOffer, type McpReach, serverNames, serverTools } from "./tools.ts";
 
 /** How long to wait before setting the locations again after a failure. */
 const RETRY_MS = 2000;
 
-export default defineFacet((host, facet) => {
-	const search = createToolSearchExtension();
-	facet.contribute(Extensions, { [search.name]: search });
+/** The code mode plugin's extension: its switch is on while the `codemode` setting is, absent without the plugin. */
+const CODEMODE_EXTENSION = "codemode";
+
+export default defineFacet((host) => {
 	contribute(host, "p2.mcp-worker", mcpWorker);
 });
 
@@ -58,36 +62,67 @@ function mcpWorker(self: StoreSelf): void {
 			context.abortSignal,
 		);
 	};
-	const extension = self.writable<Readonly<Record<string, Extension>>>({
-		[MCP_EXTENSION]: createMcpExtension([], call),
-	});
+	// Code mode switched off or not loaded: the tools would be unreachable, so `tool_search` loads them, as pi falls back.
+	const reach = self.derive(
+		[self.registry(ExtensionSwitches)],
+		([switches]): McpReach => (switches.get(CODEMODE_EXTENSION) === true ? "codemode" : "tool_search"),
+	);
+	const extension = self.writable(extensionsFor({ servers: [], tools: [], reach: "codemode" }, call));
 	self.contribute(Extensions, extension);
-	self.onLive((ctx) => offerTools(view, extension, call, ctx));
+	self.onLive((ctx) => offerTools(view, reach, extension, call, ctx));
 	leaseLocations(self, view, harness, worker);
 }
 
-/** Follows the view's `servers` until `ctx` ends: a new tool list (not a status change) makes a new extension. */
+/** The extensions offering `offer`: the servers' tools and section, and `tool_search` while it reaches the tools. */
+function extensionsFor(offer: McpOffer, call: McpCall): Readonly<Record<string, Extension>> {
+	const extensions: Record<string, Extension> = { [MCP_EXTENSION]: createMcpExtension(offer, call) };
+	if (offer.reach === "tool_search" && offer.servers.length > 0) {
+		const search = createToolSearchExtension();
+		extensions[search.name] = search;
+	}
+	return extensions;
+}
+
+/**
+ * Follows the view's `servers` and `reach` until `ctx` ends: a new server or tool list (not a status change) or a new
+ * reach makes new extensions.
+ */
 async function offerTools(
 	view: Ref<typeof Mcp>,
+	reach: Watchable<McpReach>,
 	extension: Writable<Readonly<Record<string, Extension>>>,
 	call: McpCall,
 	ctx: Ctx,
 ): Promise<void> {
-	let offered = "[]";
-	const offer = (servers: readonly Instance[]): void => {
-		const tools = serverTools(servers);
-		const key = JSON.stringify(tools);
-		if (key === offered) return;
-		offered = key;
-		extension.set({ [MCP_EXTENSION]: createMcpExtension(tools, call) });
-	};
 	const watch = await expectVariant(view, "worker").servers.watch(ctx);
 	try {
-		offer(watch.value);
-		watch.start(async (change) => {
-			if (change.kind === "value") offer(change.value);
-		});
-		await untilAborted(ctx);
+		const reaches = await reach.watch(ctx);
+		try {
+			let servers = watch.value;
+			let current = reaches.value;
+			let offered = "";
+			const offer = (): void => {
+				const next: McpOffer = { servers: serverNames(servers), tools: serverTools(servers), reach: current };
+				const key = JSON.stringify(next);
+				if (key === offered) return;
+				offered = key;
+				extension.set(extensionsFor(next, call));
+			};
+			offer();
+			watch.start(async (change) => {
+				if (change.kind !== "value") return;
+				servers = change.value;
+				offer();
+			});
+			reaches.start(async (change) => {
+				if (change.kind !== "value") return;
+				current = change.value;
+				offer();
+			});
+			await untilAborted(ctx);
+		} finally {
+			await reaches.stop();
+		}
 	} finally {
 		await watch.stop();
 	}
