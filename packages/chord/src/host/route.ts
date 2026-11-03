@@ -6,7 +6,7 @@
 import type { Context } from "../context/index.ts";
 import type { Address, HostKind, KindShape } from "../contracts/index.ts";
 import { kindParams, type ParamsData } from "../contracts/internal.ts";
-import { ChordError, type Principal } from "../data/index.ts";
+import { ChordError, forbidden, type Principal } from "../data/index.ts";
 import { asChordError, checkAddress } from "../data/internal.ts";
 import type { Codec, Link, PartLimits } from "../link/index.ts";
 import { type HostLink, Path, type PathEvent, type Upstream } from "../remote/internal.ts";
@@ -87,7 +87,7 @@ export class Route {
 	path(params: unknown, principal: Principal | undefined, context: Context): Path {
 		const address = checkAddress(this.kind, this.#params, params, context);
 		if (principal === undefined || !this.#options.authorize(principal, address)) {
-			throw new ChordError({ code: "forbidden", message: `${address.key}: not authorized` });
+			throw forbidden(`${address.key}: not authorized`);
 		}
 		let routed = this.#addresses.get(address.key);
 		if (routed === undefined) {

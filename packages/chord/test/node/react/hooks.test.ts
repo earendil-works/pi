@@ -1,6 +1,7 @@
 // Tests of the React bindings (slice 11 §3) in a real browser (Chromium; skipped without one), on the fixture's page:
 // `useHold` holds while mounted and releases on unmount, `useWatch` re-renders on change, `useRefState` follows the
-// reference's state, `useRegistry` the registry (the panels).
+// reference's state, `useRegistry` the registry (the panels), `usePageState` keeps a value across a remount by another
+// component function and starts a new key fresh.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
@@ -38,6 +39,31 @@ describe.skipIf(CHROMIUM === undefined)("React bindings", () => {
 			// Mounted again: held again.
 			await browser.evaluate('document.getElementById("toggle").click()');
 			await browser.wait('document.getElementById("count")?.dataset.state === "live"');
+		} finally {
+			await app.close(context);
+		}
+	}, 120_000);
+
+	it("keeps page state across a remount by a new function, a new key starting fresh", async () => {
+		const { app } = await webApp(await versionedEntry("1"), await freePort());
+		try {
+			await signIn(browser, app.ownerLink());
+			await browser.evaluate('document.getElementById("note").focus()');
+			await browser.type("oat mi");
+			await browser.wait('document.getElementById("note").value === "oat mi"');
+			await browser.evaluate('void (globalThis.mounted = document.getElementById("note"))');
+			// A new component function at the same place: React mounts it anew (a new element), the key keeps the value.
+			await browser.evaluate('document.getElementById("remount").click()');
+			await browser.wait('document.getElementById("note") !== globalThis.mounted');
+			expect(await browser.evaluate<string>('document.getElementById("note").value')).toBe("oat mi");
+			// Another key starts at its initial value.
+			await browser.evaluate('document.getElementById("remount").click()');
+			await browser.wait('document.getElementById("note").dataset.key === "other"');
+			expect(await browser.evaluate<string>('document.getElementById("note").value')).toBe("");
+			// Back to the first key: still kept.
+			await browser.evaluate('document.getElementById("remount").click()');
+			await browser.wait('document.getElementById("note").dataset.key === "note"');
+			expect(await browser.evaluate<string>('document.getElementById("note").value')).toBe("oat mi");
 		} finally {
 			await app.close(context);
 		}

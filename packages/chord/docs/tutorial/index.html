@@ -216,18 +216,25 @@ stays small: a kind and an id. A user&#39;s profile, if the app had one, would b
 	<span class="tk-k">type</span> <span class="tk-t">Ctx</span>,
 	defineTable,
 	eq,
+	forbidden,
 	int,
+	invalid,
 	local,
 	method,
 	num,
 	obj,
 	<span class="tk-t">PluginError</span>,
 	query,
+	remote,
+	<span class="tk-k">type</span> <span class="tk-t">Static</span>,
 	str,
 	<span class="tk-k">type</span> <span class="tk-t">Theme</span>,
 	<span class="tk-t">Themes</span>,
 } <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/index.ts"</span>;
 <span class="tk-k">export</span> <span class="tk-k">type</span> { <span class="tk-t">TodoPrincipal</span> } <span class="tk-k">from</span> <span class="tk-s">"../../principals.ts"</span>;</code></pre>
+<p><code>invalid</code> and <code>forbidden</code> make Chord&#39;s own errors: a plugin refusing arguments throws <code>invalid(&quot;args&quot;, message)</code>,
+one refusing a caller <code>forbidden(message)</code>, and the caller gets the same <code>{ code, reason }</code> Chord&#39;s built-in checks
+give (chapter VIII). <code>PluginError</code> is for codes of the plugin&#39;s own.</p>
 <p>and a <code>defineFacet</code> bound to the principal type, so every factory sees a <code>TodoPrincipal</code>:</p>
 <!-- quote: src/api/v1/index.ts -->
 <pre><code><span class="tk-c">/** Defines a facet of the todo app: its factories get the app's principals. */</span>
@@ -238,6 +245,26 @@ stays small: a kind and an id. A user&#39;s profile, if the app had one, would b
 it evaluates it. The plugin sees the very <code>Themes</code> registry and <code>List</code> host kind the process has, not a copy. A
 version in the path lets the app ship <code>v2</code> beside <code>v1</code> later; one facet uses one version (design §21, &quot;The plugin
 model&quot;).</p>
+<p>The API is also a real package: a <strong>workspace package</strong> of the app&#39;s repository, named in its <code>package.json</code> with an
+<code>exports</code> entry per module:</p>
+<!-- quote: package.json -->
+<pre><code>{
+	<span class="tk-s">"name"</span>: <span class="tk-s">"@todo/app"</span>,
+	<span class="tk-s">"version"</span>: <span class="tk-s">"0.0.1"</span>,
+	<span class="tk-s">"private"</span>: <span class="tk-k">true</span>,
+	<span class="tk-s">"description"</span>: <span class="tk-s">"The tutorial's todo app: its API (v1 and its per-kind modules), base code and built-in plugins"</span>,
+	<span class="tk-s">"type"</span>: <span class="tk-s">"module"</span>,
+	<span class="tk-s">"exports"</span>: {
+		<span class="tk-s">"./v1"</span>: <span class="tk-s">"./src/api/v1/index.ts"</span>,
+		<span class="tk-s">"./v1/server"</span>: <span class="tk-s">"./src/api/v1/server.ts"</span>,
+		<span class="tk-s">"./v1/web"</span>: <span class="tk-s">"./src/api/v1/web.ts"</span>,
+		<span class="tk-s">"./v1/tui"</span>: <span class="tk-s">"./src/api/v1/tui.ts"</span>
+	}
+}</code></pre>
+<p>The repository&#39;s root <code>package.json</code> lists it in <code>workspaces</code> (here Chord&#39;s repository lists
+<code>packages/chord/test/examples/61-tutorial</code>), so <code>npm install</code> links <code>node_modules/@todo/app</code> to it. Then Node,
+TypeScript, the tests and esbuild resolve <code>@todo/app/v1</code> alike, from base code, from a plugin&#39;s files and from a test
+importing a plugin&#39;s <code>contract.ts</code>; plugin builds still leave it out and pass the process&#39;s instance.</p>
 <h3 id="the-start-script">The start script</h3>
 <p><code>startServer</code> takes what the app decides and does the rest. <code>start.ts</code> names the API with this process&#39;s modules, the
 facet kinds (which files a plugin may have), and the principals:</p>
@@ -331,12 +358,15 @@ chapter III). Nothing is the owner because it comes from loopback: any local pro
 and an idle list costs nothing. This chapter declares where lists live, what a list offers, and the worker code that
 keeps its todos.</p>
 <h3 id="where-a-list-lives">Where a list lives</h3>
-<p>A <strong>host kind</strong> declares addressable hosts with params; <code>List({ id: &quot;groceries&quot; })</code> is an <strong>address</strong>. A <code>remote</code>
-contract says, with <code>hostAddress</code>, at which address its objects live. Here is the app&#39;s contract for a list&#39;s todos,
-in the API so that every host kind, the tests and command-line code can name it:</p>
+<p>A <strong>host kind</strong> declares addressable hosts with params; <code>List({ id: &quot;groceries&quot; })</code> is an <strong>address</strong>. The app&#39;s
+host kinds are base code, in the API:</p>
 <!-- quote: src/api/v1/index.ts -->
 <pre><code><span class="tk-c">/** A todo list: a worker process of its own, with its own store. */</span>
-<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">List</span> = <span class="tk-f">hostKind</span>(<span class="tk-s">"list"</span>, { id: <span class="tk-f">str</span>() });
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">List</span> = <span class="tk-f">hostKind</span>(<span class="tk-s">"list"</span>, { id: <span class="tk-f">str</span>() });</code></pre>
+<p>A <code>remote</code> contract says, with <code>hostAddress</code>, at which address its objects live. The contract for a list&#39;s todos is
+the lists plugin&#39;s, in its <code>contract.ts</code>, which its facets of every kind import, and so do the steps and its test:</p>
+<!-- quote: plugins/lists/contract.ts -->
+<pre><code><span class="tk-k">import</span> { arr, bool, int, <span class="tk-t">List</span>, method, num, obj, remote, <span class="tk-k">type</span> <span class="tk-t">Static</span>, str } <span class="tk-k">from</span> <span class="tk-s">"@todo/app/v1"</span>;
 
 <span class="tk-c">/** A todo: its number in the list, its text, whether it is done, who added it and when. */</span>
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Item</span> = <span class="tk-f">obj</span>({ id: <span class="tk-f">int</span>(), text: <span class="tk-f">str</span>(), done: <span class="tk-f">bool</span>(), by: <span class="tk-f">str</span>(), at: <span class="tk-f">num</span>() });
@@ -345,8 +375,8 @@ in the API so that every host kind, the tests and command-line code can name it:
 <span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Item</span> = <span class="tk-t">Static</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">Item</span>&gt;;
 
 <span class="tk-c">/**
- * A list's todos as one principal sees them, on the list's worker: the newest 50 (live), adding one and ticking one
- * off (or on again); the owner also clears the done ones.
+ * A list's todos as one principal sees them: the newest 50 (live), adding one and ticking one off (or on again); the
+ * owner also clears the done ones.
  */</span>
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Todos</span> = <span class="tk-f">remote</span>(<span class="tk-s">"todo.todos"</span>, {
 	version: <span class="tk-n">1</span>,
@@ -440,11 +470,16 @@ when <code>fn</code> returns, or not at all if it throws. The window follows aft
 writer, so it knows every change:</p>
 <!-- quote: plugins/lists/worker.ts -->
 <pre><code>			add: <span class="tk-k">async</span> ({ text, by }, ctx) =&gt; {
+				<span class="tk-c">// Refused as Chord refuses arguments that fail their schema: the caller gets `invalid/args`.</span>
+				<span class="tk-k">if</span> (text === <span class="tk-s">""</span>) <span class="tk-k">throw</span> <span class="tk-f">invalid</span>(<span class="tk-s">"args"</span>, <span class="tk-s">"a todo needs text"</span>);
 				<span class="tk-k">const</span> item = { id: next++, text, done: <span class="tk-k">false</span>, by, at: <span class="tk-t">Date</span>.<span class="tk-f">now</span>() };
 				<span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; tx.<span class="tk-f">put</span>(items, item), ctx);
 				<span class="tk-c">// In number order: two adds may commit in either order.</span>
 				window.<span class="tk-f">set</span>([...window.value, item].<span class="tk-f">sort</span>((a, b) =&gt; a.id - b.id).<span class="tk-f">slice</span>(-WINDOW));
 				<span class="tk-k">return</span> <span class="tk-k">null</span>;</code></pre>
+<p>A todo without text is refused with <code>invalid(&quot;args&quot;, …)</code>, from the API: the error crosses every link as it is, so a
+caller on a page or in a terminal gets <code>{ code: &quot;invalid&quot;, reason: &quot;args&quot; }</code>, as for arguments that fail the
+contract&#39;s schema.</p>
 <h3 id="the-view-per-principal">The view per principal</h3>
 <p><code>Todos</code> is the remote face of the store, one object per principal. Its factory gets the principal the link stamped:</p>
 <!-- quote: plugins/lists/worker.ts -->
@@ -518,8 +553,9 @@ contributes routes to the kit&#39;s <code>Http</code> registry, which the API&#3
 <pre><code><span class="tk-c">// The lists plugin on the server: a JSON API for command-line clients. A route runs as whoever sent the request (the</span>
 <span class="tk-c">// kit answered 401 before this code runs when nobody signed in), so its `ctx.get` reaches the list's worker as them.</span>
 
-<span class="tk-k">import</span> { defineFacet, <span class="tk-t">Todos</span> } <span class="tk-k">from</span> <span class="tk-s">"@todo/app/v1"</span>;
+<span class="tk-k">import</span> { defineFacet } <span class="tk-k">from</span> <span class="tk-s">"@todo/app/v1"</span>;
 <span class="tk-k">import</span> { <span class="tk-t">Http</span> } <span class="tk-k">from</span> <span class="tk-s">"@todo/app/v1/server"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">Todos</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;
 
 <span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
 	self.<span class="tk-f">contribute</span>(<span class="tk-t">Http</span>, {
@@ -573,7 +609,7 @@ for them:</p>
 <pre><code><span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">ComponentType</span> } <span class="tk-k">from</span> <span class="tk-s">"react"</span>;
 <span class="tk-k">import</span> { defineRegistry } <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/index.ts"</span>;
 
-<span class="tk-k">export</span> { useHold, useWatch } <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/react/index.ts"</span>;
+<span class="tk-k">export</span> { useHold, usePageState, useWatch } <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/react/index.ts"</span>;
 
 <span class="tk-c">/** A panel of the page: its title and its React component. */</span>
 <span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Panel</span> = { <span class="tk-k">readonly</span> title: string; <span class="tk-k">readonly</span> <span class="tk-t">Component</span>: <span class="tk-t">ComponentType</span> };
@@ -609,9 +645,11 @@ scripts with the entry&#39;s core facets, and keeps them current. <code>HostProv
 when its items change:</p>
 <!-- quote: plugins/lists/web.ts -->
 <pre><code><span class="tk-k">function</span> <span class="tk-t">TodoList</span>() {
-	<span class="tk-k">const</span> todos = <span class="tk-f">useHold</span>(<span class="tk-t">Todos</span>, { list: location.hash.<span class="tk-f">slice</span>(<span class="tk-n">1</span>) || <span class="tk-s">"groceries"</span> });
+	<span class="tk-k">const</span> list = location.hash.<span class="tk-f">slice</span>(<span class="tk-n">1</span>) || <span class="tk-s">"groceries"</span>;
+	<span class="tk-k">const</span> todos = <span class="tk-f">useHold</span>(<span class="tk-t">Todos</span>, { list });
 	<span class="tk-k">const</span> items = <span class="tk-f">useWatch</span>(todos?.items) ?? [];
-	<span class="tk-k">const</span> [text, setText] = <span class="tk-f">useState</span>(<span class="tk-s">""</span>);
+	<span class="tk-c">// Kept by the page, not the component: the new code's component finds the half-typed todo.</span>
+	<span class="tk-k">const</span> [text, setText] = <span class="tk-f">usePageState</span>(<span class="tk-s">`lists.draft.${list}`</span>, <span class="tk-s">""</span>);
 	<span class="tk-k">const</span> add = (event: { <span class="tk-f">preventDefault</span>(): <span class="tk-k">void</span> }) =&gt; {
 		event.<span class="tk-f">preventDefault</span>();
 		<span class="tk-k">if</span> (todos === <span class="tk-k">undefined</span> || text.<span class="tk-f">trim</span>() === <span class="tk-s">""</span>) <span class="tk-k">return</span>;
@@ -654,7 +692,8 @@ when its items change:</p>
 
 <span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; self.<span class="tk-f">contribute</span>(<span class="tk-t">Panels</span>, { title: <span class="tk-s">"Groceries"</span>, <span class="tk-t">Component</span>: <span class="tk-t">TodoList</span> }));</code></pre>
 <p><code>useHold</code> holds a reference while the component is mounted and releases it on unmount; it is <code>undefined</code> on the first
-render. <code>useWatch</code> follows a member. Clicks call methods with <code>BACKGROUND_CONTEXT</code>, which never ends, so a click&#39;s call
+render. <code>useWatch</code> follows a member. <code>usePageState</code> is <code>useState</code> whose value the page keeps under a key instead of the
+component: chapter VIII shows why the half-typed todo needs it. Clicks call methods with <code>BACKGROUND_CONTEXT</code>, which never ends, so a click&#39;s call
 is not cancelled when the handler returns. <code>todos?.variant === &quot;owner&quot;</code> narrows the reference: only the owner&#39;s has
 <code>clear</code>, and TypeScript knows it. The panel&#39;s look reads the active theme&#39;s CSS variables, with class names prefixed
 by the plugin&#39;s name (a <code>*.module.css</code> file would scope them instead):</p>
@@ -895,14 +934,12 @@ Her todo is hers: <code>coffee (ada)</code>.</p>
 </section>
 
 <section class="chapter" id="reload"><header class="opener"><div class="numeral">VIII</div><h2>Changing Code</h2><p class="lede">An edit while Ada is connected: the watcher marks, applyChanges rolls out, every object takes its fate.</p></header>
-<p class="dropcap">Ada typed &quot;  tea  &quot; with spaces, and an empty add should do nothing. The fix is in the lists plugin&#39;s worker facet.
-Step 8 makes the edit in the running app&#39;s copy of the plugins, as an editor or an agent would, and applies it:</p>
+<p class="dropcap">Ada typed &quot;  tea  &quot; with spaces, and a blank todo should be refused like an empty one. The fix is one line of the lists
+plugin&#39;s worker facet: the view trims the text before the store sees it. Step 8 makes the edit in the running app&#39;s
+copy of the plugins, as an editor or an agent would, and applies it:</p>
 <!-- quote: main.ts -->
 <pre><code><span class="tk-k">const</span> BEFORE = <span class="tk-s">"add: (text: string, ctx: Ctx) =&gt; store.add({ text, by }, ctx),"</span>;
-<span class="tk-k">const</span> AFTER = <span class="tk-s">`add: async (text: string, ctx: Ctx) =&gt; {
-				if (text.trim() !== "") await store.add({ text: text.trim(), by }, ctx);
-				return null;
-			},`</span>;
+<span class="tk-k">const</span> AFTER = <span class="tk-s">"add: (text: string, ctx: Ctx) =&gt; store.add({ text: text.trim(), by }, ctx),"</span>;
 <span class="tk-k">const</span> workerFile = <span class="tk-f">join</span>(root, <span class="tk-s">"lists"</span>, <span class="tk-s">"worker.ts"</span>);
 <span class="tk-k">await</span> <span class="tk-f">writeFile</span>(workerFile, (<span class="tk-k">await</span> <span class="tk-f">readFile</span>(workerFile, <span class="tk-s">"utf8"</span>)).<span class="tk-f">replace</span>(BEFORE, AFTER));
 <span class="tk-k">await</span> <span class="tk-f">until</span>(() =&gt; app.plugins.state.value.dirty.<span class="tk-f">includes</span>(<span class="tk-s">"@todo/lists"</span>));
@@ -915,14 +952,16 @@ console.<span class="tk-f">log</span>(<span class="tk-s">"8. lists changed, roll
 <span class="tk-k">await</span> adas.<span class="tk-f">add</span>(<span class="tk-s">"  tea  "</span>, context);
 <span class="tk-k">await</span> <span class="tk-f">until</span>(() =&gt; groceries.items.value.<span class="tk-f">at</span>(-<span class="tk-n">1</span>)?.text === <span class="tk-s">"tea"</span>);
 console.<span class="tk-f">log</span>(<span class="tk-s">"   ada adds '  tea  ':"</span>, <span class="tk-f">show</span>(groceries.items.value.<span class="tk-f">slice</span>(-<span class="tk-n">1</span>)));
-<span class="tk-k">const</span> count = groceries.items.value.length;
-<span class="tk-k">await</span> adas.<span class="tk-f">add</span>(<span class="tk-s">" "</span>, context);
-console.<span class="tk-f">log</span>(<span class="tk-s">"   ada adds ' ':"</span>, groceries.items.value.length === count ? <span class="tk-s">"ignored"</span> : <span class="tk-s">"added"</span>);</code></pre>
+<span class="tk-k">const</span> refused = <span class="tk-k">await</span> adas.<span class="tk-f">add</span>(<span class="tk-s">" "</span>, context).<span class="tk-f">then</span>(
+	() =&gt; <span class="tk-s">"added"</span>,
+	(error: <span class="tk-t">ChordError</span>) =&gt; ({ code: error.code, reason: error.reason }),
+);
+console.<span class="tk-f">log</span>(<span class="tk-s">"   ada adds ' ':"</span>, refused);</code></pre>
 <!-- output: main -->
 <pre class="plain"><code>8. lists changed, rolled out to: server, list, web, tui
    on list|groceries: todo.store restarted, todo.todos(groceries) parked
    ada adds '  tea  ': [ ] tea (ada)
-   ada adds ' ': ignored</code></pre>
+   ada adds ' ': { code: 'invalid', reason: 'args' }</code></pre>
 <p>The watcher marked <code>@todo/lists</code> dirty when the file changed; <code>applyChanges</code> rebuilt it (one esbuild call per facet)
 and rolled it out host by host. On each host Chord stages the new code (it runs the new factories against a recording
 <code>self</code> to see what they declare), commits it in one step, and gives each object of the changed plugin its <strong>fate</strong>
@@ -953,7 +992,9 @@ and rolled it out host by host. On each host Chord stages the new code (it runs 
 </tbody></table>
 <p>The store opens a native (the window&#39;s first read), so it restarted and read its window again from the table; the
 views waited for it (parked), then went on with the new code. Ada&#39;s reference never noticed more than a moment of
-<code>loading</code>, and her next add was trimmed. Had the edit broken the plugin, that plugin alone would have kept its old code
+<code>loading</code>, and her next add was trimmed. Her blank one is now empty after trimming, so the store refused it with
+<code>invalid(&quot;args&quot;, …)</code> (chapter II): her client got <code>{ code: &quot;invalid&quot;, reason: &quot;args&quot; }</code>, Chord&#39;s own error, which
+crossed the worker&#39;s link and the server&#39;s as it was. Had the edit broken the plugin, that plugin alone would have kept its old code
 and the report would name the error.</p>
 <p>A contract that changes shape needs a new <code>version</code>; old consumers keep working when the provider maps their version
 (<code>accepts</code>), otherwise they wait with <code>contract_mismatch</code> until they reload. A stored document or table that changes
@@ -968,12 +1009,16 @@ page reload. <code>screenshots.ts</code> adds a count of open todos to the panel
 <pre class="plain"><code>wrote docs/tutorial/screens/page.png
 wrote docs/tutorial/screens/harbor.png
 wrote docs/tutorial/screens/edited.png
-typed "oat mi"; after the edit: ""
+typed "oat mi"; after the edit: "oat mi"
 the page did not reload: true</code></pre>
 <figure class="fig"><p><img src="screens/edited.png" alt="The page after the edit"></p>
-<figcaption><span class="fignum">Figure 3.</span> After the edit of the web facet, applied in place: the count appears; the half-typed &quot;oat mi&quot; is gone, because the panel&#39;s component is new code and React mounted it anew.</figcaption></figure>
-<p>The page did not reload, and everything outside the changed plugin&#39;s components kept its state. The changed panel&#39;s
-own React state did not: a new component function is a new component to React.</p>
+<figcaption><span class="fignum">Figure 3.</span> After the edit of the web facet, applied in place: the count appears, and the half-typed &quot;oat mi&quot; is still in the box: the page kept it under its key while React mounted the new component.</figcaption></figure>
+<p>The page did not reload, and everything outside the changed plugin&#39;s components kept its state. The changed panel
+itself is new code: its component is a new function, which React mounts anew, so its own <code>useState</code> would start over
+(design §21). What must survive a plugin update (a half-typed todo, a scroll position) is <strong>page state</strong>:
+<code>usePageState(key, initial)</code> keeps the value in the page&#39;s host under the key, not in the component, so the new
+component finds it; a terminal&#39;s <code>TuiScope</code> has the same store as <code>scope.pageState(key, initial)</code>. Page state is any
+value, never sent anywhere, and gone with the page.</p>
 </section>
 
 <section class="chapter" id="export"><header class="opener"><div class="numeral">IX</div><h2>Moving a List</h2><p class="lede">Export a worker&#39;s data while it runs, import it under another address.</p></header>
@@ -1006,9 +1051,9 @@ an index of the app&#39;s, if it had one, is the app&#39;s.</p>
 production builds it (the same esbuild call, the API&#39;s imports checked), evaluates it with the app&#39;s real API module and
 loads it on a new host with an in-memory store, here at a list&#39;s address so it may serve <code>Todos</code>:</p>
 <!-- quote: plugins/lists/worker.test.ts -->
-<pre><code>	<span class="tk-k">let</span> t: <span class="tk-t">TestedPlugin</span>&lt;<span class="tk-t">TodoPrincipal</span>&gt;;
+<pre><code>	<span class="tk-k">let</span> t: <span class="tk-t">TestedPlugin</span>&lt;v1.<span class="tk-t">TodoPrincipal</span>&gt;;
 	<span class="tk-f">beforeEach</span>(<span class="tk-k">async</span> () =&gt; {
-		t = <span class="tk-k">await</span> <span class="tk-f">testPlugin</span>&lt;<span class="tk-t">TodoPrincipal</span>&gt;(
+		t = <span class="tk-k">await</span> <span class="tk-f">testPlugin</span>&lt;v1.<span class="tk-t">TodoPrincipal</span>&gt;(
 			<span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./"</span>, <span class="tk-k">import</span>.meta.url)),
 			{
 				kind: <span class="tk-s">"worker"</span>,
@@ -1026,7 +1071,7 @@ loads it on a new host with an in-memory store, here at a list&#39;s address so 
 <pre><code>	<span class="tk-f">it</span>(<span class="tk-s">"lets the owner clear the done todos"</span>, <span class="tk-k">async</span> () =&gt; {
 		<span class="tk-k">await</span> t.<span class="tk-f">root</span>(
 			<span class="tk-k">async</span> (ctx) =&gt; {
-				<span class="tk-k">const</span> todos = <span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(v1.<span class="tk-t">Todos</span>, { list: <span class="tk-s">"groceries"</span> });
+				<span class="tk-k">const</span> todos = <span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(<span class="tk-t">Todos</span>, { list: <span class="tk-s">"groceries"</span> });
 				<span class="tk-k">if</span> (todos.variant !== <span class="tk-s">"owner"</span>) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">Error</span>(<span class="tk-s">`the owner got ${todos.variant}`</span>);
 				<span class="tk-k">await</span> todos.<span class="tk-f">add</span>(<span class="tk-s">"milk"</span>, ctx);
 				<span class="tk-k">await</span> todos.<span class="tk-f">add</span>(<span class="tk-s">"eggs"</span>, ctx);
@@ -1042,10 +1087,17 @@ loads it on a new host with an in-memory store, here at a list&#39;s address so 
 knows which stub facets to add. Registries it contributes to that nobody serves are collected (<code>t.contributions(R)</code>).
 Run it like any test:</p>
 <pre><code>node ../../node_modules/vitest/dist/cli.js --run test/examples/<span class="tk-n">61</span>-tutorial/plugins/lists/worker.test.ts</code></pre>
-<p>The test imports <code>Todos</code> and <code>List</code> from the API module by path. It could not import a contract from a plugin&#39;s own
-<code>contract.ts</code>: that file imports <code>@todo/app/v1</code>, a name only plugin builds resolve. A test of such a contract declares
-it again (contracts are data: the same name, version and schema bind), as <code>docs/plugin-authoring.md</code> shows; this app
-keeps the contract it shares in its API instead.</p>
+<p>The test imports the API by its package name and <code>Todos</code> from the plugin&#39;s own <code>contract.ts</code>, as the facets do:</p>
+<!-- quote: plugins/lists/worker.test.ts -->
+<pre><code><span class="tk-k">import</span> * <span class="tk-k">as</span> v1 <span class="tk-k">from</span> <span class="tk-s">"@todo/app/v1"</span>;</code></pre>
+<!-- quote: plugins/lists/worker.test.ts -->
+<pre><code><span class="tk-k">import</span> { <span class="tk-t">Todos</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;</code></pre>
+<p>Both resolve because the API is a workspace package npm linked (chapter I); the plugin&#39;s build bundles its own copy of
+<code>contract.ts</code>, and the two bind, since contracts are data (the same name, version and schema). A third test checks
+the refusal of chapter II:</p>
+<!-- quote: plugins/lists/worker.test.ts -->
+<pre><code>				<span class="tk-k">const</span> refused = <span class="tk-k">await</span> todos.<span class="tk-f">add</span>(<span class="tk-s">""</span>, ctx).<span class="tk-k">catch</span>((error: <span class="tk-t">ChordError</span>) =&gt; error);
+				<span class="tk-f">expect</span>(refused).<span class="tk-f">toMatchObject</span>({ code: <span class="tk-s">"invalid"</span>, reason: <span class="tk-s">"args"</span> });</code></pre>
 </section>
 
 <section class="chapter" id="p2"><header class="opener"><div class="numeral">XI</div><h2>Writing a p2 Plugin</h2><p class="lede">What is different in p2, and one small plugin: a tool for the agent and a chip for the people.</p></header>
@@ -1207,15 +1259,10 @@ a tutorial.</p>
 live; <code>self.open</code> is the only place, so the store counts as holding a native and restarts at every reload of its
 plugin, parking its views, though it holds nothing open. Tables have no watch, so every table-backed live view
 repeats this pattern (example 59&#39;s chat does too).</li>
-<li><strong>A reloaded web plugin loses its own React state.</strong> Decision &quot;Slice 11, P4&quot; promises an in-place reload &quot;keeping what
-is on screen (scroll, a half-typed message)&quot;. The page does not reload, but the changed plugin&#39;s components are new
-functions, so React mounts them anew and their state (the half-typed todo) is gone.</li>
-<li><strong>Plugin contracts are hard to test from outside builds.</strong> A test or script cannot import a plugin&#39;s
-<code>contract.ts</code> (it imports the app&#39;s API by a package name only builds resolve), so contracts are declared twice or
-moved into the API.</li>
-<li><strong>No public <code>invalid</code>.</strong> Plugins throw <code>PluginError</code> with codes of their own; refusing bad arguments with Chord&#39;s
-<code>invalid/args</code>, as the built-in checks do, is not open to them.</li>
 </ul>
+<p>Three more, found the same way, are fixed: a reloaded web plugin lost its own React state (now <code>usePageState</code>,
+chapter VIII), a plugin&#39;s <code>contract.ts</code> could not be imported outside builds (the API is now a workspace package,
+chapter I), and plugins could not throw Chord&#39;s <code>invalid</code> (Chord exports <code>invalid</code> and <code>forbidden</code>, chapter II).</p>
 </section>
 
 <section class="chapter appendix" id="the-app-s-files"><header class="opener"><div class="numeral">A</div><h2>The App&#39;s Files</h2></header>
@@ -1233,9 +1280,14 @@ moved into the API.</li>
 <td>the principal type</td>
 </tr>
 <tr>
+<td><code>package.json</code></td>
+<td>base</td>
+<td>the API as the workspace package <code>@todo/app</code>, its <code>exports</code></td>
+</tr>
+<tr>
 <td><code>src/api/v1/index.ts</code></td>
 <td>base, every kind</td>
-<td><code>@todo/app/v1</code>: Chord&#39;s part, <code>defineFacet</code>, <code>List</code>, <code>Item</code>, <code>Todos</code></td>
+<td><code>@todo/app/v1</code>: Chord&#39;s part (with <code>invalid</code>, <code>forbidden</code>), <code>defineFacet</code>, <code>List</code></td>
 </tr>
 <tr>
 <td><code>src/api/v1/server.ts</code></td>
@@ -1245,7 +1297,7 @@ moved into the API.</li>
 <tr>
 <td><code>src/api/v1/web.ts</code></td>
 <td>base, web</td>
-<td><code>Panels</code>, <code>useHold</code>, <code>useWatch</code></td>
+<td><code>Panels</code>, <code>useHold</code>, <code>usePageState</code>, <code>useWatch</code></td>
 </tr>
 <tr>
 <td><code>src/api/v1/tui.ts</code></td>
@@ -1270,7 +1322,7 @@ moved into the API.</li>
 <tr>
 <td><code>plugins/lists/</code></td>
 <td>plugin</td>
-<td>worker (table, store, views), server (routes), web (panel), tui (screen), its test</td>
+<td>contract (<code>Item</code>, <code>Todos</code>), worker (table, store, views), server (routes), web (panel), tui (screen), its test</td>
 </tr>
 <tr>
 <td><code>plugins/login.server.ts</code></td>
@@ -1330,6 +1382,11 @@ moved into the API.</li>
 <td>code outside objects, as a principal</td>
 </tr>
 <tr>
+<td><code>invalid(reason, message, details?)</code>, <code>forbidden(message, details?)</code></td>
+<td>II, VIII</td>
+<td>Chord&#39;s errors, thrown by a plugin</td>
+</tr>
+<tr>
 <td><code>self.contribute(Http, { routes })</code></td>
 <td>III</td>
 <td>routes, denied by default</td>
@@ -1343,6 +1400,11 @@ moved into the API.</li>
 <td><code>startTerminalRuntime</code>, <code>TuiScope</code>, <code>startTerminal</code></td>
 <td>V</td>
 <td>the terminal</td>
+</tr>
+<tr>
+<td><code>usePageState(key, initial)</code>, <code>scope.pageState(key, initial)</code></td>
+<td>IV, VIII</td>
+<td>state the page keeps across plugin reloads</td>
 </tr>
 <tr>
 <td><code>self.contribute(Themes, theme)</code></td>

@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { Browser, CHROMIUM } from "../../node/web/browser.ts";
-import { Todos } from "./src/api/v1/index.ts";
+import { Todos } from "./plugins/lists/contract.ts";
 import { startTodo, todoDirectories } from "./start.ts";
 
 const out = resolve(process.argv[2] ?? "screens");
@@ -73,7 +73,8 @@ try {
 	await browser.wait("getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#12232e'");
 	await shoot("harbor.png");
 
-	// 3. Half a todo typed, then an edit of the lists plugin's web facet applied: a count of the open todos.
+	// 3. Half a todo typed, then an edit of the lists plugin's web facet applied: a count of the open todos. The panel
+	//    remounts (new code), and the half-typed todo is still there: the page keeps it (`usePageState`).
 	await browser.evaluate("document.querySelector('.lists-panel input').focus()");
 	await browser.type("oat mi");
 	// A mark on the page's window: a page that reloaded would have lost it.
@@ -84,6 +85,7 @@ try {
 	while (!app.plugins.state.value.dirty.includes("@todo/lists")) await new Promise((done) => setTimeout(done, 10));
 	await app.applyChanges(context);
 	await browser.wait("document.querySelector('.lists-open') !== null");
+	await browser.evaluate("document.querySelector('.lists-panel input').focus()");
 	await shoot("edited.png");
 	const after = await browser.evaluate<string>("document.querySelector('.lists-panel input').value");
 	console.log(`typed ${JSON.stringify(typed)}; after the edit: ${JSON.stringify(after)}`);

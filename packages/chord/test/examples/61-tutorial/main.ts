@@ -9,11 +9,12 @@ import { cp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { List } from "@todo/app/v1";
 import { WebSocket } from "ws";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { type ChordError, createHost, WebScripts, type WebSocketLike, webSocketLink } from "../../../src/index.ts";
 import { type RunningTerminal, requireSandboxNode, startTerminal } from "../../../src/node/tui/index.ts";
-import { type Item, List, Todos } from "./src/api/v1/index.ts";
+import { type Item, Todos } from "./plugins/lists/contract.ts";
 import type { TodoPrincipal } from "./src/principals.ts";
 import { startTodo, todoDirectories } from "./start.ts";
 
@@ -157,17 +158,15 @@ if (adas.variant === "member") {
 await until(() => groceries.items.value.some(({ by }) => by === "ada"));
 console.log("   the server's reference sees:", show(groceries.items.value.slice(-1)));
 
-// 8. An edit applied in place: the lists plugin's worker facet trims a todo's text and ignores an empty one. The
+// 8. An edit applied in place: the lists plugin's worker facet trims a todo's text, so a blank one is empty and the
+//    store refuses it with Chord's `invalid/args`, which reaches Ada as it would a refused argument. The
 //    watcher marks the plugin dirty; applying the changes rolls it out to the server, the list's worker, the page and
 //    the terminal. On the worker each object of the plugin takes its fate: the store opens a native, so it restarts
 //    (its todos are in the store, and it reads them again); the views wait for it, then go on with the new code. Ada's
 //    reference follows them.
 // The edit: `add` in the `Todos` view, before and after.
 const BEFORE = "add: (text: string, ctx: Ctx) => store.add({ text, by }, ctx),";
-const AFTER = `add: async (text: string, ctx: Ctx) => {
-				if (text.trim() !== "") await store.add({ text: text.trim(), by }, ctx);
-				return null;
-			},`;
+const AFTER = "add: (text: string, ctx: Ctx) => store.add({ text: text.trim(), by }, ctx),";
 const workerFile = join(root, "lists", "worker.ts");
 await writeFile(workerFile, (await readFile(workerFile, "utf8")).replace(BEFORE, AFTER));
 await until(() => app.plugins.state.value.dirty.includes("@todo/lists"));
@@ -180,9 +179,11 @@ for (const host of applied.steps.find(({ name }) => name === "list")!.hosts) {
 await adas.add("  tea  ", context);
 await until(() => groceries.items.value.at(-1)?.text === "tea");
 console.log("   ada adds '  tea  ':", show(groceries.items.value.slice(-1)));
-const count = groceries.items.value.length;
-await adas.add(" ", context);
-console.log("   ada adds ' ':", groceries.items.value.length === count ? "ignored" : "added");
+const refused = await adas.add(" ", context).then(
+	() => "added",
+	(error: ChordError) => ({ code: error.code, reason: error.reason }),
+);
+console.log("   ada adds ' ':", refused);
 
 // 9. Export and import. The list's running worker writes its own store and files as one archive and goes on; importing
 //    the archive makes a new list with the same todos. An address that has data is never overwritten.

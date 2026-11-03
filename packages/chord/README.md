@@ -23,7 +23,7 @@ The design, the rule book for all of this, is [docs/design.md](docs/design.md).
 | `@earendil-works/chord/app` | The app kit: `startServer`, `startWorker`, the start-data objects, sessions and the owner's sign-in, device pairing, files, export and import per address, optional plugins (users, invites, ephemeral login). | Node |
 | `@earendil-works/chord/surfaces` | The client surfaces' server side: `webSurface` (base bundle, plugin scripts, the page) and `tuiSurface` (the terminal surface). | Node |
 | `@earendil-works/chord/web` | The web surface's browser side: `startPage` in the app's web entry, `followThemes`. | Browsers |
-| `@earendil-works/chord/react` | Optional React bindings: `HostProvider`, `useHold`, `useWatch`, `useRefState`, `useRegistry`, `watchStore`. | Browsers |
+| `@earendil-works/chord/react` | Optional React bindings: `HostProvider`, `useHold`, `useWatch`, `useRefState`, `useRegistry`, `usePageState`, `watchStore`. | Browsers |
 | `@earendil-works/chord/tui` | The terminal surface's sandbox side: `startTerminalRuntime` in the app's terminal entry, `BridgeTerminal`, `TerminalTheme`, `TuiScope`. | Node (sandboxed) |
 | `@earendil-works/chord/tui/launcher` | The terminal launcher, the trusted side of a terminal client: `startTerminal`, `requireSandboxNode`. | Node |
 | `@earendil-works/chord/context` | Explicit cancellation, telemetry, and invocation values: `BACKGROUND_CONTEXT`, `withCancel`, `withAbortSignal`, `withoutAbortSignal`, `withTelemetry`, `traceIn`, `withContextValue`, `awaitWithContext`. | Node and browsers |

@@ -115,19 +115,27 @@ export {
 	type Ctx,
 	defineTable,
 	eq,
+	forbidden,
 	int,
+	invalid,
 	local,
 	method,
 	num,
 	obj,
 	PluginError,
 	query,
+	remote,
+	type Static,
 	str,
 	type Theme,
 	Themes,
 } from "../../../../../../src/index.ts";
 export type { TodoPrincipal } from "../../principals.ts";
 ```
+
+`invalid` and `forbidden` make Chord's own errors: a plugin refusing arguments throws `invalid("args", message)`,
+one refusing a caller `forbidden(message)`, and the caller gets the same `{ code, reason }` Chord's built-in checks
+give (chapter VIII). `PluginError` is for codes of the plugin's own.
 
 and a `defineFacet` bound to the principal type, so every factory sees a `TodoPrincipal`:
 
@@ -143,6 +151,31 @@ The API is a **host package**: a plugin's build leaves it out, and each process 
 it evaluates it. The plugin sees the very `Themes` registry and `List` host kind the process has, not a copy. A
 version in the path lets the app ship `v2` beside `v1` later; one facet uses one version (design §21, "The plugin
 model").
+
+The API is also a real package: a **workspace package** of the app's repository, named in its `package.json` with an
+`exports` entry per module:
+
+<!-- quote: package.json -->
+```json
+{
+	"name": "@todo/app",
+	"version": "0.0.1",
+	"private": true,
+	"description": "The tutorial's todo app: its API (v1 and its per-kind modules), base code and built-in plugins",
+	"type": "module",
+	"exports": {
+		"./v1": "./src/api/v1/index.ts",
+		"./v1/server": "./src/api/v1/server.ts",
+		"./v1/web": "./src/api/v1/web.ts",
+		"./v1/tui": "./src/api/v1/tui.ts"
+	}
+}
+```
+
+The repository's root `package.json` lists it in `workspaces` (here Chord's repository lists
+`packages/chord/test/examples/61-tutorial`), so `npm install` links `node_modules/@todo/app` to it. Then Node,
+TypeScript, the tests and esbuild resolve `@todo/app/v1` alike, from base code, from a plugin's files and from a test
+importing a plugin's `contract.ts`; plugin builds still leave it out and pass the process's instance.
 
 ## The start script
 
@@ -260,14 +293,21 @@ keeps its todos.
 
 ## Where a list lives
 
-A **host kind** declares addressable hosts with params; `List({ id: "groceries" })` is an **address**. A `remote`
-contract says, with `hostAddress`, at which address its objects live. Here is the app's contract for a list's todos,
-in the API so that every host kind, the tests and command-line code can name it:
+A **host kind** declares addressable hosts with params; `List({ id: "groceries" })` is an **address**. The app's
+host kinds are base code, in the API:
 
 <!-- quote: src/api/v1/index.ts -->
 ```ts
 /** A todo list: a worker process of its own, with its own store. */
 export const List = hostKind("list", { id: str() });
+```
+
+A `remote` contract says, with `hostAddress`, at which address its objects live. The contract for a list's todos is
+the lists plugin's, in its `contract.ts`, which its facets of every kind import, and so do the steps and its test:
+
+<!-- quote: plugins/lists/contract.ts -->
+```ts
+import { arr, bool, int, List, method, num, obj, remote, type Static, str } from "@todo/app/v1";
 
 /** A todo: its number in the list, its text, whether it is done, who added it and when. */
 export const Item = obj({ id: int(), text: str(), done: bool(), by: str(), at: num() });
@@ -276,8 +316,8 @@ export const Item = obj({ id: int(), text: str(), done: bool(), by: str(), at: n
 export type Item = Static<typeof Item>;
 
 /**
- * A list's todos as one principal sees them, on the list's worker: the newest 50 (live), adding one and ticking one
- * off (or on again); the owner also clears the done ones.
+ * A list's todos as one principal sees them: the newest 50 (live), adding one and ticking one off (or on again); the
+ * owner also clears the done ones.
  */
 export const Todos = remote("todo.todos", {
 	version: 1,
@@ -394,12 +434,18 @@ writer, so it knows every change:
 <!-- quote: plugins/lists/worker.ts -->
 ```ts
 			add: async ({ text, by }, ctx) => {
+				// Refused as Chord refuses arguments that fail their schema: the caller gets `invalid/args`.
+				if (text === "") throw invalid("args", "a todo needs text");
 				const item = { id: next++, text, done: false, by, at: Date.now() };
 				await self.tx(async (tx) => tx.put(items, item), ctx);
 				// In number order: two adds may commit in either order.
 				window.set([...window.value, item].sort((a, b) => a.id - b.id).slice(-WINDOW));
 				return null;
 ```
+
+A todo without text is refused with `invalid("args", …)`, from the API: the error crosses every link as it is, so a
+caller on a page or in a terminal gets `{ code: "invalid", reason: "args" }`, as for arguments that fail the
+contract's schema.
 
 ## The view per principal
 
@@ -497,8 +543,9 @@ export { Http } from "../../../../../../src/node/http/index.ts";
 // The lists plugin on the server: a JSON API for command-line clients. A route runs as whoever sent the request (the
 // kit answered 401 before this code runs when nobody signed in), so its `ctx.get` reaches the list's worker as them.
 
-import { defineFacet, Todos } from "@todo/app/v1";
+import { defineFacet } from "@todo/app/v1";
 import { Http } from "@todo/app/v1/server";
+import { Todos } from "./contract.ts";
 
 export default defineFacet((_host, self) => {
 	self.contribute(Http, {
@@ -566,7 +613,7 @@ for them:
 import type { ComponentType } from "react";
 import { defineRegistry } from "../../../../../../src/index.ts";
 
-export { useHold, useWatch } from "../../../../../../src/react/index.ts";
+export { useHold, usePageState, useWatch } from "../../../../../../src/react/index.ts";
 
 /** A panel of the page: its title and its React component. */
 export type Panel = { readonly title: string; readonly Component: ComponentType };
@@ -612,9 +659,11 @@ when its items change:
 <!-- quote: plugins/lists/web.ts -->
 ```ts
 function TodoList() {
-	const todos = useHold(Todos, { list: location.hash.slice(1) || "groceries" });
+	const list = location.hash.slice(1) || "groceries";
+	const todos = useHold(Todos, { list });
 	const items = useWatch(todos?.items) ?? [];
-	const [text, setText] = useState("");
+	// Kept by the page, not the component: the new code's component finds the half-typed todo.
+	const [text, setText] = usePageState(`lists.draft.${list}`, "");
 	const add = (event: { preventDefault(): void }) => {
 		event.preventDefault();
 		if (todos === undefined || text.trim() === "") return;
@@ -659,7 +708,8 @@ export default defineFacet((_host, self) => self.contribute(Panels, { title: "Gr
 ```
 
 `useHold` holds a reference while the component is mounted and releases it on unmount; it is `undefined` on the first
-render. `useWatch` follows a member. Clicks call methods with `BACKGROUND_CONTEXT`, which never ends, so a click's call
+render. `useWatch` follows a member. `usePageState` is `useState` whose value the page keeps under a key instead of the
+component: chapter VIII shows why the half-typed todo needs it. Clicks call methods with `BACKGROUND_CONTEXT`, which never ends, so a click's call
 is not cancelled when the handler returns. `todos?.variant === "owner"` narrows the reference: only the owner's has
 `clear`, and TypeScript knows it. The panel's look reads the active theme's CSS variables, with class names prefixed
 by the plugin's name (a `*.module.css` file would scope them instead):
@@ -977,16 +1027,14 @@ Her todo is hers: `coffee (ada)`.
 
 # Changing Code {#reload lede="An edit while Ada is connected: the watcher marks, applyChanges rolls out, every object takes its fate."}
 
-Ada typed "  tea  " with spaces, and an empty add should do nothing. The fix is in the lists plugin's worker facet.
-Step 8 makes the edit in the running app's copy of the plugins, as an editor or an agent would, and applies it:
+Ada typed "  tea  " with spaces, and a blank todo should be refused like an empty one. The fix is one line of the lists
+plugin's worker facet: the view trims the text before the store sees it. Step 8 makes the edit in the running app's
+copy of the plugins, as an editor or an agent would, and applies it:
 
 <!-- quote: main.ts -->
 ```ts
 const BEFORE = "add: (text: string, ctx: Ctx) => store.add({ text, by }, ctx),";
-const AFTER = `add: async (text: string, ctx: Ctx) => {
-				if (text.trim() !== "") await store.add({ text: text.trim(), by }, ctx);
-				return null;
-			},`;
+const AFTER = "add: (text: string, ctx: Ctx) => store.add({ text: text.trim(), by }, ctx),";
 const workerFile = join(root, "lists", "worker.ts");
 await writeFile(workerFile, (await readFile(workerFile, "utf8")).replace(BEFORE, AFTER));
 await until(() => app.plugins.state.value.dirty.includes("@todo/lists"));
@@ -999,9 +1047,11 @@ for (const host of applied.steps.find(({ name }) => name === "list")!.hosts) {
 await adas.add("  tea  ", context);
 await until(() => groceries.items.value.at(-1)?.text === "tea");
 console.log("   ada adds '  tea  ':", show(groceries.items.value.slice(-1)));
-const count = groceries.items.value.length;
-await adas.add(" ", context);
-console.log("   ada adds ' ':", groceries.items.value.length === count ? "ignored" : "added");
+const refused = await adas.add(" ", context).then(
+	() => "added",
+	(error: ChordError) => ({ code: error.code, reason: error.reason }),
+);
+console.log("   ada adds ' ':", refused);
 ```
 
 <!-- output: main -->
@@ -1009,7 +1059,7 @@ console.log("   ada adds ' ':", groceries.items.value.length === count ? "ignore
 8. lists changed, rolled out to: server, list, web, tui
    on list|groceries: todo.store restarted, todo.todos(groceries) parked
    ada adds '  tea  ': [ ] tea (ada)
-   ada adds ' ': ignored
+   ada adds ' ': { code: 'invalid', reason: 'args' }
 ```
 
 The watcher marked `@todo/lists` dirty when the file changed; `applyChanges` rebuilt it (one esbuild call per facet)
@@ -1026,7 +1076,9 @@ and rolled it out host by host. On each host Chord stages the new code (it runs 
 
 The store opens a native (the window's first read), so it restarted and read its window again from the table; the
 views waited for it (parked), then went on with the new code. Ada's reference never noticed more than a moment of
-`loading`, and her next add was trimmed. Had the edit broken the plugin, that plugin alone would have kept its old code
+`loading`, and her next add was trimmed. Her blank one is now empty after trimming, so the store refused it with
+`invalid("args", …)` (chapter II): her client got `{ code: "invalid", reason: "args" }`, Chord's own error, which
+crossed the worker's link and the server's as it was. Had the edit broken the plugin, that plugin alone would have kept its old code
 and the report would name the error.
 
 A contract that changes shape needs a new `version`; old consumers keep working when the provider maps their version
@@ -1049,16 +1101,20 @@ const BEFORE = `h(
 wrote docs/tutorial/screens/page.png
 wrote docs/tutorial/screens/harbor.png
 wrote docs/tutorial/screens/edited.png
-typed "oat mi"; after the edit: ""
+typed "oat mi"; after the edit: "oat mi"
 the page did not reload: true
 ```
 
-:::figure | After the edit of the web facet, applied in place: the count appears; the half-typed "oat mi" is gone, because the panel's component is new code and React mounted it anew.
+:::figure | After the edit of the web facet, applied in place: the count appears, and the half-typed "oat mi" is still in the box: the page kept it under its key while React mounted the new component.
 ![The page after the edit](screens/edited.png)
 :::
 
-The page did not reload, and everything outside the changed plugin's components kept its state. The changed panel's
-own React state did not: a new component function is a new component to React.
+The page did not reload, and everything outside the changed plugin's components kept its state. The changed panel
+itself is new code: its component is a new function, which React mounts anew, so its own `useState` would start over
+(design §21). What must survive a plugin update (a half-typed todo, a scroll position) is **page state**:
+`usePageState(key, initial)` keeps the value in the page's host under the key, not in the component, so the new
+component finds it; a terminal's `TuiScope` has the same store as `scope.pageState(key, initial)`. Page state is any
+value, never sent anywhere, and gone with the page.
 
 # Moving a List {#export lede="Export a worker's data while it runs, import it under another address."}
 
@@ -1100,9 +1156,9 @@ loads it on a new host with an in-memory store, here at a list's address so it m
 
 <!-- quote: plugins/lists/worker.test.ts -->
 ```ts
-	let t: TestedPlugin<TodoPrincipal>;
+	let t: TestedPlugin<v1.TodoPrincipal>;
 	beforeEach(async () => {
-		t = await testPlugin<TodoPrincipal>(
+		t = await testPlugin<v1.TodoPrincipal>(
 			fileURLToPath(new URL("./", import.meta.url)),
 			{
 				kind: "worker",
@@ -1124,7 +1180,7 @@ Each test runs code as a principal of its choice with `t.root`:
 	it("lets the owner clear the done todos", async () => {
 		await t.root(
 			async (ctx) => {
-				const todos = await ctx.get(v1.Todos, { list: "groceries" });
+				const todos = await ctx.get(Todos, { list: "groceries" });
 				if (todos.variant !== "owner") throw new Error(`the owner got ${todos.variant}`);
 				await todos.add("milk", ctx);
 				await todos.add("eggs", ctx);
@@ -1146,10 +1202,27 @@ Run it like any test:
 node ../../node_modules/vitest/dist/cli.js --run test/examples/61-tutorial/plugins/lists/worker.test.ts
 ```
 
-The test imports `Todos` and `List` from the API module by path. It could not import a contract from a plugin's own
-`contract.ts`: that file imports `@todo/app/v1`, a name only plugin builds resolve. A test of such a contract declares
-it again (contracts are data: the same name, version and schema bind), as `docs/plugin-authoring.md` shows; this app
-keeps the contract it shares in its API instead.
+The test imports the API by its package name and `Todos` from the plugin's own `contract.ts`, as the facets do:
+
+<!-- quote: plugins/lists/worker.test.ts -->
+```ts
+import * as v1 from "@todo/app/v1";
+```
+
+<!-- quote: plugins/lists/worker.test.ts -->
+```ts
+import { Todos } from "./contract.ts";
+```
+
+Both resolve because the API is a workspace package npm linked (chapter I); the plugin's build bundles its own copy of
+`contract.ts`, and the two bind, since contracts are data (the same name, version and schema). A third test checks
+the refusal of chapter II:
+
+<!-- quote: plugins/lists/worker.test.ts -->
+```ts
+				const refused = await todos.add("", ctx).catch((error: ChordError) => error);
+				expect(refused).toMatchObject({ code: "invalid", reason: "args" });
+```
 
 # Writing a p2 Plugin {#p2 lede="What is different in p2, and one small plugin: a tool for the agent and a chip for the people."}
 
@@ -1295,28 +1368,25 @@ a tutorial.
   live; `self.open` is the only place, so the store counts as holding a native and restarts at every reload of its
   plugin, parking its views, though it holds nothing open. Tables have no watch, so every table-backed live view
   repeats this pattern (example 59's chat does too).
-- **A reloaded web plugin loses its own React state.** Decision "Slice 11, P4" promises an in-place reload "keeping what
-  is on screen (scroll, a half-typed message)". The page does not reload, but the changed plugin's components are new
-  functions, so React mounts them anew and their state (the half-typed todo) is gone.
-- **Plugin contracts are hard to test from outside builds.** A test or script cannot import a plugin's
-  `contract.ts` (it imports the app's API by a package name only builds resolve), so contracts are declared twice or
-  moved into the API.
-- **No public `invalid`.** Plugins throw `PluginError` with codes of their own; refusing bad arguments with Chord's
-  `invalid/args`, as the built-in checks do, is not open to them.
+
+Three more, found the same way, are fixed: a reloaded web plugin lost its own React state (now `usePageState`,
+chapter VIII), a plugin's `contract.ts` could not be imported outside builds (the API is now a workspace package,
+chapter I), and plugins could not throw Chord's `invalid` (Chord exports `invalid` and `forbidden`, chapter II).
 
 # The App's Files {.appendix}
 
 | File | Kind | What it is |
 | --- | --- | --- |
 | `src/principals.ts` | base | the principal type |
-| `src/api/v1/index.ts` | base, every kind | `@todo/app/v1`: Chord's part, `defineFacet`, `List`, `Item`, `Todos` |
+| `package.json` | base | the API as the workspace package `@todo/app`, its `exports` |
+| `src/api/v1/index.ts` | base, every kind | `@todo/app/v1`: Chord's part (with `invalid`, `forbidden`), `defineFacet`, `List` |
 | `src/api/v1/server.ts` | base, server | `Http`, the ephemeral `login` |
-| `src/api/v1/web.ts` | base, web | `Panels`, `useHold`, `useWatch` |
+| `src/api/v1/web.ts` | base, web | `Panels`, `useHold`, `usePageState`, `useWatch` |
 | `src/api/v1/tui.ts` | base, tui | `Screens` |
 | `start.ts`, `worker.ts` | base | `startServer`, `startWorker` |
 | `src/web/main.ts`, `src/web/style.css` | base, web entry | `startPage`, the panels |
 | `src/tui/main.ts` | base, terminal entry | `startTerminalRuntime`, the screens |
-| `plugins/lists/` | plugin | worker (table, store, views), server (routes), web (panel), tui (screen), its test |
+| `plugins/lists/` | plugin | contract (`Item`, `Todos`), worker (table, store, views), server (routes), web (panel), tui (screen), its test |
 | `plugins/login.server.ts` | single-file plugin | the kit's ephemeral login |
 | `later/harbor/` | plugin, added in step 6 | the Harbor theme for pages and terminals |
 | `main.ts`, `screenshots.ts`, `tutorial.test.ts` | example | the steps, the screenshots, the checks |
@@ -1331,9 +1401,11 @@ a tutorial.
 | `hostKind(name, params)`, `remote(name, { version, params, hostAddress, variants })`, `local(name, { version, params, members })` | II | host kinds and contracts |
 | `host.serve(Type, factory)`; factory `self`: `table`, `writable`, `open`, `derive`, `tx`, `get`, `contribute` | II | an object's parts |
 | `host.root(fn, ctx, { principal })`, `ctx.get(Type, params)` | II | code outside objects, as a principal |
+| `invalid(reason, message, details?)`, `forbidden(message, details?)` | II, VIII | Chord's errors, thrown by a plugin |
 | `self.contribute(Http, { routes })` | III | routes, denied by default |
 | `startPage`, `HostProvider`, `useHold`, `useWatch`, `useRegistry` | IV | the page |
 | `startTerminalRuntime`, `TuiScope`, `startTerminal` | V | the terminal |
+| `usePageState(key, initial)`, `scope.pageState(key, initial)` | IV, VIII | state the page keeps across plugin reloads |
 | `self.contribute(Themes, theme)` | VI | a theme |
 | `ephemeralLoginFacet<P>()`, `host.load([], ctx)`, `host.connect(link, { principal }, ctx)` | VII | a second user's client |
 | `app.plugins.state`, `app.applyChanges(ctx)` | VI, VIII | marks and rollouts |

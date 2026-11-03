@@ -625,6 +625,12 @@ The tab's reference follows the new object and gets one frame with the differenc
 is broken (a syntax error, a factory that throws), that plugin keeps its old code on that host and the report says why;
 every other plugin of the rollout applies.
 
+A tab applies a new web script the same way, without reloading the page, and the UI keeps what lives outside the
+changed plugin. The changed plugin's own components are new functions, so React mounts them anew and their `useState`
+starts over. What must survive the update (a half-typed note, a scroll position) goes into **page state**, kept by the
+tab's host under a key: `usePageState(key, initial)` from `chord/react` instead of `useState`, and
+`scope.pageState(key, initial)` on a terminal's `TuiScope` (design §21, "UI on client hosts").
+
 :::note | Versions
 A change to a contract (a new field in `Notes`'s state) gets a new `version`. A tab built with the old contract keeps
 working if the provider maps the old version (`accepts`); otherwise it waits with "version mismatch" until it reloads.

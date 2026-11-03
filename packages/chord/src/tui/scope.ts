@@ -1,13 +1,15 @@
 // `TuiScope` (slice 11 §4, decision "Slice 11, P9"; p2's `TuiScope`): a terminal component's Chord resources, the
 // counterpart of the React bindings for terminal UI libraries. It holds references, follows watchables and registries,
-// calls one `changed` callback (the app's redraw) on every change, and releases everything at `dispose`. References
-// wait and rebind by themselves (no retry loop, unlike p2's); no terminal library dependency.
+// calls one `changed` callback (the app's redraw) on every change, and releases everything at `dispose`. Its page state
+// is the host's, shared by every scope (React's `usePageState`): a scope opened again after a plugin reload finds it.
+// References wait and rebind by themselves (no retry loop, unlike p2's); no terminal library dependency.
 
 import { BACKGROUND_CONTEXT, withAbortSignal } from "../context/index.ts";
 import type { Contract, ParamsOf } from "../contracts/index.ts";
 import type { Principal } from "../data/index.ts";
 import type { Held, Host } from "../host/index.ts";
 import type { Registry } from "../registries/index.ts";
+import { type PageState, pageState } from "../surfaces/page-state.ts";
 import type { NativeWatchable, Watchable } from "../watch.ts";
 
 /** A component's scope: what it holds and follows, until `dispose`. */
@@ -66,6 +68,17 @@ export class TuiScope<P extends Principal = Principal> {
 			() => {},
 		);
 		return () => read();
+	}
+
+	/**
+	 * The host's page state at `key`, kept for the terminal's life, not the scope's (a new key starts at `initial`); its
+	 * changes call `changed` until `dispose`.
+	 */
+	pageState<T>(key: string, initial: T): PageState<T> {
+		const state = pageState(this.#host, key, initial);
+		// A closure of its own: two scopes may share one `changed`, and subscribers are a set of functions.
+		this.#releases.push(state.subscribe(() => this.#changed()));
+		return state;
 	}
 
 	/** Releases every reference and ends every watch; `changed` is not called after it. */

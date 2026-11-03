@@ -583,6 +583,11 @@ then gives every object of the changed plugin its fate:</p>
 <p>The tab&#39;s reference follows the new object and gets one frame with the difference. Nothing reconnects. If the edit
 is broken (a syntax error, a factory that throws), that plugin keeps its old code on that host and the report says why;
 every other plugin of the rollout applies.</p>
+<p>A tab applies a new web script the same way, without reloading the page, and the UI keeps what lives outside the
+changed plugin. The changed plugin&#39;s own components are new functions, so React mounts them anew and their <code>useState</code>
+starts over. What must survive the update (a half-typed note, a scroll position) goes into <strong>page state</strong>, kept by the
+tab&#39;s host under a key: <code>usePageState(key, initial)</code> from <code>chord/react</code> instead of <code>useState</code>, and
+<code>scope.pageState(key, initial)</code> on a terminal&#39;s <code>TuiScope</code> (design §21, &quot;UI on client hosts&quot;).</p>
 <div class="note"><b class="tag">Versions</b><p>A change to a contract (a new field in <code>Notes</code>&#39;s state) gets a new <code>version</code>. A tab built with the old contract keeps
 working if the provider maps the old version (<code>accepts</code>); otherwise it waits with &quot;version mismatch&quot; until it reloads.</p>
 </div>

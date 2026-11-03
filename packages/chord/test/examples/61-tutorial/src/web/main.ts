@@ -1,6 +1,8 @@
 // The todo app's web entry, the base bundle the server builds at start: `startPage` with the app's web modules and
 // React, a core facet serving the `Panels` registry, and a page showing every panel the plugins contribute.
 
+import * as v1 from "@todo/app/v1";
+import * as v1web from "@todo/app/v1/web";
 import * as React from "react";
 import { createElement as h } from "react";
 import * as jsx from "react/jsx-runtime";
@@ -8,8 +10,6 @@ import { createRoot } from "react-dom/client";
 import { defineFacet } from "../../../../../src/index.ts";
 import { HostProvider, useRegistry } from "../../../../../src/react/index.ts";
 import { startPage } from "../../../../../src/web/index.ts";
-import * as v1 from "../api/v1/index.ts";
-import * as v1web from "../api/v1/web.ts";
 import "./style.css";
 
 /** The page's own facet: it serves `Panels`, composing the contributions in plugin-name order. */

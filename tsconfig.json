@@ -29,10 +29,6 @@
 			"@notes/app/*": ["./packages/chord/test/examples/53-app/app/*.ts"],
 			"@board/app/*": ["./packages/chord/test/examples/56-web/app/*.ts"],
 			"@chat/app/*": ["./packages/chord/test/examples/59-chat/app/*.ts"],
-			"@todo/app/*": [
-				"./packages/chord/test/examples/61-tutorial/src/api/*.ts",
-				"./packages/chord/test/examples/61-tutorial/src/api/*/index.ts"
-			],
 			"@earendil-works/pi-telemetry": ["./packages/telemetry/src/index.ts"],
 			"@earendil-works/pi-telemetry/testing": ["./packages/telemetry/src/testing/index.ts"],
 			"@earendil-works/pi-telemetry/render": ["./packages/telemetry/src/render.ts"],

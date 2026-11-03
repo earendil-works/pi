@@ -7,11 +7,11 @@ import { cp, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as v1 from "@todo/app/v1";
+import * as v1server from "@todo/app/v1/server";
 import type { Context } from "../../../src/context/index.ts";
 import { type App, startServer } from "../../../src/node/app/index.ts";
 import { type PageAssets, pageScripts } from "../../../src/node/surfaces/index.ts";
-import * as v1 from "./src/api/v1/index.ts";
-import * as v1server from "./src/api/v1/server.ts";
 import type { TodoPrincipal } from "./src/principals.ts";
 
 /** The app's API: its name, its versions (newest first), and this process's instances of its modules. */

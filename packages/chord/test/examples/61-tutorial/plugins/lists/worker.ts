@@ -1,7 +1,8 @@
 // The lists plugin on a list's worker. The todos live in a table of the worker's store (every one kept), written and
 // read by one local object, `Store`. A table has no watch, so the store keeps a live window itself: the newest 50
 // todos, read when it goes live and changed after each write (it is the only writer). Each principal's `Todos` view
-// adds todos as that principal, and gives the owner `clear`.
+// adds todos as that principal, and gives the owner `clear`. The store refuses a todo without text with Chord's
+// `invalid/args`.
 
 import {
 	arr,
@@ -10,16 +11,16 @@ import {
 	defineFacet,
 	defineTable,
 	eq,
-	Item,
 	int,
+	invalid,
 	local,
 	method,
 	num,
 	obj,
 	query,
 	str,
-	Todos,
 } from "@todo/app/v1";
+import { Item, Todos } from "./contract.ts";
 
 /** Every todo of the list, by its number. */
 const Items = defineTable("todo.items", {
@@ -63,6 +64,8 @@ export default defineFacet((host) => {
 		return {
 			items: self.derive([window], ([value]) => value),
 			add: async ({ text, by }, ctx) => {
+				// Refused as Chord refuses arguments that fail their schema: the caller gets `invalid/args`.
+				if (text === "") throw invalid("args", "a todo needs text");
 				const item = { id: next++, text, done: false, by, at: Date.now() };
 				await self.tx(async (tx) => tx.put(items, item), ctx);
 				// In number order: two adds may commit in either order.

@@ -1949,6 +1949,14 @@ type ReloadReport = {
   would interleave unchecked. In practice a restart costs little (the Durable harness is base code, terminal PTYs live
   in their own process, model runtimes, sandboxes and the search index rebuild in milliseconds); reloading the plugin
   that owns SSH connections or the relay socket hurts.
+- **UI on client hosts** (decision "Slice 11, P4", refined by "Tutorial gaps" (1)): a page or terminal applies a new
+  plugin script with `host.reload`, as any host; the UI re-renders from its registries and keeps what lives outside
+  the changed plugin. A component of a reloaded plugin is a new function, so React (or a terminal scope reopened by the
+  app) mounts it anew and its own state (`useState`) starts over. What must survive a plugin update (a half-typed
+  message, a scroll position) is **page state**: values the client host keeps by key (`usePageState(key, initial)` in
+  `chord/react`, `scope.pageState(key, initial)` on a `TuiScope`, one store per host), any same-host value, never on
+  the wire, untouched by reloads and gone with the page (a page reload, a terminal's new base bundle). Rejected: React
+  Fast Refresh (a Babel or SWC transform in every web build, fragile when hooks change).
 - **No factory trial, no migrate dry run, no consumer contract check during staging:** staging records declarations;
   incompatible consumers wait at bind (`failed { waiting }`, `contract_mismatch`). The one exception is the closure
   rule above: when a plugin of the reload failed, a changed plugin's recorded requests are checked as a bind would
@@ -2312,7 +2320,9 @@ Decisions "The app kit, point 1" to "point 5". `startServer(options)` on the ser
 entry. Opinionated and small: an app is its API, its built-in plugins and a start script.
 
 - **Shape:** the app's layout is fixed: `src/api/v<n>/` (shared and per-kind modules) and the built-in plugins root
-  `plugins/`. The data directory is a `startServer` option (no environment variables), default a dot directory named after
+  `plugins/`. The API is a real package (decision "Tutorial gaps" (3)): a workspace package of the app's repository
+  (`"name": "@acme/app"`, `"exports": { "./v1": ..., "./v1/web": ... }`) that npm links, so Node, TypeScript, tests and
+  plugin builds resolve it alike (a test imports a plugin's `contract.ts`). The data directory is a `startServer` option (no environment variables), default a dot directory named after
   the app in the home directory. One server; worker kinds are a list the app defines, each a host kind with its own
   params (sharding is the app's) and how it starts (entry, start data, principal, idle time); zero kinds is a server
   with clients only.
@@ -2334,7 +2344,7 @@ entry. Opinionated and small: an app is its API, its built-in plugins and a star
 
 ### Web and TUI (slice 11)
 
-Decision "Slice 11's points" and "Slice 11, P3" to "P9".
+Decision "Slice 11's points", "Slice 11, P3" to "P9", and "Tutorial gaps" (1) (page state).
 
 - `chord/surfaces` serves the client surfaces (web and terminal) from the server; `chord/web` is a page's client host
   with its connection loop (p2's `keepConnected`), loading and applying the plugins' web facets. A base bundle per
@@ -2342,13 +2352,15 @@ Decision "Slice 11's points" and "Slice 11, P3" to "P9".
   one combined file named by its hash, later changed plugins one script each, each a script that registers itself (no
   eval); new scripts apply in place (`host.reload` in the page); pages learn of them through an object the web
   component serves (the current set); a base code change reloads the page.
-- `chord/react`: `HostProvider`, `useHold`, `useWatch`, `useRegistry`, `useRefState`.
+- `chord/react`: `HostProvider`, `useHold`, `useWatch`, `useRegistry`, `useRefState`, and `usePageState(key, initial)`:
+  `useState`'s pair kept by the page's host under a key, so a component remounted by a plugin reload (a new function)
+  keeps it (§21, "UI on client hosts").
 - `chord/tui/launcher`: a Node client connecting with a token, always running the downloaded code (the app's terminal
   entry on `chord/tui`) in a sandbox (decision "The terminal's sandbox is a child process": a child process on pipes
   with an empty environment, `--permission` granting nothing and no SQLite; the builtin allowlist and a frozen
   substitute `process` inside; a bridge terminal; the trusted launcher outside, confirming copy, open and attach on its
   own prompt); a component scope (`hold`, `watch`, `registry`, released on dispose, one `changed` callback for the
-  app's redraw), no pi-tui dependency.
+  app's redraw; `pageState(key, initial)`, the host's page state shared with `usePageState`), no pi-tui dependency.
 
 ### Messages and languages (after slice 11)
 

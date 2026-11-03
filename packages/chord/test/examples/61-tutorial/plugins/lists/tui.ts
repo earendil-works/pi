@@ -1,7 +1,8 @@
 // The lists plugin in the terminal: the groceries list's todos, live; done ones muted.
 
-import { defineFacet, Todos } from "@todo/app/v1";
+import { defineFacet } from "@todo/app/v1";
 import { Screens } from "@todo/app/v1/tui";
+import { Todos } from "./contract.ts";
 
 export default defineFacet((_host, self) =>
 	self.contribute(Screens, {

@@ -97,6 +97,37 @@ Refused at build, each with the file, line and rule:
 Contract files mention native things (React components, functions) only through `import type`; at runtime they import
 only the API and the plugin's own data-only files.
 
+## An app's API is a package
+
+The app's API is a workspace package of the app's repository: a `package.json` named `@acme/app` with an `exports`
+entry per module, listed in the repository root's `workspaces`, so `npm install` links it into `node_modules`:
+
+```json
+{
+	"name": "@acme/app",
+	"private": true,
+	"type": "module",
+	"exports": {
+		"./v3": "./src/api/v3/index.ts",
+		"./v3/web": "./src/api/v3/web.ts",
+		"./v3/worker": "./src/api/v3/worker.ts"
+	}
+}
+```
+
+Plugins, tests and tools resolve it alike: a facet imports `@acme/app/v3`, and so do the app's base code, a test, and
+a plugin's `contract.ts` that a test or a script imports. In a plugin's build it stays a host package (left out of the
+script, the process's own instance passed in when the script is evaluated).
+
+## Errors
+
+Throw Chord's own errors where Chord's built-in checks would, from the API (it re-exports them):
+`invalid("args", "a note needs a title")` for arguments a method refuses (`"params"` for params a factory refuses),
+`forbidden("viewers only")` for a principal a factory or method refuses. The caller gets the same
+`{ code: "invalid", reason: "args" }` or `{ code: "forbidden" }` across every link. For codes of the plugin's own throw
+`new PluginError(code, message, details)`. Only the code, reason, message and JSON details cross a link, never a stack
+or a cause.
+
 ## Contracts and versions
 
 A plugin carries the contract it was written against. Plugins changing together (one root, one repository) import
@@ -114,7 +145,7 @@ No type check, no build hooks, no `dist` needed; generated files are committed. 
 process of its kind with that process's API modules. A failed build or evaluation leaves the plugin out (at startup)
 or keeps its old code (at a reload), reported with the error.
 
-## Styles and themes (web and terminal facets)
+## Styles, themes and state across reloads (web and terminal facets)
 
 - A web facet's CSS is served with its script and swapped when the plugin reloads. Scope it with a **CSS module**: a
   file named `*.module.css` has its class names made unique to the plugin and the file, and its import is the mapping
@@ -123,6 +154,11 @@ or keeps its old code (at a reload), reported with the error.
 - Read the app's look from its CSS variables (`var(--accent)`, `var(--bg)`, `var(--fg)`, `var(--muted)`, `var(--error)`,
   `var(--warning)`, `var(--success)`, and the app's own roles), never fixed colours: the active theme sets them.
 - In a terminal facet, ask the app's theme lookup for a role (`theme.fg("accent", "Notes")`); never write raw colours.
+- A reload of the plugin remounts its components (each is a new function): their `useState` starts over. Keep what
+  must survive an update (a half-typed message, a scroll position) in page state, kept by the page's host under a key
+  prefixed with the plugin's name: `usePageState("stats.draft", "")` instead of `useState("")` (from the app's web
+  API); in a terminal facet `scope.pageState("stats.draft", "")` on the `TuiScope` it was given. Any value, never sent
+  anywhere, gone with the page.
 - A theme is data: contribute a `Theme` (`{ id, name, mode, colors, web?, tui? }`) to the kit's `Themes` registry,
   from a web facet and a terminal facet to reach both. Users pick one dark and one light theme.
 
@@ -162,8 +198,9 @@ await t.close(ctx);
 ```
 
 The plugin is built as production builds it and loaded on an in-memory host (a `:memory:` store). Stubs are ordinary
-facets with fake data. A test declares the contracts it reads again (contracts are data: the same name, version and
-schema bind).
+facets with fake data. A test imports the API by its package name and the plugin's own contracts from its
+`contract.ts` (the build bundles its own copy; contracts are data: the same name, version and schema bind); contracts
+of plugins it has no files of, it declares again, as `Notes` above.
 
 ## Checklist
 

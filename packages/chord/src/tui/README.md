@@ -23,7 +23,9 @@ startTerminalRuntime<P>({
 - `channel.ts`: the sandbox's side: requests, `RelayLink` (a Chord link whose bytes the launcher relays), input and
   resizes. `terminal.ts`: the bridged terminal (size, write, input, resize). `theme.ts`: the theme lookup (`fg`, `bg`,
   `onChange`). `runtime.ts`: the client (`startClient` with `TuiScripts`; scripts run with `vm`; no wakes).
-- `scope.ts`: `TuiScope(host, changed)`: `hold`, `watch` (a reader, `undefined` while no value), `registry`, `dispose`
-  (no `changed` after it). References wait and rebind by themselves; no terminal library dependency.
+- `scope.ts`: `TuiScope(host, changed)`: `hold`, `watch` (a reader, `undefined` while no value), `registry`,
+  `pageState(key, initial)` (the host's value at `key`, shared with React's `usePageState`: a scope opened again after a
+  plugin reload finds it), `dispose` (no `changed` after it). References wait and rebind by themselves; no terminal
+  library dependency.
 
 Tests: `test/tui/` and, with the launcher and sandbox, `test/node/tui/`.

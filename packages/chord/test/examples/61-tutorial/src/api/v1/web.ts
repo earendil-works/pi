@@ -4,7 +4,7 @@
 import type { ComponentType } from "react";
 import { defineRegistry } from "../../../../../../src/index.ts";
 
-export { useHold, useWatch } from "../../../../../../src/react/index.ts";
+export { useHold, usePageState, useWatch } from "../../../../../../src/react/index.ts";
 
 /** A panel of the page: its title and its React component. */
 export type Panel = { readonly title: string; readonly Component: ComponentType };
