@@ -59,6 +59,19 @@ describe("llama.cpp extension", () => {
 		expect(() => normalizeLlamaServerUrl("file:///tmp/llama")).toThrow("http or https");
 	});
 
+	// #11745: a refused connection showed only "fetch failed"
+	it("names the server and the cause when it cannot be reached", async () => {
+		const server = createServer();
+		server.listen(0, "127.0.0.1");
+		await once(server, "listening");
+		const port = (server.address() as AddressInfo).port;
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+
+		await expect(new LlamaClient(`http://127.0.0.1:${port}`).list()).rejects.toThrow(
+			`Could not reach llama.cpp server at http://127.0.0.1:${port}: connect ECONNREFUSED 127.0.0.1:${port}`,
+		);
+	});
+
 	it("exposes loaded and sleeping models with router metadata", () => {
 		const controller = createLlamaProvider();
 		controller.setCatalog(
