@@ -1,0 +1,9 @@
+/* The lists panel: the active theme's colours (the kit writes them on :root), class names prefixed with the plugin's. */
+.lists-panel ul { list-style: none; padding: 0; margin: 0 0 0.75rem; }
+.lists-panel li { padding: 0.35rem 0; border-bottom: 1px solid var(--muted); cursor: pointer; }
+.lists-done { color: var(--muted); text-decoration: line-through; }
+.lists-by { float: right; color: var(--muted); font-size: 0.8em; }
+.lists-panel input { width: 100%; box-sizing: border-box; padding: 0.4rem; background: var(--bg); color: var(--fg);
+	border: 1px solid var(--accent); border-radius: var(--radius, 0); }
+.lists-panel button { margin-top: 0.5rem; background: none; color: var(--accent); border: 1px solid var(--accent);
+	border-radius: var(--radius, 0); padding: 0.3rem 0.6rem; }
