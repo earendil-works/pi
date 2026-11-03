@@ -2416,7 +2416,8 @@ validation and copies the v2 kernel added around Delta.
   own SQLite files (catalog, shares, search, subagents) as natives (the rule against plugin databases is p3's); (6) p2's
   terminal uses Chord's child-process sandbox, exported upstream first; (7) `createHttp` for p2 later, optional; (8)
   Chord v1 (`src/old`) is deleted right after the switch; (9) p2's v1 plugin tutorial is retired for Chord's guide;
-  (10) the phone gets it after 1-2 days on slayer, about 10 minutes down, rollback by checkout; (11) a small shim
+  (10) the phone gets it once the switch is green on slayer (owner, later the same day: "no hours on slayer first";
+  was: after 1-2 days on slayer), about 10 minutes down, rollback by checkout; (11) a small shim
   reloads pages left open across the deploy, removed with v1. Server, workers, the terminal bundle and the web bundle
   switch in one deploy (v1 and v2 links do not talk); prep and cleanup steps deploy on their own.
 - **Mistakes that wait are reported at once (owner, 2026-11-03: "yes"; p2 port footguns 1, 2, 9,
