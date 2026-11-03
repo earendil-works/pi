@@ -197,6 +197,14 @@ export interface TuiAltScreenOptions {
 	 * via an OSC 52 write.
 	 */
 	copySelection?: (text: string) => Promise<boolean | string>;
+	/**
+	 * Receive lines written to `process.stderr` while the alt screen is active, instead of letting
+	 * them land on the terminal behind the row-diff renderer. Each complete line arrives
+	 * ANSI-stripped without its trailing newline; empty lines are dropped. Intercepted bytes are
+	 * never flushed to the stderr fd: the write callback fires immediately and `write` returns
+	 * `true`.
+	 */
+	onStderrLine?: (line: string) => void;
 }
 
 /** Alternate-screen TUI with a scrollable, application-owned viewport. */
@@ -252,6 +260,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly onRightClickPaste?: () => void;
 	private copyOnSelect: boolean;
 	private readonly copySelection?: (text: string) => Promise<boolean | string>;
+	private readonly onStderrLine?: (line: string) => void;
+	private stderrWriteOriginal?: typeof process.stderr.write;
+	private stderrLineBuffer = "";
 
 	constructor(
 		terminal: Terminal,
@@ -279,6 +290,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.onRightClickPaste = options.onRightClickPaste;
 		this.copyOnSelect = options.copyOnSelect ?? true;
 		this.copySelection = options.copySelection;
+		this.onStderrLine = options.onStderrLine;
 		this.addInputListener((data) => this.handleViewportInput(data));
 	}
 
@@ -384,9 +396,11 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.terminal.write(
 			`${ENTER_ALT_SCREEN}${DISABLE_AUTOWRAP}${this.mouseEnabled ? mouseSequence : ""}\x1b[2J\x1b[H\x1b[?25l`,
 		);
+		this.installStderrGuard();
 	}
 
 	protected override beforeTerminalStop(_options: TuiStopOptions): void {
+		this.releaseStderrGuard();
 		this.closeSearch();
 		this.stopSelectionAutoScroll();
 		this.selectionPressActive = false;
@@ -441,6 +455,57 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	private deleteKittyImages(): string {
 		return this.imageProtocol === "kitty" ? deleteAllKittyImages() : "";
+	}
+
+	/**
+	 * Divert `process.stderr` writes to the `onStderrLine` sink while the alt screen owns the
+	 * terminal. A raw stderr byte lands on the screen behind the row-diff renderer's
+	 * `previousScreen` model and is never repainted (doRender skips unchanged rows), so
+	 * out-of-band output would corrupt the display until the next full repaint. Writers are
+	 * arbitrary in-process modules, so chunks outside the `string | Uint8Array` write contract are
+	 * dropped rather than forwarded — the forward is the defect this guard exists to prevent.
+	 */
+	private installStderrGuard(): void {
+		if (!this.onStderrLine || this.stderrWriteOriginal) return;
+		this.stderrLineBuffer = "";
+		const original = process.stderr.write.bind(process.stderr);
+		this.stderrWriteOriginal = original;
+		// Node's write() exposes two overload shapes; a rest-arg implementation cannot be expressed
+		// as the property's type, hence the cast.
+		process.stderr.write = ((...args: unknown[]): boolean => {
+			const callback = args.find((arg) => typeof arg === "function") as ((error?: Error) => void) | undefined;
+			this.handleStderrChunk(args[0]);
+			callback?.();
+			return true;
+		}) as typeof process.stderr.write;
+	}
+
+	/** Restore the original stderr write; a trailing partial line flushes through the sink first. */
+	private releaseStderrGuard(): void {
+		const original = this.stderrWriteOriginal;
+		if (!original) return;
+		this.stderrWriteOriginal = undefined;
+		process.stderr.write = original;
+		const rest = this.stderrLineBuffer;
+		this.stderrLineBuffer = "";
+		const line = stripTerminalSequences(rest).trimEnd();
+		if (line.trim().length > 0) this.onStderrLine?.(line);
+	}
+
+	private handleStderrChunk(chunk: unknown): void {
+		const text =
+			typeof chunk === "string" ? chunk : chunk instanceof Uint8Array ? new TextDecoder().decode(chunk) : undefined;
+		if (text === undefined) return;
+		this.stderrLineBuffer += text;
+		for (;;) {
+			const newlineIndex = this.stderrLineBuffer.indexOf("\n");
+			if (newlineIndex === -1) break;
+			const rawLine = this.stderrLineBuffer.slice(0, newlineIndex);
+			this.stderrLineBuffer = this.stderrLineBuffer.slice(newlineIndex + 1);
+			const line = stripTerminalSequences(rawLine).trimEnd();
+			if (line.trim().length === 0) continue;
+			this.onStderrLine?.(line);
+		}
 	}
 
 	private prepareKittyScreen(screen: string[]): { lines: string[]; evictedImageDeletion: string } {
