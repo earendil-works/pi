@@ -1,7 +1,9 @@
 import { Box, Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@earendil-works/pi-tui";
+import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import type { BranchSummaryMessage } from "../../../core/messages.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyText } from "./keybinding-hints.ts";
+import { createMarkdownTransform } from "./markdown-transform.ts";
 
 /**
  * Component that renders a branch summary message with collapsed/expanded state.
@@ -11,11 +13,24 @@ export class BranchSummaryMessageComponent extends Box {
 	private expanded = false;
 	private message: BranchSummaryMessage;
 	private markdownTheme: MarkdownTheme;
+	private markdownTransformers: readonly MarkdownTransformer[];
+	private messageId?: string;
+	private timestamp?: string;
 
-	constructor(message: BranchSummaryMessage, markdownTheme: MarkdownTheme = getMarkdownTheme(), outputPad = 1) {
+	constructor(
+		message: BranchSummaryMessage,
+		markdownTheme: MarkdownTheme = getMarkdownTheme(),
+		outputPad = 1,
+		markdownTransformers: readonly MarkdownTransformer[] = [],
+		messageId?: string,
+		timestamp?: string,
+	) {
 		super(outputPad, 1, (t) => theme.bg("customMessageBg", t));
 		this.message = message;
 		this.markdownTheme = markdownTheme;
+		this.markdownTransformers = markdownTransformers;
+		this.messageId = messageId;
+		this.timestamp = timestamp;
 		this.updateDisplay();
 	}
 
@@ -43,10 +58,23 @@ export class BranchSummaryMessageComponent extends Box {
 
 		if (this.expanded) {
 			const header = "**Branch Summary**\n\n";
+			const transform = createMarkdownTransform(
+				"summary",
+				() => false,
+				this.markdownTransformers,
+				this.messageId,
+				this.timestamp,
+			);
 			content.addChild(
-				new Markdown(header + this.message.summary, 0, 0, this.markdownTheme, {
-					color: (text: string) => theme.fg("customMessageText", text),
-				}),
+				new Markdown(
+					this.message.summary,
+					0,
+					0,
+					this.markdownTheme,
+					{ color: (text: string) => theme.fg("customMessageText", text) },
+					// Transformers see only the summary content, not Pi's header.
+					{ transform: (markdown, width) => header + transform(markdown, width) },
+				),
 			);
 		} else {
 			content.addChild(

@@ -1806,16 +1806,25 @@ mode and would not execute if sent via `prompt`.
 
 Register a custom TUI renderer for custom messages with your `customType`. Custom messages are created with `pi.sendMessage()` and participate in LLM context. See [Custom UI](#custom-ui).
 
-### pi.registerMarkdownTransformer(transformer)
+### pi.registerMarkdownTransformer(transformer, options?)
 
-Register a transformer for the Markdown in normal user text, assistant text, and thinking blocks. Transformers run in extension load order, and each transformer receives the Markdown returned by the previous transformer. After the chain finishes, Pi renders the transformed content with its built-in renderer.
+Register a transformer for Markdown before Pi renders it in interactive mode. Transformers run in extension load order, and each transformer receives the Markdown returned by the previous transformer. After the chain finishes, Pi renders the transformed content with its built-in renderer.
+
+By default a transformer runs on normal user text, assistant text, and thinking blocks. `options.messageTypes` lists the surfaces it runs on instead:
+
+| `messageType` | Surface |
+|---------------|---------|
+| `"user"`, `"assistant"`, `"assistant-thinking"` | Transcript messages (default) |
+| `"custom"` | Custom messages from `pi.sendMessage()` without a registered message renderer, and expanded skill blocks (their content, without Pi's header) |
+| `"summary"` | Expanded branch and compaction summaries (the summary, without Pi's header) |
+| `"changelog"` | Pi's changelog ("What's New" at startup and `/changelog`), the startup "Extension Updates" notice, and the release note of the "Update Available" notice |
 
 The transformer receives the Markdown string and a context with:
 
-- `messageType` — `"user"`, `"assistant"`, or `"assistant-thinking"`
-- `isStreaming` — `true` for partial assistant updates; `false` for user, finalized assistant, and restored messages
+- `messageType` — one of the surfaces above
+- `isStreaming` — `true` for partial assistant updates; `false` otherwise
 - `availableWidth` — exact terminal columns available for the transformed Markdown content
-- `messageId`, `timestamp` — session-entry ID and ISO timestamp when rendering from persisted session entries; `undefined` for live messages
+- `messageId`, `timestamp` — session-entry ID and ISO timestamp when rendering from persisted session entries; `undefined` for live messages and notices
 
 Return the transformed Markdown:
 
@@ -1824,9 +1833,14 @@ pi.registerMarkdownTransformer((markdown, { messageType, isStreaming }) => {
   if (isStreaming || messageType === "assistant-thinking") return markdown;
   return markdown.replaceAll("-->", "→");
 });
+
+// Show :warning: shortcodes in changelogs as a symbol.
+pi.registerMarkdownTransformer((markdown) => markdown.replaceAll(":warning:", "⚠"), {
+  messageTypes: ["changelog"],
+});
 ```
 
-If a transformer throws, Pi keeps the Markdown produced so far and continues with the next transformer. The hook is display-only: the original message remains unchanged in the session and model context. It runs for new user messages, assistant streaming updates, restored session messages, and terminal width changes, so transformers should remain synchronous and inexpensive.
+If a transformer throws, Pi keeps the Markdown produced so far and continues with the next transformer. The hook is display-only: the original message remains unchanged in the session and model context. It runs for new messages, assistant streaming updates, restored session messages, and terminal width changes, so transformers should remain synchronous and inexpensive. An extension has one transformer; registering again replaces it.
 
 ### pi.registerEntryRenderer(customType, renderer)
 
