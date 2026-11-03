@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { int, obj, opt, str } from "../../src/contracts/index.ts";
 import { json } from "../../src/store/json-column.ts";
-import { defineTable } from "../../src/store/table.ts";
+import { defineTable, type KeyOf } from "../../src/store/table.ts";
 
 const columns = { id: str(), path: str(), at: int(), note: opt(str()), meta: json(obj({}), { version: 1 }) };
 
@@ -62,5 +62,14 @@ describe("defineTable", () => {
 			defineTable("edits", { version: 1, columns: otherMeta, key: ["id"], indexes: { x: ["path"], y: ["at"] } })
 				.fingerprint,
 		).not.toBe(a.fingerprint);
+	});
+});
+
+describe("keys", () => {
+	it("type an int() key column as a number and a str() one as a string (tutorial, 2026-11-03)", () => {
+		const byNumber = { id: int(), text: str() };
+		const key: KeyOf<typeof byNumber, ["id"]> = { id: 7 };
+		const mixed: KeyOf<typeof columns, ["id", "at"]> = { id: "a", at: 1 };
+		expect([key, mixed]).toEqual([{ id: 7 }, { id: "a", at: 1 }]);
 	});
 });

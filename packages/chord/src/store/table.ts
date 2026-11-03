@@ -29,11 +29,7 @@ export type TableOptions<C extends Columns, K extends readonly OrderColumn<C>[],
 
 /** The key of a row of a table with columns `C` and key `K`: an object with exactly the key columns. */
 export type KeyOf<C extends Columns, K extends readonly string[]> = {
-	readonly [P in K[number]]: P extends keyof C
-		? C[P] extends { readonly "~kind": "Integer" }
-			? number
-			: string
-		: never;
+	readonly [P in K[number]]: P extends keyof C ? (C[P] extends { readonly type: "integer" } ? number : string) : never;
 };
 
 /**
