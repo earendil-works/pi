@@ -2419,7 +2419,10 @@ validation and copies the v2 kernel added around Delta.
   (10) the phone gets it once the switch is green on slayer (owner, later the same day: "no hours on slayer first";
   was: after 1-2 days on slayer), about 10 minutes down, rollback by checkout; (11) a small shim
   reloads pages left open across the deploy, removed with v1. Server, workers, the terminal bundle and the web bundle
-  switch in one deploy (v1 and v2 links do not talk); prep and cleanup steps deploy on their own.
+  switch in one deploy (v1 and v2 links do not talk); prep and cleanup steps deploy on their own. **Done
+  2026-11-03:** the switch is private `16329187c` (on the phone since 12:38, data unchanged); Chord v1 deleted upstream
+  `ed4f48840` (owner: "delete old chord, clean up anything related to old chord"), p2's shim, v1 tutorial and v1
+  fixture generator in private `7dadff697`.
 - **Mistakes that wait are reported at once (owner, 2026-11-03: "yes"; p2 port footguns 1, 2, 9,
   `/home/badlogic/p2-port/chord-footguns.md`):** requests keep waiting for providers (slice 7a), but a mistake no
   longer looks like slowness. (a) `get`, `hold` and `registry` on a host that has not loaded throw at once ("call
