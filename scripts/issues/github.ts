@@ -129,6 +129,11 @@ export function isActedOn(issue: Issue): boolean {
 	);
 }
 
+/** In the inbox: created since the inbox start, or still labeled `untriaged` (auto-closed by the issue gate and not reviewed yet). */
+export function inInbox(issue: Issue, inboxSince: string): boolean {
+	return issue.createdAt >= inboxSince || issue.labels.includes("untriaged");
+}
+
 export function issueStatus(issue: Issue): string {
 	const labels = issue.labels.filter((label) => ["p0", "p1", "no-action", "untriaged"].includes(label));
 	const state = issue.state === "open" ? "open" : `closed${issue.stateReason ? `:${issue.stateReason}` : ""}`;

@@ -1,7 +1,8 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Draft, JsonValue } from "@earendil-works/chord";
+import type { Draft } from "@earendil-works/chord/delta";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import {
 	CompactionTask,

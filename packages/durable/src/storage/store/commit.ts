@@ -5,7 +5,6 @@
 // documents in two passes, existing ones first (their content, then their retirement, which frees the addresses this
 // commit's creations take), then the creations and copies.
 
-import type { Context, JsonValue } from "@earendil-works/chord";
 import {
 	type EncodedRow,
 	type DocumentContent as EngineContent,
@@ -20,7 +19,9 @@ import {
 	type Step,
 	type StoreWrite,
 	writeContent,
-} from "@earendil-works/chord/next";
+} from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { StorageRequestError } from "../../errors.ts";
 import type {
 	DocumentContent,

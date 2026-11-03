@@ -4,7 +4,8 @@
  * patterns end to end.
  */
 
-import type { Context, Draft } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { Draft } from "@earendil-works/chord/delta";
 import type { AssistantMessage, Models, ToolCall } from "@earendil-works/pi-ai";
 import {
 	type Conversation,

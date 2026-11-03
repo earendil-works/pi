@@ -1,6 +1,6 @@
 // Group commit on the Session line (docs/group-commit.md): batching, gates, outcome fences, publication, failures per
 // part, upkeep through the writer, backpressure, bounds, and a randomized interleaving against an oracle.
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import {
 	type CommitOptions,
 	type CommitResult,

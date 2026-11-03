@@ -1,4 +1,5 @@
-import type { Draft, JsonValue } from "@earendil-works/chord";
+import type { Draft } from "@earendil-works/chord/delta";
+import type { JsonValue } from "@earendil-works/chord/json";
 import {
 	type ConversationId,
 	defineDoc,

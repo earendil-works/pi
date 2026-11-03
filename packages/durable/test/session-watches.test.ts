@@ -1,6 +1,6 @@
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import type { Context, WatchCall, WatchEnd } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import {
 	BACKGROUND_CONTEXT,
 	createContextKey,
@@ -9,6 +9,7 @@ import {
 	withContextValue,
 } from "@earendil-works/chord/context";
 import { applyImmutable } from "@earendil-works/chord/delta";
+import type { WatchCall, WatchEnd } from "@earendil-works/chord/watch";
 import { type DocumentWatch, defineDoc, defineDocFamily, MemoryStorage } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
 import { SessionImpl } from "../src/session/session.ts";

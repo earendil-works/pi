@@ -8,7 +8,7 @@ A local tool for the daily issue review. It runs in this order:
    - picks a category from `categories/*.md`
    - writes a one-sentence summary and signals
    - suggests p0, p1, or none
-3. **Review.** A web UI lists the inbox: every issue created since the inbox start, grouped by the agent's suggestion. You set p0, p1, or none, and fix the category if needed. Each issue links to GitHub.
+3. **Review.** A web UI lists the inbox: every issue created since the inbox start, plus every issue still labeled `untriaged` on GitHub (auto-closed by the issue gate and not reviewed yet), grouped by the agent's suggestion. You set p0, p1, or none, and fix the category if needed. Each issue links to GitHub.
 
 Decisions are stored locally only. Nothing is written to GitHub yet.
 
@@ -52,8 +52,12 @@ The agent authenticates through `~/.pi/agent/auth.json`, the same credentials pi
 | `TRIAGE_SOCKET` | | Listen on this unix socket instead of the port, for a reverse proxy |
 | `TRIAGE_DATA` | `scripts/issues/data` | State directory |
 
+The "Show related" checkbox in the header hides or shows related issues; duplicates are always shown. The choice is saved in the browser.
+
 ## UI keys
 
 - `j`/`k`: move between issues
 - `0`, `1`, `n`: set p0, p1, none
 - `o`: open the issue on GitHub
+- `c`: show or hide the agent's conversation for the issue
+- `?`: show the keyboard shortcuts

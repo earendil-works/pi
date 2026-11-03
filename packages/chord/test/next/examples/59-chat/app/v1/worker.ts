@@ -1,3 +1,0 @@
-// The chat's API v1 for channel workers (`@chat/app/v1/worker`): the kit's `Files`, each worker's own.
-
-export { Files } from "../../../../../../src/next-node/app/index.ts";
