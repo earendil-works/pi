@@ -389,13 +389,11 @@ export class Markdown implements Component {
 			}
 		}
 
-		// Add top/bottom padding (empty lines)
+		// Only background-coloured padding needs to fill the terminal width.
 		const bgFn = this.defaultTextStyle?.bgColor;
-		const emptyLine = " ".repeat(width);
 		const emptyLines: string[] = [];
 		for (let i = 0; i < this.paddingY; i++) {
-			const line = bgFn ? applyBackgroundToLine(emptyLine, width, bgFn) : emptyLine;
-			emptyLines.push(line);
+			emptyLines.push(bgFn ? applyBackgroundToLine(" ".repeat(width), width, bgFn) : "");
 		}
 		flattenLines(emptyLines);
 
@@ -429,13 +427,11 @@ export class Markdown implements Component {
 				continue;
 			}
 			for (const wrappedLine of wrapTextWithAnsi(line, contentWidth)) {
-				const lineWithMargins = leftMargin + wrappedLine + rightMargin;
 				if (bgFn) {
-					lines.push(applyBackgroundToLine(lineWithMargins, width, bgFn));
+					lines.push(applyBackgroundToLine(leftMargin + wrappedLine + rightMargin, width, bgFn));
 				} else {
-					// No background - just pad to width
-					const paddingNeeded = Math.max(0, width - visibleWidth(lineWithMargins));
-					lines.push(lineWithMargins + " ".repeat(paddingNeeded));
+					// Terminal selection copies literal spaces, so leave uncoloured lines unpadded.
+					lines.push(wrappedLine ? leftMargin + wrappedLine : "");
 				}
 			}
 		}

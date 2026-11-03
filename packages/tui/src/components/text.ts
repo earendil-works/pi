@@ -1,5 +1,5 @@
 import type { Component } from "../tui.ts";
-import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { applyBackgroundToLine, flattenLines, wrapTextWithAnsi } from "../utils.ts";
 
 /**
  * Text component - displays multi-line text with word wrapping
@@ -80,26 +80,18 @@ export class Text implements Component {
 		const contentLines: string[] = [];
 
 		for (const line of wrappedLines) {
-			// Add margins
-			const lineWithMargins = leftMargin + line + rightMargin;
-
-			// Apply background if specified (this also pads to full width)
 			if (this.customBgFn) {
-				contentLines.push(applyBackgroundToLine(lineWithMargins, width, this.customBgFn));
+				contentLines.push(applyBackgroundToLine(leftMargin + line + rightMargin, width, this.customBgFn));
 			} else {
-				// No background - just pad to width with spaces
-				const visibleLen = visibleWidth(lineWithMargins);
-				const paddingNeeded = Math.max(0, width - visibleLen);
-				contentLines.push(lineWithMargins + " ".repeat(paddingNeeded));
+				// Terminal selection copies literal spaces, so leave uncoloured lines unpadded.
+				contentLines.push(line ? leftMargin + line : "");
 			}
 		}
 
-		// Add top/bottom padding (empty lines)
-		const emptyLine = " ".repeat(width);
+		// Only background-coloured padding needs to fill the terminal width.
 		const emptyLines: string[] = [];
 		for (let i = 0; i < this.paddingY; i++) {
-			const line = this.customBgFn ? applyBackgroundToLine(emptyLine, width, this.customBgFn) : emptyLine;
-			emptyLines.push(line);
+			emptyLines.push(this.customBgFn ? applyBackgroundToLine(" ".repeat(width), width, this.customBgFn) : "");
 		}
 
 		const result = [...emptyLines, ...contentLines, ...emptyLines];
