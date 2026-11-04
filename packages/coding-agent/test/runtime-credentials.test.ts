@@ -1,4 +1,4 @@
-import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
+import type { CredentialStore } from "@earendil-works/pi-ai";
 import { describe, expect, test, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { RuntimeCredentials } from "../src/core/runtime-credentials.ts";
@@ -73,38 +73,18 @@ describe("RuntimeCredentials", () => {
 		expect(await credentials.read("anthropic")).toEqual({ type: "api_key", key: "runtime-key" });
 	});
 
-	// #11692: shutdown waits for a started OAuth refresh so the rotated token is not lost.
-	test("settled waits for started modifications, not for ones waiting on the lock", async () => {
-		let releaseLock!: () => void;
-		const lock = new Promise<void>((resolve) => {
-			releaseLock = resolve;
-		});
-		let lockHeld = false;
-		const stored = new Map<string, Credential>();
-		const storage: CredentialStore = {
-			read: async (providerId) => stored.get(providerId),
-			list: async () => [],
-			modify: async (providerId, fn) => {
-				// The first modification holds the lock until released; later ones wait for it.
-				if (lockHeld) await lock;
-				lockHeld = true;
-				const next = await fn(stored.get(providerId));
-				if (next) stored.set(providerId, next);
-				return next;
-			},
-			delete: async () => {},
-		};
+	// #11692: shutdown waits for an OAuth refresh in progress so the rotated token is not lost.
+	test("settled waits until pending modifications are written", async () => {
+		const storage = AuthStorage.inMemory({ anthropic: { type: "api_key", key: "old" } });
 		const credentials = new RuntimeCredentials(storage);
-
-		let finishRefresh!: () => void;
-		const refreshing = new Promise<void>((resolve) => {
-			finishRefresh = resolve;
+		let respond!: () => void;
+		const response = new Promise<void>((resolve) => {
+			respond = resolve;
 		});
-		const started = credentials.modify("anthropic", async () => {
-			await refreshing;
+		const modification = credentials.modify("anthropic", async () => {
+			await response;
 			return { type: "api_key", key: "rotated" };
 		});
-		const waiting = credentials.modify("openai", async () => ({ type: "api_key", key: "never-started" }));
 
 		let settled = false;
 		const settling = credentials.settled().then(() => {
@@ -113,39 +93,20 @@ describe("RuntimeCredentials", () => {
 		await new Promise((resolve) => setTimeout(resolve, 10));
 		expect(settled).toBe(false);
 
-		finishRefresh();
+		respond();
 		await settling;
-		expect(stored.get("anthropic")).toEqual({ type: "api_key", key: "rotated" });
-		expect(stored.has("openai")).toBe(false);
-
-		await started;
-		releaseLock();
-		await waiting;
+		expect(await storage.read("anthropic")).toEqual({ type: "api_key", key: "rotated" });
+		await modification;
 	});
 
-	test("settled resolves after a started modification fails", async () => {
-		const storage = AuthStorage.inMemory();
-		const credentials = new RuntimeCredentials(storage);
-		let markStarted!: () => void;
-		const started = new Promise<void>((resolve) => {
-			markStarted = resolve;
-		});
-		let failRefresh!: () => void;
-		const refreshFailed = new Promise<void>((resolve) => {
-			failRefresh = resolve;
-		});
+	test("settled resolves after a pending modification fails", async () => {
+		const credentials = new RuntimeCredentials(AuthStorage.inMemory());
 		const failed = credentials.modify("anthropic", async () => {
-			markStarted();
-			await refreshFailed;
 			throw new Error("invalid_grant");
 		});
-		const rejected = expect(failed).rejects.toThrow("invalid_grant");
 
-		await started;
-		const settling = credentials.settled();
-		failRefresh();
-		await settling;
-		await rejected;
+		await credentials.settled();
+		await expect(failed).rejects.toThrow("invalid_grant");
 	});
 
 	test("delete clears both the override and persisted credential", async () => {

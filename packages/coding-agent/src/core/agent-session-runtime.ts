@@ -10,7 +10,6 @@ import type {
 	SessionStartEvent,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
-import type { ModelRuntime } from "./model-runtime.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import { SessionManager } from "./session-manager.ts";
@@ -403,9 +402,9 @@ export class AgentSessionRuntime {
 	}
 
 	/**
-	 * Dispose the session for process exit. Also waits, up to a limit, for credential writes in
-	 * progress: an OAuth refresh may already have spent the old single-use refresh token, so exiting
-	 * before the new one is saved would lose the login (#11692).
+	 * Dispose the session for process exit. Also waits for credential writes in progress: an OAuth
+	 * refresh may already have spent the old single-use refresh token, so exiting before the new one
+	 * is saved would lose the login (#11692).
 	 */
 	async dispose(): Promise<void> {
 		await this.session.abort();
@@ -415,22 +414,7 @@ export class AgentSessionRuntime {
 		});
 		this.beforeSessionInvalidate?.();
 		this.session.dispose();
-		await settleCredentialWrites(this.services.modelRuntime);
-	}
-}
-
-// Built-in OAuth refreshes time out after 15 s; the margin covers writing the result.
-const CREDENTIAL_WRITE_SETTLE_TIMEOUT_MS = 20_000;
-
-async function settleCredentialWrites(modelRuntime: ModelRuntime): Promise<void> {
-	let timer: NodeJS.Timeout | undefined;
-	const timeout = new Promise<void>((resolve) => {
-		timer = setTimeout(resolve, CREDENTIAL_WRITE_SETTLE_TIMEOUT_MS);
-	});
-	try {
-		await Promise.race([modelRuntime.settleCredentialWrites(), timeout]);
-	} finally {
-		clearTimeout(timer);
+		await this.services.modelRuntime.settleCredentialWrites();
 	}
 }
 

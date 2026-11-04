@@ -4,8 +4,8 @@ import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore 
 export class RuntimeCredentials implements CredentialStore {
 	private readonly store: CredentialStore;
 	private readonly overrides = new Map<string, string>();
-	/** Modifications whose update function has started, for example an OAuth token request. */
-	private readonly startedModifications = new Set<Promise<void>>();
+	/** Modifications not yet written or failed, for example an OAuth refresh. */
+	private readonly pendingModifications = new Set<Promise<void>>();
 
 	constructor(store: CredentialStore) {
 		this.store = store;
@@ -43,37 +43,23 @@ export class RuntimeCredentials implements CredentialStore {
 		fn: (current: Credential | undefined) => Promise<Credential | undefined>,
 		options?: AuthOperationOptions,
 	): Promise<Credential | undefined> {
-		let markDone!: () => void;
-		const done = new Promise<void>((resolve) => {
-			markDone = resolve;
-		});
-		const modification = this.store.modify(
-			providerId,
-			(current) => {
-				this.startedModifications.add(done);
-				return fn(current);
-			},
-			options,
+		const modification = this.store.modify(providerId, fn, options);
+		const pending = modification.then(
+			() => undefined,
+			() => undefined,
 		);
-		const finish = () => {
-			this.startedModifications.delete(done);
-			markDone();
-		};
-		modification.then(finish, finish);
+		this.pendingModifications.add(pending);
+		void pending.finally(() => this.pendingModifications.delete(pending));
 		return modification;
 	}
 
 	/**
-	 * Wait until every modification whose update function has started is written or failed.
-	 *
-	 * A modification still waiting for the store lock is not awaited: it has not sent anything yet.
-	 * One that has started may have spent a single-use OAuth refresh token, so exiting before its
-	 * result is written would leave only the spent token in auth.json.
+	 * Resolves when every modification started so far is written or failed. An OAuth refresh may
+	 * already have spent the single-use refresh token, so exiting before its result is written would
+	 * leave only the spent token in auth.json.
 	 */
 	async settled(): Promise<void> {
-		while (this.startedModifications.size > 0) {
-			await Promise.all(this.startedModifications);
-		}
+		await Promise.all(this.pendingModifications);
 	}
 
 	async delete(providerId: string, options?: AuthOperationOptions): Promise<void> {
