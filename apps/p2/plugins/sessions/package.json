@@ -1,0 +1,5 @@
+{
+	"name": "sessions",
+	"private": true,
+	"type": "module"
+}

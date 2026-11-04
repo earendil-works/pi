@@ -3,7 +3,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { type ModelThinkingLevel, StringEnum, Type } from "@earendil-works/pi-ai";
+import { type Message, type ModelThinkingLevel, StringEnum, Type } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
@@ -19,7 +19,7 @@ import {
 	type Tx,
 } from "../../packages/durable/src/index.ts";
 import { openNodeSqliteStorage } from "../../packages/durable/src/storage/sqlite/node.ts";
-import { type Corpus, type Issue, issueStatus } from "./github.ts";
+import { type Corpus, type Issue, inInbox, issueStatus } from "./github.ts";
 
 const context = BACKGROUND_CONTEXT;
 /** Labels the issue templates set. Other labels and the issue's state are hidden from the agent: they are maintainer decisions. */
@@ -57,6 +57,11 @@ export type IssueState = {
 };
 
 type TriageState = { inboxSince: string; issues: Record<string, IssueState> };
+
+/** One transcript line for the UI. A tool call carries its result once the result exists. */
+export type TranscriptItem =
+	| { type: "user" | "text" | "thinking"; text: string }
+	| { type: "tool"; name: string; args: unknown; output: string | null; isError: boolean };
 
 const StateDoc = defineDoc<TriageState>({
 	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
@@ -153,6 +158,42 @@ export class Triage {
 		return (await this.harness.snapshot(StateDoc, context)) ?? StateDoc.definition.initial();
 	}
 
+	/** The issue's triage conversation without the system prompt, or null when it has none yet. */
+	async transcript(number: number): Promise<TranscriptItem[] | null> {
+		const id = (await this.state()).issues[number]?.conversationId;
+		const conversation = id ? await this.harness.conversation(id as ConversationId, context) : undefined;
+		if (!conversation) return null;
+		const { entries } = await conversation.context(context);
+		const items: TranscriptItem[] = [];
+		const calls = new Map<string, Extract<TranscriptItem, { type: "tool" }>>();
+		const text = (content: Message["content"]) =>
+			typeof content === "string"
+				? content
+				: content.map((block) => (block.type === "text" ? block.text : `[${block.type}]`)).join("\n");
+		for (const message of entries.flatMap((entry) => entry.model ?? [])) {
+			if (message.role === "user") items.push({ type: "user", text: text(message.content) });
+			else if (message.role === "toolResult") {
+				const call = calls.get(message.toolCallId);
+				if (call) {
+					call.output = text(message.content);
+					call.isError = message.isError;
+				}
+			} else if (message.role === "assistant") {
+				for (const block of message.content) {
+					if (block.type === "text" && block.text.trim()) items.push({ type: "text", text: block.text });
+					else if (block.type === "thinking" && block.thinking.trim()) {
+						items.push({ type: "thinking", text: block.thinking });
+					} else if (block.type === "toolCall") {
+						const call = { type: "tool" as const, name: block.name, args: block.arguments, output: null, isError: false };
+						calls.set(block.id, call);
+						items.push(call);
+					}
+				}
+			}
+		}
+		return items;
+	}
+
 	async usageCost(): Promise<number> {
 		const usage = await this.harness.usage(context);
 		return Object.values(usage.models).reduce((sum, model) => sum + (model.cost?.total ?? 0), 0);
@@ -166,7 +207,7 @@ export class Triage {
 	async enqueueInbox(): Promise<void> {
 		const state = await this.state();
 		for (const issue of this.options.corpus.all()) {
-			if (issue.createdAt < state.inboxSince) continue;
+			if (!inInbox(issue, state.inboxSince)) continue;
 			const current = state.issues[issue.number];
 			if (current === undefined || current.status === "queued") this.enqueue(issue.number);
 		}

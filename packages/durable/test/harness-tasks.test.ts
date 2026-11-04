@@ -1,6 +1,6 @@
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { withAbortSignal, withCancel } from "@earendil-works/chord/context";
-import { createModels, Type } from "@earendil-works/pi-ai";
+import { createModels } from "@earendil-works/pi-ai";
 import {
 	type CommitPublication,
 	type Conversation,
@@ -18,6 +18,7 @@ import {
 	type TaskId,
 	type TaskRuntime,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it } from "vitest";
 import type { SessionImpl } from "../src/session/session.ts";
@@ -424,7 +425,7 @@ describe("task phases", () => {
 			defineTool({
 				name: "late",
 				description: "late",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async () => ({}),
 			}),
 		);

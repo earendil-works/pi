@@ -9,13 +9,14 @@
  *
  *   node --conditions=source --experimental-strip-types --expose-gc test/nested-tools-bench.ts [streaming|nesting]
  */
+
 import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { Type } from "typebox";
+import { num, obj } from "@earendil-works/pi-schema";
 import {
 	type Conversation,
 	createRegistry,
@@ -103,7 +104,7 @@ async function runScenario(scenario: Scenario): Promise<{ perRun: Run[]; closedB
 		const blob = defineTool({
 			name: "blob",
 			description: "Stream a blob",
-			parameters: Type.Object({ n: Type.Number() }),
+			parameters: obj({ n: num() }),
 			execute: async (_args, api) => {
 				for (let n = 0; n < CHUNKS; n++) {
 					api.output(chunk);
@@ -118,7 +119,7 @@ async function runScenario(scenario: Scenario): Promise<{ perRun: Run[]; closedB
 			defineTool({
 				name,
 				description: `Call ${target} in parallel`,
-				parameters: Type.Object({ count: Type.Number() }),
+				parameters: obj({ count: num() }),
 				execute: async (args, api, callContext) => {
 					const calls = Array.from({ length: args.count }, (_, n) =>
 						api.executeTool(target, { n, count: FAN_OUT }, callContext, options),

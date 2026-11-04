@@ -1,0 +1,5 @@
+{
+	"name": "@board/clock",
+	"private": true,
+	"type": "module"
+}

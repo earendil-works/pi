@@ -20,7 +20,20 @@ export interface CompileOptions {
 	readonly formats?: Readonly<Record<string, FormatCheck>>;
 	/** Schema documents by URI, for `$ref`s to other documents. */
 	readonly schemas?: Readonly<Record<string, JsonSchema>>;
+	/** Add `coerce()` and `parse()` to the validator, for loosely typed input (see the README's Coercion section). */
+	readonly coerce?: boolean;
+	/**
+	 * What a `$ref` that names nothing (a missing definition, a document not in `schemas`) does: `"throw"` (default)
+	 * makes compile() throw; `"reject"` compiles it as `false`, so only values at that place fail, with the error
+	 * "unresolved reference".
+	 */
+	readonly unresolvedRefs?: "throw" | "reject";
 }
+
+/** The result of `parse()`: the coerced value when it is valid, else the errors of the coerced value. */
+export type ParseResult<T> =
+	| { readonly ok: true; readonly value: T }
+	| { readonly ok: false; readonly errors: ValidationError[] };
 
 /** One failure of a value: where it is (a JSON Pointer, "" for the value itself), the failing keyword and a message. */
 export interface ValidationError {

@@ -10,6 +10,7 @@
  *
  *   node --conditions=source --experimental-strip-types --expose-gc test/nested-images-bench.ts [count]
  */
+
 import { randomBytes } from "node:crypto";
 import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,7 +19,7 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { Type } from "typebox";
+import { arr, lit, num, obj, opt, str } from "@earendil-works/pi-schema";
 import {
 	createRegistry,
 	defineExtension,
@@ -95,11 +96,11 @@ function noWrites(): Written {
 	};
 }
 
-const ImageArgument = Type.Object({
-	type: Type.Literal("image"),
-	mimeType: Type.String(),
-	data: Type.Optional(Type.String()),
-	source: Type.Optional(Type.Object({ taskId: Type.Number() })),
+const ImageArgument = obj({
+	type: lit("image"),
+	mimeType: str(),
+	data: opt(str()),
+	source: opt(obj({ taskId: num() })),
 });
 
 function registryFor(scenario: Scenario, probe: Probe) {
@@ -107,7 +108,7 @@ function registryFor(scenario: Scenario, probe: Probe) {
 	const readImage = defineTool({
 		name: "read_image",
 		description: "Read an image",
-		parameters: Type.Object({ n: Type.Number() }),
+		parameters: obj({ n: num() }),
 		// One image, so programs get it as an `ImageContent`. Unique per call: base64 of random bytes.
 		execute: async () => ({
 			output: [
@@ -118,7 +119,7 @@ function registryFor(scenario: Scenario, probe: Probe) {
 	const classify = defineTool({
 		name: "classify",
 		description: "Classify images",
-		parameters: Type.Object({ images: Type.Array(ImageArgument) }),
+		parameters: obj({ images: arr(ImageArgument) }),
 		execute: async (args, api, callContext) => {
 			for (const image of args.images) {
 				let data = image.data;
@@ -141,7 +142,7 @@ function registryFor(scenario: Scenario, probe: Probe) {
 	const script = defineTool({
 		name: "script",
 		description: "Read and classify images",
-		parameters: Type.Object({ count: Type.Number() }),
+		parameters: obj({ count: num() }),
 		callers: ["model"],
 		execute: async (args, api, callContext) => {
 			for (let n = 0; n < args.count; n++) {

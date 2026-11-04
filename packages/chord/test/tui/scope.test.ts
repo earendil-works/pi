@@ -1,0 +1,148 @@
+// Tests of `TuiScope` (slice 11 §4, decision "Slice 11, P9"): references held for a component, watchables and
+// registries followed, one `changed` callback for every change, everything released at `dispose`, and the host's page
+// state shared by every scope (decision "Tutorial gaps" (1)), and messages in the host's language, a change redrawing
+// (decision "Messages and languages in the app kit").
+
+import { describe, expect, it } from "vitest";
+import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
+import {
+	createHost,
+	createLanguage,
+	defineFacet,
+	defineMessages,
+	defineRegistry,
+	hostLanguage,
+	local,
+	method,
+	str,
+} from "../../src/index.ts";
+import { NO_TRANSLATIONS } from "../../src/surfaces/translations.ts";
+import { TuiScope } from "../../src/tui/scope.ts";
+
+const Notes = local("test.notes", { version: 1, params: {}, members: { text: str(), write: method(str()) } });
+
+const Panels = defineRegistry<string, readonly string[]>("test.panels", { version: 1 });
+
+/** A host serving `Notes` (a writable text) and `Panels` with one contribution. */
+async function host() {
+	const created = createHost({ onError: () => {} });
+	await created.load(
+		[
+			{
+				name: "@test/notes",
+				facet: defineFacet((h, self) => {
+					h.serve(Notes, (_params, object) => {
+						const text = object.writable("first");
+						return {
+							text: object.derive([text], ([value]) => value),
+							write: async (next) => {
+								text.set(next);
+								return null;
+							},
+						};
+					});
+					h.serve(Panels, { compose: (table) => table.map(({ value }) => value) });
+					self.contribute(Panels, "notes");
+				}),
+			},
+		],
+		context,
+	);
+	return created;
+}
+
+/** Waits until `check` holds. */
+async function until(check: () => boolean): Promise<void> {
+	for (let index = 0; index < 200 && !check(); index++) await new Promise((resolve) => setTimeout(resolve, 5));
+	expect(check()).toBe(true);
+}
+
+describe("a component's scope", () => {
+	it("holds, follows and calls changed on every change; releases everything at dispose", async () => {
+		const h = await host();
+		let changes = 0;
+		const scope = new TuiScope(h, () => changes++);
+		const notes = scope.hold(Notes, {});
+		const text = scope.watch(notes.text);
+		const panels = scope.registry(Panels);
+		await until(() => text() === "first" && panels()?.[0] === "notes");
+		const before = changes;
+		await notes.write("second", context);
+		await until(() => text() === "second" && changes > before);
+		scope.dispose();
+		expect(notes.state.value.kind).toBe("ended");
+		const after = changes;
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(changes).toBe(after);
+		await h.close(context);
+	});
+
+	it("reads undefined from a watchable without a value, never throwing", async () => {
+		const h = await host();
+		const scope = new TuiScope(h, () => {});
+		const read = scope.watch({
+			get value(): string {
+				throw new Error("not ready");
+			},
+			watch: () => Promise.reject(new Error("not ready")),
+		});
+		expect(read()).toBeUndefined();
+		scope.dispose();
+		await h.close(context);
+	});
+});
+
+describe("a scope's page state", () => {
+	it("is the host's: a scope opened after another was disposed (a reload) finds its value, a new key starts fresh", async () => {
+		const h = await host();
+		const before = new TuiScope(h, () => {});
+		before.pageState("draft", "").set("oat mi");
+		before.dispose();
+		const after = new TuiScope(h, () => {});
+		expect(after.pageState("draft", "").read()).toBe("oat mi");
+		expect(after.pageState("scroll", 0).read()).toBe(0);
+		after.dispose();
+		await h.close(context);
+	});
+
+	it("calls changed on each open scope following the key, and never after dispose", async () => {
+		const h = await host();
+		const calls: string[] = [];
+		const redraw = (name: string) => () => calls.push(name);
+		const first = new TuiScope(h, redraw("first"));
+		const second = new TuiScope(h, redraw("second"));
+		const draft = first.pageState("draft", "");
+		second.pageState("draft", "");
+		draft.set("a");
+		first.dispose();
+		draft.set("b");
+		expect(calls).toEqual(["first", "second", "second"]);
+		second.dispose();
+		await h.close(context);
+	});
+});
+
+describe("a scope's messages", () => {
+	it("render in the host's language at each call, a change of it calling changed until dispose", async () => {
+		const h = await host();
+		const notes = defineMessages("notes", {
+			en: { title: "Notes", count: (n: number) => `${n} notes` },
+			de: { title: "Notizen", count: (n) => `${n} Notizen` },
+		});
+		let changes = 0;
+		const scope = new TuiScope(h, () => changes++);
+		const t = scope.messages(notes);
+		expect(t("title")).toBe("Notes");
+		hostLanguage(h).set(createLanguage("de", NO_TRANSLATIONS, () => {}));
+		expect(changes).toBe(1);
+		expect([t("title"), t("count", 2), t.render(notes.message("count", 3))]).toEqual([
+			"Notizen",
+			"2 Notizen",
+			"3 Notizen",
+		]);
+		scope.dispose();
+		hostLanguage(h).set(createLanguage("en", NO_TRANSLATIONS, () => {}));
+		expect(changes).toBe(1);
+		await h.close(context);
+	});
+});

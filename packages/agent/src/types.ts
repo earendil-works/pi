@@ -14,7 +14,7 @@ import type {
 	TranscriptContext,
 	Usage,
 } from "@earendil-works/pi-ai";
-import type { Static, TSchema } from "typebox";
+import type { Static } from "@earendil-works/pi-schema";
 
 /**
  * Stream function used by the agent loop. `Models.streamSimple` satisfies
@@ -462,27 +462,39 @@ export interface AgentToolCallOutcome {
  */
 export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T>) => void;
 
-/** Tool definition used by the agent runtime. */
-export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
+/**
+ * The arguments type of a tool with parameter schema `TParameters`: pi-schema's `Static<TParameters>` (the builders'
+ * type, TypeBox's for the common TypeBox kinds, else `unknown`), and `any` for `AgentTool<any>`.
+ */
+export type AgentToolParams<TParameters> = IsAny<TParameters> extends true ? any : Static<TParameters>;
+
+// `0 extends 1 & T` is resolved too early for a `T` constrained to `object`; this form waits for the argument.
+type IsAny<T> = boolean extends (T extends never ? true : false) ? true : false;
+
+/**
+ * Tool definition used by the agent runtime. `parameters` is any JSON Schema object; see {@link AgentToolParams} for
+ * the type `execute` receives.
+ */
+export interface AgentTool<TParameters extends object = object, TDetails = any> extends Tool<TParameters> {
 	/** Human-readable label for UI display. */
 	label: string;
 	/**
 	 * Optional compatibility shim for raw tool-call arguments before schema validation.
 	 * Must return an object that matches `TParameters`.
 	 */
-	prepareArguments?: (args: unknown) => Static<TParameters>;
+	prepareArguments?: (args: unknown) => AgentToolParams<TParameters>;
 	/**
 	 * JSON Schema of `structuredContent` in successful results. Tools that declare it should always
 	 * set `structuredContent`.
 	 */
-	outputSchema?: TSchema;
+	outputSchema?: object;
 	/**
 	 * Execute the tool call. Throw on failure, or return a result with `isError: true`; do not only
 	 * describe the failure in `content`.
 	 */
 	execute: (
 		toolCallId: string,
-		params: Static<TParameters>,
+		params: AgentToolParams<TParameters>,
 		signal?: AbortSignal,
 		onUpdate?: AgentToolUpdateCallback<TDetails>,
 	) => Promise<AgentToolResult<TDetails>>;

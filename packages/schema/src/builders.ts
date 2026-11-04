@@ -2,14 +2,27 @@
 // they accept, so `Static<typeof schema>` is the TypeScript type a valid value has. The objects are ordinary data:
 // they serialize with JSON.stringify and compile with compile() like any other schema.
 
+import type { TypeBoxStatic } from "./typebox-static.ts";
+
 declare const STATIC: unique symbol;
 declare const OPTIONAL_TYPE: unique symbol;
 
 /** A JSON Schema object whose valid values have type `T` (a type-level brand; nothing extra exists at run time). */
 export type Schema<T = unknown> = { readonly [keyword: string]: unknown } & { readonly [STATIC]?: T };
 
-/** The type of the values `S` accepts; `unknown` for schemas not built with these functions. */
-export type Static<S> = S extends { readonly [STATIC]?: infer T } ? (unknown extends T ? unknown : T) : unknown;
+// TypeBox is tested first and in its own branch: a builder brand's fallback through TypeBoxStatic would leave
+// `Static<S>` of a generic `S` (constrained to builder schemas) unresolvable to its constraint's types.
+/**
+ * The type of the values `S` accepts: the type a builder recorded; for a TypeBox schema (`'~kind'` or `'~unsafe'`),
+ * TypeBox's static type for the common kinds (see `TypeBoxStatic`); else `unknown`.
+ */
+export type Static<S> = S extends { readonly "~kind": unknown } | { readonly "~unsafe": unknown }
+	? TypeBoxStatic<S>
+	: S extends { readonly [STATIC]?: infer T }
+		? unknown extends T
+			? unknown
+			: T
+		: unknown;
 
 /** Annotations every builder accepts: they describe the schema and never change what it accepts. */
 export interface Annotations<T = unknown> {

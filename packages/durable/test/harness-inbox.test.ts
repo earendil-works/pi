@@ -9,7 +9,6 @@ import {
 	fauxText,
 	fauxToolCall,
 	type ToolResultMessage,
-	Type,
 	type Usage,
 } from "@earendil-works/pi-ai";
 import {
@@ -29,6 +28,7 @@ import {
 	ToolTask,
 	UsageDoc,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { recordUsage } from "../src/harness/usage.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
@@ -67,7 +67,7 @@ function holdTool(setup: ChatSetup, gate: Deferred, result: ToolExecutionResult 
 		defineTool({
 			name: "hold",
 			description: "Waits for the test",
-			parameters: Type.Object({}),
+			parameters: obj({}),
 			execute: async () => {
 				await gate.promise;
 				return result;
@@ -474,7 +474,7 @@ describe("inbox", () => {
 			defineTool({
 				name: "hold",
 				description: "Hands off",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async () => ({ output: [], control: { handoff: `h${++handoffs}` } }),
 			}),
 		);
@@ -796,7 +796,7 @@ describe("inbox", () => {
 			defineTool({
 				name: "later",
 				description: "Finishes first",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async () => {
 					await secondGate.promise;
 					return { output: [], control: { handoff: "two" } };

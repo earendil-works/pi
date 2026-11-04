@@ -1,3 +1,4 @@
+import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	complete,
@@ -7,7 +8,6 @@ import {
 	fauxToolCall,
 	registerFauxProvider,
 	stream,
-	Type,
 } from "../src/compat.ts";
 import type { AssistantMessageEvent, Context } from "../src/types.ts";
 

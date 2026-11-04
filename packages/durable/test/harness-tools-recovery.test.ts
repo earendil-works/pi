@@ -1,14 +1,13 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import {
 	type AssistantMessage,
 	fauxAssistantMessage,
 	fauxText,
 	fauxToolCall,
 	type ToolResultMessage,
-	Type,
 } from "@earendil-works/pi-ai";
 import {
 	defineTool,
@@ -21,6 +20,7 @@ import {
 	ToolResultEntry,
 	ToolTask,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExecutionEnv } from "../src/env/index.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
@@ -55,7 +55,7 @@ function tool(
 	execute: ToolRegistration["execute"],
 	extra: Partial<ToolRegistration> = {},
 ): ToolRegistration {
-	return defineTool({ name, description: name, parameters: Type.Object({}), execute, ...extra });
+	return defineTool({ name, description: name, parameters: obj({}), execute, ...extra });
 }
 
 function call(name: string, id = "c1"): AssistantMessage {

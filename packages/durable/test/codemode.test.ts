@@ -1,8 +1,8 @@
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { Context } from "@earendil-works/chord";
-import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
+import type { Context } from "@earendil-works/chord/context";
+import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { type CodemodeRun, CodemodeSandbox } from "@earendil-works/pi-codemode";
 import {
 	defineTool,
@@ -13,6 +13,7 @@ import {
 	ToolTask,
 	type ToolTaskInput,
 } from "@earendil-works/pi-durable";
+import { bool, num, obj, opt, str } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	type CodemodeGlobal,
@@ -30,7 +31,7 @@ import { addHooks, addTool } from "./harness-support.ts";
 import { ControlledStorage, context } from "./session-support.ts";
 import { aborted, type Deferred, deferred, eventually } from "./task-support.ts";
 
-const Parameters = Type.Object({ text: Type.Optional(Type.String()), id: Type.Optional(Type.Number()) });
+const Parameters = obj({ text: opt(str()), id: opt(num()) });
 
 function tool(
 	name: string,
@@ -715,13 +716,13 @@ describe("durable code mode", () => {
 
 	it("resolves a schema tool's error result that carries its value, and rejects one without with its text", async () => {
 		const chat = codemodeChat();
-		const Exit = Type.Object({ output: Type.String(), exitCode: Type.Number() });
+		const Exit = obj({ output: str(), exitCode: num() });
 		addTool(
 			chat.setup.registry,
 			defineTool({
 				name: "run",
 				description: "run",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				structuredOutputSchema: Exit,
 				// Like bash on a nonzero exit: an error result with its value.
 				execute: async () => ({
@@ -736,7 +737,7 @@ describe("durable code mode", () => {
 			defineTool({
 				name: "denied",
 				description: "denied",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				structuredOutputSchema: Exit,
 				execute: async () => ({ output: [{ type: "text", text: "permission denied" }], isError: true }),
 			}),
@@ -767,7 +768,7 @@ describe("durable code mode", () => {
 			defineTool({
 				name: "picture",
 				description: "picture",
-				parameters: Type.Object({ caption: Type.Boolean() }),
+				parameters: obj({ caption: bool() }),
 				execute: async (args) => ({
 					output: [
 						...(args.caption ? [{ type: "text" as const, text: "a cat" }] : []),
@@ -1078,7 +1079,7 @@ describe("durable code mode output and tool search", () => {
 			defineTool({
 				name: "later",
 				description: "A deferred tool",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				deferred: true,
 				execute: async () => ({ output: [{ type: "text", text: "later ran" }] }),
 			}),

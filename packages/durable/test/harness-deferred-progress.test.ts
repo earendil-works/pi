@@ -2,8 +2,9 @@
 // the next commit that reads or writes `pi.live` or within `settings.progress.persistWithinMs`. Crashes are simulated
 // by failing the Harness: from that moment nothing more reaches Storage, as when the process dies; the reopened Harness
 // resumes from what was stored.
+
 import { applyImmutable } from "@earendil-works/chord/delta";
-import { fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import {
 	AssistantEntry,
 	type ConversationId,
@@ -15,6 +16,7 @@ import {
 	type LiveState,
 	ToolResultEntry,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { describe, expect, it } from "vitest";
 import type { PartialMessage } from "../src/harness/partial-changes.ts";
 import type { SessionImpl } from "../src/session/session.ts";
@@ -257,7 +259,7 @@ describe("tool output", () => {
 		const registration = defineTool({
 			name: "work",
 			description: "work",
-			parameters: Type.Object({}),
+			parameters: obj({}),
 			replay,
 			execute: async (_args, api, callContext) => {
 				const run = ++state.runs;
@@ -306,7 +308,7 @@ describe("tool output", () => {
 			defineTool({
 				name: "work",
 				description: "work",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				replay: "safe",
 				execute: async (_args, api, callContext) => {
 					runs++;

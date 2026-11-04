@@ -1,4 +1,4 @@
-import { Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens } from "marked";
+import { Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens, type TokensList } from "marked";
 import markedCjkFriendly from "marked-cjk-friendly";
 import { renderLatex } from "../latex.ts";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
@@ -197,6 +197,36 @@ function trimPartialClosingFences(tokens: readonly Token[]): void {
 	token.text = token.text.slice(0, -lastLine.length).replace(/\n$/, "");
 }
 
+// An unclosed comment runs to the end of an HTML block, as in CommonMark, so streamed comments stay hidden.
+const HTML_COMMENT_REGEX = /<!--[\s\S]*?(?:-->|$)/g;
+
+function stripHtmlComments(html: string): string {
+	return html.replace(HTML_COMMENT_REGEX, "");
+}
+
+/**
+ * Remove block HTML tokens that hold only comments, so they render no line. A removed comment between two blank
+ * lines, or at the start or end, also drops a blank line, so it leaves no extra gap.
+ * See https://github.com/earendil-works/pi/issues/11710.
+ */
+function removeHtmlCommentBlocks(tokens: Token[]): void {
+	for (let i = tokens.length - 1; i >= 0; i--) {
+		const token = tokens[i];
+		if (token.type === "list") {
+			for (const item of token.items) removeHtmlCommentBlocks(item.tokens);
+		} else if (token.type === "blockquote") {
+			removeHtmlCommentBlocks(token.tokens ?? []);
+		} else if (token.type === "html" && stripHtmlComments(token.raw).trim() === "") {
+			tokens.splice(i, 1);
+			if (tokens[i]?.type === "space" && (i === 0 || tokens[i - 1]?.type === "space")) {
+				tokens.splice(i, 1);
+			} else if (i === tokens.length && tokens[i - 1]?.type === "space") {
+				tokens.splice(--i, 1);
+			}
+		}
+	}
+}
+
 const markdownParser = new Marked();
 markdownParser.setOptions({
 	tokenizer: new MarkdownTokenizer(),
@@ -244,6 +274,7 @@ export interface MarkdownTheme {
 	italic: (text: string) => string;
 	strikethrough: (text: string) => string;
 	underline: (text: string) => string;
+	/** Highlighted lines of a code block. A Markdown component reuses the result for the same code until invalidate(). */
 	highlightCode?: (code: string, lang?: string) => string[];
 	/** Prefix applied to each rendered code block line (default: "  ") */
 	codeBlockIndent?: string;
@@ -265,6 +296,16 @@ interface InlineStyleContext {
 	stylePrefix: string;
 }
 
+/** A top-level block of the last render, keyed by its source, reused by the next render. */
+interface RenderedBlock {
+	/** Width and type of the following block (which decides the spacing) that the lines were rendered for. */
+	width: number;
+	nextTokenType: string | undefined;
+	lines: string[];
+	/** Highlighted lines of the block's code, keyed by language and source; they survive a resize or new spacing. */
+	highlightedCode: Map<string, string[]>;
+}
+
 export class Markdown implements Component {
 	private text: string;
 	private paddingX: number; // Left/right padding
@@ -281,7 +322,14 @@ export class Markdown implements Component {
 	// Parsed tokens depend only on the source, so they survive theme and width invalidation. Held weakly: a token tree is
 	// about ten times the size of its source, and every message of a long transcript keeps a Markdown component. The
 	// tokens survive a burst of re-renders, such as a theme preview, and are collected afterwards.
-	private cachedTokens?: WeakRef<{ source: string; tokens: Token[] }>;
+	private cachedTokens?: WeakRef<{ source: string; tokens: TokensList }>;
+	// The last render's top-level blocks. While a message streams only its last block changes, so a render styles and
+	// wraps only that block. Each render keeps only the blocks it used, which drops a streamed block's earlier versions.
+	// Held weakly like the tokens: the blocks repeat the source in their keys and the code in their highlighting, and
+	// only a burst of renders, such as streaming or a resize, needs them.
+	private blocks?: WeakRef<Map<string, RenderedBlock>>;
+	// Highlighted code of the block being rendered, only set while renderBlock runs.
+	private blockHighlightedCode?: Map<string, string[]>;
 
 	constructor(
 		text: string,
@@ -301,10 +349,17 @@ export class Markdown implements Component {
 
 	setText(text: string): void {
 		this.text = text;
-		this.invalidate();
+		this.clearRenderCache();
 	}
 
 	invalidate(): void {
+		this.clearRenderCache();
+		// The theme may have changed, which changes every styled line and the default style's prefix.
+		this.blocks = undefined;
+		this.defaultStylePrefix = undefined;
+	}
+
+	private clearRenderCache(): void {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
@@ -322,6 +377,7 @@ export class Markdown implements Component {
 
 		// Don't render anything if there's no actual text
 		if (!text || text.trim() === "") {
+			this.blocks = undefined;
 			const result: string[] = [];
 			// Update cache
 			this.cachedText = this.text;
@@ -339,68 +395,43 @@ export class Markdown implements Component {
 		if (!tokens) {
 			tokens = markdownParser.lexer(normalizedText);
 			trimPartialClosingFences(tokens);
+			removeHtmlCommentBlocks(tokens);
 			this.cachedTokens = new WeakRef({ source: normalizedText, tokens });
 		}
 
-		// Convert tokens to styled terminal output
-		const renderedLines: string[] = [];
-
+		// A reference link resolves through a definition anywhere in the text, so blocks with the same source can render
+		// differently; such texts are rare in practice and render without reusing blocks.
+		const reuseBlocks = Object.keys(tokens.links).length === 0;
+		const previousBlocks = this.blocks?.deref();
+		const blocks = new Map<string, RenderedBlock>();
+		this.blocks = new WeakRef(blocks);
+		const contentLines: string[] = [];
 		for (let i = 0; i < tokens.length; i++) {
 			const token = tokens[i];
-			const nextToken = tokens[i + 1];
-			const tokenLines = this.renderToken(token, contentWidth, nextToken?.type);
-			for (const tokenLine of tokenLines) {
-				renderedLines.push(tokenLine);
+			const nextTokenType = tokens[i + 1]?.type;
+			const reused = reuseBlocks ? (blocks.get(token.raw) ?? previousBlocks?.get(token.raw)) : undefined;
+			const block = reused ?? { width: -1, nextTokenType, lines: [], highlightedCode: new Map() };
+			if (block.width !== width || block.nextTokenType !== nextTokenType) {
+				this.renderBlock(block, token, nextTokenType, width, contentWidth);
 			}
-		}
-
-		// Wrap lines (NO padding, NO background yet)
-		const wrappedLines: string[] = [];
-		for (const line of renderedLines) {
-			if (isImageLine(line)) {
-				wrappedLines.push(line);
-			} else {
-				for (const wrappedLine of wrapTextWithAnsi(line, contentWidth)) {
-					wrappedLines.push(wrappedLine);
-				}
-			}
-		}
-
-		// Add margins and background to each wrapped line
-		const leftMargin = " ".repeat(this.paddingX);
-		const rightMargin = " ".repeat(this.paddingX);
-		const bgFn = this.defaultTextStyle?.bgColor;
-		const contentLines: string[] = [];
-
-		for (const line of wrappedLines) {
-			if (isImageLine(line)) {
+			if (reuseBlocks) blocks.set(token.raw, block);
+			for (const line of block.lines) {
 				contentLines.push(line);
-				continue;
-			}
-
-			const lineWithMargins = leftMargin + line + rightMargin;
-
-			if (bgFn) {
-				contentLines.push(applyBackgroundToLine(lineWithMargins, width, bgFn));
-			} else {
-				// No background - just pad to width
-				const visibleLen = visibleWidth(lineWithMargins);
-				const paddingNeeded = Math.max(0, width - visibleLen);
-				contentLines.push(lineWithMargins + " ".repeat(paddingNeeded));
 			}
 		}
 
 		// Add top/bottom padding (empty lines)
+		const bgFn = this.defaultTextStyle?.bgColor;
 		const emptyLine = " ".repeat(width);
 		const emptyLines: string[] = [];
 		for (let i = 0; i < this.paddingY; i++) {
 			const line = bgFn ? applyBackgroundToLine(emptyLine, width, bgFn) : emptyLine;
 			emptyLines.push(line);
 		}
+		flattenLines(emptyLines);
 
 		// Combine top padding, content, and bottom padding
 		const result = emptyLines.concat(contentLines, emptyLines);
-		flattenLines(result);
 
 		// Update cache
 		this.cachedText = this.text;
@@ -408,6 +439,42 @@ export class Markdown implements Component {
 		this.cachedLines = result;
 
 		return result.length > 0 ? result : [""];
+	}
+
+	/** Render one top-level block to output lines: wrapped, with margins, and padded or backgrounded to the width. */
+	private renderBlock(
+		block: RenderedBlock,
+		token: Token,
+		nextTokenType: string | undefined,
+		width: number,
+		contentWidth: number,
+	): void {
+		this.blockHighlightedCode = block.highlightedCode;
+		const leftMargin = " ".repeat(this.paddingX);
+		const rightMargin = " ".repeat(this.paddingX);
+		const bgFn = this.defaultTextStyle?.bgColor;
+		const lines: string[] = [];
+		for (const line of this.renderToken(token, contentWidth, nextTokenType)) {
+			if (isImageLine(line)) {
+				lines.push(line);
+				continue;
+			}
+			for (const wrappedLine of wrapTextWithAnsi(line, contentWidth)) {
+				const lineWithMargins = leftMargin + wrappedLine + rightMargin;
+				if (bgFn) {
+					lines.push(applyBackgroundToLine(lineWithMargins, width, bgFn));
+				} else {
+					// No background - just pad to width
+					const paddingNeeded = Math.max(0, width - visibleWidth(lineWithMargins));
+					lines.push(lineWithMargins + " ".repeat(paddingNeeded));
+				}
+			}
+		}
+		this.blockHighlightedCode = undefined;
+		flattenLines(lines);
+		block.lines = lines;
+		block.width = width;
+		block.nextTokenType = nextTokenType;
 	}
 
 	/**
@@ -567,8 +634,13 @@ export class Markdown implements Component {
 				const indent = this.theme.codeBlockIndent ?? "  ";
 				lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
 				if (this.theme.highlightCode) {
-					const highlightedLines = this.theme.highlightCode(token.text, token.lang);
-					for (const hlLine of highlightedLines) {
+					const key = `${token.lang ?? ""}\0${token.text}`;
+					let highlighted = this.blockHighlightedCode?.get(key);
+					if (!highlighted) {
+						highlighted = this.theme.highlightCode(token.text, token.lang);
+						this.blockHighlightedCode?.set(key, highlighted);
+					}
+					for (const hlLine of highlighted) {
 						lines.push(`${indent}${hlLine}`);
 					}
 				} else {
@@ -674,9 +746,9 @@ export class Markdown implements Component {
 				break;
 
 			case "html":
-				// Render HTML as plain text (escaped for terminal)
+				// Render HTML as plain text (escaped for terminal), without its comments
 				if ("raw" in token && typeof token.raw === "string") {
-					lines.push(this.applyDefaultStyle(token.raw.trim()));
+					lines.push(this.applyDefaultStyle(stripHtmlComments(token.raw).trim()));
 				}
 				break;
 
@@ -704,7 +776,15 @@ export class Markdown implements Component {
 			return segments.map((segment: string) => applyText(segment)).join("\n");
 		};
 
-		for (const token of tokens) {
+		// After a skipped HTML comment, drop the next text's leading space if the text before ended with one,
+		// so "a <!-- c --> b" renders as "a b".
+		let dropLeadingSpace = false;
+		for (let i = 0; i < tokens.length; i++) {
+			let token = tokens[i];
+			if (dropLeadingSpace && token.type === "text" && !token.tokens?.length && /^[ \t]/.test(token.text)) {
+				token = { ...token, text: token.text.replace(/^[ \t]+/, "") };
+			}
+			dropLeadingSpace = false;
 			switch (token.type) {
 				case "latex": {
 					const latexToken = token as LatexToken;
@@ -783,8 +863,10 @@ export class Markdown implements Component {
 				}
 
 				case "html":
-					// Render inline HTML as plain text
-					if ("raw" in token && typeof token.raw === "string") {
+					// Render inline HTML as plain text; comments are hidden
+					if (token.raw.startsWith("<!--")) {
+						dropLeadingSpace = i === 0 || /[ \t]$/.test(tokens[i - 1].raw);
+					} else {
 						result += applyTextWithNewlines(token.raw);
 					}
 					break;

@@ -14,15 +14,20 @@ import { IsIPv6 } from "./typebox/ipv6.ts";
 import { IsIri } from "./typebox/iri.ts";
 import { IsIriReference } from "./typebox/iri_reference.ts";
 import { IsJsonPointer } from "./typebox/json_pointer.ts";
+import { IsJsonPointerUriFragment } from "./typebox/json_pointer_uri_fragment.ts";
 import { IsRegex } from "./typebox/regex.ts";
 import { IsRelativeJsonPointer } from "./typebox/relative_json_pointer.ts";
 import { IsTime } from "./typebox/time.ts";
 import { IsUri } from "./typebox/uri.ts";
 import { IsUriReference } from "./typebox/uri_reference.ts";
 import { IsUriTemplate } from "./typebox/uri_template.ts";
+import { IsUrl } from "./typebox/url.ts";
 import { IsUuid } from "./typebox/uuid.ts";
 
-/** Every format JSON Schema 2020-12 defines, by name. The checks are adapted from TypeBox 1.3.27 (MIT). */
+/**
+ * Every format JSON Schema 2020-12 defines, by name, plus `url` and `json-pointer-uri-fragment`, which TypeBox and
+ * ajv-formats also check. The checks are adapted from TypeBox 1.3.27 (MIT).
+ */
 export const formats: Readonly<Record<string, FormatCheck>> = Object.freeze({
 	date: IsDate,
 	"date-time": IsDateTime,
@@ -36,11 +41,13 @@ export const formats: Readonly<Record<string, FormatCheck>> = Object.freeze({
 	iri: IsIri,
 	"iri-reference": IsIriReference,
 	"json-pointer": IsJsonPointer,
+	"json-pointer-uri-fragment": IsJsonPointerUriFragment,
 	regex: IsRegex,
 	"relative-json-pointer": IsRelativeJsonPointer,
 	time: IsTime,
 	uri: IsUri,
 	"uri-reference": IsUriReference,
 	"uri-template": IsUriTemplate,
+	url: IsUrl,
 	uuid: IsUuid,
 });

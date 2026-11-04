@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderToolOutputType } from "@earendil-works/pi-codemode/declarations";
 import {
+	createMcpToolName,
 	type JsonRpcMessage,
 	LATEST_PROTOCOL_VERSION,
 	McpAuthRequiredError,
@@ -14,7 +15,6 @@ import {
 import { createInMemoryTransportPair, type InMemoryTransport } from "@earendil-works/pi-mcp/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { InMemoryAuthStorageBackend } from "../src/core/auth-storage.ts";
-import { truncateMiddle } from "../src/core/tools/truncate.ts";
 import {
 	addMcpServerConfig,
 	getMcpToolExposure,
@@ -29,7 +29,7 @@ import {
 	McpServerConnection,
 	McpServerLog,
 } from "../src/extensions/mcp/runtime.ts";
-import { convertMcpResult, createMcpResultSchema, createMcpToolName } from "../src/extensions/mcp/tools.ts";
+import { convertMcpResult, createMcpResultSchema } from "../src/extensions/mcp/tools.ts";
 
 // Config values are resolved at connect time, so the literal reference must survive loading.
 // biome-ignore lint/suspicious/noTemplateCurlyInString: literal config value reference
@@ -447,18 +447,6 @@ describe("MCP tools", () => {
 		// Text within the limit is not saved.
 		await convertMcpResult("docs", "small", { content: [{ type: "text", text: "ok" }] }, { saveOutput });
 		expect(saved).toHaveLength(1);
-	});
-
-	it("cuts multi-byte text only at character boundaries", () => {
-		const text = `${"é".repeat(20_000)}end`;
-		const result = truncateMiddle(text, 1001);
-		expect(result.truncated).toBe(true);
-		expect(result.content).not.toContain("\uFFFD");
-		expect(result.content.endsWith("end")).toBe(true);
-		const [head, tail] = result.content.split(/…\d+ chars truncated…/);
-		expect(Buffer.byteLength(head)).toBeLessThanOrEqual(500);
-		expect(Buffer.byteLength(tail)).toBeLessThanOrEqual(501);
-		expect(Array.from(head).length + Array.from(tail).length + result.removedChars).toBe(Array.from(text).length);
 	});
 });
 

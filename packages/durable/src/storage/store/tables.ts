@@ -3,8 +3,8 @@
 // Durable's JSON encoding; index columns are never `opt`, so absent values take sentinels no encoded value can be
 // (`0` for an absent owner, which is never an id; `""` for an absent request id: an encoded string starts with `"`).
 
-import type { JsonValue } from "@earendil-works/chord";
-import { defineTable, int, json, str, unknown } from "@earendil-works/chord/next";
+import { defineTable, int, json, str, unknown } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import type { ConversationRecord, EntryRecord, SubmissionRecord, TaskRecord } from "../../types.ts";
 
 /** A record as one `json(...)` cell. */

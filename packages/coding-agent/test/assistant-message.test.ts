@@ -1,10 +1,11 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { TuiMouseEvent } from "@earendil-works/pi-tui";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
 import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
+import * as syntaxHighlight from "../src/utils/syntax-highlight.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -34,6 +35,37 @@ function createAssistantMessage(
 }
 
 describe("AssistantMessageComponent", () => {
+	afterEach(() => vi.restoreAllMocks());
+
+	test("reuses its Markdown across streaming and its end, and renders like a new component after a theme change", () => {
+		initTheme("dark");
+		const highlight = vi.spyOn(syntaxHighlight, "highlight");
+		const streaming: boolean[] = [];
+		const code = "```ts\nconst a = 1;\n```";
+		const content = (text: string): AssistantMessage["content"] => [
+			{ type: "thinking", thinking: "Thinking with **bold** text" },
+			{ type: "text", text },
+		];
+		const component = new AssistantMessageComponent(undefined, false, undefined, "Thinking...", 1, [
+			(markdown, { isStreaming }) => {
+				streaming.push(isStreaming);
+				return markdown;
+			},
+		]);
+		component.updateContent(createAssistantMessage(content(code)), true);
+		component.render(80);
+		const message = createAssistantMessage(content(`${code}\n\nThe end.`));
+		component.updateContent(message, false);
+		component.render(80);
+		expect(highlight).toHaveBeenCalledTimes(1);
+		expect(streaming.at(-1)).toBe(false);
+
+		initTheme("light");
+		component.invalidate();
+		expect(component.render(80)).toEqual(new AssistantMessageComponent(message).render(80));
+		initTheme("dark");
+	});
+
 	test("adds OSC 133 zone markers to assistant messages without tool calls", () => {
 		initTheme("dark");
 

@@ -10,14 +10,16 @@
  * errors (`isError`) are error results for the model, but scripts still resolve to the result.
  */
 
-import { createHash } from "node:crypto";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ImageContent, JsonValue, TextContent } from "@earendil-works/pi-ai";
 import {
 	type CallToolResult,
 	type ContentBlock,
+	limitMcpContent,
+	type McpOutputSaver,
 	type McpRequestOptions,
 	type Tool as McpTool,
+	normalizeMcpInputSchema,
 	toLlmContent,
 } from "@earendil-works/pi-mcp";
 import { Container, Spacer, Text } from "@earendil-works/pi-tui";
@@ -31,7 +33,7 @@ import type {
 } from "../../core/extensions/types.ts";
 import { READ_MCP_RESOURCE_TOOL } from "../../core/mcp-servers.ts";
 import { formatToolCallWithArgs, getTextOutput, replaceTabs } from "../../core/tools/render-utils.ts";
-import { formatSize, truncateMiddle } from "../../core/tools/truncate.ts";
+import { formatSize } from "../../core/tools/truncate.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { VisualLinePreview } from "../../modes/interactive/components/visual-truncate.ts";
 import { writeOutputFile } from "../../utils/output-files.ts";
@@ -45,10 +47,6 @@ export function toToolExposure(exposure: McpExposure): ToolExposure {
 	return exposure === "codemode" ? "deferred" : exposure;
 }
 
-/** Provider tool names are limited to 64 characters of `[A-Za-z0-9_-]`. */
-const MAX_TOOL_NAME_LENGTH = 64;
-/** Model-facing text of an MCP result beyond this is cut in the middle. */
-export const MCP_OUTPUT_MAX_BYTES = 20 * 1024;
 /** Visual (wrapped) result lines shown before the output is expanded. */
 const OUTPUT_PREVIEW_LINES = 5;
 /** Tool that reads the resources named by resource links. */
@@ -61,35 +59,13 @@ export interface McpToolDetails {
 	fullOutputPath?: string;
 }
 
-/**
- * Saves the full text of a truncated result, or a binary resource, and returns the file path.
- * `extension` includes the dot, for example `.txt`.
- */
-export type McpOutputSaver = (data: string | Uint8Array, extension: string) => Promise<string>;
-
+/** Saves the full text of a truncated result, or a binary resource, to a temp file and returns its path. */
 export function saveToTempFile(data: string | Uint8Array, extension: string): Promise<string> {
 	return writeOutputFile("pi-mcp", extension, data);
 }
 
 export interface McpToolCaller {
 	callTool(name: string, args: Record<string, unknown>, options: McpRequestOptions): Promise<CallToolResult>;
-}
-
-/**
- * `mcp__<server>__<tool>`, sanitized and shortened with a hash suffix when too long. Like Codex,
- * everything but `[A-Za-z0-9_]` becomes `_`, so the name is also the identifier codemode scripts
- * call it by. `isTaken` reports names used by a different MCP tool: sanitizing can map two tools to
- * one name (`a-b` and `a_b`), which then get the hash suffix.
- */
-export function createMcpToolName(
-	server: string,
-	tool: string,
-	isTaken: (name: string) => boolean = () => false,
-): string {
-	const name = `mcp__${server}__${tool}`.replace(/[^A-Za-z0-9_]/g, "_");
-	if (name.length <= MAX_TOOL_NAME_LENGTH && !isTaken(name)) return name;
-	const hash = createHash("sha256").update(`${server}\0${tool}`).digest("hex").slice(0, 8);
-	return `${name.slice(0, MAX_TOOL_NAME_LENGTH - hash.length - 1)}_${hash}`;
 }
 
 function textOf(content: readonly (TextContent | ImageContent)[]): string {
@@ -173,33 +149,6 @@ export function createMcpResultSchema(structuredContentSchema: Record<string, un
 	} as unknown as TSchema;
 }
 
-/**
- * Keep model-facing text within {@link MCP_OUTPUT_MAX_BYTES}. Longer text becomes one text block in
- * Codex's truncation format, followed by the path of the file with the full text; images follow it.
- */
-export async function limitMcpContent(
-	content: (TextContent | ImageContent)[],
-	saveOutput: McpOutputSaver = saveToTempFile,
-): Promise<{ content: (TextContent | ImageContent)[]; fullOutputPath?: string }> {
-	const combined = textOf(content);
-	const truncation = truncateMiddle(combined, MCP_OUTPUT_MAX_BYTES);
-	if (!truncation.truncated) return { content };
-	let fullOutputPath: string | undefined;
-	let where: string;
-	try {
-		fullOutputPath = await saveOutput(combined, ".txt");
-		where = `[Full output: ${fullOutputPath} (read it with offset/limit)]`;
-	} catch (error) {
-		where = `[Could not save the full output: ${error instanceof Error ? error.message : String(error)}]`;
-	}
-	const tokens = Math.ceil(truncation.totalBytes / 4);
-	const text = `Warning: truncated output (original token count: ${tokens})\nTotal output lines: ${truncation.totalLines}\n\n${truncation.content}\n\n${where}`;
-	return {
-		content: [{ type: "text", text }, ...content.filter((block) => block.type === "image")],
-		...(fullOutputPath ? { fullOutputPath } : {}),
-	};
-}
-
 export interface ConvertMcpResultOptions {
 	/** Saves truncated text and binary resources. Default: a temp file. */
 	saveOutput?: McpOutputSaver;
@@ -275,7 +224,7 @@ export async function convertMcpResult(
 	if (result.isError && textOf(converted) === "") {
 		converted.push({ type: "text", text: `MCP tool ${server}/${tool} returned an error` });
 	}
-	const { content, fullOutputPath } = await limitMcpContent(converted, options.saveOutput);
+	const { content, fullOutputPath } = await limitMcpContent(converted, options.saveOutput ?? saveToTempFile);
 	const { _meta: _ignored, ...scriptResult } = result;
 	return {
 		content,
@@ -283,18 +232,6 @@ export async function convertMcpResult(
 		structuredContent: scriptResult as unknown as JsonValue,
 		...(result.isError ? { isError: true } : {}),
 	};
-}
-
-/**
- * Tool input schemas must be objects. MCP servers may omit `type`, and some providers reject object
- * schemas without `properties`.
- */
-function toParameters(schema: Record<string, unknown>): TSchema {
-	return {
-		...schema,
-		type: schema.type ?? "object",
-		...(schema.properties === undefined ? { properties: {} } : {}),
-	} as unknown as TSchema;
 }
 
 const ANNOTATION_HINTS = ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"] as const;
@@ -328,7 +265,8 @@ export function createMcpToolDefinition(options: {
 		name: options.name,
 		label,
 		description: tool.description?.trim() || title || `MCP tool ${tool.name} from server ${server}`,
-		parameters: toParameters(tool.inputSchema),
+		// An object schema, which is what TypeBox schemas are at runtime.
+		parameters: normalizeMcpInputSchema(tool.inputSchema) as unknown as TSchema,
 		outputSchema: createMcpResultSchema(tool.outputSchema),
 		exposure: toToolExposure(options.exposure),
 		namespace: options.namespace,

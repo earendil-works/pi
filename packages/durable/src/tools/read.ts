@@ -1,6 +1,6 @@
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { characterEnd } from "@earendil-works/chord/output";
-import { type Static, Type } from "typebox";
+import { lit, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
 import {
 	type BinaryReader,
 	type FileInfo,
@@ -31,11 +31,14 @@ import {
 } from "./image-processor.ts";
 import { resolveReadToolPath } from "./path-utils.ts";
 
-const readSchema = Type.Object({
-	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),
-	offset: Type.Optional(Type.Number({ description: "Line number to start reading from (1-indexed)" })),
-	limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
-});
+const readSchema = obj(
+	{
+		path: str({ description: "Path to the file to read (relative or absolute)" }),
+		offset: opt(num({ description: "Line number to start reading from (1-indexed)" })),
+		limit: opt(num({ description: "Maximum number of lines to read" })),
+	},
+	{ open: true },
+);
 
 export type ReadToolInput = Static<typeof readSchema>;
 
@@ -43,9 +46,9 @@ export type ReadToolInput = Static<typeof readSchema>;
  * What programs such as code mode scripts get: the text of a text file, or the image block of an image, which code
  * mode's `image()` shows.
  */
-const readStructuredOutputSchema = Type.Union([
-	Type.String(),
-	Type.Object({ type: Type.Literal("image"), data: Type.String(), mimeType: Type.String() }),
+const readStructuredOutputSchema = union([
+	str(),
+	obj({ type: lit("image"), data: str(), mimeType: str() }, { open: true }),
 ]);
 
 export type ReadToolDetails = {

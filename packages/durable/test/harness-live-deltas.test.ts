@@ -1,5 +1,5 @@
 import type { Op } from "@earendil-works/chord/delta";
-import { fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import {
 	type CommitPublication,
 	defineTool,
@@ -10,6 +10,7 @@ import {
 	type ToolExecutionApi,
 	type ToolRegistration,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { describe, expect, it } from "vitest";
 import { chatSetup, openChat, waitFor } from "./chat-support.ts";
 import { addTool } from "./harness-support.ts";
@@ -30,7 +31,7 @@ async function drive(outputLimits: ToolRegistration["outputLimits"] = {}) {
 		defineTool({
 			name: "drive",
 			description: "Driven by the test",
-			parameters: Type.Object({}),
+			parameters: obj({}),
 			outputLimits,
 			execute: async (_args, api, callContext) => {
 				for (;;) {
@@ -104,7 +105,7 @@ describe("pi.live deltas", () => {
 			defineTool({
 				name: "noop",
 				description: "noop",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async () => ({ output: [] }),
 			}),
 		);
@@ -317,7 +318,7 @@ describe("pi.live deltas", () => {
 				defineTool({
 					name,
 					description: name,
-					parameters: Type.Object({}),
+					parameters: obj({}),
 					execute: async (_args, api) => {
 						api.output(`${name} output\n`);
 						await new Promise((resolve) => setTimeout(resolve, 150));
@@ -368,7 +369,7 @@ describe("pi.live deltas", () => {
 			defineTool({
 				name: "bad",
 				description: "bad",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				// Not strict JSON: the result commit throws and the scheduler faults the task.
 				execute: async () => ({ output: [], details: { fn: (() => 1) as never } }),
 			}),
@@ -412,7 +413,7 @@ describe("pi.live deltas", () => {
 			defineTool({
 				name: "noop",
 				description: "noop",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async () => ({ output: [] }),
 			}),
 		);

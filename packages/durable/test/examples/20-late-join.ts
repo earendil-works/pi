@@ -2,10 +2,11 @@
 // view, and then only what changes after that.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/20-late-join.ts
+
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { Type } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import { obj } from "@earendil-works/pi-schema";
 import {
 	createRegistry,
 	defineExtension,
@@ -27,7 +28,7 @@ registry.install(
 			defineTool({
 				name: "count",
 				description: "Counts to ten",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async (_args, api) => {
 					for (let n = 1; n <= 10; n++) {
 						api.output(`${n}\n`);

@@ -1,4 +1,5 @@
 // Inputs placed as application entries, and data-only writes appended at once (#10407).
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,6 @@ import {
 	fauxText,
 	fauxToolCall,
 	type Context as ModelContext,
-	Type,
 } from "@earendil-works/pi-ai";
 import {
 	type Conversation,
@@ -23,6 +23,7 @@ import {
 	MemoryStorage,
 	type SubmissionDraft,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf, waitFor } from "./chat-support.ts";
@@ -54,7 +55,7 @@ function holdTool(setup: ChatSetup, gate: Deferred): void {
 		defineTool({
 			name: "hold",
 			description: "Waits for the test",
-			parameters: Type.Object({}),
+			parameters: obj({}),
 			execute: async () => {
 				await gate.promise;
 				return { output: [{ type: "text", text: "held" }] };

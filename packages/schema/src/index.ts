@@ -27,5 +27,5 @@ export {
 	union,
 	unknown,
 } from "./builders.ts";
-export type { Check, CompileOptions, FormatCheck, JsonSchema, ValidationError } from "./types.ts";
-export { compile, Validator } from "./validator.ts";
+export type { Check, CompileOptions, FormatCheck, JsonSchema, ParseResult, ValidationError } from "./types.ts";
+export { CoercingValidator, compile, Validator } from "./validator.ts";

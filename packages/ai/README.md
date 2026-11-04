@@ -103,15 +103,16 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 npm install @earendil-works/pi-ai
 ```
 
-TypeBox exports are re-exported from `@earendil-works/pi-ai`: `Type`, `Static`, and `TSchema`.
+Tool parameters are JSON Schema. The examples build them with `@earendil-works/pi-schema`, which also types the arguments (`npm install @earendil-works/pi-schema`); TypeBox schemas and plain JSON Schema objects work as well.
 
 ## Quick Start
 
 You build a `Models` collection of providers and stream through it. The quickest start registers every built-in provider; apps that care about bundle size register individual providers instead (see [Provider Factories](#provider-factories) and [Bundling and Tree Shaking](#bundling-and-tree-shaking)).
 
 ```typescript
-import { Type, type Context, type Tool } from '@earendil-works/pi-ai';
+import { type Context, type Tool } from '@earendil-works/pi-ai';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
+import { obj, opt, str } from '@earendil-works/pi-schema';
 
 // A Models collection with every built-in provider registered
 const models = builtinModels();
@@ -119,12 +120,12 @@ const models = builtinModels();
 // Sync lookup against the collection
 const model = models.getModel('openai', 'gpt-4o-mini')!;
 
-// Define tools with TypeBox schemas for type safety and validation
+// Define tools with JSON Schema; pi-schema's builders also type the arguments
 const tools: Tool[] = [{
   name: 'get_time',
   description: 'Get the current time',
-  parameters: Type.Object({
-    timezone: Type.Optional(Type.String({ description: 'Optional timezone (e.g., America/New_York)' }))
+  parameters: obj({
+    timezone: opt(str({ description: 'Optional timezone (e.g., America/New_York)' }))
   })
 }];
 
@@ -538,34 +539,35 @@ Amazon Bedrock resolves ambient AWS credentials (`AWS_PROFILE`, access key pairs
 
 ## Tools
 
-Tools enable LLMs to interact with external systems. This library uses TypeBox schemas for type-safe tool definitions with automatic validation using TypeBox's built-in validator and value conversion utilities. TypeBox schemas can be serialized and deserialized as plain JSON, making them ideal for distributed systems.
+Tools enable LLMs to interact with external systems. A tool's `parameters` is a JSON Schema object: built with `@earendil-works/pi-schema`'s builders (which also type the arguments through its `Static`), with TypeBox, or written by hand. `validateToolCall()` and `validateToolArguments()` validate with pi-schema, coercing loosely typed arguments first (numeric strings, `"true"`, a single value for an array, `null` for an omitted optional property). Schemas are plain JSON, so they serialize with the rest of a context.
 
 ### Defining Tools
 
 ```typescript
-import { Type, type Tool, StringEnum } from '@earendil-works/pi-ai';
+import { type Tool, StringEnum } from '@earendil-works/pi-ai';
+import { arr, obj, str } from '@earendil-works/pi-schema';
 
-// Define tool parameters with TypeBox
+// Define tool parameters with pi-schema's builders
 const weatherTool: Tool = {
   name: 'get_weather',
   description: 'Get current weather for a location',
-  parameters: Type.Object({
-    location: Type.String({ description: 'City name or coordinates' }),
+  parameters: obj({
+    location: str({ description: 'City name or coordinates' }),
     units: StringEnum(['celsius', 'fahrenheit'], { default: 'celsius' })
   })
 };
 
-// Note: For Google API compatibility, use StringEnum helper instead of Type.Enum
-// Type.Enum generates anyOf/const patterns that Google doesn't support
+// Note: StringEnum gives { type: "string", enum: [...] }, which every provider accepts,
+// including Google's, which rejects anyOf/const patterns
 
 const bookMeetingTool: Tool = {
   name: 'book_meeting',
   description: 'Schedule a meeting',
-  parameters: Type.Object({
-    title: Type.String({ minLength: 1 }),
-    startTime: Type.String({ format: 'date-time' }),
-    endTime: Type.String({ format: 'date-time' }),
-    attendees: Type.Array(Type.String({ format: 'email' }), { minItems: 1 })
+  parameters: obj({
+    title: str({ minLength: 1 }),
+    startTime: str({ format: 'date-time' }),
+    endTime: str({ format: 'date-time' }),
+    attendees: arr(str({ format: 'email' }), { minItems: 1 })
   })
 };
 ```
@@ -578,10 +580,7 @@ Tools can opt in to provider-side constrained sampling. For JSON-schema tools, `
 const strictTool: Tool = {
   name: 'edit_file',
   description: 'Edit a file',
-  parameters: Type.Object({
-    path: Type.String(),
-    content: Type.String()
-  }, { additionalProperties: false }),
+  parameters: obj({ path: str(), content: str() }), // obj() is closed: additionalProperties: false
   constrainedSampling: { type: 'json_schema', strict: 'prefer' }
 };
 ```
@@ -592,9 +591,7 @@ Strict JSON-schema constrained sampling is supported for OpenAI, Anthropic, supp
 const patchTool: Tool = {
   name: 'apply_patch',
   description: 'Apply a patch',
-  parameters: Type.Object({
-    input: Type.String()
-  }, { additionalProperties: false }),
+  parameters: obj({ input: str() }),
   constrainedSampling: {
     type: 'grammar',
     variants: {
@@ -698,7 +695,7 @@ for await (const event of s) {
 
 ### Validating Tool Arguments
 
-When implementing your own tool execution loop, use `validateToolCall` to validate arguments before passing them to your tools:
+When implementing your own tool execution loop, use `validateToolCall` to validate arguments before passing them to your tools. It coerces loosely typed arguments with pi-schema (`compile(schema, { coerce: true }).parse()`), returns the coerced arguments, and throws an error listing pi-schema's errors (`path: message`) followed by the arguments it received:
 
 ```typescript
 import { validateToolCall, type Tool } from '@earendil-works/pi-ai';
@@ -894,7 +891,7 @@ console.log(model.output); // ['image'] or ['image', 'text']
 
 ## Classification
 
-Classifier models consume structured JSON state, and optionally images, and answer one or more typed questions. They do not use chat or image-generation APIs. TypeSafe's Jev model, Cloudflare's Clef models, and OpenAI's GPT-6 Luna are available from these built-in providers:
+Classifier models consume structured JSON state, and optionally images, and answer one or more typed questions. They do not use chat or image-generation APIs. TypeSafe's Jev model, Cloudflare's Clef models, OpenAI's GPT-6 Luna, and Microsoft-Decision-1 are available from these built-in providers:
 
 | Provider | Model IDs | Auth |
 | --- | --- | --- |
@@ -904,6 +901,7 @@ Classifier models consume structured JSON state, and optionally images, and answ
 | `vercel-ai-gateway` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` |
 | `opencode` | `jev-1.13`, `jev-1.13-free` | `OPENCODE_API_KEY` |
 | `openai` | `gpt-6-luna` | `OPENAI_API_KEY` |
+| `github-copilot` | `microsoft-decision-1` | `COPILOT_GITHUB_TOKEN` or GitHub Copilot OAuth |
 
 ```typescript
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
@@ -1440,6 +1438,8 @@ Built-in API implementations live under `./api/<api-id>`:
 
 Importing an implementation module loads its SDK. The `./api/<id>.lazy` wrappers (used by the provider factories) defer that load to the first request when the runtime or bundler supports dynamic import chunking. Legacy raw API subpaths from older releases (`./anthropic`, `./google`, `./mistral`, `./openai-completions`, ...) were removed; use `@earendil-works/pi-ai/api/<api-id>`.
 
+**Anthropic message threads:** with `sessionId` set and `cacheRetention` not `"none"`, Anthropic requests continue from the previous reply on the server (`message-threads-2026-08-12` beta) and send only the new messages. When anything earlier in the request changed, or the server can't continue, the full request is sent. Token counts and prompt caching are unchanged. On by default only for the `anthropic` provider on `api.anthropic.com`; set `compat.supportsMessageThreads` to change that, for example for gateways that forward the `thread` field. Set `disableContinuation: true` on requests that repeat an earlier one, such as cache warming. Call `cleanupSessionResources(sessionId)` when a session ends.
+
 ### OpenAI Compatibility Settings
 
 The `openai-completions` API is implemented by many providers with minor differences. By default, the library auto-detects compatibility settings based on `baseUrl` for a small set of known OpenAI-compatible providers (Cerebras, xAI, Chutes, DeepSeek, NVIDIA NIM, Together AI, zAi, OpenCode, Cloudflare Workers AI, etc.). For custom proxies or unknown endpoints, you can override these settings via the `compat` field. For `openai-responses` models, the compat field supports Responses-specific flags.
@@ -1726,8 +1726,8 @@ models.setProvider(openaiProvider());
 
 Rules:
 
-- `@earendil-works/pi-ai/models` exports the model runtime (`createModels`, `createProvider`, model helpers, and their types) without TypeBox, built-in catalogs, or SDK implementations. Other types can still use `import type` from the root.
-- `@earendil-works/pi-ai` is the core entrypoint and does not import built-in catalogs, real provider factories, or SDK implementations, but it eagerly imports TypeBox and schema validation. Unbundled Node scripts do not tree-shake its unused exports; prefer `./models`, `./providers/faux`, and specific `./utils/*` subpaths when those are all you need.
+- `@earendil-works/pi-ai/models` exports the model runtime (`createModels`, `createProvider`, model helpers, and their types) without schema validation, built-in catalogs, or SDK implementations. Other types can still use `import type` from the root.
+- `@earendil-works/pi-ai` is the core entrypoint and does not import built-in catalogs, real provider factories, or SDK implementations, but it eagerly imports schema validation (pi-schema). Unbundled Node scripts do not tree-shake its unused exports; prefer `./models`, `./providers/faux`, and specific `./utils/*` subpaths when those are all you need.
 - `@earendil-works/pi-ai/providers/<provider>` imports that provider's catalog and lazy API wrapper only.
 - `@earendil-works/pi-ai/providers/all` imports every built-in provider factory and all catalogs. Use it only when you want the full built-in set.
 - With code splitting, provider SDKs stay in lazy chunks and load on first request.

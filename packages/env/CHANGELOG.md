@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- The daemon's `process` operation runs a program with plain pipes for stdin, stdout and stderr, for programs that speak a protocol on stdin and stdout such as MCP servers: `processWrite` and `processCloseStdin` feed its stdin in arrival order, output arrives as raw bytes per stream, and cancelling, a lost connection or the program's own exit kills its process group (on Windows, its job object), so a wrapper such as `npx` that exits leaves nothing running. `hello` reports it in `features`. `openProcess()` returns a `RemoteProcess`; daemons released before it fail the open with `not_supported`. Unlike terminals, it works on Windows too.
+
+### Fixed
+
+- On Windows, an `exec` command's output readers stop once the command has settled, also while a descendant keeps a pipe open without writing; they stayed blocked until it exited, because cancelling a blocked read did not reach the standard library's overlapped pipe I/O.
+
+## [1.5.0] - 2026-11-02
+
 ### Breaking Changes
 
 - `RemoteWatcher` follows Durable's `FileWatcher`: `close(context)` is `stop(context)`, and its changes are tagged (`{ kind: "paths", paths }`, `{ kind: "overflow" }`, `{ kind: "failed", error }`). The daemon's `watch` protocol is unchanged. Migration: `await watcher.close(ctx)` becomes `await watcher.stop(ctx)`; test `change.kind` instead of `"overflow" in change` or `"error" in change`.

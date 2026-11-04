@@ -127,7 +127,11 @@ export function codePoints(s: string): number {
 	let n = 0;
 	for (let i = 0; i < s.length; i++, n++) {
 		const c = s.charCodeAt(i);
-		if (c >= 0xd800 && c <= 0xdbff) i++;
+		// A high surrogate starts a pair only when a low surrogate follows; an unpaired one is a code point of its own.
+		if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+			const next = s.charCodeAt(i + 1);
+			if (next >= 0xdc00 && next <= 0xdfff) i++;
+		}
 	}
 	return n;
 }

@@ -1,0 +1,33 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.3.5/schema.json",
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"indentWidth": 3,
+		"lineWidth": 120
+	},
+	"linter": {
+		"enabled": true,
+		"domains": {
+			"react": "recommended"
+		},
+		"rules": {
+			"recommended": true,
+			"style": {
+				"noNonNullAssertion": "off"
+			}
+		}
+	},
+	"files": {
+		"includes": [
+			"src/**",
+			"plugins/**",
+			"!plugins/terminals/vendor",
+			"test/**",
+			"!test/fixtures/v1-data/data",
+			"scripts/**",
+			"*.json",
+			"!package-lock.json"
+		]
+	}
+}

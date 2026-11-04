@@ -1,4 +1,5 @@
 // `submit({ type: "continue" })`: a run without a new user message (#11043).
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +11,6 @@ import {
 	fauxText,
 	fauxToolCall,
 	type Message,
-	Type,
 } from "@earendil-works/pi-ai";
 import {
 	AssistantEntry,
@@ -26,6 +26,7 @@ import {
 	type Storage,
 	UserEntry,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
@@ -125,7 +126,7 @@ describe("continue", () => {
 			defineTool({
 				name: "wait",
 				description: "Waits until aborted",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async (_args, _api, callContext) => {
 					started.resolve();
 					return aborted(callContext.abortSignal!);
@@ -312,7 +313,7 @@ describe("continue", () => {
 			defineTool({
 				name: "delegate",
 				description: "Delegates",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async (_args, api, callContext) => {
 					const child = await api.commit(async (tx) => {
 						const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });

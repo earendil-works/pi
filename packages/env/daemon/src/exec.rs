@@ -1,4 +1,5 @@
-//! `exec`: Durable's `NodeExecutionEnv.exec` semantics (docs/semantics.md), output streamed as `output` events.
+//! `exec`: Durable's `NodeExecutionEnv.exec` semantics (docs/semantics.md), output streamed as `output` events; and what
+//! the commands of `exec`, `pty` and `process` share: cancellation, starting, reading pipes and reaping.
 
 use crate::decode::StreamDecoder;
 use crate::errors::Failure;
@@ -7,7 +8,7 @@ use crate::output::Output;
 use crate::sys;
 use crate::window::{Pending, Window};
 use serde_json::{Map, Value, json};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -188,30 +189,117 @@ impl Spill {
     }
 }
 
-fn spawn(
-    request: &ExecRequest,
+/// Where and with which environment a program starts.
+pub struct Launch<'a> {
+    pub cwd: &'a str,
+    pub env: &'a Map<String, Value>,
+    pub inherit_env: bool,
+}
+
+/// Start `program` with piped stdout and stderr, in a process group of its own, as libuv starts commands.
+pub fn spawn(
     program: &str,
     args: &[String],
-    piped_stdin: bool,
+    launch: &Launch,
+    stdin: Stdio,
 ) -> std::io::Result<Child> {
     let mut command = Command::new(program);
     command
-        .current_dir(&request.cwd)
-        .stdin(if piped_stdin {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
+        .current_dir(launch.cwd)
+        .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    sys::configure(&mut command, args, &request.env, request.inherit_env);
+    sys::configure(&mut command, args, launch.env, launch.inherit_env);
     let child = command.spawn()?;
     sys::after_spawn(&child);
     Ok(child)
 }
 
-/// Read one pipe on its own thread. Without an output window, reading waits while too much output is unsent.
-fn spawn_reader(
+/// A `process` program's group, killed once the program exits, and the daemon's groups, which forget the program
+/// before it is reaped.
+pub struct Ending {
+    pub group: sys::Group,
+    pub groups: Groups,
+}
+
+/// Reap `child` on a thread of its own, which sends its exit to `sender`. With `ending`, what the child started in its
+/// group is killed once it exits, before the exit is sent. A thread that cannot start hands the child back with the
+/// error, so the caller kills and reaps it.
+pub fn start_waiter(
+    child: Child,
+    ending: Option<Ending>,
+    sender: Sender<Message>,
+) -> Result<(), (Child, std::io::Error)> {
+    // The waiter receives the child once it runs, so a waiter that cannot start leaves the child here to reap.
+    let (give, take) = mpsc::channel::<Child>();
+    let started = thread::Builder::new().spawn(move || {
+        let Ok(mut child) = take.recv() else {
+            return;
+        };
+        let status = match &ending {
+            None => child.wait(),
+            Some(ending) => {
+                // After a failed wait, ending the group kills the program, so the reap below still returns.
+                let exited = ending.group.wait_for_exit(&mut child);
+                ending.group.end();
+                // Forgotten before it is reaped: a kill that checks `groups` under its lock never reaches a reused pid.
+                ending.groups.lock().unwrap().remove(&child.id());
+                exited.and(child.wait())
+            }
+        };
+        let _ = sender.send(match status {
+            Ok(status) => Message::Exit(status),
+            Err(error) => Message::WaitFailed(error.to_string()),
+        });
+    });
+    match started {
+        Ok(_) => {
+            let _ = give.send(child);
+            Ok(())
+        }
+        Err(error) => Err((child, error)),
+    }
+}
+
+/// The `argv` of a request: `None` when absent, else a non-empty array of strings.
+pub fn argv(json: &Value) -> Result<Option<Vec<String>>, Failure> {
+    match &json["argv"] {
+        Value::Null => Ok(None),
+        value => value
+            .as_array()
+            .and_then(|items| {
+                items
+                    .iter()
+                    .map(|item| item.as_str().map(str::to_string))
+                    .collect::<Option<Vec<String>>>()
+            })
+            .filter(|argv| !argv.is_empty())
+            .map(Some)
+            .ok_or_else(|| Failure::new("EINVAL", "argv must be a non-empty array of strings")),
+    }
+}
+
+/// The running request a follow-up request names in `target` (`ptyWrite`, `processWrite`, ...); `what` names its kind
+/// in the error.
+pub fn running<T>(
+    requests: &Mutex<HashMap<u32, Arc<T>>>,
+    json: &Value,
+    what: &str,
+) -> Result<Arc<T>, Failure> {
+    let target = json["target"]
+        .as_u64()
+        .ok_or_else(|| Failure::new("EINVAL", "missing field target"))?;
+    requests
+        .lock()
+        .unwrap()
+        .get(&(target as u32))
+        .cloned()
+        .ok_or_else(|| Failure::new("EBADF", format!("no running {what} with this id")))
+}
+
+/// Read one pipe on its own thread until it ends or `stop` is set. With `output`, reading waits while too much output
+/// is unsent.
+pub fn spawn_reader(
     stream: usize,
     pipe: impl sys::Pipe + Send + 'static,
     sender: Sender<Message>,
@@ -283,7 +371,17 @@ pub fn run(
             ),
         ));
     }
-    let mut child = spawn(&request, &program, &args, stdin_command.is_some())
+    let launch = Launch {
+        cwd: &request.cwd,
+        env: &request.env,
+        inherit_env: request.inherit_env,
+    };
+    let stdin = if stdin_command.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    };
+    let mut child = spawn(&program, &args, &launch, stdin)
         .map_err(|error| Failure::new("spawn_error", error.to_string()))?;
     if let (Some(command), Some(mut stdin)) = (stdin_command, child.stdin.take()) {
         let _ = stdin.write_all(command.as_bytes());
@@ -298,12 +396,10 @@ pub fn run(
     } else {
         None
     };
-    // A thread that cannot start (a task limit) fails the command; the started child is killed and reaped.
-    let abandon = |mut child: Child, readers: &[JoinHandle<()>], error: std::io::Error| {
+    // A thread that cannot start (a task limit) fails the command; the started child is killed and reaped. Readers
+    // already running see `stop` within 100 ms.
+    let abandon = |mut child: Child, error: std::io::Error| {
         stop.store(true, Ordering::SeqCst);
-        for reader in readers {
-            sys::interrupt_reader(reader);
-        }
         kill_group(pid);
         // On Windows the group kill spawns taskkill, which can fail under the same limit; kill the child directly.
         let _ = child.kill();
@@ -311,33 +407,17 @@ pub fn run(
         groups.lock().unwrap().remove(&pid);
         Failure::new("spawn_error", error.to_string())
     };
-    let mut readers = Vec::with_capacity(2);
     let stdout = child.stdout.take().unwrap();
-    match spawn_reader(0, stdout, sender.clone(), stop.clone(), gate.clone()) {
-        Ok(reader) => readers.push(reader),
-        Err(error) => return Err(abandon(child, &readers, error)),
+    if let Err(error) = spawn_reader(0, stdout, sender.clone(), stop.clone(), gate.clone()) {
+        return Err(abandon(child, error));
     }
     let stderr = child.stderr.take().unwrap();
-    match spawn_reader(1, stderr, sender.clone(), stop.clone(), gate) {
-        Ok(reader) => readers.push(reader),
-        Err(error) => return Err(abandon(child, &readers, error)),
+    if let Err(error) = spawn_reader(1, stderr, sender.clone(), stop.clone(), gate) {
+        return Err(abandon(child, error));
     }
-    // The waiter receives the child once it runs, so a waiter that cannot start leaves the child here to reap.
-    let (give, take) = mpsc::channel::<Child>();
-    let waiter = sender.clone();
-    let started = thread::Builder::new().spawn(move || {
-        let Ok(mut child) = take.recv() else {
-            return;
-        };
-        let _ = waiter.send(match child.wait() {
-            Ok(status) => Message::Exit(status),
-            Err(error) => Message::WaitFailed(error.to_string()),
-        });
-    });
-    if let Err(error) = started {
-        return Err(abandon(child, &readers, error));
+    if let Err((child, error)) = start_waiter(child, None, sender.clone()) {
+        return Err(abandon(child, error));
     }
-    let _ = give.send(child);
     drop(sender);
 
     let mut decoders = [StreamDecoder::new(), StreamDecoder::new()];
@@ -452,11 +532,9 @@ pub fn run(
             Err(RecvTimeoutError::Disconnected) => break,
         }
     }
-    // Like Node destroying its streams: stop reading, so the pipes close even if a descendant still holds them.
+    // Like Node destroying its streams: readers stop within 100 ms, so the pipes close even if a descendant still holds
+    // them.
     stop.store(true, Ordering::SeqCst);
-    for reader in &readers {
-        sys::interrupt_reader(reader);
-    }
     groups.lock().unwrap().remove(&pid);
     emit(&mut pending, 0, decoders[0].decode(&[], true));
     emit(&mut pending, 1, decoders[1].decode(&[], true));

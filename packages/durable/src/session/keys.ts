@@ -1,5 +1,6 @@
 // The keys of the Session line: what a commit writes and a job reads, so a read of an unpublished write waits for it.
-import type { Context, JsonValue } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { addressId } from "../documents.ts";
 import type {
 	CommitResult,

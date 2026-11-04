@@ -1,9 +1,10 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Context, JsonValue } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { withAbortSignal } from "@earendil-works/chord/context";
-import { createModels, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
+import type { JsonValue } from "@earendil-works/chord/json";
+import { createModels, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import {
 	type Conversation,
 	type ConversationId,
@@ -17,6 +18,7 @@ import {
 	type Storage,
 	type TaskId,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { describe, expect, it } from "vitest";
 import type { SessionImpl } from "../src/session/session.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
@@ -168,7 +170,7 @@ describe("Harness close", () => {
 				defineTool({
 					name: "wait",
 					description: "wait",
-					parameters: Type.Object({}),
+					parameters: obj({}),
 					execute: async () => {
 						if (where === "tool") await stubborn();
 						return { output: [] };

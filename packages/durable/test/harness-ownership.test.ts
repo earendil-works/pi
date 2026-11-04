@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
+import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import {
 	type Conversation,
 	type ConversationHandle,
@@ -20,6 +20,7 @@ import {
 	type Submission,
 	type TaskId,
 } from "@earendil-works/pi-durable";
+import { obj, str } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { chatSetup, openChat } from "./chat-support.ts";
@@ -1019,7 +1020,7 @@ describe("owned conversations from tools and supervisors", () => {
 			defineTool({
 				name: "delegate",
 				description: "Delegates",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async (_args, api, callContext) => {
 					const child = await api.commit(async (tx) => {
 						const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
@@ -1074,7 +1075,7 @@ describe("owned conversations from tools and supervisors", () => {
 			defineTool({
 				name: "delegate",
 				description: "Delegates late",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async (_args, api, callContext) => {
 					const child = await api.commit(async (tx) => {
 						const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
@@ -1159,7 +1160,7 @@ describe("owned conversations from tools and supervisors", () => {
 			defineTool({
 				name: "delegate",
 				description: "Delegates",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async (_args, api, callContext) => {
 					child = await api.commit(async (tx) => {
 						const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
@@ -1208,7 +1209,7 @@ describe("owned conversations from tools and supervisors", () => {
 			defineTool({
 				name: "delegate",
 				description: "Delegates and cancels",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async (_args, api, callContext) => {
 					const child = await api.commit(async (tx) => {
 						const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
@@ -1247,7 +1248,7 @@ describe("owned conversations from tools and supervisors", () => {
 			defineTool({
 				name: "spawn",
 				description: "Starts owned work, then throws or hangs",
-				parameters: Type.Object({ mode: Type.String() }),
+				parameters: obj({ mode: str() }),
 				execute: async (args, api, callContext) => {
 					const child = await api.commit(async (tx) => {
 						const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
@@ -1305,7 +1306,7 @@ describe("owned conversations from tools and supervisors", () => {
 			defineTool({
 				name: "subagent",
 				description: "Delegates",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				replay: "safe",
 				execute: async (_args, api, callContext) => {
 					const child = await api.commit(async (tx) => {

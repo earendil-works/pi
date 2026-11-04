@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import {
 	type AssistantMessage,
 	type FauxResponseStep,
@@ -11,7 +11,6 @@ import {
 	type Models,
 	type SystemMessage,
 	type ToolResultMessage,
-	Type,
 } from "@earendil-works/pi-ai";
 import {
 	AgentDoc,
@@ -32,6 +31,7 @@ import {
 	ToolResultEntry,
 	ToolTask,
 } from "@earendil-works/pi-durable";
+import { obj, opt, str } from "@earendil-works/pi-schema";
 import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { createBashTool, createEditTool, createReadTool } from "../src/tools/index.ts";
@@ -40,7 +40,7 @@ import { addHooks, addTask, addTool, type Installed } from "./harness-support.ts
 import { context } from "./session-support.ts";
 import { aborted, deferred } from "./task-support.ts";
 
-const EchoParameters = Type.Object({ text: Type.Optional(Type.String()) });
+const EchoParameters = obj({ text: opt(str()) });
 type Echo = ToolRegistration<typeof EchoParameters>;
 type Execute = Echo["execute"];
 

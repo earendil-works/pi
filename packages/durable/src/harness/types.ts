@@ -1,4 +1,6 @@
-import type { Context, JsonValue, WatchHandle } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
+import type { WatchHandle } from "@earendil-works/chord/watch";
 import type {
 	Api,
 	AssistantMessage,
@@ -8,15 +10,14 @@ import type {
 	Model,
 	Models,
 	ModelThinkingLevel,
-	Static,
 	Tool,
 	ToolCall,
 	ToolResultMessage,
 	Transport,
-	TSchema,
 	Usage,
 	UserMessage,
 } from "@earendil-works/pi-ai";
+import type { Static } from "@earendil-works/pi-schema";
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import type { ExecutionEnv, ShellOutputSkip, ShellOutputWindow } from "../env/index.ts";
 import type {
@@ -334,11 +335,21 @@ export interface ToolExecutionApi<TDetails extends JsonValue = JsonValue> extend
 }
 
 /**
+ * The arguments type of a tool with parameter schema `TParameters`: pi-schema's `Static<TParameters>` (the builders'
+ * type, TypeBox's for the common TypeBox kinds, else `unknown`), and `any` for `ToolRegistration<any>`.
+ */
+export type ToolArgs<TParameters> = IsAny<TParameters> extends true ? any : Static<TParameters>;
+
+// `0 extends 1 & T` is resolved too early for a `T` constrained to `object`; this form waits for the argument.
+type IsAny<T> = boolean extends (T extends never ? true : false) ? true : false;
+
+/**
  * Executable tool registered in a registry. Only pi-ai `Tool` fields enter the transcript. `args` are typed by
- * `parameters`, which the Harness validates them against before `execute()`; `defineTool()` infers both generics.
+ * `parameters` (any JSON Schema object; see {@link ToolArgs}), which the Harness validates them against before
+ * `execute()`; `defineTool()` infers both generics.
  */
 export type ToolRegistration<
-	TParameters extends TSchema = TSchema,
+	TParameters extends object = object,
 	TDetails extends JsonValue = JsonValue,
 > = Tool<TParameters> & {
 	/** Whether an interrupted execution may rerun on recovery. Default `unsafe`. */
@@ -350,12 +361,12 @@ export type ToolRegistration<
 	 * pure and must not mutate `args`: it runs again when a call is retried before its intent is recorded. Its result is
 	 * still validated against `parameters`.
 	 */
-	prepareArguments?(args: unknown): Static<TParameters>;
+	prepareArguments?(args: unknown): ToolArgs<TParameters>;
 	/**
 	 * Schema of `structuredOutput`, which programs that call the tool receive. Omitted: they receive the result's bounded
 	 * output, success or error, as `NestedToolExecutionResult.structuredOutput` describes.
 	 */
-	readonly structuredOutputSchema?: TSchema;
+	readonly structuredOutputSchema?: object;
 	/**
 	 * Who may call the tool: the model, other tools through `executeTool()`, or both (default). A code mode tool is
 	 * `["model"]`, so scripts cannot start scripts; tools behind code mode, such as MCP tools, can be `["tools"]`, so the
@@ -373,7 +384,7 @@ export type ToolRegistration<
 		readonly retain?: "head" | "tail";
 	};
 	execute(
-		args: Static<TParameters>,
+		args: ToolArgs<TParameters>,
 		api: ToolExecutionApi<TDetails>,
 		context: Context,
 	): Promise<ToolExecutionResult<TDetails>>;

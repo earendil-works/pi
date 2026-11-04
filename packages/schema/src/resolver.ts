@@ -14,11 +14,12 @@ export const DEFAULT_BASE = "https://json-schema.invalid/root.json";
 
 /**
  * Resolves references in the root schema and the registered documents. The schema is indexed on the first
- * reference, so a schema without references is never walked for identifiers.
+ * reference or the first `$id` a walker meets, so a schema with neither is never walked for identifiers.
  */
 export class Resolver {
 	readonly draft: "2020-12" | "7";
-	readonly rootBase: string;
+	/** The base URI the root schema is walked from; walkers apply the root's own `$id` through `baseFor`. */
+	readonly rootBase = DEFAULT_BASE;
 	/** Schema object to the base URI it was indexed under. */
 	readonly baseOf = new Map<object, string>();
 	/** URI (with a `#name` fragment) of every `$dynamicAnchor`, to its schema. */
@@ -26,6 +27,9 @@ export class Resolver {
 	private readonly root: JsonSchema;
 	private readonly options: CompileOptions;
 	private readonly registry = new Map<string, JsonSchema>();
+	private readonly rejectUnresolved: boolean;
+	/** The references that named nothing and resolved to `false` (with `unresolvedRefs: "reject"`). */
+	private readonly unresolved = new Set<string>();
 	private readonly resources = new Map<string, unknown>();
 	private readonly anchors = new Map<string, SchemaObject>();
 	private indexed = false;
@@ -34,7 +38,7 @@ export class Resolver {
 		this.draft = options.draft === "7" ? "7" : "2020-12";
 		this.root = root;
 		this.options = options;
-		this.rootBase = isSchemaObject(root) ? this.baseFor(root, DEFAULT_BASE) : DEFAULT_BASE;
+		this.rejectUnresolved = options.unresolvedRefs === "reject";
 	}
 
 	/**
@@ -42,10 +46,16 @@ export class Resolver {
 	 * the schema is indexed, the indexed base (a resolved reference target already has its own).
 	 */
 	baseFor(node: SchemaObject, base: string): string {
-		const indexed = this.baseOf.get(node);
+		let indexed = this.baseOf.get(node);
 		if (indexed !== undefined) return indexed;
 		const id = node.$id;
 		if (typeof id !== "string") return base;
+		// Index before applying an `$id`: a caller's `base` may already include it, and the index applies it once.
+		if (!this.indexed) {
+			this.ensureIndexed();
+			indexed = this.baseOf.get(node);
+			if (indexed !== undefined) return indexed;
+		}
 		if (this.draft === "7" && (typeof node.$ref === "string" || id.startsWith("#"))) return base;
 		return documentOf(resolveUri(id, base));
 	}
@@ -61,9 +71,27 @@ export class Resolver {
 		this.index(this.root, DEFAULT_BASE);
 	}
 
-	/** The schema a reference names, with the base URI it compiles under. Throws if it names nothing. */
+	/**
+	 * The schema a reference names, with the base URI it compiles under. Throws if it names nothing, or, with
+	 * `unresolvedRefs: "reject"`, resolves to `false`, the schema no value passes.
+	 */
 	resolve(ref: string, base: string): Resolved {
 		this.ensureIndexed();
+		if (!this.rejectUnresolved) return this.find(ref, base);
+		try {
+			return this.find(ref, base);
+		} catch {
+			this.unresolved.add(resolveUri(ref, base));
+			return { node: false, base };
+		}
+	}
+
+	/** Whether `ref`, from `base`, named nothing and resolved to `false`. */
+	isUnresolved(ref: string, base: string): boolean {
+		return this.unresolved.has(resolveUri(ref, base));
+	}
+
+	private find(ref: string, base: string): Resolved {
 		const uri = resolveUri(ref, base);
 		const doc = documentOf(uri);
 		const fragment = uri.length > doc.length ? decodeURIComponent(uri.slice(doc.length + 1)) : "";

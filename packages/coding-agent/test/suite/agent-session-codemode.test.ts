@@ -18,7 +18,10 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import type { CustomEntry } from "../../src/core/session-manager.ts";
-import { createToolDefinitionFromAgentTool } from "../../src/core/tools/tool-definition-wrapper.ts";
+import {
+	createToolDefinitionFromAgentTool,
+	type TypeBoxAgentTool,
+} from "../../src/core/tools/tool-definition-wrapper.ts";
 import { readCodemodeStore } from "../../src/extensions/codemode/execute.ts";
 import { createCodemodeExtension } from "../../src/extensions/codemode/index.ts";
 import {
@@ -33,7 +36,7 @@ const TINY_PNG_BASE64 =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
 
 const echoSchema = Type.Object({ text: Type.String({ description: "Text to echo" }) });
-const echoTool: AgentTool<typeof echoSchema> = {
+const echoTool: TypeBoxAgentTool<typeof echoSchema> = {
 	name: "echo",
 	label: "Echo",
 	description: "Echo text back.\n\nSecond paragraph.",

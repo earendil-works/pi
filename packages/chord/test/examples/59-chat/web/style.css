@@ -1,0 +1,7 @@
+/* The chat's look: the active theme's colours (the kit writes them on :root). */
+body { margin: 0; font: 15px system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+main { max-width: 40rem; margin: 1rem auto; }
+nav button[aria-pressed="true"] { color: var(--accent); }
+ul { list-style: none; padding: 0; }
+li img { display: block; max-width: 16rem; margin-top: 0.25rem; }
+a { color: var(--accent); }

@@ -1,6 +1,7 @@
 // The Session's document cache is bounded by use: unattached documents leave it after the retention period and load
 // from Storage again; documents with a watch or a document state never leave it.
-import { fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
+
+import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import {
 	type ConversationId,
 	defineDoc,
@@ -11,6 +12,7 @@ import {
 	MemoryStorage,
 	type StorageWrite,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { SessionImpl, setDefaultDocumentRetention } from "../src/session/session.ts";
 import { chatSetup, openChat } from "./chat-support.ts";
@@ -519,7 +521,7 @@ describe("document cache retention", () => {
 				defineTool({
 					name: "steps",
 					description: "Streams three steps",
-					parameters: Type.Object({}),
+					parameters: obj({}),
 					execute: async (_args, api) => {
 						for (const step of ["a\n", "b\n", "c\n"]) {
 							api.output(step);

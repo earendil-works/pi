@@ -21,6 +21,7 @@ import type {
 	ExtensionContextActions,
 	ExtensionFactory,
 	ExtensionUIContext,
+	MarkdownMessageType,
 	ProviderConfig,
 } from "../src/core/extensions/types.ts";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
@@ -719,6 +720,37 @@ describe("ExtensionRunner", () => {
 			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
 
 			expect(runner.getMarkdownTransformers()).toHaveLength(2);
+		});
+
+		it("runs Markdown transformers only on their message types", async () => {
+			fs.writeFileSync(
+				path.join(extensionsDir, "markdown-default.ts"),
+				`export default function(pi) { pi.registerMarkdownTransformer((markdown) => markdown + " default"); }`,
+			);
+			fs.writeFileSync(
+				path.join(extensionsDir, "markdown-opt-in.ts"),
+				`export default function(pi) {
+					pi.registerMarkdownTransformer((markdown) => markdown + " opt-in", {
+						messageTypes: ["assistant", "changelog"],
+					});
+				}`,
+			);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const transformers = runner.getMarkdownTransformers();
+			const apply = (messageType: MarkdownMessageType) =>
+				transformers.reduce(
+					(markdown, transformer) =>
+						transformer(markdown, { messageType, isStreaming: false, availableWidth: 80 }),
+					"text",
+				);
+
+			expect(apply("user")).toBe("text default");
+			expect(apply("assistant-thinking")).toBe("text default");
+			expect(apply("assistant")).toBe("text default opt-in");
+			expect(apply("changelog")).toBe("text opt-in");
+			expect(apply("custom")).toBe("text");
 		});
 
 		it("gets message renderer by type", async () => {

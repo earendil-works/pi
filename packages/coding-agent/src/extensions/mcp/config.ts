@@ -31,13 +31,9 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isMcpServerOverride, mcpNamespace } from "@earendil-works/pi-mcp";
 import { CONFIG_DIR_NAME } from "../../config.ts";
-import {
-	type McpExposure,
-	type McpServerConfig,
-	mcpNamespace,
-	validateMcpServerConfig,
-} from "../../core/mcp-servers.ts";
+import { type McpExposure, type McpServerConfig, validateMcpServerConfig } from "../../core/mcp-servers.ts";
 import { stripBom } from "../../utils/text.ts";
 
 export type {
@@ -74,11 +70,6 @@ export interface LoadedMcpConfig {
 
 const OVERRIDE_KEYS = ["enabled", "exposure", "toolExposure"];
 
-/** Whether an entry overrides a server defined elsewhere instead of defining one. */
-function isOverride(value: Record<string, unknown>): boolean {
-	return value.command === undefined && value.url === undefined && value.type === undefined;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -106,7 +97,7 @@ function readConfigFile(path: string, scope: "global" | "project", state: McpCon
 	if (typeof parsed.autoEnableCodemode === "boolean") state.autoEnableCodemode = parsed.autoEnableCodemode;
 	else if (parsed.autoEnableCodemode !== undefined) errors.push(`${path}: autoEnableCodemode must be a boolean`);
 	for (const [name, value] of Object.entries(parsed.mcpServers ?? {})) {
-		if (scope === "project" && isRecord(value) && isOverride(value)) {
+		if (scope === "project" && isRecord(value) && isMcpServerOverride(value)) {
 			const base = servers.get(name);
 			const extra = Object.keys(value).filter((key) => !OVERRIDE_KEYS.includes(key));
 			if (!base) {
@@ -180,7 +171,7 @@ export function updateMcpServerConfig(
 			parsed.mcpServers = { ...servers, [name]: server };
 		}
 		if (!isRecord(server)) throw new Error(`${path} does not define MCP server "${name}"`);
-		const keepDefaults = isOverride(server);
+		const keepDefaults = isMcpServerOverride(server);
 		if (patch.enabled !== undefined) {
 			if (patch.enabled && !keepDefaults) delete server.enabled;
 			else server.enabled = patch.enabled;

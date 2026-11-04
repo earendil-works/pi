@@ -7,6 +7,7 @@
  * then close the Harness mid-round (persistent backends) to measure replay of the round's delta chain on reopen, and
  * finish the run to measure the stored size after the round's base and reclamation. Throughput scenarios push 1 GiB.
  */
+
 import { execFile } from "node:child_process";
 import { mkdtemp, open, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,7 +17,7 @@ import { promisify } from "node:util";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { Type } from "typebox";
+import { obj } from "@earendil-works/pi-schema";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { createRegistry, defineTool, Harness, LiveDoc, MemoryStorage, type Storage } from "../src/index.ts";
 import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
@@ -145,7 +146,7 @@ async function runScenario(scenario: Scenario): Promise<Metrics> {
 				defineTool({
 					name: "emit",
 					description: "",
-					parameters: Type.Object({}),
+					parameters: obj({}),
 					outputLimits: { retain: scenario.retain },
 					execute: async (_args, api, callContext) => {
 						let counter = 0;

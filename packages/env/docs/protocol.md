@@ -30,7 +30,7 @@ does not parse gets an `EINVAL` error; framing errors end the connection.
 | 1 | request | client → daemon | `json.op` names the operation |
 | 2 | result | daemon → client | success of request `id`; the request is finished |
 | 3 | error | daemon → client | failure of request `id`; the request is finished |
-| 4 | event | daemon → client | progress of a running request (`exec` and `pty` output, `watch` changes), not finishing it |
+| 4 | event | daemon → client | progress of a running request (`exec`, `pty` and `process` output, `watch` changes), not finishing it |
 | 5 | cancel | client → daemon | cancel request `id`; see below |
 | 6 | ping | both | liveness; the receiver ignores it |
 
@@ -45,16 +45,16 @@ contents and output travel as raw payload bytes.
 ## Cancellation
 
 A cancel names one request. The daemon registers each request before running it, so a cancel sent right after its
-request is never lost. `exec` and `pty` kill the command's process group and finish with `aborted`; `{ mode: "kill" }` kills
+request is never lost. `exec`, `pty` and `process` kill the command's process group and finish with `aborted`; `{ mode: "kill" }` kills
 without aborting, so the command finishes with the killed process's status, as `cleanup()` does. `scanLines` stops
 between chunks and `listFiles` between entries, with `aborted`. `watch` stops and finishes with `{}`. Other operations
 are short and finish normally.
 
 ## Scheduling
 
-File operations run on a fixed pool of worker threads; `exec`, `pty` and `watch` run on their own threads. `ptyWrite`,
-`ptyResize` and `ptyForeground` are answered in arrival order by the thread that reads frames, so keystrokes never
-swap. Chunk writes to one handle run in arrival order. Results, errors, pings and `watch` events are sent before queued
+File operations run on a fixed pool of worker threads; `exec`, `pty`, `process` and `watch` run on their own threads.
+`ptyWrite`, `ptyResize`, `ptyForeground`, `processWrite` and `processCloseStdin` are answered in arrival order by the
+thread that reads frames, so keystrokes and protocol messages never swap. Chunk writes to one handle run in arrival order. Results, errors, pings and `watch` events are sent before queued
 command output, and results with payloads above 64 KiB queue behind output too, so a slow link delays bulk data, not
 replies. Output of a command without an output window waits while more than 4 MiB of output is unsent, which slows the
 command as a full pipe would.
@@ -64,9 +64,10 @@ command as a full pipe would.
 Each side sends `ping` every 5 seconds. The daemon kills every process group it started and exits after 30 seconds
 without receiving any bytes, when stdin ends, or on `SIGTERM`, `SIGINT` or `SIGHUP`. A dropped connection or a
 stopped daemon therefore stops remote commands. On Windows, a terminated daemon cannot clean up: a job object kills
-each command's own process, but not processes that one started. The client fails requests of a lost connection with
-`{ code: "unknown", lost: true }` and starts a new daemon on the next request; handles belong to the daemon that opened
-them, so requests on them fail instead of reaching the new one.
+each command's own process, but not processes that one started, except for `process` programs, whose own job object
+holds what they start (see `process` for the gap right after the start). The client fails requests of a lost
+connection with `{ code: "unknown", lost: true }` and starts a new daemon on the next request; handles belong to the
+daemon that opened them, so requests on them fail instead of reaching the new one.
 
 ## Operations
 
@@ -75,7 +76,7 @@ request. `version` is the npm package version the daemon shipped with; `os` and 
 values (`linux`, `android`, `macos`, `windows`; `x86_64`, `aarch64`), which the client's `nodePlatform` maps to Node's
 names; `tmpdir` follows the remote Node's `os.tmpdir()` rules; `cwd` and `driveCwds` (Windows' `=C:` variables) are
 what Node's `path.resolve` falls back to for drive-relative paths. `features` lists operations added to protocol 1
-after its first release (`listFiles`); older daemons omit the field and refuse those operations as unknown, so clients
+after its first release (`listFiles`, `process`); older daemons omit the field and refuse those operations as unknown, so clients
 check it first.
 
 File operations take `{ path }` (and the listed fields) and return `{}` unless noted:
@@ -151,3 +152,22 @@ Once the terminal has ended, they fail with `EBADF`.
 `{ foreground: { pid, name } }`, where `pid` is the group's id and `name` its leader's process name (`null` if unknown),
 or `{ foreground: null }` while the program itself is in front. For a shell this tells a running job (an editor, a
 build) from the prompt; background jobs are not reported. It fails with `EBADF` once the terminal has ended.
+
+`process { argv, cwd, env, inheritEnv }` runs a program with plain pipes for stdin, stdout and stderr (feature
+`process`), for programs that speak a protocol on stdin and stdout, such as MCP servers. `argv` is required and runs
+directly, without a shell, resolved and started as an `exec` argv command is (its own process group, the same
+environment rules), and on Windows also in a job object of its own. When the program exits, whatever it started in its
+process group (on Windows, its job object) is killed: a wrapper such as `npx` that exits does not leave the server it
+started running. On Unix, a process that moved to a process group or session of its own (`setpgid`, `setsid`) has left
+the group and keeps running. On Windows, the program runs before the daemon assigns it to its job objects: a child it
+starts in that moment stays outside them and keeps running; children started later cannot leave the job. Once the
+program runs, an event `{ kind: "started", pid }` comes first; then `{ kind: "output", stream }` events carry raw bytes
+of `stdout` or `stderr` as payload (not decoded, not translated). Output waits while more than 4 MiB of output is
+unsent, like a full pipe. After the program exits, output is collected until both pipes close or 100 ms pass without
+output. The result is `{ exitCode }`; a program that cannot start fails with `spawn_error`.
+
+While a `process` request runs, `processWrite { target }` writes its payload to the program's stdin and
+`processCloseStdin { target }` closes stdin after the input queued before it; `target` is the id of the `process`
+request. Both return `{}` at once; input is queued and written in order, waiting while the program does not read it.
+Input queued after `processCloseStdin` is dropped; once stdin is closed, and once the program has ended, both fail
+with `EBADF`.

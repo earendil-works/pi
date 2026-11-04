@@ -2,10 +2,11 @@
 // tests, a failure starts a fix run, and input sent meanwhile waits for them too.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/32-tests-after-edits.ts
+
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { Type } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import { obj, str } from "@earendil-works/pi-schema";
 import {
 	createRegistry,
 	defineExtension,
@@ -34,7 +35,7 @@ const runTests = () => {
 const edit = defineTool({
 	name: "edit",
 	description: "Replace a file's content",
-	parameters: Type.Object({ path: Type.String(), content: Type.String() }),
+	parameters: obj({ path: str(), content: str() }),
 	execute: async (args) => {
 		files.set(args.path, args.content);
 		return { output: [{ type: "text", text: `wrote ${args.path}` }] };

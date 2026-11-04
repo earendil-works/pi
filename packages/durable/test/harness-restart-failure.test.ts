@@ -1,6 +1,7 @@
 // What a crash (a host that dies, is evicted, or is reset) does to work that was running: a generation's interrupted
 // request is a failed attempt under the retry policy, and every other task ends visibly once it was cut off
 // `settings.restartLimit` times in a row (#11139).
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,7 +14,6 @@ import {
 	type Message,
 	type Models,
 	type ToolResultMessage,
-	Type,
 } from "@earendil-works/pi-ai";
 import {
 	defineTool,
@@ -27,6 +27,7 @@ import {
 	type SubmissionId,
 	type TaskId,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { commitWrites } from "../src/testing/commit-writes.ts";
@@ -282,7 +283,7 @@ describe("a generation interrupted while the model answers (#11139)", () => {
 			defineTool({
 				name: "hold",
 				description: "Waits",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				replay: "safe",
 				execute: async () => {
 					started.resolve();
@@ -375,7 +376,7 @@ describe("other tasks cut off restartLimit times in a row (#11139)", () => {
 			defineTool({
 				name: "heavy",
 				description: "Never finishes",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				replay: "safe",
 				execute: async (_args, api, ctx) => {
 					runs++;
@@ -751,7 +752,7 @@ describe("the restart limit on the normal path (#11139)", () => {
 			defineTool({
 				name: "t",
 				description: "t",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				replay: "safe",
 				execute: async () => ({}),
 			}),

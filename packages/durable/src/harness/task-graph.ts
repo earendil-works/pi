@@ -1,6 +1,7 @@
-import { type Context, type JsonValue, Watch, type WatchCall, type WatchHandle } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT, withoutAbortSignal } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT, type Context, withoutAbortSignal } from "@earendil-works/chord/context";
 import { applyImmutable, type Op } from "@earendil-works/chord/delta";
+import type { JsonValue } from "@earendil-works/chord/json";
+import { Watch, type WatchCall, type WatchHandle } from "@earendil-works/chord/watch";
 import {
 	closeEndOf,
 	closeEnds,

@@ -9,6 +9,7 @@ export {
 	type RequestOptions,
 } from "./connection.ts";
 export { LocalExecutionEnv, type LocalExecutionEnvOptions } from "./list-files.ts";
+export { openProcess, type ProcessOptions, RemoteProcess } from "./process.ts";
 export { RemoteExecutionEnv, type RemoteExecutionEnvOptions } from "./remote-env.ts";
 export {
 	acceptHostKey,

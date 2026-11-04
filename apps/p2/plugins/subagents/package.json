@@ -1,0 +1,5 @@
+{
+	"name": "subagents",
+	"private": true,
+	"type": "module"
+}
