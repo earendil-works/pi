@@ -48,15 +48,10 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
   until loader model D provides scoped, per-facet `ClientBundle` pushes (`docs/plugin-loading.md` 5.3 and 12.2 step
   4). The TUI launcher separately polls `/__p2_tui`. There is no Vite, source-module server or `index.html`.
 - **Bundles for Radius Cloud Brain:** after CI passes on main, `.github/workflows/p2-cloud-bundle.yml` builds this
-  web bundle with `scripts/cloud-bundle.ts` (imports `buildWebBundle`) and uploads it to the R2 bucket `pi-ui` under
-  the commit's full SHA, the SHA pkg.earendil.com publishes pi's packages under. Radius's control plane serves the
-  bucket under `/pi/ui/` on its own host, and the build uses that root-relative path. Radius pins one SHA for the packages, the p2 contracts it
-  copies and this UI. The script patches three places in the built script: the Chord socket URL
-  (`` new WebSocket(`${...}://${location.host}/chord`) ``), the version poll
-  (`fetch("/__p2_web",{cache:"no-store",credentials:"same-origin"})`) and the `/__p2_web/` asset prefix. It fails
-  when a target is missing, so changing those in `src/hosts/web/main.tsx` or `WEB_BUNDLE_PATH` means updating it. The
-  earlier home of these bundles, the public repo `earendil-works/bundled-ui` (served through jsDelivr), is replaced by
-  this.
+  web bundle with `scripts/cloud-bundle.ts` and uploads it to the R2 bucket `pi-ui` under the commit's full SHA, which
+  Radius serves under `/pi/ui/`. The script patches the built script's Chord socket URL, version poll and `/__p2_web/`
+  asset prefix, and fails when one is missing: changing those in `src/hosts/web/main.tsx` or `WEB_BUNDLE_PATH` means
+  updating it.
 - `npm run dev` also watches plugins and supervises runtime restarts; see **Dev mode** below. Under `npm start`,
   code changes (web included) take effect only after a restart.
 - **Data report** (`scripts/data-report.ts`, read-only, beside a live server): per session its title, location,
