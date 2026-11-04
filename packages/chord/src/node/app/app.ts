@@ -4,6 +4,7 @@
 // the server's plugins with the kit's own facets (the start-data object, sessions, the owner link, pairing, files),
 // and gives the app the controls it needs: the owner link, `applyChanges`, installs, export and import per address.
 
+import { statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { type Context, withAbortSignal } from "../../context/index.ts";
@@ -134,6 +135,13 @@ export type AppOptions<P extends Principal> = {
 	 * send (the principal of their link). Each worker's is its `startWorker`'s.
 	 */
 	readonly principalAttributes?: PrincipalAttributes<P>;
+	/**
+	 * The app's base code beside what the kit knows (files or directories: its API modules, its start script): a change
+	 * sets `plugins.state.base`. The kit adds each worker kind's `entry` and every file its base bundles were built from.
+	 */
+	readonly base?: readonly string[];
+	/** The `closeTimeout` and `readyTimeout` of every host (the server's and each worker's): 30 s and 60 s by default. */
+	readonly timeouts?: AppTimeouts;
 	readonly onError: (error: AppError) => void;
 } & (OwnerPrincipal extends P ? unknown : { readonly "the app's principal type must have { kind: 'owner' }": never });
 
@@ -151,6 +159,9 @@ export type AppLimits = {
 	readonly importBytes?: number;
 	readonly importEntries?: number;
 };
+
+/** The hosts' timeouts in milliseconds (`HostOptions.closeTimeout`, `HostOptions.readyTimeout`). */
+export type AppTimeouts = { readonly closeTimeout?: number; readonly readyTimeout?: number };
 
 /** The kit's web surface options (`webSurface`'s, its kind `web` and plugins the kit's). */
 export type AppWeb = Pick<WebSurfaceOptions, "entry" | "page" | "paths" | "public">;
@@ -182,7 +193,10 @@ export interface App<P extends Principal> {
 	ownerLink(): string;
 	/** The owner token file's path (a device session of the owner, mode 0600). */
 	readonly ownerTokenFile: string;
-	/** Builds the dirty plugins and rolls them out: the server, every worker kind, then the clients; never by itself. */
+	/**
+	 * Builds the dirty plugins and rolls them out: the server, every worker kind, then the clients; never by itself. Calls
+	 * run one after another (a later one builds after the earlier one rolled out).
+	 */
 	applyChanges(context: Context): Promise<RolloutResult>;
 	/**
 	 * Writes the data the worker at `address` created (its store and finished files) as an archive at `path`, stopping
@@ -210,6 +224,8 @@ export type KitStart = {
 	readonly telemetry: boolean;
 	/** The cap of uploads under way per `Files` object (`limits.uploads`). */
 	readonly uploads?: number;
+	/** The app's host timeouts (`timeouts`), the worker's host takes them too. */
+	readonly timeouts: AppTimeouts;
 };
 
 /**
@@ -230,6 +246,7 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 		store,
 		telemetry,
 		...(principalAttributes === undefined ? {} : { principalAttributes }),
+		...options.timeouts,
 		onError: (error) => onError({ kind: "host", error }),
 	});
 	const http = createHttp(
@@ -242,6 +259,11 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 		},
 		context,
 	);
+	// Base code by kind: directories are watched as trees, files one by one (`watchBase`).
+	const base = [...(options.base ?? []), ...(options.workers ?? []).map(({ entry }) => entry)].map((path) =>
+		resolve(path),
+	);
+	const baseDirs = base.filter((path) => statSync(path, { throwIfNoEntry: false })?.isDirectory() === true);
 	const plugins = createPlugins(
 		{
 			roots: [{ path: resolve(options.root ?? "plugins"), required: true }, layout.plugins],
@@ -253,6 +275,7 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 				]),
 			),
 			install: options.install,
+			base: baseDirs,
 			publicPath: `${WEB_PREFIX}assets/`,
 			onError: (error) => onError({ kind: "plugins", error }),
 		},
@@ -300,6 +323,8 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 			surfaces.push(surface);
 			core.push({ name: `chord.${surface.name}`, facet: surface.facet });
 		}
+		const files = base.filter((path) => !baseDirs.includes(path));
+		plugins.watchBase([...files, ...surfaces.flatMap(({ inputs }) => inputs)]);
 		await plugins.load(host, { kind: "server", core, modules: modulesOf(api, options.kinds.server) }, context);
 		await ownerTokenFile(layout.ownerToken, host, context);
 		app.started(link.renew(), await http.listening(context));
@@ -316,6 +341,8 @@ type Surface<P extends Principal> = {
 	readonly facet: Facet<P>;
 	step(name: string): RolloutStep;
 	readonly base: string;
+	/** The files its base bundle was built from. */
+	readonly inputs: readonly string[];
 };
 
 /** The app's client surfaces, built (their base bundles) in order: the web's, the terminal's. */
@@ -411,6 +438,7 @@ function workersOf<P extends Principal>(
 					files: { ...options.files },
 					telemetry: options.telemetry !== undefined,
 					...(options.limits?.uploads === undefined ? {} : { uploads: options.limits.uploads }),
+					timeouts: { ...options.timeouts },
 				};
 				return { kit, app: await kind.start(address, ctx) };
 			},
@@ -453,6 +481,8 @@ class RunningApp<P extends Principal> implements App<P> {
 	readonly #options: AppOptions<P>;
 	#link = "";
 	#closing: Promise<void> | undefined;
+	/** The latest `applyChanges`, settled to nothing: the next one starts after it. */
+	#applying: Promise<void> = Promise.resolve();
 
 	constructor(
 		host: Host<P>,
@@ -498,7 +528,19 @@ class RunningApp<P extends Principal> implements App<P> {
 		return this.#surfaces.find(({ name }) => name === "tui");
 	}
 
-	async applyChanges(context: Context): Promise<RolloutResult> {
+	applyChanges(context: Context): Promise<RolloutResult> {
+		// One build and rollout at a time: a later build rolled out before an earlier one would leave the older code
+		// deployed (each host applies the last set it is handed).
+		const applied = this.#applying.then(() => this.#applyChanges(context));
+		this.#applying = applied.then(
+			() => {},
+			() => {},
+		);
+		return applied;
+	}
+
+	/** One build of the dirty plugins and its rollout: the server, every worker kind, then the clients. */
+	async #applyChanges(context: Context): Promise<RolloutResult> {
 		const plugins = this.#component;
 		const built = await plugins.build(plugins.state.value.dirty, context);
 		const steps = [

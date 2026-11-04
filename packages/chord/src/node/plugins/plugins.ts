@@ -134,6 +134,11 @@ export interface Plugins {
 	/** Installs plugin `name`'s dependencies (`installDependencies`): its install mark clears, and it is dirty. */
 	installDependencies(name: string, context: Context): Promise<void>;
 	/**
+	 * Adds `files` to the app's base code (beside `base`): a change of one sets `base`. For files the app learns after
+	 * creating the component, a base bundle's inputs; files under `node_modules` are never watched.
+	 */
+	watchBase(files: readonly string[]): void;
+	/**
 	 * Installs new plugins from git or npm into `root`, one of the roots (`installPlugin`), and marks `set`: the next
 	 * build discovers and builds them. Returns their names.
 	 */
@@ -286,6 +291,10 @@ class PluginsComponent implements Plugins {
 			);
 		}
 		return { steps: done, stopped: undefined };
+	}
+
+	watchBase(files: readonly string[]): void {
+		this.#watcher.baseFiles(files);
 	}
 
 	async installDependencies(name: string, context: Context): Promise<void> {

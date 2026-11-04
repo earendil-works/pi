@@ -1905,7 +1905,7 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 		await server.close(context);
 	});
 
-	it("a failed unbind still rejects: a live failure answers its calls with the failure, later ones not_ready", async () => {
+	it("a failed unbind still rejects: a live failure answers its calls with the failure, and calls crossing it too", async () => {
 		const gate = Promise.withResolvers<void>();
 		let self: Self<TestPrincipal> | undefined;
 		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
@@ -1933,10 +1933,65 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 		const rejected = await peer.next("error");
 		expect(rejected).toMatchObject({ call: 0, error: { error: { message: "it broke" } } });
 		await peer.next("failed");
-		// Told a failure, the hold takes no calls by the old names.
+		// Told a failure, the hold takes no calls by the old names: one that crossed the `failed` gets that cause.
 		call(peer, 1, "ping");
-		expect(await peer.next("error")).toMatchObject({ call: 1, error: { error: { code: "not_ready" } } });
+		expect(await peer.next("error")).toMatchObject({ call: 1, error: { error: { message: "it broke" } } });
 		gate.resolve();
+		await server.close(context);
+	});
+
+	it("a call by the old variant's index crossing a fresh bound of another variant is decoded by the old names (audit F4)", async () => {
+		const ran: string[] = [];
+		const { server, peer, reload } = await keptServer({ n: 1, ran }, { ack: false });
+		peer.ack();
+		await reload({ n: 2, variant: "b", ran });
+		const bound = await peer.next("bound");
+		expect(bound.holds[0]!.variant).toBe(1);
+		// Sent before the consumer applied that `bound`: by variant a's indexes (`bump` is 0, which is `ping` in b).
+		call(peer, 0, "bump");
+		call(peer, 1, "ping");
+		await transported();
+		expect(answersTo(peer, 0)).toMatchObject([
+			{ kind: "error", error: { error: { code: "invalid", reason: "member" } } },
+		]);
+		expect(answersTo(peer, 1).map((answer) => answer.kind === "result" && partValue(answer.value!))).toEqual([2]);
+		expect(ran).toEqual(["ping"]);
+		// Applied and acknowledged: now by variant b's indexes.
+		peer.ack();
+		peer.send({ kind: "call", call: 2, hold: 0, method: wireNames(Kept, "b").methods.ping! });
+		expect(partValue((await peer.next("result")).value!)).toBe(2);
+		expect(ran).toEqual(["ping", "ping"]);
+		expect(peer.closed).toBe(false);
+		await server.close(context);
+	});
+
+	it("a call crossing a removal's failed gets the removal's cause, never not_ready (audit F3)", async () => {
+		const { server, peer } = await keptServer({ n: 1 });
+		await server.reload([], context);
+		const failed = await peer.next("failed");
+		expect(failed.cause).toMatchObject({ kind: "waiting", error: { error: { code: "unavailable" } } });
+		// Sent as a consumer sends it before the `failed` reaches it.
+		call(peer, 0, "ping");
+		const answer = await peer.next("error");
+		expect(answer.error).toEqual(failed.cause.error);
+		await server.close(context);
+	});
+
+	it("a call crossing a version refusal's failed gets contract_mismatch, never not_ready (audit F3)", async () => {
+		const { server, peer, reload } = await keptServer({ n: 1 });
+		// The new code serves version 2 only: the version 1 hold is refused.
+		const answer = async () => 2;
+		const v2 = defineFacet<TestPrincipal>((h) =>
+			h.serve(KeptV2, () => ({
+				variant: "a",
+				members: { label: constant({ text: "v2" }), bump: answer, ping: answer },
+			})),
+		);
+		await reload(v2);
+		const failed = await peer.next("failed");
+		expect(failed.cause).toMatchObject({ kind: "waiting", error: { error: { code: "contract_mismatch" } } });
+		call(peer, 0, "ping");
+		expect(await peer.next("error")).toMatchObject({ call: 0, error: { error: { code: "contract_mismatch" } } });
 		await server.close(context);
 	});
 

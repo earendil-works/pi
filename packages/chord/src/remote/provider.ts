@@ -62,6 +62,9 @@ export class ProviderSide {
 	readonly #sent: Sender[] = [];
 	/** This host's own messages in flight. */
 	#inFlight = 0;
+	/** How many of this host's own `bound` and `state` messages it sent, and how many its consumer acknowledged. */
+	#ownSent = 0;
+	#ownAcked = 0;
 	/** The holds the current batch touched, in order; its flush sends or queues them. */
 	#touched: Hold[] = [];
 	/** Holds whose ops wait in their pending queues for a slot. */
@@ -406,7 +409,7 @@ export class ProviderSide {
 			return;
 		}
 		if (!hold.callable) {
-			this.#refuse(message.call, new ChordError({ code: "not_ready", message: `hold ${hold.id}: not bound yet` }));
+			this.#refuse(message.call, hold.refusal);
 			return;
 		}
 		const method = hold.method(message.method);
@@ -494,7 +497,21 @@ export class ProviderSide {
 			return;
 		}
 		this.#inFlight--;
+		this.#ownAcked++;
 		this.#slotFreed();
+	}
+
+	/** The number the next of this host's own `bound` and `state` messages gets (counted from 1). */
+	get nextOwn(): number {
+		return this.#ownSent + 1;
+	}
+
+	/**
+	 * Whether its consumer acknowledged this host's own message number `own`, so applied it: a call it sent after that
+	 * arrives after the `ack` (one direction keeps its order).
+	 */
+	acknowledged(own: number): boolean {
+		return this.#ownAcked >= own;
 	}
 
 	/**
@@ -578,6 +595,7 @@ export class ProviderSide {
 	/** Sends one of this host's own `bound` or `state` messages, taking a slot. */
 	#sendOwn(message: Extract<OriginMessage, { readonly kind: "bound" | "state" }>): void {
 		this.#inFlight++;
+		this.#ownSent++;
 		this.#sent.push("local");
 		if (message.kind === "state") this.link.host.metrics.counter("chord.link.state_messages").add(1);
 		this.send(message);

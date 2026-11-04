@@ -1,9 +1,9 @@
 // A client host with its plugins (slice 11 §2, §4, decisions "Slice 11, P4" to "P6"): what a page and a terminal's
 // sandbox both run. A client host (no address) loads the plugin scripts it started with beside the app's core facets,
 // keeps its link to the server with the connection loop, and holds the kind's scripts object: a new set fetches the
-// changed scripts and reloads the host in place (a failed plugin keeps its old facet); a new base bundle means this
-// client's code is outdated, which the app answers by starting over (a page reloads). The surface specifics (how a
-// socket opens, how a script is fetched, what is outdated) are given.
+// changed scripts and reloads the host in place (a failed plugin keeps its old facet; a failed fetch is tried again);
+// a new base bundle means this client's code is outdated, which the app answers by starting over (a page reloads). The
+// surface specifics (how a socket opens, how a script is fetched, what is outdated) are given.
 
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { BACKGROUND_CONTEXT, type Context, withAbortSignal } from "../context/index.ts";
@@ -158,9 +158,17 @@ function entryOf(script: RegisteredScript, modules: ClientModules): SetEntry {
 	};
 }
 
+/** The first pause before a failed update is tried again: 1 s, doubling from there. */
+const UPDATE_RETRY_INITIAL_MS = 1000;
+
+/** The longest pause between tries of a failed update: 30 s. */
+const UPDATE_RETRY_MAX_MS = 30_000;
+
 /**
  * The client's plugin updates: it holds the scripts object and applies each new set in order (fetching the changed
- * scripts, reloading the host with the complete set); a new base calls `outdated` instead.
+ * scripts, reloading the host with the complete set); a new base calls `outdated` instead. An update that failed (a
+ * script that did not load) is tried again after a growing pause (1 s doubling to 30 s) until it applies or a newer set
+ * replaces it: the scripts object shows nothing new until the next rollout or reconnect.
  */
 class Updates<P extends Principal> {
 	readonly #host: Host<P>;
@@ -170,6 +178,13 @@ class Updates<P extends Principal> {
 	readonly #scripts = new Map<string, RegisteredScript>();
 	readonly #abort = new AbortController();
 	#release: (() => void) | undefined;
+	/** The newest set shown: a retry applies only it. */
+	#latest: ScriptSet | undefined;
+	/** The updates in order: one at a time, a retry's among them. */
+	#applying: Promise<void> = Promise.resolve();
+	/** The pending retry's cancel and the pause it waited (0: none waited yet). */
+	#retry: { cancel: () => void } | undefined;
+	#pause = 0;
 
 	constructor(host: Host<P>, loaded: LoadedFacets, options: ClientOptions<P>) {
 		this.#host = host;
@@ -184,22 +199,54 @@ class Updates<P extends Principal> {
 		this.#release = () => held.release();
 		const watch = await held.set.watch(withAbortSignal(this.#abort.signal, context));
 		watch.start(async (call, ctx) => {
-			if (call.kind === "value") await this.#apply(call.value as ScriptSet, ctx);
+			if (call.kind !== "value") return;
+			const set = call.value as ScriptSet;
+			this.#latest = set;
+			this.#retry?.cancel();
+			this.#retry = undefined;
+			this.#pause = 0;
+			await this.#queue(set, ctx);
 		});
 	}
 
-	/** Stops following: the watch ends, the hold is released. */
+	/** Stops following: the watch ends, the hold is released, a pending retry is dropped. */
 	async stop(): Promise<void> {
 		this.#abort.abort();
+		this.#retry?.cancel();
+		this.#retry = undefined;
 		this.#release?.();
 	}
 
-	/** Applies `set`: a new base calls `outdated`; else the changed scripts fetched and the host reloaded with all. */
-	async #apply(set: ScriptSet, context: Context): Promise<void> {
+	/** Applies `set` after the updates before it, unless a newer set replaced it meanwhile. */
+	#queue(set: ScriptSet, context: Context): Promise<void> {
+		const applied = this.#applying.then(async () => {
+			if (this.#latest !== set || this.#abort.signal.aborted) return;
+			if (!(await this.#apply(set, context))) this.#retryLater(set, context);
+		});
+		this.#applying = applied;
+		return applied;
+	}
+
+	/** Tries `set` again after the next pause (1 s doubling to 30 s). */
+	#retryLater(set: ScriptSet, context: Context): void {
+		this.#pause = this.#pause === 0 ? UPDATE_RETRY_INITIAL_MS : Math.min(this.#pause * 2, UPDATE_RETRY_MAX_MS);
+		this.#retry = {
+			cancel: this.#options.environment.after(this.#pause, () => {
+				this.#retry = undefined;
+				void this.#queue(set, context);
+			}),
+		};
+	}
+
+	/**
+	 * Applies `set`: a new base calls `outdated`; else the changed scripts fetched and the host reloaded with all.
+	 * `false` when it failed (reported `update_failed`): it is tried again.
+	 */
+	async #apply(set: ScriptSet, context: Context): Promise<boolean> {
 		const options = this.#options;
 		if (set.base !== options.base) {
 			options.outdated();
-			return;
+			return true;
 		}
 		// The first frame (and a reconnect's snapshot) usually shows what this client runs already: nothing to reload.
 		const known = this.#scripts;
@@ -208,7 +255,7 @@ class Updates<P extends Principal> {
 			set.plugins.every((entry) => known.get(entry.name)?.digest === entry.digest)
 		) {
 			options.applied?.(set);
-			return;
+			return true;
 		}
 		try {
 			const scripts: RegisteredScript[] = [];
@@ -222,8 +269,10 @@ class Updates<P extends Principal> {
 			for (const script of scripts) this.#scripts.set(script.plugin, script);
 			if (report.failed.length > 0) options.onError({ kind: "plugins", failed: report.failed });
 			options.applied?.(set);
+			return true;
 		} catch (error) {
 			options.onError({ kind: "update_failed", error });
+			return false;
 		}
 	}
 }

@@ -4,19 +4,20 @@
 // a terminal's one CommonJS script the sandbox evaluates with its own `require` (its allowed builtins only).
 
 import { createHash } from "node:crypto";
-import { basename, extname } from "node:path";
+import { basename, extname, resolve } from "node:path";
 import { build } from "esbuild";
 import { CSS, JAVASCRIPT, mimeOf, type ServedFile } from "./served.ts";
 
 /**
- * A built base bundle: its hash, its script's and stylesheet's paths (under the surface's prefix), and every file by
- * path.
+ * A built base bundle: its hash, its script's and stylesheet's paths (under the surface's prefix), every file by
+ * path, and the files esbuild read for it (absolute: the app's base code a change of which outdates the bundle).
  */
 export type BaseBundle = {
 	readonly hash: string;
 	readonly script: string;
 	readonly style: string | undefined;
 	readonly files: ReadonlyMap<string, ServedFile>;
+	readonly inputs: readonly string[];
 };
 
 /** Where a base bundle runs: a page (a script, its CSS and assets), or a terminal's sandbox (one CommonJS script). */
@@ -47,6 +48,7 @@ export async function buildBase(entry: string, platform: BasePlatform, prefix: s
 		jsx: "automatic",
 		define: { "process.env.NODE_ENV": '"production"' },
 		logLevel: "silent",
+		metafile: true,
 	});
 	const hash = createHash("sha256");
 	for (const output of [...result.outputFiles].sort((a, b) => (a.path < b.path ? -1 : 1))) {
@@ -67,5 +69,9 @@ export async function buildBase(entry: string, platform: BasePlatform, prefix: s
 			files.set(`${prefix}assets/${basename(output.path)}`, { mime: mimeOf(output.path), bytes: output.contents });
 		}
 	}
-	return { hash: digest, script, style, files };
+	// Metafile inputs are relative to the working directory; a namespaced one (`ns:path`) is no file.
+	const inputs = Object.keys(result.metafile.inputs)
+		.filter((input) => !/^[a-z-]+:/.test(input))
+		.map((input) => resolve(input));
+	return { hash: digest, script, style, files, inputs };
 }

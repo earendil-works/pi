@@ -51,7 +51,10 @@ within each link's limits, compression at the origin, activation chains and revo
   it does not know is ignored (Q1), one reusing a live id is a protocol error, and so are more running calls than this
   side announced in `hello` (N = 256 per origin; a call on an unknown hold is ignored before it is counted). Its table
   has two kinds of entries: `Hold` (served here) and `RelayedHold` (relayed, never hydrated). A call on a pending hold
-  is answered `not_ready`; an aborted, released or gone call gets no reply. While the host closes, its holds are only
+  is answered `not_ready`, one crossing a `failed` or a removal with the cause its consumer was told; a call sent with
+  the indexes of a binding its consumer has not acknowledged a newer `bound` of yet is decoded by them (another
+  variant's indexes name other methods; one the new variant lacks fails `invalid/member`); an aborted, released or gone
+  call gets no reply. While the host closes, its holds are only
   dropped (the host ends the objects itself). It sends with its origin. A hold's `chain` is kept only from a trusted
   link and its stamped `limit` only from a parent link; its decoded limit is the smaller of the link's and the stamped
   one, which a relayed hold carries upstream as `limit`. A call on a relayed hold whose arguments are past the link's

@@ -65,6 +65,7 @@ export function startWorker<P extends Principal>(options: WorkerOptions<P>): voi
 				store,
 				telemetry: recorder,
 				...(principalAttributes === undefined ? {} : { principalAttributes }),
+				...kit.timeouts,
 				onError: options.onError,
 			});
 			onClose((ctx) => host.close(ctx));
