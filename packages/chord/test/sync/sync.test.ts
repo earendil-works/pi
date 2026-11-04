@@ -556,7 +556,7 @@ describe("syncing a session between devices", () => {
 
 	it("uploads an archive first for a session whose outbox was turned on late", async () => {
 		const store = await remote();
-		const directory = await mkdtemp(join(tmpdir(), "pi-durable-sync-late-"));
+		const directory = await mkdtemp(join(tmpdir(), "chord-sync-late-"));
 		directories.push(directory);
 		const file = join(directory, "session.sqlite");
 		const before = await openStore(await backend(file), context);
@@ -605,7 +605,7 @@ describe("host pieces", () => {
 	});
 
 	it("keeps sync state in files", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-durable-sync-state-"));
+		const directory = await mkdtemp(join(tmpdir(), "chord-sync-state-"));
 		directories.push(directory);
 		const state = new FileSyncStateStore(join(directory, "sync"));
 		expect(await state.get(SESSION, context)).toBeUndefined();

@@ -138,7 +138,6 @@ export { UsageDoc, type UsageState } from "./harness/usage.ts";
 export type { ConversationView, ConversationWindow } from "./harness/view.ts";
 export { createSession } from "./session/session.ts";
 export { MemoryStorage } from "./storage/memory.ts";
-export { isUrgentCommit } from "./sync-urgency.ts";
 export { defineTask } from "./tasks.ts";
 export type {
 	CheckpointInfo,

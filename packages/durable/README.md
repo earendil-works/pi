@@ -889,13 +889,6 @@ await database.transaction(async (transaction) => {
 });
 ```
 
-### Sync (experimental)
-
-Sessions move between devices through Chord's sync layer, `@earendil-works/chord/sync`: open a session's store with
-its outbox, `openStore(backend, ctx, { outbox: true })`, keep Durable's records in it with
-`StoreStorage.open(store, owner, ctx)`, and sync the store. `isUrgentCommit(publication)` tells Chord's
-`FlushScheduler` which Durable commits to upload soon: a user message, an answer, a settled submission.
-
 A custom backend's `commit(batches, receive, context)` stores `batches` in order, each as one atomic commit with its own seq, checked against the state the earlier ones left, in as few round trips as it can. It stops at the first batch its own checks refuse (global IDs, document actions, copy resolution): the batches before it stay stored, it and the later ones are not. Once they are durable it calls `receive(index, seq)` per stored batch, in order and synchronously, then resolves with `{ stored, refused? }`; it rejects for an unknown outcome (connection lost, a failed statement or `COMMIT`). `receive` is a durability receipt: the Session publishes each batch later, one at a time, so memory and every view never show a partial log. `receive` calls no Storage method and never throws. Custom backends can run the shared conformance suite, which checks this too, with any Vitest- or Jest-compatible runner:
 
 ```typescript

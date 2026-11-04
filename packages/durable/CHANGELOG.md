@@ -2,10 +2,6 @@
 
 ## [Unreleased]
 
-### Added
-
-- `isUrgentCommit(publication)`: whether a Durable commit should reach a sync remote soon (a user message, an answer, a settled submission), for `FlushScheduler` in Chord's sync layer (`@earendil-works/chord/sync`).
-
 ## [1.5.0] - 2026-11-02
 
 ### Breaking Changes
