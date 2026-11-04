@@ -1450,7 +1450,8 @@ contract), so no plugin gains a dependency.
   editor would be (the web's read-only bar). GuestPresence is still held from the `widget-above:sharing` slot.
 - **P11c**:
   - **Artifacts** (`P2/plugins/artifacts/tui.ts`). The card adds "/artifacts opens". For text and Markdown it shows
-    the content the call wrote: 8 lines, all when expanded.
+    the content the call wrote: 8 lines, all when expanded. A call with `inline: true` shows all of it at once,
+    Markdown rendered; inline HTML and SVG keep the card line.
   - **`/artifacts`** lists `ArtifactList`. Enter shows an artifact inline: Markdown rendered with the instance
     theme, text and HTML/SVG source as sanitized lines. HTML/SVG carry a "Source only" note, because they run only in
     a browser. Ctrl+B is `openUrl` `{kind: "origin", path: "/artifact?…"}` and Ctrl+S is `download`

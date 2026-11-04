@@ -1081,6 +1081,60 @@ test("artifacts: the card previews text, /artifacts shows Markdown inline when n
 	await poll(() => runtime.notices.some((notice) => notice.text === "Downloaded Page"));
 });
 
+test("artifacts: an inline call renders all of its Markdown in the transcript; inline SVG keeps the card line", async (t) => {
+	const calls: Calls = {};
+	const markdown = [
+		"# Inline heading",
+		"",
+		"Some **bold** text",
+		...Array.from({ length: 10 }, (_, i) => `- item ${i + 1}`),
+	];
+	const svg = "<svg xmlns='http://www.w3.org/2000/svg'><text>svg-source</text></svg>";
+	const { screen, terminal } = await setup(t, {
+		calls,
+		worker: contentStubs(calls),
+		facets: [tuiCoreFacet, chatTui, statusTui, artifactsTui],
+		views: () =>
+			viewOf([
+				callEntry(1, "a1", "artifact", {
+					name: "notes",
+					title: "Notes",
+					type: "markdown",
+					content: markdown.join("\n"),
+					inline: true,
+				}),
+				resultEntry(
+					2,
+					"a1",
+					"artifact",
+					{ name: "notes", title: "Notes", type: "markdown", version: 3, inline: true },
+					"Saved",
+				),
+				callEntry(3, "a2", "artifact", { name: "flow", title: "Flow", type: "svg", content: svg, inline: true }),
+				resultEntry(
+					4,
+					"a2",
+					"artifact",
+					{ name: "flow", title: "Flow", type: "svg", version: 1, inline: true },
+					"Saved",
+				),
+			]),
+	});
+	terminal.resize(100, 50);
+	await poll(async () => {
+		const text = await screen();
+		return text.includes("Flow · SVG · version 1 · /artifacts opens") && text.includes("Notes · MARKDOWN");
+	});
+	const shown = await screen();
+	assert.match(shown, /Notes · MARKDOWN · version 3/);
+	assert(shown.includes("Inline heading") && !shown.includes("# Inline heading"), "Markdown is rendered");
+	assert(shown.includes("bold") && !shown.includes("**bold**"));
+	assert(shown.includes("item 10"), "all of it, not the collapsed preview");
+	assert(!shown.includes("more lines"));
+	assert(!shown.includes("svg-source"), "HTML and SVG run only in a browser");
+	assert.equal(calls.readArtifact, undefined, "the call's own content, no read");
+});
+
 test("artifacts: Enter shows one in the side panel, which follows new versions, scrolls when focused and hides when narrow", async (t) => {
 	const calls: Calls = {};
 	let list: Cell<{ name: string; title: string; type: string; version: number }[]> | undefined;

@@ -187,7 +187,7 @@ export function createFakeModels(options: CreateModelsOptions = {}) {
 												? fauxToolCall("subagent", JSON.parse(text.slice("subagent ".length)))
 												: text.startsWith("team ")
 													? fauxToolCall("team", JSON.parse(text.slice("team ".length)))
-													: /^(history_(search|read|handoff)|location_(envs|dirs|move)|tool_search|mcp__\w+) /.test(
+													: /^(artifact|history_(search|read|handoff)|location_(envs|dirs|move)|tool_search|mcp__\w+) /.test(
 																text,
 															)
 														? fauxToolCall(

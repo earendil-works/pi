@@ -29,7 +29,7 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
 | --- | --- | --- |
 | `P2_DATA_DIR` | `~/.pi/p2` | data directory: `catalog.sqlite`, `sessions/<id>.sqlite`, `settings.json`, `models.json`, `envs.json`, `mcp.json`, `mcp-auth.json`, `auth.json`, `radius.json`, `forwards.json` |
 | `PORT` | `8788` | listen port (loopback only), so p2 never collides with pi-mobile on 8787 |
-| `P2_FAKE` | unset | `1`: the faux provider (`faux/faux-1`, echoes the prompt; `slow …` streams long; `rename-session <title>` calls the tool; `subagent`, `subagent-bad`, `subagent-answer`, `subagent-configure`, `subagent-send`, `subagent-archive`, `subagent-status` exercise subagents, `subagent <json>` calls the tool with those arguments, as do `team <json>`, `history_search|read|handoff <json>`, `location_envs|dirs|move <json>`, `tool_search <json>` and `mcp__<server>__<tool> <json>`; `codemode` runs a script calling bash and read, `codemode-restart` one whose slow middle call a restart interrupts, `codemode <script>` runs that script; `json <text>` answers exactly `<text>`; a one-shot agent whose task is not `json …`/`slow…` answers a small value matching its schema) |
+| `P2_FAKE` | unset | `1`: the faux provider (`faux/faux-1`, echoes the prompt; `slow …` streams long; `rename-session <title>` calls the tool; `subagent`, `subagent-bad`, `subagent-answer`, `subagent-configure`, `subagent-send`, `subagent-archive`, `subagent-status` exercise subagents, `subagent <json>` calls the tool with those arguments, as do `team <json>`, `history_search|read|handoff <json>`, `location_envs|dirs|move <json>`, `tool_search <json>` and `mcp__<server>__<tool> <json>`; `codemode` runs a script calling bash and read, `codemode-restart` one whose slow middle call a restart interrupts, `codemode <script>` runs that script; `artifact <json>` calls the artifact tool with those arguments; `json <text>` answers exactly `<text>`; a one-shot agent whose task is not `json …`/`slow…` answers a small value matching its schema) |
 | `P2_IDLE_MS` | `300000` | idle time before a session worker stops |
 | `P2_PROVIDER`, `P2_MODEL` | unset | default model for new sessions after settings.json's `defaultModel` (both or neither; Pi Mobile's `PI_MOBILE_PROVIDER`/`PI_MOBILE_MODEL` work too) |
 | `P2_RADIUS` | unset | `0`: disable the outbound Radius brain connection even when signed in |
@@ -955,6 +955,29 @@ translated phone drawer and intercept chat taps.
   sent files use the conservative file preview. Nothing opens from a server update. `test/p2/artifacts.test.ts`
   covers fake-provider publication, versions, independent index, reload/restart, CSP, HEAD, guest isolation and
   byte limits; `ui-viewers-search.test.ts` the picker and viewers.
+- **Inline artifacts** (`artifact` tool, `inline: true`): the call's version also renders at its tool call site,
+  below the card, so agents can show diagrams (e.g. SVG sequence diagrams) and small visual results in the chat
+  instead of ASCII. `inline` travels only in the result's details (`ArtifactDetails`, `{ ...info, inline: true }`);
+  the index, the stored version and every Chord contract are unchanged, so no contract version moved. The web
+  (`InlineArtifact` in `plugins/artifacts/preview.tsx`, provided to `Chat.tsx` through `InlineArtifactView`) renders
+  that version, never "latest": Markdown with the viewer's `Markdown` component, text as wrapped `pre` (both at most
+  70vh, scrolling), HTML/SVG in the viewer's sandboxed frame (opaque origin, same route and CSP). The preview's
+  diagnostics bridge also posts the document's content height (level `size`, again on every resize), and the frame
+  takes that height up to 70vh. Drawings fill the frame's width: an SVG document with a `viewBox` (or an absolute
+  width and height, which become its `viewBox`) is set to 100% wide and high, so it scales with its aspect and
+  reports the `viewBox` height at its width, leaving no blank space; an HTML document whose body is only a `viewBox`
+  SVG or an image gets it 100% wide at height auto (zero specificity, so any author rule wins), and is measured
+  without its scrollbar (a too-short frame's scrollbar would otherwise stay). This applies in the viewer too. Past 70vh, HTML scrolls inside the frame and an SVG scales down to fit (giving the SVG root an explicit
+  CSS height instead, to make it scroll, broke its rendering in Chromium's out-of-process frame);
+  reported heights are kept per URL so a remounted row keeps its size. A version the route cannot serve shows
+  "Artifact unavailable" (HEAD first for HTML/SVG). Tapping the card still opens the full viewer. **Who sees it:**
+  every viewer of the session, guests included, HTML and SVG too, without a tap (owner decision, option (a): the
+  sandbox and CSP are the protection, as for an opened preview). The TUI renders inline Markdown (rendered) and text
+  in full; HTML/SVG keep the card line. SVG previews carry the bridge in CDATA (the script's `&&` broke the XML
+  before); an empty `<svg/>` root is served without it. Fake provider: `artifact <json>` calls the tool with those
+  arguments. Tests: `artifacts.test.ts` (details, bridge), `ui-inline-artifacts.test.ts` (browser: Markdown, SVG,
+  fills the width, fitted height, 70vh cap, card opens the viewer, unavailable version, guest), `tui-p11.test.ts`
+  (inline Markdown).
 - **Conversations** (`plugins/conversations`): the root-only `conversations` tool lists active roots without
   starting workers, sends server-attributed peer input, and reads the latest completed text answer (bounded scan,
   no thinking, including old history). The tool fixes owner/peer origin at its calling assistant entry: later guest

@@ -34,7 +34,7 @@ import { Markdown } from "./Markdown.tsx";
 import { RowEstimator, type RowFeatures } from "./row-estimate.ts";
 import type { Item, NestedCall, ToolView, Transcript } from "./transcript.ts";
 import { type RowRange, revealInTranscripts, type TranscriptScroll } from "./use-chat-scroll.ts";
-import { artifactUrls, FileCard, fileMeta, fileUrl, OpenViewer } from "./Viewer.tsx";
+import { artifactUrls, FileCard, fileMeta, fileUrl, InlineArtifactView, OpenViewer } from "./Viewer.tsx";
 
 function tokens(count: number): string {
 	return count < 1000
@@ -387,6 +387,7 @@ const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
 	const [open, setOpen] = useState(false);
 	const openConversation = useContext(OpenConversation);
 	const openViewer = useContext(OpenViewer);
+	const InlineArtifact = useContext(InlineArtifactView);
 	const sessionId = useContext(SessionId);
 	const cwd = useContext(WorkingDirectory)?.replace(/\/+$/, "");
 	const active = tool.status === "running" || tool.status === "pending";
@@ -543,17 +544,28 @@ const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
 				Number.isSafeInteger(details.version) &&
 				details.version > 0
 			) {
-				const artifact = details as ArtifactInfo;
+				// The version this call produced, without the details' `inline` flag (the viewer's locator is closed).
+				const artifact: ArtifactInfo = {
+					name: details.name,
+					title: details.title,
+					type: details.type as ArtifactInfo["type"],
+					version: details.version,
+				};
 				const urls = artifactUrls(sessionId, artifact);
 				card = (
-					<FileCard
-						icon={<ArtifactIcon />}
-						title={artifact.title}
-						meta={`${artifact.type.toUpperCase()} · version ${artifact.version}`}
-						href={urls.download}
-						download={urls.filename}
-						onOpen={() => openViewer({ kind: "artifact", artifact })}
-					/>
+					<>
+						<FileCard
+							icon={<ArtifactIcon />}
+							title={artifact.title}
+							meta={`${artifact.type.toUpperCase()} · version ${artifact.version}`}
+							href={urls.download}
+							download={urls.filename}
+							onOpen={() => openViewer({ kind: "artifact", artifact })}
+						/>
+						{details.inline === true && InlineArtifact && (
+							<InlineArtifact sessionId={sessionId} artifact={artifact} />
+						)}
+					</>
 				);
 			}
 			break;
