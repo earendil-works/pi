@@ -2503,6 +2503,29 @@ validation and copies the v2 kernel added around Delta.
   only when a removal empties the window or a bulk write hides which rows changed) is carry-over for when a case
   needs it. Rejected: a window document written beside the table (rows stored twice; app code mirroring every update
   and delete).
+- **Swaps: dependents first; calls during a swap never see `not_ready` (owner, 2026-11-04: "if swaps can be invisible
+  to dependents that's cool, but I fear correctness bugs"; analysis `/tmp/swap-analysis.md`):** the problem: a reload
+  swapping a provider and its pure dependent (61's `todo.store` and `todo.todos(groceries)`) parked the dependent
+  every time. `#objects` keeps objects in the order they went live, providers before dependents, and fates started in
+  that order: the store's swap showed `loading`, the view's new attempt bound it, parked, withdrew its contributions
+  (a registry gap) and unbound its holds over links (`loading` on the client). Worse, a parked swap resolved the gate:
+  a call over a link whose hold was still bound (the old instance draining) got `not_ready` while the client showed
+  `live`. Decided: (1) the gate (`ChordObject.call`) holds a call while any attempt activates (a swap, parked or not,
+  a restart after its drain) until the object is live, failed or ended, bounded by `readyTimeout`
+  (`unavailable/park_timeout`, as a call parked on a reference); a parked attempt showing `failed { waiting }`
+  rejects it with that cause. When a parked swap's hold then leaves the old instance it tells the consumer `loading`
+  and answers its calls in flight `unavailable` (the rule for any object leaving `live`): an error consistent with
+  what the client sees. (2) A reload starts the removals first, then the other fates dependents first (the reverse
+  of `#objects`); the report keeps the objects' order. A dependent's new attempt binds its provider while that is
+  still live, passes its check and reads the old instance until the new one is live (one frame): the path a
+  provider-only reload already takes, so no new state. A pure dependent still parks only when its new code needs the
+  provider's new version (the provider's `served` changes with its own fate, so the request waits unbound, then
+  parks on the swap; it never reads that version off the old instance), when its provider went live after it (a
+  provider that failed live and came back), or when it needs something that is not live (a new or missing
+  dependency); so a call waiting at the gate when a swap parks is rare. Rejected: same-host references showing
+  `live` during a swap by changing `ChordObject.state` (holds, keyed pins, versions and `variant` read it as "a live
+  instance exists"; a per-binding view is possible later, the blip is cosmetic). Carry-over: calls surviving a
+  `loading` unbind (slices.md, "Later: reload").
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a

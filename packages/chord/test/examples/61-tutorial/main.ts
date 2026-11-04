@@ -204,9 +204,10 @@ if (terminal !== undefined) {
 // 9. An edit applied in place: the lists plugin's worker facet trims a todo's text, so a blank one is empty and the
 //    store refuses it with Chord's `invalid/args`, which reaches Ada as it would a refused argument. The
 //    watcher marks the plugin dirty; applying the changes rolls it out to the server, the list's worker, the page and
-//    the terminal. On the worker each object of the plugin takes its fate: the store opens no native, so it is swapped
-//    in place (its live query runs again); the views wait for it, then go on with the new code. Ada's
-//    reference follows them.
+//    the terminal. On the worker each object of the plugin takes its fate, dependents first: each view swaps in place
+//    while the store is still live, then the store, which opens no native, swaps in place too (its live query runs
+//    again); the views read the store's old values until its new attempt is live, and their calls wait for it. Ada's
+//    reference follows them and never shows `loading`.
 // The edit: `add` in the `Todos` view, before and after.
 const BEFORE = "add: (text: string, ctx: Ctx) => store.add({ text, by }, ctx),";
 const AFTER = "add: (text: string, ctx: Ctx) => store.add({ text: text.trim(), by }, ctx),";

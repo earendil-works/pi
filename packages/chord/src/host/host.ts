@@ -757,8 +757,8 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	 * The commit (slice 7b §3), one batch: the served types become the staged ones (an unchanged plugin's stay as
 	 * they were), the removed plugins' registry providers go and the reloaded ones' are replaced, their facet
 	 * contributions replaced by plugin, every changed registry composed once; a removed type's presence list goes.
-	 * Then each object takes its fate, host-lifetime objects of new types start, and the publication wakes the
-	 * requests waiting for the names the reload serves.
+	 * Then each object takes its fate (`#startFates`), host-lifetime objects of new types start, and the publication
+	 * wakes the requests waiting for the names the reload serves.
 	 */
 	#commit(plan: ReloadPlan<P>, context: Context): readonly StartedFate[] {
 		const { staged, changed, removed } = plan;
@@ -787,12 +787,29 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		const names = new Set<string>();
 		for (const [name, served] of types) if (published.has(served.plugin)) names.add(name);
 		for (const [name, { plugin }] of staged.registries) if (published.has(plugin)) names.add(name);
-		const started = plan.fates.map((fate) => this.#startFate(fate));
+		const started = this.#startFates(plan.fates);
 		for (const type of types.values()) {
 			if (type.kind === "local" && type.hostLifetime) this.#object(type, EMPTY_PARAMS, undefined, context);
 		}
 		this.#unbound.wake(names);
 		return started;
+	}
+
+	/**
+	 * Starts `fates` (in the order of `#objects`: providers before their dependents, `wentLive`) and returns them in
+	 * that order, for the report. The removals first, then the others dependents first (decision "Swaps: dependents
+	 * first"): a dependent's new attempt binds its provider while that is still live, so it does not park on the
+	 * provider's own swap or restart, and reads the old instance until the new one is live. A removed provider is gone
+	 * before, so a dependent whose new code still needs it parks (decision 4). A provider takes its new served type with
+	 * its own fate: a dependent of a version only that serves waits unbound until then (`ChordObject.hold`), then binds
+	 * the swapping provider and parks.
+	 */
+	#startFates(fates: readonly PlannedFate[]): StartedFate[] {
+		const started = new Map<PlannedFate, StartedFate>();
+		for (const fate of fates) if (fate.kind === "end") started.set(fate, this.#startFate(fate));
+		for (const fate of fates.toReversed()) if (fate.kind !== "end") started.set(fate, this.#startFate(fate));
+		// Every fate started above.
+		return fates.map((fate) => started.get(fate)!);
 	}
 
 	/**

@@ -1309,7 +1309,7 @@ console.log("   ada adds ' ':", refused);
 <!-- output: main -->
 ```text
 9. lists changed, rolled out to: server, list, web, tui
-   on list|groceries: todo.store swapped, todo.todos(groceries) parked
+   on list|groceries: todo.store swapped, todo.todos(groceries) swapped
    ada adds '  tea  ': [ ] tea (ada)
    ada adds ' ': { code: 'invalid', reason: 'args' }
 ```
@@ -1335,8 +1335,10 @@ store was **swapped**, not restarted. The sequence on the list's worker:
    and references move to its members by name, each with one frame from its last value.
 3. The old attempt is sealed once its calls settled; its query leaves with it, so later commits run only the new one.
 
-The views' new attempts need the store, which was still between steps 1 and 2 when they checked it, so they
-**parked** for that moment and went live with the new code right after. Ada's reference waited a moment, and her next add was trimmed.
+The views were swapped too, and before the store: Chord starts the fates dependents first, so each view's new
+attempt found the store still live, read its old values until step 2 and moved to its new members with one frame;
+its calls to the store waited at the gate. Had the store gone first, the views would have found it between steps 1
+and 2 and **parked** for that moment. Ada's reference never showed `loading`, and her next add was trimmed.
 Had the store kept its window as a one-time read in `self.open`, it would count as holding a native and **restart**
 at every reload of its plugin: running calls drained, natives closed and opened again, a new instance.
 

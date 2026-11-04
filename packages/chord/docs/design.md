@@ -1952,9 +1952,27 @@ type ReloadReport = {
 
   A restarted object gets a new instance id (an old activation chain never matches it); a swapped one keeps it; a
   retried one keeps it as any retry does. Cycles are checked again for the new attempts; `parked_long` is unchanged.
+- **Fates start dependents first** (decision "Swaps: dependents first; calls during a swap never see `not_ready`"):
+  the removals first, then the other fates in the reverse of the order the objects went live (a dependent goes live
+  after its providers). Example: `todo.store` and its view `todo.todos(groceries)`, both pure, in one plugin. Started
+  provider first, the view's new attempt would bind the store while its swap shows `loading` and park (its
+  contributions leaving, its holds over a link unbinding) until the store's new instance is live. Started first, it
+  binds the store while that is still live, passes its dependency check and reads the store's old instance until
+  the new one is live (one frame), its calls waiting at the store's gate: both are reported `swapped`, nothing parks.
+  This is the path a provider-only reload under a live dependent already takes. A removed provider ends first, so a
+  dependent whose new code still needs it parks (decision 4); a provider takes its new served type with its own fate,
+  so a dependent needing a version only the new code serves waits unbound until then and parks on the provider's swap
+  (never reading that version off the old instance). A pure dependent still parks only then, or when its provider
+  went live after it (a provider that failed live and came back), or when its new code needs something that is not
+  live (a new or missing dependency).
 - **The pure swap** (decision "The seal fence": not a replacement while its calls run): a new attempt of the same
   object (its documents, line and job records) activates at once; calls arriving meanwhile wait at
-  the gate (bounded by `readyTimeout`, `unavailable/park_timeout`). The new attempt's requests are made and bound
+  the gate (bounded by `readyTimeout`, `unavailable/park_timeout`). The gate holds a call while any attempt of the
+  object activates (a swap, parked or not, a restart after its drain), until the object is live, failed or ended;
+  a parked attempt showing `failed { waiting }` rejects it with that cause. A call never gets `not_ready` there: a
+  hold over a link stays bound while the old instance still changes, so its consumer sees `live` and sends. When the
+  hold then leaves the old instance (a parked swap's retirement), it tells the consumer `loading` and answers the
+  calls still in flight `unavailable` (§22), as for any object leaving `live`. The new attempt's requests are made and bound
   before the old attempt's are released (a request equal to an old one binds to the same target with no gap, M§3.9).
   Running calls finish on the old attempt with its handles valid, except R15: an old call touching a document whose
   version rose throws once (`released/version`), the document intact, the call not resent; the same for a table whose
