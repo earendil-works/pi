@@ -3,8 +3,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { discoverExtensionsInDir } from "../src/core/extensions/discovery.ts";
 import { discoverAndLoadExtensions } from "../src/core/extensions/loader.ts";
-import { discoverExtensionsInDir } from "../src/core/extensions/manifest.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 

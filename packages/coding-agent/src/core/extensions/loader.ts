@@ -20,7 +20,7 @@ import { type McpServerConfig, McpServerRegistry, validateMcpServerConfig } from
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { time } from "../timings.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
-import { discoverExtensionDirectoryContents, discoverExtensionsInDir } from "./manifest.ts";
+import { discoverExtensionDirectoryContents, discoverExtensionsInDir } from "./discovery.ts";
 import type {
 	EntryRenderer,
 	Extension,

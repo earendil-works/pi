@@ -50,7 +50,7 @@ import {
 	resolvePath,
 } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
-import { discoverExtensionsInDir, ExtensionManifestResolutionError } from "./extensions/manifest.ts";
+import { discoverExtensionsInDir, ExtensionManifestResolutionError } from "./extensions/discovery.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
 import {
 	expandManifestGlob,
