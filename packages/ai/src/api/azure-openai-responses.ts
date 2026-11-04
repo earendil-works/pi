@@ -205,7 +205,8 @@ function buildParams(
 		model: deploymentName,
 		input: messages,
 		stream: true,
-		prompt_cache_key: clampOpenAIPromptCacheKey(options?.sessionId),
+		prompt_cache_key:
+			model.compat?.promptCacheKeyMode === "disabled" ? undefined : clampOpenAIPromptCacheKey(options?.sessionId),
 		store: false,
 	};
 

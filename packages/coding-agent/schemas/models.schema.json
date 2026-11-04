@@ -1017,6 +1017,23 @@
           ],
           "description": "Session-affinity header format. Defaults are API-specific or auto-detected."
         },
+        "promptCacheKeyMode": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "auto"
+            },
+            {
+              "type": "string",
+              "const": "enabled"
+            },
+            {
+              "type": "string",
+              "const": "disabled"
+            }
+          ],
+          "description": "Controls the prompt_cache_key request field for openai-completions and openai-responses: auto keeps each API's default, enabled sends it whenever caching is active, disabled never sends it. Default: auto."
+        },
         "supportsLongCacheRetention": {
           "type": "boolean",
           "description": "Whether the provider supports long prompt cache retention. Defaults are API-specific or auto-detected."

@@ -177,12 +177,14 @@ type ResolvedOpenAICompletionsCompat = Omit<
 	Required<OpenAICompletionsCompat>,
 	| "cacheControlFormat"
 	| "supportsThinkingTokenBudget"
+	| "promptCacheKeyMode"
 	| "thinkingTokenBudgetField"
 	| "supportsMidConvoSystemMessages"
 	| "supportsMidConvoToolAdditions"
 	| "vllmPriority"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
+	promptCacheKeyMode?: OpenAICompletionsCompat["promptCacheKeyMode"];
 	supportsThinkingTokenBudget?: OpenAICompletionsCompat["supportsThinkingTokenBudget"];
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
 	supportsMidConvoSystemMessages?: OpenAICompletionsCompat["supportsMidConvoSystemMessages"];
@@ -803,14 +805,19 @@ function buildParams(
 		grammarToolInputProperties,
 	});
 	const cacheControl = getCompatCacheControl(compat, cacheRetention);
+	const promptCacheKeyMode = compat.promptCacheKeyMode ?? "auto";
+	const supportsPromptCacheKey =
+		promptCacheKeyMode === "enabled" ||
+		(promptCacheKeyMode === "auto" &&
+			(model.baseUrl.includes("api.openai.com") ||
+				(cacheRetention === "long" && compat.supportsLongCacheRetention)));
 
 	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
 		model: model.id,
 		messages,
 		stream: true,
 		prompt_cache_key:
-			(model.baseUrl.includes("api.openai.com") && cacheRetention !== "none") ||
-			(cacheRetention === "long" && compat.supportsLongCacheRetention)
+			cacheRetention !== "none" && supportsPromptCacheKey
 				? clampOpenAIPromptCacheKey(options?.sessionId)
 				: undefined,
 		prompt_cache_retention: cacheRetention === "long" && compat.supportsLongCacheRetention ? "24h" : undefined,
@@ -1726,6 +1733,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		sendSessionAffinityHeaders: model.compat.sendSessionAffinityHeaders ?? detected.sendSessionAffinityHeaders,
 		sessionAffinityFormat: model.compat.sessionAffinityFormat ?? detected.sessionAffinityFormat,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
+		promptCacheKeyMode: model.compat.promptCacheKeyMode,
 		vllmPriority: model.compat.vllmPriority,
 	};
 }
