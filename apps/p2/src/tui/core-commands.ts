@@ -270,6 +270,20 @@ export const CORE_COMMANDS: Record<string, TuiCommand> = {
 		slash: { name: "reload" },
 		run: (ctx) => ctx.reload(),
 	},
+	"p2.panel.focus": {
+		title: "Focus the side panel or the editor",
+		category: "View",
+		keys: "f2",
+		when: "panel && !overlay",
+		run: (ctx) => ctx.panel.focus(!ctx.panel.focused),
+	},
+	"p2.panel.close": {
+		title: "Close the side panel",
+		category: "View",
+		when: "panel && !overlay",
+		slash: { name: "close-panel" },
+		run: (ctx) => ctx.panel.close(),
+	},
 	"app.tools.expand": {
 		title: "Toggle tool output",
 		category: "View",

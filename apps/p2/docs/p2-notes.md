@@ -245,6 +245,15 @@ pi's defaults (rebindable in pi's `keybindings.json` or p2 prefs; `/hotkeys` lis
 | Ctrl+T / Ctrl+O | Show thinking / expand tool output |
 | PageUp / PageDown / Ctrl+Home / Ctrl+End | Scroll the transcript (pi-tui's alt-screen keys; Ctrl+End follows again) |
 | F1 / `/hotkeys` / `/reload` | Command palette / shortcuts / fetch the server TUI bundle into a fresh worker |
+| F2 / `/close-panel` | Move the focus into the side panel and back (Escape also returns) / close it |
+
+**Side panel.** `ctx.panel.open(id, content, title)` shows one component to the right of the screen's body (about 40%
+of the width, behind a bar; the dock stays full width), in a `ScrollView` the runtime owns. Plugins open it (Enter in
+`/artifacts` shows an artifact there when the terminal fits it; it follows new versions through `ArtifactList`). The editor keeps
+the focus; F2 (`p2.panel.focus`) moves it into the panel, where the runtime sets pi-tui's `capturesViewportInput` and
+scrolls the panel with the viewport and select keys, keeps other keys from the editor and returns the focus on Escape.
+Search stays on the transcript (the primary scroll view). Hidden below 100 columns; closed on navigation to another
+conversation and whenever the command registry changes (a facet reload), like overlays.
 
 The launcher polls the bundle version every second. A changed hash prepares a new worker while the old one remains
 active; once ready, it copies bounded UI state (selection, drafts, send retry IDs, display toggles, reading position),

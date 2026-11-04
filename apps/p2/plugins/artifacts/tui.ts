@@ -1,7 +1,7 @@
 // Artifacts in the TUI (p2-tui-port.md P11c), after the web's artifact card, picker and viewer. The card shows the
 // title, type and version; expanded, a text or Markdown artifact shows the content the call wrote. `/artifacts` lists
 // the conversation's artifacts (`ArtifactList`): Enter shows one inline (`ArtifactContent`; Markdown rendered, HTML and
-// SVG as source), Ctrl+B opens it in the browser (launcher `openUrl`; the browser needs its own sign-in) and Ctrl+S
+// SVG as source; in the side panel, where it follows new versions, when the terminal is wide enough), Ctrl+B opens it in the browser (launcher `openUrl`; the browser needs its own sign-in) and Ctrl+S
 // downloads it (launcher `download`). The worker never fetches the `/artifact` route itself: it has no cookie.
 
 import { Markdown, Text } from "@earendil-works/pi-tui";
@@ -72,58 +72,129 @@ const artifactRenderers: ToolRenderers = {
 	},
 };
 
-/** An artifact shown inline: Markdown rendered, text and HTML/SVG source as lines. */
-function showArtifact(ctx: TuiContext, session: string, artifact: ArtifactInfo): void {
-	let content: string | undefined;
-	let status = "Loading…";
-	let cache: { width: number; lines: string[] } | undefined;
-	const lines = (width: number): string[] => {
-		if (content === undefined) return [ctx.theme.current.fg("muted", status)];
-		if (cache?.width === width) return cache.lines;
-		const body =
-			artifact.type === "markdown"
-				? new Markdown(safeText(content), 0, 0, ctx.theme.markdown).render(width)
-				: content.split("\n").map((line) => lineText(line));
-		const note =
-			artifact.type === "html" || artifact.type === "svg"
-				? [
-						ctx.theme.current.fg(
-							"warning",
-							`Source only: Ctrl+B in /artifacts opens it in the browser (${BROWSER_NOTE}).`,
-						),
-						"",
-					]
-				: [];
-		cache = { width, lines: [...note, ...body, ...(status ? ["", ctx.theme.current.fg("warning", status)] : [])] };
-		return cache.lines;
+/** Reads artifact versions of `session` through one held `ArtifactContent`, until released. */
+function contentReader(ctx: TuiContext, session: string) {
+	const ref = ctx.host.hold(ArtifactContent, { session }, BACKGROUND_CONTEXT);
+	return {
+		read: async (artifact: ArtifactInfo) => {
+			await whenLive(ref);
+			if (statusOf(ref) !== "live" || ref.variant !== "reader") throw new Error("Artifacts are not available");
+			return ref.read({ name: artifact.name, version: artifact.version }, BACKGROUND_CONTEXT);
+		},
+		release: () => ref.release(),
 	};
+}
+
+type ContentReader = ReturnType<typeof contentReader>;
+
+/**
+ * One version of an artifact as lines at a width (Markdown rendered, text and HTML/SVG source), cached per width;
+ * `load` reads a version and renders it once read.
+ */
+class ArtifactLines {
+	private content: string | undefined;
+	private status = "Loading…";
+	private cache: { width: number; lines: string[] } | undefined;
+	private readonly ctx: TuiContext;
+	private artifact: ArtifactInfo;
+	constructor(ctx: TuiContext, artifact: ArtifactInfo) {
+		this.ctx = ctx;
+		this.artifact = artifact;
+	}
+	get info(): ArtifactInfo {
+		return this.artifact;
+	}
+	/** Reads `artifact` (a version) and shows it once read; the previous version stays shown meanwhile. */
+	load(reader: ContentReader, artifact: ArtifactInfo): void {
+		void reader
+			.read(artifact)
+			.then((read) => {
+				// Reads may finish out of order: an older version never replaces a newer one.
+				if (artifact.version < this.artifact.version && this.content !== undefined) return;
+				this.artifact = artifact;
+				this.status = read.truncated ? "… truncated: Ctrl+S in /artifacts downloads all of it" : "";
+				this.content = read.content;
+			})
+			.catch((error: unknown) => {
+				this.status = message(error);
+			})
+			.finally(() => {
+				this.cache = undefined;
+				this.ctx.requestRender();
+			});
+	}
+	render(width: number): string[] {
+		const theme = this.ctx.theme.current;
+		if (this.content === undefined) return [theme.fg("muted", this.status)];
+		if (this.cache?.width === width) return this.cache.lines;
+		const body =
+			this.artifact.type === "markdown"
+				? new Markdown(safeText(this.content), 0, 0, this.ctx.theme.markdown).render(width)
+				: this.content.split("\n").map((line) => lineText(line));
+		const note =
+			this.artifact.type === "html" || this.artifact.type === "svg"
+				? [theme.fg("warning", `Source only: Ctrl+B in /artifacts opens it in the browser (${BROWSER_NOTE}).`), ""]
+				: [];
+		const status = this.status ? ["", theme.fg("warning", this.status)] : [];
+		this.cache = { width, lines: [...note, ...body, ...status] };
+		return this.cache.lines;
+	}
+	invalidate(): void {
+		this.cache = undefined;
+	}
+}
+
+/** An artifact shown inline, over the chat. */
+function showArtifact(ctx: TuiContext, session: string, artifact: ArtifactInfo): void {
+	const shown = new ArtifactLines(ctx, artifact);
 	const viewer = ctx.overlay(
 		"artifact-view",
 		new TextViewer(ctx, {
 			title: `${artifact.title} · ${artifact.type.toUpperCase()} · version ${artifact.version}`,
-			lines,
+			lines: (width) => shown.render(width),
 			onClose: () => {
-				ref.release();
+				reader.release();
 				viewer.close();
 			},
 		}),
 		{ width: "100%", anchor: "bottom-center" },
 	);
-	const ref = ctx.host.hold(ArtifactContent, { session }, BACKGROUND_CONTEXT);
-	void whenLive(ref)
-		.then(async () => {
-			if (statusOf(ref) !== "live" || ref.variant !== "reader") throw new Error("Artifacts are not available");
-			const read = await ref.read({ name: artifact.name, version: artifact.version }, BACKGROUND_CONTEXT);
-			status = read.truncated ? "… truncated: Ctrl+S in /artifacts downloads all of it" : "";
-			content = read.content;
-		})
-		.catch((error: unknown) => {
-			status = message(error);
-		})
-		.finally(() => {
-			cache = undefined;
-			ctx.requestRender();
-		});
+	const reader = contentReader(ctx, session);
+	shown.load(reader, artifact);
+}
+
+/** An artifact pinned in the side panel: it shows each new version as the conversation's artifact list reports it. */
+function pinArtifact(ctx: TuiContext, session: string, conversation: number, artifact: ArtifactInfo): void {
+	const shown = new ArtifactLines(ctx, artifact);
+	const reader = contentReader(ctx, session);
+	const list = ctx.host.hold(ArtifactList, { session, conversation }, BACKGROUND_CONTEXT);
+	let loaded = artifact.version;
+	shown.load(reader, artifact);
+	const stop = follow(list.artifacts, (value) => {
+		// The list has one entry per version.
+		const latest = (value ?? [])
+			.filter((candidate) => candidate.name === artifact.name)
+			.reduce<ArtifactInfo | undefined>(
+				(max, candidate) => (max && max.version >= candidate.version ? max : candidate),
+				undefined,
+			);
+		if (!latest || latest.version <= loaded) return;
+		loaded = latest.version;
+		shown.load(reader, latest);
+	});
+	ctx.panel.open(
+		`artifact:${artifact.name}`,
+		{
+			render: (width) => shown.render(width),
+			invalidate: () => shown.invalidate(),
+			dispose: () => {
+				stop();
+				list.release();
+				reader.release();
+			},
+		},
+		() => `${lineText(shown.info.title)} · ${shown.info.type.toUpperCase()} · v${shown.info.version}`,
+	);
 }
 
 function openArtifacts(ctx: TuiContext): void {
@@ -135,20 +206,30 @@ function openArtifacts(ctx: TuiContext): void {
 		artifacts = (value ?? []).filter((artifact) => NAME.test(artifact.name));
 		ctx.requestRender();
 	});
-	const byRow = (row: ListRow | undefined) => artifacts.find((artifact) => artifact.name === row?.key);
+	const close = () => {
+		stop();
+		list.release();
+		overlay.close();
+	};
+	// One entry per version: a row is a name and a version.
+	const keyOf = (artifact: ArtifactInfo) => `${artifact.name}:${artifact.version}`;
+	const byRow = (row: ListRow | undefined) => artifacts.find((artifact) => keyOf(artifact) === row?.key);
 	const overlay = ctx.overlay(
 		"artifacts",
 		new ListOverlay(ctx, {
 			title: () => `Artifacts (${artifacts.length})`,
 			rows: () =>
 				artifacts.map((artifact) => ({
-					key: artifact.name,
+					key: keyOf(artifact),
 					label: artifact.title,
 					detail: `${artifact.type.toUpperCase()} · v${artifact.version}`,
 				})),
 			onSelect: (row) => {
 				const artifact = byRow(row);
-				if (artifact) showArtifact(ctx, session, artifact);
+				if (!artifact) return;
+				if (!ctx.panel.fits) return showArtifact(ctx, session, artifact);
+				close();
+				pinArtifact(ctx, session, ctx.identity.conversation, artifact);
 			},
 			actions: [
 				{
@@ -180,13 +261,12 @@ function openArtifacts(ctx: TuiContext): void {
 				},
 			],
 			footer: () => [
-				ctx.theme.current.fg("dim", `  Enter shows it here; Ctrl+B opens it in the browser (${BROWSER_NOTE})`),
+				ctx.theme.current.fg(
+					"dim",
+					`  Enter shows it ${ctx.panel.fits ? "beside the chat" : "here"}; Ctrl+B opens it in the browser (${BROWSER_NOTE})`,
+				),
 			],
-			onClose: () => {
-				stop();
-				list.release();
-				overlay.close();
-			},
+			onClose: () => close(),
 		}),
 		{ width: "100%", anchor: "bottom-center" },
 	);

@@ -360,6 +360,8 @@ test("chat mode: chip, quoted replies and notes, /chat-mode (owner), /reply, @pi
 });
 
 const ESC = "\x1b";
+const F2 = "\x1bOQ";
+const PAGE_DOWN = "\x1b[6~";
 const TAB = "\t";
 const CTRL_T = "\x14";
 const CTRL_P = "\x10";
@@ -1027,10 +1029,10 @@ function contentStubs(calls: Calls): Stub[] {
 	];
 }
 
-test("artifacts: the card previews text, /artifacts shows Markdown inline, opens in the browser and downloads", async (t) => {
+test("artifacts: the card previews text, /artifacts shows Markdown inline when narrow, opens in the browser and downloads", async (t) => {
 	const calls: Calls = {};
 	const lines = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n");
-	const { screen, send, runtime } = await setup(t, {
+	const { screen, send, runtime, terminal } = await setup(t, {
 		calls,
 		worker: contentStubs(calls),
 		facets: [tuiCoreFacet, chatTui, statusTui, artifactsTui],
@@ -1051,6 +1053,8 @@ test("artifacts: the card previews text, /artifacts shows Markdown inline, opens
 	runtime.ctx.commands.run("p2.artifacts");
 	await poll(async () => (await screen()).includes("Artifacts (2)"));
 	assert.match(await screen(), /the browser needs its own sign-in/);
+	// Too narrow for the side panel: Enter shows an artifact over the chat.
+	terminal.resize(80, 24);
 	send(ENTER);
 	await poll(
 		async () => (await screen()).includes("Notes · MARKDOWN · version 2") && (await screen()).includes("Heading"),
@@ -1075,6 +1079,90 @@ test("artifacts: the card previews text, /artifacts shows Markdown inline, opens
 	await poll(() => grants.length === 2);
 	assert.deepEqual(grants[1], ["download", { kind: "artifact", session: "s", name: "page", version: 1 }]);
 	await poll(() => runtime.notices.some((notice) => notice.text === "Downloaded Page"));
+});
+
+test("artifacts: Enter shows one in the side panel, which follows new versions, scrolls when focused and hides when narrow", async (t) => {
+	const calls: Calls = {};
+	let list: Cell<{ name: string; title: string; type: string; version: number }[]> | undefined;
+	const rows = Array.from({ length: 60 }, (_, index) => `row ${index + 1}`).join("\n\n");
+	const { screen, send, runtime, terminal } = await setup(t, {
+		calls,
+		worker: [
+			[
+				ArtifactList,
+				(_input, _principal, self) => {
+					// One entry per version, as the worker lists them.
+					list = self.state([
+						{ name: "notes", title: "Notes", type: "markdown", version: 1 },
+						{ name: "notes", title: "Notes", type: "markdown", version: 2 },
+					]);
+					return { variant: "reader", artifacts: list };
+				},
+			],
+			[
+				ArtifactContent,
+				() => ({
+					variant: "reader",
+					read: ({ name, version }: { name: string; version: number }) => {
+						calls.readArtifact = [...(calls.readArtifact ?? []), { name, version }];
+						const heading = version === 2 ? "Version two" : "Version three";
+						return {
+							info: { name, title: "Notes", type: "markdown", version },
+							content: `# ${heading}\n\n${rows}`,
+							truncated: false,
+						};
+					},
+				}),
+			],
+		],
+		facets: [tuiCoreFacet, chatTui, statusTui, artifactsTui],
+	});
+	runtime.ctx.commands.run("p2.artifacts");
+	await poll(async () => (await screen()).includes("Artifacts (2)"));
+	send(DOWN); // the second row: version 2 of the same artifact
+	send(ENTER);
+	await poll(
+		async () => (await screen()).includes("Notes · MARKDOWN · v2") && (await screen()).includes("Version two"),
+	);
+	assert.equal(runtime.ctx.panel.current, "artifact:notes");
+	assert(runtime.contexts().has("panel"));
+	// Beside the chat, behind its bar; the editor keeps the focus.
+	assert.match(await screen(), /│ +Version two/);
+	assert.equal(runtime.ctx.panel.focused, false);
+	assert(runtime.capturesViewportInput === false);
+
+	send(F2);
+	assert.equal(runtime.ctx.panel.focused, true);
+	assert(runtime.capturesViewportInput);
+	assert(runtime.contexts().has("panelFocused"));
+	send("x"); // typing stays out of the editor
+	send(PAGE_DOWN);
+	send(PAGE_DOWN);
+	await poll(async () => !(await screen()).includes("Version two"));
+	send(ESC);
+	assert.equal(runtime.ctx.panel.focused, false);
+	assert.equal(runtime.ctx.panel.current, "artifact:notes", "Escape only gives the focus back");
+
+	// A new version replaces the shown one.
+	list!.replace(null, [...list!.value, { name: "notes", title: "Notes", type: "markdown", version: 3 }]);
+	await poll(async () => (await screen()).includes("Notes · MARKDOWN · v3"));
+	assert.deepEqual(calls.readArtifact, [
+		{ name: "notes", version: 2 },
+		{ name: "notes", version: 3 },
+	]);
+
+	// Too narrow for a split: hidden, and it cannot take the focus.
+	terminal.resize(80, 24);
+	await poll(async () => !(await screen()).includes("Notes · MARKDOWN · v3"));
+	assert(!runtime.contexts().has("panel"));
+	send(F2);
+	assert.equal(runtime.ctx.panel.focused, false);
+	terminal.resize(100, 24);
+	await poll(async () => (await screen()).includes("Notes · MARKDOWN · v3"));
+
+	runtime.ctx.commands.run("p2.panel.close");
+	await poll(async () => !(await screen()).includes("Notes · MARKDOWN · v3"));
+	assert.equal(runtime.ctx.panel.current, undefined);
 });
 
 test("sent files: the card, /downloads previews text, saves and opens through the launcher", async (t) => {
