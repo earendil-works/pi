@@ -1,11 +1,12 @@
 // Durable on Chord v2 (Node): contexts, and the Harness's registry read from the worker's Chord registries of
-// extensions and their switches.
+// extensions and their switches, with every tool's requirements checked (`tool-access.ts`).
 import type { RegistryValue } from "@earendil-works/chord";
 import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import { createRegistry, type Extension, type RegistryReader, type RegistrySnapshot } from "@earendil-works/pi-durable";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
 import { keyedRegistry } from "./chord.ts";
+import { guardTool, type P2Tool } from "./tool-access.ts";
 
 /**
  * A Durable call context: a Chord handler's or routine's `ctx` is one already; a bare signal gets the background
@@ -14,8 +15,11 @@ import { keyedRegistry } from "./chord.ts";
 export const durableContext = (ctx: Context | AbortSignal): Context =>
 	ctx instanceof AbortSignal ? withAbortSignal(ctx, BACKGROUND_CONTEXT) : ctx;
 
-/** Durable extensions every conversation of the worker may select, by name (host-lifetime objects contribute them). */
-export const Extensions = keyedRegistry<Extension>("p2.durable-extensions");
+/**
+ * Durable extensions every conversation of the worker may select, by name (host-lifetime objects contribute them). Their
+ * tools declare their requirements (`P2Tool`).
+ */
+export const Extensions = keyedRegistry<Extension<P2Tool>>("p2.durable-extensions");
 
 /**
  * Live switches of contributed extensions, by extension name: an extension whose switch reads `false` is left out of
@@ -36,20 +40,24 @@ const CODEMODE_EXTENSION = "codemode";
  * observations.
  */
 export function durableRegistry(
-	extensions: RegistryValue<ReadonlyMap<string, Extension>>,
+	extensions: RegistryValue<ReadonlyMap<string, Extension<P2Tool>>>,
 	switches: RegistryValue<ReadonlyMap<string, boolean | undefined>>,
 	context: Context,
 ): RegistryReader {
-	const snapshots = new WeakMap<ReadonlyMap<string, Extension>, Map<string, RegistrySnapshot>>();
-	const snapshotOf = (table: ReadonlyMap<string, Extension>, disabled: ReadonlySet<string>): RegistrySnapshot => {
+	const snapshots = new WeakMap<ReadonlyMap<string, Extension<P2Tool>>, Map<string, RegistrySnapshot>>();
+	const snapshotOf = (
+		table: ReadonlyMap<string, Extension<P2Tool>>,
+		disabled: ReadonlySet<string>,
+	): RegistrySnapshot => {
 		const key = [...disabled].sort().join("\n");
 		const byKey = snapshots.get(table) ?? new Map<string, RegistrySnapshot>();
 		snapshots.set(table, byKey);
 		let snapshot = byKey.get(key);
 		if (snapshot === undefined) {
-			const builder = createRegistry();
+			const builder = createRegistry<P2Tool>();
 			const installed = [...table].filter(([name]) => !disabled.has(name)).map(([, extension]) => extension);
-			for (const extension of installed) builder.install(extension);
+			for (const extension of installed)
+				builder.install(extension.tools ? { ...extension, tools: extension.tools.map(guardTool) } : extension);
 			const codemode = table.has(CODEMODE_EXTENSION) && !disabled.has(CODEMODE_EXTENSION);
 			const search = createToolSearchExtension();
 			const deferred = installed.some((extension) =>

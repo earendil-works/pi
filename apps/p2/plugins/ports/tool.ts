@@ -1,9 +1,8 @@
-import { defineExtension, defineTool, section } from "@earendil-works/pi-durable";
+import { defineExtension, section } from "@earendil-works/pi-durable";
 import { bool, int, obj, opt, str, union } from "@earendil-works/pi-schema";
 import type { Context } from "@p2/app/v1";
 import { literal } from "@p2/app/v1";
-import { isTopLevel, originOf } from "@p2/app/v1/worker";
-import type { ConversationOrigin } from "../conversations/contract.ts";
+import { defineP2Tool, isTopLevel, type P2Tool } from "@p2/app/v1/worker";
 import { type ForwardView, MAX_FORWARD_NAME, type PortsReply, type PortsRequest } from "./protocol.ts";
 
 /** What the agent learns: every forward, its addresses, who opened it, and the public endpoints spelled out. */
@@ -40,10 +39,10 @@ function describe(reply: PortsReply, self: string): string {
 }
 
 export function createPortsExtension(
-	queryServer: (query: PortsRequest, origin: ConversationOrigin, context: Context) => Promise<PortsReply>,
+	queryServer: (query: PortsRequest, context: Context) => Promise<PortsReply>,
 	self: () => string,
 ) {
-	return defineExtension({
+	return defineExtension<P2Tool>({
 		name: "p2-ports",
 		sections: [
 			section("ports", async (input, context) =>
@@ -53,7 +52,7 @@ export function createPortsExtension(
 			),
 		],
 		tools: [
-			defineTool({
+			defineP2Tool({
 				name: "ports",
 				description: [
 					"Forward web servers on this device through Radius, so the owner can open them from anywhere.",
@@ -73,14 +72,14 @@ export function createPortsExtension(
 				),
 				// Every action is idempotent: opening twice returns the same forward, closing twice reports it closed.
 				replay: "safe",
-				execute: async (args, api, context) => {
+				origin: "owner",
+				scope: "main",
+				execute: async (args, _api, context) => {
 					const reply = (text: string, details: Record<string, unknown> = {}, isError = false) => ({
 						output: [{ type: "text" as const, text }],
 						details: { action: args.action, ...(args.port === undefined ? {} : { port: args.port }), ...details },
 						isError,
 					});
-					if (!(await isTopLevel(api, api.conversationId, context)))
-						return reply("Only top-level conversations can use this tool.", {}, true);
 					let request: PortsRequest;
 					if (args.action === "list") request = { action: "list" };
 					else if (args.port === undefined) return reply(`${args.action} needs a port.`, {}, true);
@@ -93,14 +92,7 @@ export function createPortsExtension(
 						};
 					else request = { action: "close", port: args.port };
 					try {
-						const origin = await originOf(api, context);
-						if (!origin)
-							return reply(
-								"Forwarding ports requires owner-initiated input or an authenticated peer message; guest input is not permitted.",
-								{},
-								true,
-							);
-						const result = await queryServer(request, origin, context);
+						const result = await queryServer(request, context);
 						const summary =
 							request.action === "open" && result.forward
 								? `Forwarded port ${result.forward.port}${result.forward.public ? ", public" : ", private"}: ${

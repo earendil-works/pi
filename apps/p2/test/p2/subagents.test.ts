@@ -101,18 +101,10 @@ describe("subagents (fake provider)", () => {
 		await until(children.children, (value) => value?.[session]?.[0]?.tools.join() === "bash,artifact");
 		const sub = await holdIn(owner, Chat, { session, conversation: child.conversationId }, "participant");
 		const view = await until(sub.view, (value) => texts(value).includes("Echo: hello helper"));
-		// The sidebar lists the chosen tools; the agent also has `team` and the history tools, which every subagent gets.
-		assert.deepEqual((view?.docs["pi.agent"] as { tools: string[] }).tools, [
-			"bash",
-			"artifact",
-			"team",
-			"history_search",
-			"history_read",
-			"history_handoff",
-		]);
-		assert.ok(
-			(view?.docs["pi.agent"] as { extensions: { remove: string[] } }).extensions.remove.includes("subagent-tools"),
-		);
+		// The sidebar lists the chosen tools; the agent also has `team` (`scope: "subagent"`), offered from the start.
+		const agent = view?.docs["pi.agent"] as { tools: string[]; modelTools: { add: string[] } };
+		assert.deepEqual(agent.tools, ["bash", "artifact", "team"]);
+		assert.deepEqual(agent.modelTools.add, ["team"]);
 		await sub.configure({ model: { provider: "faux", modelId: "faux-1" }, thinkingLevel: "off" }, BACKGROUND_CONTEXT);
 		await until(children.children, (value) => value?.[session]?.[0]?.thinkingLevel === "off");
 		await sub.send({ text: "direct child message", requestId: "direct" }, BACKGROUND_CONTEXT);
@@ -377,39 +369,39 @@ describe("subagents with code mode (fake provider)", () => {
 		await fixture?.close();
 	});
 
-	it("validates codemode as a choosable tool", async () => {
+	it("validates tools against the caller's own, session-level ones excluded", async () => {
 		const bad = await subagent({ action: "spawn", name: "bad", message: "x", tools: ["codemode", "bogus"] });
 		assert.equal(bad.isError, true);
-		assert.equal(
-			text(bad),
-			"Unknown tools: bogus. Choose from read, write, edit, bash, send_file, artifact, codemode, location_envs, location_dirs, location_move.",
-		);
+		assert.match(text(bad), /^Unknown tools: bogus\. Choose from your own tools: .*\bcodemode\b/);
+		const main = await subagent({
+			action: "spawn",
+			name: "bad",
+			message: "x",
+			tools: ["subagent", "rename_session"],
+		});
+		assert.match(text(main), /^Unknown tools: subagent, rename_session\. /);
 		const chosen = await subagent({ action: "spawn", name: "chosen", message: "x", tools: ["bash", "codemode"] });
 		assert.deepEqual((chosen.details as { tools?: string[] }).tools, ["bash", "codemode"]);
 		await reported("chosen");
 	});
 
-	it("gives code mode by default; a script calls its tools and the tools behind code mode", async () => {
-		// The subagent's script reads with a chosen coding tool, then starts a one-shot agent (`agent` is script-only:
-		// `callers: ["tools"]`), whose tools may not include code mode.
+	it("gives all the caller's tools by default; a script calls its tools and the tools behind code mode", async () => {
+		// The subagent's script reads with a coding tool, then starts one-shot agents (`agent` is script-only:
+		// `callers: ["tools"]`), which may get code mode too, but not the tools that work only in the main conversation.
 		const script = [
 			'const read = await tools.read({ path: "marker.txt" });',
 			'const answer = await tools.agent({ prompt: \'json {"n":1}\', schema: { type: "object" } });',
+			'const nested = await tools.agent({ prompt: \'json {"n":2}\', schema: { type: "object" }, tools: ["codemode", "read"] });',
 			"let refused;",
-			'try { await tools.agent({ prompt: "x", schema: {}, tools: ["codemode"] }); } catch (error) { refused = String(error.message ?? error); }',
-			"return { read, answer, refused };",
+			'try { await tools.agent({ prompt: "x", schema: {}, tools: ["subagent"] }); } catch (error) { refused = String(error.message ?? error); }',
+			"return { read, answer, nested, refused };",
 		].join("\n");
 		const spawned = await subagent({ action: "spawn", name: "coder", message: `codemode ${script}` });
 		assert.equal(spawned.isError, false, text(spawned));
-		assert.deepEqual((spawned.details as { tools?: string[] }).tools, [
-			"read",
-			"write",
-			"edit",
-			"bash",
-			"send_file",
-			"artifact",
-			"codemode",
-		]);
+		const given = (spawned.details as { tools?: string[] }).tools ?? [];
+		for (const each of ["read", "bash", "codemode", "history_search", "location_move"])
+			assert.ok(given.includes(each), each);
+		for (const each of ["subagent", "rename_session", "team", "agent"]) assert.ok(!given.includes(each), each);
 		const listed = await until(children.children, (value) =>
 			Boolean(value?.[session]?.some((each) => each.name === "coder")),
 		);
@@ -428,13 +420,16 @@ describe("subagents with code mode (fake provider)", () => {
 		assert.equal(ran?.isError, false, text(ran));
 		const output = text(ran);
 		assert.match(output, /^Script completed/);
-		const value = JSON.parse(output.slice(output.indexOf("{"))) as { read: string; answer: unknown; refused: string };
+		const value = JSON.parse(output.slice(output.indexOf("{"))) as {
+			read: string;
+			answer: unknown;
+			nested: unknown;
+			refused: string;
+		};
 		assert.match(value.read, /inside/);
 		assert.deepEqual(value.answer, { n: 1 });
-		assert.match(
-			value.refused,
-			/Unknown tools: codemode\. Choose from read, write, edit, bash, send_file, artifact, location_envs/,
-		);
+		assert.deepEqual(value.nested, { n: 2 });
+		assert.match(value.refused, /^Unknown tools: subagent\. Choose from your own tools: /);
 		// The script-only tools were enabled by name before the script started; the model is still offered its choice.
 		const tools = (sub.view.value?.docs["pi.agent"] as { tools: string[] }).tools;
 		assert.ok(tools.includes("agent"), tools.join());
@@ -486,15 +481,9 @@ describe("subagents with code mode (fake provider)", () => {
 			if (!refused.isError) await reported(`off-${attempt}`);
 		}
 		assert.equal(refused?.isError, true);
-		assert.equal(text(refused), "Not available in this session: codemode.");
+		assert.match(text(refused), /^Unknown tools: codemode\. Choose from your own tools: /);
 		const plain = await subagent({ action: "spawn", name: "plain", message: "x" });
-		assert.deepEqual((plain.details as { tools?: string[] }).tools, [
-			"read",
-			"write",
-			"edit",
-			"bash",
-			"send_file",
-			"artifact",
-		]);
+		const given = (plain.details as { tools?: string[] }).tools ?? [];
+		assert.ok(given.includes("read") && !given.includes("codemode"), given.join());
 	});
 });

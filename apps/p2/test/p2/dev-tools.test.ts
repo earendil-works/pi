@@ -19,6 +19,7 @@ import { Session } from "../../src/runtime/chord.ts";
 import { durableContext, ExtensionSwitches } from "../../src/runtime/durable.ts";
 import { PEER_MESSAGE_ENTRY } from "../../src/runtime/entries.ts";
 import { INPUT_ENTRY } from "../../src/runtime/input.ts";
+import { guardTool } from "../../src/runtime/tool-access.ts";
 import { Extensions, type HarnessParts, SessionLocation, type WorkerParts } from "../../src/runtime/worker.ts";
 import { APP, testHost, workerFacet } from "./helpers.ts";
 
@@ -32,54 +33,58 @@ const owner = person("owner");
 const guest = person("guest");
 const context = durableContext(new AbortController().signal);
 
-function api(input: Input, newerGuest = false, conversationId = ROOT_CONVERSATION_ID): ToolExecutionApi {
-	const entry = (id: number, { kind, data }: Input) =>
-		({ id, kind, data, model: [{ role: "user", content: "x" }] }) as unknown as EntryRecord;
-	const entries = [entry(9, input)];
-	if (newerGuest) entries.unshift(entry(11, guest));
-	// Only the invocation-bound operations used by the attribution check are stubbed.
+/** A tool call's API in a run that placed `inputs`, in conversation `conversationId`. */
+function api(inputs: Input[], conversationId = ROOT_CONVERSATION_ID): ToolExecutionApi {
+	const entries = inputs.map(
+		({ kind, data }, index) =>
+			({ id: index + 1, kind, data, model: [{ role: "user", content: "x" }] }) as unknown as EntryRecord,
+	);
+	// Only the invocation-bound operations used by the requirement checks are stubbed.
 	return {
 		conversationId,
 		taskId: "fixture-tool",
 		callId: "fixture-call",
-		getTask: async () => ({ kind: "pi.tool", input: { assistant: 10 } }),
 		// No `/tree` branches: conversation 1 is the only top-level conversation.
-		snapshot: async () => undefined,
+		snapshot: async (doc: { definition: { kind: string } }) =>
+			doc.definition.kind === "pi.live" ? { run: { inputs: entries.map((entry) => entry.id) } } : undefined,
 		commit: async (change: (tx: Tx) => unknown) =>
 			change({
-				scanEntries: async (query: { maxEntryId: number }) => ({
-					items: entries.filter((entry) => entry.id <= query.maxEntryId),
-				}),
+				submission: async (id: number) => ({ type: "input", entry: id }),
+				entry: async (id: number) => entries.find((entry) => entry.id === id),
 			} as unknown as Tx),
 	} as unknown as ToolExecutionApi;
 }
 
-test("reload_plugins admits only an owner-attributed root turn working on p2; later guest input cannot change that grant", async () => {
+test("reload_plugins admits only a root turn the owner started, working on p2; a guest's steered input takes it away", async () => {
 	let calls = 0;
 	const extension = createReloadExtension(async (names) => {
 		calls++;
 		return { ok: true, message: `Reloaded ${(names ?? ["dirty"]).join(", ")}` };
 	}, true);
-	const tool = extension.tools![0]!;
+	// As the worker's registry runs it: with its requirements checked.
+	const tool = guardTool(extension.tools![0]!);
 	assert.equal(tool.name, "reload_plugins");
 	assert.equal(tool.replay, "unsafe");
-	const allowed = await tool.execute({ plugins: ["chat"] }, api(owner, true), context);
+	assert.deepEqual([tool.origin, tool.scope], ["owner", "main"]);
+	const allowed = await tool.execute({ plugins: ["chat"] }, api([owner]), context);
 	assert.equal(allowed.isError, false);
 	assert.equal(calls, 1);
-	for (const input of [
-		guest,
-		{ kind: PEER_MESSAGE_ENTRY, data: { from: { id: "peer", title: "Peer" }, text: "x" } },
-		{ kind: "pi.user" },
-	]) {
-		const denied = await tool.execute({}, api(input), context);
+	const peer = (origin?: "owner") => ({
+		kind: PEER_MESSAGE_ENTRY,
+		data: { from: { id: "peer", title: "Peer" }, text: "x", ...(origin ? { origin } : {}) },
+	});
+	assert.equal((await tool.execute({}, api([peer("owner")]), context)).isError, false, "the owner's peer message");
+	assert.equal(calls, 2);
+	for (const inputs of [[guest], [owner, guest], [peer()], [{ kind: "pi.user" }], []]) {
+		const denied = await tool.execute({}, api(inputs), context);
 		assert.equal(denied.isError, true);
 	}
-	assert.equal((await tool.execute({}, api(owner, false, 2 as ConversationId), context)).isError, true);
+	assert.equal((await tool.execute({}, api([owner], 2 as ConversationId), context)).isError, true);
 	const elsewhere = createReloadExtension(async () => {
 		assert.fail("Non-p2 sessions cannot use the local channel");
 	}, false);
-	assert.equal((await elsewhere.tools![0]!.execute({}, api(owner), context)).isError, true);
-	assert.equal(calls, 1);
+	assert.equal((await guardTool(elsewhere.tools![0]!).execute({}, api([owner]), context)).isError, true);
+	assert.equal(calls, 2);
 });
 
 test("worker facet registers reload_plugins and the owner tool uses only its own private data-directory channel", async (t) => {
@@ -126,16 +131,16 @@ test("worker facet registers reload_plugins and the owner tool uses only its own
 	});
 	const extension = (await fixture.host.registry(Extensions, BACKGROUND_CONTEXT)).value.get("p2-dev-tools");
 	assert(extension);
-	const reply = await extension.tools![0]!.execute({ plugins: ["chat"] }, api(owner), context);
+	const reply = await guardTool(extension.tools![0]!).execute({ plugins: ["chat"] }, api([owner]), context);
 	assert.equal(reply.isError, false);
 	assert.equal(calls, 1);
-	assert.equal((await extension.tools![0]!.execute({}, api(guest), context)).isError, true);
+	assert.equal((await guardTool(extension.tools![0]!).execute({}, api([guest]), context)).isError, true);
 	assert.equal(calls, 1);
 });
 
 test("reload_plugins returns a refusal as an error result without replaying it", async () => {
 	const extension = createReloadExtension(async () => ({ ok: false, message: "Reload refused: broken source" }), true);
-	const result = await extension.tools![0]!.execute({}, api(owner), context);
+	const result = await extension.tools![0]!.execute({}, api([owner]), context);
 	assert.equal(result.isError, true);
 	assert.deepEqual(result.output, [{ type: "text", text: "Reload refused: broken source" }]);
 });

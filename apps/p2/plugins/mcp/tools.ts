@@ -10,7 +10,6 @@ import {
 	defineExtension,
 	type Extension,
 	section,
-	type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import {
 	type CallToolResult,
@@ -21,6 +20,7 @@ import {
 	toLlmContent,
 } from "@earendil-works/pi-mcp";
 import type { Context } from "@p2/app/v1";
+import type { P2Tool } from "@p2/app/v1/worker";
 import { type Instance, MCP_EXTENSION, type McpTool, signInLink } from "./contract.ts";
 
 /** One tool of one server. */
@@ -83,7 +83,7 @@ export function signInNames(instances: readonly Instance[]): string[] {
  * (and Codex), every tool whose name sanitizes to one another tool's also gets pi's hash suffix, so no tool's name
  * depends on the order of the list and a new tool renames only those it collides with.
  */
-export function createMcpExtension({ servers, signIn, tools, reach }: McpOffer, call: McpCall): Extension {
+export function createMcpExtension({ servers, signIn, tools, reach }: McpOffer, call: McpCall): Extension<P2Tool> {
 	const plain = new Map<string, number>();
 	for (const { server, tool } of tools) {
 		const name = createMcpToolName(server, tool.name);
@@ -91,7 +91,7 @@ export function createMcpExtension({ servers, signIn, tools, reach }: McpOffer, 
 	}
 	const assigned = new Set<string>();
 	const listing = serversSection(servers, signIn, reach);
-	return defineExtension({
+	return defineExtension<P2Tool>({
 		name: MCP_EXTENSION,
 		tools: tools.map((entry) => {
 			const name = createMcpToolName(
@@ -142,20 +142,16 @@ function serversSection(servers: readonly string[], signIn: readonly string[], r
 /**
  * One MCP tool as a Durable tool (not replay-safe: an interrupted call is not repeated). Deferred either way, so the
  * `codemode` section leaves it out; for `codemode` only other tools (scripts) may call it, so `tool_search` never
- * offers it to the model either.
+ * offers it to the model either. Only turns the owner started may call it: the owner's accounts are behind the servers.
  */
-function toolRegistration(
-	name: string,
-	{ server, tool }: ServerTool,
-	reach: McpReach,
-	call: McpCall,
-): ToolRegistration {
+function toolRegistration(name: string, { server, tool }: ServerTool, reach: McpReach, call: McpCall): P2Tool {
 	const title = tool.title ?? tool.annotations?.title;
 	return {
 		name,
 		description: tool.description?.trim() || title || `MCP tool ${tool.name} from server ${server}`,
 		parameters: normalizeMcpInputSchema(tool.inputSchema),
 		deferred: true,
+		origin: "owner",
 		...(reach === "codemode" ? { callers: ["tools" as const] } : {}),
 		...(tool.outputSchema === undefined ? {} : { structuredOutputSchema: tool.outputSchema }),
 		async execute(args, api, context) {

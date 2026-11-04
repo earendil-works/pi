@@ -22,9 +22,6 @@ import type { HistoryHits } from "../search/contract.ts";
 export const HISTORY_SEARCH = "history_search";
 export const HISTORY_READ = "history_read";
 export const HISTORY_HANDOFF = "history_handoff";
-/** The tools a one-shot agent gets (it reads, but never hands off). */
-export const HISTORY_READ_TOOLS = [HISTORY_SEARCH, HISTORY_READ] as const;
-export const HISTORY_TOOLS = [HISTORY_SEARCH, HISTORY_READ, HISTORY_HANDOFF] as const;
 
 /** At most this much text per `history_read` call (about 12k tokens); later entries are cut. */
 export const READ_BUDGET = 50_000;

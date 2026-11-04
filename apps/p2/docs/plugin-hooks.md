@@ -171,8 +171,9 @@ const extension = createPortsExtension(
 contribute(host, "p2.port-tools", (self) => self.register(Extensions, { [extension.name]: extension }));
 ```
 
-Who: tools run for whoever's input started the turn. Durable knows no principal; tools that need one derive it from
-the calling assistant entry with `originOf` (ports, dev-tools). Reload: a running phase keeps its snapshot; tool code
+Who: tools run for whoever's input started the turn. Durable knows no principal; a tool declares what it needs
+(`P2Tool`: `origin: "owner"`, `scope: "main"`) and the worker's registry checks it before each call (`guardTool`,
+`originOf` over the run's inputs; see p2-notes **Tool requirements**). Reload: a running phase keeps its snapshot; tool code
 that must survive reload reads live resources through getters (`plugins/codemode/worker.ts:37-43`).
 
 ### 3.2 Worker registries and locals

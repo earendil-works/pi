@@ -49,7 +49,7 @@ const AGENT_DESCRIPTION =
 
 describe("code mode agent prompt", () => {
 	it("describes the tool itself, for code mode's listing, without a prompt section of its own", () => {
-		const extension = createAgentExtension({} as Models);
+		const extension = createAgentExtension({} as Models, () => new Map());
 		assert.equal(extension.sections, undefined);
 		const [tool] = extension.tools ?? [];
 		assert.equal(tool?.description, AGENT_DESCRIPTION);

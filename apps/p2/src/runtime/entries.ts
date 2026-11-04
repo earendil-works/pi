@@ -2,7 +2,7 @@
 // and a subagent's message. Their entry kinds and data are read across plugins (attribution, search) and by both UIs
 // (transcript rows).
 
-import { compile, num, obj, type Static, str, union } from "@earendil-works/pi-schema";
+import { compile, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
 import { literal } from "./schema.ts";
 
 /**
@@ -10,8 +10,9 @@ import { literal } from "./schema.ts";
  * Readers use this data; the model reads the server-written `<sender kind="session" …/>` block in front of the text.
  */
 export const PEER_MESSAGE_ENTRY = "p2.peer-message";
+/** `origin`: the sending turn's (`originOf`), so the recipient's turn may act for the owner too. */
 export const PeerMessageSchema = obj(
-	{ from: obj({ id: str(), title: str() }, { open: true }), text: str() },
+	{ from: obj({ id: str(), title: str() }, { open: true }), text: str(), origin: opt(literal("owner")) },
 	{ open: true },
 );
 export type PeerMessage = Static<typeof PeerMessageSchema>;
@@ -21,13 +22,16 @@ const isPeerMessage = compile(PeerMessageSchema).check;
 export const peerMessage = (kind: string, data: unknown): PeerMessage | undefined =>
 	kind === PEER_MESSAGE_ENTRY && isPeerMessage(data) ? data : undefined;
 
-/** Who started a tool's turn when it may act for someone: the owner, or an authenticated peer conversation. */
-export type ConversationOrigin = "owner" | "peer";
+/**
+ * Who started a turn, when it may act for the owner (`originOf`): the owner, directly or through what an agent of such a
+ * turn wrote. Agent-written entries record it as `origin` in their data.
+ */
+export type ConversationOrigin = "owner";
 
 /**
- * A main agent's message to its subagent (`subagent spawn`/`send`) whose turn the owner started: its entry kind, with
- * `{ origin: "owner" }`. The subagent's turn inherits that attribution (`originOf`), so the owner-only tools it was
- * granted (the location tools) work for it; other messages to a subagent are unattributed.
+ * An agent's task for another agent: a main agent's message to its subagent (`subagent spawn`/`send`) or a script's
+ * prompt to its one-shot agent, as its own entry kind, with `{ origin: "owner" }` when the owner started the writing
+ * turn. The receiving turn inherits it (`originOf`), so the owner-only tools it was given work for it.
  */
 export const SUBAGENT_TASK_ENTRY = "p2.subagent-task";
 
@@ -42,6 +46,8 @@ export const AgentMessageSchema = obj(
 		from: obj({ name: str(), conversationId: num() }, { open: true }),
 		intent: union([literal("answered"), literal("failed"), literal("question"), literal("note")]),
 		text: str(),
+		/** The origin of the subagent's turn that wrote it (`originOf`): the receiving turn may act for the owner too. */
+		origin: opt(literal("owner")),
 	},
 	{ open: true },
 );

@@ -146,11 +146,9 @@ is printed or needed in a URL. It prints the committed plugin selection or refus
 on failure. This is a local filesystem capability for the account, not guest filesystem isolation.
 
 The `dev-tools` worker plugin provides **reload_plugins** (`{}` for dirty plugins, or
-`{"plugins":["chat","sessions"]}`). It is limited to root conversations working on a local p2 checkout (or
-its containing repository), and only owner-initiated input. The calling assistant entry fixes attribution;
-a later guest message or a forged `<sender>` block in the text cannot change it. Guests, peer input, unattributed
-reports, subagents and remote-environment sessions are denied. It is not a location tool: it stays with the main
-conversation, works only while the session is on the local p2 checkout, and no subagent can be granted it. Tool upgrades are not automatically replayed after
+`{"plugins":["chat","sessions"]}`). It declares `origin: "owner"` and `scope: "main"` (see **Tool requirements**)
+and refuses sessions not working on a local p2 checkout (or its containing repository): guests, what they start,
+subagents and remote-environment sessions are denied, and no subagent can be given it. Tool upgrades are not automatically replayed after
 a crash. For runtime edits, use the explicit CLI `--restart` command instead. Do not invoke the owner server's
 controls from tests: use disposable data dirs and independent supervisors.
 
@@ -578,9 +576,8 @@ translated phone drawer and intercept chat taps.
   not hold the Harness (a prompt section, a tool). Resolve at each use; a relocation changes the session's location.
 - **Location tools** (`plugins/locations`): `location_envs` (this device and the configured SSH environments: name,
   host, last test; never keys), `location_dirs` (`[env:]path` or `env`+`cwd`, at most 200 folders) and `location_move`.
-  Every main agent has them; a subagent only when its main agent chooses them (`subagent spawn/configure tools`; not
-  in the default selection). All require a turn the owner started (`originOf`; a main agent's message to its subagent
-  carries the main turn's attribution as a `p2.subagent-task` entry), and the server side (`AgentLocations`) admits
+  Every main agent has them, and so do the subagents and one-shot agents it gives them to (by default it gives all
+  its tools). All declare `origin: "owner"` (see **Tool requirements**), and the server side (`AgentLocations`) admits
   only current worker generations. The main agent's move is deferred: it records `p2.location-move` on the main
   conversation; the worker applies it through `SessionMoves` (the owner's Relocate) once Durable has no task or
   submission (the turn ended, no subagent work), retries a busy refusal after the next commit, records a destination
@@ -1021,16 +1018,17 @@ translated phone drawer and intercept chat taps.
   arguments. Tests: `artifacts.test.ts` (details, bridge), `ui-inline-artifacts.test.ts` (browser: Markdown, SVG,
   fills the width, fitted height, 70vh cap, card opens the viewer, unavailable version, guest), `tui-p11.test.ts`
   (inline Markdown).
-- **Conversations** (`plugins/conversations`): the root-only `conversations` tool lists active roots without
-  starting workers, sends server-attributed peer input, and reads the latest completed text answer (bounded scan,
-  no thinking, including old history). The tool fixes owner/peer origin at its calling assistant entry: later guest
-  input cannot change that grant, and unattributed reports do not inherit older owner access. `Conversations`
+- **Conversations** (`plugins/conversations`): the `conversations` tool (`origin: "owner"`, `scope: "main"`) lists
+  active roots without starting workers, sends server-attributed peer input, and reads the latest completed text answer
+  (bounded scan, no thinking, including old history). A send carries the sending turn's origin to the recipient's
+  `p2.peer-message` entry (`Conversations.query` and `PeerConversation.send` `origin`), so the recipient's turn may
+  act for the owner when the owner started the sender's. `Conversations`
   accepts only current worker generations; `PeerConversation` accepts only the parent's `{ kind: "server" }`
   principal. The server brokers the sender's ID/title from the catalog, checks archive around startup/admission
   and receipts, and scopes deduplication to sender + Durable tool task/call. Calls are short and cancellable;
   cancellation after admission does not undo remote work. Final answers never auto-forward. Owner peer labels
   navigate to roots (restoring archives); guests get plain labels. `test/p2/conversations.test.ts` covers list/send/
-  answer, authenticated peer replies, restart deduplication, concurrent cross-sends, busy answers, follow-ups,
+  answer, peer replies from the owner's turns, restart deduplication, concurrent cross-sends, busy answers, follow-ups,
   invalid destinations, reload, guest/forged attribution, child tool exclusion and inaccessible public ingress.
 - **Subagents** (`plugins/subagents`): owns its protocol-independent Durable extension (persistent
   anchor conversations and exactly-once background reporter tasks, model/thinking/tool validation). The worker
@@ -1040,22 +1038,40 @@ translated phone drawer and intercept chat taps.
   the list does not start/hold a worker. The sidebar expands children (latest entry first), with working dots;
   `/s/<id>/c/<conversation>` opens an independent chat, draft and model control. A parent link returns to the root.
   Browser configuration synchronizes the subagent registry via `ConversationConfigured`. Main Stop leaves child
-  work running; direct child prompts do not report to the parent. **Tools** (`SUBAGENT_TOOLS` in `contract.worker.ts`,
-  validated by `resolveChoice` before any commit): `tools` may name the coding tools, `codemode` and the location tools;
-  the default is the coding tools and `codemode`, as the main agent has code mode while the `codemode` setting is on
-  (the default leaves out what is not installed: code mode while the setting is off or without the plugin; naming an
-  uninstalled tool is refused, "Not available in this session: codemode."). `team` and the history tools come on
-  top. Durable enables exactly the names in a conversation's `tools` array, and code mode's nested calls resolve among
-  the enabled tools, so a subagent with code mode also gets the script-only tools (`callers: ["tools"]`: MCP tools,
-  `terminal`, `agent`, code mode's `models.*`) by name: at spawn/configure those installed then (`withExtras`), and
-  later ones (an MCP server connecting) from the worker, which follows the registry's script-only tools and appends
-  missing names to every code mode subagent's array (`enableScriptTools`; a tool task resolves its agent once per
-  phase, so this cannot happen inside the script's own call). Names are never removed: Durable ignores a name whose
-  tool is gone. A subagent's scripts can thus start one-shot agents (which get no code mode). `test/p2/subagents.test.ts`
-  covers bad models, configured spawn, one report, answer retrieval, configuration, independent history, reload during
-  child work, idle restart, guest reads, sidebar persistence across server restart, and code mode: choosing and
-  validating it, the default with the setting on and off, a script calling a coding tool and `agent`, and MCP tools
-  installed after the spawn; `terminal-tool.test.ts` a subagent's script opening a window at its own location.
+  work running; direct child prompts do not report to the parent. **Tools** (`resolveChoice`/`resolveTools` in
+  `contract.worker.ts`, validated before any commit, shared with one-shot agents): an agent gives from its own tools
+  (`api.agent()`: offered, deferred and script-callable), never more. It may give every tool its model calls except
+  `scope: "main"` ones (`subagent`, `rename_session`, `conversations`, `ports`, `reload_plugins`) and
+  `scope: "subagent"` ones (`team`, which every subagent gets, offered from the start); `tools` names them in order,
+  the default is all of them (code mode only while the main agent has it; naming a tool it lacks is refused with the
+  list it may give). Deferred tools stay deferred unless named (then offered from the start). Durable enables exactly
+  the names in a conversation's `tools` array, and code mode's nested calls resolve among the enabled tools, so an
+  agent given `codemode` also gets the caller's script-only tools (`callers: ["tools"]`: MCP tools, `terminal`,
+  `agent`, code mode's `models.*`) by name: at spawn/configure those installed then, and later ones (an MCP server
+  connecting) from the worker, which follows the registry's script-only tools and appends missing names to every code
+  mode subagent's array (`enableScriptTools`; a tool task resolves its agent once per phase, so this cannot happen
+  inside the script's own call). Names are never removed by the worker: Durable ignores a name whose tool is gone. A
+  `send` takes away what the caller can no longer give (its tools changed). The registry records the chosen names
+  (`ConversationConfigured` records the agent's choosable tools after a browser change). Requirements are looked up
+  by name in the worker's `Extensions` (`toolsByName`). `test/p2/subagents.test.ts` covers bad models, configured
+  spawn, one report, answer retrieval, configuration, independent history, reload during child work, idle restart,
+  guest reads, sidebar persistence across server restart, and tools: validation against the caller's tools, the
+  default with code mode on and off, a script calling a coding tool, `agent` (also with code mode) and MCP tools
+  installed after the spawn; `tool-access.test.ts` the resolution rules; `terminal-tool.test.ts` a subagent's script
+  opening a window at its own location.
+- **Tool requirements** (`src/runtime/tool-access.ts`): a plugin declares them on its tool (`P2Tool`, `defineP2Tool`):
+  `origin` (`"any"` default, or `"owner"`: only a turn the owner started) and `scope` (`"any"` default, `"main"`: only
+  top-level conversations, or `"subagent"`: given to subagents only). The worker's Durable registry wraps every tool
+  with requirements (`guardTool`, in `durableRegistry`), so no tool checks them itself. `origin: "owner"`: the location
+  tools, `reload_plugins`, `conversations`, `ports`, MCP tools (the owner's accounts are behind them). A turn's origin
+  (`originOf`, `src/runtime/origin.ts`) is the conversation's current run (`pi.live.run.inputs`, each submission's
+  entry through `tx.submission`): the owner's only if every input the run placed is (`entryOrigin`): a person's input
+  by its author in the entry data, an agent-written one by its `origin`. Agent-written inputs record the writing
+  turn's origin: subagent tasks and one-shot agents' prompts (`p2.subagent-task`), `team` messages and reports
+  (`p2.agent-message`; a report has the origin of the subagent's run that answered, `answerOrigin`: its inputs after
+  the previous run's last answer), and peer messages (`p2.peer-message`). A guest's input steered into a run takes the
+  owner's tools away for the rest of it; a guest-started chain never reaches them. Known gap: inputs of earlier runs
+  still in the context are not considered. `test/p2/inputs.test.ts`, `dev-tools.test.ts`, `tool-access.test.ts`.
 - **Code mode** (`plugins/codemode`): the worker facet registers Durable's `codemode` extension
   (`createCodemodeExtension`, tool `codemode`, callers `["model"]`, replay-safe) in `Extensions`. One sandbox per worker
   (`CodemodeSandbox`, 256 MiB VM heap: `CODEMODE_MEMORY_LIMIT_BYTES`, kept constant because it is part of the VM
@@ -1137,8 +1153,9 @@ translated phone drawer and intercept chat taps.
   `structuredOutput` is the value, `details` `{ conversationId, attempts }`; nothing is reported to the parent. It has no
   prompt section (as Pi Mobile 1b763d912): its description, Pi Mobile's verbatim, carries the usage notes, and code
   mode's section lists it with the other tools scripts call. Model/thinking/tool
-  validation is the subagent tool's `resolveChoice` with `ONE_SHOT_TOOLS`: the coding and location tools, never
-  `codemode` (a one-shot agent's own scripts could start one-shot agents again, fanning out without bound). The plugin contributes the tool unconditionally and does not
+  validation is the subagent tool's `resolveChoice` (one-shot agents get no `team`): from the script's conversation's
+  tools, `codemode` and `agent` included, so a one-shot agent's scripts may start one-shot agents again (owner
+  decision: no depth limit). Its prompts are `p2.subagent-task` entries with the script's turn's origin. The plugin contributes the tool unconditionally and does not
   depend on code mode: without a script nothing can call it (`callers: ["tools"]`), so code mode stays removable while
   it is loaded (code mode's listing then disappears; `agent.test.ts` removes and re-adds code mode). It depends on subagents,
   whose document lists its conversations. The creating commit

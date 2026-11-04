@@ -179,7 +179,7 @@ test(
 		const guestChat = await holdIn(guest, Chat, { session, conversation: 1 }, "participant");
 		const [denied] = await call("location_envs {}", guestChat);
 		assert.equal(denied?.isError, true);
-		assert.match(text(denied), /need a turn the owner started/);
+		assert.match(text(denied), /needs a turn the owner started/);
 		const [noMove] = await call(`location_move ${JSON.stringify({ location: start })}`, guestChat);
 		assert.equal(noMove?.isError, true);
 		// Nor through a subagent, nor by placing one on another environment.
