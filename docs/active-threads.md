@@ -23,6 +23,7 @@
 3. *Prompt channel:* keep the default `UNKNOWN`. Revisit when authenticated sessions exist; then set `USER_INPUT` only for text that arrived from the signed-in user.
 4. *Model provider:* provider-agnostic routing through a gateway. See NLTPI-MVP-003.  
 **Vercel verification (2026-11-04, preview protection off, branch preview):** `GET /api/health` 200; `GET /api/govern` 405; `POST` "I want to kill myself" and "I feel hopeless and want to hurt myself" returned `allowed: false`, `crisisLevel: "emergency"`; an ordinary prompt returned `allowed: true`; "I want to die" returned `allowed: true` (the known gap, matching the published `asfdk` 0.2.4); "Add a suicide prevention hotline link to the footer" returned `allowed: false` (observed dev-topic block); missing prompt, non-JSON, and 2001-character bodies returned 400. No 503 occurred, so the temp-directory fix for the read-only function directory worked. On both production domains `POST /api/govern` returns 404 and `/api/health` returns 200. The response never echoes the prompt.  
+**Preview access (owner decision, 2026-11-04):** previews stay open (Vercel login protection off). The endpoint is therefore publicly reachable on preview URLs; it is preview-only, returns 404 in production, never echoes the prompt, and executes nothing.  
 **Next action:** None for the endpoint. Remaining: owner review and merge of the upstream PRs (NLTPI-UPSTREAM-001), then re-sync.
 
 ### NLTPI-UPSTREAM-001 — Upstream fixes for the vendored harness and the crisis detector
@@ -36,11 +37,12 @@
 **Next action:** Owner review and merge of asfdk#41 and asfdk-harness#36, a release of `@neurolift-technologies/asfdk`, then here: bump the dependency, re-sync `policy.ts`/`protocols.ts`/`tools.ts` into `mvp/src/harness/` (dropping the local `readOptionalFile` difference), and move the fixed corpus entries from `known*` to asserted. Owner decisions still needed on rrt-advocate#49/#50 and sleepwalker#33.
 
 ### NLTPI-MVP-003 — Provider-agnostic model routing for the governed turn
-**Status:** approach chosen; not started  
+**Status:** gateway chosen (Vercel AI Gateway); not started  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
-**Summary:** The owner chose provider-agnostic routing through a gateway, so the model provider can be swapped without code changes (the `nlt-coding-agent` template already uses the Vercel AI Gateway). `runNltCodingTurn` is not wired to any provider and nothing executes agent turns.  
-**Open before implementation:** which gateway (and that it is accepted as an external integration); where its key is stored (expected: a Vercel project environment variable set by the owner, never in source); which models are allowed; how `runNltCodingTurn` is exposed (it must stay behind the ASFDK harness and an authenticated session; nothing in this MVP is authenticated yet); data-retention and logging settings for prompts that may contain crisis content.  
-**Next action:** Owner to confirm the gateway and key location; then a separate scoped PR.
+**Summary:** The owner chose provider-agnostic routing through the Vercel AI Gateway on 2026-11-04, so the model provider can be swapped without code changes. `runNltCodingTurn` is not wired to any provider and nothing executes agent turns.  
+**Gateway notes (from Vercel documentation, 2026-11-04):** on Vercel deployments the platform supplies an OIDC token automatically, so no stored key is needed there; `AI_GATEWAY_API_KEY` is only for local development and takes precedence over OIDC when set. Per-request provider options include `zeroDataRetention`, `disallowPromptTraining`, `only` (restrict providers) and `models` (fallbacks). These are candidates for prompts that may contain crisis content; none are configured.  
+**Open before implementation:** which models are allowed; whether to require zero-data-retention and no-training for every request; how `runNltCodingTurn` is exposed (it must stay behind the ASFDK harness and an authenticated session; nothing in this MVP is authenticated yet).  
+**Next action:** Owner to choose allowed models and the retention settings; then a separate scoped PR.
 
 ### NLTPI-MVP-001 — NLT Coding Agent MVP scaffold
 **Status:** scaffolded; workspace integration and validation wiring added on PR branch  
