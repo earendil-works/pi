@@ -12,6 +12,11 @@
 - Anthropic sessions now use message threads: each request sends only the new messages and the server continues from the previous reply, falling back to the full request when the conversation changed (for example after compaction or a tool list change). On by default for the `anthropic` provider on `api.anthropic.com`; set `compat.supportsMessageThreads` in `models.json` to enable it for gateways that forward the `thread` field, or to turn it off. Cache warming does not touch the session's thread ([#11545](https://github.com/earendil-works/pi/pull/11545))
 - `pi.registerMarkdownTransformer()` takes an optional `{ messageTypes }` that selects the Markdown surfaces a transformer runs on. Besides user, assistant, and thinking Markdown, transformers can now opt into `custom` (custom messages and skill blocks), `summary` (branch and compaction summaries), and `changelog` (What's New, `/changelog`, the Extension Updates notice, and the Update Available note). Without options a transformer runs on user, assistant, and thinking Markdown as before. The built-in Mermaid renderer now also draws diagrams in expanded branch and compaction summaries
 
+### Changed
+
+- Extension folders now load the file named in the `main` field of their `package.json`, and fall back to `index.ts` or `index.js` as before
+- Broken extension packages, for example one with an invalid `package.json` in your extensions folder, are now skipped and reported with the other extension errors at startup instead of being silently ignored
+
 ### Fixed
 
 - A failed token refresh of an MCP connection no longer registers an OAuth client or replaces the PKCE verifier of a sign-in in progress, which made that sign-in fail. MCP sign-in now refreshes the stored tokens with the stored client even when the loopback callback port changed, instead of registering a new client and opening the browser. Ctrl+C in `/mcp` and the `--timeout` of `pi mcp login` now also stop a sign-in while it waits up to 25 seconds for another pi process's token refresh, and a refresh lock that fails for another reason than that wait now fails the sign-in instead of opening the browser.
@@ -20,6 +25,8 @@
 - Fixed RPC mode cutting off shutdown cleanup, such as a pending MCP token refresh, when stdin closed and SIGTERM arrived together, which process managers like Paseo and systemd do. Pi lost the refreshed token and the MCP server revoked the sign-in. Once a shutdown has started, a stdin EOF or a single signal no longer interrupts it; a second signal still exits at once. Print mode likewise no longer dies from a signal that arrives during its final cleanup ([#11599](https://github.com/earendil-works/pi/issues/11599))
 - Fixed the grep tool reading every matched file into memory when `context` was set, which ran out of memory on large files; context now comes from ripgrep, which also fixes UTF-16 files and lone CRs in matched lines, and the match limit notice no longer appears when exactly `limit` matches exist ([#9276](https://github.com/earendil-works/pi/issues/9276), [#11423](https://github.com/earendil-works/pi/issues/11423))
 - Fixed the find tool reporting the result limit when exactly `limit` files match, and `limit: 0` in find and ls returning every result or an empty listing; limits below 1 now mean 1 ([#7121](https://github.com/earendil-works/pi/issues/7121))
+- Fixed extension packages ignoring the file patterns and exclusions in their `package.json`, which loaded every file in the package, including excluded ones such as `*.test.ts` ([#9788](https://github.com/earendil-works/pi/issues/9788))
+- Fixed pi failing to start when an extension package added with `pi install` or `-e` has an invalid `package.json`. The package is now skipped and reported with the other extension errors ([#9788](https://github.com/earendil-works/pi/issues/9788))
 
 
 ## [1.5.0] - 2026-11-02
