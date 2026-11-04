@@ -50,15 +50,17 @@ import {
 	resolvePath,
 } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
-import { discoverExtensionsInDir, ExtensionManifestResolutionError } from "./extensions/discovery.ts";
+import { discoverExtensionsInDir } from "./extensions/discovery.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
 import {
 	expandManifestGlob,
 	hasManifestGlobMagic,
 	normalizeManifestPattern,
+	type PackageResolutionError,
 	type PiManifest,
 	readPiManifest,
 	resolveManifestPath,
+	toPackageResolutionError,
 } from "./pi-manifest.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
 import { BUILTIN_PATH_PREFIX, getResourcePathKey } from "./source-info.ts";
@@ -104,6 +106,8 @@ export interface ResolvedPaths {
 	themes: ResolvedResource[];
 	/** Configured packages that were skipped because installing them failed. */
 	installFailures?: PackageInstallFailure[];
+	/** Packages and extension directories skipped because they could not be read or resolved. */
+	resolutionErrors?: Array<{ path: string; error: string }>;
 }
 
 /** A configured package that could not be installed while resolving resources. */
@@ -221,6 +225,7 @@ interface ResourceAccumulator {
 	skills: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	prompts: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	themes: Map<string, { metadata: PathMetadata; enabled: boolean }>;
+	resolutionErrors: PackageResolutionError[];
 }
 
 /**
@@ -595,12 +600,12 @@ function collectAutoThemeEntries(dir: string): string[] {
  * Collect resource files from a directory based on resource type.
  * Extensions use smart discovery (index.ts in subdirs), others use recursive collection.
  */
-function collectResourceFiles(dir: string, resourceType: ResourceType): string[] {
+function collectResourceFiles(dir: string, resourceType: ResourceType, errors: PackageResolutionError[]): string[] {
 	if (resourceType === "skills") {
 		return collectSkillEntries(dir, "pi");
 	}
 	if (resourceType === "extensions") {
-		return discoverExtensionsInDir(dir);
+		return discoverExtensionsInDir(dir, errors);
 	}
 	return collectFiles(dir, FILE_PATTERNS[resourceType]);
 }
@@ -948,6 +953,7 @@ export class DefaultPackageManager implements PackageManager {
 					origin: "top-level",
 				},
 				projectBaseDir,
+				accumulator.resolutionErrors,
 			);
 			this.resolveLocalEntries(
 				globalEntries,
@@ -959,6 +965,7 @@ export class DefaultPackageManager implements PackageManager {
 					origin: "top-level",
 				},
 				globalBaseDir,
+				accumulator.resolutionErrors,
 			);
 		}
 
@@ -1484,11 +1491,8 @@ export class DefaultPackageManager implements PackageManager {
 				}
 			}
 		} catch (error) {
-			if (error instanceof ExtensionManifestResolutionError && error.code === "EXTENSION_MANIFEST_CYCLE") {
-				throw error;
-			}
 			if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
-			throw error;
+			accumulator.resolutionErrors.push(toPackageResolutionError(error, resolved));
 		}
 	}
 
@@ -2347,7 +2351,14 @@ export class DefaultPackageManager implements PackageManager {
 		filter: PackageFilter | undefined,
 		metadata: PathMetadata,
 	): boolean {
-		const manifest = readPiManifest(join(packageRoot, "package.json"));
+		let manifest: PiManifest | null;
+		try {
+			manifest = readPiManifest(join(packageRoot, "package.json"));
+		} catch (error) {
+			// Skip the whole package. Returning true keeps the caller from loading the directory itself.
+			accumulator.resolutionErrors.push(toPackageResolutionError(error, packageRoot));
+			return true;
+		}
 		const changelogPath = resolvePackageChangelogPath(packageRoot, manifest);
 		if (changelogPath) {
 			metadata.changelogPath = changelogPath;
@@ -2360,11 +2371,25 @@ export class DefaultPackageManager implements PackageManager {
 				const patterns = filter[resourceType];
 				const target = this.getTargetMap(accumulator, resourceType);
 				if (filter.autoload === false) {
-					this.applyPackageDeltaFilter(packageRoot, patterns ?? [], resourceType, target, metadata);
+					this.applyPackageDeltaFilter(
+						packageRoot,
+						patterns ?? [],
+						resourceType,
+						target,
+						metadata,
+						accumulator.resolutionErrors,
+					);
 				} else if (patterns !== undefined) {
-					this.applyPackageFilter(packageRoot, patterns, resourceType, target, metadata);
+					this.applyPackageFilter(
+						packageRoot,
+						patterns,
+						resourceType,
+						target,
+						metadata,
+						accumulator.resolutionErrors,
+					);
 				} else {
-					this.collectDefaultResources(packageRoot, resourceType, target, metadata);
+					this.collectDefaultResources(packageRoot, resourceType, target, metadata, accumulator.resolutionErrors);
 				}
 			}
 			return true;
@@ -2379,6 +2404,7 @@ export class DefaultPackageManager implements PackageManager {
 					resourceType,
 					this.getTargetMap(accumulator, resourceType),
 					metadata,
+					accumulator.resolutionErrors,
 				);
 			}
 			return true;
@@ -2389,7 +2415,7 @@ export class DefaultPackageManager implements PackageManager {
 			const dir = join(packageRoot, resourceType);
 			if (existsSync(dir)) {
 				// Collect all files from the directory (all enabled by default)
-				const files = collectResourceFiles(dir, resourceType);
+				const files = collectResourceFiles(dir, resourceType, accumulator.resolutionErrors);
 				for (const f of files) {
 					this.addResource(this.getTargetMap(accumulator, resourceType), f, metadata, true);
 				}
@@ -2404,17 +2430,18 @@ export class DefaultPackageManager implements PackageManager {
 		resourceType: ResourceType,
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
+		errors: PackageResolutionError[],
 	): void {
 		const manifest = readPiManifest(join(packageRoot, "package.json"));
 		const entries = manifest?.[resourceType];
 		if (entries) {
-			this.addManifestEntries(entries, packageRoot, resourceType, target, metadata);
+			this.addManifestEntries(entries, packageRoot, resourceType, target, metadata, errors);
 			return;
 		}
 		const dir = join(packageRoot, resourceType);
 		if (existsSync(dir)) {
 			// Collect all files from the directory (all enabled by default)
-			const files = collectResourceFiles(dir, resourceType);
+			const files = collectResourceFiles(dir, resourceType, errors);
 			for (const f of files) {
 				this.addResource(target, f, metadata, true);
 			}
@@ -2427,8 +2454,9 @@ export class DefaultPackageManager implements PackageManager {
 		resourceType: ResourceType,
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
+		errors: PackageResolutionError[],
 	): void {
-		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType);
+		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType, errors);
 
 		if (userPatterns.length === 0) {
 			// Empty array explicitly disables all resources of this type
@@ -2453,12 +2481,13 @@ export class DefaultPackageManager implements PackageManager {
 		resourceType: ResourceType,
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
+		errors: PackageResolutionError[],
 	): void {
 		if (userPatterns.length === 0) {
 			return;
 		}
 
-		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType);
+		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType, errors);
 		const enabledByUser = applyAutoloadDisabledPatterns(allFiles, userPatterns, packageRoot);
 		for (const [filePath, enabled] of enabledByUser) {
 			this.addResource(target, filePath, metadata, enabled);
@@ -2473,11 +2502,12 @@ export class DefaultPackageManager implements PackageManager {
 	private collectManifestFiles(
 		packageRoot: string,
 		resourceType: ResourceType,
+		errors: PackageResolutionError[],
 	): { allFiles: string[]; enabledByManifest: Set<string> } {
 		const manifest = readPiManifest(join(packageRoot, "package.json"));
 		const entries = manifest?.[resourceType];
 		if (entries && entries.length > 0) {
-			const allFiles = this.collectFilesFromManifestEntries(entries, packageRoot, resourceType);
+			const allFiles = this.collectFilesFromManifestEntries(entries, packageRoot, resourceType, errors);
 			const manifestPatterns = entries.filter(isOverridePattern);
 			const enabledByManifest =
 				manifestPatterns.length > 0
@@ -2490,7 +2520,7 @@ export class DefaultPackageManager implements PackageManager {
 		if (!existsSync(conventionDir)) {
 			return { allFiles: [], enabledByManifest: new Set() };
 		}
-		const allFiles = collectResourceFiles(conventionDir, resourceType);
+		const allFiles = collectResourceFiles(conventionDir, resourceType, errors);
 		return { allFiles, enabledByManifest: new Set(allFiles) };
 	}
 
@@ -2500,10 +2530,11 @@ export class DefaultPackageManager implements PackageManager {
 		resourceType: ResourceType,
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
+		errors: PackageResolutionError[],
 	): void {
 		if (!entries) return;
 
-		const allFiles = this.collectFilesFromManifestEntries(entries, root, resourceType);
+		const allFiles = this.collectFilesFromManifestEntries(entries, root, resourceType, errors);
 		const patterns = entries.filter(isOverridePattern);
 		const enabledPaths = applyPatterns(allFiles, patterns, root, normalizeManifestPattern);
 
@@ -2514,7 +2545,12 @@ export class DefaultPackageManager implements PackageManager {
 		}
 	}
 
-	private collectFilesFromManifestEntries(entries: string[], root: string, resourceType: ResourceType): string[] {
+	private collectFilesFromManifestEntries(
+		entries: string[],
+		root: string,
+		resourceType: ResourceType,
+		errors: PackageResolutionError[],
+	): string[] {
 		const sourceEntries = entries.filter((entry) => !isOverridePattern(entry));
 		const resolved = sourceEntries.flatMap((entry) => {
 			if (!hasManifestGlobMagic(entry)) {
@@ -2523,7 +2559,7 @@ export class DefaultPackageManager implements PackageManager {
 
 			return expandManifestGlob(entry, root);
 		});
-		return this.collectFilesFromPaths(resolved, resourceType);
+		return this.collectFilesFromPaths(resolved, resourceType, errors);
 	}
 
 	private resolveLocalEntries(
@@ -2532,13 +2568,14 @@ export class DefaultPackageManager implements PackageManager {
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
 		baseDir: string,
+		errors: PackageResolutionError[],
 	): void {
 		if (entries.length === 0) return;
 
 		// Collect all files from plain entries (non-pattern entries)
 		const { plain, patterns } = splitPatterns(entries);
 		const resolvedPlain = plain.map((p) => this.resolvePathFromBase(p, baseDir));
-		const allFiles = this.collectFilesFromPaths(resolvedPlain, resourceType);
+		const allFiles = this.collectFilesFromPaths(resolvedPlain, resourceType, errors);
 
 		// Determine which files are enabled based on patterns
 		const enabledPaths = applyPatterns(allFiles, patterns, baseDir);
@@ -2618,7 +2655,7 @@ export class DefaultPackageManager implements PackageManager {
 			// Project extensions from .pi/
 			addResources(
 				"extensions",
-				discoverExtensionsInDir(projectDirs.extensions),
+				discoverExtensionsInDir(projectDirs.extensions, accumulator.resolutionErrors),
 				projectMetadata,
 				projectOverrides.extensions,
 				projectBaseDir,
@@ -2670,7 +2707,7 @@ export class DefaultPackageManager implements PackageManager {
 		// User extensions from ~/.pi/agent/
 		addResources(
 			"extensions",
-			discoverExtensionsInDir(userDirs.extensions),
+			discoverExtensionsInDir(userDirs.extensions, accumulator.resolutionErrors),
 			userMetadata,
 			userOverrides.extensions,
 			globalBaseDir,
@@ -2715,7 +2752,11 @@ export class DefaultPackageManager implements PackageManager {
 		);
 	}
 
-	private collectFilesFromPaths(paths: string[], resourceType: ResourceType): string[] {
+	private collectFilesFromPaths(
+		paths: string[],
+		resourceType: ResourceType,
+		errors: PackageResolutionError[],
+	): string[] {
 		const files: string[] = [];
 		for (const p of paths) {
 			if (!existsSync(p)) continue;
@@ -2725,11 +2766,11 @@ export class DefaultPackageManager implements PackageManager {
 				if (stats.isFile()) {
 					files.push(p);
 				} else if (stats.isDirectory()) {
-					files.push(...collectResourceFiles(p, resourceType));
+					files.push(...collectResourceFiles(p, resourceType, errors));
 				}
 			} catch (error) {
 				if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
-				throw error;
+				errors.push(toPackageResolutionError(error, p));
 			}
 		}
 		return files;
@@ -2771,6 +2812,7 @@ export class DefaultPackageManager implements PackageManager {
 			skills: new Map(),
 			prompts: new Map(),
 			themes: new Map(),
+			resolutionErrors: [],
 		};
 	}
 
@@ -2799,6 +2841,7 @@ export class DefaultPackageManager implements PackageManager {
 			skills: mapToResolved(accumulator.skills),
 			prompts: mapToResolved(accumulator.prompts),
 			themes: mapToResolved(accumulator.themes),
+			resolutionErrors: accumulator.resolutionErrors.map((error) => ({ path: error.path, error: error.message })),
 		};
 	}
 

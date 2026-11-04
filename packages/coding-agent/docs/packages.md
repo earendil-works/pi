@@ -77,6 +77,8 @@ Paths are relative to the package root. Arrays accept glob patterns and exclusio
 
 When an extension path resolves to a directory, Pi uses that directory's own `pi.extensions` manifest first. Otherwise it loads the directory's `package.json` `main`, then `index.ts` or `index.js`, before scanning direct extension files. A `.` entry does not re-read its containing manifest.
 
+If a package cannot be read, its `package.json` is not valid JSON, or its `pi.extensions` entries lead back to the package itself, Pi skips that package, reports the problem with the extension errors at startup, and loads everything else.
+
 The `pi-package` keyword makes an npm package eligible for discovery in the [Pi package gallery](https://pi.dev/packages). Optional `pi.image` and `pi.video` fields add gallery previews.
 
 ## Show a changelog

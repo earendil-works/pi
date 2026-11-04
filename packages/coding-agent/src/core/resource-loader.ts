@@ -29,6 +29,7 @@ import {
 	DefaultPackageManager,
 	type PackageInstallFailure,
 	type PathMetadata,
+	type ResolvedPaths,
 	type ResolvedResource,
 } from "./package-manager.ts";
 import type { PromptTemplate } from "./prompt-templates.ts";
@@ -131,6 +132,17 @@ function mergeExtensionWarnings(
 	result.warnings = [
 		...new Map([...(result.warnings ?? []), ...warnings].map((warning) => [warning.path, warning])).values(),
 	];
+}
+
+/** Report packages skipped for an invalid package.json as extension errors, once per file and message. */
+function mergeResolutionErrors(result: LoadExtensionsResult, ...resolvedPaths: ResolvedPaths[]): void {
+	const known = new Set(result.errors.map(({ path, error }) => `${path}\n${error}`));
+	for (const resolutionError of resolvedPaths.flatMap((paths) => paths.resolutionErrors ?? [])) {
+		const key = `${resolutionError.path}\n${resolutionError.error}`;
+		if (known.has(key)) continue;
+		known.add(key);
+		result.errors.push(resolutionError);
+	}
 }
 
 type BuiltinExtension = Exclude<InlineExtension, ExtensionFactory>;
@@ -617,6 +629,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const packageWarnings = collectExtensionPackageWarnings(extensionPaths, metadataByPath);
 		const extensionsResult = await this.loadFinalExtensionSet(extensionPaths, preTrustExtensions);
 		mergeExtensionWarnings(extensionsResult, [...installWarnings, ...packageWarnings]);
+		mergeResolutionErrors(extensionsResult, resolvedPaths, cliExtensionPaths);
 		for (const p of this.additionalExtensionPaths) {
 			if (isLocalPath(p)) {
 				const resolved = this.resolveResourcePath(p);
@@ -734,6 +747,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		);
 		const extensionsResult = await loadExtensionsCached(extensionPaths, this.cwd, this.eventBus);
 		mergeExtensionWarnings(extensionsResult, [...installWarnings, ...packageWarnings]);
+		mergeResolutionErrors(extensionsResult, resolvedPaths, cliExtensionPaths);
 		if (!options.includeInlineFactories) {
 			return extensionsResult;
 		}
