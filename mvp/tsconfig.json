@@ -7,10 +7,14 @@
     "noEmit": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "types": ["node"],
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts", "api/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+  "include": [
+    "src/**/*.ts",
+    "api/**/*.ts",
+    "test/**/*.ts",
+    "vitest.config.ts"
+  ]
 }

@@ -5,7 +5,7 @@
   "type": "module",
   "description": "NLT Coding Agent MVP application boundary",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "node --test test/*.test.js && vitest --run"
   },
   "dependencies": {
