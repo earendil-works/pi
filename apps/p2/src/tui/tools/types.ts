@@ -4,6 +4,7 @@
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { Component } from "@earendil-works/pi-tui";
+import type { TuiSettings } from "../../runtime/tui-preferences.ts";
 import type { NestedCall } from "../../web/transcript.ts";
 import type { RenderContext } from "../render-context.ts";
 import type { Theme } from "../theme/theme.ts";
@@ -52,10 +53,14 @@ export interface ToolRenderers {
 	) => Component;
 }
 
-/** Chooses how calls to a tool are drawn; `next()` returns what the remaining resolvers, then the registry, would use. */
+/**
+ * Chooses how calls to a tool are drawn; `next()` returns what the remaining resolvers, then the registry, would use.
+ * p2: `settings` are the visitor's; when they change, every card is drawn again with a new resolution.
+ */
 export type ToolRendererResolver = (
 	toolName: string,
 	next: () => ToolRenderers | undefined,
+	settings: TuiSettings,
 ) => ToolRenderers | undefined;
 
 /** A JSON object, or undefined. */

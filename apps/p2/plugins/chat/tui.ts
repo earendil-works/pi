@@ -167,7 +167,8 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 			get settings() {
 				return runtime.ctx.settings;
 			},
-			toolRenderers: (name) => resolveToolRenderers(name, surface.resolvers, surface.toolRenderers),
+			toolRenderers: (name) =>
+				resolveToolRenderers(name, surface.resolvers, surface.toolRenderers, runtime.ctx.settings),
 			get entryRenderers() {
 				return surface.entryRenderers;
 			},
@@ -285,7 +286,16 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 					this.rows = rows;
 				});
 		});
-		const changed = (): void => this.update();
+		// Resolvers read plugin settings (`ToolRendererResolver`): a change there draws every card again.
+		let pluginSettings = JSON.stringify(runtime.ctx.settings.plugins ?? {});
+		const changed = (): void => {
+			const next = JSON.stringify(runtime.ctx.settings.plugins ?? {});
+			if (next !== pluginSettings) {
+				pluginSettings = next;
+				this.renderersChanged();
+			}
+			this.update();
+		};
 		runtime.listeners.add(changed);
 		this.stops.push(() => runtime.listeners.delete(changed));
 		// What the launcher may ask for under a grant (P5: Ctrl+X copy, Ctrl+G external editor).

@@ -4,6 +4,7 @@ export * from "../../runtime/tui.ts";
 export * from "../../runtime/tui-chat.ts";
 export * from "../../runtime/tui-commands.ts";
 export * from "../../runtime/tui-context.ts";
+export * from "../../runtime/tui-preferences.ts";
 export * from "../../runtime/tui-renderers.ts";
 export * from "../../runtime/tui-sessions.ts";
 export * from "../../tui/completion.ts";

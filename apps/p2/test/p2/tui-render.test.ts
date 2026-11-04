@@ -711,6 +711,9 @@ test(
 			"editor",
 		);
 		terminal.sendInput("\r");
+		// quiet-tools draws the call as one line; Ctrl+O expands it into the full card.
+		await poll(async () => /› codemode 2 calls: bash, read ✓/.test(await screen()), 30000, "quiet code mode line");
+		terminal.sendInput("\x0f");
 		// pi's code mode card: the script, its nested bash/read calls and the output.
 		// Live rows can settle before the result commits; the output comes with the result.
 		await poll(async () => /✓ bash[\s\S]*✓ read[\s\S]*bash: written/.test(await screen()), 30000, "code mode card");

@@ -6,11 +6,13 @@ import { test } from "node:test";
 import { stripTerminalSequences, TuiAltScreen } from "@earendil-works/pi-tui";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { VirtualTerminal } from "../../../../packages/tui/test/virtual-terminal.ts";
+import quietToolsTui from "../../plugins/quiet-tools/tui.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { launcherActions } from "../../src/hosts/tui-actions.ts";
 import { startTuiClient } from "../../src/hosts/tui-client.ts";
 import { loadLocalPreferences, watchLocalPreferences } from "../../src/hosts/tui-local-preferences.ts";
 import { applyPrefsPatch, prefsDiff, validatePrefsPatch } from "../../src/hosts/tui-prefs-save.ts";
+import type { Facet } from "../../src/runtime/chord.ts";
 import { TuiRuntime } from "../../src/runtime/tui.ts";
 import { tuiCoreFacet } from "../../src/tui/core-commands.ts";
 import { restoreRuntime, snapshotRuntime } from "../../src/tui/snapshot.ts";
@@ -89,8 +91,8 @@ test("savePrefs action: the diff is shown first; the write is atomic and keeps e
 	await assert.rejects(save.run({ patch: { settings: { externalEditor: "x" } } }, undefined as never));
 });
 
-async function runtimeWith(t: { after(fn: () => unknown): void }) {
-	const fixture = await testHost({ facets: [tuiCoreFacet] });
+async function runtimeWith(t: { after(fn: () => unknown): void }, facets: Facet[] = []) {
+	const fixture = await testHost({ facets: [tuiCoreFacet, ...facets] });
 	t.after(() => fixture.close());
 	const terminal = new VirtualTerminal(100, 40);
 	const tui = new TuiAltScreen(terminal);
@@ -136,6 +138,22 @@ test("/settings collects changes and proposes one patch; the theme preview never
 	send("\x1b");
 	await poll(() => grants.length === 1);
 	assert.deepEqual(grants[0], ["savePrefs", { patch: { settings: { hideThinkingBlock: false }, theme: "light" } }]);
+});
+
+test("/settings lists plugin rows (TuiSettingFields) and saves them under plugins.<plugin>", async (t) => {
+	const { runtime, grants, screen, send } = await runtimeWith(t, [quietToolsTui]);
+	runtime.ctx.commands.runSlash("/settings");
+	await poll(async () => (await screen()).includes("Hide thinking"));
+	// The plugin row comes after the theme and the 15 built-in rows.
+	for (let index = 0; index < 16; index++) send("\x1b[B");
+	await poll(async () => /→ Tool calls +quiet/.test(stripTerminalSequences(await screen())));
+	send("\r");
+	send("\x1b");
+	await poll(() => grants.length === 1);
+	assert.deepEqual(grants[0], [
+		"savePrefs",
+		{ patch: { settings: { plugins: { "quiet-tools": { toolCalls: "full" } } } } },
+	]);
 });
 
 test("hideThinkingBlock sets the thinking view; the toggle holds until the setting changes and across a reload", async (t) => {
