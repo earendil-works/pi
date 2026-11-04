@@ -9,7 +9,7 @@ import { createHost, defineFacet, type FacetHost, type Host, type Self } from ".
 import type { ChordHost } from "../../src/host/internal.ts";
 import { ChordObject } from "../../src/host/object.ts";
 import { type Link, memoryLinkPair } from "../../src/link/index.ts";
-import { binaryCodec, jsonPart } from "../../src/link/internal.ts";
+import { binaryCodec, jsonPart, type Message } from "../../src/link/internal.ts";
 import { Hold } from "../../src/remote/hold.ts";
 import { constant, type Writable } from "../../src/state/index.ts";
 import {
@@ -32,6 +32,7 @@ import {
 	relayed,
 	SERVER_ADDRESS,
 	Server,
+	Session,
 	serveNotes,
 	statesOf,
 	type TestPrincipal,
@@ -1500,7 +1501,7 @@ describe('calls over a link while a swap parks (decision "Swaps: dependents firs
 		await server.close(context);
 	});
 
-	it("a call already waiting at the gate when the swap parks is answered with its hold's loading, never not_ready", async () => {
+	it("a call already waiting at the gate when the swap parks survives its hold's loading: answered by the new code", async () => {
 		const store = await memoryStore();
 		const server = createHost<TestPrincipal>({
 			address: Server(),
@@ -1566,11 +1567,17 @@ describe('calls over a link while a swap parks (decision "Swaps: dependents firs
 				{ object: "app.gate-provider", kind: "parked", cause: expect.objectContaining({ kind: "waiting" }) },
 			]);
 			await transported();
-			// Parked: its hold left the old instance and tells the client \`loading\`; the call that waited at the gate is
-			// answered as every call in flight on a hold that leaves its object (§21), never \`not_ready\` while live.
+			// Parked: its hold left the old instance and tells the client \`loading\`; the call that waited at the gate stays
+			// (decision "Calls in flight survive a \`loading\` unbind"), unanswered until the new attempt's outcome.
 			expect(states).toEqual(["loading"]);
-			expect(await outcome).toEqual({ code: "unavailable", message: "hold 0: its object rebinds" });
+			let answered = false;
+			void outcome.then(() => {
+				answered = true;
+			});
+			await transported();
+			expect(answered).toBe(false);
 			opened.resolve();
+			expect(await outcome).toEqual({ value: 2 });
 			await transported();
 			expect(states).toEqual(["loading", "live"]);
 			expect(await gated.bump(context)).toBe(2);
@@ -1579,5 +1586,439 @@ describe('calls over a link while a swap parks (decision "Swaps: dependents firs
 			await client.close(context);
 			await server.close(context);
 		}
+	});
+});
+
+// A call sent after the hold's `loading` by the names it was bound with (as a consumer sends it before it learns of the
+// `loading`) is kept as a call in flight at the unbind is: several tests below send their calls that way.
+describe('calls in flight across a `loading` unbind (decision "Calls in flight survive a `loading` unbind")', () => {
+	/** A remote object on the server: `bump` (variant `a` only) and `ping` answer its code's number. */
+	const Kept = remote("app.kept", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		variants: {
+			a: { state: { label: str() }, methods: { bump: method(undefined, int()), ping: method(undefined, int()) } },
+			b: { state: { label: str() }, methods: { ping: method(undefined, int()) } },
+		},
+	});
+	const KEPT = wireNames(Kept, "a");
+	/** `Kept` v2: its label became an object, which v1 consumers are not mapped to (their version is dropped). */
+	const KeptV2 = evolve(Kept, (e) => e.state("a", "label", obj({ text: str() })));
+	/** A local type whose factory throws (with params: no host-lifetime object): one needing it parks on its failure. */
+	const Broken = local("app.kept-broken", { version: 1, params: { id: int() }, members: { n: int() } });
+
+	/** One code of `Kept`. */
+	type KeptCode = {
+		/** What `bump` and `ping` answer. */
+		readonly n: number;
+		readonly variant?: "a" | "b";
+		/** Whether it opens a native (a reload then restarts it), which opens once `opened` resolves. */
+		readonly native?: boolean;
+		readonly opened?: Promise<void>;
+		/** What `bump` waits for first. */
+		readonly gate?: Promise<void>;
+		/** Whether it needs `Broken` (it parks on a failed dependency). */
+		readonly broken?: boolean;
+		/** Each call that ran on this code, by method. */
+		readonly ran?: string[];
+	};
+
+	/** `Kept` as `code` (with `Broken` served beside it). */
+	function keptFacet(code: KeptCode) {
+		return defineFacet<TestPrincipal>((h) => {
+			h.serve(Broken, () => {
+				throw new Error("broken factory");
+			});
+			h.serve(Kept, (_, _principal, self) => {
+				if (code.native === true)
+					self.open(
+						async () => {
+							await code.opened;
+							return null;
+						},
+						() => {},
+					);
+				if (code.broken === true) self.get(Broken, { id: 1 });
+				const ping = async () => {
+					code.ran?.push("ping");
+					return code.n;
+				};
+				const bump = async () => {
+					await code.gate;
+					code.ran?.push("bump");
+					return code.n;
+				};
+				const label = constant(`v${code.n}`);
+				return code.variant === "b"
+					? { variant: "b", members: { label, ping } }
+					: { variant: "a", members: { label, bump, ping } };
+			});
+		});
+	}
+
+	/** A server serving `code` and a raw peer holding its `Kept` as hold 0, bound. */
+	async function keptServer(
+		code: KeptCode,
+		options: { readonly closeTimeout?: number; readonly readyTimeout?: number; readonly ack?: boolean } = {},
+	) {
+		const server = createHost<TestPrincipal>({
+			address: Server(),
+			principal: { kind: "server" },
+			closeTimeout: options.closeTimeout,
+			readyTimeout: options.readyTimeout,
+			revokedBy: (principal) => (principal.kind === "owner" ? ["owner"] : []),
+			onError: () => {},
+		});
+		await server.load([{ name: "@test/app", facet: keptFacet(code) }], context);
+		const [a, b] = memoryLinkPair();
+		server.accept(a, { principal: { kind: "owner" }, codec: testCodec() }, context);
+		const peer = new RawPeer(b, { ack: options.ack });
+		await peer.next("hello");
+		hold(peer, 0, Kept);
+		await peer.next("bound");
+		const reload = (next: KeptCode | ReturnType<typeof keptFacet>) =>
+			server.reload([{ name: "@test/app", facet: "n" in next ? keptFacet(next) : next }], context);
+		return { server, peer, reload };
+	}
+
+	/** Sends call `call` of `method` (an index of `Kept`'s variant `a`) on hold 0. */
+	function call(peer: RawPeer, call: number, method: "bump" | "ping"): void {
+		peer.send({ kind: "call", call, hold: 0, method: KEPT.methods[method]! });
+	}
+
+	/** The answers (`result`, `error`) the peer received for `call`, taken. */
+	function answersTo(peer: RawPeer, id: number): Message[] {
+		const answers = peer.received.filter(
+			(message) => (message.kind === "result" || message.kind === "error") && message.call === id,
+		);
+		peer.received.splice(0, peer.received.length, ...peer.received.filter((message) => !answers.includes(message)));
+		return answers;
+	}
+
+	it("a restart: the running call drains on the old code, one arriving during the drain runs on the new code", async () => {
+		const gate = Promise.withResolvers<void>();
+		const opened = Promise.withResolvers<void>();
+		const ran: string[] = [];
+		const { server, peer, reload } = await keptServer({ n: 1, native: true, gate: gate.promise, ran });
+		call(peer, 0, "bump");
+		await transported();
+		const report = await reload({ n: 2, native: true, opened: opened.promise, ran });
+		expect(report.objects).toEqual([{ object: "app.kept", kind: "restarted" }]);
+		// The hold stays bound while the old instance drains: a call sent now waits at the gate.
+		call(peer, 1, "bump");
+		await transported();
+		gate.resolve();
+		expect(partValue((await peer.next("result")).value!)).toBe(1);
+		await peer.next("loading");
+		await transported();
+		// Kept across the `loading`: no answer until the new attempt is live.
+		expect(answersTo(peer, 1)).toEqual([]);
+		opened.resolve();
+		await peer.next("bound");
+		const result = await peer.next("result");
+		expect([result.call, partValue(result.value!)]).toEqual([1, 2]);
+		expect(ran).toEqual(["bump", "bump"]);
+		expect(peer.kinds().filter((kind) => kind === "error")).toEqual([]);
+		await server.close(context);
+	});
+
+	it("a call stuck on the old code past closeTimeout is answered released at the seal, once", async () => {
+		const opened = Promise.withResolvers<void>();
+		const { server, peer, reload } = await keptServer(
+			{ n: 1, native: true, gate: new Promise(() => {}) },
+			{ closeTimeout: 30 },
+		);
+		call(peer, 0, "bump");
+		await transported();
+		await reload({ n: 2, native: true, opened: opened.promise });
+		await peer.next("loading");
+		const error = await peer.next("error");
+		expect(error).toMatchObject({ call: 0, error: { error: { code: "released" } } });
+		opened.resolve();
+		await peer.next("bound");
+		await transported();
+		expect(answersTo(peer, 0)).toEqual([]);
+		await server.close(context);
+	});
+
+	it("a kept call takes the gate's rejection: the parked cause, or unavailable after readyTimeout", async () => {
+		const parked = await keptServer({ n: 1, native: true });
+		const opened = Promise.withResolvers<void>();
+		await parked.reload({ n: 2, native: true, opened: opened.promise, broken: true });
+		call(parked.peer, 0, "ping");
+		opened.resolve();
+		const failed = await parked.peer.next("failed");
+		expect(failed.cause).toMatchObject({ kind: "waiting" });
+		const rejected = await parked.peer.next("error");
+		expect(rejected).toMatchObject({
+			call: 0,
+			error: { error: { message: expect.stringContaining("broken factory") } },
+		});
+		await parked.server.close(context);
+
+		const timed = await keptServer({ n: 1, native: true }, { readyTimeout: 60 });
+		await timed.reload({ n: 2, native: true, opened: new Promise(() => {}) });
+		call(timed.peer, 0, "ping");
+		await timed.peer.next("loading");
+		const timeout = await timed.peer.next("error");
+		// Bounded by readyTimeout (here the new attempt's own deadline fails it first).
+		expect(timeout).toMatchObject({
+			call: 0,
+			error: { error: { code: "unavailable", message: expect.stringContaining("60 ms") } },
+		});
+		await timed.server.close(context);
+	});
+
+	it("a kept call aborted or released by its consumer gets no answer and never runs", async () => {
+		const ran: string[] = [];
+		const opened = Promise.withResolvers<void>();
+		const { server, peer, reload } = await keptServer({ n: 1, native: true, ran });
+		await reload({ n: 2, native: true, opened: opened.promise, ran });
+		call(peer, 0, "ping");
+		call(peer, 1, "ping");
+		await peer.next("loading");
+		peer.send({ kind: "abort", call: 0 });
+		await transported();
+		opened.resolve();
+		await peer.next("bound");
+		expect((await peer.next("result")).call).toBe(1);
+		await transported();
+		expect(answersTo(peer, 0)).toEqual([]);
+		expect(ran).toEqual(["ping"]);
+		// A release while kept: the call goes with the hold.
+		const second = Promise.withResolvers<void>();
+		await reload({ n: 3, native: true, opened: second.promise, ran });
+		call(peer, 2, "ping");
+		await peer.next("loading");
+		peer.send({ kind: "release", hold: 0 });
+		await transported();
+		second.resolve();
+		await transported();
+		expect(answersTo(peer, 2)).toEqual([]);
+		expect(ran).toEqual(["ping"]);
+		await server.close(context);
+	});
+
+	it("across a variant change a kept call runs by name: one the new variant lacks fails invalid/member", async () => {
+		const opened = Promise.withResolvers<void>();
+		const { server, peer, reload } = await keptServer({ n: 1, native: true });
+		await reload({ n: 2, variant: "b", native: true, opened: opened.promise });
+		call(peer, 0, "bump");
+		call(peer, 1, "ping");
+		await peer.next("loading");
+		opened.resolve();
+		const fresh = await peer.next("bound");
+		expect(fresh.holds[0]!.variant).toBe(wireNames(Kept, "b").variant);
+		const missing = await peer.next("error");
+		expect(missing).toMatchObject({ call: 0, error: { error: { code: "invalid", reason: "member" } } });
+		const result = await peer.next("result");
+		expect([result.call, partValue(result.value!)]).toEqual([1, 2]);
+		await server.close(context);
+	});
+
+	it("a kept call of a version the new code drops is rejected contract_mismatch with the hold's failed", async () => {
+		const opened = Promise.withResolvers<void>();
+		const ran: string[] = [];
+		const { server, peer, reload } = await keptServer({ n: 1, native: true });
+		const v2 = defineFacet<TestPrincipal>((h) =>
+			h.serve(KeptV2, (_, _principal, self) => {
+				self.open(
+					async () => {
+						await opened.promise;
+						return null;
+					},
+					() => {},
+				);
+				const ping = async () => {
+					ran.push("ping");
+					return 2;
+				};
+				return { variant: "a", members: { label: constant({ text: "v2" }), bump: ping, ping } };
+			}),
+		);
+		await reload(v2);
+		call(peer, 0, "ping");
+		await peer.next("loading");
+		opened.resolve();
+		const failed = await peer.next("failed");
+		expect(failed.cause).toMatchObject({ kind: "waiting", error: { error: { code: "contract_mismatch" } } });
+		expect(await peer.next("error")).toMatchObject({ call: 0, error: { error: { code: "contract_mismatch" } } });
+		expect(ran).toEqual([]);
+		await server.close(context);
+	});
+
+	it("a call by the old names crossing the loading on the wire waits at the gate, never not_ready", async () => {
+		const opened = Promise.withResolvers<void>();
+		const { server, peer, reload } = await keptServer({ n: 1, native: true });
+		await reload({ n: 2, native: true, opened: opened.promise });
+		// Sent as a consumer sends it before it learns of the `loading`: by the names it was bound with.
+		await peer.next("loading");
+		call(peer, 0, "bump");
+		await transported();
+		expect(answersTo(peer, 0)).toEqual([]);
+		opened.resolve();
+		await peer.next("bound");
+		const result = await peer.next("result");
+		expect([result.call, partValue(result.value!)]).toEqual([0, 2]);
+		await server.close(context);
+	});
+
+	it("binding with the previous names, then a restart: the call running on the swapped-in instance drains to its result", async () => {
+		const gate = Promise.withResolvers<void>();
+		const opened = Promise.withResolvers<void>();
+		const { server, peer, reload } = await keptServer({ n: 1 }, { ack: false });
+		// A second `bound` in flight fills the window (two); the next swap in place leaves its fresh `bound` waiting.
+		await reload({ n: 2 });
+		await peer.next("bound");
+		await reload({ n: 3, gate: gate.promise });
+		await transported();
+		expect(peer.kinds()).toEqual([]);
+		call(peer, 0, "bump");
+		await transported();
+		// A restart unbinds the binding hold at once: the call runs on the live (unsealed) instance and stays.
+		await reload({ n: 4, native: true, opened: opened.promise });
+		await peer.next("loading");
+		await transported();
+		expect(answersTo(peer, 0)).toEqual([]);
+		gate.resolve();
+		const result = await peer.next("result");
+		expect([result.call, partValue(result.value!)]).toEqual([0, 3]);
+		opened.resolve();
+		peer.ack();
+		peer.ack();
+		await peer.next("bound");
+		await server.close(context);
+	});
+
+	it("a revocation racing the rebind ends the kept call with the link: no result", async () => {
+		const ran: string[] = [];
+		const { server, peer, reload } = await keptServer({ n: 1, native: true, ran });
+		await reload({ n: 2, native: true, opened: new Promise(() => {}), ran });
+		call(peer, 0, "ping");
+		await peer.next("loading");
+		server.revoke("owner", context);
+		await transported();
+		expect(peer.closed).toBe(true);
+		expect(answersTo(peer, 0).filter(({ kind }) => kind === "result")).toEqual([]);
+		expect(ran).toEqual([]);
+		await server.close(context);
+	});
+
+	it("a failed unbind still rejects: a live failure answers its calls with the failure, later ones not_ready", async () => {
+		const gate = Promise.withResolvers<void>();
+		let self: Self<TestPrincipal> | undefined;
+		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		const facet = defineFacet<TestPrincipal>((h) =>
+			h.serve(Kept, (_, _principal, declared) => {
+				self = declared;
+				const ping = async () => {
+					await gate.promise;
+					return 1;
+				};
+				return { variant: "a", members: { label: constant("v1"), bump: ping, ping } };
+			}),
+		);
+		await server.load([{ name: "@test/app", facet }], context);
+		const objects = instancesOf(ChordObject, "attempt");
+		const [a, b] = memoryLinkPair();
+		server.accept(a, { principal: { kind: "owner" }, codec: testCodec() }, context);
+		const peer = new RawPeer(b);
+		await peer.next("hello");
+		hold(peer, 0, Kept);
+		await peer.next("bound");
+		call(peer, 0, "ping");
+		await transported();
+		failLive(objects, self!, new ChordError({ code: "unavailable", message: "it broke" }));
+		const rejected = await peer.next("error");
+		expect(rejected).toMatchObject({ call: 0, error: { error: { message: "it broke" } } });
+		await peer.next("failed");
+		// Told a failure, the hold takes no calls by the old names.
+		call(peer, 1, "ping");
+		expect(await peer.next("error")).toMatchObject({ call: 1, error: { error: { code: "not_ready" } } });
+		gate.resolve();
+		await server.close(context);
+	});
+
+	describe("through a relay", () => {
+		/** `Kept` placed on a session's worker. */
+		const PlacedKept = remote("app.placed-kept", {
+			version: 1,
+			params: { session: str() },
+			hostAddress: ({ session }) => Session({ id: session }),
+			variants: { a: { state: { label: str() }, methods: { ping: method(undefined, int()) } } },
+		});
+
+		/** Serves `PlacedKept` answering `n` (recorded in `ran`), with a native that opens once `opened` resolves. */
+		function servePlacedKept(h: FacetHost<TestPrincipal>, n: number, ran: number[], opened?: Promise<void>): void {
+			h.serve(PlacedKept, (_, _principal, self) => {
+				self.open(
+					async () => {
+						await opened;
+						return null;
+					},
+					() => {},
+				);
+				const ping = async () => {
+					ran.push(n);
+					return n;
+				};
+				return { variant: "a", members: { label: constant(`v${n}`), ping } };
+			});
+		}
+
+		it("a worker's restart: the tab's kept call crosses the forwarded loading and is answered by the new code", async () => {
+			const ran: number[] = [];
+			const { tab, workers, server } = await relayed({ worker: (h) => servePlacedKept(h, 1, ran) });
+			const kept = await tab.get(PlacedKept, { session: "S1" }, context);
+			const states = statesOf(await kept.state.watch(context));
+			const opened = Promise.withResolvers<void>();
+			const worker = workers.get("session|S1")!;
+			await worker.reload(
+				[
+					{
+						name: "@test/worker",
+						facet: defineFacet<TestPrincipal>((h) => servePlacedKept(h, 2, ran, opened.promise)),
+					},
+				],
+				context,
+			);
+			// Still live during the drain: the call goes out and waits at the worker's gate.
+			const answer = kept.ping(context);
+			await transported();
+			expect(states).toEqual(["loading"]);
+			opened.resolve();
+			expect(await answer).toBe(2);
+			await transported();
+			expect(states).toEqual(["loading", "live"]);
+			expect(ran).toEqual([2]);
+			await server.close(context);
+		});
+
+		it("a downstream drop while the call is kept aborts it on the worker: it never runs", async () => {
+			const ran: number[] = [];
+			const { tab, workers, server, tabLink } = await relayed({ worker: (h) => servePlacedKept(h, 1, ran) });
+			const kept = await tab.get(PlacedKept, { session: "S1" }, context);
+			const opened = Promise.withResolvers<void>();
+			const worker = workers.get("session|S1")!;
+			await worker.reload(
+				[
+					{
+						name: "@test/worker",
+						facet: defineFacet<TestPrincipal>((h) => servePlacedKept(h, 2, ran, opened.promise)),
+					},
+				],
+				context,
+			);
+			const answer = rejection(kept.ping(context));
+			await transported();
+			tabLink.close();
+			expect(await answer).toMatchObject({ code: "unavailable" });
+			await transported();
+			opened.resolve();
+			await transported();
+			expect(ran).toEqual([]);
+			await server.close(context);
+		});
 	});
 });

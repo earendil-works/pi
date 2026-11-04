@@ -95,7 +95,10 @@ within each link's limits, compression at the origin, activation chains and revo
   failed already; the next attempt (or the parked object's next `loading`) is announced with `loading`; the hold stays,
   so a `retry` (from any holder) renews even a broken object for every holder (a parked object passes it on, one walk
   of this host with one hop less of the message's budget). After a swap in place it gets a fresh `bound` once the new
-  instance is live, answering calls by the names it was bound with until that is sent (the window may hold it). Live,
+  instance is live, answering calls by the names it was bound with until that is sent (the window may hold it). An
+  object leaving `live` unbinds it with `failed` (its calls in flight rejected) or `loading`: then its calls in flight
+  stay, each answered by the instance it runs on or by the object's gate, and calls by the names it was bound with
+  still arrive and wait at the gate until its fresh `bound` (decision "Calls in flight survive a `loading` unbind"). Live,
   it binds through the window (`boundEntry`: the variant and each member's value as a part, names as indexes into the
   bound version). Its members' frames arrive as `Subscriber` calls inside the batch; at its
   end the hold's entry lists the members that changed with their ops, each encoded with that member's own Delta
@@ -138,7 +141,8 @@ within each link's limits, compression at the origin, activation chains and revo
   calls wait in one FIFO queue, sent in order as replies free slots; it does not preempt running calls. A relay
   forwards its downstream calls at once, so only this host's own calls wait here. A slot is freed once per call: its
   `result` or `error`, its `abort` (when sent), its hold's `release` or `gone`, or the link's close. A call still
-  waiting when its hold gets `loading` is rejected `unavailable` (it may name a method of the old variant).
+  waiting when its hold gets `loading` is rejected `unavailable` (it may name a method of the old variant); one sent
+  already waits for its reply.
 - `Path` (the parent, or one route address): its current link and its holders (`RemoteObject`s and `RelayedHold`s),
   held on that link and again on every next one; when the link drops, every holder is told (`dropped`). `changed`
   tells its owner (a route) what happened without a link: a holder `attached`, the link `dropped`, the last holder

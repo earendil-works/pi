@@ -280,9 +280,9 @@ export class ProviderSide {
 	}
 
 	/**
-	 * A served hold left its object's binding (slice 7b §6, model §5): its unsent pending ops and a queued `bound` are
-	 * dropped (the ack slots of messages already sent stay until their `ack`), its calls in flight rejected with `error`
-	 * (each slot freed once).
+	 * A served hold left its object's binding with `error` (a failure, a removal or a version no longer bound; slice 7b
+	 * §6, model §5): as `unbind`, and its calls in flight rejected with `error` (each slot freed once). A hold unbinding
+	 * with `loading` keeps them (`unbind` alone).
 	 */
 	unbound(hold: Hold, error: ChordError): void {
 		this.unbind(hold);
@@ -377,11 +377,12 @@ export class ProviderSide {
 	/**
 	 * A call: one on a hold this side does not know is ignored (Q1), more than this side's N at once and compressed
 	 * arguments from a child (clients never compress) are protocol errors. On a relayed hold it is forwarded, its
-	 * arguments checked against this link's part limit first (the bytes are here). On a served hold that is not bound
-	 * yet (nor binding afresh after a swap) it is refused `not_ready`; its method is an index into the bound variant (one
-	 * outside it is a protocol error) and its arguments are opened and parsed here within the hold's limits (past one
-	 * the call fails `too_large/part`; a malformed part is a protocol error), absent ones `null`. Arguments this host
-	 * must inflate asynchronously are inflated first, then the call is handled again.
+	 * arguments checked against this link's part limit first (the bytes are here). On a served hold that is not callable
+	 * (not bound yet, nor rebinding by the names its consumer still has after a swap in place or a `loading`) it is
+	 * refused `not_ready`; its method is an index into the bound variant (one outside it is a protocol error) and its
+	 * arguments are opened and parsed here within the hold's limits (past one the call fails `too_large/part`; a
+	 * malformed part is a protocol error), absent ones `null`. Arguments this host must inflate asynchronously are
+	 * inflated first, then the call is handled again.
 	 */
 	#call(message: Extract<Message, { readonly kind: "call" }>): void | Promise<void> {
 		if (this.#calls.has(message.call)) throw new Error(`call ${message.call}: the id is in use`);

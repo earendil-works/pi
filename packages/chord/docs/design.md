@@ -391,7 +391,7 @@ host.route(Session, {
   nothing is refused for being "too many" (K16). A slot is freed once per call: by its `result` or `error`, its
   `abort` (when sent, at the caller; when received, at the provider), its hold's `release`, `gone`, its origin's
   `closed` or the link closing. A call still queued when its hold rebinds (`loading`) is rejected `unavailable` (it may
-  name a method of the old variant). A provider seeing more than N running calls of one origin closes the link
+  name a method of the old variant); one already sent is answered by the provider (a `loading` unbind keeps it, below). A provider seeing more than N running calls of one origin closes the link
   (protocol error); a call naming a hold it does not know is ignored before it is counted (Q1). **There is no limit on
   calls in progress per link** (owner, 2026-11-03; Chord v1's `maxCalls` had no counterpart): the call window N per origin
   and the part limits (section 22) are the bounds; 200 concurrent calls over one socket all run, N at a time in
@@ -1974,8 +1974,9 @@ type ReloadReport = {
   object activates (a swap, parked or not, a restart after its drain), until the object is live, failed or ended;
   a parked attempt showing `failed { waiting }` rejects it with that cause. A call never gets `not_ready` there: a
   hold over a link stays bound while the old instance still changes, so its consumer sees `live` and sends. When the
-  hold then leaves the old instance (a parked swap's retirement), it tells the consumer `loading` and answers the
-  calls still in flight `unavailable` (§22), as for any object leaving `live`. The new attempt's requests are made and bound
+  hold then leaves the old instance (a parked swap's retirement), it tells the consumer `loading` and keeps the calls
+  still in flight: they go on waiting at the gate (§22, decision "Calls in flight survive a `loading` unbind"). The
+  new attempt's requests are made and bound
   before the old attempt's are released (a request equal to an old one binds to the same target with no gap, M§3.9).
   Running calls finish on the old attempt with its handles valid, except R15: an old call touching a document whose
   version rose throws once (`released/version`), the document intact, the call not resent; the same for a table whose
@@ -2253,9 +2254,22 @@ validation, no clone of snapshots or ops.
   detaches the hold's sources, drops its unsent pending ops and a queued `bound`, and keeps the ack slots of `bound`
   and `state` messages already sent until their `ack` or the link's loss. A reload sends it when the object's type is
   removed (`not_served`), its version is no longer accepted (`version`), or a swap parks on a failed dependency; a
-  restart or a parked swap still loading sends `loading`; both are followed by a fresh `bound` when the object is live
-  again (applied as a re-binding). A swap in place keeps the hold bound and sends it a fresh `bound` once the new
-  instance is live (audit A9, 2026-10-30: one rebind path; a tab's watchers may get a frame for an unchanged member).
+  restart, a parked swap still loading or a live failure already retrying sends `loading`; both are followed by a fresh
+  `bound` when the object is live again (applied as a re-binding). A swap in place keeps the hold bound and sends it a
+  fresh `bound` once the new instance is live (audit A9, 2026-10-30: one rebind path; a tab's watchers may get a frame
+  for an unchanged member).
+- **A `loading` unbind keeps the calls in flight** (decision "Calls in flight survive a `loading` unbind"): the
+  provider unbinds the hold as above but rejects none of its calls, and the consumer keeps them (only its calls still
+  waiting for a slot reject `unavailable`). Each kept call gets exactly one answer from what it already waits on: the
+  instance it runs on (its result within `closeTimeout`, else `released` at the seal; a hold binding afresh after a swap
+  in place may unbind while its live instance still runs calls) or the gate (the new instance's result, the parked
+  cause, `unavailable` after `readyTimeout`, the object's end); an `abort`, a `release`, `gone` or the link's close
+  ends it as any call. Until its fresh `bound` is sent the hold takes calls by the names it was bound with (sent before
+  its consumer learnt of the `loading`): they wait at the gate too, never `not_ready`; after a `failed` it takes none.
+  The kept call runs by name: a method the new variant lacks fails `invalid/member`; a version the new code no longer
+  binds unbinds the hold (`failed`, `contract_mismatch`), which rejects its calls before the gate lets them run. Kept
+  calls hold their call-window slots meanwhile. A relay forwards `loading` and keeps its forwarded calls (its own
+  `loading` after an upstream drop rejects them first).
 
 ---
 
