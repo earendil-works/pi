@@ -221,8 +221,10 @@ launcher-drawn consent screen (worker IO suspended meanwhile). Unknown requests 
 frame/queue limits. Every output write passes `tui-filter.ts` (64 KiB UTF-8/frame): text, CR/LF/tab, SGR, cursor
 movement/position, erase, cursor visibility, autowrap, synchronized output, bracketed paste, pi-tui alternate screen
 and scroll region. OSC 52/title/hyperlinks, DCS, APC/PM/SOS, kitty graphics, C1 controls, unknown CSI/private modes and malformed
-or incomplete escapes are stripped. No partial escape can cross a frame boundary. Raw worker errors/streams never
-reach the terminal. Rendering is copied from coding-agent's interactive mode and DurableTui (p2-tui-port.md P0c/P2;
+or incomplete escapes are stripped. No partial escape can cross a frame boundary. Raw worker streams never reach the
+terminal. A crash (an uncaught exception or a throwing message handler) is printed by the launcher after it restored
+the terminal: the stack (frames name `p2-tui-bundle.mjs`), controls removed, at most 8 KiB (the bundle keeps function
+and class names for this); a heap overrun says so instead. Rendering is copied from coding-agent's interactive mode and DurableTui (p2-tui-port.md P0c/P2;
 p2 imports neither coding-agent nor mobile): a fullscreen layout (transcript `ScrollView` over a dock of status lines,
 pending area, pi's editor with the working indicator in its border, and pi's footer), incremental transcript
 components keyed by the shared display items (`src/tui/components/`), pi's tool cards and renderers for bash, read,

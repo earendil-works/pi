@@ -108,6 +108,8 @@ export async function buildTuiBundle(plugins: readonly string[], directory = plu
 		],
 		platform: "node",
 		target: "node26",
+		// Readable function and class names in the stack the launcher prints when the sandbox crashes (~4% size).
+		keepNames: true,
 		sourcemap: false,
 	});
 	const source = result.outputFiles[0]!.text;
