@@ -5,6 +5,7 @@
 import type { AssistantMessage, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { Models } from "@earendil-works/pi-ai/models";
 import {
+	AgentDoc,
 	AssistantEntry,
 	type ConversationHandle,
 	type ConversationId,
@@ -29,7 +30,14 @@ import type { Context, JsonValue } from "@p2/app/v1";
 import { type Location, type LocationInput, literal, locationText } from "@p2/app/v1";
 import { mainConversation, originOf } from "@p2/app/v1/worker";
 import { AGENT_MESSAGE_ENTRY, type AgentMessage, SUBAGENT_TASK_ENTRY, SubagentLocationsSchema } from "./contract.ts";
-import { HISTORY_TOOLS, resolveChoice, Subagents, TEAM_TOOL } from "./contract.worker.ts";
+import {
+	CODEMODE_TOOL,
+	HISTORY_TOOLS,
+	resolveChoice,
+	SUBAGENT_TOOLS,
+	Subagents,
+	TEAM_TOOL,
+} from "./contract.worker.ts";
 
 const SUBAGENT_EXTENSION = "subagent-tools";
 
@@ -362,9 +370,10 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 			"  env is an environment name from location_envs, or null for this device (default: yours; another environment needs",
 			"  the owner's request).",
 			"  model is 'provider/modelId' (default: yours); thinkingLevel is off|minimal|low|medium|high|xhigh|max",
-			"  (clamped to the model); tools is a subset of read, write, edit, bash, send_file, artifact (default: all of these;",
-			"  [] for none) and the location tools location_envs, location_dirs, location_move (never by default; with",
-			"  location_move it can move itself).",
+			"  (clamped to the model); tools is a subset of read, write, edit, bash, send_file, artifact, codemode (default: all",
+			"  of these, codemode while code mode is on; [] for none) and the location tools location_envs, location_dirs,",
+			"  location_move (never by default; with location_move it can move itself). With codemode its scripts call its",
+			"  chosen tools and the tools behind code mode (MCP tools, terminal, one-shot agents).",
 			"- send (name, message; followUp: true queues after the current answer instead of steering).",
 			"- configure (name; optional model, thinkingLevel, tools, env, cwd, followSession): replace its model/thinking/tool",
 			"  selection for later work; env/cwd give it its own location, followSession: true makes it follow the session",
@@ -488,7 +497,8 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 			if (action === "spawn" || action === "configure") {
 				if (action === "spawn" && agent)
 					return reply(`${name} already exists${agent.archived ? " (archived)" : ""}; use send.`, {}, true);
-				const choice = await resolveChoice(models, api, args, action === "spawn" ? undefined : agent, context);
+				const existing = action === "spawn" ? undefined : agent;
+				const choice = await resolveChoice(models, api, args, existing, SUBAGENT_TOOLS, context);
 				if (typeof choice === "string") return reply(choice, {}, true);
 				change = { model: choice.model, thinkingLevel: choice.thinkingLevel };
 				tools = choice.tools;
@@ -600,11 +610,47 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 
 /**
  * A subagent's tools plus the ones every subagent has: `team`, which is deferred (only conversations whose `modelTools`
- * adds it are offered it), and the history tools among `installed`.
+ * adds it are offered it), and the history tools among `installed`; with code mode also the tools behind it among
+ * `installed` (`scriptOnly`; the worker adds ones installed later, see `enableScriptTools`).
  */
 function withExtras(tools: readonly ToolRegistration[], installed: readonly ToolRegistration[]) {
 	const history = HISTORY_TOOLS.flatMap((name) => installed.filter((tool) => tool.name === name).slice(0, 1));
-	return { tools: [...tools, teamTool, ...history], modelTools: { add: [teamTool] } };
+	const behind = tools.some((tool) => tool.name === CODEMODE_TOOL) ? installed.filter(scriptOnly) : [];
+	return { tools: [...tools, teamTool, ...history, ...behind], modelTools: { add: [teamTool] } };
+}
+
+/**
+ * Whether only code mode scripts call `tool` (`callers: ["tools"]`: MCP tools, `terminal`, `agent`, code mode's own
+ * `models.*`). Durable enables exactly the tools a conversation's `tools` array names, and nested calls resolve among
+ * the enabled ones, so a subagent's array must name them for its scripts to reach them.
+ */
+export const scriptOnly = (tool: ToolRegistration): boolean => tool.callers?.includes("model") === false;
+
+/**
+ * Adds the tools behind code mode installed now (`names`) to every subagent with code mode, by name: MCP tools come and
+ * go with their servers, so the names written at spawn go stale. It runs between scripts, not inside one: a script's
+ * call resolves the agent once, at its start. A name whose tool goes away is ignored by Durable and works again when it
+ * returns, so none is removed.
+ */
+export async function enableScriptTools(
+	harness: Pick<Harness, "snapshot" | "commit">,
+	names: readonly string[],
+	context: Context,
+): Promise<void> {
+	const registry = await harness.snapshot(Subagents, ROOT_CONVERSATION_ID, context);
+	const lacking: ConversationId[] = [];
+	for (const agent of Object.values(registry?.agents ?? {})) {
+		if (!agent.tools.includes(CODEMODE_TOOL)) continue;
+		const enabled = (await harness.snapshot(AgentDoc, agent.conversationId, context))?.tools;
+		if (Array.isArray(enabled) && names.some((name) => !enabled.includes(name))) lacking.push(agent.conversationId);
+	}
+	if (lacking.length === 0) return;
+	await harness.commit(async (tx) => {
+		for (const conversationId of lacking) {
+			const state = await tx.doc(AgentDoc, conversationId);
+			if (Array.isArray(state.tools)) state.tools = [...new Set([...state.tools, ...names])];
+		}
+	}, context);
 }
 
 /**

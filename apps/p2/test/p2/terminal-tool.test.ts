@@ -1,10 +1,11 @@
 // The agent's terminal tool end to end with the fake provider and a real terminal host (skipped without a pi-env
 // daemon build): code mode scripts drive the session's terminals, which are the owner's (listed, labeled, typed into
 // by both); guest turns may use it; tmux errors come back as tool errors; the server serves only the session's current worker, on the session's environments, and archiving closes
-// the session's terminals. Without code mode, `tool_search` loads the tool.
+// the session's terminals; a subagent's scripts open windows at its own location. Without code mode, `tool_search`
+// loads the tool.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -208,6 +209,30 @@ test(
 			);
 			// The owner is no worker.
 			await expectChord(whenLive(owner.hold(AgentTerminals, {}, BACKGROUND_CONTEXT)), "forbidden");
+		});
+
+		await t.test("a subagent's script opens windows at the subagent's own location", async () => {
+			const own = join(workspace, "own");
+			mkdirSync(own);
+			const opener =
+				'return await tools.terminal({ command: "new-window", args: ["-n", "sub", "-w", "/^in-sub$/", "echo in-s\'\'ub"] });';
+			const spawn = { action: "spawn", name: "own", message: `codemode ${opener}`, cwd: "own" };
+			const spawned = await call(`subagent ${JSON.stringify(spawn)}`);
+			assert.equal(spawned.isError, false, text(spawned));
+			// Its answer is reported to the main conversation; that turn ends before the next script.
+			await until(
+				chat.view,
+				(value) =>
+					JSON.stringify(value?.entries ?? []).includes("[subagent own answered") &&
+					!(value?.docs["pi.live"] as { run?: unknown })?.run,
+			);
+			const { windows } = (await script('return await tools.terminal({ command: "list-windows" });')) as {
+				windows: { name?: string; opener: string; location: string }[];
+			};
+			assert.deepEqual(
+				windows.filter((window) => window.name === "sub").map(({ opener, location }) => ({ opener, location })),
+				[{ opener: "agent", location: own }],
+			);
 		});
 
 		await t.test("archiving the session closes its terminals", async () => {

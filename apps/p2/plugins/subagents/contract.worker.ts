@@ -21,8 +21,21 @@ import type { Context, Location } from "@p2/app/v1";
 export const CODING_TOOLS = ["read", "write", "edit", "bash", "send_file", "artifact"];
 /** The location tools (plugins/locations): every main agent has them; a subagent only when chosen. */
 export const LOCATION_TOOLS = ["location_envs", "location_dirs", "location_move"];
-/** What a subagent's `tools` may name: the coding tools (its default) and the location tools. */
-export const CHOOSABLE = [...CODING_TOOLS, ...LOCATION_TOOLS];
+/** The code mode tool (plugins/codemode), installed while the `codemode` setting is on. */
+export const CODEMODE_TOOL = "codemode";
+
+/** The tools an agent may choose (`choosable`) and gets without a choice (`defaults`), by name. */
+export type ToolOffer = { readonly choosable: readonly string[]; readonly defaults: readonly string[] };
+/**
+ * A subagent's: the coding tools and code mode by default (code mode only while installed, as for the main agent), the
+ * location tools when chosen.
+ */
+export const SUBAGENT_TOOLS: ToolOffer = {
+	choosable: [...CODING_TOOLS, CODEMODE_TOOL, ...LOCATION_TOOLS],
+	defaults: [...CODING_TOOLS, CODEMODE_TOOL],
+};
+/** A one-shot agent's (plugins/agent): no code mode, so a script's agents cannot run scripts that fan out again. */
+export const ONE_SHOT_TOOLS: ToolOffer = { choosable: [...CODING_TOOLS, ...LOCATION_TOOLS], defaults: CODING_TOOLS };
 export const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 export const TEAM_TOOL = "team";
@@ -107,14 +120,16 @@ export const Subagents = defineDoc<SubagentState>({
 export type AgentChoice = { model?: string; thinkingLevel?: string; tools?: string[] };
 
 /**
- * Validate a choice before any commit, so a typo changes nothing; an error is returned as text. Unset fields keep
- * `current`'s, or for a new agent the caller's model and thinking level and every coding tool.
+ * Validate a choice before any commit, so a typo changes nothing; an error is returned as text. `offer` says which tools
+ * it may name. Unset fields keep `current`'s, or for a new agent the caller's model and thinking level and the offer's
+ * defaults that are installed. A chosen tool that is not installed (code mode while its setting is off) is an error.
  */
 export async function resolveChoice(
 	models: Models,
 	api: Pick<ToolExecutionApi, "agent" | "registry">,
 	choice: AgentChoice,
 	current: Subagent | undefined,
+	offer: ToolOffer,
 	context: Context,
 ): Promise<{ model: ModelRef; thinkingLevel: ModelThinkingLevel; tools: ToolRegistration[] } | string> {
 	const own = current ? undefined : await api.agent(context);
@@ -135,10 +150,13 @@ export async function resolveChoice(
 		current?.thinkingLevel ??
 		own?.thinkingLevel ??
 		"off") as ModelThinkingLevel;
-	const names = (choice.tools ?? current?.tools ?? CODING_TOOLS).filter((tool) => !ALWAYS.includes(tool));
-	const unknown = names.filter((tool) => !CHOOSABLE.includes(tool));
-	if (unknown.length) return `Unknown tools: ${unknown.join(", ")}. Choose from ${CHOOSABLE.join(", ")}.`;
+	const names = (choice.tools ?? current?.tools ?? offer.defaults).filter((tool) => !ALWAYS.includes(tool));
+	const unknown = names.filter((tool) => !offer.choosable.includes(tool));
+	if (unknown.length) return `Unknown tools: ${unknown.join(", ")}. Choose from ${offer.choosable.join(", ")}.`;
 	const installed = api.registry.tools().map((entry) => entry.tool);
+	const missing =
+		choice.tools === undefined ? [] : names.filter((tool) => !installed.some((each) => each.name === tool));
+	if (missing.length) return `Not available in this session: ${missing.join(", ")}.`;
 	return {
 		model: ref,
 		thinkingLevel: clampThinkingLevel(model, requested),

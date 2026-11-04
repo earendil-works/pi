@@ -894,7 +894,7 @@ translated phone drawer and intercept chat taps.
   section. Call: `tools.terminal({ command, args })`, tmux's argv after the command name, parsed getopt-style
   (`commands.ts`: no string parsing, tmux-like errors such as `send-keys: unknown option -- x` or `usage: …`):
   `new-window [-n name] [-c dir] [-w W] [-T s] [command ...]` (a shell at the calling conversation's location,
-  `environments.locate`; subagents cannot choose code mode or this tool yet; `-c` relative to it; `command` is typed into it, then Enter, and the shell stays),
+  `environments.locate`: a subagent's script opens it at the subagent's own location; `-c` relative to it; `command` is typed into it, then Enter, and the shell stays),
   `list-windows`, `send-keys -t T [-l] [-w W] [-T s] key ...` (tmux key names as keys, encoded by libghostty in the
   terminal's modes, other arguments as text), `read -t T [-w W] [-T s]` (output since the agent's last read),
   `capture-pane -t T [-S -N] [-e] [-p]` (the screen, N scrollback lines, `-e` with SGR colors), `kill-window -t T`.
@@ -1037,9 +1037,22 @@ translated phone drawer and intercept chat taps.
   the list does not start/hold a worker. The sidebar expands children (latest entry first), with working dots;
   `/s/<id>/c/<conversation>` opens an independent chat, draft and model control. A parent link returns to the root.
   Browser configuration synchronizes the subagent registry via `ConversationConfigured`. Main Stop leaves child
-  work running; direct child prompts do not report to the parent. `test/p2/subagents.test.ts` covers bad models,
-  configured spawn, one report, answer retrieval, configuration, independent history, reload during child work,
-  idle restart, guest reads and sidebar persistence across server restart.
+  work running; direct child prompts do not report to the parent. **Tools** (`SUBAGENT_TOOLS` in `contract.worker.ts`,
+  validated by `resolveChoice` before any commit): `tools` may name the coding tools, `codemode` and the location tools;
+  the default is the coding tools and `codemode`, as the main agent has code mode while the `codemode` setting is on
+  (the default leaves out what is not installed: code mode while the setting is off or without the plugin; naming an
+  uninstalled tool is refused, "Not available in this session: codemode."). `team` and the history tools come on
+  top. Durable enables exactly the names in a conversation's `tools` array, and code mode's nested calls resolve among
+  the enabled tools, so a subagent with code mode also gets the script-only tools (`callers: ["tools"]`: MCP tools,
+  `terminal`, `agent`, code mode's `models.*`) by name: at spawn/configure those installed then (`withExtras`), and
+  later ones (an MCP server connecting) from the worker, which follows the registry's script-only tools and appends
+  missing names to every code mode subagent's array (`enableScriptTools`; a tool task resolves its agent once per
+  phase, so this cannot happen inside the script's own call). Names are never removed: Durable ignores a name whose
+  tool is gone. A subagent's scripts can thus start one-shot agents (which get no code mode). `test/p2/subagents.test.ts`
+  covers bad models, configured spawn, one report, answer retrieval, configuration, independent history, reload during
+  child work, idle restart, guest reads, sidebar persistence across server restart, and code mode: choosing and
+  validating it, the default with the setting on and off, a script calling a coding tool and `agent`, and MCP tools
+  installed after the spawn; `terminal-tool.test.ts` a subagent's script opening a window at its own location.
 - **Code mode** (`plugins/codemode`): the worker facet registers Durable's `codemode` extension
   (`createCodemodeExtension`, tool `codemode`, callers `["model"]`, replay-safe) in `Extensions`. One sandbox per worker
   (`CodemodeSandbox`, 256 MiB VM heap: `CODEMODE_MEMORY_LIMIT_BYTES`, kept constant because it is part of the VM
@@ -1121,7 +1134,8 @@ translated phone drawer and intercept chat taps.
   `structuredOutput` is the value, `details` `{ conversationId, attempts }`; nothing is reported to the parent. It has no
   prompt section (as Pi Mobile 1b763d912): its description, Pi Mobile's verbatim, carries the usage notes, and code
   mode's section lists it with the other tools scripts call. Model/thinking/tool
-  validation is the subagent tool's `resolveChoice`. The plugin contributes the tool unconditionally and does not
+  validation is the subagent tool's `resolveChoice` with `ONE_SHOT_TOOLS`: the coding and location tools, never
+  `codemode` (a one-shot agent's own scripts could start one-shot agents again, fanning out without bound). The plugin contributes the tool unconditionally and does not
   depend on code mode: without a script nothing can call it (`callers: ["tools"]`), so code mode stays removable while
   it is loaded (code mode's listing then disappears; `agent.test.ts` removes and re-adds code mode). It depends on subagents,
   whose document lists its conversations. The creating commit

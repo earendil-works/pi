@@ -2,7 +2,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { Models } from "@earendil-works/pi-ai/models";
 import { type ConversationId, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import { canSend, contribute, defineFacet, expectVariant, forbidden, signalOf } from "@p2/app/v1";
-import { durableContext } from "@p2/app/v1/node";
+import { durableContext, ExtensionSwitches } from "@p2/app/v1/node";
 import {
 	CommitSignal,
 	ConversationConfigured,
@@ -21,8 +21,10 @@ import { type Child, SubagentControl, Subagents } from "./contract.ts";
 import { ALWAYS, Subagents as Registry } from "./contract.worker.ts";
 import {
 	createSubagentExtension,
+	enableScriptTools,
 	ownLocation,
 	placeSubagents,
+	scriptOnly,
 	setArchived,
 	spawnEnvironments,
 	teamExtension,
@@ -60,6 +62,18 @@ export default defineFacet((host, self) => {
 			directory: (target, from, context) => resolveDirectory(harness().environments, target, from, context),
 		});
 		self.contribute(Extensions, { [extension.name]: extension, [teamExtension.name]: teamExtension });
+		// The tools behind code mode, as the Harness's registry installs them (switched-off extensions left out).
+		const scriptTools = self.derive(
+			[self.registry(Extensions), self.registry(ExtensionSwitches)],
+			([extensions, switches]) =>
+				[...extensions]
+					.filter(([name]) => switches.get(name) !== false)
+					.flatMap(([, each]) => (each.tools ?? []).filter(scriptOnly).map((tool) => tool.name))
+					.sort(),
+		);
+		self.on(scriptTools, async ({ value }, ctx) => {
+			await enableScriptTools(harness().durable, value, durableContext(ctx));
+		});
 		self.contribute(ConversationConfigured, {
 			subagents: async (conversation, ctx) => {
 				if (conversation.id === ROOT_CONVERSATION_ID) return;
