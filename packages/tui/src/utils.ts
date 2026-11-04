@@ -1347,11 +1347,13 @@ export function sliceWithWidth(
 	while (i < line.length) {
 		const ansi = extractAnsiCode(line, i);
 		if (ansi) {
+			// APC sequences (cursor markers) are positional one-shot commands, not persistent style
+			// state, so codes before the range carry over only when they are not APC.
 			if (currentCol >= startCol && currentCol < endCol) {
 				// Keep original order: codes from before the range must precede codes at the boundary
 				result += pendingAnsi + ansi.code;
 				pendingAnsi = "";
-			} else if (currentCol < startCol) pendingAnsi += ansi.code;
+			} else if (currentCol < startCol && !ansi.code.startsWith("\x1b_")) pendingAnsi += ansi.code;
 			i += ansi.length;
 			continue;
 		}
