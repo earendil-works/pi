@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage } from "node:http";
+import type { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { forbidden } from "@p2/app/v1";
 import { WebSocket, WebSocketServer } from "ws";
@@ -10,9 +11,11 @@ import {
 	terminalHostVersion,
 } from "./detached.ts";
 import {
+	encodeFrame,
 	type HostCall,
 	type HostResult,
 	MAX_BACKLOG,
+	readFrames,
 	type TerminalEvent,
 	type TerminalInfo,
 	type TerminalRequest,
@@ -295,11 +298,23 @@ export class TerminalService {
 		return (await this.#calls).call(call, signal);
 	}
 
-	/** Closes the session's terminals; without a running host there are none, and none is started. */
+	/**
+	 * Closes the session's terminals; without a running host there are none, and none is started. A host running older
+	 * code does not know `closeSession`: it closes them as the panel does, attaching to each and closing it.
+	 */
 	async closeSession(sessionId: string): Promise<void> {
-		const probe = await connectRunningTerminalHost(this.directory);
-		if (!probe) return;
-		probe.destroy();
+		const socket = await connectRunningTerminalHost(this.directory);
+		if (!socket) return;
+		try {
+			const events = hostEvents(socket);
+			const hello = await events.next(
+				(event): event is Extract<TerminalEvent, { type: "hello" }> => event.type === "hello",
+			);
+			if (hello.version !== (await terminalHostVersion(this.app)))
+				return await closeAsViewer(socket, events, sessionId);
+		} finally {
+			socket.destroy();
+		}
 		await this.call({ op: "closeSession", sessionId });
 	}
 
@@ -345,5 +360,66 @@ export class TerminalService {
 		void this.#calls?.then((calls) => calls.close());
 		await Promise.all([...this.#views].map((view) => this.release(view)));
 		await new Promise<void>((resolve) => this.#sockets.close(() => resolve()));
+	}
+}
+
+/** How long closing a session's terminals on a host running older code may take. */
+const VIEWER_CLOSE_MS = 10_000;
+
+/** A host connection's events, in order: `next` waits for the first one after the last taken that `wanted` accepts. */
+type HostEvents = { next<E extends TerminalEvent>(wanted: (event: TerminalEvent) => event is E): Promise<E> };
+
+function hostEvents(socket: Socket): HostEvents {
+	const queue: TerminalEvent[] = [];
+	let wake = () => {};
+	let ended = false;
+	readFrames(socket, (frame) => {
+		if (frame instanceof Uint8Array) return;
+		queue.push(frame as TerminalEvent);
+		wake();
+	});
+	socket.once("close", () => {
+		ended = true;
+		wake();
+	});
+	return {
+		async next(wanted) {
+			const deadline = Date.now() + VIEWER_CLOSE_MS;
+			for (;;) {
+				for (let event = queue.shift(); event; event = queue.shift()) if (wanted(event)) return event;
+				if (ended) throw new Error("Terminal host disconnected");
+				const left = deadline - Date.now();
+				if (left <= 0) throw new Error("The terminal host did not answer");
+				await new Promise<void>((resolve) => {
+					const timer = setTimeout(resolve, left);
+					wake = () => {
+						clearTimeout(timer);
+						resolve();
+					};
+				});
+			}
+		},
+	};
+}
+
+/**
+ * Closes the session's terminals with the viewer protocol every host version speaks: list them, then attach to each
+ * and force its close; resolves once the host reported each closed.
+ */
+async function closeAsViewer(socket: Socket, events: HostEvents, sessionId: string): Promise<void> {
+	socket.write(encodeFrame({ type: "list", sessionId } satisfies TerminalRequest));
+	const listed = await events.next(
+		(event): event is Extract<TerminalEvent, { type: "list" }> => event.type === "list",
+	);
+	const open = new Set(listed.terminals.map((terminal) => terminal.id));
+	for (const terminalId of open) {
+		socket.write(encodeFrame({ type: "attach", terminalId } satisfies TerminalRequest));
+		socket.write(encodeFrame({ type: "close", force: true } satisfies TerminalRequest));
+	}
+	while (open.size > 0) {
+		const closed = await events.next(
+			(event): event is Extract<TerminalEvent, { type: "closed" }> => event.type === "closed",
+		);
+		open.delete(closed.terminalId);
 	}
 }

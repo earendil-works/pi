@@ -878,7 +878,8 @@ translated phone drawer and intercept chat taps.
   session switch, showing that session's terminals without starting one. Only explicit terminal-button/tab taps
   request auto-start; attachment updates replace the route, never push or reopen a later destination.
   Outdated hosts show Restart (ends all terminals), but idle outdated hosts are not automatically replaced yet; the
-  agent's calls to an outdated host fail with that advice (`OUTDATED_HOST`), and archiving cannot close its terminals.
+  agent's calls to an outdated host fail with that advice (`OUTDATED_HOST`); archiving closes its terminals with the
+  viewer protocol every host speaks (list, then attach and force-close each).
   Each terminal has a number in its session (`index`: the lowest free one from 1, kept while it lives), an optional
   name and an `agent` mark; tabs show the name, else the title, else "Terminal N", agent terminals with a "Pi" badge.
   Every connection that listed a session hears its list change (`terminals`: opened, closed, exited, renamed, by any
@@ -918,6 +919,7 @@ translated phone drawer and intercept chat taps.
   the tool end to end (scripts, shared with the owner both ways, errors, guest turns, stale workers and foreign
   environments refused, archiving, `tool_search` without code mode); `terminal-tool-unit.test.ts`,
   `terminal-commands.test.ts`, `terminal-plain.test.ts` and `terminal-keys.test.ts` the pure parts;
+  `terminal-service.test.ts` closing a session (no host started; an outdated host's terminals closed as the panel does);
   `ghostty.test.ts` and `terminal-input.test.ts` cover the copied browser primitives. PTY tests skip when no daemon
   build exists (`npm run build:daemon` in `packages/env` builds a debug one).
 - **Search** (`plugins/search`): `SearchIndex` (server local, `search.sqlite`: root/subagent user/assistant text in FTS5 and
