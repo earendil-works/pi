@@ -4,6 +4,8 @@ import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore 
 export class RuntimeCredentials implements CredentialStore {
 	private readonly store: CredentialStore;
 	private readonly overrides = new Map<string, string>();
+	/** Modifications whose update function has started, for example an OAuth token request. */
+	private readonly startedModifications = new Set<Promise<void>>();
 
 	constructor(store: CredentialStore) {
 		this.store = store;
@@ -41,7 +43,37 @@ export class RuntimeCredentials implements CredentialStore {
 		fn: (current: Credential | undefined) => Promise<Credential | undefined>,
 		options?: AuthOperationOptions,
 	): Promise<Credential | undefined> {
-		return this.store.modify(providerId, fn, options);
+		let markDone!: () => void;
+		const done = new Promise<void>((resolve) => {
+			markDone = resolve;
+		});
+		const modification = this.store.modify(
+			providerId,
+			(current) => {
+				this.startedModifications.add(done);
+				return fn(current);
+			},
+			options,
+		);
+		const finish = () => {
+			this.startedModifications.delete(done);
+			markDone();
+		};
+		modification.then(finish, finish);
+		return modification;
+	}
+
+	/**
+	 * Wait until every modification whose update function has started is written or failed.
+	 *
+	 * A modification still waiting for the store lock is not awaited: it has not sent anything yet.
+	 * One that has started may have spent a single-use OAuth refresh token, so exiting before its
+	 * result is written would leave only the spent token in auth.json.
+	 */
+	async settled(): Promise<void> {
+		while (this.startedModifications.size > 0) {
+			await Promise.all(this.startedModifications);
+		}
 	}
 
 	async delete(providerId: string, options?: AuthOperationOptions): Promise<void> {
