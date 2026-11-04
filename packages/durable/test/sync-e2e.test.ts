@@ -4,18 +4,25 @@
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openStore, type Store } from "@earendil-works/chord";
+import { type Backend, openStore, type Store, sqliteBackend } from "@earendil-works/chord";
+import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
+import { pullSession, readOutbox, type Seq, uploadSession } from "@earendil-works/chord/sync";
+import { FileSyncStateStore, FileSystemSyncRemote } from "@earendil-works/chord/sync/node";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { NodeExecutionEnv } from "../src/env/node.ts";
 import { StoreStorage } from "../src/storage/store/index.ts";
-import { FileSyncStateStore, FileSystemSyncRemote, pullSession, readOutbox, uploadSession } from "../src/sync/index.ts";
-import type { Seq, Storage } from "../src/types.ts";
+import type { Storage } from "../src/types.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf, unanswered } from "./chat-support.ts";
 import { context } from "./session-support.ts";
-import { backend, SESSION_OWNER } from "./sync-support.ts";
 
 const SESSION = "s1";
+/** The owner name Durable's storage takes in a session store. */
+const SESSION_OWNER = "pi.session";
+
+/** A backend over the SQLite file at `path`. */
+async function backend(path: string): Promise<Backend> {
+	return sqliteBackend(await openNodeSqliteDatabase(path));
+}
 const directories: string[] = [];
 
 afterEach(async () => {
@@ -43,7 +50,7 @@ async function harnessStorage(store: Store): Promise<Storage> {
 /** One device: its data directory, its sync state and its faux model. */
 async function device(name: string, remote: FileSystemSyncRemote) {
 	const dir = await temp(`pi-durable-e2e-${name}-`);
-	const state = new FileSyncStateStore(new NodeExecutionEnv({ cwd: dir }), join(dir, "sync"));
+	const state = new FileSyncStateStore(join(dir, "sync"));
 	const setup: ChatSetup = chatSetup();
 	const file = (sessionId: string) => join(dir, `${sessionId}.sqlite`);
 	const exists = async (sessionId: string) =>
@@ -105,7 +112,7 @@ async function device(name: string, remote: FileSystemSyncRemote) {
 
 async function setupDevices() {
 	const root = await temp("pi-durable-e2e-remote-");
-	const remote = new FileSystemSyncRemote(new NodeExecutionEnv({ cwd: root }), root);
+	const remote = new FileSystemSyncRemote(root);
 	return { remote, laptop: await device("laptop", remote), desktop: await device("desktop", remote) };
 }
 

@@ -1,4 +1,4 @@
-import type { OutboxCommit } from "@earendil-works/chord";
+import type { OutboxCommit } from "../store/outbox.ts";
 
 /**
  * Version of the line envelope. It changes when the envelope changes; the writes inside carry the store outbox's own

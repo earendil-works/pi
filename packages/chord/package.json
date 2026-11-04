@@ -106,6 +106,16 @@
 			"types": "./dist/node/tui/index.d.ts",
 			"import": "./dist/node/tui/index.js"
 		},
+		"./sync": {
+			"source": "./src/sync/index.ts",
+			"types": "./dist/sync/index.d.ts",
+			"import": "./dist/sync/index.js"
+		},
+		"./sync/node": {
+			"source": "./src/sync/node/index.ts",
+			"types": "./dist/sync/node/index.d.ts",
+			"import": "./dist/sync/node/index.js"
+		},
 		"./package.json": "./package.json"
 	},
 	"sideEffects": false,

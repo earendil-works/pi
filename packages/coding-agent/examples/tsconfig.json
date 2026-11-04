@@ -67,6 +67,12 @@
 			"@earendil-works/chord/tui/launcher": [
 				"../../../packages/chord/src/node/tui/index.ts"
 			],
+			"@earendil-works/chord/sync": [
+				"../../../packages/chord/src/sync/index.ts"
+			],
+			"@earendil-works/chord/sync/node": [
+				"../../../packages/chord/src/sync/node/index.ts"
+			],
 			"@test/contracts/*": [
 				"../../chord/test/node/fixtures/plugins/contracts/*.ts"
 			],

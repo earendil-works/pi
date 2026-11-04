@@ -35,6 +35,8 @@ The design, the rule book for all of this, is [docs/design.md](docs/design.md).
 | `@earendil-works/chord/sqlite` | Portable `SqliteDatabase`, `SqliteExecutor`, and `SqliteValue`, atomic `applySqliteMigrations(database, migrations, { table })`, and `validateSqliteSchemaPrefix`. The metadata table must be a valid, non-reserved SQLite identifier; migration versions start at 1 and are contiguous. | Any SQLite adapter |
 | `@earendil-works/chord/sqlite/node` | `NodeSqliteDatabase`, `openNodeSqliteDatabase`, and `NodeSqliteDatabaseOptions`. | Node |
 | `@earendil-works/chord/sqlite/cloudflare` | `DurableObjectSqliteDatabase` and the structural `DurableObjectSqliteStorage` binding type. | Cloudflare Durable Objects |
+| `@earendil-works/chord/sync` | Sync (experimental): a store's outbox commits uploaded to a remote into slots created once (`uploadSession`), applied on another copy (`pullSession`), folded into snapshots (`foldSession`); `FlushScheduler`; the remote and sync-state interfaces. | Node and browsers |
+| `@earendil-works/chord/sync/node` | `FileSystemSyncRemote` and `FileSyncStateStore`: a remote and sync state in a directory, for development and tests. | Node |
 
 `esbuild` (for `/plugins` and `/surfaces`), `ws` (for `/http` and `/tui/launcher`) and `react` (for `/react`) are optional peer dependencies, imported only there; `/app` uses all but `react`.
 

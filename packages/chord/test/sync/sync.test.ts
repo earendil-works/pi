@@ -1,48 +1,42 @@
 // The sync protocol over stores with an outbox: slots created once, uploads from the outbox, pulls through
-// `applyBatch()`, archives for sessions whose outbox does not reach back, folds into snapshots.
+// `applyBatch()`, archives for stores whose outbox does not reach back, folds into snapshots. The stores hold a plain
+// table: sync knows nothing of what a store keeps.
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openStore, type Store } from "@earendil-works/chord";
-import type { Context } from "@earendil-works/chord/context";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { JsonValue } from "@earendil-works/chord/json";
 import { afterEach, describe, expect, it } from "vitest";
-import { NodeExecutionEnv } from "../src/env/node.ts";
-import { idFromNumber, seqFromNumber } from "../src/ids.ts";
+import { BACKGROUND_CONTEXT, type Context } from "../../src/context/index.ts";
+import { int, str } from "../../src/contracts/index.ts";
+import { openNodeSqliteDatabase } from "../../src/sqlite/node.ts";
+import { type Backend, sqliteBackend } from "../../src/store/backend.ts";
+import type { StagedWrite } from "../../src/store/step.ts";
+import { type ChordStore, openStore, type Store } from "../../src/store/store.ts";
+import { defineTable } from "../../src/store/table.ts";
+import { TableChanges } from "../../src/store/table-changes.ts";
+import { TableHandle } from "../../src/store/table-handle.ts";
+import { prepareTables } from "../../src/store/table-migration.ts";
 import {
 	type BatchInfo,
 	decodeBatch,
 	encodeBatch,
-	FileSyncStateStore,
-	FileSystemSyncRemote,
 	FlushScheduler,
 	foldSession,
 	HistoryUnavailableError,
-	isUrgentCommit,
 	LOG_START,
 	OutboxUnavailableError,
 	pullSession,
 	readOutbox,
 	remoteHead,
 	remoteHistory,
+	type Seq,
 	type SessionSyncMaintenance,
 	type SyncState,
 	type SyncStateStore,
 	UnsyncedCommitsError,
 	uploadSession,
-} from "../src/sync/index.ts";
-import {
-	type CommitPublication,
-	type DocumentCreate,
-	type DocumentId,
-	type EntryId,
-	ROOT_CONVERSATION_ID,
-	type Seq,
-	type StorageWrite,
-	type TaskId,
-} from "../src/types.ts";
-import { backend, commitAll, reads, sessionStore } from "./sync-support.ts";
+} from "../../src/sync/index.ts";
+import { FileSyncStateStore, FileSystemSyncRemote } from "../../src/sync/node/index.ts";
+import { tableOwner } from "../support.ts";
 
 const context = BACKGROUND_CONTEXT;
 const SESSION = "session-1";
@@ -55,9 +49,47 @@ afterEach(async () => {
 });
 
 async function remote(): Promise<FileSystemSyncRemote> {
-	const directory = await mkdtemp(join(tmpdir(), "pi-durable-sync-"));
+	const directory = await mkdtemp(join(tmpdir(), "chord-sync-"));
 	directories.push(directory);
-	return new FileSystemSyncRemote(new NodeExecutionEnv({ cwd: directory }), directory);
+	return new FileSystemSyncRemote(directory);
+}
+
+/** A backend over the SQLite file at `path`, `:memory:` by default. */
+async function backend(path = ":memory:"): Promise<Backend> {
+	return sqliteBackend(await openNodeSqliteDatabase(path));
+}
+
+/** A store with its outbox on. */
+async function sessionStore(path = ":memory:"): Promise<Store> {
+	return openStore(await backend(path), context, { outbox: true });
+}
+
+/** The table every copy writes: a counter per id. */
+const Counts = defineTable("counts", { version: 1, columns: { id: str(), n: int() }, key: ["id"] });
+const TABLE = "app.sync:counts";
+const OPEN = { admit: () => true, adopt: () => {} };
+
+/** One batch of the test's history: rows to put. */
+type Rows = readonly { readonly id: string; readonly n: number }[];
+
+/** Commits each batch of rows to `store`, preparing the table first (its creation is a commit of its own). */
+async function commitAll(store: Store, batches: readonly Rows[]): Promise<void> {
+	const chord = store as ChordStore;
+	await prepareTables([{ definition: Counts, table: TABLE }], chord, OPEN, "app.sync", context);
+	const handle = new TableHandle(Counts, TABLE, chord, tableOwner());
+	for (const rows of batches) {
+		const staged: StagedWrite[] = [];
+		const changes = new TableChanges(handle, staged);
+		for (const row of rows) changes.put(row);
+		await chord.commit(staged, OPEN, context);
+	}
+}
+
+/** What a copy holds, as one comparable value: every part of its export. */
+async function reads(store: Store): Promise<unknown[]> {
+	const parts: unknown[] = [];
+	for await (const part of store.export(context)) parts.push(part);
+	return parts;
 }
 
 class MemoryState implements SyncStateStore {
@@ -107,7 +139,7 @@ function device(name: string, remoteStore: FileSystemSyncRemote) {
 			return store;
 		},
 		has: (sessionId = SESSION) => copies.has(sessionId),
-		async commit(batches: readonly (readonly StorageWrite[])[], sessionId = SESSION): Promise<void> {
+		async commit(batches: readonly Rows[], sessionId = SESSION): Promise<void> {
 			await commitAll(await self.store(sessionId), batches);
 		},
 		async upload(sessionId = SESSION) {
@@ -156,58 +188,34 @@ function device(name: string, remoteStore: FileSystemSyncRemote) {
 	return self;
 }
 
-const entryId = (id: number) => idFromNumber<EntryId>(id);
-const documentId = (id: number) => idFromNumber<DocumentId>(id);
-const entry = (id: number) =>
-	({
-		type: "entry",
-		value: { id: entryId(id), conversationId: ROOT_CONVERSATION_ID, kind: "message", data: { id } },
-	}) as const satisfies StorageWrite;
-const sessionDoc = (id: number): DocumentCreate => ({
-	id: documentId(id),
-	kind: "test.session",
-	scope: { kind: "session" },
-});
-const task = (id: number, status: "pending" | "running") =>
-	({
-		type: "task",
-		value: {
-			id: idFromNumber<TaskId<JsonValue>>(id),
-			conversationId: ROOT_CONVERSATION_ID,
-			kind: "test.task",
-			version: 1,
-			input: { id },
-			background: false,
-			abortRequested: false,
-			state: { status, checkpoint: { status } },
-		},
-	}) as const satisfies StorageWrite;
-
-/** Ten commits of entries, a task updated in place, and a session document with deltas and a new base. */
-function seedBatches(): StorageWrite[][] {
+/** Ten batches of rows: new ids and updates of earlier ones. */
+function seedBatches(): Rows[] {
 	return [
-		[{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }],
-		[entry(2), task(3, "pending")],
+		[{ id: "a", n: 1 }],
 		[
-			{
-				type: "document.create",
-				record: sessionDoc(4),
-				content: { kind: "base", version: 1, value: { n: 0 } },
-			},
+			{ id: "b", n: 1 },
+			{ id: "c", n: 1 },
 		],
-		[entry(5), task(3, "running")],
-		[{ type: "document.change", id: documentId(4), content: { kind: "delta", version: 1, ops: [["s", ["n"], 1]] } }],
-		[entry(6)],
-		[{ type: "document.change", id: documentId(4), content: { kind: "base", version: 1, value: { n: 5 } } }],
-		[entry(7)],
-		[entry(8), task(9, "pending")],
-		[entry(10)],
+		[{ id: "a", n: 2 }],
+		[{ id: "d", n: 1 }],
+		[{ id: "b", n: 2 }],
+		[{ id: "e", n: 1 }],
+		[{ id: "a", n: 3 }],
+		[{ id: "f", n: 1 }],
+		[
+			{ id: "g", n: 1 },
+			{ id: "c", n: 2 },
+		],
+		[{ id: "h", n: 1 }],
 	];
 }
 
+/** One row a single device adds. */
+const entry = (id: number): Rows => [{ id: `x${id}`, n: id }];
+
 const slot = (after: number, to: number, device: string): BatchInfo => ({
-	after: seqFromNumber(after),
-	to: seqFromNumber(to),
+	after: after,
+	to: to,
 	device,
 });
 
@@ -226,7 +234,7 @@ describe("batches", () => {
 describe("remoteHistory", () => {
 	const listing = {
 		batches: [{ ...slot(0, 4, "a"), folded: true as const }, slot(4, 10, "a"), slot(10, 12, "b")],
-		snapshots: [seqFromNumber(4)],
+		snapshots: [4],
 	};
 
 	it("restores from the newest snapshot along the chain of slots", () => {
@@ -236,15 +244,15 @@ describe("remoteHistory", () => {
 	});
 
 	it("continues a copy from its head, also from inside a batch", () => {
-		expect(remoteHistory(listing, seqFromNumber(4))).toEqual({
+		expect(remoteHistory(listing, 4)).toEqual({
 			batches: [slot(4, 10, "a"), slot(10, 12, "b")],
 			head: 12,
 		});
-		expect(remoteHistory(listing, seqFromNumber(7))).toEqual({
+		expect(remoteHistory(listing, 7)).toEqual({
 			batches: [slot(4, 10, "a"), slot(10, 12, "b")],
 			head: 12,
 		});
-		expect(remoteHistory(listing, seqFromNumber(12))).toEqual({ batches: [], head: 12 });
+		expect(remoteHistory(listing, 12)).toEqual({ batches: [], head: 12 });
 	});
 });
 
@@ -320,7 +328,7 @@ describe("syncing a session between devices", () => {
 			const shared = (await devices.laptop.store()).lastSeq;
 			// Both continue without hearing from each other.
 			await devices.laptop.commit(batches.slice(5, 7));
-			await devices.phone.commit([[entry(100)]]);
+			await devices.phone.commit([entry(100)]);
 
 			const winner = devices[first];
 			const loser = devices[second];
@@ -418,17 +426,10 @@ describe("syncing a session between devices", () => {
 		// A copy that believes it shares 1 with the remote: no slot starts there, and the history ends further on.
 		const desktop = device("desktop", store);
 		await desktop.commit(batches.slice(0, 2));
-		await desktop.state.set(SESSION, { syncedHead: seqFromNumber(1) }, context);
-		const commits = await readOutbox(await desktop.store(), seqFromNumber(1), 100, context);
+		await desktop.state.set(SESSION, { syncedHead: 1 }, context);
+		const commits = await readOutbox(await desktop.store(), 1, 100, context);
 		expect(
-			await store.putBatch(
-				SESSION,
-				seqFromNumber(1),
-				seqFromNumber(commits.at(-1)!.seq),
-				"desktop",
-				await encodeBatch(commits),
-				context,
-			),
+			await store.putBatch(SESSION, 1, commits.at(-1)!.seq, "desktop", await encodeBatch(commits), context),
 		).toEqual({ type: "not_head", head });
 		expect(await desktop.upload()).toEqual({ type: "diverged", at: 1 });
 		expect((await store.list(SESSION, context)).batches).toEqual([slot(0, head, "laptop")]);
@@ -502,16 +503,16 @@ describe("syncing a session between devices", () => {
 		const at = (await stale.store()).lastSeq;
 		await expect(stale.pull()).rejects.toThrow(HistoryUnavailableError);
 		// Nor can it take a folded slot: its own commits are a different history.
-		await stale.commit([[entry(300)]]);
+		await stale.commit([entry(300)]);
 		expect(await stale.upload()).toEqual({ type: "diverged", at });
 		await stale.forget();
 		await stale.pull();
 		expect(await reads(await stale.store())).toEqual(await reads(await laptop.store()));
 
 		// Uploads go on after the fold, and the replica follows them; so does a second fold and a fresh restore.
-		await laptop.commit([[entry(100)], [entry(101)]]);
+		await laptop.commit([entry(100), entry(101)]);
 		await laptop.upload();
-		await laptop.commit([[entry(102)]]);
+		await laptop.commit([entry(102)]);
 		await laptop.upload();
 		await replica.pull();
 		expect(await reads(await replica.store())).toEqual(await reads(await laptop.store()));
@@ -584,7 +585,7 @@ describe("host pieces", () => {
 		const store = await remote();
 		expect(await store.sessions(undefined, context)).toEqual({ sessions: [], cursor: "", more: false });
 		const laptop = device("laptop", store);
-		await laptop.commit([[entry(1)]], "s2");
+		await laptop.commit([entry(1)], "s2");
 		await laptop.upload("s2");
 		await store.putMeta("s1", { title: "first" }, context);
 		await store.putMeta("s1", { title: "renamed", origin: "laptop" }, context);
@@ -606,10 +607,10 @@ describe("host pieces", () => {
 	it("keeps sync state in files", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "pi-durable-sync-state-"));
 		directories.push(directory);
-		const state = new FileSyncStateStore(new NodeExecutionEnv({ cwd: directory }), join(directory, "sync"));
+		const state = new FileSyncStateStore(join(directory, "sync"));
 		expect(await state.get(SESSION, context)).toBeUndefined();
-		await state.set(SESSION, { syncedHead: seqFromNumber(3), pulling: seqFromNumber(7) }, context);
-		expect(await state.get(SESSION, context)).toEqual({ syncedHead: seqFromNumber(3), pulling: seqFromNumber(7) });
+		await state.set(SESSION, { syncedHead: 3, pulling: 7 }, context);
+		expect(await state.get(SESSION, context)).toEqual({ syncedHead: 3, pulling: 7 });
 		await state.set(SESSION, { syncedHead: undefined }, context);
 		expect(await state.get(SESSION, context)).toEqual({ syncedHead: undefined });
 		await state.delete(SESSION, context);
@@ -713,18 +714,5 @@ describe("FlushScheduler", () => {
 		expect(errors).toHaveLength(2);
 		await time.advance(60_000);
 		expect(attempts).toHaveLength(3);
-	});
-
-	it("marks commits with input, answers, or settled submissions as urgent", () => {
-		const publication = (changes: CommitPublication["changes"]): CommitPublication => ({
-			seq: seqFromNumber(1) as Seq,
-			changes,
-		});
-		expect(
-			isUrgentCommit(
-				publication([{ type: "entry", value: { id: 1, conversationId: 1, kind: "pi.user" } }] as never),
-			),
-		).toBe(true);
-		expect(isUrgentCommit(publication([{ type: "entry", value: entry(1).value }] as never))).toBe(false);
 	});
 });

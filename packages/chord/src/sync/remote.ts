@@ -1,9 +1,13 @@
-import type { Context } from "@earendil-works/chord/context";
-import { seqFromNumber } from "../ids.ts";
-import type { JsonObject, Seq } from "../types.ts";
+import type { Context } from "../context/index.ts";
+
+/** A store's commit sequence (`store.lastSeq`, an outbox commit's `seq`); 0 is before every commit. */
+export type Seq = number;
+
+/** A JSON object: a session's description on the remote. */
+export type JsonObject = { [key: string]: unknown };
 
 /** The sequence before every commit: a store without commits is at it. */
-export const LOG_START = seqFromNumber(0);
+export const LOG_START: Seq = 0;
 
 /**
  * A slot of a session's remote history: the batch of outbox commits after `after`, up to `to`, uploaded by `device`. A

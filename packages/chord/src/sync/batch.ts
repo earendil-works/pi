@@ -1,4 +1,5 @@
-import type { ArchivePart, OutboxCommit } from "@earendil-works/chord";
+import type { ArchivePart } from "../store/archive.ts";
+import type { OutboxCommit } from "../store/outbox.ts";
 import { decodeLogLines, encodeLogLine, LogFormatError } from "./lines.ts";
 
 /**

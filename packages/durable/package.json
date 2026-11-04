@@ -60,12 +60,6 @@
 			"import": "./dist/images/cloudflare.js",
 			"default": "./dist/images/cloudflare.js"
 		},
-		"./sync": {
-			"source": "./src/sync/index.ts",
-			"types": "./dist/sync/index.d.ts",
-			"import": "./dist/sync/index.js",
-			"default": "./dist/sync/index.js"
-		},
 		"./storage/memory": {
 			"source": "./src/storage/memory.ts",
 			"types": "./dist/storage/memory.d.ts",

@@ -1,15 +1,14 @@
-import {
-	applyBatch,
-	type Backend,
-	type ChordStore,
-	importStore,
-	type OutboxCommit,
-	openStore,
-	type Store,
-} from "@earendil-works/chord";
-import type { Context } from "@earendil-works/chord/context";
-import { seqFromNumber } from "../ids.ts";
-import type { CommitPublication, Seq } from "../types.ts";
+// Session sync over a Chord store's outbox: upload the commits after the last sequence a copy shares with a remote
+// into a slot the remote creates once, pull a copy forward with `applyBatch`, restore from an archive, fold history
+// into snapshots, and decide when to upload. The remote and the host's sync state are interfaces (`remote.ts`); a
+// directory-backed pair for Node is in `./node`.
+
+import type { Context } from "../context/index.ts";
+import { applyBatch } from "../store/apply-batch.ts";
+import type { Backend } from "../store/backend.ts";
+import { importStore } from "../store/import.ts";
+import type { OutboxCommit } from "../store/outbox.ts";
+import { type ChordStore, openStore, type Store } from "../store/store.ts";
 import { decodeBatch, decodeSnapshot, encodeBatch, encodeSnapshot } from "./batch.ts";
 import {
 	type BatchInfo,
@@ -17,6 +16,7 @@ import {
 	LOG_START,
 	remoteHead,
 	remoteHistory,
+	type Seq,
 	type SessionSyncMaintenance,
 	type SessionSyncStore,
 } from "./remote.ts";
@@ -51,7 +51,7 @@ export interface SyncStateStore {
 
 /** A store's head as a sequence: `lastSeq`, 0 for a store without commits. */
 export function storeHead(store: Store): Seq {
-	return seqFromNumber(store.lastSeq);
+	return store.lastSeq;
 }
 
 /** The store keeps no outbox, or its outbox no longer holds the commits a sync needs. */
@@ -134,7 +134,7 @@ export async function uploadSession(options: {
 			const commits = await readOutbox(source, synced, BATCH_COMMITS, context);
 			if (commits.length === 0)
 				return uploaded === undefined ? { type: "idle" } : { type: "uploaded", head: uploaded };
-			to = seqFromNumber(commits.at(-1)!.seq);
+			to = commits.at(-1)!.seq;
 			body = await encodeBatch(commits);
 		}
 		const after = synced;
@@ -160,7 +160,7 @@ async function exportSnapshot(
 	const body = await encodeSnapshot(
 		(async function* () {
 			for await (const part of parts) {
-				if (part.kind === "manifest") to = seqFromNumber(part.lastSeq);
+				if (part.kind === "manifest") to = part.lastSeq;
 				yield part;
 			}
 		})(),
@@ -308,15 +308,6 @@ class ScratchState implements SyncStateStore {
 	async set(_sessionId: string, state: SyncState): Promise<void> {
 		this.#state = state;
 	}
-}
-
-/** Whether a commit should reach the remote soon: what the user typed, a finished answer, a settled submission. */
-export function isUrgentCommit(publication: CommitPublication): boolean {
-	return publication.changes.some(
-		(change) =>
-			(change.type === "entry" && (change.value.kind === "pi.user" || change.value.kind === "pi.assistant")) ||
-			(change.type === "submission" && (change.value.status === "done" || change.value.status === "unanswered")),
-	);
 }
 
 export type FlushSchedulerOptions = {
