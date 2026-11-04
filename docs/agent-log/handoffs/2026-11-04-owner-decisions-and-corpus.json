@@ -1,0 +1,52 @@
+{
+  "handoff_record": {
+    "session_id": "session_01UNjnjm3TZ7Tg4MRswGt24P",
+    "agent_name": "Claude Code",
+    "date": "2026-11-04",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "ccr-0d5033af-1rkbla",
+    "work_completed": [
+      "Restarted the branch from main after PR #15 merged (fast-forward; no unmerged work).",
+      "Recorded the owner's four post-merge decisions in docs/active-threads.md.",
+      "Measured the crisis detector and harness policy.ts and added a behavior corpus with tests: 35 asserted cases and 13 known gaps as it.fails tests.",
+      "Documented the UNKNOWN prompt-channel decision and the corpus in mvp/README.md.",
+      "Opened threads NLTPI-UPSTREAM-001 (upstream fixes) and NLTPI-MVP-003 (gateway routing)."
+    ],
+    "work_in_progress": [],
+    "blockers": [
+      "Upstream fixes belong in asfdk-harness, asfdk and the RRT source repository; the owner's instruction is that nlt-pi is the working repository and the others are read-only references, and the RRT source repository is outside this session's GitHub scope. No change was made there.",
+      "POST /api/govern has not been verified on a deployed preview (previews were behind Vercel Authentication).",
+      "Gateway routing cannot start until the gateway, key location and authenticated-session design are confirmed."
+    ],
+    "decisions_made": [
+      "Keep the vendored harness copy and send changes upstream (owner).",
+      "Fix the RRT detector and policy.ts upstream with a must-block / must-allow corpus (owner).",
+      "Keep the default UNKNOWN prompt channel; revisit when authenticated sessions exist (owner).",
+      "Provider-agnostic model routing through a gateway (owner)."
+    ],
+    "decisions_pending": [
+      "Whether to open issues/PRs in asfdk-harness and asfdk, and where the RRT source lives.",
+      "Which gateway, where its key is stored, which models are allowed, and how runNltCodingTurn is exposed behind authentication.",
+      "Whether developer requests that mention self-harm or suicide as a feature topic should be blocked (currently blocked)."
+    ],
+    "files_modified": [
+      "mvp/test/corpus/crisis-phrases.json",
+      "mvp/test/corpus/policy-commands.json",
+      "mvp/test/corpus.test.ts",
+      "mvp/README.md",
+      "docs/active-threads.md",
+      "docs/agent-log/intent/2026-11-04-owner-decisions-and-corpus.md",
+      "docs/agent-log/handoffs/2026-11-04-owner-decisions-and-corpus.json"
+    ],
+    "tests_run": [
+      "npm run check:mvp",
+      "npm run test --workspace=@neurolift/nlt-pi-mvp (7 node:test + 61 vitest passed, 13 expected fail)",
+      "npm run check:ts-imports",
+      "node scripts/biome-check.mjs",
+      "bash .nltotoi/scripts/validate-governance.sh"
+    ],
+    "test_result": "local_checks_passed; full_root_check_not_run; vercel_endpoint_unverified",
+    "pr_url": "pending"
+  }
+}

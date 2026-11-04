@@ -52,12 +52,17 @@ The ASFDK harness client is vendored under `src/harness/` from `NeuroLift-Techno
 
 The coding-agent workspace packages resolve through their built `dist`, so build before typechecking (the vitest tests import `src/governed-agent.ts` and `api/govern.ts`, which do not load the coding-agent runtime, so they run without a build). In a fresh container after `npm ci --ignore-scripts`, the root `build` script failed in `pi-ai` until `pi-schema` and `pi-telemetry` had been built first (`npm run build --workspace=@earendil-works/pi-schema`, then `--workspace=@earendil-works/pi-telemetry`). The root `build` script does not list those two packages. This was not investigated further. The inherited Pi-fork `ci.yml` workflow, which failed on this for the same reason, was removed; run the checks locally (`npm run check:mvp`, `npm run test --workspace=@neurolift/nlt-pi-mvp`).
 
+## Behavior corpus
+
+`test/corpus/` holds prompts and shell commands with the expected gate / policy outcome (`test/corpus.test.ts`). `must*` entries are asserted. `known*` entries are things the upstream component (the RRT keyword detector, the harness `policy.ts`) should handle but does not yet; they are `it.fails` tests, so they turn red when an upstream fix is re-synced and must then be moved to the asserted list. The crisis detector currently allows several unambiguous statements (for example "I want to die"), and `policy.ts` does not match forms such as `rm -fr ~` or `cat .en?`. Do not describe the gate or the guardrail as complete.
+
 ## Governed turn
 
 `createNltCodingAgent()` exposes a deterministic governed turn surface (`governedTurn`) that runs a user prompt through the ASFDK harness before any coding-agent turn may execute:
 
 - Crisis / emotional assessment (Sleepwalker Protocol + RRT Advocate handoff) via `harness.assessText`.
 - The gate (`src/gate.ts`) returns `allowed: false` with a `blockedReason` — escalation to a human precedes agent execution — when the foundation reports a critical or emergency crisis level (`rrt.CrisisLevel.RED` / `BLACK`, whose runtime values are `"critical"` / `"emergency"`), when an explicit suicidal-ideation, self-harm, or inability-to-ensure-safety flag is set, or when the assessment failed, is unavailable, or produced no emotional state (fail closed). The foundation returns no emotional state in modes that disable Sleepwalker (for example `crisis_only` and `framework`), so those modes cannot clear the gate; `ASFDK_MODE` must be `unified` (the default) for turns to be allowed.
+- The prompt is assessed on the default `UNKNOWN` channel (owner decision, 2026-11-04). Untrusted text can raise protections but never lower them, so gate outcomes were identical on `USER_INPUT` in testing. Revisit when authenticated sessions exist, and set `USER_INPUT` only for text that arrived from the signed-in user.
 - The gate depends on the upstream RRT Advocate detector, which is a keyword-based prototype. It does not detect every crisis statement (for example, some phrasings of suicidal intent are not recognized), so it is not a substitute for human review.
 - Non-blocking assessments return `allowed: true` with the interaction, emotional state, governance, and continuity context needed to feed the subsequent coding-agent turn.
 

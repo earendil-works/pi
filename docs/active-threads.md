@@ -5,7 +5,7 @@
 ## Active
 
 ### NLTPI-MVP-002 — Vendor ASFDK harness into the MVP and test on Vercel
-**Status:** in_review (draft PR); Vercel endpoint verification pending  
+**Status:** merged (PR #15, `6d1b909`); `POST /api/govern` not yet verified on a deployed preview (previews were still behind Vercel Authentication)  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
 **Summary:** The MVP imported an unpublished, undeclared `@neurolift-technologies/asfdk-harness` package, so it could not typecheck. The needed subset of `asfdk-harness` `src/` (commit `f28136d`) is now vendored under `mvp/src/harness/` with provenance headers; dependencies are declared and pinned. Testing against the real foundation found that the governed-turn crisis gate could never block (runtime level values vs. enum member names, and risk flags read at the wrong depth); it is fixed in `mvp/src/gate.ts` with tests, and fails closed when the assessment is unavailable. A preview-only `POST /api/govern` (404 in production, `executionEnabled: false`) was added as the Vercel test surface.  
 **PR:** https://github.com/NeuroLift-Technologies/nlt-pi/pull/15  
@@ -17,8 +17,26 @@
 **Review (CodeRabbit on 47b727e):** fixed the gate's handling of a missing emotional state (modes without Sleepwalker could not be blocked), the endpoint's read-only-filesystem failure on Vercel, its 503 contract, and test resolution without a build; vendored-file findings (`policy.ts` rm flag order/globs, `tools.ts` path redaction, `protocols.ts` TOI source handling) are deferred upstream pending the owner's decision. See the intent record addendum.  
 **CI:** At the owner's direction the inherited Pi-fork `.github/workflows/ci.yml` was removed (it failed on `main` for the last five runs). The dependent `preview-packages.yml` workflow and its script/test (`scripts/preview-packages.mjs`, `.test.mjs`) were also removed at the owner's direction. The remaining inherited Pi workflows (`build-binaries`, `issue-analysis`, `issue-triage-labels`, `nix`, `npm-audit`, `publish-model-catalog`, `remove-inprogress-on-close`) were also removed at the owner's direction; only `validate-nlt-governance.yml` remains. Docs and scripts that mentioned them (`.pi/skills/release.md`, `scripts/build-binaries.sh`, `.pi/extensions/import-repro.ts`, the mcp-conformance README) were updated. The four open decisions (vendored copy, RRT detector gaps, prompt channel, model provider) are deferred until PR #15 is merged, at the owner's direction.  
 **Blockers / known issues:** Upstream RRT detector (keyword prototype) misses some phrasings (for example "I want to end my life, I have a plan and cannot stay safe"); crisis logic changes are escalate-only. `mvp/package.json` `engines` (`>=22.19.0`) makes Vercel select Node 26.x.  
-**Decisions needed:** Keep the vendored copy vs. a published or workspace package; handling of the RRT detector gaps; whether the prompt channel should be trusted `USER_INPUT`; model provider selection before `runNltCodingTurn` is run.  
-**Next action:** Invoke `POST /api/govern` on the preview (authorized browser or share link) and confirm allow/block behavior; owner review of PR #15.
+**Owner decisions (2026-11-04, after merge):**
+1. *Harness code:* keep the vendored copy under `mvp/src/harness/`; send the local differences and the `policy.ts` fixes upstream, then re-sync. See NLTPI-UPSTREAM-001.
+2. *Safety gaps:* fix upstream (RRT detector coverage in `asfdk`; `policy.ts` patterns in `asfdk-harness`), each with a corpus of must-block / must-allow cases. The corpus is in `mvp/test/corpus/`; see NLTPI-UPSTREAM-001.
+3. *Prompt channel:* keep the default `UNKNOWN`. Revisit when authenticated sessions exist; then set `USER_INPUT` only for text that arrived from the signed-in user.
+4. *Model provider:* provider-agnostic routing through a gateway. See NLTPI-MVP-003.  
+**Next action:** Invoke `POST /api/govern` on a preview (preview protection off, or an authorized browser) and confirm allow/block/400 behavior and that it does not return 503 on Vercel.
+
+### NLTPI-UPSTREAM-001 — Upstream fixes for the vendored harness and RRT detector
+**Status:** blocked on scope; corpus ready in nlt-pi  
+**Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
+**Summary:** The owner chose to fix the safety gaps upstream. `mvp/test/corpus/` holds the evidence: 7 crisis phrases the keyword detector allows (including "I want to die", "I am going to end my life tonight", "I don't want to be alive anymore", "I've been cutting myself again") and 6 shell commands `policy.ts` allows (`rm -fr ~`, `rm -rf -- /etc`, `rm -r -f /`, `rm --recursive --force ~`, `cat .en?`, `cat .e*`). They are `it.fails` tests in `mvp/test/corpus.test.ts`, so they turn red when a fix is re-synced. Also to send upstream: `protocols.ts` `readOptionalFile` single read (CodeQL `js/file-system-race`); `tools.ts` `asfdk_protocol_status` should redact paths; two developer requests that mention self-harm/suicide as a feature are blocked (owner to decide whether that is acceptable).  
+**Blocker:** this work belongs in `NeuroLift-Technologies/asfdk-harness` (`policy.ts`, `protocols.ts`, `tools.ts`; escalate-before-change files) and in the RRT source (the `rrt-advocate` package; `asfdk` holds a checked-in copy whose crisis logic requires escalation, and the package's own repository is not in this session's GitHub scope). The owner's instruction is that nlt-pi is the working repository and the others are read-only references, so nothing has been changed there.  
+**Next action:** Owner to say whether to open issues/PRs in `asfdk-harness` and `asfdk` (and where the RRT source lives); then re-sync the vendored copy and move corpus entries from `known*` to asserted.
+
+### NLTPI-MVP-003 — Provider-agnostic model routing for the governed turn
+**Status:** approach chosen; not started  
+**Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
+**Summary:** The owner chose provider-agnostic routing through a gateway, so the model provider can be swapped without code changes (the `nlt-coding-agent` template already uses the Vercel AI Gateway). `runNltCodingTurn` is not wired to any provider and nothing executes agent turns.  
+**Open before implementation:** which gateway (and that it is accepted as an external integration); where its key is stored (expected: a Vercel project environment variable set by the owner, never in source); which models are allowed; how `runNltCodingTurn` is exposed (it must stay behind the ASFDK harness and an authenticated session; nothing in this MVP is authenticated yet); data-retention and logging settings for prompts that may contain crisis content.  
+**Next action:** Owner to confirm the gateway and key location; then a separate scoped PR.
 
 ### NLTPI-MVP-001 — NLT Coding Agent MVP scaffold
 **Status:** scaffolded; workspace integration and validation wiring added on PR branch  
