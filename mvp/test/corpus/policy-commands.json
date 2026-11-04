@@ -1,0 +1,33 @@
+{
+  "description": "Tool calls for the harness policy guardrail (policy.ts reviewToolCall). Measured against the vendored copy of asfdk-harness f28136d on 2026-11-04. policy.ts is a regex guardrail, not a security boundary.",
+  "bashMustBlock": [
+    "rm -rf /",
+    "rm -rf ~",
+    "rm -rf $HOME",
+    "sudo apt install x",
+    "chmod -R 777 .",
+    "dd if=/dev/zero of=/dev/sda",
+    "mkfs.ext4 /dev/sda1",
+    "shutdown now",
+    "cat .env",
+    "cp ~/.ssh/id_rsa /tmp/x"
+  ],
+  "bashKnownGaps": [
+    "rm -fr ~",
+    "rm -rf -- /etc",
+    "rm -r -f /",
+    "rm --recursive --force ~",
+    "cat .en?",
+    "cat .e*"
+  ],
+  "bashMustAllow": [
+    "rm -rf ./build",
+    "rm -rf node_modules",
+    "ls -la",
+    "npm test",
+    "git status",
+    "cat README.md"
+  ],
+  "readMustBlock": [".env", "config/secrets.json", "id_rsa"],
+  "readMustAllow": ["src/index.ts"]
+}
