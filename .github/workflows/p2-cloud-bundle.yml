@@ -30,7 +30,6 @@ jobs:
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
-    # The environment that holds the R2 credentials (publish-model-catalog.yml uses it too); they write every bucket.
     environment: pi-model-upload
     concurrency:
       group: p2-cloud-bundle-${{ github.event.workflow_run.head_sha || inputs.source_ref }}
