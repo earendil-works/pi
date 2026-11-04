@@ -2,8 +2,8 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import { formatProgramStatus, isProgramStatusReply } from "../src/program-status.ts";
 
-function decodeMessage(sequence: string): string | undefined {
-	const message = /:msg=([A-Za-z0-9+/=]*)/.exec(sequence)?.[1];
+function decodeMessage(sequence: string, key = "msg"): string | undefined {
+	const message = new RegExp(`:${key}=([A-Za-z0-9+/=]*)`).exec(sequence)?.[1];
 	return message === undefined ? undefined : Buffer.from(message, "base64").toString("utf8");
 }
 
@@ -37,6 +37,26 @@ describe("formatProgramStatus", () => {
 		assert.equal(message, "é".repeat(1024));
 		assert.ok(Buffer.byteLength(message) <= 2048);
 		assert.ok(sequence.length <= 4096);
+	});
+});
+
+// #11670
+describe("formatProgramStatus title", () => {
+	it("encodes the title as base64 before the message", () => {
+		const b64 = (text: string) => Buffer.from(text).toString("base64");
+		assert.equal(
+			formatProgramStatus({ state: "done", app: "pi", title: "Fix login", message: "Fix login" }),
+			`\x1b]7501;state=done:app=pi:title=${b64("Fix login")}:msg=${b64("Fix login")}\x1b\\`,
+		);
+		assert.equal(formatProgramStatus({ state: "idle", title: " \t " }), "\x1b]7501;state=idle\x1b\\");
+	});
+
+	it("replaces control characters and cuts long titles at a UTF-8 boundary", () => {
+		assert.equal(decodeMessage(formatProgramStatus({ state: "idle", title: "a\nb\x1b" }), "title"), "a b");
+		const sequence = formatProgramStatus({ state: "idle", title: "é".repeat(200) });
+		const encoded = /:title=([A-Za-z0-9+/=]*)/.exec(sequence)![1];
+		assert.equal(decodeMessage(sequence, "title"), "é".repeat(96));
+		assert.ok(encoded.length <= 256);
 	});
 });
 

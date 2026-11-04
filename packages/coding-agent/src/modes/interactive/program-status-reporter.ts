@@ -11,7 +11,7 @@ function firstLine(text: string | undefined): string {
 /**
  * Reports interactive-mode state to the terminal (OSC 7501): `working` during agent runs and
  * compaction, `blocked` while a dialog waits for the user, then `done`, `error`, or `idle` once the run
- * settles. Messages are limited to the session name, dialog titles, and the first line of errors; prompts
+ * settles. The title is the session name. Messages are limited to the session name, dialog titles, and the first line of errors; prompts
  * and assistant output are never reported.
  */
 export class ProgramStatusReporter {
@@ -68,7 +68,7 @@ export class ProgramStatusReporter {
 				this.restingStatus = event.aborted ? { state: "idle" } : this.runResult;
 				break;
 			case "session_info_changed":
-				// The session name is part of working and done reports.
+				// The session name is the title of every report and the message of working and done reports.
 				break;
 			default:
 				return;
@@ -93,7 +93,7 @@ export class ProgramStatusReporter {
 	}
 
 	report(): void {
-		const status: ProgramStatus = { ...this.currentStatus(), app: APP_NAME };
+		const status: ProgramStatus = { ...this.currentStatus(), app: APP_NAME, title: this.getSessionName() };
 		const key = JSON.stringify(status);
 		if (key === this.lastReport) return;
 		this.lastReport = key;

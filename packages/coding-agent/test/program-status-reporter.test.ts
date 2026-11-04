@@ -16,7 +16,7 @@ function setup(sessionName?: string) {
 		for (const event of events) reporter.handleEvent(event);
 	};
 	const last = () => {
-		const { app: _app, ...status } = reports.at(-1)!;
+		const { app: _app, title: _title, ...status } = reports.at(-1)!;
 		return Object.fromEntries(Object.entries(status).filter(([, value]) => value !== undefined));
 	};
 	return { reporter, reports, session, send, last };
@@ -51,7 +51,7 @@ describe("ProgramStatusReporter", () => {
 	it("reports idle, working during a run, and done once it settles", () => {
 		const { reporter, reports, send, last } = setup("Fix login");
 		reporter.report();
-		expect(reports.at(-1)).toEqual({ state: "idle", app: "pi" });
+		expect(reports.at(-1)).toEqual({ state: "idle", app: "pi", title: "Fix login" });
 
 		send({ type: "agent_start" });
 		expect(last()).toEqual({ state: "working", message: "Fix login" });
@@ -145,6 +145,27 @@ describe("ProgramStatusReporter", () => {
 		session.name = "New";
 		send({ type: "session_info_changed", name: "New" });
 		expect(last()).toEqual({ state: "working", message: "New" });
+	});
+
+	// #11670
+	it("sends the session name as the title in every state", () => {
+		const { reporter, reports, session, send } = setup();
+		reporter.report();
+		expect(reports.at(-1)!.title).toBeUndefined();
+
+		session.name = "Fix login";
+		send({ type: "session_info_changed", name: "Fix login" });
+		expect(reports.at(-1)).toMatchObject({ state: "idle", title: "Fix login" });
+
+		send({ type: "agent_start" }, { type: "compaction_start", reason: "threshold" } as AgentSessionEvent);
+		expect(reports.at(-1)).toMatchObject({ state: "working", title: "Fix login", message: "Compacting context" });
+
+		reporter.setBlocked("extension-selector", { kind: "question", message: "Pick one" });
+		expect(reports.at(-1)).toMatchObject({ state: "blocked", title: "Fix login", message: "Pick one" });
+		reporter.setBlocked("extension-selector", undefined);
+
+		send(compactionEnd("threshold"), assistantEnd("error", "Invalid API key"), settled);
+		expect(reports.at(-1)).toMatchObject({ state: "error", title: "Fix login", message: "Invalid API key" });
 	});
 
 	it("returns to idle when the session is replaced", () => {

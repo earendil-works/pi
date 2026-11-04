@@ -12,6 +12,8 @@ export interface ProgramStatus {
 	app?: string;
 	/** What a blocked program waits for. Omitted for other states. */
 	kind?: "permission" | "question" | "auth";
+	/** Short human-readable label for the program. Control characters become spaces; longer text is cut to the spec limit. */
+	title?: string;
 	/** One human-readable line. Control characters become spaces; longer text is cut to the spec limit. */
 	message?: string;
 }
@@ -28,6 +30,8 @@ const APP_PATTERN = /^[A-Za-z0-9_.+-]{1,32}$/;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]+/g;
 /** Decoded `msg` limit. Its base64 encoding stays under the 2732-byte encoded limit. */
 const MAX_MESSAGE_BYTES = 2048;
+/** Decoded `title` limit. Its base64 encoding stays within the 256-byte encoded limit. */
+const MAX_TITLE_BYTES = 192;
 
 function truncateUtf8(text: string, maxBytes: number): string {
 	if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
@@ -42,12 +46,20 @@ function truncateUtf8(text: string, maxBytes: number): string {
 	return text.slice(0, end);
 }
 
+/** Replace control characters, cut to `maxBytes` decoded bytes, and base64-encode. Empty text yields "". */
+function encodeText(text: string | undefined, maxBytes: number): string {
+	const clean = truncateUtf8((text ?? "").replace(CONTROL_CHARACTERS, " ").trim(), maxBytes);
+	return clean ? Buffer.from(clean, "utf8").toString("base64") : "";
+}
+
 /** Encode a status report. Terminals discard reports whose text contains control characters, so they are replaced. */
 export function formatProgramStatus(status: ProgramStatus): string {
 	const pairs = [`state=${status.state}`];
 	if (status.app !== undefined && APP_PATTERN.test(status.app)) pairs.push(`app=${status.app}`);
 	if (status.state === "blocked" && status.kind) pairs.push(`kind=${status.kind}`);
-	const message = truncateUtf8((status.message ?? "").replace(CONTROL_CHARACTERS, " ").trim(), MAX_MESSAGE_BYTES);
-	if (message) pairs.push(`msg=${Buffer.from(message, "utf8").toString("base64")}`);
+	const title = encodeText(status.title, MAX_TITLE_BYTES);
+	if (title) pairs.push(`title=${title}`);
+	const message = encodeText(status.message, MAX_MESSAGE_BYTES);
+	if (message) pairs.push(`msg=${message}`);
 	return `\x1b]7501;${pairs.join(":")}\x1b\\`;
 }
