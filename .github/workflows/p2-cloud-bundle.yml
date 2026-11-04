@@ -1,0 +1,110 @@
+# Builds p2's web UI for Radius Cloud Brain after CI passes on main and uploads it to R2 under the commit's full SHA
+# (apps/p2/scripts/cloud-bundle.ts). pkg.earendil.com publishes pi's packages under the same SHA, so Radius pins one
+# SHA for the packages, the p2 contracts it copies and this UI.
+#
+# Builds are immutable: a SHA that already has one is skipped. Runs for pushes to main only, never for PRs: the job
+# holds R2 write credentials.
+
+name: p2 cloud bundle
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Commit (full SHA) to build and upload
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    # The environment that holds the R2 credentials (publish-model-catalog.yml uses it too); they write every bucket.
+    environment: pi-model-upload
+    concurrency:
+      group: p2-cloud-bundle-${{ github.event.workflow_run.head_sha || inputs.source_ref }}
+      cancel-in-progress: false
+    env:
+      SOURCE_REF: ${{ github.event.workflow_run.head_sha || inputs.source_ref }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.PI_ARTIFACTS_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.PI_ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: 'true'
+      R2_ENDPOINT: https://67c0d357268b0fca6e0b465bb9d01b84.r2.cloudflarestorage.com
+      # Holds only these builds, at `<sha>/`. The bucket is not public: Radius's control plane binds it and serves it
+      # under /pi/ui/ on its own host, so the page loads its UI same-origin (no CORS).
+      R2_BUCKET: pi-ui
+      # Built into the script (the version poll and asset URLs). Root-relative, so one build serves every Radius host.
+      BASE_PATH: /pi/ui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          persist-credentials: false
+
+      - name: Resolve the commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # The web UI imports pi-ai, whose generated model data is not committed.
+      - name: Hydrate model data
+        run: npm run hydrate:model-data
+
+      - name: Verify AWS CLI
+        run: aws --version
+
+      - name: Build the cloud bundle
+        working-directory: apps/p2
+        env:
+          SHA: ${{ steps.commit.outputs.sha }}
+        run: >-
+          node --import ./src/source.ts scripts/cloud-bundle.ts build
+          --sha "$SHA"
+          --base "$BASE_PATH/$SHA"
+          --out "$RUNNER_TEMP/cloud-bundle"
+
+      - name: Upload to R2
+        working-directory: apps/p2
+        env:
+          SHA: ${{ steps.commit.outputs.sha }}
+        run: >-
+          node --import ./src/source.ts scripts/cloud-bundle.ts upload
+          --sha "$SHA"
+          --bucket "$R2_BUCKET"
+          --endpoint "$R2_ENDPOINT"
+          --out "$RUNNER_TEMP/cloud-bundle"
+
+      - name: Summary
+        env:
+          SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          {
+            echo "### p2 cloud bundle"
+            echo
+            echo "Built from \`${SHA}\`, uploaded to \`$R2_BUCKET\`. Radius \`PI_UI_MANIFEST_URL\`, on its own host:"
+            echo
+            echo "\`\`\`"
+            echo "$BASE_PATH/$SHA/manifest.json"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
