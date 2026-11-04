@@ -2554,6 +2554,18 @@ validation and copies the v2 kernel added around Delta.
   written as they are, stamped with the worker's host. No worker opens the store file; nothing passes its path to
   workers. The store stays its own SQLite file in the data directory, not the server's Chord store (high volume, 7-day
   retention: it would compete with app data in the commit queue and travel in exports and sync).
+- **Calls in flight survive a `loading` unbind (owner, 2026-11-04: "dunno, ask reviewers"; both reviewers, Opus
+  `/tmp/calls-survive-opus.md` and `/tmp/calls-survive-2.md`: build it; refines slice 7b's wire rule "A `failed` on a
+  bound hold unbinds it"):** a hold unbinding with `loading` (a restart, a parked swap, a live failure retrying) keeps
+  its calls in flight instead of rejecting them `unavailable`; `failed` and removal still reject. Each kept call gets
+  exactly one answer from what it already waits on: the instance it runs on (its result within `closeTimeout`, else
+  `released` at the seal) or the gate (the new code's result, `park_timeout` after `readyTimeout`, the parked cause, or
+  the object's end). Not rare: every restart of an object with natives hit it (a client still `live` during the drain
+  sends a call that waited at the gate). Calls sent before the client learns of the `loading` and arriving after the
+  unbind wait at the gate too (the unbound hold keeps its old method names, as the swap-in-place rebind does), never
+  `not_ready`. Consumers and relays need no change (they keep sent calls across `loading`; a method the new variant
+  lacks fails `invalid/member`, a dropped version `contract_mismatch`). Cost: kept calls hold call-window slots up to
+  `readyTimeout` while the object is parked.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
