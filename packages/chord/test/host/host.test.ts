@@ -1703,18 +1703,68 @@ describe("who a span was for (principalAttributes)", () => {
 		});
 	});
 
-	it("records the hook's attributes in its place, the hook called per recorded span only", async () => {
+	it("records the hook's attributes in its place, called once per recorded span", async () => {
 		const hook = vi.fn((principal: { kind: string }) => ({ "chord.principal": principal.kind, "user.name": "Ada" }));
 		const attributes = await host(new InMemoryTelemetryContext(), hook);
 		expect(attributes).toMatchObject({ "chord.principal": "user", "user.name": "Ada" });
 		expect(hook).toHaveBeenCalledTimes(1);
+	});
+
+	it("records nothing of the principal when the hook returns {}", async () => {
+		const attributes = await host(new InMemoryTelemetryContext(), () => ({}));
+		expect(Object.keys(attributes).filter((key) => key === "chord.principal" || key === "user.name")).toEqual([]);
+		expect(attributes).toMatchObject({ "principal.kind": "user" });
+	});
+
+	it("never calls the hook when nothing records (the NOOP adapter)", async () => {
+		const hook = vi.fn(() => ({ "chord.principal": "x" }));
 		const silent = createHost({ principal: { kind: "user" }, principalAttributes: hook, onError: () => {} });
 		await silent.load(
 			[{ name: "@test/echo", facet: defineFacet((h) => h.serve(Echo, () => ({ echo: async (text) => text }))) }],
 			context,
 		);
 		await (await silent.get(Echo, {}, context)).echo("hi", context);
-		expect(hook).toHaveBeenCalledTimes(1);
+		expect(hook).not.toHaveBeenCalled();
+	});
+
+	it("records a call span's principal: whom its reference acts for", async () => {
+		const Greeter = remote("app.greeter", {
+			version: 1,
+			params: {},
+			hostAddress: () => hostKind("server")(),
+			variants: { main: { methods: { greet: method(str(), str()) } } },
+		});
+		const server = createHost<{ kind: string; id?: string }>({
+			address: hostKind("server")(),
+			principal: { kind: "server" },
+			onError: () => {},
+		});
+		await server.load(
+			[
+				{
+					name: "@test/greeter",
+					facet: defineFacet((h) =>
+						h.serve(Greeter, () => ({ variant: "main", members: { greet: async (name) => `hi ${name}` } })),
+					),
+				},
+			],
+			context,
+		);
+		const telemetry = new InMemoryTelemetryContext();
+		const client = createHost<{ kind: string; id?: string }>({
+			principal: { kind: "user", id: "u1" },
+			telemetry,
+			principalAttributes: (principal) => ({ "chord.principal": `${principal.kind}:${principal.id}` }),
+			onError: () => {},
+		});
+		await client.load([], context);
+		const [a, b] = memoryLinkPair();
+		server.accept(a, { principal: { kind: "user", id: "u1" } }, context);
+		client.connect(b, { principal: { kind: "server" } }, context);
+		const greeter = await client.get(Greeter, {}, context);
+		await telemetry.startSpan({ name: "click" }, (span) => greeter.greet("Ada", withTelemetry(span, context)));
+		const call = telemetry.getSpans().find(({ name }) => name === "chord.call")!;
+		expect(call.attributes).toMatchObject({ "chord.principal": "user:u1" });
 	});
 });
 

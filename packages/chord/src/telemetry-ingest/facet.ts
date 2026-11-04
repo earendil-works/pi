@@ -37,14 +37,15 @@ export function telemetryIngestFacet<P extends Principal>(options: TelemetryInge
 		host.serve(
 			PageTelemetry,
 			(_params, principal) => {
-				const stamp = { ...options.principalAttributes(principal), "chord.host": "browser" };
+				// Per span, as for every span Chord records with a principal: caching is the hook's own.
+				const who = () => options.principalAttributes(principal);
 				const budgets = new PageBudgets();
 				return {
 					variant: "main",
 					members: {
 						ingest: async (batch, ctx) => {
 							const budget = budgets.of(ctx.incarnation, Date.now());
-							const accepted = pageSpans(batch, `browser:${ctx.incarnation}:`, stamp, budget);
+							const accepted = pageSpans(batch, `browser:${ctx.incarnation}:`, who, budget);
 							const written = options.target.ingest({ spans: accepted, metrics: [] });
 							return { written, dropped: batch.spans.length - written };
 						},
@@ -101,12 +102,14 @@ class PageBudgets {
 /**
  * The spans of a page's `batch` the store takes: its own (ids, trace and parent under `prefix`, so it never writes
  * into another sender's trace or poses as a server span), ending after they start, within its minute's `budget`; each
- * marked with `stamp` (`chord.host: browser`, the link's principal), which no attribute of the page's may override.
+ * marked `chord.host: browser` and stamped with `who()` (the link's principal's attributes), which no attribute of the
+ * page's may override: the page's own `chord.*` attributes are dropped (a claimed `chord.principal` too, when the hook
+ * records none).
  */
 function pageSpans(
 	batch: Static<typeof PageBatch>,
 	prefix: string,
-	stamp: Readonly<SpanAttributes>,
+	who: () => Readonly<SpanAttributes>,
 	budget: Budget,
 ): StoredSpan[] {
 	const accepted: StoredSpan[] = [];
@@ -118,7 +121,12 @@ function pageSpans(
 			(span.parentId === undefined || span.parentId.startsWith(prefix));
 		if (!own || span.endedMs < span.startedMs) continue;
 		budget.spans++;
-		accepted.push({ ...span, attributes: { ...span.attributes, ...stamp } });
+		accepted.push({ ...span, attributes: { "chord.host": "browser", ...ownAttributes(span.attributes), ...who() } });
 	}
 	return accepted;
+}
+
+/** A page's attributes without Chord's (`chord.*`): what Chord records about a span, the server stamps itself. */
+function ownAttributes(attributes: SpanAttributes): SpanAttributes {
+	return Object.fromEntries(Object.entries(attributes).filter(([key]) => !key.startsWith("chord.")));
 }

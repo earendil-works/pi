@@ -1543,10 +1543,31 @@ with the call under it:
 
 `host.root(fn, context, { trace })` runs `fn` in a new root span of the host's adapter, `ctx.telemetry` that span, so
 the call of `add` starts its `chord.call` under it and puts that span's carrier in the call's header (`useHost` gives a
-component its page's host). Without a recording adapter it starts nothing. `screenshots.ts` signs the owner in to the
-page in Chromium, types honey and submits, then submits again with nothing typed; it reads the store until the
-worker's spans of both clicks are there and prints honey's trace with pi-telemetry's `renderTrace` (ids and lengths of
-time masked, which differ at every run):
+component its page's host). Without a recording adapter it starts nothing. `screenshots.ts` has the owner signed in
+to the real page in Chromium (the app's page from chapter IV, by now in Harbor and French), types honey and submits,
+then submits again with nothing typed:
+
+<!-- quote: screenshots.ts -->
+```ts
+	await browser.type("honey");
+	await shoot("click-before.png");
+	const submit = "document.querySelector('.lists-panel form').requestSubmit()";
+	await browser.evaluate(submit);
+```
+
+<!-- output: screenshots -->
+```text
+wrote docs/tutorial/screens/click-before.png
+wrote docs/tutorial/screens/click-after.png
+```
+
+:::figure wide | The click, on the real page: honey typed (left), then submitted (right). The list shows honey once the worker's store committed it and its live query reached the page; the page has recorded `page.add` and the `chord.call` under it, and sends them to the server within three seconds.
+<div style="display: flex; gap: 1rem; align-items: flex-start"><img src="screens/click-before.png" alt="The page with honey typed" style="width: 50%; min-width: 0"><img src="screens/click-after.png" alt="The page after the click: honey in the list" style="width: 50%; min-width: 0"></div>
+:::
+
+It then reads the store until the worker's spans of both clicks are there and prints honey's trace with pi-telemetry's
+`renderTrace` (ids and lengths of time masked, which differ at every run), and opens the owner's trace viewer (the last
+section builds it) on the same trace:
 
 <!-- output: screenshots -->
 ```text
@@ -1559,6 +1580,10 @@ adding honey from the page:
              · chord.commit documents=0 ops=0 rows=1 duration=<ms>
              todos.validate chord.host="list|groceries" chars=5
 ```
+
+:::figure wide | The same trace in the owner's trace viewer at `/traces`, in the Harbor theme: the tree `renderTrace` printed above, each span with the host that recorded it (`browser`, `server`, `list|groceries`) and its length as a bar on the trace's time line, all written by the server. Starts are stored to the microsecond, so even bars of a fraction of a millisecond line up. On the left the newest traces: the refused click in red, each with whom it was for; the rest the app's own work (relays, activations, HTTP requests).
+![The trace viewer with the click's trace](screens/traces.png)
+:::
 
 Three processes recorded these six spans, and the server wrote them all. Each span says which host recorded it:
 `chord.host` is the host's address key (`server`, `list|groceries`), and `browser` for what a page sent. The page
@@ -1596,7 +1621,7 @@ ids are `browser:<its host's incarnation>:<n>`, and the server takes only spans 
 calling page's own prefix: a page can neither write into another sender's trace nor pose as a server span, and the
 store never replaces a stored span. A page may send 1,200 spans a minute; past that they are dropped and counted in
 `ingest`'s answer. The server marks each span `chord.host: browser` and stamps it with the principal of the link it came
-over: what a page says about itself counts for nothing.
+over, dropping the page's own `chord.*` attributes: what a page says about itself counts for nothing.
 
 The trace holds the click and nothing else. Work that serves many requests is its own trace, **linked** to the span that
 first needed it: a worker's start (`chord.resolve`), an object's activation (`chord.activate`). A link is a reference to
@@ -1829,7 +1854,8 @@ styles, which the page's CSP allows only because React sets them through the DOM
 	};
 ```
 
-After the two clicks, `screenshots.ts` opens the viewer on honey's trace, then types `user:u1` into its filter:
+After the two clicks, `screenshots.ts` opened the viewer on honey's trace (the figure in "One trace from the browser"),
+then types `user:u1` into its filter:
 
 <!-- quote: screenshots.ts -->
 ```ts
@@ -1845,10 +1871,6 @@ the viewer shows page.add: 6 spans on 3 hosts
 wrote docs/tutorial/screens/traces-ada.png
 the viewer for user:u1 lists chord.method for ada
 ```
-
-:::figure wide | The owner's trace viewer at `/traces`, in the Harbor theme: the newest traces (the refused click marked in red, each with whom it was for; the rest the app's own work: relays, activations, HTTP requests), and honey's trace as a tree across the page (`browser`), the server and the worker (`list|groceries`), all written by the server. Starts are stored to the microsecond, so even bars of a fraction of a millisecond line up.
-![The trace viewer](screens/traces.png)
-:::
 
 :::figure wide | The traces for Ada (`user:u1`): the coffee `screenshots.ts` adds at its start as her (a root of the server acting as her), recorded by the list's worker; the app's hook named her `ada`.
 ![The trace viewer filtered by principal](screens/traces-ada.png)

@@ -2837,15 +2837,17 @@ Chord reports traces, events and metrics through `@earendil-works/pi-telemetry`;
   characters anywhere), a span counts only when its id, trace and parent are under the page's own prefix
   (`browser:<its host's incarnation>:`, so it neither writes into another sender's trace nor poses as a server span),
   1,200 spans per page and minute (past it dropped, counted in the answer), each marked `chord.host: browser` and
-  stamped with the principal attributes of its link, overriding what the page wrote. The store writes ingested spans
+  stamped with the principal attributes of its link (the hook called per span), the page's own `chord.*` attributes
+  dropped, so a page never claims a host or a principal. The store writes ingested spans
   with `INSERT OR IGNORE`: a stored span is never replaced. The ingest objects' calls start no `chord.method`
   (`ServeOptions.untraced`): a span per batch would be telemetry about telemetry. A trace of a page's own starts with
   `host.root(fn, ctx, { trace: { name, attributes } })`, a root span of the host's adapter (`trace_failed` on a throw).
   A viewer clamps a page's spans against the server spans under them (the page's clock may be off).
 - **Who a span was for:** `chord.method` and `chord.call` record their principal's attributes: by default
   `chord.principal`, its principal key (capped); a host's `principalAttributes(principal)` hook replaces them (none,
-  the key, more: a user's name the app resolves). Chord calls it for every span it records with a principal, so it is
-  synchronous and cheap, its caching its own; the kit passes `startServer`'s and `startWorker`'s to their hosts, and
+  the key, more: a user's name the app resolves; `{}` records nothing). Chord calls it for every span it records with
+  a principal and never when nothing records (the NOOP adapter), so it is synchronous and cheap; Chord caches none of
+  its results, any caching is the hook's own; the kit passes `startServer`'s and `startWorker`'s to their hosts, and
   the server stamps a page's spans with it for the link's principal. `Host` exposes `principalAttributes`,
   `incarnation` and `address` for the kit and the page recorder.
 - **Reading a shared file:** `openTelemetryStore(path)` (`@earendil-works/chord/telemetry-sqlite/node`) implements

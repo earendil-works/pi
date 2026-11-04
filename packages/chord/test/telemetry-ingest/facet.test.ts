@@ -5,7 +5,7 @@
 // gets the worker's `ingest`; the calls record no span of their own.
 
 import { InMemoryTelemetryContext, type StoredSpan } from "@earendil-works/pi-telemetry";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { hostKind } from "../../src/contracts/index.ts";
 import { isChordError, type Principal } from "../../src/data/index.ts";
@@ -24,7 +24,14 @@ import { testCodec, transported } from "../support.ts";
 const Server = hostKind("server");
 
 /** A server serving the ingest facet (its batches collected), and a client of `principal` linked to it. */
-async function ingesting(principal: Principal, workers: Readonly<Record<string, string>> = {}) {
+async function ingesting(
+	principal: Principal,
+	workers: Readonly<Record<string, string>> = {},
+	principalAttributes: (who: Principal) => Readonly<Record<string, string>> = (who) => ({
+		"chord.principal": JSON.stringify(who),
+		"user.name": "Ada",
+	}),
+) {
 	const batches: TelemetryBatch[] = [];
 	const telemetry = new InMemoryTelemetryContext();
 	const server = createHost({ address: Server(), principal: { kind: "server" }, telemetry, onError: () => {} });
@@ -36,7 +43,7 @@ async function ingesting(principal: Principal, workers: Readonly<Record<string, 
 			},
 		},
 		workerHost: (who) => workers[JSON.stringify(who)],
-		principalAttributes: (who) => ({ "chord.principal": JSON.stringify(who), "user.name": "Ada" }),
+		principalAttributes,
 	});
 	await server.load([{ name: "chord.telemetry", facet }], context);
 	const client = createHost({ onError: () => {} });
@@ -85,6 +92,21 @@ describe("a page's batches", () => {
 			{ "chord.host": "browser", "chord.principal": '{"kind":"owner"}', "user.name": "Ada" },
 		]);
 		expect(batches[0]!.metrics).toEqual([]);
+	});
+
+	it("calls the hook once per span it stamps, caching nothing itself", async () => {
+		const hook = vi.fn(() => ({ "chord.principal": "owner" }));
+		const { client } = await ingesting({ kind: "owner" }, {}, hook);
+		await ingest(client, [span(client, 1), span(client, 2)]);
+		await ingest(client, [span(client, 3)]);
+		expect(hook).toHaveBeenCalledTimes(3);
+	});
+
+	it("never keeps a principal the page claims: with a hook recording none, its spans carry none", async () => {
+		const { client, batches } = await ingesting({ kind: "owner" }, {}, () => ({}));
+		const claimed = span(client, 1, { attributes: { "chord.principal": "root", "chord.host": "server", n: 1 } });
+		await ingest(client, [claimed]);
+		expect(batches[0]!.spans[0]!.attributes).toEqual({ n: 1, "chord.host": "browser" });
 	});
 
 	it("drops spans posing as another sender's or the server's: ids, traces and parents not under its own prefix", async () => {
