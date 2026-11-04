@@ -12,13 +12,13 @@
       "Measured the crisis detector and harness policy.ts and added a behavior corpus with tests: 35 asserted cases and 13 known gaps as it.fails tests.",
       "Documented the UNKNOWN prompt-channel decision and the corpus in mvp/README.md.",
       "Opened threads NLTPI-UPSTREAM-001 (upstream fixes) and NLTPI-MVP-003 (gateway routing).",
-      "Opened upstream work at the owner's direction: rrt-advocate issues #49 and #50, asfdk-harness PR #36, asfdk PR #41 (TypeScript and Python). Measured where each gap lives: the RRT engine misses 6 of the 7 phrases; the foundation never called RRT unless Sleepwalker flagged (fixes 'I want to die' only); Sleepwalker flags none of the six."
+      "Opened upstream work at the owner's direction: rrt-advocate issues #49 and #50, asfdk-harness PR #36, asfdk PR #41 (TypeScript and Python). Measured where each gap lives: the RRT engine misses 6 of the 7 phrases; the foundation never called RRT unless Sleepwalker flagged (fixes 'I want to die' only); Sleepwalker flags none of the six.",
+      "Verified POST /api/govern on a deployed Vercel preview after the owner turned off preview login protection: blocks the crisis phrases it should, allows ordinary prompts, returns 400/405 as designed, never 503; production returns 404 for /api/govern. Filed sleepwalker#33 for the Sleepwalker detector gaps (six-regex vocabulary; apostrophe-insensitive matching missing)."
     ],
     "work_in_progress": [],
     "blockers": [
-      "POST /api/govern has not been verified on a deployed preview (previews were behind Vercel Authentication).",
       "Gateway routing cannot start until the gateway, key location and authenticated-session design are confirmed.",
-      "Upstream fixes are open as drafts awaiting owner review and a release; the Sleepwalker detector gap has no issue (separate repository, not in the owner's instruction)."
+      "Upstream fixes are open as drafts awaiting owner review and a release; rrt-advocate#49/#50 and sleepwalker#33 await owner decisions."
     ],
     "decisions_made": [
       "Keep the vendored harness copy and send changes upstream (owner).",
@@ -29,7 +29,7 @@
     "decisions_pending": [
       "Which gateway, where its key is stored, which models are allowed, and how runNltCodingTurn is exposed behind authentication.",
       "Whether developer requests that mention self-harm or suicide as a feature topic should be blocked (currently blocked).",
-      "Whether to file an issue in NeuroLift-Technologies/sleepwalker for the detector gap."
+      "Decisions on rrt-advocate#49, #50 and sleepwalker#33."
     ],
     "files_modified": [
       "mvp/test/corpus/crisis-phrases.json",
@@ -47,7 +47,7 @@
       "node scripts/biome-check.mjs",
       "bash .nltotoi/scripts/validate-governance.sh"
     ],
-    "test_result": "local_checks_passed; full_root_check_not_run; vercel_endpoint_unverified",
+    "test_result": "local_checks_passed; full_root_check_not_run; vercel_endpoint_verified_on_preview",
     "pr_url": "https://github.com/NeuroLift-Technologies/nlt-pi/pull/16"
   }
 }
