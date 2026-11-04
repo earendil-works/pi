@@ -1,6 +1,6 @@
 // The todo app's start: what the app decides itself, given to the kit's `startServer`: its name and data directory,
-// its API, its facet kinds, its principals, its one worker kind (a list), its page and its terminal client. The kit
-// does the rest. The examples call `startTodo` with a copy of `plugins/` they may edit; a real app's start script calls
+// its API, its facet kinds, its principals, its one worker kind (a list), its page and its terminal client, and its
+// telemetry store (one SQLite file in the data directory, shared by the server and the workers). The kit does the rest. The examples call `startTodo` with a copy of `plugins/` they may edit; a real app's start script calls
 // it with the data directory from its command line and prints the owner link.
 
 import { cp, mkdtemp } from "node:fs/promises";
@@ -13,6 +13,7 @@ import type { Context } from "../../../src/context/index.ts";
 import { type App, startServer } from "../../../src/node/app/index.ts";
 import { type PageAssets, pageScripts } from "../../../src/node/surfaces/index.ts";
 import type { TodoPrincipal } from "./src/principals.ts";
+import { type TodoTelemetry, telemetryFile } from "./src/telemetry.ts";
 
 /** The app's API: its name, its versions (newest first), and this process's instances of its modules. */
 export const API = {
@@ -34,8 +35,16 @@ function page(request: { readonly nonce: string }, assets: PageAssets): string {
 	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Todo</title>${pageScripts(assets, request.nonce)}</head><body><div id="root"></div></body></html>`;
 }
 
-/** Starts the todo app on a free loopback port, with its data in `dataDir` and its built-in plugins in `root`. */
-export function startTodo(dataDir: string, root: string, context: Context): Promise<App<TodoPrincipal>> {
+/**
+ * Starts the todo app on a free loopback port, with its data in `dataDir`, its built-in plugins in `root`, recording to
+ * `telemetry` (the store in `dataDir`).
+ */
+export function startTodo(
+	dataDir: string,
+	root: string,
+	telemetry: TodoTelemetry,
+	context: Context,
+): Promise<App<TodoPrincipal>> {
 	return startServer<TodoPrincipal>(
 		{
 			name: "todo",
@@ -45,17 +54,21 @@ export function startTodo(dataDir: string, root: string, context: Context): Prom
 			api: API,
 			kinds: KINDS,
 			principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", list: address.key }) },
+			// The server's spans and metrics; each list's worker opens the same file (`worker.ts`).
+			telemetry: telemetry.store,
 			workers: [
 				{
 					kind: v1.List,
 					entry: fileURLToPath(new URL("./worker.ts", import.meta.url)),
 					execArgv: ["--conditions=source", "--experimental-strip-types", "--no-warnings"],
+					env: { TODO_TELEMETRY: telemetryFile(dataDir) },
 					start: () => ({}),
 					// Who may reach a list's worker: everyone signed in, and the server itself.
 					authorize: (principal) => principal.kind !== "worker",
 				},
 			],
-			web: { entry: fileURLToPath(new URL("./src/web/main.ts", import.meta.url)), page },
+			// The page, and the owner's trace viewer: the same page, which shows the viewer at `/traces`.
+			web: { entry: fileURLToPath(new URL("./src/web/main.ts", import.meta.url)), page, paths: ["/", "/traces"] },
 			tui: { entry: fileURLToPath(new URL("./src/tui/main.ts", import.meta.url)) },
 			onError: (error) => console.error("todo:", error.kind, error.error),
 		},

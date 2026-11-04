@@ -1,22 +1,27 @@
 // Screenshots of the tutorial's page (`docs/tutorial/screens/`), taken in headless Chromium: the page after the owner
 // signed in with the owner link, the page in the Harbor theme added while it runs, the page after an edit of the
-// lists plugin's web facet applied in place, and the page after the owner chose French, with the list's notice.
+// lists plugin's web facet applied in place, the page after the owner chose French, with the list's notice, and the
+// owner's trace viewer showing a todo added from a page.
 // Run from packages/chord, with Chromium (`CHROMIUM_BIN`, else `chromium-docker` on the `PATH`):
 //   node --conditions=source --experimental-strip-types test/examples/61-tutorial/screenshots.ts docs/tutorial/screens
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
-import { LocaleChoice } from "../../../src/index.ts";
+import { WebSocket } from "ws";
+import { BACKGROUND_CONTEXT as context, withTelemetry } from "../../../src/context/index.ts";
+import { createHost, LocaleChoice, type WebSocketLike, webSocketLink } from "../../../src/index.ts";
 import { Browser, CHROMIUM } from "../../node/web/browser.ts";
 import { Todos } from "./plugins/lists/contract.ts";
+import type { TodoPrincipal } from "./src/principals.ts";
+import { openTelemetry, telemetryFile } from "./src/telemetry.ts";
 import { startTodo, todoDirectories } from "./start.ts";
 
 const out = resolve(process.argv[2] ?? "screens");
 if (CHROMIUM === undefined) throw new Error("no Chromium: set CHROMIUM_BIN");
 await mkdir(out, { recursive: true });
 const { base, dataDir, root } = await todoDirectories();
-const app = await startTodo(dataDir, root, context);
+const telemetry = await openTelemetry(telemetryFile(dataDir));
+const app = await startTodo(dataDir, root, telemetry, context);
 
 // The list as the tutorial leaves it after chapter 7: the owner's todos, one by the server, one by Ada.
 const as = async (principal: Parameters<typeof app.host.root>[2], texts: readonly string[]): Promise<void> => {
@@ -109,8 +114,53 @@ try {
 	const lang = await browser.evaluate<string>("document.documentElement.lang");
 	console.log(`after choosing French: lang="${lang}", ${JSON.stringify(french)} still typed`);
 	console.log("the page did not reload:", await browser.evaluate<boolean>("window.marked === true"));
+
+	// 5. Honey added from a page that records, and a blank todo refused (main.ts's step 11: a client host with a recorder
+	//    of its own, here signed in with the owner token), then the owner opens the trace viewer on honey's trace.
+	const pageTelemetry = await openTelemetry(telemetryFile(dataDir));
+	const page = createHost<TodoPrincipal>({ telemetry: pageTelemetry.store, onError: () => {} });
+	await page.load([], context);
+	const token = (await readFile(app.ownerTokenFile, "utf8")).trim();
+	const origin = new URL(app.ownerLink()).origin;
+	const socket = new WebSocket(`${origin.replace(/^http/, "ws")}/chord`, {
+		headers: { authorization: `Bearer ${token}` },
+	});
+	page.connect(webSocketLink(socket as unknown as WebSocketLike), { principal: { kind: "server" } }, context);
+	const todos = await page.get(Todos, { list: "groceries" }, context);
+	const click = (text: string) =>
+		pageTelemetry.store.startSpan({ name: "page.add" }, (span) => todos.add(text, withTelemetry(span, context)));
+	await click("honey");
+	await click("").catch(() => "refused");
+	todos.release();
+	await page.close(context);
+	await pageTelemetry.close();
+	// Each recorder writes what settled once a second: read until the worker's span of honey's add is there.
+	const honey = async () => {
+		await telemetry.store.flush();
+		const [, trace] = (await telemetry.store.findTraces({ name: "page.add", limit: 2 })).traces;
+		return trace?.spans.some(({ name }) => name === "todos.validate") ? trace : undefined;
+	};
+	let trace = await honey();
+	while (trace === undefined) {
+		await new Promise((done) => setTimeout(done, 100));
+		trace = await honey();
+	}
+	await browser.call("Emulation.setDeviceMetricsOverride", {
+		width: 900,
+		height: 640,
+		deviceScaleFactor: 1,
+		mobile: false,
+	});
+	await browser.open(`${origin}/traces#${encodeURIComponent(trace.traceId)}`);
+	await browser.wait("document.querySelectorAll('.traces-tree li').length === 6");
+	await shoot("traces.png");
+	const hosts = await browser.evaluate<number>(
+		"new Set([...document.querySelectorAll('.traces-tree .traces-host')].map((tag) => tag.textContent)).size",
+	);
+	console.log(`the viewer shows page.add: 6 spans on ${hosts} hosts`);
 } finally {
 	await browser.close();
 	await app.close(context);
+	await telemetry.close();
 	await rm(base, { recursive: true, force: true });
 }
