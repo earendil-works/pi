@@ -12,5 +12,5 @@
     "rewriteRelativeImportExtensions": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "api/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
 }
