@@ -22,10 +22,10 @@ export interface Ctx<P extends Principal = Principal> extends Context {
 	 */
 	get<C extends Contract>(Type: C, params: ParamsOf<C>, options?: GetOptions): Promise<Reference<C>>;
 	/**
-	 * Runs `fn` in a child span `name` of this ctx's span (`telemetry`) with `attributes`: `fn` gets a child ctx (the same
-	 * principal, incarnation, signal and `get`, its references this ctx's), so calls inside are parented under it. A
-	 * throw marks the span failed (`trace_failed`; a cancel keeps it ok) and is rethrown. Without an adapter that
-	 * records, `fn` gets this ctx.
+	 * Runs `fn` in a child span `name` of this ctx's span (`telemetry`) with its host's `chord.host` and `attributes`:
+	 * `fn` gets a child ctx (the same principal, incarnation, signal and `get`, its references this ctx's), so calls
+	 * inside are parented under it. A throw marks the span failed (`trace_failed`; a cancel keeps it ok) and is rethrown.
+	 * Without an adapter that records, `fn` gets this ctx.
 	 */
 	trace<T>(name: string, attributes: SpanAttributes, fn: (ctx: Ctx<P>) => Promise<T>): Promise<T>;
 }
@@ -65,6 +65,11 @@ export class CallContext implements Ctx {
 
 	toString(): string {
 		return `${this.#context}.Ctx`;
+	}
+
+	/** Its host's `chord.host`, for its child spans. */
+	get spanHost(): string {
+		return this.#host.spanHost;
 	}
 
 	async get<C extends Contract>(Type: C, params: ParamsOf<C>, options: GetOptions = {}): Promise<Reference<C>> {
@@ -111,8 +116,11 @@ export class CallContext implements Ctx {
 	}
 }
 
-/** A ctx that makes its child under a span (`ctx.trace`): the same kind of ctx (a job's has `jobId` and `state`). */
-type Traceable = Ctx & { traced(span: TelemetrySpan): Ctx };
+/**
+ * A ctx that makes its child under a span (`ctx.trace`): the same kind of ctx (a job's has `jobId` and `state`), and
+ * its host's `chord.host`.
+ */
+type Traceable = Ctx & { readonly spanHost: string; traced(span: TelemetrySpan): Ctx };
 
 /**
  * `ctx.trace` of `ctx`: `fn` in a child span with its child ctx; with nothing recorded, `fn` with `ctx` itself. Either
@@ -127,7 +135,7 @@ function traceUnder<T>(
 	const parent = ctx.telemetry;
 	// Plugin code: a synchronous throw becomes the rejection.
 	if (untraced(parent)) return (async () => fn(ctx))();
-	return parent.startSpan({ name, attributes }, async (span) => {
+	return parent.startSpan({ name, attributes: { "chord.host": ctx.spanHost, ...attributes } }, async (span) => {
 		try {
 			return await fn(ctx.traced(span));
 		} catch (error) {
@@ -139,12 +147,17 @@ function traceUnder<T>(
 
 /** A ctx under a child span (`ctx.trace`): its parent's caller, signal and references, `telemetry` the span. */
 export class SpanCtx implements Ctx {
-	readonly #parent: Ctx;
+	readonly #parent: Traceable;
 	readonly #context: Context;
 
-	constructor(parent: Ctx, span: TelemetrySpan) {
+	constructor(parent: Traceable, span: TelemetrySpan) {
 		this.#parent = parent;
 		this.#context = withTelemetry(span, parent);
+	}
+
+	/** Its host's `chord.host`, for its child spans. */
+	get spanHost(): string {
+		return this.#parent.spanHost;
 	}
 
 	get principal(): Principal | undefined {

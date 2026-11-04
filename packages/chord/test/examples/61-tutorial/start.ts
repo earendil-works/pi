@@ -1,7 +1,8 @@
 // The todo app's start: what the app decides itself, given to the kit's `startServer`: its name and data directory,
 // its API, its facet kinds, its principals, its one worker kind (a list), its page and its terminal client, and its
-// telemetry store (one SQLite file in the data directory, shared by the server and the workers). The kit does the rest. The examples call `startTodo` with a copy of `plugins/` they may edit; a real app's start script calls
-// it with the data directory from its command line and prints the owner link.
+// telemetry store (one SQLite file in the data directory, which the server writes for every process). The kit does the
+// rest. The examples call `startTodo` with a copy of `plugins/` they may edit; a real app's start script calls it with
+// the data directory from its command line and prints the owner link.
 
 import { cp, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,8 +13,8 @@ import * as v1server from "@todo/app/v1/server";
 import type { Context } from "../../../src/context/index.ts";
 import { type App, startServer } from "../../../src/node/app/index.ts";
 import { type PageAssets, pageScripts } from "../../../src/node/surfaces/index.ts";
-import type { TodoPrincipal } from "./src/principals.ts";
-import { type TodoTelemetry, telemetryFile } from "./src/telemetry.ts";
+import { principalAttributes, type TodoPrincipal } from "./src/principals.ts";
+import type { TodoTelemetry } from "./src/telemetry.ts";
 
 /** The app's API: its name, its versions (newest first), and this process's instances of its modules. */
 export const API = {
@@ -54,14 +55,15 @@ export function startTodo(
 			api: API,
 			kinds: KINDS,
 			principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", list: address.key }) },
-			// The server's spans and metrics; each list's worker opens the same file (`worker.ts`).
+			// The store the server writes: its own spans and metrics, and what the workers and recording pages send.
 			telemetry: telemetry.store,
+			// Who a span was for: a short key and a user's name (each worker's `startWorker` gets the same hook).
+			principalAttributes,
 			workers: [
 				{
 					kind: v1.List,
 					entry: fileURLToPath(new URL("./worker.ts", import.meta.url)),
 					execArgv: ["--conditions=source", "--experimental-strip-types", "--no-warnings"],
-					env: { TODO_TELEMETRY: telemetryFile(dataDir) },
 					start: () => ({}),
 					// Who may reach a list's worker: everyone signed in, and the server itself.
 					authorize: (principal) => principal.kind !== "worker",

@@ -1,6 +1,5 @@
-// The tally app's start: `startServer` with the app's telemetry adapter, a SQLite telemetry store in the data
-// directory. Each process records to the store it is given: here every process opens the same file (`telemetry.sqlite`
-// in the data directory; its workers get the path in their environment), so one trace reads tab → server → worker.
+// The tally app's start: `startServer` with the app's telemetry store, a SQLite file in the data directory. The server
+// is its only writer: each worker sends what it records to the server, so one trace reads tab → server → worker.
 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +21,7 @@ export function telemetryFile(dataDir: string): string {
 	return join(dataDir, "telemetry.sqlite");
 }
 
-/** Opens the SQLite telemetry store at `path` (each process its own recorder on the shared file). */
+/** Opens the SQLite telemetry store at `path` (the server's). */
 export async function openTelemetry(path: string): Promise<SqliteTelemetry> {
 	return createSqliteTelemetry(await openNodeSqliteDatabase(path));
 }
@@ -48,7 +47,6 @@ export function startTally(
 					kind: v1.Tally,
 					entry: fileURLToPath(new URL("./worker.ts", import.meta.url)),
 					execArgv: ["--conditions=source", "--experimental-strip-types", "--no-warnings"],
-					env: { TALLY_TELEMETRY: telemetryFile(dataDir) },
 					start: () => ({}),
 					// The owner reaches a tally through the server, which relays.
 					authorize: (principal) => principal.kind === "owner" || principal.kind === "server",

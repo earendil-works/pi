@@ -38,6 +38,11 @@ export type ServeOptions<C extends Contract = Contract> = {
 	 * default): a reference within that time reuses it, with its documents and dependencies.
 	 */
 	readonly linger?: number;
+	/**
+	 * Its calls start no `chord.method` span (`true`): Chord's telemetry ingest, whose every call would otherwise record
+	 * a span about the telemetry it writes. Traced by default.
+	 */
+	readonly untraced?: true;
 };
 
 /** What a facet's setup declares with besides the host: its contributions to registries (R21). */

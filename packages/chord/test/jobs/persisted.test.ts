@@ -304,7 +304,14 @@ describe("trace (slice 9)", () => {
 		const phases = spans.filter(({ name }) => name === "chord.job");
 		const [intent] = phases;
 		expect([intent!.attributes, intent!.parentId]).toEqual([
-			{ job: "notes.import", phase: "intent", object: "notes.store", outcome: "ok", "job.id": run.id },
+			{
+				"chord.host": "client",
+				job: "notes.import",
+				phase: "intent",
+				object: "notes.store",
+				outcome: "ok",
+				"job.id": run.id,
+			},
 			request.id,
 		]);
 		// The run cut off by the crash (never settled), the rerun and the finish: one trace, children of the intent.
@@ -435,8 +442,8 @@ describe("a seal during the reservation (review regressions)", () => {
 			first = false;
 			const holding = {
 				admit: () => fence.admit(),
-				adopt: (seq: number, ids: readonly number[]) => {
-					fence.adopt(seq, ids);
+				adopt: (seq: number, ids: readonly number[], rows: number) => {
+					fence.adopt(seq, ids, rows);
 					void jobs.store.take(() => {}).then(held.resolve);
 				},
 			};

@@ -186,6 +186,7 @@ function call(
 	const span = untraced(host.telemetry)
 		? undefined
 		: new OpenSpan(host.telemetry, "chord.routine", {
+				"chord.host": host.spanHost,
 				type: owner.type,
 				object: capped(owner.label),
 				routine: at.kind,

@@ -5,6 +5,7 @@
 // client's code is outdated, which the app answers by starting over (a page reloads). The surface specifics (how a
 // socket opens, how a script is fetched, what is outdated) are given.
 
+import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { BACKGROUND_CONTEXT, type Context, withAbortSignal } from "../context/index.ts";
 import type { Principal } from "../data/index.ts";
 import { createHost, type Host, type HostError, type PluginFacet, type PluginFailure } from "../host/index.ts";
@@ -52,6 +53,11 @@ export type ClientOptions<P extends Principal> = {
 	/** A new set was applied (its scripts loaded or kept old): the page swaps the plugins' stylesheets. */
 	readonly applied?: (set: ScriptSet) => void;
 	readonly environment: LoopEnvironment;
+	/**
+	 * Makes the host's telemetry adapter (none: NOOP); `incarnation` names the host's run (it is read at the adapter's
+	 * first span, after the host was made).
+	 */
+	readonly telemetry?: (incarnation: () => string) => TelemetryContext;
 	readonly onError: (error: ClientError) => void;
 };
 
@@ -61,7 +67,11 @@ export type Client<P extends Principal> = { readonly host: Host<P>; stop(context
 /** Starts a client: its host loaded with the initial scripts, its link kept, its plugins kept current. */
 export async function startClient<P extends Principal>(options: ClientOptions<P>): Promise<Client<P>> {
 	const context = BACKGROUND_CONTEXT;
-	const host = createHost<P>({ onError: (error) => options.onError({ kind: "host", error }) });
+	let made: Host<P> | undefined;
+	// Read at the first span, which starts once the host exists (in its load at the earliest).
+	const telemetry = options.telemetry?.(() => made!.incarnation);
+	const host = createHost<P>({ telemetry, onError: (error) => options.onError({ kind: "host", error }) });
+	made = host;
 	const entries = options.initial.map((script) => entryOf(script, options.modules));
 	const { loaded, report } = await LoadedFacets.load(host, options.core, entries, context);
 	if (report.failed.length > 0) options.onError({ kind: "plugins", failed: report.failed });

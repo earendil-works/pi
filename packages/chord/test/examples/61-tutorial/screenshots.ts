@@ -1,18 +1,22 @@
 // Screenshots of the tutorial's page (`docs/tutorial/screens/`), taken in headless Chromium: the page after the owner
 // signed in with the owner link, the page in the Harbor theme added while it runs, the page after an edit of the
 // lists plugin's web facet applied in place, the page after the owner chose French, with the list's notice, and the
-// owner's trace viewer showing a todo added from a page.
+// page before and after the owner adds honey (the page records its clicks), the trace viewer showing that click's
+// trace, then the traces for Ada.
 // Run from packages/chord, with Chromium (`CHROMIUM_BIN`, else `chromium-docker` on the `PATH`):
 //   node --conditions=source --experimental-strip-types test/examples/61-tutorial/screenshots.ts docs/tutorial/screens
+
+import { execFile } from "node:child_process";
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { WebSocket } from "ws";
-import { BACKGROUND_CONTEXT as context, withTelemetry } from "../../../src/context/index.ts";
-import { createHost, LocaleChoice, type WebSocketLike, webSocketLink } from "../../../src/index.ts";
+import { promisify } from "node:util";
+import type { StoredTrace } from "@earendil-works/pi-telemetry";
+import { renderTrace } from "@earendil-works/pi-telemetry/render";
+import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
+import { LocaleChoice } from "../../../src/index.ts";
 import { Browser, CHROMIUM } from "../../node/web/browser.ts";
 import { Todos } from "./plugins/lists/contract.ts";
-import type { TodoPrincipal } from "./src/principals.ts";
 import { openTelemetry, telemetryFile } from "./src/telemetry.ts";
 import { startTodo, todoDirectories } from "./start.ts";
 
@@ -115,36 +119,42 @@ try {
 	console.log(`after choosing French: lang="${lang}", ${JSON.stringify(french)} still typed`);
 	console.log("the page did not reload:", await browser.evaluate<boolean>("window.marked === true"));
 
-	// 5. Honey added from a page that records, and a blank todo refused (main.ts's step 11: a client host with a recorder
-	//    of its own, here signed in with the owner token), then the owner opens the trace viewer on honey's trace.
-	const pageTelemetry = await openTelemetry(telemetryFile(dataDir));
-	const page = createHost<TodoPrincipal>({ telemetry: pageTelemetry.store, onError: () => {} });
-	await page.load([], context);
-	const token = (await readFile(app.ownerTokenFile, "utf8")).trim();
-	const origin = new URL(app.ownerLink()).origin;
-	const socket = new WebSocket(`${origin.replace(/^http/, "ws")}/chord`, {
-		headers: { authorization: `Bearer ${token}` },
-	});
-	page.connect(webSocketLink(socket as unknown as WebSocketLike), { principal: { kind: "server" } }, context);
-	const todos = await page.get(Todos, { list: "groceries" }, context);
-	const click = (text: string) =>
-		pageTelemetry.store.startSpan({ name: "page.add" }, (span) => todos.add(text, withTelemetry(span, context)));
-	await click("honey");
-	await click("").catch(() => "refused");
-	todos.release();
-	await page.close(context);
-	await pageTelemetry.close();
-	// Each recorder writes what settled once a second: read until the worker's span of honey's add is there.
-	const honey = async () => {
+	// 5. The page records (`startPage({ telemetry: true })`): the owner adds honey, then clicks again with nothing typed;
+	//    each click is a trace of the page's, the call under it through the server's relay into the list's worker. The
+	//    page sends its spans every few seconds, the worker every second, the server writes every second: read until the
+	//    worker's span of each click is there, print honey's trace, read the store with `trace.ts`, then open the viewer.
+	await browser.evaluate("document.querySelector('.lists-panel input').select()");
+	await browser.type("honey");
+	await shoot("click-before.png");
+	const submit = "document.querySelector('.lists-panel form').requestSubmit()";
+	await browser.evaluate(submit);
+	await browser.wait(
+		"[...document.querySelectorAll('.lists-panel li')].some((item) => item.textContent.startsWith('honey'))",
+	);
+	await browser.evaluate("document.querySelector('.lists-panel input').blur()");
+	await shoot("click-after.png");
+	await browser.evaluate(submit);
+	const clicks = async () => {
 		await telemetry.store.flush();
-		const [, trace] = (await telemetry.store.findTraces({ name: "page.add", limit: 2 })).traces;
-		return trace?.spans.some(({ name }) => name === "todos.validate") ? trace : undefined;
+		const { traces } = await telemetry.store.findTraces({ name: "page.add", limit: 2 });
+		return traces.filter(({ spans }) => spans.some(({ name }) => name === "todos.validate"));
 	};
-	let trace = await honey();
-	while (trace === undefined) {
+	let traces = await clicks();
+	while (traces.length < 2) {
 		await new Promise((done) => setTimeout(done, 100));
-		trace = await honey();
+		traces = await clicks();
 	}
+	const [refused, trace] = traces as [StoredTrace, StoredTrace];
+	console.log("adding honey from the page:");
+	printTelemetry(renderTrace(trace.spans));
+	const traceScript = fileURLToPath(new URL("./trace.ts", import.meta.url));
+	const read = async (...args: string[]) =>
+		(await promisify(execFile)(process.execPath, [...process.execArgv, traceScript, ...args])).stdout;
+	console.log("trace.ts <data directory> --name page.add --principal owner:");
+	printTelemetry(await read(dataDir, "--name", "page.add", "--principal", "owner"));
+	console.log("trace.ts <data directory> <the refused one's id>:");
+	printTelemetry(await read(dataDir, refused.traceId));
+	const origin = new URL(app.ownerLink()).origin;
 	await browser.call("Emulation.setDeviceMetricsOverride", {
 		width: 900,
 		height: 640,
@@ -158,9 +168,33 @@ try {
 		"new Set([...document.querySelectorAll('.traces-tree .traces-host')].map((tag) => tag.textContent)).size",
 	);
 	console.log(`the viewer shows page.add: 6 spans on ${hosts} hosts`);
+
+	// 6. The traces for Ada (`user:u1`, the app's `principalAttributes` names her): her todo of the start, a call of the
+	//    server's root acting as her, recorded by the list's worker with her name.
+	await browser.evaluate("document.querySelector('.traces-filter').focus()");
+	await browser.type("user:u1");
+	await browser.wait("document.querySelector('.traces nav a small')?.textContent.includes('ada')");
+	await browser.evaluate("document.querySelector('.traces nav a').click()");
+	await browser.wait("document.querySelectorAll('.traces-tree li').length > 0");
+	await shoot("traces-ada.png");
+	const listed = await browser.evaluate<string[]>(
+		"[...document.querySelectorAll('.traces nav a')].map((a) => a.querySelector('span').textContent + ' for ' + a.querySelectorAll('small')[0].textContent.split(' · ').at(-1))",
+	);
+	console.log(`the viewer for user:u1 lists ${[...new Set(listed)].join(", ")}`);
 } finally {
 	await browser.close();
 	await app.close(context);
 	await telemetry.close();
 	await rm(base, { recursive: true, force: true });
+}
+
+/** Prints telemetry indented, as the same text at every run: span ids, lengths of time and byte counts masked. */
+function printTelemetry(text: string): void {
+	const steady = text
+		.replaceAll(/browser:[0-9a-f-]{36}:\d+|[0-9a-f-]{36}:\d+/g, "<id>")
+		.replaceAll(/ \(\+?[\d.]+ms\)/g, "")
+		.replaceAll(/duration=[\d.]+/g, "duration=<ms>")
+		.replaceAll(/ [\d.]+ ms/g, " <ms>")
+		.replaceAll(/\d+ bytes in \d+ messages/g, "<n> bytes in <n> messages");
+	for (const line of steady.trim().split("\n")) console.log(`   ${line}`);
 }

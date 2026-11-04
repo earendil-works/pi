@@ -1,7 +1,8 @@
-// The owner's trace viewer, the page at `/traces`: the newest traces of the app's telemetry store and the one chosen
-// (its id in the URL's fragment) as a tree: each span with its host, its length as a bar on the trace's time line, its
-// attributes and events, its error marked, and its links as references to other traces, never followed. It reads the
-// traces plugin's JSON routes (`plugins/traces/server.ts`), which answer the owner only.
+// The owner's trace viewer, the page at `/traces`: the newest traces of the app's telemetry store (all, or those for
+// one principal: `user:u1`, `owner`), each with whom it was for, and the one chosen
+// (its id in the URL's fragment) as a tree: each span with its host (`chord.host`), its length as a bar on the trace's
+// time line, its attributes and events, its error marked, and its links as references to other traces, never
+// followed. It reads the traces plugin's JSON routes (`plugins/traces/server.ts`), which answer the owner only.
 
 import { createElement as h, useEffect, useState } from "react";
 
@@ -10,8 +11,9 @@ type Summary = {
 	readonly id: string;
 	readonly name: string;
 	readonly detail: string;
+	readonly principal: string;
 	readonly spans: number;
-	readonly processes: number;
+	readonly hosts: number;
 	readonly durationMs: number;
 	readonly error: boolean;
 };
@@ -20,7 +22,7 @@ type Summary = {
 type Row = {
 	readonly name: string;
 	readonly depth: number;
-	readonly process: string;
+	readonly host: string;
 	readonly offsetMs: number;
 	readonly durationMs: number;
 	readonly attributes: readonly string[];
@@ -35,14 +37,18 @@ type Answer<T> = { readonly kind: "ok"; readonly value: T } | { readonly kind: "
 /** The viewer: the list, and the chosen trace's tree. */
 export function TraceViewer() {
 	const [list, setList] = useState<Answer<readonly Summary[]>>();
+	const [principal, setPrincipal] = useState("");
 	const [chosen, setChosen] = useState(fragment);
 	const [trace, setTrace] = useState<Answer<{ readonly spans: readonly Row[] }>>();
 	useEffect(() => {
-		void read<readonly Summary[]>("/api/traces").then(setList);
 		const follow = () => setChosen(fragment());
 		addEventListener("hashchange", follow);
 		return () => removeEventListener("hashchange", follow);
 	}, []);
+	useEffect(() => {
+		const query = principal === "" ? "" : `?principal=${encodeURIComponent(principal)}`;
+		void read<readonly Summary[]>(`/api/traces${query}`).then(setList);
+	}, [principal]);
 	useEffect(() => {
 		setTrace(undefined);
 		if (chosen === "") return;
@@ -56,6 +62,12 @@ export function TraceViewer() {
 			"nav",
 			null,
 			h("h2", null, "Traces"),
+			h("input", {
+				className: "traces-filter",
+				placeholder: "principal",
+				value: principal,
+				onChange: (event: { target: { value: string } }) => setPrincipal(event.target.value),
+			}),
 			...(list?.value ?? []).map((summary) =>
 				h(
 					"a",
@@ -65,11 +77,11 @@ export function TraceViewer() {
 						className: summary.id === chosen ? "traces-chosen" : undefined,
 					},
 					h("span", { className: summary.error ? "traces-error" : undefined }, summary.name),
-					h("small", null, summary.detail),
+					h("small", null, [summary.detail, summary.principal].filter((part) => part !== "").join(" · ")),
 					h(
 						"small",
 						null,
-						`${count(summary.spans, "span")} · ${count(summary.processes, "host")} · ${ms(summary.durationMs)}`,
+						`${count(summary.spans, "span")} · ${count(summary.hosts, "host")} · ${ms(summary.durationMs)}`,
 					),
 				),
 			),
@@ -78,19 +90,19 @@ export function TraceViewer() {
 	);
 }
 
-/** One trace as a tree: a colour per host (the process that recorded the span), lengths on the trace's time line. */
+/** One trace as a tree: a colour per host (the host that recorded the span), lengths on the trace's time line. */
 function Tree({ rows }: { readonly rows: readonly Row[] }) {
 	const total = Math.max(...rows.map((row) => row.offsetMs + row.durationMs));
-	const hosts = [...new Set(rows.map((row) => row.process))];
+	const hosts = [...new Set(rows.map((row) => row.host))];
 	return h(
 		"ol",
 		{ className: "traces-tree" },
-		...rows.map((row, index) => h(Span, { key: index, row, host: hosts.indexOf(row.process), total })),
+		...rows.map((row, index) => h(Span, { key: index, row, colour: hosts.indexOf(row.host), total })),
 	);
 }
 
 /** One span: its host, name and length, its bar, then its attributes, events, links and error. */
-function Span({ row, host, total }: { readonly row: Row; readonly host: number; readonly total: number }) {
+function Span({ row, colour, total }: { readonly row: Row; readonly colour: number; readonly total: number }) {
 	const indent = { paddingLeft: `${row.depth * 1.1}rem` };
 	// Inline styles are set through the DOM by React, which the page's CSP allows (it refuses style attributes in HTML).
 	const bar = {
@@ -103,14 +115,14 @@ function Span({ row, host, total }: { readonly row: Row; readonly host: number; 
 		h(
 			"div",
 			{ className: "traces-span", style: indent },
-			h("span", { className: `traces-host traces-host-${host % 4}` }, `host ${host + 1}`),
+			h("span", { className: `traces-host traces-host-${colour % 4}` }, row.host),
 			h("b", null, row.name),
 			h("span", { className: "traces-ms" }, ms(row.durationMs)),
 		),
 		h(
 			"div",
 			{ className: "traces-line" },
-			h("span", { className: `traces-bar traces-host-${host % 4}`, style: bar }),
+			h("span", { className: `traces-bar traces-host-${colour % 4}`, style: bar }),
 		),
 		h(
 			"div",

@@ -2,6 +2,7 @@
 // (a Durable tool, a CLI), sealed when `fn` settles, when `context` aborts and when the host closes: its signal aborted,
 // its `ctx.get` refused `released`, every reference it took released.
 
+import type { SpanAttributes } from "@earendil-works/pi-telemetry";
 import { awaitWithContext, type Context, withAbortSignal, withoutAbortSignal } from "../context/index.ts";
 import { ChordError, type Principal } from "../data/index.ts";
 import { CallContext, type Ctx } from "./ctx.ts";
@@ -14,6 +15,12 @@ export type RootOptions<P extends Principal = Principal> = {
 	 * explicit `undefined` anonymous (`ctx.principal` undefined).
 	 */
 	readonly principal?: P | undefined;
+	/**
+	 * Runs `fn` in a new root span of this host's adapter (a click, a command: a trace of its own), `ctx.telemetry` that
+	 * span, with its host's `chord.host` and `attributes`; a throw marks it failed (`trace_failed`, a cancel keeps it
+	 * ok). Without an adapter that records, nothing is started.
+	 */
+	readonly trace?: { readonly name: string; readonly attributes?: SpanAttributes };
 };
 
 /** An open root scope: its seal, and how its caller is rejected when the host closes. */

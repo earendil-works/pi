@@ -21,7 +21,7 @@ import { local } from "../../contracts/index.ts";
 import { isChordError, type Principal } from "../../data/index.ts";
 import { type Ctx, defineFacet, type Facet, type Host } from "../../host/index.ts";
 import type { RegistryValue } from "../../registries/index.ts";
-import { OpenSpan, parentOf, spanFailed, untraced } from "../../telemetry.ts";
+import { hostAttribute, OpenSpan, parentOf, spanFailed, untraced } from "../../telemetry.ts";
 import {
 	type Admitted,
 	admit,
@@ -137,6 +137,8 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 	readonly upgrade: (message: IncomingMessage, socket: Duplex, head: Buffer) => void;
 	readonly #host: Host<P>;
 	readonly #options: HttpOptions;
+	/** The `chord.host` of its `chord.http` spans: its host's. */
+	readonly #spanHost: string;
 	readonly #onError: (error: HttpError) => void;
 	readonly #context: Context;
 	/** The component's context without its cancellation: each request's scope adds its own signal. */
@@ -156,6 +158,7 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 	constructor(host: Host<P>, options: HttpOptions, context: Context) {
 		this.#host = host;
 		this.#options = options;
+		this.#spanHost = hostAttribute(host.address);
 		this.#onError = options.onError;
 		this.#context = context;
 		this.#base = withoutAbortSignal(context);
@@ -311,12 +314,12 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 	#span(request: Incoming, match: RouteMatch, admission: Admitted): OpenSpan<"chord.http"> | undefined {
 		const adapter = this.#options.telemetry;
 		if (adapter === undefined || untraced(adapter)) return undefined;
+		const attributes = { "chord.host": this.#spanHost, method: request.method, route: match.pattern };
 		const traceparent = admission.provenance.kind === "relayed" ? traceHeader(request, "traceparent") : undefined;
-		if (traceparent === undefined)
-			return new OpenSpan(adapter, "chord.http", { method: request.method, route: match.pattern });
+		if (traceparent === undefined) return new OpenSpan(adapter, "chord.http", attributes);
 		const tracestate = traceHeader(request, "tracestate");
 		const carrier: TelemetryCarrier = tracestate === undefined ? { traceparent } : { traceparent, tracestate };
-		return new OpenSpan(parentOf(carrier, adapter), "chord.http", { method: request.method, route: match.pattern });
+		return new OpenSpan(parentOf(carrier, adapter), "chord.http", attributes);
 	}
 
 	/** Runs the wraps and the route in the request's scope `ctx`, and makes its answer (a failure: a reported 500). */

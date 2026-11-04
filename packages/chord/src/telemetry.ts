@@ -20,6 +20,7 @@ import {
 	type TypedSpanStarter,
 	type TypedTelemetryMetrics,
 } from "@earendil-works/pi-telemetry";
+import type { Address } from "./contracts/index.ts";
 import { isChordError } from "./data/index.ts";
 
 /** A span of Chord's schema, its end attributes and events typed. */
@@ -38,6 +39,21 @@ export type ChordCounter<N extends keyof (typeof CHORD_TELEMETRY_SCHEMA)["metric
 
 const type = { type: "string", required: true, description: "The object type's name." } as const;
 
+const host = {
+	type: "string",
+	required: true,
+	description: "The host that recorded the span: its address key (`list|groceries`), `client` without an address.",
+	cardinality: "high",
+} as const;
+
+const principal = {
+	type: "string",
+	required: false,
+	description:
+		"Whom the call was for: its principal key, unless the host's `principalAttributes` hook records other attributes.",
+	cardinality: "high",
+} as const;
+
 const object = {
 	type: "string",
 	required: true,
@@ -55,6 +71,11 @@ const commit = {
 	attributes: {
 		documents: { type: "number", required: true, description: "Documents the commit adopted." },
 		ops: { type: "number", required: true, description: "Ops of the documents' prepared changes." },
+		rows: {
+			type: "number",
+			required: true,
+			description: "Table rows its writes changed: a `put` one, an update or delete the rows its statement changed.",
+		},
 		duration: {
 			type: "number",
 			required: true,
@@ -101,10 +122,12 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 			description: "A consumer's call of a remote object's method, from the call until its reply.",
 			parents: { kind: "any" },
 			startAttributes: {
+				"chord.host": host,
 				type,
 				member,
 				object,
 				"address.kind": { type: "string", required: true, description: "The kind of the provider's host." },
+				"chord.principal": principal,
 			},
 			endAttributes: { outcome: outcome(["ok", "error", "aborted"]) },
 			status: { default: "ok", errorWhen: ERRORS },
@@ -114,10 +137,12 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 				"A provider running a method: under the call's carrier (over a link) or the caller's span (same host).",
 			parents: { kind: "any" },
 			startAttributes: {
+				"chord.host": host,
 				type,
 				member,
 				object,
 				"principal.kind": { type: "string", required: true, description: "The ctx's principal kind, or `none`." },
+				"chord.principal": principal,
 			},
 			endAttributes: { outcome: outcome(["ok", "error", "aborted"]) },
 			events: { "chord.commit": commit },
@@ -128,6 +153,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 				"A relay forwarding a hold (until it is held upstream) or a call (until its reply came back), under the arriving carrier.",
 			parents: { kind: "root_or_external" },
 			startAttributes: {
+				"chord.host": host,
 				type,
 				member: {
 					type: "string",
@@ -143,6 +169,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 			description: "A consumer's hold of a remote object, until its first `bound` or failure.",
 			parents: { kind: "any" },
 			startAttributes: {
+				"chord.host": host,
 				type,
 				object,
 				"address.kind": { type: "string", required: true, description: "The kind of the provider's host." },
@@ -155,6 +182,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 				"One activation attempt until it is live, failed, parked or ended (a parked one resumes in a new span); linked to its object's first trigger.",
 			parents: { kind: "root_or_external" },
 			startAttributes: {
+				"chord.host": host,
 				type,
 				object,
 				attempt: { type: "number", required: true, description: "The object's attempt, from 1." },
@@ -167,6 +195,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 			description: "One native's open, under its attempt's span.",
 			parents: { kind: "spans", spans: ["chord.activate"] },
 			startAttributes: {
+				"chord.host": host,
 				type,
 				native: { type: "number", required: true, description: "The native's position, from 1." },
 			},
@@ -177,6 +206,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 			description: "One native's close (a root: it runs at its attempt's teardown).",
 			parents: { kind: "root_or_external" },
 			startAttributes: {
+				"chord.host": host,
 				type,
 				native: { type: "number", required: true, description: "The native's position, from 1." },
 				reason: { type: "string", required: true, values: ["end", "close", "reload"], description: "Why." },
@@ -188,6 +218,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 			description: "A host's `load`: the setups, the publication and the start barrier.",
 			parents: { kind: "any" },
 			startAttributes: {
+				"chord.host": host,
 				plugins: { type: "number", required: true, description: "Plugins given." },
 			},
 			endAttributes: { failed: { type: "number", description: "Plugins left out." } },
@@ -197,6 +228,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 			description: "A host's `reload`: staging, the commit and every object's fate.",
 			parents: { kind: "any" },
 			startAttributes: {
+				"chord.host": host,
 				plugins: { type: "number", required: true, description: "Plugins given." },
 			},
 			endAttributes: {
@@ -213,6 +245,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 			description: "A route resolving an address (a worker start included), linked to its first trigger.",
 			parents: { kind: "root_or_external" },
 			startAttributes: {
+				"chord.host": host,
 				kind: { type: "string", required: true, description: "The host kind." },
 				address: { type: "string", required: true, description: "The address key.", cardinality: "high" },
 			},
@@ -222,7 +255,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 		"chord.revoke": {
 			description: "A revocation on this host.",
 			parents: { kind: "any" },
-			startAttributes: {},
+			startAttributes: { "chord.host": host },
 			endAttributes: { count: { type: "number", description: "Objects it ended and child links it closed." } },
 			status: { default: "ok", errorWhen: ERRORS },
 		},
@@ -231,6 +264,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 				"One routine call (`self.on`, `self.onLive`), a root linked to the span of the commit that changed its source (when known); a throw's backoff a `chord.retry` event.",
 			parents: { kind: "root_or_external" },
 			startAttributes: {
+				"chord.host": host,
 				type,
 				object,
 				routine: { type: "string", required: true, values: ["on", "onLive"], description: "Its kind." },
@@ -245,6 +279,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 				"One phase of a job run: the intent (the start's transaction), the run, the finish; under the stored carrier (persisted) or the starter's span.",
 			parents: { kind: "any" },
 			startAttributes: {
+				"chord.host": host,
 				job: { type: "string", required: true, description: "The job's name." },
 				phase: { type: "string", required: true, values: ["intent", "run", "finish"], description: "The phase." },
 				object,
@@ -261,6 +296,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 			description: "An HTTP request routed to a contributed route (`chord/http`); its path is never recorded.",
 			parents: { kind: "root_or_external" },
 			startAttributes: {
+				"chord.host": host,
 				method: { type: "string", required: true, description: "The request's method." },
 				route: { type: "string", required: true, description: "The route's pattern." },
 			},
@@ -432,6 +468,11 @@ const ATTRIBUTE_LENGTH = 256;
 /** `text` as a span attribute: its first 256 characters. */
 export function capped(text: string): string {
 	return text.length > ATTRIBUTE_LENGTH ? text.slice(0, ATTRIBUTE_LENGTH) : text;
+}
+
+/** The `chord.host` attribute of the spans of a host at `address`: its key, `client` without one; capped. */
+export function hostAttribute(address: Address | undefined): string {
+	return capped(address?.key ?? "client");
 }
 
 /** The longest message a span's error or event carries (decision "Errors in telemetry"). */

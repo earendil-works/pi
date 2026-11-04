@@ -108,6 +108,7 @@ export class RemoteObject implements Target {
 		// Its first hold carries the carrier of its `chord.hold` span, under its holder's span (`#holdTrace`).
 		if (!untraced(holder)) {
 			this.#holding = new OpenSpan(holder, "chord.hold", {
+				"chord.host": host.spanHost,
 				type,
 				object: capped(this.label),
 				"address.kind": address.kind,
@@ -183,6 +184,7 @@ export class RemoteObject implements Target {
 		// A hold that dropped before it was bound ends here.
 		this.#held("ended");
 		const attributes = {
+			"chord.host": this.#host.spanHost,
 			type: this.contract.name,
 			object: capped(this.label),
 			"address.kind": this.request.address.kind,
@@ -225,10 +227,12 @@ export class RemoteObject implements Target {
 		const parent = context.telemetry;
 		if (untraced(parent)) return hold.side.call(hold.id, index, data, args, context);
 		const attributes = {
+			"chord.host": this.#host.spanHost,
 			type: this.contract.name,
 			member: method,
 			object: capped(this.label),
 			"address.kind": this.request.address.kind,
+			...this.#host.principalAttributes(this.caller.principal, context),
 		};
 		return chordSpans(parent)("chord.call", attributes, async (span) => {
 			try {

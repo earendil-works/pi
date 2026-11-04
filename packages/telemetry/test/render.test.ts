@@ -141,6 +141,15 @@ describe("renderTrace", () => {
 		expect(rendered.endsWith(`${"  ".repeat(1999)}1999 (10ms)`)).toBe(true);
 	});
 
+	it("renders lengths of time to the microsecond, as the adapters record them", () => {
+		const root = span("root", {
+			startedMs: 1_793_789_452_816.123,
+			endedMs: 1_793_789_452_816.431,
+			events: [{ name: "half", timeMs: 0.15400000002, attributes: {} }],
+		});
+		expect(renderTrace([root])).toBe("root (0.308ms)\n  · half (+0.154ms)");
+	});
+
 	it("renders an empty input as an empty string", () => {
 		expect(renderTrace([])).toBe("");
 	});

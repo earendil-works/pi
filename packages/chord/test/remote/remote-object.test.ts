@@ -870,6 +870,7 @@ describe("consumer spans (slice 9)", () => {
 			expect(held.trace).toEqual(hold.context);
 			expect(call.trace).toEqual(chordCall.context);
 			expect(hold.attributes).toEqual({
+				"chord.host": "client",
 				type: "app.notes",
 				object: "app.notes(S1)",
 				"address.kind": "server",

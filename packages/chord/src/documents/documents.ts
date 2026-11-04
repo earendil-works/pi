@@ -212,9 +212,9 @@ export class Documents {
 	 * nothing.
 	 */
 	#recordCommit(tx: Transaction, duration: number, context: Context): void {
-		const { documents, ops, writes } = tx.committed();
+		const { documents, ops, writes, rows } = tx.committed();
 		if (documents === 0 && writes === 0) return;
-		if (!untraced(context.telemetry)) context.telemetry.addEvent("chord.commit", { documents, ops, duration });
+		if (!untraced(context.telemetry)) context.telemetry.addEvent("chord.commit", { documents, ops, rows, duration });
 		chordMetrics(this.#owner.telemetry.metrics).histogram("chord.commit.duration").record(duration);
 	}
 

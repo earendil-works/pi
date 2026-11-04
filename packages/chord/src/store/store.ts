@@ -84,8 +84,11 @@ async function switchOutbox(db: SqliteDatabase, meta: MetaRow, outbox: boolean |
 export type CommitFence = {
 	/** At the step's entry: `false` rejects the commit `released` and writes nothing. */
 	admit(): boolean;
-	/** After `COMMIT`: adopts the commit, `ids` being its created documents' ids in the order of their writes. */
-	adopt(seq: number, ids: readonly number[]): void;
+	/**
+	 * After `COMMIT`: adopts the commit, `ids` being its created documents' ids in the order of their writes, `rows` the
+	 * table rows its writes changed.
+	 */
+	adopt(seq: number, ids: readonly number[], rows: number): void;
 };
 
 /**
@@ -421,7 +424,7 @@ export class ChordStore implements Store {
 		if (writes.length === 0) {
 			// An empty commit takes no seq; a throwing `adopt` stops the store as for any commit.
 			try {
-				fence.adopt(this.#lastSeq, []);
+				fence.adopt(this.#lastSeq, [], 0);
 			} catch (error) {
 				throw this.#fail(error);
 			}
@@ -458,7 +461,7 @@ export class ChordStore implements Store {
 		metrics.counter("chord.store.commits").add(1);
 		metrics.counter("chord.store.statements").add(step.statements);
 		try {
-			fence.adopt(seq, step.created);
+			fence.adopt(seq, step.created, step.rows);
 		} catch (error) {
 			throw this.#fail(error);
 		}

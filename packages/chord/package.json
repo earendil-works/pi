@@ -56,6 +56,11 @@
 			"types": "./dist/telemetry-sqlite/index.d.ts",
 			"import": "./dist/telemetry-sqlite/index.js"
 		},
+		"./telemetry-sqlite/node": {
+			"source": "./src/telemetry-sqlite/node.ts",
+			"types": "./dist/telemetry-sqlite/node.d.ts",
+			"import": "./dist/telemetry-sqlite/node.js"
+		},
 		"./http": {
 			"source": "./src/node/http/index.ts",
 			"types": "./dist/node/http/index.d.ts",

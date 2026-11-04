@@ -1,5 +1,5 @@
-// Telemetry across hosts (slice 9): a kit app (`start.ts`) whose server and tally workers record to one SQLite
-// telemetry store in the data directory. The owner's client host calls a tally's counter: the call goes from the client
+// Telemetry across hosts (slice 9): a kit app (`start.ts`) whose server records to a SQLite telemetry store in the
+// data directory, and whose tally workers send what they record to the server. The owner's client host calls a tally's counter: the call goes from the client
 // over the server's relay into the worker's method, which checks its argument in a span of its own (`ctx.trace`) and
 // commits through a local store object. Each host starts its spans with its own adapter; the carriers on the wire make
 // them one trace. The example prints that trace as the store renders it, and a metric the server recorded.
@@ -18,7 +18,7 @@ import { openTelemetry, startTally, telemetryFile } from "./start.ts";
 
 const dataDir = join(await mkdtemp(join(tmpdir(), "tally-")), "data");
 
-// 1. The server records to the store in its data directory; each tally's worker opens the same file.
+// 1. The server records to the store in its data directory; each tally's worker sends its spans to the server.
 await mkdir(dataDir, { mode: 0o700 });
 const telemetry = await openTelemetry(telemetryFile(dataDir));
 const app = await startTally(dataDir, telemetry, context);
@@ -42,11 +42,17 @@ const total = await telemetry.startSpan({ name: "tally.click" }, async (span) =>
 });
 console.log("3. the tally's total:", total);
 
-// 4. Each process flushes its settled spans every second: wait for the worker's, flush the server's, then read the
-//    trace back from the store (the newest trace whose first span is the click).
-await new Promise((resolve) => setTimeout(resolve, 1_500));
-await telemetry.flush();
-const { traces } = await telemetry.findTraces({ name: "tally.click", limit: 1 });
+// 4. A worker sends its settled spans every second, the server writes every second: read until the worker's method is
+//    in the click's trace (the newest trace whose first span is the click).
+const clicked = async () => {
+	await telemetry.flush();
+	return (await telemetry.findTraces({ name: "tally.click", limit: 1 })).traces;
+};
+let traces = await clicked();
+while (!traces[0]?.spans.some(({ name }) => name === "tally.check")) {
+	await new Promise((resolve) => setTimeout(resolve, 100));
+	traces = await clicked();
+}
 console.log("4. the trace across the client, the server and the worker (links name the root span they point to):");
 // The roots a trace links to (the worker's start, an object's activation) are traces of their own: named here.
 const names = new Map<string, string>();

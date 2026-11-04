@@ -36,6 +36,8 @@ type NativeOwner = {
 	readonly position: number;
 	readonly context: Context;
 	readonly telemetry: TelemetryContext;
+	/** Its host's `chord.host`. */
+	readonly host: string;
 	readonly report: (error: HostError) => void;
 };
 
@@ -94,8 +96,8 @@ export class NativeHandle<T> implements Native<T>, NativeSlot {
 			await this.#opened(await this.#open(context));
 			return;
 		}
-		const { type, position } = this.#owner;
-		await chordSpans(parent)("chord.open", { type, native: position }, async (span) => {
+		const { host, type, position } = this.#owner;
+		await chordSpans(parent)("chord.open", { "chord.host": host, type, native: position }, async (span) => {
 			let value: T;
 			try {
 				value = await this.#open(withTelemetry(span, context));
@@ -132,9 +134,10 @@ export class NativeHandle<T> implements Native<T>, NativeSlot {
 	 * for it up to then; longer is reported.
 	 */
 	async #closeValue(value: T, reason: NativeCloseReason): Promise<CloseFailed | undefined> {
-		const { telemetry, type, position } = this.#owner;
+		const { telemetry, host, type, position } = this.#owner;
 		if (untraced(telemetry)) return this.#closeWithin(value, reason, this.#owner.context);
-		return chordSpans(telemetry)("chord.close", { type, native: position, reason: reason.kind }, async (span) => {
+		const attributes = { "chord.host": host, type, native: position, reason: reason.kind };
+		return chordSpans(telemetry)("chord.close", attributes, async (span) => {
 			const failure = await this.#closeWithin(value, reason, withTelemetry(span, this.#owner.context));
 			if (failure !== undefined) spanFailed(span, "close_failed", failure.error);
 			return failure;

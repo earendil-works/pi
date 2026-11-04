@@ -279,7 +279,10 @@ describe("spans (slice 9)", () => {
 		expect(opens[1]!.status).toEqual({ status: "error", error: { name: "open_failed", message: "no socket" } });
 		expect(spans.find(({ name }) => name === "app.connect")!.parentId).toBe(opens[0]!.id);
 		const close = spans.find(({ name }) => name === "chord.close")!;
-		expect([close.parentId, close.attributes]).toEqual([null, { type: "app.res", native: 1, reason: "end" }]);
+		expect([close.parentId, close.attributes]).toEqual([
+			null,
+			{ "chord.host": "client", type: "app.res", native: 1, reason: "end" },
+		]);
 		await host.close(context);
 	});
 

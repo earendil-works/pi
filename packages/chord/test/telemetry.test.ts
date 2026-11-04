@@ -126,7 +126,7 @@ describe("carriers", () => {
 describe("open spans", () => {
 	it("ends once, with how its work settled: ok, a cancel (status ok), or an error with its category", async () => {
 		const telemetry = new InMemoryTelemetryContext();
-		const attributes = { type: "t", member: "m", object: "o", "principal.kind": "none" };
+		const attributes = { "chord.host": "client", type: "t", member: "m", object: "o", "principal.kind": "none" };
 		const ok = new OpenSpan(telemetry, "chord.method", attributes);
 		ok.endWhen(Promise.resolve(1), "method_failed", undefined);
 		const aborted = new OpenSpan(telemetry, "chord.method", attributes);
@@ -222,6 +222,32 @@ describe("across hosts", () => {
 				"          · chord.commit",
 			].join("\n"),
 		);
+		await telemetry.close();
+	});
+
+	it("names the host that recorded each span: its address key, `client` without an address", async () => {
+		const { telemetry, tab } = await store();
+		await telemetry.startSpan({ name: "test" }, async (span) => {
+			const context = withTelemetry(span, BACKGROUND_CONTEXT);
+			const notes = await tab.get(PlacedNotes, { session: "S1" }, context);
+			if (notes.variant !== "editor") throw new Error("expected the editor");
+			await notes.add({ text: "a" }, context);
+		});
+		await transported();
+		await telemetry.flush();
+		const { traces } = await telemetry.findTraces({ limit: 100 });
+		const spans = traces.flatMap((trace) => trace.spans).filter(({ name }) => name !== "test");
+		const hosts = new Map<string, Set<unknown>>();
+		for (const { name, attributes } of spans)
+			hosts.set(name, (hosts.get(name) ?? new Set()).add(attributes["chord.host"]));
+		expect(Object.fromEntries([...hosts].map(([name, of]) => [name, [...of].sort()]))).toEqual({
+			"chord.activate": ["session|S1"],
+			"chord.call": ["client"],
+			"chord.hold": ["client"],
+			"chord.method": ["session|S1"],
+			"chord.relay": ["server"],
+			"chord.resolve": ["server"],
+		});
 		await telemetry.close();
 	});
 

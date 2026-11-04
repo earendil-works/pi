@@ -512,7 +512,12 @@ describe("resolve spans (slice 9)", () => {
 		const resolve = spans.find(({ name }) => name === "chord.resolve")!;
 		const relay = spans.find(({ name }) => name === "chord.relay")!;
 		expect(resolve.parentId).toBeNull();
-		expect(resolve.attributes).toEqual({ kind: "session", address: "session|S1", outcome: "failed" });
+		expect(resolve.attributes).toEqual({
+			"chord.host": "server",
+			kind: "session",
+			address: "session|S1",
+			outcome: "failed",
+		});
 		expect(resolve.status).toEqual({ status: "error", error: { name: "resolve_failed", message: "no worker" } });
 		expect(resolve.links.map(({ context: carrier }) => carrier)).toEqual([relay.context]);
 		expect(relay.links.map(({ context: carrier }) => carrier)).toEqual([resolve.context]);

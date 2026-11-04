@@ -505,6 +505,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			position: this.#natives.length + 1,
 			context: this.#context,
 			telemetry: host.telemetry,
+			host: host.spanHost,
 			report: (error: HostError) => host.report(error),
 		};
 		const native = new NativeHandle(open, close, closeTimeout, owner);
@@ -631,7 +632,12 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	#startActivation(link: TelemetryContext): void {
 		const { host, served, label } = this.#object;
 		if (untraced(host.telemetry)) return;
-		const attributes = { type: served.contract.name, object: capped(label), attempt: this.#trace.attempt };
+		const attributes = {
+			"chord.host": host.spanHost,
+			type: served.contract.name,
+			object: capped(label),
+			attempt: this.#trace.attempt,
+		};
 		const activation = new OpenSpan(host.telemetry, "chord.activate", attributes);
 		if (!untraced(link)) activation.span.addLink({ context: link });
 		this.#activation = activation;
@@ -878,7 +884,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		// caller. The caller stays the reference's (presence, §19).
 		const acting = served.kind === "remote" ? caller : { principal: host.principal, incarnation: host.incarnation };
 		// Its span only when something records (§30: nothing else is made per call).
-		const span = untraced(parent) ? undefined : this.#methodSpan(parent, method, acting);
+		const span = !served.traced || untraced(parent) ? undefined : this.#methodSpan(parent, method, acting, context);
 		const ctx = new CallContext(
 			span === undefined ? callContext : withTelemetry(span.span, callContext),
 			acting,
@@ -908,13 +914,15 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	}
 
 	/** The `chord.method` span of a call of `method` acting as `acting`, under `parent`. */
-	#methodSpan(parent: TelemetryContext, method: string, acting: Caller): OpenSpan<"chord.method"> {
-		const { served, label } = this.#object;
+	#methodSpan(parent: TelemetryContext, method: string, acting: Caller, context: Context): OpenSpan<"chord.method"> {
+		const { host, served, label } = this.#object;
 		return new OpenSpan(parent, "chord.method", {
+			"chord.host": host.spanHost,
 			type: served.contract.name,
 			member: method,
 			object: capped(label),
 			"principal.kind": capped(acting.principal?.kind ?? "none"),
+			...host.principalAttributes(acting.principal, context),
 		});
 	}
 

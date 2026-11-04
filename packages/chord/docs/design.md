@@ -2769,7 +2769,9 @@ Chord reports traces, events and metrics through `@earendil-works/pi-telemetry`;
   `chord.open` (under the activation), `chord.close` (a root), `chord.load`, `chord.reload` (a `chord.reload.fate`
   event per object), `chord.resolve`, `chord.revoke` (recorded after the synchronous revocation, its `count`),
   `chord.routine` (a root per call), `chord.job` (`intent` under the starter, `run` and `finish` under the start's
-  carrier), `chord.http`. Outcomes are attributes; a failure is `status: "error"` with a fixed category (`call_failed`,
+  carrier), `chord.http`. Every span Chord starts, `ctx.trace`'s too, names the host that recorded it: `chord.host`, the
+  host's address key (`list|groceries`, `server`), `client` without an address, capped like the other attributes (a
+  viewer tells hosts apart by it, never by a store's span ids). Outcomes are attributes; a failure is `status: "error"` with a fixed category (`call_failed`,
   `method_failed`, `relay_failed`, `hold_failed`, `activation_failed`, `open_failed`, `close_failed`, `load_failed`,
   `reload_failed`, `resolve_failed`, `routine_failed`, `job_failed`, `http_failed` for a status of 500 or more,
   `trace_failed`) and the message cut at 500 characters; a cancel (the caller's signal, `aborted`, an open its attempt
@@ -2796,8 +2798,10 @@ Chord reports traces, events and metrics through `@earendil-works/pi-telemetry`;
   starts no span, builds no attribute object and injects no carrier; with the NOOP adapter a call over a link is within
   noise of the code before slice 9 (`benchmarks.md`). A recording host's call costs its spans (`OpenSpan`, a span kept
   open until its work's promise settles).
-- **Events and metrics:** `chord.commit { documents, ops, duration }` on the span of the context a transaction ran
-  under (a method, a routine, a job phase, an HTTP request), only for a commit that changed something; the host-wide
+- **Events and metrics:** `chord.commit { documents, ops, rows, duration }` on the span of the context a transaction
+  ran under (a method, a routine, a job phase, an HTTP request), only for a commit that changed something; `rows` is the
+  table rows its writes changed, as the commit step already counts them (a `put` one, an update or delete the rows its
+  statement changed; nothing is measured for it); the host-wide
   metrics go to the host's adapter (`host.metrics`), not to a context: `chord.link.bytes { direction }` (every encoded
   message of the host's links), `chord.link.state_messages`, `chord.commit.duration`, `chord.calls.in_flight`,
   `chord.holds.active`, `chord.links.open`, `chord.park.duration`, `chord.backpressure.wait`. The cost counters still
@@ -2809,10 +2813,45 @@ Chord reports traces, events and metrics through `@earendil-works/pi-telemetry`;
   carrier `{ traceparent, tracestate }`) only from a request a contributed relay verified, each header at most 256 and
   512 characters of printable ASCII (else ignored). A verified relay vouches for the proxy, not the browser behind it:
   an app's proxy must strip `traceparent` and `tracestate` from browsers' requests (or set its own), or a browser
-  chooses the trace its requests join. `startServer({ telemetry })` passes the adapter to
-  its host and HTTP; `startWorker({ telemetry })` to its host. Each process exports to the store it is given; a shared
-  SQLite file per data directory is the app's choice (example 62). The SQLite store orders spans of one millisecond as
-  their recorder started them (by start time, then id length and id).
+  chooses the trace its requests join. `startServer({ telemetry })` passes the store to its host and HTTP and serves
+  the ingest objects; workers and recording pages send it their spans (below). The SQLite store orders spans of one
+  microsecond as their recorder started them (by start time, then id length and id).
+- **Span times (after slice 9):** a span's start is `telemetryNow()` (pi-telemetry): wall-clock milliseconds at
+  microsecond resolution from `performance.now()` anchored to the wall clock, anchored anew when the two part by more
+  than 10 ms (a clock set, a sleep the monotonic clock did not count); its end and its events' times are the monotonic
+  clock's from there. The in-memory adapter and the SQLite store share it, and `renderTrace` prints lengths to the
+  microsecond. The SQLite store keeps span times in whole microseconds (`started_us`, `ended_us`): store version 2, to
+  which a recorder migrates a version 1 file in place (its rows' milliseconds multiplied), since several processes
+  share one file and a new store version would strand the rows already there.
+- **The server is the one place telemetry is stored** (decisions "Telemetry from browser pages", "The server is the
+  one place telemetry is stored", "Who a span was for"; `src/telemetry-ingest/`): the server's store is the only
+  writer of its file. Pages and workers record with Chord's in-memory `TelemetryRecorder` (the SQLite store records
+  with it too: one carrier format, one bounded queue of settled spans and metric aggregates per 10 s) and send finished
+  spans in batches over the link they already have to the server's `PageTelemetry` and `WorkerTelemetry`
+  (`ingest(batch)`), served by the kit when `startServer` has a telemetry store (`TelemetryContext` with the store's
+  `ingest`). A worker sends every second (and its last spans and partial metrics when it closes), written as they are,
+  stamped with its host (`chord.host`: its address key, known from the principal its link stamps). A page records
+  when `startPage({ telemetry: true })` and sends spans only, every 3 s and when hidden; the server treats it as
+  untrusted: the batch schema bounds everything (100 spans; names 128 characters; 32 attributes, keys 64, values 256
+  characters or numbers or booleans; 16 events; 8 links; error messages 500; ids printable ASCII; no control
+  characters anywhere), a span counts only when its id, trace and parent are under the page's own prefix
+  (`browser:<its host's incarnation>:`, so it neither writes into another sender's trace nor poses as a server span),
+  1,200 spans per page and minute (past it dropped, counted in the answer), each marked `chord.host: browser` and
+  stamped with the principal attributes of its link, overriding what the page wrote. The store writes ingested spans
+  with `INSERT OR IGNORE`: a stored span is never replaced. The ingest objects' calls start no `chord.method`
+  (`ServeOptions.untraced`): a span per batch would be telemetry about telemetry. A trace of a page's own starts with
+  `host.root(fn, ctx, { trace: { name, attributes } })`, a root span of the host's adapter (`trace_failed` on a throw).
+  A viewer clamps a page's spans against the server spans under them (the page's clock may be off).
+- **Who a span was for:** `chord.method` and `chord.call` record their principal's attributes: by default
+  `chord.principal`, its principal key (capped); a host's `principalAttributes(principal)` hook replaces them (none,
+  the key, more: a user's name the app resolves). Chord calls it for every span it records with a principal, so it is
+  synchronous and cheap, its caching its own; the kit passes `startServer`'s and `startWorker`'s to their hosts, and
+  the server stamps a page's spans with it for the link's principal. `Host` exposes `principalAttributes`,
+  `incarnation` and `address` for the kit and the page recorder.
+- **Reading a shared file:** `openTelemetryStore(path)` (`@earendil-works/chord/telemetry-sqlite/node`) implements
+  `TelemetryStore` only, on a read-only SQLite connection (`openNodeSqliteDatabase(path, { mode: "read-only" })`:
+  deferred transactions, nothing configured or checkpointed): it never writes, creates or migrates the file, and
+  refuses one without a store or with a store of another version.
 
 ## 30. Cost model
 

@@ -4,7 +4,12 @@
 // (slice 7b: staging, the commit, each object's fate, the report), closing; one batch per host, the backoff map and the
 // endings new instances wait for.
 
-import { NOOP_TELEMETRY_CONTEXT, type TelemetryContext, type TelemetrySpan } from "@earendil-works/pi-telemetry";
+import {
+	NOOP_TELEMETRY_CONTEXT,
+	type SpanAttributes,
+	type TelemetryContext,
+	type TelemetrySpan,
+} from "@earendil-works/pi-telemetry";
 import {
 	awaitWithContext,
 	BACKGROUND_CONTEXT,
@@ -50,6 +55,7 @@ import {
 	chordSpans,
 	countingOnly,
 	ended,
+	hostAttribute,
 	parentOf,
 	untraced,
 } from "../telemetry.ts";
@@ -100,6 +106,13 @@ export type HostOptions<P extends Principal = Principal, R extends JsonValue = J
 	 * per span site.
 	 */
 	readonly telemetry?: TelemetryContext;
+	/**
+	 * Who a span was for (decision "Who a span was for"): the attributes its method and call spans record for a
+	 * principal, in place of the default `chord.principal` (its principal key, capped at 256 characters). Called for
+	 * every span recorded with a principal: synchronous and cheap; caching, if any, is the hook's own. The same
+	 * function on every host.
+	 */
+	readonly principalAttributes?: PrincipalAttributes<P>;
 	/** Everything that fails in the background; every app handles it. */
 	readonly onError: (error: HostError) => void;
 	/** How long a native's close, and an ending object's running calls, are waited for; 30 s by default. */
@@ -128,6 +141,9 @@ export type HostOptions<P extends Principal = Principal, R extends JsonValue = J
 	 */
 	readonly store?: Store;
 };
+
+/** The span attributes recorded for a principal (`HostOptions.principalAttributes`): none, its key, or more. */
+export type PrincipalAttributes<P extends Principal = Principal> = (principal: P) => Readonly<SpanAttributes>;
 
 /** Where a reported part sits on its object: a routine (`on`, `onLive`) or a native, by kind, from 1 in declaration order. */
 export type Position = { readonly kind: "on" | "onLive" | "native"; readonly position: number };
@@ -233,6 +249,15 @@ export type AnyHost = Omit<ChordHost, "load" | "reload" | "accept" | "connect" |
 
 /** A host. `P` is the app's principal type, `R` its revocation type. */
 export interface Host<P extends Principal = Principal, R extends JsonValue = JsonValue> {
+	/** This host's address (`HostOptions.address`); `undefined` on a client. */
+	readonly address: Address | undefined;
+	/** This run of the host, sent in every handshake (R20): a link's peer sees it as its calls' `ctx.incarnation`. */
+	readonly incarnation: string;
+	/**
+	 * The attributes this host's spans record for `principal`: its `principalAttributes` hook's, else `chord.principal`,
+	 * its principal key; none without a principal.
+	 */
+	principalAttributes(principal: P | undefined, context: Context): Readonly<SpanAttributes>;
 	/**
 	 * Runs every facet's setup and publishes what they declared in one batch (the types and registries served, the
 	 * registries composed once, the contributions); holds that waited for the publication are placed after that batch,
@@ -452,6 +477,9 @@ const NO_CHAIN: readonly string[] = [];
 /** The params of a type with empty params, as checked: nothing, and the empty key. */
 const EMPTY_PARAMS: CheckedParams = { params: {}, key: "" };
 
+/** What a span records for no principal. */
+const NO_ATTRIBUTES: Readonly<SpanAttributes> = Object.freeze({});
+
 /** The host: its served types, its objects by identity, its batch, backoff and endings. */
 export class ChordHost<P extends Principal = Principal, R extends JsonValue = JsonValue> implements Host<P, R> {
 	readonly batch: Batch;
@@ -466,12 +494,15 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	readonly store: ChordStore | undefined;
 	/** The telemetry adapter: root spans start on it, carriers from links are extracted with it. */
 	readonly telemetry: TelemetryContext;
+	/** The `chord.host` attribute of this host's spans: its address key, `client` without an address. */
+	readonly spanHost: string;
 	/** Chord's instruments on the adapter's metrics: the host's own counts (links, holds, calls, commits). */
 	readonly metrics: ChordMetrics;
 	/** The telemetry of this host's work under a context without a span (`#counted`); none without an adapter. */
 	readonly #counting: TelemetrySpan | undefined;
 	readonly #activity: Activity;
 	readonly #principalKey: PrincipalKeyFunction<P> | undefined;
+	readonly #principalAttributes: PrincipalAttributes<P> | undefined;
 	readonly #revocationKeys: RevocationKeys;
 	/** The presence list of each type someone asked about (`references`), by type name. */
 	readonly #references = new Map<string, References>();
@@ -523,8 +554,10 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		this.address = options.address;
 		this.principal = options.principal;
 		this.#principalKey = options.principalKey;
+		this.#principalAttributes = options.principalAttributes;
 		this.#onError = options.onError;
 		this.telemetry = options.telemetry ?? NOOP_TELEMETRY_CONTEXT;
+		this.spanHost = hostAttribute(this.address);
 		this.metrics = chordMetrics(this.telemetry.metrics);
 		const metrics = this.telemetry.metrics;
 		this.#counting = untraced(this.telemetry) || metrics === undefined ? undefined : countingOnly(metrics);
@@ -549,7 +582,7 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		this.#state = "loading";
 		const parent = context.telemetry;
 		if (untraced(parent)) return this.#load(facets, context);
-		return chordSpans(parent)("chord.load", { plugins: facets.length }, async (span) => {
+		return chordSpans(parent)("chord.load", { "chord.host": this.spanHost, plugins: facets.length }, async (span) => {
 			try {
 				const report = await this.#load(facets, withTelemetry(span, context));
 				span.setAttributes({ failed: report.failed.length });
@@ -649,20 +682,24 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	): Promise<ReloadReport> {
 		const parent = context.telemetry;
 		if (untraced(parent)) return this.#reloadSteps(facets, before, context);
-		return chordSpans(parent)("chord.reload", { plugins: facets.length }, async (span) => {
-			try {
-				const report = await this.#reloadSteps(facets, before, withTelemetry(span, context));
-				for (const { object, kind } of report.objects)
-					span.addEvent("chord.reload.fate", { object: capped(object), fate: kind });
-				const { added, changed, removed } = report.plugins;
-				const counts = { added: added.length, changed: changed.length, removed: removed.length };
-				span.setAttributes({ ...counts, failed: report.failed.length, fates: report.objects.length });
-				return report;
-			} catch (error) {
-				ended(span, "reload_failed", error, context.abortSignal);
-				throw error;
-			}
-		});
+		return chordSpans(parent)(
+			"chord.reload",
+			{ "chord.host": this.spanHost, plugins: facets.length },
+			async (span) => {
+				try {
+					const report = await this.#reloadSteps(facets, before, withTelemetry(span, context));
+					for (const { object, kind } of report.objects)
+						span.addEvent("chord.reload.fate", { object: capped(object), fate: kind });
+					const { added, changed, removed } = report.plugins;
+					const counts = { added: added.length, changed: changed.length, removed: removed.length };
+					span.setAttributes({ ...counts, failed: report.failed.length, fates: report.objects.length });
+					return report;
+				} catch (error) {
+					ended(span, "reload_failed", error, context.abortSignal);
+					throw error;
+				}
+			},
+		);
 	}
 
 	/** One reload's steps: staging, the commit, the fates, the report. */
@@ -989,7 +1026,10 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		const count = this.#revoke(revocation, context);
 		const parent = context.telemetry;
 		// Recorded after the work: a revocation is synchronous, its span only says what it ended.
-		if (!untraced(parent)) void chordSpans(parent)("chord.revoke", {}, (span) => span.setAttributes({ count }));
+		if (!untraced(parent)) {
+			const attributes = { "chord.host": this.spanHost };
+			void chordSpans(parent)("chord.revoke", attributes, (span) => span.setAttributes({ count }));
+		}
 	}
 
 	/** `revoke`'s work; how many objects it ended and child links it closed. */
@@ -1085,7 +1125,25 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		// The scope's ctx acts as `principal`, a `P`: an explicit `undefined` runs anonymous (an HTTP request nobody
 		// authenticated), only an omitted one takes the host's.
 		const principal = "principal" in options ? options.principal : this.principal;
-		return this.#roots.run(fn as (ctx: Ctx) => Promise<T>, principal, this.#counted(context));
+		const run = fn as (ctx: Ctx) => Promise<T>;
+		const trace = options.trace;
+		if (trace === undefined || untraced(this.telemetry))
+			return this.#roots.run(run, principal, this.#counted(context));
+		const attributes = { "chord.host": this.spanHost, ...trace.attributes };
+		return this.telemetry.startSpan({ name: trace.name, attributes }, async (span) => {
+			try {
+				return await this.#roots.run(run, principal, withTelemetry(span, context));
+			} catch (error) {
+				ended(span, "trace_failed", error, context.abortSignal);
+				throw error;
+			}
+		});
+	}
+
+	principalAttributes(principal: P | undefined, context: Context): Readonly<SpanAttributes> {
+		if (principal === undefined) return NO_ATTRIBUTES;
+		if (this.#principalAttributes !== undefined) return this.#principalAttributes(principal);
+		return { "chord.principal": capped(principalKey(principal, context, this.#principalKey)) };
 	}
 
 	/**

@@ -6,8 +6,9 @@ import { writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AppOptions } from "../../../src/node/app/index.ts";
 import { pageScripts } from "../../../src/node/surfaces/index.ts";
-import { tempDir, testApp } from "../app/support.ts";
+import { type TestPrincipal, tempDir, testApp } from "../app/support.ts";
 import type { Browser } from "./browser.ts";
 
 /** The fixture's web entry. */
@@ -58,6 +59,8 @@ export function webApp(
 		readonly dataDir?: string;
 		readonly root?: string;
 		readonly plugins?: Record<string, Record<string, string>>;
+		readonly withWorkers?: boolean;
+		readonly telemetry?: AppOptions<TestPrincipal>["telemetry"];
 	} = {},
 ) {
 	return testApp({

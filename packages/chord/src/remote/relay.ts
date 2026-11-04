@@ -110,10 +110,18 @@ export class RelayedHold {
 		return carrier;
 	}
 
-	/** A relay span's attributes: names from the wire, bounded by the message schema (untrusted links) and capped here. */
-	#attributes(member: string): { type: string; member: string; "upstream.kind": string } {
+	/**
+	 * A relay span's attributes: its host's `chord.host` (the downstream link's host), and names from the wire, bounded
+	 * by the message schema (untrusted links) and capped here.
+	 */
+	#attributes(member: string): { "chord.host": string; type: string; member: string; "upstream.kind": string } {
 		const { type, address } = this.#request;
-		return { type: capped(type), member, "upstream.kind": capped(address.kind) };
+		return {
+			"chord.host": this.#downstream.link.host.spanHost,
+			type: capped(type),
+			member,
+			"upstream.kind": capped(address.kind),
+		};
 	}
 
 	/** The upstream link dropped: downstream its calls fail and the hold goes loading until the path's next link. */

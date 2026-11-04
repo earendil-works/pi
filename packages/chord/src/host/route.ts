@@ -202,7 +202,11 @@ export class Route {
 		const adapter = this.#host.telemetry;
 		const span = untraced(adapter)
 			? undefined
-			: new OpenSpan(adapter, "chord.resolve", { kind: this.kind, address: capped(key) });
+			: new OpenSpan(adapter, "chord.resolve", {
+					"chord.host": this.#host.spanHost,
+					kind: this.kind,
+					address: capped(key),
+				});
 		if (span !== undefined && trigger !== undefined) {
 			span.span.addLink({ context: trigger });
 			trigger.addLink({ context: span.span });

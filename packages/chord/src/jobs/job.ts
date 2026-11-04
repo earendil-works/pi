@@ -152,7 +152,12 @@ export class Job implements JobHandle<JsonValue, unknown, JsonValue | undefined>
 		const parent = context.telemetry;
 		if (untraced(parent)) return documents.tx((tx) => this.stage(tx, args, context, options), token, context);
 		// The intent: the start's transaction, in its span (the run keeps it: its later phases are its children).
-		const attributes = { job: this.#definition.name, phase: "intent", object: capped(documents.label) } as const;
+		const attributes = {
+			"chord.host": this.#owner.host.spanHost,
+			job: this.#definition.name,
+			phase: "intent",
+			object: capped(documents.label),
+		} as const;
 		return chordSpans(parent)("chord.job", attributes, async (span) => {
 			const traced = withTelemetry(span, context);
 			try {
@@ -328,6 +333,7 @@ export class Job implements JobHandle<JsonValue, unknown, JsonValue | undefined>
 		const parent = parentOf(run.trace, host.telemetry);
 		if (untraced(parent)) return undefined;
 		return new OpenSpan(parent, "chord.job", {
+			"chord.host": host.spanHost,
 			job: this.#definition.name,
 			phase,
 			object: capped(documents.label),
@@ -533,7 +539,12 @@ class JobSpanContext extends SpanCtx {
 	readonly jobId: string;
 	declare readonly state: RunState<JsonObject> | undefined;
 
-	constructor(parent: Ctx, span: TelemetrySpan, jobId: string, state: RunState<JsonObject> | undefined) {
+	constructor(
+		parent: JobContext | JobSpanContext,
+		span: TelemetrySpan,
+		jobId: string,
+		state: RunState<JsonObject> | undefined,
+	) {
 		super(parent, span);
 		this.jobId = jobId;
 		if (state !== undefined) this.state = state;

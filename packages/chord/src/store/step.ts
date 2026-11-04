@@ -26,8 +26,8 @@ export type StagedWrite = {
 /**
  * One commit step: its backend transaction, its seq, the store's id allocator (D3: ids are taken from it as the
  * writes apply, never copied), the ids of the documents it created, the table records it changed (the store's catalog
- * takes them after `COMMIT`) and the statements it ran (`chord.store.statements`). Its reads are the step reader of
- * adapters: they see the step's own writes.
+ * takes them after `COMMIT`), the statements it ran (`chord.store.statements`) and the table rows its writes changed
+ * (`chord.commit`'s `rows`). Its reads are the step reader of adapters: they see the step's own writes.
  */
 export class Step {
 	readonly executor: SqliteExecutor;
@@ -39,6 +39,8 @@ export class Step {
 	readonly tables = new Map<string, TableRecord>();
 	readonly #catalog: ReadonlyMap<string, TableRecord>;
 	statements = 0;
+	/** Table rows its writes changed: a `put` one, the others the count their statement returned. */
+	rows = 0;
 
 	constructor(executor: SqliteExecutor, seq: number, ids: IdAllocator, catalog: ReadonlyMap<string, TableRecord>) {
 		this.executor = executor;

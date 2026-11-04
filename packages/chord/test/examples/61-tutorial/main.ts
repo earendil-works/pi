@@ -1,7 +1,7 @@
 // The tutorial's app (`docs/tutorial/book.md`): a shared todo app built with the app kit, one worker per list. Each
 // numbered step is the tutorial's chapter of that number: the server and the owner's sign-in, a list on its worker,
 // routes, the page, the terminal, a theme plugin added while the app runs, a second user, languages, an edit applied in
-// place, a list exported and imported, and a trace across the page, the server and a worker, read back from the app's
+// place, a list exported and imported, and a request's trace across the server and a worker, read back from the app's
 // telemetry store. The lists plugin's own test is `plugins/lists/worker.test.ts`; `screenshots.ts` shows the page and
 // the trace viewer in Chromium; `trace.ts` reads a data directory's traces.
 // Run from packages/chord (with Node 26.5.1 or later the terminal client runs too; `--serve` keeps the app running):
@@ -16,7 +16,7 @@ import type { StoredTrace } from "@earendil-works/pi-telemetry";
 import { renderTrace } from "@earendil-works/pi-telemetry/render";
 import { List } from "@todo/app/v1";
 import { WebSocket } from "ws";
-import { BACKGROUND_CONTEXT as context, withTelemetry } from "../../../src/context/index.ts";
+import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import {
 	type ChordError,
 	createHost,
@@ -249,37 +249,27 @@ await app.importData(archive, List({ id: "groceries" }), context).catch((error: 
 	console.log("   importing over groceries:", error.message.replace(base, "…"));
 });
 
-// 11. Telemetry. Every process of the app records to the store in the data directory (step 1 opened it for the server,
-//    `worker.ts` opens it in each list's worker). A page stands in here as a client host of this process with a
-//    recorder of its own on the same file, signed in with the owner's cookie of step 1. A click is one span of the
-//    page; the call under it goes through the server's relay into the list's worker, and the carriers on the wire make
-//    one trace of the three processes' spans. The store's `add` checks the text in a span of its own (`ctx.trace`).
-const pageTelemetry = await openTelemetry(telemetryFile(dataDir));
-const page = createHost<TodoPrincipal>({
-	telemetry: pageTelemetry.store,
-	onError: (error) => console.error("page:", error.kind),
-});
-await page.load([], context);
-const pageSocket = new WebSocket(`${url.replace(/^http/, "ws")}/chord`, { headers: { cookie } });
-page.connect(webSocketLink(pageSocket as unknown as WebSocketLike), { principal: { kind: "server" } }, context);
-const pageTodos = await page.get(Todos, { list: "groceries" }, context);
-const click = (text: string) =>
-	pageTelemetry.store.startSpan({ name: "page.add" }, (span) => pageTodos.add(text, withTelemetry(span, context)));
-await click("honey");
-await click(" ").catch(() => "refused");
-pageTodos.release();
-await page.close(context);
-await pageTelemetry.close();
-// Each recorder writes what settled once a second: read until the worker's spans of both clicks are there.
-const [refusedTrace, honeyTrace] = await written(telemetry.store, "page.add", 2, "todos.validate");
-console.log("11. adding honey from the page:");
+// 11. Telemetry. The server records to the store in the data directory (step 1 opened it) and writes what every list's
+//    worker sends it. A command-line client adds honey and a blank todo: each request is a `chord.http` trace of the
+//    server, the call into the list's worker under it, and the store's `add` checks the text in a span of its own
+//    (`ctx.trace`). A page's click, recorded by the page itself, is `screenshots.ts`'s (it needs Chromium).
+for (const text of ["honey", " "]) {
+	await fetch(`${url}/api/lists/groceries`, {
+		method: "POST",
+		headers: { ...cli, "content-type": "application/json" },
+		body: JSON.stringify(text),
+	});
+}
+// The worker sends every second, the server writes every second: read until the worker's spans of both are there.
+const [refusedTrace, honeyTrace] = await written(telemetry.store, "chord.http", 2, "todos.validate");
+console.log("11. adding honey from the command line:");
 printTelemetry(renderTrace(honeyTrace!.spans));
 // `trace.ts` reads the same file from a process of its own: the newest traces, then one by its id.
 const traceScript = fileURLToPath(new URL("./trace.ts", import.meta.url));
 const read = async (...args: string[]) =>
 	(await promisify(execFile)(process.execPath, [...process.execArgv, traceScript, ...args])).stdout;
-console.log("   trace.ts <data directory> --name page.add:");
-printTelemetry(await read(dataDir, "--name", "page.add"));
+console.log("   trace.ts <data directory> --name chord.http --principal owner:");
+printTelemetry(await read(dataDir, "--name", "chord.http", "--principal", "owner"));
 console.log("   trace.ts <data directory> <the refused one's id>:");
 printTelemetry(await read(dataDir, refusedTrace!.traceId));
 

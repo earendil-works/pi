@@ -1419,8 +1419,22 @@ describe("phase spans (slice 9)", () => {
 		const [intent, ran, finish] = spans.filter(({ name }) => name === "chord.job");
 		expect([intent!.parentId, ran!.parentId, finish!.parentId]).toEqual([request.id, intent!.id, intent!.id]);
 		expect([ran!.attributes, finish!.attributes]).toEqual([
-			{ job: "app.echo", phase: "run", object: "app.store", "job.id": run.id, outcome: "ok" },
-			{ job: "app.echo", phase: "finish", object: "app.store", "job.id": run.id, outcome: "ok" },
+			{
+				"chord.host": "client",
+				job: "app.echo",
+				phase: "run",
+				object: "app.store",
+				"job.id": run.id,
+				outcome: "ok",
+			},
+			{
+				"chord.host": "client",
+				job: "app.echo",
+				phase: "finish",
+				object: "app.store",
+				"job.id": run.id,
+				outcome: "ok",
+			},
 		]);
 		expect(finish!.events.map(({ name, attributes }) => [name, attributes])).toEqual([
 			["chord.retry", { backoff: 1_000 }],

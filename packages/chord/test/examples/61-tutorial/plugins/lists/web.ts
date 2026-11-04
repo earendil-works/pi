@@ -4,7 +4,7 @@
 // texts are in the page's language (`useMessages`), and its catalogs are its contribution to the page's `Translations`.
 
 import { BACKGROUND_CONTEXT as context, defineFacet, Translations } from "@todo/app/v1";
-import { Panels, useHold, useMessages, usePageState, useWatch } from "@todo/app/v1/web";
+import { Panels, useHold, useHost, useMessages, usePageState, useWatch } from "@todo/app/v1/web";
 import { createElement as h } from "react";
 import { Todos } from "./contract.ts";
 import { messages } from "./messages.ts";
@@ -12,6 +12,7 @@ import "./lists.css";
 
 function TodoList() {
 	const { t } = useMessages(messages);
+	const host = useHost();
 	const list = location.hash.slice(1) || "groceries";
 	const todos = useHold(Todos, { list });
 	const items = useWatch(todos?.items) ?? [];
@@ -20,8 +21,11 @@ function TodoList() {
 	const [text, setText] = usePageState(`lists.draft.${list}`, "");
 	const add = (event: { preventDefault(): void }) => {
 		event.preventDefault();
-		if (todos === undefined || text.trim() === "") return;
-		void todos.add(text, context);
+		// An empty todo too: the list's store refuses it, and the click's trace shows where.
+		if (todos === undefined) return;
+		// The click is a trace of its own: a root span of the page, the call to the list's worker under it.
+		const trace = { name: "page.add", attributes: { chars: text.length } };
+		void host.root((ctx) => todos.add(text, ctx), context, { trace }).catch(() => {});
 		setText("");
 	};
 	return h(

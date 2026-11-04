@@ -9,6 +9,11 @@ function escaped(text: string): string {
 	return text.replace(CONTROL, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
 }
 
+/** `ms` rounded to the microsecond, as the adapters record span times. */
+function microseconds(ms: number): number {
+	return Math.round(ms * 1000) / 1000;
+}
+
 function formatAttributes(attributes: Readonly<SpanAttributes> = {}): string {
 	return Object.entries(attributes)
 		.map(([key, value]) => ` ${escaped(key)}=${JSON.stringify(value)}`)
@@ -16,8 +21,9 @@ function formatAttributes(attributes: Readonly<SpanAttributes> = {}): string {
 }
 
 /**
- * Render stored spans as a chronological forest, treating absent parents as roots. Control characters in ids, names,
- * attribute keys and error messages are escaped (attribute values are JSON).
+ * Render stored spans as a chronological forest, treating absent parents as roots. Lengths of time are milliseconds to
+ * the microsecond. Control characters in ids, names, attribute keys and error messages are escaped (attribute values
+ * are JSON).
  */
 export function renderTrace(spans: readonly StoredSpan[]): string {
 	const byId = new Map(spans.map((span) => [span.id, span]));
@@ -46,10 +52,12 @@ export function renderTrace(spans: readonly StoredSpan[]): string {
 			}
 		}
 		lines.push(
-			`${indent}${escaped(span.name)}${formatAttributes(span.attributes)} (${span.endedMs - span.startedMs}ms)${error}`,
+			`${indent}${escaped(span.name)}${formatAttributes(span.attributes)} (${microseconds(span.endedMs - span.startedMs)}ms)${error}`,
 		);
 		for (const event of span.events) {
-			lines.push(`${indent}  · ${escaped(event.name)}${formatAttributes(event.attributes)} (+${event.timeMs}ms)`);
+			lines.push(
+				`${indent}  · ${escaped(event.name)}${formatAttributes(event.attributes)} (+${microseconds(event.timeMs)}ms)`,
+			);
 		}
 		for (const link of span.links) {
 			const ids = `trace ${escaped(link.traceId)} span ${escaped(link.spanId)}`;

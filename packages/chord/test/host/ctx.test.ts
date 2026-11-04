@@ -259,7 +259,7 @@ describe("ctx.trace (C11, slice 9)", () => {
 		const spans = telemetry.getSpans();
 		const byName = (name: string) => spans.find((span) => span.name === name)!;
 		expect(byName("app.step").parentId).toBe(byName("chord.method").id);
-		expect(byName("app.step").attributes).toEqual({ n: 1 });
+		expect(byName("app.step").attributes).toEqual({ "chord.host": "client", n: 1 });
 		expect(byName("app.deeper").parentId).toBe(byName("app.step").id);
 		expect(seen.inner).not.toBe(seen.outer);
 		expect(seen.inner!.principal).toBe(seen.outer!.principal);

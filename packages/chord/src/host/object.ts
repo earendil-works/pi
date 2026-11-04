@@ -65,6 +65,8 @@ type ServedType<C extends Contract> = {
 	readonly provider: Provider<Contract>;
 	/** How long a live object stays live after its last reference, in milliseconds (`serve`'s `linger`, 0 by default). */
 	readonly linger: number;
+	/** Whether its calls start method spans (`serve`'s `untraced`: not). */
+	readonly traced: boolean;
 };
 
 /** What holds an object: a reference's binding, or a hold arriving over a link. */

@@ -33,5 +33,7 @@ void startPage({
 	connect: () => new WebSocket(`${location.origin.replace(/^http/, "ws")}/chord`),
 	modules: { "@todo/app/v1": v1, "@todo/app/v1/web": v1web, react: React, "react/jsx-runtime": jsx },
 	core: [{ name: "@todo/web", facet: core }],
+	// The page records its clicks and the calls under them, and sends them to the server every few seconds.
+	telemetry: true,
 	render: (host) => createRoot(document.getElementById("root")!).render(h(HostProvider, { host }, h(Page))),
 });

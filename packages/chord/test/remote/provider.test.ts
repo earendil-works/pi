@@ -1050,10 +1050,12 @@ describe("telemetry at the provider (slice 9)", () => {
 		);
 		expect(methods.map(({ parentId }) => parentId)).toEqual([caller.id, null, null]);
 		expect(methods[0]!.attributes).toEqual({
+			"chord.host": "server",
 			type: "app.notes",
 			member: "add",
 			object: "app.notes(S1)",
 			"principal.kind": "owner",
+			"chord.principal": '{"kind":"owner"}',
 			outcome: "ok",
 		});
 	});

@@ -1179,7 +1179,14 @@ describe("routine spans (slice 9)", () => {
 		const live = routines.find(({ attributes }) => attributes.routine === "onLive")!;
 		expect([live.parentId, live.attributes]).toEqual([
 			null,
-			{ type: "app.store", object: "app.store", routine: "onLive", position: 1, outcome: "ok" },
+			{
+				"chord.host": "client",
+				type: "app.store",
+				object: "app.store",
+				routine: "onLive",
+				position: 1,
+				outcome: "ok",
+			},
 		]);
 		expect(live.events.map(({ name }) => name)).toEqual(["chord.commit"]);
 		const ons = routines.filter(({ attributes }) => attributes.routine === "on");

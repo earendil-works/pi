@@ -1,6 +1,6 @@
-// The todo app's telemetry store: one SQLite file in the data directory, `telemetry.sqlite`. The server and every
-// list's worker record to it, each process with a recorder of its own on the shared file; readers (the trace viewer,
-// `trace.ts`) open it the same way and read through the store's read interface.
+// The todo app's telemetry store: one SQLite file in the data directory, `telemetry.sqlite`. The server is its only
+// writer: its own spans, and those every list's worker and every recording page send it; readers (the trace viewer,
+// `trace.ts`) open it read-only with Chord's `openTelemetryStore` and read through the store's read interface.
 
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";

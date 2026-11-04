@@ -1,4 +1,4 @@
-import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
+import { InMemoryTelemetryContext, type SpanAttributes } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context, withAbortSignal, withCancel, withTelemetry } from "../../src/context/index.ts";
 import { evolve, hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
@@ -1674,6 +1674,50 @@ describe("reload: an abort while staging (fix round 1)", () => {
 	});
 });
 
+describe("who a span was for (principalAttributes)", () => {
+	const Echo = local("app.echo", { version: 1, params: {}, members: { echo: method(str(), str()) } });
+
+	/** A host acting as `{ kind: "user", id: "u1", name: "Ada" }` serving `Echo`, recording to `telemetry`. */
+	async function host(
+		telemetry: InMemoryTelemetryContext,
+		principalAttributes?: (p: { kind: string }) => Readonly<SpanAttributes>,
+	) {
+		const made = createHost({
+			principal: { kind: "user", id: "u1", name: "Ada" },
+			telemetry,
+			...(principalAttributes === undefined ? {} : { principalAttributes }),
+			onError: () => {},
+		});
+		await made.load(
+			[{ name: "@test/echo", facet: defineFacet((h) => h.serve(Echo, () => ({ echo: async (text) => text }))) }],
+			context,
+		);
+		const echo = await made.get(Echo, {}, context);
+		await telemetry.startSpan({ name: "work" }, (span) => echo.echo("hi", withTelemetry(span, context)));
+		return telemetry.getSpans().find(({ name }) => name === "chord.method")!.attributes;
+	}
+
+	it("records a method's principal key as `chord.principal` by default", async () => {
+		expect(await host(new InMemoryTelemetryContext())).toMatchObject({
+			"chord.principal": '{"id":"u1","kind":"user","name":"Ada"}',
+		});
+	});
+
+	it("records the hook's attributes in its place, the hook called per recorded span only", async () => {
+		const hook = vi.fn((principal: { kind: string }) => ({ "chord.principal": principal.kind, "user.name": "Ada" }));
+		const attributes = await host(new InMemoryTelemetryContext(), hook);
+		expect(attributes).toMatchObject({ "chord.principal": "user", "user.name": "Ada" });
+		expect(hook).toHaveBeenCalledTimes(1);
+		const silent = createHost({ principal: { kind: "user" }, principalAttributes: hook, onError: () => {} });
+		await silent.load(
+			[{ name: "@test/echo", facet: defineFacet((h) => h.serve(Echo, () => ({ echo: async (text) => text }))) }],
+			context,
+		);
+		await (await silent.get(Echo, {}, context)).echo("hi", context);
+		expect(hook).toHaveBeenCalledTimes(1);
+	});
+});
+
 describe("the host's spans (slice 9)", () => {
 	it("traces load under its caller's span: plugins given and left out; host-lifetime activations link to it", async () => {
 		const telemetry = new InMemoryTelemetryContext();
@@ -1694,7 +1738,7 @@ describe("the host's spans (slice 9)", () => {
 		const spans = telemetry.getSpans();
 		const load = spans.find(({ name }) => name === "chord.load")!;
 		expect(load.parentId).toBe(spans.find(({ name }) => name === "start")!.id);
-		expect(load.attributes).toEqual({ plugins: 2, failed: 1 });
+		expect(load.attributes).toEqual({ "chord.host": "client", plugins: 2, failed: 1 });
 		const activation = spans.find(({ name }) => name === "chord.activate")!;
 		expect(activation.links.map(({ context: carrier }) => carrier)).toEqual([load.context]);
 	});
@@ -1708,7 +1752,15 @@ describe("the host's spans (slice 9)", () => {
 			host.reload([{ name: "@test/app", facet: facet("b") }], withTelemetry(span, context)),
 		);
 		const reload = telemetry.getSpans().find(({ name }) => name === "chord.reload")!;
-		expect(reload.attributes).toEqual({ plugins: 1, added: 0, changed: 1, removed: 0, failed: 0, fates: 1 });
+		expect(reload.attributes).toEqual({
+			"chord.host": "client",
+			plugins: 1,
+			added: 0,
+			changed: 1,
+			removed: 0,
+			failed: 0,
+			fates: 1,
+		});
 		expect(reload.events).toEqual([
 			{ name: "chord.reload.fate", attributes: { object: "app.info", fate: "swapped" } },
 		]);
@@ -1741,7 +1793,7 @@ describe("the host's spans (slice 9)", () => {
 		host.accept(a, { principal: { kind: "guest", session: "S1" } }, context);
 		await telemetry.startSpan({ name: "admin" }, (span) => host.revoke("S1", withTelemetry(span, context)));
 		const revoke = telemetry.getSpans().find(({ name }) => name === "chord.revoke")!;
-		expect(revoke.attributes).toEqual({ count: 1 });
+		expect(revoke.attributes).toEqual({ "chord.host": "server", count: 1 });
 		host.revoke("S1", context);
 		expect(telemetry.getSpans().filter(({ name }) => name === "chord.revoke")).toHaveLength(1);
 	});

@@ -992,8 +992,8 @@ describe("request spans (slice 9)", () => {
 		await server.close();
 		const requests = telemetry.getSpans().filter(({ name }) => name === "chord.http");
 		expect(requests.map(({ attributes, parentId, status }) => [attributes, parentId, status.status])).toEqual([
-			[{ method: "GET", route: "GET /items/:id", status: 200 }, null, "ok"],
-			[{ method: "GET", route: "GET /broken", status: 500 }, null, "error"],
+			[{ "chord.host": "client", method: "GET", route: "GET /items/:id", status: 200 }, null, "ok"],
+			[{ "chord.host": "client", method: "GET", route: "GET /broken", status: 500 }, null, "error"],
 		]);
 		expect(JSON.stringify(telemetry.getSpans())).not.toContain("secret-id");
 		const lookup = telemetry.getSpans().find(({ name }) => name === "app.lookup")!;
