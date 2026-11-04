@@ -75,6 +75,8 @@ Use an explicit manifest when resources live elsewhere or need filtering:
 
 Paths are relative to the package root. Arrays accept glob patterns and exclusions. List dot-prefixed or symlinked resource roots directly when traversal through a glob would not discover them.
 
+When an extension path resolves to a directory, Pi uses that directory's own `pi.extensions` manifest first. Otherwise it loads the directory's `package.json` `main`, then `index.ts` or `index.js`, before scanning direct extension files. A `.` entry does not re-read its containing manifest.
+
 The `pi-package` keyword makes an npm package eligible for discovery in the [Pi package gallery](https://pi.dev/packages). Optional `pi.image` and `pi.video` fields add gallery previews.
 
 ## Show a changelog

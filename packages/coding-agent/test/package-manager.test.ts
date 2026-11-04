@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager, type ProgressEvent, type ResolvedResource } from "../src/core/package-manager.ts";
@@ -186,6 +186,160 @@ describe("DefaultPackageManager", () => {
 
 			expect(names(autoDiscovered.extensions)).toEqual(expectedNames);
 			expect(names(explicitlyResolved.extensions)).toEqual(expectedNames);
+		});
+
+		it("should keep dot-relative exclusions anchored to the package root", async () => {
+			const packageDir = join(tempDir, "root-anchored-manifest");
+			const rootPrompt = join(packageDir, "foo.md");
+			const nestedPrompt = join(packageDir, "nested", "foo.md");
+			mkdirSync(dirname(nestedPrompt), { recursive: true });
+			writeFileSync(rootPrompt, "Root prompt");
+			writeFileSync(nestedPrompt, "Nested prompt");
+			writeFileSync(join(packageDir, "package.json"), JSON.stringify({ pi: { prompts: [".", "!./foo.md"] } }));
+
+			const result = await packageManager.resolveExtensionSources([packageDir]);
+
+			expect(result.prompts.map((prompt) => prompt.path)).toEqual([nestedPrompt]);
+		});
+
+		it("should omit hidden glob matches consistently", async () => {
+			const extensionDir = join(agentDir, "extensions", "hidden-manifest-extension");
+			mkdirSync(extensionDir, { recursive: true });
+			writeFileSync(join(extensionDir, "main.ts"), "export default function() {}");
+			writeFileSync(join(extensionDir, ".hidden.ts"), "export default function() {}");
+			writeFileSync(
+				join(extensionDir, "package.json"),
+				JSON.stringify({ pi: { extensions: ["./*.ts", "./.*.ts"] } }),
+			);
+
+			const autoDiscovered = await packageManager.resolve();
+			const explicitlyResolved = await packageManager.resolveExtensionSources([extensionDir]);
+			const names = (resources: ResolvedResource[]) => resources.map((resource) => basename(resource.path)).sort();
+
+			expect(names(autoDiscovered.extensions)).toEqual(["main.ts"]);
+			expect(names(explicitlyResolved.extensions)).toEqual(["main.ts"]);
+		});
+
+		it("should resolve extension directories consistently", async () => {
+			const extensionDir = join(agentDir, "extensions", "directory-manifest-extension");
+			const entriesDir = join(extensionDir, "entries");
+			mkdirSync(entriesDir, { recursive: true });
+			writeFileSync(join(entriesDir, "main.ts"), "export default function() {}");
+			writeFileSync(join(entriesDir, "main.test.ts"), "export default function() {}");
+			writeFileSync(
+				join(extensionDir, "package.json"),
+				JSON.stringify({ pi: { extensions: ["./entries", "!./entries/*.test.ts"] } }),
+			);
+
+			const autoDiscovered = await packageManager.resolve();
+			const explicitlyResolved = await packageManager.resolveExtensionSources([extensionDir]);
+			const names = (resources: ResolvedResource[]) => resources.map((resource) => basename(resource.path)).sort();
+
+			expect(names(autoDiscovered.extensions)).toEqual(["main.ts"]);
+			expect(names(explicitlyResolved.extensions)).toEqual(["main.ts"]);
+		});
+
+		it.each([
+			["exact", ["~/main.ts", "!~/main.ts"], []],
+			["glob", ["~/*.ts", "!~/*.test.ts"], ["main.ts"]],
+		] as const)("should keep package-relative tilde %s patterns consistent", async (kind, entries, expectedNames) => {
+			// Regression test for #9788.
+			const extensionDir = join(agentDir, "extensions", `tilde-pattern-${kind}`);
+			mkdirSync(join(extensionDir, "~"), { recursive: true });
+			writeFileSync(join(extensionDir, "~", "main.ts"), "export default function() {}");
+			writeFileSync(join(extensionDir, "~", "main.test.ts"), "export default function() {}");
+			writeFileSync(join(extensionDir, "package.json"), JSON.stringify({ pi: { extensions: entries } }));
+
+			const autoDiscovered = await packageManager.resolve();
+			const explicitlyResolved = await packageManager.resolveExtensionSources([extensionDir]);
+			const names = (resources: ResolvedResource[]) => resources.map((resource) => basename(resource.path)).sort();
+
+			expect(names(autoDiscovered.extensions)).toEqual(expectedNames);
+			expect(names(explicitlyResolved.extensions)).toEqual(expectedNames);
+		});
+
+		it.each([
+			["bracket", "./[ab].ts", ["a.ts", "b.ts"]],
+			["brace", "./{foo,bar}.ts", ["bar.ts", "foo.ts"]],
+			["extglob", "./@(foo|bar).ts", ["bar.ts", "foo.ts"]],
+		] as const)("should resolve %s manifest glob syntax consistently", async (kind, pattern, expectedNames) => {
+			// Regression test for #9788.
+			const extensionDir = join(agentDir, "extensions", `glob-syntax-${kind}`);
+			mkdirSync(extensionDir, { recursive: true });
+			for (const name of ["a.ts", "b.ts", "foo.ts", "bar.ts"]) {
+				writeFileSync(join(extensionDir, name), "export default function() {}");
+			}
+			writeFileSync(join(extensionDir, "package.json"), JSON.stringify({ pi: { extensions: [pattern] } }));
+
+			const autoDiscovered = await packageManager.resolve();
+			const explicitlyResolved = await packageManager.resolveExtensionSources([extensionDir]);
+			const names = (resources: ResolvedResource[]) => resources.map((resource) => basename(resource.path)).sort();
+
+			expect(names(autoDiscovered.extensions)).toEqual(expectedNames);
+			expect(names(explicitlyResolved.extensions)).toEqual(expectedNames);
+		});
+
+		it("should resolve backslash-separated manifest globs consistently", async () => {
+			// Regression test for #9788.
+			const extensionDir = join(agentDir, "extensions", "backslash-glob-extension");
+			mkdirSync(extensionDir, { recursive: true });
+			writeFileSync(join(extensionDir, "main.ts"), "export default function() {}");
+			writeFileSync(join(extensionDir, "main.test.ts"), "export default function() {}");
+			writeFileSync(
+				join(extensionDir, "package.json"),
+				JSON.stringify({ pi: { extensions: [".\\*.ts", "!.\\*.test.ts"] } }),
+			);
+
+			const autoDiscovered = await packageManager.resolve();
+			const explicitlyResolved = await packageManager.resolveExtensionSources([extensionDir]);
+			const paths = (resources: ResolvedResource[]) => resources.map((resource) => resource.path);
+
+			expect(paths(autoDiscovered.extensions)).toEqual([join(extensionDir, "main.ts")]);
+			expect(paths(explicitlyResolved.extensions)).toEqual([join(extensionDir, "main.ts")]);
+		});
+
+		it("should prefer the index entry when a manifest declares its own directory", async () => {
+			// Regression test for #9788.
+			const extensionDir = join(agentDir, "extensions", "self-directory-extension");
+			mkdirSync(extensionDir, { recursive: true });
+			writeFileSync(join(extensionDir, "index.ts"), "export default function() {}");
+			writeFileSync(join(extensionDir, "helper.ts"), "export default function() {}");
+			writeFileSync(join(extensionDir, "package.json"), JSON.stringify({ pi: { extensions: ["."] } }));
+
+			const autoDiscovered = await packageManager.resolve();
+			const explicitlyResolved = await packageManager.resolveExtensionSources([extensionDir]);
+			const paths = (resources: ResolvedResource[]) => resources.map((resource) => resource.path);
+
+			expect(paths(autoDiscovered.extensions)).toEqual([join(extensionDir, "index.ts")]);
+			expect(paths(explicitlyResolved.extensions)).toEqual([join(extensionDir, "index.ts")]);
+		});
+
+		it("should prefer a declared child package main entry over scanning its contents", async () => {
+			// Regression test for #9788.
+			const extensionDir = join(agentDir, "extensions", "child-main-extension");
+			const childDir = join(extensionDir, "child");
+			mkdirSync(join(childDir, "dist"), { recursive: true });
+			writeFileSync(join(childDir, "dist", "main.js"), "export default function() {}");
+			writeFileSync(join(childDir, "helper.ts"), "export default function() {}");
+			writeFileSync(join(childDir, "package.json"), JSON.stringify({ main: "./dist/main.js" }));
+			writeFileSync(join(extensionDir, "package.json"), JSON.stringify({ pi: { extensions: ["./child"] } }));
+
+			const autoDiscovered = await packageManager.resolve();
+			const explicitlyResolved = await packageManager.resolveExtensionSources([extensionDir]);
+			const paths = (resources: ResolvedResource[]) => resources.map((resource) => resource.path);
+
+			expect(paths(autoDiscovered.extensions)).toEqual([join(childDir, "dist", "main.js")]);
+			expect(paths(explicitlyResolved.extensions)).toEqual([join(childDir, "dist", "main.js")]);
+		});
+
+		it("should fail when an extension package manifest contains malformed JSON", async () => {
+			// Regression test for #9788.
+			const extensionDir = join(agentDir, "extensions", "malformed-manifest-extension");
+			mkdirSync(extensionDir, { recursive: true });
+			writeFileSync(join(extensionDir, "index.ts"), "export default function() {}");
+			writeFileSync(join(extensionDir, "package.json"), "{");
+
+			await expect(packageManager.resolve()).rejects.toThrow(SyntaxError);
 		});
 
 		it("should resolve skill paths from settings", async () => {
@@ -641,6 +795,25 @@ Content`,
 
 			const result = await packageManager.resolveExtensionSources([extPath]);
 			expect(result.extensions.some((r) => r.path === extPath && r.enabled)).toBe(true);
+		});
+
+		it("should reject cyclic local extension manifests", async () => {
+			const firstDir = join(tempDir, "first-cycle-package");
+			const secondDir = join(tempDir, "second-cycle-package");
+			mkdirSync(firstDir);
+			mkdirSync(secondDir);
+			writeFileSync(
+				join(firstDir, "package.json"),
+				JSON.stringify({ pi: { extensions: ["../second-cycle-package"] } }),
+			);
+			writeFileSync(
+				join(secondDir, "package.json"),
+				JSON.stringify({ pi: { extensions: ["../first-cycle-package"] } }),
+			);
+
+			await expect(packageManager.resolveExtensionSources([firstDir])).rejects.toMatchObject({
+				code: "EXTENSION_MANIFEST_CYCLE",
+			});
 		});
 
 		it("should handle directories with pi manifest", async () => {

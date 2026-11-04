@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { discoverAndLoadExtensions } from "../src/core/extensions/loader.ts";
+import { discoverExtensionsInDir } from "../src/core/extensions/manifest.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -130,6 +131,17 @@ describe("extensions discovery", () => {
 		expect(result.errors).toHaveLength(0);
 		expect(result.extensions).toHaveLength(1);
 		expect(path.basename(result.extensions[0].path)).toBe("foo.js");
+	});
+
+	it.skipIf(process.platform === "win32")("skips dangling extension symlinks", async () => {
+		const extensionPath = path.join(extensionsDir, "main.ts");
+		fs.writeFileSync(extensionPath, extensionCode);
+		fs.symlinkSync(path.join(extensionsDir, "missing.ts"), path.join(extensionsDir, "dangling.ts"));
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.errors).toEqual([]);
+		expect(result.extensions.map((extension) => extension.path)).toEqual([extensionPath]);
 	});
 
 	it("discovers subdirectory with index.ts", async () => {
@@ -275,6 +287,103 @@ describe("extensions discovery", () => {
 
 		expect(result.errors).toEqual([]);
 		expect(result.extensions).toEqual([]);
+	});
+
+	it("applies manifest exclusions to entry points resolved from directory globs", async () => {
+		const subdir = path.join(extensionsDir, "grouped-manifest-package");
+		const activeIndex = path.join(subdir, "groups", "active", "index.ts");
+		const legacyIndex = path.join(subdir, "groups", "legacy", "index.ts");
+		fs.mkdirSync(path.dirname(activeIndex), { recursive: true });
+		fs.mkdirSync(path.dirname(legacyIndex), { recursive: true });
+		fs.writeFileSync(activeIndex, extensionCode);
+		fs.writeFileSync(legacyIndex, extensionCode);
+		fs.writeFileSync(
+			path.join(subdir, "package.json"),
+			JSON.stringify({ pi: { extensions: ["./groups/*/", "!./groups/legacy/index.ts"] } }),
+		);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.errors).toEqual([]);
+		expect(result.extensions.map((extension) => extension.path)).toEqual([activeIndex]);
+	});
+
+	it("loads direct extension files from manifest directories before applying exclusions", async () => {
+		const subdir = path.join(extensionsDir, "directory-manifest-package");
+		const entriesDir = path.join(subdir, "entries");
+		const extensionPath = path.join(entriesDir, "main.ts");
+		fs.mkdirSync(entriesDir, { recursive: true });
+		fs.writeFileSync(extensionPath, extensionCode);
+		fs.writeFileSync(path.join(entriesDir, "main.test.ts"), "throw new Error('test extension loaded');");
+		fs.writeFileSync(
+			path.join(subdir, "package.json"),
+			JSON.stringify({ pi: { extensions: ["./entries", "!./entries/*.test.ts"] } }),
+		);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.errors).toEqual([]);
+		expect(result.extensions.map((extension) => extension.path)).toEqual([extensionPath]);
+	});
+
+	it("rejects mutually recursive extension manifests", async () => {
+		const firstDir = path.join(extensionsDir, "first-cycle-package");
+		const secondDir = path.join(extensionsDir, "second-cycle-package");
+		fs.mkdirSync(firstDir);
+		fs.mkdirSync(secondDir);
+		fs.writeFileSync(
+			path.join(firstDir, "package.json"),
+			JSON.stringify({ pi: { extensions: ["../second-cycle-package"] } }),
+		);
+		fs.writeFileSync(
+			path.join(secondDir, "package.json"),
+			JSON.stringify({ pi: { extensions: ["../first-cycle-package"] } }),
+		);
+
+		await expect(discoverAndLoadExtensions([], tempDir, tempDir)).rejects.toMatchObject({
+			code: "EXTENSION_MANIFEST_CYCLE",
+		});
+	});
+
+	it("resolves backslash-separated manifest globs", () => {
+		// Regression test for #9788.
+		const subdir = path.join(extensionsDir, "backslash-glob-package");
+		const mainPath = path.join(subdir, "main.ts");
+		fs.mkdirSync(subdir);
+		fs.writeFileSync(mainPath, extensionCode);
+		fs.writeFileSync(path.join(subdir, "main.test.ts"), extensionCode);
+		fs.writeFileSync(
+			path.join(subdir, "package.json"),
+			JSON.stringify({ pi: { extensions: [".\\*.ts", "!.\\*.test.ts"] } }),
+		);
+
+		expect(discoverExtensionsInDir(subdir)).toEqual([mainPath]);
+	});
+
+	it("prefers index.ts when a manifest declares its own directory", () => {
+		// Regression test for #9788.
+		const subdir = path.join(extensionsDir, "self-directory-package");
+		const indexPath = path.join(subdir, "index.ts");
+		fs.mkdirSync(subdir);
+		fs.writeFileSync(indexPath, extensionCode);
+		fs.writeFileSync(path.join(subdir, "helper.ts"), extensionCode);
+		fs.writeFileSync(path.join(subdir, "package.json"), JSON.stringify({ pi: { extensions: ["."] } }));
+
+		expect(discoverExtensionsInDir(subdir)).toEqual([indexPath]);
+	});
+
+	it("prefers a child package main entry over scanning its contents", () => {
+		// Regression test for #9788.
+		const subdir = path.join(extensionsDir, "child-main-package");
+		const childDir = path.join(subdir, "child");
+		const mainPath = path.join(childDir, "dist", "main.js");
+		fs.mkdirSync(path.dirname(mainPath), { recursive: true });
+		fs.writeFileSync(mainPath, extensionCode);
+		fs.writeFileSync(path.join(childDir, "helper.ts"), extensionCode);
+		fs.writeFileSync(path.join(childDir, "package.json"), JSON.stringify({ main: "./dist/main.js" }));
+		fs.writeFileSync(path.join(subdir, "package.json"), JSON.stringify({ pi: { extensions: ["./child"] } }));
+
+		expect(discoverExtensionsInDir(subdir)).toEqual([mainPath]);
 	});
 
 	it("package.json with pi field takes precedence over index.ts", async () => {
