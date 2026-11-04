@@ -9,6 +9,7 @@
 // native restart after the drain, a retry on the new code, or its end by its type's removal, after which its
 // references wait with their last values and follow the next object of the identity.
 
+import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { awaitWithContext, type Context } from "../context/index.ts";
 import type { Contract, ParamsOf } from "../contracts/index.ts";
 import type { ContractShape } from "../contracts/internal.ts";
@@ -22,6 +23,7 @@ import { CHAIN } from "../link/internal.ts";
 import type { RegistryContribution } from "../registries/internal.ts";
 import type { DeriveSource } from "../state/internal.ts";
 import { LiveQueries } from "../store/live-query.ts";
+import { chordMetrics } from "../telemetry.ts";
 import { refusal } from "./adapted.ts";
 import { Attempt, type PinnedKey, type Self } from "./attempt.ts";
 import type { Caller } from "./ctx.ts";
@@ -185,6 +187,13 @@ export class ChordObject implements Target {
 	readonly documents: Documents;
 	/** The context of every attempt: its creator's, without the creator's cancellation. */
 	readonly #context: Context;
+	/**
+	 * What its next attempt's activation span links to: its first trigger (the span that created it, a hold's carrier),
+	 * then the last attempt's span (a retry's trigger).
+	 */
+	#trigger: TelemetryContext;
+	/** Its attempts so far (the activation span's `attempt`). */
+	#attempts = 0;
 	/** Its job runs by job name, across its attempts. */
 	readonly #jobs = new Map<string, JobRecords>();
 	/** This instance's id (uuidv7), minted at its first attempt: a restarted object is a new instance (D4). */
@@ -236,6 +245,7 @@ export class ChordObject implements Target {
 		principal: Principal | undefined,
 		key: string,
 		identity: string,
+		trigger: TelemetryContext,
 		context: Context,
 		chain: readonly string[],
 	) {
@@ -247,6 +257,7 @@ export class ChordObject implements Target {
 		this.identity = identity;
 		this.label = key === "" ? served.contract.name : `${served.contract.name}(${key})`;
 		this.chain = chain;
+		this.#trigger = trigger;
 		this.#context = context;
 		const { store } = host;
 		this.documents = new Documents({
@@ -258,6 +269,7 @@ export class ChordObject implements Target {
 				if (this.#state.kind === "live") this.failLive(this.#state.attempt, { kind: "broken", error });
 			},
 			report: (error) => host.report(error),
+			telemetry: host.telemetry,
 		});
 	}
 
@@ -304,6 +316,11 @@ export class ChordObject implements Target {
 		return this.#lastFailure;
 	}
 
+	/** The span of the activation under way, when one runs and is recorded (getters waiting for it link to it). */
+	get activationSpan(): TelemetryContext | undefined {
+		return this.#state.kind === "activating" ? this.#state.attempt.activationSpan : undefined;
+	}
+
 	/** Its instance id while an attempt activates; `undefined` otherwise (a hold's chain names only activations). */
 	get activationId(): string | undefined {
 		return this.#state.kind === "activating" ? this.#instance : undefined;
@@ -343,7 +360,7 @@ export class ChordObject implements Target {
 		const state = this.#state;
 		if (state.kind !== "waiting" && state.kind !== "failed") return undefined;
 		this.#instance ??= uuidv7();
-		const attempt = new Attempt(this, this.#context);
+		const attempt = this.#newAttempt();
 		this.#state = { kind: "activating", attempt, shown: LOADING };
 		if (state.kind === "failed") this.#notify();
 		void this.#run(attempt, this.host.endingOf(this.identity));
@@ -381,11 +398,19 @@ export class ChordObject implements Target {
 
 	/**
 	 * Calls a method of the live object for `caller`, bound at `version` (an older one maps its arguments and result,
-	 * Q10). While an attempt activates (a reload's swap or restart), the call waits for its outcome (the gate).
+	 * Q10), its `chord.method` span under `parent` (the caller's span on this host, a call's carrier over a link). While
+	 * an attempt activates (a reload's swap or restart), the call waits for its outcome (the gate).
 	 */
-	async call(method: string, args: unknown, context: Context, caller: Caller, version: number): Promise<unknown> {
+	async call(
+		method: string,
+		args: unknown,
+		context: Context,
+		caller: Caller,
+		version: number,
+		parent?: TelemetryContext,
+	): Promise<unknown> {
 		if (this.#state.kind === "activating") await this.#gate(context);
-		return this.#live().call(method, args, context, caller, version);
+		return this.#live().call(method, args, context, caller, version, parent ?? context.telemetry);
 	}
 
 	/**
@@ -659,7 +684,7 @@ export class ChordObject implements Target {
 	assertNoCycle(dependency: Target, context: Context): void {
 		const visited = new Set<Target>();
 		const cycle = dependency.pathTo(this, visited);
-		context.telemetry.metrics?.counter("chord.cycle.visits").add(visited.size);
+		chordMetrics(context.telemetry.metrics).counter("chord.cycle.visits").add(visited.size);
 		if (cycle === undefined) {
 			const across = dependency.activationId;
 			if (across === undefined || !this.chain.includes(across)) return;
@@ -786,7 +811,7 @@ export class ChordObject implements Target {
 		// A swap starts from a live object (`reloadFate`).
 		const old = (this.#state as Extract<ObjectState, { readonly kind: "live" }>).attempt;
 		const ending = this.host.endingOf(this.identity);
-		const attempt = new Attempt(this, this.#context);
+		const attempt = this.#newAttempt();
 		const swap: Swap = { old, parked: false, done: Promise.withResolvers() };
 		this.#state = { kind: "activating", attempt, shown: LOADING, swap };
 		old.handOver();
@@ -904,10 +929,15 @@ export class ChordObject implements Target {
 
 	/** A new attempt replacing the current one, holders told; its caller starts it (`#run`) after what it waits for. */
 	#replace(): Attempt {
-		const attempt = new Attempt(this, this.#context);
+		const attempt = this.#newAttempt();
 		this.#state = { kind: "activating", attempt, shown: LOADING };
 		this.#notify();
 		return attempt;
+	}
+
+	/** Its next attempt, its activation span linked to the trigger of the last (or its first trigger). */
+	#newAttempt(): Attempt {
+		return new Attempt(this, this.#context, { trigger: this.#trigger, attempt: ++this.#attempts });
 	}
 
 	/** The `released` error of an attempt a reload replaced. */
@@ -923,13 +953,23 @@ export class ChordObject implements Target {
 	/** Runs `attempt`'s activation once `ending` (its predecessors' teardowns, if any) finished; takes its outcome. */
 	async #run(attempt: Attempt, ending: Promise<void> | undefined): Promise<void> {
 		const outcome = await attempt.activate(ending);
+		this.#trigger = attempt.activationSpan ?? this.#trigger;
 		// The object may have ended after the activation's last step.
-		if (this.#state.kind !== "activating" || this.#state.attempt !== attempt) return;
+		if (this.#state.kind !== "activating" || this.#state.attempt !== attempt) {
+			attempt.activated({ kind: "ended" });
+			return;
+		}
 		switch (outcome.kind) {
 			case "live":
-				return this.#wentLive(attempt);
+				this.#wentLive(attempt);
+				attempt.activated(outcome);
+				return;
 			case "failed":
-				return this.#failed(attempt, outcome.cause);
+				this.#failed(attempt, outcome.cause);
+				attempt.activated({ ...outcome, retryAt: this.host.backoff.until(this.identity) });
+				return;
+			case "ended":
+				attempt.activated(outcome);
 		}
 	}
 

@@ -8,6 +8,7 @@ import { snapshotSchema } from "../contracts/snapshot.ts";
 import { validatorFor } from "../data/internal.ts";
 import type { Op } from "../delta/index.ts";
 import type { JsonValue } from "../json.ts";
+import { chordMetrics } from "../telemetry.ts";
 
 /** A document root: a JSON object. */
 export type JsonObject = { [key: string]: JsonValue };
@@ -158,7 +159,7 @@ export class StateDefinition<T extends JsonObject, K extends boolean, P extends 
 	}
 
 	#check(value: T, what: string, context: Context): void {
-		context.telemetry.metrics?.counter("chord.data.validations").add(1);
+		chordMetrics(context.telemetry.metrics).counter("chord.data.validations").add(1);
 		if (!validatorFor(this, context).check(value)) {
 			throw new Error(`${this.name}: ${what} does not match the schema`);
 		}

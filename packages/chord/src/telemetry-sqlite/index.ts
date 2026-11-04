@@ -1,3 +1,7 @@
+// The SQLite telemetry store (`@earendil-works/chord/telemetry-sqlite`, decision "Telemetry store", §29): an adapter
+// recording settled spans one row each (events and links inline) and metrics per series per 10 s, flushed in a batch
+// every second with retention, its queue bounded (dropped and counted); and the `TelemetryStore` reads over it.
+
 import {
 	type InstrumentOptions,
 	NOOP_TELEMETRY_CONTEXT,

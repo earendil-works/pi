@@ -13,7 +13,7 @@ note: |
   `slice-10.md`, `slice-12.md`, `slice-13.md`, the decision log and the code in `packages/chord/src`. API names
   are the current ones. The early chapters wire hosts by hand to show the parts; the last chapter shows the app kit
   (`chord/app`), which does that wiring for an app.
-colophon: Hosts and Plugins · third edition · 2026-11-03 · Chord v2 slices 1-10, 12 and 13, messages and languages
+colophon: Hosts and Plugins · fourth edition · 2026-11-04 · Chord v2 slices 1-13, messages and languages, telemetry
 ---
 
 # Before we begin {.preface}
@@ -808,6 +808,60 @@ A project's data is what its worker created: its store and its files. `app.expor
 writes them as one archive (a manifest, the store's export, the files) and stops nothing: a running worker writes its
 own store at one consistent point. `app.importData(path, Project({ id: "copy" }), ctx)` makes a new project from it and
 refuses one that already has data (example 55).
+
+# Seeing a Request Across Hosts {#telemetry lede="One trace from a click in a client through the server's relay into a worker's method: adapters, carriers and spans."}
+
+A tab calls `notes.add(…)`. The call leaves the tab, the server relays it, the project's worker runs the method, the
+method commits. When it is slow, where did the time go? Each host is a different process, so no single log has the
+answer. Chord's telemetry makes the four steps one **trace**: a tree of **spans** (named, timed pieces of work), each
+host recording its own with its own **adapter**, joined by **carriers** (a few strings naming the caller's span) that
+ride on the wire with every `hold` and `call`.
+
+Give each host an adapter. With the app kit that is one option per process; the SQLite store
+(`@earendil-works/chord/telemetry-sqlite`) records settled spans and metrics, and here every process of the app opens
+the same file in the data directory (example 62):
+
+```ts
+// start.ts: the server
+const telemetry = await createSqliteTelemetry(await openNodeSqliteDatabase(join(dataDir, "telemetry.sqlite")));
+await startServer({ ...options, telemetry }, ctx);
+// worker.ts: each worker, its own recorder on the same file (the path in its environment)
+startWorker({ api, kinds, telemetry: await openTelemetry(process.env.TALLY_TELEMETRY!), onError });
+```
+
+Nothing else changes in plugin code. A method's `ctx.telemetry` is its `chord.method` span, so whatever it calls or
+commits is parented under it, on its host or the next one. `ctx.trace(name, attributes, fn)` adds a span of your own:
+
+```ts
+add: async (n, ctx) => {
+	await ctx.trace("tally.check", { n }, async () => {
+		if (!Number.isSafeInteger(n) || n <= 0) throw new Error("add a positive count");
+	});
+	return store.add(n, ctx);
+},
+```
+
+The store renders the click's trace across the three hosts (the client's spans, the server's relay, the worker's
+methods and the commit, an event of the method that made it):
+
+```
+tally.click
+  chord.hold type="tally.counter" object="tally.counter(t1)" address.kind="tally" outcome="bound"
+    chord.relay type="tally.counter" member="hold" upstream.kind="tally" outcome="ok"
+      → link to chord.resolve
+  chord.call type="tally.counter" member="add" object="tally.counter(t1)" address.kind="tally" outcome="ok"
+    chord.relay type="tally.counter" member="#0" upstream.kind="tally" outcome="ok"
+      chord.method type="tally.counter" member="add" object="tally.counter(t1)" principal.kind="owner" outcome="ok"
+        tally.check n=3
+        chord.method type="tally.store" member="add" object="tally.store" principal.kind="worker" outcome="ok"
+          · chord.commit documents=1 ops=1 duration=1.9
+```
+
+Work shared by several requests is its own trace, linked rather than nested: the worker's start (`chord.resolve`),
+an object's activation (`chord.activate`, linked to whoever asked first). Routines and job phases are roots too; a job's
+`run` and `finish` stay under the carrier its start stored, even when a restarted worker resumes the run. Metrics
+(`chord.link.bytes`, `chord.commit.duration`, `chord.calls.in_flight`, ...) are aggregated per 10 s; ids are never their
+attributes. Without an adapter (the default), Chord starts no span and sends no carrier: a call costs what it did before.
 
 # Reference {.appendix}
 

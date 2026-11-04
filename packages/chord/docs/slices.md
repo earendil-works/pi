@@ -46,6 +46,11 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
   launcher and its child-process sandbox); examples 56-59.
 - **Live queries** (built 2026-11-03, decision "Live queries over an object's own tables"): `self.query` in
   `src/store/live-query.ts`; examples 59 and 61 use it; `test/bench/live-query.ts`.
+- **Slice 9** (built 2026-11-04, `slice-9.md`): telemetry, `src/telemetry.ts` (`CHORD_TELEMETRY_SCHEMA`, the span sites'
+  NOOP rule, open spans, typed instruments), spans of calls, methods, relays, holds, activations, natives, loads,
+  reloads, resolves, revocations, routines, job phases and HTTP requests, carriers on `hold` and `call`, `ctx.trace`,
+  commit events and the host-wide metrics, `telemetry` options of `createHttp`, `startServer` and `startWorker`;
+  example 62; `test/bench/telemetry.ts` (with R24's container width).
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
@@ -218,13 +223,6 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 
 - **Small examples** (owner, 2026-10-30: the 7c examples are complete but complex): once HTTP, workers, web and TUI
   exist, a pass of small, easy-to-read examples, each showing one thing a plugin author or app does.
-
-### Slice 9: telemetry
-
-- Spans for routine calls and job runs (from slice 5).
-- The use of a persisted run's stored start trace carrier (`trace`, stored since slice 6b).
-
-- Round-3 cut to decide: C11 (`ctx.trace`).
 
 ### When v2 goes upstream
 

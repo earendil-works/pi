@@ -3,7 +3,7 @@
 
 export type { PinnedKey } from "./attempt.ts";
 export { nextDelay } from "./backoff.ts";
-export { CallContext, type Caller } from "./ctx.ts";
+export { CallContext, type Caller, SpanCtx } from "./ctx.ts";
 export type { AnyHost, ChordHost, Serving } from "./host.ts";
 export type { ChordObject, Holder, Removal } from "./object.ts";
 export { LIVE, LOADING, type RefState } from "./ref-state.ts";

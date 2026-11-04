@@ -9,6 +9,7 @@ import { ChordError } from "../data/index.ts";
 import { invalid } from "../data/internal.ts";
 import type { SqliteDatabase, SqliteExecutor } from "../sqlite/index.ts";
 import type { Batch } from "../state/internal.ts";
+import { chordMetrics } from "../telemetry.ts";
 import { IdAllocator } from "./allocator.ts";
 import type { ArchivePart } from "./archive.ts";
 import type { Backend } from "./backend.ts";
@@ -453,9 +454,9 @@ export class ChordStore implements Store {
 		this.#lastSeq = seq;
 		this.#committedNextId = nextId;
 		for (const [name, record] of step.tables) this.#catalog.set(name, record);
-		const metrics = context.telemetry.metrics;
-		metrics?.counter("chord.store.commits").add(1);
-		metrics?.counter("chord.store.statements").add(step.statements);
+		const metrics = chordMetrics(context.telemetry.metrics);
+		metrics.counter("chord.store.commits").add(1);
+		metrics.counter("chord.store.statements").add(step.statements);
 		try {
 			fence.adopt(seq, step.created);
 		} catch (error) {
@@ -507,9 +508,9 @@ export class ChordStore implements Store {
 			this.#committedNextId = last.nextId;
 			for (const [name, record] of last.tables) this.#catalog.set(name, record);
 		}
-		const metrics = context.telemetry.metrics;
-		metrics?.counter("chord.store.commits").add(written);
-		metrics?.counter("chord.store.statements").add(statements);
+		const metrics = chordMetrics(context.telemetry.metrics);
+		metrics.counter("chord.store.commits").add(written);
+		metrics.counter("chord.store.statements").add(statements);
 		try {
 			for (const [index, { seq, created }] of stored.entries()) receive(index, seq, created);
 		} catch (error) {

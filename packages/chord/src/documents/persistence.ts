@@ -17,6 +17,7 @@ import {
 } from "../store/engine.ts";
 import type { StagedWrite } from "../store/step.ts";
 import type { ChordStore } from "../store/store.ts";
+import { chordMetrics } from "../telemetry.ts";
 import type { JsonObject } from "./definition.ts";
 import type { AnyDefinition } from "./slot.ts";
 
@@ -76,7 +77,7 @@ export class Persistence {
 			const record = await findDocument(executor, address);
 			return record === undefined ? undefined : loadDocument(executor, record);
 		}, context);
-		if (document !== undefined) context.telemetry.metrics?.counter("chord.store.loads").add(1);
+		if (document !== undefined) chordMetrics(context.telemetry.metrics).counter("chord.store.loads").add(1);
 		return document;
 	}
 

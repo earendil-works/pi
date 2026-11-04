@@ -1,10 +1,11 @@
 // Messages (§22, R1, R4, 2b): the one `Message` type every link carries, defined as a schema and checked after every
 // decode, and the codecs that turn it into bytes.
 
-import { obj as openObj, type Schema } from "@earendil-works/pi-schema";
+import { map, obj as openObj, type Schema } from "@earendil-works/pi-schema";
 import type { Context } from "../context/index.ts";
 import { arr, int, lit, obj, oneOf, opt, type Static, str, union, unknown } from "../contracts/index.ts";
 import { validatorFor } from "../data/internal.ts";
+import { chordMetrics } from "../telemetry.ts";
 import type { Part } from "./part.ts";
 
 /** A link-local id, chosen by its origin: a counter, unique per link, direction and origin while in use. */
@@ -38,14 +39,38 @@ const part = unknown() as Schema<Part>;
  */
 const segments = opt(unknown() as Schema<readonly Uint8Array[]>);
 
+/**
+ * The longest name a message carries (a type's, a host kind's): a relay records them in its spans unparsed, so a peer
+ * cannot hand it an unbounded string (slice 9 review M1).
+ */
+export const NAME_LENGTH = 256;
+
+/** A type's or a host kind's name. */
+const name = str({ max: NAME_LENGTH });
+
 /** An address as a hold names it: its host kind and params, checked against the kind where it is routed. */
-const address = obj({ kind: str(), params: unknown() });
+const address = obj({ kind: name, params: unknown() });
 
 /** A principal on a hold: JSON with a `kind`, honoured only on a parent link. */
 const principal = openObj({ kind: str() }, { open: true });
 
 /** A uuidv7 as text. */
 const incarnation = str({ pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" });
+
+/** The most keys a trace carrier has, and the longest key or value (R5). */
+export const CARRIER = { keys: 8, length: 256 } as const;
+
+/**
+ * The caller's trace carrier on a `hold` or `call` (R5, slice 9): an adapter's opaque string record, bounded, of
+ * printable ASCII only (keys without spaces), as W3C's headers and Chord's adapters are; anything else fails this schema
+ * as any malformed header does, so no control character becomes a stored trace or span id (review M2). The provider
+ * extracts it with its own adapter (absent or unknown: the adapter's root).
+ */
+const trace = opt({
+	...map(str({ max: CARRIER.length, pattern: "^[\\x20-\\x7e]*$" })),
+	propertyNames: { maxLength: CARRIER.length, pattern: "^[\\x21-\\x7e]+$" },
+	maxProperties: CARRIER.keys,
+} as Schema<Record<string, string>>);
 
 /** The longest activation chain a hold carries (Q5): a longer one keeps its last entries. */
 export const CHAIN = 32;
@@ -64,7 +89,7 @@ const MESSAGE = union([
 		kind: lit("hold"),
 		origin: opt(origin),
 		hold: id,
-		type: str(),
+		type: name,
 		version: int({ min: 1 }),
 		fingerprint: str({ pattern: "^[0-9a-f]{16}$" }),
 		params: part,
@@ -77,9 +102,19 @@ const MESSAGE = union([
 		chain: opt(arr(incarnation, { max: CHAIN })),
 		// The decoded limit per part of the link the hold was admitted on (Q2); read only on a parent link.
 		limit: opt(int({ min: 0 })),
+		trace,
 	}),
 	obj({ kind: lit("release"), origin: opt(origin), hold: id }),
-	obj({ kind: lit("call"), origin: opt(origin), call: id, hold: id, method: index, args: opt(part), segments }),
+	obj({
+		kind: lit("call"),
+		origin: opt(origin),
+		call: id,
+		hold: id,
+		method: index,
+		args: opt(part),
+		segments,
+		trace,
+	}),
 	obj({ kind: lit("abort"), origin: opt(origin), call: id }),
 	// Asks the provider for an attempt of a failed hold's object now (`ref.retry()`); `hops` is its budget: the host
 	// there passes it on to its remote dependencies with one less, never at 0, so a waiting ring of hosts stops. Relays
@@ -184,7 +219,7 @@ const MESSAGE_SCHEMA = { schema: MESSAGE };
  * `chord.link.checks`.
  */
 export function checkMessage(message: unknown, context: Context): Message {
-	context.telemetry.metrics?.counter("chord.link.checks").add(1);
+	chordMetrics(context.telemetry.metrics).counter("chord.link.checks").add(1);
 	if (!validatorFor(MESSAGE_SCHEMA, context).check(message)) throw new Error("message: fails the message schema");
 	// The check above establishes the type.
 	return message as Message;

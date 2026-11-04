@@ -421,7 +421,9 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   named it; on a local object's handler the host's), `incarnation` (the calling host's over a link, the origin's
   through a relay, this host's otherwise, R20), `get(Type, params, { readyTimeout? })` (a reference as
   `ctx.principal` sees it, with `ctx.incarnation`, also over a route; released when the handler settles; afterwards
-  `get` throws `released`), the abort signal (the caller cancelled or released, or the object ends) and telemetry.
+  `get` throws `released`), the abort signal (the caller cancelled or released, or the object ends), telemetry (the
+  handler's `chord.method` span when the host records) and `trace(name, attributes, fn)` (`fn` in a child span with a
+  child ctx: the same principal, signal and references; slice 9).
 - `self.open(open, close, { closeTimeout? })` returns a `Native<T>`: its `value` is readable from the moment its open
   resolved until its close starts; before, it throws `not_ready`, after, `released`. `open(ctx)` gets a context
   aborted when the attempt is abandoned; `close(value, reason, ctx)` gets `{ kind: "end" | "close" | "reload" }` (end:

@@ -1,8 +1,10 @@
 // The provider side of one origin on a link (§3, §22, W1; decision "Relay flow control per origin"): the holds the
 // peer sent for that origin, served here or relayed, by their ids; the calls on them, at most this side's N at once;
 // and the window: at most K unacknowledged `bound` and `state` messages of this host's own, with what waits meanwhile,
-// and the sender of every message in flight, so each `ack` reaches the host that sent its message.
+// and the sender of every message in flight, so each `ack` reaches the host that sent its message. A served call's
+// method runs under the call's carrier (slice 9).
 
+import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { type Context, withAbortSignal } from "../context/index.ts";
 import { ChordError, isChordError, type Principal } from "../data/index.ts";
 import type { Caller } from "../host/internal.ts";
@@ -19,9 +21,10 @@ import {
 	type StateEntry,
 	wireError,
 } from "../link/internal.ts";
+import { type OpenSpan, parentOf } from "../telemetry.ts";
 import { Hold } from "./hold.ts";
 import type { HostLink } from "./host-link.ts";
-import type { RelayedHold } from "./relay.ts";
+import { type RelayedHold, relayEnded } from "./relay.ts";
 
 /**
  * A call being handled: on a hold served here, with whether its result carries byte segments and the abort of its
@@ -29,7 +32,8 @@ import type { RelayedHold } from "./relay.ts";
  */
 type RunningCall =
 	| { readonly kind: "served"; readonly hold: Hold; readonly bytes: boolean; readonly abort: AbortController }
-	| { readonly kind: "relayed"; readonly hold: RelayedHold };
+	/** `span`: its `chord.relay` span while its reply is awaited, when this host records. */
+	| { readonly kind: "relayed"; readonly hold: RelayedHold; span?: OpenSpan<"chord.relay"> };
 
 /** Who sent a `bound` or `state` message in flight: this host, or the upstream link a relay forwarded it from. */
 type Sender = "local" | HostLink;
@@ -68,6 +72,8 @@ export class ProviderSide {
 	#bindingTurn = false;
 	/** Set once a hold of this origin is relayed. */
 	#relay: Relay | undefined;
+	/** When state began waiting for a slot (`performance.now()`), while some waits: `chord.backpressure.wait`. */
+	#waitingSince: number | undefined;
 
 	constructor(link: HostLink, origin: number, limit: number) {
 		this.link = link;
@@ -110,7 +116,10 @@ export class ProviderSide {
 		const entries = [...this.#entries.values()];
 		this.#entries.clear();
 		const closed = new ChordError({ code: "unavailable", message: "the link closed" });
-		for (const call of this.#calls.values()) if (call.kind === "served") call.abort.abort(closed);
+		for (const call of this.#calls.values()) {
+			if (call.kind === "served") call.abort.abort(closed);
+			else if (call.span !== undefined) relayEnded(call.span, undefined);
+		}
 		this.#calls.clear();
 		// While the host closes, it ends its objects itself.
 		for (const entry of entries) {
@@ -229,6 +238,7 @@ export class ProviderSide {
 			if (call.hold !== hold) continue;
 			this.#calls.delete(id);
 			if (call.kind === "served") call.abort.abort(reason);
+			else if (call.span !== undefined) relayEnded(call.span, undefined);
 		}
 		if (hold.kind === "served") this.unbind(hold);
 		this.#settle();
@@ -236,8 +246,11 @@ export class ProviderSide {
 
 	/** A call ended with `reply` (a result or an error): its slot is free; nothing is sent for one already gone. */
 	reply(id: number, reply: Extract<OriginMessage, { readonly kind: "result" | "error" }>): void {
-		if (!this.#calls.delete(id)) return;
+		const call = this.#calls.get(id);
+		if (call === undefined) return;
+		this.#calls.delete(id);
 		this.send(reply);
+		if (call.kind === "relayed" && call.span !== undefined) relayEnded(call.span, reply);
 		this.#settle();
 	}
 
@@ -262,6 +275,8 @@ export class ProviderSide {
 	unbind(hold: Hold): void {
 		this.#waiting.delete(hold);
 		this.#binding.delete(hold);
+		// Nothing waits any more: no wait to record.
+		if (this.#waiting.size === 0) this.#waitingSince = undefined;
 	}
 
 	/**
@@ -383,8 +398,10 @@ export class ProviderSide {
 				this.#refuse(message.call, error);
 				return;
 			}
-			this.#calls.set(message.call, { kind: "relayed", hold });
-			hold.call(message);
+			const relayed: RunningCall = { kind: "relayed", hold };
+			this.#calls.set(message.call, relayed);
+			// Registered first: a hold without an upstream link answers at once.
+			relayed.span = hold.call(message);
 			return;
 		}
 		if (!hold.callable) {
@@ -406,32 +423,44 @@ export class ProviderSide {
 		const args = json === undefined ? null : parsePayload(json, segments);
 		const call = { kind: "served", hold, bytes: method.resultBytes, abort: new AbortController() } as const;
 		this.#calls.set(message.call, call);
-		void this.#run(message.call, call, method.name, args);
+		// The caller's span over the link: its carrier with this host's adapter (absent or unknown: the adapter's root).
+		const parent = parentOf(message.trace, this.link.host.telemetry);
+		this.#run(message.call, call, method.name, args, parent);
 	}
 
 	/**
 	 * Runs a call and sends its result (absent when `null`) or error, unless it was aborted, released or gone
 	 * meanwhile. A result that cannot be encoded is sent as its error.
 	 */
-	async #run(
+	#run(
 		id: number,
 		call: Extract<RunningCall, { readonly kind: "served" }>,
 		method: string,
 		args: unknown,
-	): Promise<void> {
-		let reply: Extract<OriginMessage, { readonly kind: "result" | "error" }>;
+		parent: TelemetryContext,
+	): void {
+		const context = withAbortSignal(call.abort.signal, this.link.context);
+		let running: Promise<unknown>;
 		try {
-			// A link's context has no abort signal, so this is the call's own signal: no `AbortSignal.any` per call.
-			const result = await call.hold.call(method, args, withAbortSignal(call.abort.signal, this.link.context));
-			// Results are not validated: they are the provider's.
-			reply =
-				result === null || result === undefined
-					? { kind: "result", call: id }
-					: this.#result(id, result, call.bytes, this.link.context);
+			running = call.hold.call(method, args, parent, context);
 		} catch (error) {
-			reply = { kind: "error", call: id, error: wireError(error) };
+			running = Promise.reject(error);
 		}
-		this.reply(id, reply);
+		running.then(
+			(result) => {
+				let reply: Extract<OriginMessage, { readonly kind: "result" | "error" }>;
+				try {
+					reply =
+						result === null || result === undefined
+							? { kind: "result", call: id }
+							: this.#result(id, result, call.bytes, this.link.context);
+				} catch (error) {
+					reply = { kind: "error", call: id, error: wireError(error) };
+				}
+				this.reply(id, reply);
+			},
+			(error: unknown) => this.reply(id, { kind: "error", call: id, error: wireError(error) }),
+		);
 	}
 
 	/** Answers call `id` with `error` before it was admitted: it took no slot. */
@@ -443,8 +472,12 @@ export class ProviderSide {
 		const call = this.#calls.get(id);
 		if (call === undefined) return;
 		this.#calls.delete(id);
-		if (call.kind === "relayed") call.hold.abort(id);
-		else call.abort.abort(new ChordError({ code: "aborted", message: `call ${id}: aborted by its caller` }));
+		if (call.kind === "served") {
+			call.abort.abort(new ChordError({ code: "aborted", message: `call ${id}: aborted by its caller` }));
+			return;
+		}
+		call.hold.abort(id);
+		if (call.span !== undefined) relayEnded(call.span, undefined);
 	}
 
 	/**
@@ -484,6 +517,7 @@ export class ProviderSide {
 			if (!hold.bound) continue;
 			hold.queue();
 			this.#waiting.add(hold);
+			this.#waitingSince ??= performance.now();
 		}
 	}
 
@@ -509,6 +543,7 @@ export class ProviderSide {
 			} else if (this.#waiting.size > 0) {
 				const holds = [...this.#waiting];
 				this.#waiting.clear();
+				this.#waited();
 				this.#bindingTurn = this.#binding.size > 0;
 				this.#sendOwn({ kind: "state", holds: holds.map((hold) => hold.pendingEntry(context)) });
 			} else {
@@ -532,10 +567,18 @@ export class ProviderSide {
 		return { kind: "result", call: id, value, ...(segments === undefined ? {} : { segments }) };
 	}
 
+	/** The waiting state went out (or its holds left): how long it waited for its slot is recorded. */
+	#waited(): void {
+		if (this.#waitingSince === undefined) return;
+		this.link.host.metrics.histogram("chord.backpressure.wait").record(performance.now() - this.#waitingSince);
+		this.#waitingSince = undefined;
+	}
+
 	/** Sends one of this host's own `bound` or `state` messages, taking a slot. */
 	#sendOwn(message: Extract<OriginMessage, { readonly kind: "bound" | "state" }>): void {
 		this.#inFlight++;
 		this.#sent.push("local");
+		if (message.kind === "state") this.link.host.metrics.counter("chord.link.state_messages").add(1);
 		this.send(message);
 	}
 }

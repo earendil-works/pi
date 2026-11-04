@@ -1,5 +1,6 @@
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
-import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
+import { BACKGROUND_CONTEXT as context, withCancel, withTelemetry } from "../../src/context/index.ts";
 import { arr, int, local, method, obj, str } from "../../src/contracts/index.ts";
 import { defineState, type KeyedHandle, type SingletonHandle } from "../../src/documents/index.ts";
 import { delivered, framesOf, loaded, rejection } from "../support.ts";
@@ -169,5 +170,45 @@ describe('transactions their context\'s end cancelled (decision "Mistakes that w
 			reads.mockRestore();
 		}
 		await host.close(context);
+	});
+});
+
+describe("commits in telemetry (slice 9)", () => {
+	it("records a commit's documents, ops and duration as an event of its context's span, and its duration metric", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		let list: SingletonHandle<{ items: string[] }> | undefined;
+		const { host } = await loaded(
+			(h) =>
+				h.serve(Owner, (_, self) => {
+					list = self.state(List);
+					return { list, touch: async () => null };
+				}),
+			{ telemetry },
+		);
+		await host.get(Owner, { id: 1 }, context);
+		await telemetry.startSpan({ name: "work" }, async (span) => {
+			const traced = withTelemetry(span, context);
+			await list!.change((draft) => {
+				draft.items.push("a", "b");
+			}, traced);
+			// A transaction that changes nothing commits nothing: no event.
+			await list!.change(() => {}, traced);
+		});
+		const work = telemetry.getSpans().find(({ name }) => name === "work");
+		expect(work!.events).toEqual([
+			{ name: "chord.commit", attributes: { documents: 1, ops: 1, duration: expect.any(Number) } },
+		]);
+		expect(telemetry.getMetrics().map(({ name, unit }) => [name, unit])).toContainEqual([
+			"chord.commit.duration",
+			"ms",
+		]);
+	});
+
+	it("times nothing when nothing records", async () => {
+		const { list } = await owner();
+		const now = vi.spyOn(performance, "now");
+		await list.change((draft) => void draft.items.push("a"), context);
+		expect(now).not.toHaveBeenCalled();
+		now.mockRestore();
 	});
 });

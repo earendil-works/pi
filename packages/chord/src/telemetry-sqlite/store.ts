@@ -1,3 +1,5 @@
+// The reads of the SQLite telemetry store (`TelemetryStore`): complete traces by query or id, metric rows by query.
+
 import type {
 	MetricQuery,
 	SpanAttributes,
@@ -63,14 +65,22 @@ function attributesSql(attributes: TraceQuery["attributes"], column: string, par
 	);
 }
 
+/**
+ * Spans in start order: by start time, then as each recorder started them (an id is its recorder's scope and a counter:
+ * by length, then text, the counter compares as a number), so spans of one millisecond keep their order (slice 9).
+ */
+const SPAN_ORDER = "started_ms, length(id), id";
+
+/** The spans of trace `traceId` in start order; `undefined` when none is stored. */
 export async function getTrace(db: SqliteDatabase, traceId: string): Promise<StoredTrace | undefined> {
 	const rows = await db.all<SpanRow>(
-		"SELECT * FROM telemetry_spans WHERE trace_id = ? ORDER BY started_ms, id",
+		`SELECT * FROM telemetry_spans WHERE trace_id = ? ORDER BY ${SPAN_ORDER}`,
 		traceId,
 	);
 	return rows.length ? { traceId, spans: rows.map(storedSpan) } : undefined;
 }
 
+/** Complete traces matching `query`, newest first, paged by an opaque cursor. */
 export async function findTraces(
 	db: SqliteDatabase,
 	query: TraceQuery = {},
@@ -80,7 +90,7 @@ export async function findTraces(
 	const params: SqliteValue[] = [];
 	if (query.name !== undefined) {
 		conditions.push(
-			"(SELECT name FROM telemetry_spans WHERE trace_id = heads.trace_id ORDER BY started_ms, id LIMIT 1) = ?",
+			`(SELECT name FROM telemetry_spans WHERE trace_id = heads.trace_id ORDER BY ${SPAN_ORDER} LIMIT 1) = ?`,
 		);
 		params.push(query.name);
 	}
@@ -117,7 +127,7 @@ export async function findTraces(
 		if (more) heads.pop();
 		if (!heads.length) return { traces: [] };
 		const rows = await tx.all<SpanRow>(
-			"SELECT * FROM telemetry_spans WHERE trace_id IN (SELECT value FROM json_each(?)) ORDER BY started_ms, id",
+			`SELECT * FROM telemetry_spans WHERE trace_id IN (SELECT value FROM json_each(?)) ORDER BY ${SPAN_ORDER}`,
 			JSON.stringify(heads.map((head) => head.trace_id)),
 		);
 		const grouped = new Map<string, StoredSpan[]>();
@@ -134,6 +144,7 @@ export async function findTraces(
 	});
 }
 
+/** The stored metric rows (per series and 10 s interval) matching `query`. */
 export async function findMetrics(db: SqliteDatabase, query: MetricQuery): Promise<readonly StoredMetric[]> {
 	const params: SqliteValue[] = [query.name];
 	const conditions = ["name = ?"];

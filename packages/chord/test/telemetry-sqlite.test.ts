@@ -95,6 +95,20 @@ describe("SQLite telemetry span and propagation conformance", () => {
 });
 
 describe("SQLite telemetry buffering and aggregation", () => {
+	it("orders spans started in the same millisecond as they started: a trace's first span, siblings (slice 9)", async () => {
+		vi.spyOn(Date, "now").mockReturnValue(20_001);
+		await using f = await fixture();
+		await f.telemetry.startSpan({ name: "root" }, async (span) => {
+			for (let index = 0; index < 11; index++) await span.startSpan({ name: `child ${index}` }, () => {});
+		});
+		await f.telemetry.flush();
+		const { traces } = await f.telemetry.findTraces({ name: "root" });
+		expect(traces[0]!.spans.map(({ name }) => name)).toEqual([
+			"root",
+			...Array.from({ length: 11 }, (_, index) => `child ${index}`),
+		]);
+	});
+
 	it("does not execute SQL while recording and stores only settled spans", async () => {
 		await using f = await fixture();
 		const transaction = vi.spyOn(f.db, "transaction");

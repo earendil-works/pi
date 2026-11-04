@@ -1,9 +1,10 @@
 // A host's end of a link (§3, §22, 2b): the handshake, the link's codec, the checks of every message (skipped on a
 // trusted link), the heartbeat, and messages handled in order while one waits for an asynchronous inflate; a protocol
-// error closes the link.
+// error closes the link. The bytes of every message it encodes and receives are counted (`chord.link.bytes`).
 
 import type { Context } from "../context/index.ts";
 import { PROTOCOL_VERSION } from "../data/internal.ts";
+import type { ChordCounter, ChordMetrics } from "../telemetry.ts";
 import type { Link } from "./link.ts";
 import { type Codec, checkMessage, type Message } from "./message.ts";
 
@@ -32,7 +33,14 @@ type ChannelOptions = {
 	readonly trusted: boolean;
 	/** Where protocol errors go. */
 	readonly report: (error: unknown) => void;
+	/** The host's instruments: the bytes of every encoded message sent and received (`chord.link.bytes`). */
+	readonly metrics: ChordMetrics;
 };
+
+/** `chord.link.bytes`' attributes, made once. */
+const SENT = { direction: "sent" } as const;
+
+const RECEIVED = { direction: "received" } as const;
 
 /**
  * Where a channel stands: `greeting` until the peer's `hello`, with what this end sent meanwhile; `open` with the
@@ -73,9 +81,12 @@ export class Channel {
 	/** Whether a message is being handled asynchronously: the held ones wait. */
 	#waiting = false;
 	readonly #hello: Uint8Array;
+	/** Counts the bytes of the encoded messages (sizes the channel has). */
+	readonly #bytes: ChordCounter<"chord.link.bytes">;
 
 	constructor(link: Link, handler: ChannelHandler, options: ChannelOptions, context: Context) {
 		this.#link = link;
+		this.#bytes = options.metrics.counter("chord.link.bytes");
 		this.#codec = options.codec;
 		this.#handler = handler;
 		this.#report = options.report;
@@ -94,6 +105,7 @@ export class Channel {
 	 * calls `closed` now; so the handler is complete before it starts.
 	 */
 	start(): void {
+		this.#bytes.add(this.#hello.byteLength, SENT);
 		this.#link.send(this.#hello);
 		this.#link.onMessage((bytes) => this.#receive(bytes));
 		this.#link.onClose(() => this.#closed());
@@ -122,6 +134,7 @@ export class Channel {
 		const state = this.#state;
 		if (state.kind === "closed") return;
 		const bytes = this.#codec.encode(message);
+		this.#bytes.add(bytes.byteLength, SENT);
 		if (state.kind === "greeting") state.queued.push(bytes);
 		else this.#link.send(bytes);
 	}
@@ -148,6 +161,7 @@ export class Channel {
 
 	#receive(bytes: Uint8Array): void {
 		if (this.#state.kind === "closed") return;
+		this.#bytes.add(bytes.byteLength, RECEIVED);
 		this.#lastReceived = Date.now();
 		this.#pinged = false;
 		if (this.#held === undefined) this.#handle(bytes);

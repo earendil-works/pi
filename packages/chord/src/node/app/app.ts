@@ -5,6 +5,7 @@
 // and gives the app the controls it needs: the owner link, `applyChanges`, installs, export and import per address.
 
 import { join, resolve } from "node:path";
+import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { type Context, withAbortSignal } from "../../context/index.ts";
 import { type Address, type HostKind, hostKind, type KindShape } from "../../contracts/index.ts";
 import type { Principal } from "../../data/index.ts";
@@ -113,6 +114,11 @@ export type AppOptions<P extends Principal> = {
 	readonly web?: AppWeb;
 	/** The terminal surface (slice 11): the app's terminal entry; the `tui` facet kind. None: no terminal clients. */
 	readonly tui?: { readonly entry: string };
+	/**
+	 * The server's telemetry adapter (§29): its host's spans and metrics and its HTTP requests'; NOOP by default. Each
+	 * worker exports to the adapter its own `startWorker` is given; carriers join their spans into one trace.
+	 */
+	readonly telemetry?: TelemetryContext;
 	readonly onError: (error: AppError) => void;
 } & (OwnerPrincipal extends P ? unknown : { readonly "the app's principal type must have { kind: 'owner' }": never });
 
@@ -200,10 +206,12 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 	);
 	const { onError, api, limits = {} } = options;
 	const sessions = createSessions<P>(cookieSecret, { maxEphemeral: limits.ephemeralSessions });
+	const { telemetry } = options;
 	const host = createHost<P>({
 		address: Server(),
 		principal: options.principal.server,
 		store,
+		telemetry,
 		onError: (error) => onError({ kind: "host", error }),
 	});
 	const http = createHttp(
@@ -211,6 +219,7 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 		{
 			listen: options.listen ?? { host: "127.0.0.1", port: 0 },
 			links: { path: "/chord", opened: sessions.opened },
+			telemetry,
 			onError: (error) => onError({ kind: "http", error }),
 		},
 		context,

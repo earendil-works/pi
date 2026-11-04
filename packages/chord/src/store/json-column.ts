@@ -10,6 +10,7 @@ import { snapshotSchema } from "../contracts/snapshot.ts";
 import { ChordError } from "../data/index.ts";
 import { validatorFor } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
+import { chordMetrics } from "../telemetry.ts";
 
 /** What `json(...)` takes besides the schema. */
 export type JsonColumnOptions<T> = {
@@ -65,7 +66,7 @@ export class JsonColumn {
 		} catch (error) {
 			throw refused(`${what}: migrate from version ${version} threw`, error);
 		}
-		context.telemetry.metrics?.counter("chord.data.validations").add(1);
+		chordMetrics(context.telemetry.metrics).counter("chord.data.validations").add(1);
 		if (!validatorFor(this, context).check(migrated)) {
 			throw refused(`${what}: migrate from version ${version} does not match the schema`);
 		}

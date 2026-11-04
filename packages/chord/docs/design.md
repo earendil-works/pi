@@ -912,8 +912,11 @@ Every handler gets a `ctx` (a `Context`): `telemetry` (the current span, section
 cancelled or the object ended; there is no per-call deadline), `principal` (the caller as its link stamped it; on a
 local object's handler the host's principal, none on a client), `incarnation` (the calling host's, section 4), and
 `get(Type, params, { readyTimeout? })` (references as the caller sees them, released when the handler settles; a
-`get` after that throws `released`). Later: `ctx.trace(name, attributes, fn)` gives `fn` a child `ctx` under a child
-span (slice 9, cut C11 to decide); in a job's `run` also `jobId` and `state` (slice 5). Pass `ctx` to everything you wait
+`get` after that throws `released`), and `trace(name, attributes, fn)`: `fn` in a child span of `ctx.telemetry` with a
+child `ctx` (the same principal, incarnation, signal and `get`, its references the handler's), so calls inside are
+parented under it; a throw marks the span failed (`trace_failed`) and is rethrown; without an adapter that records,
+`fn` gets `ctx` itself (slice 9; round-3 cut C11 kept, as this section already stated it); in a job's `run` also `jobId`
+and `state` (slice 5). Pass `ctx` to everything you wait
 on. Code outside objects gets a `ctx` from `host.root` (slice 8). Durable's `Context` is the same module
 (`../context`); bridging is explicit. No code versions, no request ids.
 
@@ -2207,8 +2210,17 @@ validation, no clone of snapshots or ops.
   The asynchronous inflate runs one part at a time; the queue behind it is bounded by the sending peer's window and N,
   so only a misbehaving parent or route peer could grow it (accepted: those are the app's own hosts). The adapter reports "too large"
   and "corrupt" as a tagged result. Limits and the threshold count bytes. No per-link compression.
-- **Trace carriers (R5; slice 9)** are an optional bounded field of `call` and `hold` (key count, string lengths);
-  relays read them from the envelope.
+- **Trace carriers (R5; slice 9)** are an optional field `trace` of `call` and `hold`: an adapter's string record of at
+  most 8 keys, keys and values of at most 256 characters of printable ASCII (keys without spaces; W3C's headers and
+  Chord's adapters fit); past the bounds, with a control character or not a string record, the message fails `MESSAGE`
+  as any malformed header and the link closes (a trusted link skips the check; the adapter's `extract` then checks it).
+  A carrier names stored trace and parent ids, so no control character reaches a renderer (and `renderTrace` escapes
+  them anyway). Names a relay records unparsed are bounded the same way: a hold's `type` and its address's `kind` have
+  at most 256 characters. The
+  binary codec flags it in the kind byte (`0x40`, beside the origin's `0x80`) and writes it as JSON after the origin;
+  the text codec writes it as the last element (a hold's after `limit`, absent ones before it `null`; a call's after its
+  payload, whose two fields are then positional, `null` when absent). Relays read it from the envelope and forward
+  their own span's carrier (a relay recording nothing forwards it as it came). `PROTOCOL_VERSION` stays 1.
 - **Adapted bindings get diffs** (slice 7b; decision "References are the only indirection" (5)): a consumer bound
   through `accepts` attaches to the object instance's shared mapping for its version: per member one derive of the
   instance's member through `(current) => old` (a changed member), of its whole state (a removed member), or the
@@ -2598,7 +2610,6 @@ this document):
 | 16 | a Durable Object profile | 24 | when a DO target becomes concrete |
 | 24 | a per-type drain override: a host option or fixed (no install watchdog: `reload` takes the app's context, decision "Slice 7b's open points" (4); the routine handover uses `closeTimeout`; a failing job `finish` backs off 1-60 s and blocks after five failures, decided) | 3 | if a real case needs it |
 | 28 | Astra's circuit breaker (a hard transport-buffer cap plus a stall deadline); the heartbeat is built, the cap was never decided | 3 | if a real case needs it |
-| 29 | round-3 cut C11 (`ctx.trace`); C3 and C4 are decided (§14, §15) | 8 | slice 9 |
 
 Apps (p3), from the functionality map, decided per domain when p3 is designed:
 
@@ -2736,7 +2747,72 @@ Chord reports traces, events and metrics through `@earendil-works/pi-telemetry`;
   (`pi-telemetry/render`) prints links and never follows them. A web trace viewer in the playground reads the store.
 - **Durable** (done): submit and phase spans, stored carriers on submissions and tasks (`TaskOptions.trace`, creation
   links), events after commit, report events; pi-ai emits `pi.ai.request`/`pi.ai.poll` from one observer in
-  `lazyStream`. Persisted Chord jobs store their start carrier.
+  `lazyStream`. Persisted Chord jobs store their start carrier. A worker's Harness gets its host's adapter
+  (`HarnessOptions.telemetry`) and a method that submits input passes its `ctx` (its `telemetry` the `chord.method`
+  span), so `pi.durable.submit` links to it and starts its own trace, as decided.
+
+**Built (slice 9, `slice-9.md`; `src/telemetry.ts`):**
+
+- **The schema:** `CHORD_TELEMETRY_SCHEMA` (root export, `defineTelemetrySchema`) declares every span, event and metric
+  Chord records with its attributes; the cost counters (`chord.data.*`, `chord.link.*`, `chord.store.*`,
+  `chord.query.runs`, `chord.cycle.visits`, `chord.derive.*`, `chord.registry.*`, `chord.contract.adapts`) are recorded
+  through it (`chordMetrics(metrics)`: typed instruments made once per adapter's metrics object and name, a `WeakMap`;
+  the NOOP metrics share one set). Ids (object labels, run ids, address keys) are span attributes only.
+- **Spans:** `chord.call` (a consumer's call of a remote member, until its reply), `chord.method` (a provider running a
+  method: under the call's carrier over a link, the caller's span on the same host; in `Attempt.call`, so local and
+  remote calls alike), `chord.relay` (a relayed hold until it is held upstream, a relayed call until its reply is
+  forwarded; the member is `hold` or `#<index>`: a relay never knows names), `chord.hold` (a remote reference's hold
+  until its first `bound` or failure; its carrier rides on the reference's first hold only: a re-hold after a reconnect
+  is a fresh `chord.hold` root of the host's adapter linked to the first, and a relay's re-hold upstream after a drop a
+  fresh `chord.relay` root linked to its first, so a page kept open for days never adds children under a span long
+  ended), `chord.activate`,
+  `chord.open` (under the activation), `chord.close` (a root), `chord.load`, `chord.reload` (a `chord.reload.fate`
+  event per object), `chord.resolve`, `chord.revoke` (recorded after the synchronous revocation, its `count`),
+  `chord.routine` (a root per call), `chord.job` (`intent` under the starter, `run` and `finish` under the start's
+  carrier), `chord.http`. Outcomes are attributes; a failure is `status: "error"` with a fixed category (`call_failed`,
+  `method_failed`, `relay_failed`, `hold_failed`, `activation_failed`, `open_failed`, `close_failed`, `load_failed`,
+  `reload_failed`, `resolve_failed`, `routine_failed`, `job_failed`, `http_failed` for a status of 500 or more,
+  `trace_failed`) and the message cut at 500 characters; a cancel (the caller's signal, `aborted`, an open its attempt
+  abandoned) sets status ok explicitly (an adapter marks a span failed when its callback throws). String attributes a
+  peer chose (an object's label with its params key, an address key, a principal's kind, names from the wire) are cut
+  at 256 characters: stores keep them for days.
+- **Activations:** one span per attempt on the host's adapter, linked to the object's first trigger (the span that
+  created it, or a hold's carrier), a retry's to the attempt before it; it ends `live`, `failed` (a transient failure's
+  backoff a `chord.retry` event) or `ended`, or `parked` with a `chord.park { cause }` event, and a parked attempt's own
+  steps resume in a new span linked to the parked one (spans stay short); one that fails or ends while still parked
+  records it in a short span linked to the parked one. A getter binding to an object while it
+  activates links its span to the activation (shared work); a route's first hold links to its resolve and back.
+- **Parents across processes are carriers, not spans:** a settled span starts no recorded children, so whatever runs
+  later under work that has ended (a job's run and finish, a re-hold) goes through a carrier extracted with the host's
+  adapter. Every job run keeps its start's carrier (a persisted one stores it): a run resumed in a new attempt or
+  process stays in its trace.
+- **`ctx.trace`** gives `fn` a child of the same kind (a job run's keeps `jobId` and `state`), and a synchronous throw of
+  `fn` rejects whether or not anything records: recording changes nothing `fn` sees but its span.
+- **Routines:** each call's span links to the span of the commit that changed its source when the watch frame's
+  context names one (the newest folded frame's; the first call, with the current value, has none), and a call that
+  threw carries its backoff as a `chord.retry` event.
+- **Cost (§30):** a span site checks `untraced(parent)` (the parent starts spans as the NOOP context does: no adapter can
+  record) and then
+  starts no span, builds no attribute object and injects no carrier; with the NOOP adapter a call over a link is within
+  noise of the code before slice 9 (`benchmarks.md`). A recording host's call costs its spans (`OpenSpan`, a span kept
+  open until its work's promise settles).
+- **Events and metrics:** `chord.commit { documents, ops, duration }` on the span of the context a transaction ran
+  under (a method, a routine, a job phase, an HTTP request), only for a commit that changed something; the host-wide
+  metrics go to the host's adapter (`host.metrics`), not to a context: `chord.link.bytes { direction }` (every encoded
+  message of the host's links), `chord.link.state_messages`, `chord.commit.duration`, `chord.calls.in_flight`,
+  `chord.holds.active`, `chord.links.open`, `chord.park.duration`, `chord.backpressure.wait`. The cost counters still
+  count through the context of the work; a host with an adapter gives its links' and root scopes' work, when the app
+  passed a context without a span (`BACKGROUND_CONTEXT`, as the kit does), a span that records nothing but carries the
+  adapter's metrics (`countingOnly`), so they reach the adapter in an app too.
+- **Components:** `createHttp({ telemetry })` makes each routed request a `chord.http` root (method, route pattern,
+  status; never the path), its scope's `ctx` under it; a W3C `traceparent` (with its `tracestate`) is extracted (as the
+  carrier `{ traceparent, tracestate }`) only from a request a contributed relay verified, each header at most 256 and
+  512 characters of printable ASCII (else ignored). A verified relay vouches for the proxy, not the browser behind it:
+  an app's proxy must strip `traceparent` and `tracestate` from browsers' requests (or set its own), or a browser
+  chooses the trace its requests join. `startServer({ telemetry })` passes the adapter to
+  its host and HTTP; `startWorker({ telemetry })` to its host. Each process exports to the store it is given; a shared
+  SQLite file per data directory is the app's choice (example 62). The SQLite store orders spans of one millisecond as
+  their recorder started them (by start time, then id length and id).
 
 ## 30. Cost model
 

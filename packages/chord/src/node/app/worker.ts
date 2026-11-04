@@ -4,6 +4,7 @@
 // (`WorkerInfo`, `Files`, `Translations` for a worker that renders final text).
 
 import { join } from "node:path";
+import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import type { Principal } from "../../data/index.ts";
 import { createHost } from "../../host/index.ts";
 import type { JsonValue } from "../../json.ts";
@@ -24,6 +25,12 @@ export type WorkerOptions = {
 	readonly kinds: Readonly<Record<string, AppKind>>;
 	/** Extra keep-alive counts of the app (a record of numbers, all zero when idle). */
 	readonly busy?: Watchable<Readonly<Record<string, number>>>;
+	/**
+	 * This worker's telemetry adapter (§29): its host's spans and metrics; NOOP by default. Its methods called through
+	 * the server continue the caller's trace by the carriers on the wire; where the spans are stored is the app's (a
+	 * SQLite telemetry store per process, or one file the processes share).
+	 */
+	readonly telemetry?: TelemetryContext;
 	/** The worker host's errors (`HostError`) and a failed start's. */
 	readonly onError: (error: unknown) => void;
 };
@@ -48,6 +55,7 @@ export function startWorker<P extends Principal>(options: WorkerOptions): void {
 				address,
 				principal: kit.principal as unknown as P,
 				store,
+				telemetry: options.telemetry,
 				onError: options.onError,
 			});
 			onClose((ctx) => host.close(ctx));

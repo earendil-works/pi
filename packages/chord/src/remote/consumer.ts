@@ -4,6 +4,7 @@
 // origin's provider side. On a host without a compressor, the deflated parts of this host's own holds and calls are
 // inflated asynchronously first, and the message is handled once they are.
 
+import type { TelemetryCarrier } from "@earendil-works/pi-telemetry";
 import type { Context } from "../context/index.ts";
 import { type MethodData, takesNoArgs } from "../contracts/internal.ts";
 import { ChordError, isChordError } from "../data/index.ts";
@@ -19,6 +20,7 @@ import {
 	payloadPart,
 	type StateEntry,
 } from "../link/internal.ts";
+import { carrierOf } from "../telemetry.ts";
 import { CallWindow } from "./calls.ts";
 import { actingFor } from "./hold.ts";
 import type { HostLink } from "./host-link.ts";
@@ -37,6 +39,8 @@ type OutgoingCall = {
 	readonly method: number;
 	readonly args: Part | undefined;
 	readonly segments: readonly Uint8Array[] | undefined;
+	/** The caller's trace carrier (its `chord.call` span's), when its adapter propagates. */
+	readonly trace: TelemetryCarrier | undefined;
 	readonly resolve: (value: unknown) => void;
 	readonly reject: (error: unknown) => void;
 	id: number | undefined;
@@ -61,9 +65,9 @@ export class ConsumerSide {
 
 	/**
 	 * Holds `holder` on this link and returns its new id: its first hold, or a re-hold on a new link; `chain`: the
-	 * activation chain it is held for, if any (Q5).
+	 * activation chain it is held for, if any (Q5); `trace`: this hold's carrier, if any.
 	 */
-	attach(holder: RemoteObject, chain: string[] | undefined): number {
+	attach(holder: RemoteObject, chain: string[] | undefined, trace: TelemetryCarrier | undefined): number {
 		const id = this.#nextHold++;
 		this.#entries.set(id, holder);
 		const acting = actingFor(this.#link, holder.caller);
@@ -73,6 +77,7 @@ export class ConsumerSide {
 			...holder.request,
 			...acting,
 			...(chain === undefined ? {} : { chain }),
+			...(trace === undefined ? {} : { trace }),
 		});
 		return id;
 	}
@@ -80,8 +85,8 @@ export class ConsumerSide {
 	/**
 	 * Calls method `method` (an index into the bound variant) on hold `hold` with `args`: left out for a method without
 	 * arguments, with byte segments when its argument schema has a `bytes()` leaf, deflated above the threshold except on
-	 * the parent link. The result is parsed here. The caller's cancellation rejects it at once and sends `abort` when it
-	 * is in flight.
+	 * the parent link; with the carrier of `context`'s span when its adapter propagates. The result is parsed here. The
+	 * caller's cancellation rejects it at once and sends `abort` when it is in flight.
 	 */
 	call(hold: number, method: number, data: MethodData, args: unknown, context: Context): Promise<unknown> {
 		const signal = context.abortSignal;
@@ -103,6 +108,7 @@ export class ConsumerSide {
 			method,
 			args: part,
 			segments: payload?.segments,
+			trace: carrierOf(context.telemetry),
 			resolve: (value) => {
 				done();
 				resolve(value);
@@ -188,7 +194,7 @@ export class ConsumerSide {
 		const id = this.#nextCall++;
 		call.id = id;
 		this.#calls.set(id, call);
-		const { hold, method, args, segments } = call;
+		const { hold, method, args, segments, trace } = call;
 		this.#link.send({
 			kind: "call",
 			call: id,
@@ -196,6 +202,7 @@ export class ConsumerSide {
 			method,
 			...(args === undefined ? {} : { args }),
 			...(segments === undefined ? {} : { segments }),
+			trace,
 		});
 	}
 

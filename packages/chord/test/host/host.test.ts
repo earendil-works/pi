@@ -1,5 +1,6 @@
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
-import { BACKGROUND_CONTEXT as context, withAbortSignal, withCancel } from "../../src/context/index.ts";
+import { BACKGROUND_CONTEXT as context, withAbortSignal, withCancel, withTelemetry } from "../../src/context/index.ts";
 import { evolve, hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { broken } from "../../src/data/index.ts";
 import { type Ctx, createHost, defineFacet, type FacetHost, type HostError, type Self } from "../../src/host/index.ts";
@@ -1670,5 +1671,78 @@ describe("reload: an abort while staging (fix round 1)", () => {
 		ref.release();
 		await host.close(context);
 		expect(actual).toBe(1);
+	});
+});
+
+describe("the host's spans (slice 9)", () => {
+	it("traces load under its caller's span: plugins given and left out; host-lifetime activations link to it", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const host = createHost({ telemetry, onError: () => {} });
+		const ok = defineFacet((h) => h.serve(Info, () => ({ title: constant("t") })));
+		const failing = defineFacet(() => {
+			throw new Error("setup");
+		});
+		await telemetry.startSpan({ name: "start" }, (span) =>
+			host.load(
+				[
+					{ name: "@test/ok", facet: ok },
+					{ name: "@test/failing", facet: failing },
+				],
+				withTelemetry(span, context),
+			),
+		);
+		const spans = telemetry.getSpans();
+		const load = spans.find(({ name }) => name === "chord.load")!;
+		expect(load.parentId).toBe(spans.find(({ name }) => name === "start")!.id);
+		expect(load.attributes).toEqual({ plugins: 2, failed: 1 });
+		const activation = spans.find(({ name }) => name === "chord.activate")!;
+		expect(activation.links.map(({ context: carrier }) => carrier)).toEqual([load.context]);
+	});
+
+	it("traces a reload with one event per object's fate", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const host = createHost({ telemetry, onError: () => {} });
+		const facet = (title: string) => defineFacet((h) => h.serve(Info, () => ({ title: constant(title) })));
+		await host.load([{ name: "@test/app", facet: facet("a") }], context);
+		await telemetry.startSpan({ name: "apply" }, (span) =>
+			host.reload([{ name: "@test/app", facet: facet("b") }], withTelemetry(span, context)),
+		);
+		const reload = telemetry.getSpans().find(({ name }) => name === "chord.reload")!;
+		expect(reload.attributes).toEqual({ plugins: 1, added: 0, changed: 1, removed: 0, failed: 0, fates: 1 });
+		expect(reload.events).toEqual([
+			{ name: "chord.reload.fate", attributes: { object: "app.info", fate: "swapped" } },
+		]);
+	});
+
+	it("counts the cost counters of its links' and roots' work on its adapter, under contexts without a span (review L6)", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { server, client } = await linked((h) => void serveNotes(h), { telemetry });
+		const notes = await client.get(Notes, { session: "S1" }, context);
+		if (notes.variant !== "editor") throw new Error("expected the editor");
+		await notes.add({ text: "a" }, context);
+		await server.root(async (ctx) => (await ctx.get(Notes, { session: "S1" })).release(), context);
+		const counted = new Set(telemetry.getMetrics().map(({ name }) => name));
+		expect(counted).toContain("chord.link.checks");
+		expect(counted).toContain("chord.data.validations");
+		expect(counted).toContain("chord.link.encodes");
+	});
+
+	it("records a revocation's count after it under the caller's span", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const host = createHost<TestPrincipal, string>({
+			address: Server(),
+			principal: { kind: "server" },
+			telemetry,
+			revokedBy: (principal) => (principal.kind === "guest" ? [principal.session] : []),
+			onError: () => {},
+		});
+		await host.load([], context);
+		const [a] = memoryLinkPair();
+		host.accept(a, { principal: { kind: "guest", session: "S1" } }, context);
+		await telemetry.startSpan({ name: "admin" }, (span) => host.revoke("S1", withTelemetry(span, context)));
+		const revoke = telemetry.getSpans().find(({ name }) => name === "chord.revoke")!;
+		expect(revoke.attributes).toEqual({ count: 1 });
+		host.revoke("S1", context);
+		expect(telemetry.getSpans().filter(({ name }) => name === "chord.revoke")).toHaveLength(1);
 	});
 });

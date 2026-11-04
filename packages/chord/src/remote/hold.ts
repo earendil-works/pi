@@ -8,6 +8,7 @@
 // bound or a removed type leaves it waiting unbound. A hold of an older version follows its object's adapted members
 // (Q10).
 
+import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import type { Context } from "../context/index.ts";
 import { type VariantData, type VariantNames, variantNames, variantOrder, variantsAt } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, isChordError, type Principal } from "../data/index.ts";
@@ -36,6 +37,7 @@ import {
 	wireError,
 } from "../link/internal.ts";
 import { type DeriveSource, Source, type Subscriber } from "../state/internal.ts";
+import { chordMetrics } from "../telemetry.ts";
 import type { HostLink } from "./host-link.ts";
 import type { ProviderSide } from "./provider.ts";
 import { RelayedHold } from "./relay.ts";
@@ -144,6 +146,7 @@ export class Hold implements Holder, UnboundRequest {
 		this.caller = caller;
 		this.limits = limits;
 		provider.link.host.count("references", 1);
+		provider.link.host.metrics.upDownCounter("chord.holds.active").add(1);
 	}
 
 	/** Whether the hold is bound: its members' changes are sent. */
@@ -350,9 +353,9 @@ export class Hold implements Holder, UnboundRequest {
 		this.start(request);
 	}
 
-	/** Calls a method of the held object as the hold's caller. */
-	call(method: string, args: unknown, context: Context): Promise<unknown> {
-		return this.#object!.call(method, args, context, this.caller, this.contract.version);
+	/** Calls a method of the held object as the hold's caller, its span under `parent` (the call's carrier, extracted). */
+	call(method: string, args: unknown, parent: TelemetryContext, context: Context): Promise<unknown> {
+		return this.#object!.call(method, args, context, this.caller, this.contract.version, parent);
 	}
 
 	/**
@@ -408,7 +411,7 @@ export class Hold implements Holder, UnboundRequest {
 		this.#changes = [];
 		this.#failed = [];
 		this.#retired = NO_RETIRED;
-		context.telemetry.metrics?.counter("chord.link.encodes").add(1);
+		chordMetrics(context.telemetry.metrics).counter("chord.link.encodes").add(1);
 		return { hold: this.id, variant: variantOrder(contract).indexOf(variant), members, failed };
 	}
 
@@ -464,7 +467,10 @@ export class Hold implements Holder, UnboundRequest {
 			host.unindex(state.request.type, this);
 		}
 		this.#state = { kind: "released" };
-		if (this.#counted) host.count("references", -1);
+		if (this.#counted) {
+			host.count("references", -1);
+			host.metrics.upDownCounter("chord.holds.active").add(-1);
+		}
 		this.#counted = false;
 	}
 
@@ -576,7 +582,7 @@ export class Hold implements Holder, UnboundRequest {
 				retired = retired.filter((index) => !kept.includes(index));
 			}
 		}
-		context.telemetry.metrics?.counter("chord.link.encodes").add(1);
+		chordMetrics(context.telemetry.metrics).counter("chord.link.encodes").add(1);
 		return { hold: this.id, members, failed, retired };
 	}
 
