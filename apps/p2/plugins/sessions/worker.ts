@@ -9,13 +9,16 @@ import {
 import { obj, str } from "@earendil-works/pi-schema";
 import { defineFacet, expectVariant, forbidden, local } from "@p2/app/v1";
 import { durableContext } from "@p2/app/v1/node";
-import { Extensions, harnessOf, type WorkerParts, workerOf } from "@p2/app/v1/worker";
+import { Extensions, harnessOf, isTopLevel, type WorkerParts, workerOf } from "@p2/app/v1/worker";
 import { MAX_TITLE, Sessions, SessionTransfer } from "./contract.ts";
 
 /** Contributes the `rename_session` tool: the agent keeps the session's title naming its overall task. */
 const SessionTools = local("p2.session-tools", { version: 1, params: {}, members: {} });
 
-/** The tool runs outside Chord calls (a Durable tool), so each call starts a fresh short root of the worker's. */
+/**
+ * The tool runs outside Chord calls (a Durable tool), so each call starts a fresh short root of the worker's. Only
+ * top-level conversations (the main conversation and its `/tree` branches) may rename the session.
+ */
 const renameSession = (root: () => WorkerParts["root"]) =>
 	defineExtension({
 		name: "p2-session-title",
@@ -36,7 +39,7 @@ const renameSession = (root: () => WorkerParts["root"]) =>
 						output: [{ type: "text" as const, text }],
 						isError,
 					});
-					if (api.conversationId !== ROOT_CONVERSATION_ID)
+					if (!(await isTopLevel(api, api.conversationId, context)))
 						return reply("Only the session's top-level conversation can rename it.", true);
 					const title = args.title.replace(/\s+/g, " ").trim();
 					if (!title) return reply("The title is empty.", true);
@@ -69,7 +72,11 @@ export default defineFacet((host) => {
 			members: {
 				history: async ({ conversation, before }, ctx) => {
 					const context = durableContext(ctx);
-					const found = await harness().durable.conversation(conversation as ConversationId, context);
+					const durable = harness().durable;
+					// A subagent's history as a session of its own needs its cwd and tools: not yet.
+					if (!(await isTopLevel(durable, conversation as ConversationId, context)))
+						throw new Error("Forking a subagent conversation is not supported yet");
+					const found = await durable.conversation(conversation as ConversationId, context);
 					if (!found) throw new Error(`Unknown conversation ${conversation}`);
 					const [chosen] = (await found.entries({ maxEntryId: before as EntryId }, 1, undefined, context)).items;
 					if (chosen?.id !== before) throw new Error("Unknown message");

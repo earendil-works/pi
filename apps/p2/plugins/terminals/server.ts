@@ -61,7 +61,8 @@ export default defineFacet((host) => {
 					if (session.archivedAt !== null) throw new Error("Session is archived");
 					// Where the conversation works: a subagent's own location stays where it is when the session moves.
 					const child = children.children.value[id]?.find((each) => each.conversationId === conversation);
-					if (conversation !== 1 && !child) throw new Error("Unknown conversation");
+					if (conversation !== 1 && conversation !== session.main && !child)
+						throw new Error("Unknown conversation");
 					const { cwd, env } = conversationLocation(session, child)!;
 					return command({ type: "open", sessionId: id, cwd, env, cols, rows });
 				},

@@ -63,6 +63,8 @@ const SESSION: Session = {
 	pinned: false,
 	model: { provider: "faux", modelId: "faux-1" },
 	thinkingLevel: "off",
+	main: 1,
+	branches: [],
 };
 type Calls = Record<string, unknown[]>;
 const entry = (id: number, record: Omit<EntryRecord, "id" | "conversationId">): EntryRecord =>

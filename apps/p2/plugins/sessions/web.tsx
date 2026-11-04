@@ -1,6 +1,6 @@
 // The mobile drawer's component tree, with catalog/status/subagent/search handles supplying its data.
 
-import { Access, BACKGROUND_CONTEXT, contribute, defineFacet, liveIn } from "@p2/app/v1";
+import { Access, BACKGROUND_CONTEXT, contribute, defineFacet, liveIn, whenLive } from "@p2/app/v1";
 import {
 	Drawer,
 	navigate,
@@ -10,6 +10,7 @@ import {
 	toggleSidebar,
 	useComposerState,
 	useConnected,
+	useHost,
 	useNewSessionState,
 	useObject,
 	useReadable,
@@ -20,6 +21,7 @@ import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { Search, SessionReads } from "../search/contract.ts";
 import { SessionStatus } from "../status/contract.ts";
 import { Subagents } from "../subagents/contract.ts";
+import { SessionTree } from "../tree/contract.ts";
 import { Sessions } from "./contract.ts";
 import { SessionOptions } from "./SessionOptions.tsx";
 
@@ -75,9 +77,10 @@ function Sidebar() {
 			}),
 		[list, statuses, children, answers, reads],
 	);
-	// The open session's root conversation, shown on a visible page, is read through its latest answer.
+	// The open session's main conversation, shown on a visible page, is read through its latest answer.
 	const visible = usePageVisible();
-	const shown = visible && (route.conversation ?? 1) === 1 ? route.session : undefined;
+	const shownMain = (list ?? []).find((session) => session.id === route.session)?.main;
+	const shown = visible && route.conversation === shownMain ? route.session : undefined;
 	const latest = shown ? (answers?.[shown] ?? 0) : 0;
 	const read = shown ? (reads?.[shown] ?? 0) : 0;
 	useEffect(() => {
@@ -94,15 +97,37 @@ function Sidebar() {
 			catalog?.restore({ id }, BACKGROUND_CONTEXT) ?? Promise.reject(new Error("Only the owner restores sessions")),
 		[catalog],
 	);
-	const onOpen = useCallback((session: string, conversation = 1) => navigate({ session, conversation }), []);
+	// A session opens at its main conversation; `/s/<id>` would open conversation 1, which redirects there.
+	const onOpen = useCallback(
+		(session: string, conversation?: number) =>
+			navigate({ session, conversation: conversation ?? list?.find((each) => each.id === session)?.main ?? 1 }),
+		[list],
+	);
+	// Switching to a branch: a reference of its own (the switch also reaches the session row), then its conversation.
+	const host = useHost();
+	// Errors go to the app's toast in main, as in Pi Mobile (not clipped inside the drawer).
+	const { setError } = useComposerState();
+	const onBranch = useCallback(
+		(session: string, conversation: number) => {
+			const held = host.hold(SessionTree, { session }, BACKGROUND_CONTEXT);
+			whenLive(held)
+				.then(() => {
+					const tree = liveIn(held, "owner");
+					if (!tree) throw new Error("Only the owner switches branches");
+					return tree.select({ conversation }, BACKGROUND_CONTEXT);
+				})
+				.then(() => navigate({ session, conversation }))
+				.catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
+				.finally(() => held.release());
+		},
+		[host, setError],
+	);
 	const { setChoice } = useNewSessionState();
 	const onNew = useCallback(() => {
 		setChoice(undefined);
 		navigate({});
 		setTimeout(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(), 50);
 	}, [setChoice]);
-	// Errors go to the app's toast in main, as in Pi Mobile (not clipped inside the drawer).
-	const { setError } = useComposerState();
 	return (
 		<Drawer
 			sessions={sessions}
@@ -111,6 +136,7 @@ function Sidebar() {
 			conversationId={route.conversation}
 			connected={connected}
 			onOpen={onOpen}
+			onBranch={owner ? onBranch : undefined}
 			onNew={onNew}
 			onCollapse={toggleSidebar}
 			onSearch={search ? onSearch : undefined}

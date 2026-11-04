@@ -225,6 +225,12 @@ export default defineFacet((host) => {
 						);
 						return null;
 					},
+					treeSelf: async ({ main, branches }, ctx) => {
+						const current = await catalog.get({ id }, ctx);
+						if (current.main !== main || JSON.stringify(current.branches) !== JSON.stringify(branches))
+							await catalog.update({ id, main, branches }, ctx);
+						return null;
+					},
 				},
 			};
 		}
@@ -340,8 +346,6 @@ export default defineFacet((host) => {
 				fork: async ({ id, conversation, before }, ctx) => {
 					const source = await catalog.get({ id }, ctx);
 					if (source.archivedAt !== null) throw new Error("Session is archived");
-					// A subagent's history as a session of its own needs its cwd and tools: not yet.
-					if (conversation !== 1) throw new Error("Forking a subagent conversation is not supported yet");
 					// SessionTransfer is the server's: reached in a root of its own (a method's `ctx.get` acts as the caller).
 					const { entries } = await lifecycle(async (root) =>
 						(await root.get(SessionTransfer, { session: id })).history({ conversation, before }, root),

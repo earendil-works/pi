@@ -19,6 +19,10 @@ export {
 	type ThinkingLevel,
 	ThinkingLevelSchema,
 } from "@p2/app/v1";
+/** A `/tree` branch as the sidebar lists it: its conversation and what it is about (its first own message). */
+export const BranchSchema = obj({ conversation: int({ minimum: 1 }), label: str() });
+export type Branch = Static<typeof BranchSchema>;
+
 export const SessionSchema = obj({
 	id: str(),
 	env: opt(union([str(), nul()])),
@@ -30,6 +34,10 @@ export const SessionSchema = obj({
 	pinned: bool(),
 	model: ModelRefSchema,
 	thinkingLevel: str(),
+	/** The current main conversation: 1, or the `/tree` branch the session continues in (`docs/tree.md`). */
+	main: int({ minimum: 1 }),
+	/** The top-level conversations with messages of their own, newest first; empty until the worker reported them. */
+	branches: arr(BranchSchema),
 });
 export type Session = Static<typeof SessionSchema>;
 
@@ -66,8 +74,8 @@ export const ArchivedStarts = local("p2.archived-starts", {
 
 /** The session catalog (server, SQLite): every session, archived ones included. Host-internal. */
 export const Catalog = local("p2.catalog", {
-	/** 2: thinking levels are an enum. */
-	version: 2,
+	/** 2: thinking levels are an enum. 3: `main`. */
+	version: 3,
 	params: {},
 	members: {
 		sessions: arr(SessionSchema),
@@ -98,6 +106,8 @@ export const Catalog = local("p2.catalog", {
 				archived: opt(bool()),
 				model: opt(ModelRefSchema),
 				thinkingLevel: opt(ThinkingLevelSchema),
+				main: opt(int({ minimum: 1 })),
+				branches: opt(arr(BranchSchema)),
 			}),
 			SessionSchema,
 		),
@@ -112,8 +122,9 @@ export const Sessions = remote("p2.sessions", {
 	/**
 	 * 2: thinking levels are an enum; configureSelf takes either field alone.
 	 * 3: `clone` and `fork` (owner).
+	 * 4: rows carry `main` and `branches`; the worker's `treeSelf`.
 	 */
-	version: 3,
+	version: 4,
 	params: {},
 	hostAddress: serverHost,
 	variants: {
@@ -166,6 +177,11 @@ export const Sessions = remote("p2.sessions", {
 				renameSelf: method(obj({ title: Title }), obj({ previous: str() })),
 				/** The root conversation's configuration changed (either field alone): the catalog entry follows. */
 				configureSelf: method(obj({ model: opt(ModelRefSchema), thinkingLevel: opt(ThinkingLevelSchema) })),
+				/**
+				 * The session's main conversation or its branches changed (a `/tree` switch, a branch's first message), or
+				 * the worker started: the catalog entry follows, so clients open the main one and list the branches.
+				 */
+				treeSelf: method(obj({ main: int({ minimum: 1 }), branches: arr(BranchSchema) })),
 			},
 		},
 	},

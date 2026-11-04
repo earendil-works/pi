@@ -1,8 +1,10 @@
-// Feeds root and subagent messages into the server index with per-conversation acknowledged catch-up.
+// Feeds the top-level conversations' (the main conversation and its `/tree` branches) and subagents' messages into the
+// server index with per-conversation acknowledged catch-up.
 import { setTimeout as sleep } from "node:timers/promises";
 import {
 	AssistantEntry,
 	type Conversation,
+	type ConversationId,
 	type Cursor,
 	type EntryId,
 	type EntryRecord,
@@ -21,7 +23,7 @@ import {
 	until,
 } from "@p2/app/v1";
 import { durableContext } from "@p2/app/v1/node";
-import { CommitSignal, harnessOf } from "@p2/app/v1/worker";
+import { CommitSignal, harnessOf, topLevelRecords } from "@p2/app/v1/worker";
 import { CONVERSATION_PREFIX } from "../conversations/contract.ts";
 import { Subagents } from "../subagents/contract.worker.ts";
 import { type IndexedMessage, IndexScan, SearchFeed } from "./contract.ts";
@@ -135,15 +137,17 @@ export default defineFacet((host) => {
 				try {
 					const context = durableContext(ctx);
 					const registry = await durable.snapshot(Subagents, ROOT_CONVERSATION_ID, context);
-					const ids = new Set([
-						ROOT_CONVERSATION_ID,
-						...Object.values(registry?.agents ?? {}).map((agent) => agent.conversationId),
-					]);
-					for (const id of ids) {
-						const conversation = await durable.conversation(id, context);
+					// A branch's history starts after its fork point: what it inherits is indexed with the conversation
+					// storing it.
+					const starts = new Map<number, number>(
+						(await topLevelRecords(durable, context)).map((record) => [record.id, record.parent?.at ?? 0]),
+					);
+					for (const agent of Object.values(registry?.agents ?? {})) starts.set(agent.conversationId, 0);
+					for (const [id, start] of starts) {
+						const conversation = await durable.conversation(id as ConversationId, context);
 						if (!conversation) continue;
 						const through = await feed.cursor({ conversation: id }, ctx);
-						await catchUp(conversation, feed, through, ctx);
+						await catchUp(conversation, feed, Math.max(through, start), ctx);
 					}
 					scanned.set(true);
 				} catch (error) {

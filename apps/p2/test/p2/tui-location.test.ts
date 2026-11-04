@@ -39,6 +39,8 @@ const SESSION: Session = {
 	pinned: false,
 	model: { provider: "faux", modelId: "faux-1" },
 	thinkingLevel: "off",
+	main: 1,
+	branches: [],
 };
 const typed = (send: (data: string) => void, text: string) => {
 	for (const char of text) send(char);

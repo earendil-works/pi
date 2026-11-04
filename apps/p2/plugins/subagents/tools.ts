@@ -27,7 +27,7 @@ import {
 import { arr, bool, compile, nul, obj, opt, str, union } from "@earendil-works/pi-schema";
 import type { Context, JsonValue } from "@p2/app/v1";
 import { type Location, type LocationInput, literal, locationText } from "@p2/app/v1";
-import { originOf } from "@p2/app/v1/worker";
+import { mainConversation, originOf } from "@p2/app/v1/worker";
 import { AGENT_MESSAGE_ENTRY, type AgentMessage, SUBAGENT_TASK_ENTRY, SubagentLocationsSchema } from "./contract.ts";
 import { HISTORY_TOOLS, resolveChoice, Subagents, TEAM_TOOL } from "./contract.worker.ts";
 
@@ -171,7 +171,7 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
 					return next(settled.reason === "aborted" ? undefined : { intent: "failed", text: settled.reason });
 				// A continue settles like an input (it has no placed entry): its run's answer is reported the same way.
 				if (settled.type !== "input" && settled.type !== "continue") return next();
-				const agent = (await tx.doc(Subagents, runtime.conversationId)).agents[name];
+				const agent = (await tx.doc(Subagents, ROOT_CONVERSATION_ID)).agents[name];
 				if (!agent || agent.reported.includes(settled.answer)) return next();
 				agent.reported.push(settled.answer);
 				const answer = (await tx.entry(AssistantEntry, settled.answer))?.model?.[0] as AssistantMessage | undefined;
@@ -182,7 +182,8 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
 			const report = reporter.state.checkpoint.report;
 			if (report !== undefined) {
 				const { name, conversationId } = reporter.input;
-				const main = await runtime.conversation(runtime.conversationId, context);
+				// To the current main conversation: a `/tree` switch while the subagent worked moves where its answer goes.
+				const main = await runtime.conversation(await mainConversation(runtime, context), context);
 				await main?.submit(
 					{
 						type: "input",
@@ -407,7 +408,10 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 				details: { action, ...(name === undefined ? {} : { name }), ...extra } satisfies SubagentDetails,
 				isError,
 			});
-			const registry = (await api.snapshot(Subagents, api.conversationId, context)) ?? { agents: {}, reporters: {} };
+			const registry = (await api.snapshot(Subagents, ROOT_CONVERSATION_ID, context)) ?? {
+				agents: {},
+				reporters: {},
+			};
 			const installed = () => api.registry.tools().map((entry) => entry.tool);
 
 			if (action === "models") {
@@ -438,7 +442,7 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 				return reply(`Stopped ${name}.`, { conversationId: agent.conversationId });
 			}
 			if ((action === "archive" || action === "restore") && agent) {
-				await setArchived(api, api.conversationId, agent.conversationId, action === "archive", context);
+				await setArchived(api, ROOT_CONVERSATION_ID, agent.conversationId, action === "archive", context);
 				return reply(action === "archive" ? `Stopped and archived ${name}.` : `Restored ${name}.`, {
 					conversationId: agent.conversationId,
 				});
@@ -506,7 +510,7 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 			const session = location === null ? await locator.locate(ROOT_CONVERSATION_ID, api, context) : undefined;
 
 			const result = await api.commit(async (tx) => {
-				const state = await tx.doc(Subagents, api.conversationId);
+				const state = await tx.doc(Subagents, ROOT_CONVERSATION_ID);
 				const background = { ownership: { kind: "conversation" }, background: true } as const;
 				if (action === "configure") {
 					const target = state.agents[name];
@@ -569,7 +573,7 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 				state.reporters[api.taskId] = await tx.createTask(Reporter, input, background);
 				return action === "send" ? `Sent to ${name}.` : `Started ${name}.`;
 			}, context);
-			const current = (await api.snapshot(Subagents, api.conversationId, context))?.agents[name];
+			const current = (await api.snapshot(Subagents, ROOT_CONVERSATION_ID, context))?.agents[name];
 			return reply(
 				result,
 				current
@@ -656,7 +660,7 @@ const teamTool: ToolRegistration = defineTool({
 		if (!args.message?.trim()) return reply("send needs a message.", true);
 		const sibling = args.to === "parent" ? undefined : siblings.find(([name]) => name === args.to)?.[1];
 		if (args.to !== "parent" && !sibling) return reply(`No other subagent named ${args.to}.`, true);
-		const target = await api.conversation(sibling?.conversationId ?? ROOT_CONVERSATION_ID, context);
+		const target = await api.conversation(sibling?.conversationId ?? (await mainConversation(api, context)), context);
 		if (!target) return reply(`${args.to} has no conversation.`, true);
 		await target.submit(
 			{

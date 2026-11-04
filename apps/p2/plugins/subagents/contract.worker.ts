@@ -69,6 +69,11 @@ export type SubagentState = {
 	/** One-shot agents by the nested call ID that ran them (`<script call ID>/c<n>`). */
 	oneShots?: Record<string, OneShot>;
 };
+/**
+ * The session's subagent registry. Kept on conversation 1 for every top-level conversation (the main conversation and
+ * its `/tree` branches, `docs/tree.md`): subagents are session-wide and outlive branch switches.
+ * TODO: this should probably be a session-scoped document; moving it there needs a migration of existing sessions.
+ */
 export const Subagents = defineDoc<SubagentState>({
 	kind: "p2.subagents",
 	// 2: an own location (environment and cwd) instead of an own cwd (version 1's is `unplacedCwd` until placed).

@@ -1,0 +1,92 @@
+// `/tree` in the browser (docs/tree.md): "Edit" on a user message (a branch before it, its text in the composer),
+// "Branch from here" on an answer, the branch rows under the session in the sidebar, and following a switch made
+// elsewhere.
+
+import assert from "node:assert/strict";
+import { after, before, describe, it } from "node:test";
+import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { Chat } from "../../plugins/chat/contract.ts";
+import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SessionTree } from "../../plugins/tree/contract.ts";
+import { Browser, browserTests } from "./browser.ts";
+import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+
+const idle = (view: { docs: Record<string, unknown> } | null | undefined) =>
+	!(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run;
+
+describe("branches in the browser", { skip: !browserTests }, () => {
+	let fixture: Fixture, browser: Browser, id: string;
+	const send = async (conversation: number, text: string) => {
+		const chat = await holdIn(fixture.browser(), Chat, { session: id, conversation }, "participant");
+		await chat.send({ text, requestId: `${conversation}:${text}` }, BACKGROUND_CONTEXT);
+		await until(chat.view, (view) => JSON.stringify(view?.entries ?? []).includes(`Echo: ${text}`) && idle(view));
+		chat.release();
+	};
+	const row = async () => {
+		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		return (await until(sessions.sessions, (list) => Boolean(list?.some((each) => each.id === id)))).find(
+			(each) => each.id === id,
+		)!;
+	};
+	before(async () => {
+		fixture = await startFixture({ web: true });
+		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		id = (await sessions.create({ cwd: fixture.workspace, title: "Branches" }, BACKGROUND_CONTEXT)).id;
+		await send(1, "first");
+		await send(1, "second");
+		browser = await Browser.start();
+	});
+	after(async () => {
+		await browser?.close();
+		await fixture?.close();
+	});
+
+	it("edits a user message into a branch, lists the branches and switches between them", async () => {
+		await browser.metrics(1280, 900);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
+		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: second')`);
+		// One branch: no branch rows yet.
+		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.branch-row').length`), 0);
+		await browser.evaluate(
+			`[...document.querySelectorAll('.user')].find(e=>e.textContent.includes('second')).querySelector('.edit-button').click()`,
+		);
+		await browser.wait(`document.querySelector('.composer textarea')?.value==='second'`);
+		const main = (await until((await holdIn(fixture.browser(), Sessions, {}, "owner")).sessions, (list) =>
+			Boolean(list?.find((each) => each.id === id && each.main !== 1)),
+		))!.find((each) => each.id === id)!.main;
+		await browser.wait(`location.pathname==='/s/${id}/c/${main}'`);
+		await browser.wait(
+			`document.querySelector('.messages')?.textContent.includes('Echo: first') && !document.querySelector('.messages').textContent.includes('Echo: second')`,
+		);
+		// The branch's first message gives it a row, newest first.
+		await send(main, "other");
+		await browser.wait(`document.querySelectorAll('.branch-row').length===2`);
+		assert.deepEqual(
+			await browser.evaluate<string[]>(`[...document.querySelectorAll('.branch-row')].map(e=>e.textContent)`),
+			["othercurrent", "first"],
+		);
+		// Switching back to conversation 1 from the sidebar.
+		await browser.evaluate(`[...document.querySelectorAll('.branch-row')].find(e=>e.textContent==='first').click()`);
+		await browser.wait(`location.pathname==='/s/${id}'`);
+		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: second')`);
+		assert.equal((await row()).main, 1);
+		// The rows keep their order: only the "current" mark moves.
+		await browser.wait(
+			`[...document.querySelectorAll('.branch-row')].map(e=>e.textContent).join('|')==='other|firstcurrent'`,
+		);
+	});
+
+	it("branches after an answer, and follows a switch made elsewhere", async () => {
+		await browser.evaluate(
+			`[...document.querySelectorAll('.assistant')].find(e=>e.textContent.includes('Echo: first')).querySelector('button[aria-label="Branch from here"]').click()`,
+		);
+		await browser.wait(`location.pathname.startsWith('/s/${id}/c/')`);
+		await browser.wait(
+			`document.querySelector('.messages')?.textContent.includes('Echo: first') && !document.querySelector('.messages').textContent.includes('Echo: second')`,
+		);
+		const tree = await holdIn(fixture.browser(), SessionTree, { session: id }, "owner");
+		await tree.select({ conversation: 1 }, BACKGROUND_CONTEXT);
+		await browser.wait(`location.pathname==='/s/${id}'`);
+		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: second')`);
+	});
+});

@@ -808,6 +808,30 @@ textarea.input {
 .user .reply-button:focus-visible {
 	opacity: 1;
 }
+/* Editing a person's message (`/tree`): beside it on hover, always shown where there is no hover. */
+.edit-button {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	align-self: flex-start;
+	justify-content: center;
+	width: var(--control-sm);
+	height: var(--control-sm);
+	color: var(--faint);
+	opacity: 0;
+}
+.edit-button:hover {
+	color: var(--text);
+}
+.user:hover .edit-button,
+.edit-button:focus-visible {
+	opacity: 1;
+}
+@media (pointer: coarse) {
+	.edit-button {
+		opacity: 1;
+	}
+}
 /* Phones and tablets reply with a long press. */
 @media (pointer: coarse) {
 	.reply-button {
@@ -2837,6 +2861,18 @@ button.diff-number:hover {
 	max-width: 40%;
 	overflow: hidden;
 	font-family: var(--mono);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* `/tree` branches under their session: the fork icon before the label (docs/tree.md). */
+.branch-row > svg {
+	flex: none;
+	color: var(--faint);
+}
+.branch-row .session-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }

@@ -44,6 +44,8 @@ function api(
 		taskId: "fixture-tool",
 		callId: "fixture-call",
 		getTask: async () => ({ kind: "pi.tool", input: { assistant: 10 } }),
+		// No `/tree` branches: conversation 1 is the only top-level conversation.
+		snapshot: async () => undefined,
 		commit: async (change: (tx: Tx) => unknown) =>
 			change({
 				scanEntries: async (query: { maxEntryId: number }) => ({

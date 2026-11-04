@@ -96,7 +96,8 @@ export interface TuiContext extends RenderContext {
 	/** Guest-local display preferences (validated data from the launcher over server defaults). */
 	readonly settings: TuiSettings;
 	readonly role: TuiRole | undefined;
-	readonly identity: { readonly session: string | undefined; readonly conversation: number };
+	/** The viewed session and conversation, and the session's main conversation (1, or its current `/tree` branch). */
+	readonly identity: { readonly session: string | undefined; readonly conversation: number; readonly main: number };
 	/** Shows a screen; with `conversation`, that conversation of the session (default: the main one on a switch). */
 	navigate(screen: string, session?: string, conversation?: number): void;
 	readonly view: { expandedTools: boolean; showThinking: boolean };

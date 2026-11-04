@@ -55,6 +55,7 @@ import {
 	HarnessConfig,
 	harnessOf,
 	InputGates,
+	mainConversation,
 	ReadOnlyConversations,
 	responseCosts,
 	workerOf,
@@ -582,6 +583,7 @@ export default defineFacet((host) => {
 		/** The author an entry records, with the owner's name as settings.json says now. */
 		const author = (): Author => authorOf(principal, settings.settings.value.ownerName ?? DEFAULT_OWNER_NAME);
 		const worker = workerOf(self);
+		const harness = harnessOf(self);
 		// Each live Chat object is a viewer: the worker stays up while someone looks.
 		self.open(
 			async () => worker().liveness.add("viewers", 1),
@@ -689,9 +691,12 @@ export default defineFacet((host) => {
 						if (principal.kind !== "owner") throw forbidden("only the owner configures the model");
 						await writable(ctx);
 						await chat.configure(change, ctx);
-						// The root conversation's model is the session's: the sidebar and the next worker start use it. Either
+						// The main conversation's model is the session's: the sidebar and the next worker start use it. Either
 						// field alone updates it (Pi Mobile's configure).
-						if (conversation === 1 && (change.model || change.thinkingLevel)) {
+						if (
+							(change.model || change.thinkingLevel) &&
+							conversation === (await mainConversation(harness().durable, durableContext(ctx)))
+						) {
 							await expectVariant(await ctx.get(Sessions, {}), "worker").configureSelf(
 								{
 									...(change.model ? { model: change.model } : {}),

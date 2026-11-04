@@ -55,6 +55,8 @@ const session = (id: string, patch: Partial<Session> = {}): Session => ({
 	pinned: false,
 	model: { provider: "faux", modelId: "faux-1" },
 	thinkingLevel: "off",
+	main: 1,
+	branches: [],
 	...patch,
 });
 const META: ModelMeta = {

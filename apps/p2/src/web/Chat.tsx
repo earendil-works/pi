@@ -16,6 +16,7 @@ import {
 	AlertIcon,
 	ArtifactIcon,
 	BotIcon,
+	BranchIcon,
 	CheckIcon,
 	ChevronIcon,
 	CodeIcon,
@@ -92,6 +93,12 @@ export const OpenWorkspaceFile = createContext<((path: string, line?: number) =>
 export const SessionId = createContext<string | undefined>(undefined);
 /** Starts a reply to an entry; absent while the conversation accepts no replies (chat-mode turns them on). */
 export const ReplyTo = createContext<((target: { entryId: number; name: string }) => void) | undefined>(undefined);
+
+/**
+ * Continues the session from a message (`/tree`, docs/tree.md): before a user message, whose text goes back to the
+ * composer ("Edit"), after an answer ("Branch from here"). Absent unless the owner views the main conversation.
+ */
+export const BranchFrom = createContext<((entryId: number) => void) | undefined>(undefined);
 
 /** Loads older history until an entry is retained; false when the conversation has no such entry. */
 export const RevealEntry = createContext<((entryId: number) => Promise<boolean>) | undefined>(undefined);
@@ -783,6 +790,7 @@ function Assistant({
 	streaming: boolean;
 }) {
 	const reply = useReply(streaming ? undefined : entryId, "Pi");
+	const branch = useContext(BranchFrom);
 	const byId = new Map(tools.map((tool) => [tool.id, tool]));
 	const parts = message.content;
 	const lastText = parts.findLastIndex((part) => part.type === "text" && part.text.trim());
@@ -811,6 +819,17 @@ function Assistant({
 							{index === lastText && answer && !streaming && (
 								<div className="message-actions">
 									<CopyButton text={answer} />
+									{branch && entryId !== undefined && (
+										<button
+											type="button"
+											className="copy"
+											aria-label="Branch from here"
+											title="Branch from here: continue the session after this answer"
+											onClick={() => branch(entryId)}
+										>
+											<BranchIcon />
+										</button>
+									)}
 									{reply.button}
 								</div>
 							)}
@@ -965,11 +984,25 @@ function UserMessage({ item }: { item: Extract<Item, { type: "user" }> }) {
 	const reveal = useContext(RevealEntry);
 	const peer = item.peer;
 	const reply = useReply(item.author ? item.entryId : undefined, item.author?.name ?? "");
+	const branch = useContext(BranchFrom);
+	// Only what reached the agent can be edited: a chat message (chat mode) is not part of its history.
+	const entryId = item.chat ? undefined : item.entryId;
 	return (
 		<div
 			className={`user ${item.author?.kind === "guest" ? "guest-message" : ""} ${item.chat ? "chat-message" : ""}`}
 			data-entry={item.entryId}
 		>
+			{branch && entryId !== undefined && (
+				<button
+					type="button"
+					className="edit-button"
+					aria-label="Edit"
+					title="Edit: continue the session before this message, with its text in the composer"
+					onClick={() => branch(entryId)}
+				>
+					<PencilIcon />
+				</button>
+			)}
 			{reply.button}
 			<div className="bubble" {...reply.gesture}>
 				{item.replyTo && (

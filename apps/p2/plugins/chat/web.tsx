@@ -14,6 +14,7 @@ import {
 } from "@p2/app/v1";
 import {
 	AttachIcon,
+	BranchFrom,
 	buildTranscript,
 	ChevronIcon,
 	CloseIcon,
@@ -89,6 +90,7 @@ import type { ResourceSnapshot } from "../models/resources.ts";
 import { type Session, Sessions } from "../sessions/contract.ts";
 import { SessionMetrics, SessionStatus, WorkerControl } from "../status/contract.ts";
 import { type Child, conversationLocation, SubagentControl, Subagents } from "../subagents/contract.ts";
+import { SessionTree } from "../tree/contract.ts";
 import { Chat, ChatCosts, TranscriptEntries } from "./contract.ts";
 import { type Outgoing, outboxOf } from "./outbox.ts";
 
@@ -346,7 +348,7 @@ function TopBar({ session, child, owner = false }: { session?: Session; child?: 
 						<button
 							type="button"
 							className="crumb"
-							onClick={() => session && void nav.backOrPush(conversationRoute(route, session.id))}
+							onClick={() => session && void nav.backOrPush(conversationRoute(route, session.id, session.main))}
 						>
 							← {session?.title}
 						</button>
@@ -501,17 +503,21 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			),
 		[children, sessionId],
 	);
+	// Only subagents and the main conversation are shown: an earlier `/tree` branch (another device switched, or a link
+	// from before) and unknown conversations open the main one.
+	const main = session?.main;
 	useEffect(() => {
 		const current = nav.route;
 		if (
 			children &&
-			conversationId !== 1 &&
+			main !== undefined &&
+			conversationId !== main &&
 			!child &&
 			current.session === sessionId &&
 			current.conversation === conversationId
 		)
-			void nav.replace(conversationRoute(current, sessionId), current);
-	}, [children, child, conversationId, nav, sessionId]);
+			void nav.replace(conversationRoute(current, sessionId, main), current);
+	}, [children, child, conversationId, main, nav, sessionId]);
 	const workers = liveIn(useObject(SessionStatus, {}), "reader");
 	const workerError = useReadable(workers?.statuses)?.[sessionId]?.error;
 	const [activationError, setActivationError] = useState<string>();
@@ -581,6 +587,27 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		canReply,
 		mentionName,
 	} = composer;
+	// `/tree` from a message (docs/tree.md): the owner, in the main conversation. A reference of its own, as the switch
+	// reaches the session row (whose `main` moves this view) before its result; a user message's text fills the composer.
+	const branchFrom = useCallback(
+		(entry: number) => {
+			const held = host.hold(SessionTree, { session: sessionId }, BACKGROUND_CONTEXT);
+			whenLive(held)
+				.then(() => {
+					const tree = liveIn(held, "owner");
+					if (!tree) throw new Error("Only the owner branches the session");
+					return tree.navigate({ entry }, BACKGROUND_CONTEXT);
+				})
+				.then(({ conversation, text }) => {
+					if (text !== null) setDraft(text);
+					void nav.replace(conversationRoute(nav.route, sessionId, conversation));
+				})
+				.catch((reason: unknown) => setError(errorText(reason)))
+				.finally(() => held.release());
+		},
+		[host, nav, sessionId, setDraft, setError],
+	);
+	const canBranch = owner && conversationId === session?.main;
 	// Replies exist while a plugin allows them here (chat-mode, in chat mode); the reply action fills the composer.
 	const startReply = useCallback(
 		(target: { entryId: number; name: string }) => {
@@ -947,29 +974,31 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 										<OneShotAgents.Provider value={oneShots}>
 											<OpenWorkspaceFile.Provider value={canWrite ? openWorkspaceFile : undefined}>
 												<ReplyTo.Provider value={participant && canReply ? startReply : undefined}>
-													<RevealEntry.Provider value={reveal}>
-														<FillGap.Provider value={fillGap}>
-															<Messages
-																transcript={shown ?? transcript}
-																rows={rows}
-																list={follow.list}
-																range={follow.range}
-																stopped={
-																	stopped?.sessionId === sessionId &&
-																	stopped?.conversationId === conversationId &&
-																	!view?.entries.some((entry) =>
-																		entry.model?.some(
-																			(message) =>
-																				message.role === "assistant" &&
-																				message.stopReason === "aborted",
-																		),
-																	)
-																}
-																earlier={earlier}
-																onEarlier={() => void loadEarlier()}
-															/>
-														</FillGap.Provider>
-													</RevealEntry.Provider>
+													<BranchFrom.Provider value={canBranch ? branchFrom : undefined}>
+														<RevealEntry.Provider value={reveal}>
+															<FillGap.Provider value={fillGap}>
+																<Messages
+																	transcript={shown ?? transcript}
+																	rows={rows}
+																	list={follow.list}
+																	range={follow.range}
+																	stopped={
+																		stopped?.sessionId === sessionId &&
+																		stopped?.conversationId === conversationId &&
+																		!view?.entries.some((entry) =>
+																			entry.model?.some(
+																				(message) =>
+																					message.role === "assistant" &&
+																					message.stopReason === "aborted",
+																			),
+																		)
+																	}
+																	earlier={earlier}
+																	onEarlier={() => void loadEarlier()}
+																/>
+															</FillGap.Provider>
+														</RevealEntry.Provider>
+													</BranchFrom.Provider>
 												</ReplyTo.Provider>
 											</OpenWorkspaceFile.Provider>
 										</OneShotAgents.Provider>

@@ -1,11 +1,15 @@
 import { defineDoc, defineExtension, defineTool } from "@earendil-works/pi-durable";
 import { obj, str, union } from "@earendil-works/pi-schema";
 import { literal } from "@p2/app/v1";
+import { agentConversation } from "@p2/app/v1/worker";
 import { type ArtifactInfo, Artifacts } from "./store.ts";
 
 type ArtifactState = { artifacts: ArtifactInfo[] };
 
-/** Complete artifact index for one conversation; reset/compaction never rewind it. */
+/**
+ * Complete artifact index of one agent (on conversation 1 for the main agent, see `agentConversation`); reset and
+ * compaction never rewind it.
+ */
 export const ArtifactDoc = defineDoc<ArtifactState>({
 	kind: "p2.artifacts",
 	version: 1,
@@ -36,8 +40,10 @@ export function createArtifactExtension(dataDirectory: string, sessionId: string
 				replay: "unsafe",
 				execute: async (args, api, context) => {
 					const info = await artifacts.save(sessionId, args);
+					// The main agent's list is one, whichever `/tree` branch it works in.
+					const holder = await agentConversation(api, api.conversationId, context);
 					await api.commit(async (tx) => {
-						const state = await tx.doc(ArtifactDoc, api.conversationId);
+						const state = await tx.doc(ArtifactDoc, holder);
 						if (
 							!state.artifacts.some(
 								(artifact) => artifact.name === info.name && artifact.version === info.version,

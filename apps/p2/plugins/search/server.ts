@@ -54,7 +54,11 @@ export default defineFacet((host) => {
 					0,
 					...messages.filter((message) => message.role === "assistant").map((message) => message.entryId),
 				);
-				if (conversation === 1 && answer > (markers.value.answers[session] ?? 0))
+				// Unread answers are the main conversation's (conversation 1 or the `/tree` branch the session continues in).
+				if (
+					answer > (markers.value.answers[session] ?? 0) &&
+					conversation === (await catalog.get({ id: session }, ctx)).main
+				)
 					await markers.change((draft) => {
 						draft.answers[session] = answer;
 					}, ctx);

@@ -27,7 +27,7 @@ export function SessionOptions() {
 	const { setError } = useComposerState();
 	const perform = (operation: Promise<unknown> | undefined) =>
 		void operation?.catch((error) => setError(error instanceof Error ? error.message : String(error)));
-	if (!service || !session || route.conversation !== 1) return null;
+	if (!service || !session || route.conversation !== session.main) return null;
 	return (
 		<>
 			<button

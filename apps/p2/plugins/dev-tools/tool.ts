@@ -1,7 +1,7 @@
-import { defineExtension, defineTool, ROOT_CONVERSATION_ID, section } from "@earendil-works/pi-durable";
+import { defineExtension, defineTool, section } from "@earendil-works/pi-durable";
 import { arr, obj, opt, str } from "@earendil-works/pi-schema";
 import type { Context, DevResult } from "@p2/app/v1";
-import { originOf } from "@p2/app/v1/worker";
+import { isTopLevel, originOf } from "@p2/app/v1/worker";
 
 export function createReloadExtension(
 	reload: (plugins: readonly string[] | undefined, context: Context) => Promise<DevResult>,
@@ -11,8 +11,8 @@ export function createReloadExtension(
 	return defineExtension({
 		name: "p2-dev-tools",
 		sections: [
-			section("p2-development", (input) =>
-				permitted() && input.conversationId === ROOT_CONVERSATION_ID
+			section("p2-development", async (input, context) =>
+				permitted() && (await isTopLevel(input.read, input.conversationId, context))
 					? "p2 backend saves only mark dirty. After editing p2 plugins, use reload_plugins to apply dirty plugins (or name plugins). Web/UI edits are plugin edits too: reload_plugins rebuilds the web bundle and open pages reload onto it. Runtime edits need an explicit `npm run reload -- --restart` from apps/p2 with this server's P2_DATA_DIR. Only owner-initiated turns may use reload_plugins, never guests, peers or unattributed input."
 					: undefined,
 			),
@@ -36,7 +36,7 @@ export function createReloadExtension(
 						details: { ok },
 						isError: !ok,
 					});
-					if (!permitted() || api.conversationId !== ROOT_CONVERSATION_ID)
+					if (!permitted() || !(await isTopLevel(api, api.conversationId, context)))
 						return reply("reload_plugins requires a root session working on a local p2 checkout", false);
 					if ((await originOf(api, context)) !== "owner")
 						return reply(

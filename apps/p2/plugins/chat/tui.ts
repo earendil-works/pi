@@ -46,6 +46,7 @@ import {
 	type TranscriptContext,
 	type TranscriptStore,
 	TranscriptView,
+	TreeSelectorComponent,
 	type TuiEntryRenderer,
 	TuiEntryRenderers,
 	TuiMarkdownTransformers,
@@ -62,6 +63,7 @@ import {
 import { Drafts } from "../drafts/contract.ts";
 import { MAX_ATTACHMENTS } from "../files/contract.ts";
 import { type Session, Sessions } from "../sessions/contract.ts";
+import { SessionTree } from "../tree/contract.ts";
 import { Chat, type EntryDisplay, SHELL_BUSY, type ShellState, TranscriptEntries } from "./contract.ts";
 import { CHAT_COMMANDS, formatSize, type LauncherUpload, registerLauncherAnswers } from "./tui-commands.ts";
 
@@ -766,14 +768,58 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 			this.runtime.perform(ref.stop(BACKGROUND_CONTEXT).then(({ restored }) => this.restore(identity, restored)));
 	}
 
-	/** pi's `doubleEscapeAction`: "fork" opens `/fork`'s picker; "tree" is not supported (no `/tree`), like "none". */
+	/** pi's `doubleEscapeAction` (default "tree"): "tree" opens `/tree`, "fork" `/fork`'s picker. */
 	private doubleEscape(): void {
-		if (this.runtime.ctx.settings.doubleEscapeAction !== "fork" || this.runtime.role !== "owner") return;
+		const action = this.runtime.ctx.settings.doubleEscapeAction ?? "tree";
+		if (action === "none" || this.runtime.role !== "owner") return;
 		const now = Date.now();
 		if (now - this.lastEscape < DOUBLE_ESCAPE_MS) {
 			this.lastEscape = 0;
-			this.openFork();
+			if (action === "fork") this.openFork();
+			else this.openTree();
 		} else this.lastEscape = now;
+	}
+
+	/**
+	 * pi's `/tree` (docs/tree.md): the session's branches as one tree; Enter continues the session at the chosen
+	 * message (`SessionTree.navigate`), a user message waiting in the editor of the conversation it switched to.
+	 */
+	openTree(): void {
+		const runtime = this.runtime;
+		const session = this.session;
+		if (!session) return;
+		runtime.perform(
+			runtime.host.root(async (root) => {
+				const ref = await root.get(SessionTree, { session });
+				if (ref.variant !== "owner") throw new Error("Only the owner switches branches");
+				const tree = await ref.tree(root);
+				const overlay = runtime.ctx.overlay(
+					"tree",
+					new TreeSelectorComponent(
+						runtime.ctx,
+						tree.nodes,
+						tree.current,
+						(entry) => {
+							overlay.close();
+							runtime.perform(
+								runtime.host.root(async (inner) => {
+									const tree = await inner.get(SessionTree, { session });
+									if (tree.variant !== "owner") throw new Error("Only the owner switches branches");
+									const { conversation, text } = await tree.navigate({ entry }, inner);
+									const identity = identityKey(session, conversation);
+									if (text !== null) runtime.drafts.set(identity, text);
+									runtime.navigate("chat", session, conversation);
+									// Already shown (the session continues in the same conversation): the editor takes the text now.
+									if (text !== null && !this.disposed && this.identity === identity) this.editor.setText(text);
+								}, BACKGROUND_CONTEXT),
+							);
+						},
+						() => overlay.close(),
+					),
+					{ width: "100%", anchor: "bottom-center" },
+				);
+			}, BACKGROUND_CONTEXT),
+		);
 	}
 
 	/**
@@ -784,7 +830,7 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 		const runtime = this.runtime;
 		const session = this.session;
 		if (!session) return;
-		if (this.conversation !== 1) {
+		if (this.conversation !== runtime.mainOf(session)) {
 			runtime.notify("Forking a subagent conversation is not supported yet", "warning");
 			return;
 		}
@@ -809,7 +855,10 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 						runtime.host.root(async (root) => {
 							const sessions = await root.get(Sessions, {});
 							if (sessions.variant !== "owner") throw new Error("Only the owner forks sessions");
-							const created = await sessions.fork({ id: session, conversation: 1, before: id }, root);
+							const created = await sessions.fork(
+								{ id: session, conversation: this.conversation, before: id },
+								root,
+							);
 							runtime.drafts.set(identityKey(created.id, 1), text);
 							runtime.navigate("chat", created.id, 1);
 							runtime.notify("Forked to new session");

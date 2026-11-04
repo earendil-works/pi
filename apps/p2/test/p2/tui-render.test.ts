@@ -588,6 +588,8 @@ test("footer provenance: owner sees context against the model window, guests get
 		pinned: false,
 		model: { provider: "faux", modelId: "faux-1" },
 		thinkingLevel: "medium",
+		main: 1,
+		branches: [],
 	};
 	const view = viewOf([answerEntry(1, "hello")], {
 		"pi.agent": { model: { provider: "faux", modelId: "faux-1" }, thinkingLevel: "medium" },

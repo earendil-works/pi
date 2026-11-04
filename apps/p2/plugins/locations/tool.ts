@@ -13,7 +13,7 @@ import {
 import { nul, obj, opt, str, union } from "@earendil-works/pi-schema";
 import type { Context, DirectoryListing } from "@p2/app/v1";
 import { type Location, locationText, parseLocation, sameLocation } from "@p2/app/v1";
-import { originOf } from "@p2/app/v1/worker";
+import { isTopLevel, originOf } from "@p2/app/v1/worker";
 import { placeSubagent } from "../subagents/contract.worker.ts";
 import type { EnvInfo } from "./contract.ts";
 import { LocationMoveDoc } from "./contract.worker.ts";
@@ -103,10 +103,10 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 					if ((await originOf(api, context)) !== "owner") return reply(DENIED, true);
 					const here = await locate(api.conversationId, api, context);
 					const envs = await server.envs(context);
-					const move =
-						api.conversationId === ROOT_CONVERSATION_ID
-							? await api.snapshot(LocationMoveDoc, ROOT_CONVERSATION_ID, context)
-							: undefined;
+					// The session's move is kept on conversation 1 whichever top-level conversation asked for it.
+					const move = (await isTopLevel(api, api.conversationId, context))
+						? await api.snapshot(LocationMoveDoc, ROOT_CONVERSATION_ID, context)
+						: undefined;
 					return reply(
 						[
 							`You work at ${locationText(here)}.`,
@@ -186,7 +186,7 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 					if (typeof found === "string") return reply(found, {}, true);
 					const to: Location = { env: found.env, cwd: found.listing.path };
 					const details = { env: to.env, cwd: to.cwd };
-					if (api.conversationId === ROOT_CONVERSATION_ID) {
+					if (await isTopLevel(api, api.conversationId, context)) {
 						const pending = (await api.snapshot(LocationMoveDoc, ROOT_CONVERSATION_ID, context))?.pending;
 						if (sameLocation(to, here) && !pending)
 							return reply(`You already work at ${locationText(to)}.`, details);

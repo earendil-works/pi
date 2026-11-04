@@ -70,6 +70,8 @@ const session = (id: string, env: string | null): Session => ({
 	pinned: false,
 	model: { provider: "faux", modelId: "faux-1" },
 	thinkingLevel: "off",
+	main: 1,
+	branches: [],
 });
 
 /** The fixture server as a stdio entry; every start appends its pid to `log`. */

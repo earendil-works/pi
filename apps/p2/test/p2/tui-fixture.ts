@@ -24,6 +24,8 @@ export const SESSION: Session = {
 	pinned: false,
 	model: { provider: "faux", modelId: "faux-1" },
 	thinkingLevel: "off",
+	main: 1,
+	branches: [],
 };
 export const sessionsStub = (session: Session): Stub => [
 	Sessions,

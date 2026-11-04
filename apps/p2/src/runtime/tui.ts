@@ -157,6 +157,8 @@ export class TuiRuntime implements Component, Focusable {
 	readonly name = `tui:${crypto.randomUUID()}`;
 	session: string | undefined;
 	conversation = 1;
+	/** Each session's main conversation (1, or its current `/tree` branch), as the sessions plugin last saw its row. */
+	readonly mains = new Map<string, number>();
 	screen: "sessions" | "chat" | "models" = "sessions";
 	connected = false;
 	showThinking = false;
@@ -330,7 +332,11 @@ export class TuiRuntime implements Component, Focusable {
 				return runtime.role;
 			},
 			get identity() {
-				return { session: runtime.session, conversation: runtime.conversation };
+				return {
+					session: runtime.session,
+					conversation: runtime.conversation,
+					main: runtime.mainOf(runtime.session),
+				};
 			},
 			navigate: (screen, session, conversation) =>
 				runtime.navigate(screen as TuiRuntime["screen"], session ?? runtime.session, conversation),
@@ -539,9 +545,16 @@ export class TuiRuntime implements Component, Focusable {
 	perform(action: Promise<unknown>): void {
 		void action.catch((error: unknown) => this.fail(error));
 	}
-	/** Shows a screen; a session or conversation change switches the viewed identity (overlays close). */
+	/** The main conversation of `session` (1 until its row is known). */
+	mainOf(session: string | undefined): number {
+		return (session === undefined ? undefined : this.mains.get(session)) ?? 1;
+	}
+	/**
+	 * Shows a screen; a session or conversation change switches the viewed identity (overlays close). Another session
+	 * opens at its main conversation.
+	 */
 	navigate(screen: TuiRuntime["screen"], session = this.session, conversation?: number): void {
-		const next = conversation ?? (session === this.session ? this.conversation : 1);
+		const next = conversation ?? (session === this.session ? this.conversation : this.mainOf(session));
 		const changed = session !== this.session || next !== this.conversation;
 		if (changed) this.closeOverlays();
 		this.session = session;

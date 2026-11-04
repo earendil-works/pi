@@ -1,8 +1,8 @@
-import { defineExtension, defineTool, ROOT_CONVERSATION_ID, section } from "@earendil-works/pi-durable";
+import { defineExtension, defineTool, section } from "@earendil-works/pi-durable";
 import { bool, int, obj, opt, str, union } from "@earendil-works/pi-schema";
 import type { Context } from "@p2/app/v1";
 import { literal } from "@p2/app/v1";
-import { originOf } from "@p2/app/v1/worker";
+import { isTopLevel, originOf } from "@p2/app/v1/worker";
 import type { ConversationOrigin } from "../conversations/contract.ts";
 import { type ForwardView, MAX_FORWARD_NAME, type PortsReply, type PortsRequest } from "./protocol.ts";
 
@@ -46,8 +46,8 @@ export function createPortsExtension(
 	return defineExtension({
 		name: "p2-ports",
 		sections: [
-			section("ports", (input) =>
-				input.conversationId === ROOT_CONVERSATION_ID
+			section("ports", async (input, context) =>
+				(await isTopLevel(input.read, input.conversationId, context))
 					? "The ports tool forwards a local web server (a dev server, say) through Radius so the owner can open it from other devices, and lists all forwards and public endpoints. Forwards are private by default: only the owner can open them, after signing in. Never make a port public, by opening it with public: true or switching an existing one, without asking the user first and getting a yes: a public port is reachable by anyone with the link, without signing in."
 					: undefined,
 			),
@@ -79,7 +79,7 @@ export function createPortsExtension(
 						details: { action: args.action, ...(args.port === undefined ? {} : { port: args.port }), ...details },
 						isError,
 					});
-					if (api.conversationId !== ROOT_CONVERSATION_ID)
+					if (!(await isTopLevel(api, api.conversationId, context)))
 						return reply("Only top-level conversations can use this tool.", {}, true);
 					let request: PortsRequest;
 					if (args.action === "list") request = { action: "list" };

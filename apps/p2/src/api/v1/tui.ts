@@ -15,6 +15,7 @@ export * from "../../tui/components/secret-input.ts";
 export * from "../../tui/components/selectors.ts";
 export * from "../../tui/components/status.ts";
 export * from "../../tui/components/transcript.ts";
+export * from "../../tui/components/tree-selector.ts";
 export * from "../../tui/components/user-message-selector.ts";
 export * from "../../tui/core-commands.ts";
 export * from "../../tui/grant-notice.ts";

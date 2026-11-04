@@ -24,7 +24,7 @@ import {
 	signalOf,
 } from "@p2/app/v1";
 import { durableContext } from "@p2/app/v1/node";
-import { CommitSignal, harnessOf } from "@p2/app/v1/worker";
+import { agentConversation, CommitSignal, harnessOf } from "@p2/app/v1/worker";
 import { Conversation, SendRouters } from "../chat/contract.ts";
 import { Attachments, MAX_ATTACHMENTS } from "../files/contract.ts";
 import {
@@ -40,8 +40,8 @@ import {
 import { composeMention, digestFiles, quoteOf, readEnough, unmentioned } from "./digest.ts";
 
 /**
- * The switch and the agent's name, stored in the conversation (a fork or a new subagent starts with chat mode off and
- * the default name).
+ * The switch and the agent's name, stored per agent (`agentConversation`: the main agent's on conversation 1, whichever
+ * `/tree` branch it works in; a new subagent starts with chat mode off and the default name).
  */
 export const ChatModeDoc = defineDoc<{ enabled: boolean; name: string }>({
 	kind: "chat-mode.settings",
@@ -103,8 +103,10 @@ export default defineFacet((host) => {
 		({ conversation }, self) => {
 			const id = conversation as ConversationId;
 			const harness = harnessOf(self);
+			/** Where the agent's chat mode is (the main agent's on conversation 1); set when the object opens. */
+			let holder = id;
 			const read = async (ctx: Context) =>
-				(await harness().durable.snapshot(ChatModeDoc, id, durableContext(ctx))) ?? {
+				(await harness().durable.snapshot(ChatModeDoc, holder, durableContext(ctx))) ?? {
 					enabled: false,
 					name: DEFAULT_AGENT_NAME,
 				};
@@ -112,6 +114,7 @@ export default defineFacet((host) => {
 			const commits = self.open(
 				async (ctx) => {
 					const durable = harness().durable;
+					holder = await agentConversation(durable, id, durableContext(ctx));
 					const doc = await read(ctx);
 					await shown.change((draft) => {
 						draft.enabled = doc.enabled;
@@ -124,8 +127,10 @@ export default defineFacet((host) => {
 							(change) =>
 								(change.type === "entry" && change.value.conversationId === id) ||
 								(change.type === "document" &&
-									(change.record.kind === ChatModeDoc.definition.kind ||
-										change.record.kind === InboxDoc.definition.kind) &&
+									change.record.kind === ChatModeDoc.definition.kind &&
+									change.conversationId === holder) ||
+								(change.type === "document" &&
+									change.record.kind === InboxDoc.definition.kind &&
 									change.conversationId === id),
 						),
 					);
@@ -159,7 +164,7 @@ export default defineFacet((host) => {
 			const commit = async (ctx: Ctx, change: (doc: { enabled: boolean; name: string }) => void) => {
 				const durable = await harness().durable.conversation(id, durableContext(ctx));
 				if (!durable) throw invalid("args", `Unknown conversation ${conversation}`);
-				await durable.commit(async (tx) => change(await tx.doc(ChatModeDoc, id)), durableContext(ctx));
+				await durable.commit(async (tx) => change(await tx.doc(ChatModeDoc, holder)), durableContext(ctx));
 			};
 			return {
 				enabled: self.derive([shown], ([value]) => value.enabled),
@@ -198,7 +203,11 @@ export default defineFacet((host) => {
 			"chat-mode": async ({ conversation, author, text, requestId, whenBusy, attachments, replyTo }, ctx) => {
 				const durable = harness().durable;
 				const id = conversation as ConversationId;
-				const settings = await durable.snapshot(ChatModeDoc, id, durableContext(ctx));
+				const settings = await durable.snapshot(
+					ChatModeDoc,
+					await agentConversation(durable, id, durableContext(ctx)),
+					durableContext(ctx),
+				);
 				if (!settings?.enabled) return undefined;
 				const chat = await ctx.get(Conversation, { conversation });
 				// The client names the entry; whom it quotes and what comes from the entry.

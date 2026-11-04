@@ -4,8 +4,11 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Session } from "./contract.ts";
 
-/** 3: `titleEdited` (Pi Mobile's): an explicit title (given at creation or renamed) is never replaced automatically. */
-const SCHEMA_VERSION = 3;
+/**
+ * 3: `titleEdited` (Pi Mobile's): an explicit title (given at creation or renamed) is never replaced automatically.
+ * 4: `main` and `branches`, the current main conversation and the `/tree` branches (`docs/tree.md`).
+ */
+const SCHEMA_VERSION = 4;
 /** An automatic title: the first user message, line breaks as spaces, its first 100 characters (as Pi Mobile). */
 const AUTO_TITLE = 100;
 
@@ -16,7 +19,7 @@ export class CatalogDb {
 		this.#db = new DatabaseSync(join(directory, "catalog.sqlite"));
 		this.#db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
 		const version = Number(this.#db.prepare("PRAGMA user_version").get()?.user_version ?? 0);
-		if (version !== 0 && version !== 1 && version !== 2 && version !== SCHEMA_VERSION) {
+		if (version !== 0 && version !== 1 && version !== 2 && version !== 3 && version !== SCHEMA_VERSION) {
 			this.#db.close();
 			throw new Error(`Unsupported catalog schema: ${version}`);
 		}
@@ -25,7 +28,8 @@ export class CatalogDb {
 				id TEXT PRIMARY KEY, cwd TEXT NOT NULL, env TEXT, title TEXT NOT NULL,
 				createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, archivedAt INTEGER,
 				pinned INTEGER NOT NULL DEFAULT 0, model TEXT NOT NULL, thinkingLevel TEXT NOT NULL,
-				titleEdited INTEGER NOT NULL DEFAULT 0
+				titleEdited INTEGER NOT NULL DEFAULT 0, main INTEGER NOT NULL DEFAULT 1,
+				branches TEXT NOT NULL DEFAULT '[]'
 			) STRICT;
 		`);
 		if (version === 1) this.#db.exec("ALTER TABLE sessions ADD COLUMN env TEXT;");
@@ -33,6 +37,10 @@ export class CatalogDb {
 		if (version === 1 || version === 2)
 			this.#db.exec(
 				"ALTER TABLE sessions ADD COLUMN titleEdited INTEGER NOT NULL DEFAULT 0; UPDATE sessions SET titleEdited=1 WHERE title<>'New session';",
+			);
+		if (version !== 0 && version < 4)
+			this.#db.exec(
+				"ALTER TABLE sessions ADD COLUMN main INTEGER NOT NULL DEFAULT 1; ALTER TABLE sessions ADD COLUMN branches TEXT NOT NULL DEFAULT '[]';",
 			);
 		this.#db.exec(`PRAGMA user_version=${SCHEMA_VERSION};`);
 	}
@@ -49,6 +57,8 @@ export class CatalogDb {
 			pinned: row.pinned === 1,
 			model: JSON.parse(String(row.model)) as Session["model"],
 			thinkingLevel: String(row.thinkingLevel),
+			main: Number(row.main),
+			branches: JSON.parse(String(row.branches)) as Session["branches"],
 		};
 	}
 
@@ -106,6 +116,8 @@ export class CatalogDb {
 			archived?: boolean;
 			model?: Session["model"];
 			thinkingLevel?: string;
+			main?: number;
+			branches?: Session["branches"];
 		},
 	): Session {
 		const current = this.get(id);
@@ -119,7 +131,7 @@ export class CatalogDb {
 		const moved = change.cwd !== undefined || change.env !== undefined;
 		this.#db
 			.prepare(
-				"UPDATE sessions SET title=?,titleEdited=CASE WHEN ? THEN 1 ELSE titleEdited END,updatedAt=CASE WHEN ? THEN max(updatedAt,?) ELSE updatedAt END,pinned=?,archivedAt=?,model=?,thinkingLevel=?,cwd=?,env=? WHERE id=?",
+				"UPDATE sessions SET title=?,titleEdited=CASE WHEN ? THEN 1 ELSE titleEdited END,updatedAt=CASE WHEN ? THEN max(updatedAt,?) ELSE updatedAt END,pinned=?,archivedAt=?,model=?,thinkingLevel=?,cwd=?,env=?,main=?,branches=? WHERE id=?",
 			)
 			.run(
 				change.title ?? current.title,
@@ -132,6 +144,8 @@ export class CatalogDb {
 				change.thinkingLevel ?? current.thinkingLevel,
 				change.cwd ?? current.cwd,
 				change.env === undefined ? (current.env ?? null) : change.env,
+				change.main ?? current.main,
+				JSON.stringify(change.branches ?? current.branches),
 				id,
 			);
 		return this.get(id);
