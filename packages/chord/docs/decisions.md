@@ -2526,6 +2526,16 @@ validation and copies the v2 kernel added around Delta.
   `live` during a swap by changing `ChordObject.state` (holds, keyed pins, versions and `variant` read it as "a live
   instance exists"; a per-binding view is possible later, the blip is cosmetic). Carry-over: calls surviving a
   `loading` unbind (slices.md, "Later: reload").
+- **Telemetry from browser pages (owner, 2026-11-04: "I just need this implemented"; "it couldn't really fuck the
+  server up"; tutorial gap):** a page records spans in memory (the click and the calls it makes, carriers on its calls
+  as any client) and sends finished spans in batches every few seconds and when hidden, over its existing Chord link,
+  to a telemetry object on the server (`ingest(batch)`): sign-in, principals, part limits and flow control apply as for
+  any call; an app may admit anonymous pages. The server treats them as untrusted, best effort: batch size and rate
+  capped per connection, every field checked and capped (names, attributes, events, ids printable ASCII), spans marked
+  as from that browser (`chord.host` `browser`, ids prefixed per sender by the store), never overwriting or posing as
+  server spans; the store writes finished spans it receives (a new ingest path). The viewer clamps a browser span
+  against its server children (clock skew). General Chord: the page recorder in the web surface, the ingest facet, the
+  store's ingest; the app kit serves the object when given a telemetry store and `startPage` records when the app asks.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
