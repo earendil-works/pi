@@ -2,10 +2,18 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Removed the `thinkingFormat: \`"ant-ling"\`` compat value. Use `thinkingFormat: \`"deepseek"\`` for Ant Ling models ([#10943](https://github.com/earendil-works/pi/pull/10943) by [@lvisei](https://github.com/lvisei))
+
 ### Added
 
 - Anthropic requests with a `sessionId` (and `cacheRetention` not `"none"`) now use message threads (`message-threads-2026-08-12` beta): the server continues from the previous reply and pi sends only the new messages instead of the whole conversation. When anything earlier in the request changed, or the server can't continue the thread, the full request is sent. Token counts and prompt caching are unchanged. On by default only for the `anthropic` provider on `api.anthropic.com`; set `compat.supportsMessageThreads` to change that, for example for gateways that forward the `thread` field. Call `cleanupSessionResources(sessionId)` when a session ends to free the per-session state ([#11545](https://github.com/earendil-works/pi/pull/11545))
 - Added `StreamOptions.disableContinuation`, which keeps a request from using or replacing server-side continuation state such as Anthropic message threads. Set it on requests that repeat an earlier one, such as cache warming ([#11545](https://github.com/earendil-works/pi/pull/11545))
+
+### Changed
+
+- Replaced the Ant Ling Ling 2.6 and Ring 2.6 models with Ling 3.1 Flash, Ling 3.0 Flash, and Ling 3.0 Flash VL. Ant Ling reasoning requests now use the DeepSeek-compatible `thinking` field instead of nested `reasoning`, with thinking either off or high and no reasoning effort parameter ([#10943](https://github.com/earendil-works/pi/pull/10943) by [@lvisei](https://github.com/lvisei))
 
 ### Fixed
 

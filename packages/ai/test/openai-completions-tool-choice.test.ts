@@ -1,7 +1,8 @@
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { convertMessages } from "../src/api/openai-completions.ts";
-import { getModel, normalizeContext, stream, streamSimple } from "../src/compat.ts";
+import { getModel, normalizeContext, streamSimple } from "../src/compat.ts";
+import { getSupportedThinkingLevels } from "../src/models.ts";
 import type { AssistantMessage, Model, SimpleStreamOptions, Tool, ToolResultMessage } from "../src/types.ts";
 
 const mockState = vi.hoisted(() => ({
@@ -1399,7 +1400,7 @@ describe("openai-completions tool_choice", () => {
 				...model.compat,
 				supportsStore: false,
 				supportsDeveloperRole: false,
-				supportsReasoningEffort: true,
+				supportsReasoningEffort: false,
 				supportsUsageInStreaming: true,
 				supportsFinishReason: true,
 				maxTokensField: "max_completion_tokens",
@@ -1863,8 +1864,8 @@ describe("openai-completions tool_choice", () => {
 		expect(params.reasoning_effort).toBeUndefined();
 	});
 
-	it("uses Ant Ling compatibility metadata", async () => {
-		const model = getModel("ant-ling", "Ring-2.6-1T")!;
+	it("uses DeepSeek-compatible Ant Ling metadata", async () => {
+		const model = getModel("ant-ling", "Ling-3.1-flash")!;
 		let payload: unknown;
 
 		expect(model.compat).toMatchObject({
@@ -1872,7 +1873,7 @@ describe("openai-completions tool_choice", () => {
 			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,
 			maxTokensField: "max_tokens",
-			thinkingFormat: "ant-ling",
+			thinkingFormat: "deepseek",
 			supportsLongCacheRetention: false,
 		});
 		expect(model.compat?.supportsStrictMode).toBe(true);
@@ -1900,7 +1901,7 @@ describe("openai-completions tool_choice", () => {
 			max_tokens?: number;
 			max_completion_tokens?: number;
 			messages?: Array<{ role?: string }>;
-			reasoning?: { effort?: string };
+			thinking?: { type?: string };
 			reasoning_effort?: string;
 			store?: boolean;
 			prompt_cache_key?: string;
@@ -1909,48 +1910,36 @@ describe("openai-completions tool_choice", () => {
 		expect(params.max_tokens).toBe(123);
 		expect(params.max_completion_tokens).toBeUndefined();
 		expect(params.messages?.[0]?.role).toBe("system");
-		expect(params.reasoning).toEqual({ effort: "high" });
+		expect(params.thinking).toEqual({ type: "enabled" });
 		expect(params.reasoning_effort).toBeUndefined();
+		expect(params).not.toHaveProperty("reasoning");
 		expect(params.store).toBeUndefined();
 		expect(params.prompt_cache_key).toBeUndefined();
 		expect(params.prompt_cache_retention).toBeUndefined();
 	});
 
-	it("omits Ant Ling reasoning for unmapped direct reasoning efforts and non-reasoning models", async () => {
-		const ring = getModel("ant-ling", "Ring-2.6-1T")!;
-		let payload: unknown;
+	it("exposes only off and high for Ant Ling models", () => {
+		for (const id of ["Ling-3.1-flash", "Ling-3.0-flash", "Ling-3.0-flash-VL"] as const) {
+			expect(getSupportedThinkingLevels(getModel("ant-ling", id)!)).toEqual(["off", "high"]);
+		}
+		expect(getModel("ant-ling", "Ling-3.1-flash")!.contextWindow).toBe(1000000);
+		expect(getModel("ant-ling", "Ling-3.0-flash")!.contextWindow).toBe(262144);
+		expect(getModel("ant-ling", "Ling-3.0-flash-VL")!.contextWindow).toBe(262144);
+	});
 
-		await stream(
-			ring,
-			{
-				messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
-			},
-			{
-				apiKey: "test",
-				reasoningEffort: "medium",
-				onPayload: (params: unknown) => {
-					payload = params;
-				},
-			},
-		).result();
+	it("clamps every Ant Ling reasoning level to high", async () => {
+		const model = getModel("ant-ling", "Ling-3.0-flash")!;
+		for (const reasoning of ["minimal", "low", "medium", "high", "xhigh"] as const) {
+			const params = await captureSimpleParams(model, reasoning);
+			expect(params.thinking).toEqual({ type: "enabled" });
+			expect(params.reasoning_effort).toBeUndefined();
+		}
+	});
 
-		expect((payload ?? mockState.lastParams) as { reasoning?: unknown }).not.toHaveProperty("reasoning");
-
-		const ling = getModel("ant-ling", "Ling-2.6-flash")!;
-		await streamSimple(
-			ling,
-			{
-				messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
-			},
-			{
-				apiKey: "test",
-				reasoning: "high",
-				onPayload: (params: unknown) => {
-					payload = params;
-				},
-			},
-		).result();
-
-		expect((payload ?? mockState.lastParams) as { reasoning?: unknown }).not.toHaveProperty("reasoning");
+	it("disables Ant Ling reasoning when no reasoning level is requested", async () => {
+		const model = getModel("ant-ling", "Ling-3.0-flash-VL")!;
+		const params = await captureSimpleParams(model, undefined);
+		expect(params.thinking).toEqual({ type: "disabled" });
+		expect(params.reasoning_effort).toBeUndefined();
 	});
 });

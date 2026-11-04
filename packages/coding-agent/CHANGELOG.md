@@ -12,6 +12,10 @@
 - Anthropic sessions now use message threads: each request sends only the new messages and the server continues from the previous reply, falling back to the full request when the conversation changed (for example after compaction or a tool list change). On by default for the `anthropic` provider on `api.anthropic.com`; set `compat.supportsMessageThreads` in `models.json` to enable it for gateways that forward the `thread` field, or to turn it off. Cache warming does not touch the session's thread ([#11545](https://github.com/earendil-works/pi/pull/11545))
 - `pi.registerMarkdownTransformer()` takes an optional `{ messageTypes }` that selects the Markdown surfaces a transformer runs on. Besides user, assistant, and thinking Markdown, transformers can now opt into `custom` (custom messages and skill blocks), `summary` (branch and compaction summaries), and `changelog` (What's New, `/changelog`, the Extension Updates notice, and the Update Available note). Without options a transformer runs on user, assistant, and thinking Markdown as before. The built-in Mermaid renderer now also draws diagrams in expanded branch and compaction summaries
 
+### Changed
+
+- Changed the `ant-ling` default model to `Ling-3.1-flash`, replacing the removed Ling 2.6 and Ring 2.6 models ([#10943](https://github.com/earendil-works/pi/pull/10943) by [@lvisei](https://github.com/lvisei))
+
 ### Fixed
 
 - A failed token refresh of an MCP connection no longer registers an OAuth client or replaces the PKCE verifier of a sign-in in progress, which made that sign-in fail. MCP sign-in now refreshes the stored tokens with the stored client even when the loopback callback port changed, instead of registering a new client and opening the browser. Ctrl+C in `/mcp` and the `--timeout` of `pi mcp login` now also stop a sign-in while it waits up to 25 seconds for another pi process's token refresh, and a refresh lock that fails for another reason than that wait now fails the sign-in instead of opening the browser.
