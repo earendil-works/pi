@@ -5,15 +5,18 @@
   "type": "module",
   "description": "NLT Coding Agent MVP application boundary",
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "node --test test/*.test.js"
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "test": "node --test test/*.test.js && vitest --run"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@neurolift-technologies/asfdk": "0.2.4",
+    "typebox": "1.3.27"
   },
   "devDependencies": {
     "@types/node": "22.19.19",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "vitest": "4.1.12"
   },
   "engines": {
     "node": ">=22.19.0"

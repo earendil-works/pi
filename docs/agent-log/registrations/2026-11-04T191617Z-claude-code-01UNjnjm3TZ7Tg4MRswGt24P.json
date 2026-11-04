@@ -1,0 +1,26 @@
+{
+  "agent_registration": {
+    "agent_name": "Claude Code",
+    "platform": "Claude Code (cloud session, claude.ai/code)",
+    "version": "Not recorded",
+    "session_id": "session_01UNjnjm3TZ7Tg4MRswGt24P",
+    "entry_date": "2026-11-04T19:16:17+00:00",
+    "entry_point": "User-directed: bring the asfdk-harness source into nlt-pi's MVP so the governed turn can be built and tested on Vercel. The harness previously ran only against a local Pi copy on one of the owner's machines.",
+    "acknowledged_otoi": true,
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "working_repo": "NeuroLift-Technologies/nlt-pi",
+    "working_branch": "ccr-0d5033af-1rkbla",
+    "scope": "Vendor the subset of asfdk-harness/src required by mvp/src/index.ts into the MVP boundary with provenance headers, declare its real dependencies, make the MVP typecheck and tests pass, and prepare (but not perform without approval) a Vercel test. No change to policy.ts or governance behavior; no credentials, persistence, provider, or production deployment decisions.",
+    "capabilities_self_reported": [
+      "Repository inspection across nlt-pi, asfdk-harness, asfdk, nlt-coding-agent",
+      "Local file edits, npm install, typecheck and test execution in the cloud container",
+      "Git branch commits and draft pull request creation via GitHub MCP"
+    ],
+    "known_limitations": [
+      "Cannot run Pi on the owner's local machine; harness behavior there is not reproduced.",
+      "No Vercel credentials or deployment authority; any deployment requires explicit human approval.",
+      "Cloud container network access is proxied; registry access may differ from the owner's machines."
+    ],
+    "preferred_handoff_format": "structured JSON and Markdown"
+  }
+}

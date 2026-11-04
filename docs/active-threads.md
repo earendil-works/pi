@@ -1,8 +1,24 @@
 # Active Threads — NLT-Pi
 
-**Last updated:** 2026-11-02
+**Last updated:** 2026-11-04
 
 ## Active
+
+### NLTPI-MVP-002 — Vendor ASFDK harness into the MVP and test on Vercel
+**Status:** in_review (draft PR); Vercel endpoint verification pending  
+**Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
+**Summary:** The MVP imported an unpublished, undeclared `@neurolift-technologies/asfdk-harness` package, so it could not typecheck. The needed subset of `asfdk-harness` `src/` (commit `f28136d`) is now vendored under `mvp/src/harness/` with provenance headers; dependencies are declared and pinned. Testing against the real foundation found that the governed-turn crisis gate could never block (runtime level values vs. enum member names, and risk flags read at the wrong depth); it is fixed in `mvp/src/gate.ts` with tests, and fails closed when the assessment is unavailable. A preview-only `POST /api/govern` (404 in production, `executionEnabled: false`) was added as the Vercel test surface.  
+**PR:** https://github.com/NeuroLift-Technologies/nlt-pi/pull/15  
+**Branch:** `ccr-0d5033af-1rkbla`  
+**Registration:** `docs/agent-log/registrations/2026-11-04T191617Z-claude-code-01UNjnjm3TZ7Tg4MRswGt24P.json`  
+**Intent record:** `docs/agent-log/intent/2026-11-04-vendor-asfdk-harness-into-mvp.md`  
+**Handoff:** `docs/agent-log/handoffs/2026-11-04-vendor-asfdk-harness-into-mvp.json`  
+**Verification:** MVP typecheck, MVP tests (7 node + 26 vitest), pinned-deps, runtime-deps, ts-imports, entry-graphs, install-lock, biome, and the governance validator passed locally in the cloud container. The full root `npm run check` and root tests were not run. A Vercel preview (`dpl_FpQAQSotFRZkqrFwgE5PeHUBakHv`) built and reached READY, but `/api/govern` has not been invoked on it. Its build log showed `error TS2688: Cannot find type definition file for 'node'` (from `types: ["node"]` in `mvp/tsconfig.json`); fixed in `b018928` by moving that option to `tsconfig.typecheck.json`, and the build of that commit logs no TS error.  
+**Review (CodeRabbit on 47b727e):** fixed the gate's handling of a missing emotional state (modes without Sleepwalker could not be blocked), the endpoint's read-only-filesystem failure on Vercel, its 503 contract, and test resolution without a build; vendored-file findings (`policy.ts` rm flag order/globs, `tools.ts` path redaction, `protocols.ts` TOI source handling) are deferred upstream pending the owner's decision. See the intent record addendum.  
+**CI:** At the owner's direction the inherited Pi-fork `.github/workflows/ci.yml` was removed (it failed on `main` for the last five runs). The dependent `preview-packages.yml` workflow and its script/test (`scripts/preview-packages.mjs`, `.test.mjs`) were also removed at the owner's direction. The remaining inherited Pi workflows (`build-binaries`, `issue-analysis`, `issue-triage-labels`, `nix`, `npm-audit`, `publish-model-catalog`, `remove-inprogress-on-close`) were also removed at the owner's direction; only `validate-nlt-governance.yml` remains. Docs and scripts that mentioned them (`.pi/skills/release.md`, `scripts/build-binaries.sh`, `.pi/extensions/import-repro.ts`, the mcp-conformance README) were updated. The four open decisions (vendored copy, RRT detector gaps, prompt channel, model provider) are deferred until PR #15 is merged, at the owner's direction.  
+**Blockers / known issues:** Upstream RRT detector (keyword prototype) misses some phrasings (for example "I want to end my life, I have a plan and cannot stay safe"); crisis logic changes are escalate-only. `mvp/package.json` `engines` (`>=22.19.0`) makes Vercel select Node 26.x.  
+**Decisions needed:** Keep the vendored copy vs. a published or workspace package; handling of the RRT detector gaps; whether the prompt channel should be trusted `USER_INPUT`; model provider selection before `runNltCodingTurn` is run.  
+**Next action:** Invoke `POST /api/govern` on the preview (authorized browser or share link) and confirm allow/block behavior; owner review of PR #15.
 
 ### NLTPI-MVP-001 — NLT Coding Agent MVP scaffold
 **Status:** scaffolded; workspace integration and validation wiring added on PR branch  

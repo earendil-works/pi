@@ -1,6 +1,6 @@
 /**
- * Import a pi session shared as a gist by the issue-analysis CI workflow
- * (.github/workflows/issue-analysis.yml), or a .jsonl session file served at a URL,
+ * Import a pi session shared as a gist (for example by the upstream issue-analysis CI workflow,
+ * which was removed from NLT-Pi), or a .jsonl session file served at a URL,
  * and switch to it.
  *
  * The session ran in another checkout (the CI job's high-entropy directory, or a
@@ -293,7 +293,7 @@ async function fetchGistSession(gistId: string): Promise<{ header: SessionHeader
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("ir", {
 		description:
-			"Import a CI issue-analysis session from a gist ID, share URL, issue URL, or .jsonl URL and switch to it",
+			"Import a shared session from a gist ID, share URL, issue URL, or .jsonl URL and switch to it",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const ref = args.trim();
 			if (!ref) {
