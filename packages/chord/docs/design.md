@@ -2041,6 +2041,24 @@ type ReloadReport = {
   unchanged server restart reinstalls nothing), serialized installs, a host that starts or reconnects installing the
   current set before anything is routed to it, a rejected own install failing its own requests with the reason.
 
+### What a user sees during a reload (owner, 2026-11-04)
+
+The contract between reload and the people using an app: each row is checked end to end through a real page and a
+worker (the reload suite), not only by unit tests. "The page" is any client over a link (a browser page, a terminal);
+"a call" is a method call from it.
+
+| Change rolled out | What stays on screen | Calls | State |
+| --- | --- | --- | --- |
+| a plugin whose new build or evaluation fails | everything; the plugin keeps its old code, the error is reported to the app | unaffected | unaffected |
+| pure code (no natives) on the server or a worker | the view stays bound; one fresh snapshot once the new code is live; values change only where the new code computes differently | a running call finishes on the old code; a call arriving meanwhile waits and runs on the new code; never `not_ready` | documents and tables unchanged |
+| code holding natives (restart) | `loading` with the last values kept, then a fresh snapshot | running calls get up to `closeTimeout` on the old code; calls arriving meanwhile wait (`readyTimeout`) and run on the new code | documents and tables unchanged; natives reopened |
+| a contract change the new code still `accepts` | the old page keeps working through the mapping | answered through the mapping | unchanged |
+| a contract change not accepted, or a type removed | the reference waits with its last values (`failed { waiting }`: `version`, `not_served`) until the page's code updates or the type returns | calls wait, then fail `park_timeout` after `readyTimeout` | unchanged |
+| a web or terminal plugin | the other plugins untouched, scroll kept; the reloaded plugin's components remount | the reloaded plugin's calls as above | component state starts over; `usePageState`/`scope.pageState` survive |
+| base code (the app's client entry, Chord, React) | the page reloads (the terminal restarts its sandbox): the only case losing what is on screen | calls in flight end with the link | page state lost; server state unchanged |
+
+Order: the server, then every running worker by the same rules, then the clients' scripts.
+
 ### Loading plugins and the reload loop (slice 7c)
 
 - **No dev/prod split** (owner, 2026-10-30): a Chord app is self-modifying (the owner or an agent edits a plugin while
