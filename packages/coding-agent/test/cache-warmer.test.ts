@@ -338,7 +338,9 @@ describe("cache warming", () => {
 			usage,
 			"extension override",
 		);
-		expect(formatCacheWarmingUsage(entry)).toBe("Cache warmed (extension override): $0.029497");
+		expect(formatCacheWarmingUsage(entry.usage.cost.total, entry.note)).toBe(
+			"Cache warmed (extension override): $0.029497",
+		);
 	});
 });
 
