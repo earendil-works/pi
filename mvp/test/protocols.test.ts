@@ -1,7 +1,15 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+// Wrap readFile so a test can make one read fail with a chosen errno without relying on file permissions.
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	return { ...actual, readFile: vi.fn(actual.readFile) };
+});
+
+import { readFile } from "node:fs/promises";
 import { loadGovernanceProtocols } from "../src/harness/protocols.ts";
 
 const dirs: string[] = [];
@@ -30,6 +38,13 @@ describe("loadGovernanceProtocols optional file reads", () => {
 		const context = await loadGovernanceProtocols({ cwd });
 		expect(context.diagnostics.some((line) => line.includes("Failed to honor .otoi") || line.includes("Failed to parse"))).toBe(true);
 		expect(context.diagnostics.some((line) => line.includes("No .otoi charter found"))).toBe(false);
+	});
+
+	it("treats an unreadable file (EACCES) as absent", async () => {
+		const eacces = Object.assign(new Error("permission denied"), { code: "EACCES" });
+		vi.mocked(readFile).mockRejectedValueOnce(eacces);
+		const context = await loadGovernanceProtocols({ cwd: tempDir(), toiContent: "{}" });
+		expect(context.diagnostics.some((line) => line.includes("No .otoi charter found"))).toBe(true);
 	});
 
 	it("still surfaces errors other than a missing file (a directory is not a charter)", async () => {

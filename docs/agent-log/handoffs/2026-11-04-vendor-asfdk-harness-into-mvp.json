@@ -12,10 +12,11 @@
       "Vendored the required subset of asfdk-harness src (commit f28136d) into mvp/src/harness/ with provenance headers and README. Differences from upstream: .ts import specifiers, and protocols.ts readOptionalFile reads once (fixes CodeQL js/file-system-race, alert 626).",
       "Declared @neurolift-technologies/asfdk and typebox, pinned the workspace coding-agent dependency, and fixed MVP tsconfig for TypeScript 7.",
       "Found and fixed a dead crisis gate: it compared runtime level values to enum member names and read risk flags at the wrong depth; it now blocks and fails closed. Moved to mvp/src/gate.ts.",
-      "Added 19 vitest tests (gate unit tests, end-to-end governedTurn against the real foundation, endpoint handler tests, protocol file-read tests); a mutation check confirmed the tests catch the old behavior.",
+      "Added 26 vitest tests (gate unit tests, end-to-end governedTurn against the real foundation, endpoint handler tests, protocol file-read tests); a mutation check confirmed the tests catch the old behavior.",
       "Added a preview-only POST /api/govern endpoint that returns only the gate decision and returns 404 in production.",
       "Opened draft PR #15 and pushed a Vercel preview deployment (READY).",
-      "Removed the inherited Pi-fork ci.yml and preview-packages workflow (plus its script and test) at the owner's direction; fixed the Vercel function build TS2688 error by moving types:[node] to tsconfig.typecheck.json (b018928)."
+      "Removed the inherited Pi-fork ci.yml and preview-packages workflow (plus its script and test) at the owner's direction; fixed the Vercel function build TS2688 error by moving types:[node] to tsconfig.typecheck.json (b018928).",
+      "Addressed CodeRabbit review findings: gate now fails closed on a missing emotional state; /api/govern runs from the temp directory (Sleepwalker storage is relative to cwd and the Vercel function directory is read-only), returns 503 on assessment failure, and uses per-request user ids; tests no longer need a built dist (createNltCodingAgent moved to src/governed-agent.ts). Vendored-file findings (policy.ts rm flags/globs, tools.ts redaction, protocols.ts TOI sources) deferred upstream."
     ],
     "work_in_progress": [
       "Verify POST /api/govern on the Vercel preview deployment."
@@ -34,7 +35,8 @@
       "How to address missed phrasings in the upstream RRT keyword detector (crisis logic is escalate-only upstream).",
       "Whether the prompt channel should be trusted USER_INPUT.",
       "Model provider selection before runNltCodingTurn is run anywhere.",
-      "Whether to keep Node engines '>=22.19.0' (Vercel currently selects Node 26.x because of it)."
+      "Whether to keep Node engines '>=22.19.0' (Vercel currently selects Node 26.x because of it).",
+      "Whether to change asfdk-harness policy.ts so rm -fr / rm -rf -- and glob forms of sensitive paths are blocked (upstream change, escalate-only file), and whether asfdk_protocol_status should redact paths."
     ],
     "files_modified": [
       "mvp/package.json",
@@ -55,7 +57,7 @@
     ],
     "tests_run": [
       "npm run check:mvp",
-      "npm run test --workspace=@neurolift/nlt-pi-mvp (7 node:test + 16 vitest)",
+      "npm run test --workspace=@neurolift/nlt-pi-mvp (7 node:test + 26 vitest)",
       "npm run check:pinned-deps, check:runtime-deps, check:ts-imports, check:entry-graphs, check:install-lock:coding-agent",
       "node scripts/biome-check.mjs",
       "bash .nltotoi/scripts/validate-governance.sh and node --test scripts/governance-validator.test.mjs"

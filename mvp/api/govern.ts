@@ -3,7 +3,13 @@
  *
  * POST { "prompt": string } runs the prompt through the vendored ASFDK harness and the
  * governed-turn gate and returns the gate decision. It never starts the coding agent,
- * calls a model, or runs a tool, and it persists nothing.
+ * calls a model, or runs a tool.
+ *
+ * It stores no data durably. The ASFDK Sleepwalker component writes continuity files to a
+ * relative `.swp_storage` directory under the process working directory; serverless function
+ * directories are read-only, so the handler switches to the OS temp directory first. Those
+ * files are ephemeral to the function instance, and each request uses its own user id so one
+ * caller's state never influences another's.
  *
  * This is an observability and verification surface. Its response is not an ASFDK
  * authorization decision and must never be used to authorize a tool, model, or
@@ -11,6 +17,8 @@
  *
  * It does not exist in production: when VERCEL_ENV is "production" it answers 404.
  */
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import { evaluateGate } from "../src/gate.ts";
 import { AsfdkHarness, Channel } from "../src/harness/harness.ts";
 
@@ -59,13 +67,17 @@ export default async function handler(request: GovernRequest, response: GovernRe
     return response.status(400).json({ error: `Body must be JSON with a non-empty "prompt" string of at most ${MAX_PROMPT_LENGTH} characters` });
   }
 
-  // Serverless filesystems are read-only outside /tmp; the foundation writes continuity state to cwd.
-  const harness = new AsfdkHarness({ userId: "preview-gate-test", cwd: "/tmp" });
+  // The foundation's Sleepwalker storage path is relative to process.cwd() and cannot be configured,
+  // and serverless function directories are read-only, so run from the writable temp directory.
+  const workDir = tmpdir();
+  const harness = new AsfdkHarness({ userId: `preview-gate-${randomUUID()}`, cwd: workDir });
   try {
+    process.chdir(workDir);
     await harness.start();
     const { interaction, emotionalState } = await harness.assessText(prompt, {}, Channel.UNKNOWN);
     const decision = evaluateGate(interaction, emotionalState);
-    return response.status(200).json({
+    // An assessment that could not run is a service failure (503), not a verdict (200).
+    return response.status(decision.assessmentFailed ? 503 : 200).json({
       allowed: decision.allowed,
       crisisLevel: decision.crisisLevel,
       blockedReason: decision.blockedReason,

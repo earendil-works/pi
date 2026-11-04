@@ -8,7 +8,9 @@
  * Fail-closed rules:
  * - A critical or emergency crisis reading blocks the turn.
  * - Any explicit suicidal ideation / self-harm / inability-to-ensure-safety flag blocks the turn.
- * - A failed interaction or an unavailable emotional assessment blocks the turn.
+ * - A failed interaction, an unavailable emotional assessment, or a missing emotional state blocks the turn.
+ *   The foundation returns no emotional state (and involves no components) in modes that disable Sleepwalker,
+ *   for example `crisis_only` and `framework`, so those modes cannot clear this gate.
  *
  * Crisis levels are compared against the foundation's own `rrt.CrisisLevel` enum
  * values ("critical" and "emergency"), not their member names ("RED"/"BLACK").
@@ -28,6 +30,8 @@ export interface GateDecision {
   allowed: boolean;
   crisisLevel: string | null;
   blockedReason: string | null;
+  /** True when the turn was blocked because the assessment could not run or was incomplete (not because of a crisis reading). */
+  assessmentFailed: boolean;
 }
 
 function toRecord(value: unknown): Record<string, unknown> {
@@ -68,18 +72,24 @@ export function evaluateGate(interaction: FoundationResponse | undefined, emotio
       allowed: false,
       crisisLevel,
       blockedReason: `Crisis intervention required before agent turn execution (level: ${crisisLevel ?? "unknown"})`,
+      assessmentFailed: false,
     };
   }
 
   const assessmentFailed =
-    interaction?.success === false || toRecord(emotionalState).error !== undefined || interaction === undefined;
+    interaction === undefined ||
+    interaction.success === false ||
+    emotionalState === null ||
+    emotionalState === undefined ||
+    toRecord(emotionalState).error !== undefined;
   if (assessmentFailed) {
     return {
       allowed: false,
       crisisLevel,
       blockedReason: "Governance assessment failed before agent turn execution",
+      assessmentFailed: true,
     };
   }
 
-  return { allowed: true, crisisLevel, blockedReason: null };
+  return { allowed: true, crisisLevel, blockedReason: null, assessmentFailed: false };
 }

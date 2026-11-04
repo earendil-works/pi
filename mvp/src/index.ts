@@ -2,7 +2,7 @@
  * NLT Coding Agent MVP application entry point.
  *
  * Builds the MVP governed coding agent by composing the ASFDK Solidarity
- * Framework harness (`asfdk-harness`) with the `@earendil-works/pi-coding-agent`
+ * Framework harness (vendored under ./harness) with the `@earendil-works/pi-coding-agent`
  * runtime.
  *
  * Governance boundary:
@@ -22,38 +22,16 @@ import {
   type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import { rrt, type FoundationResponse, type HealthCheckResult } from "@neurolift-technologies/asfdk";
-import { evaluateGate } from "./gate.ts";
+import {
+  createNltCodingAgent,
+  type GovernedTurnInput,
+  type GovernedTurnResult,
+  type NltCodingAgent,
+  type NltCodingAgentConfig,
+} from "./governed-agent.ts";
 
-export interface NltCodingAgentConfig {
-  userId?: string;
-  sessionId?: string;
-  mode?: string;
-  cwd?: string;
-  toiPath?: string;
-  otoiPath?: string;
-  toiContent?: string;
-  otoiContent?: string;
-}
-
-export interface GovernedTurnInput {
-  prompt: string;
-  userId?: string;
-  sessionId?: string;
-  mode?: string;
-  cwd?: string;
-  context?: Record<string, unknown>;
-  channel?: Channel;
-}
-
-export interface GovernedTurnResult {
-  allowed: boolean;
-  crisisLevel: string | null;
-  interaction: FoundationResponse;
-  emotionalState: unknown;
-  governance: Record<string, unknown>;
-  continuity: Record<string, unknown> | null;
-  blockedReason: string | null;
-}
+export { createNltCodingAgent };
+export type { GovernedTurnInput, GovernedTurnResult, NltCodingAgent, NltCodingAgentConfig };
 
 export interface NltCodingTurnResult extends GovernedTurnResult {
   /** Final assistant text produced by the coding-agent runtime, when allowed. */
@@ -64,22 +42,6 @@ export interface NltCodingTurnResult extends GovernedTurnResult {
     continuity: Record<string, unknown> | null;
     governedAt: Date;
   };
-}
-
-export interface NltCodingAgent {
-  readonly harness: AsfdkHarness;
-  readonly mode: string;
-  assessText(
-    text: string,
-    context?: Record<string, unknown>,
-    channel?: Channel,
-  ): Promise<{ interaction: FoundationResponse; emotionalState: unknown }>;
-  healthCheck(): Promise<HealthCheckResult>;
-  status(): Promise<Record<string, unknown>>;
-  protocolSnapshot(): Promise<Record<string, unknown>>;
-  protocolSystemPrompt(): Promise<string>;
-  foundation(): Promise<unknown>;
-  governedTurn(input: GovernedTurnInput): Promise<GovernedTurnResult>;
 }
 
 function buildPreflightBlocks(governed: GovernedTurnResult): string[] {
@@ -101,57 +63,6 @@ function buildPreflightBlocks(governed: GovernedTurnResult): string[] {
     blocks.push(`[Sleepwalker Continuity] ${JSON.stringify(governed.continuity)}`);
   }
   return blocks;
-}
-
-export function createNltCodingAgent(config: NltCodingAgentConfig = {}): NltCodingAgent {
-  const harness = new AsfdkHarness({
-    userId: config.userId,
-    sessionId: config.sessionId,
-    mode: config.mode as never,
-    cwd: config.cwd,
-    toiPath: config.toiPath,
-    otoiPath: config.otoiPath,
-    toiContent: config.toiContent,
-    otoiContent: config.otoiContent,
-  });
-
-  return {
-    harness,
-    mode: "UNIFIED",
-    assessText: (text, context, channel) => harness.assessText(text, context ?? {}, channel ?? Channel.UNKNOWN),
-    healthCheck: () => harness.healthCheck(),
-    status: () => harness.status(),
-    protocolSnapshot: async () => (await harness.protocolSnapshot()) as unknown as Record<string, unknown>,
-    protocolSystemPrompt: () => harness.protocolSystemPrompt(),
-    foundation: () => harness.foundation(),
-    governedTurn: async (input: GovernedTurnInput): Promise<GovernedTurnResult> => {
-      const assessment = await harness.assessText(
-        input.prompt,
-        input.context ?? {},
-        input.channel ?? Channel.UNKNOWN,
-      );
-      const interaction = assessment.interaction;
-      const emotionalState = assessment.emotionalState;
-      const { allowed, crisisLevel, blockedReason } = evaluateGate(interaction, emotionalState);
-
-      const governance: Record<string, unknown> = {
-        componentsInvolved: interaction?.componentsInvolved ?? [],
-        responseType: interaction?.responseType ?? null,
-      };
-
-      const continuity = (emotionalState ?? null) as Record<string, unknown> | null;
-
-      return {
-        allowed,
-        crisisLevel,
-        interaction,
-        emotionalState,
-        governance,
-        continuity,
-        blockedReason,
-      };
-    },
-  };
 }
 
 /**

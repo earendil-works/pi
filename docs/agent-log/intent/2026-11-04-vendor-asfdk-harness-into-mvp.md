@@ -45,7 +45,7 @@ Completed 2026-11-04 on branch `ccr-0d5033af-1rkbla` (draft PR #15).
 - Deviation from the plan: testing the real foundation showed the MVP's crisis gate could never block (it compared the foundation's runtime level values to enum member names and read risk flags at the wrong nesting depth). The gate was moved to `mvp/src/gate.ts` and fixed; it also now fails closed when the emotional assessment is unavailable. This is MVP code, not upstream `governance/crisis.ts`, so no upstream escalate-only file was changed.
 - An initial hypothesis that the default `UNKNOWN` channel prevented assessment was disproved by measurement and the default was left unchanged.
 - Not fixed, flagged for the owner: the upstream RRT detector is a keyword prototype and missed some phrasings.
-- Local verification: MVP typecheck, MVP tests (7 node + 19 vitest), pinned-deps, runtime-deps, ts-imports, entry-graphs, install-lock, biome, and the governance validator all passed. Full root `npm run check` and root tests were not run.
+- Local verification: MVP typecheck, MVP tests (7 node + 26 vitest), pinned-deps, runtime-deps, ts-imports, entry-graphs, install-lock, biome, and the governance validator all passed. Full root `npm run check` and root tests were not run.
 - Vercel: the push produced a preview deployment (`dpl_FpQAQSotFRZkqrFwgE5PeHUBakHv`) that reached READY. The build log contained `error TS2688: Cannot find type definition file for 'node'` from the function transpile step; fixed in `b018928` (node types moved to a typecheck-only tsconfig), and the build of that commit logs no TS error. The endpoint itself has NOT been invoked on Vercel: the available Vercel connection could not fetch the protected preview. No environment variables, production deployment, or project settings were changed.
 
 ## Addendum: removal of inherited CI workflow (2026-11-04)
@@ -59,3 +59,16 @@ At the owner's direction ("Yes remove them"), the remaining inherited Pi-fork wo
 
 ## Addendum: documentation and script clean-up (2026-11-04)
 At the owner's direction ("Cleanup the docs and scripts"), stale mentions of the removed workflows were updated: `.pi/skills/release.md` (NLT-Pi notice added at the top; upstream steps 4-6 replaced by a single "removed" step; it states NLT-Pi has no approved release process and that publishing needs the owner's approval), `scripts/build-binaries.sh` (header comment), `.pi/extensions/import-repro.ts` (header comment and command description), and `packages/coding-agent/test/mcp-conformance/README.md` (no longer runs in CI). No behavior changed: comments, descriptions, and docs only. Not changed: `nix/`, `flake.nix`, `scripts/release*`, and other inherited Pi release tooling, which are separate decisions.
+
+## Addendum: review findings (CodeRabbit, 2026-11-04)
+CodeRabbit reviewed commit 47b727e (9 findings, 1 nitpick). Each was checked against the code.
+
+Fixed (own code):
+- `gate.ts`: a missing (null/undefined) emotional state now fails closed. Verified: in `crisis_only` and `framework` modes the foundation returns no emotional state and involves no components, and the crisis prompt "I want to kill myself" was allowed. `GateDecision` gained `assessmentFailed`.
+- `api/govern.ts`: returns 503 (not 200) whenever the assessment did not run or was incomplete; runs from the OS temp directory (`process.chdir`) because the foundation's Sleepwalker storage path is a fixed relative `.swp_storage` under `process.cwd()`, which is read-only on Vercel (the harness's own `cwd` option and `/tmp` fallback do not affect it); uses a per-request random user id so continuity state is not shared between callers. A mutation check (removing the chdir) fails the new test.
+- Tests no longer need a built `dist`: `createNltCodingAgent` moved to `src/governed-agent.ts` (no coding-agent runtime import); `@earendil-works/pi-coding-agent` exports only `dist`, so importing `src/index.ts` failed on a fresh checkout. Typecheck still needs the workspace build.
+- Added the EACCES optional-file test (nitpick).
+
+Not changed here (vendored upstream files; changes belong in asfdk-harness and need the owner's approval, then re-sync): `policy.ts` destructive-command patterns do not match `rm -fr`, `rm -rf -- /path`, or shell globs for sensitive paths (a known limit of the regex guardrail, consistent with the README's "guardrail, not a security boundary"); `tools.ts` `asfdk_protocol_status` returns unredacted protocol paths (the Pi tool is not used by `/api/govern`); `protocols.ts` serves the same inline TOI content for every `.toi` source URI and does not use the `honor` result (inline content is unused by the MVP); `harness.ts` `/tmp` fallback (addressed for the endpoint in `govern.ts`).
+
+Corrected statement: earlier text said the endpoint "persists nothing". The foundation may write ephemeral continuity files under the temp directory of the function instance; no durable storage is used.
