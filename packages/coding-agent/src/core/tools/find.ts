@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline";
-import { spawn } from "child_process";
+import { execFile, spawn } from "child_process";
 import path from "path";
 import { type Static, Type } from "typebox";
 import { ensureTool } from "../../utils/tools-manager.ts";
@@ -20,6 +20,28 @@ export function relativizeFindResultPath(
 	const relativePath = pathModule.isAbsolute(resultPath) ? pathModule.relative(searchPath, resultPath) : resultPath;
 	const posixPath = relativePath.split(pathModule.sep).join("/");
 	return hadTrailingSeparator && !posixPath.endsWith("/") ? `${posixPath}/` : posixPath;
+}
+
+// Before 10.5.1, fd on Windows matched --full-path globs against paths with native `\` separators, so a
+// glob separator `/` never matched (sharkdp/fd#2067). Version per fd binary path, probed once.
+const legacyWindowsFullPathGlobByFdPath = new Map<string, Promise<boolean>>();
+
+/** Whether this fd binary predates the Windows --full-path glob fix (sharkdp/fd#2067, fd 10.5.1). */
+export function usesLegacyWindowsFullPathGlob(fdPath: string): Promise<boolean> {
+	let result = legacyWindowsFullPathGlobByFdPath.get(fdPath);
+	if (!result) {
+		result = new Promise((resolve) => {
+			execFile(fdPath, ["--version"], { timeout: 5000 }, (_error, stdout) => {
+				const match = /(\d+)\.(\d+)\.(\d+)/.exec(stdout);
+				// Unknown versions are treated as fixed: pi downloads the latest fd release.
+				if (!match) return resolve(false);
+				const [major, minor, patch] = match.slice(1).map(Number);
+				resolve(major !== 10 ? major < 10 : minor !== 5 ? minor < 5 : patch < 1);
+			});
+		});
+		legacyWindowsFullPathGlobByFdPath.set(fdPath, result);
+	}
+	return result;
 }
 
 const findSchema = Type.Object({
@@ -173,6 +195,8 @@ export function createFindToolDefinition(
 
 						// Default implementation uses fd.
 						const fdPath = await ensureTool("fd");
+						const legacyWindowsGlob =
+							process.platform === "win32" && !!fdPath && (await usesLegacyWindowsFullPathGlob(fdPath));
 						if (signal?.aborted) {
 							settle(() => reject(new Error("Operation aborted")));
 							return;
@@ -205,15 +229,24 @@ export function createFindToolDefinition(
 						// fd --glob matches against the basename unless --full-path is set; in --full-path
 						// mode it matches against the absolute candidate path, so a path-containing
 						// pattern like 'src/**/*.spec.ts' needs a leading '**/' to match anything.
-						let effectivePattern = pattern;
-						if (pattern.includes("/")) {
+						// On Windows `\` is a path separator (fd does not treat it as a glob escape there), so
+						// native patterns like 'src\**\*.ts' are normalized to '/' (#9262). On POSIX `\` stays an
+						// escape character.
+						let effectivePattern = process.platform === "win32" ? pattern.replaceAll("\\", "/") : pattern;
+						if (effectivePattern.includes("/")) {
 							args.push("--full-path");
-							if (!pattern.startsWith("/") && !pattern.startsWith("**/") && pattern !== "**") {
-								effectivePattern = `**/${pattern}`;
+							if (
+								!effectivePattern.startsWith("/") &&
+								!effectivePattern.startsWith("**/") &&
+								effectivePattern !== "**"
+							) {
+								effectivePattern = `**/${effectivePattern}`;
 							}
-							// fd matches full paths using native separators on Windows.
-							if (process.platform === "win32")
+							// Best-effort workaround for old fd on Windows. It must not be applied to fixed fd:
+							// '**[/\\]' is no longer a recursive wildcard there, so every path glob matches nothing.
+							if (legacyWindowsGlob) {
 								effectivePattern = effectivePattern.replaceAll("/", String.raw`[/\\]`);
+							}
 						}
 						args.push("--", effectivePattern, searchPath);
 

@@ -28,6 +28,7 @@
 - Fixed the grep tool reading every matched file into memory when `context` was set, which ran out of memory on large files; context now comes from ripgrep, which also fixes UTF-16 files and lone CRs in matched lines, and the match limit notice no longer appears when exactly `limit` matches exist ([#9276](https://github.com/earendil-works/pi/issues/9276), [#11423](https://github.com/earendil-works/pi/issues/11423))
 - Fixed the find tool reporting the result limit when exactly `limit` files match, and `limit: 0` in find and ls returning every result or an empty listing; limits below 1 now mean 1 ([#7121](https://github.com/earendil-works/pi/issues/7121))
 - Fixed grep match lines, codemode output, compaction summaries of tool results, and MCP error and server summaries cutting an emoji or other non-BMP character in half when truncating, which left an invalid lone surrogate in the text ([#7121](https://github.com/earendil-works/pi/issues/7121))
+- Fixed the find tool on Windows returning no results for every path pattern, such as `src/**/*.ts`, with fd 10.5.1, which pi downloads now. The workaround for older fd is now used only with fd before 10.5.1. With fd 10.5.1, `src/**/*.ts` also finds files directly in `src/`, `src/*.ts` no longer finds files in subdirectories, and patterns with Windows separators such as `src\**\*.ts` work ([#9262](https://github.com/earendil-works/pi/issues/9262))
 
 
 ## [1.5.0] - 2026-11-02

@@ -2,7 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createFindToolDefinition } from "../../../src/core/tools/find.ts";
+import { createFindToolDefinition, usesLegacyWindowsFullPathGlob } from "../../../src/core/tools/find.ts";
+import { getToolPath } from "../../../src/utils/tools-manager.ts";
+
+// fd before 10.5.1 on Windows only gets a best-effort workaround (sharkdp/fd#2067): it misses files
+// directly under the prefix and lets '*' cross directories, so exact-result cases skip there.
+const fdPath = getToolPath("fd");
+const exactPathGlobs = !(process.platform === "win32" && fdPath && (await usesLegacyWindowsFullPathGlob(fdPath)));
 
 /**
  * Regression test for https://github.com/earendil-works/pi/issues/3302
@@ -26,6 +32,7 @@ describe("issue #3302 find returns no results for path-based glob patterns", () 
 		writeFileSync(join(tempRoot, "some", "parent", "child", "file.ext"), "");
 		writeFileSync(join(tempRoot, "some", "parent", "child", "test.spec.ts"), "");
 		writeFileSync(join(tempRoot, "src", "foo", "bar", "example.spec.ts"), "");
+		writeFileSync(join(tempRoot, "src", "direct.spec.ts"), "");
 	});
 
 	afterEach(() => {
@@ -49,7 +56,11 @@ describe("issue #3302 find returns no results for path-based glob patterns", () 
 
 	it("basename pattern still matches (regression-safe)", async () => {
 		const files = await runFind("*.spec.ts");
-		expect(files.sort()).toEqual(["some/parent/child/test.spec.ts", "src/foo/bar/example.spec.ts"]);
+		expect(files.sort()).toEqual([
+			"some/parent/child/test.spec.ts",
+			"src/direct.spec.ts",
+			"src/foo/bar/example.spec.ts",
+		]);
 	});
 
 	it("directory-prefixed pattern with ** tail matches subtree", async () => {
@@ -65,8 +76,40 @@ describe("issue #3302 find returns no results for path-based glob patterns", () 
 		expect(files.sort()).toContain("some/parent/child/test.spec.ts");
 	});
 
-	it("src/**/*.spec.ts matches nested spec file", async () => {
+	it.runIf(exactPathGlobs)("src/**/*.spec.ts matches direct and nested spec files", async () => {
 		const files = await runFind("src/**/*.spec.ts");
-		expect(files).toEqual(["src/foo/bar/example.spec.ts"]);
+		expect(files.sort()).toEqual(["src/direct.spec.ts", "src/foo/bar/example.spec.ts"]);
+	});
+
+	it.runIf(exactPathGlobs)("src/*.spec.ts does not cross directories", async () => {
+		const files = await runFind("src/*.spec.ts");
+		expect(files).toEqual(["src/direct.spec.ts"]);
+	});
+
+	// https://github.com/earendil-works/pi/issues/9262: on Windows, `\` is a path separator.
+	// On POSIX it is a glob escape character, so these cases are Windows-only.
+	it.runIf(process.platform === "win32" && exactPathGlobs)(
+		"Windows backslash patterns match like forward-slash patterns",
+		async () => {
+			expect((await runFind(String.raw`src\**\*.spec.ts`)).sort()).toEqual([
+				"src/direct.spec.ts",
+				"src/foo/bar/example.spec.ts",
+			]);
+			expect(await runFind(String.raw`src\*.spec.ts`)).toEqual(["src/direct.spec.ts"]);
+			expect((await runFind(String.raw`**\parent\child\*`)).sort()).toEqual([
+				"some/parent/child/file.ext",
+				"some/parent/child/test.spec.ts",
+			]);
+			expect((await runFind(String.raw`src\**/*.spec.ts`)).sort()).toEqual([
+				"src/direct.spec.ts",
+				"src/foo/bar/example.spec.ts",
+			]);
+		},
+	);
+
+	it.runIf(process.platform !== "win32")("POSIX backslash still escapes glob characters", async () => {
+		writeFileSync(join(tempRoot, "src", "*.ts"), "");
+		writeFileSync(join(tempRoot, "src", "other.ts"), "");
+		expect(await runFind(String.raw`src/\*.ts`)).toEqual(["src/*.ts"]);
 	});
 });
