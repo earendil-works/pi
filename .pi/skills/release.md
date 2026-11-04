@@ -5,6 +5,8 @@ description: Prepare, publish, verify, and recover pi releases. Use for release 
 
 # Releasing pi
 
+> **NLT-Pi notice:** this skill was inherited from upstream Pi and describes the upstream release process (npm publishing under `@earendil-works`, the `pi.dev` release marker, the Nix `stable` branch). The CI workflows that process depends on (`build-binaries.yml`, `nix.yml`) were removed from this repository at the owner's direction, so steps 4-6 below no longer exist and nothing publishes automatically. NLT-Pi has no approved release or publishing process yet. Do not run the release script, push tags, or publish packages without explicit approval from Joshua W. Dorsey, Sr.; escalate instead. Steps 1-3 are kept for reference only.
+
 Run repository commands from the repo root (two directories above this skill), unless instructed otherwise.
 
 **Lockstep versioning**: all packages share one version; every release updates all together. `patch` = fixes + additions, `minor` = breaking changes. No major releases.
@@ -45,8 +47,4 @@ Run repository commands from the repo root (two directories above this skill), u
 
    The release script pins the newest published model catalog for Nix (`nix/model-catalog.json`) and builds the checkout with it as the Nix build does (it fails if that catalog predates main's model changes; publish one first), bumps all package versions, updates changelogs, regenerates release artifacts, runs `npm run check`, commits `Release vX.Y.Z`, tags `vX.Y.Z`, adds fresh `## [Unreleased]` changelog sections, commits `Add [Unreleased] section for next cycle`, then pushes `main` and the tag. Do not rerun the release script after a tag was pushed.
 
-4. **CI verifies and announces the npm release**: pushing the `vX.Y.Z` tag triggers `.github/workflows/build-binaries.yml`. The `publish-npm` job uses npm trusted publishing through GitHub Actions OIDC with environment `npm-publish`; no local `npm publish`, `npm whoami`, OTP, or WebAuthn flow is required. After publishing, `announce-pi-dev-release` verifies every public workspace package resolves at the exact release version and that its npm tarball is available, then writes the verified release marker to R2. `pi.dev/api/latest-version` reads that marker; it must never announce a release from npm before this job succeeds.
-
-5. **CI builds the Nix release**: the tag push also triggers `.github/workflows/nix.yml`, which builds the tagged flake on Linux and macOS and then fast-forwards the `stable` branch to the release commit. `nix run github:earendil-works/pi/stable` runs the latest release. If the Nix build fails, `stable` stays on the previous release; the tag cannot be fixed, so fix `main` and ship the fix in the next release.
-
-6. **If CI publish or announcement fails**: inspect the failed job. The publish helper is idempotent and skips package versions already present on npm; the announcement job rechecks availability before updating the R2 marker. Rerun the failed job or workflow after fixing CI or transient npm issues. Do not rerun `npm run release:patch` or `npm run release:minor` for the same version.
+4. **(Removed) CI publish, Nix build, and recovery**: upstream's steps 4-6 relied on `.github/workflows/build-binaries.yml` (npm trusted publishing and the `pi.dev` announcement) and `.github/workflows/nix.yml` (Nix release build and `stable` branch). Both workflows were removed from NLT-Pi, so there is no CI publish, announcement, or Nix release to verify or recover. Any future release automation needs the owner's approval and a new process.

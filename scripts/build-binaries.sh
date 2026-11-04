@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Build pi binaries for all platforms locally.
-# Mirrors .github/workflows/build-binaries.yml
+# Originally mirrored .github/workflows/build-binaries.yml, which was removed from NLT-Pi; this script is now local-only.
 #
 # Usage:
 #   ./scripts/build-binaries.sh [--skip-install] [--skip-build] [--offline-model-data] [--platform <platform>] [--out <dir>]
