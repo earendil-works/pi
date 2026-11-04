@@ -23,6 +23,7 @@ const compat: Omit<Required<OpenAICompletionsCompat>, "thinkingTokenBudgetField"
 	maxTokensField: "max_completion_tokens",
 	requiresToolResultName: false,
 	requiresAssistantAfterToolResult: false,
+	requiresNonNullAssistantContent: false,
 	requiresThinkingAsText: false,
 	requiresReasoningContentOnAssistantMessages: false,
 	thinkingFormat: "openai",
