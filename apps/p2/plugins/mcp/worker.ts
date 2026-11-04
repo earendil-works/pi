@@ -2,12 +2,11 @@
 // conversations work at (the session's, active subagents' own), with the project `.pi/mcp.json` read at each through
 // its environment, as its leases, again whenever they may have changed and whenever the view (re)activates, and offers
 // the servers' tools as one Durable extension that follows the view's `servers` and the code mode switch: as in pi,
-// tools are for code mode scripts, and only without code mode does `tool_search` load them for the model. No MCP
-// process or credential is ever in a worker.
+// tools are for code mode scripts, and only without code mode does `tool_search` (installed by the worker's registry)
+// load them for the model. No MCP process or credential is ever in a worker.
 
 import { setTimeout as sleep } from "node:timers/promises";
 import { type ConversationId, type Extension, type Harness, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
-import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
 import {
 	type Context,
 	type Ctx,
@@ -81,14 +80,12 @@ function mcpWorker(self: StoreSelf): void {
 	leaseLocations(self, view, harness, worker);
 }
 
-/** The extensions offering `offer`: the servers' tools and section, and `tool_search` while it reaches the tools. */
+/**
+ * The extension offering `offer`: the servers' tools and section. `tool_search`, which reaches them without code mode,
+ * is the worker's registry's (`durableRegistry`), shared with other plugins' deferred tools.
+ */
 function extensionsFor(offer: McpOffer, call: McpCall): Readonly<Record<string, Extension>> {
-	const extensions: Record<string, Extension> = { [MCP_EXTENSION]: createMcpExtension(offer, call) };
-	if (offer.reach === "tool_search" && offer.servers.length > 0) {
-		const search = createToolSearchExtension();
-		extensions[search.name] = search;
-	}
-	return extensions;
+	return { [MCP_EXTENSION]: createMcpExtension(offer, call) };
 }
 
 /**

@@ -1852,6 +1852,14 @@ audio.file-media {
 .terminal-tabs > button.exited {
 	text-decoration: line-through;
 }
+/* Opened by the agent (the terminal tool). */
+.terminal-agent {
+	margin-right: 0.4em;
+	padding: 0 0.3em;
+	border: 1px solid var(--line);
+	border-radius: 3px;
+	font-size: 0.85em;
+}
 .terminal-tabs > .icon-button[aria-pressed="true"] {
 	color: var(--text);
 }

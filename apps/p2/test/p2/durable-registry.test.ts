@@ -1,8 +1,9 @@
-// The Extensions registry as Durable's RegistryReader: one complete snapshot per table, swapped at reload.
+// The Extensions registry as Durable's RegistryReader: one complete snapshot per table, swapped at reload, with
+// `tool_search` installed once while code mode is off and deferred tools need it.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { defineExtension, section } from "@earendil-works/pi-durable";
-import { bool } from "@earendil-works/pi-schema";
+import { defineExtension, defineTool, section } from "@earendil-works/pi-durable";
+import { bool, obj } from "@earendil-works/pi-schema";
 import { BACKGROUND_CONTEXT, local, method, whenLive } from "@p2/app/v1";
 import { defineFacet, type Facet, Session } from "../../src/runtime/chord.ts";
 import { durableRegistry, ExtensionSwitches } from "../../src/runtime/durable.ts";
@@ -113,5 +114,46 @@ describe("durable registry bridge", () => {
 		await tick();
 		assert.deepEqual(names(), ["switched", "guard"]);
 		assert.ok(published > before);
+	});
+
+	it("installs tool_search once while code mode is off and deferred tools the model may call exist", async (t) => {
+		const deferredTool = (name: string, callers?: readonly ("model" | "tools")[]) =>
+			defineFacet((_host, self) =>
+				self.contribute(Extensions, {
+					[name]: defineExtension({
+						name,
+						tools: [
+							defineTool({
+								name,
+								description: name,
+								parameters: obj({}),
+								deferred: true,
+								...(callers ? { callers } : {}),
+								execute: async () => ({}),
+							}),
+						],
+					}),
+				}),
+			);
+		const codemode = (on: boolean) =>
+			defineFacet((_host, self) => {
+				self.contribute(Extensions, { codemode: defineExtension({ name: "codemode" }) });
+				self.contribute(ExtensionSwitches, { codemode: on });
+			});
+		const names = async (facets: Facet[]) => {
+			const fixture = await testHost({ address: Session({ id: "w" }), kind: "worker", facets });
+			t.after(() => fixture.close());
+			return (await readerOf(fixture))
+				.snapshot()
+				.installed()
+				.map((extension) => extension.name);
+		};
+		// Two plugins with deferred tools (MCP's, the terminal tool), no code mode: one tool_search.
+		assert.deepEqual(await names([deferredTool("a"), deferredTool("b")]), ["a", "b", "tool-search"]);
+		assert.deepEqual(await names([codemode(false), deferredTool("a")]), ["a", "tool-search"]);
+		// Code mode on, or only script-callable deferred tools, or none: no tool_search.
+		assert.deepEqual(await names([codemode(true), deferredTool("a")]), ["codemode", "a"]);
+		assert.deepEqual(await names([deferredTool("a", ["tools"])]), ["a"]);
+		assert.deepEqual(await names([facet("guard", "v1")]), ["guard"]);
 	});
 });

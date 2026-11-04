@@ -29,7 +29,7 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
 | --- | --- | --- |
 | `P2_DATA_DIR` | `~/.pi/p2` | data directory: `catalog.sqlite`, `sessions/<id>.sqlite`, `settings.json`, `models.json`, `envs.json`, `mcp.json`, `mcp-auth.json`, `auth.json`, `radius.json`, `forwards.json` |
 | `PORT` | `8788` | listen port (loopback only), so p2 never collides with pi-mobile on 8787 |
-| `P2_FAKE` | unset | `1`: the faux provider (`faux/faux-1`, echoes the prompt; `slow …` streams long; `rename-session <title>` calls the tool; `subagent`, `subagent-bad`, `subagent-answer`, `subagent-configure`, `subagent-send`, `subagent-archive`, `subagent-status` exercise subagents, `subagent <json>` calls the tool with those arguments, as do `team <json>`, `history_search|read|handoff <json>`, `location_envs|dirs|move <json>`, `tool_search <json>` and `mcp__<server>__<tool> <json>`; `codemode` runs a script calling bash and read, `codemode-restart` one whose slow middle call a restart interrupts, `codemode <script>` runs that script; `artifact <json>` calls the artifact tool with those arguments; `json <text>` answers exactly `<text>`; a one-shot agent whose task is not `json …`/`slow…` answers a small value matching its schema) |
+| `P2_FAKE` | unset | `1`: the faux provider (`faux/faux-1`, echoes the prompt; `slow …` streams long; `rename-session <title>` calls the tool; `subagent`, `subagent-bad`, `subagent-answer`, `subagent-configure`, `subagent-send`, `subagent-archive`, `subagent-status` exercise subagents, `subagent <json>` calls the tool with those arguments, as do `team <json>`, `history_search|read|handoff <json>`, `location_envs|dirs|move <json>`, `tool_search <json>`, `terminal <json>` and `mcp__<server>__<tool> <json>`; `codemode` runs a script calling bash and read, `codemode-restart` one whose slow middle call a restart interrupts, `codemode <script>` runs that script; `artifact <json>` calls the artifact tool with those arguments; `json <text>` answers exactly `<text>`; a one-shot agent whose task is not `json …`/`slow…` answers a small value matching its schema) |
 | `P2_IDLE_MS` | `300000` | idle time before a session worker stops |
 | `P2_PROVIDER`, `P2_MODEL` | unset | default model for new sessions after settings.json's `defaultModel` (both or neither; Pi Mobile's `PI_MOBILE_PROVIDER`/`PI_MOBILE_MODEL` work too) |
 | `P2_RADIUS` | unset | `0`: disable the outbound Radius brain connection even when signed in |
@@ -877,11 +877,49 @@ translated phone drawer and intercept chat taps.
   Terminal tab through the terminals plugin's `workspace-terminal` slot. Side and bottom panels carry across a
   session switch, showing that session's terminals without starting one. Only explicit terminal-button/tab taps
   request auto-start; attachment updates replace the route, never push or reopen a later destination.
-  Outdated hosts show Restart (ends all terminals), but idle outdated hosts are not automatically replaced yet.
+  Outdated hosts show Restart (ends all terminals), but idle outdated hosts are not automatically replaced yet; the
+  agent's calls to an outdated host fail with that advice (`OUTDATED_HOST`), and archiving cannot close its terminals.
+  Each terminal has a number in its session (`index`: the lowest free one from 1, kept while it lives), an optional
+  name and an `agent` mark; tabs show the name, else the title, else "Terminal N", agent terminals with a "Pi" badge.
+  Every connection that listed a session hears its list change (`terminals`: opened, closed, exited, renamed, by any
+  viewer or the agent); a panel showing a terminal keeps it, one showing none attaches the newest new one. Archiving a
+  session closes its terminals (`SessionArchived`, a host-lifetime contribution; no host is started for it).
+  **Agent terminal tool** (owner decisions): the agent drives the same terminals the owner sees (shared: the owner
+  watches and types; the agent may read, type into and close any terminal of its session, the owner's too). Guest
+  turns may use it, like bash. Code mode only, like MCP tools (`deferred`, `callers: ["tools"]`; scripts find it with
+  `searchTools()`); while code mode is off `tool_search` loads it (installed once by `durableRegistry`, not by each
+  plugin: two plugins contributing `tool-search` would be a registry conflict). The description says to use it only
+  when the user asks for a terminal or for driving an interactive program in one, never instead of bash; no prompt
+  section. Call: `tools.terminal({ command, args })`, tmux's argv after the command name, parsed getopt-style
+  (`commands.ts`: no string parsing, tmux-like errors such as `send-keys: unknown option -- x` or `usage: …`):
+  `new-window [-n name] [-c dir] [-w W] [-T s] [command ...]` (a shell at the calling conversation's location,
+  `environments.locate`; subagents cannot choose code mode or this tool yet; `-c` relative to it; `command` is typed into it, then Enter, and the shell stays),
+  `list-windows`, `send-keys -t T [-l] [-w W] [-T s] key ...` (tmux key names as keys, encoded by libghostty in the
+  terminal's modes, other arguments as text), `read -t T [-w W] [-T s]` (output since the agent's last read),
+  `capture-pane -t T [-S -N] [-e] [-p]` (the screen, N scrollback lines, `-e` with SGR colors), `kill-window -t T`.
+  Targets: the number (`2`, `:2`) or the name. Waits `W`: `quiet` (0.5 s without output; default of new-window and
+  send-keys), `exit`, `/regex/` (`/regex/i`) over the new plain text, `none` (read's default); `-T` seconds (default
+  10, send-keys 5, max 120); a timeout is no error. Result (`structuredOutput`): `{ window, output, running,
+  foreground?, exitCode?, error?, screen?, skipped?, timedOut? }`, `{ windows }`, `{ window, killed }`; output is the
+  last 16 KiB of plain text (escape sequences removed, `\r` overwrites and backspaces applied, erase-in-line honored),
+  or a full-screen program's screen (`screen: true`). The host keeps each terminal's last MiB of output
+  (`OutputRing`) and the agent's read cursor, so reads survive server and worker restarts; it answers calls with ids
+  (`call`/`reply`, `cancel` ends a wait) and does keyed calls (open, send, close) once per key (the tool call's task
+  id; the last 1024 remembered). The tool is replay-safe: the read start and a killed window's id are memoized
+  (`api.memo`). Server: `AgentTerminals` (worker variant only) serves the session's running current generation (as
+  MCP's `currentWorker`), refuses archived sessions, opens only on environments the session works on (its own, its
+  subagents'), forwards cancellation. The agent may have 8 running terminals per session (the owner's do not count).
+  Web: the transcript card (code mode off) shows the command line and output with "Open terminal N"; code mode's
+  nested-call rows show the command line. TUI: a card with the command line and the output's last lines.
   `terminals-host.test.ts` covers shells, disconnect snapshots, foreground jobs, themes and flood resync;
   `terminals.test.ts` covers guest/control denial, one-use byte grants, session isolation, reload and server restart;
-  `ghostty.test.ts` and `terminal-input.test.ts` cover the copied browser primitives. PTY tests skip when no daemon build
-  exists.
+  `terminal-agent-host.test.ts` the host's calls (keys done once, cursor, waits, cancel, plain text, the alternate
+  screen, captures, ring overflow, list pushes, the cap, closing a session, an outdated host); `terminal-tool.test.ts`
+  the tool end to end (scripts, shared with the owner both ways, errors, guest turns, stale workers and foreign
+  environments refused, archiving, `tool_search` without code mode); `terminal-tool-unit.test.ts`,
+  `terminal-commands.test.ts`, `terminal-plain.test.ts` and `terminal-keys.test.ts` the pure parts;
+  `ghostty.test.ts` and `terminal-input.test.ts` cover the copied browser primitives. PTY tests skip when no daemon
+  build exists (`npm run build:daemon` in `packages/env` builds a debug one).
 - **Search** (`plugins/search`): `SearchIndex` (server local, `search.sqlite`: root/subagent user/assistant text in FTS5 and
   one cursor per conversation; derived, dropped on a schema change). Each worker's `Indexer` (lifetime "host") runs a task that reads
   the server's cursor (`SearchFeed`, worker principals only, session from the principal), scans each root/subagent
@@ -1052,8 +1090,9 @@ translated phone drawer and intercept chat taps.
   refusal because a newer generation runs ends it), and
   contributes one Durable extension `mcp` (a `self.writable`, rebuilt only when the tool list changes): deferred tools
   named by `createMcpToolName` (every tool of a colliding name gets the hash suffix, as in pi), results through
-  `toLlmContent` and `limitMcpContent`, `structuredOutput` only for tools with an output schema. The worker facet also
-  installs `tool_search`. Tests: `mcp.test.ts` (manager and views on a bare host with `test/fixtures/mcp-server.mjs` and
+  `toLlmContent` and `limitMcpContent`, `structuredOutput` only for tools with an output schema. Without code mode,
+  `tool_search` is installed by the worker's registry (`durableRegistry`: once, while code mode is off and any extension
+  has a deferred tool the model may call; MCP's and the terminal tool share it). Tests: `mcp.test.ts` (manager and views on a bare host with `test/fixtures/mcp-server.mjs` and
   an HTTP fixture; projects, where sessions work, and an environment through the debug pi-env daemon, skipped without
   it: `npm run build:daemon` in `packages/env`, or `PI_ENV_DAEMON`), `mcp-instances.test.ts` (the supervisor with a
   short backoff), `mcp-leases.test.ts`, `mcp-environments.test.ts`, `mcp-project.test.ts`,

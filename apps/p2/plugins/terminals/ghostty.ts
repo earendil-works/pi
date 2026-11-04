@@ -38,6 +38,8 @@ const CELL_GRAPHEMES_BUF = 4;
 const CELL_BG = 5;
 const CELL_FG = 6;
 const CELL_HAS_STYLING = 8;
+// GhosttyFormatterFormat
+const FORMAT_PLAIN = 0;
 const FORMAT_VT = 1;
 // GhosttyCellData, GhosttyCellWide
 const CELL_DATA_WIDE = 3;
@@ -556,6 +558,18 @@ export class VtTerminal {
 	 * size reproduces this one, for a browser that attaches later.
 	 */
 	snapshot(): Uint8Array {
+		return this.#format(FORMAT_VT);
+	}
+
+	/**
+	 * The active screen as plain text, with the scrollback before it (the alternate screen of a full-screen program has
+	 * none): soft-wrapped lines joined, trailing spaces trimmed.
+	 */
+	text(): string {
+		return new TextDecoder().decode(this.#format(FORMAT_PLAIN));
+	}
+
+	#format(emit: number): Uint8Array {
 		const ghostty = this.#ghostty;
 		const type = "GhosttyFormatterTerminalOptions";
 		const size = ghostty.size(type);
@@ -568,7 +582,7 @@ export class VtTerminal {
 			const flag = (base: number, struct: string, name: string) =>
 				view.setUint8(base + ghostty.field(struct, name), 1);
 			view.setUint32(options + ghostty.field(type, "size"), size, true);
-			view.setUint32(options + ghostty.field(type, "emit"), FORMAT_VT, true);
+			view.setUint32(options + ghostty.field(type, "emit"), emit, true);
 			flag(options, type, "unwrap");
 			flag(options, type, "trim");
 			view.setUint32(
@@ -576,17 +590,19 @@ export class VtTerminal {
 				ghostty.size("GhosttyFormatterTerminalExtra"),
 				true,
 			);
-			// Not `tabstops`: the formatter emits them after the cursor position, moving the cursor (programs rarely
-			// change the default stops anyway).
-			for (const name of ["modes", "scrolling_region", "pwd", "keyboard"])
-				flag(extra, "GhosttyFormatterTerminalExtra", name);
 			view.setUint32(
 				screen + ghostty.field("GhosttyFormatterScreenExtra", "size"),
 				ghostty.size("GhosttyFormatterScreenExtra"),
 				true,
 			);
-			for (const name of ["cursor", "style", "hyperlink", "protection", "kitty_keyboard", "charsets"])
-				flag(screen, "GhosttyFormatterScreenExtra", name);
+			if (emit === FORMAT_VT) {
+				// Not `tabstops`: the formatter emits them after the cursor position, moving the cursor (programs rarely
+				// change the default stops anyway).
+				for (const name of ["modes", "scrolling_region", "pwd", "keyboard"])
+					flag(extra, "GhosttyFormatterTerminalExtra", name);
+				for (const name of ["cursor", "style", "hyperlink", "protection", "kitty_keyboard", "charsets"])
+					flag(screen, "GhosttyFormatterScreenExtra", name);
+			}
 			formatter = ghostty.create("ghostty_formatter_terminal_new", this.handle, options);
 			const result = ghostty.call("ghostty_formatter_format_alloc", formatter, 0, this.#scratch, this.#scratch + 4);
 			if (result !== SUCCESS) throw new Error(`Formatting the terminal failed (${result})`);

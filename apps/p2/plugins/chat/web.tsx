@@ -42,6 +42,7 @@ import {
 	navigate,
 	OneShotAgents,
 	OpenConversation,
+	OpenTerminal,
 	OpenWorkspaceFile,
 	openLayer,
 	type PickedFile,
@@ -480,6 +481,18 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 					file: { path, view: "file", line },
 				},
 			});
+		},
+		[nav],
+	);
+	// The terminal panel where it is open (the workspace's tab), else below the chat.
+	const openTerminal = useCallback(
+		(terminalId: string) => {
+			const current = nav.route;
+			void nav.push(
+				current.workspace?.tab === "terminal"
+					? { ...current, workspace: { ...current.workspace, terminal: terminalId, startTerminal: undefined } }
+					: { ...current, terminal: terminalId, startTerminal: undefined },
+			);
 		},
 		[nav],
 	);
@@ -998,33 +1011,35 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 									<OpenConversation.Provider value={openConversation}>
 										<OneShotAgents.Provider value={oneShots}>
 											<OpenWorkspaceFile.Provider value={canWrite ? openWorkspaceFile : undefined}>
-												<ReplyTo.Provider value={participant && canReply ? startReply : undefined}>
-													<BranchFrom.Provider value={canBranch ? branchFrom : undefined}>
-														<RevealEntry.Provider value={reveal}>
-															<FillGap.Provider value={fillGap}>
-																<Messages
-																	transcript={shown ?? transcript}
-																	rows={rows}
-																	list={follow.list}
-																	range={follow.range}
-																	stopped={
-																		stopped?.sessionId === sessionId &&
-																		stopped?.conversationId === conversationId &&
-																		!view?.entries.some((entry) =>
-																			entry.model?.some(
-																				(message) =>
-																					message.role === "assistant" &&
-																					message.stopReason === "aborted",
-																			),
-																		)
-																	}
-																	earlier={earlier}
-																	onEarlier={() => void loadEarlier()}
-																/>
-															</FillGap.Provider>
-														</RevealEntry.Provider>
-													</BranchFrom.Provider>
-												</ReplyTo.Provider>
+												<OpenTerminal.Provider value={owner ? openTerminal : undefined}>
+													<ReplyTo.Provider value={participant && canReply ? startReply : undefined}>
+														<BranchFrom.Provider value={canBranch ? branchFrom : undefined}>
+															<RevealEntry.Provider value={reveal}>
+																<FillGap.Provider value={fillGap}>
+																	<Messages
+																		transcript={shown ?? transcript}
+																		rows={rows}
+																		list={follow.list}
+																		range={follow.range}
+																		stopped={
+																			stopped?.sessionId === sessionId &&
+																			stopped?.conversationId === conversationId &&
+																			!view?.entries.some((entry) =>
+																				entry.model?.some(
+																					(message) =>
+																						message.role === "assistant" &&
+																						message.stopReason === "aborted",
+																				),
+																			)
+																		}
+																		earlier={earlier}
+																		onEarlier={() => void loadEarlier()}
+																	/>
+																</FillGap.Provider>
+															</RevealEntry.Provider>
+														</BranchFrom.Provider>
+													</ReplyTo.Provider>
+												</OpenTerminal.Provider>
 											</OpenWorkspaceFile.Provider>
 										</OneShotAgents.Provider>
 									</OpenConversation.Provider>

@@ -4,6 +4,7 @@ import type { RegistryValue } from "@earendil-works/chord";
 import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import { createRegistry, type Extension, type RegistryReader, type RegistrySnapshot } from "@earendil-works/pi-durable";
+import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
 import { keyedRegistry } from "./chord.ts";
 
 /**
@@ -23,9 +24,14 @@ export const Extensions = keyedRegistry<Extension>("p2.durable-extensions");
  */
 export const ExtensionSwitches = keyedRegistry<boolean | undefined>("p2.extension-switches");
 
+/** The code mode plugin's extension: its switch is on while the `codemode` setting is, absent without the plugin. */
+const CODEMODE_EXTENSION = "codemode";
+
 /**
  * Durable's registry over the worker's `Extensions` and `ExtensionSwitches`: a snapshot per (extensions, switched-off
- * set), made once and kept while the composition lives; `subscribe` observes both registries' compositions (its
+ * set), made once and kept while the composition lives. Without code mode, deferred tools the model may call (MCP
+ * tools, the terminal tool) are reachable only through `tool_search`, as pi falls back: it is installed then, once,
+ * whichever plugins offer such tools; `subscribe` observes both registries' compositions (its
  * listener called inside the Chord batch that composed, so it only wakes the scheduler). `context` ends the
  * observations.
  */
@@ -42,7 +48,14 @@ export function durableRegistry(
 		let snapshot = byKey.get(key);
 		if (snapshot === undefined) {
 			const builder = createRegistry();
-			for (const [name, extension] of table) if (!disabled.has(name)) builder.install(extension);
+			const installed = [...table].filter(([name]) => !disabled.has(name)).map(([, extension]) => extension);
+			for (const extension of installed) builder.install(extension);
+			const codemode = table.has(CODEMODE_EXTENSION) && !disabled.has(CODEMODE_EXTENSION);
+			const search = createToolSearchExtension();
+			const deferred = installed.some((extension) =>
+				extension.tools?.some((tool) => tool.deferred && (tool.callers?.includes("model") ?? true)),
+			);
+			if (!codemode && deferred && !table.has(search.name)) builder.install(search);
 			snapshot = builder.snapshot();
 			byKey.set(key, snapshot);
 		}
