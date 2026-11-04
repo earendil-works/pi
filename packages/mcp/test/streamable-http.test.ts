@@ -253,6 +253,71 @@ describe("StreamableHttpTransport", () => {
 		await client.close();
 	});
 
+	it("stops resuming the response stream of a request that was cancelled or timed out", async () => {
+		let resumes = 0;
+		const { url } = await startServer(async (request, response, requests) => {
+			if (request.method === "GET" && request.headers["last-event-id"]) {
+				resumes++;
+				response.writeHead(200, { "content-type": "text/event-stream" });
+				response.end(`id: r${resumes}\nretry: 30\ndata:\n\n`);
+				return;
+			}
+			if (request.method !== "POST") return protocolHandler(request, response, requests);
+			const message = JSON.parse(await readBody(request)) as Record<string, unknown>;
+			if (message.method !== "tools/call") return protocolHandler(request, response, requests, message);
+			response.writeHead(200, { "content-type": "text/event-stream" });
+			response.end("id: 1\nretry: 30\ndata:\n\n");
+		});
+		const client = new McpClient({ name: "http-test", version: "1.0.0" });
+		const errors: Error[] = [];
+		client.onError((error) => errors.push(error));
+		await client.connect(new StreamableHttpTransport({ url, openGetStream: false }));
+
+		const controller = new AbortController();
+		const aborted = client.callTool("echo", {}, { signal: controller.signal });
+		setTimeout(() => controller.abort(), 5);
+		await expect(aborted).rejects.toMatchObject({ name: "AbortError" });
+		await expect(client.callTool("echo", {}, { timeoutMs: 10 })).rejects.toMatchObject({
+			name: "McpTimeoutError",
+		});
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(resumes).toBe(0);
+		expect(errors).toEqual([]);
+		await client.ping();
+		await client.close();
+	});
+
+	it("closes an active resumed response stream when its request is cancelled", async () => {
+		let resumed: ServerResponse | undefined;
+		let closeResumed: () => void = () => {};
+		const resumedClosed = new Promise<void>((resolve) => {
+			closeResumed = resolve;
+		});
+		const { url } = await startServer(async (request, response, requests) => {
+			if (request.method === "GET" && request.headers["last-event-id"]) {
+				resumed = response;
+				response.on("close", () => closeResumed());
+				response.writeHead(200, { "content-type": "text/event-stream" });
+				response.write(": open\n\n");
+				return;
+			}
+			if (request.method !== "POST") return protocolHandler(request, response, requests);
+			const message = JSON.parse(await readBody(request)) as Record<string, unknown>;
+			if (message.method !== "tools/call") return protocolHandler(request, response, requests, message);
+			response.writeHead(200, { "content-type": "text/event-stream" });
+			response.end("id: 1\nretry: 1\ndata:\n\n");
+		});
+		const client = new McpClient({ name: "http-test", version: "1.0.0" });
+		await client.connect(new StreamableHttpTransport({ url, openGetStream: false }));
+		const controller = new AbortController();
+		const call = client.callTool("echo", {}, { signal: controller.signal });
+		await vi.waitFor(() => expect(resumed).toBeDefined());
+		controller.abort();
+		await expect(call).rejects.toMatchObject({ name: "AbortError" });
+		await resumedClosed;
+		await client.close();
+	});
+
 	it("fails a request whose response stream ends without an answer", async () => {
 		const { url } = await startServer(async (request, response, requests) => {
 			if (request.method !== "POST") return protocolHandler(request, response, requests);

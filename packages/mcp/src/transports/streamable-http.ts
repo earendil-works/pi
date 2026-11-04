@@ -36,6 +36,8 @@ export interface ConsumeSseOptions {
 	onId?(id: string): void;
 	/** Called for every valid `retry` field, in milliseconds. */
 	onRetry?(delayMs: number): void;
+	/** Stops reading and cancels the stream; events not yet dispatched are dropped. */
+	signal?: AbortSignal;
 }
 
 export async function consumeSseStream(stream: ReadableStream<Uint8Array>, options: ConsumeSseOptions): Promise<void> {
@@ -86,9 +88,15 @@ export async function consumeSseStream(stream: ReadableStream<Uint8Array>, optio
 		} else if (field === "retry" && /^\d+$/.test(value)) options.onRetry?.(Number(value));
 	};
 
+	const onAbort = () => {
+		void reader.cancel().catch(() => {});
+	};
+	if (options.signal?.aborted) onAbort();
+	else options.signal?.addEventListener("abort", onAbort, { once: true });
 	try {
 		while (true) {
 			const { done, value } = await reader.read();
+			if (options.signal?.aborted) return;
 			if (done) break;
 			buffered += decoder.decode(value, { stream: true });
 			let newline = buffered.indexOf("\n");
@@ -108,6 +116,7 @@ export async function consumeSseStream(stream: ReadableStream<Uint8Array>, optio
 		await reader.cancel().catch(() => {});
 		throw error;
 	} finally {
+		options.signal?.removeEventListener("abort", onAbort);
 		reader.releaseLock();
 	}
 }
@@ -292,7 +301,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 			return;
 		}
 		if (type === "text/event-stream" && response.body) {
-			void this.consumeResponseStream(response.body, message.id);
+			void this.consumeResponseStream(response.body, message.id, signal);
 			return;
 		}
 		await discard(response);
@@ -324,12 +333,14 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	 *
 	 * `signal` only stops dispatch: getting a token or the authorization recovery can take a while, and a
 	 * request its sender gave up on in the meantime must not reach the server. It does not abort the shared
-	 * recovery, which other requests may wait for.
+	 * recovery, which other requests may wait for. `fetchSignal` aborts the fetch itself; it defaults to the
+	 * transport's own signal.
 	 */
 	private async authorizedFetch(
 		method: "GET" | "POST",
 		init: { headers: Record<string, string>; body?: string },
 		signal?: AbortSignal,
+		fetchSignal: AbortSignal = this.controller.signal,
 	): Promise<Response> {
 		const onUnauthorized = this.options.authProvider?.onUnauthorized?.bind(this.options.authProvider);
 		for (let attempt = 0; ; attempt++) {
@@ -339,7 +350,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 				method,
 				headers,
 				body: init.body,
-				signal: this.controller.signal,
+				signal: fetchSignal,
 			});
 			if (attempt > 0 || !onUnauthorized || !needsAuthorization(response)) return response;
 			try {
@@ -383,9 +394,11 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		stream: ReadableStream<Uint8Array>,
 		cursor: StreamCursor,
 		onMessage?: (message: JsonRpcMessage) => void,
+		signal?: AbortSignal,
 	): Promise<void> {
 		await consumeSseStream(stream, {
 			maxEventBytes: this.options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES,
+			signal,
 			onId: (id) => {
 				cursor.lastEventId = id;
 			},
@@ -413,39 +426,56 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	 * Read the SSE stream answering one request. When the stream ends or breaks before the response
 	 * arrives and the server assigned event IDs, resume it with GET and `Last-Event-ID`, as the
 	 * server may close response streams at will. Otherwise only this request fails.
+	 *
+	 * `requestSignal` aborts when the sender gave up on the request (cancelled or timed out): reading and
+	 * resuming stop, and nothing more is dispatched for it.
 	 */
-	private async consumeResponseStream(body: ReadableStream<Uint8Array>, requestId: JsonRpcId): Promise<void> {
+	private async consumeResponseStream(
+		body: ReadableStream<Uint8Array>,
+		requestId: JsonRpcId,
+		requestSignal?: AbortSignal,
+	): Promise<void> {
 		const cursor: StreamCursor = { lastEventId: undefined, retryMs: undefined, received: false };
 		let answered = false;
 		const onMessage = (message: JsonRpcMessage) => {
 			if (isJsonRpcResponse(message) && message.id === requestId) answered = true;
 		};
+		// The sender also aborts its signal once the response settled the request; the rest of this
+		// stream is still read then, as the server may send more messages before ending it.
+		const abandoned = new AbortController();
+		const signal = abandoned.signal;
+		const onAbandoned = () => {
+			if (!answered) abandoned.abort();
+		};
+		if (requestSignal?.aborted) onAbandoned();
+		else requestSignal?.addEventListener("abort", onAbandoned, { once: true });
 		let stream: ReadableStream<Uint8Array> | undefined = body;
 		let failure: unknown;
 		for (let attempt = 0; ; ) {
 			if (stream) {
 				try {
-					await this.consumeSse(stream, cursor, onMessage);
+					await this.consumeSse(stream, cursor, onMessage, signal);
 					failure = undefined;
 				} catch (error) {
 					failure = error;
 				}
 			}
-			if (answered || this.closed) return;
+			if (answered || this.closed || signal.aborted) return;
 			if (failure !== undefined && !this.isRetryable(failure)) break;
 			if (cursor.lastEventId === undefined || attempt >= this.maxRetries()) break;
 			if (cursor.received) attempt = 0;
 			cursor.received = false;
-			if (!(await this.sleep(this.reconnectDelay(attempt++, cursor.retryMs)))) return;
+			if (!(await this.sleep(this.reconnectDelay(attempt++, cursor.retryMs), signal))) return;
 			try {
-				stream = await this.openSseStream(cursor.lastEventId);
+				stream = await this.openSseStream(cursor.lastEventId, signal);
 			} catch (error) {
+				if (signal.aborted) return;
 				failure = error;
 				if (!this.isRetryable(error)) break;
 				stream = undefined;
 			}
 		}
-		if (this.closed) return;
+		if (this.closed || signal.aborted) return;
 		const reason = failure === undefined ? "stream ended without a response" : toError(failure).message;
 		this.emitMessage({
 			jsonrpc: "2.0",
@@ -489,13 +519,21 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	}
 
 	/** Open a GET SSE stream. Resolves to undefined when the server answers 405 (no GET stream). */
-	private async openSseStream(lastEventId: string | undefined): Promise<ReadableStream<Uint8Array> | undefined> {
-		const response = await this.authorizedFetch("GET", {
-			headers: {
-				accept: "text/event-stream",
-				...(lastEventId === undefined ? {} : { "last-event-id": lastEventId }),
+	private async openSseStream(
+		lastEventId: string | undefined,
+		signal?: AbortSignal,
+	): Promise<ReadableStream<Uint8Array> | undefined> {
+		const response = await this.authorizedFetch(
+			"GET",
+			{
+				headers: {
+					accept: "text/event-stream",
+					...(lastEventId === undefined ? {} : { "last-event-id": lastEventId }),
+				},
 			},
-		});
+			signal,
+			signal ? AbortSignal.any([this.controller.signal, signal]) : this.controller.signal,
+		);
 		if (response.status === 405) {
 			await discard(response);
 			return undefined;
@@ -535,9 +573,9 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		return this.options.reconnect?.maxRetries ?? DEFAULT_RECONNECT_MAX_RETRIES;
 	}
 
-	/** Resolves false when the transport closed while waiting. */
-	private sleep(ms: number): Promise<boolean> {
-		const signal = this.controller.signal;
+	/** Resolves false when the transport closed, or `requestSignal` aborted, while waiting. */
+	private sleep(ms: number, requestSignal?: AbortSignal): Promise<boolean> {
+		const signal = requestSignal ? AbortSignal.any([this.controller.signal, requestSignal]) : this.controller.signal;
 		if (signal.aborted) return Promise.resolve(false);
 		return new Promise((resolve) => {
 			const onAbort = () => {
