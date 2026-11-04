@@ -27,7 +27,7 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `P2_DATA_DIR` | `~/.pi/p2` | data directory: `catalog.sqlite`, `sessions/<id>.sqlite`, `settings.json`, `models.json`, `envs.json`, `mcp.json`, `auth.json`, `radius.json`, `forwards.json` |
+| `P2_DATA_DIR` | `~/.pi/p2` | data directory: `catalog.sqlite`, `sessions/<id>.sqlite`, `settings.json`, `models.json`, `envs.json`, `mcp.json`, `mcp-auth.json`, `auth.json`, `radius.json`, `forwards.json` |
 | `PORT` | `8788` | listen port (loopback only), so p2 never collides with pi-mobile on 8787 |
 | `P2_FAKE` | unset | `1`: the faux provider (`faux/faux-1`, echoes the prompt; `slow …` streams long; `rename-session <title>` calls the tool; `subagent`, `subagent-bad`, `subagent-answer`, `subagent-configure`, `subagent-send`, `subagent-archive`, `subagent-status` exercise subagents, `subagent <json>` calls the tool with those arguments, as do `team <json>`, `history_search|read|handoff <json>`, `location_envs|dirs|move <json>`, `tool_search <json>` and `mcp__<server>__<tool> <json>`; `codemode` runs a script calling bash and read, `codemode-restart` one whose slow middle call a restart interrupts, `codemode <script>` runs that script; `json <text>` answers exactly `<text>`; a one-shot agent whose task is not `json …`/`slow…` answers a small value matching its schema) |
 | `P2_IDLE_MS` | `300000` | idle time before a session worker stops |
@@ -990,13 +990,13 @@ translated phone drawer and intercept chat taps.
   reload during a script, SIGKILL and graceful restarts mid-call (finished calls do not rerun; the interrupted unsafe
   `bash` call returns an error the script catches); the removal mid-script (prompt error, turn ends, the script's thread goes); `codemode-plugin.test.ts` the
   sandbox across reload/removal.
-- **MCP servers** (`plugins/mcp`, plan `docs/mcp-durable.md`, WP6 and WP7): the server's `McpManager` (local,
+- **MCP servers** (`plugins/mcp`, plan `docs/mcp-durable.md`, WP6-8): the server's `McpManager` (local,
   host lifetime) owns every MCP process and connection; workers never spawn one or hold a credential. `<P2_DATA_DIR>/mcp.json`
   is the owner's `mcpServers` (pi-mcp's `validateMcpServerConfig`, plus p2's `shared` and `runOn`; invalid entries are
   skipped and listed in `errors`, `${VAR}` in headers and env values from the p2 host's environment; watched: an edited
   server restarts, a removed one closes; an invalid save keeps the last valid servers, also across a reload). Instances (`placement.ts`): stdio per session and location (key: session,
   location, server, hash of command, args, env, cwd and timeout; roots the location's cwd), `"shared": true` once on
-  the host, HTTP shared unless `"shared": false` (one per session); a 401 shows `sign-in` (OAuth is WP8). Stdio
+  the host, HTTP shared unless `"shared": false` (one per session); a 401 of a server without an `Authorization` header shows `sign-in` (OAuth below). Stdio
   servers on an environment (`runOn: "location"` on a remote location, or `{ env }`) start through its pi-env daemon
   (`openProcess` behind pi-mcp's `PipeTransport`, `transports.ts`): one connection per environment and revision of its
   `envs.json` entry, shared by its instances and closed with the last (`environments.ts`), opened through the envs
@@ -1034,6 +1034,15 @@ translated phone drawer and intercept chat taps.
   short backoff), `mcp-leases.test.ts`, `mcp-environments.test.ts`, `mcp-project.test.ts`,
   `mcp-windows-command.test.ts`, `mcp-tools.test.ts`, `mcp-worker.test.ts` (fake provider: a project file, `tool_search`,
   a call, a relocation).
+- **MCP sign-in** (`plugins/mcp/sign-in.ts`, `routes.ts`, `probe.ts`, `pages.ts`, `credentials.ts`; as built:
+  `docs/mcp-durable.md` section 4.7): HTTP servers without an `Authorization` header use OAuth with pi-mcp's auth
+  provider (stored tokens, refreshed, never a browser) and credentials in `<P2_DATA_DIR>/mcp-auth.json` (0600, keyed like
+  pi's). Owners sign in at `GET /mcp/sign-in/<server>` (the web MCP sheet opens it in a new tab): the device owner's
+  browser returns to a loopback callback on the p2 host; for a relayed or public owner a probe page first fetches a
+  nonce URL from a 127.0.0.1 listener of p2 (CORS for that origin only), and returns to loopback when it answers, else to
+  `GET /mcp/callback` on the origin p2 is reached through. Pasting the final redirect URL (web sheet, TUI `/mcp paste`)
+  always completes a waiting sign-in. One flow per server, in memory, 10 minutes; a pending one keeps the manager held.
+  Tests: `mcp-sign-in.test.ts` (a fake authorization server and MCP server).
 - **One-shot agents** (`plugins/agent`, port of Pi Mobile a9335ebea and 0e238b29f): code mode scripts' `tools.agent({
   prompt, schema, label?, model?, thinkingLevel?, tools? })` (`callers: ["tools"]`, replay-safe). One conversation per
   call, owned by the tool task (abort cascades) and recorded in the task-scoped `p2.agent-run` doc, so a rerun

@@ -2980,6 +2980,43 @@ button.diff-number:hover {
 .foot-button.on {
 	font-weight: var(--fw-strong);
 }
+/* The footer's "More" menu: owner entries in a list opening upwards from the button. */
+.foot-menu {
+	position: relative;
+}
+.foot-menu-chevron {
+	display: flex;
+	transform: rotate(-90deg);
+	transition: transform 0.15s ease-out;
+}
+.foot-button[aria-expanded="true"] .foot-menu-chevron {
+	transform: rotate(90deg);
+}
+.foot-menu-list {
+	position: absolute;
+	bottom: calc(100% + var(--s1));
+	left: 0;
+	z-index: 5;
+	display: flex;
+	flex-direction: column;
+	min-width: 180px;
+	padding: var(--s1) 0;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	box-shadow: 0 6px 24px rgb(0 0 0 / 0.18);
+}
+.foot-menu-list[hidden] {
+	display: none;
+}
+.foot-menu-list .foot-button {
+	width: 100%;
+	padding: 0 var(--x);
+	text-align: left;
+}
+.foot-menu-list .foot-button:hover {
+	background: var(--hover);
+}
 
 /* Sheets: bottom sheet on phones, centred dialog on wide screens. Above the workspace
    panel (35), below the viewer (40): only the top navigation layer is ever shown. */

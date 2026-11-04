@@ -1,6 +1,6 @@
-// MCP servers' contracts: the server's manager (host-internal: every MCP connection and process, by instance and lease)
-// and its view per principal (`Mcp`: a session worker sets its locations and calls tools; the owner sees and restarts
-// instances).
+// MCP servers' contracts: the server's manager (host-internal: every MCP connection and process, by instance and lease,
+// and the OAuth sign-ins) and its view per principal (`Mcp`: a session worker sets its locations and calls tools; the
+// owner sees and restarts instances and signs in and out of HTTP servers).
 
 import type { CallToolResult, ToolAnnotations } from "@earendil-works/pi-mcp";
 import { arr, int, nul, obj, oneOf, opt, type Static, str, union, unknown } from "@earendil-works/pi-schema";
@@ -31,6 +31,8 @@ export const InstanceSchema = obj({
 	/** The location it serves; null: shared by every session, or an HTTP server. */
 	location: union([LocationSchema, nul()]),
 	runsOn: RunsOnSchema,
+	/** `oauth`: an HTTP server that signs in with OAuth (no `Authorization` header configured). */
+	auth: opt(literal("oauth")),
 	/** `sign-in`: the HTTP server asked for authorization. */
 	status: oneOf(["starting", "connected", "sign-in", "failed"]),
 	error: opt(str()),
@@ -39,6 +41,27 @@ export const InstanceSchema = obj({
 });
 /** One instance as the manager lists it: its server, where it runs, its status, error and tools. */
 export type Instance = Static<typeof InstanceSchema>;
+
+/**
+ * A sign-in to an HTTP server under way (`waiting`: for the browser's redirect back or a pasted redirect URL) or failed,
+ * one per server: returning to a loopback callback on the p2 host, or to p2's `/mcp/callback` route. No URL, state or
+ * code.
+ */
+export const SignInSchema = obj({
+	id: str(),
+	server: str(),
+	via: oneOf(["loopback", "route"]),
+	status: oneOf(["waiting", "failed"]),
+	error: opt(str()),
+});
+/** A sign-in as the owner sees it. */
+export type SignIn = Static<typeof SignInSchema>;
+
+/** A begun sign-in: signed in at once (stored tokens refreshed), or the authorization URL to open. */
+const SignInStartSchema = union([obj({ kind: literal("authorized") }), obj({ kind: literal("redirect"), url: str() })]);
+
+/** Completes sign-in `id` with the final redirect URL the owner copied from the browser's address bar. */
+const PasteSchema = obj({ id: str(), redirectUrl: str({ maxLength: 8192 }) });
 
 /** The instances one session's lease at a location uses, and why entries of its project were refused. */
 const LeaseViewSchema = obj({ session: str(), location: LocationSchema, instances: arr(str()), errors: arr(str()) });
@@ -81,10 +104,11 @@ const Caller = { session: str(), generation: int(), incarnation: str() };
  * moves the session to any configured environment.
  */
 export const McpManager = local("p2.mcp.manager", {
-	version: 1,
+	version: 2,
 	params: {},
 	members: {
 		instances: arr(InstanceSchema),
+		signIns: arr(SignInSchema),
 		/** The leases of every session and location, with the instances each uses. */
 		leases: arr(LeaseViewSchema),
 		/** Why entries of `mcp.json` were skipped (the leases' projects' errors are in `leases`). */
@@ -102,16 +126,41 @@ export const McpManager = local("p2.mcp.manager", {
 			CallResultSchema,
 		),
 		restart: method(obj({ instance: str() })),
+		/**
+		 * Begins a sign-in to HTTP server `server`, replacing its current one: the browser returns to a loopback callback on
+		 * the p2 host, or to p2's callback route at `url`.
+		 */
+		beginSignIn: method(
+			obj({
+				server: str(),
+				redirect: union([obj({ kind: literal("loopback") }), obj({ kind: literal("route"), url: str() })]),
+			}),
+			SignInStartSchema,
+		),
+		/** Completes the route sign-in whose `state` the authorization response on the callback route carries. */
+		completeSignIn: method(
+			obj({ state: str(), code: opt(str()), iss: opt(str()), error: opt(str()) }),
+			obj({ server: str() }),
+		),
+		pasteSignIn: method(PasteSchema),
+		cancelSignIn: method(obj({ id: str() })),
+		/** Forgets the server's OAuth credentials; its instances reconnect without them. */
+		signOut: method(obj({ server: str() })),
+		/**
+		 * A loopback probe URL for a sign-in page on `origin`: only a browser on the p2 host reaches it (see
+		 * `LoopbackProbe`).
+		 */
+		probe: method(obj({ origin: str() }), obj({ url: str() })),
 	},
 });
 
 /**
  * MCP servers as a principal sees them: a session worker sets its locations and calls tools (its session, generation
- * and incarnation from the link), the owner sees every instance with its errors and restarts them. Nobody else gets
- * one.
+ * and incarnation from the link), the owner sees every instance with its errors and sign-ins, restarts them and signs in
+ * and out of HTTP servers. Nobody else gets one.
  */
 export const Mcp = remote("p2.mcp", {
-	version: 1,
+	version: 2,
 	params: {},
 	hostAddress: serverHost,
 	variants: {
@@ -136,11 +185,26 @@ export const Mcp = remote("p2.mcp", {
 		},
 		owner: {
 			/** `errors`: the owner's `mcp.json`'s, then every lease's (by session). */
-			state: { instances: arr(InstanceSchema), errors: arr(str()) },
-			methods: { restart: method(obj({ instance: str() })) },
+			state: { instances: arr(InstanceSchema), errors: arr(str()), signIns: arr(SignInSchema) },
+			methods: {
+				restart: method(obj({ instance: str() })),
+				/**
+				 * Begins a sign-in returning to a loopback callback on the p2 host (pasting its final URL works from anywhere).
+				 * Browsers open `/mcp/sign-in/<server>` instead, which also finds out where the browser runs.
+				 */
+				signIn: method(obj({ server: str() }), SignInStartSchema),
+				paste: method(PasteSchema),
+				cancelSignIn: method(obj({ id: str() })),
+				signOut: method(obj({ server: str() })),
+			},
 		},
 	},
 });
+
+/** The p2 page that signs the owner in to HTTP server `server` (relative: it opens on the origin the viewer uses). */
+export function signInLink(server: string): string {
+	return `/mcp/sign-in/${encodeURIComponent(server)}`;
+}
 
 /** The worker's Durable extension of MCP tools. */
 export const MCP_EXTENSION = "mcp";

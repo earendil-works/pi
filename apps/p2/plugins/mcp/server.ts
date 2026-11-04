@@ -1,13 +1,15 @@
 // The MCP plugin's server facet: the manager (the owner's configuration, the leases of session workers with their
-// projects' configurations, the environments and where sessions work, the supervisor of instances) and its view per
-// principal: a session worker's (its locations and calls, fenced to the session's current worker; its leases released
-// when the view ends) and the owner's (every instance with its errors, restart).
+// projects' configurations, the environments and where sessions work, the supervisor of instances, the OAuth sign-ins)
+// and its view per principal: a session worker's (its locations and calls, fenced to the session's current worker; its
+// leases released when the view ends) and the owner's (every instance with its errors and sign-ins, restart, signing in
+// and out); and the sign-in routes browsers open.
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { arr, int, nul, obj, str, union, unknown } from "@earendil-works/pi-schema";
 import {
 	type Ctx,
+	contribute,
 	defineFacet,
 	defineTypedState,
 	deriveTyped,
@@ -23,6 +25,7 @@ import {
 	locationText,
 	type Native,
 	nativeOf,
+	PluginError,
 	type Ref,
 	type Self,
 	sameLocation,
@@ -39,11 +42,15 @@ import { EnvManagers, EnvService } from "../envs/contract.ts";
 import { Catalog, type Session } from "../sessions/contract.ts";
 import { type Child, ChildStore } from "../subagents/contract.ts";
 import { type OwnerConfig, OwnerConfigFile, type OwnerServer } from "./config.ts";
-import { InstanceSchema, Mcp, McpManager, type ProjectFile } from "./contract.ts";
+import { InstanceSchema, Mcp, McpManager, type ProjectFile, SignInSchema } from "./contract.ts";
+import { McpCredentials } from "./credentials.ts";
 import type { ConnectEnv } from "./environments.ts";
 import { type ClientInfo, Instances, RECONNECT } from "./instances.ts";
 import { heldLease, type Lease, type ProjectSource, releaseGeneration, setLocations } from "./leases.ts";
-import { type Placement, place, type WorkEnvironments } from "./placement.ts";
+import { oauthServerOf, type Placement, place, type WorkEnvironments } from "./placement.ts";
+import { LoopbackProbe } from "./probe.ts";
+import { signInRoutes } from "./routes.ts";
+import { type OAuthServer, SIGN_IN_TIMEOUT_MS, type SignInRedirect, SignIns } from "./sign-in.ts";
 
 /** A tool call as the worker's view takes it; the manager's adds the caller. */
 type CallArgs = { location: Location; server: string; tool: string; args: Record<string, unknown> };
@@ -77,6 +84,7 @@ export function mcpServerFacet(viewLingerMs: number, connector: EnvConnector): F
 	return defineFacet((host) => {
 		host.serve(McpManager, managerFactory(connector));
 		host.serve(Mcp, view, { linger: viewLingerMs });
+		contribute(host, "p2.mcp-routes", signInRoutes);
 	});
 }
 
@@ -111,11 +119,14 @@ const Leased = defineTypedState("p2.mcp.leases", {
 	initial: (): { leases: Lease[] } => ({ leases: [] }),
 });
 
-/** The supervisor's instances as it last listed them; a reload's new supervisor starts with their tools. */
+/**
+ * The supervisor's instances as it last listed them (a reload's new supervisor starts with their tools), and the
+ * sign-ins under way.
+ */
 const Listed = defineTypedState("p2.mcp.instances", {
-	schema: obj({ instances: arr(InstanceSchema) }),
-	version: 1,
-	initial: () => ({ instances: [] }),
+	schema: obj({ instances: arr(InstanceSchema), signIns: arr(SignInSchema) }),
+	version: 2,
+	initial: () => ({ instances: [], signIns: [] }),
 });
 
 /** The manager: its documents, the file and the supervisor as natives, and the routines that keep them in step. */
@@ -143,11 +154,27 @@ function managerFactory(connector: EnvConnector): Factory<typeof McpManager> {
 				// After a reload the leases are still here: the routine below starts what they use, with the tools listed
 				// before. Not here: natives open before derives compute.
 				const info = await clientInfo(server.info.value.app);
-				return new Instances(info, RECONNECT, listed.value.instances, connect);
+				return new Instances(info, RECONNECT, listed.value.instances, connect, (oauth) =>
+					signIns.value.authProvider(oauth),
+				);
 			},
 			(opened) => opened.close(),
 		);
-		self.onLive((ctx) => followNatives(file, instances, configured, listed, ctx));
+		const signIns = self.open(
+			async () =>
+				new SignIns(
+					new McpCredentials(server.info.value.dataDir),
+					"p2",
+					(name) => instances.value.reconnect(name),
+					SIGN_IN_TIMEOUT_MS,
+				),
+			(opened) => opened.close(),
+		);
+		const probe = self.open(
+			async () => new LoopbackProbe(),
+			(opened) => opened.close(),
+		);
+		self.onLive((ctx) => followNatives(file, instances, signIns, configured, listed, ctx));
 		// The current configuration, leases, environments and places of work, then every change of them, start and close
 		// instances; methods that change leases reconcile at once too, so a call right after `setLocations` finds its
 		// instance.
@@ -174,11 +201,18 @@ function managerFactory(connector: EnvConnector): Factory<typeof McpManager> {
 		);
 		return {
 			instances: deriveTyped(self, [listed], ([value]) => value.instances),
+			signIns: deriveTyped(self, [listed], ([value]) => value.signIns),
 			leases,
 			errors: self.derive([configured], ([{ errors, failure }]) =>
 				failure === null ? [...errors] : [...errors, `${failure}; keeping the last valid servers`],
 			),
 			...managerMethods(leased, () => instances.value, placement),
+			...signInMethods(
+				configured,
+				listed,
+				() => signIns.value,
+				() => probe.value,
+			),
 		};
 	};
 }
@@ -220,10 +254,11 @@ function placements(): (
 	};
 }
 
-/** Copies what the file reads and the supervisor lists into the manager's documents until `ctx` ends. */
+/** Copies what the file reads, the supervisor lists and the sign-ins are into the manager's documents until `ctx` ends. */
 async function followNatives(
 	file: Native<OwnerConfigFile>,
 	instances: Native<Instances>,
+	signIns: Native<SignIns>,
 	configured: HandleOf<typeof Configured>,
 	listed: HandleOf<typeof Listed>,
 	ctx: Ctx,
@@ -234,6 +269,7 @@ async function followNatives(
 		void listed
 			.change((draft) => {
 				draft.instances = instances.value.list();
+				draft.signIns = signIns.value.list();
 			}, ctx)
 			.catch(() => {});
 	};
@@ -254,6 +290,7 @@ async function followNatives(
 				.catch(() => {});
 		}),
 		instances.value.subscribe(show),
+		signIns.value.subscribe(show),
 	];
 	show();
 	try {
@@ -303,6 +340,60 @@ function managerMethods(leased: HandleOf<typeof Leased>, instances: () => Instan
 	};
 }
 
+/** The manager's sign-in methods: flows of the owner's OAuth servers, the callback route's completion, the probe. */
+function signInMethods(
+	configured: HandleOf<typeof Configured>,
+	listed: HandleOf<typeof Listed>,
+	signIns: () => SignIns,
+	probe: () => LoopbackProbe,
+) {
+	const oauthServer = (name: string): OAuthServer => {
+		const server = configured.value.servers.find((candidate) => candidate.name === name);
+		const oauth = server === undefined ? undefined : oauthServerOf(server);
+		if (oauth === undefined) throw new PluginError("not_found", `No MCP server "${name}" signs in with OAuth`);
+		return oauth;
+	};
+	return {
+		beginSignIn: async ({ server, redirect }: { server: string; redirect: SignInRedirect }, ctx: Ctx) => {
+			const start = await asPluginError(signIns().begin(oauthServer(server), redirect));
+			// Listed before the answer: a caller following `signIns` for this flow's end sees it under way first.
+			await listed.change((draft) => {
+				draft.signIns = signIns().list();
+			}, ctx);
+			return start;
+		},
+		completeSignIn: ({ state, code, iss, error }: { state: string; code?: string; iss?: string; error?: string }) =>
+			signIns().complete(
+				error !== undefined || code === undefined
+					? { state, error: error ?? "The authorization response has no code" }
+					: { state, code, ...(iss === undefined ? {} : { iss }) },
+			),
+		pasteSignIn: async ({ id, redirectUrl }: { id: string; redirectUrl: string }) => {
+			await signIns().paste(id, redirectUrl);
+			return null;
+		},
+		cancelSignIn: async ({ id }: { id: string }) => {
+			signIns().cancel(id);
+			return null;
+		},
+		signOut: async ({ server }: { server: string }) => {
+			await asPluginError(signIns().signOut(oauthServer(server)));
+			return null;
+		},
+		probe: async ({ origin }: { origin: string }) => ({ url: await probe().url(origin) }),
+	};
+}
+
+/** `promise`, its failures as the caller's errors with their messages (a discovery that failed, an unset variable). */
+async function asPluginError<T>(promise: Promise<T>): Promise<T> {
+	try {
+		return await promise;
+	} catch (error) {
+		if (error instanceof PluginError) throw error;
+		throw new PluginError("sign_in", error instanceof Error ? error.message : String(error));
+	}
+}
+
 /** The project configuration the worker found at `location`: none, the file's text, or why it could not read it. */
 function projectAt(location: Location, projects: readonly ProjectFile[]): ProjectSource {
 	const file = projects.find((candidate) => sameLocation(candidate.location, location));
@@ -324,7 +415,12 @@ const view: Factory<typeof Mcp> = (_params, principal, self) => {
 					...errors,
 					...leases.flatMap((lease) => lease.errors.map((error) => `session ${lease.session}: ${error}`)),
 				]),
+				signIns: manager.signIns,
 				restart: (args, ctx) => manager.restart(args, ctx),
+				signIn: ({ server }, ctx) => manager.beginSignIn({ server, redirect: { kind: "loopback" } }, ctx),
+				paste: (args, ctx) => manager.pasteSignIn(args, ctx),
+				cancelSignIn: (args, ctx) => manager.cancelSignIn(args, ctx),
+				signOut: (args, ctx) => manager.signOut(args, ctx),
 			},
 		};
 	return { variant: "worker", members: workerView(principal, manager, self) };

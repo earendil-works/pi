@@ -14,6 +14,7 @@ import type { OwnerConfig, OwnerServer } from "./config.ts";
 import type { RunsOn } from "./contract.ts";
 import type { Lease } from "./leases.ts";
 import { type ProjectConfig, type ProjectServer, parseProjectConfig } from "./project.ts";
+import type { OAuthServer } from "./sign-in.ts";
 
 /** A program on an environment, started through its pi-env daemon; paths resolve once the daemon tells its system. */
 export type RemoteConnect = {
@@ -46,7 +47,13 @@ export type Connect =
 			readonly hostVariables: boolean;
 	  }
 	| RemoteConnect
-	| { readonly kind: "http"; readonly url: string; readonly headers: Readonly<Record<string, string>> }
+	| {
+			readonly kind: "http";
+			readonly url: string;
+			readonly headers: Readonly<Record<string, string>>;
+			/** Signs in with OAuth (no `Authorization` header configured), as in pi. */
+			readonly oauth: OAuthServer | undefined;
+	  }
 	| { readonly kind: "unplaced"; readonly reason: string };
 
 /** One instance to run: its identity and where and how it runs. Equal configuration and key give an equal ID. */
@@ -139,16 +146,17 @@ function ownerSpec(
 	const timeoutMs = server.config.timeout === undefined ? undefined : server.config.timeout * 1000;
 	const owned = server.shared ? undefined : lease;
 	if (server.kind === "http") {
-		const { url, headers = {} } = server.config;
+		const { url, headers = {}, oauth } = server.config;
 		// Unshared HTTP servers are one per session, wherever its conversations work.
-		const key = ["http", server.name, owned?.session ?? null, hashOf({ url, headers, timeoutMs: timeoutMs ?? null })];
+		const hash = hashOf({ url, headers, ...(oauth === undefined ? {} : { oauth }), timeoutMs: timeoutMs ?? null });
+		const key = ["http", server.name, owned?.session ?? null, hash];
 		return {
 			id: idOf(key),
 			server: server.name,
 			source: "owner",
 			location: null,
 			runsOn: "host",
-			connect: { kind: "http", url, headers },
+			connect: { kind: "http", url, headers, oauth: oauthServerOf(server) },
 			timeoutMs,
 		};
 	}
@@ -156,6 +164,14 @@ function ownerSpec(
 	const runsOn: RunsOn = server.runOn !== "location" ? server.runOn : at?.env ? { env: at.env } : "host";
 	const placed = { server: server.name, source: "owner" as const, session: owned?.session ?? null, location: at };
 	return stdioSpec(placed, runsOn, server.config, timeoutMs, envs);
+}
+
+/** How owner server `server` signs in with OAuth: as in pi, an HTTP server without an `Authorization` header. */
+export function oauthServerOf(server: OwnerServer): OAuthServer | undefined {
+	if (server.kind !== "http") return undefined;
+	const { url, headers = {}, oauth } = server.config;
+	if (Object.keys(headers).some((header) => header.toLowerCase() === "authorization")) return undefined;
+	return { name: server.name, url, config: oauth };
 }
 
 /** The instance of project server `server` at `lease`'s location: always there, for that session alone. */
@@ -238,7 +254,10 @@ function expandHome(value: string): string {
 	return value.startsWith("~/") ? join(homedir(), value.slice(2)) : value;
 }
 
-/** The configuration hash: what makes another process or connection (command, args, env, cwd; URL and headers; the timeout). */
+/**
+ * The configuration hash: what makes another process or connection (command, args, env, cwd; URL, headers and OAuth
+ * client settings; the timeout).
+ */
 function hashOf(value: unknown): string {
 	return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 }
