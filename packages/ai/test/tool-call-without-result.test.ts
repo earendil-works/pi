@@ -318,6 +318,70 @@ describe("Tool Call Without Result Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.DEEPINFRA_API_KEY)("DeepInfra Provider", () => {
+		const model = getModel("deepinfra", "openai/gpt-oss-120b");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
+	describe.skipIf(!process.env.NEBIUS_API_KEY)("Nebius Token Factory Provider", () => {
+		const model = getModel("nebius", "openai/gpt-oss-120b");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
+	describe.skipIf(!process.env.OLLAMA_API_KEY)("Ollama Cloud Provider", () => {
+		const model = getModel("ollama-cloud", "gpt-oss:120b");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
+	describe.skipIf(!process.env.SCALEWAY_API_KEY)("Scaleway Generative APIs Provider", () => {
+		const model = getModel("scaleway", "gpt-oss-120b");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
+	describe.skipIf(!process.env.SILICONFLOW_API_KEY)("SiliconFlow Provider", () => {
+		const model = getModel("siliconflow", "zai-org/GLM-5.2");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
+	describe.skipIf(!process.env.SILICONFLOW_CN_API_KEY)("SiliconFlow (China) Provider", () => {
+		const model = getModel("siliconflow-cn", "zai-org/GLM-5.2");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
+	describe.skipIf(!process.env.STEPFUN_API_KEY)("StepFun Provider", () => {
+		const model = getModel("stepfun", "step-3.7-flash");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
+	describe.skipIf(!process.env.STEPFUN_CN_API_KEY)("StepFun (China) Provider", () => {
+		const model = getModel("stepfun-cn", "step-3.7-flash");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
 	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider", () => {
 		const model = getModel("kimi-coding", "kimi-for-coding");
 

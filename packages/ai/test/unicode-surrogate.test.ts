@@ -838,6 +838,134 @@ describe("AI Providers Unicode Surrogate Pair Tests", () => {
 		},
 	);
 
+	describe.skipIf(!process.env.DEEPINFRA_API_KEY)("DeepInfra Provider Unicode Handling", () => {
+		const llm = getModel("deepinfra", "openai/gpt-oss-120b");
+
+		it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testEmojiInToolResults(llm);
+		});
+
+		it("should handle real-world LinkedIn comment data with emoji", { retry: 3, timeout: 30000 }, async () => {
+			await testRealWorldLinkedInData(llm);
+		});
+
+		it("should handle unpaired high surrogate (0xD83D) in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testUnpairedHighSurrogate(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.NEBIUS_API_KEY)("Nebius Token Factory Provider Unicode Handling", () => {
+		const llm = getModel("nebius", "openai/gpt-oss-120b");
+
+		it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testEmojiInToolResults(llm);
+		});
+
+		it("should handle real-world LinkedIn comment data with emoji", { retry: 3, timeout: 30000 }, async () => {
+			await testRealWorldLinkedInData(llm);
+		});
+
+		it("should handle unpaired high surrogate (0xD83D) in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testUnpairedHighSurrogate(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.OLLAMA_API_KEY)("Ollama Cloud Provider Unicode Handling", () => {
+		const llm = getModel("ollama-cloud", "gpt-oss:120b");
+
+		it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testEmojiInToolResults(llm);
+		});
+
+		it("should handle real-world LinkedIn comment data with emoji", { retry: 3, timeout: 30000 }, async () => {
+			await testRealWorldLinkedInData(llm);
+		});
+
+		it("should handle unpaired high surrogate (0xD83D) in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testUnpairedHighSurrogate(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.SCALEWAY_API_KEY)("Scaleway Generative APIs Provider Unicode Handling", () => {
+		const llm = getModel("scaleway", "gpt-oss-120b");
+
+		it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testEmojiInToolResults(llm);
+		});
+
+		it("should handle real-world LinkedIn comment data with emoji", { retry: 3, timeout: 30000 }, async () => {
+			await testRealWorldLinkedInData(llm);
+		});
+
+		it("should handle unpaired high surrogate (0xD83D) in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testUnpairedHighSurrogate(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.SILICONFLOW_API_KEY)("SiliconFlow Provider Unicode Handling", () => {
+		const llm = getModel("siliconflow", "zai-org/GLM-5.2");
+
+		it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testEmojiInToolResults(llm);
+		});
+
+		it("should handle real-world LinkedIn comment data with emoji", { retry: 3, timeout: 30000 }, async () => {
+			await testRealWorldLinkedInData(llm);
+		});
+
+		it("should handle unpaired high surrogate (0xD83D) in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testUnpairedHighSurrogate(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.SILICONFLOW_CN_API_KEY)("SiliconFlow (China) Provider Unicode Handling", () => {
+		const llm = getModel("siliconflow-cn", "zai-org/GLM-5.2");
+
+		it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testEmojiInToolResults(llm);
+		});
+
+		it("should handle real-world LinkedIn comment data with emoji", { retry: 3, timeout: 30000 }, async () => {
+			await testRealWorldLinkedInData(llm);
+		});
+
+		it("should handle unpaired high surrogate (0xD83D) in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testUnpairedHighSurrogate(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.STEPFUN_API_KEY)("StepFun Provider Unicode Handling", () => {
+		const llm = getModel("stepfun", "step-3.7-flash");
+
+		it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testEmojiInToolResults(llm);
+		});
+
+		it("should handle real-world LinkedIn comment data with emoji", { retry: 3, timeout: 30000 }, async () => {
+			await testRealWorldLinkedInData(llm);
+		});
+
+		it("should handle unpaired high surrogate (0xD83D) in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testUnpairedHighSurrogate(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.STEPFUN_CN_API_KEY)("StepFun (China) Provider Unicode Handling", () => {
+		const llm = getModel("stepfun-cn", "step-3.7-flash");
+
+		it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testEmojiInToolResults(llm);
+		});
+
+		it("should handle real-world LinkedIn comment data with emoji", { retry: 3, timeout: 30000 }, async () => {
+			await testRealWorldLinkedInData(llm);
+		});
+
+		it("should handle unpaired high surrogate (0xD83D) in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testUnpairedHighSurrogate(llm);
+		});
+	});
+
 	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider Unicode Handling", () => {
 		const llm = getModel("kimi-coding", "kimi-for-coding");
 

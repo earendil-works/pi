@@ -417,6 +417,30 @@ describe("Tool Results with Images", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.STEPFUN_API_KEY)("StepFun Provider (step-3.7-flash)", () => {
+		const llm = getModel("stepfun", "step-3.7-flash");
+
+		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithImageResult(llm);
+		});
+
+		it("should handle tool result with text and image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithTextAndImageResult(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.STEPFUN_CN_API_KEY)("StepFun (China) Provider (step-3.7-flash)", () => {
+		const llm = getModel("stepfun-cn", "step-3.7-flash");
+
+		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithImageResult(llm);
+		});
+
+		it("should handle tool result with text and image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithTextAndImageResult(llm);
+		});
+	});
+
 	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider (kimi-for-coding)", () => {
 		const llm = getModel("kimi-coding", "kimi-for-coding");
 

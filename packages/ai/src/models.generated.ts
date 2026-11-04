@@ -11,6 +11,7 @@ import { BASETEN_CLASSIFIER_MODELS, BASETEN_IMAGE_MODELS, BASETEN_MODELS } from 
 import { CEREBRAS_CLASSIFIER_MODELS, CEREBRAS_IMAGE_MODELS, CEREBRAS_MODELS } from "./providers/cerebras.models.ts";
 import { CLOUDFLARE_AI_GATEWAY_CLASSIFIER_MODELS, CLOUDFLARE_AI_GATEWAY_IMAGE_MODELS, CLOUDFLARE_AI_GATEWAY_MODELS } from "./providers/cloudflare-ai-gateway.models.ts";
 import { CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS, CLOUDFLARE_WORKERS_AI_IMAGE_MODELS, CLOUDFLARE_WORKERS_AI_MODELS } from "./providers/cloudflare-workers-ai.models.ts";
+import { DEEPINFRA_CLASSIFIER_MODELS, DEEPINFRA_IMAGE_MODELS, DEEPINFRA_MODELS } from "./providers/deepinfra.models.ts";
 import { DEEPSEEK_CLASSIFIER_MODELS, DEEPSEEK_IMAGE_MODELS, DEEPSEEK_MODELS } from "./providers/deepseek.models.ts";
 import { FIREWORKS_CLASSIFIER_MODELS, FIREWORKS_IMAGE_MODELS, FIREWORKS_MODELS } from "./providers/fireworks.models.ts";
 import { GITHUB_COPILOT_CLASSIFIER_MODELS, GITHUB_COPILOT_IMAGE_MODELS, GITHUB_COPILOT_MODELS } from "./providers/github-copilot.models.ts";
@@ -25,7 +26,9 @@ import { MINIMAX_CN_CLASSIFIER_MODELS, MINIMAX_CN_IMAGE_MODELS, MINIMAX_CN_MODEL
 import { MISTRAL_CLASSIFIER_MODELS, MISTRAL_IMAGE_MODELS, MISTRAL_MODELS } from "./providers/mistral.models.ts";
 import { MOONSHOTAI_CLASSIFIER_MODELS, MOONSHOTAI_IMAGE_MODELS, MOONSHOTAI_MODELS } from "./providers/moonshotai.models.ts";
 import { MOONSHOTAI_CN_CLASSIFIER_MODELS, MOONSHOTAI_CN_IMAGE_MODELS, MOONSHOTAI_CN_MODELS } from "./providers/moonshotai-cn.models.ts";
+import { NEBIUS_CLASSIFIER_MODELS, NEBIUS_IMAGE_MODELS, NEBIUS_MODELS } from "./providers/nebius.models.ts";
 import { NVIDIA_CLASSIFIER_MODELS, NVIDIA_IMAGE_MODELS, NVIDIA_MODELS } from "./providers/nvidia.models.ts";
+import { OLLAMA_CLOUD_CLASSIFIER_MODELS, OLLAMA_CLOUD_IMAGE_MODELS, OLLAMA_CLOUD_MODELS } from "./providers/ollama-cloud.models.ts";
 import { OPENAI_CLASSIFIER_MODELS, OPENAI_IMAGE_MODELS, OPENAI_MODELS } from "./providers/openai.models.ts";
 import { OPENAI_CODEX_CLASSIFIER_MODELS, OPENAI_CODEX_IMAGE_MODELS, OPENAI_CODEX_MODELS } from "./providers/openai-codex.models.ts";
 import { OPENCODE_CLASSIFIER_MODELS, OPENCODE_IMAGE_MODELS, OPENCODE_MODELS } from "./providers/opencode.models.ts";
@@ -35,6 +38,11 @@ import { QWEN_TOKEN_PLAN_CLASSIFIER_MODELS, QWEN_TOKEN_PLAN_IMAGE_MODELS, QWEN_T
 import { QWEN_TOKEN_PLAN_CN_CLASSIFIER_MODELS, QWEN_TOKEN_PLAN_CN_IMAGE_MODELS, QWEN_TOKEN_PLAN_CN_MODELS } from "./providers/qwen-token-plan-cn.models.ts";
 import { QWEN_TOKEN_PLAN_INDIVIDUAL_CLASSIFIER_MODELS, QWEN_TOKEN_PLAN_INDIVIDUAL_IMAGE_MODELS, QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS } from "./providers/qwen-token-plan-individual.models.ts";
 import { RADIUS_CLASSIFIER_MODELS, RADIUS_IMAGE_MODELS, RADIUS_MODELS } from "./providers/radius.models.ts";
+import { SCALEWAY_CLASSIFIER_MODELS, SCALEWAY_IMAGE_MODELS, SCALEWAY_MODELS } from "./providers/scaleway.models.ts";
+import { SILICONFLOW_CLASSIFIER_MODELS, SILICONFLOW_IMAGE_MODELS, SILICONFLOW_MODELS } from "./providers/siliconflow.models.ts";
+import { SILICONFLOW_CN_CLASSIFIER_MODELS, SILICONFLOW_CN_IMAGE_MODELS, SILICONFLOW_CN_MODELS } from "./providers/siliconflow-cn.models.ts";
+import { STEPFUN_CLASSIFIER_MODELS, STEPFUN_IMAGE_MODELS, STEPFUN_MODELS } from "./providers/stepfun.models.ts";
+import { STEPFUN_CN_CLASSIFIER_MODELS, STEPFUN_CN_IMAGE_MODELS, STEPFUN_CN_MODELS } from "./providers/stepfun-cn.models.ts";
 import { TOGETHER_CLASSIFIER_MODELS, TOGETHER_IMAGE_MODELS, TOGETHER_MODELS } from "./providers/together.models.ts";
 import { TYPESAFE_CLASSIFIER_MODELS, TYPESAFE_IMAGE_MODELS, TYPESAFE_MODELS } from "./providers/typesafe.models.ts";
 import { VERCEL_AI_GATEWAY_CLASSIFIER_MODELS, VERCEL_AI_GATEWAY_IMAGE_MODELS, VERCEL_AI_GATEWAY_MODELS } from "./providers/vercel-ai-gateway.models.ts";
@@ -59,6 +67,7 @@ export const MODELS: {
 	readonly "cerebras": typeof CEREBRAS_MODELS;
 	readonly "cloudflare-ai-gateway": typeof CLOUDFLARE_AI_GATEWAY_MODELS;
 	readonly "cloudflare-workers-ai": typeof CLOUDFLARE_WORKERS_AI_MODELS;
+	readonly "deepinfra": typeof DEEPINFRA_MODELS;
 	readonly "deepseek": typeof DEEPSEEK_MODELS;
 	readonly "fireworks": typeof FIREWORKS_MODELS;
 	readonly "github-copilot": typeof GITHUB_COPILOT_MODELS;
@@ -73,7 +82,9 @@ export const MODELS: {
 	readonly "mistral": typeof MISTRAL_MODELS;
 	readonly "moonshotai": typeof MOONSHOTAI_MODELS;
 	readonly "moonshotai-cn": typeof MOONSHOTAI_CN_MODELS;
+	readonly "nebius": typeof NEBIUS_MODELS;
 	readonly "nvidia": typeof NVIDIA_MODELS;
+	readonly "ollama-cloud": typeof OLLAMA_CLOUD_MODELS;
 	readonly "openai": typeof OPENAI_MODELS;
 	readonly "openai-codex": typeof OPENAI_CODEX_MODELS;
 	readonly "opencode": typeof OPENCODE_MODELS;
@@ -83,6 +94,11 @@ export const MODELS: {
 	readonly "qwen-token-plan-cn": typeof QWEN_TOKEN_PLAN_CN_MODELS;
 	readonly "qwen-token-plan-individual": typeof QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS;
 	readonly "radius": typeof RADIUS_MODELS;
+	readonly "scaleway": typeof SCALEWAY_MODELS;
+	readonly "siliconflow": typeof SILICONFLOW_MODELS;
+	readonly "siliconflow-cn": typeof SILICONFLOW_CN_MODELS;
+	readonly "stepfun": typeof STEPFUN_MODELS;
+	readonly "stepfun-cn": typeof STEPFUN_CN_MODELS;
 	readonly "together": typeof TOGETHER_MODELS;
 	readonly "typesafe": typeof TYPESAFE_MODELS;
 	readonly "vercel-ai-gateway": typeof VERCEL_AI_GATEWAY_MODELS;
@@ -106,6 +122,7 @@ export const MODELS: {
 	"cerebras": CEREBRAS_MODELS,
 	"cloudflare-ai-gateway": CLOUDFLARE_AI_GATEWAY_MODELS,
 	"cloudflare-workers-ai": CLOUDFLARE_WORKERS_AI_MODELS,
+	"deepinfra": DEEPINFRA_MODELS,
 	"deepseek": DEEPSEEK_MODELS,
 	"fireworks": FIREWORKS_MODELS,
 	"github-copilot": GITHUB_COPILOT_MODELS,
@@ -120,7 +137,9 @@ export const MODELS: {
 	"mistral": MISTRAL_MODELS,
 	"moonshotai": MOONSHOTAI_MODELS,
 	"moonshotai-cn": MOONSHOTAI_CN_MODELS,
+	"nebius": NEBIUS_MODELS,
 	"nvidia": NVIDIA_MODELS,
+	"ollama-cloud": OLLAMA_CLOUD_MODELS,
 	"openai": OPENAI_MODELS,
 	"openai-codex": OPENAI_CODEX_MODELS,
 	"opencode": OPENCODE_MODELS,
@@ -130,6 +149,11 @@ export const MODELS: {
 	"qwen-token-plan-cn": QWEN_TOKEN_PLAN_CN_MODELS,
 	"qwen-token-plan-individual": QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS,
 	"radius": RADIUS_MODELS,
+	"scaleway": SCALEWAY_MODELS,
+	"siliconflow": SILICONFLOW_MODELS,
+	"siliconflow-cn": SILICONFLOW_CN_MODELS,
+	"stepfun": STEPFUN_MODELS,
+	"stepfun-cn": STEPFUN_CN_MODELS,
 	"together": TOGETHER_MODELS,
 	"typesafe": TYPESAFE_MODELS,
 	"vercel-ai-gateway": VERCEL_AI_GATEWAY_MODELS,
@@ -155,6 +179,7 @@ export const IMAGE_MODELS: {
 	readonly "cerebras": typeof CEREBRAS_IMAGE_MODELS;
 	readonly "cloudflare-ai-gateway": typeof CLOUDFLARE_AI_GATEWAY_IMAGE_MODELS;
 	readonly "cloudflare-workers-ai": typeof CLOUDFLARE_WORKERS_AI_IMAGE_MODELS;
+	readonly "deepinfra": typeof DEEPINFRA_IMAGE_MODELS;
 	readonly "deepseek": typeof DEEPSEEK_IMAGE_MODELS;
 	readonly "fireworks": typeof FIREWORKS_IMAGE_MODELS;
 	readonly "github-copilot": typeof GITHUB_COPILOT_IMAGE_MODELS;
@@ -169,7 +194,9 @@ export const IMAGE_MODELS: {
 	readonly "mistral": typeof MISTRAL_IMAGE_MODELS;
 	readonly "moonshotai": typeof MOONSHOTAI_IMAGE_MODELS;
 	readonly "moonshotai-cn": typeof MOONSHOTAI_CN_IMAGE_MODELS;
+	readonly "nebius": typeof NEBIUS_IMAGE_MODELS;
 	readonly "nvidia": typeof NVIDIA_IMAGE_MODELS;
+	readonly "ollama-cloud": typeof OLLAMA_CLOUD_IMAGE_MODELS;
 	readonly "openai": typeof OPENAI_IMAGE_MODELS;
 	readonly "openai-codex": typeof OPENAI_CODEX_IMAGE_MODELS;
 	readonly "opencode": typeof OPENCODE_IMAGE_MODELS;
@@ -179,6 +206,11 @@ export const IMAGE_MODELS: {
 	readonly "qwen-token-plan-cn": typeof QWEN_TOKEN_PLAN_CN_IMAGE_MODELS;
 	readonly "qwen-token-plan-individual": typeof QWEN_TOKEN_PLAN_INDIVIDUAL_IMAGE_MODELS;
 	readonly "radius": typeof RADIUS_IMAGE_MODELS;
+	readonly "scaleway": typeof SCALEWAY_IMAGE_MODELS;
+	readonly "siliconflow": typeof SILICONFLOW_IMAGE_MODELS;
+	readonly "siliconflow-cn": typeof SILICONFLOW_CN_IMAGE_MODELS;
+	readonly "stepfun": typeof STEPFUN_IMAGE_MODELS;
+	readonly "stepfun-cn": typeof STEPFUN_CN_IMAGE_MODELS;
 	readonly "together": typeof TOGETHER_IMAGE_MODELS;
 	readonly "typesafe": typeof TYPESAFE_IMAGE_MODELS;
 	readonly "vercel-ai-gateway": typeof VERCEL_AI_GATEWAY_IMAGE_MODELS;
@@ -202,6 +234,7 @@ export const IMAGE_MODELS: {
 	"cerebras": CEREBRAS_IMAGE_MODELS,
 	"cloudflare-ai-gateway": CLOUDFLARE_AI_GATEWAY_IMAGE_MODELS,
 	"cloudflare-workers-ai": CLOUDFLARE_WORKERS_AI_IMAGE_MODELS,
+	"deepinfra": DEEPINFRA_IMAGE_MODELS,
 	"deepseek": DEEPSEEK_IMAGE_MODELS,
 	"fireworks": FIREWORKS_IMAGE_MODELS,
 	"github-copilot": GITHUB_COPILOT_IMAGE_MODELS,
@@ -216,7 +249,9 @@ export const IMAGE_MODELS: {
 	"mistral": MISTRAL_IMAGE_MODELS,
 	"moonshotai": MOONSHOTAI_IMAGE_MODELS,
 	"moonshotai-cn": MOONSHOTAI_CN_IMAGE_MODELS,
+	"nebius": NEBIUS_IMAGE_MODELS,
 	"nvidia": NVIDIA_IMAGE_MODELS,
+	"ollama-cloud": OLLAMA_CLOUD_IMAGE_MODELS,
 	"openai": OPENAI_IMAGE_MODELS,
 	"openai-codex": OPENAI_CODEX_IMAGE_MODELS,
 	"opencode": OPENCODE_IMAGE_MODELS,
@@ -226,6 +261,11 @@ export const IMAGE_MODELS: {
 	"qwen-token-plan-cn": QWEN_TOKEN_PLAN_CN_IMAGE_MODELS,
 	"qwen-token-plan-individual": QWEN_TOKEN_PLAN_INDIVIDUAL_IMAGE_MODELS,
 	"radius": RADIUS_IMAGE_MODELS,
+	"scaleway": SCALEWAY_IMAGE_MODELS,
+	"siliconflow": SILICONFLOW_IMAGE_MODELS,
+	"siliconflow-cn": SILICONFLOW_CN_IMAGE_MODELS,
+	"stepfun": STEPFUN_IMAGE_MODELS,
+	"stepfun-cn": STEPFUN_CN_IMAGE_MODELS,
 	"together": TOGETHER_IMAGE_MODELS,
 	"typesafe": TYPESAFE_IMAGE_MODELS,
 	"vercel-ai-gateway": VERCEL_AI_GATEWAY_IMAGE_MODELS,
@@ -251,6 +291,7 @@ export const CLASSIFIER_MODELS: {
 	readonly "cerebras": typeof CEREBRAS_CLASSIFIER_MODELS;
 	readonly "cloudflare-ai-gateway": typeof CLOUDFLARE_AI_GATEWAY_CLASSIFIER_MODELS;
 	readonly "cloudflare-workers-ai": typeof CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS;
+	readonly "deepinfra": typeof DEEPINFRA_CLASSIFIER_MODELS;
 	readonly "deepseek": typeof DEEPSEEK_CLASSIFIER_MODELS;
 	readonly "fireworks": typeof FIREWORKS_CLASSIFIER_MODELS;
 	readonly "github-copilot": typeof GITHUB_COPILOT_CLASSIFIER_MODELS;
@@ -265,7 +306,9 @@ export const CLASSIFIER_MODELS: {
 	readonly "mistral": typeof MISTRAL_CLASSIFIER_MODELS;
 	readonly "moonshotai": typeof MOONSHOTAI_CLASSIFIER_MODELS;
 	readonly "moonshotai-cn": typeof MOONSHOTAI_CN_CLASSIFIER_MODELS;
+	readonly "nebius": typeof NEBIUS_CLASSIFIER_MODELS;
 	readonly "nvidia": typeof NVIDIA_CLASSIFIER_MODELS;
+	readonly "ollama-cloud": typeof OLLAMA_CLOUD_CLASSIFIER_MODELS;
 	readonly "openai": typeof OPENAI_CLASSIFIER_MODELS;
 	readonly "openai-codex": typeof OPENAI_CODEX_CLASSIFIER_MODELS;
 	readonly "opencode": typeof OPENCODE_CLASSIFIER_MODELS;
@@ -275,6 +318,11 @@ export const CLASSIFIER_MODELS: {
 	readonly "qwen-token-plan-cn": typeof QWEN_TOKEN_PLAN_CN_CLASSIFIER_MODELS;
 	readonly "qwen-token-plan-individual": typeof QWEN_TOKEN_PLAN_INDIVIDUAL_CLASSIFIER_MODELS;
 	readonly "radius": typeof RADIUS_CLASSIFIER_MODELS;
+	readonly "scaleway": typeof SCALEWAY_CLASSIFIER_MODELS;
+	readonly "siliconflow": typeof SILICONFLOW_CLASSIFIER_MODELS;
+	readonly "siliconflow-cn": typeof SILICONFLOW_CN_CLASSIFIER_MODELS;
+	readonly "stepfun": typeof STEPFUN_CLASSIFIER_MODELS;
+	readonly "stepfun-cn": typeof STEPFUN_CN_CLASSIFIER_MODELS;
 	readonly "together": typeof TOGETHER_CLASSIFIER_MODELS;
 	readonly "typesafe": typeof TYPESAFE_CLASSIFIER_MODELS;
 	readonly "vercel-ai-gateway": typeof VERCEL_AI_GATEWAY_CLASSIFIER_MODELS;
@@ -298,6 +346,7 @@ export const CLASSIFIER_MODELS: {
 	"cerebras": CEREBRAS_CLASSIFIER_MODELS,
 	"cloudflare-ai-gateway": CLOUDFLARE_AI_GATEWAY_CLASSIFIER_MODELS,
 	"cloudflare-workers-ai": CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS,
+	"deepinfra": DEEPINFRA_CLASSIFIER_MODELS,
 	"deepseek": DEEPSEEK_CLASSIFIER_MODELS,
 	"fireworks": FIREWORKS_CLASSIFIER_MODELS,
 	"github-copilot": GITHUB_COPILOT_CLASSIFIER_MODELS,
@@ -312,7 +361,9 @@ export const CLASSIFIER_MODELS: {
 	"mistral": MISTRAL_CLASSIFIER_MODELS,
 	"moonshotai": MOONSHOTAI_CLASSIFIER_MODELS,
 	"moonshotai-cn": MOONSHOTAI_CN_CLASSIFIER_MODELS,
+	"nebius": NEBIUS_CLASSIFIER_MODELS,
 	"nvidia": NVIDIA_CLASSIFIER_MODELS,
+	"ollama-cloud": OLLAMA_CLOUD_CLASSIFIER_MODELS,
 	"openai": OPENAI_CLASSIFIER_MODELS,
 	"openai-codex": OPENAI_CODEX_CLASSIFIER_MODELS,
 	"opencode": OPENCODE_CLASSIFIER_MODELS,
@@ -322,6 +373,11 @@ export const CLASSIFIER_MODELS: {
 	"qwen-token-plan-cn": QWEN_TOKEN_PLAN_CN_CLASSIFIER_MODELS,
 	"qwen-token-plan-individual": QWEN_TOKEN_PLAN_INDIVIDUAL_CLASSIFIER_MODELS,
 	"radius": RADIUS_CLASSIFIER_MODELS,
+	"scaleway": SCALEWAY_CLASSIFIER_MODELS,
+	"siliconflow": SILICONFLOW_CLASSIFIER_MODELS,
+	"siliconflow-cn": SILICONFLOW_CN_CLASSIFIER_MODELS,
+	"stepfun": STEPFUN_CLASSIFIER_MODELS,
+	"stepfun-cn": STEPFUN_CN_CLASSIFIER_MODELS,
 	"together": TOGETHER_CLASSIFIER_MODELS,
 	"typesafe": TYPESAFE_CLASSIFIER_MODELS,
 	"vercel-ai-gateway": VERCEL_AI_GATEWAY_CLASSIFIER_MODELS,
