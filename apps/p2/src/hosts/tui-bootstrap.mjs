@@ -65,7 +65,11 @@ port.on("message", async (message) => {
 	}
 });
 // Owner-approved dynamic import: the single self-contained server bundle is evaluated only from memory.
-const bundle = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+// The sourceURL names its frames: a data: URL would put the whole base64 bundle (megabytes) into every stack frame,
+// and formatting one stack (Chord makes a released reference's error stack text at once) exhausts the worker heap.
+const bundle = await import(
+	`data:text/javascript;base64,${Buffer.from(`${source}\n//# sourceURL=p2-tui-bundle.mjs\n`).toString("base64")}`
+);
 await bundle.default({
 	input,
 	send,
