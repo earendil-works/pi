@@ -14,14 +14,14 @@
       "Found and fixed a dead crisis gate: it compared runtime level values to enum member names and read risk flags at the wrong depth; it now blocks and fails closed. Moved to mvp/src/gate.ts.",
       "Added 19 vitest tests (gate unit tests, end-to-end governedTurn against the real foundation, endpoint handler tests, protocol file-read tests); a mutation check confirmed the tests catch the old behavior.",
       "Added a preview-only POST /api/govern endpoint that returns only the gate decision and returns 404 in production.",
-      "Opened draft PR #15 and pushed a Vercel preview deployment (READY)."
+      "Opened draft PR #15 and pushed a Vercel preview deployment (READY).",
+      "Removed the inherited Pi-fork ci.yml and preview-packages workflow (plus its script and test) at the owner's direction; fixed the Vercel function build TS2688 error by moving types:[node] to tsconfig.typecheck.json (b018928)."
     ],
     "work_in_progress": [
       "Verify POST /api/govern on the Vercel preview deployment."
     ],
     "blockers": [
-      "The Vercel connection available to this session could not fetch the protected preview URL, so the endpoint has not been invoked on Vercel.",
-      "The preview build log shows 'error TS2688: Cannot find type definition file for node' from the function transpile step; its effect on the function is unknown."
+      "The Vercel connection available to this session could not fetch the protected preview URL, so the endpoint has not been invoked on Vercel."
     ],
     "decisions_made": [
       "Follow the owner's direction: no package publish; build the harness into nlt-pi from source.",
