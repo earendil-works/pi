@@ -3,10 +3,11 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { type Message, type ModelThinkingLevel, StringEnum, Type } from "@earendil-works/pi-ai";
+import type { Message, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+import { arr, num, obj, oneOf, str } from "@earendil-works/pi-schema";
 import { AuthStorage } from "../../packages/coding-agent/src/core/auth-storage.ts";
 import {
 	type ConversationId,
@@ -328,7 +329,7 @@ export class Triage {
 			name: "search_issues",
 			description:
 				"Keyword search over the repository's recent issues (open and closed). Returns up to 10 matches with status, title, and the start of the body.",
-			parameters: Type.Object({ query: Type.String({ description: "Keywords, an error message, or an API name" }) }),
+			parameters: obj({ query: str({ description: "Keywords, an error message, or an API name" }) }),
 			replay: "safe",
 			execute: async (args, api) => {
 				const hits = corpus.search(args.query, issueFor(api.conversationId));
@@ -339,7 +340,7 @@ export class Triage {
 		const readIssue = defineTool({
 			name: "read_issue",
 			description: "Read one issue in full: status, labels, and body.",
-			parameters: Type.Object({ number: Type.Number() }),
+			parameters: obj({ number: num() }),
 			replay: "safe",
 			execute: async (args) => {
 				const issue = corpus.get(args.number);
@@ -352,21 +353,21 @@ export class Triage {
 		const submitTriage = defineTool({
 			name: "submit_triage",
 			description: "Record the triage result. Call exactly once, as the last step.",
-			parameters: Type.Object({
-				category: StringEnum(names),
-				confidence: StringEnum(["high", "low"] as const),
-				alternative: Type.String({ description: "Second-best category when confidence is low, else empty" }),
-				summary: Type.String({ description: "One plain sentence" }),
-				signals: Type.Array(Type.String()),
-				duplicates: Type.Array(
-					Type.Object({
-						number: Type.Number(),
-						kind: StringEnum(["duplicate", "related"] as const),
-						reason: Type.String({ description: "At most 15 words" }),
+			parameters: obj({
+				category: oneOf(names),
+				confidence: oneOf(["high", "low"]),
+				alternative: str({ description: "Second-best category when confidence is low, else empty" }),
+				summary: str({ description: "One plain sentence" }),
+				signals: arr(str()),
+				duplicates: arr(
+					obj({
+						number: num(),
+						kind: oneOf(["duplicate", "related"]),
+						reason: str({ description: "At most 15 words" }),
 					}),
 				),
-				suggestion: StringEnum([...PRIORITIES]),
-				reason: Type.String({ description: "One sentence" }),
+				suggestion: oneOf(PRIORITIES),
+				reason: str({ description: "One sentence" }),
 			}),
 			replay: "safe",
 			execute: async (args, api, callContext) => {
