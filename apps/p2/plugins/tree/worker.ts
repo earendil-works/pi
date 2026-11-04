@@ -14,6 +14,7 @@ import {
 	ROOT_CONVERSATION_ID,
 } from "@earendil-works/pi-durable";
 import {
+	type AcceptsTable,
 	type Context,
 	type Ctx,
 	contribute,
@@ -38,6 +39,21 @@ import {
 } from "@p2/app/v1/worker";
 import { type Branch, Sessions } from "../sessions/contract.ts";
 import { PREVIEW_LENGTH, SessionTree, type Tree, type TreeNode } from "./contract.ts";
+
+/** `SessionTree` v1 consumers (a page or TUI loaded before a deploy): the tree without branch labels. */
+const TREE_ACCEPTS: AcceptsTable<typeof SessionTree> = {
+	1: {
+		methods: {
+			tree: {
+				result: ({ nodes, main, current }) => ({
+					nodes: nodes.map(({ entry, parent, role, text }) => ({ entry, parent, role, text })),
+					main,
+					current,
+				}),
+			},
+		},
+	},
+};
 
 const NOT_CURRENT = "This is an earlier branch of the session: switch to it with /tree to continue it";
 
@@ -87,38 +103,42 @@ export default defineFacet((host) => {
 		});
 	});
 
-	host.serve(SessionTree, (_params, principal, self) => {
-		if (!isOwner(principal)) throw forbidden("the tree is the owner's");
-		const harness = harnessOf(self);
-		const worker = workerOf(self);
-		return {
-			variant: "owner",
-			members: {
-				tree: (ctx) => worker().liveness.call(() => readTree(harness().durable, durableContext(ctx))),
-				navigate: ({ entry }, ctx) =>
-					worker().liveness.call(async () => {
-						const durable = harness().durable;
-						const switched = await navigate(durable, entry as EntryId, durableContext(ctx));
-						await reportTree(durable, ctx);
-						return switched;
-					}),
-				select: ({ conversation }, ctx) =>
-					worker().liveness.call(async () => {
-						const durable = harness().durable;
-						await select(durable, conversation as ConversationId, durableContext(ctx));
-						await reportTree(durable, ctx);
-						return null;
-					}),
-				rename: ({ conversation, label }, ctx) =>
-					worker().liveness.call(async () => {
-						const durable = harness().durable;
-						await rename(durable, conversation, label, durableContext(ctx));
-						await reportTree(durable, ctx);
-						return null;
-					}),
-			},
-		};
-	});
+	host.serve(
+		SessionTree,
+		(_params, principal, self) => {
+			if (!isOwner(principal)) throw forbidden("the tree is the owner's");
+			const harness = harnessOf(self);
+			const worker = workerOf(self);
+			return {
+				variant: "owner",
+				members: {
+					tree: (ctx) => worker().liveness.call(() => readTree(harness().durable, durableContext(ctx))),
+					navigate: ({ entry }, ctx) =>
+						worker().liveness.call(async () => {
+							const durable = harness().durable;
+							const switched = await navigate(durable, entry as EntryId, durableContext(ctx));
+							await reportTree(durable, ctx);
+							return switched;
+						}),
+					select: ({ conversation }, ctx) =>
+						worker().liveness.call(async () => {
+							const durable = harness().durable;
+							await select(durable, conversation as ConversationId, durableContext(ctx));
+							await reportTree(durable, ctx);
+							return null;
+						}),
+					rename: ({ conversation, label }, ctx) =>
+						worker().liveness.call(async () => {
+							const durable = harness().durable;
+							await rename(durable, conversation, label, durableContext(ctx));
+							await reportTree(durable, ctx);
+							return null;
+						}),
+				},
+			};
+		},
+		{ accepts: TREE_ACCEPTS },
+	);
 });
 
 /** Tells the catalog the current main conversation and the branches, newest first (it ignores an unchanged report). */

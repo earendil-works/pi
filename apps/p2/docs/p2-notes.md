@@ -359,6 +359,12 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
 - **Plugins:** see **Plugin layout** and **Plugin reloads**; the server loads its facets with `createPlugins`, workers
   get theirs from the workers component, the TUI and web bundles load theirs with `host.load`.
 - **Protocol versions:** a page or TUI reloads when the server speaks a newer link protocol (`newerPeerProtocol`).
+- **Contract versions:** pages and TUIs keep the contracts they were built with until they reload, so a deploy that
+  bumps a contract a client holds must keep serving the old version: write the history with `evolve` (the released
+  version as the base, verbatim, so old bundles' fingerprints match) and give the provider an `accepts` table mapping
+  current state and results back (`Sessions` v3/v4, `Catalog` v2/v3, `SessionTree` v1;
+  `test/p2/contract-versions.test.ts` binds the released declarations). Without it, old clients wait unbound
+  (`contract_mismatch`) until they reload.
 
 ## Radius and port forwards
 

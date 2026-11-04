@@ -42,7 +42,9 @@ version 2; absent: `{ 1, [{ 1, null }] }`):
   (`main`; model and thinking level follow it), the web home route, the drawer, the chat's back links, TUI checks,
   terminals, unread answers, `Sessions.fork`, peer messages (the conversations broker), and where subagents report.
 - Clients learn it through the session row (`Sessions` version 4, catalog schema 4; version 5: null labels); the
-  worker reports it after a switch and at every start (`treeSelf`). A web page or TUI viewing the previous main conversation follows a switch.
+  worker reports it after a switch and at every start (`treeSelf`). Clients built before still bind: the providers
+  accept `Sessions` 3 and 4 and `SessionTree` 1, mapping rows and the tree back (no `main`/`branches` for 3, a null
+  label as the session title for 4, no labels for `SessionTree` 1). A web page or TUI viewing the previous main conversation follows a switch.
 - Earlier branches are read-only (`ReadOnlyConversations`): only the main conversation runs. The web shows only the
   main conversation and subagents (others redirect to the main one).
 - **Labels** are stored per branch (see [Labels](#labels)).
