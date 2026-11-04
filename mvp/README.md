@@ -50,7 +50,7 @@ Do not expose coding-agent tools to requests until the ASFDK harness and executi
 
 The ASFDK harness client is vendored under `src/harness/` from `NeuroLift-Technologies/asfdk-harness` (no package is published). See `src/harness/README.md` for provenance, scope, and re-sync rules. The foundation it wraps, `@neurolift-technologies/asfdk`, is a published dependency.
 
-The coding-agent workspace packages resolve through their built `dist`, so build before typechecking (CI runs `npm run build` before `npm run check`). In a fresh container after `npm ci --ignore-scripts`, the root `build` script failed in `pi-ai` until `pi-schema` and `pi-telemetry` had been built first (`npm run build --workspace=@earendil-works/pi-schema`, then `--workspace=@earendil-works/pi-telemetry`). The root `build` script does not list those two packages. This was not investigated further.
+The coding-agent workspace packages resolve through their built `dist`, so build before typechecking. In a fresh container after `npm ci --ignore-scripts`, the root `build` script failed in `pi-ai` until `pi-schema` and `pi-telemetry` had been built first (`npm run build --workspace=@earendil-works/pi-schema`, then `--workspace=@earendil-works/pi-telemetry`). The root `build` script does not list those two packages. This was not investigated further. The inherited Pi-fork `ci.yml` workflow, which failed on this for the same reason, was removed; run the checks locally (`npm run check:mvp`, `npm run test --workspace=@neurolift/nlt-pi-mvp`).
 
 ## Governed turn
 
