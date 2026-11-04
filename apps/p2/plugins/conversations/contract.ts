@@ -1,7 +1,7 @@
 import { arr, bool, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
 import { literal, local, method, param, propertiesOf, remote, serverHost, sessionHost } from "@p2/app/v1";
 
-export { CONVERSATION_PREFIX, type ConversationOrigin } from "@p2/app/v1";
+export type { ConversationOrigin } from "@p2/app/v1";
 
 export const QuerySchema = union([
 	obj({ action: literal("list") }),

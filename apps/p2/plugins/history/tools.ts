@@ -16,7 +16,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { arr, int, obj, opt, str, union } from "@earendil-works/pi-schema";
 import type { JsonValue } from "@p2/app/v1";
-import { literal, messageOf, SHELL_ENTRY, shellData } from "@p2/app/v1";
+import { literal, messageData, peerMessage, SHELL_ENTRY, shellData } from "@p2/app/v1";
 import type { HistoryHits } from "../search/contract.ts";
 
 export const HISTORY_SEARCH = "history_search";
@@ -90,7 +90,9 @@ export function renderEntry(entry: EntryRecord, results: ReadonlyMap<string, boo
 	}
 	if (!message) return undefined;
 	if (message.role === "user") {
-		const person = messageOf(entry.data, entry.kind === "pi.user" ? message.content : undefined);
+		const peer = peerMessage(entry.kind, entry.data);
+		if (peer) return { entry: id, role: "user", author: `session ${peer.from.title}`, text: peer.text };
+		const person = messageData(entry.data);
 		if (person)
 			return {
 				entry: id,

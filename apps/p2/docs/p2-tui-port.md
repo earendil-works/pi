@@ -1590,7 +1590,7 @@ Tests: `P2/test/p2/shell.test.ts` (a bare session host with real Durable and a r
     under its own root context (the method returns at once). Closing the object cancels it.
   - When it ends, a Durable write submission places a `p2.shell` entry (`P2/src/runtime/shell.ts`, `ShellData`:
     author, command, output tail, `exitCode`, `cancelled`, `truncated`, `fullOutputPath`, `includeInContext`, `error`).
-  - **`!`:** the entry also carries a user message (the speaker block plus pi's `bashExecutionToText`,
+  - **`!`:** the entry also carries a user message (the sender block plus pi's `bashExecutionToText`,
     `shellContextText`). The agent reads it on its next run, and no run starts now.
   - **`!!`:** the entry is display-only.
   - **Busy agent:** while the agent runs, the entry is placed at the run's next boundary, like any write.

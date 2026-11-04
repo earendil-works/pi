@@ -22,7 +22,8 @@ import {
 	expectVariant,
 	forbidden,
 	isOwner,
-	messageOf,
+	messageData,
+	peerMessage,
 	signalOf,
 } from "@p2/app/v1";
 import { durableContext } from "@p2/app/v1/node";
@@ -272,12 +273,13 @@ function roleOf(entry: EntryRecord): TreeNode["role"] | undefined {
 	return message?.role === "user" && entry.head === undefined ? "user" : undefined;
 }
 
-/** What a person typed (structured input data), else the user message's text. */
+/** What a person or a peer session wrote (structured input data), else the user message's text. */
 function userText(entry: EntryRecord): string {
 	const message = entry.model?.[0];
 	const content = message?.role === "user" ? message.content : "";
 	return (
-		messageOf(entry.data, content)?.text ??
+		messageData(entry.data)?.text ??
+		peerMessage(entry.kind, entry.data)?.text ??
 		(typeof content === "string"
 			? content
 			: content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"))

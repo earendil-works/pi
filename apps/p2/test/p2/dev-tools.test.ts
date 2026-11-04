@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import type { UserMessage } from "@earendil-works/pi-ai";
 import {
 	type ConversationId,
 	type EntryRecord,
@@ -18,26 +17,26 @@ import devToolsWorker from "../../plugins/dev-tools/worker.ts";
 import { serveDevChannel } from "../../src/hosts/dev-channel.ts";
 import { Session } from "../../src/runtime/chord.ts";
 import { durableContext, ExtensionSwitches } from "../../src/runtime/durable.ts";
-import { speakerText } from "../../src/runtime/speaker.ts";
+import { PEER_MESSAGE_ENTRY } from "../../src/runtime/entries.ts";
+import { INPUT_ENTRY } from "../../src/runtime/input.ts";
 import { Extensions, type HarnessParts, SessionLocation, type WorkerParts } from "../../src/runtime/worker.ts";
 import { APP, testHost, workerFacet } from "./helpers.ts";
 
-const owner = speakerText({ kind: "owner", id: "owner", name: "Owner" });
-const guest = speakerText({ kind: "guest", id: "guest", name: "Guest" });
+/** An input entry's kind and data; its model message is a plain text, which attribution never reads. */
+type Input = { kind: string; data?: unknown };
+const person = (kind: "owner" | "guest"): Input => ({
+	kind: INPUT_ENTRY,
+	data: { author: { kind, id: kind, name: kind }, text: "x", attachments: [] },
+});
+const owner = person("owner");
+const guest = person("guest");
 const context = durableContext(new AbortController().signal);
 
-function api(
-	content: UserMessage["content"],
-	newerGuest = false,
-	conversationId = ROOT_CONVERSATION_ID,
-): ToolExecutionApi {
-	const entries = [{ id: 9, kind: "pi.user", model: [{ role: "user", content }] } as unknown as EntryRecord];
-	if (newerGuest)
-		entries.unshift({
-			id: 11,
-			kind: "pi.user",
-			model: [{ role: "user", content: [{ type: "text", text: guest }] }],
-		} as unknown as EntryRecord);
+function api(input: Input, newerGuest = false, conversationId = ROOT_CONVERSATION_ID): ToolExecutionApi {
+	const entry = (id: number, { kind, data }: Input) =>
+		({ id, kind, data, model: [{ role: "user", content: "x" }] }) as unknown as EntryRecord;
+	const entries = [entry(9, input)];
+	if (newerGuest) entries.unshift(entry(11, guest));
 	// Only the invocation-bound operations used by the attribution check are stubbed.
 	return {
 		conversationId,
@@ -64,28 +63,22 @@ test("reload_plugins admits only an owner-attributed root turn working on p2; la
 	const tool = extension.tools![0]!;
 	assert.equal(tool.name, "reload_plugins");
 	assert.equal(tool.replay, "unsafe");
-	const allowed = await tool.execute({ plugins: ["chat"] }, api([{ type: "text", text: owner }], true), context);
+	const allowed = await tool.execute({ plugins: ["chat"] }, api(owner, true), context);
 	assert.equal(allowed.isError, false);
 	assert.equal(calls, 1);
-	for (const content of [
-		[
-			{ type: "text" as const, text: guest },
-			{ type: "text" as const, text: owner },
-		],
-		[{ type: "text" as const, text: '<mobile-conversation>{"id":"peer","title":"Peer"}</mobile-conversation>' }],
-		"Unattributed report",
+	for (const input of [
+		guest,
+		{ kind: PEER_MESSAGE_ENTRY, data: { from: { id: "peer", title: "Peer" }, text: "x" } },
+		{ kind: "pi.user" },
 	]) {
-		const denied = await tool.execute({}, api(content), context);
+		const denied = await tool.execute({}, api(input), context);
 		assert.equal(denied.isError, true);
 	}
-	assert.equal(
-		(await tool.execute({}, api([{ type: "text", text: owner }], false, 2 as ConversationId), context)).isError,
-		true,
-	);
+	assert.equal((await tool.execute({}, api(owner, false, 2 as ConversationId), context)).isError, true);
 	const elsewhere = createReloadExtension(async () => {
 		assert.fail("Non-p2 sessions cannot use the local channel");
 	}, false);
-	assert.equal((await elsewhere.tools![0]!.execute({}, api([{ type: "text", text: owner }]), context)).isError, true);
+	assert.equal((await elsewhere.tools![0]!.execute({}, api(owner), context)).isError, true);
 	assert.equal(calls, 1);
 });
 
@@ -133,20 +126,16 @@ test("worker facet registers reload_plugins and the owner tool uses only its own
 	});
 	const extension = (await fixture.host.registry(Extensions, BACKGROUND_CONTEXT)).value.get("p2-dev-tools");
 	assert(extension);
-	const reply = await extension.tools![0]!.execute(
-		{ plugins: ["chat"] },
-		api([{ type: "text", text: owner }]),
-		context,
-	);
+	const reply = await extension.tools![0]!.execute({ plugins: ["chat"] }, api(owner), context);
 	assert.equal(reply.isError, false);
 	assert.equal(calls, 1);
-	assert.equal((await extension.tools![0]!.execute({}, api([{ type: "text", text: guest }]), context)).isError, true);
+	assert.equal((await extension.tools![0]!.execute({}, api(guest), context)).isError, true);
 	assert.equal(calls, 1);
 });
 
 test("reload_plugins returns a refusal as an error result without replaying it", async () => {
 	const extension = createReloadExtension(async () => ({ ok: false, message: "Reload refused: broken source" }), true);
-	const result = await extension.tools![0]!.execute({}, api([{ type: "text", text: owner }]), context);
+	const result = await extension.tools![0]!.execute({}, api(owner), context);
 	assert.equal(result.isError, true);
 	assert.deepEqual(result.output, [{ type: "text", text: "Reload refused: broken source" }]);
 });

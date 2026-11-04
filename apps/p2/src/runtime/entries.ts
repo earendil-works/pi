@@ -1,12 +1,25 @@
 // Inputs that are not a person's (browser-safe): a peer conversation's message, a main agent's task for its subagent
-// and a subagent's message. Their entry kinds and header blocks are read across plugins (attribution, search, the fake
-// provider) and by both UIs (transcript rows).
+// and a subagent's message. Their entry kinds and data are read across plugins (attribution, search) and by both UIs
+// (transcript rows).
 
-import { num, obj, type Static, str, union } from "@earendil-works/pi-schema";
+import { compile, num, obj, type Static, str, union } from "@earendil-works/pi-schema";
 import { literal } from "./schema.ts";
 
-/** The first block of a peer conversation's message (the conversations tool): `<mobile-conversation>{id,title}</…>`. */
-export const CONVERSATION_PREFIX = "<mobile-conversation>";
+/**
+ * A peer session's message (the conversations tool), as its own entry kind: the sending session and what it wrote.
+ * Readers use this data; the model reads the server-written `<sender kind="session" …/>` block in front of the text.
+ */
+export const PEER_MESSAGE_ENTRY = "p2.peer-message";
+export const PeerMessageSchema = obj(
+	{ from: obj({ id: str(), title: str() }, { open: true }), text: str() },
+	{ open: true },
+);
+export type PeerMessage = Static<typeof PeerMessageSchema>;
+const isPeerMessage = compile(PeerMessageSchema).check;
+
+/** The peer message an entry of kind `kind` with `data` records, if it is one. */
+export const peerMessage = (kind: string, data: unknown): PeerMessage | undefined =>
+	kind === PEER_MESSAGE_ENTRY && isPeerMessage(data) ? data : undefined;
 
 /** Who started a tool's turn when it may act for someone: the owner, or an authenticated peer conversation. */
 export type ConversationOrigin = "owner" | "peer";

@@ -1108,9 +1108,6 @@ const ItemView = memo(function ItemView({ item }: { item: Item }) {
 		case "user": {
 			// Subagents' messages (reports, questions, notes), from their entry data.
 			if (item.agent) return <Report name={item.agent.from.name} status={item.agent.intent} text={item.text} />;
-			// LEGACY: reports from before they were entries, recognized by their first line.
-			const report = !item.author && !item.peer && /^\[subagent (\S+) ([^\]]*)\] ?([\s\S]*)$/.exec(item.text);
-			if (report) return <Report name={report[1] ?? ""} status={report[2] ?? ""} text={report[3] ?? ""} />;
 			return <UserMessage item={item} />;
 		}
 		case "assistant":

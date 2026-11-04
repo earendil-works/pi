@@ -14,7 +14,6 @@ import {
 	type InboxItem,
 	type SubmissionId,
 	type TaskId,
-	type UserInput,
 } from "@earendil-works/pi-durable";
 import { obj } from "@earendil-works/pi-schema";
 import type { JsonValue } from "@p2/app/v1";
@@ -22,6 +21,7 @@ import {
 	type Author,
 	authorIdOf,
 	authorOf,
+	authorSender,
 	type Ctx,
 	canSend,
 	canView,
@@ -36,16 +36,16 @@ import {
 	isGuest,
 	isOwner,
 	type MessageData,
-	messageOf,
+	messageData,
 	SHELL_ENTRY,
 	SHELL_MAX_BYTES,
 	SHELL_MAX_LINES,
 	type ShellData,
+	senderText,
 	serveKeyed,
 	shellContextText,
 	shellTail,
 	signalOf,
-	speakerText,
 } from "@p2/app/v1";
 import { durableContext } from "@p2/app/v1/node";
 import {
@@ -80,7 +80,7 @@ import {
 /** Who wrote a queued input and what they typed, from its entry data; tool-originated input has none. */
 function restoredInput(item: InboxItem): { author: Author; text: string } | undefined {
 	if (item.mode === "write") return undefined;
-	const message = messageOf(item.entry?.data, item.entry ? undefined : (item.content as UserInput));
+	const message = messageData(item.entry?.data);
 	return message?.text.trim() ? { author: message.author, text: message.text } : undefined;
 }
 
@@ -375,7 +375,7 @@ export default defineFacet((host) => {
 												{
 													role: "user" as const,
 													content: [
-														{ type: "text" as const, text: speakerText(input.author) },
+														{ type: "text" as const, text: senderText(authorSender(input.author)) },
 														{ type: "text" as const, text: shellContextText(data) },
 													],
 													timestamp: Date.now(),
@@ -478,9 +478,9 @@ export default defineFacet((host) => {
 					const submission = await current.submit(
 						{
 							type: "input",
-							// The speaker block stays for the model (the system prompt attributes input by it); readers use the data.
+							// The sender block is for the model (the system prompt attributes input by it); readers use the data.
 							content: [
-								{ type: "text", text: speakerText(author) },
+								{ type: "text", text: senderText(authorSender(author)) },
 								...(await content(text, files ?? [], current, models(), ctx, maxImages)),
 							],
 							entry: entry ? { kind: entry.kind, data: entry.data as JsonValue } : { kind: INPUT_ENTRY, data },

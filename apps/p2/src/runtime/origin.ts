@@ -2,8 +2,8 @@
 // check it.
 import type { Context } from "@earendil-works/chord/context";
 import type { Cursor, EntryId, ToolExecutionApi } from "@earendil-works/pi-durable";
-import { CONVERSATION_PREFIX, type ConversationOrigin, SUBAGENT_TASK_ENTRY } from "./entries.ts";
-import { messageOf } from "./input.ts";
+import { type ConversationOrigin, PEER_MESSAGE_ENTRY, SUBAGENT_TASK_ENTRY } from "./entries.ts";
+import { messageData } from "./input.ts";
 
 /** Nested calls followed up to the model-issued call; deeper chains are refused. */
 const MAX_NESTING = 32;
@@ -49,27 +49,10 @@ export async function originOf(api: ToolExecutionApi, context: Context): Promise
 						: undefined;
 				}
 				// A person's input: its author is in the data the worker wrote.
-				const person = messageOf(entry.data, entry.kind === "pi.user" ? message.content : undefined);
+				const person = messageData(entry.data);
 				if (person) return person.author.kind === "owner" && person.author.id === "owner" ? "owner" : undefined;
-				const header = Array.isArray(message.content) ? message.content[0] : undefined;
-				if (header?.type !== "text") return undefined;
-				try {
-					if (header.text.startsWith(CONVERSATION_PREFIX) && header.text.endsWith("</mobile-conversation>")) {
-						const sender: unknown = JSON.parse(
-							header.text.slice(CONVERSATION_PREFIX.length, -"</mobile-conversation>".length),
-						);
-						return sender &&
-							typeof sender === "object" &&
-							"id" in sender &&
-							typeof sender.id === "string" &&
-							"title" in sender &&
-							typeof sender.title === "string"
-							? "peer"
-							: undefined;
-					}
-				} catch {
-					return undefined;
-				}
+				// A peer session's message: the conversations broker wrote it, from an authenticated session.
+				if (entry.kind === PEER_MESSAGE_ENTRY) return "peer";
 				// Unattributed input (including a subagent report) cannot inherit an earlier owner's grant.
 				return undefined;
 			}

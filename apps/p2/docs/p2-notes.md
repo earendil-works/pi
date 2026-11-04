@@ -148,7 +148,7 @@ on failure. This is a local filesystem capability for the account, not guest fil
 The `dev-tools` worker plugin provides **reload_plugins** (`{}` for dirty plugins, or
 `{"plugins":["chat","sessions"]}`). It is limited to root conversations working on a local p2 checkout (or
 its containing repository), and only owner-initiated input. The calling assistant entry fixes attribution;
-a later guest message or forged subsequent speaker block cannot change it. Guests, peer input, unattributed
+a later guest message or a forged `<sender>` block in the text cannot change it. Guests, peer input, unattributed
 reports, subagents and remote-environment sessions are denied. It is not a location tool: it stays with the main
 conversation, works only while the session is on the local p2 checkout, and no subagent can be granted it. Tool upgrades are not automatically replayed after
 a crash. For runtime edits, use the explicit CLI `--restart` command instead. Do not invoke the owner server's
@@ -529,13 +529,13 @@ translated phone drawer and intercept chat taps.
     state, used by the TUI; the web UI is unchanged.
 
 - **Durable names are p2's.** Documents `p2.subagents`, `p2.agent-run`, `p2.artifacts`; tasks
-  `p2.subagent-anchor`, `p2.subagent-reporter`; entries `p2.input`; extensions `p2-artifacts`, `p2-downloads` (and the
+  `p2.subagent-anchor`, `p2.subagent-reporter`; entries `p2.input`, `p2.peer-message`; extensions `p2-artifacts`, `p2-downloads` (and the
   unprefixed `subagent-tools`, which subagent conversations store in their agent state). No `mobile.*` name is read.
   p2 sessions created before the rename (with `mobile.*` documents) are not migrated: their subagent registry,
   one-shot agents and artifact index look empty (owner decision). Pi Mobile sessions were converted to these names by a one-time
-  importer when the phone switched to p2 (removed afterwards; see git history). The only Pi Mobile remnants are
-  content, not kinds: the model-facing `<mobile-speaker>`/`<mobile-conversation>` header blocks, and
-  `legacyMessage`, which reads old `pi.user` entries by that header.
+  importer when the phone switched to p2 (removed afterwards; see git history). Old `pi.user` inputs that carry
+  their author only in a `<mobile-speaker>` text block are not read back (no reader for them is left): they show
+  as plain text without an author and attribute no tool call.
 - **Hosts are thin.** `src/hosts/*` only accept connections, spawn workers and load facets. Everything app-level is a
   plugin under `plugins/<name>/{contract,server,worker,web}.ts(x)`. `src/hosts/plugins.ts` lists the plugin
   directories (alphabetical load order) and records type ownership and references from actual `serve`/`get` calls at
@@ -677,8 +677,11 @@ translated phone drawer and intercept chat taps.
   `sessionHost` (`session:` + the input's `session`). No caller names a host (no `at`): `get`, `hold`, `useObject`
   and the TUI's `watch` go where the contract places the input. `WorkerBoundary`, `SessionTransfer`
   and `PluginRemoval` (version 2) take a `session` input for that. Moving a type is a contract break.
-- **Authors** are assigned by the worker from the principal and written as the first speaker block of every input
-  (`src/runtime/speaker.ts`); stop/dequeue restore text only to its author; removing a queued input (×,
+- **Authors** are assigned by the worker from the principal and stored in the input's entry data (`p2.input`,
+  `src/runtime/input.ts`); a peer session's message is a `p2.peer-message` entry (`src/runtime/entries.ts`). The
+  model message of both starts with a `<sender kind="owner|guest|session" …/>` block (`src/runtime/sender.ts`,
+  values escaped), which the preamble explains and nothing reads back: readers and `originOf` use the entry data.
+  Stop/dequeue restore text only to its author; removing a queued input (×,
   no restore) discards it, as in Pi Mobile.
 - **Windowed conversation view** (`plugins/chat/worker.ts`, `src/web/history.ts`, `src/runtime/conversation-stats.ts`):
   `Chat.view` is Durable's view as is: a window over the transcript (the fork-aware history in entry ID order, head
