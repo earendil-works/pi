@@ -2540,8 +2540,10 @@ validation and copies the v2 kernel added around Delta.
   telemetry if we're fine with that"; refines "IDs are attributes of spans" for principals):** method and call spans
   record the principal's attributes, by default its principal key (`chord.principal`), never other app data. A hook in
   the host's telemetry options maps a principal to the attributes to record (none, the key, or more, e.g. a user name
-  the app resolves from its own data); Chord calls it once per principal and caches the result (a `WeakMap` by
-  principal object, or per principal key), so no per-span lookup. Browser spans are stamped with the principal of the
+  the app resolves from its own data). Chord calls the hook for each span it records with a principal; the hook must be
+  synchronous and cheap, and caching is the hook's own (owner: "the caching should be done by the hook"). The hook is
+  a Chord host option (`createHost({ telemetry, principalAttributes })`); the app kit passes it through `startServer`
+  and `startWorker`. Browser spans are stamped with the principal of the
   link their batch came over. The viewer stays the owner's and filters by principal.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
