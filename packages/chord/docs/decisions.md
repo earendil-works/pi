@@ -2581,6 +2581,17 @@ validation and copies the v2 kernel added around Delta.
   `not_ready`. Consumers and relays need no change (they keep sent calls across `loading`; a method the new variant
   lacks fails `invalid/member`, a dropped version `contract_mismatch`). Cost: kept calls hold call-window slots up to
   `readyTimeout` while the object is parked.
+- **The rollout order stays; no `loading` grace (owner, 2026-11-04: "either order has the problem, just in the
+  opposite host", "keep"; "no loading grace"; part of the restart-only discussion, `/tmp/restart-study.md`):** (1) The
+  kit keeps server, then workers, then clients. A contract change between hosts made in one rollout leaves a gap
+  whatever the order: a consumer on an earlier step whose provider on a later step moves to a new version waits
+  `failed { waiting }` (with its last values) until the provider's step commits (server first: server consumers of
+  worker types; workers first: worker consumers of server types). `accepts` cannot close it within one rollout (the
+  old provider never serves the new version). Documented with the recipe that avoids it: two applies, the provider
+  first (serving the new version and accepting the old one), then its consumers. The reload suite's two `it.fails`
+  targets for it become documented-behaviour tests. Rejected: the kit ordering steps by the direction of the changed
+  contracts (works only when every change points one way). (2) No grace on consumers' `loading` (a reference with
+  values reporting `loading` only after ~300 ms): rejected from the restart-only proposal.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
