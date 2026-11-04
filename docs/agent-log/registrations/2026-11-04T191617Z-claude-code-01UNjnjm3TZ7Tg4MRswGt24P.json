@@ -2,7 +2,7 @@
   "agent_registration": {
     "agent_name": "Claude Code",
     "platform": "Claude Code (cloud session, claude.ai/code)",
-    "version": "claude-sonnet-5-5 (configured; serving model may differ)",
+    "version": "Not recorded",
     "session_id": "session_01UNjnjm3TZ7Tg4MRswGt24P",
     "entry_date": "2026-11-04T19:16:17+00:00",
     "entry_point": "User-directed: bring the asfdk-harness source into nlt-pi's MVP so the governed turn can be built and tested on Vercel. The harness previously ran only against a local Pi copy on one of the owner's machines.",
