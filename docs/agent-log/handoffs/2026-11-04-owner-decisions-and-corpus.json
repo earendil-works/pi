@@ -11,13 +11,14 @@
       "Recorded the owner's four post-merge decisions in docs/active-threads.md.",
       "Measured the crisis detector and harness policy.ts and added a behavior corpus with tests: 35 asserted cases and 13 known gaps as it.fails tests.",
       "Documented the UNKNOWN prompt-channel decision and the corpus in mvp/README.md.",
-      "Opened threads NLTPI-UPSTREAM-001 (upstream fixes) and NLTPI-MVP-003 (gateway routing)."
+      "Opened threads NLTPI-UPSTREAM-001 (upstream fixes) and NLTPI-MVP-003 (gateway routing).",
+      "Opened upstream work at the owner's direction: rrt-advocate issues #49 and #50, asfdk-harness PR #36, asfdk PR #41 (TypeScript and Python). Measured where each gap lives: the RRT engine misses 6 of the 7 phrases; the foundation never called RRT unless Sleepwalker flagged (fixes 'I want to die' only); Sleepwalker flags none of the six."
     ],
     "work_in_progress": [],
     "blockers": [
-      "Upstream fixes belong in asfdk-harness, asfdk and the RRT source repository; the owner's instruction is that nlt-pi is the working repository and the others are read-only references, and the RRT source repository is outside this session's GitHub scope. No change was made there.",
       "POST /api/govern has not been verified on a deployed preview (previews were behind Vercel Authentication).",
-      "Gateway routing cannot start until the gateway, key location and authenticated-session design are confirmed."
+      "Gateway routing cannot start until the gateway, key location and authenticated-session design are confirmed.",
+      "Upstream fixes are open as drafts awaiting owner review and a release; the Sleepwalker detector gap has no issue (separate repository, not in the owner's instruction)."
     ],
     "decisions_made": [
       "Keep the vendored harness copy and send changes upstream (owner).",
@@ -26,9 +27,9 @@
       "Provider-agnostic model routing through a gateway (owner)."
     ],
     "decisions_pending": [
-      "Whether to open issues/PRs in asfdk-harness and asfdk, and where the RRT source lives.",
       "Which gateway, where its key is stored, which models are allowed, and how runNltCodingTurn is exposed behind authentication.",
-      "Whether developer requests that mention self-harm or suicide as a feature topic should be blocked (currently blocked)."
+      "Whether developer requests that mention self-harm or suicide as a feature topic should be blocked (currently blocked).",
+      "Whether to file an issue in NeuroLift-Technologies/sleepwalker for the detector gap."
     ],
     "files_modified": [
       "mvp/test/corpus/crisis-phrases.json",
