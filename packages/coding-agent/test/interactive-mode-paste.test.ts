@@ -69,6 +69,7 @@ describe("InteractiveMode keeps collapsed paste content when it moves a draft", 
 			defaultEditor,
 			editor,
 			editorContainer: new Container(),
+			extensionDialogs: [],
 			disposeActiveSelector() {},
 		};
 		const setCustomEditorComponent = Reflect.get(InteractiveMode.prototype, "setCustomEditorComponent") as (
@@ -94,7 +95,12 @@ describe("InteractiveMode keeps collapsed paste content when it moves a draft", 
 				keybindings,
 				editor: new Editor(ui, getEditorTheme()),
 				editorContainer: new Container(),
+				extensionDialogs: [],
+				programStatus: { setBlocked() {} },
 				disposeActiveSelector() {},
+				pushExtensionDialog: Reflect.get(InteractiveMode.prototype, "pushExtensionDialog"),
+				removeExtensionDialog: Reflect.get(InteractiveMode.prototype, "removeExtensionDialog"),
+				showTopExtensionDialog: Reflect.get(InteractiveMode.prototype, "showTopExtensionDialog"),
 			};
 		}
 		const showExtensionCustom = Reflect.get(InteractiveMode.prototype, "showExtensionCustom") as (
