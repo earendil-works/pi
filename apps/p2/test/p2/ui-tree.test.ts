@@ -45,8 +45,9 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await browser.metrics(1280, 900);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: second')`);
-		// One branch: no branch rows yet.
+		// One branch: no branch rows and no expand control yet.
 		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.branch-row').length`), 0);
+		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.subagent-toggle').length`), 0);
 		await browser.evaluate(
 			`[...document.querySelectorAll('.user')].find(e=>e.textContent.includes('second')).querySelector('.edit-button').click()`,
 		);
@@ -58,8 +59,16 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await browser.wait(
 			`document.querySelector('.messages')?.textContent.includes('Echo: first') && !document.querySelector('.messages').textContent.includes('Echo: second')`,
 		);
-		// The fork has a row at once, newest first, labelled with the edited message; conversation 1 shows the title.
+		// The fork has a row at once, newest first, labelled with the edited message; conversation 1 shows the title. The
+		// rows wait collapsed behind the session's expand control (here without subagents), which shows them.
 		await browser.wait(`document.querySelectorAll('.branch-row').length===2`);
+		const branches = `document.getElementById('branches-${id}')`;
+		const toggle = `document.querySelector('.subagent-toggle[aria-controls="branches-${id}"]')`;
+		assert.equal(await browser.evaluate<boolean>(`${branches}.hidden`), true);
+		assert.equal(await browser.evaluate<string>(`${toggle}.getAttribute('aria-label')`), "Expand branches");
+		assert.equal(await browser.evaluate<string>(`${toggle}.textContent`), "2");
+		await browser.evaluate(`${toggle}.click()`);
+		await browser.wait(`!${branches}.hidden && ${toggle}.getAttribute('aria-expanded')==='true'`);
 		assert.deepEqual(
 			await browser.evaluate<string[]>(`[...document.querySelectorAll('.branch-row')].map(e=>e.textContent)`),
 			["secondcurrent", "Branches"],
@@ -72,10 +81,16 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await browser.wait(`location.pathname==='/s/${id}'`);
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: second')`);
 		assert.equal((await row()).main, 1);
-		// The rows keep their order: only the "current" mark moves.
+		// The rows keep their order: only the "current" mark moves. They stay expanded across the switch.
 		await browser.wait(
 			`[...document.querySelectorAll('.branch-row')].map(e=>e.textContent).join('|')==='second|Branchescurrent'`,
 		);
+		assert.equal(await browser.evaluate<boolean>(`${branches}.hidden`), false);
+		// Collapsing hides them again.
+		await browser.evaluate(`${toggle}.click()`);
+		await browser.wait(`${branches}.hidden && ${toggle}.getAttribute('aria-label')==='Expand branches'`);
+		await browser.evaluate(`${toggle}.click()`);
+		await browser.wait(`!${branches}.hidden`);
 	});
 
 	it("renames a branch from its row; conversation 1 follows the session title until renamed", async () => {

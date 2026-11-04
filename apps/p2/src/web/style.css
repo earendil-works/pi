@@ -2845,6 +2845,12 @@ button.diff-number:hover {
 .subagent-toggle:hover {
 	color: var(--text);
 }
+/* The branch count beside the subagent count: the fork icon before it. */
+.toggle-branches {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+}
 .subagent-row {
 	min-height: var(--control-sm);
 	padding-top: 2px;

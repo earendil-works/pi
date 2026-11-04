@@ -17,6 +17,7 @@ import { Catalog, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
+import { SessionTree } from "../../plugins/tree/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
 import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
 
@@ -184,6 +185,29 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		const status = await holdIn(owner, SessionStatus, {}, "reader");
 		await childChat.stop(BACKGROUND_CONTEXT);
 		await until(status.statuses, (states) => !states?.[pinned.id]?.busy.includes(child.conversationId));
+		// With `/tree` branches as well, the one control shows the branch rows, then the subagents, and hides both.
+		await until(status.statuses, (states) => states?.[pinned.id]?.tasks === 0);
+		const tree = await holdIn(owner, SessionTree, { session: pinned.id }, "owner");
+		const first = (await tree.tree(BACKGROUND_CONTEXT)).nodes.find((node) => node.role === "user")!;
+		await tree.navigate({ entry: first.entry }, BACKGROUND_CONTEXT);
+		await tree.select({ conversation: 1 }, BACKGROUND_CONTEXT);
+		tree.release();
+		const toggle = `document.querySelector('.subagent-toggle[aria-controls="branches-${pinned.id} subagents-${pinned.id}"]')`;
+		await browser.wait(`${toggle}?.getAttribute('aria-label')==='Collapse branches and subagents'`);
+		assert.deepEqual(
+			await browser.evaluate<string[]>(
+				`[...document.getElementById('branches-${pinned.id}').parentElement.children].slice(1).map(e=>e.id+(e.hidden?':hidden':''))`,
+			),
+			[`branches-${pinned.id}`, `subagents-${pinned.id}`],
+		);
+		await browser.evaluate(`${toggle}.click()`);
+		await browser.wait(
+			`document.getElementById('branches-${pinned.id}').hidden && document.getElementById('subagents-${pinned.id}').hidden`,
+		);
+		assert.equal(
+			await browser.evaluate<string>(`${toggle}.getAttribute('aria-label')`),
+			"Expand branches and subagents",
+		);
 	});
 
 	it("preserves rename, pin and archive after moving actions out of session rows", async () => {

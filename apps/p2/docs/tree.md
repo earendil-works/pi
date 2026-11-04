@@ -115,7 +115,9 @@ node:
 - Web: "Edit" beside the owner's view of a user message (on hover; always shown on touch screens) and "Branch from
   here" under an answer, in the main conversation. Under the session in the sidebar, from two branches on, one row per
   branch (`Sessions` rows' `branches`: the stored labels, null for the session title, newest first in a stable order,
-  the current one marked in place); choosing one switches the session to its end (`SessionTree.select`). The worker
+  the current one marked in place), behind the session row's expand control, which also shows its subagents
+  (collapsed by default, expanded while a subagent is shown); choosing one switches the session to its end
+  (`SessionTree.select`). The worker
   reports `p2.main` (`treeSelf`: `main` and the branches with their labels) at start and whenever a commit changes it.
 - Search indexes each branch's own entries (after its fork point).
 

@@ -71,8 +71,8 @@ function ThemeButton() {
 }
 
 /**
- * A session's `/tree` branches (docs/tree.md), from two on, newest first in a stable order: switching only moves the
- * "current" mark. Choosing another branch switches the session to it (`onBranch`, the owner's); the pencil beside a
+ * A session's `/tree` branches (docs/tree.md), newest first in a stable order: switching only moves the "current" mark.
+ * Shown from two branches on, behind the session row's expand control (`hidden` while collapsed). Choosing another branch switches the session to it (`onBranch`, the owner's); the pencil beside a
  * row renames it (`onRenameBranch`). A branch without a label (conversation 1's default) shows the session title.
  */
 function BranchRows({
@@ -82,6 +82,7 @@ function BranchRows({
 	onOpen,
 	onBranch,
 	onRenameBranch,
+	hidden,
 }: {
 	session: SessionSummary;
 	conversationId: number;
@@ -89,10 +90,10 @@ function BranchRows({
 	onOpen: (id: string, conversationId?: number) => void;
 	onBranch: (id: string, conversationId: number) => void;
 	onRenameBranch?: (id: string, conversationId: number) => void;
+	hidden: boolean;
 }) {
-	if (session.branches.length < 2) return null;
 	return (
-		<div className="branch-rows">
+		<div className="branch-rows" id={`branches-${session.id}`} hidden={hidden}>
 			{session.branches.map((branch) => {
 				const current = branch.conversation === session.main;
 				const label = branch.label ?? session.title;
@@ -151,11 +152,13 @@ function SessionRow({
 	archived?: boolean;
 	children: ReactNode;
 }) {
-	// A subagent shown expands its session's list.
-	const [expanded, setExpanded] = useState(conversationId !== session.main);
+	// One control expands a session's branch rows and its subagents; a subagent shown expands them. Not any conversation
+	// but the main one: right after a `/tree` switch the page shows the new branch before the row names it main.
+	const showsSubagent = session.subagents.some((agent) => agent.conversationId === conversationId);
+	const [expanded, setExpanded] = useState(showsSubagent);
 	useEffect(() => {
-		if (conversationId !== session.main) setExpanded(true);
-	}, [conversationId, session.main]);
+		if (showsSubagent) setExpanded(true);
+	}, [showsSubagent]);
 	// One-shot agents are opened from their script's tool card; archived subagents wait behind their own row.
 	const listed = (archived ? [] : session.subagents)
 		.filter((agent) => agent.kind !== "agent")
@@ -164,6 +167,8 @@ function SessionRow({
 	const stored = listed.filter((agent) => agent.archived);
 	const [showStored, setShowStored] = useState(false);
 	const storedOpen = showStored || stored.some((agent) => agent.conversationId === conversationId);
+	const branches = onBranch !== undefined && !archived && session.branches.length >= 2;
+	const nested = [branches && "branches", listed.length > 0 && "subagents"].filter(Boolean).join(" and ");
 	const row = (agent: (typeof listed)[number]) => (
 		<button
 			type="button"
@@ -190,25 +195,33 @@ function SessionRow({
 	);
 	return (
 		<div className="session-row">
-			<div className={`session-header ${listed.length ? "has-subagents" : ""}`}>
+			<div className={`session-header ${nested ? "has-subagents" : ""}`}>
 				{children}
-				{listed.length > 0 && (
+				{nested && (
 					<button
 						type="button"
 						className="subagent-toggle"
-						aria-label={expanded ? "Collapse subagents" : "Expand subagents"}
+						aria-label={`${expanded ? "Collapse" : "Expand"} ${nested}`}
 						aria-expanded={expanded}
-						aria-controls={`subagents-${session.id}`}
+						aria-controls={[branches && `branches-${session.id}`, listed.length > 0 && `subagents-${session.id}`]
+							.filter(Boolean)
+							.join(" ")}
 						onClick={() => setExpanded(!expanded)}
 					>
-						<span>{agents.length}</span>
+						{listed.length > 0 && <span>{agents.length}</span>}
+						{branches && (
+							<span className="toggle-branches" title={`${session.branches.length} branches`}>
+								<BranchIcon size={11} />
+								{session.branches.length}
+							</span>
+						)}
 						<span className={`chev ${expanded ? "open" : ""}`}>
 							<ChevronIcon size={12} />
 						</span>
 					</button>
 				)}
 			</div>
-			{onBranch && !archived && (
+			{branches && (
 				<BranchRows
 					session={session}
 					conversationId={conversationId}
@@ -216,6 +229,7 @@ function SessionRow({
 					onOpen={onOpen}
 					onBranch={onBranch}
 					onRenameBranch={onRenameBranch}
+					hidden={!expanded}
 				/>
 			)}
 			{listed.length > 0 && (
