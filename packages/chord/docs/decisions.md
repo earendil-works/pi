@@ -2592,6 +2592,18 @@ validation and copies the v2 kernel added around Delta.
   targets for it become documented-behaviour tests. Rejected: the kit ordering steps by the direction of the changed
   contracts (works only when every change points one way). (2) No grace on consumers' `loading` (a reference with
   values reporting `loading` only after ~300 ms): rejected from the restart-only proposal.
+- **Workers start from the base code the server booted with (owner, 2026-11-04: "let's do this for armin"; Armin's
+  incident report, Radius artifact 01m6m3xek8fveayqgstayg8w92):** the problem: a worker loads its entry module and the
+  base code it imports from disk when it is forked, while the server keeps what it loaded at boot. An edit of the
+  app's own source while it runs (an agent half way through a change) makes every later fork run other base code than
+  the server: a crash while loading modules fails the start before `started` (and R2 keeps the address failed after
+  the edit is finished), or the two sides run skewed code silently (`PROTOCOL_VERSION` stays 1 until p3). Design §21
+  says base code applies only through a restart of the server; nothing enforced it for workers. Rule: the workers
+  component builds its worker entry once when it is created, as the surfaces build their base bundles at start (one
+  esbuild bundle for Node), and forks every worker of its kind from that snapshot; a change of base code reaches
+  workers only through a server restart, which the kit's `base` mark flags. Plugins are unaffected (workers get the
+  server's built scripts). What the bundle keeps external (Node builtins, packages that cannot be bundled, such as
+  native addons) is settled by the build. p2 adopts it through its own `createWorkers`.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
