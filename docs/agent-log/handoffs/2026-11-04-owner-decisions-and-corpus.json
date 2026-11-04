@@ -47,6 +47,6 @@
       "bash .nltotoi/scripts/validate-governance.sh"
     ],
     "test_result": "local_checks_passed; full_root_check_not_run; vercel_endpoint_unverified",
-    "pr_url": "pending"
+    "pr_url": "https://github.com/NeuroLift-Technologies/nlt-pi/pull/16"
   }
 }
