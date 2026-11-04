@@ -90,7 +90,7 @@ Clients must also handle child-process startup failures, unexpected exits, stder
 
 ## Shutdown
 
-Close the child's stdin to request an orderly shutdown. This also works on Windows, where signals cannot be handled and killing the process ends it at once. Pi disposes the active runtime and waits for pending work to finish before exiting, so give it time to exit before killing it. Clients should still handle process signals and unexpected exits.
+Close the child's stdin to request an orderly shutdown. Pi disposes the active runtime and waits for pending work to finish before exiting, so give it time to exit before killing it. Clients should still handle process signals and unexpected exits.
 
 SIGTERM and SIGHUP also start an orderly shutdown. Once a shutdown has started, from either stdin EOF or a signal, a stdin EOF or a single signal does not interrupt it; a second signal exits at once. Closing stdin and sending SIGTERM together is safe.
 
