@@ -4,7 +4,7 @@
 
 ### Breaking Changes
 
-- Removed the `thinkingFormat: \`"ant-ling"\`` compat value. Use `thinkingFormat: \`"deepseek"\`` for Ant Ling models ([#10943](https://github.com/earendil-works/pi/pull/10943) by [@lvisei](https://github.com/lvisei))
+- Removed the `thinkingFormat: \`"ant-ling"\``compat value. Use`thinkingFormat: \`"deepseek"\`` for Ant Ling models ([#11799](https://github.com/earendil-works/pi/pull/11799) by [@lvisei](https://github.com/lvisei))
 
 ### Added
 
@@ -13,7 +13,7 @@
 
 ### Changed
 
-- Replaced the Ant Ling Ling 2.6 and Ring 2.6 models with Ling 3.1 Flash, Ling 3.0 Flash, and Ling 3.0 Flash VL. Ant Ling reasoning requests now use the DeepSeek-compatible `thinking` field instead of nested `reasoning`, with thinking either off or high and no reasoning effort parameter ([#10943](https://github.com/earendil-works/pi/pull/10943) by [@lvisei](https://github.com/lvisei))
+- Replaced the Ant Ling Ling 2.6 and Ring 2.6 models with Ling 3.1 Flash, Ling 3.0 Flash, and Ling 3.0 Flash VL. Ant Ling reasoning requests now use the DeepSeek-compatible `thinking` field instead of nested `reasoning`, with thinking either off or high and no reasoning effort parameter ([#11799](https://github.com/earendil-works/pi/pull/11799) by [@lvisei](https://github.com/lvisei))
 
 ### Fixed
 
@@ -30,7 +30,10 @@
   ```ts
   // Before
   import { Type, type Static, StringEnum } from "@earendil-works/pi-ai";
-  const params = Type.Object({ path: Type.String(), mode: StringEnum(["a", "b"]) });
+  const params = Type.Object({
+    path: Type.String(),
+    mode: StringEnum(["a", "b"]),
+  });
   type Params = Static<typeof params>;
 
   // After: pi-schema builders (closed objects; pass { open: true } to allow other properties)
@@ -42,6 +45,7 @@
   // Or keep TypeBox, imported from typebox itself (its schemas are JSON Schema)
   import { Type, type Static } from "typebox";
   ```
+
 - Tool arguments are validated as JSON Schema only; nothing runs through TypeBox's own validator any more, so TypeBox features outside JSON Schema no longer apply to tool arguments:
   - `Type.Refine()` refinements are not run: arguments they would reject are accepted.
   - `Type.BigInt()`, `Type.Undefined()` and `Type.Void()` reject every JSON argument (TypeBox converted to them).
@@ -812,6 +816,7 @@
 ## [0.80.6] - 2026-07-09
 
 ### Added
+
 - Added a separate opt-in `max` thinking level, including native `xhigh` and `max` support for GPT-5.6 and Anthropic adaptive-thinking effort metadata matching Anthropic's documentation: `max` on all adaptive Claude models, native `xhigh` on Opus 4.7/4.8, Sonnet 5, and Fable 5 only.
 - Added request-wide input-token pricing tiers to model cost metadata and usage cost calculation.
 
@@ -1260,6 +1265,7 @@ Migration guide:
 ### Breaking Changes
 
 - Replaced `OpenAICompletionsCompat.reasoningEffortMap` with top-level `Model.thinkingLevelMap` for model-specific thinking controls ([#3208](https://github.com/badlogic/pi-mono/issues/3208)). Migration: move mappings from `model.compat.reasoningEffortMap` to `model.thinkingLevelMap`. See `packages/ai/README.md#custom-models` and `packages/coding-agent/docs/models.md#thinking-level-map`. Map values keep the same provider-specific string semantics, and `null` marks a pi thinking level unsupported. Example:
+
   ```ts
   // Before
   compat: { reasoningEffortMap: { high: "high", xhigh: "max" } }
@@ -1267,6 +1273,7 @@ Migration guide:
   // After
   thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", xhigh: "max" }
   ```
+
 - Removed `supportsXhigh()`. Migration: use `getSupportedThinkingLevels(model).includes("xhigh")` or `clampThinkingLevel(model, requestedLevel)` instead ([#3208](https://github.com/badlogic/pi-mono/issues/3208)).
 
 ### Added
