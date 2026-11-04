@@ -22,6 +22,7 @@
 - Fixed RPC mode cutting off shutdown cleanup, such as a pending MCP token refresh, when stdin closed and SIGTERM arrived together, which process managers like Paseo and systemd do. Pi lost the refreshed token and the MCP server revoked the sign-in. Once a shutdown has started, a stdin EOF or a single signal no longer interrupts it; a second signal still exits at once. Print mode likewise no longer dies from a signal that arrives during its final cleanup ([#11599](https://github.com/earendil-works/pi/issues/11599))
 - Fixed the grep tool reading every matched file into memory when `context` was set, which ran out of memory on large files; context now comes from ripgrep, which also fixes UTF-16 files and lone CRs in matched lines, and the match limit notice no longer appears when exactly `limit` matches exist ([#9276](https://github.com/earendil-works/pi/issues/9276), [#11423](https://github.com/earendil-works/pi/issues/11423))
 - Fixed the find tool reporting the result limit when exactly `limit` files match, and `limit: 0` in find and ls returning every result or an empty listing; limits below 1 now mean 1 ([#7121](https://github.com/earendil-works/pi/issues/7121))
+- Fixed Ctrl+P not switching to the only model in scope (or the only available model) when the active model is a different one; it showed "Only one model in scope" instead. Cycling forward from a model outside the scope now also selects the first scoped model instead of skipping it ([#11806](https://github.com/earendil-works/pi/issues/11806))
 
 
 ## [1.5.0] - 2026-11-02
