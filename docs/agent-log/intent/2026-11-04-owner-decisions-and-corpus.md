@@ -25,7 +25,7 @@ Decision 2 (fix safety gaps upstream with a test corpus) needs evidence upstream
 
 ## Alternatives considered
 - Patch `policy.ts` and the gate locally: rejected by the owner (decision 2).
-- Open issues/PRs in `asfdk-harness` and `asfdk` now: not done; conflicts with the owner's instruction that other repositories are read-only references. Raised as the next question.
+- Open issues/PRs in `asfdk-harness` and `asfdk`: first held back (the owner had said other repositories are read-only references), then opened at the owner's direction. The owner approved the scope on 2026-11-04. Drafts await owner review and release (see `docs/active-threads.md`).
 - Wire a gateway now: not done; key location, gateway acceptance and authenticated sessions are undecided.
 
 ## Human approval / escalation
@@ -37,4 +37,4 @@ Completed 2026-11-04.
 - Added `mvp/test/corpus/crisis-phrases.json`, `mvp/test/corpus/policy-commands.json`, and `mvp/test/corpus.test.ts`: 35 asserted cases pass and 13 known gaps (7 crisis phrases the detector allows, 6 commands `policy.ts` allows) are `it.fails` tests. Full MVP suite: 61 passed, 13 expected-fail.
 - Measurements made while building the corpus: the detector allows "I want to die", "I am going to end my life tonight", "I don't want to be alive anymore", "I've been cutting myself again", and "Nobody would miss me if I were gone" in addition to the two phrasings reported earlier; it blocks two developer requests that mention self-harm or suicide as a feature topic (recorded as observed behavior, not judged).
 - Documented the `UNKNOWN` channel decision in `mvp/README.md` and the decisions and new threads in `docs/active-threads.md`.
-- Not done, by design: any change in `asfdk`, `asfdk-harness`, or the RRT source; any gateway integration. The upstream work is blocked on the owner's scope decision (NLTPI-UPSTREAM-001).
+- Not done, by design: any change to upstream source code in `asfdk`, `asfdk-harness`, or the RRT source from this repository; any gateway integration. Upstream issues and draft PRs are open; owner review and release are pending (NLTPI-UPSTREAM-001).
