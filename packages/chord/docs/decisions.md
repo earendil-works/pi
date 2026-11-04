@@ -2545,6 +2545,15 @@ validation and copies the v2 kernel added around Delta.
   a Chord host option (`createHost({ telemetry, principalAttributes })`); the app kit passes it through `startServer`
   and `startWorker`. Browser spans are stamped with the principal of the
   link their batch came over. The viewer stays the owner's and filters by principal.
+- **The server is the one place telemetry is stored (owner, 2026-11-04: "who stores all the telemetry? There must be a
+  single place ... the client and the worker would just talk to that object on the server"; refines "Telemetry from
+  browser pages" and "Telemetry store"):** the server owns the telemetry store and is its only writer. Browsers and
+  workers record in memory and send finished spans in batches over the links they already have to the server's
+  telemetry object (`ingest(batch)`), which checks, stamps (`chord.host`, the link's principal for browsers) and writes
+  them. Browser batches get the strict checks and caps; a worker's (the server's own child, a trusted link) are
+  written as they are, stamped with the worker's host. No worker opens the store file; nothing passes its path to
+  workers. The store stays its own SQLite file in the data directory, not the server's Chord store (high volume, 7-day
+  retention: it would compete with app data in the commit queue and travel in exports and sync).
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
