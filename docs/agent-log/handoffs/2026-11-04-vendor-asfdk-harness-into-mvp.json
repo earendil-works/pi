@@ -9,10 +9,10 @@
     "work_completed": [
       "Reviewed nlt-pi and the related asfdk-harness, asfdk, and nlt-coding-agent repositories.",
       "Established that asfdk-harness is not published to npm and that the MVP imported a non-existent package name, so the MVP could not typecheck on main.",
-      "Vendored the required subset of asfdk-harness src (commit f28136d) into mvp/src/harness/ with provenance headers and README.",
+      "Vendored the required subset of asfdk-harness src (commit f28136d) into mvp/src/harness/ with provenance headers and README. Differences from upstream: .ts import specifiers, and protocols.ts readOptionalFile reads once (fixes CodeQL js/file-system-race, alert 626).",
       "Declared @neurolift-technologies/asfdk and typebox, pinned the workspace coding-agent dependency, and fixed MVP tsconfig for TypeScript 7.",
       "Found and fixed a dead crisis gate: it compared runtime level values to enum member names and read risk flags at the wrong depth; it now blocks and fails closed. Moved to mvp/src/gate.ts.",
-      "Added 16 vitest tests (gate unit tests, end-to-end governedTurn against the real foundation, endpoint handler tests); a mutation check confirmed the tests catch the old behavior.",
+      "Added 19 vitest tests (gate unit tests, end-to-end governedTurn against the real foundation, endpoint handler tests, protocol file-read tests); a mutation check confirmed the tests catch the old behavior.",
       "Added a preview-only POST /api/govern endpoint that returns only the gate decision and returns 404 in production.",
       "Opened draft PR #15 and pushed a Vercel preview deployment (READY)."
     ],

@@ -17,7 +17,9 @@ Upstream commit: `f28136d1cece7f5dd20734020346075efc2f6d9d`.
 ## Rules
 
 - **Do not edit these files here.** Change upstream and re-sync. Upstream treats `policy.ts` as a hard guardrail that needs the owner's approval to change.
-- The only local difference is that relative imports use a `.ts` extension, as required by `npm run check:ts-imports`.
+- Local differences from upstream:
+  - Relative imports use a `.ts` extension, as required by `npm run check:ts-imports` (all files).
+  - `protocols.ts` `readOptionalFile` reads the file once instead of calling `access()` and then `readFile()`, which CodeQL flagged as a file system race (`js/file-system-race`). Missing or unreadable files are still treated as absent; other errors still propagate. This should be proposed upstream and then removed from this list on the next re-sync.
 - Intentionally **not** vendored: the MCP server, discovery hub, A2A proxy, Cloudflare Worker pipeline (`governance/`, `authority/`, `server.ts`), runtime plugins, and installer.
 
 ## What this layer is and is not
