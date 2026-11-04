@@ -710,14 +710,19 @@ export class ModelRuntime implements Models {
 		options?: ModelsApiStreamOptions<TApi>,
 	): AssistantMessageEventStream {
 		const transcript = normalizeContext(context);
-		return lazyStream(model, async () => {
-			assertChatModel(model);
-			const prepared = await this.prepareRequest(
-				model,
-				options as (StreamOptions & ModelsRequestTransforms) | undefined,
-			);
-			return prepared.provider.stream(prepared.model, transcript, prepared.options as ApiStreamOptions<TApi>);
-		});
+		return lazyStream(
+			model,
+			async () => {
+				assertChatModel(model);
+				const prepared = await this.prepareRequest(
+					model,
+					options as (StreamOptions & ModelsRequestTransforms) | undefined,
+				);
+				return prepared.provider.stream(prepared.model, transcript, prepared.options as ApiStreamOptions<TApi>);
+			},
+			undefined,
+			options?.signal,
+		);
 	}
 
 	complete<TApi extends Api>(
@@ -733,27 +738,38 @@ export class ModelRuntime implements Models {
 		if (isVirtualModel(model)) {
 			// Requests outside the agent loop are routed here. Callers sized them before routing, so
 			// cap the output budget to the routed model.
-			return lazyStream(model, async () => {
-				const route = await this.resolveModel(model, transcript.messages, {
-					reason: "direct",
-					thinkingLevel: options?.reasoning ?? "off",
-					signal: options?.signal,
-				});
-				const { maxTokens: limit } = route.model;
-				const maxTokens = options?.maxTokens && limit > 0 ? Math.min(options.maxTokens, limit) : options?.maxTokens;
-				const reasoning = route.thinkingLevel === "off" ? undefined : route.thinkingLevel;
-				// Caller credentials were resolved for the virtual model's provider. Another provider
-				// resolves its own, so they are not sent to the wrong vendor.
-				const { apiKey, headers, env, ...rest } = options ?? {};
-				const auth = route.model.provider === model.provider ? { apiKey, headers, env } : {};
-				return this.streamSimple(route.model, context, { ...rest, ...auth, maxTokens, reasoning });
-			});
+			return lazyStream(
+				model,
+				async () => {
+					const route = await this.resolveModel(model, transcript.messages, {
+						reason: "direct",
+						thinkingLevel: options?.reasoning ?? "off",
+						signal: options?.signal,
+					});
+					const { maxTokens: limit } = route.model;
+					const maxTokens =
+						options?.maxTokens && limit > 0 ? Math.min(options.maxTokens, limit) : options?.maxTokens;
+					const reasoning = route.thinkingLevel === "off" ? undefined : route.thinkingLevel;
+					// Caller credentials were resolved for the virtual model's provider. Another provider
+					// resolves its own, so they are not sent to the wrong vendor.
+					const { apiKey, headers, env, ...rest } = options ?? {};
+					const auth = route.model.provider === model.provider ? { apiKey, headers, env } : {};
+					return this.streamSimple(route.model, context, { ...rest, ...auth, maxTokens, reasoning });
+				},
+				undefined,
+				options?.signal,
+			);
 		}
-		return lazyStream(model, async () => {
-			assertChatModel(model);
-			const prepared = await this.prepareRequest(model, options);
-			return prepared.provider.streamSimple(prepared.model, transcript, prepared.options as SimpleStreamOptions);
-		});
+		return lazyStream(
+			model,
+			async () => {
+				assertChatModel(model);
+				const prepared = await this.prepareRequest(model, options);
+				return prepared.provider.streamSimple(prepared.model, transcript, prepared.options as SimpleStreamOptions);
+			},
+			undefined,
+			options?.signal,
+		);
 	}
 
 	completeSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): Promise<AssistantMessage> {
@@ -765,14 +781,19 @@ export class ModelRuntime implements Models {
 		handle: DeferredHandle,
 		options?: ModelsDeferredFetchOptions,
 	): AssistantMessageEventStream {
-		return lazyStream(model, async () => {
-			assertChatModel(model);
-			const prepared = await this.prepareRequest(model, options);
-			if (!prepared.provider.fetchDeferred) {
-				throw new ModelsError("provider", `Provider ${model.provider} does not support deferred responses`);
-			}
-			return prepared.provider.fetchDeferred(prepared.model, handle, prepared.options as DeferredFetchOptions);
-		});
+		return lazyStream(
+			model,
+			async () => {
+				assertChatModel(model);
+				const prepared = await this.prepareRequest(model, options);
+				if (!prepared.provider.fetchDeferred) {
+					throw new ModelsError("provider", `Provider ${model.provider} does not support deferred responses`);
+				}
+				return prepared.provider.fetchDeferred(prepared.model, handle, prepared.options as DeferredFetchOptions);
+			},
+			undefined,
+			options?.signal,
+		);
 	}
 
 	async fetchDeferred(
