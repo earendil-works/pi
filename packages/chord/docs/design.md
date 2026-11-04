@@ -2050,13 +2050,13 @@ worker (the reload suite), not only by unit tests. "The page" is any client over
 
 | Change rolled out | What stays on screen | Calls | State |
 | --- | --- | --- | --- |
-| a plugin whose new build or evaluation fails | everything; the plugin keeps its old code, the error is reported to the app | unaffected | unaffected |
-| pure code (no natives) on the server or a worker | the view stays bound; one fresh snapshot once the new code is live; values change only where the new code computes differently | a running call finishes on the old code; a call arriving meanwhile waits and runs on the new code; never `not_ready` | documents and tables unchanged |
-| code holding natives (restart) | `loading` with the last values kept, then a fresh snapshot | running calls get up to `closeTimeout` on the old code; calls arriving meanwhile wait (`readyTimeout`) and run on the new code | documents and tables unchanged; natives reopened |
+| a plugin whose new build, evaluation or staging fails | everything; the plugin keeps its old code, the error is reported to the app (a page's own evaluation failure is reported in that page) | unaffected | unaffected |
+| pure code (no natives) on the server or a worker | the view stays bound; one fresh snapshot once the new code is live; values change only where the new code computes differently | a running call finishes on the old code; a call arriving meanwhile waits and runs on the new code; never `not_ready` | documents and tables unchanged; `self.writable` values start over |
+| code holding natives (restart) | `live` with the last values (and what the draining old code still commits) while the old code drains, up to `closeTimeout`; then `loading` briefly; then a fresh snapshot | running calls get up to `closeTimeout` on the old code; calls arriving meanwhile wait (the provider host's `readyTimeout`) and run on the new code | documents and tables unchanged; natives reopened; `self.writable` values start over |
 | a contract change the new code still `accepts` | the old page keeps working through the mapping | answered through the mapping | unchanged |
-| a contract change not accepted, or a type removed | the reference waits with its last values (`failed { waiting }`: `version`, `not_served`) until the page's code updates or the type returns | calls wait, then fail `park_timeout` after `readyTimeout` | unchanged |
+| a contract change not accepted, or a type removed | the reference waits with its last values (`failed { waiting }`) until the page's code updates or the type returns | calls fail at once with the cause (`contract_mismatch`, `unavailable` not served; §7) | unchanged |
 | a web or terminal plugin | the other plugins untouched, scroll kept; the reloaded plugin's components remount | the reloaded plugin's calls as above | component state starts over; `usePageState`/`scope.pageState` survive |
-| base code (the app's client entry, Chord, React) | the page reloads (the terminal restarts its sandbox): the only case losing what is on screen | calls in flight end with the link | page state lost; server state unchanged |
+| base code (the app's client entry, Chord, React) | applied by restarting the server (the kit builds base bundles at start; no reload applies them); the page reconnects to a new base and reloads (the terminal restarts its sandbox): the only case losing what is on screen | calls in flight end with the link | page state lost; in-memory server and worker state lost; stores unchanged |
 
 Order: the server, then every running worker by the same rules, then the clients' scripts.
 
