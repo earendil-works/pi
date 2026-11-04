@@ -284,6 +284,7 @@ const NO_WORKERS: SessionWorkerControl = {
 	},
 	retry: async () => {},
 	stop: async () => {},
+	suspend: async () => {},
 	subscribe: () => () => {},
 };
 

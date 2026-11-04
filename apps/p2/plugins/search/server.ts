@@ -137,7 +137,7 @@ export default defineFacet((host) => {
 			} finally {
 				if (archived) {
 					await archivedStarts.end({ session }, ctx);
-					await hosts.stop({ session }, ctx);
+					await server().workers.suspend(session);
 				}
 			}
 		};

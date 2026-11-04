@@ -408,4 +408,29 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 			`location.pathname === '/' && document.querySelector('.toast')?.textContent === 'Session is archived'`,
 		);
 	});
+
+	it("archives the viewed session from its sheet without an error or a notice", async () => {
+		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const session = await sessions.create({ cwd: fixture.workspace, title: "Archived here" }, BACKGROUND_CONTEXT);
+		await browser.metrics(390, 844);
+		await browser.open(url(`/s/${session.id}`));
+		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+		// The page's conversation is live: its worker runs, and the page keeps holding it after leaving (linger).
+		const hosts = fixture.server.host.hold(Hosts, {}, BACKGROUND_CONTEXT);
+		await until(hosts.workers, (workers) => workers?.[session.id]?.running === true);
+		await browser.click('[aria-label="Session options"]');
+		await browser.click(".row-button.danger");
+		await until(sessions.sessions, (list) => Boolean(list?.find((s) => s.id === session.id)?.archivedAt));
+		await until(hosts.workers, (workers) => workers?.[session.id]?.running === false);
+		// Leaving the session released the sheet's reference: the archive's call is not cancelled with it (no
+		// "p2.sessions: released" toast), and the lingering conversation starts no worker the archive refuses (no notice).
+		await new Promise((resolve) => setTimeout(resolve, 1000));
+		assert.deepEqual(
+			await browser.evaluate(
+				`({ path: location.pathname, toast: document.querySelector('.toast')?.textContent ?? null, notices: [...document.querySelectorAll('.owner-notice')].map((e) => e.textContent) })`,
+			),
+			{ path: "/", toast: null, notices: [] },
+		);
+		hosts.release();
+	});
 });

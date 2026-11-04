@@ -18,7 +18,7 @@ import {
 	serveKeyed,
 	WorkerBoundary,
 } from "@p2/app/v1";
-import { Hosts, Server, serverOf, WorkerInitValues } from "@p2/app/v1/server";
+import { Server, serverOf, WorkerInitValues } from "@p2/app/v1/server";
 import { EnvManagers, EnvService } from "../envs/contract.ts";
 import { ModelConfig, ModelResources } from "../models/contract.ts";
 import { ChildStore } from "../subagents/contract.ts";
@@ -236,7 +236,6 @@ export default defineFacet((host) => {
 			return { variant: "guest", members: { sessions: sessionsView } };
 		}
 		if (!isOwner(principal)) throw forbidden("sessions are owner-only");
-		const hosts = self.get(Hosts, {});
 		const lifecycleOf = serverOf(self);
 		const models = self.get(ModelConfig, {});
 		const resources = nativeOf(self, ModelResources, "The model configuration");
@@ -361,7 +360,9 @@ export default defineFacet((host) => {
 					} catch (error) {
 						if (created) {
 							await catalog.update({ id: copy, archived: true }, ctx).catch(() => {});
-							await hosts.stop({ session: copy }, ctx).catch(() => {});
+							await lifecycleOf()
+								.workers.suspend(copy)
+								.catch(() => {});
 						} else await removeSessionCopy(dataDir, copy);
 						throw error;
 					}
@@ -376,10 +377,13 @@ export default defineFacet((host) => {
 					await catalog.update({ id, pinned }, ctx);
 					return null;
 				},
-				archive: async ({ id }, ctx) => {
-					await catalog.update({ id, archived: true }, ctx);
-					// Archive stops the worker whatever it is doing; its storage and history stay.
-					await hosts.stop({ session: id }, ctx);
+				archive: async ({ id }) => {
+					await lifecycle(async (root) => {
+						await catalog.update({ id, archived: true }, root);
+						// Archive stops the worker whatever it is doing; its storage and history stay. Its holders (a page's
+						// lingering conversation) wait for a restore rather than start a worker the archive refuses.
+						await lifecycleOf().workers.suspend(id);
+					});
 					return null;
 				},
 				restore: async ({ id }, ctx) => {
