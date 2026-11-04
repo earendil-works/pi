@@ -7,7 +7,7 @@ import { fauxAssistantMessage, fauxToolCall, type Message } from "@earendil-work
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import subagentExtension from "../examples/extensions/subagent/index.ts";
 import { CONFIG_DIR_NAME } from "../src/config.ts";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../src/core/extensions/index.ts";
+import type { ExtensionAPI, ExtensionToolContext, ToolDefinition } from "../src/core/extensions/index.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "../src/core/tools/truncate.ts";
 import { createHarness, type Harness } from "./suite/harness.ts";
 
@@ -111,22 +111,22 @@ function createTool(): ToolDefinition {
 	return registered;
 }
 
-function createContext(cwd: string): ExtensionContext {
+function createContext(cwd: string): ExtensionToolContext {
 	return {
 		cwd,
 		hasUI: false,
 		model: { provider: "test", id: "dispatch-alias" },
 		thinkingLevel: "high",
 		isProjectTrusted: () => false,
-	} as unknown as ExtensionContext;
+	} as unknown as ExtensionToolContext;
 }
 
 function createInteractiveContext(
-	base: ExtensionContext,
+	base: ExtensionToolContext,
 	confirm: (title: string, message: string) => Promise<boolean>,
 	trusted = false,
-): ExtensionContext {
-	return { ...base, hasUI: true, ui: { confirm }, isProjectTrusted: () => trusted } as unknown as ExtensionContext;
+): ExtensionToolContext {
+	return { ...base, hasUI: true, ui: { confirm }, isProjectTrusted: () => trusted } as unknown as ExtensionToolContext;
 }
 
 function singleTask(task: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -204,6 +204,10 @@ function renderText(tool: ToolDefinition, result: AgentToolResult<unknown>, expa
 		expanded,
 		showImages: false,
 		isError: false,
+		durationMs: undefined,
+		outputPad: 0,
+		keyText: () => "",
+		keyHint: (_keybinding, description) => description,
 	});
 	return component.render(160).join("\n");
 }
@@ -211,7 +215,7 @@ function renderText(tool: ToolDefinition, result: AgentToolResult<unknown>, expa
 describe("subagent example extension", () => {
 	let tempDir: string;
 	let tool: ToolDefinition;
-	let ctx: ExtensionContext;
+	let ctx: ExtensionToolContext;
 	const harnesses: Harness[] = [];
 
 	function executeSubagent(
@@ -219,7 +223,7 @@ describe("subagent example extension", () => {
 		options: {
 			signal?: AbortSignal;
 			onUpdate?: (result: AgentToolResult<unknown>) => void;
-			context?: ExtensionContext;
+			context?: ExtensionToolContext;
 		} = {},
 	): Promise<AgentToolResult<unknown>> {
 		return withFixtureInvocation(() =>
@@ -419,7 +423,9 @@ describe("subagent example extension", () => {
 			expect(toolResult?.role).toBe("toolResult");
 			if (toolResult?.role === "toolResult") {
 				expect(toolResult.isError).toBe(true);
-				expect((toolResult.details as TestSubagentDetails).results[0].errorMessage).toBe("provider evidence");
+				expect((toolResult.details as unknown as TestSubagentDetails).results[0].errorMessage).toBe(
+					"provider evidence",
+				);
 			}
 		});
 

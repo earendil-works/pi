@@ -68,5 +68,5 @@
 		}
 	},
 	"include": ["scripts/model-catalog-protocol.ts", "scripts/model-catalog-protocol.test.ts", "packages/*/src/**/*", "packages/*/test/**/*", "packages/ai/catalog/**/*", "packages/durable/test-workers/**/*", "packages/coding-agent/examples/**/*", "packages/agent/examples/**/*"],
-	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/**", "packages/coding-agent/test/suite/regressions/8261-subagent-project-trust.test.ts"]
+	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/**", "packages/coding-agent/test/suite/regressions/8261-subagent-project-trust.test.ts", "packages/coding-agent/test/subagent-extension.test.ts"]
 }

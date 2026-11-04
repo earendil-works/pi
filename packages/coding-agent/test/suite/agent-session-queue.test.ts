@@ -5,6 +5,10 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, getAssistantTexts, getMessageText, getUserTexts, type Harness } from "./harness.ts";
 
+// Image processing omits images it cannot decode, so the fixture must be a real PNG.
+const TINY_PNG_BASE64 =
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+
 async function createWaitingHarness(
 	options: {
 		tools?: AgentTool[];
@@ -456,7 +460,7 @@ describe("AgentSession queue characterization", () => {
 		]);
 
 		await waitForToolStart;
-		await harness.session.steer("", [{ type: "image", mimeType: "image/png", data: "ZmFrZQ==" }]);
+		await harness.session.steer("", [{ type: "image", mimeType: "image/png", data: TINY_PNG_BASE64 }]);
 		expect(harness.session.pendingMessageCount).toBe(1);
 		releaseToolExecution();
 		await promptPromise;

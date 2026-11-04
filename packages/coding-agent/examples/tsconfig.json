@@ -189,7 +189,8 @@
 	"include": [
 		"./extensions/**/*",
 		"../../*/src/**/*.d.ts",
-		"../test/suite/regressions/8261-subagent-project-trust.test.ts"
+		"../test/suite/regressions/8261-subagent-project-trust.test.ts",
+		"../test/subagent-extension.test.ts"
 	],
 	"exclude": [
 		"**/node_modules/**",
