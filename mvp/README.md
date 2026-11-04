@@ -46,12 +46,19 @@ For the Vercel project using `mvp/` as its Root Directory, **Include source file
 
 Do not expose coding-agent tools to requests until the ASFDK harness and execution boundary are integrated and verified. Do not interpret the status endpoint as proof of authorization. Do not treat this scaffold as a production-ready agent.
 
+## ASFDK harness source
+
+The ASFDK harness client is vendored under `src/harness/` from `NeuroLift-Technologies/asfdk-harness` (no package is published). See `src/harness/README.md` for provenance, scope, and re-sync rules. The foundation it wraps, `@neurolift-technologies/asfdk`, is a published dependency.
+
+The coding-agent workspace packages resolve through their built `dist`, so build before typechecking (CI runs `npm run build` before `npm run check`). In a fresh container after `npm ci --ignore-scripts`, the root `build` script failed in `pi-ai` until `pi-schema` and `pi-telemetry` had been built first (`npm run build --workspace=@earendil-works/pi-schema`, then `--workspace=@earendil-works/pi-telemetry`). The root `build` script does not list those two packages. This was not investigated further.
+
 ## Governed turn
 
 `createNltCodingAgent()` exposes a deterministic governed turn surface (`governedTurn`) that runs a user prompt through the ASFDK harness before any coding-agent turn may execute:
 
 - Crisis / emotional assessment (Sleepwalker Protocol + RRT Advocate handoff) via `harness.assessText`.
-- Blocking crisis levels (`RED` / `BLACK`) or failed governance assessments return `allowed: false` with a `blockedReason` — escalation to a human precedes agent execution.
+- The gate (`src/gate.ts`) returns `allowed: false` with a `blockedReason` — escalation to a human precedes agent execution — when the foundation reports a critical or emergency crisis level (`rrt.CrisisLevel.RED` / `BLACK`, whose runtime values are `"critical"` / `"emergency"`), when an explicit suicidal-ideation, self-harm, or inability-to-ensure-safety flag is set, or when the assessment failed or is unavailable (fail closed).
+- The gate depends on the upstream RRT Advocate detector, which is a keyword-based prototype. It does not detect every crisis statement (for example, some phrasings of suicidal intent are not recognized), so it is not a substitute for human review.
 - Non-blocking assessments return `allowed: true` with the interaction, emotional state, governance, and continuity context needed to feed the subsequent coding-agent turn.
 
 `runNltCodingTurn()` wraps the above into a single governed turn entry point: assess → block-or-run → inject governed system prompt (ASFDK protocol + preflight) → execute through the pi-coding-agent runtime (ASFDK extension loaded) → return the final assistant response plus post-turn governance/continuity bookkeeping.
