@@ -104,6 +104,45 @@ describe("consumeSseStream", () => {
 		expect(events).toEqual([{ id: "7", data: '{"one":\n1}' }]);
 	});
 
+	it("recognizes CR, LF, and CRLF line endings, including CRLF split across chunks", async () => {
+		const encoder = new TextEncoder();
+		const parse = async (chunks: string[]) => {
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+					controller.close();
+				},
+			});
+			const events: SseEvent[] = [];
+			await consumeSseStream(stream, { onEvent: (event) => events.push(event) });
+			return events;
+		};
+		const expected = [{ id: "1", data: "a\nb" }, { data: "c" }];
+		for (const separator of ["\n", "\r\n", "\r"]) {
+			const text = ["id: 1", "data: a", "data: b", "", "data: c", "", ""].join(separator);
+			expect(await parse([text])).toEqual(expected);
+			// One character per chunk splits every CRLF between chunks.
+			expect(await parse([...text])).toEqual(expected);
+		}
+		expect(await parse(["id: 1\rdata: a\r\ndata: b\n\r", "\ndata: c\r\r"])).toEqual(expected);
+	});
+
+	it("dispatches CR-terminated events while the stream stays open", async () => {
+		const encoder = new TextEncoder();
+		let controller!: ReadableStreamDefaultController<Uint8Array>;
+		const stream = new ReadableStream<Uint8Array>({
+			start(c) {
+				controller = c;
+			},
+		});
+		const received = new Promise<SseEvent>((resolve) => {
+			void consumeSseStream(stream, { onEvent: resolve }).catch(() => {});
+		});
+		controller.enqueue(encoder.encode("data: first\r\r"));
+		expect(await received).toEqual({ data: "first" });
+		controller.close();
+	});
+
 	it("rejects events whose data lines exceed the limit without a blank line", async () => {
 		const encoder = new TextEncoder();
 		let sent = 0;

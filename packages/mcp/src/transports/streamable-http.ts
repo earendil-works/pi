@@ -64,8 +64,7 @@ export async function consumeSseStream(stream: ReadableStream<Uint8Array>, optio
 		dataBytes = 0;
 	};
 
-	const processLine = (rawLine: string) => {
-		const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+	const processLine = (line: string) => {
 		if (line === "") {
 			dispatch();
 			return;
@@ -86,21 +85,45 @@ export async function consumeSseStream(stream: ReadableStream<Uint8Array>, optio
 		} else if (field === "retry" && /^\d+$/.test(value)) options.onRetry?.(Number(value));
 	};
 
+	// SSE lines end with CRLF, LF, or a lone CR.
+	let skipLeadingLf = false;
+	const consumeLines = () => {
+		let start = 0;
+		for (let i = 0; i < buffered.length; i++) {
+			const char = buffered[i];
+			if (char !== "\r" && char !== "\n") continue;
+			processLine(buffered.slice(start, i));
+			if (char === "\r") {
+				if (i + 1 < buffered.length) {
+					if (buffered[i + 1] === "\n") i++;
+				} else {
+					skipLeadingLf = true;
+				}
+			}
+			start = i + 1;
+		}
+		buffered = buffered.slice(start);
+	};
+
 	try {
 		while (true) {
 			const { done, value } = await reader.read();
 			if (done) break;
-			buffered += decoder.decode(value, { stream: true });
-			let newline = buffered.indexOf("\n");
-			while (newline >= 0) {
-				processLine(buffered.slice(0, newline));
-				buffered = buffered.slice(newline + 1);
-				newline = buffered.indexOf("\n");
+			let text = decoder.decode(value, { stream: true });
+			// A CRLF split across chunks: the CR already ended the line, so drop the LF.
+			if (skipLeadingLf && text.length > 0) {
+				if (text.startsWith("\n")) text = text.slice(1);
+				skipLeadingLf = false;
 			}
+			buffered += text;
+			consumeLines();
 			if (Buffer.byteLength(buffered) > maxEventBytes)
 				throw new Error(`MCP SSE event exceeds ${maxEventBytes} bytes`);
 		}
-		buffered += decoder.decode();
+		let tail = decoder.decode();
+		if (skipLeadingLf && tail.startsWith("\n")) tail = tail.slice(1);
+		buffered += tail;
+		consumeLines();
 		if (buffered) processLine(buffered);
 		dispatch();
 	} catch (error) {
