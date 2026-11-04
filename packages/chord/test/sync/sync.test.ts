@@ -19,6 +19,8 @@ import {
 	type BatchInfo,
 	decodeBatch,
 	encodeBatch,
+	FileSyncStateStore,
+	FileSystemSyncRemote,
 	FlushScheduler,
 	foldSession,
 	HistoryUnavailableError,
@@ -35,8 +37,8 @@ import {
 	UnsyncedCommitsError,
 	uploadSession,
 } from "../../src/sync/index.ts";
-import { FileSyncStateStore, FileSystemSyncRemote } from "../../src/sync/node/index.ts";
 import { tableOwner } from "../support.ts";
+import { nodeFiles } from "./node-files.ts";
 
 const context = BACKGROUND_CONTEXT;
 const SESSION = "session-1";
@@ -51,7 +53,7 @@ afterEach(async () => {
 async function remote(): Promise<FileSystemSyncRemote> {
 	const directory = await mkdtemp(join(tmpdir(), "chord-sync-"));
 	directories.push(directory);
-	return new FileSystemSyncRemote(directory);
+	return new FileSystemSyncRemote(nodeFiles, directory);
 }
 
 /** A backend over the SQLite file at `path`, `:memory:` by default. */
@@ -607,7 +609,7 @@ describe("host pieces", () => {
 	it("keeps sync state in files", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "chord-sync-state-"));
 		directories.push(directory);
-		const state = new FileSyncStateStore(join(directory, "sync"));
+		const state = new FileSyncStateStore(nodeFiles, join(directory, "sync"));
 		expect(await state.get(SESSION, context)).toBeUndefined();
 		await state.set(SESSION, { syncedHead: 3, pulling: 7 }, context);
 		expect(await state.get(SESSION, context)).toEqual({ syncedHead: 3, pulling: 7 });

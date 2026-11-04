@@ -30,7 +30,6 @@
 			"@earendil-works/chord/tui": ["../../packages/chord/src/tui/index.ts"],
 			"@earendil-works/chord/tui/launcher": ["../../packages/chord/src/node/tui/index.ts"],
 			"@earendil-works/chord/sync": ["../../packages/chord/src/sync/index.ts"],
-			"@earendil-works/chord/sync/node": ["../../packages/chord/src/sync/node/index.ts"],
 			"@earendil-works/pi-telemetry": ["../../packages/telemetry/src/index.ts"],
 			"@earendil-works/pi-telemetry/testing": ["../../packages/telemetry/src/testing/index.ts"],
 			"@earendil-works/pi-telemetry/render": ["../../packages/telemetry/src/render.ts"],

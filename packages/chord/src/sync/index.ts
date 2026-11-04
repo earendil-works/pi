@@ -1,5 +1,5 @@
 // Session sync over a store's outbox (`@earendil-works/chord/sync`, experimental). Portable: the remote and the host's
-// sync state are interfaces; `@earendil-works/chord/sync/node` has directory-backed ones for development and tests.
+// sync state are interfaces, and the directory-backed ones take their file operations (`SyncFileSystem`).
 
 export { decodeBatch, decodeSnapshot, encodeBatch, encodeSnapshot } from "./batch.ts";
 export {
@@ -17,6 +17,8 @@ export {
 	type UploadResult,
 	uploadSession,
 } from "./client.ts";
+export type { FileResult, SyncFileInfo, SyncFileSystem } from "./files.ts";
+export { checkSessionId, FileSystemSyncRemote } from "./filesystem.ts";
 export { decodeLogLines, encodeLogLine, LOG_VERSION, LogFormatError } from "./lines.ts";
 export {
 	type BatchInfo,
@@ -34,3 +36,4 @@ export {
 	type SessionSyncMaintenance,
 	type SessionSyncStore,
 } from "./remote.ts";
+export { FileSyncStateStore } from "./state.ts";
