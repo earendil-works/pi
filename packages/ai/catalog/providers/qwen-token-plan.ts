@@ -6,6 +6,7 @@ import { getEffortThinkingLevelMap } from "../reasoning.ts";
 // endpoints and API keys (sk-sp- prefix). models.dev lists them as
 // "alibaba-token-plan[-cn]".
 export const INTERNATIONAL_BASE_URL = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
+export const CN_BASE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1";
 
 const COMPAT: OpenAICompletionsCompat = {
 	thinkingFormat: "qwen",
