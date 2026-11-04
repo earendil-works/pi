@@ -730,6 +730,10 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
 	});
 
+	test("anthropic default tracks current model", () => {
+		expect(defaultModelPerProvider.anthropic).toBe("claude-opus-5-5");
+	});
+
 	test("xai default tracks current model", () => {
 		expect(defaultModelPerProvider.xai).toBe("grok-4.7");
 	});
