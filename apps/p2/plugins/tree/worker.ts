@@ -1,6 +1,6 @@
 // `/tree` in the session worker (`docs/tree.md`): the tree of the top-level conversations' messages, switching the
 // current main conversation (forking a new branch where none ends at the chosen point), and the rules that come with
-// it: older branches are read-only, and the session catalog follows the main conversation.
+// it: older branches are read-only, branches carry stored labels, and the session catalog follows `p2.main`.
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
 	AgentDoc,
@@ -11,6 +11,7 @@ import {
 	type EntryRecord,
 	type Harness,
 	type JsonObject,
+	ROOT_CONVERSATION_ID,
 } from "@earendil-works/pi-durable";
 import {
 	type Context,
@@ -54,27 +55,29 @@ export default defineFacet((host) => {
 					: undefined;
 			},
 		});
-		// The catalog follows the main conversation and lists the branches: at start (also after a worker stopped between
-		// a switch and its report), at every switch, and when a branch gets its first message (its label).
-		/** Top-level conversations without a label yet: their first entry gives them one. */
-		let unlabeled = new Set<number>();
+		// The catalog follows `p2.main` (the main conversation, the branches and their labels): at start (also after a
+		// worker stopped between a change and its report) and at every change.
 		const commits = self.open(
 			async () =>
 				new CommitSignal(harness().durable, (publication) =>
 					publication.changes.some(
-						(change) =>
-							(change.type === "document" && change.record.kind === MainDoc.definition.kind) ||
-							(change.type === "entry" && unlabeled.has(change.value.conversationId)),
+						(change) => change.type === "document" && change.record.kind === MainDoc.definition.kind,
 					),
 				),
 			(signal) => signal.close(),
 		);
 		self.onLive(async (ctx) => {
 			const signal = signalOf(ctx);
+			try {
+				await fillLabels(harness().durable, durableContext(ctx));
+			} catch (error) {
+				if (signal.aborted) return;
+				console.error("p2 tree: labelling the branches failed:", error);
+			}
 			while (!signal.aborted) {
 				const seen = commits.value.version;
 				try {
-					unlabeled = await reportTree(harness().durable, ctx);
+					await reportTree(harness().durable, ctx);
 				} catch (error) {
 					if (signal.aborted) return;
 					console.error("p2 tree: reporting the branches failed:", error);
@@ -106,64 +109,77 @@ export default defineFacet((host) => {
 						await reportTree(durable, ctx);
 						return null;
 					}),
+				rename: ({ conversation, label }, ctx) =>
+					worker().liveness.call(async () => {
+						const durable = harness().durable;
+						await rename(durable, conversation, label, durableContext(ctx));
+						await reportTree(durable, ctx);
+						return null;
+					}),
 			},
 		};
 	});
 });
 
+/** Tells the catalog the current main conversation and the branches, newest first (it ignores an unchanged report). */
+async function reportTree(durable: Harness, ctx: Ctx): Promise<void> {
+	const state = await durable.snapshot(MainDoc, durableContext(ctx));
+	const main = state?.conversation ?? ROOT_CONVERSATION_ID;
+	const branches: Branch[] = (state?.branches ?? [{ conversation: ROOT_CONVERSATION_ID, label: null }]).toReversed();
+	await expectVariant(await ctx.get(Sessions, {}), "worker").treeSelf({ main, branches }, ctx);
+}
+
 /**
- * Tells the catalog the current main conversation and the branches (it ignores an unchanged report). Returns the
- * top-level conversations still without a label.
+ * Labels the branches `p2.main` version 1 listed without one (conversation 1 keeps null, the session title): the
+ * fork point's message, else the branch's first own user message. Runs at start; a branch `/tree` creates is labelled
+ * in the commit that creates it, so nothing is derived after this.
  */
-async function reportTree(durable: Harness, ctx: Ctx): Promise<Set<number>> {
-	const context = durableContext(ctx);
-	const labels = labelsOf(durable);
-	const branches: Branch[] = [];
-	const unlabeled = new Set<number>();
-	for (const record of await topLevelRecords(durable, context)) {
-		let label = labels.get(record.id);
-		if (label === undefined) {
-			label = await labelOf(durable, record, context);
-			if (label !== undefined) labels.set(record.id, label);
-		}
-		if (label !== undefined) branches.push({ conversation: record.id, label });
-		else unlabeled.add(record.id);
-	}
-	await expectVariant(await ctx.get(Sessions, {}), "worker").treeSelf(
-		{ main: await mainConversation(durable, context), branches: branches.reverse() },
-		ctx,
+async function fillLabels(durable: Harness, context: Context): Promise<void> {
+	const state = await durable.snapshot(MainDoc, context);
+	const unlabeled = new Set(
+		(state?.branches ?? []).flatMap((branch) =>
+			branch.label === null && branch.conversation !== ROOT_CONVERSATION_ID ? [branch.conversation] : [],
+		),
 	);
-	return unlabeled;
-}
-
-/** Branch labels by conversation, per Harness: a branch's first own message never changes once it is there. */
-const labels = new WeakMap<Harness, Map<number, string>>();
-
-function labelsOf(durable: Harness): Map<number, string> {
-	let known = labels.get(durable);
-	if (!known) {
-		known = new Map();
-		labels.set(durable, known);
+	if (unlabeled.size === 0) return;
+	const labels = new Map<number, string>();
+	for (const record of await topLevelRecords(durable, context)) {
+		if (!unlabeled.has(record.id)) continue;
+		const label = await forkLabel(durable, record, context);
+		if (label !== undefined) labels.set(record.id, label);
 	}
-	return known;
+	if (labels.size === 0) return;
+	await durable.commit(async (tx) => {
+		for (const branch of (await tx.doc(MainDoc)).branches)
+			if (branch.label === null) branch.label = labels.get(branch.conversation) ?? null;
+	}, context);
 }
 
-/** How many own entries a label looks at: a branch's first message comes early. */
-const LABEL_SCAN = 100;
-
-/** A branch's label: its first own user message, else its first own answer; undefined while it has no message. */
-async function labelOf(durable: Harness, record: ConversationRecord, context: Context): Promise<string | undefined> {
+/** A version 1 branch's label: its fork point's message, else its first own user message; undefined without either. */
+async function forkLabel(durable: Harness, record: ConversationRecord, context: Context): Promise<string | undefined> {
+	const parent = record.parent;
+	const point = parent ? await durable.commit((tx) => tx.entry(parent.at as EntryId), context) : undefined;
+	const atPoint = point ? previewOf(point)?.text : undefined;
+	if (atPoint !== undefined) return atPoint;
 	const conversation = await durable.conversation(record.id, context);
 	if (!conversation) return undefined;
-	const page = await conversation.entries(
-		{ minEntryId: ((record.parent?.at ?? 0) + 1) as EntryId, order: "ascending" },
-		LABEL_SCAN,
-		undefined,
-		context,
-	);
-	const nodes = page.items.flatMap((entry) => nodeOf(entry, null) ?? []);
-	return (nodes.find((node) => node.role === "user") ?? nodes[0])?.text;
+	let cursor: Cursor | undefined;
+	do {
+		const page = await conversation.entries(
+			{ minEntryId: ((parent?.at ?? 0) + 1) as EntryId, order: "ascending" },
+			PAGE,
+			cursor,
+			context,
+		);
+		const user = page.items.map(previewOf).find((preview) => preview?.role === "user");
+		if (user) return user.text;
+		cursor = page.next;
+	} while (cursor !== undefined);
+	return undefined;
 }
+
+/** Entries per page when walking a conversation. */
+const PAGE = 500;
 
 /** The messages of every top-level conversation, each hung below the node its branch continues from. */
 async function readTree(durable: Harness, context: Context): Promise<Tree> {
@@ -188,35 +204,44 @@ async function readTree(durable: Harness, context: Context): Promise<Tree> {
 		do {
 			const page = await conversation.entries(
 				{ minEntryId: ((record.parent?.at ?? 0) + 1) as EntryId, order: "ascending" },
-				500,
+				PAGE,
 				cursor,
 				context,
 			);
 			for (const entry of page.items) {
-				const node = nodeOf(entry, previous);
-				if (!node) continue;
-				nodes.push(node);
-				previous = node.entry;
+				const preview = previewOf(entry);
+				if (!preview) continue;
+				nodes.push({ entry: entry.id, parent: previous, conversation: record.id, ...preview });
+				previous = entry.id;
 			}
 			cursor = page.next;
 		} while (cursor !== undefined);
 		own.set(record.id, nodes);
 	}
-	const main = await mainConversation(durable, context);
+	const state = await durable.snapshot(MainDoc, context);
+	const main = (state?.conversation ?? ROOT_CONVERSATION_ID) as ConversationId;
 	return {
 		nodes: [...own.values()].flat().sort((a, b) => a.entry - b.entry),
+		branches: state?.branches ?? [{ conversation: ROOT_CONVERSATION_ID, label: null }],
 		main,
 		current: lastOn(main, Number.MAX_SAFE_INTEGER),
 	};
 }
 
-/** A tree node for a user message or an assistant answer with text; undefined for every other entry. */
-function nodeOf(entry: EntryRecord, parent: number | null): TreeNode | undefined {
+/**
+ * A user message's or an assistant answer's text on one line, at most `PREVIEW_LENGTH` characters (a tree node, a
+ * branch label); undefined for every other entry and for messages without text.
+ */
+function previewOf(entry: EntryRecord): Pick<TreeNode, "role" | "text"> | undefined {
 	const role = roleOf(entry);
 	if (!role) return undefined;
-	const text = role === "user" ? userText(entry) : assistantText(entry);
-	if (!text.trim()) return undefined;
-	return { entry: entry.id, parent, role, text: text.replace(/\s+/g, " ").trim().slice(0, PREVIEW_LENGTH) };
+	const text = oneLine(role === "user" ? userText(entry) : assistantText(entry));
+	return text ? { role, text } : undefined;
+}
+
+/** Text on one line, trimmed, at most `PREVIEW_LENGTH` characters. */
+function oneLine(text: string): string {
+	return text.replace(/\s+/g, " ").trim().slice(0, PREVIEW_LENGTH);
 }
 
 function roleOf(entry: EntryRecord): TreeNode["role"] | undefined {
@@ -245,9 +270,10 @@ function assistantText(entry: EntryRecord): string {
 
 /**
  * Switches the main conversation so the session continues at `entry`: after an answer, before a user message (whose
- * text comes back). A top-level conversation already ending there is reused; else a fork of the conversation storing
- * the point, or a new empty conversation before the first message. The new conversation, the carried documents and
- * the main pointer are one commit.
+ * text comes back). A top-level conversation already ending there is reused, its label unchanged; else a fork of the
+ * conversation storing the point, or a new empty conversation before the first message, labelled with the chosen
+ * message (what the owner picked: the answer, or the user message typed again). The new conversation, its label, the
+ * carried documents and the main pointer are one commit.
  */
 async function navigate(
 	durable: Harness,
@@ -284,7 +310,8 @@ async function navigate(
 		}
 		const state = await tx.doc(MainDoc);
 		state.conversation = to;
-		if (!state.branches.includes(to)) state.branches.push(to);
+		if (!state.branches.some((branch) => branch.conversation === to))
+			state.branches.push({ conversation: to, label: previewOf(chosen)?.text ?? null });
 		return to;
 	}, context);
 	return { conversation, text };
@@ -310,6 +337,22 @@ async function select(durable: Harness, id: ConversationId, context: Context): P
 	await idleOrRefuse(durable, main, context);
 	await durable.commit(async (tx) => {
 		(await tx.doc(MainDoc)).conversation = id;
+	}, context);
+}
+
+/**
+ * Labels the branch `id`: one line, 1 to `PREVIEW_LENGTH` characters. Null or empty resets conversation 1 to the
+ * session title; another branch needs a label (it has a fork point to be named after).
+ */
+async function rename(durable: Harness, id: number, label: string | null, context: Context): Promise<void> {
+	// Schema-checked arguments: the length and the null rule are this method's own.
+	const text = (label ?? "").replace(/\s+/g, " ").trim();
+	if (text.length > PREVIEW_LENGTH) throw new Error(`A branch label has at most ${PREVIEW_LENGTH} characters`);
+	if (!text && id !== ROOT_CONVERSATION_ID) throw new Error("A branch label needs at least one character");
+	await durable.commit(async (tx) => {
+		const branch = (await tx.doc(MainDoc)).branches.find((each) => each.conversation === id);
+		if (!branch) throw new Error("Unknown branch");
+		branch.label = text || null;
 	}, context);
 }
 

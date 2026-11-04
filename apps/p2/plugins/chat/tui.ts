@@ -14,7 +14,7 @@ import {
 	truncateToWidth,
 	VStack,
 } from "@earendil-works/pi-tui";
-import type { Held, HeldIn } from "@p2/app/v1";
+import type { Ctx, Held, HeldIn } from "@p2/app/v1";
 import { BACKGROUND_CONTEXT, FileIndex, followRegistry, liveIn, serveKeyed, statusOf } from "@p2/app/v1";
 import {
 	BashExecutionComponent,
@@ -792,42 +792,52 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 
 	/**
 	 * pi's `/tree` (docs/tree.md): the session's branches as one tree; Enter continues the session at the chosen
-	 * message (`SessionTree.navigate`), a user message waiting in the editor of the conversation it switched to.
+	 * message (`SessionTree.navigate`), a user message waiting in the editor of the conversation it switched to. The
+	 * label key renames the selected message's branch (`SessionTree.rename`); a null label shows the session title.
 	 */
 	openTree(): void {
 		const runtime = this.runtime;
 		const session = this.session;
 		if (!session) return;
+		const title = () => this.rows.find((row) => row.id === session)?.title ?? "";
 		runtime.perform(
 			runtime.host.root(async (root) => {
 				const ref = await root.get(SessionTree, { session });
 				if (ref.variant !== "owner") throw new Error("Only the owner switches branches");
 				const tree = await ref.tree(root);
-				const overlay = runtime.ctx.overlay(
-					"tree",
-					new TreeSelectorComponent(
-						runtime.ctx,
-						tree.nodes,
-						tree.current,
-						(entry) => {
-							overlay.close();
-							runtime.perform(
-								runtime.host.root(async (inner) => {
-									const tree = await inner.get(SessionTree, { session });
-									if (tree.variant !== "owner") throw new Error("Only the owner switches branches");
-									const { conversation, text } = await tree.navigate({ entry }, inner);
-									const identity = identityKey(session, conversation);
-									if (text !== null) runtime.drafts.set(identity, text);
-									runtime.navigate("chat", session, conversation);
-									// Already shown (the session continues in the same conversation): the editor takes the text now.
-									if (text !== null && !this.disposed && this.identity === identity) this.editor.setText(text);
-								}, BACKGROUND_CONTEXT),
-							);
-						},
-						() => overlay.close(),
-					),
-					{ width: "100%", anchor: "bottom-center" },
+				// Each action runs in a root of its own: the selector outlives this one.
+				const act = (action: (tree: typeof ref, ctx: Ctx) => Promise<void>) =>
+					runtime.perform(
+						runtime.host.root(async (inner) => {
+							const owned = await inner.get(SessionTree, { session });
+							if (owned.variant !== "owner") throw new Error("Only the owner switches branches");
+							await action(owned, inner);
+						}, BACKGROUND_CONTEXT),
+					);
+				const selector: TreeSelectorComponent = new TreeSelectorComponent(
+					runtime.ctx,
+					tree.nodes,
+					tree.current,
+					new Map(tree.branches.map((branch) => [branch.conversation, branch.label ?? title()])),
+					(entry) => {
+						overlay.close();
+						act(async (owned, ctx) => {
+							const { conversation, text } = await owned.navigate({ entry }, ctx);
+							const identity = identityKey(session, conversation);
+							if (text !== null) runtime.drafts.set(identity, text);
+							runtime.navigate("chat", session, conversation);
+							// Already shown (the session continues in the same conversation): the editor takes the text now.
+							if (text !== null && !this.disposed && this.identity === identity) this.editor.setText(text);
+						});
+					},
+					() => overlay.close(),
+					(conversation, label) =>
+						act(async (owned, ctx) => {
+							await owned.rename({ conversation, label: label || null }, ctx);
+							selector.setLabel(conversation, label || title());
+						}),
 				);
+				const overlay = runtime.ctx.overlay("tree", selector, { width: "100%", anchor: "bottom-center" });
 			}, BACKGROUND_CONTEXT),
 		);
 	}

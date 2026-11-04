@@ -1,16 +1,26 @@
 // Adapted from coding-agent interactive/components/tree-selector.ts (`/tree`, docs/tree.md): the tree layout (indent
-// at branch points, connectors, gutters, the current branch first), the active path marker, selection and paging.
-// Changes: nodes are p2's tree nodes (`plugins/tree/contract.ts`: user messages and answers by entry ID, no tool
-// entries), so there are no filters, folding, labels or copying; the instance theme and keymap (section 5.4) replace the
-// globals; message text is server text (`lineText`).
-import { type Component, Container, type Focusable, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
+// at branch points, connectors, gutters, the current branch first), the active path marker, selection, paging and the
+// label input. Changes: nodes are p2's tree nodes (`plugins/tree/contract.ts`: user messages and answers by entry ID,
+// no tool entries), so there are no filters, folding or copying; labels are branch labels, shown on each branch's first
+// own message and edited for the branch holding the selected message; the instance theme and keymap (section 5.4)
+// replace the globals; message text and labels are server text (`lineText`).
+import {
+	type Component,
+	Container,
+	type Focusable,
+	Input,
+	Spacer,
+	Text,
+	truncateToWidth,
+} from "@earendil-works/pi-tui";
 import { keyHint, lineText } from "../render-context.ts";
 import { DynamicBorder, type SelectorContext } from "./selectors.ts";
 
-/** One message of the tree; `parent` is the node before it on its branch. */
+/** One message of the tree; `parent` is the node before it on its branch, `conversation` the branch storing it. */
 export type TreeSelectorNode = {
 	readonly entry: number;
 	readonly parent: number | null;
+	readonly conversation: number;
 	readonly role: "user" | "assistant";
 	readonly text: string;
 };
@@ -38,14 +48,29 @@ class TreeList implements Component {
 	private selectedIndex: number;
 	private readonly ctx: SelectorContext;
 	private readonly maxVisible: number;
+	/** Branch labels by conversation (null labels already resolved to the session title). */
+	readonly labels: Map<number, string>;
+	/** The entries starting a branch: the first of a conversation's own nodes, where its label shows. */
+	private readonly firsts = new Set<number>();
 	onSelect?: (entry: number) => void;
 	onCancel?: () => void;
+	onLabelEdit?: (conversation: number) => void;
 
-	constructor(ctx: SelectorContext, nodes: readonly TreeSelectorNode[], current: number | null, maxVisible: number) {
+	constructor(
+		ctx: SelectorContext,
+		nodes: readonly TreeSelectorNode[],
+		current: number | null,
+		labels: ReadonlyMap<number, string>,
+		maxVisible: number,
+	) {
 		this.ctx = ctx;
 		this.maxVisible = maxVisible;
+		this.labels = new Map(labels);
 		const byEntry = new Map(nodes.map((node) => [node.entry, node]));
 		for (let at = current; at !== null; at = byEntry.get(at)?.parent ?? null) this.activePath.add(at);
+		for (const node of nodes)
+			if (node.parent === null || byEntry.get(node.parent)?.conversation !== node.conversation)
+				this.firsts.add(node.entry);
 		const roots = buildTree(nodes);
 		this.multipleRoots = roots.length > 1;
 		this.flat = this.flatten(roots);
@@ -130,9 +155,11 @@ class TreeList implements Component {
 				else prefix += "   ";
 			}
 			const marker = this.activePath.has(flat.node.entry) ? theme.fg("accent", "• ") : "";
+			const label = this.firsts.has(flat.node.entry) ? this.labels.get(flat.node.conversation) : undefined;
+			const labelText = label === undefined ? "" : theme.fg("warning", `[${lineText(label)}] `);
 			const role = flat.node.role === "user" ? theme.fg("accent", "user: ") : theme.fg("muted", "assistant: ");
 			const text = lineText(flat.node.text);
-			const body = `${theme.fg("dim", prefix)}${marker}${role}${selected ? theme.bold(text) : text}`;
+			const body = `${theme.fg("dim", prefix)}${marker}${labelText}${role}${selected ? theme.bold(text) : text}`;
 			const line = truncateToWidth(`${selected ? theme.fg("accent", "› ") : "  "}${body}`, width);
 			lines.push(selected ? theme.bg("selectedBg", line) : line);
 		}
@@ -154,6 +181,9 @@ class TreeList implements Component {
 		else if (keys.matches(data, "tui.select.confirm")) {
 			const selected = this.flat[this.selectedIndex];
 			if (selected) this.onSelect?.(selected.node.entry);
+		} else if (keys.matches(data, "app.tree.editLabel")) {
+			const selected = this.flat[this.selectedIndex];
+			if (selected) this.onLabelEdit?.(selected.node.conversation);
 		} else if (keys.matches(data, "tui.select.cancel")) this.onCancel?.();
 		this.ctx.requestRender();
 	}
@@ -173,19 +203,79 @@ function buildTree(nodes: readonly TreeSelectorNode[]): TreeNode[] {
 	return roots;
 }
 
-/** pi's `/tree` selector over the session's branches: Enter continues the session at the chosen message. */
+/** pi's label input, for a branch: Enter saves the trimmed text (empty: see `TreeSelectorComponent`), Escape cancels. */
+class LabelInput implements Component, Focusable {
+	private readonly input = new Input();
+	private readonly ctx: SelectorContext;
+	private readonly prompt: string;
+	private _focused = false;
+	onSubmit?: (label: string) => void;
+	onCancel?: () => void;
+
+	constructor(ctx: SelectorContext, prompt: string, current: string) {
+		this.ctx = ctx;
+		this.prompt = prompt;
+		// As a paste: the cursor ends after the text (`setValue` leaves it at the start), and server text is never keys.
+		this.input.handleInput(`\x1b[200~${current}\x1b[201~`);
+	}
+
+	// Focus reaches the input for IME cursor placement.
+	get focused(): boolean {
+		return this._focused;
+	}
+	set focused(value: boolean) {
+		this._focused = value;
+		this.input.focused = value;
+	}
+
+	invalidate(): void {}
+
+	render(width: number): string[] {
+		const theme = this.ctx.theme.current;
+		const indent = "  ";
+		return [
+			truncateToWidth(`${indent}${theme.fg("muted", this.prompt)}`, width),
+			...this.input.render(width - indent.length).map((line) => truncateToWidth(`${indent}${line}`, width)),
+			truncateToWidth(
+				`${indent}${keyHint(this.ctx, "tui.select.confirm", "save")}  ${keyHint(this.ctx, "tui.select.cancel", "cancel")}`,
+				width,
+			),
+		];
+	}
+
+	handleInput(data: string): void {
+		const keys = this.ctx.keys;
+		if (keys.matches(data, "tui.select.confirm")) this.onSubmit?.(this.input.getValue().trim());
+		else if (keys.matches(data, "tui.select.cancel")) this.onCancel?.();
+		else this.input.handleInput(data);
+		this.ctx.requestRender();
+	}
+}
+
+/**
+ * pi's `/tree` selector over the session's branches: Enter continues the session at the chosen message; the label key
+ * renames the branch holding the selected message (`onRename`; empty resets conversation 1 to the session title). The
+ * owner of the selector shows a saved label with `setLabel`.
+ */
 export class TreeSelectorComponent extends Container implements Focusable {
-	focused = false;
+	private readonly ctx: SelectorContext;
 	private readonly list: TreeList;
+	private readonly listContainer = new Container();
+	private readonly labelContainer = new Container();
+	private labelInput: LabelInput | undefined;
+	private _focused = false;
 
 	constructor(
 		ctx: SelectorContext,
 		nodes: readonly TreeSelectorNode[],
 		current: number | null,
+		labels: ReadonlyMap<number, string>,
 		onSelect: (entry: number) => void,
 		onCancel: () => void,
+		onRename: (conversation: number, label: string) => void,
 	) {
 		super();
+		this.ctx = ctx;
 		const theme = ctx.theme.current;
 		this.addChild(new Spacer(1));
 		this.addChild(new Text(theme.bold("Session Tree"), 1, 0));
@@ -193,7 +283,7 @@ export class TreeSelectorComponent extends Container implements Focusable {
 			new Text(
 				theme.fg(
 					"muted",
-					`Continue from a message: an answer continues after it, a user message is typed again · ${keyHint(ctx, "tui.select.confirm", "select")} · ${keyHint(ctx, "tui.select.cancel", "cancel")}`,
+					`Continue from a message: an answer continues after it, a user message is typed again · ${keyHint(ctx, "tui.select.confirm", "select")} · ${keyHint(ctx, "app.tree.editLabel", "label")} · ${keyHint(ctx, "tui.select.cancel", "cancel")}`,
 				),
 				1,
 				0,
@@ -201,14 +291,55 @@ export class TreeSelectorComponent extends Container implements Focusable {
 		);
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder(ctx));
-		this.list = new TreeList(ctx, nodes, current, 16);
+		this.list = new TreeList(ctx, nodes, current, labels, 16);
 		this.list.onSelect = onSelect;
 		this.list.onCancel = onCancel;
-		this.addChild(this.list);
+		this.list.onLabelEdit = (conversation) => this.editLabel(conversation, onRename);
+		this.listContainer.addChild(this.list);
+		this.addChild(this.listContainer);
+		this.addChild(this.labelContainer);
 		this.addChild(new DynamicBorder(ctx));
 	}
 
+	get focused(): boolean {
+		return this._focused;
+	}
+	set focused(value: boolean) {
+		this._focused = value;
+		if (this.labelInput) this.labelInput.focused = value;
+	}
+
+	/** Shows a branch's saved label. */
+	setLabel(conversation: number, label: string): void {
+		this.list.labels.set(conversation, label);
+		this.ctx.requestRender();
+	}
+
 	handleInput(data: string): void {
-		this.list.handleInput(data);
+		if (this.labelInput) this.labelInput.handleInput(data);
+		else this.list.handleInput(data);
+	}
+
+	private editLabel(conversation: number, onRename: (conversation: number, label: string) => void): void {
+		const input = new LabelInput(
+			this.ctx,
+			conversation === 1 ? "Branch label (empty: the session title):" : "Branch label:",
+			this.list.labels.get(conversation) ?? "",
+		);
+		input.onSubmit = (label) => {
+			this.closeLabel();
+			onRename(conversation, label);
+		};
+		input.onCancel = () => this.closeLabel();
+		this.labelInput = input;
+		input.focused = this._focused;
+		this.listContainer.clear();
+		this.labelContainer.addChild(input);
+	}
+
+	private closeLabel(): void {
+		this.labelInput = undefined;
+		this.labelContainer.clear();
+		this.listContainer.addChild(this.list);
 	}
 }

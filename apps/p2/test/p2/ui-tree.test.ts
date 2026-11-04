@@ -1,6 +1,6 @@
 // `/tree` in the browser (docs/tree.md): "Edit" on a user message (a branch before it, its text in the composer),
-// "Branch from here" on an answer, the branch rows under the session in the sidebar, and following a switch made
-// elsewhere.
+// "Branch from here" on an answer, the branch rows under the session in the sidebar (stored labels, the session title
+// for conversation 1) and renaming them, and following a switch made elsewhere.
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
@@ -58,22 +58,56 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await browser.wait(
 			`document.querySelector('.messages')?.textContent.includes('Echo: first') && !document.querySelector('.messages').textContent.includes('Echo: second')`,
 		);
-		// The branch's first message gives it a row, newest first.
-		await send(main, "other");
+		// The fork has a row at once, newest first, labelled with the edited message; conversation 1 shows the title.
 		await browser.wait(`document.querySelectorAll('.branch-row').length===2`);
 		assert.deepEqual(
 			await browser.evaluate<string[]>(`[...document.querySelectorAll('.branch-row')].map(e=>e.textContent)`),
-			["othercurrent", "first"],
+			["secondcurrent", "Branches"],
 		);
+		await send(main, "other");
 		// Switching back to conversation 1 from the sidebar.
-		await browser.evaluate(`[...document.querySelectorAll('.branch-row')].find(e=>e.textContent==='first').click()`);
+		await browser.evaluate(
+			`[...document.querySelectorAll('.branch-row')].find(e=>e.textContent==='Branches').click()`,
+		);
 		await browser.wait(`location.pathname==='/s/${id}'`);
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: second')`);
 		assert.equal((await row()).main, 1);
 		// The rows keep their order: only the "current" mark moves.
 		await browser.wait(
-			`[...document.querySelectorAll('.branch-row')].map(e=>e.textContent).join('|')==='other|firstcurrent'`,
+			`[...document.querySelectorAll('.branch-row')].map(e=>e.textContent).join('|')==='second|Branchescurrent'`,
 		);
+	});
+
+	it("renames a branch from its row; conversation 1 follows the session title until renamed", async () => {
+		const rows = () =>
+			browser.evaluate<string>(`[...document.querySelectorAll('.branch-row')].map(e=>e.textContent).join('|')`);
+		const rename = async (label: string, text: string) => {
+			await browser.evaluate(
+				`document.querySelector('.branch-rename[aria-label="Rename branch ${label}"]').click()`,
+			);
+			await browser.wait(`document.querySelector('.sheet input')?.value===${JSON.stringify(label)}`);
+			await browser.evaluate(
+				`(()=>{const e=document.querySelector('.sheet input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(text)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+			);
+			await browser.evaluate(`document.querySelector('.sheet button[type="submit"]').click()`);
+			await browser.wait(`!document.querySelector('.sheet')`);
+		};
+		await rename("second", "Second try");
+		await browser.wait(`[...document.querySelectorAll('.branch-row')].some(e=>e.textContent==='Second try')`);
+		// A session rename reaches conversation 1's row.
+		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		await sessions.rename({ id, title: "Renamed" }, BACKGROUND_CONTEXT);
+		await browser.wait(`[...document.querySelectorAll('.branch-row')].some(e=>e.textContent==='Renamedcurrent')`);
+		await rename("Renamed", "Main line");
+		await browser.wait(`[...document.querySelectorAll('.branch-row')].some(e=>e.textContent==='Main linecurrent')`);
+		assert.equal(await rows(), "Second try|Main linecurrent");
+		assert.equal((await row()).branches.find((branch) => branch.conversation === 1)?.label, "Main line");
+		// Back to the session title.
+		await browser.evaluate(`document.querySelector('.branch-rename[aria-label="Rename branch Main line"]').click()`);
+		await browser.evaluate(
+			`[...document.querySelectorAll('.sheet button')].find(e=>e.textContent==='Use the session title').click()`,
+		);
+		await browser.wait(`[...document.querySelectorAll('.branch-row')].some(e=>e.textContent==='Renamedcurrent')`);
 	});
 
 	it("branches after an answer, and follows a switch made elsewhere", async () => {

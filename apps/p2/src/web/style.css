@@ -2876,6 +2876,38 @@ button.diff-number:hover {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+/* Renaming a branch: the pencil at the row's end on hover, always shown where there is no hover. */
+.branch-item {
+	position: relative;
+}
+.branch-item .branch-row {
+	padding-right: calc(var(--x) + var(--control-sm));
+}
+.branch-rename {
+	position: absolute;
+	top: 50%;
+	right: 0;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--control-sm);
+	height: var(--control-sm);
+	color: var(--faint);
+	opacity: 0;
+	transform: translateY(-50%);
+}
+.branch-rename:hover {
+	color: var(--text);
+}
+.branch-item:hover .branch-rename,
+.branch-rename:focus-visible {
+	opacity: 1;
+}
+@media (pointer: coarse) {
+	.branch-rename {
+		opacity: 1;
+	}
+}
 .subagent-location {
 	min-width: 0;
 	overflow: hidden;

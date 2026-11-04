@@ -1,6 +1,6 @@
 // The mobile drawer's component tree, with catalog/status/subagent/search handles supplying its data.
 
-import { Access, BACKGROUND_CONTEXT, contribute, defineFacet, liveIn, whenLive } from "@p2/app/v1";
+import { Access, BACKGROUND_CONTEXT, contribute, defineFacet, type HeldIn, liveIn, whenLive } from "@p2/app/v1";
 import {
 	Drawer,
 	navigate,
@@ -17,11 +17,12 @@ import {
 	useRoute,
 	useStatus,
 } from "@p2/app/v1/web";
-import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Search, SessionReads } from "../search/contract.ts";
 import { SessionStatus } from "../status/contract.ts";
 import { Subagents } from "../subagents/contract.ts";
 import { SessionTree } from "../tree/contract.ts";
+import { BranchSheet } from "./BranchSheet.tsx";
 import { Sessions } from "./contract.ts";
 import { SessionOptions } from "./SessionOptions.tsx";
 
@@ -103,25 +104,37 @@ function Sidebar() {
 			navigate({ session, conversation: conversation ?? list?.find((each) => each.id === session)?.main ?? 1 }),
 		[list],
 	);
-	// Switching to a branch: a reference of its own (the switch also reaches the session row), then its conversation.
+	// A branch's switch or rename: a reference of its own (the change also reaches the session row).
 	const host = useHost();
+	const withTree = useCallback(
+		(session: string, action: (tree: HeldIn<typeof SessionTree, "owner">) => Promise<unknown>) => {
+			const held = host.hold(SessionTree, { session }, BACKGROUND_CONTEXT);
+			return whenLive(held)
+				.then(() => {
+					const tree = liveIn(held, "owner");
+					if (!tree) throw new Error("Only the owner changes branches");
+					return action(tree);
+				})
+				.finally(() => held.release());
+		},
+		[host],
+	);
 	// Errors go to the app's toast in main, as in Pi Mobile (not clipped inside the drawer).
 	const { setError } = useComposerState();
 	const onBranch = useCallback(
-		(session: string, conversation: number) => {
-			const held = host.hold(SessionTree, { session }, BACKGROUND_CONTEXT);
-			whenLive(held)
-				.then(() => {
-					const tree = liveIn(held, "owner");
-					if (!tree) throw new Error("Only the owner switches branches");
-					return tree.select({ conversation }, BACKGROUND_CONTEXT);
-				})
+		(session: string, conversation: number) =>
+			void withTree(session, (tree) => tree.select({ conversation }, BACKGROUND_CONTEXT))
 				.then(() => navigate({ session, conversation }))
-				.catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
-				.finally(() => held.release());
-		},
-		[host, setError],
+				.catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason))),
+		[withTree, setError],
 	);
+	const [renaming, setRenaming] = useState<{ session: string; conversation: number }>();
+	const onRenameBranch = useCallback(
+		(session: string, conversation: number) => setRenaming({ session, conversation }),
+		[],
+	);
+	const renamed = renaming && list?.find((each) => each.id === renaming.session);
+	const branch = renamed?.branches.find((each) => each.conversation === renaming?.conversation);
 	const { setChoice } = useNewSessionState();
 	const onNew = useCallback(() => {
 		setChoice(undefined);
@@ -129,24 +142,40 @@ function Sidebar() {
 		setTimeout(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(), 50);
 	}, [setChoice]);
 	return (
-		<Drawer
-			sessions={sessions}
-			guest={guest}
-			activeId={route.session}
-			conversationId={route.conversation}
-			connected={connected}
-			onOpen={onOpen}
-			onBranch={owner ? onBranch : undefined}
-			onNew={onNew}
-			onCollapse={toggleSidebar}
-			onSearch={search ? onSearch : undefined}
-			onRestore={onRestore}
-			onError={setError}
-			footer={footer}
-			onProviders={() => openLayer({ kind: "sheet", name: "providers" }, { fromDrawer: true })}
-			onEnvs={() => openLayer({ kind: "sheet", name: "envs" }, { fromDrawer: true })}
-			onOwnerLink={() => openLayer({ kind: "sheet", name: "devices" }, { fromDrawer: true })}
-		/>
+		<>
+			<Drawer
+				sessions={sessions}
+				guest={guest}
+				activeId={route.session}
+				conversationId={route.conversation}
+				connected={connected}
+				onOpen={onOpen}
+				onBranch={owner ? onBranch : undefined}
+				onRenameBranch={owner ? onRenameBranch : undefined}
+				onNew={onNew}
+				onCollapse={toggleSidebar}
+				onSearch={search ? onSearch : undefined}
+				onRestore={onRestore}
+				onError={setError}
+				footer={footer}
+				onProviders={() => openLayer({ kind: "sheet", name: "providers" }, { fromDrawer: true })}
+				onEnvs={() => openLayer({ kind: "sheet", name: "envs" }, { fromDrawer: true })}
+				onOwnerLink={() => openLayer({ kind: "sheet", name: "devices" }, { fromDrawer: true })}
+			/>
+			{renamed && branch && (
+				<BranchSheet
+					title={renamed.title}
+					conversation={branch.conversation}
+					label={branch.label}
+					onSave={(label) =>
+						withTree(renamed.id, (tree) =>
+							tree.rename({ conversation: branch.conversation, label }, BACKGROUND_CONTEXT),
+						)
+					}
+					onClose={() => setRenaming(undefined)}
+				/>
+			)}
+		</>
 	);
 }
 export default defineFacet((host) => {

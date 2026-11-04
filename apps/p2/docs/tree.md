@@ -1,7 +1,8 @@
 # `/tree`: branching the main conversation
 
 pi's `/tree` in p2 (owner decisions from the design discussion). Code: `plugins/tree/` (worker, web sheet),
-`src/runtime/main-conversation.ts`, `src/tui/components/tree-selector.ts`, `/tree` in `plugins/chat/tui.ts`. Tests:
+`src/runtime/main-conversation.ts`, `src/tui/components/tree-selector.ts`, `/tree` in `plugins/chat/tui.ts`, the sidebar's
+branch rows (`src/web/Drawer.tsx`, `plugins/sessions/web.tsx`, `BranchSheet.tsx`). Tests:
 `tree.test.ts`, `tui-tree.test.ts`, `ui-tree.test.ts`.
 
 ## Goal
@@ -29,7 +30,8 @@ instructions as at the fork point); `pi.inbox`, `pi.provider` and `pi.usage` sta
 
 ## 1. Top-level conversations and the current main
 
-The session-scoped Durable document `p2.main = { conversation, branches }` (`MainDoc`; absent: `{ 1, [1] }`):
+The session-scoped Durable document `p2.main = { conversation, branches: { conversation, label }[] }` (`MainDoc`,
+version 2; absent: `{ 1, [{ 1, null }] }`):
 
 - **Top-level** = in `branches`: conversation 1 and every conversation `/tree` created, added in the switch's commit.
   An explicit list, not "conversations no task owns": older sessions (and `harness-cwd.test.ts`) have subagents
@@ -39,10 +41,11 @@ The session-scoped Durable document `p2.main = { conversation, branches }` (`Mai
 - **Current main** = `conversation`. It answers "which top-level conversation is shown and followed": the session row
   (`main`; model and thinking level follow it), the web home route, the drawer, the chat's back links, TUI checks,
   terminals, unread answers, `Sessions.fork`, peer messages (the conversations broker), and where subagents report.
-- Clients learn it through the session row (`Sessions` version 4, catalog schema 4); the worker reports it after a
-  switch and at every start (`mainSelf`). A web page or TUI viewing the previous main conversation follows a switch.
+- Clients learn it through the session row (`Sessions` version 4, catalog schema 4; version 5: null labels); the
+  worker reports it after a switch and at every start (`treeSelf`). A web page or TUI viewing the previous main conversation follows a switch.
 - Earlier branches are read-only (`ReadOnlyConversations`): only the main conversation runs. The web shows only the
   main conversation and subagents (others redirect to the main one).
+- **Labels** are stored per branch (see [Labels](#labels)).
 
 ## 2. Per-agent state
 
@@ -72,8 +75,25 @@ A branch forked before a subagent was spawned still lists that subagent (accepte
 Where the session continues: the top-level conversation whose history ends there (the main one first; switching back
 moves only `p2.main`), else a fork of the conversation storing that entry (same history, shorter chain than forking
 the one it was picked in), else, before the first message, a new ownerless conversation with the agent as it was then.
-The new conversation and `p2.main` are one commit. Refused while the current main has a run or queued input;
+The new conversation, its label and `p2.main` are one commit. Refused while the current main has a run or queued input;
 subagents keep running.
+
+### Labels
+
+What the sidebar and the TUI selector call a branch: `label` in `p2.main`, stored, never derived from later messages.
+
+- **A new branch** is labelled in the commit that creates it, with the first `PREVIEW_LENGTH` (200) characters of the
+  message the owner picked, on one line: the answer for "Branch from here", the user message itself for "Edit" (not
+  the answer the fork starts after). Switching to an existing branch changes no label.
+- **Conversation 1** has no fork point: its label is null, and every UI shows the session title for a null label, so
+  it follows a session rename. Once renamed, its stored label wins.
+- **Renaming:** `SessionTree.rename({ conversation, label })` (owner): one line, 1 to 200 characters after trimming;
+  null or empty resets conversation 1 to the session title (other branches need a label). Web: the pencil beside a
+  branch row (on hover; always on touch screens) opens a sheet. TUI: pi's label key (`app.tree.editLabel`, Shift+L) in
+  `/tree` renames the branch holding the selected message.
+- **Version 1** (`branches: number[]`) migrates to `label: null` (Durable `migrate`). At start the worker labels the
+  null branches other than conversation 1 once, in one commit: the fork point's message (`parent.at`; for an Edit that
+  is the entry before the edited message), else the branch's first own user message.
 
 ### Tree
 
@@ -88,18 +108,19 @@ node:
 ### Where
 
 - TUI: `/tree` (`app.session.tree`) and double Escape (`doubleEscapeAction`, default "tree" as in pi), a selector
-  adapted from pi's `tree-selector.ts` (layout, active path, paging; no filters, folding or labels).
+  adapted from pi's `tree-selector.ts` (layout, active path, paging, label input; no filters or folding). A branch's
+  label shows before its first own message (`TreeNode.conversation` names the branch storing a node).
 - Web: "Edit" beside the owner's view of a user message (on hover; always shown on touch screens) and "Branch from
   here" under an answer, in the main conversation. Under the session in the sidebar, from two branches on, one row per
-  branch (`Sessions` rows' `branches`: labelled by their first own message, newest first in a stable order, the current
-  one marked in place); choosing one switches the session to its end (`SessionTree.select`). The worker reports the branches with
-  `main` (`treeSelf`) at start, at every switch and when a branch gets its first message.
+  branch (`Sessions` rows' `branches`: the stored labels, null for the session title, newest first in a stable order,
+  the current one marked in place); choosing one switches the session to its end (`SessionTree.select`). The worker
+  reports `p2.main` (`treeSelf`: `main` and the branches with their labels) at start and whenever a commit changes it.
 - Search indexes each branch's own entries (after its fork point).
 
 ## Later
 
 - Branch summary of the branch being left (pi's `branchSummary`): a write in the new branch after the fork.
-- Entry labels, filters and folding in the selectors.
+- Filters and folding in the selectors; labels on single entries (pi's entry labels).
 - Session cost: sum `pi.usage` over all top-level conversations.
 - History tools in a branch search only the branch's own entries (inherited ones are indexed with conversation 1).
 - Deleting or archiving branches.

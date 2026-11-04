@@ -10,16 +10,37 @@ import {
 } from "@earendil-works/pi-durable";
 
 /**
- * The session's top-level conversations (`docs/tree.md`): conversation 1 and the branches `/tree` created, in creation
- * order, and the current main conversation among them, the one the session shows and follows. Session-scoped, so a
- * fork never copies it. An explicit list, not "conversations no task owns": older sessions have subagents created
- * without an owner.
+ * A top-level conversation and its label, what the sidebar and `/tree` call it. Null shows the session title:
+ * conversation 1's default (it has no fork point), so it follows a session rename until the branch is renamed.
  */
-export const MainDoc = defineDoc<{ conversation: number; branches: number[] }>({
+export type MainBranch = { conversation: number; label: string | null };
+
+/** `p2.main`: the current main conversation and the top-level conversations in creation order. */
+export type MainState = { conversation: number; branches: MainBranch[] };
+
+/**
+ * The session's top-level conversations (`docs/tree.md`): conversation 1 and the branches `/tree` created, in creation
+ * order, each with its label, and the current main conversation among them, the one the session shows and follows.
+ * Session-scoped, so a fork never copies it. An explicit list, not "conversations no task owns": older sessions have
+ * subagents created without an owner.
+ */
+export const MainDoc = defineDoc<MainState>({
 	kind: "p2.main",
-	version: 1,
+	// 2: stored labels. Version 1 listed IDs only: their labels start null, and the tree worker fills them at start.
+	version: 2,
 	scope: "session",
-	initial: () => ({ conversation: ROOT_CONVERSATION_ID, branches: [ROOT_CONVERSATION_ID] }),
+	initial: () => ({
+		conversation: ROOT_CONVERSATION_ID,
+		branches: [{ conversation: ROOT_CONVERSATION_ID, label: null }],
+	}),
+	migrate: (value, fromVersion) => {
+		if (fromVersion !== 1) throw new Error(`Unknown p2.main version ${fromVersion}`);
+		const state = value as unknown as { conversation: number; branches: number[] };
+		return {
+			conversation: state.conversation,
+			branches: state.branches.map((conversation) => ({ conversation, label: null })),
+		};
+	},
 	checkpointWhen: () => true,
 });
 
@@ -30,7 +51,8 @@ export async function mainConversation(read: DocumentReader, context: Context): 
 
 /** The top-level conversations' IDs: conversation 1, then the `/tree` branches. */
 export async function topLevelConversations(read: DocumentReader, context: Context): Promise<ConversationId[]> {
-	return ((await read.snapshot(MainDoc, context))?.branches ?? [ROOT_CONVERSATION_ID]) as ConversationId[];
+	const branches = (await read.snapshot(MainDoc, context))?.branches;
+	return (branches?.map((branch) => branch.conversation) ?? [ROOT_CONVERSATION_ID]) as ConversationId[];
 }
 
 /** Whether conversation `id` is top-level (conversation 1 or a `/tree` branch), not a subagent or one-shot agent. */

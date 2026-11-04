@@ -16,6 +16,7 @@ import {
 	ChevronIcon,
 	FolderIcon,
 	MoonIcon,
+	PencilIcon,
 	PinIcon,
 	PlusIcon,
 	SearchIcon,
@@ -71,7 +72,8 @@ function ThemeButton() {
 
 /**
  * A session's `/tree` branches (docs/tree.md), from two on, newest first in a stable order: switching only moves the
- * "current" mark. Choosing another branch switches the session to it (`onBranch`, the owner's).
+ * "current" mark. Choosing another branch switches the session to it (`onBranch`, the owner's); the pencil beside a
+ * row renames it (`onRenameBranch`). A branch without a label (conversation 1's default) shows the session title.
  */
 function BranchRows({
 	session,
@@ -79,33 +81,48 @@ function BranchRows({
 	active,
 	onOpen,
 	onBranch,
+	onRenameBranch,
 }: {
 	session: SessionSummary;
 	conversationId: number;
 	active: boolean;
 	onOpen: (id: string, conversationId?: number) => void;
 	onBranch: (id: string, conversationId: number) => void;
+	onRenameBranch?: (id: string, conversationId: number) => void;
 }) {
 	if (session.branches.length < 2) return null;
 	return (
 		<div className="branch-rows">
 			{session.branches.map((branch) => {
 				const current = branch.conversation === session.main;
+				const label = branch.label ?? session.title;
 				return (
-					<button
-						type="button"
-						key={branch.conversation}
-						className={`subagent-row branch-row ${active && conversationId === branch.conversation ? "active" : ""}`}
-						title={current ? "The current branch" : "Switch the session to this branch"}
-						onClick={() =>
-							current ? onOpen(session.id, branch.conversation) : onBranch(session.id, branch.conversation)
-						}
-					>
-						<span className="branch" />
-						<BranchIcon size={13} />
-						<span className="session-title">{branch.label}</span>
-						{current && <span className="session-meta">current</span>}
-					</button>
+					<div className="branch-item" key={branch.conversation}>
+						<button
+							type="button"
+							className={`subagent-row branch-row ${active && conversationId === branch.conversation ? "active" : ""}`}
+							title={current ? "The current branch" : "Switch the session to this branch"}
+							onClick={() =>
+								current ? onOpen(session.id, branch.conversation) : onBranch(session.id, branch.conversation)
+							}
+						>
+							<span className="branch" />
+							<BranchIcon size={13} />
+							<span className="session-title">{label}</span>
+							{current && <span className="session-meta">current</span>}
+						</button>
+						{onRenameBranch && (
+							<button
+								type="button"
+								className="branch-rename"
+								aria-label={`Rename branch ${label}`}
+								title="Rename branch"
+								onClick={() => onRenameBranch(session.id, branch.conversation)}
+							>
+								<PencilIcon />
+							</button>
+						)}
+					</div>
 				);
 			})}
 		</div>
@@ -117,6 +134,7 @@ function SessionRow({
 	conversationId,
 	onOpen,
 	onBranch,
+	onRenameBranch,
 	active = false,
 	archived = false,
 	children,
@@ -126,6 +144,8 @@ function SessionRow({
 	onOpen: (id: string, conversationId?: number) => void;
 	/** Switches the session to a branch (the owner); absent: no branch rows. */
 	onBranch?: (id: string, conversationId: number) => void;
+	/** Asks for a branch's new label (the owner). */
+	onRenameBranch?: (id: string, conversationId: number) => void;
 	/** The session is the one shown. */
 	active?: boolean;
 	archived?: boolean;
@@ -195,6 +215,7 @@ function SessionRow({
 					active={active}
 					onOpen={onOpen}
 					onBranch={onBranch}
+					onRenameBranch={onRenameBranch}
 				/>
 			)}
 			{listed.length > 0 && (
@@ -233,6 +254,7 @@ export const Drawer = memo(function Drawer({
 	connected,
 	onOpen,
 	onBranch,
+	onRenameBranch,
 	onNew,
 	onCollapse,
 	onProviders,
@@ -251,6 +273,8 @@ export const Drawer = memo(function Drawer({
 	onOpen: (id: string, conversationId?: number) => void;
 	/** Switches a session to one of its `/tree` branches (the owner's). */
 	onBranch?: (id: string, conversationId: number) => void;
+	/** Asks for a new label of one of a session's `/tree` branches (the owner's). */
+	onRenameBranch?: (id: string, conversationId: number) => void;
 	onNew: () => void;
 	onCollapse: () => void;
 	onProviders: () => void;
@@ -383,6 +407,7 @@ export const Drawer = memo(function Drawer({
 								conversationId={session.id === activeId ? conversationId : session.main}
 								onOpen={onOpen}
 								onBranch={onBranch}
+								onRenameBranch={onRenameBranch}
 								active={session.id === activeId}
 							>
 								<button
