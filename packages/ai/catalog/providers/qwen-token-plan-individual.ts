@@ -3,9 +3,9 @@ import { defineProvider } from "../define.ts";
 import { INTERNATIONAL_BASE_URL, QWEN_COMPLETIONS_COMPAT, qwenTokenPlanModels } from "./qwen-token-plan.ts";
 
 // QwenCloud Token Plan Individual text-model allowlist, verified 2026-11-01.
-// It shares the international endpoint with a narrower catalog.
+// It shares the international endpoint with a narrower catalog; qwen-token-plan-individual-cn uses it on the China endpoint.
 // https://docs.qwencloud.com/token-plan/personal/token-plan-personal-overview
-const MODEL_IDS = new Set<string>([
+export const INDIVIDUAL_MODEL_IDS = new Set<string>([
 	"deepseek-v4-flash-0731",
 	"deepseek-v4-pro",
 	"deepseek-v4-pro-0813",
@@ -21,11 +21,11 @@ const MODEL_IDS = new Set<string>([
 export default defineProvider({
 	id: "qwen-token-plan-individual",
 	models: (ctx) => {
-		const models = qwenTokenPlanModels(ctx, "alibaba-token-plan", INTERNATIONAL_BASE_URL, MODEL_IDS);
+		const models = qwenTokenPlanModels(ctx, "alibaba-token-plan", INTERNATIONAL_BASE_URL, INDIVIDUAL_MODEL_IDS);
 		if (ctx.strict) {
 			assertExactModelIds(
 				ctx.providerId,
-				MODEL_IDS,
+				INDIVIDUAL_MODEL_IDS,
 				models.map((model) => model.id),
 			);
 		}
