@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Faster checks, still without eval: object and array loops run `const`, small `enum`s, type lists, number bounds, string lengths and patterns inline instead of calling a closure; a closed object looks up keys in declared order first; `anyOf` branches that are bare types (as `nullable` builds) run as one type test. Checks take about 16% less time across the benchmark's speed cases, up to 30% less for tagged unions and 45% less for nullable properties.
+
 ### Fixed
 
 - Fixed local `$ref`s in schemas whose root `$id` is a relative path with a directory, such as `schemas/tool.json`: the `$id` was applied twice, so `compile` threw and `unresolvedRefs: "reject"` rejected valid tool arguments. Relative `$id`s are now also applied once with `unevaluatedProperties`/`unevaluatedItems`, when explaining errors under nested resources, and on the first coercion of a schema with `$dynamicRef` ([#11697](https://github.com/earendil-works/pi/issues/11697))

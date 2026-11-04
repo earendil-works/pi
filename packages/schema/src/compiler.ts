@@ -43,9 +43,10 @@ import {
 	ifCheck,
 	indirect,
 	itemsCheck,
-	LEAF_CODES,
+	leafOf,
 	lengthCheck,
 	listCheck,
+	maskedAnyCheck,
 	NEVER,
 	notCheck,
 	numberCheck,
@@ -59,6 +60,7 @@ import {
 	TYPE_CHECKS,
 	taggedCheck,
 	typeCheck,
+	typeMask,
 	uniqueCheck,
 } from "./checks.ts";
 import { documentOf, isSchemaObject, Resolver, resolveUri } from "./resolver.ts";
@@ -189,7 +191,7 @@ export class Compiler {
 		return (
 			constUnion(branches, exactlyOne) ??
 			this.tagged(branches, base) ??
-			(exactlyOne ? oneCheck(checks()) : anyCheck(checks()))
+			(exactlyOne ? oneCheck(checks()) : anyOf(checks()))
 		);
 	}
 
@@ -334,15 +336,15 @@ export class Compiler {
 		) {
 			return undefined;
 		}
-		// One array per object: key, check, flags (leaf code, required, key also names an Object.prototype member).
+		// One array per object: key, check (or a leaf's argument), flags (leaf code, required, key also names an
+		// Object.prototype member).
 		const entries: unknown[] = [];
 		for (const k of keys) {
 			const check = this.check(properties[k], base);
+			const leaf = leafOf(check);
 			const flags =
-				(LEAF_CODES.get(check) ?? 0) |
-				(required.includes(k) ? REQUIRED : 0) |
-				(k in Object.prototype ? INHERITED : 0);
-			entries.push(k, check, flags);
+				(leaf?.[0] ?? 0) | (required.includes(k) ? REQUIRED : 0) | (k in Object.prototype ? INHERITED : 0);
+			entries.push(k, leaf === undefined ? check : leaf[1], flags);
 		}
 		const extraRequired = required.filter((k) => !Object.hasOwn(properties, k));
 		const pats = patternKeys.map((p) => [sharedRegex(p), this.check(patterns[p], base)] as const);
@@ -574,6 +576,20 @@ function constUnion(branches: readonly unknown[], exactlyOne: boolean): Check | 
 	}
 	return enumCheck(values);
 }
+
+/** `anyOf`: its bare-type branches (`nullable` gives one) run as one type test. */
+function anyOf(checks: readonly Check[]): Check {
+	const types: string[] = [];
+	const rest: Check[] = [];
+	for (const check of checks) {
+		const type = BARE_TYPES.get(check);
+		if (type === undefined) rest.push(check);
+		else types.push(type);
+	}
+	return types.length === 0 ? anyCheck(rest) : maskedAnyCheck(typeMask(types), rest);
+}
+
+const BARE_TYPES: ReadonlyMap<Check, string> = new Map([...TYPE_CHECKS].map(([type, check]) => [check, type]));
 
 // The tag of a tagged-union branch: a primitive const on a required property of an object schema.
 function tagOf(branch: SchemaObject, key: string): unknown {
