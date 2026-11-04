@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	allStepsComplete,
 	cleanStepText,
 	extractDoneSteps,
 	extractTodoItems,
@@ -119,11 +120,10 @@ describe("cleanStepText", () => {
 		expect(cleanStepText("update config")).toBe("Config");
 	});
 
-	it("truncates long text", () => {
+	it("keeps full text (truncation moved to the widget display)", () => {
 		const longText = "This is a very long step description that exceeds the maximum allowed length for display";
 		const result = cleanStepText(longText);
-		expect(result.length).toBe(50);
-		expect(result.endsWith("...")).toBe(true);
+		expect(result).toBe(longText);
 	});
 
 	it("normalizes whitespace", () => {
@@ -183,13 +183,31 @@ Plan:
 		expect(items[0].text).toContain("proper");
 	});
 
-	it("filters out code-like items", () => {
+	it("keeps steps that start with backticks (code-file steps)", () => {
 		const message = `Plan:
 1. \`npm install\`
 2. Run the build process`;
 
 		const items = extractTodoItems(message);
-		expect(items).toHaveLength(1);
+		expect(items).toHaveLength(2);
+		expect(items[0].text).toBe("Npm install");
+	});
+
+	it("extracts only the last Plan: section (thinking draft + text plan)", () => {
+		const message = `Some reasoning...\nPlan:\n1. Draft one\n2. Draft two\nNow the answer.\nPlan:\n1. Print 1\n2. Print 2\n3. Print 3`;
+
+		const items = extractTodoItems(message);
+		expect(items).toHaveLength(3);
+		expect(items.map((i) => i.text)).toEqual(["Print 1", "Print 2", "Print 3"]);
+	});
+
+	it("extracts markdown step titles fully", () => {
+		const message = `Plan:\n1. **Explore** the repo structure\n2. \`index.ts\` — fix getTextContent`;
+
+		const items = extractTodoItems(message);
+		expect(items).toHaveLength(2);
+		expect(items[0].text).toBe("Explore the repo structure");
+		expect(items[1].text).toBe("Index.ts — fix getTextContent");
 	});
 });
 
@@ -209,9 +227,23 @@ describe("extractDoneSteps", () => {
 		expect(extractDoneSteps(message)).toEqual([1, 2, 3]);
 	});
 
-	it("returns empty array with no markers", () => {
-		const message = "No markers here";
+	it("extracts DONE marker variants", () => {
+		const message = "[DONE:1] [DONE: 2] [DONE3] [Done:4] Done: 5";
+		expect(extractDoneSteps(message)).toEqual([1, 2, 3, 4, 5]);
+	});
+
+	it("extracts prose completion phrasings", () => {
+		const message = "Step 6 done, Step 7 is complete, Step 8 finished";
+		expect(extractDoneSteps(message)).toEqual([6, 7, 8]);
+	});
+
+	it("does not match negated or unfinished phrasings", () => {
+		const message = "Step 9 is not done, Step 10 incomplete";
 		expect(extractDoneSteps(message)).toEqual([]);
+	});
+
+	it("collapses duplicate markers", () => {
+		expect(extractDoneSteps("[DONE:1] [DONE: 1]")).toEqual([1]);
 	});
 
 	it("ignores malformed markers", () => {
@@ -248,8 +280,15 @@ describe("markCompletedSteps", () => {
 
 		const count = markCompletedSteps("[DONE:99]", items);
 
-		expect(count).toBe(1); // Still counts the marker found
-		expect(items[0].completed).toBe(false); // But doesn't mark anything
+		expect(count).toBe(0); // Counts only newly marked items
+		expect(items[0].completed).toBe(false);
+	});
+
+	it("marks all remaining steps for whole-plan completion phrasings", () => {
+		expect(allStepsComplete("All steps complete, wrapping up")).toBe(true);
+		expect(allStepsComplete("Every step is finished")).toBe(true);
+		expect(allStepsComplete("The plan is done")).toBe(true);
+		expect(allStepsComplete("Step 1 complete, moving on")).toBe(false);
 	});
 
 	it("doesn't double-complete already completed items", () => {
