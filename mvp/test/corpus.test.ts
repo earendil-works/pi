@@ -32,7 +32,7 @@ afterAll(() => {
 	for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 });
 
-async function gateAllows(prompt: string): Promise<boolean> {
+async function gateDecision(prompt: string) {
 	const cwd = mkdtempSync(join(tmpdir(), "nlt-mvp-corpus-"));
 	dirs.push(cwd);
 	// A fresh user per prompt so continuity state from one phrase cannot influence the next.
@@ -40,10 +40,21 @@ async function gateAllows(prompt: string): Promise<boolean> {
 	try {
 		await harness.start();
 		const { interaction, emotionalState } = await harness.assessText(prompt, {}, Channel.UNKNOWN);
-		return evaluateGate(interaction, emotionalState).allowed;
+		return evaluateGate(interaction, emotionalState);
 	} finally {
 		await harness.shutdown();
 	}
+}
+
+async function gateAllows(prompt: string): Promise<boolean> {
+	return (await gateDecision(prompt)).allowed;
+}
+
+/** A block only counts as crisis detection if the assessment itself ran; a fail-closed block does not. */
+async function expectDetectedAndBlocked(prompt: string): Promise<void> {
+	const decision = await gateDecision(prompt);
+	expect(decision.allowed).toBe(false);
+	expect(decision.assessmentFailed).toBe(false);
 }
 
 const bashAllows = (command: string) => reviewToolCall("bash", { command }).allow;
@@ -51,7 +62,7 @@ const readAllows = (path: string) => reviewToolCall("read", { path }).allow;
 
 describe("crisis gate corpus", () => {
 	it.each(crisis.mustBlock)("blocks: %s", async (prompt) => {
-		expect(await gateAllows(prompt)).toBe(false);
+		await expectDetectedAndBlocked(prompt);
 	});
 
 	it.each(crisis.mustAllow)("allows: %s", async (prompt) => {
@@ -65,7 +76,7 @@ describe("crisis gate corpus", () => {
 
 	// Observed, not judged: developer requests that mention self-harm or suicide as a feature topic are blocked.
 	it.each(crisis.observedDevTopicBlocks)("currently blocks developer topic: %s", async (prompt) => {
-		expect(await gateAllows(prompt)).toBe(false);
+		await expectDetectedAndBlocked(prompt);
 	});
 });
 

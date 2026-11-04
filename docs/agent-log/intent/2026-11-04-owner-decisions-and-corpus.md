@@ -1,6 +1,6 @@
 # NLT-Pi Intent Record
 
-**Date:** 2026-11-04
+**Date:** 2026-11-04T20:38:52+00:00
 **Agent / session:** Claude Code, session_01UNjnjm3TZ7Tg4MRswGt24P
 **Branch:** ccr-0d5033af-1rkbla (restarted from `main` after PR #15 merged)
 **OTOI:** NLT-PI-DEV-OTOI-1.0.1
