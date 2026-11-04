@@ -54,10 +54,13 @@ export default defineFacet((host) => {
 					0,
 					...messages.filter((message) => message.role === "assistant").map((message) => message.entryId),
 				);
-				// Unread answers are the main conversation's (conversation 1 or the `/tree` branch the session continues in).
+				// Unread answers are the top-level conversations' (the main one and the other `/tree` branches): a branch left
+				// while running answers in the background. `branches` is empty until the worker first reports it.
+				const row =
+					answer > (markers.value.answers[session] ?? 0) ? await catalog.get({ id: session }, ctx) : undefined;
 				if (
-					answer > (markers.value.answers[session] ?? 0) &&
-					conversation === (await catalog.get({ id: session }, ctx)).main
+					row &&
+					(conversation === row.main || row.branches.some((branch) => branch.conversation === conversation))
 				)
 					await markers.change((draft) => {
 						draft.answers[session] = answer;

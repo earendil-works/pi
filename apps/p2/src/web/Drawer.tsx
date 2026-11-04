@@ -73,7 +73,8 @@ function ThemeButton() {
 /**
  * A session's `/tree` branches (docs/tree.md), newest first in a stable order: switching only moves the "current" mark.
  * Shown from two branches on, behind the session row's expand control (`hidden` while collapsed). Choosing another branch switches the session to it (`onBranch`, the owner's); the pencil beside a
- * row renames it (`onRenameBranch`). A branch without a label (conversation 1's default) shows the session title.
+ * row renames it (`onRenameBranch`). A branch without a label (conversation 1's default) shows the session title. A
+ * branch left while running goes on in the background: its row shows the working dot.
  */
 function BranchRows({
 	session,
@@ -111,6 +112,9 @@ function BranchRows({
 							<BranchIcon size={13} />
 							<span className="session-title">{label}</span>
 							{current && <span className="session-meta">current</span>}
+							{session.worker.busy?.includes(branch.conversation) && (
+								<span className="live-dot" title="Working" />
+							)}
 						</button>
 						{onRenameBranch && (
 							<button

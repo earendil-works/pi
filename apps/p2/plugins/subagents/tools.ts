@@ -129,11 +129,16 @@ async function latestAnswer(api: ToolExecutionApi, conversationId: ConversationI
 	}, context);
 }
 
-// Delivers one message, waits for the answer, then reports it to the main agent
+// Delivers one message, waits for the answer, then reports it to the conversation that sent the message
 // as a follow-up input. Request IDs make both submissions exactly-once across restarts.
 type ReporterInput = {
 	name: string;
 	conversationId: ConversationId;
+	/**
+	 * The conversation that sent the message, which the report goes to: a `/tree` branch left while the subagent works
+	 * still gets its answer. Absent (checkpointed before it was recorded): the current main conversation.
+	 */
+	parent?: ConversationId;
 	message: string;
 	followUp: boolean;
 	/** The owner started the main agent's turn: the subagent's turn inherits it (`SUBAGENT_TASK_ENTRY`). */
@@ -181,10 +186,9 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
 		report: async (reporter, runtime, context) => {
 			const report = reporter.state.checkpoint.report;
 			if (report !== undefined) {
-				const { name, conversationId } = reporter.input;
-				// To the current main conversation: a `/tree` switch while the subagent worked moves where its answer goes.
-				const main = await runtime.conversation(await mainConversation(runtime, context), context);
-				await main?.submit(
+				const { name, conversationId, parent } = reporter.input;
+				const target = await runtime.conversation(parent ?? (await mainConversation(runtime, context)), context);
+				await target?.submit(
 					{
 						type: "input",
 						...(typeof report === "string"
@@ -555,6 +559,7 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 				if (!target) return `No subagent named ${name}.`;
 				// Working with an archived subagent again brings it back.
 				delete target.archived;
+				target.parent = api.conversationId;
 				// Subagents spawned before the team or history tools existed get them now.
 				if (!target.team || !target.history) {
 					const all = installed();
@@ -566,6 +571,7 @@ export function createSubagentExtension(models: Models, locator: SubagentLocator
 				const input = {
 					name,
 					conversationId: target.conversationId,
+					parent: api.conversationId,
 					message: message ?? "",
 					followUp: action === "send" && followUp === true,
 					...(origin === "owner" ? { origin } : {}),
@@ -660,7 +666,11 @@ const teamTool: ToolRegistration = defineTool({
 		if (!args.message?.trim()) return reply("send needs a message.", true);
 		const sibling = args.to === "parent" ? undefined : siblings.find(([name]) => name === args.to)?.[1];
 		if (args.to !== "parent" && !sibling) return reply(`No other subagent named ${args.to}.`, true);
-		const target = await api.conversation(sibling?.conversationId ?? (await mainConversation(api, context)), context);
+		const parent = registry?.agents[self]?.parent;
+		const target = await api.conversation(
+			sibling?.conversationId ?? parent ?? (await mainConversation(api, context)),
+			context,
+		);
 		if (!target) return reply(`${args.to} has no conversation.`, true);
 		await target.submit(
 			{

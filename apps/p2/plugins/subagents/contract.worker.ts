@@ -46,6 +46,11 @@ export type Subagent = {
 	 * environment it was spawned on before the Harness is live, so no one else reads it.
 	 */
 	unplacedCwd?: string;
+	/**
+	 * The top-level conversation that last spawned it or sent it a message (the main conversation or a `/tree` branch):
+	 * where `team send to: "parent"` goes. Absent (spawned before it was recorded): the current main conversation.
+	 */
+	parent?: ConversationId;
 	/** Answers already reported: several messages can end in one answer, reported once. */
 	reported: EntryId[];
 	/** Hidden from the sidebar's list and `status`; still usable, and `send` restores it. */

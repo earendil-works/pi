@@ -60,7 +60,8 @@ const NOT_CURRENT = "This is an earlier branch of the session: switch to it with
 export default defineFacet((host) => {
 	contribute(host, "p2.tree-branches", (self) => {
 		const harness = harnessOf(self);
-		// Only the current main conversation runs: an earlier branch shows its history but takes no input.
+		// Only the current main conversation takes input: an earlier branch shows its history, and a run it still has goes
+		// on in the background (Stop stays allowed).
 		self.contribute(ReadOnlyConversations, {
 			tree: async (conversation, ctx) => {
 				const durable = harness().durable;
@@ -293,7 +294,8 @@ function assistantText(entry: EntryRecord): string {
  * text comes back). A top-level conversation already ending there is reused, its label unchanged; else a fork of the
  * conversation storing the point, or a new empty conversation before the first message, labelled with the chosen
  * message (what the owner picked: the answer, or the user message typed again). The new conversation, its label, the
- * carried documents and the main pointer are one commit.
+ * carried documents and the main pointer are one commit. A run of the conversation left keeps going in the background,
+ * read-only.
  */
 async function navigate(
 	durable: Harness,
@@ -301,7 +303,6 @@ async function navigate(
 	context: Context,
 ): Promise<{ conversation: number; text: string | null }> {
 	const main = await mainConversation(durable, context);
-	await idleOrRefuse(durable, main, context);
 	const chosen = await durable.commit((tx) => tx.entry(entry), context);
 	if (!chosen || !(await isTopLevel(durable, chosen.conversationId, context))) throw new Error("Unknown message");
 	const role = roleOf(chosen);
@@ -339,22 +340,10 @@ async function navigate(
 
 const OWNERLESS = { ownership: { kind: "ownerless" } } as const;
 
-/** Refuses a switch while the main conversation works: a run, queued input, or a task of its own. */
-async function idleOrRefuse(durable: Harness, main: ConversationId, context: Context): Promise<void> {
-	const inspection = await durable.inspect(context);
-	if (
-		inspection.tasks.some((task) => task.record.conversationId === main && !task.record.background) ||
-		inspection.submissions.some((submission) => submission.conversationId === main)
-	)
-		throw new Error("Stop the current run before switching branches");
-}
-
-/** Switches the main conversation to the top-level conversation `id` (its latest message), refused while busy. */
+/** Switches the main conversation to the top-level conversation `id` (its latest message); a run there goes on. */
 async function select(durable: Harness, id: ConversationId, context: Context): Promise<void> {
 	if (!(await isTopLevel(durable, id, context))) throw new Error("Unknown branch");
-	const main = await mainConversation(durable, context);
-	if (id === main) return;
-	await idleOrRefuse(durable, main, context);
+	if (id === (await mainConversation(durable, context))) return;
 	await durable.commit(async (tx) => {
 		(await tx.doc(MainDoc)).conversation = id;
 	}, context);
