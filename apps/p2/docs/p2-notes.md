@@ -807,7 +807,9 @@ translated phone drawer and intercept chat taps.
   (server local) saves immutable snapshots for producers (send_file); `GET|HEAD
   /download?session=&id=` serves them to the owner and the session's guests (no `Sec-Fetch-Site: cross-site`;
   ranges for audio/video). Owns local `Uploads`, `Downloads` and `filePreview` implementations. Web: the composer's
-  attach button and drag/drop upload files at send time, including a new session's first prompt.
+  attach button, drag/drop and pasted images upload files at send time, including a new session's first prompt. A
+  paste with plain text stays a text paste (Office apps add a picture of the copied text, Chrome on macOS a Finder
+  file's icon); a paste with only images attaches them.
 - **File index** (`plugins/file-index`): `FileIndex({ session, conversation })` (participants, as `Workspace`) answers
   `@` completion (`complete`, ranked like pi's `@`) and Tab completion (`list`, one directory) for the TUI and the web
   composer. A worker-local cache per conversation (`FileIndexCache`) builds from `WorkspaceBackend`'s `files` query
