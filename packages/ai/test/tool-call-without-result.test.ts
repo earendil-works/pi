@@ -286,6 +286,38 @@ describe("Tool Call Without Result Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.DASHSCOPE_API_KEY)("Alibaba Cloud Model Studio Provider", () => {
+		const model = getModel("alibaba", "qwen3.7-max");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
+	describe.skipIf(!process.env.DASHSCOPE_CN_API_KEY)("Alibaba Cloud Model Studio (China) Provider", () => {
+		const model = getModel("alibaba-cn", "qwen3.7-max");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
+	describe.skipIf(!process.env.ZAI_PAYG_API_KEY)("Z.AI API (pay-as-you-go) Provider", () => {
+		const model = getModel("zai-api", "glm-5.3");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
+	describe.skipIf(!process.env.ZAI_PAYG_CN_API_KEY)("Z.AI API (pay-as-you-go, China) Provider", () => {
+		const model = getModel("zai-api-cn", "glm-5.3");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
 	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider", () => {
 		const model = getModel("kimi-coding", "kimi-for-coding");
 

@@ -1,6 +1,8 @@
 // Every built-in provider catalog. Add new providers here.
 
 import type { ProviderDefinition } from "../define.ts";
+import alibaba from "./alibaba.ts";
+import alibabaCn from "./alibaba-cn.ts";
 import amazonBedrock from "./amazon-bedrock.ts";
 import antLing from "./ant-ling.ts";
 import anthropic from "./anthropic.ts";
@@ -42,9 +44,13 @@ import xiaomiTokenPlanAms from "./xiaomi-token-plan-ams.ts";
 import xiaomiTokenPlanCn from "./xiaomi-token-plan-cn.ts";
 import xiaomiTokenPlanSgp from "./xiaomi-token-plan-sgp.ts";
 import zai from "./zai.ts";
+import zaiApi from "./zai-api.ts";
+import zaiApiCn from "./zai-api-cn.ts";
 import zaiCodingCn from "./zai-coding-cn.ts";
 
 export const PROVIDERS: readonly ProviderDefinition[] = [
+	alibabaCn,
+	alibaba,
 	amazonBedrock,
 	antLing,
 	anthropic,
@@ -85,6 +91,8 @@ export const PROVIDERS: readonly ProviderDefinition[] = [
 	xiaomiTokenPlanCn,
 	xiaomiTokenPlanSgp,
 	xiaomi,
+	zaiApiCn,
+	zaiApi,
 	zaiCodingCn,
 	zai,
 ];

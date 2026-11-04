@@ -137,6 +137,10 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	// Qwen Token Plan
 	{ provider: "qwen-token-plan", model: "qwen3.7-max", label: "qwen-token-plan-qwen3.7-max" },
 	{ provider: "qwen-token-plan-cn", model: "qwen3.7-max", label: "qwen-token-plan-cn-qwen3.7-max" },
+	{ provider: "alibaba", model: "qwen3.7-max", label: "alibaba-qwen3.7-max" },
+	{ provider: "alibaba-cn", model: "qwen3.7-max", label: "alibaba-cn-qwen3.7-max" },
+	{ provider: "zai-api", model: "glm-5.3", label: "zai-api-glm-5.3" },
+	{ provider: "zai-api-cn", model: "glm-5.3", label: "zai-api-cn-glm-5.3" },
 	{
 		provider: "qwen-token-plan-individual",
 		model: "qwen3.8-max",

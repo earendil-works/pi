@@ -7,7 +7,8 @@ import { getEffortThinkingLevelMap } from "../reasoning.ts";
 // "alibaba-token-plan[-cn]".
 export const INTERNATIONAL_BASE_URL = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
 
-const COMPAT: OpenAICompletionsCompat = {
+/** Alibaba Cloud Model Studio's compatible-mode API, shared by the Token Plan and pay-as-you-go. */
+export const MODEL_STUDIO_COMPAT: OpenAICompletionsCompat = {
 	thinkingFormat: "qwen",
 	supportsDeveloperRole: false,
 	supportsStore: false,
@@ -37,7 +38,7 @@ export function qwenTokenPlanModels(ctx: ProviderContext, source: string, baseUr
 				(REASONING_EFFORT_FALLBACK_MODEL_IDS.has(model.id) ? FALLBACK_THINKING_LEVELS : undefined);
 			return {
 				...model,
-				compat: thinkingLevelMap ? COMPAT : { ...COMPAT, supportsReasoningEffort: false },
+				compat: thinkingLevelMap ? MODEL_STUDIO_COMPAT : { ...MODEL_STUDIO_COMPAT, supportsReasoningEffort: false },
 				...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 			};
 		},

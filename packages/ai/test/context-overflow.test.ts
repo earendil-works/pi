@@ -503,6 +503,54 @@ describe("Context overflow error handling", () => {
 		}, 120000);
 	});
 
+	describe.skipIf(!process.env.DASHSCOPE_API_KEY)("Alibaba Cloud Model Studio", () => {
+		it("qwen3.7-max - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("alibaba", "qwen3.7-max");
+			const result = await testContextOverflow(model, process.env.DASHSCOPE_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/input length/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	describe.skipIf(!process.env.DASHSCOPE_CN_API_KEY)("Alibaba Cloud Model Studio (China)", () => {
+		it("qwen3.7-max - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("alibaba-cn", "qwen3.7-max");
+			const result = await testContextOverflow(model, process.env.DASHSCOPE_CN_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/input length/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	describe.skipIf(!process.env.ZAI_PAYG_API_KEY)("Z.AI API (pay-as-you-go)", () => {
+		it("glm-5.3 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("zai-api", "glm-5.3");
+			const result = await testContextOverflow(model, process.env.ZAI_PAYG_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/input length/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	describe.skipIf(!process.env.ZAI_PAYG_CN_API_KEY)("Z.AI API (pay-as-you-go, China)", () => {
+		it("glm-5.3 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("zai-api-cn", "glm-5.3");
+			const result = await testContextOverflow(model, process.env.ZAI_PAYG_CN_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/input length/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
 	// =============================================================================
 	// Kimi For Coding
 	// =============================================================================

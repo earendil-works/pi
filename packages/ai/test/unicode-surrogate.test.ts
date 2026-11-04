@@ -760,6 +760,84 @@ describe("AI Providers Unicode Surrogate Pair Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.DASHSCOPE_API_KEY)("Alibaba Cloud Model Studio Provider Unicode Handling", () => {
+		const llm = getModel("alibaba", "qwen3.7-max");
+
+		it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testEmojiInToolResults(llm);
+		});
+
+		it("should handle real-world LinkedIn comment data with emoji", { retry: 3, timeout: 30000 }, async () => {
+			await testRealWorldLinkedInData(llm);
+		});
+
+		it("should handle unpaired high surrogate (0xD83D) in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testUnpairedHighSurrogate(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.DASHSCOPE_CN_API_KEY)(
+		"Alibaba Cloud Model Studio (China) Provider Unicode Handling",
+		() => {
+			const llm = getModel("alibaba-cn", "qwen3.7-max");
+
+			it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
+				await testEmojiInToolResults(llm);
+			});
+
+			it("should handle real-world LinkedIn comment data with emoji", { retry: 3, timeout: 30000 }, async () => {
+				await testRealWorldLinkedInData(llm);
+			});
+
+			it(
+				"should handle unpaired high surrogate (0xD83D) in tool results",
+				{ retry: 3, timeout: 30000 },
+				async () => {
+					await testUnpairedHighSurrogate(llm);
+				},
+			);
+		},
+	);
+
+	describe.skipIf(!process.env.ZAI_PAYG_API_KEY)("Z.AI API (pay-as-you-go) Provider Unicode Handling", () => {
+		const llm = getModel("zai-api", "glm-5.3");
+
+		it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testEmojiInToolResults(llm);
+		});
+
+		it("should handle real-world LinkedIn comment data with emoji", { retry: 3, timeout: 30000 }, async () => {
+			await testRealWorldLinkedInData(llm);
+		});
+
+		it("should handle unpaired high surrogate (0xD83D) in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testUnpairedHighSurrogate(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.ZAI_PAYG_CN_API_KEY)(
+		"Z.AI API (pay-as-you-go, China) Provider Unicode Handling",
+		() => {
+			const llm = getModel("zai-api-cn", "glm-5.3");
+
+			it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
+				await testEmojiInToolResults(llm);
+			});
+
+			it("should handle real-world LinkedIn comment data with emoji", { retry: 3, timeout: 30000 }, async () => {
+				await testRealWorldLinkedInData(llm);
+			});
+
+			it(
+				"should handle unpaired high surrogate (0xD83D) in tool results",
+				{ retry: 3, timeout: 30000 },
+				async () => {
+					await testUnpairedHighSurrogate(llm);
+				},
+			);
+		},
+	);
+
 	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider Unicode Handling", () => {
 		const llm = getModel("kimi-coding", "kimi-for-coding");
 
