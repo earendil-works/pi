@@ -12,7 +12,7 @@ import { mcpNamespace } from "@earendil-works/pi-mcp";
 import type { KeyId } from "@earendil-works/pi-tui";
 import type { createJiti } from "jiti";
 import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode } from "../../config.ts";
-import { pathsEqual, resolvePath } from "../../utils/paths.ts";
+import { canonicalizePath, pathsEqual, resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
@@ -590,7 +590,7 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 		...resolutionOptions,
 	});
 
-	const module = await jiti.import(extensionPath, { default: true });
+	const module = await jiti.import(canonicalizePath(extensionPath), { default: true });
 	const factory = module as ExtensionFactory;
 	if (typeof factory !== "function") {
 		return undefined;
