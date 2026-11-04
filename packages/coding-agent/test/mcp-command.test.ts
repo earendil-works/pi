@@ -110,7 +110,7 @@ describe("pi mcp", () => {
 			for (const command of ["login", "logout"]) {
 				expect(await run([command, "radius"], radius)).toMatchObject({
 					exitCode: 1,
-					output: `MCP server "radius" uses the credentials of provider "radius". Run /${command} radius in pi.`,
+					output: `MCP server "radius" uses the credentials of provider "radius". Run "pi auth ${command} radius".`,
 				});
 			}
 		} finally {

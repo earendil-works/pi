@@ -26,6 +26,9 @@ import {
 	printAuthCommandHelp,
 	validateAuthCommandArgs,
 } from "./cli/auth-command.ts";
+import { runAuthLogin } from "./cli/auth-login.ts";
+import { runAuthLogout } from "./cli/auth-logout.ts";
+import { createProcessLoginTerminal } from "./cli/auth-terminal.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
@@ -130,9 +133,53 @@ function isPlainRuntimeMetadataCommand(parsed: Args): boolean {
 	return !parsed.print && parsed.mode === undefined && (parsed.help === true || parsed.listModels !== undefined);
 }
 
+async function runAuthLoginCommand(args: string[]): Promise<number> {
+	const cwd = process.cwd();
+	const agentDir = getAgentDir();
+	const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+	applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
+	configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs());
+	const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false, signal: AbortSignal.timeout(15_000) });
+
+	const controller = new AbortController();
+	const interrupt = () => controller.abort();
+	process.on("SIGINT", interrupt);
+	try {
+		return await runAuthLogin(args, {
+			modelRuntime,
+			terminal: createProcessLoginTerminal(interrupt),
+			agentDir,
+			cwd,
+			getDeviceId: () => settingsManager.getOrCreateDeviceId(),
+			signal: controller.signal,
+		});
+	} finally {
+		process.off("SIGINT", interrupt);
+	}
+}
+
+async function runAuthLogoutCommand(args: string[]): Promise<number> {
+	const signal = AbortSignal.timeout(15_000);
+	const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false, signal });
+	return runAuthLogout(args, {
+		modelRuntime,
+		terminal: { write: (line) => console.log(line), error: (line) => console.error(line) },
+		signal,
+	});
+}
+
 async function runAuthCommand(args: string[]): Promise<boolean> {
 	if (isAuthCommandHelp(args)) {
 		printAuthCommandHelp();
+		return true;
+	}
+	if (args[0] === "auth" && args[1] === "login") {
+		// main() already applied --offline.
+		process.exitCode = await runAuthLoginCommand(args.slice(2).filter((arg) => arg !== "--offline"));
+		return true;
+	}
+	if (args[0] === "auth" && args[1] === "logout") {
+		process.exitCode = await runAuthLogoutCommand(args.slice(2).filter((arg) => arg !== "--offline"));
 		return true;
 	}
 

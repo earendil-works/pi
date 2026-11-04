@@ -7,13 +7,13 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { createInterface } from "node:readline/promises";
 import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME } from "../../config.ts";
 import { validateMcpServerConfig } from "../../core/mcp-servers.ts";
 import { ModelRuntime } from "../../core/model-runtime.ts";
 import { ProjectTrustStore } from "../../core/trust-manager.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
+import { questionTerminal } from "../../utils/terminal-question.ts";
 import {
 	addMcpServerConfig,
 	getMcpToolExposure,
@@ -285,7 +285,7 @@ export async function runMcpCommand(args: string[], options: McpCommandOptions):
 			const authProvider = getAuthProvider(entry);
 			if (authProvider) {
 				error(
-					`MCP server "${name}" uses the credentials of provider "${authProvider}". Run /${command} ${authProvider} in ${APP_NAME}.`,
+					`MCP server "${name}" uses the credentials of provider "${authProvider}". Run "${APP_NAME} auth ${command} ${authProvider}".`,
 				);
 				return 1;
 			}
@@ -659,21 +659,19 @@ async function login(
 
 /**
  * The pasted redirect URL in a terminal; otherwise only the browser callback can finish the sign-in.
- * Resolves to undefined when `signal` aborts: the callback arrived, or the sign-in timed out.
+ * Resolves to undefined on cancellation or EOF, or when the callback arrives or the sign-in times out.
  */
 async function waitForRedirectUrl(signal: AbortSignal, interactive: boolean): Promise<string | undefined> {
 	if (!interactive) {
 		if (!signal.aborted) await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
 		return undefined;
 	}
-	const readline = createInterface({ input: process.stdin, output: process.stderr });
 	try {
-		return await readline.question("If the browser cannot reach this machine, paste the URL it was redirected to: ", {
+		return await questionTerminal("If the browser cannot reach this machine, paste the URL it was redirected to: ", {
 			signal,
+			output: process.stderr,
 		});
 	} catch {
 		return undefined;
-	} finally {
-		readline.close();
 	}
 }
