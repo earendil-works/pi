@@ -17,6 +17,7 @@ import googleVertex from "./google-vertex.ts";
 import groq from "./groq.ts";
 import huggingface from "./huggingface.ts";
 import kimiCoding from "./kimi-coding.ts";
+import longcat from "./longcat.ts";
 import meta from "./meta.ts";
 import minimax from "./minimax.ts";
 import minimaxCn from "./minimax-cn.ts";
@@ -61,6 +62,7 @@ export const PROVIDERS: readonly ProviderDefinition[] = [
 	groq,
 	huggingface,
 	kimiCoding,
+	longcat,
 	meta,
 	minimaxCn,
 	minimax,

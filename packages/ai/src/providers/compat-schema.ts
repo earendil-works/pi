@@ -232,6 +232,10 @@ const OpenAICompletionsCompatProperties = {
 				"Whether a user message after tool results requires an assistant message in between. Default: auto-detected from URL.",
 		}),
 	),
+	requiresAssistantContentString: optionalCompatBoolean({
+		description: "Whether tool-only assistant messages need an empty string instead of null content.",
+		default: false,
+	}),
 	requiresThinkingAsText: opt(
 		bool({
 			description:

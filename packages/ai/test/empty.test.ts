@@ -144,6 +144,27 @@ async function testEmptyAssistantMessage<TApi extends Api>(llm: Model<TApi>, opt
 }
 
 describe("AI Providers Empty Message Tests", () => {
+	describe.skipIf(!process.env.LONGCAT_API_KEY)("LongCat Provider Empty Messages", () => {
+		const llm = getModel("longcat", "LongCat-2.5");
+		const options = { reasoningEffort: "high" } satisfies StreamOptionsWithExtras;
+
+		it("should handle empty content array", { retry: 3, timeout: 30000 }, async () => {
+			await testEmptyMessage(llm, options);
+		});
+
+		it("should handle empty string content", { retry: 3, timeout: 30000 }, async () => {
+			await testEmptyStringMessage(llm, options);
+		});
+
+		it("should handle whitespace-only content", { retry: 3, timeout: 30000 }, async () => {
+			await testWhitespaceOnlyMessage(llm, options);
+		});
+
+		it("should handle empty assistant message in conversation", { retry: 3, timeout: 30000 }, async () => {
+			await testEmptyAssistantMessage(llm, options);
+		});
+	});
+
 	describe.skipIf(!process.env.GEMINI_API_KEY)("Google Provider Empty Messages", () => {
 		const llm = getModel("google", "gemini-2.5-flash");
 

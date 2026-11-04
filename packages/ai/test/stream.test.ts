@@ -348,6 +348,35 @@ async function multiTurn<TApi extends Api>(model: Model<TApi>, options?: StreamO
 }
 
 describe("Generate E2E Tests", () => {
+	describe.skipIf(!process.env.LONGCAT_API_KEY)("LongCat Provider (LongCat-2.5 via OpenAI Completions)", () => {
+		const llm = getModel("longcat", "LongCat-2.5");
+		const options = { reasoningEffort: "high" } satisfies StreamOptionsWithExtras;
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm, options);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm, options);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm, options);
+		});
+
+		it("should handle thinking mode", { retry: 3 }, async () => {
+			await handleThinking(llm, options);
+		});
+
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			await multiTurn(llm, options);
+		});
+
+		it("should handle image input", { retry: 3 }, async () => {
+			await handleImage(llm, options);
+		});
+	});
+
 	describe.skipIf(!process.env.GEMINI_API_KEY)("Gemini Provider (gemini-2.5-flash)", () => {
 		const llm = getModel("google", "gemini-2.5-flash");
 

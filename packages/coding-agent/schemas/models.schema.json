@@ -552,6 +552,11 @@
           "type": "boolean",
           "description": "Whether a user message after tool results requires an assistant message in between. Default: auto-detected from URL."
         },
+        "requiresAssistantContentString": {
+          "type": "boolean",
+          "description": "Whether tool-only assistant messages need an empty string instead of null content.",
+          "default": false
+        },
         "requiresThinkingAsText": {
           "type": "boolean",
           "description": "Whether thinking blocks must be converted to text blocks with <thinking> delimiters. Default: auto-detected from URL."

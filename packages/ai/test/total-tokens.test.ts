@@ -102,6 +102,28 @@ describe("totalTokens field", () => {
 	// Anthropic
 	// =========================================================================
 
+	describe.skipIf(!process.env.LONGCAT_API_KEY)("LongCat", () => {
+		it(
+			"LongCat-2.5 - should return totalTokens equal to sum of components",
+			{ retry: 3, timeout: 60000 },
+			async () => {
+				const llm = getModel("longcat", "LongCat-2.5");
+
+				console.log(`\nLongCat / ${llm.id}:`);
+				const { first, second } = await testTotalTokensWithCache(llm, {
+					apiKey: process.env.LONGCAT_API_KEY,
+					reasoningEffort: "high",
+				});
+
+				logUsage("First request", first);
+				logUsage("Second request", second);
+
+				assertTotalTokensEqualsComponents(first);
+				assertTotalTokensEqualsComponents(second);
+			},
+		);
+	});
+
 	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic (API Key)", () => {
 		it(
 			"claude-sonnet-4-5 - should return totalTokens equal to sum of components",

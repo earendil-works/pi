@@ -98,6 +98,18 @@ async function testAbortThenNewMessage<TApi extends Api>(llm: Model<TApi>, optio
 }
 
 describe("AI Providers Abort Tests", () => {
+	describe.skipIf(!process.env.LONGCAT_API_KEY)("LongCat Provider Abort", () => {
+		const llm = getModel("longcat", "LongCat-2.5");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm, { reasoningEffort: "high" });
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm, { reasoningEffort: "high" });
+		});
+	});
+
 	describe.skipIf(!process.env.GEMINI_API_KEY)("Google Provider Abort", () => {
 		const llm = getModel("google", "gemini-2.5-flash");
 

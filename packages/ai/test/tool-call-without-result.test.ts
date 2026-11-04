@@ -95,6 +95,14 @@ describe("Tool Call Without Result Tests", () => {
 	// API Key-based providers
 	// =========================================================================
 
+	describe.skipIf(!process.env.LONGCAT_API_KEY)("LongCat Provider", () => {
+		const model = getModel("longcat", "LongCat-2.5");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model, { reasoningEffort: "high" });
+		});
+	});
+
 	describe.skipIf(!process.env.GEMINI_API_KEY)("Google Provider", () => {
 		const model = getModel("google", "gemini-2.5-flash");
 

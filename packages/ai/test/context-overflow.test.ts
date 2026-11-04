@@ -93,6 +93,17 @@ function logResult(result: OverflowResult) {
 // =============================================================================
 
 describe("Context overflow error handling", () => {
+	describe.skipIf(!process.env.LONGCAT_API_KEY)("LongCat", () => {
+		it("LongCat-2.5 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("longcat", "LongCat-2.5");
+			const result = await testContextOverflow(model, process.env.LONGCAT_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
 	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic (API Key)", () => {
 		it("claude-haiku-4-5 - should detect overflow via isContextOverflow", async () => {
 			const model = getModel("anthropic", "claude-haiku-4-5");

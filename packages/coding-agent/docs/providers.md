@@ -34,6 +34,7 @@ This table covers providers with a single primary API-key variable. Providers th
 | Ant Ling | `ANT_LING_API_KEY` |
 | OpenAI | `OPENAI_API_KEY` |
 | DeepSeek | `DEEPSEEK_API_KEY` |
+| LongCat | `LONGCAT_API_KEY` |
 | NVIDIA NIM | `NVIDIA_API_KEY` |
 | Google Gemini | `GEMINI_API_KEY` |
 | GitHub Copilot | `COPILOT_GITHUB_TOKEN` |
@@ -132,6 +133,16 @@ Regional endpoints filter models to their region. To use one, set the base URL i
 ```
 
 If the base URL rejects the key at `/models/user` or does not have that endpoint, for example a proxy configured as the OpenRouter base URL, Pi lists every OpenRouter model.
+
+### LongCat
+
+Authenticate with `/login longcat` or `LONGCAT_API_KEY`. Select `longcat/LongCat-2.5` with `/model` or from the command line:
+
+```bash
+pi --model longcat/LongCat-2.5 --thinking high
+```
+
+LongCat uses `https://api.longcat.chat/openai/v1` and supports text, images, and tool calls. Thinking is either `off` or `high`; `high` enables thinking without a separate reasoning-effort parameter.
 
 ### Azure OpenAI
 

@@ -84,6 +84,14 @@ async function testTokensOnAbort<TApi extends Api>(llm: Model<TApi>, options: St
 }
 
 describe("Token Statistics on Abort", () => {
+	describe.skipIf(!process.env.LONGCAT_API_KEY)("LongCat Provider", () => {
+		const llm = getModel("longcat", "LongCat-2.5");
+
+		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
+			await testTokensOnAbort(llm, { reasoningEffort: "high" });
+		});
+	});
+
 	describe.skipIf(!process.env.GEMINI_API_KEY)("Google Provider", () => {
 		const llm = getModel("google", "gemini-2.5-flash");
 

@@ -207,6 +207,19 @@ async function handleToolWithTextAndImageResult<TApi extends Api>(
 }
 
 describe("Tool Results with Images", () => {
+	describe.skipIf(!process.env.LONGCAT_API_KEY)("LongCat Provider (LongCat-2.5)", () => {
+		const llm = getModel("longcat", "LongCat-2.5");
+		const options = { reasoningEffort: "high" } satisfies StreamOptionsWithExtras;
+
+		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithImageResult(llm, options);
+		});
+
+		it("should handle tool result with text and image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithTextAndImageResult(llm, options);
+		});
+	});
+
 	describe.skipIf(!process.env.GEMINI_API_KEY)("Google Provider (gemini-2.5-flash)", () => {
 		const llm = getModel("google", "gemini-2.5-flash");
 

@@ -100,6 +100,7 @@ export type KnownProvider =
 	| "typesafe"
 	| "nvidia"
 	| "deepseek"
+	| "longcat"
 	| "github-copilot"
 	| "xai"
 	| "groq"
