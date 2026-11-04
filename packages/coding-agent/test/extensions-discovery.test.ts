@@ -132,6 +132,17 @@ describe("extensions discovery", () => {
 		expect(path.basename(result.extensions[0].path)).toBe("foo.js");
 	});
 
+	it.skipIf(process.platform === "win32")("skips dangling extension symlinks", async () => {
+		const extensionPath = path.join(extensionsDir, "main.ts");
+		fs.writeFileSync(extensionPath, extensionCode);
+		fs.symlinkSync(path.join(extensionsDir, "missing.ts"), path.join(extensionsDir, "dangling.ts"));
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.errors).toEqual([]);
+		expect(result.extensions.map((extension) => extension.path)).toEqual([extensionPath]);
+	});
+
 	it("discovers subdirectory with index.ts", async () => {
 		const subdir = path.join(extensionsDir, "my-extension");
 		fs.mkdirSync(subdir);
@@ -238,6 +249,23 @@ describe("extensions discovery", () => {
 
 		expect(result.errors).toHaveLength(0);
 		expect(result.extensions).toHaveLength(2);
+	});
+
+	it("reports an extension package with an invalid package.json and loads the other extensions", async () => {
+		// Regression test for #9788: one broken extension must not stop the others from loading.
+		const brokenDir = path.join(extensionsDir, "broken-package");
+		const healthyPath = path.join(extensionsDir, "healthy.ts");
+		fs.mkdirSync(brokenDir);
+		fs.writeFileSync(path.join(brokenDir, "index.ts"), extensionCode);
+		fs.writeFileSync(path.join(brokenDir, "package.json"), "{");
+		fs.writeFileSync(healthyPath, extensionCode);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.extensions.map((extension) => extension.path)).toEqual([healthyPath]);
+		expect(result.errors).toEqual([
+			{ path: path.join(brokenDir, "package.json"), error: expect.stringContaining("Invalid package.json") },
+		]);
 	});
 
 	it("package.json with pi field takes precedence over index.ts", async () => {

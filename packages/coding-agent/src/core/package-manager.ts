@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
-	globSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
@@ -51,8 +50,18 @@ import {
 	resolvePath,
 } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { discoverExtensionsInDir } from "./extensions/discovery.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
-import { type PiManifest, readPiManifest } from "./pi-manifest.ts";
+import {
+	expandManifestGlob,
+	hasManifestGlobMagic,
+	normalizeManifestPattern,
+	type PackageResolutionError,
+	type PiManifest,
+	readPiManifest,
+	resolveManifestPath,
+	toPackageResolutionError,
+} from "./pi-manifest.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
 import { BUILTIN_PATH_PREFIX, getResourcePathKey } from "./source-info.ts";
 
@@ -97,6 +106,8 @@ export interface ResolvedPaths {
 	themes: ResolvedResource[];
 	/** Configured packages that were skipped because installing them failed. */
 	installFailures?: PackageInstallFailure[];
+	/** Packages and extension directories skipped because they could not be read or resolved. */
+	resolutionErrors?: Array<{ path: string; error: string }>;
 }
 
 /** A configured package that could not be installed while resolving resources. */
@@ -214,6 +225,7 @@ interface ResourceAccumulator {
 	skills: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	prompts: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	themes: Map<string, { metadata: PathMetadata; enabled: boolean }>;
+	resolutionErrors: PackageResolutionError[];
 }
 
 /**
@@ -325,22 +337,7 @@ function isOverridePattern(s: string): boolean {
 	return s.startsWith("!") || s.startsWith("+") || s.startsWith("-");
 }
 
-function hasGlobPattern(s: string): boolean {
-	return s.includes("*") || s.includes("?");
-}
-
 /** Glob entries discover visible paths; exact entries can target dot paths or symlinked trees. */
-function expandPackageGlob(pattern: string, root: string): string[] {
-	return globSync(pattern, { cwd: root })
-		.map((match) => resolve(root, match))
-		.filter((path) =>
-			relative(root, path)
-				.split(sep)
-				.every((segment) => segment === ".." || !segment.startsWith(".")),
-		)
-		.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-}
-
 function splitPatterns(entries: string[]): { plain: string[]; patterns: string[] } {
 	const plain: string[] = [];
 	const patterns: string[] = [];
@@ -599,100 +596,16 @@ function collectAutoThemeEntries(dir: string): string[] {
 	return entries;
 }
 
-function resolveExtensionEntries(dir: string): string[] | null {
-	const packageJsonPath = join(dir, "package.json");
-	if (existsSync(packageJsonPath)) {
-		const manifest = readPiManifest(packageJsonPath);
-		if (manifest?.extensions?.length) {
-			const entries: string[] = [];
-			for (const extPath of manifest.extensions) {
-				const resolvedExtPath = resolve(dir, extPath);
-				if (existsSync(resolvedExtPath)) {
-					entries.push(resolvedExtPath);
-				}
-			}
-			if (entries.length > 0) {
-				return entries;
-			}
-		}
-	}
-
-	const indexTs = join(dir, "index.ts");
-	const indexJs = join(dir, "index.js");
-	if (existsSync(indexTs)) {
-		return [indexTs];
-	}
-	if (existsSync(indexJs)) {
-		return [indexJs];
-	}
-
-	return null;
-}
-
-function collectAutoExtensionEntries(dir: string): string[] {
-	const entries: string[] = [];
-	if (!existsSync(dir)) return entries;
-
-	// First check if this directory itself has explicit extension entries (package.json or index)
-	const rootEntries = resolveExtensionEntries(dir);
-	if (rootEntries) {
-		return rootEntries;
-	}
-
-	// Otherwise, discover extensions from directory contents
-	const ig = ignore();
-	addIgnoreRules(ig, dir, dir);
-
-	try {
-		const dirEntries = readdirSync(dir, { withFileTypes: true });
-		for (const entry of dirEntries) {
-			if (entry.name.startsWith(".")) continue;
-			if (entry.name === "node_modules") continue;
-
-			const fullPath = join(dir, entry.name);
-			let isDir = entry.isDirectory();
-			let isFile = entry.isFile();
-
-			if (entry.isSymbolicLink()) {
-				try {
-					const stats = statSync(fullPath);
-					isDir = stats.isDirectory();
-					isFile = stats.isFile();
-				} catch {
-					continue;
-				}
-			}
-
-			const relPath = toPosixPath(relative(dir, fullPath));
-			const ignorePath = isDir ? `${relPath}/` : relPath;
-			if (ig.ignores(ignorePath)) continue;
-
-			if (isFile && (entry.name.endsWith(".ts") || entry.name.endsWith(".js"))) {
-				entries.push(fullPath);
-			} else if (isDir) {
-				const resolvedEntries = resolveExtensionEntries(fullPath);
-				if (resolvedEntries) {
-					entries.push(...resolvedEntries);
-				}
-			}
-		}
-	} catch {
-		// Ignore errors
-	}
-
-	return entries;
-}
-
 /**
  * Collect resource files from a directory based on resource type.
  * Extensions use smart discovery (index.ts in subdirs), others use recursive collection.
  */
-function collectResourceFiles(dir: string, resourceType: ResourceType): string[] {
+function collectResourceFiles(dir: string, resourceType: ResourceType, errors: PackageResolutionError[]): string[] {
 	if (resourceType === "skills") {
 		return collectSkillEntries(dir, "pi");
 	}
 	if (resourceType === "extensions") {
-		return collectAutoExtensionEntries(dir);
+		return discoverExtensionsInDir(dir, errors);
 	}
 	return collectFiles(dir, FILE_PATTERNS[resourceType]);
 }
@@ -728,7 +641,20 @@ function resolvePackageChangelogPath(packageRoot: string, manifest: PiManifest |
 	}
 }
 
-function matchesAnyPattern(filePath: string, patterns: string[], baseDir: string): boolean {
+function normalizePattern(pattern: string): { value: string; rootAnchored: boolean } {
+	const rootAnchored = pattern.startsWith("./") || pattern.startsWith(".\\");
+	const normalized = rootAnchored ? pattern.slice(2) : pattern;
+	return { value: toPosixPath(normalizePath(normalized)), rootAnchored };
+}
+
+type PatternNormalizer = (pattern: string) => { value: string; rootAnchored: boolean };
+
+function matchesAnyPattern(
+	filePath: string,
+	patterns: string[],
+	baseDir: string,
+	normalize: PatternNormalizer = normalizePattern,
+): boolean {
 	const rel = toPosixPath(relative(baseDir, filePath));
 	const name = basename(filePath);
 	const filePathPosix = toPosixPath(filePath);
@@ -739,10 +665,10 @@ function matchesAnyPattern(filePath: string, patterns: string[], baseDir: string
 	const parentDirPosix = isSkillFile ? toPosixPath(parentDir!) : undefined;
 
 	return patterns.some((pattern) => {
-		const normalizedPattern = toPosixPath(normalizePath(pattern));
+		const { value: normalizedPattern, rootAnchored } = normalize(pattern);
 		if (
 			minimatch(rel, normalizedPattern) ||
-			minimatch(name, normalizedPattern) ||
+			(!rootAnchored && minimatch(name, normalizedPattern)) ||
 			minimatch(filePathPosix, normalizedPattern)
 		) {
 			return true;
@@ -750,18 +676,18 @@ function matchesAnyPattern(filePath: string, patterns: string[], baseDir: string
 		if (!isSkillFile) return false;
 		return (
 			minimatch(parentRel!, normalizedPattern) ||
-			minimatch(parentName!, normalizedPattern) ||
+			(!rootAnchored && minimatch(parentName!, normalizedPattern)) ||
 			minimatch(parentDirPosix!, normalizedPattern)
 		);
 	});
 }
 
-function normalizeExactPattern(pattern: string): string {
-	const normalized = pattern.startsWith("./") || pattern.startsWith(".\\") ? pattern.slice(2) : pattern;
-	return toPosixPath(normalizePath(normalized));
-}
-
-function matchesAnyExactPattern(filePath: string, patterns: string[], baseDir: string): boolean {
+function matchesAnyExactPattern(
+	filePath: string,
+	patterns: string[],
+	baseDir: string,
+	normalize: PatternNormalizer = normalizePattern,
+): boolean {
 	if (patterns.length === 0) return false;
 	const rel = toPosixPath(relative(baseDir, filePath));
 	const name = basename(filePath);
@@ -772,7 +698,7 @@ function matchesAnyExactPattern(filePath: string, patterns: string[], baseDir: s
 	const parentDirPosix = isSkillFile ? toPosixPath(parentDir!) : undefined;
 
 	return patterns.some((pattern) => {
-		const normalized = normalizeExactPattern(pattern);
+		const { value: normalized } = normalize(pattern);
 		if (normalized === rel || normalized === filePathPosix) {
 			return true;
 		}
@@ -812,7 +738,12 @@ function isEnabledByOverrides(filePath: string, patterns: string[], baseDir: str
  * - `+path`: force-include exact path (overrides exclusions)
  * - `-path`: force-exclude exact path (overrides force-includes)
  */
-function applyPatterns(allPaths: string[], patterns: string[], baseDir: string): Set<string> {
+function applyPatterns(
+	allPaths: string[],
+	patterns: string[],
+	baseDir: string,
+	normalize: PatternNormalizer = normalizePattern,
+): Set<string> {
 	const includes: string[] = [];
 	const excludes: string[] = [];
 	const forceIncludes: string[] = [];
@@ -835,18 +766,18 @@ function applyPatterns(allPaths: string[], patterns: string[], baseDir: string):
 	if (includes.length === 0) {
 		result = [...allPaths];
 	} else {
-		result = allPaths.filter((filePath) => matchesAnyPattern(filePath, includes, baseDir));
+		result = allPaths.filter((filePath) => matchesAnyPattern(filePath, includes, baseDir, normalize));
 	}
 
 	// Step 2: Apply excludes
 	if (excludes.length > 0) {
-		result = result.filter((filePath) => !matchesAnyPattern(filePath, excludes, baseDir));
+		result = result.filter((filePath) => !matchesAnyPattern(filePath, excludes, baseDir, normalize));
 	}
 
 	// Step 3: Force-include (add back from allPaths, overriding exclusions)
 	if (forceIncludes.length > 0) {
 		for (const filePath of allPaths) {
-			if (!result.includes(filePath) && matchesAnyExactPattern(filePath, forceIncludes, baseDir)) {
+			if (!result.includes(filePath) && matchesAnyExactPattern(filePath, forceIncludes, baseDir, normalize)) {
 				result.push(filePath);
 			}
 		}
@@ -854,7 +785,7 @@ function applyPatterns(allPaths: string[], patterns: string[], baseDir: string):
 
 	// Step 4: Force-exclude (remove even if included or force-included)
 	if (forceExcludes.length > 0) {
-		result = result.filter((filePath) => !matchesAnyExactPattern(filePath, forceExcludes, baseDir));
+		result = result.filter((filePath) => !matchesAnyExactPattern(filePath, forceExcludes, baseDir, normalize));
 	}
 
 	return new Set(result);
@@ -1022,6 +953,7 @@ export class DefaultPackageManager implements PackageManager {
 					origin: "top-level",
 				},
 				projectBaseDir,
+				accumulator.resolutionErrors,
 			);
 			this.resolveLocalEntries(
 				globalEntries,
@@ -1033,6 +965,7 @@ export class DefaultPackageManager implements PackageManager {
 					origin: "top-level",
 				},
 				globalBaseDir,
+				accumulator.resolutionErrors,
 			);
 		}
 
@@ -1557,8 +1490,9 @@ export class DefaultPackageManager implements PackageManager {
 					this.addResource(accumulator.extensions, resolved, metadata, true);
 				}
 			}
-		} catch {
-			return;
+		} catch (error) {
+			if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+			accumulator.resolutionErrors.push(toPackageResolutionError(error, resolved));
 		}
 	}
 
@@ -2417,7 +2351,14 @@ export class DefaultPackageManager implements PackageManager {
 		filter: PackageFilter | undefined,
 		metadata: PathMetadata,
 	): boolean {
-		const manifest = readPiManifest(join(packageRoot, "package.json"));
+		let manifest: PiManifest | null;
+		try {
+			manifest = readPiManifest(join(packageRoot, "package.json"));
+		} catch (error) {
+			// Skip the whole package. Returning true keeps the caller from loading the directory itself.
+			accumulator.resolutionErrors.push(toPackageResolutionError(error, packageRoot));
+			return true;
+		}
 		const changelogPath = resolvePackageChangelogPath(packageRoot, manifest);
 		if (changelogPath) {
 			metadata.changelogPath = changelogPath;
@@ -2430,11 +2371,25 @@ export class DefaultPackageManager implements PackageManager {
 				const patterns = filter[resourceType];
 				const target = this.getTargetMap(accumulator, resourceType);
 				if (filter.autoload === false) {
-					this.applyPackageDeltaFilter(packageRoot, patterns ?? [], resourceType, target, metadata);
+					this.applyPackageDeltaFilter(
+						packageRoot,
+						patterns ?? [],
+						resourceType,
+						target,
+						metadata,
+						accumulator.resolutionErrors,
+					);
 				} else if (patterns !== undefined) {
-					this.applyPackageFilter(packageRoot, patterns, resourceType, target, metadata);
+					this.applyPackageFilter(
+						packageRoot,
+						patterns,
+						resourceType,
+						target,
+						metadata,
+						accumulator.resolutionErrors,
+					);
 				} else {
-					this.collectDefaultResources(packageRoot, resourceType, target, metadata);
+					this.collectDefaultResources(packageRoot, resourceType, target, metadata, accumulator.resolutionErrors);
 				}
 			}
 			return true;
@@ -2449,6 +2404,7 @@ export class DefaultPackageManager implements PackageManager {
 					resourceType,
 					this.getTargetMap(accumulator, resourceType),
 					metadata,
+					accumulator.resolutionErrors,
 				);
 			}
 			return true;
@@ -2459,7 +2415,7 @@ export class DefaultPackageManager implements PackageManager {
 			const dir = join(packageRoot, resourceType);
 			if (existsSync(dir)) {
 				// Collect all files from the directory (all enabled by default)
-				const files = collectResourceFiles(dir, resourceType);
+				const files = collectResourceFiles(dir, resourceType, accumulator.resolutionErrors);
 				for (const f of files) {
 					this.addResource(this.getTargetMap(accumulator, resourceType), f, metadata, true);
 				}
@@ -2474,17 +2430,18 @@ export class DefaultPackageManager implements PackageManager {
 		resourceType: ResourceType,
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
+		errors: PackageResolutionError[],
 	): void {
 		const manifest = readPiManifest(join(packageRoot, "package.json"));
 		const entries = manifest?.[resourceType];
 		if (entries) {
-			this.addManifestEntries(entries, packageRoot, resourceType, target, metadata);
+			this.addManifestEntries(entries, packageRoot, resourceType, target, metadata, errors);
 			return;
 		}
 		const dir = join(packageRoot, resourceType);
 		if (existsSync(dir)) {
 			// Collect all files from the directory (all enabled by default)
-			const files = collectResourceFiles(dir, resourceType);
+			const files = collectResourceFiles(dir, resourceType, errors);
 			for (const f of files) {
 				this.addResource(target, f, metadata, true);
 			}
@@ -2497,8 +2454,9 @@ export class DefaultPackageManager implements PackageManager {
 		resourceType: ResourceType,
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
+		errors: PackageResolutionError[],
 	): void {
-		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType);
+		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType, errors);
 
 		if (userPatterns.length === 0) {
 			// Empty array explicitly disables all resources of this type
@@ -2523,12 +2481,13 @@ export class DefaultPackageManager implements PackageManager {
 		resourceType: ResourceType,
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
+		errors: PackageResolutionError[],
 	): void {
 		if (userPatterns.length === 0) {
 			return;
 		}
 
-		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType);
+		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType, errors);
 		const enabledByUser = applyAutoloadDisabledPatterns(allFiles, userPatterns, packageRoot);
 		for (const [filePath, enabled] of enabledByUser) {
 			this.addResource(target, filePath, metadata, enabled);
@@ -2543,14 +2502,17 @@ export class DefaultPackageManager implements PackageManager {
 	private collectManifestFiles(
 		packageRoot: string,
 		resourceType: ResourceType,
+		errors: PackageResolutionError[],
 	): { allFiles: string[]; enabledByManifest: Set<string> } {
 		const manifest = readPiManifest(join(packageRoot, "package.json"));
 		const entries = manifest?.[resourceType];
 		if (entries && entries.length > 0) {
-			const allFiles = this.collectFilesFromManifestEntries(entries, packageRoot, resourceType);
+			const allFiles = this.collectFilesFromManifestEntries(entries, packageRoot, resourceType, errors);
 			const manifestPatterns = entries.filter(isOverridePattern);
 			const enabledByManifest =
-				manifestPatterns.length > 0 ? applyPatterns(allFiles, manifestPatterns, packageRoot) : new Set(allFiles);
+				manifestPatterns.length > 0
+					? applyPatterns(allFiles, manifestPatterns, packageRoot, normalizeManifestPattern)
+					: new Set(allFiles);
 			return { allFiles: Array.from(enabledByManifest), enabledByManifest };
 		}
 
@@ -2558,7 +2520,7 @@ export class DefaultPackageManager implements PackageManager {
 		if (!existsSync(conventionDir)) {
 			return { allFiles: [], enabledByManifest: new Set() };
 		}
-		const allFiles = collectResourceFiles(conventionDir, resourceType);
+		const allFiles = collectResourceFiles(conventionDir, resourceType, errors);
 		return { allFiles, enabledByManifest: new Set(allFiles) };
 	}
 
@@ -2568,12 +2530,13 @@ export class DefaultPackageManager implements PackageManager {
 		resourceType: ResourceType,
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
+		errors: PackageResolutionError[],
 	): void {
 		if (!entries) return;
 
-		const allFiles = this.collectFilesFromManifestEntries(entries, root, resourceType);
+		const allFiles = this.collectFilesFromManifestEntries(entries, root, resourceType, errors);
 		const patterns = entries.filter(isOverridePattern);
-		const enabledPaths = applyPatterns(allFiles, patterns, root);
+		const enabledPaths = applyPatterns(allFiles, patterns, root, normalizeManifestPattern);
 
 		for (const f of allFiles) {
 			if (enabledPaths.has(f)) {
@@ -2582,16 +2545,21 @@ export class DefaultPackageManager implements PackageManager {
 		}
 	}
 
-	private collectFilesFromManifestEntries(entries: string[], root: string, resourceType: ResourceType): string[] {
+	private collectFilesFromManifestEntries(
+		entries: string[],
+		root: string,
+		resourceType: ResourceType,
+		errors: PackageResolutionError[],
+	): string[] {
 		const sourceEntries = entries.filter((entry) => !isOverridePattern(entry));
 		const resolved = sourceEntries.flatMap((entry) => {
-			if (!hasGlobPattern(entry)) {
-				return [resolve(root, entry)];
+			if (!hasManifestGlobMagic(entry)) {
+				return [resolveManifestPath(entry, root)];
 			}
 
-			return expandPackageGlob(entry, root);
+			return expandManifestGlob(entry, root);
 		});
-		return this.collectFilesFromPaths(resolved, resourceType);
+		return this.collectFilesFromPaths(resolved, resourceType, errors);
 	}
 
 	private resolveLocalEntries(
@@ -2600,13 +2568,14 @@ export class DefaultPackageManager implements PackageManager {
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
 		baseDir: string,
+		errors: PackageResolutionError[],
 	): void {
 		if (entries.length === 0) return;
 
 		// Collect all files from plain entries (non-pattern entries)
 		const { plain, patterns } = splitPatterns(entries);
 		const resolvedPlain = plain.map((p) => this.resolvePathFromBase(p, baseDir));
-		const allFiles = this.collectFilesFromPaths(resolvedPlain, resourceType);
+		const allFiles = this.collectFilesFromPaths(resolvedPlain, resourceType, errors);
 
 		// Determine which files are enabled based on patterns
 		const enabledPaths = applyPatterns(allFiles, patterns, baseDir);
@@ -2686,7 +2655,7 @@ export class DefaultPackageManager implements PackageManager {
 			// Project extensions from .pi/
 			addResources(
 				"extensions",
-				collectAutoExtensionEntries(projectDirs.extensions),
+				discoverExtensionsInDir(projectDirs.extensions, accumulator.resolutionErrors),
 				projectMetadata,
 				projectOverrides.extensions,
 				projectBaseDir,
@@ -2738,7 +2707,7 @@ export class DefaultPackageManager implements PackageManager {
 		// User extensions from ~/.pi/agent/
 		addResources(
 			"extensions",
-			collectAutoExtensionEntries(userDirs.extensions),
+			discoverExtensionsInDir(userDirs.extensions, accumulator.resolutionErrors),
 			userMetadata,
 			userOverrides.extensions,
 			globalBaseDir,
@@ -2783,7 +2752,11 @@ export class DefaultPackageManager implements PackageManager {
 		);
 	}
 
-	private collectFilesFromPaths(paths: string[], resourceType: ResourceType): string[] {
+	private collectFilesFromPaths(
+		paths: string[],
+		resourceType: ResourceType,
+		errors: PackageResolutionError[],
+	): string[] {
 		const files: string[] = [];
 		for (const p of paths) {
 			if (!existsSync(p)) continue;
@@ -2793,10 +2766,11 @@ export class DefaultPackageManager implements PackageManager {
 				if (stats.isFile()) {
 					files.push(p);
 				} else if (stats.isDirectory()) {
-					files.push(...collectResourceFiles(p, resourceType));
+					files.push(...collectResourceFiles(p, resourceType, errors));
 				}
-			} catch {
-				// Ignore errors
+			} catch (error) {
+				if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+				errors.push(toPackageResolutionError(error, p));
 			}
 		}
 		return files;
@@ -2838,6 +2812,7 @@ export class DefaultPackageManager implements PackageManager {
 			skills: new Map(),
 			prompts: new Map(),
 			themes: new Map(),
+			resolutionErrors: [],
 		};
 	}
 
@@ -2866,6 +2841,7 @@ export class DefaultPackageManager implements PackageManager {
 			skills: mapToResolved(accumulator.skills),
 			prompts: mapToResolved(accumulator.prompts),
 			themes: mapToResolved(accumulator.themes),
+			resolutionErrors: accumulator.resolutionErrors.map((error) => ({ path: error.path, error: error.message })),
 		};
 	}
 

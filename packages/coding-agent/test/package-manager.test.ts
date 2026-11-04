@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager, type ProgressEvent, type ResolvedResource } from "../src/core/package-manager.ts";
@@ -150,6 +150,171 @@ describe("DefaultPackageManager", () => {
 			expect(await builtins()).toEqual([
 				["builtin:mcp", false, "builtin", "user"],
 				["builtin:llama.cpp", true, "builtin", "user"],
+			]);
+		});
+
+		it.each<{ name: string; files: Record<string, string>; extensions: string[]; expected: string[] }>([
+			{
+				name: "globs and exclusions",
+				files: { "main.ts": "", "main.test.ts": "" },
+				extensions: ["./*.ts", "!./*.test.ts"],
+				expected: ["main.ts"],
+			},
+			{
+				name: "force-exclude",
+				files: { "main.ts": "", "dangerous.ts": "" },
+				extensions: ["./*.ts", "-./dangerous.ts"],
+				expected: ["main.ts"],
+			},
+			{
+				name: "force-include",
+				files: { "main.ts": "", "dangerous.ts": "" },
+				extensions: ["./*.ts", "!./*.ts", "+./main.ts"],
+				expected: ["main.ts"],
+			},
+			{
+				name: "exclusions without index fallback",
+				files: { "index.ts": "" },
+				extensions: ["./*.ts", "!./*.ts"],
+				expected: [],
+			},
+			{
+				name: "hidden glob matches",
+				files: { "main.ts": "", ".hidden.ts": "" },
+				extensions: ["./*.ts", "./.*.ts"],
+				expected: ["main.ts"],
+			},
+			{
+				name: "directory entries",
+				files: { "entries/main.ts": "", "entries/main.test.ts": "" },
+				extensions: ["./entries", "!./entries/*.test.ts"],
+				expected: ["entries/main.ts"],
+			},
+			{
+				name: "directory globs",
+				files: { "groups/active/index.ts": "", "groups/legacy/index.ts": "" },
+				extensions: ["./groups/*/", "!./groups/legacy/index.ts"],
+				expected: ["groups/active/index.ts"],
+			},
+			{
+				name: "package-relative tilde paths",
+				files: { "~/main.ts": "" },
+				extensions: ["~/main.ts", "!~/main.ts"],
+				expected: [],
+			},
+			{
+				name: "package-relative tilde globs",
+				files: { "~/main.ts": "", "~/main.test.ts": "" },
+				extensions: ["~/*.ts", "!~/*.test.ts"],
+				expected: ["~/main.ts"],
+			},
+			{
+				name: "bracket globs",
+				files: { "a.ts": "", "b.ts": "", "c.ts": "" },
+				extensions: ["./[ab].ts"],
+				expected: ["a.ts", "b.ts"],
+			},
+			{
+				name: "brace globs",
+				files: { "foo.ts": "", "bar.ts": "", "baz.ts": "" },
+				extensions: ["./{foo,bar}.ts"],
+				expected: ["bar.ts", "foo.ts"],
+			},
+			{
+				name: "backslash separators",
+				files: { "main.ts": "", "main.test.ts": "" },
+				extensions: [".\\*.ts", "!.\\*.test.ts"],
+				expected: ["main.ts"],
+			},
+			{
+				name: "self-directory entries",
+				files: { "index.ts": "", "helper.ts": "" },
+				extensions: ["."],
+				expected: ["index.ts"],
+			},
+			{
+				name: "child package main",
+				files: {
+					"child/dist/main.js": "",
+					"child/helper.ts": "",
+					"child/package.json": JSON.stringify({ main: "./dist/main.js" }),
+				},
+				extensions: ["./child"],
+				expected: ["child/dist/main.js"],
+			},
+		])(
+			"should resolve manifest $name the same for auto-discovered and package extensions",
+			async ({ name, files, extensions, expected }) => {
+				// Regression test for #9788: the two discovery paths disagreed on manifest patterns.
+				const extensionDir = join(agentDir, "extensions", name.replaceAll(" ", "-"));
+				for (const [file, content] of Object.entries(files)) {
+					mkdirSync(dirname(join(extensionDir, file)), { recursive: true });
+					writeFileSync(join(extensionDir, file), content);
+				}
+				writeFileSync(join(extensionDir, "package.json"), JSON.stringify({ pi: { extensions } }));
+				const relativePaths = (resources: ResolvedResource[]) =>
+					resources.map((resource) => relative(extensionDir, resource.path).split(sep).join("/")).sort();
+
+				expect(relativePaths((await packageManager.resolve()).extensions)).toEqual(expected);
+				expect(relativePaths((await packageManager.resolveExtensionSources([extensionDir])).extensions)).toEqual(
+					expected,
+				);
+			},
+		);
+
+		it.skipIf(process.platform === "win32" || process.getuid?.() === 0).each([
+			["package.json", "package.json"],
+			["directory", "."],
+		] as const)("should skip and report an extension whose %s cannot be read", async (_kind, unreadable) => {
+			// Regression test for #9788: an unreadable extension must not stop pi from launching.
+			const extensionDir = join(agentDir, "extensions", "unreadable-extension");
+			const healthyPath = join(agentDir, "extensions", "healthy.ts");
+			const unreadablePath = join(extensionDir, unreadable);
+			mkdirSync(extensionDir, { recursive: true });
+			writeFileSync(join(extensionDir, "index.ts"), "export default function() {}");
+			writeFileSync(join(extensionDir, "package.json"), "{}");
+			writeFileSync(healthyPath, "export default function() {}");
+			chmodSync(unreadablePath, 0);
+			try {
+				const result = await packageManager.resolve();
+
+				expect(result.extensions.map((resource) => resource.path)).toEqual([healthyPath]);
+				expect(result.resolutionErrors).toEqual([
+					{ path: join(extensionDir, "package.json"), error: expect.stringContaining("EACCES") },
+				]);
+			} finally {
+				chmodSync(unreadablePath, 0o755);
+			}
+		});
+
+		it("should keep dot-relative exclusions anchored to the package root", async () => {
+			const packageDir = join(tempDir, "root-anchored-manifest");
+			const rootPrompt = join(packageDir, "foo.md");
+			const nestedPrompt = join(packageDir, "nested", "foo.md");
+			mkdirSync(dirname(nestedPrompt), { recursive: true });
+			writeFileSync(rootPrompt, "Root prompt");
+			writeFileSync(nestedPrompt, "Nested prompt");
+			writeFileSync(join(packageDir, "package.json"), JSON.stringify({ pi: { prompts: [".", "!./foo.md"] } }));
+
+			const result = await packageManager.resolveExtensionSources([packageDir]);
+
+			expect(result.prompts.map((prompt) => prompt.path)).toEqual([nestedPrompt]);
+		});
+
+		it("should skip and report an auto-discovered extension whose package.json is malformed", async () => {
+			// Regression test for #9788.
+			const extensionDir = join(agentDir, "extensions", "malformed-manifest-extension");
+			const healthyPath = join(agentDir, "extensions", "healthy.ts");
+			mkdirSync(extensionDir, { recursive: true });
+			writeFileSync(join(extensionDir, "index.ts"), "export default function() {}");
+			writeFileSync(join(extensionDir, "package.json"), "{");
+			writeFileSync(healthyPath, "export default function() {}");
+
+			const result = await packageManager.resolve();
+
+			expect(result.extensions.map((resource) => resource.path)).toEqual([healthyPath]);
+			expect(result.resolutionErrors).toEqual([
+				{ path: join(extensionDir, "package.json"), error: expect.stringContaining("Invalid package.json") },
 			]);
 		});
 
@@ -606,6 +771,28 @@ Content`,
 
 			const result = await packageManager.resolveExtensionSources([extPath]);
 			expect(result.extensions.some((r) => r.path === extPath && r.enabled)).toBe(true);
+		});
+
+		it("should skip and report cyclic local extension manifests", async () => {
+			const firstDir = join(tempDir, "first-cycle-package");
+			const secondDir = join(tempDir, "second-cycle-package");
+			mkdirSync(firstDir);
+			mkdirSync(secondDir);
+			writeFileSync(
+				join(firstDir, "package.json"),
+				JSON.stringify({ pi: { extensions: ["../second-cycle-package"] } }),
+			);
+			writeFileSync(
+				join(secondDir, "package.json"),
+				JSON.stringify({ pi: { extensions: ["../first-cycle-package"] } }),
+			);
+
+			const result = await packageManager.resolveExtensionSources([firstDir]);
+
+			expect(result.extensions).toEqual([]);
+			expect(result.resolutionErrors).toEqual([
+				{ path: join(secondDir, "package.json"), error: expect.stringContaining("cycle") },
+			]);
 		});
 
 		it("should handle directories with pi manifest", async () => {

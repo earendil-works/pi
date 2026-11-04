@@ -17,10 +17,11 @@ import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { type McpServerConfig, McpServerRegistry, validateMcpServerConfig } from "../mcp-servers.ts";
-import { readPiManifest } from "../pi-manifest.ts";
+import type { PackageResolutionError } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { time } from "../timings.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
+import { discoverExtensionDirectoryContents, discoverExtensionsInDir } from "./discovery.ts";
 import type {
 	EntryRenderer,
 	Extension,
@@ -745,95 +746,6 @@ export async function loadExtensionsCached(
 	return loadExtensionsInternal(paths, cwd, eventBus, runtime, true);
 }
 
-function isExtensionFile(name: string): boolean {
-	return name.endsWith(".ts") || name.endsWith(".js");
-}
-
-/**
- * Resolve extension entry points from a directory.
- *
- * Checks for:
- * 1. package.json with "pi.extensions" field -> returns declared paths
- * 2. index.ts or index.js -> returns the index file
- *
- * Returns resolved paths or null if no entry points found.
- */
-function resolveExtensionEntries(dir: string): string[] | null {
-	// Check for package.json with "pi" field first
-	const packageJsonPath = path.join(dir, "package.json");
-	if (fs.existsSync(packageJsonPath)) {
-		const manifest = readPiManifest(packageJsonPath);
-		if (manifest?.extensions?.length) {
-			const entries: string[] = [];
-			for (const extPath of manifest.extensions) {
-				const resolvedExtPath = path.resolve(dir, extPath);
-				if (fs.existsSync(resolvedExtPath)) {
-					entries.push(resolvedExtPath);
-				}
-			}
-			if (entries.length > 0) {
-				return entries;
-			}
-		}
-	}
-
-	// Check for index.ts or index.js
-	const indexTs = path.join(dir, "index.ts");
-	const indexJs = path.join(dir, "index.js");
-	if (fs.existsSync(indexTs)) {
-		return [indexTs];
-	}
-	if (fs.existsSync(indexJs)) {
-		return [indexJs];
-	}
-
-	return null;
-}
-
-/**
- * Discover extensions in a directory.
- *
- * Discovery rules:
- * 1. Direct files: `extensions/*.ts` or `*.js` → load
- * 2. Subdirectory with index: `extensions/* /index.ts` or `index.js` → load
- * 3. Subdirectory with package.json: `extensions/* /package.json` with "pi" field → load what it declares
- *
- * No recursion beyond one level. Complex packages must use package.json manifest.
- */
-function discoverExtensionsInDir(dir: string): string[] {
-	if (!fs.existsSync(dir)) {
-		return [];
-	}
-
-	const discovered: string[] = [];
-
-	try {
-		const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-		for (const entry of entries) {
-			const entryPath = path.join(dir, entry.name);
-
-			// 1. Direct files: *.ts or *.js
-			if ((entry.isFile() || entry.isSymbolicLink()) && isExtensionFile(entry.name)) {
-				discovered.push(entryPath);
-				continue;
-			}
-
-			// 2 & 3. Subdirectories
-			if (entry.isDirectory() || entry.isSymbolicLink()) {
-				const entries = resolveExtensionEntries(entryPath);
-				if (entries) {
-					discovered.push(...entries);
-				}
-			}
-		}
-	} catch {
-		return [];
-	}
-
-	return discovered;
-}
-
 /**
  * Discover and load extensions from standard locations.
  */
@@ -847,6 +759,7 @@ export async function discoverAndLoadExtensions(
 	const resolvedAgentDir = resolvePath(agentDir);
 	const allPaths: string[] = [];
 	const seen = new Set<string>();
+	const resolutionErrors: PackageResolutionError[] = [];
 
 	const addPaths = (paths: string[]) => {
 		for (const p of paths) {
@@ -860,29 +773,24 @@ export async function discoverAndLoadExtensions(
 
 	// 1. Project-local extensions: cwd/${CONFIG_DIR_NAME}/extensions/
 	const localExtDir = path.join(resolvedCwd, CONFIG_DIR_NAME, "extensions");
-	addPaths(discoverExtensionsInDir(localExtDir));
+	addPaths(discoverExtensionDirectoryContents(localExtDir, resolutionErrors));
 
 	// 2. Global extensions: agentDir/extensions/
 	const globalExtDir = path.join(resolvedAgentDir, "extensions");
-	addPaths(discoverExtensionsInDir(globalExtDir));
+	addPaths(discoverExtensionDirectoryContents(globalExtDir, resolutionErrors));
 
 	// 3. Explicitly configured paths
 	for (const p of configuredPaths) {
 		const resolved = resolvePath(p, resolvedCwd, { normalizeUnicodeSpaces: true });
 		if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
-			// Check for package.json with pi manifest or index.ts
-			const entries = resolveExtensionEntries(resolved);
-			if (entries) {
-				addPaths(entries);
-				continue;
-			}
-			// No explicit entries - discover individual files in directory
-			addPaths(discoverExtensionsInDir(resolved));
+			addPaths(discoverExtensionsInDir(resolved, resolutionErrors));
 			continue;
 		}
 
 		addPaths([resolved]);
 	}
 
-	return loadExtensions(allPaths, resolvedCwd, eventBus);
+	const result = await loadExtensions(allPaths, resolvedCwd, eventBus);
+	result.errors.unshift(...resolutionErrors.map((error) => ({ path: error.path, error: error.message })));
+	return result;
 }

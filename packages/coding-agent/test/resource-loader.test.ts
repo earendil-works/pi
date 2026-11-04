@@ -168,20 +168,31 @@ describe("DefaultResourceLoader", () => {
 			expect(warnings[0].path).toBe("npm:broken-package");
 		});
 
-		it("should fail when an extension package manifest cannot be parsed", async () => {
+		it("should report and skip an extension package whose manifest cannot be parsed", async () => {
+			// Regression test for #9788: one broken package must not stop pi from launching.
 			const packageRoot = join(tempDir, "invalid-extension-package");
 			const extensionsDir = join(packageRoot, "extensions");
+			const userExtensionPath = join(agentDir, "extensions", "user-extension.ts");
 			mkdirSync(extensionsDir, { recursive: true });
+			mkdirSync(join(agentDir, "extensions"), { recursive: true });
 			writeFileSync(join(packageRoot, "package.json"), "{");
 			writeFileSync(join(extensionsDir, "package-extension.ts"), "export default function() {}");
+			mkdirSync(join(packageRoot, "prompts"));
+			writeFileSync(join(packageRoot, "prompts", "review.md"), "Review");
+			writeFileSync(userExtensionPath, "export default function() {}");
 
 			const loader = new DefaultResourceLoader({
 				cwd,
 				agentDir,
 				settingsManager: SettingsManager.inMemory({ packages: [packageRoot] }),
 			});
+			await loader.reload();
 
-			await expect(loader.reload()).rejects.toThrow(SyntaxError);
+			expect(loader.getExtensions().extensions.map((extension) => extension.path)).toEqual([userExtensionPath]);
+			expect(loader.getExtensions().errors).toEqual([
+				{ path: join(packageRoot, "package.json"), error: expect.stringContaining("Invalid package.json") },
+			]);
+			expect(loader.getPrompts().prompts).toEqual([]);
 		});
 
 		it("should discover skills from agentDir", async () => {
