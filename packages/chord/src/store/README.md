@@ -2,7 +2,8 @@
 
 The store (slice 6a): one per host, opened by the app over a backend (SQLite: `chord/sqlite/node`, Durable Objects'
 storage), holding the host's tables, persisted documents and outbox; one commit queue serializing only the commit
-step; eager table migrations; export and import.
+step, writing the commits queued behind a running step in one backend transaction (group commit, S18); eager table
+migrations; export and import.
 
 ## For apps (`index.ts`)
 

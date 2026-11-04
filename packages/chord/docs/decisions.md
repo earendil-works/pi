@@ -793,6 +793,21 @@ validation and copies the v2 kernel added around Delta.
   order, `tx.update` per row, chunks of N rows per commit; table version `migrating` → `ready`; a crash resumes the
   scan). Indexes are local and created after `ready` (**superseded in part** by "Index definitions are recorded": the
   index changes after `ready` are recorded).
+- **S18, group commit (owner, 2026-11-04):** the commits queued behind a running commit step form one group, which the
+  next turn of the commit queue admits at its entry and writes in one backend transaction: each commit keeps its own
+  step, seq and outbox commit, the metadata is written once, and after `COMMIT` memory follows commit by commit, each
+  adopted when memory stands at it, in queue order, before the next turn (S1 as for lone steps). Fewer transactions are
+  always good, and a remote SQLite backend would pay a round trip per statement. A series, an export or a batch apply
+  queued after an open group ends it (queue order stays); an empty commit never joins one. A refusal in a group (one
+  commit's own writes throw, D4) rolls the group back whole and its admitted commits run again one by one, not admitted
+  again, so only the refusing commit is refused; their live queries run again too (`chord.query.runs` counts both
+  attempts, the statements only the stored one). The ids the rolled-back attempt took stay unused (D3: the allocator
+  is shared with Durable's `mintId`, never rewound; so within a group's worth of ids of `Number.MAX_SAFE_INTEGER` a
+  refused group can exhaust the id space a little earlier, accepted). A group that would pass the end of the seq range
+  runs its commits one by one, so the ones that fit are stored. A backend failure while the store closes (a commit's,
+  a read's, a maintenance write's) still refuses the admitted commits after it. No savepoints (two statements per
+  commit, and Durable Objects refuse them) and no check/write split of Chord's writes (their counted conditional writes
+  are the checks).
 - **Blobs and derived data (owner, 2026-10-21):** blobs (artifact versions, uploads, sent files) are app layer: files in
   the session directory named by the hash of their content, never changed, written (tmp, fsync, rename) before the row
   or document that names them; any process may write one. Export copies `blobs/` with the store snapshot; import

@@ -130,6 +130,8 @@ export class QueryRefresh {
 	}
 
 	async #rerun(step: Step): Promise<readonly StoreWrite[]> {
+		// A grouped commit that rolled back applies again alone (store.ts): only the last application's runs count.
+		this.#runs.length = 0;
 		for (const query of this.#queries) this.#runs.push(await query.rerun(step, this.#context));
 		return NO_WRITES;
 	}
