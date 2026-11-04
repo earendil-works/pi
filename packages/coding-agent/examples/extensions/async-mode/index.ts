@@ -1,4 +1,4 @@
-// Optional semantic routing of complex, long tasks to session-owned background executors.
+// Optional busy-time side answers and main-agent background delegation.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
@@ -42,7 +42,7 @@ const RecordSchema = Type.Object({
 });
 const ModeSchema = Type.Object({ sessionId: Type.String(), enabled: Type.Boolean() });
 const ReceiptSchema = Type.Object({ eventId: Type.String() });
-const ownedTools = new Set(["async_start", "async_status", "async_cancel", "async_main_state", "async_dialogue_read"]);
+const ownedTools = new Set(["async_start", "async_status", "async_cancel", "async_dialogue_read"]);
 const coreTools = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
 
 export default function asyncMode(pi: ExtensionAPI): void {
@@ -52,33 +52,17 @@ export default function asyncMode(pi: ExtensionAPI): void {
 	let modeSelected = false;
 	let runtime: TaskRuntime | undefined;
 	const queued = new Set<string>();
-	const dialogue = registerDialogue(
-		pi,
-		() => enabled,
-		() =>
-			runtime
-				? [...runtime.records.values()].map(({ task, execution }) => ({
-						id: task.id,
-						kind: "background" as const,
-						goal: task.description,
-						status: execution.state.status,
-						result: execution.state.status === "running" ? undefined : execution.state.result,
-					}))
-				: [],
-		(id) => runtime?.cancel(id),
-	);
+	registerDialogue(pi, () => enabled);
 
 	function refreshTools(): void {
 		const names = pi.getActiveTools().filter((name) => !ownedTools.has(name));
-		if (enabled) names.push("async_start", "async_main_state", "async_dialogue_read");
-		else if (dialogue.needsMilestones()) names.push("async_main_state", "async_dialogue_read");
+		if (enabled) names.push("async_start", "async_dialogue_read");
 		if (enabled || (runtime?.records.size ?? 0) > 0) names.push("async_status", "async_cancel");
 		pi.setActiveTools(names);
 	}
 
 	function deliver(): void {
 		if (!alive || !runtime) return;
-		dialogue.dependenciesChanged();
 		for (const event of runtime.events()) {
 			if (queued.has(event.id)) continue;
 			queued.add(event.id);
@@ -160,7 +144,7 @@ export default function asyncMode(pi: ExtensionAPI): void {
 			refreshTools();
 			ctx.ui.notify(
 				enabled
-					? "Async mode enabled. New messages are routed automatically."
+					? "Async mode enabled. Questions are answered separately while the main agent is busy."
 					: "Default mode enabled. Accepted background tasks continue.",
 				"info",
 			);
