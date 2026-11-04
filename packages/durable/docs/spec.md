@@ -1439,6 +1439,7 @@ interface Tx {
   scanConversations(query: ConversationQuery, limit: number, cursor?: Cursor): Promise<Page<ConversationRecord, Cursor>>;
   scanEntries(query: EntryQuery, limit: number, cursor?: Cursor): Promise<Page<EntryRecord, Cursor>>;
   scanTasks(query: TaskQuery, limit: number, cursor?: Cursor): Promise<Page<TaskRecord<JsonValue, JsonValue, JsonValue>, Cursor>>;
+  submission(id: SubmissionId): Promise<SubmissionRecord | undefined>;
   submissionByRequest(conversationId: ConversationId, requestId: string): Promise<SubmissionRecord | undefined>;
 
   createConversation(options: { readonly ownership: ConversationOwnership }): Promise<ConversationRecord>;
