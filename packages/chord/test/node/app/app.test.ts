@@ -1,6 +1,7 @@
 // Tests of `startServer` (slice 13 §1, §4, §5): the layout and the start-data object, start and close, a server without
-// workers, two worker kinds, `applyChanges`, a required root failing, and export and import per address (documents,
-// tables and files round-trip; an existing address refused).
+// workers, two worker kinds, `applyChanges`, a required root failing, a worker entry that does not build, the base
+// marks (a worker base's inputs among them), and export and import per address (documents, tables and files
+// round-trip; an existing address refused).
 
 import { chmod, mkdir, readdir, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -108,6 +109,17 @@ describe("starting and closing", () => {
 		expect(String(error)).toContain('"@test/broken"');
 		// Closed: the data directory's lock is free again (a second start fails only on the same plugin).
 		expect(await rejection(testApp({ root, dataDir }))).toMatchObject({ name: "PluginError" });
+	});
+
+	it("rejects when a worker kind's entry does not build, with everything closed", async () => {
+		const base = await tempDir();
+		await writeFile(join(base, "worker.ts"), "export const broken = ;");
+		const worker = { kind: Project, entry: join(base, "worker.ts"), start: () => null, authorize: () => true };
+		const dataDir = join(base, "data");
+		expect(String(await rejection(testApp({ dataDir, workers: [worker] })))).toContain('Unexpected ";"');
+		// Closed: the data directory's lock is free again.
+		const { app } = await testApp({ dataDir });
+		await app.close(context);
 	});
 });
 
@@ -232,14 +244,22 @@ describe("applying changes one after another", () => {
 });
 
 describe("base code", () => {
-	it("marks base for a change of `base`'s files and directories and of a worker kind's entry", async () => {
+	it("marks base for a change of `base`'s files and directories and of a file a worker kind's base was built from", async () => {
 		const dir = await tempDir();
 		await mkdir(join(dir, "api"));
 		await writeFile(join(dir, "api", "v1.ts"), "export {};");
 		await writeFile(join(dir, "start.ts"), "export {};");
-		await writeFile(join(dir, "worker.ts"), "export {};");
+		await writeFile(join(dir, "worker.ts"), 'import "./shared.ts";');
+		await writeFile(join(dir, "shared.ts"), "export {};");
 		const worker = { kind: Project, entry: join(dir, "worker.ts"), start: () => null, authorize: () => true };
-		for (const changed of [join(dir, "api", "v1.ts"), join(dir, "start.ts"), join(dir, "worker.ts")]) {
+		// The entry last: its change drops its import.
+		const changes = [
+			join(dir, "api", "v1.ts"),
+			join(dir, "start.ts"),
+			join(dir, "shared.ts"),
+			join(dir, "worker.ts"),
+		];
+		for (const changed of changes) {
 			const { app } = await testApp({ base: [join(dir, "api"), join(dir, "start.ts")], workers: [worker] });
 			try {
 				expect(app.plugins.state.value.base).toBe(false);

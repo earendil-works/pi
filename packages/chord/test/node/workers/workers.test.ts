@@ -2,9 +2,11 @@
 // `connect`, the start timer covering only the start), failures that stay (a crash, a `fatal`, a failed start: no fork
 // for a new hold, holders `failed { waiting }`) until `retry` or a rollout, a running worker's lost link recovered from
 // once a minute, idle stops and `busy`, `stop` and its suspension, the per-address queue, `close`, the rollout step,
-// stale lock files cleared, and nothing kept of 1,000 addresses.
+// stale lock files cleared, nothing kept of 1,000 addresses, and the worker base (an edit after the component was
+// created runs in no worker; a broken entry rejects its creation).
 
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,10 +15,11 @@ import { describe, expect, it, vi } from "vitest";
 import { withAbortSignal } from "../../../src/context/index.ts";
 import { createHost } from "../../../src/host/index.ts";
 import { memoryLinkPair } from "../../../src/link/index.ts";
-import type { RolloutHost } from "../../../src/node/plugins/index.ts";
+import { createPlugins, type RolloutHost } from "../../../src/node/plugins/index.ts";
+import { createWorkers } from "../../../src/node/workers/index.ts";
 import { expectCollected } from "../../support.ts";
 import { Control } from "../fixtures/workers/control.ts";
-import { context, fleet, Notes, Session, type TestPrincipal, until } from "./support.ts";
+import { context, ENTRY, fleet, Notes, Server, Session, type TestPrincipal, until } from "./support.ts";
 
 /** A step's hosts as `[host, what]`. */
 function listed(hosts: readonly RolloutHost[]) {
@@ -52,6 +55,60 @@ describe("starts on demand", () => {
 		const notes = await server.get(Notes, { id: "S1" }, context);
 		expect(notes.label.value).toBe("S1 v1");
 		notes.release();
+	});
+});
+
+describe('the worker base (decision "Workers start from the base code the server booted with")', () => {
+	it("a worker started after an edit of the entry's imported source runs the code the component was created with", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "chord-workers-base-"));
+		// The fixture worker, plus a line naming its label and the file it was forked from.
+		await writeFile(join(dir, "label.ts"), 'export const label = "boot";\n');
+		await writeFile(
+			join(dir, "entry.ts"),
+			[
+				`import ${JSON.stringify(ENTRY)};`,
+				'import { label } from "./label.ts";',
+				'process.stdout.write(["label", label, process.argv[1]].join(" ") + "\\n");',
+			].join("\n"),
+		);
+		const { server, workers, output } = await fleet({ entry: join(dir, "entry.ts") });
+		expect(workers.inputs).toEqual(expect.arrayContaining([join(dir, "entry.ts"), join(dir, "label.ts"), ENTRY]));
+		// Half way through an edit: the source on disk no longer even parses.
+		await writeFile(join(dir, "label.ts"), "export const label = ;\n");
+		const notes = await server.get(Notes, { id: "S1" }, context);
+		expect(notes.label.value).toBe("S1 v1");
+		const line = output.find((each) => each.startsWith("session|S1 label "));
+		expect(line).toMatch(/^session\|S1 label boot /);
+		notes.release();
+		// The worker ran from the bundle's file, which the component's close removes.
+		const forkedFrom = line!.split(" ")[3]!;
+		expect(existsSync(forkedFrom)).toBe(true);
+		await workers.close(context);
+		expect(existsSync(forkedFrom)).toBe(false);
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	it("a broken entry rejects createWorkers: nothing is routed, the kind can be routed again", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "chord-workers-base-"));
+		await writeFile(join(dir, "entry.ts"), "export const broken = ;\n");
+		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		const plugins = createPlugins({ roots: [dir], kinds: {}, onError: () => {} }, context);
+		const options = {
+			kind: "worker",
+			entry: join(dir, "entry.ts"),
+			authorize: () => true,
+			principal: () => ({ kind: "server" }) as const,
+			start: () => ({}),
+			lock: (address: { readonly key: string }) => `chord-test:${dir}:${address.key}`,
+			plugins,
+			onError: () => {},
+		};
+		await expect(createWorkers(server, Session, options, context)).rejects.toThrow(/Unexpected ";"/);
+		const workers = await createWorkers(server, Session, { ...options, entry: ENTRY }, context);
+		await workers.close(context);
+		await server.close(context);
+		plugins.close();
+		await rm(dir, { recursive: true, force: true });
 	});
 });
 

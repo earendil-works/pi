@@ -36,7 +36,7 @@ const plugins = createPlugins(
 	context,
 );
 const server = createHost({ address: hostKind("server")(), principal: { kind: "server" }, onError: console.error });
-const workers = createWorkers(
+const workers = await createWorkers(
 	server,
 	Session,
 	{

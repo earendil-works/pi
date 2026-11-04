@@ -22,7 +22,7 @@ const plugins = createPlugins(
 
 // 1. The server, and its workers: one forked process per session, stopped after 300 ms without use.
 const server = createHost({ address: hostKind("server")(), principal: { kind: "server" }, onError: console.error });
-const workers = createWorkers(
+const workers = await createWorkers(
 	server,
 	Session,
 	{

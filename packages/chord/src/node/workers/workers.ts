@@ -3,6 +3,8 @@
 // `fatal` or a failed start leaves the address failed until `retry` or a rollout. A running worker's lost link is a
 // stop its holders start a new worker after, once a minute (decision "A lost worker link is recovered from").
 // Per address, a child's events are recorded on that child as they happen; starts and stops run one after another.
+// Every worker is forked from the kind's worker base, bundled when the component is created (decision "Workers start
+// from the base code the server booted with").
 
 import type { Context } from "../../context/index.ts";
 import { awaitWithContext, BACKGROUND_CONTEXT, withAbortSignal } from "../../context/index.ts";
@@ -15,6 +17,7 @@ import { Batch, type BatchError, Source } from "../../state/internal.ts";
 import type { Watchable } from "../../watch.ts";
 import type { Plugins, RolloutHost, RolloutStep } from "../plugins/plugins.ts";
 import type { PluginScript } from "../plugins/runtime.ts";
+import { buildWorkerBase, type WorkerBase } from "./base.ts";
 import { type CrossedError, type CrossedReport, type FromWorker, uncrossed, uncrossedReport } from "./control.ts";
 import { clearStaleLock } from "./lock.ts";
 import { type Exit, WorkerProcess } from "./process.ts";
@@ -23,7 +26,10 @@ import { type Exit, WorkerProcess } from "./process.ts";
 export type WorkersOptions<P extends Principal, K extends KindShape> = {
 	/** The facet kind its workers load (`"worker"`), shipped by the plugins component. */
 	readonly kind: string;
-	/** The worker's entry module (it calls `workerMain`), its Node flags and its environment. */
+	/**
+	 * The worker's entry module (it calls `workerMain`), bundled with the base code it imports when the component is
+	 * created; its Node flags (their `--conditions` resolve the bundle's imports too) and its environment.
+	 */
 	readonly entry: string;
 	readonly execArgv?: readonly string[];
 	readonly env?: Readonly<Record<string, string>>;
@@ -84,25 +90,31 @@ export type WorkersError =
 export interface Workers<K extends KindShape> {
 	/** Per address key its `WorkerState`; no entry when stopped or never started. A JSON watchable. */
 	readonly state: Watchable<Readonly<Record<string, WorkerState>>>;
+	/** The files its worker base was built from: the app's base code for its workers. */
+	readonly inputs: readonly string[];
 	/** Suspends `address` while it has holders (`RouteHandle.suspend`), then stops its worker. */
 	stop(address: Address<K>, context: Context): Promise<void>;
 	/** Clears `address`'s failure and suspension: it starts again now if held (`RouteHandle.retry`). */
 	retry(address: Address<K>, context: Context): Promise<void>;
 	/** A rollout step shipping the kind's current set to every worker, one result per worker (§4). */
 	step(name: string): RolloutStep;
-	/** Cancels starts, stops every worker; new starts reject `released/closed`. */
+	/** Cancels starts, stops every worker, removes the worker base's file; new starts reject `released/closed`. */
 	close(context: Context): Promise<void>;
 }
 
-/** Creates the workers component on `host`: it routes `Kind` itself (`host.route`, before `load`). */
-export function createWorkers<P extends Principal, N extends string, Q extends Params>(
+/**
+ * Bundles the kind's worker base, then creates the workers component on `host`: it routes `Kind` itself (`host.route`,
+ * before `load`). Rejects with esbuild's failure when the base does not build: the server does not start with it.
+ */
+export async function createWorkers<P extends Principal, N extends string, Q extends Params>(
 	host: Host<P>,
 	Kind: HostKind<N, Q>,
 	options: WorkersOptions<P, HostKind<N, Q>>,
 	context: Context,
-): Workers<HostKind<N, Q>> {
+): Promise<Workers<HostKind<N, Q>>> {
+	const base = await buildWorkerBase(options.entry, options.execArgv ?? []);
 	// Its addresses are `Address<HostKind<N, Q>>`, as the route hands them over.
-	const component = new WorkersComponent(options as unknown as WorkersOptions<Principal, HostKind>, context);
+	const component = new WorkersComponent(options as unknown as WorkersOptions<Principal, HostKind>, base, context);
 	const route = host.route(
 		Kind,
 		{
@@ -221,6 +233,7 @@ class WorkersComponent implements Workers<HostKind> {
 	readonly state: Watchable<Readonly<Record<string, WorkerState>>>;
 	readonly #state: WorkersState;
 	readonly #options: WorkersOptions<Principal, HostKind>;
+	readonly #base: WorkerBase;
 	readonly #addresses = new Map<string, Routed>();
 	/** Aborted at `close`: starts waiting in the app's `start` or for `started` end. */
 	readonly #closing = new AbortController();
@@ -230,12 +243,17 @@ class WorkersComponent implements Workers<HostKind> {
 	#routing = false;
 	#idleTimer: ReturnType<typeof setInterval> | undefined;
 
-	constructor(options: WorkersOptions<Principal, HostKind>, context: Context) {
+	constructor(options: WorkersOptions<Principal, HostKind>, base: WorkerBase, context: Context) {
 		this.#options = options;
+		this.#base = base;
 		this.#state = new WorkersState(this.#addresses, new Batch((error) => options.onError(error), undefined));
 		// Its value is a `Record<string, WorkerState>`.
 		this.state = this.#state as unknown as Watchable<Readonly<Record<string, WorkerState>>>;
 		this.#closeWith(context);
+	}
+
+	get inputs(): readonly string[] {
+		return this.#base.inputs;
 	}
 
 	/**
@@ -285,6 +303,8 @@ class WorkersComponent implements Workers<HostKind> {
 
 	async close(context: Context): Promise<void> {
 		if (!this.#closing.signal.aborted) this.#closing.abort(closed());
+		// Nothing forks once closing: running workers loaded their module already.
+		this.#base.remove();
 		clearInterval(this.#idleTimer);
 		this.#idleTimer = undefined;
 		// Each stop, then what its exit queued (the clear of a killed child's lock file).
@@ -415,8 +435,9 @@ class WorkersComponent implements Workers<HostKind> {
 		let child!: Child;
 		const process = new WorkerProcess(
 			{
-				entry: this.#options.entry,
-				...(this.#options.execArgv === undefined ? {} : { execArgv: this.#options.execArgv }),
+				entry: this.#base.file(),
+				// Stack traces name the base code's files; the app's flags come after (`--no-enable-source-maps` wins).
+				execArgv: ["--enable-source-maps", ...(this.#options.execArgv ?? [])],
 				...(this.#options.env === undefined ? {} : { env: this.#options.env }),
 				...(onOutput === undefined ? {} : { onOutput: (stream, chunk) => onOutput(address, stream, chunk) }),
 			},
