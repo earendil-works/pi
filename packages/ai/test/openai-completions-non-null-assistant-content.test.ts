@@ -12,7 +12,10 @@ const emptyUsage: Usage = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-const baseCompat: Omit<Required<OpenAICompletionsCompat>, "thinkingTokenBudgetField" | "vllmPriority"> & {
+const baseCompat: Omit<
+	Required<OpenAICompletionsCompat>,
+	"promptCacheKeyMode" | "thinkingTokenBudgetField" | "vllmPriority"
+> & {
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
 } = {
 	supportsStore: true,
