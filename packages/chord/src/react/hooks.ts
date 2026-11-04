@@ -1,7 +1,9 @@
 // React bindings (slice 11 §3, decision "Slice 11, P7"; p2's `useObject`, `useReadable`, `useRegistry`): a host in
-// context, references held for a component's life, and watchables read with `useSyncExternalStore`. A component
-// unmounted by a reload has not left (design §21): its releases are plain releases, presence is the app's. No
-// components, no styling.
+// context, references held for a component's life, watchables read with `useSyncExternalStore`, page state kept for
+// the host's life, and a plugin's messages in the host's language. A component unmounted by a reload has not left
+// (design §21): its releases are plain releases, presence is the app's. A component of a reloaded plugin is a new
+// function and remounts, its `useState` starting over; what must survive is page state (decision "Tutorial gaps" (1)).
+// No components, no styling.
 
 import {
 	createContext,
@@ -19,6 +21,8 @@ import type { Principal } from "../data/index.ts";
 import { canonicalJson } from "../data/principal.ts";
 import type { Held, Host, RefState } from "../host/index.ts";
 import type { Registry } from "../registries/index.ts";
+import { hostLanguage, type Messages, type Translator } from "../surfaces/index.ts";
+import { pageState } from "../surfaces/page-state.ts";
 import type { NativeWatchable, Watchable } from "../watch.ts";
 import { watchStore } from "./stores.ts";
 
@@ -76,4 +80,27 @@ export function useRegistry<C, V>(R: Registry<C, V>): V | undefined {
 /** The state of `ref` (loading, live, failed, ended), re-rendering on change; `undefined` without a reference. */
 export function useRefState(ref: { readonly state: NativeWatchable<RefState> } | undefined): RefState | undefined {
 	return useWatch(ref?.state);
+}
+
+/**
+ * A value the page keeps under `key` for its host's life, not the component's, with its setter (`useState`'s pair): a
+ * component remounted by a plugin reload, a new function, finds what it had; a new key starts at `initial`. Any value
+ * (it never crosses a link); gone with the page.
+ */
+export function usePageState<T>(key: string, initial: T): readonly [T, (value: T) => void] {
+	const state = pageState(useHost(), key, initial);
+	return [useSyncExternalStore(state.subscribe, state.read, state.read), state.set];
+}
+
+/**
+ * `messages` in the language of the component's host (the user's pick, else the device's, matched against the
+ * catalogs), with its locale; re-renders when the locale or a translation changes. Before the host follows a language
+ * (`startPage` does), `t` renders the first catalog and `locale` is `undefined`.
+ */
+export function useMessages<N extends string, M>(
+	messages: Messages<N, M>,
+): { readonly t: Translator<N, M>; readonly locale: string | undefined } {
+	const state = hostLanguage(useHost());
+	const language = useSyncExternalStore(state.subscribe, state.read, state.read);
+	return useMemo(() => ({ t: messages.in(language), locale: language?.locale }), [messages, language]);
 }

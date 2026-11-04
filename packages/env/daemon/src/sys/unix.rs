@@ -354,6 +354,47 @@ pub fn kill_tree(pid: u32) {
     }
 }
 
+/// The process group of a `process` program: what the program started there is killed once it exits.
+pub struct Group {
+    pid: u32,
+}
+
+/// The group of a program just started; `configure` already made it a process group of its own.
+pub fn group(child: &Child) -> io::Result<Group> {
+    Ok(Group { pid: child.id() })
+}
+
+impl Group {
+    /// Wait until the program has exited, leaving it unreaped: its pid, which is the group's id, names no other
+    /// process until it is reaped.
+    pub fn wait_for_exit(&self, child: &mut Child) -> io::Result<()> {
+        loop {
+            // SAFETY: a zeroed siginfo_t for waitid to fill; WNOWAIT leaves the program unreaped.
+            let waited = unsafe {
+                let mut info: libc::siginfo_t = std::mem::zeroed();
+                libc::waitid(
+                    libc::P_PID,
+                    child.id() as libc::id_t,
+                    &mut info,
+                    libc::WEXITED | libc::WNOWAIT,
+                )
+            };
+            if waited == 0 {
+                return Ok(());
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+    }
+
+    /// Kill what is left in the group, the program too if it still runs.
+    pub fn end(&self) {
+        kill_tree(self.pid);
+    }
+}
+
 /// A process killed by a signal has no exit code; report 128 + the signal, as the shell does.
 pub fn exit_code(status: ExitStatus) -> i64 {
     i64::from(
@@ -380,4 +421,46 @@ pub fn read_dir(path: &str) -> io::Result<std::fs::ReadDir> {
 /// Device and inode of `path`; the metadata already has them.
 pub fn path_identity(_path: &str, metadata: &Metadata, _follow: bool) -> (u64, u64) {
     identity(metadata)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn ending_a_group_kills_what_the_program_left_running() {
+        // A wrapper that starts a background process in its group, prints its pid and exits, as `npx` can.
+        let mut command = Command::new("/bin/sh");
+        command.stdout(Stdio::piped());
+        let script = "sleep 30 </dev/null >/dev/null 2>&1 & echo $!";
+        configure(
+            &mut command,
+            &["-c".to_string(), script.to_string()],
+            &Map::new(),
+            true,
+        );
+        let mut child = command.spawn().unwrap();
+        let group = group(&child).unwrap();
+        let mut stdout = String::new();
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut stdout)
+            .unwrap();
+        let sleeper: i32 = stdout.trim().parse().unwrap();
+        group.wait_for_exit(&mut child).unwrap();
+        group.end();
+        assert!(child.wait().unwrap().success());
+        // The killed sleeper is an orphan; it is gone once init has reaped it.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        // SAFETY: signal 0 only checks that the process exists.
+        while unsafe { libc::kill(sleeper, 0) } == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // SAFETY: as above.
+        assert_ne!(unsafe { libc::kill(sleeper, 0) }, 0);
+    }
 }

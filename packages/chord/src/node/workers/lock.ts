@@ -1,13 +1,14 @@
-// Process locks (slice 10 §3, Chord v1's `processLock`): one live worker per address. A lock is a listening socket the
+// Process locks (slice 10 §3): one live worker per address. A lock is a listening socket the
 // kernel owns for the holder's lifetime (an abstract socket on Linux and Android, a named pipe on Windows, a socket file
-// elsewhere), so there is no race between two would-be holders; a socket file a crashed holder left fails closed (the
-// error names it: a takeover would race another taker). A child finding the lock held waits
+// elsewhere), so there is no race between two would-be holders; a socket file a crashed holder left fails closed for a
+// taker (the error names it: a takeover would race another taker), and only the one process that starts the holders of
+// a name clears it (decision "Stale lock files are cleared by the starter"). A child finding the lock held waits
 // without polling: it connects to the holder's socket, which the holder never answers, and tries again when that
 // connection closes (the holder exited).
 
 import { createHash } from "node:crypto";
 import { unlinkSync } from "node:fs";
-import { lstat, mkdir } from "node:fs/promises";
+import { lstat, mkdir, unlink } from "node:fs/promises";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,13 +25,55 @@ export type LockAddress = { readonly kind: "abstract" | "pipe" | "file"; readonl
  * Throws what listening throws besides "in use", and for a stale socket file (macOS, the BSDs) an error naming it.
  */
 export async function processLock(name: string, context: Context): Promise<ProcessLock> {
+	return lockAt(await lockAddress(name), context);
+}
+
+/**
+ * Removes the socket file of the lock `name` when nobody accepts on it (a holder killed without its exit hooks left
+ * it); resolves with whether it did. Abstract sockets and named pipes end with their holder: nothing to clear. Only one
+ * process clears a name, one clear at a time: two clearers could both find it stale, one remove it, a new holder take
+ * it, and the other remove the new holder's file.
+ */
+export async function clearStaleLock(name: string, context: Context): Promise<boolean> {
+	return clearStaleLockAt(await lockAddress(name), context);
+}
+
+/** Where the lock `name` lives on this platform. */
+async function lockAddress(name: string): Promise<LockAddress> {
 	const key = createHash("sha256").update(name).digest("hex").slice(0, 32);
-	if (process.platform === "win32")
-		return lockAt({ kind: "pipe", address: `\\\\.\\pipe\\chord-lock-${key}` }, context);
+	if (process.platform === "win32") return { kind: "pipe", address: `\\\\.\\pipe\\chord-lock-${key}` };
 	if (process.platform === "linux" || process.platform === "android") {
-		return lockAt({ kind: "abstract", address: `\0chord-lock-${key}` }, context);
+		return { kind: "abstract", address: `\0chord-lock-${key}` };
 	}
-	return lockAt({ kind: "file", address: await socketPath(`chord-lock-${key}.sock`) }, context);
+	return { kind: "file", address: await socketPath(`chord-lock-${key}.sock`) };
+}
+
+/** `clearStaleLock` at `lock`: a socket file nobody accepts on is removed. */
+export async function clearStaleLockAt(lock: LockAddress, context: Context): Promise<boolean> {
+	context.abortSignal?.throwIfAborted();
+	if (lock.kind !== "file" || !(await nobodyAccepts(lock.address))) return false;
+	try {
+		await unlink(lock.address);
+		return true;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+		throw error;
+	}
+}
+
+/** A connect's errors that mean nobody accepts on the path: a socket file nobody listens on, or no socket there. */
+const NOBODY_ACCEPTS = new Set(["ECONNREFUSED", "ENOTSOCK"]);
+
+/** Whether the path `address` exists and nobody accepts on it. */
+function nobodyAccepts(address: string): Promise<boolean> {
+	return new Promise<boolean>((resolve) => {
+		const socket = connect(address);
+		socket.once("connect", () => {
+			socket.destroy();
+			resolve(false);
+		});
+		socket.once("error", (error: NodeJS.ErrnoException) => resolve(NOBODY_ACCEPTS.has(error.code ?? "")));
+	});
 }
 
 /**
@@ -115,7 +158,8 @@ function waitWhileHeld(address: string, context: Context): Promise<boolean> {
 			connected = true;
 		});
 		socket.on("error", (error: NodeJS.ErrnoException) => {
-			if (!connected && error.code === "ECONNREFUSED") settle(false);
+			// A regular file at the path is ENOTSOCK on macOS (ECONNREFUSED on Linux); retrying would spin.
+			if (!connected && NOBODY_ACCEPTS.has(error.code ?? "")) settle(false);
 		});
 		socket.once("close", () => settle(true));
 	});

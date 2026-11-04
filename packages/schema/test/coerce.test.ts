@@ -201,6 +201,20 @@ describe("pass 2: TypeBox's conversion rules on JSON Schema", () => {
 		expect(coerce(schema, { item: { id: "7" } })).toEqual({ item: { id: 7 } });
 	});
 
+	it("follows a relative $ref from the root $id on the first call of a schema with $dynamicRef", () => {
+		const schema = {
+			$id: "https://example.com/root.json",
+			$dynamicAnchor: "node",
+			type: "object",
+			properties: { count: { $ref: "defs/n.json" }, children: { type: "array", items: { $dynamicRef: "#node" } } },
+		};
+		const options = { coerce: true, schemas: { "https://example.com/defs/n.json": { type: "integer" } } } as const;
+		expect(compile(schema, options).coerce({ count: "2" })).toEqual({ count: 2 });
+		const validator = compile(schema, options);
+		expect(validator.parse({ count: "2" })).toEqual({ ok: true, value: { count: 2 } });
+		expect(validator.parse({ count: "2" })).toEqual({ ok: true, value: { count: 2 } });
+	});
+
 	it("converts patternProperties and additionalProperties", () => {
 		const schema = {
 			type: "object",

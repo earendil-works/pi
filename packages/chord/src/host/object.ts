@@ -21,6 +21,7 @@ import type { JsonValue } from "../json.ts";
 import { CHAIN } from "../link/internal.ts";
 import type { RegistryContribution } from "../registries/internal.ts";
 import type { DeriveSource } from "../state/internal.ts";
+import { LiveQueries } from "../store/live-query.ts";
 import { refusal } from "./adapted.ts";
 import { Attempt, type PinnedKey, type Self } from "./attempt.ts";
 import type { Caller } from "./ctx.ts";
@@ -108,7 +109,7 @@ export type ReloadFate = "swap" | "restart" | "retry";
 /**
  * A pure swap in progress (slice 7b §5): the attempt it replaces (its calls run on, then it is sealed), whether the new
  * attempt parked (holders then see what it shows, and the old one's contributions left the tables), and the end of
- * the swap (its new attempt live, parked or failed, or the object ended), which calls arriving meanwhile wait for.
+ * the swap (its new attempt live, parked or failed, or the object ended), which the old attempt's retirement waits for.
  */
 type Swap = { readonly old: Attempt; parked: boolean; readonly done: PromiseWithResolvers<void> };
 
@@ -223,6 +224,10 @@ export class ChordObject implements Target {
 	#wakes: RetryWakes | undefined;
 	/** Its swapped-out attempts while they retire (bounded by `closeTimeout`); made by the first swap. */
 	#retiring: Map<Attempt, Promise<void>> | undefined;
+	/** Its live queries by table, across its attempts; made by the first table it declares. */
+	#liveQueries: LiveQueries | undefined;
+	/** Resolves at its next change of state, for calls waiting at the gate; made by the first one. */
+	#changed: PromiseWithResolvers<void> | undefined;
 
 	constructor(
 		host: AnyHost,
@@ -376,11 +381,10 @@ export class ChordObject implements Target {
 
 	/**
 	 * Calls a method of the live object for `caller`, bound at `version` (an older one maps its arguments and result,
-	 * Q10). While a reload's pure swap runs, the call waits for its new attempt (the gate), bounded by `readyTimeout`.
+	 * Q10). While an attempt activates (a reload's swap or restart), the call waits for its outcome (the gate).
 	 */
 	async call(method: string, args: unknown, context: Context, caller: Caller, version: number): Promise<unknown> {
-		const state = this.#state;
-		if (state.kind === "activating" && state.swap !== undefined) await this.#gate(state.swap, context);
+		if (this.#state.kind === "activating") await this.#gate(context);
 		return this.#live().call(method, args, context, caller, version);
 	}
 
@@ -461,11 +465,34 @@ export class ChordObject implements Target {
 		return this.#live().keyMapping(member, version);
 	}
 
-	/** Waits until `swap` ended (its new attempt live, parked, failed, or the object ended). */
-	async #gate(swap: Swap, context: Context): Promise<void> {
-		// No timer of its own: the swap ends when its new attempt is live, parked or failed, and `readyTimeout` bounds
-		// the new attempt's own steps (Fable).
-		await awaitWithContext(swap.done.promise, context);
+	/**
+	 * Waits while an attempt activates until the object is live, failed or ended (`#live` then calls or throws);
+	 * rejects with the cause once the attempt parks on a failed dependency (`failed { waiting }`), and with
+	 * `unavailable/park_timeout` after `readyTimeout`, as a call parked on a reference. A hold over a link stays bound
+	 * while the old instance still changes (a swap, a restart's drain), so its consumer sees `live` and sends calls
+	 * that arrive here: they wait for the new attempt, never `not_ready` (decision "Swaps: dependents first").
+	 */
+	async #gate(context: Context): Promise<void> {
+		const { ready } = this.host.timeouts;
+		const due = Date.now() + ready;
+		for (;;) {
+			const state = this.#state;
+			if (state.kind !== "activating") return;
+			if (state.shown.kind === "failed") throw state.shown.cause.error;
+			const left = due - Date.now();
+			if (left <= 0) {
+				const message = `${this.label}: a call waited ${ready} ms for its object to go live`;
+				throw new ChordError({ code: "unavailable", reason: "park_timeout", message });
+			}
+			this.#changed ??= Promise.withResolvers();
+			const timer = Promise.withResolvers<void>();
+			const timeout = setTimeout(timer.resolve, left);
+			try {
+				await awaitWithContext(Promise.race([this.#changed.promise, timer.promise]), context);
+			} finally {
+				clearTimeout(timeout);
+			}
+		}
 	}
 
 	/** The keyed member `member` of the live object: its ultimate slot (slice 6a §12). */
@@ -543,6 +570,12 @@ export class ChordObject implements Target {
 	 */
 	claimTable(table: string): void {
 		this.host.store!.claims.table(table, this);
+	}
+
+	/** Its live queries by table (`self.query`), across its attempts: what its commits writing a table re-run. */
+	get liveQueries(): LiveQueries {
+		this.#liveQueries ??= new LiveQueries();
+		return this.#liveQueries;
 	}
 
 	/** Claims this object's documents in `namespace` of the host's store, as `claimTable`. */
@@ -1089,6 +1122,7 @@ export class ChordObject implements Target {
 
 	/** Tells every holder that the state changed: references first follow what it shows now (`followed`). */
 	#notify(): void {
+		this.#wakeGate();
 		const holders = [...this.#holders];
 		// In one batch when some reference's members move (one frame each, a diamond over several sees one change); no
 		// commit at all for references that used none (activation churn).
@@ -1098,6 +1132,12 @@ export class ChordObject implements Target {
 		if (holders.some((holder) => holder.following)) this.host.batch.within(retarget, this.#context);
 		else retarget();
 		for (const holder of holders) holder.moved();
+	}
+
+	/** Calls waiting at the gate check the state again. */
+	#wakeGate(): void {
+		this.#changed?.resolve();
+		this.#changed = undefined;
 	}
 
 	/**
@@ -1116,6 +1156,7 @@ export class ChordObject implements Target {
 		// Its swapped-out attempts end before its teardown completes (they share its documents).
 		const previous = retiring === undefined ? endings : Promise.all([endings, retiring]).then(() => {});
 		this.#state = { kind: "ended", ended: { kind: "ended", error } };
+		this.#wakeGate();
 		for (const records of this.#jobs.values()) records.end(error);
 		if (this.#flush !== undefined) clearTimeout(this.#flush.timer);
 		this.#flush = undefined;

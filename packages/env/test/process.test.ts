@@ -246,13 +246,36 @@ describe("ending", () => {
 		expect(await waitUntilGone(child)).toBe(true);
 	});
 
-	// On Windows the daemon's pipe ends are overlapped; a writer blocked in the standard library's write could not be
-	// cancelled, so it kept stdin open, still writing, for as long as a descendant held it.
-	it("stops writing to stdin a descendant still holds once the program has exited", async () => {
+	it("kills what the program started when it exits", async () => {
 		const { connection, cwd } = connect();
-		const count = join(cwd, "count.txt");
-		// The descendant inherits stdin and reads it only after the program exited, until its end.
-		const descendant = `
+		const stdout = collector();
+		const program = await openProcess(connection, {
+			cwd,
+			// A wrapper that exits and leaves the server it started running, as npx can once stdin closes. On Windows the
+			// server is detached, so libuv's own job object does not take it down with the wrapper: only the daemon's can.
+			argv: node(`
+				const child = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore", detached: ${process.platform === "win32"} });
+				process.stdout.write(child.pid + "\\n", () => process.exit(0));
+			`),
+			onStdout: stdout.onData,
+		});
+		expect(await program.exited).toBe(0);
+		const child = Number.parseInt(stdout.bytes().toString("utf8"), 10);
+		expect(Number.isInteger(child)).toBe(true);
+		expect(await waitUntilGone(child)).toBe(true);
+	});
+
+	// On Windows the daemon's pipe ends are overlapped; a writer blocked in the standard library's write could not be
+	// cancelled, so it kept stdin open, still writing, for as long as a descendant held it. There a descendant now dies
+	// with the program's job object; only one started before the program was assigned to the job (see the protocol)
+	// can still hold stdin, which a test cannot arrange reliably. On Unix the descendant leaves the process group.
+	it.skipIf(process.platform === "win32")(
+		"stops writing to stdin a descendant still holds once the program has exited",
+		async () => {
+			const { connection, cwd } = connect();
+			const count = join(cwd, "count.txt");
+			// The descendant inherits stdin and reads it only after the program exited, until its end.
+			const descendant = `
 			setTimeout(() => {
 				let length = 0;
 				process.stdin.on("data", (chunk) => { length += chunk.length; });
@@ -260,22 +283,24 @@ describe("ending", () => {
 			}, 1500);
 			setTimeout(() => process.exit(1), 15000);
 		`;
-		const program = await openProcess(connection, {
-			cwd,
-			argv: node(`
+			const program = await openProcess(connection, {
+				cwd,
+				argv: node(`
 				require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: ["inherit", "ignore", "ignore"], detached: true }).unref();
 				setTimeout(() => process.exit(0), 300);
 			`),
-			onStdout: () => {},
-		});
-		// Far more than the pipe holds: the writer blocks until it is stopped.
-		program.write(new Uint8Array(4 * 1024 * 1024));
-		expect(await program.exited).toBe(0);
-		const deadline = Date.now() + 8000;
-		while (!existsSync(count) && Date.now() < deadline) await new Promise((done) => setTimeout(done, 50));
-		const read = Number(existsSync(count) ? readFileSync(count, "utf8") : Number.NaN);
-		expect(read).toBeLessThan(4 * 1024 * 1024);
-	}, 20_000);
+				onStdout: () => {},
+			});
+			// Far more than the pipe holds: the writer blocks until it is stopped.
+			program.write(new Uint8Array(4 * 1024 * 1024));
+			expect(await program.exited).toBe(0);
+			const deadline = Date.now() + 8000;
+			while (!existsSync(count) && Date.now() < deadline) await new Promise((done) => setTimeout(done, 50));
+			const read = Number(existsSync(count) ? readFileSync(count, "utf8") : Number.NaN);
+			expect(read).toBeLessThan(4 * 1024 * 1024);
+		},
+		20_000,
+	);
 
 	it("kills the program when the connection closes", async () => {
 		const { connection, cwd } = connect();

@@ -9,21 +9,21 @@ Chord builds applications out of **objects** that live in several processes (a s
 - Every call has a **principal**: links stamp it, the app types it, and objects are kept per principal key.
 - A **reload** swaps a plugin's code inside the running app, rolled out host by host: hosts keep running, data, connections and running work survive where they can.
 
-The design, the rule book for all of this, is [docs/design.md](docs/design.md). Chord v1, which p2 still runs on, stays available as `@earendil-works/chord/old` until p2 moves to v2 ([docs/old](docs/old/README.md)).
+The design, the rule book for all of this, is [docs/design.md](docs/design.md).
 
 ## Entry points
 
 | Import | Contents | Runs in |
 |--------|----------|---------|
-| `@earendil-works/chord` | Contracts (`local`, `remote`, `method`, the schema builders), errors (`ChordError`, `isChordError`), hosts and facets (`createHost`, `defineFacet`), documents (`defineState`), derives and natives (`constant`, `mapShared`), routines and jobs (`defineJob`), links (`memoryLinkPair`, `ipcLink`, `webSocketLink`), registries (`defineRegistry`), the store (`openStore`, `defineTable`, queries, export and import), and the client surfaces' shared part (`Themes`, `ThemeChoice`, `WebScripts`, `TuiScripts`). | Node and browsers |
+| `@earendil-works/chord` | Contracts (`local`, `remote`, `method`, the schema builders), errors (`ChordError`, `isChordError`), hosts and facets (`createHost`, `defineFacet`), documents (`defineState`), derives and natives (`constant`, `mapShared`), routines and jobs (`defineJob`), links (`memoryLinkPair`, `ipcLink`, `webSocketLink`), registries (`defineRegistry`), the store (`openStore`, `defineTable`, queries, export and import), and the client surfaces' shared part (`Themes`, `ThemeChoice`, `WebScripts`, `TuiScripts`, messages and languages: `defineMessages`, `Translations`, `LocaleChoice`, `formatTime`, `formatNumber`). | Node and browsers |
 | `@earendil-works/chord/http` | HTTP: a Web-standard `fetch` handler (`createHttp`) built from the routes, wraps and sockets plugins contribute to the registry `Http`, authenticators (`Authenticators`), responses as descriptions, a security baseline on by default, Chord's Node listener and `nodeRequest`, the links endpoint. | Node |
 | `@earendil-works/chord/workers` | Workers: `createWorkers` runs a forked worker per address of a host kind, started on demand and stopped when idle; `workerMain` is a worker's entry; `processLock`. | Node |
 | `@earendil-works/chord/plugins` | Plugins: discovery, builds with esbuild (`buildFacet`), evaluation, the watcher, rollouts, `createPlugins`, `installPlugin`, `testPlugin`, `pluginFile`. | Node |
 | `@earendil-works/chord/plugins/runtime` | `createPluginRuntime`: loads built plugins without esbuild (a worker's side). | Node |
 | `@earendil-works/chord/app` | The app kit: `startServer`, `startWorker`, the start-data objects, sessions and the owner's sign-in, device pairing, files, export and import per address, optional plugins (users, invites, ephemeral login). | Node |
 | `@earendil-works/chord/surfaces` | The client surfaces' server side: `webSurface` (base bundle, plugin scripts, the page) and `tuiSurface` (the terminal surface). | Node |
-| `@earendil-works/chord/web` | The web surface's browser side: `startPage` in the app's web entry, `followThemes`. | Browsers |
-| `@earendil-works/chord/react` | Optional React bindings: `HostProvider`, `useHold`, `useWatch`, `useRefState`, `useRegistry`, `watchStore`. | Browsers |
+| `@earendil-works/chord/web` | The web surface's browser side: `startPage` in the app's web entry, `followThemes`, `followLanguage`. | Browsers |
+| `@earendil-works/chord/react` | Optional React bindings: `HostProvider`, `useHold`, `useWatch`, `useRefState`, `useRegistry`, `usePageState`, `useMessages`, `watchStore`. | Browsers |
 | `@earendil-works/chord/tui` | The terminal surface's sandbox side: `startTerminalRuntime` in the app's terminal entry, `BridgeTerminal`, `TerminalTheme`, `TuiScope`. | Node (sandboxed) |
 | `@earendil-works/chord/tui/launcher` | The terminal launcher, the trusted side of a terminal client: `startTerminal`, `requireSandboxNode`. | Node |
 | `@earendil-works/chord/context` | Explicit cancellation, telemetry, and invocation values: `BACKGROUND_CONTEXT`, `withCancel`, `withAbortSignal`, `withoutAbortSignal`, `withTelemetry`, `traceIn`, `withContextValue`, `awaitWithContext`. | Node and browsers |
@@ -35,7 +35,6 @@ The design, the rule book for all of this, is [docs/design.md](docs/design.md). 
 | `@earendil-works/chord/sqlite` | Portable `SqliteDatabase`, `SqliteExecutor`, and `SqliteValue`, atomic `applySqliteMigrations(database, migrations, { table })`, and `validateSqliteSchemaPrefix`. The metadata table must be a valid, non-reserved SQLite identifier; migration versions start at 1 and are contiguous. | Any SQLite adapter |
 | `@earendil-works/chord/sqlite/node` | `NodeSqliteDatabase`, `openNodeSqliteDatabase`, and `NodeSqliteDatabaseOptions`. | Node |
 | `@earendil-works/chord/sqlite/cloudflare` | `DurableObjectSqliteDatabase` and the structural `DurableObjectSqliteStorage` binding type. | Cloudflare Durable Objects |
-| `@earendil-works/chord/old`, `@earendil-works/chord/old/node` | Chord v1, unchanged, kept for p2 until it runs on v2 ([docs/old](docs/old/README.md)). | Node and browsers; `/old/node` Node |
 
 `esbuild` (for `/plugins` and `/surfaces`), `ws` (for `/http` and `/tui/launcher`) and `react` (for `/react`) are optional peer dependencies, imported only there; `/app` uses all but `react`.
 
@@ -77,7 +76,6 @@ await host.close(context);
 - [Plugins and hosts](docs/guide-plugins-hosts/book.md): a tutorial building a notes app with plugins, HTTP and workers; [plugin authoring](docs/plugin-authoring.md): the guide for agents writing plugins.
 - [Examples](test/examples/): runnable references, one topic each. Run from `packages/chord`: `node --conditions=source --experimental-strip-types test/examples/01-objects.ts`.
 - Each layer's README in `src/*/README.md` and `src/node/*/README.md`; the [delta guide](src/delta/README.md): ownership, lifecycle, operation, and replica contracts of `@earendil-works/chord/delta`.
-- [Chord v1](docs/old/README.md) (`@earendil-works/chord/old`): its tutorial, usage guide and specification.
 
 ## Explicit Context telemetry
 

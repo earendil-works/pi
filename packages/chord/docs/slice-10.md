@@ -14,7 +14,7 @@ Read in full before writing code: this spec; `decisions.md`; `design.md` (§3 ho
 `src/node/plugins/README.md`; the 7b brief `slice-7b/book.md` (chapters "Assets and Files", "HTTP", "A Mini p2
 from Chord"); p2's `src/hosts/server.ts`, `src/runtime/server.ts`, `src/hosts/worker.ts`, `src/hosts/socket-limits.ts`,
 `src/hosts/principals.ts`, `plugins/files/server.ts`, `plugins/terminals/server.ts`, `plugins/radius/server.ts`; Chord
-v1's `src/old/manager.ts` (`processLock`, `forkDriver`, `createHostManager`, `childControl`).
+v1's `src/manager.ts` (`processLock`, `forkDriver`, `createHostManager`, `childControl`; v1 has since been deleted).
 
 ## 1. What p2 has, and what moves into Chord
 
@@ -144,11 +144,13 @@ await workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   run during its `load`. The start timer (60 s from the fork) covers fork, lock and connect only (Q4): past it the tree is
   killed and the start fails. `ready` (after the app's function returned, carrying the idle state and its load report) sets `state` to
   `running` and lets idle stops begin; a `load` that never ends shows `starting` until `stop`.
-- **Workers never restart by themselves** (R2): a crash (an exit nobody asked for), a `fatal`, a link lost while its
-  child lives, or a failed start (`start` threw, the start timer, a lock not taken in time) leaves the address `failed`
-  with its error (`worker_failed` reported once). A link lost while its child lives (the heartbeat after a blocked
-  event loop, a protocol error) starts the stop: the grace (5 s), then the tree is killed; its exit is the crash ("link
-  lost"). `resolve` of a failed address rejects at once with that error; its holders and new holds see `failed {
+- **Workers never restart by themselves** (R2): a crash (an exit nobody asked for), a `fatal`, or a failed start
+  (`start` threw, the start timer, a lock not taken in time) leaves the address `failed` with its error
+  (`worker_failed` reported once). A link lost while its child lives (the heartbeat after a blocked event loop, a
+  protocol error, the child closing its own link) starts the stop: the grace (5 s), then the tree is killed. After
+  `ready` that exit is no failure (decision "A lost worker link is recovered from", 2026-11-03): `worker_link_lost`
+  is reported and the held route resolves again, a new worker; a second within a minute of the address's last
+  recovery fails it (`worker lost its link`), as does one before `ready`. `resolve` of a failed address rejects at once with that error; its holders and new holds see `failed {
   waiting }` with it as cause (Q1) and stay on the address's path, nothing forks. `workers.retry(address)`
   (`RouteHandle.retry`) or a rollout reaching workers clears it (Q2, §4). An idle stop is no failure: the next hold
   starts the worker on demand.
@@ -186,7 +188,8 @@ await workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   message, code?, reason? }`.
 - **Errors** (`onError`, `WorkersError`, which includes `BatchError` for a `state` watch listener that throws): `worker_failed { address, error, stderrTail? }` (private),
   `authorize_failed { address, error }` (a throwing `authorize`: the hold is refused `forbidden`), `worker_exited {
-  address, code, signal }` (only for an exit nobody asked for: not after a stop or a start the component failed).
+  address, code, signal }` (only for an exit nobody asked for: not after a stop or a start the component failed),
+  `worker_link_lost { address, error }` (a running worker's lost link recovered from).
 
 ### Plugins in workers (D11)
 

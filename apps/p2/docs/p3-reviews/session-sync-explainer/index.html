@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>One Session, Many Stores: exporting and syncing a p3 session</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A discussion book · p3 session data · 2026-10-21</div>
+  <h1>Many<br>Stores</h1>
+  <p class="subtitle">How a session whose plugins keep their own SQLite files can be exported, imported and continued on another machine without coming apart</p>
+  <div class="cover-stats"><div class="stat"><b>4</b><span>kinds of storage in one session directory</span></div><div class="stat"><b>1</b><span>position counter per session, shared by all stores</span></div><div class="stat"><b>54 B</b><span>changeset of a two-row SQL UPDATE (measured, Node 24)</span></div><div class="stat"><b>0</b><span>Chord changes beyond a wrappable storage</span></div></div>
+  <div class="cover-note"><p>A proposal for discussion, not a decision. Written for the owner after the discussion of 2026-10-21 (option E in
+<code>apps/p2/docs/p3-reviews/session-data-scenarios.md</code>). Assumes the open proposals P1 (a session is self-contained)
+and P3 (persisted documents only in input-less <code>local</code> objects). The SQLite changeset behaviour was checked on
+slayer with Node 24.4.1 (<code>node:sqlite</code>); everything else is design. Notes marked <em>review</em> are open points.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#holds">I. What a Session Holds</a></li>
+<li><a href="#easy">II. The Easy Cases</a></li>
+<li><a href="#problem">III. Two Stores, No Common Order</a></li>
+<li><a href="#counter">IV. One Counter for the Session</a></li>
+<li><a href="#sqlite">V. Capturing a SQLite Change</a></li>
+<li><a href="#crashes">VI. Crashes</a></li>
+<li><a href="#kinds">VII. What Each Store Needs, and What Chord Provides</a></li>
+<li><a href="#open-questions">Open Questions</a></li>
+<li><a href="#glossary">Appendix A: Glossary</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Mario works in session S1 on his laptop. The agent edits files, and a plugin called <strong>file-history</strong> remembers every
+edit: which file, which entry of the conversation made it, the content before and after. It keeps those rows in its
+own SQLite database, <code>history.sqlite</code>, because it needs SQL: &quot;every version of <code>src/app.ts</code>&quot;, &quot;every file the last
+turn touched&quot;, &quot;the directory <code>a/</code> was renamed to <code>b/</code>, update ten thousand rows&quot;.</p>
+<p>In the evening Mario wants to continue S1 on his desktop. Or he exports S1 to a file and imports it on another p3
+instance. Either way the desktop must end up with the conversation (Durable), the plugins&#39; documents (Chord), the
+artifact contents (blobs) and <code>history.sqlite</code>, and all four must agree with each other. A row in <code>history.sqlite</code>
+says &quot;entry 812 made this edit&quot;; entry 812 must exist on the desktop and be the same entry.</p>
+<p>Copying files does not do that. A live SQLite file copied while it is written is not a consistent database, and
+<code>session.sqlite</code> and <code>history.sqlite</code> copied a moment apart do not agree with each other. Shipping only the
+conversation and rebuilding the rest works for indexes, not for <code>history.sqlite</code>: its rows exist nowhere else.</p>
+<h3 id="seven-things-to-know">Seven things to know</h3>
+<ol class="findings">
+<li><strong>A session is a directory of stores.</strong> The log (<code>session.sqlite</code>), blobs, plugin databases and derived caches all
+live in <code>sessions/S1/</code>.</li>
+<li><strong>Immutable and derived data are easy.</strong> Blobs are written before the document that names them; derived data is
+rebuilt. Export and import need nothing else for them.</li>
+<li><strong>Mutable plugin stores are the problem.</strong> Two stores changing side by side can arrive on another machine at
+different points in time, and then they disagree.</li>
+<li><strong>One position counter fixes the order.</strong> Every change in every store of the session takes the next position from
+one counter. Positions say what happened before what, across stores.</li>
+<li><strong>Each store records its own changes in its own transaction.</strong> The change and its outbox record commit together,
+so a crash can never lose one without the other.</li>
+<li><strong>SQLite can record its own changes.</strong> Its session extension turns any SQL write into a compact changeset of rows,
+which another database applies. A plugin writes plain SQL.</li>
+<li><strong>Chord only provides a wrappable storage.</strong> The counter, the outboxes, the batches and the store kinds are app
+layer (p3&#39;s sync layer).</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>A <strong>store</strong> is one place where a session keeps data: Durable&#39;s and Chord&#39;s storage (<code>session.sqlite</code>), the blob
+directory, a plugin&#39;s SQLite database, an append-only JSONL file. A <strong>change</strong> is one committed transaction of one
+store. A <strong>position</strong> is a number from the session&#39;s counter that every change takes when it commits. An <strong>outbox</strong>
+is where a store records its changes with their positions, inside the same transaction as the change. A <strong>batch</strong> is
+all changes of all stores up to one position, shipped together. The <strong>driver</strong> is the instance that writes the
+session; a <strong>replica</strong> is a copy on another instance that applies batches.</p>
+</section>
+
+<section class="chapter" id="holds"><header class="opener"><div class="numeral">I</div><h2>What a Session Holds</h2><p class="lede">The four kinds of data in a session directory, and which of them are hard.</p></header>
+<p class="dropcap">Everything of S1 lives under one directory on the instance that runs it. The server keeps only mirrors (the catalog)
+and its own instance data (shares, devices, settings).</p>
+<figure class="fig wide"><svg viewBox="0 0 720 385" width="100%" role="img" aria-label="The session directory of S1. Accent marks the store that makes export and sync hard." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">LOG</text><text x="16" y="155" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">CONTENT</text><text x="16" y="288" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">PLUGIN STORES</text><rect x="255" y="36" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">session.sqlite</text><text x="360" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle">Durable entries, tasks, documents;</text><text x="360" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle">Chord documents</text><rect x="255" y="169" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="187.5" font-size="11" fill="#2a2723" text-anchor="middle">blobs/</text><text x="360" y="201.5" font-size="9.5" fill="#7b7468" text-anchor="middle">artifact versions, uploads; named by</text><text x="360" y="214" font-size="9.5" fill="#7b7468" text-anchor="middle">hash, never changed</text><rect x="137" y="302" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="242" y="321.3" font-size="11" fill="#2a2723" text-anchor="middle">history.sqlite</text><text x="242" y="335.3" font-size="9.5" fill="#7b7468" text-anchor="middle">file-history: rows exist nowhere else</text><rect x="373" y="302" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae" stroke-dasharray="3 3"/><text x="478" y="321.3" font-size="11" fill="#2a2723" text-anchor="middle">search index</text><text x="478" y="335.3" font-size="9.5" fill="#7b7468" text-anchor="middle">derived from the log, rebuildable</text><text x="16" y="370" font-size="10.5" fill="#7b7468" text-anchor="start">The server holds only mirrors (catalog) and instance data (shares, devices, settings).</text></svg><figcaption><span class="fignum">Figure 1.</span> The session directory of S1. Accent marks the store that makes export and sync hard.</figcaption></figure>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Example</th>
+<th>Changes</th>
+<th>Export and sync</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>log</td>
+<td>conversation, documents</td>
+<td>append and update</td>
+<td>must ship, in order</td>
+</tr>
+<tr>
+<td>blob</td>
+<td>artifact v3 contents</td>
+<td>never</td>
+<td>ship the file</td>
+</tr>
+<tr>
+<td>derived</td>
+<td>full-text index</td>
+<td>rebuilt</td>
+<td>never ship, rebuild</td>
+</tr>
+<tr>
+<td>plugin store</td>
+<td><code>history.sqlite</code></td>
+<td>update in place</td>
+<td>the open problem</td>
+</tr>
+</tbody></table>
+</section>
+
+<section class="chapter" id="easy"><header class="opener"><div class="numeral">II</div><h2>The Easy Cases</h2><p class="lede">Why blobs and derived data need no machinery, and what that teaches about the hard case.</p></header>
+<p class="dropcap">The artifacts plugin saves a new version. It writes the content as a blob first, then commits a document that names
+the blob&#39;s hash. The order is the whole trick.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 164" width="100%" role="img" aria-label="Saving artifact &quot;chart&quot; version 3. The blob exists before anything refers to it." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="130.7" y1="42" x2="130.7" y2="156" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="45.7" y="10" width="170" height="32" rx="4" fill="#fff" stroke="#c9bfae"/><text x="130.7" y="30" font-size="11" fill="#2a2723" text-anchor="middle">artifact tool</text><line x1="360" y1="42" x2="360" y2="156" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="275" y="10" width="170" height="32" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="360" y="30" font-size="11" fill="#2a2723" text-anchor="middle">blobs/</text><line x1="589.3" y1="42" x2="589.3" y2="156" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="504.3" y="10" width="170" height="32" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="589.3" y="30" font-size="11" fill="#2a2723" text-anchor="middle">session.sqlite</text><g class="step edge" style="--i:1"><line x1="130.7" y1="68" x2="357" y2="68" stroke="#7b7468" marker-end="url(#f2m)"/><text x="245.3" y="62" font-size="10" fill="#2a2723" text-anchor="middle">write sha256:9f3a… (tmp, fsync, rename)</text></g><g class="step edge" style="--i:2"><line x1="130.7" y1="100" x2="586.3" y2="100" stroke="#b4472f" marker-end="url(#f2a)"/><text x="360" y="94" font-size="10" fill="#b4472f" text-anchor="middle">seq 41: chart.versions[2] = { blob: &quot;sha256:9f3a…&quot; }</text></g><g class="step edge" style="--i:3"><line x1="130.7" y1="132" x2="586.3" y2="132" stroke="#b4472f" marker-end="url(#f2a)"/><text x="360" y="126" font-size="10" fill="#b4472f" text-anchor="middle">seq 42: entry 812 &quot;chart v3 saved&quot;</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> Saving artifact &quot;chart&quot; version 3. The blob exists before anything refers to it.</figcaption></figure>
+<p>An export reads the log at some head, say 42, and copies every file in <code>blobs/</code>. Any blob a record up to 42 refers to
+was written before that record, so it is in the directory. The session does not have to stop. An import replays the
+log into a fresh <code>session.sqlite</code>, copies the blobs and checks their hashes.</p>
+<h3 id="derived-data-rebuilds-itself">Derived data rebuilds itself</h3>
+<p>The artifacts plugin also keeps a full-text index over artifact contents, in its own SQLite file under
+<code>derived/artifacts/</code>, because searching documents one by one is too slow. The index holds nothing of its own: every
+row can be recomputed from the <code>artifact</code> documents and the blobs they name. So it is never exported or synced. A
+routine compares the index with the documents whenever the object starts and fills in whatever is missing:</p>
+<pre><code><span class="tk-k">const</span> <span class="tk-t">Artifact</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"artifact"</span>, {
+  schema: <span class="tk-f">obj</span>({ title: <span class="tk-f">str</span>(), <span class="tk-k">type</span>: <span class="tk-f">str</span>(), versions: <span class="tk-f">arr</span>(<span class="tk-f">obj</span>({ blob: <span class="tk-f">str</span>(), size: <span class="tk-f">int</span>(), at: <span class="tk-f">int</span>() })) }),
+  version: <span class="tk-n">1</span>, keyed: <span class="tk-k">true</span>, persist: <span class="tk-k">true</span>,                         <span class="tk-c">// key = artifact name</span>
+  initial: () =&gt; ({ title: <span class="tk-s">""</span>, <span class="tk-k">type</span>: <span class="tk-s">"text"</span>, versions: [] }),
+  checkpointWhen: () =&gt; <span class="tk-k">true</span>,
+});
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">ArtifactStore</span>, (_, self) =&gt; {                          <span class="tk-c">// local, input-less</span>
+  <span class="tk-k">const</span> artifacts = self.<span class="tk-f">state</span>(<span class="tk-t">Artifact</span>);
+  <span class="tk-k">const</span> blobs = self.<span class="tk-f">get</span>(<span class="tk-t">SessionBlobs</span>, {});                       <span class="tk-c">// app layer: the session's blob store</span>
+  <span class="tk-k">const</span> info = self.<span class="tk-f">get</span>(<span class="tk-t">SessionInfo</span>, {});
+  <span class="tk-k">const</span> index = self.<span class="tk-f">open</span>(<span class="tk-k">async</span> () =&gt; <span class="tk-f">openIndex</span>(<span class="tk-f">join</span>(info.init.value.dir, <span class="tk-s">"derived/artifacts/index.sqlite"</span>)),
+    (db) =&gt; db.<span class="tk-f">close</span>());
+
+  self.routines.<span class="tk-f">loop</span>(<span class="tk-s">"catch-up"</span>, <span class="tk-k">async</span> (ctx) =&gt; {                 <span class="tk-c">// the index repairs itself</span>
+    <span class="tk-k">for</span> <span class="tk-k">await</span> (<span class="tk-k">const</span> name <span class="tk-k">of</span> artifacts.<span class="tk-f">keys</span>()) {
+      <span class="tk-k">const</span> a = <span class="tk-k">await</span> artifacts.<span class="tk-f">get</span>(name);
+      <span class="tk-k">if</span> (a &amp;&amp; index.value.<span class="tk-f">versions</span>(name) !== a.versions.length)
+        index.value.<span class="tk-f">put</span>(name, a.versions.length, <span class="tk-k">await</span> blobs.<span class="tk-f">read</span>(a.versions.<span class="tk-f">at</span>(-<span class="tk-n">1</span>)!.blob, ctx));
+    }
+  });
+
+  <span class="tk-k">return</span> {
+    save: <span class="tk-k">async</span> ({ name, title, <span class="tk-k">type</span>, content }, ctx) =&gt; {
+      <span class="tk-k">const</span> bytes = <span class="tk-f">utf8</span>(content);
+      <span class="tk-k">const</span> blob = <span class="tk-k">await</span> blobs.<span class="tk-f">put</span>(bytes, ctx);                   <span class="tk-c">// 1. content first</span>
+      <span class="tk-k">await</span> self.<span class="tk-f">tx</span>(ctx, <span class="tk-k">async</span> (tx) =&gt; {                          <span class="tk-c">// 2. the document naming it</span>
+        <span class="tk-k">const</span> a = <span class="tk-k">await</span> tx.<span class="tk-f">draft</span>(artifacts, name);
+        a.title = title; a.<span class="tk-k">type</span> = <span class="tk-k">type</span>;
+        a.versions.<span class="tk-f">push</span>({ blob, size: bytes.length, at: <span class="tk-t">Date</span>.<span class="tk-f">now</span>() });
+      });
+      <span class="tk-k">const</span> version = (<span class="tk-k">await</span> artifacts.<span class="tk-f">get</span>(name))!.versions.length;
+      index.value.<span class="tk-f">put</span>(name, version, content);                    <span class="tk-c">// 3. derived, best effort</span>
+      <span class="tk-k">return</span> { version };
+    },
+    search: ({ query }) =&gt; index.value.<span class="tk-f">search</span>(query),
+  };
+});</code></pre>
+<p>The same routine covers three situations without any special code:</p>
+<div class="steps"><div class="steps-head"><span class="title">One routine, three situations</span><span class="count"></span><button class="prev" type="button">Back</button><button class="next" type="button">Next</button></div><div class="step-panel"><h4>Normal save</h4><p><code>save</code> writes the blob, commits the document, then updates the index. The routine finds nothing to do.</p>
+</div><div class="step-panel"><h4>Crash after the commit</h4><p>The process dies between step 2 and step 3. The document says version 3, the index still has version 2. On the next
+start the routine sees the difference, reads the blob of version 3 and indexes it.</p>
+</div><div class="step-panel"><h4>Import or sync</h4><p>On the desktop <code>derived/artifacts/</code> does not exist. <code>openIndex</code> creates an empty index; the routine finds every
+artifact missing and indexes them all from the documents and blobs that came with the session.</p>
+</div></div>
+<div class="note"><b class="tag">Cost of the catch-up</b><p>This routine visits every artifact on each start: fine for hundreds, slow for millions. A large derived store would
+keep the last position it applied and read only the changes after it (the outboxes of chapter V give exactly that).</p>
+</div>
+<p>Both cases work because nothing ever changes in place: a blob is final when written, and a derived index has no data
+of its own. <code>history.sqlite</code> breaks both assumptions. Its rows change in place, and they are the only copy.</p>
+</section>
+
+<section class="chapter" id="problem"><header class="opener"><div class="numeral">III</div><h2>Two Stores, No Common Order</h2><p class="lede">What goes wrong when history.sqlite and the log travel separately.</p></header>
+<p class="dropcap">Suppose every store ships its own changes to the desktop as it pleases: <code>session.sqlite</code> in batches of commits,
+<code>history.sqlite</code> as a stream of its own. The agent edits <code>x.ts</code>; the edit is recorded in both stores.</p>
+<div class="steps"><div class="steps-head"><span class="title">One edit, two stores, shipped separately</span><span class="count"></span><button class="prev" type="button">Back</button><button class="next" type="button">Next</button></div><div class="step-panel"><h4>On the laptop</h4><p>The tool records the edit in <code>history.sqlite</code> (row: path <code>x.ts</code>, entry 812), then Durable commits entry 812 at seq
+42. On the laptop both exist and agree.</p>
+</div><div class="step-panel"><h4>The history stream arrives first</h4><p>The desktop has received the <code>history.sqlite</code> changes, including the row, but the log only up to seq 41. The row
+says entry 812 made the edit; the desktop has no entry 812.</p>
+</div><div class="step-panel"><h4>Mario takes over now</h4><p>The laptop&#39;s lid is closed; the desktop becomes the driver. Its agent writes the next entry, which gets id 812: a
+different message. The row now points to the wrong entry, permanently.</p>
+</div><div class="step-panel"><h4>The opposite order</h4><p>If the log arrives first instead, entry 812 says &quot;x.ts edited&quot; and the history has no row for it. Either way the
+desktop holds a state the laptop never had.</p>
+</div></div>
+<p>The fault is not in either store. Each one is consistent on its own. What is missing is an order <strong>across</strong> stores:
+which change of <code>history.sqlite</code> happened before which commit of the log.</p>
+</section>
+
+<section class="chapter" id="counter"><header class="opener"><div class="numeral">IV</div><h2>One Counter for the Session</h2><p class="lede">A single sequence of positions that every store takes from when it commits.</p></header>
+<p class="dropcap">The session gets one counter, kept in memory by p3&#39;s sync layer on the driver. Every store, in the transaction that
+commits a change, takes the next position and writes the change with that position into its own outbox. Positions
+increase across all stores of the session, so they order everything.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 350" width="100%" role="img" aria-label="The same edit with positions. Each store writes its outbox inside its own transaction." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f3m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f3a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f3b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="342" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="102" y="30" font-size="11" fill="#2a2723" text-anchor="middle">edit tool</text><line x1="274" y1="52" x2="274" y2="342" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="274" y="27" font-size="11" fill="#2a2723" text-anchor="middle">counter</text><text x="274" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">sync layer, memory</text><line x1="446" y1="52" x2="446" y2="342" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="446" y="27" font-size="11" fill="#2a2723" text-anchor="middle">history.sqlite</text><text x="446" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">plugin store</text><line x1="618" y1="52" x2="618" y2="342" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="618" y="30" font-size="11" fill="#2a2723" text-anchor="middle">session.sqlite</text><g class="step edge" style="--i:1"><line x1="102" y1="78" x2="443" y2="78" stroke="#7b7468" marker-end="url(#f3m)"/><text x="274" y="72" font-size="10" fill="#2a2723" text-anchor="middle">BEGIN; INSERT row (x.ts, entry 812)</text></g><g class="step edge" style="--i:2"><line x1="446" y1="110" x2="277" y2="110" stroke="#7b7468" marker-end="url(#f3m)"/><text x="360" y="104" font-size="10" fill="#2a2723" text-anchor="middle">next()</text></g><g class="step edge" style="--i:3"><line x1="274" y1="142" x2="443" y2="142" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f3m)"/><text x="360" y="136" font-size="10" fill="#2a2723" text-anchor="middle">7</text></g><g class="step edge" style="--i:4"><path d="M446 168 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f3a)"/><text x="488" y="178" font-size="10" fill="#b4472f" text-anchor="start">outbox row (7, changeset); COMMIT</text></g><g class="step edge" style="--i:5"><line x1="102" y1="214" x2="615" y2="214" stroke="#7b7468" marker-end="url(#f3m)"/><text x="360" y="208" font-size="10" fill="#2a2723" text-anchor="middle">commit entry 812</text></g><g class="step edge" style="--i:6"><line x1="618" y1="246" x2="277" y2="246" stroke="#7b7468" marker-end="url(#f3m)"/><text x="446" y="240" font-size="10" fill="#2a2723" text-anchor="middle">next()</text></g><g class="step edge" style="--i:7"><line x1="274" y1="278" x2="615" y2="278" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f3m)"/><text x="446" y="272" font-size="10" fill="#2a2723" text-anchor="middle">8</text></g><g class="step edge" style="--i:8"><path d="M618 304 h-34 v14 h32" fill="none" stroke="#b4472f" marker-end="url(#f3a)"/><text x="576" y="314" font-size="10" fill="#b4472f" text-anchor="end">seq 42 with position 8, same transaction</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 3.</span> The same edit with positions. Each store writes its outbox inside its own transaction.</figcaption></figure>
+<p>After the edit the two outboxes look like this:</p>
+<table>
+<thead>
+<tr>
+<th>Store</th>
+<th>Position</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>history.sqlite</code></td>
+<td>7</td>
+<td>changeset: insert row (x.ts, entry 812)</td>
+</tr>
+<tr>
+<td><code>session.sqlite</code></td>
+<td>8</td>
+<td>seq 42: entry 812</td>
+</tr>
+</tbody></table>
+<p>The sync layer cuts a <strong>batch</strong> at a position P: every change of every store with a position up to P. A replica
+applies a batch in position order, store by store as the positions say. After applying a batch it holds exactly the
+state the driver had at P, for all stores together. The bad states of the previous chapter cannot happen: a replica
+has position 8 only together with position 7.</p>
+<figure class="fig wide anim"><svg viewBox="0 0 720 241" width="100%" role="img" aria-label="Shipping. Batches are cut across stores; the replica applies them in position order." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f4m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f4a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f4b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">DRIVER</text><text x="16" y="144" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">REPLICA</text><g class="step" style="--i:1"><rect x="19" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="124" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">history outbox</text><text x="124" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">7, 11, 12</text></g><g class="step" style="--i:4"><rect x="255" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">log outbox</text><text x="360" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">8, 9, 10, 13</text></g><g class="step" style="--i:3"><rect x="491" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="596" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">cut at 12</text><text x="596" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">nothing ≤ 12 still committing</text></g><g class="step" style="--i:9"><rect x="255" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">apply in order</text><text x="360" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">history 7, log 8 9 10, history 11 12</text></g><g class="step" style="--i:7"><rect x="491" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="596" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">batch ≤ 12</text><text x="596" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">7 8 9 10 11 12</text></g><g class="step edge" style="--i:2"><path d="M124 32 Q360 -12 596 32" fill="none" stroke="#7b7468" marker-end="url(#f4m)"/></g><g class="step edge" style="--i:5"><path d="M465 58 L489 58" fill="none" stroke="#7b7468" marker-end="url(#f4m)"/></g><g class="step edge" style="--i:6"><path d="M596 80 L596 156" fill="none" stroke="#7b7468" marker-end="url(#f4m)"/><rect x="600" y="112" width="39.6" height="13" fill="#fbf8f2" opacity=".92"/><text x="604" y="122" font-size="9.5" fill="#7b7468" text-anchor="start">upload</text></g><g class="step edge" style="--i:8"><path d="M491 180 L467 180" fill="none" stroke="#7b7468" marker-end="url(#f4m)"/></g><text x="16" y="226" font-size="10.5" fill="#7b7468" text-anchor="start">Position 13 waits for the next batch, together with whatever else comes after 12.</text></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 4.</span> Shipping. Batches are cut across stores; the replica applies them in position order.</figcaption></figure>
+<p><strong>Cutting needs one rule.</strong> The counter hands out position 12 to a store whose transaction has not committed yet,
+while position 13 already committed elsewhere. A cut at 13 would miss 12. So the counter remembers the positions it
+handed out that are not committed yet, and a cut goes only up to just below the smallest of them. A transaction that
+fails gives its position back as a gap; gaps are fine, order is what counts.</p>
+</section>
+
+<section class="chapter" id="sqlite"><header class="opener"><div class="numeral">V</div><h2>Capturing a SQLite Change</h2><p class="lede">How a plugin writes plain SQL and still produces a change record another database can apply.</p></header>
+<p class="dropcap">A plugin store must turn its writes into change records. For JSONL that is the appended lines themselves. For SQLite
+it would be a burden on every plugin, except that SQLite has the <strong>session extension</strong>: it watches tables and turns
+whatever SQL ran into a <strong>changeset</strong>, a compact list of row inserts, updates and deletes. Another database applies
+it. <code>node:sqlite</code> exposes it. This ran on slayer with Node 24.4.1:</p>
+<pre><code><span class="tk-k">import</span> { <span class="tk-t">DatabaseSync</span> } <span class="tk-k">from</span> <span class="tk-s">"node:sqlite"</span>;
+<span class="tk-k">const</span> laptop = <span class="tk-k">new</span> <span class="tk-t">DatabaseSync</span>(<span class="tk-s">":memory:"</span>), desktop = <span class="tk-k">new</span> <span class="tk-t">DatabaseSync</span>(<span class="tk-s">":memory:"</span>);
+<span class="tk-c">// both: CREATE TABLE edits(id INTEGER PRIMARY KEY, path TEXT); CREATE TABLE outbox(pos INTEGER PRIMARY KEY, cs BLOB)</span>
+
+<span class="tk-k">const</span> session = laptop.<span class="tk-f">createSession</span>({ table: <span class="tk-s">"edits"</span> });
+laptop.<span class="tk-f">exec</span>(<span class="tk-s">"BEGIN"</span>);
+laptop.<span class="tk-f">exec</span>(<span class="tk-s">"UPDATE edits SET path = 'b/' || substr(path, 3) WHERE path GLOB 'a/*'"</span>);  <span class="tk-c">// plain SQL</span>
+<span class="tk-k">const</span> cs = session.<span class="tk-f">changeset</span>();                                                      <span class="tk-c">// 54 bytes for two rows</span>
+laptop.<span class="tk-f">prepare</span>(<span class="tk-s">"INSERT INTO outbox VALUES (?, ?)"</span>).<span class="tk-f">run</span>(<span class="tk-n">7</span>, cs);                       <span class="tk-c">// same transaction</span>
+laptop.<span class="tk-f">exec</span>(<span class="tk-s">"COMMIT"</span>);
+
+desktop.<span class="tk-f">applyChangeset</span>(cs);   <span class="tk-c">// desktop now has b/x and b/y</span></code></pre>
+<p>So p3 could offer plugins a session SQLite as a store kind. The plugin opens it, writes SQL in transactions, and the
+wrapper does the rest: start a session on the plugin&#39;s tables, take a position before <code>COMMIT</code>, write the changeset to
+the outbox table, commit. The plugin never sees positions or outboxes.</p>
+<div class="note review"><b class="tag">Limits of changesets</b><p><strong>Rows, not commands.</strong> Renaming <code>a/</code> to <code>b/</code> over ten thousand rows is ten thousand row changes in the changeset
+(tens of bytes each), not one command. Still logical rows, never database pages.
+<strong>No schema changes.</strong> <code>CREATE TABLE</code> and <code>ALTER TABLE</code> are not in changesets. A plugin&#39;s schema migrations must be
+versioned and run on every replica before changes made with the new schema are applied.
+<strong>Cloudflare.</strong> The Durable Object SQLite API may not expose the session extension; not checked.</p>
+</div>
+</section>
+
+<section class="chapter" id="crashes"><header class="opener"><div class="numeral">VI</div><h2>Crashes</h2><p class="lede">Why the outbox lives inside each store, and how the counter restarts.</p></header>
+<p class="dropcap">Why not one shared outbox file for all stores? Because the change and its record must commit together. With a shared
+file, the plugin commits its rows, the process dies before the changeset reaches the shared file, and the changeset
+is gone: it existed only in memory. The rows are on disk and will never be shipped. Each store therefore keeps its
+outbox inside itself, in the same transaction as the change: an outbox table in a SQLite database, the record in
+<code>session.sqlite</code>&#39;s commit, the lines themselves in a JSONL file.</p>
+<div class="steps"><div class="steps-head"><span class="title">The laptop dies in the middle of a turn</span><span class="count"></span><button class="prev" type="button">Back</button><button class="next" type="button">Next</button></div><div class="step-panel"><h4>Before the crash</h4><p>Positions 1 to 14 are handed out. 7, 11, 12 committed in <code>history.sqlite</code>; 8, 9, 10, 13 in <code>session.sqlite</code>; 14 was
+still in a <code>history.sqlite</code> transaction. Batch ≤ 12 was uploaded.</p>
+</div><div class="step-panel"><h4>The crash</h4><p>Position 14&#39;s transaction never committed, so neither its rows nor its outbox record exist. Nothing half-done is
+left in any store.</p>
+</div><div class="step-panel"><h4>Restart</h4><p>The sync layer reads the highest position in every outbox (12 and 13) and starts the counter at 14. Position 13 is
+committed and not yet uploaded; it goes into the next batch.</p>
+</div><div class="step-panel"><h4>Nothing is lost or reordered</h4><p>Every committed change has its record; every record has its change. The next batch continues at 13.</p>
+</div></div>
+</section>
+
+<section class="chapter" id="kinds"><header class="opener"><div class="numeral">VII</div><h2>What Each Store Needs, and What Chord Provides</h2><p class="lede">The store kinds p3 would offer plugins, and the small part that falls to Chord.</p></header>
+<table>
+<thead>
+<tr>
+<th>Store kind</th>
+<th>Change record</th>
+<th>Applied on a replica by</th>
+<th>Snapshot (export, compaction)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Durable/Chord storage</td>
+<td>the commit&#39;s writes</td>
+<td><code>replay</code></td>
+<td><code>export()</code></td>
+</tr>
+<tr>
+<td>blob directory</td>
+<td>&quot;added hash&quot; plus the bytes</td>
+<td>writing the file</td>
+<td>the files</td>
+</tr>
+<tr>
+<td>append-only JSONL</td>
+<td>the appended lines</td>
+<td>appending</td>
+<td>the file</td>
+</tr>
+<tr>
+<td>plugin SQLite</td>
+<td>changeset, in the same transaction</td>
+<td><code>applyChangeset</code></td>
+<td><code>VACUUM INTO</code></td>
+</tr>
+<tr>
+<td>files changed in place</td>
+<td>none</td>
+<td>none</td>
+<td>cannot sync: derived data only</td>
+</tr>
+</tbody></table>
+<p><strong>Export and import</strong> use the same pieces. An export takes a snapshot of every store at one cut position P (the
+log&#39;s <code>export()</code>, <code>VACUUM INTO</code> for each plugin database, the blob files, the JSONL files) and writes them into one
+archive with P in its manifest. An import restores each snapshot into a fresh session directory. Later changes, on a
+replica, continue from P.</p>
+<p><strong>Chord&#39;s part</strong> is small. Its storage (and Durable&#39;s) must be wrappable: the sync layer sees every commit&#39;s writes
+in order and gets a hook inside the commit to take a position and write the outbox record in the same transaction.
+And the storage needs <code>export()</code>, <code>replay()</code> and <code>head()</code>. The counter, outboxes, batches, store kinds and the
+session directory are p3&#39;s.</p>
+<p>One consequence for an open question: ordering no longer needs Chord&#39;s documents to live in Durable&#39;s storage. If
+they had their own file, it would be one more store with its own outbox, ordered by the same counter. Sharing the
+storage would only save a file.</p>
+</section>
+
+<section class="chapter epilogue" id="open-questions"><header class="opener"><div class="numeral">∴</div><h2>Open Questions</h2><p class="lede">What this proposal needs decided before anything is built.</p></header>
+<p class="dropcap">The proposal: a session is a directory of stores; p3&#39;s sync layer orders every change of every store through one
+position counter; each store kind records its changes in its own transaction; plugins get store kinds (SQLite through
+changesets, JSONL, blobs) in the session directory; files changed in place may hold only derived data. Chord provides
+a wrappable storage with <code>export</code>, <code>replay</code> and <code>head</code>.</p>
+<h3 id="needs-a-decision">Needs a decision</h3>
+<ul>
+<li><strong>The direction.</strong> Is this the model for p3 sessions?</li>
+<li><strong>Store kinds.</strong> Which kinds p3 offers plugins at first (SQLite and blobs, or JSONL too).</li>
+<li><strong>Shared storage.</strong> Whether Chord&#39;s persisted session documents still share Durable&#39;s storage, now that ordering
+does not need it.</li>
+</ul>
+<h3 id="to-verify">To verify</h3>
+<ul>
+<li>The session extension&#39;s cost on large tables and wide updates (a benchmark of the 10k-row rename).</li>
+<li>Whether Cloudflare&#39;s Durable Object SQLite exposes changesets; if not, what a plugin store means there.</li>
+</ul>
+</section>
+
+<section class="chapter appendix" id="glossary"><header class="opener"><div class="numeral">A</div><h2>Glossary</h2></header>
+<p><strong>Batch:</strong> all changes of all stores up to one position. <strong>Blob:</strong> a file named by the hash of its content, never
+changed. <strong>Changeset:</strong> SQLite&#39;s record of the rows a transaction inserted, updated or deleted. <strong>Cut:</strong> choosing the
+position a batch ends at; never past a position still committing. <strong>Derived data:</strong> data rebuilt from other stores,
+never shipped. <strong>Driver:</strong> the instance that writes a session. <strong>Outbox:</strong> a store&#39;s own record of its changes with
+positions, written in the same transaction. <strong>Position:</strong> a number from the session&#39;s counter, taken by every change.
+<strong>Replica:</strong> a copy of a session on another instance that applies batches. <strong>Store:</strong> one place a session keeps data.</p>
+</section>
+
+<p class="colophon">One Session, Many Stores · first edition · 2026-10-21 · based on session-data-scenarios.md and the redesign log</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

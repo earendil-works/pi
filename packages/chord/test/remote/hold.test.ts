@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { type Context, BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { bool, evolve, hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import { bool, evolve, hostKind, int, keyed, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { broken, ChordError } from "../../src/data/index.ts";
 import type * as Delta from "../../src/delta/index.ts";
 import { decoder } from "../../src/delta/index.ts";
@@ -20,8 +20,10 @@ import {
 	fakeTimers,
 	flushed,
 	forEachCodec,
+	holdNextCommit,
 	instancesOf,
 	linked,
+	memoryStore,
 	PlacedNotes,
 	partValue,
 	RawPeer,
@@ -1365,5 +1367,217 @@ describe("a hold across a swap whose mapping fails (final review)", () => {
 		expect([ref.x.value, valuesOf(calls)]).toEqual([3, [{ failed: "member boom" }, 3]]);
 		await client.close(context);
 		await server.close(context);
+	});
+});
+
+describe('calls over a link while a swap parks (decision "Swaps: dependents first")', () => {
+	/** A provider on the server: its name, its keys (`entries`) and `set`, which writes key `x`. */
+	const Provider = local("app.gate-provider", {
+		version: 1,
+		params: {},
+		members: { name: str(), entries: keyed(obj({ n: int() })), set: method(int()) },
+	});
+	const ENTRIES = { schema: obj({ n: int() }), version: 1, initial: () => ({ n: 0 }), keyed: true } as const;
+	const Entries = defineState("entries", ENTRIES);
+	const PersistedEntries = defineState("entries", { ...ENTRIES, persist: true, checkpointWhen: () => false });
+	/** A local type whose native opens once `opened` resolves. */
+	const Slow = local("app.gate-slow", { version: 1, params: {}, members: { name: str() } });
+	/** A remote object over the provider: `bump` answers its code's number. */
+	const Gated = remote("app.gated", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		variants: { v: { state: { label: str() }, methods: { bump: method(undefined, int()) } } },
+	});
+
+	/** Serves `Slow`, whose native opens once `opened` resolves. */
+	function serveSlow(h: FacetHost<TestPrincipal>, opened: Promise<void>): void {
+		h.serve(Slow, (_, self) => {
+			self.open(
+				async () => {
+					await opened;
+					return null;
+				},
+				() => {},
+			);
+			return { name: constant("slow") };
+		});
+	}
+
+	/** Serves the provider labelled `name`, needing `Slow` when `slow`, its keys persisted when `persisted`. */
+	function serveProvider(h: FacetHost<TestPrincipal>, name: string, options: { slow?: boolean; persisted?: boolean }) {
+		h.serve(Provider, (_, self) => {
+			if (options.slow === true) self.get(Slow, {});
+			const entries = self.state(options.persisted === true ? PersistedEntries : Entries);
+			return {
+				name: constant(name),
+				entries,
+				set: async (n: number, ctx: Context) => {
+					await entries.change(
+						"x",
+						(draft) => {
+							draft.n = n;
+						},
+						ctx,
+					);
+					return null;
+				},
+			};
+		});
+	}
+
+	/**
+	 * Serves `Gated` as code `code`: its label over the provider's name (or its key `k`), `bump` first awaiting `gate`;
+	 * needing `Slow` too when `slow`.
+	 */
+	function serveGated(
+		h: FacetHost<TestPrincipal>,
+		code: number,
+		options: { gate?: Promise<void>; pin?: boolean; slow?: boolean },
+	) {
+		h.serve(Gated, (_, _principal, self) => {
+			const provider = self.get(Provider, {});
+			if (options.slow === true) self.get(Slow, {});
+			const label =
+				options.pin === true
+					? self.derive([provider.entries.at("k")], ([entry]) => `v${code} ${entry.n}`)
+					: self.derive([provider.name], ([name]) => `v${code} ${name}`);
+			return {
+				variant: "v",
+				members: {
+					label,
+					bump: async () => {
+						await options.gate;
+						return code;
+					},
+				},
+			};
+		});
+	}
+
+	it("a call arriving after the swap parked, while an old call drains, waits for the new attempt (never not_ready)", async () => {
+		const gate = Promise.withResolvers<void>();
+		const opened = Promise.withResolvers<void>();
+		const { server, client } = await linked((h) => {
+			serveProvider(h, "p1", {});
+			serveGated(h, 1, { gate: gate.promise });
+		});
+		const gated = await client.get(Gated, {}, context);
+		const old = gated.bump(context);
+		await transported();
+		const report = await server.reload(
+			[
+				{
+					name: "@test/app",
+					facet: defineFacet<TestPrincipal>((h) => {
+						serveSlow(h, opened.promise);
+						serveProvider(h, "p2", {});
+						serveGated(h, 2, { slow: true });
+					}),
+				},
+			],
+			context,
+		);
+		// The new code of `Gated` waits for `Slow`, a new type still opening: its swap parks.
+		expect(report.objects).toEqual([
+			{ object: "app.gate-provider", kind: "swapped" },
+			{ object: "app.gated", kind: "parked", cause: expect.objectContaining({ kind: "waiting" }) },
+		]);
+		// The old call still runs, so the hold stays bound: the client sees live and sends.
+		const outcome = gated.bump(context).then(
+			(value) => ({ value }),
+			(error: ChordError) => ({ code: error.code }),
+		);
+		await transported();
+		expect(gated.state.value).toEqual({ kind: "live" });
+		opened.resolve();
+		expect(await outcome).toEqual({ value: 2 });
+		gate.resolve();
+		expect(await old).toBe(1);
+		await transported();
+		expect(gated.label.value).toBe("v2 p2");
+		await client.close(context);
+		await server.close(context);
+	});
+
+	it("a call already waiting at the gate when the swap parks is answered with its hold's loading, never not_ready", async () => {
+		const store = await memoryStore();
+		const server = createHost<TestPrincipal>({
+			address: Server(),
+			principal: { kind: "server" },
+			store,
+			onError: () => {},
+		});
+		const client = createHost<TestPrincipal>({ onError: () => {} });
+		const providerV1 = defineFacet<TestPrincipal>((h) => serveProvider(h, "p1", { persisted: true }));
+		await server.load(
+			[
+				{ name: "@test/provider", facet: providerV1 },
+				{ name: "@test/app", facet: defineFacet<TestPrincipal>((h) => serveGated(h, 1, {})) },
+			],
+			context,
+		);
+		await client.load([], context);
+		const [up, down] = memoryLinkPair();
+		server.accept(up, { principal: { kind: "owner" }, codec: testCodec() }, context);
+		client.connect(down, { principal: { kind: "server" }, codec: testCodec() }, context);
+		try {
+			const gated = await client.get(Gated, {}, context);
+			const provider = await server.get(Provider, {}, context);
+			// The provider's line is held by a commit: a key loads only after it.
+			const held = holdNextCommit(store);
+			const setting = provider.set(1, context);
+			await held.entered;
+			// `Gated`'s new code pins the provider's key `k`: its swap stays in place while the key waits for the line.
+			const appV2 = defineFacet<TestPrincipal>((h) => serveGated(h, 2, { pin: true }));
+			const report = await server.reload(
+				[
+					{ name: "@test/provider", facet: providerV1 },
+					{ name: "@test/app", facet: appV2 },
+				],
+				context,
+			);
+			expect(report.objects).toEqual([{ object: "app.gated", kind: "swapped" }]);
+			const states = statesOf(await gated.state.watch(context));
+			const outcome = gated.bump(context).then(
+				(value) => ({ value }),
+				(error: ChordError) => ({ code: error.code, message: error.message }),
+			);
+			await transported();
+			// The provider swaps too while the key waits; its new code needs \`Slow\`, still opening. Once the key loaded,
+			// the swap of \`Gated\` checks again, finds the provider loading and parks, with the call waiting at the gate.
+			const opened = Promise.withResolvers<void>();
+			const reloading = server.reload(
+				[
+					{
+						name: "@test/provider",
+						facet: defineFacet<TestPrincipal>((h) => {
+							serveSlow(h, opened.promise);
+							serveProvider(h, "p2", { persisted: true, slow: true });
+						}),
+					},
+					{ name: "@test/app", facet: appV2 },
+				],
+				context,
+			);
+			held.release();
+			await setting;
+			expect((await reloading).objects).toEqual([
+				{ object: "app.gate-provider", kind: "parked", cause: expect.objectContaining({ kind: "waiting" }) },
+			]);
+			await transported();
+			// Parked: its hold left the old instance and tells the client \`loading\`; the call that waited at the gate is
+			// answered as every call in flight on a hold that leaves its object (§21), never \`not_ready\` while live.
+			expect(states).toEqual(["loading"]);
+			expect(await outcome).toEqual({ code: "unavailable", message: "hold 0: its object rebinds" });
+			opened.resolve();
+			await transported();
+			expect(states).toEqual(["loading", "live"]);
+			expect(await gated.bump(context)).toBe(2);
+			expect(gated.label.value).toBe("v2 0");
+		} finally {
+			await client.close(context);
+			await server.close(context);
+		}
 	});
 });

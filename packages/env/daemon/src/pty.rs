@@ -220,7 +220,7 @@ pub fn run(
     if let Err(error) = started {
         return Err(abandon(child, error));
     }
-    if let Err((child, error)) = start_waiter(child, sender.clone()) {
+    if let Err((child, error)) = start_waiter(child, None, sender.clone()) {
         return Err(abandon(child, error));
     }
     drop(sender);

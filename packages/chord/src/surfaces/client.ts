@@ -10,6 +10,7 @@ import type { Principal } from "../data/index.ts";
 import { createHost, type Host, type HostError, type PluginFacet, type PluginFailure } from "../host/index.ts";
 import type { Link } from "../link/index.ts";
 import { type ConnectionState, keepConnected, type LoopEnvironment, type SocketEvents } from "./connection.ts";
+import type { MessagesReport } from "./language.ts";
 import { LoadedFacets, type SetEntry } from "./loaded.ts";
 import { type ClientModules, evaluateRegistered, type RegisteredScript } from "./registered.ts";
 import type { ScriptEntry, ScriptSet, ScriptsContract } from "./scripts.ts";
@@ -18,7 +19,9 @@ import type { ScriptEntry, ScriptSet, ScriptsContract } from "./scripts.ts";
 export type ClientError =
 	| { readonly kind: "host"; readonly error: HostError }
 	| { readonly kind: "plugins"; readonly failed: readonly PluginFailure[] }
-	| { readonly kind: "update_failed"; readonly error: unknown };
+	| { readonly kind: "update_failed"; readonly error: unknown }
+	/** A message rendered by a fallback, a contributed message that threw, a foreign message (each once). */
+	| { readonly kind: "messages"; readonly report: MessagesReport };
 
 /** What `startClient` takes. */
 export type ClientOptions<P extends Principal> = {

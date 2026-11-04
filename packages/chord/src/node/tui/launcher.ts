@@ -32,6 +32,8 @@ export type TerminalOptions = {
 	readonly colors?: ColorDepth;
 	/** The terminal's background, choosing between the user's dark and light theme: dark by default. */
 	readonly mode?: "dark" | "light";
+	/** The user's languages, most preferred first, until they choose one: the system's locale by default. */
+	readonly locales?: readonly string[];
 	/** Opens a URL the user confirmed: the platform's opener by default. */
 	readonly opener?: (url: string) => Promise<void>;
 };
@@ -232,6 +234,7 @@ class Launcher {
 			rows: this.#rows,
 			colors,
 			mode: this.#options.mode ?? "dark",
+			locales: this.#options.locales ?? systemLocales(),
 		} as const;
 		this.#requests = 0;
 		this.#sandbox = await Sandbox.start(
@@ -464,3 +467,16 @@ class Launcher {
 
 /** The launcher's SIGUSR1 listener: the signal does nothing. */
 function ignoreSignal(): void {}
+
+/**
+ * The system's languages: `LANGUAGE` (a colon list), then `LC_ALL`, `LC_MESSAGES`, `LANG` (`de_DE.UTF-8` is `de-DE`;
+ * `C` and `POSIX` name none), then the runtime's default locale.
+ */
+function systemLocales(): readonly string[] {
+	const { LANGUAGE, LC_ALL, LC_MESSAGES, LANG } = process.env;
+	const named = [...(LANGUAGE ?? "").split(":"), LC_ALL, LC_MESSAGES, LANG].flatMap((value) => {
+		const tag = value?.replace(/[.@].*$/, "").replace(/_/g, "-");
+		return tag === undefined || tag === "" || tag === "C" || tag === "POSIX" ? [] : [tag];
+	});
+	return [...new Set([...named, Intl.DateTimeFormat().resolvedOptions().locale])];
+}

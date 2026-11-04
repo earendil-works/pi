@@ -1,0 +1,12 @@
+/* Chrome needs a hit-testable editable field under a long press, not the 1px IME target at the cursor. */
+.terminal-input[data-native-menu] {
+	width: 44px;
+	height: 44px;
+	z-index: 1;
+	opacity: 1;
+	background: transparent;
+	color: transparent;
+	user-select: text;
+	pointer-events: auto;
+	-webkit-touch-callout: default;
+}

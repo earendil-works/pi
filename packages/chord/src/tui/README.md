@@ -13,6 +13,7 @@ startTerminalRuntime<P>({
 		const scope = new TuiScope(host, () => redraw());          // hold, watch, registry; dispose
 		terminal.onInput((data) => …); terminal.write(frame);
 		theme.fg("accent", "Notes");                             // colours by role
+		const t = scope.messages(messages);                      // a plugin's texts in the host's language
 	},
 });
 ```
@@ -22,8 +23,13 @@ startTerminalRuntime<P>({
   bridge on `globalThis.chordBridge`; the runtime takes it off before any plugin runs.
 - `channel.ts`: the sandbox's side: requests, `RelayLink` (a Chord link whose bytes the launcher relays), input and
   resizes. `terminal.ts`: the bridged terminal (size, write, input, resize). `theme.ts`: the theme lookup (`fg`, `bg`,
-  `onChange`). `runtime.ts`: the client (`startClient` with `TuiScripts`; scripts run with `vm`; no wakes).
-- `scope.ts`: `TuiScope(host, changed)`: `hold`, `watch` (a reader, `undefined` while no value), `registry`, `dispose`
-  (no `changed` after it). References wait and rebind by themselves; no terminal library dependency.
+  `onChange`). `runtime.ts`: the client (`startClient` with `TuiScripts`; scripts run with `vm`; no wakes), the kit's
+  themes and translations, the language followed from the user's pick and the launcher's `locales` (the bridge's
+  start).
+- `scope.ts`: `TuiScope(host, changed)`: `hold`, `watch` (a reader, `undefined` while no value), `registry`,
+  `pageState(key, initial)` (the host's value at `key`, shared with React's `usePageState`: a scope opened again after a
+  plugin reload finds it), `messages(t)` (a plugin's messages in the host's language at each call; a change of the
+  locale or a translation calls `changed`), `dispose` (no `changed` after it). References wait and rebind by themselves; no terminal
+  library dependency.
 
 Tests: `test/tui/` and, with the launcher and sandbox, `test/node/tui/`.

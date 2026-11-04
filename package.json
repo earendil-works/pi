@@ -5,13 +5,14 @@
 	"workspaces": [
 		"packages/*",
 		"apps/*",
+		"packages/chord/test/examples/61-tutorial",
 		"packages/coding-agent/examples/extensions/with-deps",
 		"packages/coding-agent/examples/extensions/custom-provider-anthropic",
 		"packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
 		"packages/coding-agent/examples/extensions/gondolin"
 	],
 	"scripts": {
-		"clean": "npm run clean --workspaces",
+		"clean": "npm run clean --workspaces --if-present",
 		"build": "cd packages/telemetry && npm run build && cd ../schema && npm run build && cd ../chord && npm run build && cd ../tui && npm run build && cd ../codemode && npm run build && cd ../mcp && npm run build && cd ../ai && npm run build && cd ../durable && npm run build && cd ../env && npm run build && cd ../agent && npm run build && cd ../coding-agent && npm run build",
 		"build:offline": "cd packages/telemetry && npm run build && cd ../schema && npm run build && cd ../chord && npm run build && cd ../tui && npm run build && cd ../codemode && npm run build && cd ../mcp && npm run build && cd ../ai && npm run build:offline && cd ../durable && npm run build && cd ../env && npm run build && cd ../agent && npm run build && cd ../coding-agent && npm run build",
 		"build:native:darwin": "npm --prefix packages/tui run build:native:darwin",
@@ -36,7 +37,7 @@
 		"check:model-catalog-compat": "node scripts/check-model-catalog-compat.mjs",
 		"profile:tui": "node scripts/profile-coding-agent-node.mjs --mode tui",
 		"profile:rpc": "node scripts/profile-coding-agent-node.mjs --mode rpc",
-		"test": "npm run test:scripts && npm run test --workspaces --if-present",
+		"test": "npm run test:scripts && npm run test --workspace packages --if-present",
 		"test:scripts": "node --test scripts/*.test.mjs scripts/*.test.ts",
 		"test:mcp-conformance": "node packages/coding-agent/test/mcp-conformance/run.ts",
 		"version:patch": "npm version patch --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",

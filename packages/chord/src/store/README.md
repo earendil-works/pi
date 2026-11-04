@@ -43,6 +43,9 @@ const copy = await importStore(sqliteBackend(db), decodeJsonl(bytes), ctx);
   optional data step (`rows(fn)` or `update({ where?, set })`), `drop`, `index`, `dropIndex` after it.
 - Queries: `query(Table).where((t) => cond).orderBy((t) => col, dir)` with `eq ne lt lte gt gte inArray isNull prefix
   and or not` (SQL's `NULL` rules); pages `{ items, next? }` with opaque cursors, `rows()` paging by 100, `count`.
+- Live queries: `self.query(table, q, limit)` in the owning object's factory, a watchable of up to `limit` rows, run
+  at activation and again in the commit step of each commit of the object that writes the table (`live-query.ts`;
+  `host/` describes the rules). One query per such commit: not for tables written hundreds of times a second.
 - Writes in `self.tx`: `put` (an upsert), `update(key, set)`, `delete(key)`, `updateWhere(where, set)`,
   `deleteWhere(where)`; a `set` is values or expressions (`add sub max min concat replacePrefix coalesce when`); key
   columns never change. `tx.get` sees the transaction's own single-key writes, not after a bulk one (W10).
@@ -72,10 +75,11 @@ call and at its turn while an owner holds a claim or once the store diverged, an
 `take()` for an export, the catalog), the commit `Step` and `StagedWrite`s in their `WriteOrder` (`step.ts`), the documents engine
 (`engine.ts`), the catalog (`catalog.ts`), the write vocabulary (`writes.ts`, `table-writes.ts`), rows and columns
 (`rows.ts`, `columns.ts`, `json-column.ts`), the compiled where/set vocabulary (`expression.ts`) and its JS evaluator (`evaluate.ts`),
-SQL (`sql.ts`), the table handle and a transaction's table changes (`table-handle.ts`, `table-changes.ts`), table
+SQL (`sql.ts`), the table handle and a transaction's table changes (`table-handle.ts`, `table-changes.ts`), live
+queries and their re-run in a commit step (`live-query.ts`), table
 histories and migrations (`table.ts`, `table-evolve.ts`, `table-history.ts`, `table-migration.ts`), the outbox
 (`outbox.ts`), archives (`archive.ts`, `export.ts`, `import.ts`, `applier.ts`, `jsonl.ts`), the store's SQL schema
 (`schema.ts`) and backends (`backend.ts`).
 
-Tests: `test/store/` (one file per source); the benchmarks in `test/bench/store.ts` (results in
-`docs/benchmarks.md`). Examples: `20-tables.ts`, `22-migrations.ts`, `25-export-import.ts`.
+Tests: `test/store/` (one file per source); the benchmarks in `test/bench/store.ts` and `test/bench/live-query.ts`
+(results in `docs/benchmarks.md`). Examples: `20-tables.ts`, `22-migrations.ts`, `25-export-import.ts`.

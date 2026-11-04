@@ -252,7 +252,7 @@ own plugin's directory; nothing gives it another plugin's files.
 "the kernel fixes and a first real proof" are done. p2's HTTP is its own, about 30 lines of helpers plus the server host:
 
 ```ts
-// apps/p2/src/runtime/server.ts (p2 today, Chord v1)
+// apps/p2/src/runtime/server.ts (p2 at the time, on Chord v1)
 export const Routes = defineRegistry<RouteHandler>("p2.routes", { conflict: "error" });        // "METHOD /path" → handler
 export const Upgrades = defineRegistry<UpgradeHandler>("p2.upgrades", { conflict: "error" });   // WebSocket upgrades
 export const RequestResolvers = defineRegistry<RequestResolver>("p2.request-resolvers", { conflict: "error" });

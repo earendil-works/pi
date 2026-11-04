@@ -1,0 +1,132 @@
+/* Voice mode (plugins/voice): the composer's microphone and orb. */
+.voice-chip {
+	position: relative;
+	gap: var(--s1);
+}
+/* The microphone's mute, beside the orb while voice mode is on: struck through and marked while muted. */
+.voice-mute {
+	padding: 0 var(--s1);
+}
+.chip.voice-mute.on {
+	color: var(--bad);
+}
+/* An error: a dot on the orb (its text is in the orb's label and in the Voice sheet). */
+.voice-error-dot {
+	position: absolute;
+	top: 6px;
+	right: 2px;
+	width: 7px;
+	height: 7px;
+	border: 1px solid var(--bg);
+	border-radius: 50%;
+	background: var(--bad);
+}
+.voice-orb {
+	--level: 0;
+	--orb: #7b8cff;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	background: radial-gradient(
+		circle at 35% 30%,
+		#fff 0%,
+		var(--orb) 55%,
+		color-mix(in srgb, var(--orb) 60%, #000) 100%
+	);
+	box-shadow: 0 0 calc(4px + var(--level) * 14px) color-mix(in srgb, var(--orb) 70%, transparent);
+	transform: scale(calc(1 + var(--level) * 0.5));
+	transition:
+		transform 70ms linear,
+		box-shadow 70ms linear,
+		background 300ms;
+}
+.voice-orb.listening {
+	animation: voice-breathe 2.4s ease-in-out infinite;
+}
+.voice-orb.hearing {
+	--orb: var(--ok);
+}
+.voice-orb.thinking {
+	--orb: var(--working);
+	background: conic-gradient(from 0deg, var(--orb), #fff, var(--orb));
+	animation: voice-spin 1.2s linear infinite;
+}
+/* Someone else in the room is talking. */
+.voice-orb.talking {
+	--orb: var(--ok);
+	opacity: 0.75;
+}
+.voice-orb.speaking {
+	--orb: #a26bff;
+}
+/* Speech is being fetched: the speaking colour, faint and breathing, until a sentence actually plays. */
+.voice-orb.preparing {
+	--orb: #a26bff;
+	opacity: 0.6;
+	animation: voice-breathe 1.2s ease-in-out infinite;
+}
+.voice-orb.connecting {
+	opacity: 0.5;
+	animation: voice-breathe 1s ease-in-out infinite;
+}
+@keyframes voice-breathe {
+	50% {
+		transform: scale(0.85);
+		opacity: 0.8;
+	}
+}
+@keyframes voice-spin {
+	to {
+		transform: rotate(1turn);
+	}
+}
+/* The voice sheet reuses the model picker (.sheet-sticky, .label, .model-list, .model-row); the speed sits where the
+   thinking level does there, its value on the label's right. */
+/* The current choice, and the language select beside it when the engine speaks several. */
+.voice-choice {
+	display: flex;
+	align-items: center;
+	gap: var(--s2);
+	margin: 0 0 var(--s2);
+}
+.voice-choice > p {
+	flex: 1;
+	min-width: 0;
+	margin: 0;
+}
+.voice-choice .voice-language {
+	flex: none;
+	width: auto;
+	max-width: 45%;
+	height: var(--control-sm);
+}
+.voice-state {
+	margin: 0 0 var(--s2);
+}
+.voice-speed {
+	display: block;
+}
+.voice-speed input {
+	display: block;
+	width: 100%;
+	height: var(--control-sm);
+	margin: 0;
+	accent-color: var(--text);
+}
+.voice-speed-value {
+	margin-left: auto;
+	color: var(--text);
+	font-size: var(--fs-sm);
+	font-weight: var(--fw-medium);
+	font-variant-numeric: tabular-nums;
+	letter-spacing: 0;
+	text-transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+	.voice-orb.listening,
+	.voice-orb.thinking,
+	.voice-orb.preparing,
+	.voice-orb.connecting {
+		animation: none;
+	}
+}

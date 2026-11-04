@@ -64,6 +64,27 @@ A facet only declares (`host.serve`, `self.contribute`, `host.references`), sync
 happens in objects: state in documents and tables, standing behaviour in a `local` object with empty params (it lives
 as long as the host). Names are prefixed by the plugin (`bob.stats`).
 
+## Tables shown live
+
+A table has no watch. To show its rows live, the object owning it declares a live query with a limit:
+
+```ts
+host.serve(Store, (_params, self) => {                 // a local type with empty params: it may have tables
+	const items = self.table(Items);
+	const newest = self.query(items, query(Items).orderBy((i) => i.id, "desc"), 50);
+	return { items: newest, add: async (row, ctx) => self.tx(async (tx) => tx.put(items, row), ctx) };
+});
+```
+
+- Chord runs it before the object goes live and again in each commit of the object that writes the table; watchers get
+  only what changed. A commit writing no such table runs nothing.
+- Only the object's own tables, the query fixed for the object's attempt (decide it from params), the limit required
+  (`invalid/args` without one).
+- One query per writing commit, at most `limit` rows (for 100 rows about 60 µs more per commit, 80 µs when watched;
+  `benchmarks.md`): there may be dragons for a table written hundreds of times a second. Keep a document for those.
+- Never read a table in `self.open` to fill a window: that makes a native, and the object restarts at every reload of
+  its plugin instead of swapping in place. A live query is no native.
+
 ## What a plugin may import
 
 | Import | Resolves to |
@@ -97,6 +118,37 @@ Refused at build, each with the file, line and rule:
 Contract files mention native things (React components, functions) only through `import type`; at runtime they import
 only the API and the plugin's own data-only files.
 
+## An app's API is a package
+
+The app's API is a workspace package of the app's repository: a `package.json` named `@acme/app` with an `exports`
+entry per module, listed in the repository root's `workspaces`, so `npm install` links it into `node_modules`:
+
+```json
+{
+	"name": "@acme/app",
+	"private": true,
+	"type": "module",
+	"exports": {
+		"./v3": "./src/api/v3/index.ts",
+		"./v3/web": "./src/api/v3/web.ts",
+		"./v3/worker": "./src/api/v3/worker.ts"
+	}
+}
+```
+
+Plugins, tests and tools resolve it alike: a facet imports `@acme/app/v3`, and so do the app's base code, a test, and
+a plugin's `contract.ts` that a test or a script imports. In a plugin's build it stays a host package (left out of the
+script, the process's own instance passed in when the script is evaluated).
+
+## Errors
+
+Throw Chord's own errors where Chord's built-in checks would, from the API (it re-exports them):
+`invalid("args", "a note needs a title")` for arguments a method refuses (`"params"` for params a factory refuses),
+`forbidden("viewers only")` for a principal a factory or method refuses. The caller gets the same
+`{ code: "invalid", reason: "args" }` or `{ code: "forbidden" }` across every link. For codes of the plugin's own throw
+`new PluginError(code, message, details)`. Only the code, reason, message and JSON details cross a link, never a stack
+or a cause.
+
 ## Contracts and versions
 
 A plugin carries the contract it was written against. Plugins changing together (one root, one repository) import
@@ -114,7 +166,7 @@ No type check, no build hooks, no `dist` needed; generated files are committed. 
 process of its kind with that process's API modules. A failed build or evaluation leaves the plugin out (at startup)
 or keeps its old code (at a reload), reported with the error.
 
-## Styles and themes (web and terminal facets)
+## Styles, themes and state across reloads (web and terminal facets)
 
 - A web facet's CSS is served with its script and swapped when the plugin reloads. Scope it with a **CSS module**: a
   file named `*.module.css` has its class names made unique to the plugin and the file, and its import is the mapping
@@ -123,8 +175,44 @@ or keeps its old code (at a reload), reported with the error.
 - Read the app's look from its CSS variables (`var(--accent)`, `var(--bg)`, `var(--fg)`, `var(--muted)`, `var(--error)`,
   `var(--warning)`, `var(--success)`, and the app's own roles), never fixed colours: the active theme sets them.
 - In a terminal facet, ask the app's theme lookup for a role (`theme.fg("accent", "Notes")`); never write raw colours.
+- A reload of the plugin remounts its components (each is a new function): their `useState` starts over. Keep what
+  must survive an update (a half-typed message, a scroll position) in page state, kept by the page's host under a key
+  prefixed with the plugin's name: `usePageState("stats.draft", "")` instead of `useState("")` (from the app's web
+  API); in a terminal facet `scope.pageState("stats.draft", "")` on the `TuiScope` it was given. Any value, never sent
+  anywhere, gone with the page.
 - A theme is data: contribute a `Theme` (`{ id, name, mode, colors, web?, tui? }`) to the kit's `Themes` registry,
   from a web facet and a terminal facet to reach both. Users pick one dark and one light theme.
+
+## Messages
+
+Text people read is written once, in code, and rendered in each viewer's language (design §23, "Messages and
+languages"). From the app's API:
+
+```ts
+// plugins/stats/messages.ts: imported by every facet that renders, and by the worker when it builds messages as data
+export const messages = defineMessages("bob.stats", {
+	en: { title: "Stats", words: (n: number) => (n === 1 ? "1 word" : `${formatNumber(n)} words`), done: (by: string) => `${by} finished` },
+	de: { title: "Statistik", words: (n) => (n === 1 ? "1 Wort" : `${formatNumber(n)} Wörter`), done: (by) => `${by} ist fertig` },
+});
+```
+
+- The namespace is the plugin's name; keys are names (`title`), never English text; the English catalog comes first and
+  annotates its functions' parameters, the others take them from it. A missing key, an unknown one or a wrong argument
+  is a type error. Plurals and word order are functions; dates, times and numbers go through `formatTime` and
+  `formatNumber` inside them (they follow the language being rendered).
+- Every facet that renders contributes the plugin's own catalogs: `self.contribute(Translations, messages.translations)`
+  (registries are per host; the host learns the languages offered from them).
+- Render in the host's language: `const { t } = useMessages(messages)` in a component, `const t =
+  scope.messages(messages)` in a terminal facet. The plain `messages(key, ...)` has no language of its own (outside a
+  render: the first catalog); never use it in UI code.
+- Objects never store sentences: a member typed `union([MessageSchema, nul()])` holds `messages.message("done", by)`
+  (keys whose arguments are strings, numbers, booleans or `null`; a date as an ISO string), and each client renders it
+  with `t.render(message)`, which shows the key of a message it does not know.
+- A translation is a plugin: its catalogs typed `MessagesOf<typeof messages>` (a type-only import of the other plugin's
+  `messages.ts`), partial allowed, in one shared file contributed as a list from each facet that renders:
+  `self.contribute(Translations, [{ namespace: "bob.stats", locale: "fr", messages: statsFr }])`; `override: true`
+  replaces the plugin's own catalog of that locale.
+- Never translated: the model's prompts and answers, log lines, error codes.
 
 ## Installing
 
@@ -162,8 +250,9 @@ await t.close(ctx);
 ```
 
 The plugin is built as production builds it and loaded on an in-memory host (a `:memory:` store). Stubs are ordinary
-facets with fake data. A test declares the contracts it reads again (contracts are data: the same name, version and
-schema bind).
+facets with fake data. A test imports the API by its package name and the plugin's own contracts from its
+`contract.ts` (the build bundles its own copy; contracts are data: the same name, version and schema bind); contracts
+of plugins it has no files of, it declares again, as `Notes` above.
 
 ## Checklist
 
@@ -172,5 +261,8 @@ schema bind).
 3. Imports: the app's API at one version, own files, same-root contract files by relative path, other repositories'
    by package name pinned in `dependencies`.
 4. Contracts prefixed with the plugin's name; a version bump for every change of shape.
-5. Files of one kind named `*.<kind>.ts(x)`.
-6. A test with `testPlugin` and stubs for every name `t.unserved()` lists.
+5. Live rows of a table through `self.query(table, q, limit)`, never a read in `self.open`.
+6. Files of one kind named `*.<kind>.ts(x)`.
+7. A test with `testPlugin` and stubs for every name `t.unserved()` lists.
+8. Texts people read in `messages.ts` (`defineMessages`), its catalogs contributed from each facet that renders, state
+   holding messages as data.

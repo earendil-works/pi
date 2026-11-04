@@ -106,16 +106,6 @@
 			"types": "./dist/node/tui/index.d.ts",
 			"import": "./dist/node/tui/index.js"
 		},
-		"./old": {
-			"source": "./src/old/index.ts",
-			"types": "./dist/old/index.d.ts",
-			"import": "./dist/old/index.js"
-		},
-		"./old/node": {
-			"source": "./src/old/node.ts",
-			"types": "./dist/old/node.d.ts",
-			"import": "./dist/old/node.js"
-		},
 		"./package.json": "./package.json"
 	},
 	"sideEffects": false,

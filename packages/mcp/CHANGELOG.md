@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `PipeTransport`, MCP's stdio transport over a program started by the caller through an `McpPipe` (`write`, `closeStdin`, `close`, `exited`), for example `@earendil-works/pi-env`'s `openProcess()` on another machine. `StdioTransport` and `PipeTransport` share the newline-delimited framing and the stderr tail.
+- Added MCP OAuth sign-in in two halves (`@earendil-works/pi-mcp/oauth`), moved from pi's coding agent: `startMcpSignIn()` refreshes the stored tokens or returns the authorization URL, and `completeMcpSignIn()` exchanges the code later, possibly in another request with the same state store. The code comes from a loopback callback server (`listenForLoopbackSignIn()`, `waitForLoopbackSignIn()`), the application's own callback route, or a pasted redirect URL (`responseFromRedirectUrl()`). Client ID Metadata Documents (`clientMetadataDocuments`) and the client name are the caller's. Aborting a sign-in's `signal` also stops `startMcpSignIn()` while it waits for the refresh lock; a store's `withRefreshLock()` throws `McpRefreshLockBusyError` when another process holds the lock too long, which makes `startMcpSignIn()` skip the refresh, while any other lock failure fails the sign-in. Also added `createMcpAuthProvider()`, which refreshes tokens once across requests and, through `McpOAuthServerStore.withRefreshLock()`, across processes; its `redirectUrl` option names a redirect URI the application signs in with, so tokens from a Client ID Metadata Document that lists only an https callback route can be refreshed. Also added the `refreshOnly` option of `authorizeMcp()`, which refreshes without registering a client or replacing a pending authorization's `state` and PKCE verifier.
+- Added helpers that let applications name and configure MCP tools like pi's coding agent, moved from it: `createMcpToolName()` (`mcp__<server>__<tool>`, sanitized, with a hash suffix for long or colliding names) and `mcpNamespace()`; `normalizeMcpInputSchema()`, which makes an input schema an object schema; `limitMcpContent()` and `MCP_OUTPUT_MAX_BYTES`, which cut model-facing text over 20KB in the middle and optionally save the full text through a caller's `McpOutputSaver`; and `validateMcpServerConfig()`, which validates one entry of the `mcpServers` configuration shape (stdio, Streamable HTTP, `oauth`, `enabled`, `description`, `timeout`), returns the entry tagged with its transport, and keeps the application's own fields for it to check afterwards. `isMcpServerOverride()` recognizes entries that only override a server defined elsewhere.
+
+### Fixed
+
+- Fixed Streamable HTTP `application/json` responses bypassing `maxMessageBytes`; oversized JSON responses are now cancelled and rejected like oversized SSE events ([#11335](https://github.com/earendil-works/pi/issues/11335))
+- Fixed Streamable HTTP errors reading the whole HTTP error body; only the first 8 KiB kept in the error is read, and the rest is cancelled
+
 ## [1.5.0] - 2026-11-02
 
 ### Changed

@@ -13,7 +13,7 @@ import { createHost, type Facet, type Host, type HostError, type PluginFacet } f
 import type { JsonValue } from "../../json.ts";
 import { openNodeSqliteDatabase } from "../../sqlite/node.ts";
 import { openStore, type Store, sqliteBackend } from "../../store/index.ts";
-import { themeChoiceFacet, themesFacet } from "../../surfaces/index.ts";
+import { localeChoiceFacet, themeChoiceFacet, themesFacet, translationsFacet } from "../../surfaces/index.ts";
 import type { Watchable } from "../../watch.ts";
 import { createHttp, type HttpComponent, type HttpError, type ListenAddress } from "../http/index.ts";
 import {
@@ -253,6 +253,8 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 		{ name: "chord.app.files", facet: filesFacet(join(layout.server, "files"), options.files, limits.uploads) },
 		{ name: "chord.themes", facet: themesFacet() },
 		{ name: "chord.themes.choice", facet: themeChoiceFacet() },
+		{ name: "chord.translations", facet: translationsFacet() },
+		{ name: "chord.locale.choice", facet: localeChoiceFacet() },
 	];
 	const surfaces: Surface<P>[] = [];
 	const app = new RunningApp(host, http, workers, plugins, surfaces, { store, lock }, layout, options);

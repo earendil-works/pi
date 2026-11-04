@@ -2084,6 +2084,30 @@ validation and copies the v2 kernel added around Delta.
   is trusted (a plugin's own file). (2) The worker lock on macOS and the BSDs fails closed on a stale lock file, with an
   error naming it (no takeover; Linux and Android use abstract sockets and are unaffected). (3) A route's overhead:
   Opus's two trims, measured again after the `fetch` rework, and the numbers brought to the owner.
+- **Stale lock files are cleared by the starter (owner, 2026-11-03: "do both"; refines point (2) of "Slice 10 fix
+  round, three small points"):** on macOS and the BSDs a worker killed by a signal (the grace's SIGKILL, the start
+  timer, a dev supervisor) runs no exit hooks and leaves its lock's socket file; every later start of that address then
+  failed closed on it, also `retry`, until someone removed the file by hand. Takers still fail closed (two takers
+  clearing could race); the workers component, the one process that starts an address's workers, removes a socket file
+  nobody accepts on (`clearStaleLock`) before each start's message and after a child's exit by a signal, both in the
+  address's queue, so never two clears of one name at once. A live holder (an older worker still exiting) accepts and
+  is kept. One connect per start on macOS and the BSDs, nothing on Linux, Android and Windows. A taker also treats
+  `ENOTSOCK` (a non-socket file at the path on macOS) as stale; before it retried until its context ended.
+- **A pause of the process is no silence (owner, 2026-11-03; refines "Slice 4a spec decisions"):** after a laptop
+  slept, the host's heartbeat timer fires before any I/O is read and found every link silent past `close`: the server
+  closed its worker links (and the worker its parent link) though both peers were fine, and p2's session workers
+  stayed failed ("worker exited (code 0)") until Retry. A tick at least one interval late is time this process did
+  not run (a sleep, a blocked event loop); that time does not count as silence: each link's silence is what it was
+  before the pause, at least `ping`, so an open link pings at once and a dead peer (a TCP connection the sleep
+  dropped) closes `close - ping` later (15 s by default). One subtraction per link on a late tick, nothing otherwise.
+- **A lost worker link is recovered from (owner, 2026-11-03: "should we not auto reconnect?"; refines R2 of "Slice
+  10's points"):** R2 counted a link lost while its child lives (the heartbeat, a protocol error, the child closing its
+  own link) as a crash. A lost link of a `running` worker is now a stop instead: the child is stopped (grace 5 s, then
+  killed), `worker_link_lost { address, error }` is reported, the address does not fail, and its held route resolves
+  again (the kernel resolves once after a held link drops): a new worker starts after the exit. No restart loop: a
+  second lost link within a minute of the address's last recovery fails it as before, with the public error `worker
+  lost its link` (`worker_exited` and `worker_failed` as for a crash). A link lost before `ready` is still a failed
+  start. Crashes, `fatal`s and failed starts stay failed until `retry` or a rollout (R2 unchanged for them).
 - **Slice 10: a route's overhead accepted; no header accessor (owner, 2026-10-31: "1 yes, 2 no"):** after the `fetch`
   rework and the Node fast path a route costs +20-21 µs over a plain Node handler on the standard bench, +12-13 µs warmed
   (before the rework +4.5 µs): the request's scope (2.1 µs), URL parsing, admission and routing, the baseline's headers,
@@ -2395,7 +2419,21 @@ validation and copies the v2 kernel added around Delta.
   state, notices, tool summaries and errors shown to people (a code plus parameters); each client renders it with
   `t.render` in its own language (checked at runtime across a link: an unknown key shows the key). Never translated:
   the model's prompts and answers, log lines, error codes. No translator file format now; an export/import tool to JSON
-  when someone needs it. Built after slice 11 (carry-over "After slice 11").
+  when someone needs it. Built after slice 11 (carry-over "After slice 11"). **Refined in the build (2026-11-03;
+  asked by the build, accepted by the main session):** (1) a `Translations` contribution is a list
+  (`readonly Translation[]`): a contributor contributes once per registry, and the proposal's French plugin
+  contributes `notes/fr` and `app/fr` from one facet. (2) A plugin's own catalogs are its built-in contributions
+  literally: each facet that renders contributes them (`self.contribute(Translations, notes.translations)`), because
+  `defineMessages` runs at module evaluation, tied to no host, and a host must know every locale its catalogs offer
+  (the device default, a settings list); conflicts and `override` as decided (`override: true` wins over a catalog
+  without it), and `t` still renders its own catalogs if a facet forgot the contribution. (3) `t` is per host:
+  `useMessages(t)` returns `{ t, locale }` bound to the `HostProvider`'s host and its language, `scope.messages(t)`
+  likewise (a change redraws); the plain `t(key, ...args)` imported from `messages.ts` renders in the language of the
+  render under way (a synchronous render scope: nested `t` calls, `formatTime` in a message function), outside one in
+  the first catalog (servers, tests, logs); no module-level current locale, since one process may run many hosts and a
+  server renders per recipient. Also from the build: the typed message is `MessageData<N, K>` (the link protocol owns
+  `Message`), `t.message` takes only keys whose arguments are JSON scalars, and the theme choice and the locale choice
+  share one per-principal preference store (`src/surfaces/preference.ts`).
 - **Chord v2 becomes the package's root (owner, 2026-11-03: "src/old", "subpaths", "yes", "yes", "no, chord is
   wip"; for merging pi-private into pi this week; trial `/home/badlogic/chord-root-move/report.md`):** `src/next` is
   the package's `src` (its main export), the Node parts `src/next-node` are `src/node` with short subpaths (`/http`,
@@ -2419,7 +2457,10 @@ validation and copies the v2 kernel added around Delta.
   (10) the phone gets it once the switch is green on slayer (owner, later the same day: "no hours on slayer first";
   was: after 1-2 days on slayer), about 10 minutes down, rollback by checkout; (11) a small shim
   reloads pages left open across the deploy, removed with v1. Server, workers, the terminal bundle and the web bundle
-  switch in one deploy (v1 and v2 links do not talk); prep and cleanup steps deploy on their own.
+  switch in one deploy (v1 and v2 links do not talk); prep and cleanup steps deploy on their own. **Done
+  2026-11-03:** the switch is private `16329187c` (on the phone since 12:38, data unchanged); Chord v1 deleted upstream
+  `ed4f48840` (owner: "delete old chord, clean up anything related to old chord"), p2's shim, v1 tutorial and v1
+  fixture generator in private `7dadff697`.
 - **Mistakes that wait are reported at once (owner, 2026-11-03: "yes"; p2 port footguns 1, 2, 9,
   `/home/badlogic/p2-port/chord-footguns.md`):** requests keep waiting for providers (slice 7a), but a mistake no
   longer looks like slowness. (a) `get`, `hold` and `registry` on a host that has not loaded throw at once ("call
@@ -2438,6 +2479,53 @@ validation and copies the v2 kernel added around Delta.
   acts as the method's caller (decision of slice 4a, unchanged): a server object acting as itself towards a worker
   takes the reference with `self.get` in its own object or a server root; documented with p2's `Search.rebuildIndex`
   example in the guide and the porting notes.
+- **Tutorial gaps (owner, 2026-11-03: "4. export", "3. ok", "1. b"; the tutorial's findings):** (4) Chord's root
+  exports `invalid` and `forbidden`; an app's API re-exports them, so a plugin throws a decided `ChordError`. (3) An app's
+  API is a real package (`"name": "@acme/app"`, `"exports": { "./v1": ..., "./v1/web": ... }`), so Node,
+  TypeScript and plugin builds resolve it alike and tests import plugins' contract files; the tutorial and
+  `plugin-authoring.md` show it, no Chord change. (1) **Refines "Slice 11, P4":** a component of a reloaded web plugin
+  is a new function and remounts (its `useState` starts over); state that must survive a plugin update (a half-typed
+  message, a scroll position) is kept by the page host: `usePageState(key, initial)` in `chord/react` (and the same
+  per-key store for `TuiScope`), untouched by plugin reloads, gone with the page. Rejected: React Fast Refresh (a Babel
+  or SWC transform in every web build, fragile when hooks change). Open: a live view of table rows (the tutorial's
+  and 59-chat's `self.open` read at activation, which makes every reload a restart): to explain first.
+- **Live queries over an object's own tables (owner, 2026-11-03: "if self.query is easy enough, and we document it as
+  'there may be dragons' then i guess it's ok"; resolves the tutorial's gap 2):** `self.query(table, q, limit)` in a
+  factory returns a `Watchable` of the query's rows, usable as a state member and a derive source. Chord runs the
+  query before the object goes live (like loading its documents: no `self.open`, so a reload swaps the object), and
+  again in the publication step of every commit of the object that touched that table, diffing the new rows against
+  the previous ones (ops to watchers and holds, as for any member). Only the object's own tables (only it writes them,
+  so its commits are the exact invalidation); the query is fixed for the attempt (params decide it); a limit is
+  required (the third argument, as `page` takes it: the query language keeps the limit an argument of the runner;
+  refused `invalid/args` at declaration; build, 2026-11-03). Cost: one query per touching commit, bounded by the
+  limit; documented with a warning ("there may be dragons": not for tables written hundreds of times a second).
+  Incremental maintenance of the result (an ordered, limited query with row-level changes kept in memory, re-running
+  only when a removal empties the window or a bulk write hides which rows changed) is carry-over for when a case
+  needs it. Rejected: a window document written beside the table (rows stored twice; app code mirroring every update
+  and delete).
+- **Swaps: dependents first; calls during a swap never see `not_ready` (owner, 2026-11-04: "if swaps can be invisible
+  to dependents that's cool, but I fear correctness bugs"; analysis `/tmp/swap-analysis.md`):** the problem: a reload
+  swapping a provider and its pure dependent (61's `todo.store` and `todo.todos(groceries)`) parked the dependent
+  every time. `#objects` keeps objects in the order they went live, providers before dependents, and fates started in
+  that order: the store's swap showed `loading`, the view's new attempt bound it, parked, withdrew its contributions
+  (a registry gap) and unbound its holds over links (`loading` on the client). Worse, a parked swap resolved the gate:
+  a call over a link whose hold was still bound (the old instance draining) got `not_ready` while the client showed
+  `live`. Decided: (1) the gate (`ChordObject.call`) holds a call while any attempt activates (a swap, parked or not,
+  a restart after its drain) until the object is live, failed or ended, bounded by `readyTimeout`
+  (`unavailable/park_timeout`, as a call parked on a reference); a parked attempt showing `failed { waiting }`
+  rejects it with that cause. When a parked swap's hold then leaves the old instance it tells the consumer `loading`
+  and answers its calls in flight `unavailable` (the rule for any object leaving `live`): an error consistent with
+  what the client sees. (2) A reload starts the removals first, then the other fates dependents first (the reverse
+  of `#objects`); the report keeps the objects' order. A dependent's new attempt binds its provider while that is
+  still live, passes its check and reads the old instance until the new one is live (one frame): the path a
+  provider-only reload already takes, so no new state. A pure dependent still parks only when its new code needs the
+  provider's new version (the provider's `served` changes with its own fate, so the request waits unbound, then
+  parks on the swap; it never reads that version off the old instance), when its provider went live after it (a
+  provider that failed live and came back), or when it needs something that is not live (a new or missing
+  dependency); so a call waiting at the gate when a swap parks is rare. Rejected: same-host references showing
+  `live` during a swap by changing `ChordObject.state` (holds, keyed pins, versions and `variant` read it as "a live
+  instance exists"; a per-binding view is possible later, the blip is cosmetic). Carry-over: calls surviving a
+  `loading` unbind (slices.md, "Later: reload").
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a

@@ -878,6 +878,8 @@ pi.on("before_provider_request", (event, ctx) => {
 
 This is mainly useful for debugging provider serialization and cache behavior.
 
+The payload is the full request. Providers that continue from a previous response (OpenAI Codex over WebSocket, Anthropic message threads) may send only the part that is new since the previous request.
+
 #### after_provider_response
 
 Fired after an HTTP response is received and before its stream body is consumed. Handlers run in extension load order.
@@ -1259,7 +1261,7 @@ Control flow helpers. `ctx.isIdle()` is false while Pi is processing an agent ru
 Request a graceful shutdown of pi.
 
 - **Interactive mode:** Deferred until the agent becomes idle (after processing all queued steering and follow-up messages).
-- **RPC mode:** Deferred until the next idle state (after completing the current command response, when waiting for the next command).
+- **RPC mode:** Runs right away when the session is idle and no command is being handled. Otherwise deferred until the current command finishes (including its response) or the active run settles. (A request made while an extension-started compaction is running waits for the next command or run to finish.)
 - **Print mode:** No-op. The process exits automatically when all prompts are processed.
 
 Emits `session_shutdown` event to all extensions before exiting. Available in all contexts (event handlers, tools, commands, shortcuts).
@@ -1804,16 +1806,25 @@ mode and would not execute if sent via `prompt`.
 
 Register a custom TUI renderer for custom messages with your `customType`. Custom messages are created with `pi.sendMessage()` and participate in LLM context. See [Custom UI](#custom-ui).
 
-### pi.registerMarkdownTransformer(transformer)
+### pi.registerMarkdownTransformer(transformer, options?)
 
-Register a transformer for the Markdown in normal user text, assistant text, and thinking blocks. Transformers run in extension load order, and each transformer receives the Markdown returned by the previous transformer. After the chain finishes, Pi renders the transformed content with its built-in renderer.
+Register a transformer for Markdown before Pi renders it in interactive mode. Transformers run in extension load order, and each transformer receives the Markdown returned by the previous transformer. After the chain finishes, Pi renders the transformed content with its built-in renderer.
+
+By default a transformer runs on normal user text, assistant text, and thinking blocks. `options.messageTypes` lists the surfaces it runs on instead:
+
+| `messageType` | Surface |
+|---------------|---------|
+| `"user"`, `"assistant"`, `"assistant-thinking"` | Transcript messages (default) |
+| `"custom"` | Custom messages from `pi.sendMessage()` without a registered message renderer, and expanded skill blocks (their content, without Pi's header) |
+| `"summary"` | Expanded branch and compaction summaries (the summary, without Pi's header) |
+| `"changelog"` | Pi's changelog ("What's New" at startup and `/changelog`), the startup "Extension Updates" notice, and the release note of the "Update Available" notice |
 
 The transformer receives the Markdown string and a context with:
 
-- `messageType` — `"user"`, `"assistant"`, or `"assistant-thinking"`
-- `isStreaming` — `true` for partial assistant updates; `false` for user, finalized assistant, and restored messages
+- `messageType` — one of the surfaces above
+- `isStreaming` — `true` for partial assistant updates; `false` otherwise
 - `availableWidth` — exact terminal columns available for the transformed Markdown content
-- `messageId`, `timestamp` — session-entry ID and ISO timestamp when rendering from persisted session entries; `undefined` for live messages
+- `messageId`, `timestamp` — session-entry ID and ISO timestamp when rendering from persisted session entries; `undefined` for live messages and notices
 
 Return the transformed Markdown:
 
@@ -1822,9 +1833,14 @@ pi.registerMarkdownTransformer((markdown, { messageType, isStreaming }) => {
   if (isStreaming || messageType === "assistant-thinking") return markdown;
   return markdown.replaceAll("-->", "→");
 });
+
+// Show :warning: shortcodes in changelogs as a symbol.
+pi.registerMarkdownTransformer((markdown) => markdown.replaceAll(":warning:", "⚠"), {
+  messageTypes: ["changelog"],
+});
 ```
 
-If a transformer throws, Pi keeps the Markdown produced so far and continues with the next transformer. The hook is display-only: the original message remains unchanged in the session and model context. It runs for new user messages, assistant streaming updates, restored session messages, and terminal width changes, so transformers should remain synchronous and inexpensive.
+If a transformer throws, Pi keeps the Markdown produced so far and continues with the next transformer. The hook is display-only: the original message remains unchanged in the session and model context. It runs for new messages, assistant streaming updates, restored session messages, and terminal width changes, so transformers should remain synchronous and inexpensive. An extension has one transformer; registering again replaces it.
 
 ### pi.registerEntryRenderer(customType, renderer)
 
@@ -2401,6 +2417,8 @@ pi.registerTool({
 The `create*ToolDefinition()` factories, such as `createReadToolDefinition()`, return complete tool definitions, including the built-in prompt snippet and guidelines, for the same purpose. Rendering does not need copying: a tool registered under a built-in name inherits the built-in renderer for each slot it leaves out (see [Overriding Built-in Tools](#overriding-built-in-tools)).
 
 **Operations interfaces:** `ReadOperations`, `WriteOperations`, `EditOperations`, `BashOperations`, `PowerShellOperations`, `LsOperations`, `GrepOperations`, `FindOperations`
+
+`GrepOperations` only covers the directory check: grep always runs the local `rg`. To search a remote system, override grep's `execute()` instead, as the [Gondolin example](../examples/extensions/gondolin/index.ts) does.
 
 For `user_bash`, extensions can reuse Pi's local shell backend via `createLocalBashOperations()` (or `createLocalPowerShellOperations()`) instead of reimplementing local process spawning, shell resolution, and process-tree termination.
 

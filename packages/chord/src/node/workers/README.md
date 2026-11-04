@@ -52,9 +52,13 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   lock (waiting for an old holder without polling), makes its parent link and sends `started` when the app's host
   connects; `resolve` returns the link then. The start timer (60 s) covers fork, lock and connect only. `ready` (after
   the app's function returned, with the idle state and the load report) makes the worker `running`.
-- **Failures stay** (R2): a crash (an exit nobody asked for), a `fatal`, a link closed by this side (the heartbeat, a
-  protocol error: the child is stopped, grace 5 s, then killed) or a failed start leaves the address `failed`
+- **Failures stay** (R2): a crash (an exit nobody asked for), a `fatal` or a failed start leaves the address `failed`
   (`worker_failed` once, `worker_exited` for the exit) until `retry` or a rollout reaching workers.
+- **A lost link is recovered from** (decision "A lost worker link is recovered from"): a link closed by this side (the
+  heartbeat, a protocol error: the child is stopped, grace 5 s, then killed) or by the child while it lives on (killed
+  after the grace). After `ready` its exit is a stop: `worker_link_lost { address, error }`, and the held route
+  resolves again, a new worker. A second within a minute of the address's last recovery fails it (public error
+  `worker lost its link`), as does one before `ready`.
 - **Keep-alive:** the child reports when its idleness flips: `host.activity`'s `references`, `jobs` and `lingering` and
   the app's `busy` (a JSON watchable of a record of numbers) all zero, no reload running; local calls send nothing.
   The server stops a worker idle since `idleMs()` (checked every second, from `ready`). A stop: `shutdown`; the child
@@ -82,6 +86,9 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   `shutdown`, the parent's disconnect, `SIGTERM` and `SIGINT` abort its context and run the closers registered so far,
   also during startup. An uncaught error or a throwing function sends `fatal` with `redact(error)` and exits 1.
 - `processLock(name, ctx)`: the lock (an abstract socket on Linux, a named pipe on Windows, a socket file elsewhere).
+  A taker fails closed on a socket file nobody accepts on; the component clears one (a worker killed by a signal left
+  it) before each start and after a child's exit by a signal, in the address's queue (decision "Stale lock files are
+  cleared by the starter").
 
 ## Examples
 
