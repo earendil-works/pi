@@ -28,6 +28,7 @@
 - Fixed the grep tool reading every matched file into memory when `context` was set, which ran out of memory on large files; context now comes from ripgrep, which also fixes UTF-16 files and lone CRs in matched lines, and the match limit notice no longer appears when exactly `limit` matches exist ([#9276](https://github.com/earendil-works/pi/issues/9276), [#11423](https://github.com/earendil-works/pi/issues/11423))
 - Fixed the find tool reporting the result limit when exactly `limit` files match, and `limit: 0` in find and ls returning every result or an empty listing; limits below 1 now mean 1 ([#7121](https://github.com/earendil-works/pi/issues/7121))
 - Fixed grep match lines, codemode output, compaction summaries of tool results, and MCP error and server summaries cutting an emoji or other non-BMP character in half when truncating, which left an invalid lone surrogate in the text ([#7121](https://github.com/earendil-works/pi/issues/7121))
+- Fixed the read tool loading whole files into memory, which ran out of memory on large files even with `offset`/`limit`; it now streams the file and keeps only the shown lines. Custom `ReadOperations` can stream too by providing the new optional `createReadStream` ([#9654](https://github.com/earendil-works/pi/issues/9654))
 
 
 ## [1.5.0] - 2026-11-02
