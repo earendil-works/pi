@@ -1455,19 +1455,13 @@ reference acts as whoever made it: <code>ctx.get</code> as the caller, <code>hos
 Await what you start: a write started with a context that ends is cancelled and reported <code>transaction_cancelled</code>. A
 watch starts at the current value: read <code>handle.value</code>, then <code>start</code>; the listener gets changes only. The plain <code>t</code>
 has no language of its own: components and screens render with <code>useMessages(t)</code> and <code>scope.messages(t)</code>.</p>
-<p><strong>Hard to explain, found while writing the example.</strong> Each is a candidate for a fix in Chord rather than a paragraph in
-a tutorial.</p>
-<ul>
-<li><strong>Integer table keys do not type-check.</strong> <code>KeyOf</code> in <code>src/store/table.ts</code> still tests TypeBox&#39;s
-<code>&quot;~kind&quot;: &quot;Integer&quot;</code>, which pi-schema&#39;s <code>int()</code> lacks, so the key of an <code>int</code> key column is typed <code>string</code>:
-<code>tx.get(items, { id })</code> with a number fails <code>tsc</code>. The store here uses <code>updateWhere</code> with <code>eq</code> instead of
-<code>tx.update</code>.
-Four more, found the same way, are fixed: a reloaded web plugin lost its own React state (now <code>usePageState</code>,
+<p><strong>Found while writing the example, and fixed in Chord since.</strong> Integer table keys were typed <code>string</code> (a leftover
+of the switch from TypeBox), so <code>tx.update(items, { id }, ...)</code> with a number failed <code>tsc</code>; the store now uses it. A
+reloaded web plugin lost its own React state (now <code>usePageState</code>,
 chapter IX), a plugin&#39;s <code>contract.ts</code> could not be imported outside builds (the API is now a workspace package,
 chapter I), plugins could not throw Chord&#39;s <code>invalid</code> (Chord exports <code>invalid</code> and <code>forbidden</code>, chapter II), and a
 live window over a table needed a one-time read in <code>self.open</code>, which made the store restart at every reload of its
-plugin (now <code>self.query</code>, a live query Chord runs, chapters II and IX).</li>
-</ul>
+plugin (now <code>self.query</code>, a live query Chord runs, chapters II and IX).</p>
 </section>
 
 <section class="chapter appendix" id="the-app-s-files"><header class="opener"><div class="numeral">A</div><h2>The App&#39;s Files</h2></header>

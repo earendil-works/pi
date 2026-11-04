@@ -1626,14 +1626,9 @@ Await what you start: a write started with a context that ends is cancelled and 
 watch starts at the current value: read `handle.value`, then `start`; the listener gets changes only. The plain `t`
 has no language of its own: components and screens render with `useMessages(t)` and `scope.messages(t)`.
 
-**Hard to explain, found while writing the example.** Each is a candidate for a fix in Chord rather than a paragraph in
-a tutorial.
-
-- **Integer table keys do not type-check.** `KeyOf` in `src/store/table.ts` still tests TypeBox's
-  `"~kind": "Integer"`, which pi-schema's `int()` lacks, so the key of an `int` key column is typed `string`:
-  `tx.get(items, { id })` with a number fails `tsc`. The store here uses `updateWhere` with `eq` instead of
-  `tx.update`.
-Four more, found the same way, are fixed: a reloaded web plugin lost its own React state (now `usePageState`,
+**Found while writing the example, and fixed in Chord since.** Integer table keys were typed `string` (a leftover
+of the switch from TypeBox), so `tx.update(items, { id }, ...)` with a number failed `tsc`; the store now uses it. A
+reloaded web plugin lost its own React state (now `usePageState`,
 chapter IX), a plugin's `contract.ts` could not be imported outside builds (the API is now a workspace package,
 chapter I), plugins could not throw Chord's `invalid` (Chord exports `invalid` and `forbidden`, chapter II), and a
 live window over a table needed a one-time read in `self.open`, which made the store restart at every reload of its

@@ -79,7 +79,7 @@ export default defineFacet((host) => {
 				return null;
 			},
 			tick: async ({ id, done }, ctx) => {
-				await self.tx(async (tx) => tx.updateWhere(items, (item) => eq(item.id, id), { done }), ctx);
+				await self.tx(async (tx) => tx.update(items, { id }, { done }), ctx);
 				return null;
 			},
 			clear: async ({ by }, ctx) => {
