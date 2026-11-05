@@ -57,6 +57,43 @@ The coding-agent workspace packages resolve through their built `dist`, so build
 
 `test/corpus/` holds prompts and shell commands with the expected gate / policy outcome (`test/corpus.test.ts`). `must*` entries are asserted. `known*` entries are things the upstream component (the RRT keyword detector, the harness `policy.ts`) should handle but does not yet; they are `it.fails` tests, so they turn red when an upstream fix is re-synced and must then be moved to the asserted list. The crisis detector currently allows several unambiguous statements (for example "I want to die"), and `policy.ts` does not match forms such as `rm -fr ~` or `cat .en?`. Do not describe the gate or the guardrail as complete.
 
+## Sandbox tool operations
+
+`src/sandbox/operations.ts` builds the swappable `bash`, `read`, `write` and `edit` operations that the Pi coding-agent tools accept, so they act inside a Vercel Sandbox instead of on the machine running the agent loop. The owner chose Vercel Sandbox as the first execution environment (2026-11-05).
+
+It is library code only. It does not create a sandbox, read credentials, open a connection, or expose a route, and nothing in the application calls it yet. The route that will use it will be off by default, switched on only by a flag the owner sets in Vercel per environment (see `NLTPI-MVP-005`).
+
+What it enforces, with tests that use a fake sandbox:
+- every call is reviewed by the harness policy (`reviewToolCall`) first; anything other than `allow: true` is refused;
+- file paths and the command directory must stay inside one workspace root, including after symlink resolution, and including creating a file under a symlinked directory that leads outside. The harness policy reviews both the path as given and where it really points (so a link to `.env` is refused), and the resolved path is the one used for the read or write. The check is made immediately before use and is not atomic: the sandbox SDK takes a path and resolves it again, so a command that runs at the same moment could swap a link in between. `bash` can reach the same paths anyway, which is why the sandbox is the boundary;
+- the caller's environment is never forwarded to the sandbox (it comes from the host process and can hold credentials); only a fixed, configured environment is;
+- commands always have a timeout (default 2 minutes, at most 10), and output (1 MiB), file reads (10 MiB) and writes (2 MiB) are capped. A file's size is asked of the sandbox before any content is transferred, and the limits must be non-negative integers;
+- any sandbox error is an error, never a pass.
+
+The path checks are a guardrail for the file tools, not the security boundary. The sandbox is: it is isolated, and new sandboxes get a limited outbound policy (see Sandbox lifecycle); `DEFAULT_SANDBOX_NETWORK_POLICY` remains `deny-all` for callers that build their own. `bash` inside the sandbox can do anything the sandbox allows, which is why egress and secrets must be handled at the sandbox level.
+
+`@vercel/sandbox` is pinned to 3.6.1. Newer releases (3.7.0 and later) pull in a transitive `zod@4.1.11` through `@vercel/cli-config` that `npm audit` flags as high severity (memory exhaustion on oversized collections), so they are not used until that is fixed upstream.
+
+## Sandbox lifecycle
+
+`src/sandbox/lifecycle.ts` decides how the agent's one sandbox is found, created and shared. The owner's Vercel plan allows one sandbox (and the Hobby plan caps a session at 45 minutes), so the agent uses exactly one fixed-name, persistent sandbox (`nlt-agent`), found or created on demand with `Sandbox.getOrCreate`, never one per conversation.
+
+- **Settings are a small envelope:** one vCPU by default (1 or 2 allowed), a session length from 1 to 40 minutes (default 30), and only the last snapshot kept. Outbound traffic is limited to named domains: by default package registries (npm, yarn, PyPI) and GitHub (clone and raw content), as the owner allowed on 2026-11-05. Pass an empty preset list to deny everything. There is no way to allow all traffic; extra domains must be a host or a `*.` wildcard in front of one (a wildcard covers every subdomain at any depth; a bare `*`, a scheme, a port or a path is refused). The sandbox name is fixed; a caller cannot choose another, because a different name would create a second sandbox. A reused sandbox keeps the policy it was created with, so each turn states its policy after taking the lock. No credentials are placed in the sandbox, so these domains give read access to public content, not a way to publish or push. Hobby does not support transform or forwarding rules, which are not used.
+- **One turn at a time:** `withAgentSandbox` takes a lock inside the sandbox (an atomic `mkdir` of a directory that holds the turn's random token) and releases it afterwards only if the token is still its own. A second turn gets `SandboxBusyError` and does not touch the first turn's lock. A lock older than 15 minutes (compared in seconds) can be taken over, under a second short-lived mutex so two takeovers cannot interleave; one window of a few milliseconds remains, described in the code. Anything unexpected while locking is a failure, not permission to run.
+- **A turn stops before its lock can be taken:** the work function receives an `AbortSignal` that aborts at 80% of the stale age (12 minutes by default). It must stop when the signal aborts. If it has not settled shortly after, `SandboxTurnTimeoutError` is thrown and the lock is left to expire rather than released under a running turn.
+- The lock scripts are fixed text and every value is passed as an argument, so no model or user input reaches them. An agent with `bash` inside the sandbox could delete the lock, which would only allow two turns to overlap in the owner's own sandbox.
+- `src/sandbox/vercel-client.ts` is the real client. It is kept separate so the lifecycle logic and its tests never load the SDK, and it is compile-checked against the real SDK types. Calling it creates or resumes a real, billed sandbox, so nothing calls it yet.
+
+## Free-model selection
+
+`src/gateway/free-models.ts` implements the owner's rule that only free models go through the Vercel AI Gateway. It reads the gateway's public model catalog (`https://ai-gateway.vercel.sh/v1/models`, no authentication) at the time of use and treats a model as free only if it is a language model whose input and output prices are listed and exactly zero, every other price field is also zero, and its price is not flagged `varies_by_provider`. Missing, tiered, regional, unrecognised or malformed pricing is not free.
+
+`pickFreeModel()` returns the best free model with tool support (preferred ids first, then larger context, then id order). A specific model can be requested, but it is used only if it is free right now; it is never swapped for another. If the catalog cannot be read, nothing is free, or the requested model is not free, it throws `NoFreeModelError`, and the caller must refuse the turn instead of using a priced model. No model identifiers are written in source.
+
+On 2026-11-05 the live catalog listed 320 language models; 3 were selectable. A fourth was listed at zero but flagged `varies_by_provider`, so it is excluded.
+
+Like the sandbox operations, this is unwired library code: it makes no model call and holds no credentials.
+
 ## Governed turn
 
 `createNltCodingAgent()` exposes a deterministic governed turn surface (`governedTurn`) that runs a user prompt through the ASFDK harness before any coding-agent turn may execute:
