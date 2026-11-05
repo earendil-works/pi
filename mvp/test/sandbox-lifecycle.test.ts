@@ -387,28 +387,23 @@ describe("invocation deadline", () => {
     expect(client.sandbox.held).toBe(false);
   });
 
-  it("aborts the turn early enough that abort plus grace ends by the deadline, not a fresh window", async () => {
+  it("reconciles a lock acquired after the deadline so a timed-out turn does not orphan the lock", async () => {
     const client = new FakeClient();
-    const deadlineAt = Date.now() + 1200;
-    let abortedAt = 0;
-    const started = Date.now();
-    await expect(
-      withAgentSandbox(
-        client,
-        (_sandbox, signal) =>
-          new Promise<void>((resolve) => {
-            signal.addEventListener("abort", () => {
-              abortedAt = Date.now();
-              resolve();
-            });
-          }),
-        { lockStaleMs: 10_000, deadlineAt },
-      ),
-    ).resolves.toBeUndefined();
-    // A 10 s stale age alone would abort at 8 s. Grace is 1 s, so the invocation deadline (1.2 s) forces the abort
-    // at about 200 ms, leaving the whole grace period before the deadline.
-    expect(abortedAt - started).toBeGreaterThan(100);
-    expect(abortedAt - started).toBeLessThan(500);
+    const inner = client.sandbox.runCommand.bind(client.sandbox);
+    let releaseCalls = 0;
+    client.sandbox.runCommand = async (params) => {
+      if (params.args?.[1]?.includes("mkdir")) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 80));
+      }
+      if (params.args?.[1]?.includes("rm -rf")) releaseCalls += 1;
+      return inner(params);
+    };
+    await expect(withAgentSandbox(client, async () => "ran", { deadlineAt: Date.now() + 20 })).rejects.toBeInstanceOf(
+      SandboxTurnTimeoutError,
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 140));
+    expect(client.sandbox.held).toBe(false);
+    expect(releaseCalls).toBeGreaterThanOrEqual(1);
   });
 });
 

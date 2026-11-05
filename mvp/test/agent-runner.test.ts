@@ -253,6 +253,53 @@ describe("runAgentTurn", () => {
     expect(client.sandbox.held).toBe(false);
   });
 
+  it("aborts setup stages after the lock is held and never calls the model or binds credentials", async () => {
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+    for (const stage of ["token", "bind", "session"] as const) {
+      const { client, deps, faux, state } = setup();
+      faux.setResponses([fauxAssistantMessage("should not run")]);
+      const controller = new AbortController();
+      if (stage === "token") {
+        deps.gatewayToken = async () => {
+          setTimeout(() => controller.abort(), 10);
+          await sleep(120);
+          return TOKEN;
+        };
+      } else if (stage === "bind") {
+        const inner = deps.bindModel!;
+        deps.bindModel = async (model, token) => {
+          setTimeout(() => controller.abort(), 10);
+          await sleep(120);
+          return inner(model, token);
+        };
+      } else {
+        const original = client.sandbox.fs.access.bind(client.sandbox.fs);
+        client.sandbox.fs.access = async (path: string) => {
+          controller.abort();
+          return original(path);
+        };
+      }
+      const result = await runAgentTurn(deps, { prompt: "x", signal: controller.signal });
+      expect(result).toMatchObject({ status: "aborted" });
+      expect(client.sandbox.held).toBe(false);
+      if (stage === "token") expect(state.binds).toBe(0);
+    }
+  });
+
+  it("times out setup stages after the lock is held when the invocation deadline arrives", async () => {
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+    const { client, deps, faux, state } = setup();
+    faux.setResponses([fauxAssistantMessage("should not run")]);
+    deps.gatewayToken = async () => {
+      await sleep(200);
+      return TOKEN;
+    };
+    const result = await runAgentTurn(deps, { prompt: "x", deadlineAt: Date.now() + 60 });
+    expect(result).toEqual({ status: "timed_out" });
+    expect(state.binds).toBe(0);
+    expect(client.sandbox.held).toBe(false);
+  });
+
   it("does no setup at all for a request cancelled before it starts", async () => {
     const { client, deps, state } = setup();
     const controller = new AbortController();

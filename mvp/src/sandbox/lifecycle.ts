@@ -238,6 +238,22 @@ export function withinDeadline<T>(work: Promise<T>, deadlineAt: number | undefin
   });
 }
 
+/** Releases the lock only if it still carries this turn's token, logging the outcome for timed-out reconciliation. */
+async function reconcileTimedOutAcquire(sandbox: SandboxLike, lockPath: string, token: string): Promise<void> {
+  try {
+    const released = await sandbox.runCommand({
+      cmd: "sh",
+      args: ["-c", RELEASE_SCRIPT, "sh", lockPath, token],
+      timeoutMs: 15_000,
+    });
+    console.warn(`withinDeadline: reconciled a late lock acquire (release exit ${String(released.exitCode)})`);
+  } catch (error) {
+    console.warn(
+      `withinDeadline: could not reconcile a late lock acquire (${error instanceof Error ? error.name : "unknown"})`,
+    );
+  }
+}
+
 /**
  * Runs `fn` with the agent's sandbox while holding its lock, and releases the lock if this turn still owns it.
  * Throws `SandboxBusyError` without running `fn` if another turn holds it.
@@ -266,14 +282,45 @@ export async function withAgentSandbox<T>(
   const { deadlineAt } = options;
   const sandbox = await withinDeadline(client.getOrCreate(params), deadlineAt);
 
-  const acquired = await withinDeadline(
-    sandbox.runCommand({
-      cmd: "sh",
-      args: ["-c", ACQUIRE_SCRIPT, "sh", lockPath, token, String(staleSeconds)],
-      timeoutMs: 15_000,
-    }),
-    deadlineAt,
-  );
+  const acquiredWork = sandbox.runCommand({
+    cmd: "sh",
+    args: ["-c", ACQUIRE_SCRIPT, "sh", lockPath, token, String(staleSeconds)],
+    timeoutMs: 15_000,
+  });
+  const acquired = await (async (): Promise<Awaited<typeof acquiredWork>> => {
+    if (deadlineAt === undefined) return acquiredWork;
+    const remaining = deadlineAt - Date.now();
+    if (remaining <= 0) {
+      void acquiredWork.then((result) => {
+        if (result.exitCode === 0) void reconcileTimedOutAcquire(sandbox, lockPath, token);
+      }).catch((error: unknown) => {
+        console.warn(`withinDeadline: work failed after the deadline (${error instanceof Error ? error.name : "unknown"})`);
+      });
+      throw new SandboxTurnTimeoutError();
+    }
+    return new Promise<Awaited<typeof acquiredWork>>((resolve, reject) => {
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        void acquiredWork.then((result) => {
+          if (result.exitCode === 0) void reconcileTimedOutAcquire(sandbox, lockPath, token);
+        }).catch((error: unknown) => {
+          console.warn(`withinDeadline: work failed after the deadline (${error instanceof Error ? error.name : "unknown"})`);
+        });
+        reject(new SandboxTurnTimeoutError());
+      }, remaining);
+      acquiredWork.then(
+        (value) => {
+          clearTimeout(timer);
+          if (!timedOut) resolve(value);
+        },
+        (error: unknown) => {
+          clearTimeout(timer);
+          if (!timedOut) reject(error);
+        },
+      );
+    });
+  })();
   if (acquired.exitCode === BUSY_EXIT_CODE) throw new SandboxBusyError();
   // Anything other than a clean acquire is a failure to lock, not permission to proceed.
   if (acquired.exitCode !== 0) throw new Error(`Could not take the sandbox lock (exit ${String(acquired.exitCode)})`);
