@@ -793,45 +793,27 @@ describe("generation hooks", () => {
 		await harness.close(context);
 	});
 
-	it("gives afterResponse the request each attempt sent", async () => {
+	it("gives afterResponse the request the attempt sent", async () => {
 		const setup = chatSetup();
 		addHooks(setup.registry, GenerationTask, {
 			beforeRequest: ({ messages }) => ({
 				messages: [...messages, { role: "user", content: "injected", timestamp: 0 }],
 			}),
 		});
-		let replace = false;
-		addHooks(setup.registry, GenerationTask, {
-			beforeProviderRequest: ({ payload }) =>
-				replace ? { payload: { ...(payload as object), changed: true } } : undefined,
-		});
-		const requests: GenerationRequest[] = [];
-		addHooks(setup.registry, GenerationTask, {
-			afterResponse: ({ request }) => void requests.push(request!),
-		});
-		let yields = 0;
-		addHooks(setup.registry, GenerationTask, {
-			onYield: () => (yields++ === 0 ? { continue: "again" } : undefined),
-		});
-		const respond: FauxResponseStep = async (_context, options, _state, model) => {
-			await options!.onPayload!({ body: 1 }, model);
-			replace = true;
-			return DONE;
-		};
-		const { harness, status } = await run(setup, [respond, respond]);
+		const requests: (GenerationRequest | undefined)[] = [];
+		addHooks(setup.registry, GenerationTask, { afterResponse: ({ request }) => void requests.push(request) });
+		const { harness, status } = await run(setup, [DONE]);
 		expect(status).toBe("done");
-		const [first, second] = requests;
-		expect(`${first!.model.provider}/${first!.model.id}`).toBe("faux/faux-1");
-		// The messages are the ones sent: after the `beforeRequest` chain.
-		expect(textOf(first!.messages.at(-1) as never)).toBe("injected");
-		// The options are the request's own, without what belongs to the attempt.
-		expect(typeof first!.options.sessionId).toBe("string");
-		expect(first!.options.sessionId).toBe(second!.options.sessionId);
-		expect(first!.options.signal).toBeUndefined();
-		expect(first!.options.onPayload).toBeUndefined();
-		expect(first!.options.telemetry).toBeUndefined();
-		// Only the second request's body was replaced by a hook.
-		expect([first!.payloadReplaced, second!.payloadReplaced]).toEqual([false, true]);
+		const [request] = requests;
+		expect(`${request!.model.provider}/${request!.model.id}`).toBe("faux/faux-1");
+		// The messages after the `beforeRequest` chain, and the request's options without the attempt's own.
+		expect(textOf(request!.messages.at(-1) as never)).toBe("injected");
+		expect(typeof request!.options.sessionId).toBe("string");
+		expect([request!.options.signal, request!.options.onPayload, request!.options.telemetry]).toEqual([
+			undefined,
+			undefined,
+			undefined,
+		]);
 		await harness.close(context);
 	});
 

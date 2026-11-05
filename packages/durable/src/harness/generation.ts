@@ -296,19 +296,14 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 				sessionId: await ensureProviderSessionId(runtime, context),
 				...(thinkingLevel === "off" ? {} : { reasoning: thinkingLevel }),
 			};
-			let payloadReplaced = false;
 			const options: SimpleStreamOptions = {
 				...sentOptions,
 				signal: runtime.signal,
 				telemetry: context.telemetry,
-				onPayload: async (payload) => {
-					const replaced = await providerPayload(runtime, model, payload, context);
-					if (replaced !== undefined) payloadReplaced = true;
-					return replaced ?? payload;
-				},
+				onPayload: (payload) => providerPayload(runtime, model, payload, context),
 			};
 			const message = await streamResponse(runtime, model, messages, options, attempt, context);
-			const sent = { model, messages, options: sentOptions, payloadReplaced };
+			const sent = { model, messages, options: sentOptions };
 			const request = { attempt, compacted, model: ref, thinkingLevel, cutoff, messages: view.messages, sent };
 			await classify(runtime, request, message, context);
 		},
@@ -679,23 +674,19 @@ export async function convertPartial(tx: Tx, live: Draft<LiveState>, conversatio
 	await appendAssistant(tx, conversationId, { ...message, stopReason: "aborted" });
 }
 
-/** The `beforeProviderRequest` replacement chain over one provider request body; `undefined` when no hook replaced it. */
+/** The `beforeProviderRequest` replacement chain over one provider request body. */
 async function providerPayload(
 	runtime: Runtime,
 	model: Model<Api>,
 	payload: unknown,
 	context: Context,
 ): Promise<unknown> {
-	let current: { readonly payload: unknown } | undefined;
+	let current = payload;
 	await runtime.hooks.each("beforeProviderRequest", async (hook) => {
-		const replaced = await hook(
-			{ model, payload: current === undefined ? payload : current.payload },
-			runtime,
-			context,
-		);
-		if (replaced !== undefined) current = replaced;
+		const replaced = await hook({ model, payload: current }, runtime, context);
+		if (replaced !== undefined) current = replaced.payload;
 	});
-	return current?.payload;
+	return current;
 }
 
 /**

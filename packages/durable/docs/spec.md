@@ -3402,8 +3402,6 @@ type GenerationRequest = {
   readonly messages: readonly Message[];
   /** The request's options without the attempt's `signal`, `telemetry` and `onPayload`. */
   readonly options: SimpleStreamOptions;
-  /** Whether a `beforeProviderRequest` hook replaced the body; a resend without the chain differs. */
-  readonly payloadReplaced: boolean;
 };
 
 /** `request` is `undefined` for a polled deferred response, which sent no request. */
@@ -4937,8 +4935,8 @@ The run's inputs live in `pi.live.run`, not in the task input.
 - `afterResponse` observes every terminal message, from `request` or `poll`,
   before classification; a still deferred result is not terminal. It gets the
   request the attempt sent (model, messages after `beforeRequest`, options
-  without the attempt's signal, telemetry and payload callback, and whether a
-  `beforeProviderRequest` hook replaced the body); a polled response has none.
+  without the attempt's signal, telemetry and payload callback); a polled
+  response has none.
 - Before classifying, the handler stops the partial throttle and awaits any
   partial commit in flight, so no stale partial lands after the outcome. The
   terminal message is classified in one commit that also clears the partial:

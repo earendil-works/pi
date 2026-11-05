@@ -4,7 +4,7 @@
 
 ### Breaking Changes
 
-- `GenerationHooks.afterResponse` takes a `GenerationResponse` (`{ message, request }`) instead of the bare message. `request` is the provider request the attempt sent (`GenerationRequest`: the model, the messages after `beforeRequest`, the options without the attempt's signal, telemetry and payload callback, and `payloadReplaced`), so a hook can send it again, e.g. to keep its prompt cache entry warm; it is `undefined` for a polled deferred response. Migration: `afterResponse: (message) => ...` becomes `afterResponse: ({ message }) => ...`.
+- `GenerationHooks.afterResponse` takes a `GenerationResponse` (`{ message, request }`) instead of the bare message. `request` is the provider request the attempt sent (`GenerationRequest`: the model, the messages after `beforeRequest`, the options without the attempt's signal, telemetry and payload callback), so a hook can send it again, e.g. to keep its prompt cache entry warm; it is `undefined` for a polled deferred response. Migration: `afterResponse: (message) => ...` becomes `afterResponse: ({ message }) => ...`.
 
 ### Added
 

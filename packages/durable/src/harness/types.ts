@@ -982,8 +982,8 @@ export interface HookApi extends DocumentReader {
 export type HookResult<T> = T | undefined | Promise<T | undefined>;
 
 /**
- * A provider request one generation attempt sent, as it was passed to `models.streamSimple()`: sending it again with the
- * same model, messages and options repeats it, which keeps its prompt cache entry alive (cache warming).
+ * A provider request one generation attempt sent, as it was passed to `models.streamSimple()`: sending it again repeats
+ * it (without the `beforeProviderRequest` chain), which keeps its prompt cache entry alive (cache warming).
  */
 export type GenerationRequest = {
 	readonly model: Model<Api>;
@@ -991,11 +991,6 @@ export type GenerationRequest = {
 	readonly messages: readonly Message[];
 	/** The request's options without the attempt's `signal`, `telemetry` and `onPayload`. */
 	readonly options: SimpleStreamOptions;
-	/**
-	 * Whether a `beforeProviderRequest` hook replaced the provider request body. A resend without that chain then
-	 * sends a different body.
-	 */
-	readonly payloadReplaced: boolean;
 };
 
 /** A terminal provider message for `afterResponse`. */

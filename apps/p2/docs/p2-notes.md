@@ -1183,21 +1183,19 @@ translated phone drawer and intercept chat taps.
 - **Cache warming** (`plugins/cache-warming`): pi-coding-agent's cache warmer for every conversation of a session.
   The worker facet registers a hook-only Durable extension (`cache-warming`): `afterResponse` gets the request the
   attempt sent (`GenerationRequest`: model, messages after `beforeRequest`, options without the attempt's signal) and
-  starts that conversation's run, replacing the previous one; `afterRun` turns it idle. Before the entry expires (90%
-  of `model.promptCache[retention]`: 270 s for the 5-minute tier) the run sends the request again with
+  starts that conversation's run, replacing the previous one. Before the entry expires (90% of
+  `model.promptCache[retention]`: 270 s for the 5-minute tier) the run sends the request again with
   `getCacheWarmingRequestOptions` (one output token, no retries, `disableContinuation`) and adds the spend to the
-  conversation's `pi.usage` (`recordUsage`, the model's key). The policy is pi-ai's (`evaluateCacheWarming`, shared
-  with pi-coding-agent): streaming up to an hour after the request, idle up to 30 minutes, a refresh only when its
-  expected savings reach $0.05 (continuation probability 1 while streaming, 0.15 idle). p2's additions: only
-  top-level conversations (`isTopLevel`) are warmed idle, since a settled subagent or one-shot agent rarely continues;
-  a run that ended without `afterRun` (an abort during tools, a turn limit) turns idle at the next refresh (`pi.live.run`
-  gone); a refresh first checks the conversation still sends the same prefix (same model, a context that extends the
-  sent messages by role and timestamp), so a reset, compaction or model change stops it; requests whose body a
-  `beforeProviderRequest` hook replaced (`payloadReplaced`) are not warmed. Timers and refreshes are a native of
-  `CacheWarmingRuntime`, closed by a reload or stop (nothing is durable: the next response starts again); while a
-  run is armed the worker's liveness counts it (`cacheWarming`), so the idle stop (`P2_IDLE_MS`) waits. Setting:
-  `cacheWarming` (`"idle"` default, `"streaming"`, `"off"`, switched live through `ExtensionSwitches`). No status UI
-  and no decision hook yet (pi's `/session` line, `cache_warming_decision`). `test/p2/cache-warming.test.ts`.
+  conversation's `pi.usage` (`recordUsage`). The policy is pi-ai's, shared with pi-coding-agent: up to an hour after the
+  request while the run streams, 30 minutes once idle, a refresh only when its expected savings reach $0.05
+  (`evaluateCacheWarming`). Each refresh reads the conversation's phase: streaming while `pi.live.run` exists, else
+  idle for top-level conversations (`isTopLevel`; a settled subagent or one-shot agent is not warmed), and nothing
+  once the next request would start differently (another model, or a context that no longer starts with the sent
+  messages by role and timestamp: a reset, compaction or edit). Timers live in `CacheWarmingRuntime`'s native, closed by
+  a reload or stop; nothing is durable, the next response starts again. While a run is armed the worker's liveness
+  counts it (`cacheWarming`), so the idle stop (`P2_IDLE_MS`) waits. Setting `cacheWarming` (`"idle"` default,
+  `"streaming"`, `"off"`, switched live through `ExtensionSwitches`). No status UI and no decision hook yet (pi's
+  `/session` line, `cache_warming_decision`). `test/p2/cache-warming.test.ts`.
 - **MCP servers** (`plugins/mcp`, plan `docs/mcp-durable.md`, WP6-8): the server's `McpManager` (local,
   host lifetime) owns every MCP process and connection; workers never spawn one or hold a credential. `<P2_DATA_DIR>/mcp.json`
   is the owner's `mcpServers` (pi-mcp's `validateMcpServerConfig`, plus p2's `shared` and `runOn`; invalid entries are
