@@ -1,0 +1,39 @@
+{
+  "handoff_record": {
+    "session_id": "session_01UNjnjm3TZ7Tg4MRswGt24P",
+    "agent_name": "Claude Code",
+    "date": "2026-11-05T01:10:48+00:00",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "ccr-0d5033af-1rkbla",
+    "work_completed": [
+      "Re-synced mvp/src/harness policy.ts, protocols.ts and tools.ts from asfdk-harness 5488262 (PR #36 merged); only the .ts import specifiers differ. Provenance headers and the harness README updated; the old readOptionalFile local difference is gone (upstreamed).",
+      "Verified harness.ts, a2a.ts and asfdk-runtime.ts are identical to upstream apart from header and imports.",
+      "Moved the six policy commands fixed upstream to the asserted bashMustBlock corpus list.",
+      "Measured three glob variants from review of #36 as still allowed and recorded them as known gaps: cat .EN?, cat cred*.yaml, cat .en?.staging."
+    ],
+    "work_in_progress": [],
+    "blockers": [],
+    "decisions_made": [
+      "Re-sync independently of the asfdk package release, since the harness fix does not depend on it."
+    ],
+    "decisions_pending": [
+      "Approve a draft asfdk-harness PR for the three glob variants (policy.ts is escalate-before-change upstream).",
+      "Release of @neurolift-technologies/asfdk with asfdk#41, then bump here and assert the 'I want to die' corpus entry.",
+      "Decisions on rrt-advocate#49/#50, sleepwalker#33 and nlt-sdl#13."
+    ],
+    "escalations": [],
+    "next_agent_notes": "Vendored files must stay byte-identical to upstream apart from .ts imports; change upstream and re-sync. After an asfdk release: bump the dependency in mvp/package.json, run the corpus, and move entries that now pass from the known* lists to the asserted lists (the it.fails tests turn red when a gap is fixed).",
+    "files_modified": [
+      "mvp/src/harness/ (headers on all seven files; policy.ts, protocols.ts, tools.ts re-synced)",
+      "mvp/src/harness/README.md",
+      "mvp/test/corpus/policy-commands.json",
+      "docs/active-threads.md",
+      "docs/agent-log/intent/2026-11-05-resync-harness-after-upstream-36.md",
+      "docs/agent-log/handoffs/2026-11-05-resync-harness-after-upstream-36.json"
+    ],
+    "tests_run": "see PR description",
+    "tests_passing": null,
+    "pr_url": null
+  }
+}

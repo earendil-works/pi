@@ -1,6 +1,5 @@
-// Vendored from NeuroLift-Technologies/asfdk-harness src/protocols.ts @ f28136d1cece7f5dd20734020346075efc2f6d9d
-// Changes from upstream: relative import specifiers use .ts (repo check:ts-imports), and readOptionalFile reads once
-// instead of access()+readFile() (CodeQL js/file-system-race). Do not edit otherwise: re-sync from upstream. See mvp/src/harness/README.md.
+// Vendored from NeuroLift-Technologies/asfdk-harness src/protocols.ts @ 5488262c96d97026b27703d6580da65c2bcb1fb6
+// Only change from upstream: relative import specifiers use .ts (repo check:ts-imports). Do not edit otherwise: re-sync from upstream. See mvp/src/harness/README.md.
 import { access, readFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
@@ -396,9 +395,9 @@ function resolveProtocolPath(cwd: string, path: string): string {
   return isAbsolute(path) ? path : resolve(cwd, path);
 }
 
-// NLT-Pi local change (CodeQL js/file-system-race): read once instead of access() then readFile(),
-// which left a window between the check and the read. A missing or unreadable file is still
-// reported as absent; any other error (for example reading a directory) still propagates.
+// Read once instead of access() then readFile(), which left a window between the check and the read
+// (CodeQL js/file-system-race). A missing or unreadable file is still reported as absent; any other error
+// (for example reading a directory) still propagates.
 const ABSENT_FILE_ERROR_CODES: ReadonlySet<string> = new Set(["ENOENT", "ENOTDIR", "EACCES", "EPERM"]);
 
 async function readOptionalFile(path: string): Promise<string | undefined> {

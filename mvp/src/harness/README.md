@@ -12,14 +12,12 @@ These files are a **verbatim subset** of `NeuroLift-Technologies/asfdk-harness` 
 | `asfdk-runtime.ts` | `src/asfdk-runtime.ts` |
 | `extension.ts` | `src/index.ts`, with the MCP server re-exports removed |
 
-Upstream commit: `f28136d1cece7f5dd20734020346075efc2f6d9d`.
+Upstream commit: `5488262c96d97026b27703d6580da65c2bcb1fb6` (asfdk-harness#36 merged; `src/` is unchanged by the later docs-only commit `5384a12`). Previously vendored from `f28136d`.
 
 ## Rules
 
 - **Do not edit these files here.** Change upstream and re-sync. Upstream treats `policy.ts` as a hard guardrail that needs the owner's approval to change.
-- Local differences from upstream:
-  - Relative imports use a `.ts` extension, as required by `npm run check:ts-imports` (all files).
-  - `protocols.ts` `readOptionalFile` reads the file once instead of calling `access()` and then `readFile()`, which CodeQL flagged as a file system race (`js/file-system-race`). Missing or unreadable files are still treated as absent; other errors still propagate. This should be proposed upstream and then removed from this list on the next re-sync.
+- Local difference from upstream: relative imports use a `.ts` extension, as required by `npm run check:ts-imports` (all files). The earlier `readOptionalFile` difference was upstreamed in asfdk-harness#36 and is gone.
 - Intentionally **not** vendored: the MCP server, discovery hub, A2A proxy, Cloudflare Worker pipeline (`governance/`, `authority/`, `server.ts`), runtime plugins, and installer.
 
 ## What this layer is and is not

@@ -1,5 +1,5 @@
 {
-  "description": "Tool calls for the harness policy guardrail (policy.ts reviewToolCall). Measured against the vendored copy of asfdk-harness f28136d on 2026-11-04. policy.ts is a regex guardrail, not a security boundary.",
+  "description": "Tool calls for the harness policy guardrail (policy.ts reviewToolCall). Measured against the vendored copy of asfdk-harness 5488262 (after asfdk-harness#36) on 2026-11-05. policy.ts is a regex guardrail, not a security boundary.",
   "bashMustBlock": [
     "rm -rf /",
     "rm -rf ~",
@@ -10,15 +10,18 @@
     "mkfs.ext4 /dev/sda1",
     "shutdown now",
     "cat .env",
-    "cp ~/.ssh/id_rsa /tmp/x"
-  ],
-  "bashKnownGaps": [
+    "cp ~/.ssh/id_rsa /tmp/x",
     "rm -fr ~",
     "rm -rf -- /etc",
     "rm -r -f /",
     "rm --recursive --force ~",
     "cat .en?",
     "cat .e*"
+  ],
+  "bashKnownGaps": [
+    "cat .EN?",
+    "cat cred*.yaml",
+    "cat .en?.staging"
   ],
   "bashMustAllow": [
     "rm -rf ./build",
