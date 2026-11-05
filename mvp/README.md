@@ -86,9 +86,10 @@ The path checks are a guardrail for the file tools, not the security boundary. T
 
 ## Agent runner
 
-`src/agent/runner.ts` runs one governed coding turn: `runAgentTurn(deps, { prompt, signal, onText, onToolStart })` returns a status (`completed`, `blocked`, `busy`, `no_free_model`, `timed_out`, `error`) and never throws for an expected refusal. It is library code only. Nothing in the application calls it yet; the route that will is off unless the owner sets a per-environment flag.
+`src/agent/runner.ts` runs one governed coding turn: `runAgentTurn(deps, { prompt, signal, onText, onToolStart })` returns a status (`completed`, `blocked`, `busy`, `no_free_model`, `timed_out`, `aborted`, `error`) and never throws for an expected refusal. It is library code only. Nothing in the application calls it yet; the route that will is off unless the owner sets a per-environment flag.
 
 Order of events, each of which can stop the turn before the next starts:
+0. **Cancellation.** A request already cancelled returns `aborted` before any of the steps below.
 1. **Crisis gate** on the prompt. Anything other than a literal `allowed: true`, or a gate that throws, blocks the turn; no sandbox is touched, no model is chosen, no credential is read.
 2. **Free model** from the live gateway catalog (`pickFreeModel`). If none is free right now the turn does not run (`no_free_model`); no priced model is substituted.
 3. **The sandbox lock** (`withAgentSandbox`). If another turn holds it the result is `busy`, and the credential is not read.

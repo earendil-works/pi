@@ -242,6 +242,38 @@ describe("runAgentTurn", () => {
     expect(client.sandbox.held).toBe(false);
   });
 
+  it("does no setup at all for a request cancelled before it starts", async () => {
+    const { client, deps, state } = setup();
+    const controller = new AbortController();
+    controller.abort();
+    expect((await runAgentTurn(deps, { prompt: "x", signal: controller.signal })).status).toBe("aborted");
+    expect(state.gated).toEqual([]);
+    expect(client.calls).toEqual([]);
+    expect(state.tokenReads + state.binds + state.picks).toBe(0);
+  });
+
+  it("reports a failed model run as an error, not as a completed turn", async () => {
+    const { client, faux, deps } = setup();
+    faux.setResponses([fauxAssistantMessage("partial", { stopReason: "error", errorMessage: "upstream failed" })]);
+    const result = await runAgentTurn(deps, { prompt: "x" });
+    expect(result).toMatchObject({ status: "error" });
+    expect((result as { reason: string }).reason).toContain("upstream failed");
+    expect(client.sandbox.held).toBe(false);
+  });
+
+  it("releases the model binding when the turn fails", async () => {
+    let disposed = 0;
+    const { deps, faux } = setup();
+    const inner = deps.bindModel!;
+    deps.bindModel = async (model, token) => {
+      const binding = await inner(model, token);
+      return { ...binding, dispose: async () => { disposed += 1; await binding.dispose?.(); } };
+    };
+    faux.setResponses([fauxAssistantMessage("x", { stopReason: "error", errorMessage: "boom" })]);
+    await runAgentTurn(deps, { prompt: "x" });
+    expect(disposed).toBe(1);
+  });
+
   it("L3: rejects an injected model that is not free", async () => {
     const priced: GatewayCatalogModel = { ...FREE, id: "synthetic/priced-model", pricing: { input: "0.01", output: "0" } };
     const { client, deps } = setup({
@@ -254,11 +286,12 @@ describe("runAgentTurn", () => {
   });
 
   it("accepts an injected free model after re-validation", async () => {
-    const { client, deps } = setup({
+    const { deps, faux } = setup({
       pickModel: async () => FREE,
     });
+    faux.setResponses([fauxAssistantMessage("fine")]);
     const result = await runAgentTurn(deps, { prompt: "x" });
-    expect(result.status).toBe("completed");
+    expect(result).toMatchObject({ status: "completed", text: "fine" });
   });
 
   it("M1: creates a missing workspace root first, so the first turn still runs", async () => {

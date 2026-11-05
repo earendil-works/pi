@@ -99,6 +99,15 @@ export type AgentTurnResult =
 /** Registers the gateway as an OpenAI-compatible provider for one free model, with the token held in memory. */
 export async function bindGatewayModel(model: GatewayCatalogModel, token: string): Promise<ModelBinding> {
   const dir = await mkdtemp(join(tmpdir(), "nlt-agent-"));
+  try {
+    return await bindInto(dir, model, token);
+  } catch (error) {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function bindInto(dir: string, model: GatewayCatalogModel, token: string): Promise<ModelBinding> {
   const modelRuntime = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
     modelsPath: null,
@@ -146,6 +155,9 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
     return { status: "error", reason: "Empty prompt" };
   }
 
+  // A request cancelled before it starts does no setup work: no gate, catalog read, sandbox or credential.
+  if (input.signal?.aborted) return { status: "aborted", reason: "The turn was cancelled by the caller" };
+
   // 1. Crisis gate. Anything but a literal `allowed: true` stops here.
   let gate: GateResult;
   try {
@@ -173,49 +185,49 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
 
   // 3. The turn, inside the one sandbox, under its lock.
   const root = deps.workspaceRoot ?? DEFAULT_WORKSPACE_ROOT;
-  let binding: ModelBinding | undefined;
-  let session: AgentSession | undefined;
   try {
-    const text = await withAgentSandbox(
+    const outcome = await withAgentSandbox(
       deps.sandboxClient,
       async (sandbox, turnSignal) => {
-        // M1: create the workspace root outside the confinement check so that
-        // `confineReal`/`realpath` can succeed even when the root does not exist yet.
+        // Create the workspace root outside the confinement check: every sandbox operation needs the root to
+        // exist (`realpath`), so it cannot be created through them.
         try {
           await sandbox.fs.access(root);
         } catch {
           await sandbox.fs.mkdir(root, { recursive: true });
         }
         const ops = createSandboxToolOperations(sandbox, { ...deps.operations, root });
-        await ops.write.mkdir(root);
 
         // The credential is read now, inside the request, and goes only to the model runtime.
         const token = await deps.gatewayToken();
-        binding = await (deps.bindModel ?? bindGatewayModel)(chosen, token);
-
-        // The tool factories return differently typed definitions; the session takes them as one list.
-        const tools: CustomTools = [
-          createBashToolDefinition(root, { operations: ops.bash, exposeSessionEnvironment: false }) as CustomTools[number],
-          createReadToolDefinition(root, { operations: ops.read, autoResizeImages: false }) as CustomTools[number],
-          createWriteToolDefinition(root, { operations: ops.write }) as CustomTools[number],
-          createEditToolDefinition(root, { operations: ops.edit }) as CustomTools[number],
-        ];
-
-        // No host resources: no extensions, skills, prompt files or context files from the machine running this.
-        const scratch = await mkdtemp(join(tmpdir(), "nlt-agent-res-"));
-        const resourceLoader = new DefaultResourceLoader({
-          cwd: root,
-          agentDir: scratch,
-          noExtensions: true,
-          noSkills: true,
-          noPromptTemplates: true,
-          noThemes: true,
-          noContextFiles: true,
-          settingsManager: SettingsManager.inMemory(),
-        });
-        await resourceLoader.reload();
-
+        const binding = await (deps.bindModel ?? bindGatewayModel)(chosen, token);
+        // Everything created below is released inside the turn, so work that finishes after the deadline is still
+        // cleaned up.
+        let scratch: string | undefined;
+        let session: AgentSession | undefined;
         try {
+          // The tool factories return differently typed definitions; the session takes them as one list.
+          const tools: CustomTools = [
+            createBashToolDefinition(root, { operations: ops.bash, exposeSessionEnvironment: false }) as CustomTools[number],
+            createReadToolDefinition(root, { operations: ops.read, autoResizeImages: false }) as CustomTools[number],
+            createWriteToolDefinition(root, { operations: ops.write }) as CustomTools[number],
+            createEditToolDefinition(root, { operations: ops.edit }) as CustomTools[number],
+          ];
+
+          // No host resources: no extensions, skills, prompt files or context files from the machine running this.
+          scratch = await mkdtemp(join(tmpdir(), "nlt-agent-res-"));
+          const resourceLoader = new DefaultResourceLoader({
+            cwd: root,
+            agentDir: scratch,
+            noExtensions: true,
+            noSkills: true,
+            noPromptTemplates: true,
+            noThemes: true,
+            noContextFiles: true,
+            settingsManager: SettingsManager.inMemory(),
+          });
+          await resourceLoader.reload();
+
           ({ session } = await createAgentSession({
             // The session's cwd is the sandbox workspace: Pi hands it to the tools, and it is shown to the model.
             // Nothing is read from it on this machine (no context files, extensions or skills are loaded).
@@ -229,10 +241,16 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
             sessionManager: SessionManager.inMemory(root),
             settingsManager: SettingsManager.inMemory(),
           }));
+          const live = session;
 
           let out = "";
-          const unsubscribe = session.subscribe((event) => {
-            if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+          // Only the latest assistant outcome counts, so an error that an automatic retry recovered from does not
+          // fail the turn.
+          let lastOutcome: { stopReason: string; errorMessage?: string } | undefined;
+          const unsubscribe = live.subscribe((event) => {
+            if (event.type === "message_end" && event.message.role === "assistant") {
+              lastOutcome = { stopReason: event.message.stopReason, errorMessage: event.message.errorMessage };
+            } else if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
               out += event.assistantMessageEvent.delta;
               input.onText?.(event.assistantMessageEvent.delta);
             } else if (event.type === "tool_execution_start") {
@@ -240,16 +258,16 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
             }
           });
 
+          // A cancellation or deadline that already happened means the model is never called.
+          if (input.signal?.aborted) throw new CallerAbortedError();
+          if (turnSignal.aborted) throw new SandboxTurnTimeoutError();
+
           // Stop the model run when the caller aborts or the turn deadline arrives.
-          const stop = () => void session?.abort();
+          const stop = () => void live.abort();
           input.signal?.addEventListener("abort", stop, { once: true });
           turnSignal.addEventListener("abort", stop, { once: true });
-
           try {
-            // A cancellation or deadline that already happened means the model is never called.
-            if (input.signal?.aborted) throw new CallerAbortedError();
-            if (turnSignal.aborted) throw new SandboxTurnTimeoutError();
-            await session.prompt(input.prompt);
+            await live.prompt(input.prompt);
           } finally {
             input.signal?.removeEventListener("abort", stop);
             turnSignal.removeEventListener("abort", stop);
@@ -257,21 +275,23 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
           }
           if (turnSignal.aborted) throw new SandboxTurnTimeoutError();
           if (input.signal?.aborted) throw new CallerAbortedError();
+          // `prompt` resolves even when the model run failed; do not report that as a completed turn.
+          const final = lastOutcome as { stopReason: string; errorMessage?: string } | undefined;
+          if (final?.stopReason === "error") throw new Error(final.errorMessage ?? "The model run failed");
           return out;
         } finally {
           session?.dispose();
-          await rm(scratch, { recursive: true, force: true });
+          if (scratch) await rm(scratch, { recursive: true, force: true }).catch(() => undefined);
+          await binding.dispose?.().catch(() => undefined);
         }
       },
       deps.sandbox,
     );
-    return { status: "completed", text, model: chosen.id };
+    return { status: "completed", text: outcome, model: chosen.id };
   } catch (error) {
     if (error instanceof SandboxBusyError) return { status: "busy" };
     if (error instanceof SandboxTurnTimeoutError) return { status: "timed_out" };
     if (error instanceof CallerAbortedError) return { status: "aborted", reason: error.message };
     return { status: "error", reason: describeError(error) };
-  } finally {
-    await binding?.dispose?.().catch(() => undefined);
   }
 }
