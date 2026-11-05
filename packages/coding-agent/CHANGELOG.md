@@ -36,6 +36,7 @@
 - Fixed the read tool loading whole files into memory, which ran out of memory on large files even with `offset`/`limit`; it now streams the file and keeps only the shown lines. Custom `ReadOperations` can stream too by providing the new optional `createReadStream` ([#9654](https://github.com/earendil-works/pi/issues/9654))
 - Fixed OAuth logins such as `openai` and `anthropic` failing with `invalid_grant` after pi was stopped while it refreshed an expired token, for example an RPC client that stops pi right after startup while the background catalog refresh runs. The token endpoint had already replaced the refresh token, but pi exited before saving the new one. On exit, pi now waits for a token refresh in progress to be saved ([#11692](https://github.com/earendil-works/pi/issues/11692))
 - Fixed Ctrl+P not switching to the only model in scope (or the only available model) when the active model is a different one; it showed "Only one model in scope" instead. Cycling forward from a model outside the scope now also selects the first scoped model instead of skipping it ([#11806](https://github.com/earendil-works/pi/issues/11806))
+- Fixed `/reload` and session switches leaving extension overlays on screen when an extension had more than one `ctx.ui.custom({ overlay: true })` open: only the topmost overlay was removed, and the others kept focus and input although the extension that opened them was gone. All extension overlays, including hidden ones, are now removed and disposed; pi's own overlays stay open
 
 
 ## [1.5.0] - 2026-11-02
