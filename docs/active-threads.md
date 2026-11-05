@@ -26,6 +26,14 @@
 **Preview access (owner decision, 2026-11-04):** previews stay open (Vercel login protection off). The endpoint is therefore publicly reachable on preview URLs; it is preview-only, returns 404 in production, never echoes the prompt, and executes nothing.  
 **Next action:** None for the endpoint. Remaining work is tracked in NLTPI-UPSTREAM-001.
 
+### NLTPI-MVP-004 — Chat page for the Vercel preview
+**Status:** in review (draft PR); not deployed to production by this change alone  
+**Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
+**Summary:** The owner supplied a chat UI mockup and asked for it on Vercel. `mvp/public/index.html` now serves a no-framework chat page wired to the real `POST /api/govern` gate, `/api/health` and `/api/status`; the earlier status page moved to `/status.html`. Mockup elements that would claim things that are not true today were not copied: a signed-in user, "RRT GREEN", "Escalation Not Required", "Tools Enabled (6)", a model name, and a canned assistant reply. The page shows "Not signed in", "None connected", "Disabled", and the live gate result. Conversations are in memory only (no new persistence).  
+**Verification:** 11 new `node:test` cases for the verdict logic (a literal `allowed: true` is the only pass; 503, 404, 400, network errors, and malformed bodies all fail closed). Browser check with mocked endpoints at 1440 and 390 px: allowed, blocked and 503 paths render, no horizontal overflow, no script errors. Not yet checked against the live preview.  
+**Open:** blocked-message copy (includes a US 988 line) needs owner/clinician review; logo is a placeholder mark pending the real asset; sign-in, a connected model, tools and saved sessions depend on NLTPI-MVP-003 and an authenticated-session decision; framework choice (for example Next.js) is the owner's.  
+**Next action:** Owner reviews the PR and the preview, then decides on the copy and logo.
+
 ### NLTPI-UPSTREAM-001 — Upstream fixes for the vendored harness and the crisis detector
 **Status:** in progress; asfdk-harness#36 and asfdk#41 merged upstream and the harness is re-synced here (2026-11-05); the crisis-detector fixes wait on rrt-advocate#49/#50, sleepwalker#33 and an `asfdk` release  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  

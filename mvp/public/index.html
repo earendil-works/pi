@@ -3,125 +3,136 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#10131a" />
-    <meta name="description" content="NeuroLift Technologies Coding Agent application status." />
+    <meta name="theme-color" content="#050b1f" />
+    <meta name="description" content="NLT Coding Agent: governed chat preview for the nlt-pi MVP." />
     <title>NLT Coding Agent</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: #10131a;
-        color: #edf0f6;
-        font-synthesis: none;
-        text-rendering: optimizeLegibility;
-      }
-      * { box-sizing: border-box; }
-      body { margin: 0; min-height: 100vh; background: radial-gradient(ellipse at 15% 0%, #20283a 0, #10131a 48rem); }
-      main { width: min(100% - 2rem, 960px); margin: 0 auto; padding: 4.5rem 0 3rem; }
-      .eyebrow { color: #91a4c7; font-size: .76rem; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
-      h1 { margin: .8rem 0 .7rem; font-size: clamp(2.1rem, 6vw, 3.8rem); letter-spacing: -.055em; line-height: 1.04; }
-      .intro { max-width: 650px; color: #aeb8ca; font-size: 1.05rem; line-height: 1.7; }
-      .panel { margin-top: 2.5rem; padding: clamp(1.25rem, 4vw, 2rem); border: 1px solid #30394a; border-radius: 18px; background: rgb(24 29 40 / 88%); box-shadow: 0 24px 80px rgb(0 0 0 / 22%); }
-      .panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: 1.4rem; }
-      h2 { margin: 0; font-size: 1.05rem; letter-spacing: -.015em; }
-      .health { display: inline-flex; align-items: center; gap: .5rem; color: #a8e2c2; font-size: .8rem; font-weight: 650; }
-      .dot { width: .5rem; height: .5rem; border-radius: 50%; background: #62c58c; box-shadow: 0 0 0 4px rgb(98 197 140 / 12%); }
-      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: .85rem; }
-      .metric { min-height: 112px; padding: 1rem; border: 1px solid #30394a; border-radius: 12px; background: #141923; }
-      .metric-label { display: block; margin-bottom: .8rem; color: #8f9bb0; font-size: .76rem; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
-      .metric-value { font-size: 1.05rem; font-weight: 700; }
-      .metric-detail { margin-top: .35rem; color: #929eb2; font-size: .8rem; line-height: 1.5; }
-      .notice { margin-top: 1rem; padding: 1rem 1.1rem; border-left: 3px solid #d4a85f; border-radius: 8px; background: #211e19; color: #d8c7a6; font-size: .9rem; line-height: 1.6; }
-      .links { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1.4rem; }
-      a { color: #a9c7ff; text-decoration-thickness: 1px; text-underline-offset: 3px; }
-      a:focus-visible { outline: 2px solid #a9c7ff; outline-offset: 4px; border-radius: 2px; }
-      footer { margin-top: 2rem; color: #758198; font-size: .78rem; line-height: 1.6; }
-      #refresh-state { min-height: 1.2rem; margin-top: .8rem; color: #8f9bb0; font-size: .78rem; }
-    </style>
+    <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
-    <main>
-      <div class="eyebrow">NeuroLift Technologies</div>
-      <h1>NLT Coding Agent</h1>
-      <p class="intro">
-        A governed coding-agent application boundary. The application surface,
-        runtime, governance harness, and execution environment remain separate
-        components with explicit responsibilities.
-      </p>
+    <div class="app">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="NLT Coding Agent home">
+          <svg class="mark" viewBox="0 0 48 48" aria-hidden="true">
+            <defs>
+              <linearGradient id="mark-gradient" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#4fc3ff" />
+                <stop offset="1" stop-color="#7a5cff" />
+              </linearGradient>
+            </defs>
+            <path
+              d="M24 6c-5 0-8 3-9 6-4 1-7 4-7 9 0 3 1 5 3 7-1 5 2 9 6 10 2 3 5 4 7 4s5-1 7-4c4-1 7-5 6-10 2-2 3-4 3-7 0-5-3-8-7-9-1-3-4-6-9-6Z"
+              fill="none"
+              stroke="url(#mark-gradient)"
+              stroke-width="2.2"
+              stroke-linejoin="round"
+            />
+            <path d="M24 8v32M24 18l-8-4M24 18l8-4M24 28l-9-3M24 28l9-3M24 36l-5-2M24 36l5-2" fill="none" stroke="url(#mark-gradient)" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+          <span class="brand-text">
+            <span class="brand-name">NLT Coding Agent</span>
+            <span class="brand-tagline">ElevAIting Minds, Changing Lives</span>
+          </span>
+        </a>
+        <div class="pills" role="status" aria-live="polite">
+          <span class="pill"><span class="dot" id="health-dot" data-state="checking" aria-hidden="true"></span><span id="health-label">Checking</span></span>
+          <span class="pill">Vercel MVP</span>
+          <span class="pill pill-muted">Preview shell</span>
+        </div>
+        <div class="account" title="Sign-in is not built yet">
+          <span class="avatar avatar-muted" aria-hidden="true">?</span>
+          <span>Not signed in</span>
+        </div>
+      </header>
 
-      <section class="panel" aria-labelledby="status-heading">
-        <div class="panel-head">
-          <h2 id="status-heading">System status</h2>
-          <span class="health"><span class="dot" aria-hidden="true"></span><span id="health-label">Checking application</span></span>
+      <aside class="sidebar" aria-label="Conversations">
+        <button class="new-chat" id="new-chat" type="button"><span aria-hidden="true">+</span> New Conversation</button>
+        <section class="card sessions" aria-labelledby="sessions-heading">
+          <h2 id="sessions-heading">Recent sessions</h2>
+          <ul id="session-list" class="session-list"></ul>
+          <p class="fine">Kept in this tab only. Closing or reloading the page clears them.</p>
+        </section>
+        <section class="card brand-card">
+          <h2>Governance</h2>
+          <p class="brand-line" id="governance-summary">Checking…</p>
+          <p class="fine">Human sovereignty preserved. Capability does not equal authority.</p>
+          <p class="quote">“We’re Not Competing. We’re Completing.”</p>
+          <p class="fine"><a href="/status.html">System status page</a></p>
+        </section>
+      </aside>
+
+      <main class="chat" aria-labelledby="chat-title">
+        <div class="chat-head">
+          <span class="mark-sm" aria-hidden="true"></span>
+          <div>
+            <h1 id="chat-title">New conversation</h1>
+            <p class="subtitle">Chat • Build • Learn • Innovate</p>
+          </div>
         </div>
-        <div class="grid" aria-live="polite">
-          <article class="metric">
-            <span class="metric-label">Application API</span>
-            <div class="metric-value" id="app-status">Checking</div>
-            <div class="metric-detail">Vercel function health</div>
-          </article>
-          <article class="metric">
-            <span class="metric-label">Pi runtime</span>
-            <div class="metric-value" id="runtime-status">Not integrated</div>
-            <div class="metric-detail">Checked-in runtime package</div>
-          </article>
-          <article class="metric">
-            <span class="metric-label">ASFDK governance</span>
-            <div class="metric-value" id="governance-status">Not verified</div>
-            <div class="metric-detail">Harness and authorization boundary</div>
-          </article>
-          <article class="metric">
-            <span class="metric-label">Agent execution</span>
-            <div class="metric-value" id="execution-status">Disabled</div>
-            <div class="metric-detail">No model or tool execution is exposed</div>
-          </article>
-        </div>
+
         <div class="notice" role="note">
-          This is an application shell, not an active agent session. Runtime
-          execution remains disabled until the Pi runtime, ASFDK enforcement,
-          and the independent execution boundary are integrated and verified.
+          <strong>Preview.</strong> Each message goes through the ASFDK governance check and nothing else. No model is
+          connected and no tools run. Messages are not saved by this page.
         </div>
-        <div class="links">
-          <a href="/api/health">Health endpoint</a>
-          <a href="/api/status">Runtime integration status</a>
+
+        <div class="log" id="log" role="log" aria-live="polite" aria-relevant="additions" tabindex="0"></div>
+
+        <form class="composer" id="composer" autocomplete="off">
+          <label class="sr-only" for="prompt">Message</label>
+          <textarea id="prompt" rows="1" maxlength="2000" placeholder="Ask the NLT Coding Agent anything…" enterkeyhint="send"></textarea>
+          <span class="counter" id="counter" aria-hidden="true">0 / 2000</span>
+          <button class="send" id="send" type="submit" aria-label="Send message">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 21 3l-8.5 18-2.3-7.2L3 11.5Z" fill="currentColor" /></svg>
+          </button>
+        </form>
+        <div class="chips" aria-label="Starter prompts">
+          <button type="button" class="chip" data-fill="Explain this code">Explain this code</button>
+          <button type="button" class="chip" data-fill="Show a plan">Show a plan</button>
+          <button type="button" class="chip" data-fill="Run a task">Run a task</button>
+          <button type="button" class="chip" data-fill="Check my code">Check my code</button>
+          <button type="button" class="chip" data-fill="Help me learn">Help me learn</button>
         </div>
-        <p id="refresh-state" role="status">Loading status…</p>
-      </section>
+      </main>
 
-      <footer>
-        Capability does not equal authority. Model intent is a proposal, not
-        permission. Human authority remains final.
-      </footer>
-    </main>
-    <script>
-      const labels = {
-        runtime: { integrated: "Integrated", "not-integrated": "Not integrated" },
-        governance: { verified: "Verified", "not-verified": "Not verified" },
-      };
+      <aside class="panels" aria-label="Agent and governance details">
+        <section class="card" aria-labelledby="activity-heading">
+          <h2 id="activity-heading"><span class="dot" id="activity-dot" data-state="idle" aria-hidden="true"></span> Agent Activity</h2>
+          <dl class="rows">
+            <div><dt>Model</dt><dd>None connected</dd></div>
+            <div><dt>Tools</dt><dd>Disabled</dd></div>
+            <div><dt>Current task</dt><dd id="current-task">Idle</dd></div>
+            <div><dt>Last check</dt><dd id="last-latency">—</dd></div>
+          </dl>
+          <svg class="spark" id="spark" viewBox="0 0 200 40" preserveAspectRatio="none" role="img" aria-label="Recent governance check durations"></svg>
+          <p class="fine">Duration of the last 20 governance checks.</p>
+        </section>
 
-      async function refreshStatus() {
-        const refreshState = document.getElementById("refresh-state");
-        try {
-          const [healthResponse, statusResponse] = await Promise.all([
-            fetch("/api/health", { headers: { accept: "application/json" } }),
-            fetch("/api/status", { headers: { accept: "application/json" } }),
-          ]);
-          if (!healthResponse.ok || !statusResponse.ok) throw new Error("Status request failed");
-          const [health, status] = await Promise.all([healthResponse.json(), statusResponse.json()]);
-          document.getElementById("health-label").textContent = health.status === "ok" ? "Application online" : "Application unavailable";
-          document.getElementById("app-status").textContent = health.status === "ok" ? "Healthy" : "Unavailable";
-          document.getElementById("runtime-status").textContent = labels.runtime[status.runtime] ?? "Unknown";
-          document.getElementById("governance-status").textContent = labels.governance[status.governance] ?? "Unknown";
-          document.getElementById("execution-status").textContent = status.executionEnabled === true ? "Enabled" : "Disabled";
-          refreshState.textContent = "Status checked just now.";
-        } catch {
-          document.getElementById("health-label").textContent = "Status unavailable";
-          document.getElementById("app-status").textContent = "Unavailable";
-          refreshState.textContent = "Unable to reach the application status endpoints.";
-        }
-      }
+        <section class="card" aria-labelledby="gov-heading">
+          <h2 id="gov-heading">ASFDK Governance</h2>
+          <dl class="rows">
+            <div><dt>Verification</dt><dd id="gov-verification">—</dd></div>
+            <div><dt>Last result</dt><dd id="gov-result">No message checked</dd></div>
+            <div><dt>Crisis level</dt><dd><span class="level" id="gov-level" data-tone="neutral">—</span></dd></div>
+            <div><dt>Checked by</dt><dd id="gov-components">—</dd></div>
+            <div><dt>Execution</dt><dd id="gov-execution">—</dd></div>
+          </dl>
+          <p class="fine" id="gov-reason" hidden></p>
+        </section>
 
-      refreshStatus();
-    </script>
+        <section class="card" aria-labelledby="session-heading">
+          <h2 id="session-heading">Session</h2>
+          <dl class="rows">
+            <div><dt>Tab session</dt><dd id="session-id">—</dd></div>
+            <div><dt>Started</dt><dd id="session-started">—</dd></div>
+            <div><dt>Storage</dt><dd>This tab only</dd></div>
+          </dl>
+        </section>
+
+        <section class="card" aria-labelledby="events-heading">
+          <h2 id="events-heading">Recent events</h2>
+          <ul class="events" id="events"><li class="fine">Nothing yet.</li></ul>
+        </section>
+      </aside>
+    </div>
+    <script type="module" src="/app.js"></script>
   </body>
 </html>
