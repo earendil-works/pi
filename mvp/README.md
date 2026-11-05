@@ -99,6 +99,17 @@ Order of events, each of which can stop the turn before the next starts:
 
 Tests run offline with Pi's faux provider and a recording fake sandbox (11 tests, including checks that a blocked gate, no free model, a busy sandbox, and a policy-blocked command each stop short of the next step, and that the token and host environment never reach the sandbox). They were mutation-checked: removing the policy review or loosening the gate check makes them fail. Not exercised: the real gateway call, a real sandbox, and the tool-name list Pi sends the model.
 
+## Agent route
+
+`mvp/api/agent.ts` (logic in `src/agent/route.ts`) exposes the runner as `POST /api/agent` with `{ "prompt": string }` (at most 8000 characters).
+
+- **Off by default.** Without `NLT_AGENT_ENABLED=1` in that Vercel environment the route answers 404 and touches nothing (no gate, sandbox, catalog or token). Only the owner sets this flag. Vercel login covers all deployments, so the flag is the second control.
+- **Network.** The default is the named allowlist (package registries and GitHub). `NLT_AGENT_EGRESS_ALL=1`, also owner-set, switches to allow-all; the request body cannot. Each turn logs the effective policy (`allowlist:packages,git` or `allow-all`), never the prompt.
+- **Streaming.** The response is newline-delimited JSON: `{type:"text",delta}`, `{type:"tool",name}`, then one `{type:"done",status,...}`. The chat page tries this route first and falls back to the gate-only check on 404. A client that disconnects aborts the turn.
+- **Credential.** The Vercel OIDC token (`@vercel/oidc` 3.2.0, `getVercelOidcToken()`) is read inside the turn and held in memory; it is never put in the sandbox.
+- **Duration.** `vercel.json` sets `maxDuration` 300 for this function.
+- **Not verified.** The offline tests use fakes and the faux provider. A real gateway call, a real sandbox, the workspace root `/vercel/sandbox`, the OIDC token on a deployment, and the stream through Vercel's edge have not been run.
+
 ## Free-model selection
 
 `src/gateway/free-models.ts` implements the owner's rule that only free models go through the Vercel AI Gateway. It reads the gateway's public model catalog (`https://ai-gateway.vercel.sh/v1/models`, no authentication) at the time of use and treats a model as free only if it is a language model whose input and output prices are listed and exactly zero, every other price field is also zero, and its price is not flagged `varies_by_provider`. Missing, tiered, regional, unrecognised or malformed pricing is not free.

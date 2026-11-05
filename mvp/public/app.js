@@ -1,9 +1,11 @@
 import {
   MAX_PROMPT_LENGTH,
+  agentDoneMessage,
   assistantMessage,
   formatClock,
   interpretGate,
   levelTone,
+  parseNdjson,
   resultLabel,
   validatePrompt,
 } from "./lib/decision.js";
@@ -205,6 +207,68 @@ async function askGate(prompt) {
   }
 }
 
+/**
+ * Tries the agent route. Returns undefined when the route is off or unreachable (the caller falls back to the
+ * gate check). Otherwise streams text into a live bubble and returns once the turn is done.
+ */
+async function runAgent(prompt, conversation) {
+  let response;
+  try {
+    response = await fetch("/api/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/x-ndjson" },
+      body: JSON.stringify({ prompt }),
+    });
+  } catch {
+    return undefined;
+  }
+  if (response.status === 404 || !response.body) return undefined;
+  if (!response.ok) {
+    return { text: "The agent is unavailable right now.", kind: "unavailable" };
+  }
+  const reply = { role: "assistant", kind: "allowed", text: "", at: new Date() };
+  conversation.messages.push(reply);
+  const node = renderMessage(reply);
+  const bubble = node.querySelector(".bubble");
+  if (conversation === active) {
+    els.log.append(node);
+  }
+  const decoder = new TextDecoder();
+  const reader = response.body.getReader();
+  let buffer = "";
+  let done;
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      const parsed = parseNdjson(buffer);
+      buffer = parsed.rest;
+      for (const event of parsed.events) {
+        if (event.type === "text" && typeof event.delta === "string") {
+          reply.text += event.delta;
+          bubble.textContent = reply.text;
+        } else if (event.type === "tool" && typeof event.name === "string") {
+          els.currentTask.textContent = `Running ${event.name}`;
+        } else if (event.type === "done") {
+          done = event;
+        }
+      }
+      els.log.scrollTop = els.log.scrollHeight;
+    }
+  } catch {
+    // fall through: a stream that ended without a done event is a failure
+  }
+  const note = agentDoneMessage(done);
+  if (note) {
+    reply.kind = done?.status === "blocked" ? "blocked" : "unavailable";
+    reply.text = reply.text ? `${reply.text}\n\n${note}` : note;
+    bubble.textContent = reply.text;
+    bubble.dataset.kind = reply.kind;
+  }
+  return { streamed: true, status: done?.status };
+}
+
 function setPending(value) {
   pending = value;
   els.send.disabled = value;
@@ -233,6 +297,18 @@ async function submit(raw) {
   setPending(true);
   logEvent("Governance check sent", "busy");
   const started = performance.now();
+  const agent = await runAgent(checked.prompt, conversation);
+  if (agent) {
+    setPending(false);
+    if (agent.text) {
+      const failure = { role: "assistant", kind: agent.kind, text: agent.text, at: new Date() };
+      conversation.messages.push(failure);
+      if (conversation === active) appendMessage(failure);
+    }
+    logEvent(`Agent turn: ${agent.status ?? "ended"}`, agent.status === "completed" ? "online" : "idle");
+    els.prompt.focus();
+    return;
+  }
   const result = await askGate(checked.prompt);
   const elapsed = performance.now() - started;
   const view = interpretGate(result);

@@ -1,0 +1,5 @@
+{
+  "functions": {
+    "api/agent.ts": { "maxDuration": 300 }
+  }
+}

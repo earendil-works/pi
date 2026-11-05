@@ -1,0 +1,47 @@
+/**
+ * The coding-agent route. Off unless the owner sets NLT_AGENT_ENABLED=1 for the environment.
+ *
+ * Wires the real pieces: the ASFDK crisis gate (checked before anything else), the Vercel Sandbox, the free
+ * Vercel AI Gateway models, and the Vercel OIDC token as the gateway credential (read inside the request).
+ * See src/agent/route.ts for the contract. This file is not exercised by the offline tests.
+ */
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { getVercelOidcToken } from "@vercel/oidc";
+import { runAgentTurn } from "../src/agent/runner.ts";
+import { type AgentRequest, type AgentResponse, handleAgentRequest } from "../src/agent/route.ts";
+import { evaluateGate } from "../src/gate.ts";
+import { AsfdkHarness, Channel } from "../src/harness/harness.ts";
+import { createVercelSandboxClient } from "../src/sandbox/vercel-client.ts";
+
+async function gate(prompt: string) {
+  // Sleepwalker writes relative to the working directory; function directories are read-only.
+  const workDir = tmpdir();
+  const harness = new AsfdkHarness({ userId: `agent-gate-${randomUUID()}`, cwd: workDir });
+  try {
+    process.chdir(workDir);
+    await harness.start();
+    const { interaction, emotionalState } = await harness.assessText(prompt, {}, Channel.UNKNOWN);
+    const decision = evaluateGate(interaction, emotionalState);
+    return { allowed: decision.allowed, blockedReason: decision.blockedReason, crisisLevel: decision.crisisLevel };
+  } catch {
+    // Fail closed: an assessment that could not run is not a pass.
+    return { allowed: false, blockedReason: "Governance assessment unavailable", crisisLevel: null };
+  } finally {
+    await harness.shutdown().catch(() => undefined);
+  }
+}
+
+export default async function handler(request: AgentRequest, response: AgentResponse) {
+  await handleAgentRequest(request, response, {
+    env: process.env,
+    createDeps: ({ egressAll }) => ({
+      gate,
+      sandboxClient: createVercelSandboxClient(),
+      gatewayToken: () => getVercelOidcToken(),
+      sandbox: { egressAll },
+    }),
+    run: runAgentTurn,
+    log: (line) => console.info(line),
+  });
+}
