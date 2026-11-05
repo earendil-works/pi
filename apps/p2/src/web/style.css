@@ -2877,6 +2877,23 @@ button.diff-number:hover {
 	color: var(--faint);
 	font-size: var(--fs-xs);
 }
+/* A lifecycle operation of the session (a move, a copy, an archive) running, or failed with Dismiss. */
+.session-operation {
+	display: flex;
+	align-items: center;
+	gap: var(--s1);
+	padding: 0 0 var(--s1);
+	color: var(--muted);
+	font-size: var(--fs-xs);
+}
+.session-operation.failed {
+	color: var(--error);
+}
+.session-operation > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
 .session-header {
 	display: flex;
 	align-items: stretch;

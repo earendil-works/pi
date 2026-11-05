@@ -4,19 +4,19 @@ import {
 	defineFacet,
 	defineState,
 	deriveTyped,
+	followNative,
 	forbidden,
 	isOwner,
 	nativeOf,
 	record,
 	serveNative,
-	untilAborted,
 } from "@p2/app/v1";
 import { listLocalDirectory } from "@p2/app/v1/node";
 import { Hosts, Server } from "@p2/app/v1/server";
 import { Catalog, type Session } from "../sessions/contract.ts";
 import { StatusStore } from "../status/contract.ts";
 import { type Child, ChildStore } from "../subagents/contract.ts";
-import { EnvConfigSchema, envRevision } from "./config.ts";
+import { envRevision } from "./config.ts";
 import { EnvManagers, EnvService, Envs, EnvTestSchema } from "./contract.ts";
 import { EnvManager } from "./manager.ts";
 import { EnvStore } from "./store.ts";
@@ -41,15 +41,11 @@ const Restarts = defineState("p2.env-restarts", {
 	initial: () => ({ revisions: null, pending: {} }),
 });
 
-/** The observed configuration, its last error, and the latest test of each environment (with its revision). */
-const Observed = defineState("p2.env-service", {
-	schema: obj({
-		configs: record(EnvConfigSchema),
-		tests: record(obj({ revision: str(), test: EnvTestSchema })),
-		failure: union([str(), nul()]),
-	}),
+/** The latest test of each environment, with the revision of the configuration it tested. */
+const Tests = defineState("p2.env-tests", {
+	schema: obj({ tests: record(obj({ revision: str(), test: EnvTestSchema })) }),
 	version: 1,
-	initial: () => ({ configs: {}, tests: {}, failure: null }),
+	initial: () => ({ tests: {} }),
 });
 
 export default defineFacet((host) => {
@@ -98,7 +94,7 @@ export default defineFacet((host) => {
 		const server = self.get(Server, {});
 		const catalog = self.get(Catalog, {});
 		const children = self.get(ChildStore, {});
-		const observed = self.state(Observed);
+		const tested = self.state(Tests);
 		const store = self.open(
 			async () => {
 				const opened = new EnvStore(server.info.value.dataDir);
@@ -120,29 +116,21 @@ export default defineFacet((host) => {
 				return manager.value;
 			},
 		});
-		self.onLive(async (ctx) => {
-			const stop = store.value.subscribe((snapshot) => {
-				void observed
-					.change((draft) => {
-						draft.configs = snapshot.configs;
-						draft.failure = snapshot.error;
-					}, ctx)
-					.catch(() => {});
-			});
-			try {
-				await untilAborted(ctx);
-			} finally {
-				stop();
-			}
-		});
+		// envs.json as the store last read it validly, and why the last read failed: `reload` resolves after the store
+		// told this source.
+		const snapshot = followNative(
+			self,
+			(changed) => store.value.subscribe(changed),
+			() => store.value.snapshot,
+		);
 		return {
-			configs: self.derive([observed], ([value]) => value.configs),
-			tests: self.derive([observed], ([value]) => value.tests),
-			failure: self.derive([observed], ([value]) => value.failure),
+			configs: deriveTyped(self, [snapshot], ([value]) => value.configs),
+			tests: self.derive([tested], ([value]) => value.tests),
+			failure: self.derive([snapshot], ([value]) => value.error),
 			test: async ({ name }, ctx) => {
 				const config = await manager.value.config(name);
 				const test = await manager.value.test(name);
-				await observed.change((draft) => {
+				await tested.change((draft) => {
 					draft.tests[name] = { revision: envRevision(config), test };
 				}, ctx);
 				return test;

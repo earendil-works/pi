@@ -1,6 +1,15 @@
 import { AgentDoc, type ConversationId, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import { canSend, defineFacet, forbidden, type Location, type Subscribable, sameLocation, signalOf } from "@p2/app/v1";
+import {
+	canSend,
+	defineFacet,
+	followNative,
+	forbidden,
+	type Location,
+	type Subscribable,
+	sameLocation,
+	signalOf,
+} from "@p2/app/v1";
 import { durableContext } from "@p2/app/v1/node";
 import { conversationEnvironment, harnessOf, isLocalEnvironment, workerOf } from "@p2/app/v1/worker";
 import { LocationMoveDoc } from "../locations/contract.worker.ts";
@@ -62,15 +71,6 @@ export default defineFacet((host) => {
 		const harness = harnessOf(self);
 		const worker = workerOf(self);
 		const writes = self.get(WorkspaceWrites, {});
-		const changes = self.writable(0);
-		self.open(
-			async () => {
-				const liveness = worker().liveness;
-				liveness.add("viewers", 1);
-				return liveness;
-			},
-			(liveness) => liveness.add("viewers", -1),
-		);
 		/** The viewed conversation's workspace where it works now, and the watch reporting its changes to `listeners`. */
 		const openWorkspace = async (context: ReturnType<typeof durableContext>, notify: () => void) => {
 			const durable = harness().durable;
@@ -124,10 +124,13 @@ export default defineFacet((host) => {
 					},
 				};
 				let pending: ReturnType<typeof setTimeout> | undefined;
+				// Counts the workspace's changes (at most one per 100 ms): viewers read again at each.
+				let version = 0;
 				const notify = (): void => {
 					if (pending) return;
 					pending = setTimeout(() => {
 						pending = undefined;
+						version++;
 						for (const fn of listeners) fn(null);
 					}, 100);
 				};
@@ -225,6 +228,9 @@ export default defineFacet((host) => {
 				return {
 					events,
 					current,
+					get version() {
+						return version;
+					},
 					close: async () => {
 						stop();
 						closing.abort();
@@ -235,13 +241,12 @@ export default defineFacet((host) => {
 			},
 			(value) => value.close(),
 		);
-		// Closed before the workspace (reverse order), so no change arrives after the writable ends.
-		self.open(
-			async () => workspaceResource.value.events.subscribe(() => changes.set(changes.value + 1)),
-			(stop) => stop(),
-		);
 		return {
-			changes: self.derive([changes], ([value]) => value),
+			changes: followNative(
+				self,
+				(changed) => workspaceResource.value.events.subscribe(changed),
+				() => workspaceResource.value.version,
+			),
 			query: (query, ctx) =>
 				worker().liveness.call(async () => {
 					if ("path" in query && workspacePath(query.path) === undefined)

@@ -21,7 +21,7 @@ import { restoreRuntime, snapshotRuntime } from "../tui/snapshot.ts";
 import { parseTerminalState } from "../tui/theme/theme.ts";
 
 type Bridge = {
-	input: { columns: number; rows: number; origin?: unknown; mouse?: unknown };
+	input: { columns: number; rows: number; origin?: unknown; mouse?: unknown; role?: unknown };
 	send(value: unknown): void;
 	onMessage(handler: (message: Record<string, unknown>) => unknown): void;
 };
@@ -161,6 +161,8 @@ export async function setupTui(bridge: Bridge, facets: readonly PluginFacet<P2Pr
 	host.connect(link, linkOptions, BACKGROUND_CONTEXT);
 	const loaded = await host.load([...facets, { name: "@p2/tui-core", facet: tuiCoreFacet }], BACKGROUND_CONTEXT);
 	runtime.origin = typeof bridge.input.origin === "string" ? bridge.input.origin.slice(0, 200) : undefined;
+	// The launcher's admission (a hint from outside the sandbox): owner views hold at once; `Access` confirms it.
+	if (bridge.input.role === "owner" || bridge.input.role === "guest") runtime.role = bridge.input.role;
 	await runtime.start();
 	// A facet left out at load (its setup threw) is shown, not silently missing.
 	for (const { plugin, error } of loaded.failed)
@@ -210,7 +212,27 @@ export async function setupTui(bridge: Bridge, facets: readonly PluginFacet<P2Pr
 		reported = { target, suspend, busy };
 	};
 	runtime.listeners.add(report);
-	let access: ReturnType<typeof host.hold<typeof Access>> | undefined;
+	// Who this TUI is: held once (Chord holds it again on every new link), the role and a guest's grant follow it.
+	const access = host.hold(Access, {}, BACKGROUND_CONTEXT);
+	follow(access.state, (state) => {
+		if (state.kind !== "live") return;
+		const role = access.variant === "owner" ? "owner" : "guest";
+		if (role === runtime.role) return;
+		runtime.role = role;
+		runtime.changed();
+	});
+	void whenLive(access).then(
+		() => {
+			if (access.variant === "guest")
+				follow(access.grant, (grant) => {
+					runtime.grant = grant
+						? { name: grant.name, sessions: grant.sessions ?? { [grant.session]: grant.mode } }
+						: undefined;
+					if (grant) runtime.navigate("chat", grant.session);
+				});
+		},
+		(error: unknown) => runtime.fail(error),
+	);
 	bridge.onMessage(async (message) => {
 		if (message.kind === "snapshot") return snapshotRuntime(runtime);
 		if (message.kind === "activate") {
@@ -228,23 +250,6 @@ export async function setupTui(bridge: Bridge, facets: readonly PluginFacet<P2Pr
 					host.connect(link, linkOptions, BACKGROUND_CONTEXT);
 					link.activate();
 				}
-				// Held for the connection: the role and a guest's grant follow it (released when the link drops).
-				access?.release();
-				const held = host.hold(Access, {}, BACKGROUND_CONTEXT);
-				access = held;
-				void whenLive(held)
-					.then(() => {
-						runtime.role = held.variant === "owner" ? "owner" : "guest";
-						runtime.changed();
-						if (held.variant === "guest")
-							follow(held.grant, (grant) => {
-								runtime.grant = grant
-									? { name: grant.name, sessions: grant.sessions ?? { [grant.session]: grant.mode } }
-									: undefined;
-								if (grant) runtime.navigate("chat", grant.session);
-							});
-					})
-					.catch((error: unknown) => runtime.fail(error));
 				void host
 					.root(async (ctx) => (await ctx.get(TuiPreferences, {})).read(ctx), BACKGROUND_CONTEXT)
 					// Server defaults sit below the guest's local preferences (section 4.2).

@@ -3,7 +3,7 @@
 // facet, which owns the session's Durable Harness.
 
 import { isChordError } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { workerMain } from "@earendil-works/chord/workers/child";
 import { registerLazyBedrockProvider } from "@earendil-works/pi-ai/lazy-bedrock-provider";
 import { registerLazyOAuthFlows } from "@earendil-works/pi-ai/lazy-oauth";
@@ -62,9 +62,7 @@ workerMain(
 				core: [
 					{
 						name: "@p2/core",
-						facet: workerCore(init, liveness, location, (fn, signal) =>
-							host.root(fn, signal ? withAbortSignal(signal, context) : context),
-						),
+						facet: workerCore(init, liveness, location, (fn, rootContext) => host.root(fn, rootContext)),
 					},
 				],
 			},

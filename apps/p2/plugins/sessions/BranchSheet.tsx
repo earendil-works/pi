@@ -3,7 +3,10 @@ import { Sheet } from "@p2/app/v1/web";
 import { useState } from "react";
 import { PREVIEW_LENGTH } from "../tree/contract.ts";
 
-/** Renames a branch; `label` null shows `title` (conversation 1's default), and only conversation 1 may go back to it. */
+/**
+ * Renames a branch; `label` null shows `title` (conversation 1's default), and only conversation 1 may go back to it.
+ * Saving closes the sheet: the row shows the new label while the rename is in flight.
+ */
 export function BranchSheet({
 	title,
 	conversation,
@@ -15,18 +18,17 @@ export function BranchSheet({
 	title: string;
 	conversation: number;
 	label: string | null;
-	onSave: (label: string | null) => Promise<unknown>;
+	onSave: (label: string | null) => void;
 	onClose: () => void;
 }) {
 	const [draft, setDraft] = useState(label ?? title);
-	const [error, setError] = useState<string>();
 	const next = draft.replace(/\s+/g, " ").trim();
 	const resettable = conversation === 1;
 	const unchanged = next === (label ?? title);
-	const save = (value: string | null) =>
-		void onSave(value)
-			.then(onClose)
-			.catch((failure: unknown) => setError(failure instanceof Error ? failure.message : String(failure)));
+	const save = (value: string | null) => {
+		onSave(value);
+		onClose();
+	};
 	return (
 		<Sheet title="Branch name" onClose={onClose}>
 			<form
@@ -48,7 +50,6 @@ export function BranchSheet({
 				{resettable && (
 					<p className="muted small">The first branch shows the session title until it gets a label of its own.</p>
 				)}
-				{error && <p className="error small">{error}</p>}
 				<div className="inline-form">
 					<button type="submit" className="button" disabled={unchanged || (!next && !resettable)}>
 						Save

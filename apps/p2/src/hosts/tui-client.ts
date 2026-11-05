@@ -67,6 +67,8 @@ export async function startTuiClient(options: {
 	actions?: Readonly<Record<string, LauncherAction>>;
 	/** The visitor's mouse policy (launcher-only preference): which mouse modes worker output may enable. */
 	mouse?: MousePolicy;
+	/** Who the launcher was admitted as: the TUI starts with that role, so owner views hold before `Access` answers. */
+	role?: "owner" | "guest";
 	url: URL;
 	/** The visitor's validated local preferences (section 4.2) and their change feed; sent to every worker as data. */
 	preferences?: {
@@ -409,6 +411,7 @@ export async function startTuiClient(options: {
 					origin: options.url.origin,
 					// The visitor's mouse policy decides whether pi-tui captures the mouse (wheel, app-owned selection).
 					mouse: (options.mouse ?? "off") !== "off",
+					...(options.role ? { role: options.role } : {}),
 				},
 				onFailure: (message) => {
 					if (sandbox === candidate) fail(message);

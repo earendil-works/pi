@@ -777,15 +777,18 @@ describe("voice mode's switch and voice", () => {
 			"participant",
 		);
 		await owner.set({ enabled: true }, BACKGROUND_CONTEXT);
+		// The answer follows its state: the owner's switch and voice are on the page when each call resolves.
+		assert.equal(owner.enabled.value, true);
 		await owner.choose({ engine: "kokoro", voice: "kokoro-af_heart", speed: 1, language: "de" }, BACKGROUND_CONTEXT);
+		assert.equal(owner.voice.value?.voice, "kokoro-af_heart");
 		// The guest sees the owner's choice, language included.
 		assert.equal((await until(alice.voice, (voice) => voice?.voice === "kokoro-af_heart"))?.language, "de");
 		assert.equal(alice.enabled.value, false, "a guest's switch is its own");
 		await alice.set({ enabled: true }, BACKGROUND_CONTEXT);
-		await until(alice.enabled, (value) => value);
+		assert.equal(alice.enabled.value, true);
 		// The guest turning its microphone off leaves the owner's voice mode on.
 		await alice.set({ enabled: false }, BACKGROUND_CONTEXT);
-		await until(alice.enabled, (value) => !value);
+		assert.equal(alice.enabled.value, false);
 		assert.equal(owner.enabled.value, true);
 		// A reference carries every variant's members; the participant's binding refuses the owner's (cast: the type has
 		// only the participant's).

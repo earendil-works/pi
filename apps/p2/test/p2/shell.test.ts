@@ -19,6 +19,7 @@ import { Chat, SHELL_BUSY } from "../../plugins/chat/contract.ts";
 import chatWorker from "../../plugins/chat/worker.ts";
 import { WorkerModels } from "../../plugins/models/contract.ts";
 import { createP2Models } from "../../plugins/models/models.ts";
+import { StatusReport } from "../../plugins/status/contract.ts";
 import { type Host, Session } from "../../src/runtime/chord.ts";
 import { durableContext } from "../../src/runtime/durable.ts";
 import { SHELL_ENTRY, type ShellData, shellTail } from "../../src/runtime/shell.ts";
@@ -60,9 +61,11 @@ async function shellHost() {
 					relocate: async () => {},
 				} as unknown as HarnessParts,
 				worker: {
-					// A running command is one active call (the worker stays up; a move or clone waits for it).
+					// Calls and running commands are active calls (a move or a clone waits for them).
 					liveness: {
-						add: () => {},
+						add: (kind: string, delta: number) => {
+							if (kind === "activeCalls") calls += delta;
+						},
 						call: async <T>(fn: () => Promise<T>) => {
 							calls++;
 							try {
@@ -79,6 +82,8 @@ async function shellHost() {
 			chatWorker,
 		],
 		stubs: [
+			// No server here: the worker's status pushes go nowhere.
+			[StatusReport, { push: async () => null }],
 			// No settings.json: the owner's entries carry the default name.
 			[WorkerModels, (_input, _principal, self) => ({ settings: self.state({}) })],
 		],
@@ -145,7 +150,8 @@ describe("user shell commands", () => {
 			{ command: "echo private", includeInContext: false, requestId: "2" },
 			BACKGROUND_CONTEXT,
 		);
-		assert.equal(typeof again.shellId, "string");
+		// The command's ID is the caller's request ID.
+		assert.equal(again.shellId, "2");
 		await new Promise((resolve) => setTimeout(resolve, 200));
 		assert.equal(shells(owner.view.value).length, 2);
 		// The web shows it as a plain notice: `$ command`, the output fenced, how it ended.
@@ -174,9 +180,11 @@ describe("user shell commands", () => {
 			},
 			BACKGROUND_CONTEXT,
 		);
-		// Everyone sees it run, with its output so far; it is one active call while it runs.
+		// Everyone sees it run, with its output so far. It is a job (the worker stays up) and one active call while it
+		// runs (a move or a clone waits for it).
 		const live = await until(bob.liveShell, (value) => Boolean(value?.running && value.output.includes("started")));
 		assert.deepEqual(live?.author, { kind: "guest", id: "alice", name: "Alice" });
+		assert.equal(fixture.host.activity.value.jobs, 1);
 		assert.equal(fixture.activeCalls(), 1);
 		await assert.rejects(
 			owner.shell({ command: "true", includeInContext: true, requestId: "b" }, BACKGROUND_CONTEXT),
@@ -190,7 +198,7 @@ describe("user shell commands", () => {
 		assert.doesNotMatch(cancelled?.data.output ?? "", /late/);
 		assert.deepEqual(cancelled?.data.author, { kind: "guest", id: "alice", name: "Alice" });
 		await until(owner.liveShell, (value) => value === null);
-		for (let i = 0; i < 50 && fixture.activeCalls(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+		await until(fixture.host.activity, (activity) => activity.jobs === 0);
 		assert.equal(fixture.activeCalls(), 0);
 		// Only its author or the owner cancels a running command.
 		const second = await owner.shell(

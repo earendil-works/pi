@@ -64,10 +64,7 @@ function mcpWorker(self: StoreSelf): void {
 	const view = self.get(Mcp, {});
 	const call: McpCall = async ({ conversationId, read, ...request }, context) => {
 		const location = await harness().environments.locate(conversationId, context, read);
-		return worker().root(
-			(ctx) => expectVariant(view, "worker").call({ location, ...request }, ctx),
-			context.abortSignal,
-		);
+		return worker().root((ctx) => expectVariant(view, "worker").call({ location, ...request }, ctx), context);
 	};
 	// Code mode switched off or not loaded: the tools would be unreachable, so `tool_search` loads them, as pi falls back.
 	const reach = self.derive(

@@ -173,6 +173,7 @@ From `AGENTS.md` and this project's history:
 | `README.md`, `DEV.md` | running, deployment behind a proxy, TUI sign-in and isolation |
 | `docs/p2-notes.md` | decisions, configuration, plugin-by-plugin notes |
 | `docs/p2-tui-port.md` | TUI design, as-built notes, open phases |
+| `docs/optimistic-ui.md` | optimistic UI: the pattern for actions, pending states and loads (web and terminal) |
 | `docs/workflows.md` | code mode workflows with one-shot agents |
 | `docs/tree.md` | `/tree`: branches of the main conversation as Durable forks |
 | `docs/remote-envs.md` | SSH environments |

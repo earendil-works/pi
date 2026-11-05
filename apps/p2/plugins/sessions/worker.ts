@@ -7,7 +7,6 @@ import {
 } from "@earendil-works/pi-durable";
 import { obj, str } from "@earendil-works/pi-schema";
 import { defineFacet, expectVariant, forbidden, local } from "@p2/app/v1";
-import { durableContext } from "@p2/app/v1/node";
 import {
 	defineP2Tool,
 	Extensions,
@@ -23,8 +22,8 @@ import { MAX_TITLE, Sessions, SessionTransfer } from "./contract.ts";
 const SessionTools = local("p2.session-tools", { version: 1, params: {}, members: {} });
 
 /**
- * The tool runs outside Chord calls (a Durable tool), so each call starts a fresh short root of the worker's. Only
- * top-level conversations (the main conversation and its `/tree` branches) may rename the session.
+ * The tool runs outside Chord calls (a Durable tool), so each call opens a short root of the worker's. Only top-level
+ * conversations (the main conversation and its `/tree` branches) may rename the session.
  */
 const renameSession = (root: () => WorkerParts["root"]) =>
 	defineExtension<P2Tool>({
@@ -50,9 +49,11 @@ const renameSession = (root: () => WorkerParts["root"]) =>
 					const title = args.title.replace(/\s+/g, " ").trim();
 					if (!title) return reply("The title is empty.", true);
 					try {
-						// A Durable tool is not a Chord root: each call starts a fresh short one.
-						const { previous } = await root()(async (ctx) =>
-							expectVariant(await ctx.get(Sessions, {}), "worker").renameSelf({ title }, ctx),
+						// A Durable tool is not a Chord call: it pushes the title in a short root of the worker's, under its
+						// own context.
+						const { previous } = await root()(
+							async (ctx) => expectVariant(await ctx.get(Sessions, {}), "worker").renameSelf({ title }, ctx),
+							context,
 						);
 						return reply(
 							previous === title
@@ -77,20 +78,19 @@ export default defineFacet((host) => {
 			variant: "server",
 			members: {
 				history: async ({ conversation, before }, ctx) => {
-					const context = durableContext(ctx);
 					const durable = harness().durable;
 					// A subagent's history as a session of its own needs its cwd and tools: not yet.
-					if (!(await isTopLevel(durable, conversation as ConversationId, context)))
+					if (!(await isTopLevel(durable, conversation as ConversationId, ctx)))
 						throw new Error("Forking a subagent conversation is not supported yet");
-					const found = await durable.conversation(conversation as ConversationId, context);
+					const found = await durable.conversation(conversation as ConversationId, ctx);
 					if (!found) throw new Error(`Unknown conversation ${conversation}`);
-					const [chosen] = (await found.entries({ maxEntryId: before as EntryId }, 1, undefined, context)).items;
+					const [chosen] = (await found.entries({ maxEntryId: before as EntryId }, 1, undefined, ctx)).items;
 					if (chosen?.id !== before) throw new Error("Unknown message");
 					// The fork holds what came before the chosen message, as the context stood at the entry before it.
-					const [previous] = (await found.entries({ maxEntryId: (before - 1) as EntryId }, 1, undefined, context))
+					const [previous] = (await found.entries({ maxEntryId: (before - 1) as EntryId }, 1, undefined, ctx))
 						.items;
 					if (!previous) return { entries: [] };
-					const view = await found.context(context, { at: previous.id });
+					const view = await found.context(ctx, { at: previous.id });
 					// Edits are applied in `contributions` (their targets' IDs change); a head marker starts the copy's context.
 					const entries: EntryDraft[] = view.entries.map((entry, index) => {
 						const model = view.contributions[index] ?? [];
@@ -104,15 +104,14 @@ export default defineFacet((host) => {
 					return { entries };
 				},
 				seed: async ({ entries }, ctx) => {
-					const context = durableContext(ctx);
 					const durable = harness().durable;
-					const root = await durable.conversation(ROOT_CONVERSATION_ID, context);
+					const root = await durable.conversation(ROOT_CONVERSATION_ID, ctx);
 					if (!root) throw new Error("No main conversation");
-					if ((await root.entries({}, 1, undefined, context)).items.length)
+					if ((await root.entries({}, 1, undefined, ctx)).items.length)
 						throw new Error("The session has history already");
 					await durable.commit(async (tx) => {
 						for (const entry of entries) await tx.appendEntry(ROOT_CONVERSATION_ID, entry as EntryDraft);
-					}, context);
+					}, ctx);
 					return null;
 				},
 			},

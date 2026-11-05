@@ -1,9 +1,11 @@
 // Sharing in the browser: the share sheet (owner), and the guest's presence while its page is open.
 
-import { BACKGROUND_CONTEXT, contribute, defineFacet, follow } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet } from "@p2/app/v1";
 import {
 	closeLayers,
 	copyText,
+	errorText,
+	readValue,
 	Sheet,
 	Slots,
 	useObject,
@@ -16,8 +18,6 @@ import { useEffect, useState } from "react";
 import { GuestPresence, type ShareMode, Sharing } from "./contract.ts";
 
 const LABEL: Record<ShareMode, string> = { view: "Read-only", full: "Read/write" };
-
-const errorText = (reason: unknown): string => (reason instanceof Error ? reason.message : String(reason));
 
 /**
  * Two links per session (read-only; read/write: send and Stop), the people it is shared with by email, and the guests
@@ -54,15 +54,8 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 			}
 			if (url === undefined) {
 				await sharing.link({ mode, ...(remoteConfirmed ? { remoteConfirmed } : {}) }, BACKGROUND_CONTEXT);
-				// The new link arrives as state; wait for it (the sheet is subscribed).
-				url = await new Promise<string | undefined>((resolve) => {
-					const stop = follow(sharing.links, (value) => {
-						const found = value?.find((link) => link.mode === mode)?.url;
-						if (found === undefined) return;
-						queueMicrotask(() => stop());
-						resolve(found);
-					});
-				});
+				// The answer follows its state: the new link is in `links` when the call resolves.
+				url = readValue(sharing.links)?.find((link) => link.mode === mode)?.url;
 			}
 			if (url !== undefined && (await copyText(url))) setCopied(mode);
 		} catch (reason) {

@@ -3,6 +3,7 @@
 // data), logs and owner notices, restarts after a crash (as v1), and the lifecycle steps of relocation and cloning,
 // serialized per session.
 import { realpathSync } from "node:fs";
+import type { FollowAttachment, FollowObserver } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { Plugins } from "@earendil-works/chord/plugins";
@@ -10,7 +11,13 @@ import { createWorkers, type WorkerState, type Workers, type WorkersError } from
 import { type Host, Session } from "../runtime/chord.ts";
 import { logWriter, processLogs } from "../runtime/logs.ts";
 import { canView, type P2Principal } from "../runtime/principals.ts";
-import type { HostEvent, RelocationSteps, SessionWorkerControl } from "../runtime/server.ts";
+import type {
+	HostEvent,
+	RelocationSteps,
+	SessionWorkerControl,
+	WorkerState as SessionWorkerState,
+} from "../runtime/server.ts";
+import { WorkerBoundary } from "../runtime/session-worker.ts";
 import type { WorkerInit } from "../runtime/worker.ts";
 
 export type SessionWorkersOptions = {
@@ -43,6 +50,9 @@ export class SessionWorkers implements SessionWorkerControl {
 	readonly #generations = new Map<string, number>();
 	readonly #operations = new Map<string, Promise<unknown>>();
 	readonly #listeners = new Set<(event: HostEvent) => void>();
+	/** The followers of every worker's state (`observe`), and the state they were given last. */
+	readonly #observers = new Set<FollowObserver<unknown>>();
+	#workerStates: Readonly<Record<string, SessionWorkerState>> = {};
 	readonly #writers = new Map<string, ReturnType<typeof logWriter>>();
 	/** The redacted reason of each session's last failed start or crash (Chord's public error is a fixed message). */
 	readonly #reasons = new Map<string, string>();
@@ -69,7 +79,7 @@ export class SessionWorkers implements SessionWorkerControl {
 	static async create(options: SessionWorkersOptions, context: Context): Promise<SessionWorkers> {
 		const made = new SessionWorkers(options);
 		made.#workers = await made.#createWorkers(context);
-		void made.#follow();
+		await made.#follow();
 		return made;
 	}
 
@@ -138,6 +148,11 @@ export class SessionWorkers implements SessionWorkerControl {
 	subscribe(listener: (event: HostEvent) => void): () => void {
 		this.#listeners.add(listener);
 		return () => this.#listeners.delete(listener);
+	}
+
+	observe(observer: FollowObserver<unknown>): FollowAttachment<Readonly<Record<string, SessionWorkerState>>> {
+		this.#observers.add(observer);
+		return { value: this.#workerStates, detach: () => this.#observers.delete(observer) };
 	}
 
 	async relocate(session: string, steps: RelocationSteps): Promise<void> {
@@ -232,7 +247,19 @@ export class SessionWorkers implements SessionWorkerControl {
 		});
 	}
 
-	async retry(session: string): Promise<void> {
+	async retry(session: string, context: Context): Promise<SessionWorkerState> {
+		await this.resume(session);
+		// A hold of the server's own starts the worker when nothing else holds it; its outcome is the answer.
+		const boundary = this.#options.host.hold(WorkerBoundary, { session }, context);
+		try {
+			await this.#settled(session, context);
+		} finally {
+			boundary.release();
+		}
+		return this.#workerStates[session] ?? { running: false, generation: this.generation(session) };
+	}
+
+	async resume(session: string): Promise<void> {
 		this.#crashRestarts.delete(session);
 		await this.#serially(session, async () => {
 			await this.#suspended(session, async () => {
@@ -242,6 +269,27 @@ export class SessionWorkers implements SessionWorkerControl {
 				processLogs.append(source, "event", "Worker retry requested");
 			});
 		});
+	}
+
+	/** Resolves once the session's worker runs or failed (not while it starts or is stopped); `context` ends the wait. */
+	async #settled(session: string, context: Context): Promise<void> {
+		const settled = () => {
+			const status = this.#status(session);
+			return status === "running" || status === "failed";
+		};
+		if (settled()) return;
+		const watch = await this.workers.state.watch(context);
+		try {
+			await new Promise<void>((resolve, reject) => {
+				context.abortSignal?.addEventListener("abort", () => reject(context.abortSignal?.reason), { once: true });
+				if (settled()) return resolve();
+				watch.start(async () => {
+					if (settled()) resolve();
+				});
+			});
+		} finally {
+			await watch.stop();
+		}
 	}
 
 	/** Stops the session's worker and clears its failure: the next hold (one waiting now too) starts it again. */
@@ -434,6 +482,7 @@ export class SessionWorkers implements SessionWorkerControl {
 	async #follow(): Promise<void> {
 		const watch = await this.workers.state.watch(BACKGROUND_CONTEXT);
 		const publish = (states: typeof watch.value): void => {
+			const changed: Record<string, SessionWorkerState> = {};
 			for (const key of new Set([...Object.keys(this.#states), ...Object.keys(states)])) {
 				const state = states[key];
 				if (JSON.stringify(state) === JSON.stringify(this.#states[key])) continue;
@@ -451,8 +500,15 @@ export class SessionWorkers implements SessionWorkerControl {
 								}
 							: { session, running: state.status === "running", generation, pid: state.pid };
 				for (const listener of [...this.#listeners]) listener(event);
+				const { session: _session, ...worker } = event;
+				changed[session] = worker;
 			}
 			this.#states = states;
+			if (Object.keys(changed).length === 0) return;
+			this.#workerStates = { ...this.#workerStates, ...changed };
+			const value = this.#workerStates;
+			for (const observer of [...this.#observers])
+				observer.advance({ kind: "value", value, ops: [["r", value]], retired: false }, BACKGROUND_CONTEXT);
 		};
 		publish(watch.value);
 		watch.start(async (call) => {

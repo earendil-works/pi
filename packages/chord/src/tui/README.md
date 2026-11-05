@@ -29,8 +29,9 @@ startTerminalRuntime<P>({
 - `scope.ts`: `TuiScope(host, changed)`: `hold`, `watch` (a reader, `undefined` while no value), `registry`,
   `pageState(key, initial)` (the host's value at `key`, shared with React's `usePageState`: a scope opened again after a
   plugin reload finds it), `messages(t)` (a plugin's messages in the host's language at each call; a change of the
-  locale or a translation calls `changed`), `optimistic(read)` (the reader and `show(value, call)`: `value` shown until
-  every call shown settled, React's `useOptimistic`), `dispose` (no `changed` after it). References wait and rebind by
+  locale or a translation calls `changed`), `optimistic(read, reduce?)` (React's `useOptimistic`: the reader, `add(action,
+  call)` showing `reduce(current, action)` over every action in flight (no reducer: the last action) until every call
+  added settled, and `pending`), `dispose` (no `changed` after it). References wait and rebind by
   themselves; no terminal library dependency.
 
 Tests: `test/tui/` and, with the launcher and sandbox, `test/node/tui/`.

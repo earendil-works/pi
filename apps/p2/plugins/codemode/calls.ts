@@ -3,12 +3,12 @@
 import {
 	type Harness as DurableHarness,
 	LiveDoc,
+	type LiveState,
 	type TaskId,
 	type ToolExecutionApi,
 	type ToolExecutionResult,
 } from "@earendil-works/pi-durable";
 import type { Context } from "@p2/app/v1";
-import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 
 /** What a call removed mid-script reports, as its output, before Durable settles it aborted. */
 export const REMOVED_MESSAGE = "Code mode was removed while this script ran.";
@@ -55,8 +55,7 @@ export class RunningCalls {
 	}
 
 	/** Ends every running call with an error result; resolves once each is terminal. */
-	async cancel(harness: DurableHarness): Promise<void> {
-		const context = BACKGROUND_CONTEXT;
+	async cancel(harness: DurableHarness, context: Context): Promise<void> {
 		await Promise.all(
 			[...this.#calls.values()].map(async (api) => {
 				try {
@@ -74,11 +73,28 @@ export class RunningCalls {
 
 /** Resolves once the call's slot holds the removal message (the output is committed with a throttle), or after a bound. */
 async function reported(harness: DurableHarness, api: ToolExecutionApi, context: Context): Promise<void> {
-	const deadline = Date.now() + REPORT_MS;
-	while (Date.now() < deadline) {
-		const live = await harness.snapshot(LiveDoc, api.conversationId, context);
+	const done = (live: Readonly<LiveState> | undefined): boolean => {
 		const slot = live?.tools?.find((tool) => tool.taskId === api.taskId);
-		if (!slot || slot.status === "done" || slot.output?.includes(REMOVED_MESSAGE)) return;
-		await new Promise((resolve) => setTimeout(resolve, 25));
+		return !slot || slot.status === "done" || slot.output?.includes(REMOVED_MESSAGE) === true;
+	};
+	const shown = Promise.withResolvers<void>();
+	const observation = await harness.observeDoc(
+		LiveDoc,
+		api.conversationId,
+		{
+			advance: (call) => {
+				if (call.kind === "value" && done(call.value)) shown.resolve();
+			},
+			end: () => shown.resolve(),
+		},
+		context,
+	);
+	if (observation === undefined) return;
+	const timer = setTimeout(shown.resolve, REPORT_MS);
+	try {
+		if (!done(observation.value)) await shown.promise;
+	} finally {
+		clearTimeout(timer);
+		observation.detach();
 	}
 }

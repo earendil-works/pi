@@ -178,6 +178,8 @@ test("bare-host TUI facets register, render session/model pickers and reload wit
 						sessions,
 						defaultCwd,
 						defaultEnv,
+						operations: self.state([]),
+						dismissOperation: () => {},
 						create: () => session,
 						relocate: () => {},
 						rename: () => {},

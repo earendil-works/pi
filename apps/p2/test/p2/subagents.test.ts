@@ -11,7 +11,7 @@ import { Mcp } from "../../plugins/mcp/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
-import { type Child, SubagentControl, Subagents } from "../../plugins/subagents/contract.ts";
+import { type Child, ChildStore, SubagentControl, Subagents } from "../../plugins/subagents/contract.ts";
 import { Workspace } from "../../plugins/workspace/contract.ts";
 import { startServer } from "../../src/hosts/server.ts";
 import type { Host, RefIn } from "../../src/runtime/chord.ts";
@@ -127,7 +127,12 @@ describe("subagents (fake provider)", () => {
 			{ type: "text", text: "1 archived (status with a name shows one)." },
 		]);
 		const control = owner.hold(SubagentControl, { session }, BACKGROUND_CONTEXT);
+		// The worker pushes the sidebar's flag to the server before it answers: the server's index has it then.
+		const store = fixture.server.host.hold(ChildStore, {}, BACKGROUND_CONTEXT);
+		await whenLive(store);
 		await control.archive({ conversation: child.conversationId, archived: false }, BACKGROUND_CONTEXT);
+		assert.equal(store.children.value[session]?.[0]?.archived, undefined, "pushed before the answer");
+		store.release();
 		await until(children.children, (value) => value?.[session]?.[0]?.archived === undefined);
 		await assert.rejects(
 			control.archive({ conversation: 999, archived: true }, BACKGROUND_CONTEXT),

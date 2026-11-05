@@ -21,7 +21,7 @@ export default defineFacet((host) => {
 		const via = <T>(
 			call: (server: Awaited<ReturnType<typeof terminals>>, ctx: Ctx) => Promise<T>,
 			context: Context,
-		): Promise<T> => worker().root(async (ctx) => call(await terminals(ctx), ctx), context.abortSignal);
+		): Promise<T> => worker().root(async (ctx) => call(await terminals(ctx), ctx), context);
 		const backend: TerminalBackend = {
 			list: async (context) => (await via((server, ctx) => server.list({}, ctx), context)).windows,
 			open: (args, context) => via((server, ctx) => server.open(args, ctx), context),

@@ -6,11 +6,13 @@ import { BACKGROUND_CONTEXT, contribute, defineFacet, type HeldIn, locationText 
 import {
 	ChevronIcon,
 	closeLayers,
+	errorText,
 	openLayer,
 	Sheet,
 	Slots,
 	useComposerState,
 	useObject,
+	useOptimisticCall,
 	useOwner,
 	useReadable,
 	useSheet,
@@ -20,7 +22,29 @@ import { type Instance, Mcp, type SignIn, signInLink } from "./contract.ts";
 
 type OwnerView = HeldIn<typeof Mcp, "owner">;
 
-const errorText = (reason: unknown): string => (reason instanceof Error ? reason.message : String(reason));
+/** A change of the instances while its call is in flight: a restart starts it, a sign-out leaves it signed out. */
+type InstanceGuess =
+	| { readonly kind: "restart"; readonly instance: string }
+	| { readonly kind: "signOut"; readonly server: string };
+
+function applyInstance(instances: readonly Instance[], guess: InstanceGuess): readonly Instance[] {
+	return instances.map((instance) =>
+		guess.kind === "restart"
+			? instance.id === guess.instance
+				? { ...instance, status: "starting", error: undefined }
+				: instance
+			: instance.server === guess.server && instance.auth === "oauth"
+				? { ...instance, status: "sign-in" }
+				: instance,
+	);
+}
+
+/** What a server's entry does; each shows its effect at once and rolls back with the error in the toast. */
+type Actions = {
+	readonly restart: (instance: string) => void;
+	readonly signOut: (server: string) => void;
+	readonly cancelSignIn: (id: string) => void;
+};
 
 const STATUS: Record<Instance["status"], string> = {
 	starting: "Starting",
@@ -32,10 +56,22 @@ const STATUS: Record<Instance["status"], string> = {
 /** The sheet: configuration errors, then each server with its instances and sign-in. */
 function McpSheet({ onClose }: { onClose: () => void }) {
 	const view = useObject(Mcp, {}, { variant: "owner" });
-	const instances = useReadable(view?.instances) ?? [];
 	const errors = useReadable(view?.errors) ?? [];
-	const signIns = useReadable(view?.signIns) ?? [];
+	const { fail } = useComposerState();
+	const [instances, changeInstance] = useOptimisticCall(useReadable(view?.instances) ?? [], applyInstance, fail);
+	const [signIns, cancel] = useOptimisticCall(
+		useReadable(view?.signIns) ?? [],
+		(list, id: string) => list.filter((entry) => entry.id !== id),
+		fail,
+	);
 	const servers = [...new Set(instances.map((instance) => instance.server))];
+	const actions: Actions | undefined = view && {
+		restart: (instance) =>
+			changeInstance({ kind: "restart", instance }, () => view.restart({ instance }, BACKGROUND_CONTEXT)),
+		signOut: (server) =>
+			changeInstance({ kind: "signOut", server }, () => view.signOut({ server }, BACKGROUND_CONTEXT)),
+		cancelSignIn: (id) => cancel(id, () => view.cancelSignIn({ id }, BACKGROUND_CONTEXT)),
+	};
 	return (
 		<Sheet title="MCP servers" onClose={onClose}>
 			<p className="muted small">
@@ -48,12 +84,13 @@ function McpSheet({ onClose }: { onClose: () => void }) {
 				</p>
 			))}
 			{view && servers.length === 0 && <p className="muted">No MCP server is running.</p>}
-			{view && (
+			{view && actions && (
 				<div className="list">
 					{servers.map((server) => (
 						<ServerEntry
 							key={server}
 							view={view}
+							actions={actions}
 							server={server}
 							instances={instances.filter((instance) => instance.server === server)}
 							signIn={signIns.find((entry) => entry.server === server)}
@@ -68,17 +105,17 @@ function McpSheet({ onClose }: { onClose: () => void }) {
 /** One server: its instances (status, place, tools, error, restart), and signing in or out if it uses OAuth. */
 function ServerEntry({
 	view,
+	actions,
 	server,
 	instances,
 	signIn,
 }: {
 	view: OwnerView;
+	actions: Actions;
 	server: string;
 	instances: readonly Instance[];
 	signIn: SignIn | undefined;
 }) {
-	const { setError } = useComposerState();
-	const perform = (action: Promise<unknown>) => void action.catch((reason: unknown) => setError(errorText(reason)));
 	const oauth = instances.some((instance) => instance.auth === "oauth");
 	const needsSignIn = instances.some((instance) => instance.status === "sign-in");
 	const connected = instances.some((instance) => instance.status === "connected");
@@ -100,25 +137,19 @@ function ServerEntry({
 					</p>
 					{instance.error && instance.status !== "sign-in" && <p className="error small">{instance.error}</p>}
 					<div className="inline-form">
-						<button
-							type="button"
-							className="text-action"
-							onClick={() => perform(view.restart({ instance: instance.id }, BACKGROUND_CONTEXT))}
-						>
+						<button type="button" className="text-action" onClick={() => actions.restart(instance.id)}>
 							Restart
 						</button>
 					</div>
 				</div>
 			))}
-			{oauth && signIn?.status === "waiting" && <PendingSignIn view={view} signIn={signIn} />}
+			{oauth && signIn?.status === "waiting" && (
+				<PendingSignIn view={view} signIn={signIn} onCancel={() => actions.cancelSignIn(signIn.id)} />
+			)}
 			{oauth && signIn?.status === "failed" && (
 				<div className="stack">
 					<p className="error small">{signIn.error ?? "The sign-in failed."}</p>
-					<button
-						type="button"
-						className="text-action"
-						onClick={() => perform(view.cancelSignIn({ id: signIn.id }, BACKGROUND_CONTEXT))}
-					>
+					<button type="button" className="text-action" onClick={() => actions.cancelSignIn(signIn.id)}>
 						Dismiss
 					</button>
 				</div>
@@ -132,11 +163,7 @@ function ServerEntry({
 						</a>
 					) : null}
 					{connected && (
-						<button
-							type="button"
-							className="text-action danger"
-							onClick={() => perform(view.signOut({ server }, BACKGROUND_CONTEXT))}
-						>
+						<button type="button" className="text-action danger" onClick={() => actions.signOut(server)}>
 							Sign out
 						</button>
 					)}
@@ -147,7 +174,7 @@ function ServerEntry({
 }
 
 /** A sign-in waiting for the browser: paste the final redirect URL, or cancel. */
-function PendingSignIn({ view, signIn }: { view: OwnerView; signIn: SignIn }) {
+function PendingSignIn({ view, signIn, onCancel }: { view: OwnerView; signIn: SignIn; onCancel: () => void }) {
 	const [value, setValue] = useState("");
 	const [sending, setSending] = useState(false);
 	const [error, setError] = useState<string>();
@@ -184,11 +211,7 @@ function PendingSignIn({ view, signIn }: { view: OwnerView; signIn: SignIn }) {
 				<button type="submit" className="button" disabled={sending || !value.trim()}>
 					Continue
 				</button>
-				<button
-					type="button"
-					className="text-action"
-					onClick={() => void view.cancelSignIn({ id: signIn.id }, BACKGROUND_CONTEXT).catch(() => {})}
-				>
+				<button type="button" className="text-action" onClick={onCancel}>
 					Cancel
 				</button>
 			</div>

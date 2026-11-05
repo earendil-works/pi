@@ -13,6 +13,7 @@ import type { PrivilegedResolution } from "../tui/keybindings.ts";
 import type { RenderContext } from "../tui/render-context.ts";
 import type { ThemeRef } from "../tui/theme/ref.ts";
 import type { Host } from "./chord.ts";
+import type { TuiScope } from "./tui.ts";
 import type { TuiCommand, TuiCommandConflict } from "./tui-commands.ts";
 import type { TuiSettings } from "./tui-preferences.ts";
 
@@ -130,6 +131,12 @@ export interface TuiContext extends RenderContext {
 	surface(name: string): Component | undefined;
 	/** One status line (errors replace the runtime's error line until P2's status lines). */
 	notify(message: string, kind?: TuiNoticeKind): void;
+	/** Shows a failure (a refused call, a rolled-back guess) as an error status line. */
+	fail(error: unknown): void;
+	/** Shows `action`'s failure, if it fails (an optimistic call's rejection is its caller's). */
+	perform(action: Promise<unknown>): void;
+	/** A scope for an overlay or a command (references, optimistic guesses), disposed by its owner when it closes. */
+	scope(): TuiScope;
 	/**
 	 * Show an overlay on pi-tui's stack. While it is focused, commands whose `when` names `overlay` or `overlay:<id>`
 	 * run before the component (section 6.2 stage 3). Closed on navigation, reload and plugin replacement.

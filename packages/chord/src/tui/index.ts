@@ -10,6 +10,6 @@ export {
 	type TerminalRuntime,
 	type TerminalRuntimeOptions,
 } from "./runtime.ts";
-export { TuiScope } from "./scope.ts";
+export { type OptimisticAdd, TuiScope } from "./scope.ts";
 export { BridgeTerminal } from "./terminal.ts";
 export { TerminalTheme } from "./theme.ts";

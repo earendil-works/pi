@@ -4,16 +4,21 @@
  * exists, the messages move to its main conversation's outbox, which delivers them (uploads, template expansion,
  * retries), and the page opens the session.
  *
- * One start per page, kept for the page's lifetime: messages sent while the session is being created join it. A
- * creation the server refuses (a directory that does not exist, an unknown model) puts the messages back into the
- * composer; a failure of the connection is tried again, at most `GIVE_UP` times while connected. A creation whose answer
- * was lost with the connection is tried again too and may leave an empty session behind.
+ * One start per page, kept for the page's lifetime: messages sent while the session is being created join it. The page
+ * chooses the session's ID at the first Send (`Sessions.create` takes it), so a creation whose answer was lost with
+ * the connection is tried again with the same ID and answers the same session. A creation the server refuses (a
+ * directory that does not exist, an unknown model) puts the messages back into the composer; a failure of the
+ * connection is tried again, at most `GIVE_UP` times while connected.
  */
 import type { ModelChoice } from "@p2/app/v1/web";
 import { GIVE_UP, type Outgoing, outboxOf, retryDelay } from "./outbox.ts";
 
-/** Where and with which model the session starts (as chosen at the first Send), and the messages it starts with. */
+/**
+ * The session's ID, where and with which model it starts (as chosen at the first Send), and the messages it starts
+ * with.
+ */
 export type Start = {
+	readonly session: string;
 	readonly location: { readonly env: string | null; readonly cwd: string };
 	readonly choice: ModelChoice;
 	readonly messages: readonly Outgoing[];
@@ -21,8 +26,8 @@ export type Start = {
 
 /** How the connected new-session screen creates the session, and what it does with the outcome. */
 export type Creator = {
-	/** Creates the session; resolves with its ID. */
-	create(start: Start): Promise<string>;
+	/** Creates the session `start.session` (again, after a lost answer: the server answers the same row). */
+	create(start: Start): Promise<unknown>;
 	/** Whether `error` refuses the creation for good; anything else is retried. */
 	refused(error: unknown): boolean;
 	/** The session exists and its main conversation's outbox has the messages. */
@@ -51,7 +56,7 @@ export class SessionStart {
 	};
 	snapshot = (): Start | undefined => this.#start;
 
-	/** Adds `message`; the first one's `place` decides where and with which model the session starts. */
+	/** Adds `message`; the first one's `place` decides the session's ID, where and with which model it starts. */
 	add(message: Outgoing, place: Omit<Start, "messages">): void {
 		this.#set(
 			this.#start
@@ -83,7 +88,8 @@ export class SessionStart {
 		this.#running = true;
 		clearTimeout(this.#retry);
 		try {
-			const session = await creator.create(start);
+			await creator.create(start);
+			const { session } = start;
 			this.#attempt = 0;
 			// Read after the creation: messages sent meanwhile go with the first.
 			const messages = this.#start?.messages ?? [];

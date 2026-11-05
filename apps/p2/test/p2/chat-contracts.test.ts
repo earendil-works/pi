@@ -162,14 +162,14 @@ test("enabledModels: patterns resolve to the scope; the owner saves them to sett
 	const ref = fixture.browser().hold(Models, {}, BACKGROUND_CONTEXT);
 	await whenLive(ref);
 	await ref.setEnabledModels({ patterns: ["faux-*:low", " "] }, BACKGROUND_CONTEXT);
-	const scoped = await until(ref.scopedModels, (value) => Boolean(value?.length));
-	assert.deepEqual(scoped, [{ provider: "faux", modelId: "faux-1", thinkingLevel: "low" }]);
-	assert.deepEqual(await until(ref.enabledModels, (value) => Boolean(value?.length)), ["faux-*:low"]);
+	// The answer follows its state: the page holds the new scope when the call resolves.
+	assert.deepEqual(ref.scopedModels.value, [{ provider: "faux", modelId: "faux-1", thinkingLevel: "low" }]);
+	assert.deepEqual(ref.enabledModels.value, ["faux-*:low"]);
 	assert.deepEqual(JSON.parse(readFileSync(join(fixture.dataDir, "settings.json"), "utf8")).enabledModels, [
 		"faux-*:low",
 	]);
 	await ref.setEnabledModels({ patterns: [] }, BACKGROUND_CONTEXT);
-	await until(ref.scopedModels, (value) => value?.length === 0);
+	assert.deepEqual(ref.scopedModels.value, []);
 	assert(!("enabledModels" in JSON.parse(readFileSync(join(fixture.dataDir, "settings.json"), "utf8"))));
 });
 

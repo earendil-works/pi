@@ -1,9 +1,7 @@
-import { arr, nul, obj, str, union } from "@earendil-works/pi-schema";
 import {
-	BACKGROUND_CONTEXT,
 	defineFacet,
-	defineTypedState,
 	deriveTyped,
+	followNative,
 	forbidden,
 	isOwner,
 	isWorker,
@@ -12,43 +10,30 @@ import {
 } from "@p2/app/v1";
 import { Hosts, Server } from "@p2/app/v1/server";
 import { Catalog, SessionArchived } from "../sessions/contract.ts";
-import { ForwardSchema, ForwardStore, ForwardsNative, Ports } from "./contract.ts";
+import { ForwardStore, ForwardsNative, Ports } from "./contract.ts";
 import { forwardView } from "./protocol.ts";
 import { Forwards } from "./store.ts";
-
-/** The forwards' list and Radius origin as the store shows them (in memory). */
-const Listed = defineTypedState("p2.forward-store", {
-	schema: obj({ list: arr(ForwardSchema), radiusOrigin: union([str(), nul()]) }),
-	version: 1,
-	initial: () => ({ list: [], radiusOrigin: null }),
-});
 
 export default defineFacet((host) => {
 	serveNative(host, ForwardsNative);
 	host.serve(ForwardStore, (_params, self) => {
 		const server = self.get(Server, {});
 		const catalog = self.get(Catalog, {});
-		const listed = self.state(Listed);
-		const show = (store: Forwards) =>
-			listed.change((draft) => {
-				// A draft's arrays are mutable; the store's list is the same JSON.
-				draft.list = store.list() as typeof draft.list;
-				draft.radiusOrigin = store.radiusOrigin;
-			}, BACKGROUND_CONTEXT);
 		const forwards = self.open(
 			async () => {
 				const store = await Forwards.open(server.info.value.dataDir);
 				// Forwards of archived sessions close first, so the list never shows them.
 				for (const session of catalog.sessions.value)
 					if (session.archivedAt !== null) await store.closeSession(session.id);
-				await show(store);
 				return store;
 			},
 			() => {},
 		);
-		self.open(
-			async () => forwards.value.events.subscribe(() => void show(forwards.value).catch(() => {})),
-			(stop) => stop(),
+		// The store's list and Radius origin: a method's write resolves after the store told this source.
+		const listed = followNative(
+			self,
+			(changed) => forwards.value.events.subscribe(changed),
+			() => ({ list: forwards.value.list(), radiusOrigin: forwards.value.radiusOrigin }),
 		);
 		self.contribute(ForwardsNative, {
 			get forwards() {

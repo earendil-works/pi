@@ -2521,8 +2521,9 @@ Decision "Slice 11's points", "Slice 11, P3" to "P9", and "Tutorial gaps" (1) (p
   with an empty environment, `--permission` granting nothing and no SQLite; the builtin allowlist and a frozen
   substitute `process` inside; a bridge terminal; the trusted launcher outside, confirming copy, open and attach on its
   own prompt); a component scope (`hold`, `watch`, `registry`, released on dispose, one `changed` callback for the
-  app's redraw; `pageState(key, initial)`, the host's page state shared with `usePageState`; `optimistic(read)`, a
-  reader showing an optimistic value while a call is pending, React's `useOptimistic`, §3), no pi-tui dependency.
+  app's redraw; `pageState(key, initial)`, the host's page state shared with `usePageState`; `optimistic(read, reduce?)`,
+  a reader showing optimistic actions while their calls are pending, with `add` and `pending`, React's `useOptimistic`,
+  §3), no pi-tui dependency.
 
 ### Messages and languages (built after slice 11)
 

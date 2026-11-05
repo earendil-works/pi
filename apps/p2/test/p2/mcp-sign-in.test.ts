@@ -252,7 +252,8 @@ test("a 401 waits for a sign-in; the owner view's loopback sign-in connects with
 	assert.equal(waiting?.auth, "oauth");
 	const start = await owner.signIn({ server: "docs" }, TEST);
 	assert.equal(start.kind, "redirect");
-	const [flow] = await until(owner.signIns, (list) => list.length === 1);
+	// The answer follows its state: the flow is listed when the call resolves.
+	const [flow] = owner.signIns.value;
 	assert.equal(flow?.via, "loopback");
 	assert.equal(flow?.status, "waiting");
 	// The browser goes to the authorization server, which redirects to the loopback callback on this machine.
@@ -339,8 +340,9 @@ test("pasting the final redirect URL completes a sign-in; a URL of another sign-
 	assert.equal((await until(owner.signIns, (list) => list.length === 1))[0]?.status, "waiting");
 	// The loopback page never loaded (the browser runs elsewhere): its address, pasted, completes the sign-in.
 	await owner.paste({ id: flow!.id, redirectUrl: back.href }, TEST);
+	// The finished flow is gone when the call resolves; the instance reconnects with the tokens.
+	assert.deepEqual(owner.signIns.value, []);
 	await until(owner.instances, (list) => docs(list)?.status === "connected");
-	await until(owner.signIns, (list) => list.length === 0);
 });
 
 test("refused tokens refresh without a browser; signing out forgets them and waits for a sign-in", async (t) => {
@@ -353,12 +355,15 @@ test("refused tokens refresh without a browser; signing out forgets them and wai
 	await until(owner.instances, (list) => docs(list)?.status === "connected");
 	oauth.expireAccessTokens();
 	await owner.restart({ instance: waiting!.id }, TEST);
+	// A restart shows the instance starting when the call resolves (a pending state, then its outcome).
+	assert.equal(docs(owner.instances.value)?.status, "starting");
 	await until(owner.instances, (list) => docs(list)?.status === "connected");
 	assert.deepEqual(oauth.grants, ["authorization_code", "refresh_token"]);
 	assert.equal(oauth.authorizations.length, 1);
 	// A refresh token a stored sign-in still has signs in at once, without the browser.
 	assert.deepEqual(await owner.signIn({ server: "docs" }, TEST), { kind: "authorized" });
 	await owner.signOut({ server: "docs" }, TEST);
+	assert.notEqual(docs(owner.instances.value)?.status, "connected", "signed out instances reconnect at once");
 	await until(owner.instances, (list) => docs(list)?.status === "sign-in");
 	assert.doesNotMatch(readFileSync(join(host.dataDir, "mcp-auth.json"), "utf8"), /access-/);
 });

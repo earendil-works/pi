@@ -1,6 +1,7 @@
 // `/tree` in the session worker (`docs/tree.md`): the tree of the top-level conversations' messages, switching the
 // current main conversation (forking a new branch where none ends at the chosen point), and the rules that come with
-// it: older branches are read-only, branches carry stored labels, and the session catalog follows `p2.main`.
+// it: older branches are read-only, branches carry stored labels, and the session catalog follows `p2.main`, pushed by
+// the worker inside the method that changed it.
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
 	AgentDoc,
@@ -25,11 +26,8 @@ import {
 	isOwner,
 	messageData,
 	peerMessage,
-	signalOf,
 } from "@p2/app/v1";
-import { durableContext } from "@p2/app/v1/node";
 import {
-	CommitSignal,
 	harnessOf,
 	isTopLevel,
 	MainDoc,
@@ -67,42 +65,19 @@ export default defineFacet((host) => {
 		self.contribute(ReadOnlyConversations, {
 			tree: async (conversation, ctx) => {
 				const durable = harness().durable;
-				const context = durableContext(ctx);
 				const id = conversation as ConversationId;
-				return id !== (await mainConversation(durable, context)) && (await isTopLevel(durable, id, context))
+				return id !== (await mainConversation(durable, ctx)) && (await isTopLevel(durable, id, ctx))
 					? NOT_CURRENT
 					: undefined;
 			},
 		});
-		// The catalog follows `p2.main` (the main conversation, the branches and their labels): at start (also after a
-		// worker stopped between a change and its report) and at every change.
-		const commits = self.open(
-			async () =>
-				new CommitSignal(harness().durable, (publication) =>
-					publication.changes.some(
-						(change) => change.type === "document" && change.record.kind === MainDoc.definition.kind,
-					),
-				),
-			(signal) => signal.close(),
-		);
+		// The catalog follows `p2.main` (the main conversation, the branches and their labels): the methods changing it
+		// push it before they answer (`reportTree`); at start the worker pushes it once, which also covers a worker that
+		// stopped between a change and its push. Nothing else changes `p2.main`.
 		self.onLive(async (ctx) => {
-			const signal = signalOf(ctx);
-			try {
-				await fillLabels(harness().durable, durableContext(ctx));
-			} catch (error) {
-				if (signal.aborted) return;
-				console.error("p2 tree: labelling the branches failed:", error);
-			}
-			while (!signal.aborted) {
-				const seen = commits.value.version;
-				try {
-					await reportTree(harness().durable, ctx);
-				} catch (error) {
-					if (signal.aborted) return;
-					console.error("p2 tree: reporting the branches failed:", error);
-				}
-				await commits.value.next(seen, signal).catch(() => {});
-			}
+			const durable = harness().durable;
+			await fillLabels(durable, ctx);
+			await reportTree(durable, ctx);
 		});
 	});
 
@@ -115,25 +90,25 @@ export default defineFacet((host) => {
 			return {
 				variant: "owner",
 				members: {
-					tree: (ctx) => worker().liveness.call(() => readTree(harness().durable, durableContext(ctx))),
+					tree: (ctx) => worker().liveness.call(() => readTree(harness().durable, ctx)),
 					navigate: ({ entry }, ctx) =>
 						worker().liveness.call(async () => {
 							const durable = harness().durable;
-							const switched = await navigate(durable, entry as EntryId, durableContext(ctx));
+							const switched = await navigate(durable, entry as EntryId, ctx);
 							await reportTree(durable, ctx);
 							return switched;
 						}),
 					select: ({ conversation }, ctx) =>
 						worker().liveness.call(async () => {
 							const durable = harness().durable;
-							await select(durable, conversation as ConversationId, durableContext(ctx));
+							await select(durable, conversation as ConversationId, ctx);
 							await reportTree(durable, ctx);
 							return null;
 						}),
 					rename: ({ conversation, label }, ctx) =>
 						worker().liveness.call(async () => {
 							const durable = harness().durable;
-							await rename(durable, conversation, label, durableContext(ctx));
+							await rename(durable, conversation, label, ctx);
 							await reportTree(durable, ctx);
 							return null;
 						}),
@@ -146,7 +121,7 @@ export default defineFacet((host) => {
 
 /** Tells the catalog the current main conversation and the branches, newest first (it ignores an unchanged report). */
 async function reportTree(durable: Harness, ctx: Ctx): Promise<void> {
-	const state = await durable.snapshot(MainDoc, durableContext(ctx));
+	const state = await durable.snapshot(MainDoc, ctx);
 	const main = state?.conversation ?? ROOT_CONVERSATION_ID;
 	const branches: Branch[] = (state?.branches ?? [{ conversation: ROOT_CONVERSATION_ID, label: null }]).toReversed();
 	await expectVariant(await ctx.get(Sessions, {}), "worker").treeSelf({ main, branches }, ctx);

@@ -17,7 +17,7 @@ import {
 	type WebSocketLike,
 	webSocketLink,
 } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { NativeWatchable, Watchable } from "@earendil-works/chord/watch";
 import { WebSocket as NodeWebSocket } from "ws";
 import type { WebManifest } from "../../src/hosts/bundles.ts";
@@ -308,10 +308,12 @@ const NO_WORKERS: SessionWorkerControl = {
 	pause: async () => {
 		throw new Error("no workers in a test host");
 	},
-	retry: async () => {},
+	retry: async () => ({ running: false, generation: 0, error: "no workers in a test host" }),
+	resume: async () => {},
 	stop: async () => {},
 	suspend: async () => {},
 	subscribe: () => () => {},
+	observe: () => ({ value: {}, detach: () => {} }),
 };
 
 /**
@@ -333,9 +335,9 @@ export function workerFacet(parts: {
 			init: {} as WorkerParts["init"],
 			liveness: new Liveness(),
 			location: new SessionLocation({ cwd: "/", env: null }),
-			root: (fn, signal) => {
+			root: (fn, context) => {
 				if (!parts.host) throw new Error("no root in this test worker");
-				return parts.host().root(fn, signal ? withAbortSignal(signal, TEST) : TEST);
+				return parts.host().root(fn, context);
 			},
 			...parts.worker,
 		});
@@ -386,7 +388,7 @@ export async function testHost(options: {
 			self.contribute(ServerNatives, {
 				resourceOptions: {},
 				workers: NO_WORKERS,
-				root: (fn, signal) => host.root(fn, signal ? withAbortSignal(signal, TEST) : TEST),
+				root: (fn, context) => host.root(fn, context),
 				...options.server,
 			});
 		}

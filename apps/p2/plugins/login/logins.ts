@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { AuthPrompt, AuthType } from "@earendil-works/pi-ai";
-import { LockedFile } from "@p2/app/v1/node";
+import { LockedFile, processLogs } from "@p2/app/v1/node";
 import type { Resources } from "../models/contract.ts";
-import type { LoginEvent, LoginPrompt } from "./contract.ts";
+import type { LoginEvent, LoginPrompt, LoginState } from "./contract.ts";
 
 type PendingPrompt = { prompt: LoginPrompt; resolve: (value: string) => void };
 type Attempt = {
@@ -16,18 +16,40 @@ type Attempt = {
 	done: Promise<void>;
 };
 
+/** The current login (one at a time) and the principal key of the owner that started it. */
+export type LoginsState = { readonly login: LoginState | null; readonly owner: string | null };
+
+/**
+ * Provider logins (provider-owned api-key and OAuth flows over the shared credentials), one at a time. The flow runs
+ * here, outside Chord; its state changes synchronously with each event, and listeners hear of every change (the
+ * server's `LoginService` follows it).
+ */
 export class Logins {
 	private readonly resources: Resources;
-	private readonly emit: (owner: string, event: LoginEvent) => void;
-
 	private readonly lifetime = new AbortController();
 	private readonly device: LockedFile;
+	private readonly listeners = new Set<() => void>();
 	private active: Attempt | undefined;
+	private current: LoginsState = { login: null, owner: null };
 
-	constructor(resources: Resources, emit: (owner: string, event: LoginEvent) => void) {
+	constructor(resources: Resources) {
 		this.resources = resources;
-		this.emit = emit;
 		this.device = new LockedFile(join(resources.directory, "device.json"));
+	}
+
+	get state(): LoginsState {
+		return this.current;
+	}
+
+	/** `listener` hears of every change of `state`; the result stops it. */
+	subscribe(listener: () => void): () => void {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
+	}
+
+	/** The current login, if `owner` started it. */
+	private mine(owner: string): LoginState | null {
+		return this.current.owner === owner ? this.current.login : null;
 	}
 
 	start(owner: string, providerId: string, authType: AuthType, remote = false): string {
@@ -176,17 +198,31 @@ export class Logins {
 		return this.active;
 	}
 
+	/** Answers the prompt (closed at once); secrets and pasted codes are redacted from the logs first. */
 	answer(owner: string, attemptId: string, promptId: string, value: string): void {
 		const attempt = this.owned(owner, attemptId);
 		const pending = attempt.prompts.get(promptId);
 		if (!pending) throw new Error("Login prompt is no longer active");
 		if (pending.prompt.type === "select" && !pending.prompt.options.some((option) => option.id === value))
 			throw new Error("Select one of the listed options");
+		if (pending.prompt.type === "secret" || pending.prompt.type === "manual_code")
+			processLogs.redactor.addSecret(value);
 		pending.resolve(value);
 	}
 
-	cancel(owner: string, attemptId: string): void {
-		this.owned(owner, attemptId).controller.abort();
+	/** Cancels the login; resolves once it finished (its state shows "cancelled", or what it reached first). */
+	async cancel(owner: string, attemptId: string): Promise<void> {
+		const attempt = this.owned(owner, attemptId);
+		attempt.controller.abort();
+		await attempt.done;
+	}
+
+	/** Clears `owner`'s finished login `attemptId` from the state. */
+	dismiss(owner: string, attemptId: string): void {
+		const login = this.mine(owner);
+		if (login?.attemptId !== attemptId || login.status === "working") return;
+		this.current = { ...this.current, login: null };
+		this.changed();
 	}
 
 	/** Its owner left (closed the sheet everywhere, or disconnected): end its unfinished login, nobody else's. */
@@ -206,10 +242,55 @@ export class Logins {
 		await this.resources.refreshModels(providerId, this.lifetime.signal);
 	}
 
+	/** Applies `event` of `owner`'s login to the state, redacting the codes and URLs it shows from the logs. */
+	private emit(owner: string, event: LoginEvent): void {
+		if (event.type === "notice" && event.event.type === "device_code")
+			processLogs.redactor.addSecret(event.event.userCode);
+		if (event.type === "notice" && event.event.type === "auth_url") processLogs.redactor.addSecret(event.event.url);
+		this.current = {
+			owner: event.type === "started" ? owner : this.current.owner,
+			login: reduce(this.current.login, event),
+		};
+		this.changed();
+	}
+
+	private changed(): void {
+		for (const listener of this.listeners) listener();
+	}
+
 	async close(): Promise<void> {
 		this.lifetime.abort();
 		this.active?.controller.abort();
 		await this.active?.done;
 		await this.device.close();
+	}
+}
+
+/** The next state of the current login after `event`. */
+function reduce(state: LoginState | null, event: LoginEvent): LoginState | null {
+	if (event.type === "started")
+		return {
+			attemptId: event.attemptId,
+			providerId: event.providerId,
+			authType: event.authType,
+			status: "working",
+			prompt: null,
+			notices: [],
+		};
+	if (state === null || state.attemptId !== event.attemptId) return state;
+	switch (event.type) {
+		case "prompt":
+			return { ...state, prompt: event.prompt };
+		case "promptClosed":
+			return state.prompt?.id === event.promptId ? { ...state, prompt: null } : state;
+		case "notice":
+			return { ...state, notices: [...state.notices, { id: state.notices.length, event: event.event }] };
+		case "finished":
+			return {
+				...state,
+				status: event.status,
+				prompt: null,
+				...(event.message === undefined ? {} : { message: event.message }),
+			};
 	}
 }

@@ -126,7 +126,7 @@ export function errorOf(ref: HeldRef): Error | undefined {
 
 /**
  * Releases held references later: a chat stays held for a while after its screen is left, so that switching back is
- * instant (v1's client linger), at most `cap` of them at once (the oldest goes first).
+ * instant, at most `cap` of them at once (the oldest goes first).
  */
 export class Lingering {
 	readonly #delays: Readonly<Record<string, number>>;

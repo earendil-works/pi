@@ -99,10 +99,10 @@ describe("a scope's optimistic values", () => {
 		let changes = 0;
 		const scope = new TuiScope(h, () => changes++);
 		const notes = scope.hold(Notes, {});
-		const [text, show] = scope.optimistic(scope.watch(notes.text));
+		const [text, add] = scope.optimistic(scope.watch(notes.text));
 		await until(() => text() === "first");
 		const before = changes;
-		const written = show("second", notes.write("second", context));
+		const written = add("second", notes.write("second", context));
 		expect(text()).toBe("second");
 		expect(changes).toBe(before + 1);
 		await written;
@@ -116,11 +116,11 @@ describe("a scope's optimistic values", () => {
 		const h = await host();
 		const calls: string[] = [];
 		const scope = new TuiScope(h, () => calls.push(text()!));
-		const [text, show] = scope.optimistic(() => "real");
+		const [text, add] = scope.optimistic(() => "real");
 		const first = Promise.withResolvers<null>();
 		const second = Promise.withResolvers<null>();
-		show("one", first.promise);
-		const failing = show("two", second.promise);
+		add("one", first.promise);
+		const failing = add("two", second.promise);
 		first.resolve(null);
 		await first.promise;
 		await Promise.resolve();
@@ -133,13 +133,45 @@ describe("a scope's optimistic values", () => {
 		await h.close(context);
 	});
 
+	it("apply a reducer over every action in flight, in order, and say whether a call is pending", async () => {
+		const h = await host();
+		const scope = new TuiScope(h, () => {});
+		let real = ["a", "b", "c"];
+		const [list, add, pending] = scope.optimistic(
+			() => real,
+			(current: string[], removed: string) => current.filter((each) => each !== removed),
+		);
+		const first = Promise.withResolvers<null>();
+		const second = Promise.withResolvers<null>();
+		add("a", first.promise);
+		add("c", second.promise);
+		expect(list()).toEqual(["b"]);
+		// Unchanged reader and actions: the same value, not a new array per read.
+		expect(list()).toBe(list());
+		expect(pending()).toBe(true);
+		// The first call settled with its change committed: both actions stay until the second settles too.
+		real = ["b", "c"];
+		first.resolve(null);
+		await first.promise;
+		await Promise.resolve();
+		expect(list()).toEqual(["b"]);
+		real = ["b"];
+		second.resolve(null);
+		await second.promise;
+		await Promise.resolve();
+		expect(list()).toBe(real);
+		expect(pending()).toBe(false);
+		scope.dispose();
+		await h.close(context);
+	});
+
 	it("never call changed after dispose", async () => {
 		const h = await host();
 		let changes = 0;
 		const scope = new TuiScope(h, () => changes++);
-		const [, show] = scope.optimistic(() => "real");
+		const [, add] = scope.optimistic(() => "real");
 		const call = Promise.withResolvers<null>();
-		show("shown", call.promise);
+		add("shown", call.promise);
 		scope.dispose();
 		call.resolve(null);
 		await call.promise;

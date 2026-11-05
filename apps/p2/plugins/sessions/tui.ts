@@ -18,13 +18,14 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import type { Held } from "@p2/app/v1";
-import { BACKGROUND_CONTEXT, contribute, defineFacet, followRegistry, liveIn, statusOf } from "@p2/app/v1";
+import type { Held, HeldIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, followRegistry, liveIn } from "@p2/app/v1";
 import type { TuiContext } from "@p2/app/v1/tui";
 import {
 	confirm,
 	keyHint,
 	lineText,
+	type OptimisticAdd,
 	type SessionChild,
 	type SessionHit,
 	type TuiCommand,
@@ -38,7 +39,7 @@ import {
 	TuiSlots,
 	type TuiSurface,
 } from "@p2/app/v1/tui";
-import { MAX_TITLE, type Session, Sessions } from "./contract.ts";
+import { MAX_TITLE, type Operation, type Session, Sessions } from "./contract.ts";
 import {
 	completeLocation,
 	envNames,
@@ -74,6 +75,22 @@ function age(timestamp: number): string {
 }
 const where = (session: Session): string => `${session.env ? `${session.env}:` : ""}${session.cwd}`;
 
+/** How operations read in the selector and on status lines, by kind. */
+const OPERATION_TEXT: Record<Operation["kind"], { running: string; failed: string; done: string }> = {
+	relocate: { running: "moving…", failed: "Move failed", done: "Session moved" },
+	clone: { running: "cloning…", failed: "Clone failed", done: "Clone ready" },
+	fork: { running: "forking…", failed: "Fork failed", done: "Fork ready" },
+	archive: { running: "archiving…", failed: "Archive failed", done: "Session archived" },
+};
+
+/** A change to one session's row while its call is in flight (a rename, a pin, an archive or restore, a move). */
+type RowGuess = {
+	readonly id: string;
+	readonly change: Partial<Pick<Session, "title" | "pinned" | "archivedAt" | "env" | "cwd">>;
+};
+const applyRow = (rows: Session[], { id, change }: RowGuess): Session[] =>
+	rows.map((row) => (row.id === id ? { ...row, ...change } : row));
+
 export class SessionsSurface implements TuiSurface {
 	readonly scope: TuiScope;
 	readonly runtime: TuiRuntime;
@@ -83,7 +100,12 @@ export class SessionsSurface implements TuiSurface {
 	focus: Component & Focusable = this.search;
 	/** The "+ New session" prompt (directory and environment). */
 	private location: LocationInput | undefined;
-	private rows: Session[] = [];
+	private received: Session[] = [];
+	/** The catalog's lifecycle operations (owner): running ones mark their rows, failed ones are announced. */
+	private operations: Operation[] = [];
+	/** Row changes whose calls are in flight: the list shows them at once and rolls back a refused one. */
+	private shownRows: () => Session[];
+	private editing: OptimisticAdd<RowGuess>;
 	private children: Readonly<Record<string, SessionChild[]>> = {};
 	private hits: SessionHit[] = [];
 	private sources: TuiSessionSource[] = [];
@@ -105,21 +127,23 @@ export class SessionsSurface implements TuiSurface {
 	private sort: SortMode = "threaded";
 	private selectedIndex = 0;
 	private visible: Row[] = [];
-	private service: () => Held<typeof Sessions>;
+	private service: Held<typeof Sessions>;
 
 	constructor(runtime: TuiRuntime) {
 		this.runtime = runtime;
 		this.scope = new TuiScope(runtime);
+		[this.shownRows, this.editing] = this.scope.optimistic(() => this.received, applyRow);
 		this.service = this.scope.watch(Sessions, {}, (ref, follow) => {
 			this.owner = ref.variant === "owner";
 			const viewer = liveIn(ref, "owner", "guest");
 			if (!viewer) return;
 			follow(viewer.sessions, (rows) => {
-				this.rows = rows;
+				this.received = rows;
 				this.followMains(rows);
 				this.rebuild();
 			});
 			if (ref.variant === "owner") {
+				follow(ref.operations, (operations) => this.followOperations(operations));
 				follow(ref.defaultCwd, (value) => {
 					this.defaultCwd = value ?? "~";
 					this.rebuild();
@@ -160,6 +184,73 @@ export class SessionsSurface implements TuiSurface {
 
 	private get ctx(): TuiContext {
 		return this.runtime.ctx;
+	}
+
+	/**
+	 * Announces what changed in the lifecycle operations: a failure (as an error line until `/dismiss-failed`), and a
+	 * running operation that ended without one (a move done, a copy ready).
+	 */
+	private followOperations(operations: Operation[]): void {
+		const before = new Map(this.operations.map((operation) => [operation.id, operation]));
+		this.operations = operations;
+		for (const operation of operations)
+			if (operation.phase === "failed" && before.get(operation.id)?.phase !== "failed")
+				this.runtime.notify(
+					`${OPERATION_TEXT[operation.kind].failed}: ${lineText(operation.error)} · /dismiss-failed`,
+					"error",
+				);
+		for (const [id, operation] of before)
+			if (operation.phase === "running" && !operations.some((each) => each.id === id))
+				this.runtime.notify(OPERATION_TEXT[operation.kind].done);
+		this.rebuild();
+	}
+
+	/** What a row says about an operation on it: failed, running, or a copy into it whose files are copied. */
+	private operationText(session: string): string {
+		const operation =
+			this.operations.find((each) => each.phase === "failed" && each.session === session) ??
+			this.operations.find((each) => each.session === session) ??
+			this.operations.find((each) => each.phase === "running" && each.target === session && each.copying);
+		if (!operation) return "";
+		if (operation.phase === "failed") return `${OPERATION_TEXT[operation.kind].failed} `;
+		return operation.session === session ? `${OPERATION_TEXT[operation.kind].running} ` : "copying files… ";
+	}
+
+	/** `/dismiss-failed`: forgets every failed operation (their lines go from every client's list). */
+	dismissFailed(): void {
+		const catalog = this.catalog;
+		const failed = this.operations.filter((operation) => operation.phase === "failed");
+		if (!catalog || !failed.length) {
+			this.runtime.notify("No failed operations");
+			return;
+		}
+		for (const operation of failed)
+			this.runtime.perform(catalog.dismissOperation({ operation: operation.id }, BACKGROUND_CONTEXT));
+	}
+
+	/** The catalog as shown: the server's rows with the changes in flight. */
+	private get rows(): Session[] {
+		return this.shownRows();
+	}
+
+	/** The owner's live catalog, which every change goes through. */
+	get catalog(): HeldIn<typeof Sessions, "owner"> | undefined {
+		return liveIn(this.service, "owner");
+	}
+
+	/**
+	 * Changes a row: shown at once, `done` once the server took it (the selector's status, else a status line); a
+	 * refused change rolls back and its error shows as a status line.
+	 */
+	edit(guess: RowGuess, call: (catalog: HeldIn<typeof Sessions, "owner">) => Promise<unknown>, done: string): void {
+		const catalog = this.catalog;
+		if (!catalog) return;
+		const settled = this.editing(guess, call(catalog)).then(() => {
+			if (this.runtime.screen === "sessions") this.setStatus(done);
+			else this.runtime.notify(done);
+		});
+		this.rebuild();
+		this.runtime.perform(settled.finally(() => this.rebuild()));
 	}
 
 	/** The viewed session, which "current folder" means. */
@@ -262,7 +353,7 @@ export class SessionsSurface implements TuiSurface {
 	}
 
 	command(name: string): void {
-		if (name === "new" && this.owner && statusOf(this.service()) === "live") {
+		if (name === "new" && this.catalog) {
 			this.mode = "create";
 			const current = this.current;
 			this.location = new LocationInput(this.ctx, {
@@ -298,15 +389,20 @@ export class SessionsSurface implements TuiSurface {
 		}
 	}
 
+	/**
+	 * Creates a session and opens it at once: this TUI chooses its ID, and the conversation shows loading until the
+	 * session's worker runs. A refused creation comes back to the selector with the error.
+	 */
 	private create(location: Location): void {
-		const service = this.service();
-		if (statusOf(service) !== "live" || service.variant !== "owner") return;
-		this.runtime.perform(
-			service.create({ cwd: location.path, env: location.env }, BACKGROUND_CONTEXT).then((session) => {
-				if (this.mode === "create") this.closePrompt();
-				this.runtime.navigate("chat", session.id);
-			}),
-		);
+		const catalog = this.catalog;
+		if (!catalog) return;
+		const id = crypto.randomUUID();
+		if (this.mode === "create") this.closePrompt();
+		this.runtime.navigate("chat", id);
+		catalog.create({ id, cwd: location.path, env: location.env }, BACKGROUND_CONTEXT).catch((error: unknown) => {
+			if (this.runtime.session === id) this.runtime.navigate("sessions", undefined);
+			this.runtime.fail(error);
+		});
 	}
 
 	/**
@@ -325,18 +421,20 @@ export class SessionsSurface implements TuiSurface {
 	}
 
 	private submitPrompt(): void {
-		const service = this.service();
-		if (statusOf(service) !== "live" || service.variant !== "owner") return;
 		const value = this.prompt.getValue().trim();
-		if (this.mode === "rename" && this.renaming && value) {
-			const id = this.renaming.id;
-			this.runtime.perform(
-				service.rename({ id, title: value.slice(0, MAX_TITLE) }, BACKGROUND_CONTEXT).then(() => {
-					this.closePrompt();
-					this.setStatus("Session renamed");
-				}),
-			);
-		}
+		if (this.mode !== "rename" || !this.renaming || !value) return;
+		this.renameSession(this.renaming.id, value);
+		this.closePrompt();
+	}
+
+	/** Renames session `id` (the selector's prompt, `/name`): the new title shows at once. */
+	renameSession(id: string, value: string): void {
+		const title = value.slice(0, MAX_TITLE);
+		this.edit(
+			{ id, change: { title } },
+			(catalog) => catalog.rename({ id, title }, BACKGROUND_CONTEXT),
+			`Session name: ${lineText(title)}`,
+		);
 	}
 
 	private closePrompt(): void {
@@ -380,13 +478,13 @@ export class SessionsSurface implements TuiSurface {
 	}
 	pin(): void {
 		const row = this.selected();
-		const service = this.service();
-		if (row?.kind !== "session" || statusOf(service) !== "live" || service.variant !== "owner") return;
+		if (row?.kind !== "session") return;
+		const { id } = row.session;
 		const pinned = !row.session.pinned;
-		this.runtime.perform(
-			service
-				.pin({ id: row.session.id, pinned }, BACKGROUND_CONTEXT)
-				.then(() => this.setStatus(pinned ? "Pinned" : "Unpinned")),
+		this.edit(
+			{ id, change: { pinned } },
+			(catalog) => catalog.pin({ id, pinned }, BACKGROUND_CONTEXT),
+			pinned ? "Pinned" : "Unpinned",
 		);
 	}
 	/** Delete = archive (pi asks to confirm); in the archived scope it restores. */
@@ -394,13 +492,12 @@ export class SessionsSurface implements TuiSurface {
 		const row = this.selected();
 		if (!this.owner || row?.kind !== "session") return;
 		if (this.archived) {
-			const service = this.service();
-			if (statusOf(service) === "live" && service.variant === "owner")
-				this.runtime.perform(
-					service
-						.restore({ id: row.session.id }, BACKGROUND_CONTEXT)
-						.then(() => this.setStatus("Session restored")),
-				);
+			const { id } = row.session;
+			this.edit(
+				{ id, change: { archivedAt: null } },
+				(catalog) => catalog.restore({ id }, BACKGROUND_CONTEXT),
+				"Session restored",
+			);
 			return;
 		}
 		this.confirming = row.session;
@@ -438,11 +535,12 @@ export class SessionsSurface implements TuiSurface {
 			return;
 		}
 		if (this.confirming) {
-			const service = this.service();
-			if (keys.matches(data, "tui.select.confirm") && statusOf(service) === "live" && service.variant === "owner") {
-				const id = this.confirming.id;
-				this.runtime.perform(
-					service.archive({ id }, BACKGROUND_CONTEXT).then(() => this.setStatus("Session archived")),
+			if (keys.matches(data, "tui.select.confirm")) {
+				const { id } = this.confirming;
+				this.edit(
+					{ id, change: { archivedAt: Date.now() } },
+					(catalog) => catalog.archive({ id }, BACKGROUND_CONTEXT),
+					"Session archived",
 				);
 			}
 			this.confirming = undefined;
@@ -556,7 +654,7 @@ export class SessionsSurface implements TuiSurface {
 							? "warning"
 							: undefined;
 			left = color ? theme.fg(color, text) : text;
-			right = `${this.scopeAll ? `${lineText(where(session))} ` : ""}${this.showIds ? `${session.id} ` : ""}${age(session.updatedAt)}`;
+			right = `${this.operationText(session.id)}${this.scopeAll ? `${lineText(where(session))} ` : ""}${this.showIds ? `${session.id} ` : ""}${age(session.updatedAt)}`;
 		}
 		const available = Math.max(10, width - 2 - visibleWidth(right) - 2);
 		let styled = truncateToWidth(left, available, "…");
@@ -628,9 +726,9 @@ const openSessions: TuiCommand["run"] = (ctx) => ctx.navigate("sessions");
 
 /**
  * Moves the viewed session (the web's Relocate, `Sessions.relocate`): the location is resolved and checked as the
- * web's DirectoryPicker does (`Envs.listDirectory`, `~` expanded on the session's environment) and relocated to the
- * listed path; another environment is confirmed first with the web's note. Errors are the server's text, as on the
- * web. Without an argument, a prompt with the environment choice (Tab).
+ * web's DirectoryPicker does (`Envs.listDirectory`, `~` expanded on the session's environment), then the session row
+ * shows the listed path at once while the move runs; a refused move (a busy session) rolls back with the server's
+ * text. Another environment is confirmed first with the web's note.
  */
 async function relocate(ctx: TuiContext, session: Session, location: Location, confirmed = false): Promise<void> {
 	const moving = location.env !== (session.env ?? null);
@@ -646,16 +744,15 @@ async function relocate(ctx: TuiContext, session: Session, location: Location, c
 		return;
 	const envs = await ownerEnvs(ctx);
 	if (envs.variant !== "owner") throw new Error("Only the owner changes directories");
-	const listing = await envs.listDirectory(
+	const { path } = await envs.listDirectory(
 		{ path: location.path, ...(location.env ? { env: location.env } : {}) },
 		BACKGROUND_CONTEXT,
 	);
-	await ctx.host.root(async (root) => {
-		const sessions = await root.get(Sessions, {});
-		if (sessions.variant !== "owner") throw new Error("Only the owner changes directories");
-		await sessions.relocate({ id: session.id, env: location.env, cwd: listing.path }, root);
-	}, BACKGROUND_CONTEXT);
-	ctx.notify(`Working directory: ${lineText(locationLabel({ env: location.env, path: listing.path }))}`);
+	// A move is long work (a job): the row says "moving…" until it is done ("Session moved"), or failed.
+	const catalog = surfaceOf(ctx)?.catalog;
+	if (!catalog) return;
+	ctx.notify(`Moving to ${lineText(locationLabel({ env: location.env, path }))}…`);
+	await catalog.relocate({ id: session.id, env: location.env, cwd: path }, BACKGROUND_CONTEXT);
 }
 
 /**
@@ -695,9 +792,7 @@ async function moveTo(ctx: TuiContext, env: string | null): Promise<void> {
 			...(error ? { error } : {}),
 			onSubmit: (location) => {
 				overlay.close();
-				void relocate(ctx, session, location, true).catch((caught: unknown) =>
-					ctx.notify(caught instanceof Error ? caught.message : String(caught), "error"),
-				);
+				void relocate(ctx, session, location, true).catch((caught: unknown) => ctx.fail(caught));
 			},
 			onCancel: () => overlay.close(),
 		}),
@@ -733,9 +828,7 @@ async function changeDirectory(ctx: TuiContext, argument: string): Promise<void>
 			moving: true,
 			onSubmit: (location) => {
 				overlay.close();
-				void relocate(ctx, session, location, true).catch((error: unknown) =>
-					ctx.notify(error instanceof Error ? error.message : String(error), "error"),
-				);
+				void relocate(ctx, session, location, true).catch((error: unknown) => ctx.fail(error));
 			},
 			onCancel: () => overlay.close(),
 		}),
@@ -812,21 +905,20 @@ const SESSION_COMMANDS: Record<string, TuiCommand> = {
 		category: "Session",
 		when: "chat && owner && !overlay",
 		slash: { name: "name", argumentHint: "<title>" },
-		run: async (ctx, args) => {
+		run: (ctx, args) => {
 			const session = ctx.identity.session;
-			const title = args?.trim().slice(0, MAX_TITLE);
+			const title = args?.trim();
 			if (!session) return;
-			if (!title) {
-				ctx.notify("Usage: /name <title>");
-				return;
-			}
-			await ctx.host.root(async (root) => {
-				const sessions = await root.get(Sessions, {});
-				if (sessions.variant !== "owner") throw new Error("Only the owner renames sessions");
-				await sessions.rename({ id: session, title }, root);
-			}, BACKGROUND_CONTEXT);
-			ctx.notify(`Session name: ${title}`);
+			if (title) surfaceOf(ctx)?.renameSession(session, title);
+			else ctx.notify("Usage: /name <title>");
 		},
+	},
+	"p2.session.dismissFailed": {
+		title: "Dismiss failed session operations",
+		category: "Session",
+		when: "owner && !overlay",
+		slash: { name: "dismiss-failed" },
+		run: (ctx) => surfaceOf(ctx)?.dismissFailed(),
 	},
 	"app.session.toggleSort": selectorCommand("Toggle session sort", (surface) => surface.toggleSort()),
 	"app.session.toggleNamedFilter": selectorCommand("Toggle pinned filter", (surface) => surface.togglePinned()),

@@ -53,11 +53,21 @@ export type PersonRow = {
 	readonly mode: ShareMode;
 };
 
+/** A grant to a person by email that is not removed: the email (normalized) and the session. */
+export type EmailGrant = { readonly email: string; readonly session: string };
+
+/** The emails of `grants` on sessions `open` accepts, each once, sorted. */
+export function openEmails(grants: readonly EmailGrant[], open: (session: string) => boolean): string[] {
+	return [...new Set(grants.filter((grant) => open(grant.session)).map((grant) => grant.email))].sort();
+}
+
 /** Thrown for join failures the guest may see. */
 export class JoinError extends Error {}
 
+/** The shares database (`shares.sqlite`); listeners hear of every committed change of links, guests and grants. */
 export class ShareDb {
 	readonly #db: DatabaseSync;
+	readonly #listeners = new Set<() => void>();
 
 	constructor(directory: string) {
 		const path = join(directory, "shares.sqlite");
@@ -94,16 +104,24 @@ export class ShareDb {
 		});
 	}
 
+	/** `listener` hears of every committed change from now on; the result stops it. */
+	subscribe(listener: () => void): () => void {
+		this.#listeners.add(listener);
+		return () => this.#listeners.delete(listener);
+	}
+
 	#transaction<T>(fn: () => T): T {
 		this.#db.exec("BEGIN");
+		let result: T;
 		try {
-			const result = fn();
+			result = fn();
 			this.#db.exec("COMMIT");
-			return result;
 		} catch (error) {
 			this.#db.exec("ROLLBACK");
 			throw error;
 		}
+		for (const listener of this.#listeners) listener();
+		return result;
 	}
 
 	links(): ShareLink[] {
@@ -279,16 +297,19 @@ export class ShareDb {
 			}));
 	}
 
-	/** Every email with a grant that is not removed, on a session `open` accepts; sorted. */
-	emails(open: (session: string) => boolean): string[] {
-		const emails = new Set<string>();
-		for (const row of this.#db
+	/** Every grant to a person by email that is not removed. */
+	emailGrants(): EmailGrant[] {
+		return this.#db
 			.prepare(
 				"SELECT guests.email,grants.session FROM grants JOIN guests ON guests.id=grants.guest WHERE grants.removed=0 AND guests.email IS NOT NULL",
 			)
-			.all())
-			if (open(String(row.session))) emails.add(String(row.email));
-		return [...emails].sort();
+			.all()
+			.map((row) => ({ email: String(row.email), session: String(row.session) }));
+	}
+
+	/** Every email with a grant that is not removed, on a session `open` accepts; sorted. */
+	emails(open: (session: string) => boolean): string[] {
+		return openEmails(this.emailGrants(), open);
 	}
 
 	seen(id: string): void {

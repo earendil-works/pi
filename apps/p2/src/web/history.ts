@@ -292,10 +292,13 @@ export function pagesWatchable(store: TranscriptStore): NativeWatchable<Pages | 
 				return { kind };
 			};
 			context.abortSignal?.addEventListener("abort", () => end("aborted"), { once: true });
+			const value = store.value;
 			return {
-				value: store.value,
+				value,
 				start: (next) => {
 					listener = next;
+					// A change between the watch and its start (the view arriving meanwhile) is not lost.
+					if (store.value !== value) void next({ kind: "value", value: store.value }, context);
 				},
 				stop: async () => end("stopped"),
 				closed: closed.promise,

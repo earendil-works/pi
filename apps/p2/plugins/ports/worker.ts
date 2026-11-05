@@ -10,7 +10,7 @@ export default defineFacet((host) => {
 			(query, context) =>
 				worker().root(
 					async (ctx) => expectVariant(await ctx.get(Ports, {}), "worker").query({ conversation: 1, query }, ctx),
-					context.abortSignal,
+					context,
 				),
 			() => worker().init.values.session.id,
 		);

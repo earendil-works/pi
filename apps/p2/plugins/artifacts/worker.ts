@@ -1,26 +1,9 @@
 import type { ConversationId } from "@earendil-works/pi-durable";
-import { arr, obj } from "@earendil-works/pi-schema";
-import {
-	type Context,
-	canView,
-	contribute,
-	defineFacet,
-	defineTypedState,
-	deriveTyped,
-	forbidden,
-	signalOf,
-} from "@p2/app/v1";
-import { agentConversation, CommitSignal, Extensions, harnessOf, workerOf } from "@p2/app/v1/worker";
-import { ArtifactContent, ArtifactInfoSchema, ArtifactList, MAX_ARTIFACT_PREVIEW } from "./contract.ts";
+import { canView, contribute, defineFacet, deriveTyped, forbidden } from "@p2/app/v1";
+import { agentConversation, Extensions, harnessOf, workerOf } from "@p2/app/v1/worker";
+import { ArtifactContent, ArtifactList, MAX_ARTIFACT_PREVIEW } from "./contract.ts";
 import { Artifacts } from "./store.ts";
 import { ArtifactDoc, createArtifactExtension } from "./tool.ts";
-
-/** The artifacts of one conversation (in memory, from its document). */
-const Listed = defineTypedState("p2.artifact-list", {
-	schema: obj({ artifacts: arr(ArtifactInfoSchema) }),
-	version: 1,
-	initial: () => ({ artifacts: [] }),
-});
 
 export default defineFacet((host) => {
 	contribute(host, "p2.artifact-tools", (self) => {
@@ -63,40 +46,18 @@ export default defineFacet((host) => {
 		if (!canView(principal, session)) throw forbidden("viewers only");
 		const harness = harnessOf(self);
 		const id = conversation as ConversationId;
-		const listed = self.state(Listed);
-		/** Where the viewed agent's list is (the main agent's on conversation 1); set when the object opens. */
-		let holder = id;
-		const show = async (ctx: Context) => {
-			const doc = await harness().durable.snapshot(ArtifactDoc, holder, ctx);
-			await listed.change((draft) => {
-				// A draft's arrays are mutable; the document's are the same JSON.
-				draft.artifacts = [...(doc?.artifacts ?? [])] as typeof draft.artifacts;
+		// The viewed agent's list (the main agent's on conversation 1), followed.
+		const listed = self.follow(async (observer, ctx) => {
+			const durable = harness().durable;
+			if (!(await durable.conversation(id, ctx))) throw new Error(`Unknown conversation ${conversation}`);
+			const holder = await agentConversation(durable, id, ctx);
+			const observed = await durable.observeDoc(ArtifactDoc, holder, observer, ctx);
+			if (observed !== undefined) return observed;
+			// No artifact saved yet: the document is absent, and an absent address cannot be followed. Create it empty.
+			await durable.commit(async (tx) => {
+				await tx.doc(ArtifactDoc, holder);
 			}, ctx);
-		};
-		const commits = self.open(
-			async (ctx) => {
-				const durable = harness().durable;
-				if (!(await durable.conversation(id, ctx))) throw new Error(`Unknown conversation ${conversation}`);
-				holder = await agentConversation(durable, id, ctx);
-				await show(ctx);
-				return new CommitSignal(durable, (publication) =>
-					publication.changes.some(
-						(change) =>
-							change.type === "document" &&
-							change.record.kind === ArtifactDoc.definition.kind &&
-							change.conversationId === holder,
-					),
-				);
-			},
-			(signal) => signal.close(),
-		);
-		self.onLive(async (ctx) => {
-			const signal = signalOf(ctx);
-			while (!signal.aborted) {
-				const seen = commits.value.version;
-				await show(ctx);
-				await commits.value.next(seen, signal).catch(() => {});
-			}
+			return durable.observeDoc(ArtifactDoc, holder, observer, ctx);
 		});
 		return { variant: "reader", members: { artifacts: deriveTyped(self, [listed], ([value]) => value.artifacts) } };
 	});

@@ -515,13 +515,13 @@ test("while the conversation connects, typed keys stay in the editor and Enter s
 	const { runtime, stubs, screen, send } = await chatRuntime(t, () => viewOf([answerEntry(1, "ready")]), { ready });
 	for (const char of "typed early") send(char);
 	send("\r");
-	await poll(() => runtime.drafts.get("s#1") === "typed early");
-	await poll(async () => (await screen()).includes("Sending when connected…"));
+	// Shown at once (no transcript yet: in the pending area) and out of the editor; sent once the conversation is live.
+	await poll(() => runtime.drafts.get("s#1") === "");
+	await poll(async () => (await screen()).includes("Sending: typed early"));
 	assert.equal(stubs.get(1)?.sent.length ?? 0, 0);
 	open();
 	await poll(() => stubs.get(1)?.sent.length === 1);
 	assert.equal(stubs.get(1)!.sent[0]!.text, "typed early");
-	await poll(() => runtime.drafts.get("s#1") === "");
 });
 
 test("Ctrl+D exits only on an empty editor; Ctrl+C clears, twice exits", async (t) => {

@@ -268,14 +268,16 @@ export default tuiFacet("footer", (runtime) => new FooterSurface(runtime), {
 		category: "Owner",
 		when: "owner && !overlay",
 		slash: { name: "retry-worker" },
+		// Long work: the pending line shows at once, the outcome when the worker started (or failed again).
 		run: (ctx) => {
 			const session = ctx.identity.session;
 			if (!session) return;
+			ctx.notify("Retrying the session worker…");
 			return ctx.host.root(async (root) => {
 				const control = await root.get(WorkerControl, { session });
 				if (control.variant !== "owner") return;
 				await control.restart(root);
-				ctx.notify("Retrying the session worker");
+				ctx.notify("Session worker started");
 			}, BACKGROUND_CONTEXT);
 		},
 	},

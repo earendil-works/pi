@@ -7,15 +7,14 @@ import {
 	type Ctx,
 	contribute,
 	defineFacet,
-	defineState,
 	defineTypedState,
 	deriveTyped,
+	followNative,
 	forbidden,
 	type GuestPrincipal,
 	isGuest,
 	isOwner,
 	type P2Principal,
-	record,
 } from "@p2/app/v1";
 import {
 	Authenticators,
@@ -30,22 +29,11 @@ import {
 	SessionAccess,
 	ShareUrls,
 	sendJson,
-	serverOf,
 } from "@p2/app/v1/server";
 import { Catalog } from "../sessions/contract.ts";
 import { ChildStore, remoteEnvironments } from "../subagents/contract.ts";
-import {
-	ConnectedSchema,
-	GuestPresence,
-	LinkSchema,
-	PersonSchema,
-	Presence,
-	type ShareLink,
-	type ShareMode,
-	Shares,
-	Sharing,
-} from "./contract.ts";
-import { type GuestRow, JoinError, ShareDb } from "./db.ts";
+import { GuestPresence, Presence, type ShareLink, type ShareMode, Shares, Sharing } from "./contract.ts";
+import { type GuestRow, JoinError, openEmails, ShareDb } from "./db.ts";
 
 /** Registers the join routes, the guest cookie and Radius authenticators, and guest session access. */
 
@@ -102,24 +90,11 @@ async function readJson(request: IncomingMessage, limit: number): Promise<unknow
 	return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-/** The database's links, emails and people as `Shares` shows them, and the archived sessions as last seen. */
-const Shown = defineTypedState("p2.shares", {
-	schema: obj({
-		/** Null before the catalog was first seen. */
-		archived: union([arr(str()), nul()]),
-		links: arr(LinkSchema),
-		emails: arr(str()),
-		people: arr(PersonSchema),
-	}),
+/** The archived sessions as the routine below last saw them (null before it first saw the catalog). */
+const Archived = defineTypedState("p2.shares.archived", {
+	schema: obj({ sessions: union([arr(str()), nul()]) }),
 	version: 1,
-	initial: () => ({ archived: null, links: [], emails: [], people: [] }),
-});
-
-/** The connected guests (in memory). */
-const Connected = defineState("p2.presence", {
-	schema: obj({ guests: record(ConnectedSchema) }),
-	version: 1,
-	initial: () => ({ guests: {} }),
+	initial: () => ({ sessions: null }),
 });
 
 export default defineFacet((host) => {
@@ -127,25 +102,21 @@ export default defineFacet((host) => {
 		const catalog = self.get(Catalog, {});
 		const children = self.get(ChildStore, {});
 		const server = self.get(Server, {});
-		const shown = self.state(Shown);
-		const unarchived = (session: string): boolean => !shown.value.archived?.includes(session);
-		const reload = (ctx: Ctx) =>
-			shown.change((draft) => {
-				draft.links = dbResource.value.links();
-				draft.emails = dbResource.value.emails(unarchived);
-				draft.people = dbResource.value.people();
-			}, ctx);
+		const archived = self.state(Archived);
 		const dbResource = self.open(
-			async (ctx) => {
-				const db = new ShareDb(server.info.value.dataDir);
-				await shown.change((draft) => {
-					draft.links = db.links();
-					draft.emails = db.emails(unarchived);
-					draft.people = db.people();
-				}, ctx);
-				return db;
-			},
+			async () => new ShareDb(server.info.value.dataDir),
 			(db) => db.close(),
+		);
+		// The database's links, people and email grants as it holds them: a method's write tells this source before the
+		// method returns.
+		const stored = followNative(
+			self,
+			(changed) => dbResource.value.subscribe(changed),
+			() => ({
+				links: dbResource.value.links(),
+				people: dbResource.value.people(),
+				emails: dbResource.value.emailGrants(),
+			}),
 		);
 		/** The session is known and not archived. */
 		const open = async (session: string, ctx: Ctx): Promise<boolean> => {
@@ -188,24 +159,24 @@ export default defineFacet((host) => {
 		};
 		// Archive ends every guest's access to the session, restore gives it back: both change their grants.
 		self.on(catalog.sessions, async ({ value: sessions }, ctx) => {
-			const archived = sessions.filter((session) => session.archivedAt !== null).map((session) => session.id);
-			const previous = shown.value.archived;
-			await shown.change((draft) => {
-				draft.archived = archived;
-			}, ctx);
-			await shown.change((draft) => {
-				draft.emails = dbResource.value.emails(unarchived);
+			const now = sessions.filter((session) => session.archivedAt !== null).map((session) => session.id);
+			const previous = archived.value.sessions;
+			await archived.change((draft) => {
+				draft.sessions = now;
 			}, ctx);
 			if (previous === null) return;
 			const before = new Set(previous);
-			const after = new Set(archived);
-			const changed = [...archived.filter((id) => !before.has(id)), ...previous.filter((id) => !after.has(id))];
+			const after = new Set(now);
+			const changed = [...now.filter((id) => !before.has(id)), ...previous.filter((id) => !after.has(id))];
 			for (const session of changed) await revoke(dbResource.value.bump(session), ctx);
 		});
 		return {
-			links: deriveTyped(self, [shown], ([value]) => value.links),
-			emails: self.derive([shown], ([value]) => value.emails),
-			people: deriveTyped(self, [shown], ([value]) => value.people),
+			links: deriveTyped(self, [stored], ([value]) => value.links),
+			emails: self.derive([stored, catalog.sessions], ([{ emails }, sessions]) => {
+				const archivedNow = new Set(sessions.filter((entry) => entry.archivedAt !== null).map((entry) => entry.id));
+				return openEmails(emails, (session) => !archivedNow.has(session));
+			}),
+			people: deriveTyped(self, [stored], ([value]) => value.people),
 			authenticate: async ({ cookie }, ctx) => {
 				const principal = await principalOf(dbResource.value.guestOfCookie(cookie), ctx);
 				if (principal) dbResource.value.seen(principal.id);
@@ -223,9 +194,7 @@ export default defineFacet((host) => {
 			},
 			link: async ({ session, mode, reset, remoteConfirmed }, ctx) => {
 				await confirmRemote(session, mode, remoteConfirmed, ctx);
-				const ended = dbResource.value.link(session, mode, reset);
-				await reload(ctx);
-				await revoke(ended, ctx);
+				await revoke(dbResource.value.link(session, mode, reset), ctx);
 				return null;
 			},
 			share: async ({ session, email, mode, remoteConfirmed }, ctx) => {
@@ -233,13 +202,11 @@ export default defineFacet((host) => {
 				if (!normalized) throw new Error("Enter an email address");
 				await confirmRemote(session, mode, remoteConfirmed, ctx);
 				const shared = dbResource.value.share(session, normalized, email.trim(), mode);
-				await reload(ctx);
 				if (shared.changed) await revoke([shared.guest], ctx);
 				return null;
 			},
 			remove: async ({ session, guestId }, ctx) => {
 				if (dbResource.value.remove(session, guestId)) await revoke([guestId], ctx);
-				await reload(ctx);
 				return null;
 			},
 			join: async ({ token, name, cookie }, ctx) => {
@@ -255,38 +222,21 @@ export default defineFacet((host) => {
 		};
 	});
 
-	host.serve(Presence, (_params, self) => {
-		const connected = self.state(Connected);
-		return {
-			guests: self.derive([connected], ([value]) => value.guests),
-			enter: async (guest, ctx) => {
-				await connected.change((draft) => {
-					draft.guests[guest.id] = guest;
-				}, ctx);
-				return null;
-			},
-			leave: async ({ id }, ctx) => {
-				await connected.change((draft) => {
-					delete draft.guests[id];
-				}, ctx);
-				return null;
-			},
-		};
-	});
+	// The guests connected now: every guest principal holding a `GuestPresence` (one per tab; a link drop is a leaving).
+	const holders = host.references(GuestPresence);
+	host.serve(Presence, (_params, self) => ({
+		guests: self.derive([holders], ([references]) => {
+			const guests: Record<string, { id: string; name: string; sessions: Record<string, ShareMode> }> = {};
+			for (const { principal } of references)
+				if (isGuest(principal))
+					guests[principal.id] = { id: principal.id, name: principal.name, sessions: principal.sessions };
+			return guests;
+		}),
+	}));
 
-	host.serve(GuestPresence, (_params, principal, self) => {
+	host.serve(GuestPresence, (_params, principal) => {
 		if (isOwner(principal)) return { variant: "owner", members: {} };
 		if (!isGuest(principal)) throw forbidden("owners and guests only");
-		const presence = self.get(Presence, {});
-		const server = serverOf(self);
-		const { id, name, sessions } = principal;
-		// One object per guest revision: live while any of the guest's tabs holds it.
-		self.open(
-			(ctx) => presence.enter({ id, name, sessions }, ctx),
-			async () => {
-				await server().root((ctx) => presence.leave({ id }, ctx));
-			},
-		);
 		return { variant: "guest", members: {} };
 	});
 

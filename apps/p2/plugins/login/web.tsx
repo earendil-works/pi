@@ -1,7 +1,6 @@
 // The Providers sheet (any owner): sign in to model providers, refresh their catalogs, sign out.
 
 import type { AuthEvent } from "@earendil-works/pi-ai";
-import type { Held } from "@p2/app/v1";
 import { BACKGROUND_CONTEXT, contribute, defineFacet } from "@p2/app/v1";
 import {
 	CheckIcon,
@@ -15,6 +14,7 @@ import {
 	useHost,
 	useNavigation,
 	useObject,
+	useOptimisticCall,
 	useOwner,
 	useReadable,
 	useRoute,
@@ -22,8 +22,6 @@ import {
 } from "@p2/app/v1/web";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type LoginState, ProviderLogin } from "./contract.ts";
-
-const errorText = (reason: unknown): string => (reason instanceof Error ? reason.message : String(reason));
 
 /** Links from providers open only over http(s). */
 function Link({ url, label }: { url: string; label: string }) {
@@ -77,20 +75,14 @@ function Notice({ event }: { event: AuthEvent }): ReactNode {
 	}
 }
 
-function PromptForm({ state, login }: { state: LoginState; login: Held<typeof ProviderLogin> }) {
+/** The provider's question; answering it shows the flow working at once (the next prompt or progress follows). */
+function PromptForm({ state, onAnswer }: { state: LoginState; onAnswer: (promptId: string, value: string) => void }) {
 	const prompt = state.prompt;
 	const [value, setValue] = useState("");
-	const [sending, setSending] = useState(false);
-	const [error, setError] = useState<string>();
 	if (!prompt) return null;
 	const answer = (input: string) => {
-		setSending(true);
-		setError(undefined);
-		login
-			.answer({ attemptId: state.attemptId, promptId: prompt.id, value: input }, BACKGROUND_CONTEXT)
-			.then(() => setValue(""))
-			.catch((reason: unknown) => setError(errorText(reason)))
-			.finally(() => setSending(false));
+		onAnswer(prompt.id, input);
+		setValue("");
 	};
 	if (prompt.type === "select")
 		return (
@@ -98,19 +90,12 @@ function PromptForm({ state, login }: { state: LoginState; login: Held<typeof Pr
 				<p>{prompt.message}</p>
 				<div className="list">
 					{prompt.options.map((option) => (
-						<button
-							type="button"
-							key={option.id}
-							className="row-button"
-							disabled={sending}
-							onClick={() => answer(option.id)}
-						>
+						<button type="button" key={option.id} className="row-button" onClick={() => answer(option.id)}>
 							<span>{option.label}</span>
 							<ChevronIcon />
 						</button>
 					))}
 				</div>
-				{error && <p className="error small">{error}</p>}
 			</div>
 		);
 	return (
@@ -140,8 +125,7 @@ function PromptForm({ state, login }: { state: LoginState; login: Held<typeof Pr
 				value={value}
 				onChange={(event) => setValue(event.target.value)}
 			/>
-			{error && <p className="error small">{error}</p>}
-			<button type="submit" className="login-continue" disabled={sending}>
+			<button type="submit" className="login-continue">
 				<span>Continue</span>
 				<ChevronIcon />
 			</button>
@@ -152,8 +136,22 @@ function PromptForm({ state, login }: { state: LoginState; login: Held<typeof Pr
 /** The provider list, one provider's actions, or the running login. Closing the sheet cancels an unfinished one. */
 function ProvidersSheet({ onClose }: { onClose: () => void }) {
 	const login = useObject(ProviderLogin, {});
-	const providers = useReadable(login?.providers) ?? [];
-	const state = useReadable(login?.login) ?? null;
+	// Provider errors go to the app's toast, as in Pi Mobile.
+	const { fail } = useComposerState();
+	// Signing out shows at once; a refused sign-out puts the provider back.
+	const [providers, signOut] = useOptimisticCall(
+		useReadable(login?.providers) ?? [],
+		(list, providerId: string) =>
+			list.map((entry) => (entry.id === providerId ? { ...entry, signedIn: null } : entry)),
+		fail,
+	);
+	// A start, an answer or a cancel shows the flow's next state at once: working (the provider's attempt and its
+	// prompts are the server's, so a start shows the spinner until they arrive), or cancelled.
+	const [state, guessLogin] = useOptimisticCall(
+		useReadable(login?.login) ?? null,
+		(_, next: LoginState) => next,
+		fail,
+	);
 	const [query, setQuery] = useState("");
 	const nav = useNavigation();
 	const route = useRoute();
@@ -184,11 +182,6 @@ function ProvidersSheet({ onClose }: { onClose: () => void }) {
 	}, [host, login, selected]);
 	const [result, setResult] = useState<string>();
 	const [busy, setBusy] = useState(false);
-	// Provider errors go to the app's toast, as in Pi Mobile (a prompt's own error stays in its form).
-	const { setError } = useComposerState();
-	const perform = (action: Promise<unknown> | undefined) => {
-		void action?.catch((reason: unknown) => setError(errorText(reason)));
-	};
 	const providerId = selected;
 	const provider = providers.find((entry) => entry.id === providerId);
 	if (login && provider) {
@@ -203,7 +196,17 @@ function ProvidersSheet({ onClose }: { onClose: () => void }) {
 						{state.notices.map((entry) => (
 							<Notice key={entry.id} event={entry.event} />
 						))}
-						{state.prompt && <PromptForm key={state.prompt.id} state={state} login={login} />}
+						{state.prompt && (
+							<PromptForm
+								key={state.prompt.id}
+								state={state}
+								onAnswer={(promptId, value) =>
+									guessLogin({ ...state, prompt: null }, () =>
+										login.answer({ attemptId: state.attemptId, promptId, value }, BACKGROUND_CONTEXT),
+									)
+								}
+							/>
+						)}
 						{state.status === "working" && !state.prompt && !state.notices.length && (
 							<div className="spinner large" />
 						)}
@@ -219,7 +222,13 @@ function ProvidersSheet({ onClose }: { onClose: () => void }) {
 							<button
 								type="button"
 								className="text-action"
-								onClick={() => perform(login.cancel({ attemptId: state.attemptId }, BACKGROUND_CONTEXT))}
+								// A start not answered yet has no attempt to cancel.
+								disabled={!state.attemptId}
+								onClick={() =>
+									guessLogin({ ...state, status: "cancelled", prompt: null, message: "Cancelled." }, () =>
+										login.cancel({ attemptId: state.attemptId }, BACKGROUND_CONTEXT),
+									)
+								}
 							>
 								Cancel
 							</button>
@@ -247,7 +256,17 @@ function ProvidersSheet({ onClose }: { onClose: () => void }) {
 								key={method.type}
 								className="login-action primary"
 								onClick={() =>
-									perform(login.start({ providerId: provider.id, authType: method.type }, BACKGROUND_CONTEXT))
+									guessLogin(
+										{
+											attemptId: "",
+											providerId: provider.id,
+											authType: method.type,
+											status: "working",
+											prompt: null,
+											notices: [],
+										},
+										() => login.start({ providerId: provider.id, authType: method.type }, BACKGROUND_CONTEXT),
+									)
 								}
 							>
 								<span>{method.label}</span>
@@ -271,7 +290,7 @@ function ProvidersSheet({ onClose }: { onClose: () => void }) {
 													: "Catalog updated; no models reported.",
 											),
 										)
-										.catch((reason: unknown) => setError(errorText(reason)))
+										.catch(fail)
 										.finally(() => setBusy(false));
 								}}
 							>
@@ -283,7 +302,9 @@ function ProvidersSheet({ onClose }: { onClose: () => void }) {
 							<button
 								type="button"
 								className="login-action danger"
-								onClick={() => perform(login.logout({ providerId: provider.id }, BACKGROUND_CONTEXT))}
+								onClick={() =>
+									signOut(provider.id, () => login.logout({ providerId: provider.id }, BACKGROUND_CONTEXT))
+								}
 							>
 								<span>Sign out</span>
 							</button>

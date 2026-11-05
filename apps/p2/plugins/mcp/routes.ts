@@ -4,16 +4,15 @@
 // p2 host; for any other owner a probe page finds out first (`LoopbackProbe`).
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { type Ctx, isOwner, type StoreSelf, until } from "@p2/app/v1";
-import { type RequestAccess, Routes, type ServerParts, serverOf } from "@p2/app/v1/server";
+import { type Ctx, isOwner, type StoreSelf } from "@p2/app/v1";
+import { type RequestAccess, Routes } from "@p2/app/v1/server";
 import { McpManager } from "./contract.ts";
 import { resultPage, sendPage, sendProbePage } from "./pages.ts";
 
 /** Contributes the sign-in routes. */
 export function signInRoutes(self: StoreSelf): void {
-	const server = serverOf(self);
 	self.contribute(Routes, {
-		"GET /mcp/sign-in/*": (request, response, access, ctx) => signIn(request, response, access, server, ctx),
+		"GET /mcp/sign-in/*": (request, response, access, ctx) => signIn(request, response, access, ctx),
 		"GET /mcp/callback": (request, response, access, ctx) => callback(request, response, access, ctx),
 	});
 }
@@ -29,7 +28,6 @@ async function signIn(
 	request: IncomingMessage,
 	response: ServerResponse,
 	{ principal, origin }: RequestAccess,
-	server: () => ServerParts,
 	ctx: Ctx,
 ): Promise<void> {
 	if (!isOwner(principal)) return refuse(response, principal === undefined);
@@ -64,26 +62,8 @@ async function signIn(
 	}
 	if (start.kind === "authorized")
 		return sendPage(response, 200, resultPage(`Signed in to ${name}`, "You may close this page."));
-	keepManager(name, server);
 	response.writeHead(302, { Location: start.url });
 	response.end();
-}
-
-/**
- * Keeps the manager, which holds the flow, while the sign-in to `name` waits for its browser step (until it finishes,
- * fails or expires), also when no view holds it meanwhile.
- */
-function keepManager(name: string, server: () => ServerParts): void {
-	void server()
-		.root(async (ctx) => {
-			const manager = await ctx.get(McpManager, {});
-			await until(
-				manager.signIns,
-				(signIns) => !signIns.some((entry) => entry.server === name && entry.status === "waiting"),
-				ctx,
-			);
-		})
-		.catch(() => {});
 }
 
 /** Completes a route sign-in with the authorization response the browser brings back. */

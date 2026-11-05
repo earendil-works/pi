@@ -278,10 +278,10 @@ export type WorkerParts = {
 	readonly liveness: Liveness;
 	readonly location: SessionLocation;
 	/**
-	 * Runs `fn` in a root of the worker's own (`HOST`): for code outside Chord calls (Durable tools, sections). `signal`
-	 * ends it early.
+	 * Runs `fn` in a root of the worker's own (`HOST`) under `context`: for code outside Chord calls (a Durable tool or
+	 * section passes its Durable context), or a method acting as the worker (`withoutAbortSignal(ctx)`).
 	 */
-	readonly root: <T>(fn: (ctx: Ctx) => Promise<T>, signal?: AbortSignal) => Promise<T>;
+	readonly root: <T>(fn: (ctx: Ctx) => Promise<T>, context: Context) => Promise<T>;
 };
 
 /**
@@ -649,7 +649,7 @@ function openHarness(self: Self, init: WorkerInit, location: SessionLocation): H
 		(await placements.value.get("subagents")?.place(harness, at, values, context)) ?? { followers: [], own: [] };
 	let reader: DocumentReader | undefined;
 	const execution: Native<Execution> = self.open(
-		async (ctx) => {
+		async () => {
 			const created = new Execution(location.value, open, async (read, id, context) => {
 				const documents = read ?? reader;
 				if (!documents) throw new Error("The session's Harness is not open");
@@ -661,7 +661,6 @@ function openHarness(self: Self, init: WorkerInit, location: SessionLocation): H
 				await created.close();
 				throw error;
 			}
-			void ctx;
 			return created;
 		},
 		(created) => created.close(),

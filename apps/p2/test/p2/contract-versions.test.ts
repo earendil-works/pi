@@ -1,8 +1,8 @@
 // Pages, TUIs and plugins built before a deploy keep working: the providers of `Sessions`, `SessionTree` and `Catalog`
 // still bind the versions released before `/tree` and its branch labels, through their `accepts`, and map the current
 // state and results back. The old contracts below are copied verbatim from the releases that bundled them
-// (`Sessions` v3 and `Catalog` v2 from 0a730c8a7, `Sessions` v4, `Catalog` v3 and `SessionTree` v1 from e88525506), so
-// their fingerprints are the ones old bundles send.
+// (`Sessions` v3 and `Catalog` v2 from 0a730c8a7, `Sessions` v4, `Catalog` v3 and `SessionTree` v1 from e88525506,
+// `Sessions` v5 from 9ff0ebfd0), so their fingerprints are the ones old bundles send.
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
@@ -14,6 +14,7 @@ import {
 	ModelRefSchema,
 	method,
 	param,
+	propertiesOf,
 	remote,
 	serverHost,
 	sessionHost,
@@ -122,6 +123,44 @@ const SessionsV4 = remote("p2.sessions", {
 				renameSelf: method(obj({ title: Title }), obj({ previous: str() })),
 				configureSelf: method(obj({ model: opt(ModelRefSchema), thinkingLevel: opt(ThinkingLevelSchema) })),
 				treeSelf: method(obj({ main: int({ minimum: 1 }), branches: arr(BranchSchemaV4) })),
+			},
+		},
+	},
+});
+
+/** 9ff0ebfd0's `BranchSchema` and `SessionSchema`: a branch label may be null. */
+const BranchSchemaV5 = obj({ conversation: int({ minimum: 1 }), label: union([str(), nul()]) });
+const SessionSchemaV5 = obj({ ...propertiesOf(SessionSchemaV4), branches: arr(BranchSchemaV5) });
+
+/** `Sessions` as 9ff0ebfd0 declared it (before client-chosen IDs and lifecycle operations). */
+const SessionsV5 = remote("p2.sessions", {
+	version: 5,
+	params: {},
+	hostAddress: serverHost,
+	variants: {
+		owner: {
+			state: { sessions: arr(SessionSchemaV5), defaultCwd: str(), defaultEnv: union([str(), nul()]) },
+			methods: {
+				create: method(CreateSchema, SessionSchemaV5),
+				relocate: method(obj({ id: str(), cwd: str({ minLength: 1 }), env: union([str(), nul()]) })),
+				rename: method(obj({ id: str(), title: Title })),
+				pin: method(obj({ id: str(), pinned: bool() })),
+				archive: method(Id),
+				restore: method(Id),
+				clone: method(Id, SessionSchemaV5),
+				fork: method(
+					obj({ id: str(), conversation: int({ minimum: 1 }), before: int({ minimum: 1 }) }),
+					SessionSchemaV5,
+				),
+			},
+		},
+		guest: { state: { sessions: arr(SessionSchemaV5) } },
+		worker: {
+			state: { session: union([SessionSchemaV5, nul()]) },
+			methods: {
+				renameSelf: method(obj({ title: Title }), obj({ previous: str() })),
+				configureSelf: method(obj({ model: opt(ModelRefSchema), thinkingLevel: opt(ThinkingLevelSchema) })),
+				treeSelf: method(obj({ main: int({ minimum: 1 }), branches: arr(BranchSchemaV5) })),
 			},
 		},
 	},
@@ -262,6 +301,15 @@ describe("older contract versions against the current server (fake provider)", (
 	});
 	after(async () => {
 		await fixture?.close();
+	});
+
+	it("binds Sessions v5: rows as they are, create answered with its row", async () => {
+		const ref = await boundIn(owner, SessionsV5, {}, "owner");
+		const rows = await until(ref.sessions, (list) => list.some((row) => row.id === session.id));
+		assert.equal(rows.find((each) => each.id === session.id)?.main, branch);
+		const created = await ref.create({ cwd: fixture.workspace, title: "From a v5 tab" }, BACKGROUND_CONTEXT);
+		assert.equal(created.title, "From a v5 tab");
+		ref.release();
 	});
 
 	it("binds Sessions v4: a null branch label reads as the session title", async () => {

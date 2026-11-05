@@ -3,10 +3,12 @@ import type { Ctx } from "@p2/app/v1";
 import {
 	evolve,
 	keyedRegistry,
+	literal,
 	local,
 	ModelRefSchema,
 	method,
 	param,
+	propertiesOf,
 	remote,
 	serverHost,
 	sessionHost,
@@ -73,6 +75,41 @@ export const CreateSchema = obj({
 	thinkingLevel: opt(ThinkingLevelSchema),
 });
 
+/** A session ID: a UUID, chosen by the server or by the client (so a page can navigate before the answer). */
+export const SessionIdSchema = str({ pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" });
+
+/** `Sessions.create` from version 6: `id`, the new session's ID chosen by the caller (default a new one). */
+export const CreateArgsSchema = obj({ ...propertiesOf(CreateSchema), id: opt(SessionIdSchema) });
+
+/** A lifecycle operation: what runs as a job after its method answered. */
+export const OperationKindSchema = union([literal("relocate"), literal("clone"), literal("fork"), literal("archive")]);
+
+/**
+ * A lifecycle operation of a session in progress or failed (`Sessions.operations`): `session` the session it acts on,
+ * `target` the new session a clone or fork makes (its row exists from the start; its worker starts once the copy is
+ * done). `copying`: a clone's or fork's files are being copied (the target's worker waits). A failed one stays until
+ * it is dismissed, with why it failed; what it changed was rolled back (a failed copy's row is archived).
+ */
+export const OperationSchema = union([
+	obj({
+		phase: literal("running"),
+		id: str(),
+		kind: OperationKindSchema,
+		session: str(),
+		target: union([str(), nul()]),
+		copying: bool(),
+	}),
+	obj({
+		phase: literal("failed"),
+		id: str(),
+		kind: OperationKindSchema,
+		session: str(),
+		target: union([str(), nul()]),
+		error: str(),
+	}),
+]);
+export type Operation = Static<typeof OperationSchema>;
+
 /**
  * Archived sessions whose worker may start anyway, without resuming Durable work: rebuilding their search index
  * (server, host-internal; the search plugin's `rebuildIndex`, as Pi Mobile's).
@@ -88,8 +125,8 @@ export const ArchivedStarts = local("p2.archived-starts", {
 });
 
 const CatalogCreate = obj({
-	/** A chosen ID (a clone's or fork's, whose files exist before its entry); default a new one. */
-	id: opt(str({ pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" })),
+	/** A chosen ID (the caller's, a clone's or a fork's); default a new one. */
+	id: opt(SessionIdSchema),
 	env: opt(union([str(), nul()])),
 	cwd: str(),
 	title: str(),
@@ -227,15 +264,8 @@ const SessionsV4 = evolve(SessionsV3, (e) =>
 		.addMethod("worker", "treeSelf", obj({ main: int({ minimum: 1 }), branches: arr(BranchSchemaV4) }), nul()),
 );
 
-/**
- * Sessions as a principal sees them. The owner lists and manages all; a guest sees its own session; a worker sees
- * and renames only its own session (its principal names it). 5: a branch's label may be null (the session title).
- * The provider still serves 3 and 4 (its `accepts`): pages and TUIs loaded before a deploy keep working.
- *
- * The worker's `treeSelf`: the session's main conversation or its branches changed (a `/tree` switch or fork, a branch
- * renamed), or the worker started; the catalog entry follows, so clients open the main one and list the branches.
- */
-export const Sessions = evolve(SessionsV4, (e) =>
+/** 5: a branch's label may be null (the session title). */
+const SessionsV5 = evolve(SessionsV4, (e) =>
 	e
 		.state("owner", "sessions", arr(SessionSchema))
 		.state("guest", "sessions", arr(SessionSchema))
@@ -245,6 +275,62 @@ export const Sessions = evolve(SessionsV4, (e) =>
 		.result("fork", SessionSchema)
 		.args("treeSelf", obj({ main: int({ minimum: 1 }), branches: arr(BranchSchema) })),
 );
+
+/**
+ * Sessions as a principal sees them. The owner lists and manages all; a guest sees its own session; a worker sees
+ * and renames only its own session (its principal names it). The provider still serves 3, 4 and 5 (its `accepts`):
+ * pages and TUIs loaded before a deploy keep working.
+ *
+ * 6, client-chosen IDs and lifecycle operations as jobs: `create` takes the new session's `id`, `clone` and `fork` the
+ * copy's (`copy`), so a page navigates at once. `clone`, `fork`, `relocate` and `archive` answer once their effect is
+ * visible (the copy's row, the archived row) or started (a move), and their long part runs as a job, shown in
+ * `operations` (running, then gone or failed with its error) until `dismissOperation`. A `relocate` the worker
+ * refuses (busy) is a failed operation.
+ *
+ * The worker's `treeSelf`: the session's main conversation or its branches changed (a `/tree` switch or fork, a branch
+ * renamed), or the worker started; the catalog entry follows, so clients open the main one and list the branches.
+ */
+export const Sessions = evolve(SessionsV5, (e) =>
+	e
+		.args("create", CreateArgsSchema)
+		.args("clone", obj({ id: str(), copy: opt(SessionIdSchema) }))
+		.args(
+			"fork",
+			obj({
+				id: str(),
+				conversation: int({ minimum: 1 }),
+				before: int({ minimum: 1 }),
+				copy: opt(SessionIdSchema),
+			}),
+		)
+		.addState("owner", "operations", arr(OperationSchema))
+		.addMethod("owner", "dismissOperation", obj({ operation: str() }), nul()),
+);
+
+const Location = obj({ id: str(), cwd: str({ minLength: 1 }), env: union([str(), nul()]) });
+
+/**
+ * The sessions' lifecycle operations (server, host-internal; a host-lifetime object, so its job runs persist): each
+ * method answers once its visible effect committed and runs the rest as a job (`operations`). `move` is the agent's
+ * relocation (`SessionMoves`): it waits for the job and answers why a busy worker refused (nothing recorded).
+ */
+export const SessionOperations = local("p2.session-operations", {
+	version: 1,
+	params: {},
+	members: {
+		operations: arr(OperationSchema),
+		move: method(Location, obj({ refused: union([str(), nul()]) })),
+		relocate: method(Location),
+		clone: method(obj({ id: str(), copy: SessionIdSchema }), SessionSchema),
+		fork: method(
+			obj({ id: str(), conversation: int({ minimum: 1 }), before: int({ minimum: 1 }), copy: SessionIdSchema }),
+			SessionSchema,
+		),
+		archive: method(obj({ id: str() })),
+		restore: method(obj({ id: str() })),
+		dismiss: method(obj({ operation: str() })),
+	},
+});
 
 /**
  * Moving a session to another location (server, host-internal): `Sessions.relocate` for the owner, and the locations

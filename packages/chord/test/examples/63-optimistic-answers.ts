@@ -179,7 +179,7 @@ const scope = new TuiScope(client, () => drawn.push(title()));
 const sessions = scope.hold(Sessions, {});
 const session = scope.hold(SessionTitle, { id: "S1" });
 const titles = scope.watch(sessions.titles);
-const [title, show] = scope.optimistic(() => titles()?.S1);
+const [title, add] = scope.optimistic(() => titles()?.S1);
 await session.rename("Draft", context);
 await settle();
 console.log("the index shows:", title());
@@ -194,7 +194,7 @@ for (const id of ["S2", "S3", "S4"]) await index.report({ id, title: `session ${
 // (whose change waits in the server's window too) and answers. The server sends its waiting state before it forwards
 // the answer, past its window.
 drawn.length = 0;
-const renamed = show("Renamed", session.rename("Renamed", context));
+const renamed = add("Renamed", session.rename("Renamed", context));
 await settle();
 console.log("while the call is pending, the title shows:", title());
 

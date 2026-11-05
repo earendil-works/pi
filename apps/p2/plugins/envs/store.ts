@@ -30,9 +30,9 @@ export class EnvStore {
 	get snapshot(): EnvSnapshot {
 		return this.#snapshot;
 	}
+	/** `listener` hears of every load's snapshot from now on; the result stops it. */
 	subscribe(listener: (snapshot: EnvSnapshot) => void): () => void {
 		this.#listeners.add(listener);
-		listener(this.#snapshot);
 		return () => this.#listeners.delete(listener);
 	}
 }

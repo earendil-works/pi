@@ -1,10 +1,11 @@
 import { awaitWithContext, defineFacet, forbidden, isChordError, isWorker, signalOf } from "@p2/app/v1";
-import { durableContext } from "@p2/app/v1/node";
 import { Hosts } from "@p2/app/v1/server";
 import { Catalog } from "../sessions/contract.ts";
 import { StatusStore } from "../status/contract.ts";
 import { ConversationBroker, Conversations, PeerConversation } from "./contract.ts";
 
+// The server's side of peer conversations: the broker between session workers (a local object, so its references act
+// as the server, whom `PeerConversation` serves), and the workers' view of it, fenced by worker generation.
 export default defineFacet((host) => {
 	host.serve(ConversationBroker, (_params, self) => {
 		const catalog = self.get(Catalog, {});
@@ -14,13 +15,13 @@ export default defineFacet((host) => {
 				const sender = await catalog.get({ id: source }, ctx);
 				if (sender.archivedAt !== null) throw forbidden("The sending session is archived");
 				if (query.action === "list") {
-					const sessions = (catalog.sessions.value ?? []).filter((session) => session.archivedAt === null);
+					const sessions = catalog.sessions.value.filter((session) => session.archivedAt === null);
 					return {
 						action: "list",
 						self: source,
 						truncated: sessions.length > 200,
 						peers: sessions.slice(0, 200).map((session) => {
-							const status = statuses.statuses.value?.[session.id];
+							const status = statuses.statuses.value[session.id];
 							return {
 								id: session.id,
 								title: session.title,
@@ -43,10 +44,7 @@ export default defineFacet((host) => {
 					(await catalog.get({ id: recipient.id }, ctx)).archivedAt !== null;
 				// Each attempt holds the recipient's worker afresh, starting it if needed, as a browser opening it does.
 				const deliver = async () => {
-					const peer = await awaitWithContext(
-						ctx.get(PeerConversation, { session: recipient.id }),
-						durableContext(ctx),
-					);
+					const peer = await awaitWithContext(ctx.get(PeerConversation, { session: recipient.id }), ctx);
 					// Startup can yield to archive/restore. Recheck both sessions before admitting peer work.
 					if (await archived()) throw forbidden("Conversation is archived");
 					if (query.action === "answer") return { action: "answer" as const, answer: await peer.answer(ctx) };
@@ -91,7 +89,7 @@ export default defineFacet((host) => {
 			variant: "worker",
 			members: {
 				query: async ({ requestId, origin, query }, ctx) => {
-					const current = hosts.workers.value?.[principal.session];
+					const current = hosts.workers.value[principal.session];
 					if (!current?.running || current.generation !== principal.generation) throw forbidden("stale worker");
 					return broker.query({ source: principal.session, requestId, ...(origin ? { origin } : {}), query }, ctx);
 				},

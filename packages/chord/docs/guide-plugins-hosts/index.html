@@ -442,11 +442,16 @@ own and may come later.</li>
 </ul>
 <p>So the rule for a method that should feel instant: it awaits its own changes, the pushes to other hosts included (the
 worker&#39;s <code>rename</code> awaits its report to the index), and keeps them on the host that answers or relays the answer.</p>
-<p>A terminal UI does the same with its component scope: <code>scope.optimistic(read)</code> wraps a reader and returns it with
-<code>show(value, call)</code>, which shows <code>value</code> until the call settles (until every call shown, when they overlap):</p>
+<p>A terminal UI does the same with its component scope: <code>scope.optimistic(read, reduce?)</code> wraps a reader and returns
+it with <code>add(action, call)</code> and <code>pending()</code>, as React&#39;s <code>useOptimistic</code>: while calls are in flight the reader shows
+<code>reduce(current, action)</code> over each action, in order (without a reducer the last action is the value), until every
+call added settles. <code>add</code> returns the call; a rejection is the caller&#39;s to handle.</p>
 <pre><code><span class="tk-k">const</span> titles = scope.<span class="tk-f">watch</span>(sessions.titles);
-<span class="tk-k">const</span> [title, show] = scope.<span class="tk-f">optimistic</span>(() =&gt; <span class="tk-f">titles</span>()?.[id]);
-<span class="tk-k">await</span> <span class="tk-f">show</span>(next, session.<span class="tk-f">rename</span>(next, ctx));              <span class="tk-c">// title() is `next` at once, the real one when it settles</span></code></pre>
+<span class="tk-k">const</span> [title, add] = scope.<span class="tk-f">optimistic</span>(() =&gt; <span class="tk-f">titles</span>()?.[id]);
+<span class="tk-k">await</span> <span class="tk-f">add</span>(next, session.<span class="tk-f">rename</span>(next, ctx));               <span class="tk-c">// title() is `next` at once, the real one when it settles</span>
+
+<span class="tk-k">const</span> [rows, change] = scope.<span class="tk-f">optimistic</span>(() =&gt; <span class="tk-f">list</span>() ?? [], (rows, id: string) =&gt; rows.<span class="tk-f">filter</span>((row) =&gt; row.id !== id));
+<span class="tk-f">change</span>(id, store.<span class="tk-f">remove</span>({ id }, ctx)).<span class="tk-f">catch</span>(fail);        <span class="tk-c">// gone at once; back with the error if refused</span></code></pre>
 <p><code>test/examples/63-optimistic-answers.ts</code> runs this with a stalled terminal client and prints what each redraw showed.</p>
 </section>
 

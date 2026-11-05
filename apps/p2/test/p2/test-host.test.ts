@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { BACKGROUND_CONTEXT, follow, whenLive } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
 import { DraftStore, Drafts } from "../../plugins/drafts/contract.ts";
 import draftsWorker from "../../plugins/drafts/worker.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
@@ -139,7 +139,7 @@ describe("testHost", () => {
 	});
 });
 
-it("a workspace hold protects a slow watch activation, and releases its liveness lease", async (t) => {
+it("a workspace hold keeps the worker busy through a slow watch activation, until it is released", async (t) => {
 	const root = await mkdtemp(join(tmpdir(), "p2-watch-unit-"));
 	const project = join(root, "project");
 	const dataDir = join(root, "data");
@@ -159,11 +159,7 @@ it("a workspace hold protects a slow watch activation, and releases its liveness
 		await blocked;
 		return watch(...args);
 	};
-	let viewers = 0;
 	const liveness = new Liveness();
-	follow(liveness, (counts) => {
-		viewers = counts.viewers ?? 0;
-	});
 	const fixture = await testHost({
 		address: Session({ id: "sample" }),
 		kind: "worker",
@@ -210,12 +206,14 @@ it("a workspace hold protects a slow watch activation, and releases its liveness
 		await rm(root, { recursive: true, force: true });
 	});
 	const workspace = fixture.client(OWNER).hold(Workspace, { session: "sample", conversation: 1 }, BACKGROUND_CONTEXT);
+	// Chord's activity counts the hold from its arrival (the worker's keep-alive), bound or not.
+	const references = () => fixture.host.activity.value.references;
 	await Promise.race([watching, whenLive(workspace)]);
-	assert.equal(viewers, 1, "activation is held work even before FileSystem.watch returns");
+	assert.equal(references(), 1, "the hold is counted even before FileSystem.watch returns");
 	unblock();
 	await whenLive(workspace);
 	workspace.release();
-	await poll(() => viewers === 0, 5000, "workspace activation lease released");
+	await poll(() => references() === 0, 5000, "the released hold is no longer counted");
 });
 
 describe("live assertion helpers", () => {

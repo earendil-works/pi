@@ -225,8 +225,8 @@ export class RemoteProcess {
   (`mcpNamespace(name)|url`). The refresh lock is a promise chain per server in the process, not `proper-lockfile`: one
   p2 server owns a data directory (process lock), and nothing else reads this file.
 - **Flows:** `sign-in.ts` (`SignIns`, a native of the manager), in memory, one per server (a new one replaces it),
-  10 minutes each; listed (`signIns`: id, server, `via: "loopback" | "route"`, `waiting | failed`, error) in the
-  manager's `Listed` document. Not a Chord flow object: the manager's methods are `beginSignIn`, `completeSignIn`
+  10 minutes each; listed (`signIns`: id, server, `via: "loopback" | "route"`, `waiting | failed`, error) as the
+  manager follows them (`self.follow`: a method's change is listed when it answers). Not a Chord flow object: the manager's methods are `beginSignIn`, `completeSignIn`
   (callback route), `pasteSignIn`, `cancelSignIn`, `signOut`, `probe`. A done flow disappears; the instances of its
   server restart (`Instances.reconnect`). A pre-registered client (`oauth.clientId`) always uses loopback.
 - **Links by server, not flow:** `GET /mcp/sign-in/<server>` begins (or replaces) the server's flow, so the link is

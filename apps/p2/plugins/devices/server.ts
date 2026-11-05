@@ -1,5 +1,14 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { type Ctx, defineFacet, forbidden, isOwner, nativeOf, type P2Principal, serveNative } from "@p2/app/v1";
+import {
+	type Ctx,
+	constant,
+	defineFacet,
+	forbidden,
+	isOwner,
+	nativeOf,
+	type P2Principal,
+	serveNative,
+} from "@p2/app/v1";
 import {
 	Authenticators,
 	fromOrigin,
@@ -146,7 +155,7 @@ export default defineFacet((host) => {
 		return {
 			variant: "owner",
 			members: {
-				canMint: self.derive([], () => local),
+				canMint: constant(local),
 				token: async () => {
 					if (!local) throw forbidden("Generate owner links on the host with npm run owner-link");
 					return { token: access().access.issueToken() };

@@ -3,7 +3,7 @@
 // session selector's subagent conversations (threaded sort, p2-tui-port.md section 1.17).
 
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
-import { BACKGROUND_CONTEXT, contribute, defineFacet, follow, locationText, statusOf, whenLive } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, liveIn, locationText } from "@p2/app/v1";
 import type { TuiContext } from "@p2/app/v1/tui";
 import {
 	getTextOutput,
@@ -111,27 +111,24 @@ function openAgents(ctx: TuiContext): void {
 		ctx.notify("Open a session first");
 		return;
 	}
-	const ref = ctx.host.hold(Subagents, {}, BACKGROUND_CONTEXT);
-	let children: Child[] = [];
-	let showArchived = false;
-	let closed = false;
-	let stop = (): void => {};
-	// The children are the reader variant's: subscribed once the reference knows its variant.
-	void whenLive(ref)
-		.then(() => {
-			if (closed || ref.variant !== "reader") return;
-			stop = follow(ref.children, (value) => {
-				children = value[session] ?? [];
-				ctx.requestRender();
+	const scope = ctx.scope();
+	let received: Child[] = [];
+	scope.watch(Subagents, {}, (ref, follow) => {
+		if (ref.variant === "reader")
+			follow(ref.children, (value) => {
+				received = value[session] ?? [];
 			});
-		})
-		.catch(() => {});
-	const control = ctx.host.hold(SubagentControl, { session }, BACKGROUND_CONTEXT);
+	});
+	const control = scope.watch(SubagentControl, { session }, () => {});
+	// Archive and restore show at once; a refused one flips back with the error.
+	const [shown, archiving] = scope.optimistic(
+		() => received,
+		(children, { conversation, archived }: { conversation: number; archived: boolean }) =>
+			children.map((child) => (child.conversationId === conversation ? { ...child, archived } : child)),
+	);
+	let showArchived = false;
 	const close = () => {
-		closed = true;
-		stop();
-		ref.release();
-		control.release();
+		scope.dispose();
 		overlay.close();
 	};
 	const rows = (): ListRow[] => [
@@ -140,7 +137,7 @@ function openAgents(ctx: TuiContext): void {
 			label: "main",
 			detail: ctx.identity.conversation === ctx.identity.main ? "✓ shown" : `conversation ${ctx.identity.main}`,
 		},
-		...children
+		...shown()
 			.filter((child) => showArchived || !child.archived)
 			.map((child) => ({
 				key: String(child.conversationId),
@@ -172,18 +169,19 @@ function openAgents(ctx: TuiContext): void {
 					id: "app.session.delete",
 					label: "archive/restore",
 					run: (row) => {
-						const child = children.find((candidate) => String(candidate.conversationId) === row?.key);
+						const child = shown().find((candidate) => String(candidate.conversationId) === row?.key);
 						if (!child || child.kind === "agent") return;
-						if (statusOf(control) !== "live" || control.variant !== "participant") {
+						const participant = liveIn(control, "participant");
+						if (!participant) {
 							ctx.notify("Only participants archive subagents", "warning");
 							return;
 						}
-						void control
-							.archive({ conversation: child.conversationId, archived: !child.archived }, BACKGROUND_CONTEXT)
-							.then(() => ctx.notify(`${child.archived ? "Restored" : "Archived"} ${child.name}`))
-							.catch((error: unknown) =>
-								ctx.notify(error instanceof Error ? error.message : String(error), "error"),
-							);
+						const change = { conversation: child.conversationId, archived: !child.archived };
+						ctx.perform(
+							archiving(change, participant.archive(change, BACKGROUND_CONTEXT)).then(() =>
+								ctx.notify(`${change.archived ? "Archived" : "Restored"} ${child.name}`),
+							),
+						);
 					},
 				},
 			],

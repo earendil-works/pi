@@ -74,7 +74,8 @@ describe("plugin listing and selection", () => {
 		const models = fixture.browser().hold(Models, {}, BACKGROUND_CONTEXT);
 		const choice = { provider: "faux", modelId: "faux-1", thinkingLevel: "off" };
 		await models.setDefault(choice, BACKGROUND_CONTEXT);
-		assert.deepEqual(await until(models.defaultModel, (value) => value?.thinkingLevel === "off"), choice);
+		// The answer follows its state: the new default is on the page when the call resolves.
+		assert.deepEqual(models.defaultModel.value, choice);
 		const unavailable = fixture
 			.browser()
 			.hold(Terminals, { session: "not-opened", view: crypto.randomUUID() }, BACKGROUND_CONTEXT);

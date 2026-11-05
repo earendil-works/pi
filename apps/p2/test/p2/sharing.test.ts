@@ -45,11 +45,9 @@ describe("sharing (fake provider)", () => {
 		});
 	const linkOf = async (mode: "view" | "full", reset = false) => {
 		await sharing.link({ mode, reset }, BACKGROUND_CONTEXT);
-		const links = await until(sharing.links, (value) =>
-			Boolean(value?.some((link) => link.mode === mode && (!reset || link.token !== tokens[mode]))),
-		);
-		const link = links?.find((entry) => entry.mode === mode);
-		assert(link);
+		// The answer follows its state: the (new) link is on the page when the call resolves.
+		const link = sharing.links.value.find((entry) => entry.mode === mode);
+		assert(link && (!reset || link.token !== tokens[mode]));
 		tokens[mode] = link.token;
 		return link;
 	};

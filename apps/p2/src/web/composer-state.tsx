@@ -4,12 +4,13 @@ import {
 	type Dispatch,
 	type ReactNode,
 	type SetStateAction,
+	useCallback,
 	useContext,
 	useEffect,
 	useRef,
 	useState,
 } from "react";
-import { useRoute } from "../runtime/web.tsx";
+import { errorText, useRoute } from "../runtime/web.tsx";
 export type PickedFile = { key: string; file: File; preview?: string; uploaded?: string; session?: string };
 /** The message the next send answers: an entry of the current conversation, and whose it is (for display only). */
 export type ReplyTarget = { entryId: number; name: string };
@@ -22,6 +23,8 @@ type State = {
 	setSteer: Dispatch<SetStateAction<boolean>>;
 	error: string | undefined;
 	setError: Dispatch<SetStateAction<string | undefined>>;
+	/** Shows a failed call's error in the app's toast (an optimistic guess rolled back, an action refused). */
+	fail: (error: unknown) => void;
 	stopped: { sessionId: string; conversationId: number } | undefined;
 	setStopped: Dispatch<SetStateAction<{ sessionId: string; conversationId: number } | undefined>>;
 	viewer: string;
@@ -42,6 +45,7 @@ export function ComposerState({ children }: { children: ReactNode }) {
 	const [files, setFiles] = useState<PickedFile[]>([]);
 	const [steer, setSteer] = useState(true);
 	const [error, setError] = useState<string>();
+	const fail = useCallback((failure: unknown) => setError(errorText(failure)), []);
 	const [stopped, setStopped] = useState<State["stopped"]>();
 	const viewer = useRef(crypto.randomUUID());
 	const [replyTo, setReplyTo] = useState<ReplyTarget>();
@@ -95,6 +99,7 @@ export function ComposerState({ children }: { children: ReactNode }) {
 				setSteer,
 				error,
 				setError,
+				fail,
 				stopped,
 				setStopped,
 				viewer: viewer.current,

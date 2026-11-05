@@ -7,7 +7,6 @@ import {
 	BACKGROUND_CONTEXT,
 	contribute,
 	defineFacet,
-	follow,
 	type Held,
 	type HeldIn,
 	liveIn,
@@ -39,48 +38,51 @@ const messageOf = (error: unknown): string => (error instanceof Error ? error.me
 
 /** `/mcp [paste <url>]`: the overlay, or a pasted redirect URL for the sign-in waiting for it. */
 function openMcp(ctx: TuiContext, args: string | undefined): void {
-	const ref = ctx.host.hold(Mcp, {}, BACKGROUND_CONTEXT);
 	const words = args?.trim().split(/\s+/).filter(Boolean) ?? [];
 	if (words[0] === "paste") {
+		const ref = ctx.host.hold(Mcp, {}, BACKGROUND_CONTEXT);
 		void paste(ctx, ref, words[1]).finally(() => ref.release());
 		return;
 	}
-	let instances: Instance[] = [];
+	const scope = ctx.scope();
+	let received: Instance[] = [];
 	let signIns: SignIn[] = [];
 	let status = "";
-	let closed = false;
-	const stops: (() => void)[] = [];
-	void whenLive(ref)
-		.then(() => {
-			const view = liveIn(ref, "owner");
-			if (closed || view === undefined) return;
-			stops.push(
-				follow(view.instances, (value) => {
-					instances = value;
-					ctx.requestRender();
-				}),
-				follow(view.signIns, (value) => {
-					signIns = value;
-					ctx.requestRender();
-				}),
-			);
-		})
-		.catch(() => {});
-	const run = (label: string, action: (view: OwnerView) => Promise<unknown>) => {
-		const view = liveIn(ref, "owner");
+	const held = scope.watch(Mcp, {}, (mcp, follow) => {
+		const view = liveIn(mcp, "owner");
+		if (!view) return;
+		follow(view.instances, (value) => {
+			received = value;
+		});
+		follow(view.signIns, (value) => {
+			signIns = value;
+		});
+	});
+	// A restart shows the server starting and a sign-out signed out at once; the status line follows the call.
+	type StatusGuess = { instance: string; status: Instance["status"] };
+	const [instances, changing] = scope.optimistic(
+		() => received,
+		(list, guess: StatusGuess) =>
+			list.map((instance) => (instance.id === guess.instance ? { ...instance, status: guess.status } : instance)),
+	);
+	const run = (label: string, action: (view: OwnerView) => Promise<unknown>, guess?: StatusGuess) => {
+		const view = liveIn(held, "owner");
 		if (view === undefined) return;
 		status = `${label}…`;
-		ctx.requestRender();
-		void action(view)
-			.then(() => {
+		const call = (async () => {
+			try {
+				await action(view);
 				status = `${label}: done`;
-			})
-			.catch((error: unknown) => {
+			} catch (error) {
 				status = `${label}: ${messageOf(error)}`;
-			})
-			.finally(() => ctx.requestRender());
+				throw error;
+			}
+		})();
+		// The status line shows how it ended, a failure included.
+		void (guess ? changing(guess, call) : call).catch(() => ctx.requestRender());
+		ctx.requestRender();
 	};
-	const byRow = (row: ListRow | undefined) => instances.find((instance) => instance.id === row?.key);
+	const byRow = (row: ListRow | undefined) => instances().find((instance) => instance.id === row?.key);
 	const signIn = (view: OwnerView, server: string) =>
 		view.signIn({ server }, BACKGROUND_CONTEXT).then(async (start) => {
 			if (start.kind === "authorized") return;
@@ -92,9 +94,9 @@ function openMcp(ctx: TuiContext, args: string | undefined): void {
 	const overlay = ctx.overlay(
 		"mcp",
 		new ListOverlay(ctx, {
-			title: () => `MCP servers (${instances.length})`,
+			title: () => `MCP servers (${instances().length})`,
 			rows: () =>
-				instances.map((instance) => {
+				instances().map((instance) => {
 					const flow = signIns.find((entry) => entry.server === instance.server);
 					const place = [
 						instance.location ? locationText(instance.location) : "",
@@ -127,8 +129,10 @@ function openMcp(ctx: TuiContext, args: string | undefined): void {
 					run: (row) => {
 						const instance = byRow(row);
 						if (instance)
-							run(`Restarting ${instance.server}`, (view) =>
-								view.restart({ instance: instance.id }, BACKGROUND_CONTEXT),
+							run(
+								`Restarting ${instance.server}`,
+								(view) => view.restart({ instance: instance.id }, BACKGROUND_CONTEXT),
+								{ instance: instance.id, status: "starting" },
 							);
 					},
 				},
@@ -147,17 +151,17 @@ function openMcp(ctx: TuiContext, args: string | undefined): void {
 					run: (row) => {
 						const instance = byRow(row);
 						if (instance?.auth === "oauth")
-							run(`Signing out of ${instance.server}`, (view) =>
-								view.signOut({ server: instance.server }, BACKGROUND_CONTEXT),
+							run(
+								`Signing out of ${instance.server}`,
+								(view) => view.signOut({ server: instance.server }, BACKGROUND_CONTEXT),
+								{ instance: instance.id, status: "sign-in" },
 							);
 					},
 				},
 			],
 			footer: () => (status ? [ctx.theme.current.fg("muted", `  ${lineText(status)}`)] : []),
 			onClose: () => {
-				closed = true;
-				for (const stop of stops) stop();
-				ref.release();
+				scope.dispose();
 				overlay.close();
 			},
 		}),

@@ -472,7 +472,10 @@ test("an invalid mcp.json keeps the last valid servers, also across a reload", a
 	const [after] = await until(s1.servers, (value) => isUp("files")(value) && host.starts().length === 2);
 	assert.equal(after!.id, instance!.id);
 	assert.equal(alive(pid), false);
-	assert.match(owner.errors.value.join("\n"), /Invalid mcp.json syntax; keeping the last valid servers/);
+	// The restarted reader reads the half-saved file once more before it reports it.
+	await until(owner.errors, (errors) =>
+		/Invalid mcp.json syntax; keeping the last valid servers/.test(errors.join("\n")),
+	);
 });
 
 test("a view outlives its last reference by the linger: a worker re-taking it keeps its processes", async (t) => {
@@ -754,6 +757,8 @@ test("a reload of the plugin keeps the leases and the tools: the new supervisor 
 	const stop = follow(s1.servers, (servers) => {
 		fewest = Math.min(fewest, servers[0]?.tools.length ?? 0);
 	});
+	// The manager's memento of the listed tools is written a moment after the list changed: let it catch up.
+	await settled(host.manager.instances);
 	// A new facet value: a reload, not the same code again.
 	await host.fixture.reload([{ ...mcpServer }]);
 	const [after] = await until(s1.servers, (value) => isUp("files")(value) && host.starts().length === 2);

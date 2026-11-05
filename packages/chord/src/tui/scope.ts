@@ -15,6 +15,9 @@ import { hostLanguage, type Language, type MessageData, type Messages, type Tran
 import { type PageState, pageState } from "../surfaces/page-state.ts";
 import type { NativeWatchable, Watchable } from "../watch.ts";
 
+/** Adds an optimistic action shown while `call` is in flight; returns `call` (see `TuiScope.optimistic`). */
+export type OptimisticAdd<A> = <R>(action: A, call: Promise<R>) => Promise<R>;
+
 /** A component's scope: what it holds and follows, until `dispose`. */
 export class TuiScope<P extends Principal = Principal> {
 	readonly #host: Host<P>;
@@ -74,32 +77,52 @@ export class TuiScope<P extends Principal = Principal> {
 	}
 
 	/**
-	 * `read` with an optimistic value (React's `useOptimistic`): `show(value, call)` returns `call` and shows `value` in
-	 * place of `read`'s until every call shown so settled, then `read`'s again; each change calls `changed`. A call over
-	 * a link settles after the changes its answering host committed before answering (decision "A call's answer follows
-	 * its state"), so the value shown next is the real one.
+	 * `read` with optimistic values, as React's `useOptimistic`: `add(action, call)` returns `call` and, until every call
+	 * added so settled, the reader shows `reduce(current, action)` applied over `read`'s value for each action in flight,
+	 * in order (without `reduce`, the last action is the value); then `read`'s again. `pending` says a call is in flight.
+	 * Each change calls `changed`. A call over a link settles after the changes its answering host committed before
+	 * answering (decision "A call's answer follows its state"), so the value shown next is the real one. A rejected
+	 * call is its caller's to handle (React leaves it to the transition); its action goes as a resolved one's does.
 	 */
-	optimistic<T>(
-		read: () => T | undefined,
-	): readonly [read: () => T | undefined, show: <R>(value: T, call: Promise<R>) => Promise<R>] {
-		let shown: T | undefined;
+	optimistic<T>(read: () => T): readonly [read: () => T, add: OptimisticAdd<T>, pending: () => boolean];
+	optimistic<T, A>(
+		read: () => T,
+		reduce: (current: T, action: A) => T,
+	): readonly [read: () => T, add: OptimisticAdd<A>, pending: () => boolean];
+	optimistic<T, A>(
+		read: () => T,
+		// Without `reduce` the first overload makes the action a `T`: the last one is the value.
+		reduce: (current: T, action: A) => T = (_current, action) => action as unknown as T,
+	): readonly [read: () => T, add: OptimisticAdd<A>, pending: () => boolean] {
+		// Kept until every call settled, as React keeps the updates of transitions still in flight.
+		let actions: A[] = [];
 		let pending = 0;
 		const redraw = (): void => {
 			if (!this.#abort.signal.aborted) this.#changed();
 		};
 		const settled = (): void => {
-			if (--pending === 0) shown = undefined;
+			if (--pending === 0) actions = [];
 			redraw();
 		};
-		const show = <R>(value: T, call: Promise<R>): Promise<R> => {
-			shown = value;
+		const add = <R>(action: A, call: Promise<R>): Promise<R> => {
+			actions = [...actions, action];
 			pending++;
 			// Its caller handles a rejection of `call`; this only follows it.
 			call.then(settled, settled);
 			redraw();
 			return call;
 		};
-		return [() => (pending > 0 ? shown : read()), show];
+		// The value shown is computed again only when `read`'s value or the actions changed: a redraw reading it often
+		// gets the same value (by identity) until then.
+		let last: { base: T; actions: A[]; value: T } | undefined;
+		const shown = (): T => {
+			const base = read();
+			if (pending === 0) return base;
+			if (last?.base !== base || last.actions !== actions)
+				last = { base, actions, value: actions.reduce(reduce, base) };
+			return last.value;
+		};
+		return [shown, add, () => pending > 0];
 	}
 
 	/**

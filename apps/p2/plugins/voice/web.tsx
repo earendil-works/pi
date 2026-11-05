@@ -6,14 +6,17 @@
 // A read/write guest talks (its transcripts are its own messages) but hears nothing yet: the answers are read aloud only
 // in the owner's browser. View-only guests have no voice mode. Only when the server has a speech service (voice.json).
 
-import { Access, BACKGROUND_CONTEXT, contribute, defineFacet, grantMode, type HeldIn, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, type HeldIn, liveIn } from "@p2/app/v1";
 import {
 	CheckIcon,
 	closeLayers,
 	openLayer,
 	Sheet,
 	Slots,
+	useCanWrite,
+	useComposerState,
 	useObject,
+	useOptimisticCall,
 	useOwner,
 	useReadable,
 	useRoute,
@@ -172,11 +175,7 @@ function MicIcon({ muted = false, size = 18 }: { muted?: boolean; size?: number 
  * view-only guest only reads).
  */
 function useTalker(): { owner: boolean; talker: boolean } {
-	const owner = useOwner();
-	const { session } = useRoute();
-	const access = useObject(Access, {});
-	const grant = useReadable(liveIn(access, "guest")?.grant);
-	return { owner, talker: owner || grantMode(grant, session) === "full" };
+	return { owner: useOwner(), talker: useCanWrite(useRoute().session) };
 }
 
 /** The voice mode switch of a conversation (the owner's variant or a guest's) and its shared voice. */
@@ -379,7 +378,12 @@ function VoiceSheet({ config, owner, onClose }: { config: VoiceConfig; owner: bo
 	const [, setTick] = useState(0);
 	useEffect(() => shown.subscribe(() => setTick((tick) => tick + 1)), []);
 	const mine = useStored();
-	const settings = shared ?? mine;
+	// The owner's choice shows at once; a refused one goes back with the error in the toast.
+	const [settings, choose] = useOptimisticCall(
+		shared ?? mine,
+		(_, next: VoiceSettings) => next,
+		useComposerState().fail,
+	);
 	const { engine: ttsEngine, voice, language } = resolveVoice(config, settings);
 	const languages = languagesOf(ttsEngine);
 	const voiceName = ttsEngine?.voices.find((option) => option.id === voice)?.name ?? voice;
@@ -416,7 +420,7 @@ function VoiceSheet({ config, owner, onClose }: { config: VoiceConfig; owner: bo
 		const next = resolved(config, { ...settings, ...change });
 		sampling.current = next;
 		stored.set(next);
-		void ownerMode?.choose(next, BACKGROUND_CONTEXT).catch((error: unknown) => console.error("[voice]", error));
+		if (ownerMode) choose(next, () => ownerMode.choose(next, BACKGROUND_CONTEXT));
 	};
 	const sample = () => sampler.sample();
 

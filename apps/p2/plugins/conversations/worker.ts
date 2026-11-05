@@ -11,7 +11,6 @@ import {
 	type PeerMessage,
 	senderText,
 } from "@p2/app/v1";
-import { durableContext } from "@p2/app/v1/node";
 import {
 	defineP2Tool,
 	Extensions,
@@ -24,6 +23,7 @@ import {
 	type WorkerParts,
 	workerOf,
 } from "@p2/app/v1/worker";
+import { StatusReport } from "../status/contract.ts";
 import { Conversations, PeerConversation, type Query } from "./contract.ts";
 
 const ConversationTools = local("p2.conversation-tools", { version: 1, params: {}, members: {} });
@@ -84,16 +84,19 @@ const conversationsExtension = (worker: () => WorkerParts) => {
 					try {
 						// The recipient's entry records it: its turn may act for the owner too.
 						const origin = await originOf(api, context);
-						const result = await worker().root(async (ctx) =>
-							expectVariant(await ctx.get(Conversations, {}), "worker").query(
-								{
-									conversation: 1,
-									requestId: `${api.taskId}:${api.callId}`,
-									...(origin ? { origin } : {}),
-									query,
-								},
-								ctx,
-							),
+						// A root of the worker's own under the tool's context (its cancellation, its trace).
+						const result = await worker().root(
+							async (ctx) =>
+								expectVariant(await ctx.get(Conversations, {}), "worker").query(
+									{
+										conversation: 1,
+										requestId: `${api.taskId}:${api.callId}`,
+										...(origin ? { origin } : {}),
+										query,
+									},
+									ctx,
+								),
+							context,
 						);
 						switch (result.action) {
 							case "list":
@@ -142,6 +145,7 @@ export default defineFacet((host) => {
 		const harness = harnessOf(self);
 		const worker = workerOf(self);
 		const gates = self.registry(InputGates);
+		const status = self.get(StatusReport, {});
 		return {
 			variant: "broker",
 			members: {
@@ -149,8 +153,7 @@ export default defineFacet((host) => {
 					worker().liveness.call(async () => {
 						for (const gate of gates.value.values()) await gate(ctx);
 						const durable = harness().durable;
-						const context = durableContext(ctx);
-						const main = await durable.conversation(await mainConversation(durable, context), context);
+						const main = await durable.conversation(await mainConversation(durable, ctx), ctx);
 						if (!main) throw new Error("No main conversation");
 						const sent = await main.submit(
 							{
@@ -170,22 +173,23 @@ export default defineFacet((host) => {
 								requestId: `conversation:${source}:${requestId}`,
 								whenBusy: followUp ? "followUp" : "steer",
 							},
-							context,
+							ctx,
 						);
+						// The recipient's working dot is current when the sender's tool answers.
+						await status.push(ctx);
 						return { submissionId: sent.id };
 					}),
 				answer: (ctx) =>
 					worker().liveness.call(async () => {
 						const durable = harness().durable;
-						const context = durableContext(ctx);
-						const main = await durable.conversation(await mainConversation(durable, context), context);
+						const main = await durable.conversation(await mainConversation(durable, ctx), ctx);
 						if (!main) throw new Error("No main conversation");
 						let cursor: Cursor | undefined;
 						let text: string | undefined;
 						let truncated = false;
 						let limited = false;
 						for (let scanned = 0; scanned < 2000; ) {
-							const page = await main.entries({}, 100, cursor, context);
+							const page = await main.entries({}, 100, cursor, ctx);
 							for (const entry of page.items) {
 								scanned++;
 								const message = AssistantEntry.is(entry)
@@ -204,7 +208,7 @@ export default defineFacet((host) => {
 							cursor = page.next;
 							limited = scanned >= 2000;
 						}
-						const busy = (await durable.snapshot(LiveDoc, main.id, context))?.run !== undefined;
+						const busy = (await durable.snapshot(LiveDoc, main.id, ctx))?.run !== undefined;
 						return { ...(text === undefined ? {} : { text }), busy, truncated, limited };
 					}),
 			},

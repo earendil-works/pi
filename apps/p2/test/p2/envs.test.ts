@@ -110,7 +110,8 @@ test(
 		const browser = fixture.browser();
 		const envs = browser.hold(Envs, {}, BACKGROUND_CONTEXT);
 		await envs.save({ name: "gpu", config }, BACKGROUND_CONTEXT);
-		await until(envs.envs, (entries) => entries?.[0]?.name === "gpu");
+		// The answer follows its state: the saved environment is listed when the call resolves.
+		assert.equal(envs.envs.value[0]?.name, "gpu");
 		await writeFile(join(fixture.dataDir, "envs.json"), JSON.stringify({ gpu: { ...config, host: "changed" } }));
 		await until(envs.envs, (entries) => entries?.[0]?.config.host === "changed");
 		await writeFile(join(fixture.dataDir, "envs.json"), "{");
@@ -293,6 +294,7 @@ test(
 		);
 		assert.equal((await stat(uploadedKey.identityFile)).mode & 0o777, 0o600);
 		await envs.delete({ name: "copy" }, BACKGROUND_CONTEXT);
+		assert(!envs.envs.value.some((entry) => entry.name === "copy"), "the deleted environment is gone at the answer");
 		const sessions = await holdIn(owner, Sessions, {}, "owner");
 		const session = await sessions.create(
 			{ env: "box", cwd: "~/project", createDirectory: true },

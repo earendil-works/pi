@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { canSend, contribute, defineFacet, filePreview, signalOf } from "@p2/app/v1";
+import {
+	canSend,
+	contribute,
+	defineFacet,
+	filePreview,
+	signalOf,
+	withAbortSignal,
+	withoutAbortSignal,
+} from "@p2/app/v1";
 import { fromOrigin, type RouteHandler, Routes, sendJson, serverOf } from "@p2/app/v1/server";
 import { Catalog } from "../sessions/contract.ts";
 import { WorkspaceTransfer } from "./contract.ts";
@@ -71,11 +79,13 @@ export default defineFacet((host) => {
 							} catch (error) {
 								// Cleanup has its own uncancelled root after a disconnect.
 								await server()
-									.root(async (cleanup) =>
-										(await cleanup.get(WorkspaceTransfer, { session, conversation })).write(
-											{ path, name, token, offset, data: "", final: false, abort: true },
-											cleanup,
-										),
+									.root(
+										async (cleanup) =>
+											(await cleanup.get(WorkspaceTransfer, { session, conversation })).write(
+												{ path, name, token, offset, data: "", final: false, abort: true },
+												cleanup,
+											),
+										withoutAbortSignal(outer),
 									)
 									.catch(() => {});
 								throw error;
@@ -151,7 +161,7 @@ export default defineFacet((host) => {
 						}
 						response.end();
 					},
-					AbortSignal.any([abort.signal, signalOf(outer)]),
+					withAbortSignal(abort.signal, outer),
 				);
 			} catch (error) {
 				request.resume();

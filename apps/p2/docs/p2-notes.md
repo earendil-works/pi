@@ -258,7 +258,7 @@ The launcher polls the bundle version every second. A changed hash prepares a ne
 active; once ready, it copies bounded UI state (selection, drafts, send retry IDs, display toggles, reading position),
 swaps the fixed-origin connection and terminates the old worker. Failed preparation retains the old worker.
 `/reload` also creates a fresh worker, even for an unchanged hash. There is no local watcher or local facet reload.
-Network drops reconnect with bounded exponential backoff; subscribed references rebind and gone references reacquire.
+Network drops reconnect with bounded exponential backoff; Chord rebinds the held references.
 Image attachments/results remain text placeholders; no attachment uploader, browser sheets, terminal panel or
 provider-login screen is provided.
 
@@ -351,9 +351,20 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
   most five times a minute per session; the next crash waits for Retry. A worker stays alive while objects
   linger on it (Chat 30 s after its last viewer), on top of `P2_IDLE_MS`.
 - **Principals:** owners, guests and workers as before (`src/runtime/principals.ts`); the server host acts as `SERVER`
-  (workers tell its own requests from a person's), a worker as `HOST`. A method's `ctx.get` acts as its caller: code
-  that must reach a worker as the server runs in `serverOf(self)().root` (a root of the server's own). Revocation is
-  Chord's (`revokedBy`: a device, remote owners, a guest).
+  (workers tell its own requests from a person's), a worker as `HOST`. A method's `ctx.get` acts as its caller; a
+  `local` object's methods, routines and jobs act as the host, so a server object that must reach a worker as the
+  server is a `local` one (`SessionOperations`, `SearchIndex`, `ConversationBroker`). Code outside Chord calls (a
+  Durable tool, a route) uses `serverOf(self)().root(fn, context)` / `workerOf(self)().root(fn, context)`, which take
+  a required context: a method passes `withoutAbortSignal(ctx)` (the call chain is kept, a caller giving up does not
+  cut it off), a tool its Durable context. Revocation is Chord's (`revokedBy`: a device, remote owners, a guest).
+- **Rules this code follows** (the p2 cleanup, `packages/chord/docs/decisions.md` "App authoring rules confirmed by
+  the p2 audit"): state outside Chord is followed (`self.follow` of a synchronous observer: `Hosts.workers` follows
+  the workers component, status follows Durable's task graph), never copied by a listener; a method awaits its own
+  effects on the host that answers; long work is a job (`self.job`, persisted on the server's store where it must
+  survive a restart: session lifecycle operations, index rebuilds) and its UI watches the job's state; a session's
+  worker pushes what the server's index shows (title, `/tree` branches, subagent flags, working state) inside the
+  method that changed it, awaited, and never pulls session data (the search cursor is the server's acknowledgement
+  of what it indexed, not session data).
 - **References:** `host.hold(T, params, ctx)` gives a reference at once (loading, live, failed, ended);
   `ctx.get`/`host.get` one once live. UIs use `src/runtime/refs.ts`: `follow` (a value with its current one first),
   `followRegistry`, `whenLive`, `statusOf`, `liveIn(ref, ...variants)` (`HeldIn`), `UI_LINGER`. A held reference's
@@ -366,6 +377,12 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
   `TerminalServices`, `DeviceAccesses`, `ForwardsNative`, `RadiusConnections`. A reader that needs a native while it
   activates also declares its owner (`self.get(Owner, {})`). Methods return `null` for nothing; their arguments are
   closed objects (schemas that check stored data stay open).
+- **State outside Chord is followed:** a native's state (a store with `subscribe`, the configuration files, a
+  database, `processLogs`) or a Durable document is a state member through `self.follow` of a synchronous observer
+  (`followNative(self, subscribe, read)` from `@p2/app/v1` for a native that tells listeners; Durable's `observeDoc`), never a document a
+  routine or listener copies it into. A method that changes it through the native answers after the native told the
+  source, so the page holds the new state when the call resolves (models, envs, ports, login, mcp, logs, sharing,
+  voice mode).
 - **Registries:** keyed registries (`keyedRegistry`) compose contributions into a map; the core facets serve the base
   ones (`serveServerRegistries`, `serveWorkerRegistries`, `tuiCoreFacet`, `webCoreFacet`), a plugin serves its own
   (`serveKeyed`). One contribution per registry per object or facet.
@@ -456,8 +473,10 @@ The stack and per-area scroll positions persist in this tab's sessionStorage; UR
 Failed worker starts now publish `WorkerState.error` through `SessionStatus`, including failures before a process
 could be spawned and fatal bootstrap failures after control readiness. The session view replaces its spinner with
 the error, **Retry** and owner-only **Show logs**; the sidebar marks it **Worker failed**. A failed start stays
-cached so background references cannot continually respawn it. Owner-only `WorkerControl.retry` stops the old
-instance and clears the failure and notice before a new Chat hold; drafts and attachments stay intact. Creating a session
+cached so background references cannot continually respawn it. Owner-only `WorkerControl.restart` (Retry) stops the
+old instance, clears the failure and notice, starts a worker (holding `WorkerBoundary` itself when nothing else holds
+the session) and answers with the outcome: once the worker runs, or rejecting `worker_failed` with why it could not
+start, so the button shows pending and then the result; drafts and attachments stay intact. Creating a session
 navigates to its view before awaiting the worker, so a failed first start also has a visible recovery screen.
 
 Host `onError`, refused reloads and worker failures publish bounded, redacted owner notices (`LogNotices`), with
@@ -465,7 +484,7 @@ Show logs and Dismiss. Notices keep the latest error per source (at most 50 sour
 messages do not become worker-failure notices. Archived-session admission refusals are not cached as crashes,
 so restoring an archive still works without an extra Retry. Archiving stops the worker with
 `SessionWorkerControl.suspend`, not `stop`: holders of the session's objects (a page's lingering conversation) wait
-suspended until a restore (`retry`) or their release, instead of starting a worker the archive refuses. Neither guests nor workers may read or dismiss notices, or invoke
+suspended until a restore (`resume`) or their release, instead of starting a worker the archive refuses. Neither guests nor workers may read or dismiss notices, or invoke
 the worker retry control. Dev controls additionally publish their own reload/restart results.
 
 The owner-only `logs` plugin adds **Logs** to `sidebar-foot:logs`. Its sheet selects Server, session workers,
@@ -563,8 +582,9 @@ translated phone drawer and intercept chat taps.
   facet, and imports base code directly. `plugin-layout.test.ts` builds every server, worker, TUI and web facet with
   Chord v2's `buildFacet` against the API.
 - **Runtime registries and locals** (`src/runtime`): `Routes` (HTTP by `METHOD /path`, exact path), `WorkerInitValues`
-  (spawn parameters contributed per plugin; a throw refuses the start, e.g. archived sessions), `Hosts` (worker
-  states, restart for the holders), `HarnessHost`/`HarnessNative`, `Extensions`, `HarnessConfig`, `Slots`,
+  (the worker's start data, contributed per plugin; a throw refuses the start, e.g. archived sessions; a contribution
+  may wait, as the sessions plugin's does for a copy's files), `Hosts` (worker states, followed from the workers
+  component; restart for the holders), `HarnessHost`/`HarnessNative`, `Extensions`, `HarnessConfig`, `Slots`,
   `useObject`/`useReadable`/`useStatus`.
 - **No configuration process globals.** Diagnostics alone have native process-scoped buffers because they capture
   stdout/stderr before/after object activation and survive facet reload. Host configuration is the core's: `Server` (server: `info` = data dir,
@@ -614,13 +634,28 @@ translated phone drawer and intercept chat taps.
   workers while any session or subagent location uses the environment (`sessionsUsing`). Sharing: read/write links
   need the remote confirmation when any of the session's conversations works on a remote environment
   (`remoteEnvironments`; `Sharing.env` lists them).
+- **Session lifecycle operations** (`SessionOperations`, server, a host-lifetime `local` object of the sessions plugin;
+  its job runs persist in the server's Chord store `<data>/server.sqlite` and run again after a crash, each run
+  idempotent): `relocate`, `clone`, `fork` and `archive` answer once their visible effect committed on the server and
+  run their long part as a job. `create`, `clone` and `fork` take a client-chosen ID (`id`, `copy`), so a page
+  navigates before the answer; a chosen ID already in the catalog answers its row (a retry). `clone` and `fork` answer
+  with the copy's row at once; the copy's worker start waits (in its start data) while its files are copied and, for
+  an ID held before its row exists, up to 10 s for the row. `relocate` validates the destination at once (a missing
+  directory rejects) and starts the move; `archive` archives the row, then closes the session's `SessionArchived`
+  contributions and suspends its worker in the job (`restore` waits for a running archive first). `Sessions.operations`
+  lists the running ones (`copying` while a copy's files are copied) and the failed ones with their error until
+  `dismissOperation`: a busy worker refusing a move or a clone, a failed copy (its row archived again, its files
+  removed). The agent's `location_move` goes through `SessionMoves.relocate`, which waits for the job and answers the
+  refusal (not recorded). Tests: `session-operations.test.ts`, `fork-clone.test.ts`, `relocate.test.ts`. The UI:
+  the web's new session and the TUI's `/new`, `/clone` and `/fork` choose the ID and open the session at once; the
+  sidebar row and the TUI selector show running operations and failed ones with Dismiss (`/dismiss-failed`), the top
+  bar "Moving…" during a move (`docs/optimistic-ui.md`).
 - **Relocation (in place):** `Sessions.relocate` (web Relocate, TUI `/cd`) does not restart a running worker.
-  - **Server** (`SessionWorkers.relocate`, serialized with starts, stops and pauses): fences the worker with
+  - **Server** (the relocate job; `SessionWorkers.relocate`, serialized with starts, stops and pauses): fences the worker with
     `WorkerBoundary.prepare` (refused while anything runs: "Stop the current run before changing directory", a named
     subagent, background work), updates the catalog, then calls `WorkerBoundary.relocate`, which runs
     `Harness.relocate` and lifts the fence. The fence counts as an active call, so the worker cannot stop idle
-    meanwhile. The steps run in a root of the server's own (`host.root`), not the caller's: an aborted call or closed
-    tab cannot cut them off. A worker is never left fenced: a failed catalog update lifts the fence (`cancel`); a
+    meanwhile. The steps run in the job, not in the caller's call: an aborted call or closed tab cannot cut them off. A worker is never left fenced: a failed catalog update lifts the fence (`cancel`); a
     worker whose fence state is unknown (prepare failed after the fence, or cancel failed) is stopped. A worker that
     exits during the steps (crash, idle stop racing the fence) gets only the catalog update. While a step calls the
     worker (prepare, move, cancel), its route fails on a dead link instead of queueing a start behind the relocation,
@@ -665,8 +700,6 @@ translated phone drawer and intercept chat taps.
     one connection each and closing only unused machines), `harness-cwd.test.ts` (version 1 registry placement),
     `envs.test.ts` (local to SSH and back in place, an own local location staying while the session moves to SSH,
     real sshd).
-- **Retries:** `retrying()` (src/runtime/retry.ts) only retries `upgrade_conflict` (an old root reaching an object a
-  reload migrated), in a fresh root. Roots of a worker that started behind the server are admitted by Chord.
 - **Principals** (`src/runtime/principals.ts`, typed: `P2Principal`, with Chord's API typed by it in
   `src/runtime/chord.ts`): `owner` (trusted loopback `access: "local"`, authenticated Radius `access: "relay"`, or a
   signed owner cookie `access: "device"` with a device ID), `guest`, `worker` (stamped by the server's `session:` route
@@ -770,8 +803,10 @@ translated phone drawer and intercept chat taps.
   keeps its focus and a phone's keyboard. The session is created (with the location and model chosen at that Send) whenever the owner's catalog is live, its messages move to the main
   conversation's outbox, which delivers them, and the page opens the session. Messages sent meanwhile join the same
   session. A creation the server refuses (its own errors: a missing directory, an unknown model) puts the messages
-  back into the composer with the error; a connection failure is retried like an outbox send. A creation whose answer
-  was lost with the connection can leave an empty session behind (`create` takes no request ID).
+  back into the composer with the error; a connection failure is retried like an outbox send. The page chooses the
+  session's ID at the first Send, so a creation whose answer was lost with the connection is tried again with the same
+  ID and answers the same session; the new session's worker starts beside the creation (the page holds its main
+  conversation while `create` runs; the worker's start waits for the row).
 - **Chat frame** (`Main` in `plugins/chat/web.tsx`): the chat's `.chat` area and its dock outlive the screens shown in
   it (the new-session screen, a conversation, the next one). There is one composer, in the dock: a screen publishes
   what the dock shows (`useChatScreen`: a bar above, the composer's settings, queued rows, the footer, or a bar in the
@@ -800,26 +835,32 @@ translated phone drawer and intercept chat taps.
   conversation) has one height in every state. Rows far from the viewport are not in the DOM: browser find-in-page and
   tests see only rendered rows (`.rows[data-rows]` counts them); `jumpToEntry` reveals an entry through the list
   (`revealInTranscripts`).
-- **References** (Chord entry 8): an awaited `ctx.get`/`host.get` is ready with its state; UI runtimes hold
-  synchronously (`host.hold` in `useObject` and the TUI's `watch`) and read state through `useReadable` (undefined
-  until hydrated). Multi-variant references narrow on `variant` before using a member that not every variant has:
-  inline, `inVariant(ref, ...variants)` (the ref or `undefined`; a loading ref has no variant yet), `useObject(type,
-  input, { variant })`, or `expectVariant` where a mismatch is a bug (throws `not_in_variant`); all in
-  `src/runtime/chord.ts`. A TUI `watch` binds after `ready`, so its callback narrows on `ref.variant`. Tests use
-  `holdIn(host, type, input, variant)` (held, ready, `expectVariant`). Method-only references take `{ state: false }`.
+- **References**: an awaited `ctx.get`/`host.get` is live with its state; UI runtimes hold synchronously
+  (`host.hold` in `useObject` and `TuiScope.watch`) and read state through `useReadable` (undefined until hydrated).
+  Chord rebinds a held reference by itself (a dropped link, a restarted worker, a reload); the UI never holds one
+  again. Multi-variant references narrow with `liveIn(ref, ...variants)` or `useObject(type, params, { variant })`;
+  a TUI `watch` binds once the reference is live, so its callback narrows on `ref.variant`. Tests use
+  `holdIn(host, type, params, variant)`.
+- **Optimistic UI** (`docs/optimistic-ui.md`): actions show their effect at once (`useOptimisticCall` on the web,
+  `scope.optimistic(read, reduce?)` in the terminal, Chord's `TuiScope.optimistic`), long work shows a pending state,
+  refusals roll back with the error.
 - **Lingering views** (`UI_LINGER`, `src/runtime/refs.ts`): the web's `useObject` and the TUI's `TuiScope` release a
   Chat reference 2 minutes after its view goes (at most 4), so switching back to a conversation binds at once; a
-  lingering reference counts as a viewer for worker liveness. Transcripts live per host and conversation (`transcriptOf`, at most 4 not
+  lingering reference keeps the worker up (a reference over its link). Transcripts live per host and conversation (`transcriptOf`, at most 4 not
   viewed), and a view taken again merges its snapshot into them.
-- **Worker liveness**: viewers (live Chat objects and held workspace backends), active calls, Durable tasks; the host manager stops an idle worker
-  after `P2_IDLE_MS`. Browsers re-`get` a reference that went `gone` (`useObject`).
-- **Conversation views** are mirrored with `cell.replace`: a new Durable revision shares unchanged containers with
-  the last, so subscribers get a diff. `Chat` exposes `Conversation.view` directly (a held reference's state member).
-  Durable watches become listener sources without memoizing: a reload keeps the subscription (same resource, same
-  `select` source text), so a watch is never started twice.
+- **Worker liveness**: Chord's `host.activity` (references over the worker's links, running jobs such as a user
+  shell command, lingering objects such as a `Conversation` for 30 s) plus p2's counts (active
+  calls under the relocation fence, Durable tasks); the host manager stops an idle worker after `P2_IDLE_MS`. Browsers re-`get` a reference that went `gone` (`useObject`).
+- **Durable state is followed, never copied** (`self.follow` over Durable's synchronous observers): a
+  conversation's view (`observeConversation`, shared by every viewer through `Conversation.view`), chat mode's switch
+  and name (`observeDoc(ChatModeDoc)`), a conversation's artifact list (`observeDoc(ArtifactDoc)`), the task graph
+  (status). A document nobody wrote yet is absent and cannot be followed, so chat mode and artifacts create it empty on
+  first follow. A method that writes such a document returns after Durable's commit, by when the follow has the new
+  value (`chat-mode.test.ts`). The same holds for p2's own natives: `PromptResources` follows the prompt loads.
 - **Sharing** (`plugins/sharing`): `Shares` (server local, `shares.sqlite`: links, guest identities with a
-  revision), `Presence` (connected guests, in memory), `GuestPresence` (held by a guest page's web facet; its
-  resource enters/leaves `Presence`), owner-only `Sharing` (links, connected guests, link/reset/remove). Guest
+  revision; the database tells listeners of each committed change and `Shares` follows it), `Presence` (connected
+  guests: derived from `host.references(GuestPresence)`, design §19), `GuestPresence` (held by a guest page's web
+  facet; a link drop is a leaving), owner-only `Sharing` (links, connected guests, link/reset/remove). Guest
   principals carry their grant revision; removal, link reset, archive and restore bump it and call
   `invalidatePrincipal`, so the guest's objects go `gone` and its socket closes. The server consults the
   `Authenticators` registry (guest cookie) and `SessionAccess` (guests reach only their session at the current
@@ -961,7 +1002,7 @@ translated phone drawer and intercept chat taps.
   committed it, and the cursor sent stays put until the last page of a range, so an interrupted scan repeats the
   range (idempotent by entry ID). It runs at start and after every commit adding entries (Durable
   `observeCommits`), and retries after an error (server unreachable, reload) from a fresh cursor. The speaker and
-  peer-sender blocks are not indexed. Owner-only `Search.search({ query, archived })`: sessions whose title or cwd
+  peer-sender blocks are not indexed. Owner-only `Search.rebuildIndex({ session })` (Pi Mobile's) starts a persisted job on `SearchIndex` (stop the worker, reset its entries, scan from a fresh worker; an archived session's starts without resuming its work and stops again) and answers once it started; `Search.rebuilds` shows it running and why it failed (`rebuild-index.test.ts`). Owner-only `Search.search({ query, archived })`: sessions whose title or cwd
   contains the query (sidebar order) and up to 41 message hits (literal terms, all required) in the archive scope.
   Search hits include conversation IDs, and a hit opens that conversation (a subagent's too); default titles derive from the first root user message, explicit titles
   survive reindexing, and `updatedAt` advances monotonically with indexed activity. The sidebar search box (owner) filters sessions and
@@ -994,8 +1035,9 @@ translated phone drawer and intercept chat taps.
   for every request (pages, WebSocket, files); the loopback owner cookie wins over a guest cookie (the owner's
   browser stays owner). Checked only on loopback. `loopback-join.test.ts` (HTTP and Chromium with fresh profiles).
 - **Provider login** (`plugins/login`): `LoginService` (server local) runs its own `Logins` (provider-owned
-  api-key and OAuth flows); its events arrive through a listener and become the `login` state (status, the pending
-  prompt, notices; never credentials or answers). `ProviderLogin` admits every owner (local, device-associated,
+  api-key and OAuth flows), which keeps the flow's `login` state (status, the pending prompt, notices; never
+  credentials or answers); the service follows it, so `start`, `answer`, `dismiss` and `cancel` (which waits for the
+  flow to end) answer with their change shown. `ProviderLogin` admits every owner (local, device-associated,
   or Radius), never guests, and adds the provider list. Web: Providers in the sidebar footer for every
   owner, regardless of browser hostname. Remote flows automatically choose device-code when the provider offers
   it; account selectors remain interactive. Browser-callback flows keep the provider's registered callback URL:
@@ -1005,7 +1047,8 @@ translated phone drawer and intercept chat taps.
   `openBrowserOnConfirm: false` (a provider asking clients not to offer opening its page) shows the verification
   address as text instead of the Open link (web), and the TUI offers no "open in browser" for it. No pi-ai changes or custom
   callback URL. API keys and pasted codes pass through the tunnel/relay; use a trusted transport. Once no browser
-  holds the sheet, an unfinished login is cancelled. Tests use fake providers (login.test.ts and remote-login.test.ts).
+  holds the sheet (no reference to its owner's `ProviderLogin` left, `host.references`), its unfinished login is
+  cancelled. Tests use fake providers (login.test.ts and remote-login.test.ts).
 - **Web slots**: `SlotList({ prefix })` renders every `prefix:<name>` slot (e.g. `sidebar-foot:providers`); `Sheet` is
   the shared modal with scroll memory (Escape and the scrim close the whole modal stack). Shell-level
   `workspace-panel` docks beside `main`; `workspace-terminal` is an optional terminals-plugin surface.
@@ -1015,9 +1058,8 @@ translated phone drawer and intercept chat taps.
   after source deletion or plugin reload. `test/p2/send-file.test.ts` and the files integration tests cover it.
   The artifacts plugin supplies the shared viewer.
 - **Artifacts and viewer** (`plugins/artifacts`): owns its native artifact tool and immutable version
-  storage (2 MiB UTF-8). `ArtifactList` reads the conversation's latest-only `ArtifactDoc`, independently of
-  transcript paging, compaction and reset; it subscribes before catching up and validates the conversation during
-  activation. `/artifact?session=&name=&version=` rechecks authorization for owner/guest, rejects cross-site reads,
+  storage (2 MiB UTF-8). `ArtifactList` follows the conversation's latest-only `ArtifactDoc`, independently of
+  transcript paging, compaction and reset, and validates the conversation during activation. `/artifact?session=&name=&version=` rechecks authorization for owner/guest, rejects cross-site reads,
   and serves the preview with a CSP sandbox (no same-origin privilege, forms, child frames or objects). Only
   previews receive the diagnostics bridge; `download=1` returns the original source. HEAD describes the same
   representation as GET. The chat-content slot supplies the shared transcript card contexts and explicit-click
@@ -1147,8 +1189,9 @@ translated phone drawer and intercept chat taps.
   exactly its locations (leaving one out ends that lease), a newer generation takes the session over and refuses an
   older one (decided inside the leases' change), calls go through the setting incarnation's lease, and the view's end
   (its worker's link went, after a 30 s linger, so a worker object taking it again keeps its processes) releases its
-  generation's leases; a reload keeps them and the last listed tools (in-memory
-  documents of the manager). Unshared instances close with their last lease, shared ones stay while configured. A lost
+  generation's leases; a reload keeps them (an in-memory document of the manager), and the restarted natives start
+  from the manager's memento of the last valid servers and the last listed tools. The manager follows `mcp.json`, the
+  instances and the sign-ins (`self.follow`), so restart, sign-in, sign-out and cancel answer with their change shown. Unshared instances close with their last lease, shared ones stay while configured. A lost
   connection reconnects with backoff (`RECONNECT`: 1 s doubling to 60 s, reset after a minute up), tools still listed;
   `notifications/tools/list_changed` refreshes them; call errors never carry a server's stderr (the owner's `error`
   does). The worker object (`p2.mcp-worker`) sends `setLocations` with every location its conversations work at (the
@@ -1206,7 +1249,7 @@ translated phone drawer and intercept chat taps.
   browser through the worker's `SubagentControl({ session }).archive({ conversation, archived })` (owner and read/write
   guests). Archiving aborts the conversation first (`setArchived`, shared by both); `send` clears the flag; spawning an
   archived name says so. `status` omits archived agents unless named and adds "N archived (status with a name shows
-  one)." `Child.archived` reaches the sidebar (`ChildStore`): archived
+  one)." `Child.archived` reaches the sidebar (`ChildStore`), pushed by the worker before `SubagentControl.archive` answers (the tool's changes after their commit): archived
   children sit behind an **N archived** row per session, open while viewing one. The subagent view now has mobile's
   bar (Tools, Archive/Restore). The TUI lists no subagents, so archived ones need nothing there.
   `subagents.test.ts` covers tool archive, status, browser restore/archive-with-abort, send restoring and guest

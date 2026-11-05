@@ -2,6 +2,7 @@
 // fake provider: copies under new IDs, history, artifacts, and the refusals.
 
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
@@ -55,10 +56,21 @@ describe("clone and fork (fake provider)", () => {
 		return ref;
 	};
 
-	it("clones the whole session under a new ID; the original goes on", async () => {
+	it("clones the whole session under a new ID chosen by the client; the original goes on", async () => {
 		const ref = await ownerSessions();
-		const copy = await ref.clone({ id: source.id }, BACKGROUND_CONTEXT);
-		assert.notEqual(copy.id, source.id);
+		const chosen = randomUUID();
+		// The page navigates to the copy before the answer: its worker waits until the copy is done.
+		const early = holdIn(owner, Chat, { session: chosen, conversation: 1 }, "participant");
+		const copy = await ref.clone({ id: source.id, copy: chosen }, BACKGROUND_CONTEXT);
+		assert.equal(copy.id, chosen);
+		assert.deepEqual(
+			await ref.clone({ id: source.id, copy: chosen }, BACKGROUND_CONTEXT),
+			copy,
+			"a retry answers the same row",
+		);
+		const waiting = await early;
+		await until(waiting.view, (next) => text(next).includes("Echo: second"));
+		waiting.release();
 		assert.equal(copy.title, "Parser work (copy)");
 		assert.equal(copy.cwd, source.cwd);
 		assert.deepEqual(copy.model, source.model);
@@ -92,6 +104,7 @@ describe("clone and fork (fake provider)", () => {
 		const fork = await ref.fork({ id: source.id, conversation: 1, before: second.id }, BACKGROUND_CONTEXT);
 		assert.equal(fork.title, "Parser work (fork)");
 		const forked = await chatOf(fork.id);
+
 		const forkView = await until(forked.view, (next) => text(next).includes("Echo: first"));
 		assert.doesNotMatch(text(forkView), /Echo: second|second/);
 		assert.equal(inputs(forkView).length, 2, "the inputs before the chosen one");
@@ -119,7 +132,18 @@ describe("clone and fork (fake provider)", () => {
 			BACKGROUND_CONTEXT,
 		);
 		await until(original.liveShell, (value) => Boolean(value?.running));
-		await assert.rejects(ref.clone({ id: source.id }, BACKGROUND_CONTEXT), /before cloning/);
+		// The clone's row is there at once; the busy worker refuses the copy: the operation fails visibly and the row is
+		// archived again (rolled back).
+		const refused = await ref.clone({ id: source.id }, BACKGROUND_CONTEXT);
+		const operations = await until(ref.operations, (list) =>
+			(list ?? []).some((each) => each.target === refused.id && each.phase === "failed"),
+		);
+		const failure = operations!.find((each) => each.target === refused.id);
+		assert(failure?.phase === "failed");
+		assert.match(failure.error, /before cloning/);
+		await until(ref.sessions, (rows) => rows?.find((row) => row.id === refused.id)?.archivedAt !== null);
+		await ref.dismissOperation({ operation: failure.id }, BACKGROUND_CONTEXT);
+		await until(ref.operations, (list) => !(list ?? []).some((each) => each.id === failure.id));
 		await original.abortShell({ shellId }, BACKGROUND_CONTEXT);
 		await until(original.liveShell, (value) => value === null);
 		forked.release();

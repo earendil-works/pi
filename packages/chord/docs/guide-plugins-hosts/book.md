@@ -445,13 +445,18 @@ full (design §3). Without that, the answer could overtake the index change and 
 So the rule for a method that should feel instant: it awaits its own changes, the pushes to other hosts included (the
 worker's `rename` awaits its report to the index), and keeps them on the host that answers or relays the answer.
 
-A terminal UI does the same with its component scope: `scope.optimistic(read)` wraps a reader and returns it with
-`show(value, call)`, which shows `value` until the call settles (until every call shown, when they overlap):
+A terminal UI does the same with its component scope: `scope.optimistic(read, reduce?)` wraps a reader and returns
+it with `add(action, call)` and `pending()`, as React's `useOptimistic`: while calls are in flight the reader shows
+`reduce(current, action)` over each action, in order (without a reducer the last action is the value), until every
+call added settles. `add` returns the call; a rejection is the caller's to handle.
 
 ```ts
 const titles = scope.watch(sessions.titles);
-const [title, show] = scope.optimistic(() => titles()?.[id]);
-await show(next, session.rename(next, ctx));              // title() is `next` at once, the real one when it settles
+const [title, add] = scope.optimistic(() => titles()?.[id]);
+await add(next, session.rename(next, ctx));               // title() is `next` at once, the real one when it settles
+
+const [rows, change] = scope.optimistic(() => list() ?? [], (rows, id: string) => rows.filter((row) => row.id !== id));
+change(id, store.remove({ id }, ctx)).catch(fail);        // gone at once; back with the error if refused
 ```
 
 `test/examples/63-optimistic-answers.ts` runs this with a stalled terminal client and prints what each redraw showed.

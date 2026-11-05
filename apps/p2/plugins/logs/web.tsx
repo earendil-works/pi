@@ -1,6 +1,7 @@
-import { defineFacet, whenLive } from "@p2/app/v1";
+import { contribute, defineFacet, whenLive } from "@p2/app/v1";
 import {
 	closeLayers,
+	errorText,
 	openLayer,
 	Sheet,
 	Slots,
@@ -14,7 +15,6 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { Logs } from "./contract.ts";
 import "./style.css";
-import { contribute } from "@p2/app/v1";
 
 function sourceLabel(source: string): string {
 	if (source.startsWith("session:")) return `Worker ${source.slice(8)}`;
@@ -41,7 +41,7 @@ function LogsSheet({ source }: { source: string }) {
 	useEffect(() => {
 		let current = true;
 		void (logs ? whenLive(logs) : Promise.resolve()).catch((error: unknown) => {
-			if (current) setMessage(error instanceof Error ? error.message : String(error));
+			if (current) setMessage(errorText(error));
 		});
 		return () => {
 			current = false;
@@ -104,7 +104,12 @@ function LogsSheet({ source }: { source: string }) {
 			</div>
 			{message && <output className="notice">{message}</output>}
 			<pre ref={area} className="logs-output" title="Log lines">
-				{text || (status === "live" ? "No log lines" : status === "gone" ? "Logs unavailable" : "Loading logs…")}
+				{text ||
+					(status === "live"
+						? "No log lines"
+						: status === "failed" || status === "ended"
+							? "Logs unavailable"
+							: "Loading logs…")}
 			</pre>
 		</Sheet>
 	);

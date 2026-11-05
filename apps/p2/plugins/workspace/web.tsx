@@ -1,12 +1,14 @@
-import { Access, BACKGROUND_CONTEXT, contribute, defineFacet, follow, grantMode, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, follow, liveIn } from "@p2/app/v1";
 import type { Navigation, WorkspaceRoute } from "@p2/app/v1/web";
 import {
 	FolderIcon,
 	locationLabel,
 	Slots,
+	useCanWrite,
 	useComposerState,
 	useNavigation,
 	useObject,
+	useOwner,
 	useReadable,
 	useRoute,
 	useStatus,
@@ -21,15 +23,8 @@ import { WorkspacePanel as MobileWorkspacePanel } from "./Workspace.tsx";
 function WorkspaceButton() {
 	const nav = useNavigation();
 	const route = useRoute();
-	const access = useObject(Access, {});
-	const grant = useReadable(liveIn(access, "guest")?.grant);
-	const status = useStatus(access);
-	if (
-		!route.session ||
-		status !== "live" ||
-		(access?.variant !== "owner" && grantMode(grant, route.session) !== "full")
-	)
-		return null;
+	const canWrite = useCanWrite(route.session);
+	if (!route.session || !canWrite) return null;
 	return (
 		<button
 			type="button"
@@ -50,25 +45,18 @@ function WorkspaceButton() {
 function WorkspacePanel() {
 	const route = useRoute(),
 		nav = useNavigation();
-	const access = useObject(Access, {});
-	const grant = useReadable(liveIn(access, "guest")?.grant);
-	const status = useStatus(access);
+	const owner = useOwner();
+	const canWrite = useCanWrite(route.session);
 	// Retry opens the workspace again: a new panel holds a new reference.
 	const [attempt, setAttempt] = useState(0);
-	if (
-		!route.session ||
-		!route.workspace ||
-		status !== "live" ||
-		(access?.variant !== "owner" && grantMode(grant, route.session) !== "full")
-	)
-		return null;
+	if (!route.session || !route.workspace || !canWrite) return null;
 	return (
 		<NativePanel
 			key={`${route.session}:${route.conversation}:${attempt}`}
 			onRetry={() => setAttempt((current) => current + 1)}
 			session={route.session}
 			conversation={route.conversation}
-			owner={access?.variant === "owner"}
+			owner={owner}
 			nav={nav}
 			route={route.workspace}
 		/>
@@ -101,7 +89,7 @@ function NativePanel({
 	);
 	const cwd = location?.cwd ?? "";
 	const { steer, setError } = useComposerState();
-	// Why the workspace is not open: a failed open (the reference is gone, and taken again shortly) shows its error
+	// Why the workspace is not open: a failed open shows its error (Retry opens it again with a new reference)
 	// instead of loading forever.
 	const [unavailable, setUnavailable] = useState<string>();
 	useEffect(() => {

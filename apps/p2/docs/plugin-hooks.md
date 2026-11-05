@@ -189,7 +189,7 @@ that must survive reload reads live resources through getters (`plugins/codemode
 | `HarnessEnvironments` | registry, key `"remote"` only | opens a remote machine (`at(cwd)` environments, one connection) per environment name | `src/runtime/worker.ts` | envs |
 | `ConversationLocations` | local, one provider | conversations following the session, own locations (`place`, `own`) | `src/runtime/worker.ts` | subagents (`plugins/subagents/worker.ts`) |
 | `Harness` | local, lifetime "host" | `harness` (native Durable Harness), `environments` (`session`, `locate(id)`, `at(location)`) | `src/runtime/worker.ts` | most worker plugins |
-| `WorkerProcess` | local, lifetime "host" | `init` (dataDir, generation, `values` from `WorkerInitValues`), `liveness` (`add("viewers" \| "activeCalls")`, `stopping`) | `src/runtime/worker.ts:165` | chat and workspace (viewers), codemode (`stopping`) |
+| `WorkerProcess` | local, lifetime "host" | `init` (dataDir, generation, `values` from `WorkerInitValues`), `liveness` (`add("viewers" \| "activeCalls")`, `stopping`) | `src/runtime/worker.ts` | workspace (viewers), participants' calls (`activeCalls`, the relocation fence), codemode (`stopping`) |
 | `Conversation` | local (chat) | `submit` (input with own `entry` kind), `write` (display-only entry), `stop`, `history`, `compact`, `reset`, `runShell`… | `plugins/chat/contract.ts:140-189` | chat-mode, conversations |
 
 ```ts

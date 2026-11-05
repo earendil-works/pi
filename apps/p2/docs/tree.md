@@ -42,8 +42,8 @@ version 2; absent: `{ 1, [{ 1, null }] }`):
   (`main`; model and thinking level follow it), the web home route, the drawer, the chat's back links, TUI checks,
   terminals, reading unread answers, `Sessions.fork`, and peer messages (the conversations broker).
 - Clients learn it through the session row (`Sessions` version 4, catalog schema 4; version 5: null labels); the
-  worker reports it after a switch and at every start (`treeSelf`). Clients built before still bind: the providers
-  accept `Sessions` 3 and 4 and `SessionTree` 1, mapping rows and the tree back (no `main`/`branches` for 3, a null
+  worker pushes it inside the switch, before answering, and at every start (`treeSelf`). Clients built before still
+  bind: the providers accept `Sessions` 3, 4 and 5 and `SessionTree` 1, mapping rows and the tree back (no `main`/`branches` for 3, a null
   label as the session title for 4, no labels for `SessionTree` 1). A web page or TUI viewing the previous main conversation follows a switch.
 - Earlier branches are read-only (`ReadOnlyConversations`): only the main conversation takes input (send, dequeue,
   configure); Stop stays allowed. A branch left while it works keeps running in the background: its run and queued
@@ -122,7 +122,8 @@ node:
   the current one marked in place), behind the session row's expand control, which also shows its subagents
   (collapsed by default, expanded while a subagent is shown); choosing one switches the session to its end
   (`SessionTree.select`). The worker
-  reports `p2.main` (`treeSelf`: `main` and the branches with their labels) at start and whenever a commit changes it.
+  pushes `p2.main` (`treeSelf`: `main` and the branches with their labels) at start and inside each `SessionTree`
+  method that changes it, before the method answers (nothing else changes `p2.main`).
 - Search indexes each branch's own entries (after its fork point).
 
 ## Later

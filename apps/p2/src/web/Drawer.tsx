@@ -8,6 +8,8 @@ export type SessionSummary = Session & {
 	subagents: Child[];
 	/** `unread`: a finished answer the owner has not read on any device (see `SessionReads`). */
 	worker: { busy: number[]; error?: string; unread?: boolean };
+	/** A lifecycle operation of the session: running (`label` only), or failed with its error and a Dismiss. */
+	operation?: { readonly label: string; readonly error?: string; readonly dismiss?: () => void };
 };
 
 import { requestReveal } from "./Chat.tsx";
@@ -225,6 +227,19 @@ function SessionRow({
 					</button>
 				)}
 			</div>
+			{session.operation && (
+				<div className={`session-operation ${session.operation.error === undefined ? "" : "failed"}`}>
+					<span title={session.operation.error}>
+						{session.operation.label}
+						{session.operation.error === undefined ? "" : `: ${session.operation.error}`}
+					</span>
+					{session.operation.dismiss && (
+						<button type="button" className="text-action" onClick={session.operation.dismiss}>
+							Dismiss
+						</button>
+					)}
+				</div>
+			)}
 			{branches && (
 				<BranchRows
 					session={session}
@@ -264,7 +279,6 @@ function SessionRow({
 export const Drawer = memo(function Drawer({
 	onSearch,
 	onRestore,
-	onError,
 	footer,
 	sessions,
 	activeId,
@@ -282,8 +296,8 @@ export const Drawer = memo(function Drawer({
 	guest,
 }: {
 	onSearch?: (query: string, archived: boolean) => Promise<SearchResults>;
-	onRestore: (id: string) => Promise<unknown>;
-	onError: (error: string) => void;
+	/** Restores an archived session and opens it (at `conversationId`, a message hit's). */
+	onRestore: (id: string, conversationId?: number) => void;
 	footer?: ReactNode;
 	sessions: SessionSummary[];
 	activeId?: string;
@@ -340,10 +354,6 @@ export const Drawer = memo(function Drawer({
 	const ordered = [...groups].sort(([a], [b]) => (latest.get(b) ?? 0) - (latest.get(a) ?? 0));
 	for (const [, list] of ordered)
 		list.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt);
-	const restore = (id: string, conversationId?: number) =>
-		void onRestore(id)
-			.then(() => onOpen(id, conversationId))
-			.catch((error: Error) => onError(error.message));
 	if (guest)
 		return (
 			<nav className="drawer-content" aria-label="Shared session">
@@ -450,7 +460,7 @@ export const Drawer = memo(function Drawer({
 									<button
 										type="button"
 										className={`session-main ${session.id === activeId && conversationId === session.main ? "active" : ""}`}
-										onClick={() => (archived ? restore(session.id) : onOpen(session.id))}
+										onClick={() => (archived ? onRestore(session.id) : onOpen(session.id))}
 									>
 										<span className="session-title">
 											{session.pinned && <PinIcon size={12} />}
@@ -482,7 +492,7 @@ export const Drawer = memo(function Drawer({
 								// p2 indexes subagent messages too: a hit opens the conversation it was found in, at the message.
 								onClick={() => {
 									requestReveal(hit.session, hit.conversationId, hit.entryId);
-									if (archived) restore(hit.session, hit.conversationId);
+									if (archived) onRestore(hit.session, hit.conversationId);
 									else onOpen(hit.session, hit.conversationId);
 								}}
 							>

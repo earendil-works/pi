@@ -15,7 +15,7 @@ import {
 	type Tx,
 } from "@earendil-works/pi-durable";
 import { arr, int, obj, opt, str, union } from "@earendil-works/pi-schema";
-import type { JsonValue } from "@p2/app/v1";
+import type { Context, JsonValue } from "@p2/app/v1";
 import { agentMessage, literal, messageData, peerMessage, SHELL_ENTRY, shellData } from "@p2/app/v1";
 import type { HistoryHits } from "../search/contract.ts";
 
@@ -29,12 +29,15 @@ export const READ_BUDGET = 50_000;
 const PREVIEW = 200;
 
 /** Searches the calling conversation in the server's index (the search plugin's worker feed). */
-export type HistorySearch = (query: {
-	query: string;
-	conversation: number;
-	before?: number;
-	limit: number;
-}) => Promise<HistoryHits>;
+export type HistorySearch = (
+	query: {
+		query: string;
+		conversation: number;
+		before?: number;
+		limit: number;
+	},
+	context: Context,
+) => Promise<HistoryHits>;
 
 export type HistoryRole = "user" | "assistant" | "marker";
 /** An entry as the history tools show it. */
@@ -292,12 +295,10 @@ export function createHistoryExtension(search: HistorySearch, label: (conversati
 				context,
 			);
 			const before = args.before ?? boundary;
-			const result = await search({
-				query: args.query,
-				conversation,
-				...(before === undefined ? {} : { before }),
-				limit: args.limit ?? 10,
-			});
+			const result = await search(
+				{ query: args.query, conversation, ...(before === undefined ? {} : { before }), limit: args.limit ?? 10 },
+				context,
+			);
 			// Authors from the entries themselves (the index keeps roles only).
 			const hits = await api.commit(async (tx) => {
 				const out: { entry: number; role: "user" | "assistant"; author?: string; snippet: string }[] = [];

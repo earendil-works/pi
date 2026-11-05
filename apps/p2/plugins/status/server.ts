@@ -2,68 +2,58 @@ import { num, obj } from "@earendil-works/pi-schema";
 import {
 	canView,
 	defineFacet,
-	defineState,
 	defineTypedState,
 	deriveTyped,
 	forbidden,
 	isGuest,
 	isOwner,
 	isWorker,
+	PluginError,
 	record,
 } from "@p2/app/v1";
 import { Hosts, serverOf } from "@p2/app/v1/server";
-import {
-	SessionMetrics,
-	SessionStatus,
-	type Status,
-	StatusesSchema,
-	StatusStore,
-	Viewers,
-	WorkerControl,
-} from "./contract.ts";
+import { ReportFields, SessionMetrics, SessionStatus, type Status, StatusStore, WorkerControl } from "./contract.ts";
 
-const Statuses = defineTypedState("p2.status-store", {
-	schema: obj({ statuses: StatusesSchema }),
+/** The latest report of each session's worker, with the generation that sent it. */
+const Reports = defineTypedState("p2.status-reports", {
+	schema: obj({ reports: record(obj({ generation: num(), ...ReportFields })) }),
 	version: 1,
-	initial: () => ({ statuses: {} }),
-});
-
-const Counts = defineState("p2.session-viewers", {
-	schema: obj({ counts: record(num()) }),
-	version: 1,
-	initial: () => ({ counts: {} }),
+	initial: () => ({ reports: {} }),
 });
 
 export default defineFacet((host) => {
+	// Who looks at a session: one entry per `SessionMetrics` reference (its params name the session and the viewer).
+	const metrics = host.references(SessionMetrics);
+
 	host.serve(StatusStore, (_params, self) => {
-		const store = self.state(Statuses);
+		const reports = self.state(Reports);
 		const hosts = self.get(Hosts, {});
-		// Whether a worker runs comes from the workers component; what it does, from the worker's reports.
-		self.on(hosts.workers, async ({ value: workers }, ctx) => {
-			await store.change((draft) => {
-				for (const [session, worker] of Object.entries(workers)) {
-					const current = draft.statuses[session];
-					if (!worker.running) {
-						draft.statuses[session] = {
-							running: false,
-							tasks: 0,
-							busy: [],
-							...(worker.error ? { error: worker.error } : {}),
-						};
-					} else if (current?.running !== true || current.error)
-						draft.statuses[session] = { running: true, tasks: 0, busy: [] };
-				}
-			}, ctx);
-		});
+		// Whether a worker runs comes from the workers component, what it does from its own generation's latest report.
+		const statuses = deriveTyped(self, [hosts.workers, reports], ([workers, { reports: latest }]) =>
+			Object.fromEntries(
+				Object.entries(workers).map(([session, worker]): [string, Status] => {
+					if (!worker.running)
+						return [
+							session,
+							{ running: false, tasks: 0, busy: [], ...(worker.error ? { error: worker.error } : {}) },
+						];
+					const report = latest[session];
+					if (report === undefined || report.generation !== worker.generation)
+						return [session, { running: true, tasks: 0, busy: [] }];
+					const { generation: _generation, ...work } = report;
+					return [session, { running: true, ...work }];
+				}),
+			),
+		);
 		return {
-			statuses: deriveTyped(self, [store], ([value]) => value.statuses as Record<string, Status>),
+			statuses,
 			report: async ({ session, generation, tasks, busy, usage }, ctx) => {
 				// A report of an older worker (one that exited while its report travelled) is dropped.
 				const worker = hosts.workers.value[session];
 				if (worker === undefined || !worker.running || worker.generation !== generation) return null;
-				await store.change((draft) => {
-					draft.statuses[session] = {
-						running: true,
+				await reports.change((draft) => {
+					draft.reports[session] = {
+						generation,
 						tasks,
 						busy: [...busy].sort((a, b) => a - b),
 						...(usage ? { usage } : {}),
@@ -80,53 +70,26 @@ export default defineFacet((host) => {
 		return {
 			variant: "owner",
 			members: {
-				restart: async () => {
-					await server().workers.retry(session);
+				// Answers with the start's outcome: the worker runs, or the call fails with why it could not start.
+				restart: async (ctx) => {
+					const outcome = await server().workers.retry(session, ctx);
+					if (outcome.error !== undefined) throw new PluginError("worker_failed", outcome.error);
 					return null;
 				},
 			},
 		};
 	});
 
-	host.serve(Viewers, (_params, self) => {
-		const viewers = new Map<string, Set<string>>();
-		const counts = self.state(Counts);
-		return {
-			counts: self.derive([counts], ([value]) => value.counts),
-			enter: async ({ session, viewer }, ctx) => {
-				const list = viewers.get(session) ?? new Set<string>();
-				list.add(viewer);
-				viewers.set(session, list);
-				await counts.change((draft) => {
-					draft.counts[session] = list.size;
-				}, ctx);
-				return null;
-			},
-			leave: async ({ session, viewer }, ctx) => {
-				const list = viewers.get(session);
-				list?.delete(viewer);
-				await counts.change((draft) => {
-					draft.counts[session] = list?.size ?? 0;
-				}, ctx);
-				return null;
-			},
-		};
-	});
-	host.serve(SessionMetrics, ({ session, viewer }, principal, self) => {
+	host.serve(SessionMetrics, ({ session }, principal, self) => {
 		if (!canView(principal, session)) throw forbidden("viewers only");
-		const counts = self.get(Viewers, {});
 		const status = self.get(StatusStore, {});
-		const server = serverOf(self);
-		const clients = self.derive([counts.counts], ([value]) => value[session] ?? 0);
-		const usage = deriveTyped(self, [status.statuses], ([value]) => value[session]?.usage ?? null);
-		self.open(
-			async () => server().root((ctx) => counts.enter({ session, viewer }, ctx)),
-			async () => {
-				await server()
-					.root((ctx) => counts.leave({ session, viewer }, ctx))
-					.catch(() => {});
-			},
+		const clients = self.derive(
+			[metrics],
+			([references]) =>
+				new Set(references.filter((each) => each.params.session === session).map((each) => each.params.viewer))
+					.size,
 		);
+		const usage = deriveTyped(self, [status.statuses], ([value]) => value[session]?.usage ?? null);
 		return { variant: "reader", members: { clients, usage } };
 	});
 

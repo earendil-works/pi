@@ -24,7 +24,6 @@ import {
 	signalOf,
 	until,
 } from "@p2/app/v1";
-import { durableContext } from "@p2/app/v1/node";
 import { CommitSignal, harnessOf, topLevelRecords } from "@p2/app/v1/worker";
 import { Subagents } from "../subagents/contract.worker.ts";
 import { type IndexedMessage, IndexScan, SearchFeed } from "./contract.ts";
@@ -89,17 +88,11 @@ async function catchUp(
 	through: number,
 	ctx: Ctx,
 ): Promise<number> {
-	const context = durableContext(ctx);
-	const upper = (await root.entries({}, 1, undefined, context)).items[0]?.id;
+	const upper = (await root.entries({}, 1, undefined, ctx)).items[0]?.id;
 	if (upper === undefined || upper <= through) return through;
 	let cursor: Cursor | undefined;
 	do {
-		const page = await root.entries(
-			{ minEntryId: (through + 1) as EntryId, maxEntryId: upper },
-			PAGE,
-			cursor,
-			context,
-		);
+		const page = await root.entries({ minEntryId: (through + 1) as EntryId, maxEntryId: upper }, PAGE, cursor, ctx);
 		cursor = page.next;
 		const messages = page.items.map(indexedMessage).filter((message) => message !== undefined);
 		await feed.index({ conversation: root.id, messages, through: cursor === undefined ? upper : through }, ctx);
@@ -137,16 +130,15 @@ export default defineFacet((host) => {
 			while (!signalOf(ctx).aborted) {
 				const seen = signal.version;
 				try {
-					const context = durableContext(ctx);
-					const registry = await durable.snapshot(Subagents, ROOT_CONVERSATION_ID, context);
+					const registry = await durable.snapshot(Subagents, ROOT_CONVERSATION_ID, ctx);
 					// A branch's history starts after its fork point: what it inherits is indexed with the conversation
 					// storing it.
 					const starts = new Map<number, number>(
-						(await topLevelRecords(durable, context)).map((record) => [record.id, record.parent?.at ?? 0]),
+						(await topLevelRecords(durable, ctx)).map((record) => [record.id, record.parent?.at ?? 0]),
 					);
 					for (const agent of Object.values(registry?.agents ?? {})) starts.set(agent.conversationId, 0);
 					for (const [id, start] of starts) {
-						const conversation = await durable.conversation(id as ConversationId, context);
+						const conversation = await durable.conversation(id as ConversationId, ctx);
 						if (!conversation) continue;
 						const through = await feed.cursor({ conversation: id }, ctx);
 						await catchUp(conversation, feed, Math.max(through, start), ctx);

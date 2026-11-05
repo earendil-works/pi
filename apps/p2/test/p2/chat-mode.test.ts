@@ -6,7 +6,13 @@ import { describe, it } from "node:test";
 import type { ConversationView, EntryRecord, InboxState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
-import { type ChatMessage, ChatMode, mentionsAgent, mentionToken } from "../../plugins/chat-mode/contract.ts";
+import {
+	type ChatMessage,
+	ChatMode,
+	ChatModeSetting,
+	mentionsAgent,
+	mentionToken,
+} from "../../plugins/chat-mode/contract.ts";
 import {
 	type ChatEntry,
 	composeMention,
@@ -249,6 +255,18 @@ describe("chat-mode on a bare session host", () => {
 			.client({ ...ALICE, id: "carol", home: "s2", sessions: { s2: "full" } })
 			.hold(ChatMode, where, BACKGROUND_CONTEXT);
 		await expectChord(whenLive(stranger), "forbidden");
+	});
+
+	it("shows a switch or a rename once the call returns: the worker follows the document, it copies nothing", async (t) => {
+		const fixture = await chatModeHost();
+		t.after(() => fixture.close());
+		const setting = await fixture.host.get(ChatModeSetting, { conversation: 1 }, BACKGROUND_CONTEXT);
+		const owner = await holdIn(fixture.client(OWNER), ChatMode, where, "owner");
+		assert.equal(setting.enabled.value, false);
+		await owner.set({ enabled: true }, BACKGROUND_CONTEXT);
+		assert.equal(setting.enabled.value, true, "committed and followed before the answer");
+		await owner.rename({ name: "Claude" }, BACKGROUND_CONTEXT);
+		assert.equal(setting.name.value, "Claude");
 	});
 
 	it("lets only the owner rename the agent; mentions then use the new name", async (t) => {

@@ -83,25 +83,23 @@ const ConversationConfigureSchema = obj({
 
 const RestoredSchema = arr(obj({ author: AuthorSchema, text: str() }));
 
-/**
- * The conversation's user shell command (`!cmd`/`!!cmd`) while it runs and until its `p2.shell` entry is placed:
- * the tail of its output (src/runtime/shell.ts limits). Null when none.
- */
-export const ShellStateSchema = union([
-	obj({
-		id: str(),
-		command: str(),
-		author: AuthorSchema,
-		includeInContext: bool(),
-		output: str(),
-		truncated: bool(),
-		running: bool(),
-		exitCode: opt(num()),
-		cancelled: bool(),
-		error: opt(str()),
-	}),
-	nul(),
-]);
+/** A user shell command (`!cmd`/`!!cmd`) while it runs and until its `p2.shell` entry is placed. */
+export const LiveShellSchema = obj({
+	id: str(),
+	command: str(),
+	author: AuthorSchema,
+	includeInContext: bool(),
+	/** The tail of its output (src/runtime/shell.ts limits). */
+	output: str(),
+	truncated: bool(),
+	running: bool(),
+	exitCode: opt(num()),
+	cancelled: bool(),
+	error: opt(str()),
+});
+export type LiveShell = Static<typeof LiveShellSchema>;
+/** The conversation's user shell command; null when none. */
+export const ShellStateSchema = union([LiveShellSchema, nul()]);
 export type ShellState = Static<typeof ShellStateSchema>;
 /** pi's text when a second command is started while one runs (interactive-mode `isBashRunning`). */
 export const SHELL_BUSY = "A bash command is already running. Press Esc to cancel it first.";
@@ -109,7 +107,7 @@ export const ShellSchema = obj({
 	command: str({ minLength: 1, maxLength: 100_000 }),
 	/** `!` (true): the output joins the agent's context; `!!` (false): display only. */
 	includeInContext: bool(),
-	/** Client-chosen; a retried call with the same ID runs once (scoped to the author). */
+	/** Client-chosen, the command's `shellId` (`liveShell.id`); a retried call with the same ID runs once (per author). */
 	requestId: str({ minLength: 1, maxLength: 200 }),
 });
 
@@ -165,7 +163,8 @@ export type Submit = Static<typeof SubmitSchema>;
  * watch, and the operations that need an author, which callers pass explicitly.
  */
 export const Conversation = local("p2.conversation", {
-	version: 1,
+	/** 2: user shell commands moved to `ShellCommands` (chat/shell.ts). */
+	version: 2,
 	params: { conversation: param.int() },
 	members: {
 		/** The view's window, as every viewer holds it. */
@@ -202,12 +201,6 @@ export const Conversation = local("p2.conversation", {
 		abortCompaction: method(undefined, obj({ aborted: int({ minimum: 0 }) })),
 		/** Withdraws `authorId`'s queued inputs (by the server-stamped author) in submission order. */
 		dequeueOwn: method(obj({ authorId: str() }), obj({ restored: RestoredSchema, skipped: int({ minimum: 0 }) })),
-		/** The running (or just finished, not yet placed) user shell command. */
-		shell: ShellStateSchema,
-		/** Runs a user shell command on the conversation's environment; one at a time per conversation. */
-		runShell: method(obj({ ...propertiesOf(ShellSchema), author: AuthorSchema }), obj({ shellId: str() })),
-		/** Cancels the running command `shellId`; false when it is not the running one. */
-		abortShell: method(obj({ shellId: str() }), obj({ aborted: bool() })),
 	},
 });
 

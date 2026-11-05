@@ -1,5 +1,6 @@
-import { type Contract, type Held, isChordError, type ParamsOf } from "@earendil-works/chord";
+import type { Contract, Held, ParamsOf } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { TuiScope as ChordTuiScope, type OptimisticAdd } from "@earendil-works/chord/tui";
 import type { NativeWatchable, Watchable } from "@earendil-works/chord/watch";
 import {
 	type Component,
@@ -19,6 +20,7 @@ import { formatKeyText, lineText } from "../tui/render-context.ts";
 import { ThemeRef } from "../tui/theme/ref.ts";
 import { BUILTIN_THEMES, resolveTheme, SYSTEM_THEME_NAME, type Theme } from "../tui/theme/theme.ts";
 import { defineFacet, type FacetHost, type Host, keyedRegistry } from "./chord.ts";
+import type { P2Principal } from "./principals.ts";
 import { follow, UI_LINGER } from "./refs.ts";
 import { TuiAppearance } from "./tui-appearance.ts";
 import { type TuiCommand, TuiCommandDispatcher, TuiCommands, TuiSlashSources } from "./tui-commands.ts";
@@ -60,86 +62,69 @@ export function tuiFacet(
 	});
 }
 
-/** Ends that asking again cannot fix: a TuiScope stops re-holding after them. */
-const permanent = (error: unknown): boolean =>
-	isChordError(error) &&
-	(error.code === "forbidden" || error.code === "invalid" || error.code === "contract_mismatch");
+export type { OptimisticAdd } from "@earendil-works/chord/tui";
 
 /** What `TuiScope.watch`'s bind follows: a member of the live reference (a state member, a derive). */
 export type TuiFollow = <T>(source: Watchable<T> | NativeWatchable<T>, fn: (value: T) => void) => void;
 
 /**
  * Component-owned references: each is held until the scope is disposed (then released after its type's linger), its
- * members followed from its first live binding; an ended one is held again after a backoff unless the end is a refusal.
+ * members followed from its first live binding. Chord rebinds a held reference by itself (a dropped link, a restarted
+ * worker, a reload), so the scope only reports what it cannot fix: a broken failure or an end.
  */
 export class TuiScope {
 	private stops: (() => void)[] = [];
 	readonly runtime: TuiRuntime;
+	/** Chord's scope, for its optimistic readers: they redraw the runtime and stop with this scope. */
+	readonly #optimistic: ChordTuiScope<P2Principal>;
 	constructor(runtime: TuiRuntime) {
 		this.runtime = runtime;
+		this.#optimistic = new ChordTuiScope(runtime.host, () => runtime.changed());
 	}
-	watch<C extends Contract>(
-		type: C,
-		params: ParamsOf<C>,
-		bind: (ref: Held<C>, follow: TuiFollow) => void,
-	): () => Held<C> {
-		let ref!: Held<C>;
-		let disposed = false;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		/** Backoff for ends that are not refusals: 0.5 s doubling to 30 s, reset when live. */
-		let delay = 500;
-		/** Each distinct failure is reported once per watch, not once per attempt. */
-		const reported = new Set<string>();
+	watch<C extends Contract>(type: C, params: ParamsOf<C>, bind: (ref: Held<C>, follow: TuiFollow) => void): Held<C> {
+		// Synchronous: the scope renders loading from the reference's state.
+		const ref = this.runtime.host.hold(type, params, BACKGROUND_CONTEXT);
+		let bound = false;
 		const stops: (() => void)[] = [];
-		const report = (error: Error): void => {
-			if (reported.has(error.message)) return;
-			reported.add(error.message);
-			this.runtime.fail(error);
-		};
-		const acquire = (): void => {
-			for (const stop of stops.splice(0)) stop();
-			if (ref) UI_LINGER.release(ref, type.name);
-			// Synchronous: the scope renders loading from the reference's state.
-			const current = this.runtime.host.hold(type, params, BACKGROUND_CONTEXT);
-			ref = current;
-			let bound = false;
-			stops.push(
-				follow(current.state, (state) => {
-					if (disposed || current !== ref) return;
-					this.runtime.changed();
-					if (state.kind === "live") {
-						delay = 500;
-						if (bound) return;
-						bound = true;
-						bind(current, (source, fn) => {
-							stops.push(
-								follow(source, (value) => {
-									fn(value);
-									this.runtime.changed();
-								}),
-							);
-						});
-					} else if (state.kind === "failed" && state.cause.kind === "broken") report(state.cause.error);
-					else if (state.kind === "ended") {
-						report(state.error);
-						if (permanent(state.error)) return;
-						timer = setTimeout(acquire, delay);
-						delay = Math.min(30_000, delay * 2);
-					}
-				}),
-			);
-		};
-		acquire();
+		stops.push(
+			follow(ref.state, (state) => {
+				this.runtime.changed();
+				if (state.kind === "live" && !bound) {
+					bound = true;
+					bind(ref, (source, fn) => {
+						stops.push(
+							follow(source, (value) => {
+								fn(value);
+								this.runtime.changed();
+							}),
+						);
+					});
+				} else if (state.kind === "failed" && state.cause.kind === "broken") this.runtime.fail(state.cause.error);
+				else if (state.kind === "ended") this.runtime.fail(state.error);
+			}),
+		);
 		this.stops.push(() => {
-			disposed = true;
-			clearTimeout(timer);
 			for (const stop of stops) stop();
 			UI_LINGER.release(ref, type.name);
 		});
-		return () => ref;
+		return ref;
+	}
+	/**
+	 * Optimistic UI in the terminal (docs/optimistic-ui.md): Chord's `TuiScope.optimistic`, React's `useOptimistic`, on
+	 * this scope (redrawing the runtime). `add(action, call)` returns the call: its failure is the caller's to show
+	 * (`runtime.perform`), and its action goes as a settled one's does.
+	 */
+	optimistic<T>(read: () => T): readonly [read: () => T, add: OptimisticAdd<T>, pending: () => boolean];
+	optimistic<T, A>(
+		read: () => T,
+		reduce: (current: T, action: A) => T,
+	): readonly [read: () => T, add: OptimisticAdd<A>, pending: () => boolean];
+	optimistic<T, A>(read: () => T, reduce?: (current: T, action: A) => T) {
+		return reduce ? this.#optimistic.optimistic(read, reduce) : this.#optimistic.optimistic(read);
 	}
 	dispose(): void {
 		for (const stop of this.stops.splice(0)) stop();
+		this.#optimistic.dispose();
 	}
 }
 
@@ -391,6 +376,9 @@ export class TuiRuntime implements Component, Focusable {
 			},
 			surface: (name) => runtime.surfaces.get(name),
 			notify: (message, kind) => runtime.notify(message, kind),
+			fail: (error) => runtime.fail(error),
+			perform: (action) => runtime.perform(action),
+			scope: () => new TuiScope(runtime),
 			overlay: (id, component, options) => runtime.overlay(id, component, options),
 			panel: {
 				open: (id, content, title) => runtime.openPanel(id, content, title),

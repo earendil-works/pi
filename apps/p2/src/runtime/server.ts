@@ -2,7 +2,14 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
-import { constant, defineRegistry, defineState, local, method, untilAborted } from "@earendil-works/chord";
+import {
+	constant,
+	defineRegistry,
+	type FollowAttachment,
+	type FollowObserver,
+	local,
+	method,
+} from "@earendil-works/chord";
 import type { Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { CredentialStore, ModelsStore } from "@earendil-works/pi-ai";
@@ -19,7 +26,6 @@ import {
 	keyedRegistry,
 	type Self,
 	serveKeyed,
-	signalOf,
 } from "./chord.ts";
 import { isGuest, isOwner, type P2Principal } from "./principals.ts";
 import { record } from "./schema.ts";
@@ -83,8 +89,16 @@ export interface SessionWorkerControl {
 		work: () => Promise<void>,
 		doing: string,
 	): Promise<void>;
-	/** Owner-requested retry: stops the previous instance and clears the failure before a fresh reference. */
-	retry(session: string): Promise<void>;
+	/**
+	 * Owner-requested retry: stops the previous instance, clears the failure and starts the worker again, resolving with
+	 * the start's outcome (running, or failed with its redacted error).
+	 */
+	retry(session: string, context: Context): Promise<WorkerState>;
+	/**
+	 * Clears the session's failure or suspension (a restore): its holders start a worker, a later hold does too. Nothing
+	 * is started when nobody holds it.
+	 */
+	resume(session: string): Promise<void>;
 	/** Stops the session's worker; its holders start a new one (a restart, e.g. for a changed environment). */
 	stop(session: string): Promise<void>;
 	/**
@@ -92,8 +106,13 @@ export interface SessionWorkerControl {
 	 * or their release, instead of a start the archived session refuses.
 	 */
 	suspend(session: string): Promise<void>;
-	/** Every change of a worker's state. */
+	/** Every change of a worker's state (the dev supervisor's events). */
 	subscribe(listener: (event: HostEvent) => void): () => void;
+	/**
+	 * Follows every session worker's state (latest generation only) with a synchronous observer: Chord's `self.follow`
+	 * of `Hosts.workers`.
+	 */
+	observe(observer: FollowObserver<unknown>): FollowAttachment<Readonly<Record<string, WorkerState>>>;
 }
 
 /** The server's natives, contributed by the core facet from the start. */
@@ -101,10 +120,11 @@ export type ServerParts = {
 	readonly resourceOptions: ServerResourceOptions;
 	readonly workers: SessionWorkerControl;
 	/**
-	 * Runs `fn` in a root of the server's own (`SERVER`), not a caller's: lifecycle steps a caller giving up (an aborted
-	 * call, a closed tab) must not cut off, and code outside Chord calls (Durable tools, routes). `signal` ends it early.
+	 * Runs `fn` in a root of the server's own (`SERVER`) under `context`: code that acts as the server rather than as a
+	 * method's caller. Inside a method pass `withoutAbortSignal(ctx)` (the call chain is kept; a caller giving up does not
+	 * cut off lifecycle steps); outside Chord calls pass the context at hand.
 	 */
-	readonly root: <T>(fn: (ctx: Ctx) => Promise<T>, signal?: AbortSignal) => Promise<T>;
+	readonly root: <T>(fn: (ctx: Ctx) => Promise<T>, context: Context) => Promise<T>;
 };
 export const ServerNatives = defineRegistry<ServerParts, ServerParts | undefined>("p2.server-natives", { version: 1 });
 
@@ -250,12 +270,6 @@ export const Hosts = local("p2.hosts", {
 	},
 });
 
-const Workers = defineState("p2.hosts.workers", {
-	schema: obj({ workers: record(WorkerStateSchema) }),
-	version: 1,
-	initial: () => ({ workers: {} }),
-});
-
 /** Serves the base keyed registries of the server (the core facet; test hosts without one). */
 export function serveServerRegistries(facet: FacetHost): void {
 	for (const registry of [
@@ -292,27 +306,10 @@ export function serverCore(host: Host, info: ServerInfo, parts: ServerParts): Fa
 			},
 		}));
 		facet.serve(Hosts, (_params, self) => {
-			const state = self.state(Workers);
-			self.onLive(async (ctx) => {
-				const stop = parts.workers.subscribe(({ session, ...worker }) => {
-					// An exit heard while this routine stops would change the state with an ended ctx.
-					if (signalOf(ctx).aborted) return;
-					void state
-						.change((draft) => {
-							// A late exit of an older generation never overwrites a newer worker.
-							if ((draft.workers[session]?.generation ?? 0) > worker.generation) return;
-							draft.workers[session] = worker;
-						}, ctx)
-						.catch(() => {});
-				});
-				try {
-					await untilAborted(ctx);
-				} finally {
-					stop();
-				}
-			});
+			// The workers component's state, followed: never copied into a document of this object.
+			const workers = self.follow(async (observer) => parts.workers.observe(observer));
 			return {
-				workers: self.derive([state], ([value]) => value.workers),
+				workers,
 				stop: async ({ session }) => {
 					await parts.workers.stop(session);
 					return null;

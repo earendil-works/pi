@@ -11,14 +11,13 @@ import {
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { RemoteExecutionEnv } from "@earendil-works/pi-env";
-import { arr, num, obj, opt, str } from "@earendil-works/pi-schema";
+import { num, obj, opt, str } from "@earendil-works/pi-schema";
 import {
 	BACKGROUND_CONTEXT,
 	type Context,
 	canSend,
 	defineFacet,
 	defineRegistry,
-	defineTypedState,
 	deriveTyped,
 	forbidden,
 	local,
@@ -26,6 +25,8 @@ import {
 	nativeOf,
 	type Subscribable,
 	serveNative,
+	signalOf,
+	untilAborted,
 } from "@p2/app/v1";
 import { remotePaths } from "@p2/app/v1/node";
 import {
@@ -38,7 +39,7 @@ import {
 	workerOf,
 } from "@p2/app/v1/worker";
 import type { LoadedPrompt } from "./context-files.ts";
-import { PromptResources, SkillInfoSchema, TemplateInfoSchema } from "./contract.ts";
+import { PromptResources, type SkillInfo, type TemplateInfo } from "./contract.ts";
 import { envFiles, promptObserver } from "./environment.ts";
 import { expandPrompt } from "./templates.ts";
 
@@ -75,7 +76,7 @@ type PromptLoads = {
 
 /** Where conversations find their prompt resources: the session's (following its moves) or their own location's. */
 type PromptFiles = {
-	readonly session: PromptLoads;
+	readonly session: MovingPromptLoads;
 	of: (id: ConversationId, context: Context, read?: DocumentReader) => Promise<PromptLoads>;
 };
 
@@ -140,11 +141,20 @@ function promptLoads(dataDir: string, at: Location, environment: Promise<Executi
 	};
 }
 
+/** The session's prompt resources, which move with the session (`move`, from the `Prompt` object's routine). */
+type MovingPromptLoads = PromptLoads & {
+	/**
+	 * Loads them anew at `at` (from the new cwd, on the new machine) when `version` is a newer move; resolves once the
+	 * old location's watches closed.
+	 */
+	move(at: Location, version: number): Promise<void>;
+};
+
 /**
- * The prompt resources of the session's current location: loaded for the location it is at, and loaded anew (from the
- * new cwd, on the new machine) after each move. `loads` follows the current location's loads.
+ * The prompt resources of the session's current location: loaded for the location it is at, and loaded anew after
+ * each move. `loads` follows the current location's loads.
  */
-function followedPromptLoads(location: SessionLocation, open: (at: Location) => PromptLoads): PromptLoads {
+function movingPromptLoads(location: SessionLocation, open: (at: Location) => PromptLoads): MovingPromptLoads {
 	const listeners = new Set<(loaded: Loaded) => void>();
 	let latest: Loaded | undefined;
 	const forward = (loaded: Loaded): void => {
@@ -157,15 +167,9 @@ function followedPromptLoads(location: SessionLocation, open: (at: Location) => 
 		loads.loads.subscribe((loaded) => {
 			if (inner === loads) forward(loaded);
 		});
+	let version = location.version;
 	let inner = open(location.value);
 	let unsubscribe = follow(inner);
-	const stop = location.subscribe((at) => {
-		const previous = inner;
-		unsubscribe();
-		inner = open(at);
-		unsubscribe = follow(inner);
-		void previous.close().catch((error: unknown) => console.error("p2 prompt: closing old watches:", error));
-	});
 	return {
 		current: () => inner.current(),
 		started: () => inner.started(),
@@ -177,8 +181,16 @@ function followedPromptLoads(location: SessionLocation, open: (at: Location) => 
 				return () => listeners.delete(listener);
 			},
 		},
+		move: async (at, moved) => {
+			if (moved <= version) return;
+			version = moved;
+			const previous = inner;
+			unsubscribe();
+			inner = open(at);
+			unsubscribe = follow(inner);
+			await previous.close().catch((error: unknown) => console.error("p2 prompt: closing old watches:", error));
+		},
 		close: async () => {
-			stop();
 			unsubscribe();
 			await inner.close();
 		},
@@ -199,12 +211,18 @@ const Prompt = local("p2.prompt", {
 /** The open `Prompt`'s files (the native it contributes), for `PromptResources`. */
 const PromptFilesNative = defineRegistry<PromptFiles, PromptFiles | undefined>("p2.prompt-files", { version: 1 });
 
-/** The templates and skills where one conversation works, as `PromptResources` shows them. */
-const Listed = defineTypedState("p2.prompt-resources", {
-	schema: obj({ templates: arr(TemplateInfoSchema), skills: arr(SkillInfoSchema) }),
-	version: 1,
-	initial: () => ({ templates: [], skills: [] }),
-});
+/** The templates and skills of a load, as `PromptResources` shows them. */
+function listedOf(loaded: LoadedPrompt): { templates: TemplateInfo[]; skills: SkillInfo[] } {
+	return {
+		templates: loaded.templates.map(({ name, description, argumentHint, source }) => ({
+			name,
+			description,
+			...(argumentHint ? { argumentHint } : {}),
+			source,
+		})),
+		skills: loaded.skillFiles.map(({ name, description }) => ({ name, description })),
+	};
+}
 
 export default defineFacet((host) => {
 	serveNative(host, PromptFilesNative);
@@ -216,7 +234,7 @@ export default defineFacet((host) => {
 				const environments = harness().environments;
 				const dataDir = worker().init.dataDir;
 				const open = (at: Location): PromptLoads => promptLoads(dataDir, at, environments.at(at));
-				const session = followedPromptLoads(worker().location, open);
+				const session = movingPromptLoads(worker().location, open);
 				const own = new Map<string, PromptLoads>();
 				const files: PromptFiles = {
 					session,
@@ -241,13 +259,29 @@ export default defineFacet((host) => {
 			},
 			(value) => value.close(),
 		);
-		self.open(
-			async () =>
-				filesResource.value.files.session.loads.subscribe(({ error }) => {
-					if (error !== undefined) console.error(`p2 prompt: ${error}`);
-				}),
-			(stop) => stop(),
-		);
+		// The session's resources follow its moves (one committed while the files opened included).
+		self.onLive(async (ctx) => {
+			const location = worker().location;
+			const session = filesResource.value.files.session;
+			for (;;) {
+				// Listening before moving: a move committed while the old watches close is not missed.
+				const moved = location.next(signalOf(ctx));
+				moved.catch(() => {}); // The abort ends this routine below.
+				await session.move(location.value, location.version);
+				await moved;
+			}
+		});
+		// Load failures of the session's resources go to the worker's log (they also leave the last good load in use).
+		self.onLive(async (ctx) => {
+			const stop = filesResource.value.files.session.loads.subscribe(({ error }) => {
+				if (error !== undefined) console.error(`p2 prompt: ${error}`);
+			});
+			try {
+				await untilAborted(ctx);
+			} finally {
+				stop();
+			}
+		});
 		self.contribute(PromptFilesNative, {
 			get session() {
 				return filesResource.value.files.session;
@@ -312,31 +346,18 @@ export default defineFacet((host) => {
 		if (!canSend(principal, session)) throw forbidden("participants only");
 		const prompt = self.get(Prompt, {});
 		const files = nativeOf(self, PromptFilesNative, "The prompt files");
-		const listed = self.state(Listed);
-		let fingerprint: string | undefined;
-		const show = (loaded: LoadedPrompt, context: Context) => {
-			fingerprint = loaded.fingerprint;
-			void listed
-				.change((draft) => {
-					draft.templates = loaded.templates.map(({ name, description, argumentHint, source }) => ({
-						name,
-						description,
-						...(argumentHint ? { argumentHint } : {}),
-						source,
-					}));
-					draft.skills = loaded.skillFiles.map(({ name, description }) => ({ name, description }));
-				}, context)
-				.catch(() => {});
-		};
-		self.open(
-			async (ctx) => {
-				const loads = await files().of(conversation as ConversationId, ctx);
-				return loads.loads.subscribe(({ prompt: loaded }) => {
-					if (loaded && loaded.fingerprint !== fingerprint) show(loaded, BACKGROUND_CONTEXT);
-				});
-			},
-			(stop) => stop(),
-		);
+		// The loads where the conversation works, followed: each new load (a changed fingerprint) is the next value.
+		const listed = self.follow(async (observer, ctx) => {
+			const loads = await files().of(conversation as ConversationId, ctx);
+			let fingerprint = loads.current().fingerprint;
+			const stop = loads.loads.subscribe(({ prompt: loaded }) => {
+				if (!loaded || loaded.fingerprint === fingerprint) return;
+				fingerprint = loaded.fingerprint;
+				const value = listedOf(loaded);
+				observer.advance({ kind: "value", value, ops: [["r", value]], retired: false }, BACKGROUND_CONTEXT);
+			});
+			return { value: listedOf(loads.current()), detach: stop };
+		});
 		return {
 			variant: "participant",
 			members: {

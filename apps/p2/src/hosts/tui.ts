@@ -66,6 +66,7 @@ try {
 				url: options.url,
 				credentials: { cookie: admission.cookie },
 				mouse: local.mouse,
+				role: admission.role,
 				actions: launcherActions({
 					url: options.url,
 					credentials: { cookie: admission.cookie },

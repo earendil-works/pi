@@ -12,7 +12,7 @@ import {
 	until,
 	type WorkerPrincipal,
 } from "@p2/app/v1";
-import { Hosts, Server, serverOf, Upgrades, type WorkerState } from "@p2/app/v1/server";
+import { Hosts, Server, Upgrades, type WorkerState } from "@p2/app/v1/server";
 import { Catalog, SessionArchived } from "../sessions/contract.ts";
 import { ChildStore, conversationLocation } from "../subagents/contract.ts";
 import { AgentTerminals, TerminalServiceObject, TerminalServices, Terminals } from "./contract.ts";
@@ -69,10 +69,10 @@ export default defineFacet((host) => {
 		const service = () => services().service;
 		const catalog = self.get(Catalog, {});
 		const children = self.get(ChildStore, {});
-		const server = serverOf(self);
 		const viewResource = self.open(
-			async () => {
-				await server().root((ctx) => catalog.get({ id }, ctx));
+			async (context) => {
+				// An unknown session refuses the view.
+				await catalog.get({ id }, context);
 				return service().open(id);
 			},
 			(view) => service().release(view),

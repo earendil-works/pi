@@ -7,7 +7,7 @@ import { after, before, describe, it } from "node:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { BACKGROUND_CONTEXT, follow, type Held, whenLive } from "@p2/app/v1";
-import { type LoginState, ProviderLogin } from "../../plugins/login/contract.ts";
+import { LoginService, type LoginState, ProviderLogin } from "../../plugins/login/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import type { ServerResourceOptions } from "../../src/runtime/server.ts";
@@ -88,6 +88,8 @@ describe("provider login (fixture provider)", () => {
 		const state = await until(login.login, (current) => current?.prompt?.type === type);
 		assert(state?.prompt);
 		await login.answer({ attemptId: state.attemptId, promptId: state.prompt.id, value }, BACKGROUND_CONTEXT);
+		// The answer follows its state: the answered prompt is closed on the page when the call resolves.
+		assert.notEqual(login.login.value?.prompt?.id, state.prompt.id);
 	};
 
 	before(async () => {
@@ -113,6 +115,7 @@ describe("provider login (fixture provider)", () => {
 
 	it("runs an OAuth flow through prompts and notices", async () => {
 		const { attemptId } = await login.start({ providerId: "faux", authType: "oauth" }, BACKGROUND_CONTEXT);
+		assert.equal(login.login.value?.attemptId, attemptId, "the started login is shown when the call resolves");
 		await assert.rejects(
 			login.start({ providerId: "faux", authType: "api_key" }, BACKGROUND_CONTEXT),
 			/already in progress/,
@@ -140,12 +143,12 @@ describe("provider login (fixture provider)", () => {
 		const published = JSON.stringify(seen);
 		assert(!published.includes("private-access-token") && !published.includes("private-entered-code"));
 		await login.dismiss({ attemptId }, BACKGROUND_CONTEXT);
-		await until(login.login, (value) => value === null);
+		assert.equal(login.login.value, null);
 	});
 
 	it("signs in with an API key, refreshes, and signs out", async () => {
 		await login.logout({ providerId: "faux" }, BACKGROUND_CONTEXT);
-		await until(login.providers, (value) => value?.[0]?.signedIn === null);
+		assert.equal(login.providers.value[0]?.signedIn, null, "signed out when the call resolves");
 		await login.start({ providerId: "faux", authType: "api_key" }, BACKGROUND_CONTEXT);
 		await answer("secret", "private-api-key");
 		await until(login.login, (current) => current?.status === "success");
@@ -157,25 +160,23 @@ describe("provider login (fixture provider)", () => {
 	it("cancels an unfinished login, also when the sheet is gone", async () => {
 		const first = await login.start({ providerId: "faux", authType: "oauth" }, BACKGROUND_CONTEXT);
 		await login.cancel({ attemptId: first.attemptId }, BACKGROUND_CONTEXT);
-		await until(login.login, (current) => current?.status === "cancelled");
+		assert.equal(login.login.value?.status, "cancelled", "cancel resolves once the login finished");
 		const otherBrowser = fixture.browser();
 		const other = otherBrowser.hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
 		const { attemptId } = await other.start({ providerId: "faux", authType: "oauth" }, BACKGROUND_CONTEXT);
 		await until(login.login, (current) => current?.attemptId === attemptId && current.prompt !== null);
-		// Both browsers share the owner's object; releasing every reference ends the flow. The two releases travel over
-		// different sockets: wait until the server has processed the other browser's (a later reference over its socket is
-		// ready), else `again` below may arrive first and keep the object, and so the login, alive.
+		// Both browsers hold the owner's sheet; once neither does (closed sheets, disconnects), the owner has left and the
+		// flow ends. The server's own service shows it (a new hold of the sheet would make the owner present again).
 		other.release();
-		const probe = otherBrowser.hold(Models, {}, BACKGROUND_CONTEXT);
-		await whenLive(probe);
-		probe.release();
 		login.release();
-		const again = owner.hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
-		const state = await until(
-			again.login,
+		const service = await fixture.server.host.get(LoginService, {}, BACKGROUND_CONTEXT);
+		const ended = await until(
+			service.login,
 			(current) => current?.attemptId === attemptId && current.status !== "working",
 		);
-		assert.equal(state?.status, "cancelled");
+		assert.equal(ended?.status, "cancelled");
+		const again = owner.hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
+		assert.equal((await until(again.login, (current) => current?.attemptId === attemptId))?.status, "cancelled");
 		login = again;
 	});
 });

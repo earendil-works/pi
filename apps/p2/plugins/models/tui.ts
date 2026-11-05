@@ -10,6 +10,7 @@ import type { TuiContext } from "@p2/app/v1/tui";
 import {
 	lineText,
 	ModelSelectorComponent,
+	type OptimisticAdd,
 	ScopedModelsSelectorComponent,
 	type SelectorModel,
 	ThinkingSelectorComponent,
@@ -25,6 +26,22 @@ import { type ModelChoice, type ModelInfo, Models } from "./contract.ts";
 
 type Scoped = { provider: string; modelId: string; thinkingLevel?: string };
 
+/** A choice in flight: the conversation's model and level, the default, or the scope. */
+type Guess = {
+	readonly model?: ModelMeta | null;
+	readonly thinkingLevel?: string;
+	readonly defaultModel?: ModelChoice | null;
+	readonly scoped?: Scoped[];
+};
+
+/** What the commands read: the state with the choices in flight applied. */
+type Shown = {
+	readonly model: ModelMeta | null;
+	readonly thinkingLevel: string | undefined;
+	readonly defaultModel: ModelChoice | null;
+	readonly scoped: Scoped[];
+};
+
 /**
  * What the commands need, held per runtime (a non-screen slot): the owner's catalog, scope and default, and the viewed
  * conversation's model and thinking level.
@@ -35,18 +52,22 @@ export class ModelState implements TuiSurface {
 	private owner: TuiScope | undefined;
 	private chat: TuiScope | undefined;
 	private identity: string | undefined;
-	private models: () => Held<typeof Models> | undefined = () => undefined;
-	private chatRef: () => Held<typeof Chat> | undefined = () => undefined;
+	private models: Held<typeof Models> | undefined;
+	private chatRef: Held<typeof Chat> | undefined;
+	/** The state as shown: the choices in flight over what the server last sent. */
+	private readonly shownState: () => Shown;
+	/** Shows a choice while its call is in flight: the selectors and cycling start from it (Ctrl+P twice moves twice). */
+	readonly choosing: OptimisticAdd<Guess>;
 	catalog: ModelInfo[] = [];
-	scoped: Scoped[] = [];
-	defaultModel: ModelChoice | null = null;
-	/** The viewed conversation's model (guest-safe metadata) and thinking level. */
-	model: ModelMeta | null = null;
-	thinkingLevel: string | undefined;
+	private received: Shown = { model: null, thinkingLevel: undefined, defaultModel: null, scoped: [] };
 	private stop: () => void;
 	constructor(runtime: TuiRuntime) {
 		this.runtime = runtime;
 		this.scope = new TuiScope(runtime);
+		[this.shownState, this.choosing] = this.scope.optimistic(
+			() => this.received,
+			(shown, guess: Guess) => ({ ...shown, ...guess }),
+		);
 		const changed = (): void => {
 			// The catalog is owner-only: guests never request it.
 			if (runtime.role === "owner" && !this.owner) {
@@ -56,10 +77,10 @@ export class ModelState implements TuiSurface {
 						this.catalog = models ?? [];
 					});
 					follow(ref.scopedModels, (scoped) => {
-						this.scoped = scoped ?? [];
+						this.received = { ...this.received, scoped: scoped ?? [] };
 					});
 					follow(ref.defaultModel, (value) => {
-						this.defaultModel = value ?? null;
+						this.received = { ...this.received, defaultModel: value ?? null };
 					});
 				});
 			}
@@ -67,19 +88,18 @@ export class ModelState implements TuiSurface {
 			this.identity = runtime.identity;
 			this.chat?.dispose();
 			this.chat = undefined;
-			this.chatRef = () => undefined;
-			this.model = null;
-			this.thinkingLevel = undefined;
+			this.chatRef = undefined;
+			this.received = { ...this.received, model: null, thinkingLevel: undefined };
 			const session = runtime.session;
 			if (!session) return;
 			this.chat = new TuiScope(runtime);
 			this.chatRef = this.chat.watch(Chat, { session, conversation: runtime.conversation }, (ref, follow) => {
 				follow(ref.model, (model) => {
-					this.model = model ?? null;
+					this.received = { ...this.received, model: model ?? null };
 				});
 				follow(ref.view, (view) => {
 					const agent = view?.docs["pi.agent"] as { thinkingLevel?: string } | undefined;
-					this.thinkingLevel = agent?.thinkingLevel;
+					this.received = { ...this.received, thinkingLevel: agent?.thinkingLevel };
 				});
 			});
 		};
@@ -87,15 +107,30 @@ export class ModelState implements TuiSurface {
 		this.stop = () => runtime.listeners.delete(changed);
 		changed();
 	}
+	/** The state as shown: the choices in flight over what the server last sent. */
+	private get shown(): Shown {
+		return this.shownState();
+	}
+	/** The viewed conversation's model (guest-safe metadata). */
+	get model(): ModelMeta | null {
+		return this.shown.model;
+	}
+	get thinkingLevel(): string | undefined {
+		return this.shown.thinkingLevel;
+	}
+	get defaultModel(): ModelChoice | null {
+		return this.shown.defaultModel;
+	}
+	get scoped(): Scoped[] {
+		return this.shown.scoped;
+	}
 	/** The owner's Models reference once live. */
 	service(): Held<typeof Models> | undefined {
-		const ref = this.models();
-		return liveIn(ref, "owner");
+		return liveIn(this.models, "owner");
 	}
 	/** The viewed conversation's participant reference once live. */
 	participant(): HeldIn<typeof Chat, "participant"> | undefined {
-		const ref = this.chatRef();
-		return liveIn(ref, "participant");
+		return liveIn(this.chatRef, "participant");
 	}
 	selectorModels(): SelectorModel[] {
 		return this.catalog.map(({ provider, modelId, name }) => ({ provider, modelId, name }));
@@ -122,39 +157,79 @@ const describe = (state: ModelState): string =>
 		? `${lineText(state.model.provider)}/${lineText(state.model.modelId)} · thinking ${lineText(state.thinkingLevel ?? "off")}`
 		: "no model";
 
-/** Applies a model and/or level: the conversation's (Chat.configure) with a session, else the default. */
-async function apply(ctx: TuiContext, state: ModelState, change: { model?: SelectorModel; thinkingLevel?: string }) {
-	const chat = ctx.identity.session ? state.participant() : undefined;
+/** A model and/or level a command chose. */
+type Change = { readonly model?: SelectorModel; readonly thinkingLevel?: string };
+
+/** The conversation's model as shown while a change to `model` is in flight: the catalog's facts about it. */
+function metaOf(state: ModelState, model: SelectorModel): ModelMeta {
+	const info = state.catalog.find((entry) => entry.provider === model.provider && entry.modelId === model.modelId);
+	const thinkingLevels = info?.thinkingLevels ?? [];
+	return {
+		provider: model.provider,
+		modelId: model.modelId,
+		name: info?.name ?? model.name,
+		contextWindow: info?.contextWindow ?? 0,
+		reasoning: thinkingLevels.length > 1,
+		thinkingLevels,
+	};
+}
+
+/**
+ * Applies a change: the conversation's (Chat.configure) with a session, else the default. The choice shows at once
+ * (the notice, and the selectors and cycling start from it); a refused call takes it back and says why.
+ */
+function choose(ctx: TuiContext, state: ModelState, change: Change, done: string): void {
 	if (ctx.identity.session) {
-		if (!chat) throw new Error("This conversation is not connected or read-only");
-		await chat.configure(
-			{
-				...(change.model ? { model: { provider: change.model.provider, modelId: change.model.modelId } } : {}),
-				...(change.thinkingLevel ? { thinkingLevel: change.thinkingLevel } : {}),
-			},
-			BACKGROUND_CONTEXT,
+		const chat = state.participant();
+		if (!chat) {
+			ctx.notify("This conversation is not connected or read-only", "error");
+			return;
+		}
+		const guess = {
+			...(change.model ? { model: metaOf(state, change.model) } : {}),
+			...(change.thinkingLevel ? { thinkingLevel: change.thinkingLevel } : {}),
+		};
+		ctx.notify(done);
+		ctx.perform(
+			state.choosing(
+				guess,
+				chat.configure(
+					{
+						...(change.model
+							? { model: { provider: change.model.provider, modelId: change.model.modelId } }
+							: {}),
+						...(change.thinkingLevel ? { thinkingLevel: change.thinkingLevel } : {}),
+					},
+					BACKGROUND_CONTEXT,
+				),
+			),
 		);
 		return;
 	}
-	const service = state.service();
 	const model = change.model ?? state.defaultModel;
-	if (!service || !model) throw new Error("Models are not available");
-	await service.setDefault(
-		{
-			provider: model.provider,
-			modelId: model.modelId,
-			thinkingLevel: change.thinkingLevel ?? state.defaultModel?.thinkingLevel ?? "off",
-		},
-		BACKGROUND_CONTEXT,
-	);
+	if (model) setDefault(ctx, state, { ...model, thinkingLevel: change.thinkingLevel }, done);
 }
 
-const perform = (ctx: TuiContext, action: Promise<unknown>, done?: string) =>
-	void action
-		.then(() => done && ctx.notify(done))
-		.catch((error: unknown) => {
-			ctx.notify(error instanceof Error ? error.message : String(error), "error");
-		});
+/** Sets the default for new sessions (keeping the default's level unless `thinkingLevel` is given), shown at once. */
+function setDefault(
+	ctx: TuiContext,
+	state: ModelState,
+	choice: { provider: string; modelId: string; thinkingLevel: string | undefined },
+	done: string,
+): void {
+	const service = state.service();
+	if (!service) {
+		ctx.notify("Models are not available", "error");
+		return;
+	}
+	const defaultModel = {
+		provider: choice.provider,
+		modelId: choice.modelId,
+		thinkingLevel: choice.thinkingLevel ?? state.defaultModel?.thinkingLevel ?? "off",
+	};
+	ctx.notify(done);
+	ctx.perform(state.choosing({ defaultModel }, service.setDefault(defaultModel, BACKGROUND_CONTEXT)));
+}
 
 /** Guests (and the owner without the catalog yet) see the model read-only. */
 function readOnly(ctx: TuiContext, state: ModelState | undefined): boolean {
@@ -184,24 +259,13 @@ function openModelSelector(ctx: TuiContext, initialSearch?: string): void {
 			...(initialSearch ? { initialSearch } : {}),
 			onSelect: (model) => {
 				handle.close();
-				perform(ctx, apply(ctx, state, { model }), `Model: ${model.provider}/${model.modelId}`);
+				choose(ctx, state, { model }, `Model: ${model.provider}/${model.modelId}`);
 			},
 			onSelectAsDefault: (model) => {
 				handle.close();
-				const service = state.service();
-				if (!service) return;
 				const thinkingLevel = state.thinkingLevel ?? state.defaultModel?.thinkingLevel ?? "off";
-				perform(
-					ctx,
-					Promise.all([
-						service.setDefault(
-							{ provider: model.provider, modelId: model.modelId, thinkingLevel },
-							BACKGROUND_CONTEXT,
-						),
-						...(ctx.identity.session ? [apply(ctx, state, { model })] : []),
-					]),
-					`Default model: ${model.provider}/${model.modelId}`,
-				);
+				setDefault(ctx, state, { ...model, thinkingLevel }, `Default model: ${model.provider}/${model.modelId}`);
+				if (ctx.identity.session) choose(ctx, state, { model }, `Model: ${model.provider}/${model.modelId}`);
 			},
 			onCancel: () => handle.close(),
 		}),
@@ -222,24 +286,14 @@ function openThinkingSelector(ctx: TuiContext): void {
 			...(state.defaultModel ? { defaultLevel: state.defaultModel.thinkingLevel } : {}),
 			onSelect: (level) => {
 				handle.close();
-				perform(ctx, apply(ctx, state, { thinkingLevel: level }), `Thinking level: ${level}`);
+				choose(ctx, state, { thinkingLevel: level }, `Thinking level: ${level}`);
 			},
 			onSelectAsDefault: (level) => {
 				handle.close();
-				const service = state.service();
 				const model = state.model ?? state.defaultModel;
-				if (!service || !model) return;
-				perform(
-					ctx,
-					Promise.all([
-						service.setDefault(
-							{ provider: model.provider, modelId: model.modelId, thinkingLevel: level },
-							BACKGROUND_CONTEXT,
-						),
-						...(ctx.identity.session ? [apply(ctx, state, { thinkingLevel: level })] : []),
-					]),
-					`Default thinking level: ${level}`,
-				);
+				if (!model) return;
+				setDefault(ctx, state, { ...model, thinkingLevel: level }, `Default thinking level: ${level}`);
+				if (ctx.identity.session) choose(ctx, state, { thinkingLevel: level }, `Thinking level: ${level}`);
 			},
 			onCancel: () => handle.close(),
 		}),
@@ -260,9 +314,10 @@ function cycleModel(ctx: TuiContext, direction: 1 | -1): void {
 	const next = ring[(index + direction + ring.length) % ring.length]!;
 	const info = state.catalog.find((model) => model.provider === next.provider && model.modelId === next.modelId);
 	const model = { provider: next.provider, modelId: next.modelId, name: info?.name ?? next.modelId };
-	perform(
+	choose(
 		ctx,
-		apply(ctx, state, { model, ...(next.thinkingLevel ? { thinkingLevel: next.thinkingLevel } : {}) }),
+		state,
+		{ model, ...(next.thinkingLevel ? { thinkingLevel: next.thinkingLevel } : {}) },
 		`Model: ${next.provider}/${next.modelId}${next.thinkingLevel ? ` · thinking ${next.thinkingLevel}` : ""}`,
 	);
 }
@@ -278,7 +333,7 @@ function cycleThinking(ctx: TuiContext): void {
 	}
 	const current = state.thinkingLevel ?? "off";
 	const next = levels[(levels.indexOf(current) + 1) % levels.length]!;
-	perform(ctx, apply(ctx, state, { thinkingLevel: next }), `Thinking level: ${next}`);
+	choose(ctx, state, { thinkingLevel: next }, `Thinking level: ${next}`);
 }
 
 function openScopedModels(ctx: TuiContext): void {
@@ -292,12 +347,14 @@ function openScopedModels(ctx: TuiContext): void {
 			onSave: (patterns) => {
 				handle.close();
 				const service = state.service();
-				if (service)
-					perform(
-						ctx,
-						service.setEnabledModels({ patterns }, BACKGROUND_CONTEXT),
-						patterns.length ? `Scoped models: ${patterns.length}` : "Model scope cleared",
-					);
+				if (!service) return;
+				ctx.notify(patterns.length ? `Scoped models: ${patterns.length}` : "Model scope cleared");
+				// The selector saves exact `provider/modelId` patterns: cycling uses them at once.
+				const scoped = patterns.map((pattern) => {
+					const slash = pattern.indexOf("/");
+					return { provider: pattern.slice(0, slash), modelId: pattern.slice(slash + 1) };
+				});
+				ctx.perform(state.choosing({ scoped }, service.setEnabledModels({ patterns }, BACKGROUND_CONTEXT)));
 			},
 			onCancel: () => handle.close(),
 		}),
@@ -331,7 +388,7 @@ export const MODEL_COMMANDS: Record<string, TuiCommand> = {
 				? state?.catalog.find((model) => `${model.provider}/${model.modelId}`.toLowerCase() === query.toLowerCase())
 				: undefined;
 			if (state && exact && !readOnly(ctx, state))
-				perform(ctx, apply(ctx, state, { model: exact }), `Model: ${exact.provider}/${exact.modelId}`);
+				choose(ctx, state, { model: exact }, `Model: ${exact.provider}/${exact.modelId}`);
 			else if (!exact) openModelSelector(ctx, query);
 		},
 	},

@@ -6,7 +6,7 @@
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { arr, int, nul, obj, str, union, unknown } from "@earendil-works/pi-schema";
+import { arr, int, obj, str, union, unknown } from "@earendil-works/pi-schema";
 import {
 	type Ctx,
 	contribute,
@@ -15,6 +15,7 @@ import {
 	deriveTyped,
 	type Facet,
 	type Factory,
+	followNative,
 	forbidden,
 	type HandleOf,
 	isOwner,
@@ -23,7 +24,6 @@ import {
 	LocationSchema,
 	literal,
 	locationText,
-	type Native,
 	nativeOf,
 	PluginError,
 	type Ref,
@@ -32,7 +32,6 @@ import {
 	signalOf,
 	unsafe,
 	until,
-	untilAborted,
 	type Watchable,
 	type WorkerPrincipal,
 } from "@p2/app/v1";
@@ -41,8 +40,8 @@ import type { EnvConfig } from "../envs/config.ts";
 import { EnvManagers, EnvService } from "../envs/contract.ts";
 import { Catalog, type Session } from "../sessions/contract.ts";
 import { type Child, ChildStore } from "../subagents/contract.ts";
-import { type OwnerConfig, OwnerConfigFile, type OwnerServer } from "./config.ts";
-import { InstanceSchema, Mcp, McpManager, type ProjectFile, SignInSchema } from "./contract.ts";
+import { type OwnerConfig, OwnerConfigFile, type OwnerConfigState, type OwnerServer } from "./config.ts";
+import { type Instance, InstanceSchema, Mcp, McpManager, type ProjectFile } from "./contract.ts";
 import { McpCredentials } from "./credentials.ts";
 import type { ConnectEnv } from "./environments.ts";
 import { type ClientInfo, Instances, RECONNECT } from "./instances.ts";
@@ -88,16 +87,6 @@ export function mcpServerFacet(viewLingerMs: number, connector: EnvConnector): F
 	});
 }
 
-/**
- * The owner's configuration as last validly read, and why the last read failed (null: it did not). In memory, kept
- * across a reload: a new reader seeing a save caught half-way keeps these servers.
- */
-const Configured = defineTypedState("p2.mcp.config", {
-	schema: obj({ servers: unsafe<OwnerServer[]>(unknown()), errors: arr(str()), failure: union([str(), nul()]) }),
-	version: 1,
-	initial: () => ({ servers: [], errors: [], failure: null }),
-});
-
 /** The leases of session workers; kept across a reload of the plugin, so the new supervisor starts what they use. */
 const Leased = defineTypedState("p2.mcp.leases", {
 	schema: obj({
@@ -120,45 +109,40 @@ const Leased = defineTypedState("p2.mcp.leases", {
 });
 
 /**
- * The supervisor's instances as it last listed them (a reload's new supervisor starts with their tools), and the
- * sign-ins under way.
+ * What a restarted manager's natives start from (in memory, kept across a reload's restart; never shown): the servers
+ * last read validly (a new reader may first see a save caught half-way) and the instances as last listed (their tools
+ * stay listed until their servers answer again).
  */
-const Listed = defineTypedState("p2.mcp.instances", {
-	schema: obj({ instances: arr(InstanceSchema), signIns: arr(SignInSchema) }),
-	version: 2,
-	initial: () => ({ instances: [], signIns: [] }),
+const Memento = defineTypedState("p2.mcp.memento", {
+	schema: obj({ servers: unsafe<OwnerServer[]>(unknown()), errors: arr(str()), instances: arr(InstanceSchema) }),
+	version: 1,
+	initial: () => ({ servers: [], errors: [], instances: [] }),
 });
 
-/** The manager: its documents, the file and the supervisor as natives, and the routines that keep them in step. */
+/**
+ * The manager: the file, the supervisor and the sign-ins as natives it follows, the leases as its document, and the
+ * routine that starts and closes instances as they change.
+ */
 function managerFactory(connector: EnvConnector): Factory<typeof McpManager> {
 	return (_params, self) => {
 		const server = self.get(Server, {});
 		const envs = self.get(EnvService, {});
-		const work = workEnvironments(self.get(Catalog, {}), self.get(ChildStore, {}), self);
-		const configured = self.state(Configured);
+		const catalog = self.get(Catalog, {});
+		const store = self.get(ChildStore, {});
+		const work = deriveTyped(self, [catalog.sessions, store.children], ([sessions, children]) =>
+			workEnvironments(sessions, children),
+		);
 		const leased = self.state(Leased);
-		const listed = self.state(Listed);
+		const memento = self.state(Memento);
 		const placed = placements();
-		const placement = () => placed(configured.value, leased.value.leases, envs.configs.value, work.value);
 		const connect = connector(self);
 		const file = self.open(
 			async () => {
-				const opened = new OwnerConfigFile(server.info.value.dataDir);
+				const opened = new OwnerConfigFile(server.info.value.dataDir, memento.value);
 				await opened.observer.start();
 				return opened;
 			},
 			(opened) => opened.observer.close(),
-		);
-		const instances = self.open(
-			async () => {
-				// After a reload the leases are still here: the routine below starts what they use, with the tools listed
-				// before. Not here: natives open before derives compute.
-				const info = await clientInfo(server.info.value.app);
-				return new Instances(info, RECONNECT, listed.value.instances, connect, (oauth) =>
-					signIns.value.authProvider(oauth),
-				);
-			},
-			(opened) => opened.close(),
 		);
 		const signIns = self.open(
 			async () =>
@@ -170,11 +154,42 @@ function managerFactory(connector: EnvConnector): Factory<typeof McpManager> {
 				),
 			(opened) => opened.close(),
 		);
+		const instances = self.open(
+			async () => {
+				const info = await clientInfo(server.info.value.app);
+				const opened = new Instances(info, RECONNECT, memento.value.instances, connect, (oauth) =>
+					signIns.value.authProvider(oauth),
+				);
+				// What the leases use now starts at once (after a restart with the tools listed before), so the supervisor's
+				// first list already shows it; derives compute only after the natives opened, so placed from the sources.
+				const at = workEnvironments(catalog.sessions.value, store.children.value);
+				opened.reconcile(placed(file.value.state, leased.value.leases, envs.configs.value, at));
+				return opened;
+			},
+			(opened) => opened.close(),
+		);
 		const probe = self.open(
 			async () => new LoopbackProbe(),
 			(opened) => opened.close(),
 		);
-		self.onLive((ctx) => followNatives(file, instances, signIns, configured, listed, ctx));
+		// The file, the supervisor and the sign-ins as they are: every method's change is made before it returns.
+		const configured = followNative(
+			self,
+			(changed) => file.value.subscribe(changed),
+			() => file.value.state,
+		);
+		const listed = followNative(
+			self,
+			(changed) => {
+				const stops = [instances.value.subscribe(changed), signIns.value.subscribe(changed)];
+				return () => {
+					for (const stop of stops) stop();
+				};
+			},
+			() => ({ instances: instances.value.list(), signIns: signIns.value.list() }),
+		);
+		keepMemento(self, memento, configured, listed);
+		const placement = () => placed(configured.value, leased.value.leases, envs.configs.value, work.value);
 		// The current configuration, leases, environments and places of work, then every change of them, start and close
 		// instances; methods that change leases reconcile at once too, so a call right after `setLocations` finds its
 		// instance.
@@ -209,7 +224,6 @@ function managerFactory(connector: EnvConnector): Factory<typeof McpManager> {
 			...managerMethods(leased, () => instances.value, placement),
 			...signInMethods(
 				configured,
-				listed,
 				() => signIns.value,
 				() => probe.value,
 			),
@@ -217,14 +231,36 @@ function managerFactory(connector: EnvConnector): Factory<typeof McpManager> {
 	};
 }
 
+/**
+ * Keeps the memento a restarted manager's natives start from: the servers of each valid read, and the instances once
+ * one of them lists other tools (instances closing change no tools, so a manager ending writes nothing).
+ */
+function keepMemento(
+	self: Self,
+	memento: HandleOf<typeof Memento>,
+	configured: Watchable<OwnerConfigState>,
+	listed: Watchable<{ readonly instances: readonly Instance[] }>,
+): void {
+	self.on(configured, async ({ value: { servers, errors, failure } }, ctx) => {
+		if (failure === null) await memento.change((draft) => Object.assign(draft, { servers, errors }), ctx);
+	});
+	self.on(listed, async ({ value: { instances } }, ctx) => {
+		const remembered = new Map(memento.value.instances.map((instance) => [instance.id, toolNames(instance)]));
+		if (instances.some((instance) => remembered.get(instance.id) !== toolNames(instance)))
+			await memento.change((draft) => Object.assign(draft, { instances }), ctx);
+	});
+}
+
+/** The names of the tools `instance` lists, as one string. */
+const toolNames = (instance: Instance): string => instance.tools.map((tool) => tool.name).join("\n");
+
 /** The environments each session's conversations work on, as the catalog and the subagent store record them. */
 function workEnvironments(
-	catalog: Ref<typeof Catalog>,
-	store: Ref<typeof ChildStore>,
-	self: Self,
-): Watchable<WorkEnvironments> {
-	return deriveTyped(self, [catalog.sessions, store.children], ([sessions, children]) =>
-		Object.fromEntries(sessions.map((session) => [session.id, sessionEnvironments(session, children[session.id])])),
+	sessions: readonly Session[],
+	children: Readonly<Record<string, readonly Child[]>>,
+): WorkEnvironments {
+	return Object.fromEntries(
+		sessions.map((session) => [session.id, sessionEnvironments(session, children[session.id])]),
 	);
 }
 
@@ -252,52 +288,6 @@ function placements(): (
 			last = { config, leases, envs, work: at, placement: place(config, leases, envs, work) };
 		return last.placement;
 	};
-}
-
-/** Copies what the file reads, the supervisor lists and the sign-ins are into the manager's documents until `ctx` ends. */
-async function followNatives(
-	file: Native<OwnerConfigFile>,
-	instances: Native<Instances>,
-	signIns: Native<SignIns>,
-	configured: HandleOf<typeof Configured>,
-	listed: HandleOf<typeof Listed>,
-	ctx: Ctx,
-): Promise<void> {
-	// Changes heard while this routine stops would change state with an ended ctx.
-	const show = (): void => {
-		if (signalOf(ctx).aborted) return;
-		void listed
-			.change((draft) => {
-				draft.instances = instances.value.list();
-				draft.signIns = signIns.value.list();
-			}, ctx)
-			.catch(() => {});
-	};
-	const stops = [
-		file.value.subscribe((read) => {
-			if (signalOf(ctx).aborted) return;
-			void configured
-				.change((draft) => {
-					// An invalid read keeps the servers last read validly.
-					if (read.kind === "invalid") draft.failure = read.failure;
-					else if (read.kind === "valid")
-						Object.assign(draft, {
-							servers: [...read.config.servers],
-							errors: [...read.config.errors],
-							failure: null,
-						});
-				}, ctx)
-				.catch(() => {});
-		}),
-		instances.value.subscribe(show),
-		signIns.value.subscribe(show),
-	];
-	show();
-	try {
-		await untilAborted(ctx);
-	} finally {
-		for (const stop of stops) stop();
-	}
 }
 
 /** The manager's methods: the lease rules applied on the leases' line, calls through the leased instance, restarts. */
@@ -341,12 +331,7 @@ function managerMethods(leased: HandleOf<typeof Leased>, instances: () => Instan
 }
 
 /** The manager's sign-in methods: flows of the owner's OAuth servers, the callback route's completion, the probe. */
-function signInMethods(
-	configured: HandleOf<typeof Configured>,
-	listed: HandleOf<typeof Listed>,
-	signIns: () => SignIns,
-	probe: () => LoopbackProbe,
-) {
+function signInMethods(configured: Watchable<OwnerConfigState>, signIns: () => SignIns, probe: () => LoopbackProbe) {
 	const oauthServer = (name: string): OAuthServer => {
 		const server = configured.value.servers.find((candidate) => candidate.name === name);
 		const oauth = server === undefined ? undefined : oauthServerOf(server);
@@ -354,14 +339,9 @@ function signInMethods(
 		return oauth;
 	};
 	return {
-		beginSignIn: async ({ server, redirect }: { server: string; redirect: SignInRedirect }, ctx: Ctx) => {
-			const start = await asPluginError(signIns().begin(oauthServer(server), redirect));
-			// Listed before the answer: a caller following `signIns` for this flow's end sees it under way first.
-			await listed.change((draft) => {
-				draft.signIns = signIns().list();
-			}, ctx);
-			return start;
-		},
+		// The flow is listed before the answer: a caller following `signIns` for its end sees it under way first.
+		beginSignIn: ({ server, redirect }: { server: string; redirect: SignInRedirect }) =>
+			asPluginError(signIns().begin(oauthServer(server), redirect)),
 		completeSignIn: ({ state, code, iss, error }: { state: string; code?: string; iss?: string; error?: string }) =>
 			signIns().complete(
 				error !== undefined || code === undefined

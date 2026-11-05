@@ -14,8 +14,8 @@ import {
 	truncateToWidth,
 	VStack,
 } from "@earendil-works/pi-tui";
-import type { Ctx, Held, HeldIn } from "@p2/app/v1";
-import { BACKGROUND_CONTEXT, FileIndex, followRegistry, liveIn, serveKeyed, statusOf } from "@p2/app/v1";
+import type { Held, HeldIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, FileIndex, followRegistry, liveIn, serveKeyed, statusOf, whenLive } from "@p2/app/v1";
 import {
 	BashExecutionComponent,
 	buildTranscript,
@@ -31,6 +31,7 @@ import {
 	identityKey,
 	lineText,
 	type MarkdownTransformer,
+	type OptimisticAdd,
 	ordered,
 	type Pages,
 	pagesWatchable,
@@ -66,6 +67,17 @@ import { type Session, Sessions } from "../sessions/contract.ts";
 import { SessionTree } from "../tree/contract.ts";
 import { Chat, type EntryDisplay, SHELL_BUSY, type ShellState, TranscriptEntries } from "./contract.ts";
 import { CHAT_COMMANDS, formatSize, type LauncherUpload, registerLauncherAnswers } from "./tui-commands.ts";
+
+/** A message sent from here that the server does not show yet: in the transcript, or the queue while a run is busy. */
+type Outgoing = {
+	readonly id: string;
+	readonly text: string;
+	readonly mode: "steer" | "followUp";
+	readonly files: readonly LauncherUpload[];
+};
+
+/** No message in flight: one array, so a transcript rebuild sees "unchanged". */
+const NO_OUTGOING: readonly Outgoing[] = [];
 
 /** pi: a second Ctrl+C within this window exits; a second Escape runs `doubleEscapeAction`. */
 const DOUBLE_CTRL_C_MS = 500;
@@ -114,7 +126,23 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 		const agent = this.view?.docs["pi.agent"] as { cwd?: unknown } | undefined;
 		return typeof agent?.cwd === "string" ? agent.cwd : (this.rows.find((row) => row.id === this.session)?.cwd ?? "");
 	}
-	private ref: (() => Held<typeof Chat>) | undefined;
+	private ref: Held<typeof Chat> | undefined;
+	/** Messages in flight (`send`): shown at once, the editor already cleared; a refused one comes back to the editor. */
+	private outgoing: () => readonly Outgoing[] = () => NO_OUTGOING;
+	private sending: OptimisticAdd<Outgoing> | undefined;
+	/** A `!cmd` in flight: its block shows as running before the server's state does. */
+	private starting: () => ShellState = () => null;
+	private start: OptimisticAdd<ShellState> | undefined;
+	/** A `/compact` in flight: the compaction indicator shows before `pi.live` does. */
+	private compacting: () => boolean = () => false;
+	private compactNow: OptimisticAdd<boolean> | undefined;
+	/** The session catalog (`/fork`, `/clone`). */
+	private catalog: Held<typeof Sessions>;
+	/**
+	 * The viewed session's branches (`/tree`), held from its first use until another session is viewed: a switch of
+	 * the main conversation changes the view's identity but must not release it while `navigate` is in flight.
+	 */
+	private tree: { session: string; scope: TuiScope; ref: Held<typeof SessionTree> } | undefined;
 	private view: ConversationView | null | undefined;
 	/** The conversation's user shell command while it runs (`Chat.liveShell`), and its component (the transcript tail). */
 	private liveShell: ShellState = null;
@@ -134,9 +162,6 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 	private current: Transcript | undefined;
 	private synced: unknown[] = [];
 	private disposed = false;
-	private sending = false;
-	/** A send asked for while the conversation was connecting. */
-	private waiting: "steer" | "followUp" | undefined;
 	private lastCtrlC = 0;
 	private lastEscape = 0;
 	private indicator: StatusIndicator | undefined;
@@ -279,7 +304,7 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 		);
 		// The session's cwd: tool paths display relative to it.
 		this.sessions = new TuiScope(runtime);
-		this.sessions.watch(Sessions, {}, (ref, follow) => {
+		this.catalog = this.sessions.watch(Sessions, {}, (ref, follow) => {
 			const viewer = liveIn(ref, "owner", "guest");
 			if (viewer)
 				follow(viewer.sessions, (rows) => {
@@ -330,7 +355,6 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 		if (identity !== this.identity) this.switchTo(identity);
 		this.transcript.setState({ expanded: runtime.expandedTools, showThinking: runtime.showThinking });
 		this.sync();
-		if (this.waiting && runtime.connected && this.participant()) this.send(this.waiting);
 	}
 
 	private switchTo(identity: string | undefined): void {
@@ -339,14 +363,18 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 		this.scope?.dispose();
 		this.scope = undefined;
 		this.ref = undefined;
+		this.outgoing = () => NO_OUTGOING;
+		this.sending = undefined;
+		this.starting = () => null;
+		this.start = undefined;
+		this.compacting = () => false;
+		this.compactNow = undefined;
 		this.view = undefined;
 		this.transcriptStore = undefined;
 		this.files = undefined;
 		this.current = undefined;
 		this.liveShell = null;
 		this.synced = [];
-		this.sending = false;
-		this.waiting = undefined;
 		this.replyTo = undefined;
 		this.transcript.reset();
 		this.identity = identity;
@@ -359,6 +387,12 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 		const conversation = this.conversation;
 		const scope = new TuiScope(runtime);
 		this.scope = scope;
+		[this.outgoing, this.sending] = scope.optimistic(
+			(): readonly Outgoing[] => NO_OUTGOING,
+			(list, message: Outgoing) => [...list, message],
+		);
+		[this.starting, this.start] = scope.optimistic((): ShellState => null);
+		[this.compacting, this.compactNow] = scope.optimistic(() => false);
 		this.ref = scope.watch(Chat, { session, conversation }, (ref, follow) => {
 			follow(ref.view, (view) => {
 				if (view !== undefined) this.view = view;
@@ -373,29 +407,36 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 			});
 			this.transcriptStore = store;
 			follow(pagesWatchable(store), () => {});
-			if (ref.variant !== "participant") return;
-			scope.watch(Drafts, { session, conversation }, (drafts, subscribe) => {
-				subscribe(drafts.drafts, (items) => {
-					if (items?.length)
-						runtime.perform(
-							drafts
-								.claim({ ids: items.map((item) => item.id) }, BACKGROUND_CONTEXT)
-								.then(({ texts }) => this.restore(identityKey(session, conversation), texts)),
-						);
-				});
-			});
-			// `@` and Tab file completion (participants, as the workspace); a server without the plugin has none.
-			if (!this.files)
-				try {
-					this.files = scope.watch(FileIndex, { session, conversation }, () => {});
-				} catch {}
+			if (ref.variant === "participant") this.holdWriterParts(scope, session, conversation);
 		});
+		// Who may write is known before the conversation is live (the role, a guest's grant): no wait for it.
+		if (runtime.role === "owner" || runtime.guestMode() === "full")
+			this.holdWriterParts(scope, session, conversation);
+	}
+
+	/**
+	 * What a writer of the conversation holds besides it: its drafts withdrawn by others (claimed back into the editor)
+	 * and its file index (`@` and Tab completion). Once per view.
+	 */
+	private holdWriterParts(scope: TuiScope, session: string, conversation: number): void {
+		if (this.files) return;
+		scope.watch(Drafts, { session, conversation }, (drafts, subscribe) => {
+			subscribe(drafts.drafts, (items) => {
+				if (items?.length)
+					this.runtime.perform(
+						drafts
+							.claim({ ids: items.map((item) => item.id) }, BACKGROUND_CONTEXT)
+							.then(({ texts }) => this.restore(identityKey(session, conversation), texts)),
+					);
+			});
+		});
+		this.files = scope.watch(FileIndex, { session, conversation }, () => {});
 	}
 
 	/** The viewed conversation's file index once live (P7b). */
-	private files: (() => Held<typeof FileIndex>) | undefined;
+	private files: Held<typeof FileIndex> | undefined;
 	private fileSource(): FileSource | undefined {
-		const ref = liveIn(this.files?.(), "reader");
+		const ref = liveIn(this.files, "reader");
 		return (
 			ref && {
 				complete: (args) => ref.complete(args, BACKGROUND_CONTEXT),
@@ -446,18 +487,23 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 	}
 
 	private participant(): HeldIn<typeof Chat, "participant"> | undefined {
-		const ref = this.ref?.();
-		return liveIn(ref, "participant");
+		return liveIn(this.ref, "participant");
+	}
+
+	/** Whether the reference is live in a variant that cannot write (a viewer). */
+	private get readOnlyView(): boolean {
+		return this.ref !== undefined && statusOf(this.ref) === "live" && this.ref.variant !== "participant";
 	}
 
 	private sync(): void {
-		const ref = this.ref?.();
+		const ref = this.ref;
 		const view = this.view;
 		const pages = this.pages;
-		const inputs = [pages, this.displays, this.toolRenderers, this.resolvers, this.entryRenderers];
+		const outgoing = this.outgoing();
+		const inputs = [pages, outgoing, this.displays, this.toolRenderers, this.resolvers, this.entryRenderers];
 		if (inputs.length !== this.synced.length || inputs.some((input, index) => input !== this.synced[index])) {
 			this.synced = inputs;
-			this.current = pages ? buildTranscript(pages.view, this.display, pages.filling) : undefined;
+			this.current = pages ? this.withOutgoing(buildTranscript(pages.view, this.display, pages.filling)) : undefined;
 			const entries = (pages?.view.items ?? []).flatMap((item) => (item.kind === "entry" ? [item.entry] : []));
 			this.transcript.sync(this.current, entries);
 		}
@@ -505,7 +551,7 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 
 	/** The running command as pi's bash execution component at the end of the transcript. */
 	private syncShell(): void {
-		const live = this.liveShell;
+		const live = this.shownShell;
 		if (!live) {
 			this.shellView?.component.dispose();
 			this.shellView = undefined;
@@ -532,32 +578,70 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 		this.transcript.tail = component;
 	}
 
-	/** `!cmd`/`!!cmd`: runs the command (`Chat.shell`); one at a time, as pi. */
+	/** The transcript with the messages in flight: at its end while idle, else in the queue (`syncPending`). */
+	private withOutgoing(transcript: Transcript): Transcript {
+		const outgoing = this.outgoing();
+		if (!outgoing.length || transcript.busy) return transcript;
+		const author = this.ownAuthor();
+		const items = outgoing.map((message) => ({
+			type: "user" as const,
+			key: `outgoing-${message.id}`,
+			text: message.text,
+			images: [],
+			files: message.files.map((file) => file.name),
+			author: { ...author, id: "" },
+		}));
+		return { ...transcript, items: [...transcript.items, ...items] };
+	}
+
+	/** Who the server will record as this visitor (for messages and commands shown before it does). */
+	private ownAuthor(): { kind: "owner" | "guest"; name: string } {
+		return this.runtime.role === "guest"
+			? { kind: "guest", name: this.runtime.grant?.name ?? "Guest" }
+			: { kind: "owner", name: "Owner" };
+	}
+
+	/** The running command as shown: the server's, else one just started from here. */
+	private get shownShell(): ShellState {
+		return this.liveShell ?? this.starting();
+	}
+
+	/**
+	 * `!cmd`/`!!cmd`: runs the command (`Chat.shell`); one at a time, as pi. Its block shows as running at once and the
+	 * editor clears; a refused command comes back to the editor with the error.
+	 */
 	shell(command: string, includeInContext: boolean): void {
 		const ref = this.participant();
 		const identity = this.identity;
-		if (!ref || !identity) {
-			this.runtime.fail(
-				this.ref?.() !== undefined && statusOf(this.ref()) === "live"
-					? "This conversation is read-only"
-					: "Not connected yet",
-			);
+		if (!ref || !identity || !this.start) {
+			this.runtime.fail(this.readOnlyView ? "This conversation is read-only" : "Not connected yet");
 			return;
 		}
-		if (this.liveShell?.running) {
+		if (this.shownShell?.running) {
 			this.runtime.notify(SHELL_BUSY, "warning");
 			return;
 		}
 		const draft = this.editor.getExpandedText();
+		this.editor.addToHistory(draft.trim());
+		this.editor.setText("");
+		this.runtime.drafts.set(identity, "");
 		this.runtime.clearNotices();
 		this.scroll.scrollToEnd();
+		const requestId = randomUUID();
+		const guess = {
+			id: requestId,
+			command,
+			author: { ...this.ownAuthor(), id: "" },
+			includeInContext,
+			output: "",
+			truncated: false,
+			running: true,
+			cancelled: false,
+		};
 		this.runtime.perform(
-			ref.shell({ command, includeInContext, requestId: randomUUID() }, BACKGROUND_CONTEXT).then(() => {
-				if (!this.disposed) this.editor.addToHistory(draft.trim());
-				if (!this.disposed && identity === this.identity && this.editor.getExpandedText() === draft)
-					this.editor.setText("");
-				if (this.runtime.drafts.get(identity) === draft) this.runtime.drafts.set(identity, "");
-				this.runtime.changed();
+			this.start(guess, ref.shell({ command, includeInContext, requestId }, BACKGROUND_CONTEXT)).catch((error) => {
+				this.restore(identity, [draft]);
+				throw error;
 			}),
 		);
 	}
@@ -567,30 +651,26 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 		const theme = this.runtime.theme.current;
 		this.pending.clear();
 		const queued = this.current?.queued ?? [];
+		// Messages in flight while a run is busy wait in the queue, as the server will place them; before the transcript
+		// arrived (the conversation still connecting) they show here too.
+		const outgoing = !this.current || this.current.busy ? this.outgoing() : NO_OUTGOING;
 		const replying = this.canReply ? this.replyTo : undefined;
-		if (queued.length === 0 && !this.sending && !this.waiting && !replying) return;
+		if (queued.length === 0 && outgoing.length === 0 && !replying) return;
 		this.pending.addChild(new Text("", 0, 0));
 		if (replying)
 			this.pending.addChild(
 				new TruncatedText(theme.fg("accent", `↪ Replying to ${lineText(replying.name)} · /reply cancels`), 1, 0),
 			);
-		for (const input of queued)
+		const label = (mode: string) => (!this.current ? "Sending" : mode === "followUp" ? "Follow-up" : "Steering");
+		for (const input of [...queued, ...outgoing])
 			this.pending.addChild(
-				new TruncatedText(
-					theme.fg("dim", `${input.mode === "followUp" ? "Follow-up" : "Steering"}: ${lineText(input.text)}`),
-					1,
-					0,
-				),
+				new TruncatedText(theme.fg("dim", `${label(input.mode)}: ${lineText(input.text)}`), 1, 0),
 			);
 		if (queued.length && participant) {
 			const hint = this.runtime.ctx.keyText("app.message.dequeue");
 			if (hint)
 				this.pending.addChild(new TruncatedText(theme.fg("dim", `↳ ${hint} to edit your queued messages`), 1, 0));
 		}
-		if (this.sending || this.waiting)
-			this.pending.addChild(
-				new TruncatedText(theme.fg("dim", this.sending ? "Sending…" : "Sending when connected…"), 1, 0),
-			);
 	}
 
 	/** DTUI `#syncStatus`: retry, compaction, running tool or working, from `pi.live`. */
@@ -599,7 +679,10 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 		const tui = this.runtime.tui;
 		const live = this.view?.docs["pi.live"] as unknown as LiveState | undefined;
 		const generation = live?.generation;
-		const compaction = live?.compactions?.[0];
+		// A `/compact` in flight shows as a manual compaction until `pi.live` has it.
+		const compaction =
+			live?.compactions?.[0] ??
+			(this.compacting() ? { trigger: "manual" as const, attempt: 1, retry: undefined } : undefined);
 		const running = live?.tools?.find((slot) => slot.status === "running");
 		const abort = `(${ctx.keyText("app.interrupt")} to abort)`;
 		let key = "";
@@ -639,61 +722,62 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 		if (!participant && this.indicator) this.status.addChild(this.indicator);
 	}
 
+	/**
+	 * Sends the editor's message the way the web's outbox does: it leaves the editor and shows in the transcript (the
+	 * queue while a run is busy) at once, and is delivered once the conversation is live (a reload, a reconnect). A
+	 * refused message comes back to the editor with the error; a retry of the same text reuses its request ID, so it
+	 * is admitted once.
+	 */
 	send(mode: "steer" | "followUp"): void {
-		const ref = this.participant();
 		const text = this.editor.getExpandedText().trim();
-		const files = this.identity ? (this.attachments.get(this.identity) ?? []) : [];
-		if ((!text && !files.length) || this.sending) return;
-		const current = this.ref?.();
-		if (current !== undefined && statusOf(current) === "live" && current.variant !== "participant") {
+		const identity = this.identity;
+		const files = identity ? (this.attachments.get(identity) ?? []) : [];
+		const ref = this.ref;
+		if ((!text && !files.length) || !identity || !ref || !this.sending) return;
+		if (this.readOnlyView) {
 			this.runtime.fail("This conversation is read-only");
 			return;
 		}
-		if (!this.runtime.connected || !ref) {
-			// Still connecting (a reload, a reconnect): sent once the conversation is live, with the same request ID.
-			this.waiting = mode;
-			this.runtime.changed();
-			return;
-		}
-		this.waiting = undefined;
-		const identity = this.identity!;
 		const draft = this.editor.getExpandedText();
 		let submission = this.runtime.submissions.get(identity);
 		if (submission?.text !== text || submission.mode !== mode) {
 			submission = { text, mode, id: randomUUID() };
 			this.runtime.submissions.set(identity, submission);
 		}
-		this.sending = true;
+		const replyTo = this.canReply ? this.replyTo : undefined;
+		this.attachments.set(identity, []);
+		this.replyTo = undefined;
+		this.editor.addToHistory(text);
+		this.editor.setText("");
+		this.runtime.drafts.set(identity, "");
 		this.runtime.clearNotices();
 		this.scroll.scrollToEnd();
-		this.runtime.perform(
-			ref
-				.send(
+		const sent = submission;
+		const delivered = (async () => {
+			try {
+				// Waits through a connecting conversation; calls made while it reconnects wait for it too.
+				await whenLive(ref);
+				const writer = liveIn(ref, "participant");
+				if (!writer) throw new Error("This conversation is read-only");
+				await writer.send(
 					{
 						text,
-						requestId: submission.id,
+						requestId: sent.id,
 						whenBusy: mode,
 						...(files.length ? { attachments: files.map((file) => file.id) } : {}),
-						...(this.canReply && this.replyTo ? { replyTo: this.replyTo.entryId } : {}),
+						...(replyTo ? { replyTo: replyTo.entryId } : {}),
 					},
 					BACKGROUND_CONTEXT,
-				)
-				.then(() => {
-					// Sent: these attachments belong to the message now (later uploads stay pending).
-					const left = (this.attachments.get(identity) ?? []).filter((file) => !files.includes(file));
-					this.attachments.set(identity, left);
-					if (identity === this.identity) this.replyTo = undefined;
-					if (!this.disposed) this.editor.addToHistory(text);
-					if (!this.disposed && identity === this.identity && this.editor.getExpandedText() === draft)
-						this.editor.setText("");
-					if (this.runtime.drafts.get(identity) === draft) this.runtime.drafts.set(identity, "");
-					if (this.runtime.submissions.get(identity) === submission) this.runtime.submissions.delete(identity);
-				})
-				.finally(() => {
-					if (identity === this.identity) this.sending = false;
-					this.runtime.changed();
-				}),
-		);
+				);
+				if (this.runtime.submissions.get(identity) === sent) this.runtime.submissions.delete(identity);
+			} catch (error) {
+				this.restore(identity, [draft]);
+				this.attachments.set(identity, [...files, ...(this.attachments.get(identity) ?? [])]);
+				if (identity === this.identity) this.replyTo ??= replyTo;
+				throw error;
+			}
+		})();
+		this.runtime.perform(this.sending({ id: sent.id, text, mode, files }, delivered));
 	}
 
 	private restore(identity: string, texts: string[]): void {
@@ -705,7 +789,7 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 	}
 
 	private loadEarlier(): void {
-		const ref = this.ref?.();
+		const ref = this.ref;
 		const store = this.transcriptStore;
 		if (ref === undefined || statusOf(ref) !== "live" || !store || this.earlierFailed.has(store)) return;
 		this.runtime.perform(
@@ -725,7 +809,7 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 
 	/** Loads a gap's missing entries while it is in view; a failed load is not retried for that gap. */
 	private fillGap(gap: Gap): void {
-		const ref = this.ref?.();
+		const ref = this.ref;
 		const store = this.transcriptStore;
 		if (
 			ref === undefined ||
@@ -800,20 +884,19 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 		const session = this.session;
 		if (!session) return;
 		const title = () => this.rows.find((row) => row.id === session)?.title ?? "";
+		// One reference per viewed session: opening `/tree` again and each action reuse it.
+		if (this.tree?.session !== session) {
+			this.tree?.scope.dispose();
+			const scope = new TuiScope(runtime);
+			this.tree = { session, scope, ref: scope.watch(SessionTree, { session }, () => {}) };
+		}
+		const held = this.tree.ref;
 		runtime.perform(
-			runtime.host.root(async (root) => {
-				const ref = await root.get(SessionTree, { session });
-				if (ref.variant !== "owner") throw new Error("Only the owner switches branches");
-				const tree = await ref.tree(root);
-				// Each action runs in a root of its own: the selector outlives this one.
-				const act = (action: (tree: typeof ref, ctx: Ctx) => Promise<void>) =>
-					runtime.perform(
-						runtime.host.root(async (inner) => {
-							const owned = await inner.get(SessionTree, { session });
-							if (owned.variant !== "owner") throw new Error("Only the owner switches branches");
-							await action(owned, inner);
-						}, BACKGROUND_CONTEXT),
-					);
+			(async () => {
+				await whenLive(held);
+				const owner = liveIn(held, "owner");
+				if (!owner) throw new Error("Only the owner switches branches");
+				const tree = await owner.tree(BACKGROUND_CONTEXT);
 				const selector: TreeSelectorComponent = new TreeSelectorComponent(
 					runtime.ctx,
 					tree.nodes,
@@ -821,24 +904,29 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 					new Map(tree.branches.map((branch) => [branch.conversation, branch.label ?? title()])),
 					(entry) => {
 						overlay.close();
-						act(async (owned, ctx) => {
-							const { conversation, text } = await owned.navigate({ entry }, ctx);
-							const identity = identityKey(session, conversation);
-							if (text !== null) runtime.drafts.set(identity, text);
-							runtime.navigate("chat", session, conversation);
-							// Already shown (the session continues in the same conversation): the editor takes the text now.
-							if (text !== null && !this.disposed && this.identity === identity) this.editor.setText(text);
-						});
+						runtime.perform(
+							owner.navigate({ entry }, BACKGROUND_CONTEXT).then(({ conversation, text }) => {
+								const identity = identityKey(session, conversation);
+								if (text !== null) runtime.drafts.set(identity, text);
+								runtime.navigate("chat", session, conversation);
+								// Already shown (the session continues in the same conversation): the editor takes the text now.
+								if (text !== null && !this.disposed && this.identity === identity) this.editor.setText(text);
+							}),
+						);
 					},
 					() => overlay.close(),
-					(conversation, label) =>
-						act(async (owned, ctx) => {
-							await owned.rename({ conversation, label: label || null }, ctx);
-							selector.setLabel(conversation, label || title());
-						}),
+					// The label shows at once; a refused rename puts the old one back.
+					(conversation, label) => {
+						const before = tree.branches.find((branch) => branch.conversation === conversation)?.label ?? title();
+						selector.setLabel(conversation, label || title());
+						owner.rename({ conversation, label: label || null }, BACKGROUND_CONTEXT).catch((error: unknown) => {
+							selector.setLabel(conversation, before);
+							runtime.fail(error);
+						});
+					},
 				);
 				const overlay = runtime.ctx.overlay("tree", selector, { width: "100%", anchor: "bottom-center" });
-			}, BACKGROUND_CONTEXT),
+			})(),
 		);
 	}
 
@@ -871,18 +959,17 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 				(id) => {
 					overlay.close();
 					const text = messages.find((message) => message.id === id)?.text ?? "";
-					runtime.perform(
-						runtime.host.root(async (root) => {
-							const sessions = await root.get(Sessions, {});
-							if (sessions.variant !== "owner") throw new Error("Only the owner forks sessions");
-							const created = await sessions.fork(
-								{ id: session, conversation: this.conversation, before: id },
-								root,
-							);
-							runtime.drafts.set(identityKey(created.id, 1), text);
-							runtime.navigate("chat", created.id, 1);
-							runtime.notify("Forked to new session");
-						}, BACKGROUND_CONTEXT),
+					const catalog = liveIn(this.catalog, "owner");
+					if (!catalog) return;
+					// The forked message waits in the new session's editor.
+					this.openCopy(
+						session,
+						(copy) =>
+							catalog.fork(
+								{ id: session, conversation: this.conversation, before: id, copy },
+								BACKGROUND_CONTEXT,
+							),
+						text,
 					);
 				},
 				() => overlay.close(),
@@ -892,28 +979,39 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 		);
 	}
 
-	/** pi's `/clone`: the whole session as a new one (`Sessions.clone`), opened. */
+	/** pi's `/clone`: the whole session as a new one (`Sessions.clone`), opened at once. */
 	cloneSession(): void {
-		const runtime = this.runtime;
 		const session = this.session;
-		if (!session) return;
-		runtime.perform(
-			runtime.host.root(async (root) => {
-				const sessions = await root.get(Sessions, {});
-				if (sessions.variant !== "owner") throw new Error("Only the owner clones sessions");
-				const created = await sessions.clone({ id: session }, root);
-				runtime.navigate("chat", created.id, 1);
-				runtime.notify("Cloned to new session");
-			}, BACKGROUND_CONTEXT),
-		);
+		const catalog = liveIn(this.catalog, "owner");
+		if (!session || !catalog) return;
+		this.openCopy(session, (copy) => catalog.clone({ id: session, copy }, BACKGROUND_CONTEXT));
 	}
 
-	/** `/compact [instructions]`: summarize earlier context now (Escape aborts it). */
+	/**
+	 * Opens a copy of `session` (a clone, a fork) at once: this TUI chooses its ID (`copy`), the new conversation shows
+	 * loading while its files are copied (a job; its worker starts after), with `draft` in its editor. A refused copy
+	 * returns to `session` with the error.
+	 */
+	private openCopy(session: string, call: (copy: string) => Promise<unknown>, draft?: string): void {
+		const runtime = this.runtime;
+		const copy = randomUUID();
+		if (draft !== undefined) runtime.drafts.set(identityKey(copy, 1), draft);
+		runtime.navigate("chat", copy, 1);
+		call(copy).catch((error: unknown) => {
+			if (runtime.session === copy) runtime.navigate("chat", session);
+			runtime.fail(error);
+		});
+	}
+
+	/** `/compact [instructions]`: summarize earlier context now (Escape aborts it); its indicator shows at once. */
 	compact(instructions?: string): void {
 		const ref = this.participant();
-		if (!ref) return;
+		if (!ref || !this.compactNow) return;
 		this.runtime.perform(
-			ref.compact(instructions?.trim() ? { instructions: instructions.trim() } : {}, BACKGROUND_CONTEXT),
+			this.compactNow(
+				true,
+				ref.compact(instructions?.trim() ? { instructions: instructions.trim() } : {}, BACKGROUND_CONTEXT),
+			),
 		);
 	}
 
@@ -1014,9 +1112,7 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 
 	/** The editor keeps input while the conversation connects (a reload, a reconnect); read-only views drop it. */
 	handleInput(data: string): void {
-		const ref = this.ref?.();
-		if (ref !== undefined && statusOf(ref) === "live" && ref.variant !== "participant") return;
-		this.editor.handleInput(data);
+		if (!this.readOnlyView) this.editor.handleInput(data);
 	}
 
 	/** Without the fullscreen layout (tests): transcript, dock. */
@@ -1037,6 +1133,7 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 		this.shellView?.component.dispose();
 		this.transcript.dispose();
 		this.sessions.dispose();
+		this.tree?.scope.dispose();
 		this.scope?.dispose();
 	}
 }

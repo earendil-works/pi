@@ -52,12 +52,19 @@ export async function copySessionStore(dataDir: string, from: string, to: string
 		);
 }
 
-/** Removes what a failed copy left for the session `id` (it has no catalog entry yet, or an archived one). */
+/** Removes the copy's per-session directories (a fork starting its copy over). */
+export async function removeSessionDirectories(dataDir: string, id: string): Promise<void> {
+	await Promise.all(
+		["artifacts", "downloads", "uploads"].map((kind) =>
+			rm(join(dataDir, kind, id), { recursive: true, force: true }),
+		),
+	);
+}
+
+/** Removes what a failed copy left for the session `id` (its row is archived, its worker stopped). */
 export async function removeSessionCopy(dataDir: string, id: string): Promise<void> {
 	await Promise.all([
 		...["", "-wal", "-shm"].map((suffix) => rm(join(dataDir, "sessions", `${id}.sqlite${suffix}`), { force: true })),
-		...["artifacts", "downloads", "uploads"].map((kind) =>
-			rm(join(dataDir, kind, id), { recursive: true, force: true }),
-		),
+		removeSessionDirectories(dataDir, id),
 	]);
 }

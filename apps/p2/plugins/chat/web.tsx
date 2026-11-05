@@ -10,6 +10,7 @@ import {
 	isChordError,
 	liveIn,
 	serveKeyed,
+	UI_LINGER,
 	whenLive,
 } from "@p2/app/v1";
 import {
@@ -23,6 +24,7 @@ import {
 	closeLayers,
 	conversationRoute,
 	DownIcon,
+	errorText,
 	type FileCompletion,
 	FileCompletionPopover,
 	FillGap,
@@ -33,6 +35,7 @@ import {
 	keep,
 	keepSessions,
 	keptSizes,
+	knownMain,
 	loadKept,
 	locationLabel,
 	MenuIcon,
@@ -76,6 +79,7 @@ import {
 	useNavigation,
 	useNewSessionState,
 	useObject,
+	useOptimisticCall,
 	useOwner,
 	useReadable,
 	useRegistry,
@@ -109,8 +113,6 @@ import { SessionTree } from "../tree/contract.ts";
 import { Chat, ChatCosts, TranscriptEntries } from "./contract.ts";
 import { type Outgoing, outboxOf } from "./outbox.ts";
 import { sessionStart } from "./session-start.ts";
-
-const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /** An upload the server answered with an error status. */
 class UploadError extends Error {
@@ -206,6 +208,30 @@ const attachingOf = ({ files, setFiles, addFiles }: ReturnType<typeof useCompose
 	add: addFiles,
 	remove: (file) => setFiles((current) => current.filter((entry) => entry !== file)),
 });
+
+/**
+ * The owner's model catalog and settings, with the default model as just chosen: `setDefault` shows the choice as the
+ * default at once (the picker's mark) and rolls back if the server refuses it.
+ */
+function useModelResources(owner: boolean, fail: (error: unknown) => void) {
+	const models = useObject(Models, owner ? {} : undefined);
+	const [resources, guess] = useOptimisticCall(
+		useReadable(models?.resources),
+		(snapshot, choice: ModelChoice) =>
+			snapshot && {
+				...snapshot,
+				settings: { ...snapshot.settings, defaultModel: choice.model, thinkingLevel: choice.thinkingLevel },
+			},
+		fail,
+	);
+	const setDefault = (choice: ModelChoice) => {
+		if (models)
+			guess(choice, () =>
+				models.setDefault({ ...choice.model, thinkingLevel: choice.thinkingLevel }, BACKGROUND_CONTEXT),
+			);
+	};
+	return [resources, setDefault] as const;
+}
 
 /** The model and thinking chip that opens the model sheet. */
 function ModelControl({ resources, choice }: { resources: ResourceSnapshot | undefined; choice?: ModelChoice }) {
@@ -490,7 +516,18 @@ function Dock({ frame, dockRef }: { frame: Frame; dockRef: (element: HTMLDivElem
 	);
 }
 
-function TopBar({ session, child, owner = false }: { session?: Session; child?: Child; owner?: boolean }) {
+function TopBar({
+	session,
+	child,
+	owner = false,
+	moving = false,
+}: {
+	session?: Session;
+	child?: Child;
+	owner?: boolean;
+	/** The session is being moved (a relocation job runs). */
+	moving?: boolean;
+}) {
 	const connected = useConnected();
 	const nav = useNavigation();
 	const route = useRoute();
@@ -530,7 +567,7 @@ function TopBar({ session, child, owner = false }: { session?: Session; child?: 
 									className="title-cwd"
 									onClick={() => openLayer(directoryPickerLayer(session.env ?? null, session.cwd))}
 								>
-									{locationLabel(session.env, session.cwd)}
+									{moving ? "Moving…" : locationLabel(session.env, session.cwd)}
 								</button>
 							) : (
 								<p>{locationLabel(session.env, session.cwd)}</p>
@@ -663,8 +700,8 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	// Taken while the object is live, a removed grant (null) included.
 	if (useStatus(access) === "live") lastGrant.current = liveGrant;
 	const grant = owner ? undefined : lastGrant.current;
-	const models = useObject(Models, owner ? {} : undefined);
-	const resources = useReadable(models?.resources);
+	const { fail } = useComposerState();
+	const [resources, setDefault] = useModelResources(owner, fail);
 	const subagents = liveIn(useObject(Subagents, {}), "reader");
 	const children = useReadable(subagents?.children);
 	const child = children?.[sessionId]?.find((entry) => entry.conversationId === conversationId);
@@ -744,10 +781,10 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	// Who may write decides what shows (as Pi Mobile's `canWrite`), not whether the chat object is live yet: during a
 	// load, a cold start or a reconnect the composer stays and only Send waits.
 	const canWrite = owner || grantMode(grant, sessionId) === "full";
-	const subagentControl = useObject(
-		SubagentControl,
-		canWrite && child && !oneShot ? { session: sessionId } : undefined,
-	);
+	// Held with the view, not once the subagent list names the child: Archive works right after load.
+	const subagentControl = useObject(SubagentControl, canWrite ? { session: sessionId } : undefined);
+	// The bar's archived mark flips at the tap.
+	const [archived, archive] = useOptimisticCall(child?.archived ?? false, (_, next: boolean) => next, fail);
 	const composer = useComposerState();
 	const {
 		draft,
@@ -802,7 +839,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const fileCompletion = useFileCompletion(
 		composerRef,
 		setDraft,
-		participant ? { session: sessionId, conversation: conversationId } : undefined,
+		canWrite ? { session: sessionId, conversation: conversationId } : undefined,
 		{ mention: canReply ? mentionName : undefined },
 	);
 	const metrics = useObject(SessionMetrics, { session: sessionId, viewer });
@@ -823,7 +860,8 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		},
 		[setDraft],
 	);
-	useRestoredDrafts(sessionId, conversationId, participant, restore);
+	// Who may write is known before the chat object is live (`canWrite`): drafts hold at once.
+	useRestoredDrafts(sessionId, conversationId, canWrite, restore);
 	const [pages, transcriptStore] = useTranscriptPages(cacheKey, chat);
 	// What this device kept starts the transcript; the live view is merged into it when it continues it.
 	useEffect(() => {
@@ -837,12 +875,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		if (!owner || !liveView || !store?.value) return;
 		keep(cacheKey, () => ({ view: store.value!.view, sizes: [...keptSizes(cacheKey)] }));
 	}, [owner, liveView, pages, transcriptStore, cacheKey]);
-	const perform = useCallback(
-		(action: Promise<unknown> | undefined) => {
-			void action?.catch((reason: unknown) => setError(errorText(reason)));
-		},
-		[setError],
-	);
+	const perform = useCallback((action: Promise<unknown> | undefined) => void action?.catch(fail), [fail]);
 	// Plugins show their own display-only entry kinds (chat-mode's chat messages) as people's messages.
 	const entryKinds = useRegistry(TranscriptEntries);
 	const display = useCallback((kind: string, data: unknown) => entryKinds.get(kind)?.(data), [entryKinds]);
@@ -891,7 +924,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		[pending, busy, started],
 	);
 	// The server's queued inputs, without those still shown as messages sent from here.
-	const queued = useMemo(() => {
+	const serverQueued = useMemo(() => {
 		const sentIds = new Set(pending.map((message) => message.sent?.submissionId));
 		return transcript?.queued.filter((item) => !sentIds.has(item.id)) ?? [];
 	}, [transcript, pending]);
@@ -962,15 +995,17 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 				const start = started.get(message.id) ?? { after: newest.current, idle: !latest.current.busy };
 				started.set(message.id, start);
 				const { after } = start;
-				const attachments: string[] = [];
-				for (const file of message.files) {
-					if (file.session !== session) {
-						file.uploaded = undefined;
-						file.session = session;
-					}
-					file.uploaded ??= await upload(session, file.file);
-					attachments.push(file.uploaded);
-				}
+				// Uploads run side by side; one kept from an earlier try of this send is reused.
+				const attachments = await Promise.all(
+					message.files.map(async (file) => {
+						if (file.session !== session) {
+							file.uploaded = undefined;
+							file.session = session;
+						}
+						file.uploaded ??= await upload(session, file.file);
+						return file.uploaded;
+					}),
+				);
 				// `/template args` and `/skill:name args` expand on the session worker first (10.8).
 				const text = message.text.startsWith("/")
 					? await expandComposerText(client, session, conversation, message.text)
@@ -1062,12 +1097,45 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const first = pages?.view.items.find((item) => item.kind === "entry");
 	const paged = (first?.kind === "entry" ? first.entry.id : Number.POSITIVE_INFINITY) < (view?.entries[0]?.id ?? 0);
 	const earlier = transcript?.earlier ? (pages?.loadingEarlier ? "loading" : "more") : paged ? "start" : undefined;
-	const choice: ModelChoice | undefined = session
-		? {
-				model: agentModel ?? session.model,
-				thinkingLevel: transcript?.agent.thinkingLevel ?? (session.thinkingLevel as ModelChoice["thinkingLevel"]),
-			}
-		: undefined;
+	// The chip and the picker show a model change at once; the conversation's state replaces it with the answer.
+	const [choice, chooseModel] = useOptimisticCall<ModelChoice | undefined, ModelChoice>(
+		session
+			? {
+					model: agentModel ?? session.model,
+					thinkingLevel:
+						transcript?.agent.thinkingLevel ?? (session.thinkingLevel as ModelChoice["thinkingLevel"]),
+				}
+			: undefined,
+		(_, next) => next,
+		fail,
+	);
+	// A move is long work (a job): the top bar says "Moving…" from the tap until the job is done; a refused move
+	// (a busy session) shows as a failed operation in the sidebar.
+	const operations = useReadable(liveIn(sessions, "owner")?.operations);
+	const moveRunning =
+		operations?.some(
+			(operation) =>
+				operation.phase === "running" && operation.kind === "relocate" && operation.session === sessionId,
+		) ?? false;
+	const [moving, relocate] = useOptimisticCall(moveRunning, () => true, fail);
+	// A clone or fork into this session whose files are still being copied: nothing is sent until its worker runs.
+	const copyTarget =
+		operations?.some((operation) => operation.phase === "running" && operation.target === sessionId) ?? false;
+	// A move of this session the worker refused (busy) or that failed: said in the toast once; the sidebar row keeps it
+	// until dismissed.
+	const failedMove = operations?.find(
+		(operation) => operation.phase === "failed" && operation.kind === "relocate" && operation.session === sessionId,
+	);
+	const failedMoveText = failedMove?.phase === "failed" ? `Move failed: ${failedMove.error}` : undefined;
+	useEffect(() => {
+		if (failedMoveText) toast(failedMoveText);
+	}, [failedMoveText, toast]);
+	// Removed queued inputs leave the queue at once.
+	const [queued, dequeue] = useOptimisticCall(
+		serverQueued,
+		(items, submissionId: number) => items.filter((item) => item.id !== submissionId),
+		fail,
+	);
 	const modelControl = owner ? (
 		<ModelControl resources={resources} {...(choice ? { choice } : {})} />
 	) : (
@@ -1107,30 +1175,25 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 					Tools: {child.tools.join(", ") || "none"}
 					{!oneShot && viewLocation && ` · in ${locationLabel(viewLocation.env, viewLocation.cwd)}`}
 					{!oneShot && !child.location && " · follows the session"}
-					{child.archived ? " · archived" : ""}
+					{archived ? " · archived" : ""}
 				</span>
-				{canWrite && !oneShot && (
+				{canWrite && !oneShot && subagentControl && (
 					<button
 						type="button"
 						className="text-action"
 						title={
-							child.archived
-								? "Show it in the sidebar again"
-								: "Stop it and move it to the sidebar's archived row"
+							archived ? "Show it in the sidebar again" : "Stop it and move it to the sidebar's archived row"
 						}
 						onClick={() =>
-							perform(
-								subagentControl?.archive(
-									{
-										conversation: child.conversationId,
-										archived: !child.archived,
-									},
+							archive(!archived, () =>
+								subagentControl.archive(
+									{ conversation: child.conversationId, archived: !archived },
 									BACKGROUND_CONTEXT,
 								),
 							)
 						}
 					>
-						{child.archived ? "Restore" : "Archive"}
+						{archived ? "Restore" : "Archive"}
 					</button>
 				)}
 				{canWrite && oneShot && busy && (
@@ -1179,13 +1242,14 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 						className="queue-edit"
 						title="Move back to editor"
 						onClick={() =>
-							perform(
-								writer
-									?.dequeue({ submissionId: item.id, restore: true }, BACKGROUND_CONTEXT)
-									.then(({ text }) => {
-										if (text) restore([text], true);
-									}),
-							)
+							writer &&
+							dequeue(item.id, async () => {
+								const { text } = await writer.dequeue(
+									{ submissionId: item.id, restore: true },
+									BACKGROUND_CONTEXT,
+								);
+								if (text) restore([text], true);
+							})
 						}
 					>
 						<span>{item.mode === "steer" ? "Steer" : "Queued"}</span> {item.text}
@@ -1194,7 +1258,9 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 						type="button"
 						className="queue-remove"
 						aria-label="Remove from queue"
-						onClick={() => perform(writer?.dequeue({ submissionId: item.id }, BACKGROUND_CONTEXT))}
+						onClick={() =>
+							writer && dequeue(item.id, () => writer.dequeue({ submissionId: item.id }, BACKGROUND_CONTEXT))
+						}
 					>
 						<CloseIcon />
 					</button>
@@ -1221,7 +1287,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 										busy,
 										steer,
 										setSteer,
-										disabled: false,
+										disabled: copyTarget,
 										onSend: send,
 										onStop: stop,
 										attaching,
@@ -1239,7 +1305,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	);
 	return (
 		<>
-			<TopBar session={session} child={child} owner={owner} />
+			<TopBar session={session} child={child} owner={owner} moving={moving} />
 			{cwdSheet && owner && session && (
 				<DirectoryPicker
 					value={session.cwd}
@@ -1250,7 +1316,8 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 					]}
 					onClose={closeLayers}
 					onChange={(env, cwd) => {
-						perform(liveIn(sessions, "owner")?.relocate({ id: sessionId, env, cwd }, BACKGROUND_CONTEXT));
+						const catalog = liveIn(sessions, "owner");
+						if (catalog) relocate(true, () => catalog.relocate({ id: sessionId, env, cwd }, BACKGROUND_CONTEXT));
 						closeLayers();
 					}}
 				/>
@@ -1259,12 +1326,10 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 				<ModelPicker
 					resources={resources}
 					value={choice}
-					onChange={(choice) => perform(writer?.configure(choice, BACKGROUND_CONTEXT))}
-					onDefault={(choice) =>
-						perform(
-							models?.setDefault({ ...choice.model, thinkingLevel: choice.thinkingLevel }, BACKGROUND_CONTEXT),
-						)
-					}
+					onChange={(next) => {
+						if (writer) chooseModel(next, () => writer.configure(next, BACKGROUND_CONTEXT));
+					}}
+					onDefault={setDefault}
 					onClose={closeLayers}
 				/>
 			)}
@@ -1298,7 +1363,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 							{owner ? (
 								<div className="actions">
 									<button type="button" className="button" disabled={retrying} onClick={() => void retry()}>
-										Retry
+										{retrying ? "Retrying…" : "Retry"}
 									</button>
 									<button
 										type="button"
@@ -1373,13 +1438,13 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 
 function NewSession() {
 	const connected = useConnected();
+	const host = useHost();
 	const owner = useOwner();
 	const catalog = useObject(Sessions, {});
 	const listed = useReadable(liveIn(catalog, "owner", "guest")?.sessions);
 	// Only the owner creates sessions.
 	const sessions = liveIn(catalog, "owner");
-	const models = useObject(Models, owner ? {} : undefined);
-	const resources = useReadable(models?.resources);
+	const [resources, setDefault] = useModelResources(owner, useComposerState().fail);
 	const recent = useMemo(() => (listed ?? []).toSorted((a, b) => b.updatedAt - a.updatedAt), [listed]);
 	const { location: selectedLocation, setLocation, choice: selectedChoice, setChoice } = useNewSessionState();
 	const location =
@@ -1422,7 +1487,8 @@ function NewSession() {
 				whenBusy: steer ? "steer" : "followUp",
 				item: outgoingItem(id, text, files, OWNER_AUTHOR),
 			},
-			{ location, choice },
+			// The page chooses the session's ID: a retried creation answers the same session.
+			{ session: crypto.randomUUID(), location, choice },
 		);
 		setDraft("");
 		setFiles([]);
@@ -1443,18 +1509,27 @@ function NewSession() {
 			return;
 		}
 		sessionStart.connect({
-			create: async ({ location, choice }) =>
-				(
+			create: async ({ session, location, choice }) => {
+				// The new session's worker starts beside the creation, not after it (its start waits for the row): held
+				// here and lingering for the session's view, which holds it next.
+				const chat = host.hold(Chat, { session, conversation: 1 }, BACKGROUND_CONTEXT);
+				try {
 					await sessions.create(
 						{
+							id: session,
 							env: location.env,
 							cwd: location.cwd,
 							model: choice.model,
 							thinkingLevel: choice.thinkingLevel,
 						},
 						BACKGROUND_CONTEXT,
-					)
-				).id,
+					);
+					UI_LINGER.release(chat, Chat.name);
+				} catch (error) {
+					chat.release();
+					throw error;
+				}
+			},
 			// The server's own errors (a missing directory, an unknown model) refuse; a lost connection is tried again.
 			refused: (error) => !isChordError(error) || refused(error),
 			created: (session) => {
@@ -1467,7 +1542,7 @@ function NewSession() {
 			},
 		});
 		return () => sessionStart.connect(undefined);
-	}, [connected, sessions, setDraft, setFiles, setError]);
+	}, [connected, sessions, host, setDraft, setFiles, setError]);
 	// Leaving the page loses a session not created yet: the browser asks first.
 	useEffect(() => {
 		if (!start) return;
@@ -1522,11 +1597,7 @@ function NewSession() {
 					resources={resources}
 					value={choice}
 					onChange={setChoice}
-					onDefault={(choice) =>
-						void models
-							?.setDefault({ ...choice.model, thinkingLevel: choice.thinkingLevel }, BACKGROUND_CONTEXT)
-							.catch((error) => setError(errorText(error)))
-					}
+					onDefault={setDefault}
 					onClose={closeLayers}
 				/>
 			)}
@@ -1597,7 +1668,14 @@ function Main() {
 	const [contents] = useState(() => new DockContents());
 	const composer = useRef<HTMLTextAreaElement>(null);
 	const frame = useMemo(() => ({ view, dock, contents, composer }), [view, dock, contents]);
-	const conversation = route.session && `${route.session}:${route.conversation ?? 1}`;
+	// A short link (`/s/<id>`) opens the session's main conversation as last known here: no hold of conversation 1
+	// first and no redirect after the catalog arrives (the conversation view corrects a stale guess).
+	const shownConversation = route.session && route.conversation === 1 ? knownMain(route.session) : route.conversation;
+	useEffect(() => {
+		if (route.session && shownConversation !== route.conversation)
+			void nav.replace(conversationRoute(route, route.session, shownConversation), route);
+	}, [route, shownConversation, nav]);
+	const conversation = route.session && `${route.session}:${shownConversation}`;
 	return (
 		<ChatFrame.Provider value={frame}>
 			{ended ? (
@@ -1605,7 +1683,7 @@ function Main() {
 			) : route.session ? (
 				<Slot name="chat-content">
 					<Slot name="chat-attribution">
-						<SessionChat key={conversation} sessionId={route.session} conversationId={route.conversation ?? 1} />
+						<SessionChat key={conversation} sessionId={route.session} conversationId={shownConversation} />
 					</Slot>
 				</Slot>
 			) : (

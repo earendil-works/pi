@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { arr, compile, obj, str } from "@earendil-works/pi-schema";
-import { contribute, defineFacet, deriveTyped, forbidden, isOwner } from "@p2/app/v1";
+import { contribute, defineFacet, deriveTyped, followNative, forbidden, isOwner } from "@p2/app/v1";
 import { captureProcessLogs, type LogSnapshot, processLogs } from "@p2/app/v1/node";
 import { Server } from "@p2/app/v1/server";
 import { LogLineSchema, LogNotices, Logs } from "./contract.ts";
@@ -71,14 +71,16 @@ export default defineFacet((host) => {
 
 	host.serve(LogNotices, (_params, principal, self) => {
 		if (!isOwner(principal)) throw forbidden("Notices are only available to owners");
-		const notices = self.writable(processLogs.notices());
-		self.open(
-			async () => processLogs.events.subscribe(() => notices.set(processLogs.notices())),
-			(stop) => stop(),
+		// The process's notices as it keeps them: a dismissal tells this source before `dismiss` returns.
+		const notices = followNative(
+			self,
+			(changed) => processLogs.events.subscribe(changed),
+			() => processLogs.notices(),
 		);
 		return {
 			variant: "owner",
 			members: {
+				// Diffed: the process tells of every log line, and the notices rarely change with one.
 				notices: deriveTyped(self, [notices], ([value]) => value),
 				dismiss: async ({ id }) => {
 					processLogs.dismissNotice(id);
@@ -90,17 +92,21 @@ export default defineFacet((host) => {
 
 	host.serve(Logs, ({ source }, principal, self) => {
 		if (!isOwner(principal)) throw forbidden("Logs are only available to owners");
-		const sources = self.writable(processLogs.sources());
-		const lines = self.writable(processLogs.lines(source));
-		self.open(
-			async () =>
-				processLogs.events.subscribe((changed) => {
-					sources.set(processLogs.sources());
-					if (changed === source || !processLogs.sources().some((entry) => entry.id === source))
-						lines.set(processLogs.lines(source));
-				}),
-			(stop) => stop(),
+		const sources = followNative(
+			self,
+			(changed) => processLogs.events.subscribe(changed),
+			() => processLogs.sources(),
 		);
+		// Read again only when this source changed (or went), not for every line of another one.
+		const lines = followNative(
+			self,
+			(changed) =>
+				processLogs.events.subscribe((changedSource) => {
+					if (changedSource === source || !processLogs.sources().some((entry) => entry.id === source)) changed();
+				}),
+			() => processLogs.lines(source),
+		);
+		// Diffed: a frame carries the lines and sources that changed, not the whole buffer.
 		return {
 			variant: "owner",
 			members: {

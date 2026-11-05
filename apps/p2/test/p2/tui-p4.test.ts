@@ -103,9 +103,13 @@ function stubs(calls: Calls, sessions: Session[], options: { view?: Conversation
 					sessions: sessionsState,
 					defaultCwd,
 					defaultEnv,
-					create: (args: { cwd: string }, ctx: Ctx) => {
-						record("create", args);
-						const created = session(`new-${(calls.create ?? []).length}`, {
+					operations: self.state([]),
+					dismissOperation: () => {},
+					create: (args: { id: string; cwd: string }, ctx: Ctx) => {
+						const { id, ...location } = args;
+						record("create", location);
+						record("created", id);
+						const created = session(id, {
 							cwd: args.cwd,
 							updatedAt: Date.now(),
 						});
@@ -210,8 +214,9 @@ function stubs(calls: Calls, sessions: Session[], options: { view?: Conversation
 		],
 		[
 			Search,
-			() => ({
+			(_input, _principal, self) => ({
 				variant: "owner",
+				rebuilds: self.state([]),
 				search: ({ query }: { query: string }) => ({
 					sessions: [],
 					messages: [
@@ -469,7 +474,8 @@ test("/new, /name and /session", async (t) => {
 	send(ENTER);
 	await poll(() => (calls.create?.length ?? 0) === 1);
 	assert.deepEqual(calls.create?.[0], { cwd: "/work", env: null });
-	await poll(() => runtime.session === "new-1");
+	// The TUI chose the new session's ID and opened it at once.
+	assert.equal(runtime.session, calls.created?.[0]);
 });
 
 test("chat controls: /compact, Escape aborts compaction, /new-context, Alt+Up restores own queued messages", async (t) => {

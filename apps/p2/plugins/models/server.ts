@@ -1,36 +1,14 @@
-import { obj, unknown } from "@earendil-works/pi-schema";
-import {
-	defineFacet,
-	defineState,
-	forbidden,
-	isOwner,
-	type JsonValue,
-	unsafe,
-	untilAborted,
-	type Watchable,
-} from "@p2/app/v1";
+import { defineFacet, deriveTyped, followNative, forbidden, isOwner } from "@p2/app/v1";
 import { Server, serverOf } from "@p2/app/v1/server";
 import { openResources, resourceState } from "./config.ts";
-import { ModelConfig, ModelResources, ModelSummarySchema, Models } from "./contract.ts";
-import type { ResourceSnapshot } from "./resources.ts";
+import { ModelConfig, ModelResources, Models } from "./contract.ts";
 import { resolveModelScope } from "./scope.ts";
-
-/** What `ModelConfig` publishes of the configuration: the picker's summary and the secret-free snapshot. */
-const Published = defineState("p2.model-config", {
-	schema: obj({ summary: ModelSummarySchema, snapshot: unsafe<JsonValue>(unknown()) }),
-	version: 1,
-	initial: () => ({
-		summary: { models: [], defaultModel: null, errors: [] },
-		snapshot: { version: 0, settings: {}, credentials: [], providers: [], models: [], errors: [] },
-	}),
-});
 
 export default defineFacet((host) => {
 	host.serve(ModelResources, { compose: (table) => table[0]?.value });
 	host.serve(ModelConfig, (_params, self) => {
 		const server = self.get(Server, {});
 		const natives = serverOf(self);
-		const published = self.state(Published);
 		const resources = self.open(
 			() => openResources(server.info.value.dataDir, server.info.value.fake, natives().resourceOptions),
 			(opened) => opened.close(),
@@ -40,25 +18,16 @@ export default defineFacet((host) => {
 				return resources.value;
 			},
 		});
-		self.onLive(async (ctx) => {
-			const publish = () =>
-				published.change((draft) => {
-					const state = resourceState(resources.value, server.info.value.fake);
-					draft.summary = state.summary;
-					draft.snapshot = state.snapshot as unknown as JsonValue;
-				}, ctx);
-			await publish();
-			const stop = resources.value.subscribe(() => void publish().catch(() => {}));
-			try {
-				await untilAborted(ctx);
-			} finally {
-				stop();
-			}
-		});
+		// The configuration files' state as the resources hold it: a save below resolves after its reload, which
+		// told this source, so the caller's answer comes with the new state.
+		const state = followNative(
+			self,
+			(changed) => resources.value.subscribe(changed),
+			() => resourceState(resources.value, server.info.value.fake),
+		);
 		return {
-			summary: self.derive([published], ([value]) => value.summary),
-			// The snapshot is JSON (`Resources.snapshot()`); its type is the one the contract names.
-			snapshot: self.derive([published], ([value]) => value.snapshot) as unknown as Watchable<ResourceSnapshot>,
+			summary: self.derive([state], ([value]) => value.summary),
+			snapshot: deriveTyped(self, [state], ([value]) => value.snapshot),
 			setDefault: async ({ provider, modelId, thinkingLevel }) => {
 				const opened = resources.value;
 				if (!opened.models.getModel(provider, modelId)) throw new Error("Unknown model");

@@ -1,31 +1,41 @@
-// The mobile drawer's component tree, with catalog/status/subagent/search handles supplying its data.
+// The mobile drawer's component tree, with catalog/status/subagent/search handles supplying its data, and the owner's
+// session actions on its rows.
 
 import { Access, BACKGROUND_CONTEXT, contribute, defineFacet, type HeldIn, liveIn, whenLive } from "@p2/app/v1";
 import {
 	ChevronIcon,
+	closeLayers,
+	conversationRoute,
 	Drawer,
+	MoreIcon,
 	navigate,
 	openLayer,
+	rememberMains,
+	type SessionSummary,
 	Slot,
 	Slots,
 	toggleSidebar,
 	useComposerState,
 	useConnected,
 	useHost,
+	useNavigation,
 	useNewSessionState,
 	useObject,
+	useOptimisticCall,
+	useOwner,
 	useReadable,
 	useRoute,
-	useStatus,
+	useSheet,
 } from "@p2/app/v1/web";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { directoryPickerLayer } from "../envs/contract.web.tsx";
 import { Search, SessionReads } from "../search/contract.ts";
 import { SessionStatus } from "../status/contract.ts";
 import { Subagents } from "../subagents/contract.ts";
 import { SessionTree } from "../tree/contract.ts";
 import { BranchSheet } from "./BranchSheet.tsx";
-import { Sessions } from "./contract.ts";
-import { SessionOptions } from "./SessionOptions.tsx";
+import { type Operation, type Session, Sessions } from "./contract.ts";
+import { SessionSheet } from "./SessionSheet.tsx";
 
 const subscribeVisibility = (listener: () => void) => {
 	document.addEventListener("visibilitychange", listener);
@@ -87,23 +97,80 @@ function FooterMenu() {
 }
 
 const footer = <FooterMenu />;
+
+/** What a row says about a lifecycle operation (`Sessions.operations`), by kind: running, and failed. */
+const OPERATION_LABELS: Record<Operation["kind"], { running: string; failed: string }> = {
+	relocate: { running: "Moving…", failed: "Move failed" },
+	clone: { running: "Cloning…", failed: "Clone failed" },
+	fork: { running: "Forking…", failed: "Fork failed" },
+	archive: { running: "Archiving…", failed: "Archive failed" },
+};
+
+/**
+ * The operation row `session` shows: a failed one of it first (with Dismiss), else one running on it, else a copy
+ * into it whose files are still being copied (its worker waits for them).
+ */
+function operationOf(
+	operations: readonly Operation[],
+	session: string,
+	dismiss: (operation: string) => void,
+): SessionSummary["operation"] {
+	const failed = operations.find((operation) => operation.phase === "failed" && operation.session === session);
+	if (failed?.phase === "failed")
+		return { label: OPERATION_LABELS[failed.kind].failed, error: failed.error, dismiss: () => dismiss(failed.id) };
+	const running = operations.find((operation) => operation.session === session);
+	if (running) return { label: OPERATION_LABELS[running.kind].running };
+	const copying = operations.find(
+		(operation) => operation.phase === "running" && operation.target === session && operation.copying,
+	);
+	return copying ? { label: "Copying files…" } : undefined;
+}
+
+/** A change to one session's row while its call is in flight. */
+type RowGuess = { readonly id: string; readonly change: Partial<Session> };
+const applyRow = (rows: Session[] | undefined, { id, change }: RowGuess): Session[] | undefined =>
+	rows?.map((row) => (row.id === id ? { ...row, ...change } : row));
+
+/**
+ * The drawer, and the owner's session actions on its rows: rename, pin, archive and restore (the Session sheet is
+ * rendered here, opened from the top bar's button), switching and renaming `/tree` branches. Each action shows its
+ * effect on the rows at once (`useOptimisticCall`); a refused one rolls back and the toast says why.
+ */
 function Sidebar() {
 	const connected = useConnected();
 	const route = useRoute();
+	const nav = useNavigation();
 	const service = useObject(Sessions, {});
 	const catalog = liveIn(service, "owner");
 	const access = useObject(Access, {});
 	const guest = useReadable(liveIn(access, "guest")?.grant);
-	const owner = useStatus(access) === "live" && access?.variant === "owner";
+	// As the server last said (kept across starts): unread marks and search hold without waiting for Access.
+	const owner = useOwner();
 	const status = liveIn(useObject(SessionStatus, {}), "reader");
 	const agents = liveIn(useObject(Subagents, {}), "reader");
-	const list = useReadable(liveIn(service, "owner", "guest")?.sessions);
+	const { fail } = useComposerState();
+	const [list, edit] = useOptimisticCall(useReadable(liveIn(service, "owner", "guest")?.sessions), applyRow, fail);
 	const statuses = useReadable(status?.statuses);
 	const children = useReadable(agents?.children);
+	useEffect(() => {
+		if (list) rememberMains(list);
+	}, [list]);
 	// Unread answers are the owner's (any device); guests see none and mark nothing.
 	const marks = useObject(SessionReads, owner ? {} : undefined);
 	const answers = useReadable(marks?.answers);
 	const reads = useReadable(marks?.reads);
+	// Dismissing a failed operation removes its line at once.
+	const [operations, dismissing] = useOptimisticCall(
+		useReadable(catalog?.operations) ?? [],
+		(list, operation: string) => list.filter((each) => each.id !== operation),
+		fail,
+	);
+	const dismiss = useCallback(
+		(operation: string) => {
+			if (catalog) dismissing(operation, () => catalog.dismissOperation({ operation }, BACKGROUND_CONTEXT));
+		},
+		[catalog, dismissing],
+	);
 	const sessions = useMemo(
 		() =>
 			(list ?? []).map((session) => {
@@ -117,35 +184,51 @@ function Sidebar() {
 						unread: (answers?.[session.id] ?? 0) > (reads?.[session.id] ?? 0),
 					},
 					subagents: children?.[session.id] ?? [],
+					operation: operationOf(operations, session.id, dismiss),
 				};
 			}),
-		[list, statuses, children, answers, reads],
+		[list, statuses, children, answers, reads, operations, dismiss],
 	);
 	// The open session's main conversation, shown on a visible page, is read through its latest answer.
 	const visible = usePageVisible();
-	const shownMain = (list ?? []).find((session) => session.id === route.session)?.main;
-	const shown = visible && route.conversation === shownMain ? route.session : undefined;
+	const viewed = list?.find((session) => session.id === route.session);
+	const shown = visible && route.conversation === viewed?.main ? route.session : undefined;
 	const latest = shown ? (answers?.[shown] ?? 0) : 0;
 	const read = shown ? (reads?.[shown] ?? 0) : 0;
 	useEffect(() => {
 		if (shown && marks && latest > read)
 			void marks.markRead({ session: shown, through: latest }, BACKGROUND_CONTEXT).catch(() => {});
 	}, [marks, shown, latest, read]);
-	const search = useObject(Search, owner ? {} : undefined);
+	const search = liveIn(useObject(Search, owner ? {} : undefined), "owner");
+	// A rebuild shows as running at once; it is long work (a job), so the sheet shows it running until it is done.
+	const [rebuilds, reindex] = useOptimisticCall(
+		useReadable(search?.rebuilds) ?? [],
+		(list, session: string) => [
+			...list.filter((each) => each.session !== session),
+			{ session, phase: "running" as const },
+		],
+		fail,
+	);
 	const onSearch = useCallback(
 		(query: string, archived: boolean) => search!.search({ query, archived }, BACKGROUND_CONTEXT),
 		[search],
-	);
-	const onRestore = useCallback(
-		(id: string) =>
-			catalog?.restore({ id }, BACKGROUND_CONTEXT) ?? Promise.reject(new Error("Only the owner restores sessions")),
-		[catalog],
 	);
 	// A session opens at its main conversation; `/s/<id>` would open conversation 1, which redirects there.
 	const onOpen = useCallback(
 		(session: string, conversation?: number) =>
 			navigate({ session, conversation: conversation ?? list?.find((each) => each.id === session)?.main ?? 1 }),
 		[list],
+	);
+	// The restored row is back at once; the session opens once the server has it (an archived one would bounce).
+	const onRestore = useCallback(
+		(id: string, conversation?: number) => {
+			if (!catalog) return;
+			edit({ id, change: { archivedAt: null } }, async () => {
+				await catalog.restore({ id }, BACKGROUND_CONTEXT);
+				onOpen(id, conversation);
+			});
+		},
+		[catalog, edit, onOpen],
 	);
 	// A branch's switch or rename: a reference of its own (the change also reaches the session row).
 	const host = useHost();
@@ -162,14 +245,14 @@ function Sidebar() {
 		},
 		[host],
 	);
-	// Errors go to the app's toast in main, as in Pi Mobile (not clipped inside the drawer).
-	const { setError } = useComposerState();
+	// The row marks the chosen branch at once; the view follows once the session's main conversation moved.
 	const onBranch = useCallback(
 		(session: string, conversation: number) =>
-			void withTree(session, (tree) => tree.select({ conversation }, BACKGROUND_CONTEXT))
-				.then(() => navigate({ session, conversation }))
-				.catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason))),
-		[withTree, setError],
+			edit({ id: session, change: { main: conversation } }, async () => {
+				await withTree(session, (tree) => tree.select({ conversation }, BACKGROUND_CONTEXT));
+				navigate({ session, conversation });
+			}),
+		[withTree, edit],
 	);
 	const [renaming, setRenaming] = useState<{ session: string; conversation: number }>();
 	const onRenameBranch = useCallback(
@@ -178,6 +261,19 @@ function Sidebar() {
 	);
 	const renamed = renaming && list?.find((each) => each.id === renaming.session);
 	const branch = renamed?.branches.find((each) => each.conversation === renaming?.conversation);
+	const renameBranch = (session: Session, conversation: number, label: string | null) =>
+		edit(
+			{
+				id: session.id,
+				change: {
+					branches: session.branches.map((each) =>
+						each.conversation === conversation ? { ...each, label } : each,
+					),
+				},
+			},
+			() => withTree(session.id, (tree) => tree.rename({ conversation, label }, BACKGROUND_CONTEXT)),
+		);
+	const sessionSheet = useSheet("session");
 	const { setChoice, setLocation } = useNewSessionState();
 	const onNew = useCallback(() => {
 		setChoice(undefined);
@@ -201,14 +297,13 @@ function Sidebar() {
 				conversationId={route.conversation}
 				connected={connected}
 				onOpen={onOpen}
-				onBranch={owner ? onBranch : undefined}
-				onRenameBranch={owner ? onRenameBranch : undefined}
+				onBranch={catalog ? onBranch : undefined}
+				onRenameBranch={catalog ? onRenameBranch : undefined}
 				onNew={onNew}
 				onNewIn={owner ? onNewIn : undefined}
 				onCollapse={toggleSidebar}
 				onSearch={search ? onSearch : undefined}
 				onRestore={onRestore}
-				onError={setError}
 				footer={footer}
 				onProviders={() => openLayer({ kind: "sheet", name: "providers" }, { fromDrawer: true })}
 				onEnvs={() => openLayer({ kind: "sheet", name: "envs" }, { fromDrawer: true })}
@@ -219,17 +314,62 @@ function Sidebar() {
 					title={renamed.title}
 					conversation={branch.conversation}
 					label={branch.label}
-					onSave={(label) =>
-						withTree(renamed.id, (tree) =>
-							tree.rename({ conversation: branch.conversation, label }, BACKGROUND_CONTEXT),
+					onSave={(label) => renameBranch(renamed, branch.conversation, label)}
+					onClose={() => setRenaming(undefined)}
+				/>
+			)}
+			{sessionSheet && catalog && viewed && route.conversation === viewed.main && (
+				<SessionSheet
+					session={viewed}
+					onClose={closeLayers}
+					onRename={(title) =>
+						edit({ id: viewed.id, change: { title } }, () =>
+							catalog.rename({ id: viewed.id, title }, BACKGROUND_CONTEXT),
 						)
 					}
-					onClose={() => setRenaming(undefined)}
+					onPin={() =>
+						edit({ id: viewed.id, change: { pinned: !viewed.pinned } }, () =>
+							catalog.pin({ id: viewed.id, pinned: !viewed.pinned }, BACKGROUND_CONTEXT),
+						)
+					}
+					onShare={() => openLayer({ kind: "sheet", name: "share" })}
+					onCwd={() => openLayer(directoryPickerLayer(viewed.env ?? null, viewed.cwd))}
+					reindex={rebuilds.find((each) => each.session === viewed.id)}
+					onReindex={
+						search &&
+						(() => reindex(viewed.id, () => search.rebuildIndex({ session: viewed.id }, BACKGROUND_CONTEXT)))
+					}
+					onArchive={() => {
+						closeLayers();
+						void nav.replace(conversationRoute(route, undefined));
+						edit({ id: viewed.id, change: { archivedAt: Date.now() } }, () =>
+							catalog.archive({ id: viewed.id }, BACKGROUND_CONTEXT),
+						);
+					}}
 				/>
 			)}
 		</>
 	);
 }
+
+/** The top bar's button that opens the Session sheet (the drawer renders the sheet, where the rows are). */
+function SessionOptions() {
+	const route = useRoute();
+	const rows = useReadable(useObject(Sessions, {}, { variant: "owner" })?.sessions);
+	const session = rows?.find((row) => row.id === route.session);
+	if (!session || route.conversation !== session.main) return null;
+	return (
+		<button
+			type="button"
+			className="icon-button"
+			aria-label="Session options"
+			onClick={() => openLayer({ kind: "sheet", name: "session" })}
+		>
+			<MoreIcon />
+		</button>
+	);
+}
+
 export default defineFacet((host) => {
 	contribute(host, "p2.web-sessions", (self) => {
 		self.contribute(Slots, { sidebar: Sidebar, "session-options": SessionOptions });

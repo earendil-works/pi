@@ -122,7 +122,7 @@ describe("sheet parity", { skip: !browserTests }, () => {
 		socket?.close();
 		process?.kill("SIGTERM");
 		await fixture?.close();
-		if (profile) rmSync(profile, { recursive: true, force: true });
+		if (profile) rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 	});
 
 	it("Done returns to All providers, and Back cancels and dismisses an unfinished provider flow", async () => {

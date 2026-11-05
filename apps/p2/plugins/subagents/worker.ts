@@ -1,8 +1,17 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Models } from "@earendil-works/pi-ai/models";
-import { type ConversationId, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
-import { canSend, contribute, defineFacet, expectVariant, forbidden, signalOf } from "@p2/app/v1";
-import { durableContext, ExtensionSwitches } from "@p2/app/v1/node";
+import { type ConversationId, type Harness, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
+import {
+	type Ctx,
+	canSend,
+	contribute,
+	defineFacet,
+	defineRegistry,
+	expectVariant,
+	forbidden,
+	signalOf,
+} from "@p2/app/v1";
+import { ExtensionSwitches } from "@p2/app/v1/node";
 import {
 	CommitSignal,
 	ConversationConfigured,
@@ -32,7 +41,58 @@ import {
 
 const READ_ONLY = "One-shot agents are read-only";
 
+/** Pushes the session's child list to the server, one push at a time, each reading the registry when it starts. */
+class ChildReporter {
+	readonly #report: (ctx: Ctx) => Promise<void>;
+	#last: Promise<unknown> = Promise.resolve();
+	constructor(report: (ctx: Ctx) => Promise<void>) {
+		this.#report = report;
+	}
+	/** Resolves once the server committed a report read after every change made before this call. */
+	push(ctx: Ctx): Promise<void> {
+		const run = this.#last.then(() => this.#report(ctx));
+		this.#last = run.catch(() => {});
+		return run;
+	}
+}
+
+/** The worker's child reporter, for methods that push what they changed (contributed by the tools' object). */
+const ChildReports = defineRegistry<ChildReporter, ChildReporter | undefined>("p2.subagents.reports", { version: 1 });
+
+/** The session's subagents and one-shot agents as the server's index lists them. */
+async function childrenOf(durable: Harness, ctx: Ctx): Promise<Child[]> {
+	const registry = await durable.snapshot(Registry, ROOT_CONVERSATION_ID, ctx);
+	const children: Child[] = [];
+	for (const [name, agent] of Object.entries(registry?.agents ?? {})) {
+		const child = await durable.conversation(agent.conversationId, ctx);
+		const latest = await child?.entries({}, 1, undefined, ctx);
+		children.push({
+			name,
+			conversationId: agent.conversationId,
+			model: agent.model,
+			thinkingLevel: agent.thinkingLevel,
+			tools: [...agent.tools],
+			...(agent.location === undefined ? {} : { location: agent.location }),
+			lastEntryId: latest?.items[0]?.id ?? 0,
+			...(agent.archived ? { archived: true } : {}),
+		});
+	}
+	for (const [callId, agent] of Object.entries(registry?.oneShots ?? {}))
+		children.push({
+			name: agent.label,
+			kind: "agent",
+			callId,
+			conversationId: agent.conversationId,
+			model: agent.model,
+			thinkingLevel: agent.thinkingLevel,
+			tools: [...agent.tools],
+			lastEntryId: 0,
+		});
+	return children;
+}
+
 export default defineFacet((host, self) => {
+	host.serve(ChildReports, { compose: (table) => table[0]?.value });
 	// Subagents spawned without a cwd and one-shot agents follow the session: the opening Harness gets this (without a
 	// Harness dependency) and moves them with it. Only a subagent's own registry `location` keeps it elsewhere.
 	self.contribute(ConversationLocations, {
@@ -81,13 +141,12 @@ export default defineFacet((host, self) => {
 					.sort(),
 		);
 		self.on(scriptTools, async ({ value }, ctx) => {
-			await enableScriptTools(harness().durable, value, durableContext(ctx));
+			await enableScriptTools(harness().durable, value, ctx);
 		});
 		self.contribute(ConversationConfigured, {
 			subagents: async (conversation, ctx) => {
 				if (conversation.id === ROOT_CONVERSATION_ID) return;
-				const context = durableContext(ctx);
-				const agent = await conversation.agent(context);
+				const agent = await conversation.agent(ctx);
 				await harness().durable.commit(async (tx) => {
 					const registry = await tx.doc(Registry, ROOT_CONVERSATION_ID);
 					const child = Object.values(registry.agents).find((entry) => entry.conversationId === conversation.id);
@@ -95,23 +154,23 @@ export default defineFacet((host, self) => {
 					child.model = agent.model ? `${agent.model.provider}/${agent.model.modelId}` : child.model;
 					child.thinkingLevel = agent.thinkingLevel;
 					child.tools = choosableTools(agent, access()).map((tool) => tool.name);
-				}, context);
+				}, ctx);
 			},
 		});
 		// A one-shot agent belongs to the script waiting for its answer: it can be read and stopped, not steered.
 		self.contribute(ReadOnlyConversations, {
 			subagents: async (conversation, ctx) => {
-				const registry = await harness().durable.snapshot(Registry, ROOT_CONVERSATION_ID, durableContext(ctx));
+				const registry = await harness().durable.snapshot(Registry, ROOT_CONVERSATION_ID, ctx);
 				return Object.values(registry?.oneShots ?? {}).some((agent) => agent.conversationId === conversation)
 					? READ_ONLY
 					: undefined;
 			},
 		});
+		// Only the sidebar orders by activity, and it lists no one-shot agents: their entries do not report.
+		const oneShots = new Set<number>();
 		const commits = self.open(
-			async () => {
-				// Only the sidebar orders by activity, and it lists no one-shot agents: their entries do not report.
-				const oneShots = new Set<number>();
-				const signal = new CommitSignal(harness().durable, (publication) =>
+			async () =>
+				new CommitSignal(harness().durable, (publication) =>
 					publication.changes.some(
 						(change) =>
 							(change.type === "document" && change.record.kind === Registry.definition.kind) ||
@@ -119,49 +178,24 @@ export default defineFacet((host, self) => {
 								change.value.conversationId !== ROOT_CONVERSATION_ID &&
 								!oneShots.has(change.value.conversationId)),
 					),
-				);
-				return { signal, oneShots };
-			},
-			({ signal }) => signal.close(),
+				),
+			(signal) => signal.close(),
 		);
+		const reporter = new ChildReporter(async (ctx) => {
+			const children = await childrenOf(harness().durable, ctx);
+			for (const child of children) if (child.kind === "agent") oneShots.add(child.conversationId);
+			await expectVariant(feed, "reporter").report({ children }, ctx);
+		});
+		self.contribute(ChildReports, reporter);
+		// What the agent changes on its own (a spawn, a subagent's messages moving it up the list) is pushed after each
+		// commit that touches it; methods push their own changes before they answer (`SubagentControl.archive`).
 		self.onLive(async (ctx) => {
-			const durable = harness().durable;
-			const { signal, oneShots } = commits.value;
+			const signal = commits.value;
 			const aborted = signalOf(ctx);
 			while (!aborted.aborted) {
 				const seen = signal.version;
 				try {
-					const context = durableContext(ctx);
-					const registry = await durable.snapshot(Registry, ROOT_CONVERSATION_ID, context);
-					const children: Child[] = [];
-					for (const [name, agent] of Object.entries(registry?.agents ?? {})) {
-						const child = await durable.conversation(agent.conversationId, context);
-						const latest = await child?.entries({}, 1, undefined, context);
-						children.push({
-							name,
-							conversationId: agent.conversationId,
-							model: agent.model,
-							thinkingLevel: agent.thinkingLevel,
-							tools: [...agent.tools],
-							...(agent.location === undefined ? {} : { location: agent.location }),
-							lastEntryId: latest?.items[0]?.id ?? 0,
-							...(agent.archived ? { archived: true } : {}),
-						});
-					}
-					for (const [callId, agent] of Object.entries(registry?.oneShots ?? {})) {
-						oneShots.add(agent.conversationId);
-						children.push({
-							name: agent.label,
-							kind: "agent",
-							callId,
-							conversationId: agent.conversationId,
-							model: agent.model,
-							thinkingLevel: agent.thinkingLevel,
-							tools: [...agent.tools],
-							lastEntryId: 0,
-						});
-					}
-					await expectVariant(feed, "reporter").report({ children }, ctx);
+					await reporter.push(ctx);
 					await signal.next(seen, aborted);
 				} catch (error) {
 					if (aborted.aborted) return;
@@ -176,19 +210,21 @@ export default defineFacet((host, self) => {
 		if (!canSend(principal, session)) throw forbidden("participants only");
 		const harness = harnessOf(self);
 		const worker = workerOf(self);
+		const reports = self.registry(ChildReports);
 		return {
 			variant: "participant",
 			members: {
 				archive: ({ conversation, archived }, ctx) =>
 					worker().liveness.call(async () => {
 						const durable = harness().durable;
-						const context = durableContext(ctx);
-						const registry = await durable.snapshot(Registry, ROOT_CONVERSATION_ID, context);
+						const registry = await durable.snapshot(Registry, ROOT_CONVERSATION_ID, ctx);
 						if (Object.values(registry?.oneShots ?? {}).some((agent) => agent.conversationId === conversation))
 							throw forbidden(READ_ONLY);
 						if (!Object.values(registry?.agents ?? {}).some((agent) => agent.conversationId === conversation))
 							throw new Error("Unknown conversation");
-						await setArchived(durable, ROOT_CONVERSATION_ID, conversation as ConversationId, archived, context);
+						await setArchived(durable, ROOT_CONVERSATION_ID, conversation as ConversationId, archived, ctx);
+						// The sidebar's archived flag is the server's: pushed before the answer.
+						await reports.value?.push(ctx);
 						return null;
 					}),
 			},

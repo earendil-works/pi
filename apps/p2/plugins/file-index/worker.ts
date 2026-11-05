@@ -1,7 +1,6 @@
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { type Ctx, canSend, defineFacet, FileIndex, FileIndexCache, type FileItem, forbidden } from "@p2/app/v1";
-import { durableContext } from "@p2/app/v1/node";
 import { conversationEnvironment, harnessOf, isLocalEnvironment, workerOf } from "@p2/app/v1/worker";
 import { WorkspaceBackend, workspacePath } from "../workspace/contract.ts";
 import { inside, listIndex } from "./listing.ts";
@@ -30,27 +29,24 @@ export default defineFacet((host) => {
 			 * workspace's index, which also reports a private or unavailable working directory.
 			 */
 			const listed = async (ctx: Ctx) => {
-				const context = durableContext(ctx);
 				try {
 					return await worker().liveness.call(async () => {
-						const handle = await harness().durable.conversation(conversation as ConversationId, context);
+						const handle = await harness().durable.conversation(conversation as ConversationId, ctx);
 						if (!handle) return undefined;
-						const { env } = await conversationEnvironment(harness().environments, handle.id, context);
+						const { env } = await conversationEnvironment(harness().environments, handle.id, ctx);
 						if (env === unsupported) return undefined;
 						if (env.listFiles === undefined) {
 							unsupported = env;
 							return undefined;
 						}
-						const root = await env.canonicalPath(env.cwd, context);
+						const root = await env.canonicalPath(env.cwd, ctx);
 						if (!root.ok) return undefined;
 						const init = worker().init;
 						// Decided from the environment, not the location, which lags behind it during a move.
-						const privatePath = isLocalEnvironment(env)
-							? await env.canonicalPath(init.dataDir, context)
-							: undefined;
+						const privatePath = isLocalEnvironment(env) ? await env.canonicalPath(init.dataDir, ctx) : undefined;
 						const denied = privatePath === undefined ? [] : [privatePath.ok ? privatePath.value : init.dataDir];
 						if (denied.some((directory) => inside(directory, root.value))) return undefined;
-						const result = await listIndex(env, root.value, denied, context);
+						const result = await listIndex(env, root.value, denied, ctx);
 						if (result === undefined) unsupported = env;
 						return result;
 					});

@@ -66,6 +66,8 @@ test("/tree switches branches with the chosen message in the editor; double Esca
 						sessions: rows,
 						defaultCwd: self.state("/work"),
 						defaultEnv: self.state(null),
+						operations: self.state([]),
+						dismissOperation: () => {},
 						create: () => SESSION,
 						relocate: () => {},
 						rename: () => {},

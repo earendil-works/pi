@@ -76,11 +76,14 @@ function stubs(calls: Calls, role: "owner" | "guest" = "owner") {
 					sessions,
 					defaultCwd,
 					defaultEnv,
-					create: (args: { cwd: string; env?: string | null }, ctx: Ctx) => {
-						record("create", args);
+					operations: self.state([]),
+					dismissOperation: () => {},
+					create: (args: { id: string; cwd: string; env?: string | null }, ctx: Ctx) => {
+						const { id: _id, ...location } = args;
+						record("create", location);
 						const created = {
 							...SESSION,
-							id: `new-${calls.create?.length}`,
+							id: args.id,
 							cwd: args.cwd,
 							env: args.env ?? null,
 						};
@@ -219,7 +222,7 @@ test("/cd relocates: folder completion, relative paths, the web's errors, env mo
 	await poll(() => (calls.relocate?.length ?? 0) === 1);
 	assert.deepEqual(calls.relocate?.[0], { id: "s", env: null, cwd: "/work/src" });
 	await poll(async () => (await screen()).includes("/work/src • Fixture"));
-	await poll(() => runtime.notices.some((notice) => notice.text === "Working directory: /work/src"));
+	await poll(() => runtime.notices.some((notice) => notice.text === "Moving to /work/src…"));
 	// A missing folder: the server's error text, nothing relocated.
 	typed(send, "/cd /nope");
 	send(ENTER);

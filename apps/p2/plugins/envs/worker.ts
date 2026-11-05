@@ -2,19 +2,10 @@ import { contribute, defineFacet } from "@p2/app/v1";
 import { HarnessEnvironments, workerOf } from "@p2/app/v1/worker";
 import { loadEnvs } from "./config.ts";
 import { remoteSession } from "./remote-env.ts";
-import { EnvStore } from "./store.ts";
 
 export default defineFacet((host) => {
 	contribute(host, "p2.worker-envs", (self) => {
 		const worker = workerOf(self);
-		self.open(
-			async () => {
-				const store = new EnvStore(worker().init.dataDir);
-				await store.observer.start();
-				return store;
-			},
-			(store) => store.observer.close(),
-		);
 		self.contribute(HarnessEnvironments, {
 			remote: {
 				open: async (env) => {

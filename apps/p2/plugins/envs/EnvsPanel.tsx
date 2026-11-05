@@ -3,11 +3,13 @@ import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import {
 	ChevronIcon,
 	CopyButton,
+	errorText,
 	PlusIcon,
 	Sheet,
 	SlotList,
 	useNavigation,
 	useObject,
+	useOptimisticCall,
 	useReadable,
 } from "@p2/app/v1/web";
 import { useEffect, useRef, useState } from "react";
@@ -68,7 +70,20 @@ function configOf(draft: Draft): EnvConfig {
 		...(Object.keys(shellEnv).length ? { shellEnv } : {}),
 	};
 }
-const errorText = (reason: unknown): string => (reason instanceof Error ? reason.message : String(reason));
+/** An environment saved or deleted while its call is in flight. */
+type EnvGuess =
+	| { readonly kind: "save"; readonly name: string; readonly config: EnvConfig }
+	| { readonly kind: "delete"; readonly name: string };
+
+/** The list with a save (a new row, or the row's new configuration) or a deletion applied. */
+function applyEnv(envs: EnvSummary[] | undefined, guess: EnvGuess): EnvSummary[] | undefined {
+	if (!envs) return envs;
+	if (guess.kind === "delete") return envs.filter((env) => env.name !== guess.name);
+	const saved = envs.find((env) => env.name === guess.name);
+	return saved
+		? envs.map((env) => (env === saved ? { ...env, config: guess.config } : env))
+		: [...envs, { name: guess.name, config: guess.config, sessions: 0 }];
+}
 function TestResult({
 	test,
 	busy,
@@ -252,13 +267,16 @@ function KeySection({
 /** The route's locator is the edited environment; an empty locator creates one. Form edits are not steps. */
 export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () => void }) {
 	const service = useObject(Envs, {});
-	const envs = useReadable(service?.envs);
 	const loadError = useReadable(service?.failure);
 	const nav = useNavigation();
 	const [editing, setEditing] = useState<{ draft: Draft; existing: boolean }>();
 	const [test, setTest] = useState<EnvTest>();
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string>();
+	// Saves and deletions show in the list at once; a refused one rolls back with its error.
+	const [envs, edit] = useOptimisticCall(useReadable(service?.envs), applyEnv, (reason) =>
+		setError(errorText(reason)),
+	);
 	const [confirmDelete, setConfirmDelete] = useState(false);
 	const filled = useRef<string | null | undefined>(null);
 	useEffect(() => {
@@ -298,9 +316,19 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 	const name = editing?.draft.name.trim() ?? "";
 	const update = (patch: Partial<Draft>) =>
 		setEditing((current) => current && { ...current, draft: { ...current.draft, ...patch } });
-	const save = async (testing: boolean) => {
-		if (!service || !editing) return;
-		await service.save({ name, config: configOf(editing.draft) }, BACKGROUND_CONTEXT);
+	/** Saves the form: the environment is listed (and the form an existing one's) at once; the save's call. */
+	const save = (): Promise<unknown> | undefined => {
+		if (!service || !editing) return undefined;
+		setError(undefined);
+		let config: EnvConfig;
+		try {
+			config = configOf(editing.draft);
+		} catch (reason) {
+			setError(errorText(reason));
+			return undefined;
+		}
+		const saving = service.save({ name, config }, BACKGROUND_CONTEXT);
+		edit({ kind: "save", name, config }, () => saving);
 		setEditing((current) => current && { ...current, existing: true });
 		if (!editing.existing) {
 			filled.current = name;
@@ -309,8 +337,16 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 				layers: [...nav.route.layers.slice(0, -1), { kind: "sheet", name: "envs", locator: name }],
 			});
 		}
-		if (testing) setTest(await service.test({ name }, BACKGROUND_CONTEXT));
+		return saving;
 	};
+	/** Saves, then tests: long work, so the form shows "Working…" until the test answers. */
+	const saveAndTest = () =>
+		void run(async () => {
+			const saving = save();
+			if (!saving || !service) return;
+			await saving;
+			setTest(await service.test({ name }, BACKGROUND_CONTEXT));
+		});
 	if (editing) {
 		const { draft, existing } = editing;
 		const sessions = envs?.find((env) => env.name === name)?.sessions ?? 0;
@@ -320,7 +356,8 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 					className="stack env-form"
 					onSubmit={(event) => {
 						event.preventDefault();
-						void run(() => save(false));
+						// A refused save shows through its rollback.
+						void save()?.catch(() => {});
 					}}
 				>
 					{!existing && (
@@ -425,7 +462,7 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 							type="button"
 							className="button primary"
 							disabled={busy || !name || !draft.host.trim()}
-							onClick={() => void run(() => save(true))}
+							onClick={saveAndTest}
 						>
 							{busy ? "Working…" : "Save and test"}
 						</button>
@@ -468,12 +505,12 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 								<button
 									type="button"
 									className="text-action danger"
-									onClick={() =>
-										void run(async () => {
-											await service?.delete({ name }, BACKGROUND_CONTEXT);
-											toScreen(undefined, "close");
-										})
-									}
+									onClick={() => {
+										if (!service) return;
+										setError(undefined);
+										edit({ kind: "delete", name }, () => service.delete({ name }, BACKGROUND_CONTEXT));
+										toScreen(undefined, "close");
+									}}
 								>
 									Delete
 								</button>

@@ -1,127 +1,63 @@
-// Provider login: p2's Logins (provider-owned api-key and OAuth flows) as chord2 objects.
+// Provider login: the server's `Logins` (provider-owned api-key and OAuth flows) followed by `LoginService`, and its
+// view per owner.
 
-import { nul, obj, str, union } from "@earendil-works/pi-schema";
-import {
-	BACKGROUND_CONTEXT,
-	defineFacet,
-	defineTypedState,
-	deriveTyped,
-	forbidden,
-	isChordError,
-	isOwner,
-	nativeOf,
-	principalKey,
-} from "@p2/app/v1";
-import { processLogs } from "@p2/app/v1/node";
-import { serverOf } from "@p2/app/v1/server";
+import { defineFacet, deriveTyped, followNative, forbidden, isOwner, nativeOf, principalKey } from "@p2/app/v1";
 import { ModelConfig, ModelResources } from "../models/contract.ts";
-import { type LoginEvent, LoginService, type LoginState, LoginStateSchema, ProviderLogin } from "./contract.ts";
+import { LoginService, ProviderLogin } from "./contract.ts";
 import { Logins } from "./logins.ts";
 
-/** The next state of the current login after `event`. */
-function reduce(state: LoginState | null, event: LoginEvent): LoginState | null {
-	if (event.type === "started")
-		return {
-			attemptId: event.attemptId,
-			providerId: event.providerId,
-			authType: event.authType,
-			status: "working",
-			prompt: null,
-			notices: [],
-		};
-	if (state === null || state.attemptId !== event.attemptId) return state;
-	switch (event.type) {
-		case "prompt":
-			return { ...state, prompt: event.prompt };
-		case "promptClosed":
-			return state.prompt?.id === event.promptId ? { ...state, prompt: null } : state;
-		case "notice":
-			return { ...state, notices: [...state.notices, { id: state.notices.length, event: event.event }] };
-		case "finished":
-			return {
-				...state,
-				status: event.status,
-				prompt: null,
-				...(event.message === undefined ? {} : { message: event.message }),
-			};
-	}
-}
-
-/** The current login and the owner that started it (in memory). */
-const Current = defineTypedState("p2.login-service", {
-	schema: obj({ login: union([LoginStateSchema, nul()]), owner: union([str(), nul()]) }),
-	version: 1,
-	initial: () => ({ login: null, owner: null }),
-});
-
 export default defineFacet((host) => {
+	const holders = host.references(ProviderLogin);
 	host.serve(LoginService, (_params, self) => {
 		// Declared, so the configuration is open before the logins are.
 		self.get(ModelConfig, {});
 		const resources = nativeOf(self, ModelResources, "The model configuration");
-		const current = self.state(Current);
-		// Login flows run outside Chord calls: each event changes the state on its own.
-		const apply = (owner: string, event: LoginEvent) =>
-			void current
-				.change((draft) => {
-					if (event.type === "started") draft.owner = owner;
-					// A draft's arrays are mutable; the reduced state (readonly prompt options) is the same JSON.
-					draft.login = reduce(current.value.login, event) as typeof draft.login;
-				}, BACKGROUND_CONTEXT)
-				.catch(() => {});
-		const loginsResource = self.open(
-			async () =>
-				new Logins(resources().resources, (owner, event) => {
-					if (event.type === "notice" && event.event.type === "device_code")
-						processLogs.redactor.addSecret(event.event.userCode);
-					if (event.type === "notice" && event.event.type === "auth_url")
-						processLogs.redactor.addSecret(event.event.url);
-					apply(owner, event);
-				}),
-			(logins) => logins.close(),
+		const logins = self.open(
+			async () => new Logins(resources().resources),
+			(opened) => opened.close(),
 		);
-		const logins = (): Logins => loginsResource.value;
-		/** The current login, if `owner` started it. */
-		const mine = (owner: string): LoginState | null => (current.value.owner === owner ? current.value.login : null);
+		// The flow's state as the logins hold it: each method's change is made before it returns.
+		const state = followNative(
+			self,
+			(changed) => logins.value.subscribe(changed),
+			() => logins.value.state,
+		);
+		// An owner leaving the Providers sheet everywhere (no reference of theirs left: closed sheets, disconnects) ends
+		// their unfinished login; another owner's sheet coming and going does not.
+		const abandoned = self.derive([holders, state], ([references, { login, owner }]) =>
+			login?.status === "working" &&
+			owner !== null &&
+			!references.some(({ principal }) => principal !== undefined && principalKey(principal) === owner)
+				? owner
+				: null,
+		);
+		self.on(abandoned, async ({ value: owner }) => {
+			if (owner !== null) logins.value.disconnect(owner);
+		});
 		return {
-			login: deriveTyped(self, [current], ([value]) => value.login),
-			owner: self.derive([current], ([value]) => value.owner),
+			login: deriveTyped(self, [state], ([value]) => value.login),
+			owner: self.derive([state], ([value]) => value.owner),
 			start: async ({ owner, providerId, authType, remote }) => ({
-				attemptId: logins().start(owner, providerId, authType, remote),
+				attemptId: logins.value.start(owner, providerId, authType, remote),
 			}),
 			answer: async ({ owner, attemptId, promptId, value }) => {
-				const current = mine(owner);
-				if (
-					current?.attemptId === attemptId &&
-					current.prompt?.id === promptId &&
-					(current.prompt.type === "secret" || current.prompt.type === "manual_code")
-				)
-					processLogs.redactor.addSecret(value);
-				logins().answer(owner, attemptId, promptId, value);
+				logins.value.answer(owner, attemptId, promptId, value);
 				return null;
 			},
 			cancel: async ({ owner, attemptId }) => {
-				logins().cancel(owner, attemptId);
+				await logins.value.cancel(owner, attemptId);
 				return null;
 			},
-			abandon: async ({ owner }) => {
-				logins().disconnect(owner);
-				return null;
-			},
-			dismiss: async ({ owner, attemptId }, ctx) => {
-				const login = mine(owner);
-				if (login?.attemptId === attemptId && login.status !== "working")
-					await current.change((draft) => {
-						draft.login = null;
-					}, ctx);
+			dismiss: async ({ owner, attemptId }) => {
+				logins.value.dismiss(owner, attemptId);
 				return null;
 			},
 			logout: async ({ providerId }) => {
-				await logins().logout(providerId);
+				await logins.value.logout(providerId);
 				return null;
 			},
 			refresh: async ({ providerId }) => {
-				await logins().refresh(providerId);
+				await logins.value.refresh(providerId);
 				return {
 					models: resources()
 						.resources.models.getModels()
@@ -137,20 +73,6 @@ export default defineFacet((host) => {
 		const service = self.get(LoginService, {});
 		// This owner's logins: one device's (its cookie), the Radius owner's, or the device owner's (every local tab).
 		const owner = principalKey(principal);
-		// This owner leaving the sheet everywhere (release, disconnect) ends its unfinished login; another owner's
-		// sheet coming and going does not.
-		const server = serverOf(self);
-		self.open(
-			async () => service,
-			async (held) => {
-				try {
-					await server().root((ctx) => held.abandon({ owner }, ctx));
-				} catch (error) {
-					// The host is closing (no root starts any more): the login service ends with it.
-					if (!isChordError(error, "released")) throw error;
-				}
-			},
-		);
 		// Prompts and notices (an auth URL, a device code) only for the owner that started the login.
 		const loginView = deriveTyped(self, [service.login, service.owner], ([login, started]) =>
 			started === owner ? login : null,

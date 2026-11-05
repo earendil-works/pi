@@ -24,14 +24,11 @@ export default defineFacet((host) => {
 		const extension = createLocationExtension({
 			server: {
 				envs: (context) =>
-					worker().root(
-						async (ctx) => (await (await server(ctx)).envs({ origin: "owner" }, ctx)).envs,
-						context.abortSignal,
-					),
+					worker().root(async (ctx) => (await (await server(ctx)).envs({ origin: "owner" }, ctx)).envs, context),
 				directories: (env, path, context) =>
 					worker().root(
 						async (ctx) => (await server(ctx)).directories({ origin: "owner", env, path }, ctx),
-						context.abortSignal,
+						context,
 					),
 			},
 			locate: (id, read, context) => locateConversation(harness, id, context, read),
