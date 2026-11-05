@@ -237,7 +237,54 @@ describe("runAgentTurn", () => {
     const controller = new AbortController();
     controller.abort();
     const result = await runAgentTurn(deps, { prompt: "x", signal: controller.signal });
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("aborted");
+    expect((result as { reason?: string }).reason).toBe("The turn was cancelled by the caller");
     expect(client.sandbox.held).toBe(false);
+  });
+
+  it("L3: rejects an injected model that is not free", async () => {
+    const priced: GatewayCatalogModel = { ...FREE, id: "synthetic/priced-model", pricing: { input: "0.01", output: "0" } };
+    const { client, deps } = setup({
+      pickModel: async () => priced,
+    });
+    const result = await runAgentTurn(deps, { prompt: "x" });
+    expect(result.status).toBe("no_free_model");
+    expect((result as { reason?: string }).reason).toContain("not a free model");
+    expect(client.calls).toEqual([]);
+  });
+
+  it("accepts an injected free model after re-validation", async () => {
+    const { client, deps } = setup({
+      pickModel: async () => FREE,
+    });
+    const result = await runAgentTurn(deps, { prompt: "x" });
+    expect(result.status).toBe("completed");
+  });
+
+  it("M1: creates the workspace root when it does not exist", async () => {
+    const sandbox = new RecordingSandbox();
+    sandbox.files.clear();
+    const origAccess = sandbox.fs.access.bind(sandbox);
+    sandbox.fs.access = async (path: string) => {
+      if (path === "/vercel/sandbox") throw new Error("ENOENT");
+      return origAccess(path);
+    };
+    const client = new Client(sandbox);
+    const { deps } = setup({ sandboxClient: client });
+    const result = await runAgentTurn(deps, { prompt: "x" });
+    expect(result.status).toBe("completed");
+    expect(sandbox.fsCalls.some((call) => call.startsWith("mkdir /vercel/sandbox"))).toBe(true);
+  });
+
+  it("L1: bindGatewayModel registers an OpenAI-compatible provider", async () => {
+    const binding = await bindGatewayModel(FREE, TOKEN);
+    try {
+      const provider = binding.modelRuntime.getProvider("nlt-gateway");
+      expect(provider).toBeDefined();
+      const model = binding.modelRuntime.getModel("nlt-gateway", FREE.id);
+      expect(model).toBeDefined();
+    } finally {
+      await binding.dispose?.();
+    }
   });
 });

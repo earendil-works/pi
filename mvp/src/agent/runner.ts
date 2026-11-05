@@ -33,7 +33,7 @@ import {
   SettingsManager,
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
-import { GATEWAY_MODELS_URL, NoFreeModelError, pickFreeModel, type GatewayCatalogModel } from "../gateway/free-models.ts";
+import { GATEWAY_MODELS_URL, NoFreeModelError, isFreeLanguageModel, pickFreeModel, type GatewayCatalogModel } from "../gateway/free-models.ts";
 import {
   SandboxBusyError,
   SandboxTurnTimeoutError,
@@ -93,10 +93,11 @@ export type AgentTurnResult =
   | { status: "busy" }
   | { status: "no_free_model"; reason: string }
   | { status: "timed_out" }
+  | { status: "aborted"; reason: string }
   | { status: "error"; reason: string };
 
 /** Registers the gateway as an OpenAI-compatible provider for one free model, with the token held in memory. */
-async function bindGatewayModel(model: GatewayCatalogModel, token: string): Promise<ModelBinding> {
+export async function bindGatewayModel(model: GatewayCatalogModel, token: string): Promise<ModelBinding> {
   const dir = await mkdtemp(join(tmpdir(), "nlt-agent-"));
   const modelRuntime = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
@@ -157,6 +158,11 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
     return { status: "error", reason: describeError(error) };
   }
 
+  // L3: re-validate an injected model choice before binding.
+  if (deps.pickModel && !isFreeLanguageModel(chosen)) {
+    return { status: "no_free_model", reason: `Rejected injected model ${chosen.id}: not a free model` };
+  }
+
   // 3. The turn, inside the one sandbox, under its lock.
   const root = deps.workspaceRoot ?? DEFAULT_WORKSPACE_ROOT;
   let binding: ModelBinding | undefined;
@@ -165,6 +171,13 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
     const text = await withAgentSandbox(
       deps.sandboxClient,
       async (sandbox, turnSignal) => {
+        // M1: create the workspace root outside the confinement check so that
+        // `confineReal`/`realpath` can succeed even when the root does not exist yet.
+        try {
+          await sandbox.fs.access(root);
+        } catch {
+          await sandbox.fs.mkdir(root, { recursive: true });
+        }
         const ops = createSandboxToolOperations(sandbox, { ...deps.operations, root });
         await ops.write.mkdir(root);
 
@@ -223,8 +236,13 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
           const stop = () => void session?.abort();
           input.signal?.addEventListener("abort", stop, { once: true });
           turnSignal.addEventListener("abort", stop, { once: true });
+
+          // L2: honour caller cancellation as a distinct `aborted` status, not an error.
+          if (input.signal?.aborted) {
+            return { status: "aborted", reason: "The turn was cancelled by the caller" };
+          }
           try {
-            if (input.signal?.aborted || turnSignal.aborted) throw new Error("aborted");
+            if (turnSignal.aborted) throw new SandboxTurnTimeoutError();
             await session.prompt(input.prompt);
           } finally {
             input.signal?.removeEventListener("abort", stop);
