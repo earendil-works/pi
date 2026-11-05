@@ -37,6 +37,7 @@
 - Fixed OAuth logins such as `openai` and `anthropic` failing with `invalid_grant` after pi was stopped while it refreshed an expired token, for example an RPC client that stops pi right after startup while the background catalog refresh runs. The token endpoint had already replaced the refresh token, but pi exited before saving the new one. On exit, pi now waits for a token refresh in progress to be saved ([#11692](https://github.com/earendil-works/pi/issues/11692))
 - Fixed Ctrl+P not switching to the only model in scope (or the only available model) when the active model is a different one; it showed "Only one model in scope" instead. Cycling forward from a model outside the scope now also selects the first scoped model instead of skipping it ([#11806](https://github.com/earendil-works/pi/issues/11806))
 - Fixed `/reload` and session switches leaving extension overlays on screen when an extension had more than one `ctx.ui.custom({ overlay: true })` open: only the topmost overlay was removed, and the others kept focus and input although the extension that opened them was gone. All extension overlays, including hidden ones, are now removed and disposed; pi's own overlays stay open
+- Fixed `/mcp` sign-in staying on "Connecting…" for minutes after a successful browser sign-in, with Ctrl+C doing nothing: pi waited for the browser to drop an unused connection to the OAuth callback port. The callback server now closes remaining connections when it shuts down ([#11311](https://github.com/earendil-works/pi/issues/11311))
 
 
 ## [1.5.0] - 2026-11-02
