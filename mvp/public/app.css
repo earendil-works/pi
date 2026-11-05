@@ -113,7 +113,7 @@ button, textarea { font: inherit; color: inherit; }
 .quote { margin: 10px 0 0; font-style: italic; color: #cfdcff; font-size: 0.9rem; }
 .brand-line { margin: 0; font-weight: 600; }
 
-.session-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.session-list { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
 .session-list button {
   width: 100%;
   display: flex;
@@ -143,7 +143,8 @@ button, textarea { font: inherit; color: inherit; }
   background: rgb(7 15 36 / 85%);
 }
 .chat-head { display: flex; align-items: center; gap: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
-.chat-head h1 { margin: 0; font-size: 1.35rem; letter-spacing: -0.01em; }
+.chat-head > div { min-width: 0; }
+.chat-head h1 { margin: 0; font-size: 1.35rem; letter-spacing: -0.01em; overflow-wrap: anywhere; }
 .subtitle { margin: 2px 0 0; color: var(--muted); font-size: 0.9rem; }
 .mark-sm { width: 40px; height: 40px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #4fc3ff, #3a47ff 60%, #1a1f66); box-shadow: 0 0 18px rgb(79 195 255 / 35%); }
 

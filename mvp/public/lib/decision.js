@@ -17,7 +17,10 @@ const LEVEL_TONES = {
 };
 
 export function levelTone(level) {
-  return typeof level === "string" ? (LEVEL_TONES[level.toLowerCase()] ?? "neutral") : "neutral";
+  if (typeof level !== "string") return "neutral";
+  const key = level.toLowerCase();
+  // Own keys only: names such as "constructor" or "__proto__" must not resolve to inherited values.
+  return Object.hasOwn(LEVEL_TONES, key) ? LEVEL_TONES[key] : "neutral";
 }
 
 /** Reads a non-empty string, or undefined. */

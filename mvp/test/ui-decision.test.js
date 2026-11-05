@@ -71,7 +71,10 @@ test("every view kind has a message and a label, and only allowed mentions that 
     const view = { kind, components: [], failClosed: kind !== "allowed" && kind !== "blocked" };
     assert.ok(assistantMessage(view).length > 0);
     assert.ok(resultLabel(view).length > 0);
+    // A failure or blocked view must never reuse the "passed" wording.
+    if (kind !== "allowed") assert.doesNotMatch(assistantMessage(view), /passed the governance check|nothing was run/i);
   }
+  assert.match(assistantMessage({ kind: "allowed", components: [] }), /Nothing was run/);
   assert.match(assistantMessage({ kind: "blocked", components: [] }), /not a judgement about you/);
   assert.match(assistantMessage({ kind: "blocked", components: [] }), /988/);
 });
@@ -82,6 +85,10 @@ test("level tones", () => {
   assert.equal(levelTone("emergency"), "alert");
   assert.equal(levelTone("something-new"), "neutral");
   assert.equal(levelTone(undefined), "neutral");
+  // Inherited object property names must not leak through as a tone.
+  for (const name of ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"]) {
+    assert.equal(levelTone(name), "neutral", name);
+  }
 });
 
 test("prompt validation matches the endpoint limits", () => {

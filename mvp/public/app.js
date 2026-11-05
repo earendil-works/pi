@@ -80,15 +80,25 @@ function renderMessage(message) {
   const who = el("span", `who ${message.role === "user" ? "avatar" : "mark-sm"}`, message.role === "user" ? "You" : "");
   who.setAttribute("aria-hidden", "true");
   const body = el("div");
+  const speaker = el("span", "sr-only", message.role === "user" ? "You: " : "Assistant: ");
   const bubble = el("div", "bubble", message.text);
   if (message.kind) bubble.dataset.kind = message.kind;
-  body.append(bubble, el("span", "meta", formatClock(message.at)));
+  body.append(speaker, bubble, el("span", "meta", formatClock(message.at)));
   wrap.append(who, body);
   return wrap;
 }
 
+/** Full re-render, used only when switching conversations. The live region is off so history is not re-announced. */
 function renderLog() {
+  els.log.setAttribute("aria-live", "off");
   els.log.replaceChildren(...(active?.messages ?? []).map(renderMessage));
+  els.log.scrollTop = els.log.scrollHeight;
+  els.log.setAttribute("aria-live", "polite");
+}
+
+/** Adds one message without touching the others, so a screen reader announces only the new one. */
+function appendMessage(message) {
+  els.log.append(renderMessage(message));
   els.log.scrollTop = els.log.scrollHeight;
 }
 
@@ -209,14 +219,15 @@ async function submit(raw) {
 
   const conversation = active;
   const isFirst = conversation.messages.filter((message) => message.role === "user").length === 0;
-  conversation.messages.push({ role: "user", text: checked.prompt, at: new Date() });
+  const userMessage = { role: "user", text: checked.prompt, at: new Date() };
+  conversation.messages.push(userMessage);
   if (isFirst) {
     conversation.title = checked.prompt.length > 28 ? `${checked.prompt.slice(0, 28)}…` : checked.prompt;
     els.title.textContent = conversation.title;
   }
   els.prompt.value = "";
   autosize();
-  renderLog();
+  appendMessage(userMessage);
   renderSessions();
 
   setPending(true);
@@ -227,13 +238,14 @@ async function submit(raw) {
   const view = interpretGate(result);
   setPending(false);
 
-  conversation.messages.push({ role: "assistant", kind: view.kind, text: assistantMessage(view), at: new Date() });
+  const reply = { role: "assistant", kind: view.kind, text: assistantMessage(view), at: new Date() };
+  conversation.messages.push(reply);
   showGate(view, elapsed);
   logEvent(
     `Result: ${resultLabel(view)}`,
     view.kind === "allowed" ? "online" : view.kind === "blocked" ? "idle" : "offline",
   );
-  if (conversation === active) renderLog();
+  if (conversation === active) appendMessage(reply);
   els.prompt.focus();
 }
 
@@ -249,7 +261,8 @@ els.form.addEventListener("submit", (event) => {
 });
 els.prompt.addEventListener("input", autosize);
 els.prompt.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+  // keyCode 229 is how some browsers (Safari) report the Enter that confirms IME text, after isComposing is false.
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
     event.preventDefault();
     submit(els.prompt.value);
   }
@@ -265,12 +278,14 @@ els.newChat.addEventListener("click", newConversation);
 
 async function loadStatus() {
   try {
-    const [healthResponse, statusResponse] = await Promise.all([
-      fetch("/api/health", { headers: { accept: "application/json" } }),
-      fetch("/api/status", { headers: { accept: "application/json" } }),
+    // Each request is judged on its own: a failing /api/status must not change what /api/health said.
+    const readJson = (response) => (response.ok ? response.json() : undefined);
+    const [healthResult, statusResult] = await Promise.allSettled([
+      fetch("/api/health", { headers: { accept: "application/json" } }).then(readJson),
+      fetch("/api/status", { headers: { accept: "application/json" } }).then(readJson),
     ]);
-    const health = healthResponse.ok ? await healthResponse.json() : undefined;
-    const status = statusResponse.ok ? await statusResponse.json() : undefined;
+    const health = healthResult.status === "fulfilled" ? healthResult.value : undefined;
+    const status = statusResult.status === "fulfilled" ? statusResult.value : undefined;
     const online = health?.status === "ok";
     els.healthDot.dataset.state = online ? "online" : "offline";
     els.healthLabel.textContent = online ? "Online" : "Unavailable";
