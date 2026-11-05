@@ -1,19 +1,25 @@
 // Tests of the workers component (slice 10 §3, §4): starts on demand (the link made at the fork, `started` on
-// `connect`, the start timer covering only the start), failures that stay (a crash, a `fatal`, a lost link, a failed
-// start: no fork for a new hold, holders `failed { waiting }`) until `retry` or a rollout, idle stops and `busy`, `stop`
-// and its suspension, the per-address queue, `close`, the rollout step, and nothing kept of 1,000 addresses.
+// `connect`, the start timer covering only the start), failures that stay (a crash, a `fatal`, a failed start: no fork
+// for a new hold, holders `failed { waiting }`) until `retry` or a rollout, a running worker's lost link recovered from
+// once a minute, idle stops and `busy`, `stop` and its suspension, the per-address queue, `close`, the rollout step,
+// stale lock files cleared, nothing kept of 1,000 addresses, and the worker base (an edit after the component was
+// created runs in no worker; a broken entry rejects its creation).
 
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { withAbortSignal } from "../../../src/context/index.ts";
 import { createHost } from "../../../src/host/index.ts";
 import { memoryLinkPair } from "../../../src/link/index.ts";
-import type { RolloutHost } from "../../../src/node/plugins/index.ts";
+import { createPlugins, type RolloutHost } from "../../../src/node/plugins/index.ts";
+import { createWorkers } from "../../../src/node/workers/index.ts";
 import { expectCollected } from "../../support.ts";
 import { Control } from "../fixtures/workers/control.ts";
-import { context, fleet, Notes, Session, type TestPrincipal, until } from "./support.ts";
+import { context, ENTRY, fleet, Notes, Server, Session, type TestPrincipal, until } from "./support.ts";
 
 /** A step's hosts as `[host, what]`. */
 function listed(hosts: readonly RolloutHost[]) {
@@ -22,6 +28,9 @@ function listed(hosts: readonly RolloutHost[]) {
 		"report" in entry ? entry.report.plugins : "stopped" in entry ? "stopped" : (entry.error as Error).message,
 	]);
 }
+
+/** The process lock module, for a process that takes a lock and is killed holding it. */
+const LOCK_MODULE = fileURLToPath(new URL("../../../src/node/workers/lock.ts", import.meta.url));
 
 /** The state entry of `id`. */
 const stateOf = (state: unknown, id: string) =>
@@ -46,6 +55,60 @@ describe("starts on demand", () => {
 		const notes = await server.get(Notes, { id: "S1" }, context);
 		expect(notes.label.value).toBe("S1 v1");
 		notes.release();
+	});
+});
+
+describe('the worker base (decision "Workers start from the base code the server booted with")', () => {
+	it("a worker started after an edit of the entry's imported source runs the code the component was created with", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "chord-workers-base-"));
+		// The fixture worker, plus a line naming its label and the file it was forked from.
+		await writeFile(join(dir, "label.ts"), 'export const label = "boot";\n');
+		await writeFile(
+			join(dir, "entry.ts"),
+			[
+				`import ${JSON.stringify(ENTRY)};`,
+				'import { label } from "./label.ts";',
+				'process.stdout.write(["label", label, process.argv[1]].join(" ") + "\\n");',
+			].join("\n"),
+		);
+		const { server, workers, output } = await fleet({ entry: join(dir, "entry.ts") });
+		expect(workers.inputs).toEqual(expect.arrayContaining([join(dir, "entry.ts"), join(dir, "label.ts"), ENTRY]));
+		// Half way through an edit: the source on disk no longer even parses.
+		await writeFile(join(dir, "label.ts"), "export const label = ;\n");
+		const notes = await server.get(Notes, { id: "S1" }, context);
+		expect(notes.label.value).toBe("S1 v1");
+		const line = output.find((each) => each.startsWith("session|S1 label "));
+		expect(line).toMatch(/^session\|S1 label boot /);
+		notes.release();
+		// The worker ran from the bundle's file, which the component's close removes.
+		const forkedFrom = line!.split(" ")[3]!;
+		expect(existsSync(forkedFrom)).toBe(true);
+		await workers.close(context);
+		expect(existsSync(forkedFrom)).toBe(false);
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	it("a broken entry rejects createWorkers: nothing is routed, the kind can be routed again", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "chord-workers-base-"));
+		await writeFile(join(dir, "entry.ts"), "export const broken = ;\n");
+		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		const plugins = createPlugins({ roots: [dir], kinds: {}, onError: () => {} }, context);
+		const options = {
+			kind: "worker",
+			entry: join(dir, "entry.ts"),
+			authorize: () => true,
+			principal: () => ({ kind: "server" }) as const,
+			start: () => ({}),
+			lock: (address: { readonly key: string }) => `chord-test:${dir}:${address.key}`,
+			plugins,
+			onError: () => {},
+		};
+		await expect(createWorkers(server, Session, options, context)).rejects.toThrow(/Unexpected ";"/);
+		const workers = await createWorkers(server, Session, { ...options, entry: ENTRY }, context);
+		await workers.close(context);
+		await server.close(context);
+		plugins.close();
+		await rm(dir, { recursive: true, force: true });
 	});
 });
 
@@ -112,21 +175,32 @@ describe("failures stay until retry or a rollout (R2)", () => {
 		notes.release();
 	});
 
-	it("a link lost while its child lives (a blocked event loop past the heartbeat): killed after the grace, failed", async () => {
+	it("a running worker's lost link (a blocked event loop past the heartbeat): killed after the grace, its holders get a new worker past the lock file the kill left; a second within a minute fails the address", async () => {
 		const { server, workers, starts, errors } = await fleet({ heartbeat: { ping: 100, close: 300 } });
 		const notes = await server.get(Notes, { id: "S1" }, context);
 		const control = await server.get(Control, { id: "S1" }, context);
 		await control.block(20_000, context);
 		await until(() => stateOf(workers.state.value, "S1")?.status === "stopping", 5_000);
-		await until(() => stateOf(workers.state.value, "S1")?.status === "failed", 10_000);
-		expect(stateOf(workers.state.value, "S1")?.error?.message).toBe("worker exited (SIGKILL)");
+		// SIGKILL skipped the child's exit hooks: on macOS and the BSDs its lock's socket file was left, and the next start
+		// cleared it (else the new child would fail closed on it).
+		await until(() => starts.length === 2 && notes.state.value.kind === "live", 15_000);
+		await until(() => stateOf(workers.state.value, "S1")?.status === "running");
+		expect(errors).toMatchObject([
+			{ kind: "worker_link_lost", address: "session|S1", error: { message: "worker: link lost" } },
+		]);
+		// The new worker loses its link too: no restart loop, the address fails until `retry`.
+		await until(() => control.state.value.kind === "live");
+		await control.block(20_000, context);
+		await until(() => stateOf(workers.state.value, "S1")?.status === "failed", 15_000);
+		expect(stateOf(workers.state.value, "S1")?.error?.message).toBe("worker lost its link");
 		expect(errors.find(({ kind }) => kind === "worker_failed")).toMatchObject({
 			error: { message: "worker: link lost" },
 		});
-		expect(starts).toEqual(["session|S1"]);
+		await until(() => notes.state.value.kind === "failed");
+		expect(starts).toEqual(["session|S1", "session|S1"]);
 		notes.release();
 		control.release();
-	}, 20_000);
+	}, 45_000);
 
 	it("an exit before started fails the start; a worker that never connects is killed at the start timer", async () => {
 		const { server, workers, behaviours, errors } = await fleet();
@@ -174,6 +248,27 @@ describe("failures stay until retry or a rollout (R2)", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe('stale lock files (macOS, the BSDs; decision "Stale lock files are cleared by the starter")', () => {
+	it("a start clears the lock file a killed worker of an earlier server left: the worker runs", async () => {
+		const { server, workers, root } = await fleet();
+		// What an earlier server's worker SIGKILLed while holding the lock leaves (nothing on Linux: an abstract socket).
+		const name = `chord-test:${root}:${Session({ id: "S1" }).key}`;
+		const script = `const { processLock } = await import(${JSON.stringify(LOCK_MODULE)}); await processLock(${JSON.stringify(name)}, {}); process.kill(process.pid, "SIGKILL");`;
+		const killed = spawnSync(process.execPath, [
+			"--experimental-strip-types",
+			"--no-warnings",
+			"--input-type=module",
+			"-e",
+			script,
+		]);
+		expect(killed.signal).toBe("SIGKILL");
+		const notes = server.hold(Notes, { id: "S1" }, context);
+		await until(() => notes.state.value.kind === "live");
+		expect(stateOf(workers.state.value, "S1")?.status).not.toBe("failed");
+		notes.release();
 	});
 });
 
@@ -566,15 +661,16 @@ describe("fix round 1", () => {
 		notes.release();
 	});
 
-	it("reaps a worker that closed its own IPC channel and lives on: killed after the grace, failed (Sol)", async () => {
-		const { server, workers, behaviours } = await fleet();
+	it("reaps a worker that closed its own IPC channel and lives on: killed after the grace, a lost link its holder gets a new worker for (Sol)", async () => {
+		const { server, workers, behaviours, starts, errors } = await fleet();
 		behaviours.set("S1", { disconnectAndBlock: true });
 		const notes = await server.get(Notes, { id: "S1" }, context);
-		await until(() => stateOf(workers.state.value, "S1")?.status === "failed", 10_000);
-		expect(stateOf(workers.state.value, "S1")?.error?.message).toBe("worker exited (SIGKILL)");
-		await until(() => notes.state.value.kind === "failed");
+		behaviours.delete("S1");
+		await until(() => errors.some(({ kind }) => kind === "worker_link_lost"), 10_000);
+		await until(() => starts.length === 2 && notes.state.value.kind === "live", 10_000);
+		expect(stateOf(workers.state.value, "S1")?.status).not.toBe("failed");
 		notes.release();
-	}, 15_000);
+	}, 25_000);
 
 	it("keeps no reload report once consumed: the reload queue settles to nothing (Sol)", async () => {
 		const env = await fleet();

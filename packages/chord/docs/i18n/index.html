@@ -115,8 +115,9 @@ table{max-width:100%}
   <div class="cover-stats"><div class="stat"><b>1</b><span>function a plugin calls: t(key, ...args)</span></div><div class="stat"><b>0</b><span>message files outside the code</span></div><div class="stat"><b>0</b><span>page reloads to switch a language</span></div></div>
   <div class="cover-note"><p>A proposal by the redesign session, asked for by the owner on 2026-11-02 (&quot;i18n also needs to be part of the app
 kit&quot;; &quot;need code example&quot;). It starts from mini-lit&#39;s <code>src/i18n.ts</code> (typed catalogs in code) and adapts it to
-plugins that are built separately, reload live and run on several hosts. Not built; it would land in the app kit
-with slice 11.</p>
+plugins that are built separately, reload live and run on several hosts. Accepted 2026-11-03 and built after slice
+11, with three refinements (a contribution is a list, each rendering facet contributes its plugin&#39;s own catalogs,
+<code>t</code> is bound per host): design.md §23 &quot;Messages and languages&quot; is the current statement.</p>
 </div>
 </section><div class="inner">
 <nav class="toc"><h2>Contents</h2><ol>

@@ -48,6 +48,8 @@ export type WebSurface<P extends Principal> = {
 	/** The rollout step publishing the web kind's current set (after the server's step). */
 	step(name: string): RolloutStep;
 	readonly base: string;
+	/** The files its base bundle was built from: the app's base code for this surface. */
+	readonly inputs: readonly string[];
 };
 
 /** Where the web surface's files live. */
@@ -75,7 +77,7 @@ export async function webSurface<P extends Principal>(
 			scripts: [WEB_PREFIX],
 		});
 	});
-	return { facet, step: (name) => published.step(name), base: base.hash };
+	return { facet, step: (name) => published.step(name), base: base.hash, inputs: base.inputs };
 }
 
 /** The surface's routes: its files (served forever), its current base hash (public), and the page. */

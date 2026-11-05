@@ -160,6 +160,8 @@ test("bare-host TUI facets register, render session/model pickers and reload wit
 		pinned: false,
 		model: { provider: "faux", modelId: "faux-1" },
 		thinkingLevel: "off",
+		main: 1,
+		branches: [],
 	};
 	let configured = "";
 	const fixture = await testHost({

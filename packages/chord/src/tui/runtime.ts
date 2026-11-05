@@ -1,9 +1,10 @@
 // `startTerminalRuntime` (slice 11 §4, decisions "Slice 11, P8" and "P9"): the terminal client inside the sandbox, in
 // the app's terminal entry (the base bundle the launcher downloaded). A client host like a page's: the plugin scripts
-// the launcher brought, loaded with the app's core facets and the kit's themes; the link to the server relayed by the
-// launcher, kept by the same connection loop; `TuiScripts` followed to apply new plugin scripts in place; a new base
-// bundle hands over to the launcher, which starts the new one. The app gets the host, the bridged terminal, the theme
-// lookup and the launcher's actions.
+// the launcher brought, loaded with the app's core facets and the kit's themes and translations; the language followed
+// from the user's pick and the system's locales the launcher read (scopes' messages redraw on a change); the link to
+// the server relayed by the launcher, kept by the same connection loop; `TuiScripts` followed to apply new plugin
+// scripts in place; a new base bundle hands over to the launcher, which starts the new one. The app gets the host, the
+// bridged terminal, the theme lookup and the launcher's actions.
 
 import { BACKGROUND_CONTEXT } from "../context/index.ts";
 import type { Principal } from "../data/index.ts";
@@ -15,12 +16,14 @@ import {
 	type ConnectionState,
 	FALLBACK_THEMES,
 	type FacetFunction,
+	followActiveLanguage,
 	followActiveTheme,
 	REGISTER,
 	type RegisteredScript,
 	startClient,
 	TuiScripts,
 	themesFacet,
+	translationsFacet,
 } from "../surfaces/index.ts";
 import { BRIDGE, type Bridge } from "./bridge.ts";
 import { SandboxChannel } from "./channel.ts";
@@ -37,7 +40,10 @@ export type TerminalRuntimeOptions<P extends Principal> = {
 	readonly onConnection?: (state: ConnectionState) => void;
 	/** Draws the app, once its plugins are loaded. */
 	readonly render: (runtime: TerminalRuntime<P>) => void;
-	/** Plugins left out or kept old, a failed update, the host's errors; dropped by default (stderr is the launcher's). */
+	/**
+	 * Plugins left out or kept old, a failed update, the host's errors, messages' reports; dropped by default (stderr
+	 * is the launcher's).
+	 */
 	readonly onError?: (error: ClientError) => void;
 };
 
@@ -69,7 +75,12 @@ export async function startTerminalRuntime<P extends Principal>(
 	const channel = new SandboxChannel(takeBridge());
 	const { start } = channel;
 	const scripts = new SandboxScripts(channel);
-	const core: PluginFacet<P>[] = [{ name: "chord.themes", facet: themesFacet<P>() }, ...(options.core ?? [])];
+	const core: PluginFacet<P>[] = [
+		{ name: "chord.themes", facet: themesFacet<P>() },
+		{ name: "chord.translations", facet: translationsFacet<P>() },
+		...(options.core ?? []),
+	];
+	const onError = options.onError ?? (() => {});
 	const client = await startClient<P>({
 		scripts: TuiScripts,
 		base: start.base,
@@ -94,10 +105,17 @@ export async function startTerminalRuntime<P extends Principal>(
 		...(options.canRetry === undefined ? {} : { canRetry: options.canRetry }),
 		...(options.onConnection === undefined ? {} : { onConnection: options.onConnection }),
 		environment: TERMINAL_ENVIRONMENT,
-		onError: options.onError ?? (() => {}),
+		onError,
 	});
 	const theme = new TerminalTheme(FALLBACK_THEMES[start.mode], start.colors);
 	await followActiveTheme(client.host, start.mode, (active) => theme.set(active), BACKGROUND_CONTEXT);
+	await followActiveLanguage(
+		client.host,
+		start.locales,
+		() => {},
+		(report) => onError({ kind: "messages", report }),
+		BACKGROUND_CONTEXT,
+	);
 	const runtime: TerminalRuntime<P> = {
 		host: client.host,
 		terminal: new BridgeTerminal(channel),

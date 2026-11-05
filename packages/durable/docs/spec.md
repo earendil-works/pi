@@ -1439,6 +1439,7 @@ interface Tx {
   scanConversations(query: ConversationQuery, limit: number, cursor?: Cursor): Promise<Page<ConversationRecord, Cursor>>;
   scanEntries(query: EntryQuery, limit: number, cursor?: Cursor): Promise<Page<EntryRecord, Cursor>>;
   scanTasks(query: TaskQuery, limit: number, cursor?: Cursor): Promise<Page<TaskRecord<JsonValue, JsonValue, JsonValue>, Cursor>>;
+  submission(id: SubmissionId): Promise<SubmissionRecord | undefined>;
   submissionByRequest(conversationId: ConversationId, requestId: string): Promise<SubmissionRecord | undefined>;
 
   createConversation(options: { readonly ownership: ConversationOwnership }): Promise<ConversationRecord>;
@@ -6261,7 +6262,14 @@ after a committed base or retirement.
 ### 11.2 SQLite
 
 One SQL transaction is one storage call: the batches of a `commit()` call,
-each checked before it writes. SQLite stores:
+each checked before it writes. The checks read the stored state of all the
+call's batches in a few statements and run in memory, each batch against what
+the batches before it left; the accepted batches are written per table in
+multi-row statements (rows as one JSON array parameter, rows with much text
+bound column by column within Durable Objects' 100 parameters), so a call
+costs a few statements whatever its number of batches (a remote SQLite pays a
+round trip per statement). A copy reads its source from the
+database, so the batches before it are written first. SQLite stores:
 
 - conversation, entry, task, and submission records;
 - document records;

@@ -12,7 +12,7 @@ import { mcpNamespace } from "@earendil-works/pi-mcp";
 import type { KeyId } from "@earendil-works/pi-tui";
 import type { createJiti } from "jiti";
 import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode } from "../../config.ts";
-import { pathsEqual, resolvePath } from "../../utils/paths.ts";
+import { canonicalizePath, pathsEqual, resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
@@ -29,7 +29,9 @@ import type {
 	ExtensionRuntime,
 	ExtensionVirtualModel,
 	LoadExtensionsResult,
+	MarkdownMessageType,
 	MarkdownTransformer,
+	MarkdownTransformerOptions,
 	MessageRenderer,
 	ProviderConfig,
 	RegisteredCommand,
@@ -246,6 +248,8 @@ export function createExtensionRuntime(): ExtensionRuntime {
  * Registration methods write to the extension object.
  * Action methods delegate to the shared runtime.
  */
+const DEFAULT_MARKDOWN_MESSAGE_TYPES: readonly MarkdownMessageType[] = ["user", "assistant", "assistant-thinking"];
+
 function createExtensionAPI(
 	extension: Extension,
 	runtime: ExtensionRuntime,
@@ -358,9 +362,12 @@ function createExtensionAPI(
 			extension.messageRenderers.set(customType, renderer as MessageRenderer);
 		},
 
-		registerMarkdownTransformer(transformer: MarkdownTransformer): void {
+		registerMarkdownTransformer(transformer: MarkdownTransformer, options?: MarkdownTransformerOptions): void {
 			assertActive();
-			extension.markdownTransformer = transformer;
+			extension.markdownTransformer = {
+				transformer,
+				messageTypes: new Set(options?.messageTypes ?? DEFAULT_MARKDOWN_MESSAGE_TYPES),
+			};
 		},
 
 		registerEntryRenderer<T>(customType: string, renderer: EntryRenderer<T>): void {
@@ -583,7 +590,7 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 		...resolutionOptions,
 	});
 
-	const module = await jiti.import(extensionPath, { default: true });
+	const module = await jiti.import(canonicalizePath(extensionPath), { default: true });
 	const factory = module as ExtensionFactory;
 	if (typeof factory !== "function") {
 		return undefined;

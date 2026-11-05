@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type CredentialStore, createModels, type Provider } from "@earendil-works/pi-ai";
@@ -364,6 +364,33 @@ describe("AuthStorage", () => {
 		});
 		expect(update).not.toHaveBeenCalled();
 		expect(existsSync(authJsonPath)).toBe(false);
+	});
+
+	// #11655: aliases of the same auth.json must share one lock.
+	test("a symlinked auth.json path waits for the lock held on the real file", async () => {
+		writeAuthJson({ anthropic: { type: "api_key", key: "stored" } });
+		const aliasPath = join(tempDir, "alias.json");
+		symlinkSync(authJsonPath, aliasPath);
+		const release = await lockfile.lock(authJsonPath, { realpath: false });
+		const backend = new FileAuthStorageBackend(aliasPath);
+		const update = vi.fn(async () => ({ result: undefined, next: JSON.stringify({}) }));
+		const syncUpdate = vi.fn(() => ({ result: undefined, next: JSON.stringify({}) }));
+
+		try {
+			const controller = new AbortController();
+			const pending = backend.withLockAsync(update, { signal: controller.signal });
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			controller.abort();
+			await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+			expect(() => backend.withLock(syncUpdate)).toThrow(expect.objectContaining({ code: "ELOCKED" }));
+		} finally {
+			await release();
+		}
+		expect(update).not.toHaveBeenCalled();
+		expect(syncUpdate).not.toHaveBeenCalled();
+		expect(JSON.parse(readFileSync(authJsonPath, "utf8"))).toEqual({
+			anthropic: { type: "api_key", key: "stored" },
+		});
 	});
 
 	test("aborts while waiting for a held file lock without running the mutation later", async () => {

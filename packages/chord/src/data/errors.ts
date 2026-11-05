@@ -99,7 +99,7 @@ export class PluginError extends Error {
 	}
 }
 
-/** An `invalid` error with the given reason. */
+/** An `invalid` error with the given reason: a plugin throws it for arguments or params it refuses. */
 export function invalid(
 	reason: ChordErrorReason<"invalid">,
 	message: string,
@@ -107,6 +107,15 @@ export function invalid(
 ): Extract<ChordError, { readonly code: "invalid" }> {
 	// The constructor's return type cannot narrow on its argument.
 	return new ChordError({ code: "invalid", reason, message, details }) as Extract<ChordError, { code: "invalid" }>;
+}
+
+/**
+ * A `forbidden` error without a reason: what a plugin or an `authorize` throws for a principal it refuses (`revoked` is
+ * Chord's own, for a revoked authority).
+ */
+export function forbidden(message: string, details?: JsonValue): Extract<ChordError, { readonly code: "forbidden" }> {
+	// The constructor's return type cannot narrow on its argument.
+	return new ChordError({ code: "forbidden", message, details }) as Extract<ChordError, { code: "forbidden" }>;
 }
 
 /** `error` itself when it is a ChordError, otherwise an `unavailable` error naming `label`, with `error` as cause. */

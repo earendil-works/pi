@@ -43,6 +43,9 @@
 			"@earendil-works/chord/workers": [
 				"../../../packages/chord/src/node/workers/index.ts"
 			],
+			"@earendil-works/chord/workers/child": [
+				"../../../packages/chord/src/node/workers/child.ts"
+			],
 			"@earendil-works/chord/plugins": [
 				"../../../packages/chord/src/node/plugins/index.ts"
 			],
@@ -192,7 +195,8 @@
 	"include": [
 		"./extensions/**/*",
 		"../../*/src/**/*.d.ts",
-		"../test/suite/regressions/8261-subagent-project-trust.test.ts"
+		"../test/suite/regressions/8261-subagent-project-trust.test.ts",
+		"../test/subagent-extension.test.ts"
 	],
 	"exclude": [
 		"**/node_modules/**",

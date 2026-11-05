@@ -32,6 +32,7 @@ import { OPENROUTER_CLASSIFIER_MODELS, OPENROUTER_IMAGE_MODELS, OPENROUTER_MODEL
 import { QWEN_TOKEN_PLAN_CLASSIFIER_MODELS, QWEN_TOKEN_PLAN_IMAGE_MODELS, QWEN_TOKEN_PLAN_MODELS } from "./providers/qwen-token-plan.models.ts";
 import { QWEN_TOKEN_PLAN_CN_CLASSIFIER_MODELS, QWEN_TOKEN_PLAN_CN_IMAGE_MODELS, QWEN_TOKEN_PLAN_CN_MODELS } from "./providers/qwen-token-plan-cn.models.ts";
 import { QWEN_TOKEN_PLAN_INDIVIDUAL_CLASSIFIER_MODELS, QWEN_TOKEN_PLAN_INDIVIDUAL_IMAGE_MODELS, QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS } from "./providers/qwen-token-plan-individual.models.ts";
+import { QWEN_TOKEN_PLAN_INDIVIDUAL_CN_CLASSIFIER_MODELS, QWEN_TOKEN_PLAN_INDIVIDUAL_CN_IMAGE_MODELS, QWEN_TOKEN_PLAN_INDIVIDUAL_CN_MODELS } from "./providers/qwen-token-plan-individual-cn.models.ts";
 import { RADIUS_CLASSIFIER_MODELS, RADIUS_IMAGE_MODELS, RADIUS_MODELS } from "./providers/radius.models.ts";
 import { TOGETHER_CLASSIFIER_MODELS, TOGETHER_IMAGE_MODELS, TOGETHER_MODELS } from "./providers/together.models.ts";
 import { TYPESAFE_CLASSIFIER_MODELS, TYPESAFE_IMAGE_MODELS, TYPESAFE_MODELS } from "./providers/typesafe.models.ts";
@@ -76,6 +77,7 @@ export const MODELS: {
 	readonly "qwen-token-plan": typeof QWEN_TOKEN_PLAN_MODELS;
 	readonly "qwen-token-plan-cn": typeof QWEN_TOKEN_PLAN_CN_MODELS;
 	readonly "qwen-token-plan-individual": typeof QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS;
+	readonly "qwen-token-plan-individual-cn": typeof QWEN_TOKEN_PLAN_INDIVIDUAL_CN_MODELS;
 	readonly "radius": typeof RADIUS_MODELS;
 	readonly "together": typeof TOGETHER_MODELS;
 	readonly "typesafe": typeof TYPESAFE_MODELS;
@@ -119,6 +121,7 @@ export const MODELS: {
 	"qwen-token-plan": QWEN_TOKEN_PLAN_MODELS,
 	"qwen-token-plan-cn": QWEN_TOKEN_PLAN_CN_MODELS,
 	"qwen-token-plan-individual": QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS,
+	"qwen-token-plan-individual-cn": QWEN_TOKEN_PLAN_INDIVIDUAL_CN_MODELS,
 	"radius": RADIUS_MODELS,
 	"together": TOGETHER_MODELS,
 	"typesafe": TYPESAFE_MODELS,
@@ -164,6 +167,7 @@ export const IMAGE_MODELS: {
 	readonly "qwen-token-plan": typeof QWEN_TOKEN_PLAN_IMAGE_MODELS;
 	readonly "qwen-token-plan-cn": typeof QWEN_TOKEN_PLAN_CN_IMAGE_MODELS;
 	readonly "qwen-token-plan-individual": typeof QWEN_TOKEN_PLAN_INDIVIDUAL_IMAGE_MODELS;
+	readonly "qwen-token-plan-individual-cn": typeof QWEN_TOKEN_PLAN_INDIVIDUAL_CN_IMAGE_MODELS;
 	readonly "radius": typeof RADIUS_IMAGE_MODELS;
 	readonly "together": typeof TOGETHER_IMAGE_MODELS;
 	readonly "typesafe": typeof TYPESAFE_IMAGE_MODELS;
@@ -207,6 +211,7 @@ export const IMAGE_MODELS: {
 	"qwen-token-plan": QWEN_TOKEN_PLAN_IMAGE_MODELS,
 	"qwen-token-plan-cn": QWEN_TOKEN_PLAN_CN_IMAGE_MODELS,
 	"qwen-token-plan-individual": QWEN_TOKEN_PLAN_INDIVIDUAL_IMAGE_MODELS,
+	"qwen-token-plan-individual-cn": QWEN_TOKEN_PLAN_INDIVIDUAL_CN_IMAGE_MODELS,
 	"radius": RADIUS_IMAGE_MODELS,
 	"together": TOGETHER_IMAGE_MODELS,
 	"typesafe": TYPESAFE_IMAGE_MODELS,
@@ -252,6 +257,7 @@ export const CLASSIFIER_MODELS: {
 	readonly "qwen-token-plan": typeof QWEN_TOKEN_PLAN_CLASSIFIER_MODELS;
 	readonly "qwen-token-plan-cn": typeof QWEN_TOKEN_PLAN_CN_CLASSIFIER_MODELS;
 	readonly "qwen-token-plan-individual": typeof QWEN_TOKEN_PLAN_INDIVIDUAL_CLASSIFIER_MODELS;
+	readonly "qwen-token-plan-individual-cn": typeof QWEN_TOKEN_PLAN_INDIVIDUAL_CN_CLASSIFIER_MODELS;
 	readonly "radius": typeof RADIUS_CLASSIFIER_MODELS;
 	readonly "together": typeof TOGETHER_CLASSIFIER_MODELS;
 	readonly "typesafe": typeof TYPESAFE_CLASSIFIER_MODELS;
@@ -295,6 +301,7 @@ export const CLASSIFIER_MODELS: {
 	"qwen-token-plan": QWEN_TOKEN_PLAN_CLASSIFIER_MODELS,
 	"qwen-token-plan-cn": QWEN_TOKEN_PLAN_CN_CLASSIFIER_MODELS,
 	"qwen-token-plan-individual": QWEN_TOKEN_PLAN_INDIVIDUAL_CLASSIFIER_MODELS,
+	"qwen-token-plan-individual-cn": QWEN_TOKEN_PLAN_INDIVIDUAL_CN_CLASSIFIER_MODELS,
 	"radius": RADIUS_CLASSIFIER_MODELS,
 	"together": TOGETHER_CLASSIFIER_MODELS,
 	"typesafe": TYPESAFE_CLASSIFIER_MODELS,

@@ -3,7 +3,7 @@
 import type { EntryRecord, InboxState } from "@earendil-works/pi-durable";
 import { compile } from "@earendil-works/pi-schema";
 import type { Author } from "@p2/app/v1";
-import { messageOf } from "@p2/app/v1";
+import { messageData } from "@p2/app/v1";
 import type { Submit } from "../chat/contract.ts";
 import type { Attachment } from "../files/contract.ts";
 import {
@@ -58,7 +58,7 @@ export function quoteOf(entry: EntryRecord): ReplyTo | undefined {
 	const message = entry.model?.[0];
 	if (message?.role === "assistant")
 		return quote(AGENT, message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(" "));
-	const person = messageOf(entry.data, entry.kind === "pi.user" && message ? message.content : undefined);
+	const person = messageData(entry.data);
 	return person && quote(person.author, person.text);
 }
 
@@ -143,7 +143,7 @@ export const digestFiles = (chat: readonly ChatEntry[], own: readonly string[]):
 /**
  * A mention as the chat plugin submits it: the one place that decides what a mention is. It is placed as a
  * `chat.mention` entry whose data is what the person wrote (author, text, attachments, reply) and the chat entries
- * passed on; the model reads the digest, which the chat plugin starts with the author's speaker block.
+ * passed on; the model reads the digest, which the chat plugin starts with the author's sender block.
  */
 export function composeMention(input: {
 	readonly author: Author;

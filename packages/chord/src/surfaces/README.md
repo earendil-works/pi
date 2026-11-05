@@ -1,7 +1,7 @@
 # surfaces
 
 The client surfaces' portable part (slice 11; design §23 "Web and TUI"; decisions "Slice 11's points", "Slice 11, P3"
-to "P9", "Looks and themes"). What a page and a terminal's sandbox run alike, and what the server serves them: exported
+to "P9", "Looks and themes", "Messages and languages in the app kit"). What a page and a terminal's sandbox run alike, and what the server serves them: exported
 from `@earendil-works/chord`.
 
 - **Scripts objects** (`scripts.ts`): `WebScripts` and `TuiScripts`, remote objects on the server (`hostKind("server")()`,
@@ -32,6 +32,15 @@ from `@earendil-works/chord`.
   host, `FALLBACK_THEMES`, `activeTheme(themes, pick, mode)`, `themeVariables` (`--<role>`, `--<web extra>`),
   `terminalColor` (a role's `tui` override, else its colour, else the fallback's; true colour or the nearest of 256);
   `ThemeChoice` (remote on the server, per principal: `pick` `{ dark, light }` and `choose`) with `themeChoiceFacet`
-  keeping every pick in one persisted document by principal key; `followActiveTheme(host, mode, changed, ctx)`.
+  keeping every pick in one persisted document by principal key (`preference.ts`, shared with the locale choice);
+  `followActiveTheme(host, mode, changed, ctx)`.
+- **Messages and languages** (`messages.ts`, `language.ts`, `format.ts`, `translations.ts`, `locale-choice.ts`,
+  `active-language.ts`; design §23): `defineMessages(namespace, catalogs)` (a typed `t`; `t.message`, `t.render`,
+  `t.in(language)`, `t.translations`), `MessagesOf`, `MessageData`, `MessageSchema`; `Language`
+  (`createLanguage(locale, translations, report)`; internally the render scope `inLanguage`, `matchLocale`,
+  `resolveLocale`); `formatTime`, `formatNumber`; the `Translations` registry (a list of `{ namespace, locale, messages, override? }` per
+  contributor; one catalog per namespace and locale) with `translationsFacet`; `LocaleChoice` with
+  `localeChoiceFacet`; `followActiveLanguage(host, preferred, changed, report, ctx)`, keeping the host's language as
+  its page state (`hostLanguage`).
 
 Tests: `test/surfaces/`.

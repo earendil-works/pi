@@ -16,22 +16,17 @@ import {
 } from "@earendil-works/pi-durable";
 import { arr, int, obj, opt, str, union } from "@earendil-works/pi-schema";
 import type { JsonValue } from "@p2/app/v1";
-import { literal, messageOf, SHELL_ENTRY, shellData } from "@p2/app/v1";
+import { agentMessage, literal, messageData, peerMessage, SHELL_ENTRY, shellData } from "@p2/app/v1";
 import type { HistoryHits } from "../search/contract.ts";
 
 export const HISTORY_SEARCH = "history_search";
 export const HISTORY_READ = "history_read";
 export const HISTORY_HANDOFF = "history_handoff";
-/** The tools a one-shot agent gets (it reads, but never hands off). */
-export const HISTORY_READ_TOOLS = [HISTORY_SEARCH, HISTORY_READ] as const;
-export const HISTORY_TOOLS = [HISTORY_SEARCH, HISTORY_READ, HISTORY_HANDOFF] as const;
 
 /** At most this much text per `history_read` call (about 12k tokens); later entries are cut. */
 export const READ_BUDGET = 50_000;
 /** A rendered entry's text in a card's list. */
 const PREVIEW = 200;
-/** Subagents' messages (plugins/subagents `AGENT_MESSAGE_ENTRY`), read without depending on that plugin. */
-const AGENT_MESSAGE = "p2.agent-message";
 
 /** Searches the calling conversation in the server's index (the search plugin's worker feed). */
 export type HistorySearch = (query: {
@@ -78,19 +73,19 @@ export function renderEntry(entry: EntryRecord, results: ReadonlyMap<string, boo
 			? { entry: id, role: "user", author: shell.author.name, text: `[shell: ${shell.command}]` }
 			: undefined;
 	}
-	if (entry.kind === AGENT_MESSAGE) {
-		const data = entry.data as { from?: { name?: unknown }; intent?: unknown; text?: unknown } | undefined;
-		if (typeof data?.text === "string")
-			return {
-				entry: id,
-				role: "user",
-				author: `subagent ${String(data.from?.name ?? "")}`.trim(),
-				text: `${data.intent === "question" ? "[asks] " : data.intent === "note" ? "[notes] " : ""}${data.text}`,
-			};
-	}
+	const fromAgent = agentMessage(entry.kind, entry.data);
+	if (fromAgent)
+		return {
+			entry: id,
+			role: "user",
+			author: `subagent ${fromAgent.from.name}`,
+			text: `${fromAgent.intent === "question" ? "[asks] " : fromAgent.intent === "note" ? "[notes] " : ""}${fromAgent.text}`,
+		};
 	if (!message) return undefined;
 	if (message.role === "user") {
-		const person = messageOf(entry.data, entry.kind === "pi.user" ? message.content : undefined);
+		const peer = peerMessage(entry.kind, entry.data);
+		if (peer) return { entry: id, role: "user", author: `session ${peer.from.title}`, text: peer.text };
+		const person = messageData(entry.data);
 		if (person)
 			return {
 				entry: id,

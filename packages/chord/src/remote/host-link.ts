@@ -79,8 +79,9 @@ export class HostLink implements ChannelHandler {
 		this.consumer = new ConsumerSide(this);
 		const { codec, trusted } = options;
 		const report = (error: unknown): void => host.report({ kind: "protocol_error", error });
-		const channel = { codec, incarnation: host.incarnation, calls: CALLS, trusted, report };
+		const channel = { codec, incarnation: host.incarnation, calls: CALLS, trusted, report, metrics: host.metrics };
 		this.#channel = new Channel(link, this, channel, context);
+		host.metrics.upDownCounter("chord.links.open").add(1);
 		// Last: a link closed already calls `closed` at once.
 		this.#channel.start();
 	}
@@ -109,8 +110,8 @@ export class HostLink implements ChannelHandler {
 	}
 
 	/** The heartbeat (see `Channel.tick`). */
-	tick(now: number, ping: number, close: number): void {
-		this.#channel.tick(now, ping, close);
+	tick(now: number, paused: number, ping: number, close: number): void {
+		this.#channel.tick(now, paused, ping, close);
 	}
 
 	opened(): void {
@@ -211,6 +212,7 @@ export class HostLink implements ChannelHandler {
 	}
 
 	closed(): void {
+		this.host.metrics.upDownCounter("chord.links.open").add(-1);
 		this.#closing.abort();
 		for (const provider of this.#providers.values()) provider.closed();
 		this.#providers.clear();

@@ -47,7 +47,8 @@ or not.
 
 `check(value)` is the fast path: a boolean, no allocations for most schemas, and a plain function you can pass
 around. `errors(value)` explains a failure and returns `[]` for a valid value. It is built on the first failure and
-kept, so a schema whose values always pass never pays for it.
+kept, so a schema whose values always pass never pays for it. `validate(value)` combines the two without changing
+the value: `{ ok: true, value }` or `{ ok: false, errors }`.
 
 ### Builders
 
@@ -65,6 +66,9 @@ kept, so a schema whose values always pass never pays for it.
 | `union([...])` | `{ anyOf: [...] }` | the union |
 | `nullable(schema)` | `{ anyOf: [schema, { type: "null" }] }` | `T \| null` |
 | `bytes({ minLength, maxLength })` | `{ type: "bytes", ... }` | `Uint8Array` |
+| `bigint({ minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf })` | `{ type: "bigint", ... }`, bigint bounds | `bigint` |
+| `unsafe<T>(schema)` | `schema` as given (`{}` by default) | `T`, unchecked |
+| `recursive<T>(id, (self) => schema)` | `schema` with `$id: id`; `self` is `{ $ref: id }` | `T` |
 
 Every builder also takes `title`, `description`, `examples`, `deprecated` and `default`. A `default` is an annotation;
 validation never inserts it.
@@ -77,11 +81,20 @@ compile(Block).errors({ kind: "video" });
 // [{ path: "/kind", keyword: "anyOf", message: 'expected one of ["text","image"]' }]
 ```
 
+A recursive schema needs its type spelled out, since TypeScript cannot infer one from the builders. Its `id` must be
+unique among the recursive schemas within one schema:
+
+```typescript
+type Tree = { name: string; children: Tree[] };
+const Tree = recursive<Tree>("Tree", (self) => obj({ name: str(), children: arr(self) }));
+```
+
 `Static` also types schemas built with TypeBox 1.x, read from TypeBox's type shapes (pi-schema does not import
 TypeBox): `String`, `Number`, `Integer`, `Boolean`, `Null`, `Literal`, `Array`, `Object` (with `Type.Optional` and
-`Type.Readonly` properties), `Union`, `Record`, `Unsafe`, `Unknown` and `Any` give TypeBox's own static type, so
-`Static<typeof Type.Object({ path: Type.String() })>` is `{ path: string }`. Other TypeBox kinds (`Enum`, `Tuple`,
-`Intersect`, `Cyclic`, ...) give `unknown` where they stand. Other JSON Schema objects give `unknown`.
+`Type.Readonly` properties), `Union`, `Record`, `Enum`, `Tuple`, `BigInt`, `Undefined`, `Unsafe`, `Unknown` and `Any`
+give TypeBox's own static type, so `Static<typeof Type.Object({ path: Type.String() })>` is `{ path: string }`. Other
+TypeBox kinds (`Intersect`, `Cyclic`, `Ref`, ...) give `unknown` where they stand. Other JSON Schema objects give
+`unknown`.
 
 ### Options
 
@@ -116,8 +129,8 @@ import Type from "typebox";
 const user = compile(Type.Object({ name: Type.String(), tags: Type.Array(Type.String()) }));
 ```
 
-TypeBox's JavaScript-only types (`BigInt`, `Undefined`, `Function`, ...), refinements and codecs are not JSON Schema
-and are not supported.
+TypeBox's `BigInt` and `Undefined` are supported (see Values). Its other JavaScript-only types (`Function`, `Symbol`,
+...), refinements and codecs are not JSON Schema and are not supported.
 
 ### Coercion
 
@@ -151,6 +164,9 @@ Three passes run in order:
    - `integer`: as `number`, then truncated (`"3.5"` and `3.5` become 3).
    - `boolean`: `"true"`/`"false"` (any case), `"1"`/`"0"`, 1/0, `null` to `false`.
    - `null`: `"null"`, `"undefined"`, `""`, `"0"`, 0 and `false`.
+   - `bigint`: integer strings (`"12"`, `"12n"`; `"12.9"` truncated), numbers truncated, `"true"`/`"false"` and
+     booleans to 1n/0n, `null` to 0n.
+   - `undefined`: `"undefined"`, `"null"`, `""`, `"0"`, 0, 0n, `false` and `null`.
    - `array`: a single value becomes a one-item array, then each item converts; a tuple (`prefixItems` or an `items`
      array) converts its items and never wraps.
    - `object`: each property converts by `properties`, `patternProperties` or `additionalProperties`.
@@ -171,9 +187,16 @@ coerced by any pass.
 
 ### Values
 
-- A property whose value is `undefined` counts as absent, as in TypeBox.
+- An optional property whose value is `undefined` counts as absent, as in TypeBox. A required property set to
+  `undefined` is present: valid when its schema takes `undefined` (`Type.Undefined()` in it, `Type.Unknown()`,
+  `Type.Any()`), else missing.
 - `{ type: "bytes", minLength, maxLength }` matches a `Uint8Array` of that length, an extension for values that never
   pass through JSON.
+- `{ type: "bigint" }` (TypeBox's `Type.BigInt`) matches a `bigint`. The number keywords (`minimum`, `maximum`,
+  `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`) apply to numbers and bigints alike, with bounds of either kind,
+  as in TypeBox.
+- `{ type: "undefined" }` (TypeBox's `Type.Undefined`) matches `undefined`.
+- `equal(a, b)` is JSON equality as `const`, `enum` and `uniqueItems` compare (TypeBox's `Value.Equal`).
 
 ## Supported keywords
 

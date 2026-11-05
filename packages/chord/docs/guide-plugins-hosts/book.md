@@ -13,7 +13,7 @@ note: |
   `slice-10.md`, `slice-12.md`, `slice-13.md`, the decision log and the code in `packages/chord/src`. API names
   are the current ones. The early chapters wire hosts by hand to show the parts; the last chapter shows the app kit
   (`chord/app`), which does that wiring for an app.
-colophon: Hosts and Plugins · third edition · 2026-11-02 · Chord v2 slices 1-10, 12 and 13
+colophon: Hosts and Plugins · fourth edition · 2026-11-04 · Chord v2 slices 1-13, messages and languages, telemetry
 ---
 
 # Before we begin {.preface}
@@ -75,7 +75,7 @@ addressable hosts; an **address** (`Session({ id: "p1" })`) names one. An **obje
 on its own host only) or `remote` (used from any host). An **object** is one instance of a type, per params. A
 **facet** is a plugin's declarations for one host kind. A **plugin** is a directory with a `package.json`. A
 **reference** is what you get when you ask for an object (`host.get`, `self.get`, `ctx.get`). A **document** is data an object
-stores, changed in **transactions**; a **table** holds many records with queries, in the host's **store**; a **derive** is a value computed from others; a **native** is an outside
+stores, changed in **transactions**; a **table** holds many records with queries, in the host's **store**, and a **live query** keeps some of its rows current; a **derive** is a value computed from others; a **native** is an outside
 resource an object opens and closes. A **registry** is an
 extension point: one plugin defines it, others contribute. A **rollout** applies a build to the hosts in order.
 
@@ -180,6 +180,20 @@ Persisted data lives only in `local` objects with empty params (one per host and
 on who asked or with which params; an object with params (a view per project) reads from such a store. Writes go
 through the same transactions as documents: a note row and a document can change in one commit.
 
+A table has no watch of its own. To show rows live (the newest notes in a tab), the object declares a **live query**
+over its own table, with a limit:
+
+```ts
+const newest = self.query(rows, recent, 50);             // the 50 newest rows, a value like a document's
+return { newest, add, page };                            // a member: tabs watch it and get only the changes
+```
+
+Chord runs the query before the object goes live, and again in every commit of the object that writes `rows`, and
+sends what changed. Only the object's own tables: it is their only writer, so its commits are exactly when the rows
+can change, and a commit that writes no such table costs nothing. Each writing commit runs the query once more, at
+most the limit's rows: right for data people edit, wrong for a table written hundreds of times a second (there may be
+dragons; keep what the tab shows in a document the object writes with each change instead). The limit is required.
+
 A **derive** is a value computed from other values, recomputed whenever they change. It is how an object offers
 something it does not store:
 
@@ -212,7 +226,8 @@ self.onLive(async (ctx) => {                                  // a routine start
 ```
 
 Natives are why some objects restart when their plugin changes: an open connection cannot be moved to new code, so
-Chord closes it and opens it again. Objects without natives are swapped in place.
+Chord closes it and opens it again. Objects without natives are swapped in place. A first read of a table is no
+native: declare it as a live query, not with `self.open`, or the object restarts at every change of its plugin.
 
 **Await what you start in a root or a handler.** What is started with a context ends with it. Code outside objects
 gets its `ctx` from `host.root(fn, ctx)`, and that scope seals when `fn` returns; a handler's context ends when its
@@ -374,6 +389,21 @@ gets the current value in one frame. The UI shows a banner from `ref.state`, not
 `tui` facets, rendering with whatever terminal library the app chose. **What a client never does**: serve a `remote`
 type, be routed to, or keep data others rely on. Data that must outlive a tab belongs in an object on the server or a
 worker.
+
+**Text in the viewer's language** is a client's job too, because two people looking at the same object may read
+different languages. A plugin writes its texts once, in a shared `messages.ts`; a client renders them in its host's
+language (the user's pick, else the device's), and objects store messages as data, never sentences (design §23,
+"Messages and languages"):
+
+```ts
+// plugins/notes/messages.ts: the first catalog types the others
+export const messages = defineMessages("notes", { en: { empty: "No notes yet" }, de: { empty: "Noch keine Notizen" } });
+// plugins/notes/web.tsx: the facet contributes its catalogs; a component renders in the page's language
+self.contribute(Translations, messages.translations);
+const { t } = useMessages(messages);                       // re-renders when the user picks another language
+// plugins/notes/worker.ts: a notice as data; every client renders it with t.render(notice)
+draft.notice = messages.message("empty");
+```
 
 # Plugins {#plugins lede="Move the code into a directory that can be added, edited and removed while the app runs."}
 
@@ -625,6 +655,12 @@ The tab's reference follows the new object and gets one frame with the differenc
 is broken (a syntax error, a factory that throws), that plugin keeps its old code on that host and the report says why;
 every other plugin of the rollout applies.
 
+A tab applies a new web script the same way, without reloading the page, and the UI keeps what lives outside the
+changed plugin. The changed plugin's own components are new functions, so React mounts them anew and their `useState`
+starts over. What must survive the update (a half-typed note, a scroll position) goes into **page state**, kept by the
+tab's host under a key: `usePageState(key, initial)` from `chord/react` instead of `useState`, and
+`scope.pageState(key, initial)` on a terminal's `TuiScope` (design §21, "UI on client hosts").
+
 :::note | Versions
 A change to a contract (a new field in `Notes`'s state) gets a new `version`. A tab built with the old contract keeps
 working if the provider maps the old version (`accepts`); otherwise it waits with "version mismatch" until it reloads.
@@ -772,6 +808,71 @@ A project's data is what its worker created: its store and its files. `app.expor
 writes them as one archive (a manifest, the store's export, the files) and stops nothing: a running worker writes its
 own store at one consistent point. `app.importData(path, Project({ id: "copy" }), ctx)` makes a new project from it and
 refuses one that already has data (example 55).
+
+# Seeing a Request Across Hosts {#telemetry lede="One trace from a click in a client through the server's relay into a worker's method: adapters, carriers and spans."}
+
+A tab calls `notes.add(…)`. The call leaves the tab, the server relays it, the project's worker runs the method, the
+method commits. When it is slow, where did the time go? Each host is a different process, so no single log has the
+answer. Chord's telemetry makes the four steps one **trace**: a tree of **spans** (named, timed pieces of work), each
+host recording its own with its own **adapter**, joined by **carriers** (a few strings naming the caller's span) that
+ride on the wire with every `hold` and `call`.
+
+Give the server a store and the kit does the rest. The SQLite store (`@earendil-works/chord/telemetry-sqlite`)
+records settled spans and metrics in one file in the data directory, and the server is its only writer: every worker
+records in memory and sends its spans and metrics to the server once a second over its link, and a page that records
+(`startPage({ telemetry: true })`) sends its own every few seconds and when hidden (example 62):
+
+```ts
+// start.ts: the server, its store, and whom spans were for (default: the principal's key)
+const telemetry = await createSqliteTelemetry(await openNodeSqliteDatabase(join(dataDir, "telemetry.sqlite")));
+await startServer({ ...options, telemetry, principalAttributes: (p) => ({ "chord.principal": p.kind }) }, ctx);
+// worker.ts: nothing about telemetry (its own `principalAttributes`, if any)
+startWorker({ api, kinds, onError });
+// the web entry: the page records
+startPage({ ...options, telemetry: true });
+```
+
+A page is untrusted: the server checks each batch's every field (sizes, no control characters, ids printable ASCII),
+keeps only spans under the page's own ids, caps them per page and minute, marks them `chord.host: browser` and stamps
+them with the principal of their link. A click is a trace of its own with `host.root(fn, ctx, { trace: { name } })`.
+
+Nothing else changes in plugin code. A method's `ctx.telemetry` is its `chord.method` span, so whatever it calls or
+commits is parented under it, on its host or the next one. `ctx.trace(name, attributes, fn)` adds a span of your own:
+
+```ts
+add: async (n, ctx) => {
+	await ctx.trace("tally.check", { n }, async () => {
+		if (!Number.isSafeInteger(n) || n <= 0) throw new Error("add a positive count");
+	});
+	return store.add(n, ctx);
+},
+```
+
+The store renders the click's trace across the three hosts (the client's spans, the server's relay, the worker's
+methods and the commit, an event of the method that made it); every span of Chord names the host that recorded it
+(`chord.host`: its address key, `client` without an address), and method and call spans whom they were for
+(`chord.principal`, the host's `principalAttributes` hook):
+
+```
+tally.click
+  chord.hold chord.host="client" type="tally.counter" object="tally.counter(t1)" address.kind="tally" outcome="bound"
+    chord.relay chord.host="server" type="tally.counter" member="hold" upstream.kind="tally" outcome="ok"
+      → link to chord.resolve
+  chord.call chord.host="client" type="tally.counter" member="add" object="tally.counter(t1)" address.kind="tally" outcome="ok"
+    chord.relay chord.host="server" type="tally.counter" member="#0" upstream.kind="tally" outcome="ok"
+      chord.method chord.host="tally|t1" type="tally.counter" member="add" object="tally.counter(t1)" principal.kind="owner" chord.principal="{\"kind\":\"owner\"}" outcome="ok"
+        tally.check chord.host="tally|t1" n=3
+        chord.method chord.host="tally|t1" type="tally.store" member="add" object="tally.store" principal.kind="worker" chord.principal="{\"kind\":\"worker\",\"tally\":\"tally|t1\"}" outcome="ok"
+          · chord.commit documents=1 ops=1 rows=0 duration=1.9
+```
+
+Work shared by several requests is its own trace, linked rather than nested: the worker's start (`chord.resolve`),
+an object's activation (`chord.activate`, linked to whoever asked first). Routines and job phases are roots too; a job's
+`run` and `finish` stay under the carrier its start stored, even when a restarted worker resumes the run. Metrics
+(`chord.link.bytes`, `chord.commit.duration`, `chord.calls.in_flight`, ...) are aggregated per 10 s; ids are never their
+attributes. Without an adapter (the default), Chord starts no span and sends no carrier: a call costs what it did before.
+A script or a viewer reads the file with `openTelemetryStore(path)` (`@earendil-works/chord/telemetry-sqlite/node`),
+which opens it read-only and offers only the read interface (`findTraces`, `getTrace`, `findMetrics`).
 
 # Reference {.appendix}
 

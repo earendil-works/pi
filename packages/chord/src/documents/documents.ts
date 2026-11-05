@@ -1,11 +1,13 @@
 // An object's documents (§9, P2, slice 6a §1.2, §10): its slots across attempts, its line (its transactions and line
 // jobs run one at a time), the seal fence over the transaction holding the line, the factory's pins between attempts,
-// the activation's loads and the residency of keyed documents.
+// the activation's loads and the residency of keyed documents; a commit's telemetry (its event, its duration, slice 9).
 
+import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import type { Context } from "../context/index.ts";
 import { ChordError } from "../data/index.ts";
 import type { Batch } from "../state/internal.ts";
 import type { ChordStore } from "../store/store.ts";
+import { chordMetrics, untraced } from "../telemetry.ts";
 import type { CommitPersistence, JsonObject, StateDefinition } from "./definition.ts";
 import { SealToken } from "./fence.ts";
 import { type HandleOf, type KeyDeclarer, Keyed, Singleton } from "./handles.ts";
@@ -44,6 +46,8 @@ export type DocumentsOwner = {
 	fail(error: ChordError): void;
 	/** Reports a transaction its context's end cancelled (the host's `onError`). */
 	report(error: TransactionCancelled): void;
+	/** The host's telemetry adapter: commit durations go to its metrics. */
+	readonly telemetry: TelemetryContext;
 };
 
 /**
@@ -180,9 +184,13 @@ export class Documents {
 			this.assertAdmitted(token);
 			this.#holder = tx;
 			const result = await fn(tx);
+			// Timed only when something records: the commit's duration metric, its event on the enclosing span.
+			const timed = !untraced(this.#owner.telemetry) || !untraced(context.telemetry);
+			const started = timed ? performance.now() : 0;
 			// In-memory-only commits are synchronous (W12): no await unless the store's step is taken.
 			const step = tx.commit();
 			if (step !== undefined) await step;
+			if (timed) this.#recordCommit(tx, performance.now() - started, context);
 			return result;
 		} catch (error) {
 			tx.discard();
@@ -196,6 +204,18 @@ export class Documents {
 			release();
 			tx.settle();
 		}
+	}
+
+	/**
+	 * A commit of `tx` that took `duration` ms (from its start to its adoption): its event on `context`'s span (the
+	 * method, routine or job it ran in) and the host's commit duration metric; a commit that changed nothing records
+	 * nothing.
+	 */
+	#recordCommit(tx: Transaction, duration: number, context: Context): void {
+		const { documents, ops, writes, rows } = tx.committed();
+		if (documents === 0 && writes === 0) return;
+		if (!untraced(context.telemetry)) context.telemetry.addEvent("chord.commit", { documents, ops, rows, duration });
+		chordMetrics(this.#owner.telemetry.metrics).histogram("chord.commit.duration").record(duration);
 	}
 
 	/**

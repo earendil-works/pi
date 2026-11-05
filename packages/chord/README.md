@@ -15,15 +15,16 @@ The design, the rule book for all of this, is [docs/design.md](docs/design.md).
 
 | Import | Contents | Runs in |
 |--------|----------|---------|
-| `@earendil-works/chord` | Contracts (`local`, `remote`, `method`, the schema builders), errors (`ChordError`, `isChordError`), hosts and facets (`createHost`, `defineFacet`), documents (`defineState`), derives and natives (`constant`, `mapShared`), routines and jobs (`defineJob`), links (`memoryLinkPair`, `ipcLink`, `webSocketLink`), registries (`defineRegistry`), the store (`openStore`, `defineTable`, queries, export and import), and the client surfaces' shared part (`Themes`, `ThemeChoice`, `WebScripts`, `TuiScripts`). | Node and browsers |
+| `@earendil-works/chord` | Contracts (`local`, `remote`, `method`, the schema builders), errors (`ChordError`, `isChordError`), hosts and facets (`createHost`, `defineFacet`), documents (`defineState`), derives and natives (`constant`, `mapShared`), routines and jobs (`defineJob`), links (`memoryLinkPair`, `ipcLink`, `webSocketLink`), registries (`defineRegistry`), the store (`openStore`, `defineTable`, queries, export and import), and the client surfaces' shared part (`Themes`, `ThemeChoice`, `WebScripts`, `TuiScripts`, messages and languages: `defineMessages`, `Translations`, `LocaleChoice`, `formatTime`, `formatNumber`). | Node and browsers |
 | `@earendil-works/chord/http` | HTTP: a Web-standard `fetch` handler (`createHttp`) built from the routes, wraps and sockets plugins contribute to the registry `Http`, authenticators (`Authenticators`), responses as descriptions, a security baseline on by default, Chord's Node listener and `nodeRequest`, the links endpoint. | Node |
 | `@earendil-works/chord/workers` | Workers: `createWorkers` runs a forked worker per address of a host kind, started on demand and stopped when idle; `workerMain` is a worker's entry; `processLock`. | Node |
+| `@earendil-works/chord/workers/child` | The worker's side alone: `workerMain` and `processLock`, without esbuild (a worker entry imports this). | Node |
 | `@earendil-works/chord/plugins` | Plugins: discovery, builds with esbuild (`buildFacet`), evaluation, the watcher, rollouts, `createPlugins`, `installPlugin`, `testPlugin`, `pluginFile`. | Node |
 | `@earendil-works/chord/plugins/runtime` | `createPluginRuntime`: loads built plugins without esbuild (a worker's side). | Node |
 | `@earendil-works/chord/app` | The app kit: `startServer`, `startWorker`, the start-data objects, sessions and the owner's sign-in, device pairing, files, export and import per address, optional plugins (users, invites, ephemeral login). | Node |
 | `@earendil-works/chord/surfaces` | The client surfaces' server side: `webSurface` (base bundle, plugin scripts, the page) and `tuiSurface` (the terminal surface). | Node |
-| `@earendil-works/chord/web` | The web surface's browser side: `startPage` in the app's web entry, `followThemes`. | Browsers |
-| `@earendil-works/chord/react` | Optional React bindings: `HostProvider`, `useHold`, `useWatch`, `useRefState`, `useRegistry`, `watchStore`. | Browsers |
+| `@earendil-works/chord/web` | The web surface's browser side: `startPage` in the app's web entry, `followThemes`, `followLanguage`. | Browsers |
+| `@earendil-works/chord/react` | Optional React bindings: `HostProvider`, `useHold`, `useWatch`, `useRefState`, `useRegistry`, `usePageState`, `useMessages`, `watchStore`. | Browsers |
 | `@earendil-works/chord/tui` | The terminal surface's sandbox side: `startTerminalRuntime` in the app's terminal entry, `BridgeTerminal`, `TerminalTheme`, `TuiScope`. | Node (sandboxed) |
 | `@earendil-works/chord/tui/launcher` | The terminal launcher, the trusted side of a terminal client: `startTerminal`, `requireSandboxNode`. | Node |
 | `@earendil-works/chord/context` | Explicit cancellation, telemetry, and invocation values: `BACKGROUND_CONTEXT`, `withCancel`, `withAbortSignal`, `withoutAbortSignal`, `withTelemetry`, `traceIn`, `withContextValue`, `awaitWithContext`. | Node and browsers |
@@ -37,7 +38,7 @@ The design, the rule book for all of this, is [docs/design.md](docs/design.md).
 | `@earendil-works/chord/sqlite/cloudflare` | `DurableObjectSqliteDatabase` and the structural `DurableObjectSqliteStorage` binding type. | Cloudflare Durable Objects |
 | `@earendil-works/chord/sync` | Sync (experimental): a store's outbox commits uploaded to a remote into slots created once (`uploadSession`), applied on another copy (`pullSession`), folded into snapshots (`foldSession`); `FlushScheduler`; the remote and sync-state interfaces, and directory-backed ones over a `SyncFileSystem` for development and tests. | Node and browsers |
 
-`esbuild` (for `/plugins` and `/surfaces`), `ws` (for `/http` and `/tui/launcher`) and `react` (for `/react`) are optional peer dependencies, imported only there; `/app` uses all but `react`.
+`esbuild` (for `/plugins`, `/surfaces` and `/workers`), `ws` (for `/http` and `/tui/launcher`) and `react` (for `/react`) are optional peer dependencies, imported only there; `/app` uses all but `react`.
 
 ## Quick start
 

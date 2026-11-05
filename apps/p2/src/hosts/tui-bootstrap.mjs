@@ -55,17 +55,29 @@ module.syncBuiltinESMExports();
 // The bundle receives only this capability, not a port or Worker object. Raw stdout/stderr are captured by the launcher.
 const send = (value) => post({ kind: "event", value });
 let handler;
+// The thrown value is the bundle's: reading its stack may run its getters, so anything odd becomes a fixed text.
+const describe = (error) => {
+	try {
+		return String(error instanceof Error ? (error.stack ?? error) : error);
+	} catch {
+		return "unprintable error";
+	}
+};
 port.on("message", async (message) => {
 	try {
 		const result = await handler?.(message.value);
 		if (message.id !== undefined) post({ kind: "reply", id: message.id, value: result });
-	} catch {
+	} catch (error) {
 		if (message.id !== undefined) post({ kind: "reply", id: message.id, failed: true });
-		else post({ kind: "failed" });
+		else post({ kind: "failed", error: describe(error) });
 	}
 });
 // Owner-approved dynamic import: the single self-contained server bundle is evaluated only from memory.
-const bundle = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+// The sourceURL names its frames: a data: URL would put the whole base64 bundle (megabytes) into every stack frame,
+// and formatting one stack (Chord makes a released reference's error stack text at once) exhausts the worker heap.
+const bundle = await import(
+	`data:text/javascript;base64,${Buffer.from(`${source}\n//# sourceURL=p2-tui-bundle.mjs\n`).toString("base64")}`
+);
 await bundle.default({
 	input,
 	send,

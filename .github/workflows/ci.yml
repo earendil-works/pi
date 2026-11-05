@@ -3,6 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+    # The release commit is pushed together with the next commit, so a push to main never builds it; the tag run does,
+    # and preview-packages.yml releases its packages on pkg.earendil.com.
+    tags: ['v*.*.*']
   pull_request:
     branches: [main]
 
@@ -29,7 +32,7 @@ jobs:
       - name: Build
         run: npm run build
 
-      # Previews are published for main and PRs from branches of this repo only (see preview-packages.yml).
+      # Previews are published for main, release tags and PRs from branches of this repo only (see preview-packages.yml).
       - name: Pack preview packages
         if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
         env:

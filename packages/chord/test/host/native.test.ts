@@ -1,3 +1,4 @@
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { type Context, BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
 import { int, local } from "../../src/contracts/index.ts";
@@ -240,5 +241,93 @@ describe("closing", () => {
 describe("facets", () => {
 	it("cannot open natives", () => {
 		expectTypeOf<FacetHost>().not.toHaveProperty("open");
+	});
+});
+
+describe("spans (slice 9)", () => {
+	it("opens each native in a `chord.open` span of its attempt's, and closes it in a `chord.close` root", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { host } = await loaded(
+			(h) =>
+				h.serve(Res, (_, self) => {
+					self.open(
+						async (opening) => {
+							await opening.telemetry.startSpan({ name: "app.connect" }, () => {});
+							return 1;
+						},
+						() => {},
+					);
+					self.open(
+						async () => {
+							throw new Error("no socket");
+						},
+						() => {},
+					);
+					return { n: constant(1) };
+				}),
+			{ telemetry },
+		);
+		await rejection(host.get(Res, { id: 1 }, context, { readyTimeout: 50 }));
+		await flushed();
+		const spans = telemetry.getSpans();
+		const [activation] = spans.filter(({ name }) => name === "chord.activate");
+		const opens = spans.filter(({ name }) => name === "chord.open");
+		expect(opens.map(({ attributes, parentId, status }) => [attributes.native, parentId, status.status])).toEqual([
+			[1, activation!.id, "ok"],
+			[2, activation!.id, "error"],
+		]);
+		expect(opens[1]!.status).toEqual({ status: "error", error: { name: "open_failed", message: "no socket" } });
+		expect(spans.find(({ name }) => name === "app.connect")!.parentId).toBe(opens[0]!.id);
+		const close = spans.find(({ name }) => name === "chord.close")!;
+		expect([close.parentId, close.attributes]).toEqual([
+			null,
+			{ "chord.host": "client", type: "app.res", native: 1, reason: "end" },
+		]);
+		await host.close(context);
+	});
+
+	it("keeps an open its attempt abandoned (cancelled) ok (review L3)", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { host } = await loaded(
+			(h) =>
+				h.serve(Res, (_, self) => {
+					self.open(
+						(opening) =>
+							new Promise((_resolve, reject) =>
+								opening.abortSignal!.addEventListener("abort", () => reject(opening.abortSignal!.reason)),
+							),
+						() => {},
+					);
+					return { n: constant(1) };
+				}),
+			{ telemetry, readyTimeout: 30 },
+		);
+		await rejection(host.get(Res, { id: 1 }, context, { readyTimeout: 100 }));
+		await flushed();
+		const open = telemetry.getSpans().find(({ name }) => name === "chord.open")!;
+		expect([open.settled, open.status]).toEqual([true, { status: "ok" }]);
+		await host.close(context);
+	});
+
+	it("marks a close that threw failed", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { host } = await loaded(
+			(h) =>
+				h.serve(Res, (_, self) => {
+					self.open(
+						async () => 1,
+						() => {
+							throw new Error("stuck");
+						},
+					);
+					return { n: constant(1) };
+				}),
+			{ telemetry },
+		);
+		await host.get(Res, { id: 1 }, context);
+		await rejection(host.close(context));
+		const close = telemetry.getSpans().find(({ name }) => name === "chord.close")!;
+		expect(close.attributes.reason).toBe("close");
+		expect(close.status).toEqual({ status: "error", error: { name: "close_failed", message: "stuck" } });
 	});
 });

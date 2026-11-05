@@ -5,7 +5,7 @@
 
 import type { Models } from "@earendil-works/pi-ai/models";
 import { contribute, defineFacet } from "@p2/app/v1";
-import { Extensions, HarnessConfig } from "@p2/app/v1/worker";
+import { Extensions, HarnessConfig, toolsByName } from "@p2/app/v1/worker";
 import { createAgentExtension } from "./tool.ts";
 
 export default defineFacet((host) => {
@@ -20,7 +20,8 @@ export default defineFacet((host) => {
 				return typeof value === "function" ? value.bind(current) : value;
 			},
 		});
-		const extension = createAgentExtension(models);
+		const extensions = self.registry(Extensions);
+		const extension = createAgentExtension(models, () => toolsByName(extensions.value));
 		self.contribute(Extensions, { [extension.name]: extension });
 	});
 });

@@ -42,6 +42,14 @@ export const CHAT_COMMANDS: Record<string, TuiCommand> = {
 		slash: { name: "compact", argumentHint: "[instructions]" },
 		run: (ctx, args) => chat(ctx)?.compact(args),
 	},
+	// pi's /tree: the session's branches (docs/tree.md).
+	"app.session.tree": {
+		title: "Continue the session from an earlier message",
+		category: "Session",
+		when: "chat && owner && !overlay",
+		slash: { name: "tree" },
+		run: (ctx) => chat(ctx)?.openTree(),
+	},
 	// pi's /fork and /clone as new sessions (Sessions.fork/clone; the server copies the store).
 	"app.session.fork": {
 		title: "Fork from a message into a new session",

@@ -12,9 +12,11 @@ export type SessionSummary = Session & {
 
 import { requestReveal } from "./Chat.tsx";
 import {
+	BranchIcon,
 	ChevronIcon,
 	FolderIcon,
 	MoonIcon,
+	PencilIcon,
 	PinIcon,
 	PlusIcon,
 	SearchIcon,
@@ -68,23 +70,99 @@ function ThemeButton() {
 	);
 }
 
+/**
+ * A session's `/tree` branches (docs/tree.md), newest first in a stable order: switching only moves the "current" mark.
+ * Shown from two branches on, behind the session row's expand control (`hidden` while collapsed). Choosing another branch switches the session to it (`onBranch`, the owner's); the pencil beside a
+ * row renames it (`onRenameBranch`). A branch without a label (conversation 1's default) shows the session title. A
+ * branch left while running goes on in the background: its row shows the working dot.
+ */
+function BranchRows({
+	session,
+	conversationId,
+	active,
+	onOpen,
+	onBranch,
+	onRenameBranch,
+	hidden,
+}: {
+	session: SessionSummary;
+	conversationId: number;
+	active: boolean;
+	onOpen: (id: string, conversationId?: number) => void;
+	onBranch: (id: string, conversationId: number) => void;
+	onRenameBranch?: (id: string, conversationId: number) => void;
+	hidden: boolean;
+}) {
+	return (
+		<div className="branch-rows" id={`branches-${session.id}`} hidden={hidden}>
+			{session.branches.map((branch) => {
+				const current = branch.conversation === session.main;
+				const label = branch.label ?? session.title;
+				return (
+					<div className="branch-item" key={branch.conversation}>
+						<button
+							type="button"
+							className={`subagent-row branch-row ${active && conversationId === branch.conversation ? "active" : ""}`}
+							title={current ? "The current branch" : "Switch the session to this branch"}
+							onClick={() =>
+								current ? onOpen(session.id, branch.conversation) : onBranch(session.id, branch.conversation)
+							}
+						>
+							<span className="branch" />
+							<BranchIcon size={13} />
+							<span className="session-title">{label}</span>
+							{current && <span className="session-meta">current</span>}
+							{session.worker.busy?.includes(branch.conversation) && (
+								<span className="live-dot" title="Working" />
+							)}
+						</button>
+						{onRenameBranch && (
+							<button
+								type="button"
+								className="branch-rename"
+								aria-label={`Rename branch ${label}`}
+								title="Rename branch"
+								onClick={() => onRenameBranch(session.id, branch.conversation)}
+							>
+								<PencilIcon />
+							</button>
+						)}
+					</div>
+				);
+			})}
+		</div>
+	);
+}
+
 function SessionRow({
 	session,
 	conversationId,
 	onOpen,
+	onBranch,
+	onRenameBranch,
+	active = false,
 	archived = false,
 	children,
 }: {
 	session: SessionSummary;
 	conversationId: number;
 	onOpen: (id: string, conversationId?: number) => void;
+	/** Switches the session to a branch (the owner); absent: no branch rows. */
+	onBranch?: (id: string, conversationId: number) => void;
+	/** Asks for a branch's new label (the owner). */
+	onRenameBranch?: (id: string, conversationId: number) => void;
+	/** The session is the one shown. */
+	active?: boolean;
 	archived?: boolean;
 	children: ReactNode;
 }) {
-	const [expanded, setExpanded] = useState(conversationId !== 1);
+	// One control expands a session's branch rows and its subagents; a subagent shown expands them. Not any conversation
+	// but the main one: right after a `/tree` switch the page shows the new branch before the row names it main.
+	const showsSubagent = session.subagents.some((agent) => agent.conversationId === conversationId);
+	const [expanded, setExpanded] = useState(showsSubagent);
 	useEffect(() => {
-		if (conversationId !== 1) setExpanded(true);
-	}, [conversationId]);
+		if (showsSubagent) setExpanded(true);
+	}, [showsSubagent]);
 	// One-shot agents are opened from their script's tool card; archived subagents wait behind their own row.
 	const listed = (archived ? [] : session.subagents)
 		.filter((agent) => agent.kind !== "agent")
@@ -93,6 +171,8 @@ function SessionRow({
 	const stored = listed.filter((agent) => agent.archived);
 	const [showStored, setShowStored] = useState(false);
 	const storedOpen = showStored || stored.some((agent) => agent.conversationId === conversationId);
+	const branches = onBranch !== undefined && !archived && session.branches.length >= 2;
+	const nested = [branches && "branches", listed.length > 0 && "subagents"].filter(Boolean).join(" and ");
 	const row = (agent: (typeof listed)[number]) => (
 		<button
 			type="button"
@@ -119,24 +199,43 @@ function SessionRow({
 	);
 	return (
 		<div className="session-row">
-			<div className={`session-header ${listed.length ? "has-subagents" : ""}`}>
+			<div className={`session-header ${nested ? "has-subagents" : ""}`}>
 				{children}
-				{listed.length > 0 && (
+				{nested && (
 					<button
 						type="button"
 						className="subagent-toggle"
-						aria-label={expanded ? "Collapse subagents" : "Expand subagents"}
+						aria-label={`${expanded ? "Collapse" : "Expand"} ${nested}`}
 						aria-expanded={expanded}
-						aria-controls={`subagents-${session.id}`}
+						aria-controls={[branches && `branches-${session.id}`, listed.length > 0 && `subagents-${session.id}`]
+							.filter(Boolean)
+							.join(" ")}
 						onClick={() => setExpanded(!expanded)}
 					>
-						<span>{agents.length}</span>
+						{listed.length > 0 && <span>{agents.length}</span>}
+						{branches && (
+							<span className="toggle-branches" title={`${session.branches.length} branches`}>
+								<BranchIcon size={11} />
+								{session.branches.length}
+							</span>
+						)}
 						<span className={`chev ${expanded ? "open" : ""}`}>
 							<ChevronIcon size={12} />
 						</span>
 					</button>
 				)}
 			</div>
+			{branches && (
+				<BranchRows
+					session={session}
+					conversationId={conversationId}
+					active={active}
+					onOpen={onOpen}
+					onBranch={onBranch}
+					onRenameBranch={onRenameBranch}
+					hidden={!expanded}
+				/>
+			)}
 			{listed.length > 0 && (
 				<div id={`subagents-${session.id}`} hidden={!expanded}>
 					{agents.map(row)}
@@ -172,6 +271,8 @@ export const Drawer = memo(function Drawer({
 	conversationId,
 	connected,
 	onOpen,
+	onBranch,
+	onRenameBranch,
 	onNew,
 	onCollapse,
 	onProviders,
@@ -188,6 +289,10 @@ export const Drawer = memo(function Drawer({
 	conversationId: number;
 	connected: boolean;
 	onOpen: (id: string, conversationId?: number) => void;
+	/** Switches a session to one of its `/tree` branches (the owner's). */
+	onBranch?: (id: string, conversationId: number) => void;
+	/** Asks for a new label of one of a session's `/tree` branches (the owner's). */
+	onRenameBranch?: (id: string, conversationId: number) => void;
 	onNew: () => void;
 	onCollapse: () => void;
 	onProviders: () => void;
@@ -256,12 +361,12 @@ export const Drawer = memo(function Drawer({
 						<SessionRow
 							key={session.id}
 							session={session}
-							conversationId={session.id === activeId ? conversationId : 1}
+							conversationId={session.id === activeId ? conversationId : session.main}
 							onOpen={onOpen}
 						>
 							<button
 								type="button"
-								className={`session-main ${session.id === activeId && conversationId === 1 ? "active" : ""}`}
+								className={`session-main ${session.id === activeId && conversationId === session.main ? "active" : ""}`}
 								onClick={() => onOpen(session.id)}
 							>
 								<span className="session-title">{session.title}</span>
@@ -317,12 +422,15 @@ export const Drawer = memo(function Drawer({
 								key={session.id}
 								session={session}
 								archived={archived}
-								conversationId={session.id === activeId ? conversationId : 1}
+								conversationId={session.id === activeId ? conversationId : session.main}
 								onOpen={onOpen}
+								onBranch={onBranch}
+								onRenameBranch={onRenameBranch}
+								active={session.id === activeId}
 							>
 								<button
 									type="button"
-									className={`session-main ${session.id === activeId && conversationId === 1 ? "active" : ""}`}
+									className={`session-main ${session.id === activeId && conversationId === session.main ? "active" : ""}`}
 									onClick={() => (archived ? restore(session.id) : onOpen(session.id))}
 								>
 									<span className="session-title">

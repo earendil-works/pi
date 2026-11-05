@@ -1,8 +1,9 @@
 // The lists plugin on the server: a JSON API for command-line clients. A route runs as whoever sent the request (the
 // kit answered 401 before this code runs when nobody signed in), so its `ctx.get` reaches the list's worker as them.
 
-import { defineFacet, Todos } from "@todo/app/v1";
+import { defineFacet } from "@todo/app/v1";
 import { Http } from "@todo/app/v1/server";
+import { Todos } from "./contract.ts";
 
 export default defineFacet((_host, self) => {
 	self.contribute(Http, {

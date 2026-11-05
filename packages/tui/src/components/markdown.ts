@@ -197,6 +197,36 @@ function trimPartialClosingFences(tokens: readonly Token[]): void {
 	token.text = token.text.slice(0, -lastLine.length).replace(/\n$/, "");
 }
 
+// An unclosed comment runs to the end of an HTML block, as in CommonMark, so streamed comments stay hidden.
+const HTML_COMMENT_REGEX = /<!--[\s\S]*?(?:-->|$)/g;
+
+function stripHtmlComments(html: string): string {
+	return html.replace(HTML_COMMENT_REGEX, "");
+}
+
+/**
+ * Remove block HTML tokens that hold only comments, so they render no line. A removed comment between two blank
+ * lines, or at the start or end, also drops a blank line, so it leaves no extra gap.
+ * See https://github.com/earendil-works/pi/issues/11710.
+ */
+function removeHtmlCommentBlocks(tokens: Token[]): void {
+	for (let i = tokens.length - 1; i >= 0; i--) {
+		const token = tokens[i];
+		if (token.type === "list") {
+			for (const item of token.items) removeHtmlCommentBlocks(item.tokens);
+		} else if (token.type === "blockquote") {
+			removeHtmlCommentBlocks(token.tokens ?? []);
+		} else if (token.type === "html" && stripHtmlComments(token.raw).trim() === "") {
+			tokens.splice(i, 1);
+			if (tokens[i]?.type === "space" && (i === 0 || tokens[i - 1]?.type === "space")) {
+				tokens.splice(i, 1);
+			} else if (i === tokens.length && tokens[i - 1]?.type === "space") {
+				tokens.splice(--i, 1);
+			}
+		}
+	}
+}
+
 const markdownParser = new Marked();
 markdownParser.setOptions({
 	tokenizer: new MarkdownTokenizer(),
@@ -365,6 +395,7 @@ export class Markdown implements Component {
 		if (!tokens) {
 			tokens = markdownParser.lexer(normalizedText);
 			trimPartialClosingFences(tokens);
+			removeHtmlCommentBlocks(tokens);
 			this.cachedTokens = new WeakRef({ source: normalizedText, tokens });
 		}
 
@@ -715,9 +746,9 @@ export class Markdown implements Component {
 				break;
 
 			case "html":
-				// Render HTML as plain text (escaped for terminal)
+				// Render HTML as plain text (escaped for terminal), without its comments
 				if ("raw" in token && typeof token.raw === "string") {
-					lines.push(this.applyDefaultStyle(token.raw.trim()));
+					lines.push(this.applyDefaultStyle(stripHtmlComments(token.raw).trim()));
 				}
 				break;
 
@@ -745,7 +776,15 @@ export class Markdown implements Component {
 			return segments.map((segment: string) => applyText(segment)).join("\n");
 		};
 
-		for (const token of tokens) {
+		// After a skipped HTML comment, drop the next text's leading space if the text before ended with one,
+		// so "a <!-- c --> b" renders as "a b".
+		let dropLeadingSpace = false;
+		for (let i = 0; i < tokens.length; i++) {
+			let token = tokens[i];
+			if (dropLeadingSpace && token.type === "text" && !token.tokens?.length && /^[ \t]/.test(token.text)) {
+				token = { ...token, text: token.text.replace(/^[ \t]+/, "") };
+			}
+			dropLeadingSpace = false;
 			switch (token.type) {
 				case "latex": {
 					const latexToken = token as LatexToken;
@@ -824,8 +863,10 @@ export class Markdown implements Component {
 				}
 
 				case "html":
-					// Render inline HTML as plain text
-					if ("raw" in token && typeof token.raw === "string") {
+					// Render inline HTML as plain text; comments are hidden
+					if (token.raw.startsWith("<!--")) {
+						dropLeadingSpace = i === 0 || /[ \t]$/.test(tokens[i - 1].raw);
+					} else {
 						result += applyTextWithNewlines(token.raw);
 					}
 					break;

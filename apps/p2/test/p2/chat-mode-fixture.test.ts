@@ -193,7 +193,7 @@ describe("chat mode (server, sharing, fake provider)", () => {
 		const asked = requests()[before]!.at(-1)!;
 		assert.equal(asked.role, "user");
 		const text = textOf(asked);
-		assert.match(text, /<mobile-speaker>.*"name":"Alice"/);
+		assert.match(text, /<sender kind="guest" id="[^"]+" name="Alice"\/>/);
 		assert.match(text, /^Alice \(guest\): screenshots \[attached: a\.png, b\.png, c\.png\]$/m);
 		assert.match(text, /^Owner: my notes \[attached: notes\.txt, d\.png, e\.png\]$/m);
 		assert.match(text, /Alice \(guest\) mentioned you:\n@Pi, what do you think\?/);

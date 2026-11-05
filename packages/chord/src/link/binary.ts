@@ -1,4 +1,5 @@
-// The binary codec (2b): a kind byte (its high bit set when an origin follows as a varint), then the kind's fields as
+// The binary codec (2b): a kind byte (its high bit set when an origin follows as a varint, the next one when a trace
+// carrier follows as JSON, slice 9), then the kind's fields as
 // unsigned varints, length-prefixed UTF-8 strings, raw incarnation (16 bytes) and fingerprint (8 bytes), parts as
 // length-prefixed bytes whose prefix also says whether the part is deflated (decoded as views of the message, never
 // parsed or inflated here), and byte segments only beside payloads marked as carrying bytes. No outer length: links
@@ -45,6 +46,9 @@ const KIND_BYTES = new Map<string, number>(KINDS.map((kind, byte) => [kind, byte
 /** The kind byte's flag for an origin. */
 const ORIGIN = 0x80;
 
+/** The kind byte's flag for a trace carrier (a `hold`'s or `call`'s; the message schema refuses it elsewhere). */
+const TRACE = 0x40;
+
 /** A payload's flags: present, and carrying byte segments. */
 const PRESENT = 1;
 
@@ -68,25 +72,27 @@ export const binaryCodec: Codec = {
 	encode(message) {
 		const writer = new Writer();
 		const origin = "origin" in message ? message.origin : undefined;
-		if (origin === undefined) {
-			writer.byte(KIND_BYTES.get(message.kind)!);
-		} else {
-			writer.byte(KIND_BYTES.get(message.kind)! | ORIGIN);
-			writer.varint(origin);
-		}
+		const trace = message.kind === "hold" || message.kind === "call" ? message.trace : undefined;
+		writer.byte(
+			KIND_BYTES.get(message.kind)! | (origin === undefined ? 0 : ORIGIN) | (trace === undefined ? 0 : TRACE),
+		);
+		if (origin !== undefined) writer.varint(origin);
+		if (trace !== undefined) writer.json(trace);
 		encodeFields(message, writer);
 		return writer.finish();
 	},
 	decode(bytes) {
 		const reader = new Reader(bytes);
 		const byte = reader.byte();
-		const origin = byte & ORIGIN ? reader.varint() : undefined;
-		const kind = KINDS[byte & ~ORIGIN];
+		const kind = KINDS[byte & ~(ORIGIN | TRACE)];
 		if (kind === undefined) throw new Error("binary: an unknown kind");
+		const origin = byte & ORIGIN ? reader.varint() : undefined;
+		const trace = byte & TRACE ? reader.json() : undefined;
 		const message = decodeFields(kind, reader);
 		reader.end();
-		// A fresh object; the message schema refuses an origin on a kind without one.
+		// A fresh object; the message schema refuses an origin or a trace on a kind without one, and checks the trace.
 		if (origin !== undefined) (message as { origin?: number }).origin = origin;
+		if (trace !== undefined) (message as { trace?: unknown }).trace = trace;
 		return message;
 	},
 };

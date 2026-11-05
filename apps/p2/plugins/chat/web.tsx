@@ -14,6 +14,7 @@ import {
 } from "@p2/app/v1";
 import {
 	AttachIcon,
+	BranchFrom,
 	buildTranscript,
 	ChevronIcon,
 	CloseIcon,
@@ -41,6 +42,7 @@ import {
 	navigate,
 	OneShotAgents,
 	OpenConversation,
+	OpenTerminal,
 	OpenWorkspaceFile,
 	openLayer,
 	type PickedFile,
@@ -89,6 +91,7 @@ import type { ResourceSnapshot } from "../models/resources.ts";
 import { type Session, Sessions } from "../sessions/contract.ts";
 import { SessionMetrics, SessionStatus, WorkerControl } from "../status/contract.ts";
 import { type Child, conversationLocation, SubagentControl, Subagents } from "../subagents/contract.ts";
+import { SessionTree } from "../tree/contract.ts";
 import { Chat, ChatCosts, TranscriptEntries } from "./contract.ts";
 import { type Outgoing, outboxOf } from "./outbox.ts";
 
@@ -125,12 +128,30 @@ function refused(error: unknown): boolean {
 	);
 }
 
-/** Picked files: shown above the textarea, removable; the attach button adds more. */
+/** Picked files: shown above the textarea, removable; the attach button and pasted images add more. */
 type Attaching = {
 	readonly files: readonly PickedFile[];
 	readonly add: (files: File[]) => void;
 	readonly remove: (file: PickedFile) => void;
 };
+
+/**
+ * The images a paste attaches, or none to leave the paste to the textarea. Plain text wins: Office apps put a rendered
+ * picture of the copied cells beside the text, and Chrome on macOS pastes a Finder file as its icon beside its name.
+ */
+function pastedImages(data: DataTransfer): File[] {
+	if (data.getData("text/plain") !== "") return [];
+	return [...data.items]
+		.filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+		.map((item) => item.getAsFile())
+		.filter((file) => file !== null)
+		.map((file) =>
+			// The server infers an upload's image type from its extension; a nameless paste gets one from its type.
+			/\.[a-z0-9]+$/i.test(file.name)
+				? file
+				: new File([file], `pasted-image.${file.type.slice(6).replace("jpeg", "jpg")}`, { type: file.type }),
+		);
+}
 
 /** The composer's attachments from its state. */
 const attachingOf = ({ files, setFiles, addFiles }: ReturnType<typeof useComposerState>): Attaching => ({
@@ -261,6 +282,13 @@ function Composer({
 					completion?.update();
 				}}
 				onClick={() => completion?.update()}
+				onPaste={(event) => {
+					if (!attaching) return;
+					const images = pastedImages(event.clipboardData);
+					if (!images.length) return;
+					event.preventDefault();
+					attaching.add(images);
+				}}
 				onFocus={() => completion?.onFocus()}
 				onBlur={() => completion?.onBlur()}
 				onCompositionStart={() => completion?.onCompositionStart()}
@@ -346,7 +374,7 @@ function TopBar({ session, child, owner = false }: { session?: Session; child?: 
 						<button
 							type="button"
 							className="crumb"
-							onClick={() => session && void nav.backOrPush(conversationRoute(route, session.id))}
+							onClick={() => session && void nav.backOrPush(conversationRoute(route, session.id, session.main))}
 						>
 							← {session?.title}
 						</button>
@@ -456,6 +484,18 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		},
 		[nav],
 	);
+	// The terminal panel where it is open (the workspace's tab), else below the chat.
+	const openTerminal = useCallback(
+		(terminalId: string) => {
+			const current = nav.route;
+			void nav.push(
+				current.workspace?.tab === "terminal"
+					? { ...current, workspace: { ...current.workspace, terminal: terminalId, startTerminal: undefined } }
+					: { ...current, terminal: terminalId, startTerminal: undefined },
+			);
+		},
+		[nav],
+	);
 	const connected = useConnected();
 	const host = useHost();
 	// The catalog as the owner or a guest sees it (`worker` is a session worker's).
@@ -501,17 +541,21 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			),
 		[children, sessionId],
 	);
+	// Only subagents and the main conversation are shown: an earlier `/tree` branch (another device switched, or a link
+	// from before) and unknown conversations open the main one.
+	const main = session?.main;
 	useEffect(() => {
 		const current = nav.route;
 		if (
 			children &&
-			conversationId !== 1 &&
+			main !== undefined &&
+			conversationId !== main &&
 			!child &&
 			current.session === sessionId &&
 			current.conversation === conversationId
 		)
-			void nav.replace(conversationRoute(current, sessionId), current);
-	}, [children, child, conversationId, nav, sessionId]);
+			void nav.replace(conversationRoute(current, sessionId, main), current);
+	}, [children, child, conversationId, main, nav, sessionId]);
 	const workers = liveIn(useObject(SessionStatus, {}), "reader");
 	const workerError = useReadable(workers?.statuses)?.[sessionId]?.error;
 	const [activationError, setActivationError] = useState<string>();
@@ -581,6 +625,27 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		canReply,
 		mentionName,
 	} = composer;
+	// `/tree` from a message (docs/tree.md): the owner, in the main conversation. A reference of its own, as the switch
+	// reaches the session row (whose `main` moves this view) before its result; a user message's text fills the composer.
+	const branchFrom = useCallback(
+		(entry: number) => {
+			const held = host.hold(SessionTree, { session: sessionId }, BACKGROUND_CONTEXT);
+			whenLive(held)
+				.then(() => {
+					const tree = liveIn(held, "owner");
+					if (!tree) throw new Error("Only the owner branches the session");
+					return tree.navigate({ entry }, BACKGROUND_CONTEXT);
+				})
+				.then(({ conversation, text }) => {
+					if (text !== null) setDraft(text);
+					void nav.replace(conversationRoute(nav.route, sessionId, conversation));
+				})
+				.catch((reason: unknown) => setError(errorText(reason)))
+				.finally(() => held.release());
+		},
+		[host, nav, sessionId, setDraft, setError],
+	);
+	const canBranch = owner && conversationId === session?.main;
 	// Replies exist while a plugin allows them here (chat-mode, in chat mode); the reply action fills the composer.
 	const startReply = useCallback(
 		(target: { entryId: number; name: string }) => {
@@ -946,31 +1011,35 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 									<OpenConversation.Provider value={openConversation}>
 										<OneShotAgents.Provider value={oneShots}>
 											<OpenWorkspaceFile.Provider value={canWrite ? openWorkspaceFile : undefined}>
-												<ReplyTo.Provider value={participant && canReply ? startReply : undefined}>
-													<RevealEntry.Provider value={reveal}>
-														<FillGap.Provider value={fillGap}>
-															<Messages
-																transcript={shown ?? transcript}
-																rows={rows}
-																list={follow.list}
-																range={follow.range}
-																stopped={
-																	stopped?.sessionId === sessionId &&
-																	stopped?.conversationId === conversationId &&
-																	!view?.entries.some((entry) =>
-																		entry.model?.some(
-																			(message) =>
-																				message.role === "assistant" &&
-																				message.stopReason === "aborted",
-																		),
-																	)
-																}
-																earlier={earlier}
-																onEarlier={() => void loadEarlier()}
-															/>
-														</FillGap.Provider>
-													</RevealEntry.Provider>
-												</ReplyTo.Provider>
+												<OpenTerminal.Provider value={owner ? openTerminal : undefined}>
+													<ReplyTo.Provider value={participant && canReply ? startReply : undefined}>
+														<BranchFrom.Provider value={canBranch ? branchFrom : undefined}>
+															<RevealEntry.Provider value={reveal}>
+																<FillGap.Provider value={fillGap}>
+																	<Messages
+																		transcript={shown ?? transcript}
+																		rows={rows}
+																		list={follow.list}
+																		range={follow.range}
+																		stopped={
+																			stopped?.sessionId === sessionId &&
+																			stopped?.conversationId === conversationId &&
+																			!view?.entries.some((entry) =>
+																				entry.model?.some(
+																					(message) =>
+																						message.role === "assistant" &&
+																						message.stopReason === "aborted",
+																				),
+																			)
+																		}
+																		earlier={earlier}
+																		onEarlier={() => void loadEarlier()}
+																	/>
+																</FillGap.Provider>
+															</RevealEntry.Provider>
+														</BranchFrom.Provider>
+													</ReplyTo.Provider>
+												</OpenTerminal.Provider>
 											</OpenWorkspaceFile.Provider>
 										</OneShotAgents.Provider>
 									</OpenConversation.Provider>

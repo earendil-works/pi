@@ -1,13 +1,39 @@
 import { Worker } from "node:worker_threads";
 
 export const MAX_TUI_BUNDLE = 8 * 1024 * 1024;
+const HEAP_LIMIT_MB = 96;
 export function requireTuiNode(version = process.versions.node): void {
 	const [major = 0, minor = 0, patch = 0] = version.split(".").map(Number);
 	if (major < 26 || (major === 26 && (minor < 5 || (minor === 5 && patch < 1))))
 		throw new Error("p2 TUI requires Node >=26.5.1 (on slayer: ~/.local/bin/node26, Node 26.11.1)");
 }
 
-/** Launcher-owned lifecycle. Worker streams and guest errors are never printed as terminal output. */
+/** The most of one guest error report the launcher prints. */
+const MAX_ERROR_REPORT = 8192;
+
+/**
+ * A guest error or stack as printable text: terminal controls and bidi overrides removed, bounded. The guest controls
+ * this text; only the launcher prints it, after restoring the terminal.
+ */
+function guestErrorText(text: string): string {
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: the report keeps only newlines and tabs.
+	const clean = text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "");
+	return clean.length > MAX_ERROR_REPORT ? `${clean.slice(0, MAX_ERROR_REPORT)}\n(truncated)` : clean;
+}
+
+/** Why the worker's `error` event fired: the heap limit, or an exception the bundle did not catch. */
+function workerErrorMessage(error: unknown): string {
+	if (error instanceof Error && (error as NodeJS.ErrnoException).code === "ERR_WORKER_OUT_OF_MEMORY")
+		return `TUI sandbox exceeded its memory limit (${HEAP_LIMIT_MB} MiB heap)`;
+	// Structured-cloned from the worker (wire input): an Error keeps its stack, anything else is the thrown value.
+	const text = error instanceof Error ? (error.stack ?? `${error.name}: ${error.message}`) : String(error);
+	return `TUI sandbox crashed with an uncaught exception:\n${guestErrorText(text)}`;
+}
+
+/**
+ * Launcher-owned lifecycle. Worker streams never reach the terminal; a crash is reported through `onFailure` with its
+ * sanitized stack, which the launcher prints after restoring the terminal.
+ */
 export class TuiSandbox {
 	readonly worker: Worker;
 	readonly ready: Promise<void>;
@@ -40,7 +66,7 @@ export class TuiSandbox {
 			stdout: true,
 			stderr: true,
 			resourceLimits: {
-				maxOldGenerationSizeMb: 96,
+				maxOldGenerationSizeMb: HEAP_LIMIT_MB,
 				maxYoungGenerationSizeMb: 16,
 				codeRangeSizeMb: 64,
 				stackSizeMb: 4,
@@ -77,9 +103,14 @@ export class TuiSandbox {
 				clearTimeout(request.timer);
 				if ("failed" in message && message.failed) request.reject(new Error("TUI sandbox request failed"));
 				else request.resolve("value" in message ? message.value : undefined);
-			} else if (message.kind === "failed") fail("TUI sandbox handler failed");
+			} else if (message.kind === "failed")
+				fail(
+					"error" in message && typeof message.error === "string"
+						? `TUI sandbox message handler threw:\n${guestErrorText(message.error)}`
+						: "TUI sandbox message handler threw",
+				);
 		});
-		this.worker.on("error", () => fail("TUI sandbox failed or exceeded its memory limit"));
+		this.worker.on("error", (error) => fail(workerErrorMessage(error)));
 		this.worker.on("exit", () => {
 			clearTimeout(this.startup);
 			fail("TUI sandbox exited");

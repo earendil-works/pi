@@ -9,6 +9,7 @@ const terminal = await startTerminal({
 	url: "http://127.0.0.1:8788",
 	credentials: { kind: "file", path: "~/.acme/owner-token" },   // or { kind: "token", token }, { kind: "pairing", label, save? }
 	mode: "dark", colors: "truecolor",                              // the terminal's background and colours
+	locales: ["de-DE"],                                             // the user's languages: the system locale by default
 });
 process.exitCode = await terminal.exited;
 ```

@@ -1,12 +1,30 @@
 import type { SpanAttributes, StoredSpan } from "./index.ts";
 
+// C0 and C1 control characters and DEL: a stored id, name or message may come from another process (a carrier), so
+// none reaches a terminal or a viewer raw.
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
+
+/** `text` with every control character written as a `\uXXXX` escape. */
+function escaped(text: string): string {
+	return text.replace(CONTROL, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
+/** `ms` rounded to the microsecond, as the adapters record span times. */
+function microseconds(ms: number): number {
+	return Math.round(ms * 1000) / 1000;
+}
+
 function formatAttributes(attributes: Readonly<SpanAttributes> = {}): string {
 	return Object.entries(attributes)
-		.map(([key, value]) => ` ${key}=${JSON.stringify(value)}`)
+		.map(([key, value]) => ` ${escaped(key)}=${JSON.stringify(value)}`)
 		.join("");
 }
 
-/** Render stored spans as a chronological forest, treating absent parents as roots. */
+/**
+ * Render stored spans as a chronological forest, treating absent parents as roots. Lengths of time are milliseconds to
+ * the microsecond. Control characters in ids, names, attribute keys and error messages are escaped (attribute values
+ * are JSON).
+ */
 export function renderTrace(spans: readonly StoredSpan[]): string {
 	const byId = new Map(spans.map((span) => [span.id, span]));
 	const roots: StoredSpan[] = [];
@@ -29,16 +47,21 @@ export function renderTrace(spans: readonly StoredSpan[]): string {
 		let error = "";
 		if (span.status.status === "error") {
 			error = " error";
-			if (span.status.error !== undefined) error += ` ${span.status.error.name}: ${span.status.error.message}`;
+			if (span.status.error !== undefined) {
+				error += ` ${escaped(span.status.error.name)}: ${escaped(span.status.error.message)}`;
+			}
 		}
 		lines.push(
-			`${indent}${span.name}${formatAttributes(span.attributes)} (${span.endedMs - span.startedMs}ms)${error}`,
+			`${indent}${escaped(span.name)}${formatAttributes(span.attributes)} (${microseconds(span.endedMs - span.startedMs)}ms)${error}`,
 		);
 		for (const event of span.events) {
-			lines.push(`${indent}  · ${event.name}${formatAttributes(event.attributes)} (+${event.timeMs}ms)`);
+			lines.push(
+				`${indent}  · ${escaped(event.name)}${formatAttributes(event.attributes)} (+${microseconds(event.timeMs)}ms)`,
+			);
 		}
 		for (const link of span.links) {
-			lines.push(`${indent}  → link trace ${link.traceId} span ${link.spanId}${formatAttributes(link.attributes)}`);
+			const ids = `trace ${escaped(link.traceId)} span ${escaped(link.spanId)}`;
+			lines.push(`${indent}  → link ${ids}${formatAttributes(link.attributes)}`);
 		}
 		const descendants = children.get(span.id) ?? [];
 		for (let index = descendants.length - 1; index >= 0; index--) {

@@ -6,12 +6,14 @@ import { promisify } from "node:util";
 import type { FileInfo } from "@earendil-works/pi-durable/env";
 import {
 	acceptHostKey,
+	type Connection,
 	connectSsh,
 	forgetHostKey,
 	HostKeyChangedError,
 	HostKeyUnknownError,
 	RemoteExecutionEnv,
 	scanHostKey,
+	sshConnection,
 } from "@earendil-works/pi-env";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { remotePaths, value } from "@p2/app/v1/node";
@@ -60,6 +62,14 @@ export class EnvManager {
 		const config = Object.hasOwn(configs, name) ? configs[name] : undefined;
 		if (!config) throw new Error(`Environment "${name}" is not configured`);
 		return config;
+	}
+
+	/**
+	 * A pi-env connection to env `name` configured as `config`, over SSH with p2's key and known hosts, deploying the
+	 * daemon pi-env ships. It starts at its first request; the caller closes it.
+	 */
+	connection(name: string, config: EnvConfig): Connection {
+		return sshConnection(sshOptions(this.directory, name, config)).connection;
 	}
 
 	async list(): Promise<EnvSummary[]> {

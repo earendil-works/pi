@@ -15,6 +15,8 @@ import type { AnyDefinition } from "../documents/internal.ts";
 import type { JobDefinition } from "../jobs/index.ts";
 import type { Registry, RegistryProvider } from "../registries/index.ts";
 import { checkProvider, type RegistryValueSource } from "../registries/internal.ts";
+import { checkLiveQuery } from "../store/live-query.ts";
+import type { Query } from "../store/query.ts";
 import { tableSqlName } from "../store/sql.ts";
 import type { ChordStore } from "../store/store.ts";
 import type { TableDefinition } from "../store/table.ts";
@@ -148,7 +150,7 @@ function stageEntry(
 		throw new Error(`${contract.name}: a host without an address serves only local types`);
 	}
 	const provider = bindProvider(contract, options.accepts ?? {});
-	const common = { plugin, provider, linger: options.linger ?? 0 };
+	const common = { plugin, provider, linger: options.linger ?? 0, traced: options.untraced !== true };
 	// The contract's kind decides the factory's signature and the contract's shape.
 	const served: Served =
 		contract.kind === "local"
@@ -273,6 +275,16 @@ class RecordingSelf {
 		const object = this.#object;
 		store.claims.assertTable(tableSqlName(object.served.contract.name, definition.name), object);
 		this.#tables.set(definition.name, definition);
+		return INERT;
+	}
+
+	/** A live query over a table this factory declared (its handle is inert: the query names the table), limited. */
+	query(_table: unknown, q: Query, limit: unknown): never {
+		this.#assertDeclaring("query");
+		const label = this.#object.label;
+		const table = this.#tables.get(q.table.name);
+		if (table !== q.table) throw new Error(`${label}: self.query: the table is not one this factory declared`);
+		checkLiveQuery(table, q, limit, label);
 		return INERT;
 	}
 

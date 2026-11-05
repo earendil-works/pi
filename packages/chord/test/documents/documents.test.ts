@@ -1,8 +1,13 @@
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
-import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
+import { type Context, BACKGROUND_CONTEXT as context, withCancel, withTelemetry } from "../../src/context/index.ts";
 import { arr, int, local, method, obj, str } from "../../src/contracts/index.ts";
+import type { Tx } from "../../src/documents/index.ts";
 import { defineState, type KeyedHandle, type SingletonHandle } from "../../src/documents/index.ts";
-import { delivered, framesOf, loaded, rejection } from "../support.ts";
+import { eq } from "../../src/store/expression.ts";
+import type { TableOf } from "../../src/store/index.ts";
+import { defineTable } from "../../src/store/table.ts";
+import { delivered, framesOf, loaded, memoryStore, rejection } from "../support.ts";
 
 const List = defineState("list", { schema: obj({ items: arr(str()) }), version: 1, initial: () => ({ items: [] }) });
 const Drafts = defineState("drafts", {
@@ -169,5 +174,78 @@ describe('transactions their context\'s end cancelled (decision "Mistakes that w
 			reads.mockRestore();
 		}
 		await host.close(context);
+	});
+});
+
+describe("commits in telemetry (slice 9)", () => {
+	it("records a commit's documents, ops and duration as an event of its context's span, and its duration metric", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		let list: SingletonHandle<{ items: string[] }> | undefined;
+		const { host } = await loaded(
+			(h) =>
+				h.serve(Owner, (_, self) => {
+					list = self.state(List);
+					return { list, touch: async () => null };
+				}),
+			{ telemetry },
+		);
+		await host.get(Owner, { id: 1 }, context);
+		await telemetry.startSpan({ name: "work" }, async (span) => {
+			const traced = withTelemetry(span, context);
+			await list!.change((draft) => {
+				draft.items.push("a", "b");
+			}, traced);
+			// A transaction that changes nothing commits nothing: no event.
+			await list!.change(() => {}, traced);
+		});
+		const work = telemetry.getSpans().find(({ name }) => name === "work");
+		expect(work!.events).toEqual([
+			{ name: "chord.commit", attributes: { documents: 1, ops: 1, rows: 0, duration: expect.any(Number) } },
+		]);
+		expect(telemetry.getMetrics().map(({ name, unit }) => [name, unit])).toContainEqual([
+			"chord.commit.duration",
+			"ms",
+		]);
+	});
+
+	it("counts the table rows a commit's writes changed: a put one, an update or delete the rows it changed", async () => {
+		const Rows = defineTable("rows", { version: 1, columns: { id: int(), text: str() }, key: ["id"] });
+		// A table's owner has empty params.
+		const Keeper = local("app.keeper", { version: 1, params: {}, members: { touch: method() } });
+		const telemetry = new InMemoryTelemetryContext();
+		let write: ((fn: (tx: Tx, rows: TableOf<typeof Rows>) => void, ctx: Context) => Promise<void>) | undefined;
+		const { host } = await loaded(
+			(h) =>
+				h.serve(Keeper, (_, self) => {
+					const rows = self.table(Rows);
+					write = (fn, ctx) => self.tx((tx) => fn(tx, rows), ctx);
+					return { touch: async () => null };
+				}),
+			{ telemetry, store: await memoryStore() },
+		);
+		await telemetry.startSpan({ name: "work" }, async (span) => {
+			const traced = withTelemetry(span, context);
+			await write!((tx, rows) => {
+				for (const id of [1, 2, 3]) tx.put(rows, { id, text: "a" });
+			}, traced);
+			await write!((tx, rows) => {
+				tx.updateWhere(rows, (row) => eq(row.text, "a"), { text: "b" });
+				tx.delete(rows, { id: 9 });
+			}, traced);
+		});
+		const work = telemetry.getSpans().find(({ name }) => name === "work");
+		expect(work!.events.map(({ attributes }) => [attributes.documents, attributes.ops, attributes.rows])).toEqual([
+			[0, 0, 3],
+			[0, 0, 3],
+		]);
+		await host.close(context);
+	});
+
+	it("times nothing when nothing records", async () => {
+		const { list } = await owner();
+		const now = vi.spyOn(performance, "now");
+		await list.change((draft) => void draft.items.push("a"), context);
+		expect(now).not.toHaveBeenCalled();
+		now.mockRestore();
 	});
 });

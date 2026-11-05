@@ -4,15 +4,24 @@
 // `fetch`, from the registries its facet serves (`Http`, `Authenticators`), an upgrade adapter for Node (`upgrade`), and
 // the facet, whose host-lifetime listener object is Chord's own Node server. Every request is admitted (provenance), routed,
 // checked for foreign origins, authenticated unless foreign, and served in one `host.root` scope with its principal
-// that lasts until its body is delivered; every answer carries the default headers.
+// that lasts until its body is delivered (a routed one in a `chord.http` span with an adapter, slice 9); every answer
+// carries the default headers.
 
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
-import { awaitWithContext, type Context, withAbortSignal, withoutAbortSignal } from "../../context/index.ts";
+import type { TelemetryCarrier, TelemetryContext } from "@earendil-works/pi-telemetry";
+import {
+	awaitWithContext,
+	type Context,
+	withAbortSignal,
+	withoutAbortSignal,
+	withTelemetry,
+} from "../../context/index.ts";
 import { local } from "../../contracts/index.ts";
 import { isChordError, type Principal } from "../../data/index.ts";
 import { type Ctx, defineFacet, type Facet, type Host } from "../../host/index.ts";
 import type { RegistryValue } from "../../registries/index.ts";
+import { hostAttribute, OpenSpan, parentOf, spanFailed, untraced } from "../../telemetry.ts";
 import {
 	type Admitted,
 	admit,
@@ -39,6 +48,11 @@ export type HttpOptions = {
 	readonly links?: LinksOptions;
 	/** How long `close` waits for running requests and closing sockets: 30 s by default. */
 	readonly closeTimeout?: number;
+	/**
+	 * The telemetry adapter (the host's): each routed request is a `chord.http` root span, its scope's `ctx` under it; a
+	 * W3C `traceparent` is extracted only from a request a contributed relay verified. NOOP by default.
+	 */
+	readonly telemetry?: TelemetryContext;
 	readonly onError: (error: HttpError) => void;
 };
 
@@ -123,6 +137,8 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 	readonly upgrade: (message: IncomingMessage, socket: Duplex, head: Buffer) => void;
 	readonly #host: Host<P>;
 	readonly #options: HttpOptions;
+	/** The `chord.host` of its `chord.http` spans: its host's. */
+	readonly #spanHost: string;
 	readonly #onError: (error: HttpError) => void;
 	readonly #context: Context;
 	/** The component's context without its cancellation: each request's scope adds its own signal. */
@@ -142,6 +158,7 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 	constructor(host: Host<P>, options: HttpOptions, context: Context) {
 		this.#host = host;
 		this.#options = options;
+		this.#spanHost = hostAttribute(host.address);
 		this.#onError = options.onError;
 		this.#context = context;
 		this.#base = withoutAbortSignal(context);
@@ -264,6 +281,8 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 		// Deny by default (decision "The app kit, point 3"): no plugin code runs for nobody unless the route is public.
 		if (principal === undefined && !match.public) return { answer: this.refusal(401, admission, router, head) };
 		const answered = Promise.withResolvers<Answer>();
+		const span = this.#span(request, match, admission);
+		const base = withAbortSignal(controller.signal, this.#base);
 		const scope = this.#host
 			.root(
 				async (ctx) => {
@@ -271,14 +290,36 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 					// The scope lasts until the body is written or abandoned (a `bytes` body reads in it).
 					await finished;
 				},
-				withAbortSignal(controller.signal, this.#base),
+				span === undefined ? base : withTelemetry(span.span, base),
 				{ principal },
 			)
 			.catch(() => {
 				// The scope was sealed (a disconnect, `close`) before it answered: the request is over.
 				answered.resolve(this.refusal(503, admission, router, head));
 			});
-		return { answer: await answered.promise, scope };
+		const answer = await answered.promise;
+		if (span !== undefined) {
+			span.span.setAttributes({ status: answer.status });
+			if (answer.status >= 500) spanFailed(span.span, "http_failed", `status ${answer.status}`);
+			void scope.then(() => span.end());
+		}
+		return { answer, scope };
+	}
+
+	/**
+	 * A routed request's `chord.http` span (its method and route pattern; its path never: it may carry ids or secrets):
+	 * a root of the adapter, or the child of a W3C `traceparent` (and its `tracestate`) of a request a contributed relay
+	 * verified, never a browser's; none without an adapter that records.
+	 */
+	#span(request: Incoming, match: RouteMatch, admission: Admitted): OpenSpan<"chord.http"> | undefined {
+		const adapter = this.#options.telemetry;
+		if (adapter === undefined || untraced(adapter)) return undefined;
+		const attributes = { "chord.host": this.#spanHost, method: request.method, route: match.pattern };
+		const traceparent = admission.provenance.kind === "relayed" ? traceHeader(request, "traceparent") : undefined;
+		if (traceparent === undefined) return new OpenSpan(adapter, "chord.http", attributes);
+		const tracestate = traceHeader(request, "tracestate");
+		const carrier: TelemetryCarrier = tracestate === undefined ? { traceparent } : { traceparent, tracestate };
+		return new OpenSpan(parentOf(carrier, adapter), "chord.http", attributes);
 	}
 
 	/** Runs the wraps and the route in the request's scope `ctx`, and makes its answer (a failure: a reported 500). */
@@ -525,6 +566,22 @@ function tracked(stream: ReadableStream<Uint8Array>, finished: () => void): Read
 		},
 		{ highWaterMark: 0 },
 	);
+}
+
+/**
+ * The longest W3C trace header taken from a relayed request (`traceparent` is 55 characters, `tracestate` at most 512):
+ * the relay forwards what the browser sent unless it strips them, so they are bounded as a link's carrier is (review L2).
+ */
+const TRACE_HEADERS = { traceparent: 256, tracestate: 512 } as const;
+
+/** Printable ASCII, as a link's carrier. */
+const PRINTABLE = /^[\x20-\x7e]*$/;
+
+/** A W3C trace header of `request`, when present, within its bound and printable; otherwise none (ignored). */
+function traceHeader(request: Incoming, name: keyof typeof TRACE_HEADERS): string | undefined {
+	const value = request.header(name);
+	if (value === null || value.length > TRACE_HEADERS[name] || !PRINTABLE.test(value)) return undefined;
+	return value;
 }
 
 /** Refuses an upgrade with `status` and closes its connection. */

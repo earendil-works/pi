@@ -1,16 +1,17 @@
 // Tests of `startServer` (slice 13 §1, §4, §5): the layout and the start-data object, start and close, a server without
-// workers, two worker kinds, `applyChanges`, a required root failing, and export and import per address (documents,
-// tables and files round-trip; an existing address refused).
+// workers, two worker kinds, `applyChanges`, a required root failing, a worker entry that does not build, the base
+// marks (a worker base's inputs among them), and export and import per address (documents, tables and files
+// round-trip; an existing address refused).
 
 import { chmod, mkdir, readdir, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { hostKind, local, remote, str, unknown } from "../../../src/contracts/index.ts";
 import { addressParam, HostData } from "../../../src/node/app/data.ts";
 import { AppInfo } from "../../../src/node/app/index.ts";
-import { rejection } from "../../support.ts";
+import { changesOf, rejection } from "../../support.ts";
 import { send } from "../http/support.ts";
 import { gitRepository, writePlugin } from "../plugins/support.ts";
 import { ECHO_SERVER, NOTES_PLUGIN, Notes, Project, tempDir, testApp, WORKER_ENTRY } from "./support.ts";
@@ -109,6 +110,17 @@ describe("starting and closing", () => {
 		// Closed: the data directory's lock is free again (a second start fails only on the same plugin).
 		expect(await rejection(testApp({ root, dataDir }))).toMatchObject({ name: "PluginError" });
 	});
+
+	it("rejects when a worker kind's entry does not build, with everything closed", async () => {
+		const base = await tempDir();
+		await writeFile(join(base, "worker.ts"), "export const broken = ;");
+		const worker = { kind: Project, entry: join(base, "worker.ts"), start: () => null, authorize: () => true };
+		const dataDir = join(base, "data");
+		expect(String(await rejection(testApp({ dataDir, workers: [worker] })))).toContain('Unexpected ";"');
+		// Closed: the data directory's lock is free again.
+		const { app } = await testApp({ dataDir });
+		await app.close(context);
+	});
 });
 
 describe("workers", () => {
@@ -177,6 +189,86 @@ describe("workers", () => {
 		expect(echo.text.value).toBe("changed");
 		expect(app.plugins.state.value.dirty).toEqual([]);
 		await app.close(context);
+	});
+});
+
+describe("applying changes one after another", () => {
+	it("starts a later applyChanges after the earlier one rolled out, so the newest build stays deployed", async () => {
+		const { app, root } = await testApp({ plugins: { echo: { "server.ts": ECHO_SERVER } } });
+		const echo = await app.host.get(Echo, {}, context);
+		const component = app.plugins.component;
+		const build = component.build.bind(component);
+		const rollout = component.rollout.bind(component);
+		const events: string[] = [];
+		const built = Promise.withResolvers<void>();
+		const gate = Promise.withResolvers<void>();
+		// The first build read its files, then waits: unserialized, the second would build and roll out meanwhile.
+		component.build = async (names, ctx) => {
+			const n = events.filter((event) => event.startsWith("build")).length + 1;
+			events.push(`build ${n}`);
+			const result = await build(names, ctx);
+			if (n === 1) {
+				built.resolve();
+				await gate.promise;
+			}
+			return result;
+		};
+		component.rollout = async (steps, result, ctx) => {
+			events.push("rollout");
+			return rollout(steps, result, ctx);
+		};
+		const marks = changesOf(await app.plugins.state.watch(context));
+		const edit = async (text: string): Promise<void> => {
+			const seen = marks.length;
+			await writeFile(join(root, "echo", "server.ts"), ECHO_SERVER.replace('"echo"', JSON.stringify(text)));
+			await vi.waitFor(() => expect(marks.length).toBeGreaterThan(seen), { timeout: 5_000 });
+		};
+		try {
+			await edit("v2");
+			const first = app.applyChanges(context);
+			await built.promise;
+			await edit("v3");
+			const second = app.applyChanges(context);
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			expect(events).toEqual(["build 1"]);
+			gate.resolve();
+			await first;
+			await second;
+			expect(events).toEqual(["build 1", "rollout", "build 2", "rollout"]);
+			expect(echo.text.value).toBe("v3");
+		} finally {
+			echo.release();
+			await app.close(context);
+		}
+	});
+});
+
+describe("base code", () => {
+	it("marks base for a change of `base`'s files and directories and of a file a worker kind's base was built from", async () => {
+		const dir = await tempDir();
+		await mkdir(join(dir, "api"));
+		await writeFile(join(dir, "api", "v1.ts"), "export {};");
+		await writeFile(join(dir, "start.ts"), "export {};");
+		await writeFile(join(dir, "worker.ts"), 'import "./shared.ts";');
+		await writeFile(join(dir, "shared.ts"), "export {};");
+		const worker = { kind: Project, entry: join(dir, "worker.ts"), start: () => null, authorize: () => true };
+		// The entry last: its change drops its import.
+		const changes = [
+			join(dir, "api", "v1.ts"),
+			join(dir, "start.ts"),
+			join(dir, "shared.ts"),
+			join(dir, "worker.ts"),
+		];
+		for (const changed of changes) {
+			const { app } = await testApp({ base: [join(dir, "api"), join(dir, "start.ts")], workers: [worker] });
+			try {
+				expect(app.plugins.state.value.base).toBe(false);
+				await writeFile(changed, "export const changed = 1;");
+				await vi.waitFor(() => expect(app.plugins.state.value.base).toBe(true), { timeout: 5_000 });
+			} finally {
+				await app.close(context);
+			}
+		}
 	});
 });
 

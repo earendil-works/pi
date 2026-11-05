@@ -29,6 +29,7 @@ import {
 	defineFacet,
 	type Facet,
 	type FacetHost,
+	type Held,
 	type Host,
 	type HostError,
 	hostErrorText,
@@ -172,6 +173,31 @@ export async function holdIn<C extends Contract, const V extends VariantOf<C>>(
 ): Promise<HeldIn<C, V & string>> {
 	const ref = host.hold(type, params, TEST);
 	await whenLive(ref);
+	return narrowed(ref, variant);
+}
+
+/**
+ * `holdIn` for an older contract version: fails, naming the state, when the reference does not bind (a version the
+ * provider does not accept is left `failed { waiting }` with `contract_mismatch`, where `holdIn` would wait).
+ */
+export async function boundIn<C extends Contract, const V extends VariantOf<C>>(
+	host: Pick<Host, "hold">,
+	type: C,
+	params: ParamsOf<C>,
+	variant: V,
+): Promise<HeldIn<C, V & string>> {
+	return narrowed(await bound(host.hold(type, params, TEST)), variant);
+}
+
+/** `ref` once live; fails, naming the state, when it fails instead (`contract_mismatch`, say). */
+export async function bound<R extends HeldRef>(ref: R): Promise<R> {
+	const state = await until(ref.state, (value) => value.kind === "live" || value.kind === "failed", 10_000);
+	assert.equal(state.kind, "live", `not bound: ${JSON.stringify(state)}`);
+	return ref;
+}
+
+/** A live `ref` narrowed to `variant`; rejects `invalid/member` (releasing it) for another variant. */
+function narrowed<C extends Contract, V extends VariantOf<C>>(ref: Held<C>, variant: V): HeldIn<C, V & string> {
 	if (ref.variant !== variant) {
 		ref.release();
 		throw Object.assign(new Error(`expected variant ${String(variant)}, got ${String(ref.variant)}`), {
@@ -284,6 +310,7 @@ const NO_WORKERS: SessionWorkerControl = {
 	},
 	retry: async () => {},
 	stop: async () => {},
+	suspend: async () => {},
 	subscribe: () => () => {},
 };
 

@@ -14,7 +14,6 @@ import {
 	type InboxItem,
 	type SubmissionId,
 	type TaskId,
-	type UserInput,
 } from "@earendil-works/pi-durable";
 import { obj } from "@earendil-works/pi-schema";
 import type { JsonValue } from "@p2/app/v1";
@@ -22,6 +21,7 @@ import {
 	type Author,
 	authorIdOf,
 	authorOf,
+	authorSender,
 	type Ctx,
 	canSend,
 	canView,
@@ -36,16 +36,16 @@ import {
 	isGuest,
 	isOwner,
 	type MessageData,
-	messageOf,
+	messageData,
 	SHELL_ENTRY,
 	SHELL_MAX_BYTES,
 	SHELL_MAX_LINES,
 	type ShellData,
+	senderText,
 	serveKeyed,
 	shellContextText,
 	shellTail,
 	signalOf,
-	speakerText,
 } from "@p2/app/v1";
 import { durableContext } from "@p2/app/v1/node";
 import {
@@ -55,6 +55,7 @@ import {
 	HarnessConfig,
 	harnessOf,
 	InputGates,
+	mainConversation,
 	ReadOnlyConversations,
 	responseCosts,
 	workerOf,
@@ -79,7 +80,7 @@ import {
 /** Who wrote a queued input and what they typed, from its entry data; tool-originated input has none. */
 function restoredInput(item: InboxItem): { author: Author; text: string } | undefined {
 	if (item.mode === "write") return undefined;
-	const message = messageOf(item.entry?.data, item.entry ? undefined : (item.content as UserInput));
+	const message = messageData(item.entry?.data);
 	return message?.text.trim() ? { author: message.author, text: message.text } : undefined;
 }
 
@@ -374,7 +375,7 @@ export default defineFacet((host) => {
 												{
 													role: "user" as const,
 													content: [
-														{ type: "text" as const, text: speakerText(input.author) },
+														{ type: "text" as const, text: senderText(authorSender(input.author)) },
 														{ type: "text" as const, text: shellContextText(data) },
 													],
 													timestamp: Date.now(),
@@ -477,9 +478,9 @@ export default defineFacet((host) => {
 					const submission = await current.submit(
 						{
 							type: "input",
-							// The speaker block stays for the model (the system prompt attributes input by it); readers use the data.
+							// The sender block is for the model (the system prompt attributes input by it); readers use the data.
 							content: [
-								{ type: "text", text: speakerText(author) },
+								{ type: "text", text: senderText(authorSender(author)) },
 								...(await content(text, files ?? [], current, models(), ctx, maxImages)),
 							],
 							entry: entry ? { kind: entry.kind, data: entry.data as JsonValue } : { kind: INPUT_ENTRY, data },
@@ -582,6 +583,7 @@ export default defineFacet((host) => {
 		/** The author an entry records, with the owner's name as settings.json says now. */
 		const author = (): Author => authorOf(principal, settings.settings.value.ownerName ?? DEFAULT_OWNER_NAME);
 		const worker = workerOf(self);
+		const harness = harnessOf(self);
 		// Each live Chat object is a viewer: the worker stays up while someone looks.
 		self.open(
 			async () => worker().liveness.add("viewers", 1),
@@ -689,9 +691,12 @@ export default defineFacet((host) => {
 						if (principal.kind !== "owner") throw forbidden("only the owner configures the model");
 						await writable(ctx);
 						await chat.configure(change, ctx);
-						// The root conversation's model is the session's: the sidebar and the next worker start use it. Either
+						// The main conversation's model is the session's: the sidebar and the next worker start use it. Either
 						// field alone updates it (Pi Mobile's configure).
-						if (conversation === 1 && (change.model || change.thinkingLevel)) {
+						if (
+							(change.model || change.thinkingLevel) &&
+							conversation === (await mainConversation(harness().durable, durableContext(ctx)))
+						) {
 							await expectVariant(await ctx.get(Sessions, {}), "worker").configureSelf(
 								{
 									...(change.model ? { model: change.model } : {}),

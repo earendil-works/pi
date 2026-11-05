@@ -2,8 +2,15 @@
 // (the ctx, the state document and its fence, throws and aborts), finishes (cleanup, retries, blocked, dropped),
 // `running`, keep-alive, the object's end, cost guards and GC.
 
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
-import { type Context, BACKGROUND_CONTEXT as context, withAbortSignal, withCancel } from "../../src/context/index.ts";
+import {
+	type Context,
+	BACKGROUND_CONTEXT as context,
+	withAbortSignal,
+	withCancel,
+	withTelemetry,
+} from "../../src/context/index.ts";
 import { arr, int, local, obj, remote, str, unknown } from "../../src/contracts/index.ts";
 import { ChordError, PluginError, type Principal } from "../../src/data/index.ts";
 import type { Op } from "../../src/delta/index.ts";
@@ -1384,3 +1391,109 @@ expectTypeOf<Outcome<{ command: string }, { exit: number }, { output: string }>[
 	command: string;
 }>();
 void (null as unknown as Context);
+
+describe("phase spans (slice 9)", () => {
+	fakeTimers();
+
+	it("traces the intent under the starter, the run and the finish under the intent; a failed finish try is a retry", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		let fails = 1;
+		const { job } = await declared(
+			Echo,
+			(_, log) => ({
+				run: async ({ text }) => text,
+				finish: async (outcome, tx) => {
+					if (fails-- > 0) throw new Error("not yet");
+					(await tx.draft(log)).list.push(outcome.kind);
+				},
+			}),
+			{ telemetry },
+		);
+		const run = await telemetry.startSpan({ name: "request" }, (span) =>
+			job.start({ text: "hi" }, withTelemetry(span, context)),
+		);
+		await vi.advanceTimersByTimeAsync(1_000);
+		await run.outcome(context);
+		const spans = telemetry.getSpans();
+		const request = spans.find(({ name }) => name === "request")!;
+		const [intent, ran, finish] = spans.filter(({ name }) => name === "chord.job");
+		expect([intent!.parentId, ran!.parentId, finish!.parentId]).toEqual([request.id, intent!.id, intent!.id]);
+		expect([ran!.attributes, finish!.attributes]).toEqual([
+			{
+				"chord.host": "client",
+				job: "app.echo",
+				phase: "run",
+				object: "app.store",
+				"job.id": run.id,
+				outcome: "ok",
+			},
+			{
+				"chord.host": "client",
+				job: "app.echo",
+				phase: "finish",
+				object: "app.store",
+				"job.id": run.id,
+				outcome: "ok",
+			},
+		]);
+		expect(finish!.events.map(({ name, attributes }) => [name, attributes])).toEqual([
+			["chord.retry", { backoff: 1_000 }],
+			["chord.commit", expect.objectContaining({ documents: 1, ops: 1 })],
+		]);
+	});
+
+	it("keeps a run's ctx a job's under `ctx.trace`: its id and state, recorded or not (review L5)", async () => {
+		for (const telemetry of [new InMemoryTelemetryContext(), undefined]) {
+			const seen: { jobId?: string; output?: string; traced?: boolean }[] = [];
+			const { job } = await declared(
+				Shell,
+				() => ({
+					run: async (_args, ctx) =>
+						ctx.trace("app.step", {}, async (inner) => {
+							const job = inner as typeof ctx;
+							await job.state.change((draft) => {
+								draft.output = "half";
+							}, job);
+							seen.push({ jobId: job.jobId, output: job.state.value.output, traced: inner !== ctx });
+							return { exit: 0 };
+						}),
+				}),
+				{ telemetry },
+			);
+			const run = await job.start({ command: "ls" }, context);
+			await run.outcome(context);
+			expect(seen).toEqual([{ jobId: run.id, output: "half", traced: telemetry !== undefined }]);
+		}
+	});
+
+	it("marks a run that threw failed (`job_failed`), and an aborted one ok", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { job } = await declared(
+			Echo,
+			() => ({
+				run: async ({ text }, ctx) => {
+					if (text === "throw") throw new Error("boom");
+					await untilAborted(ctx);
+					throw new Error("stopped");
+				},
+			}),
+			{ telemetry },
+		);
+		await telemetry.startSpan({ name: "request" }, async (span) => {
+			const traced = withTelemetry(span, context);
+			const threw = await job.start({ text: "throw" }, traced);
+			await threw.outcome(context);
+			const aborted = await job.start({ text: "wait" }, traced);
+			await vi.advanceTimersByTimeAsync(0);
+			await job.abort(aborted.id, context);
+			await aborted.outcome(context);
+		});
+		const runs = telemetry
+			.getSpans()
+			.filter(({ name, attributes }) => name === "chord.job" && attributes.phase === "run");
+		expect(runs.map(({ attributes, status }) => [attributes.outcome, status])).toEqual([
+			["error", { status: "error", error: { name: "job_failed", message: "boom" } }],
+			["aborted", { status: "ok" }],
+		]);
+	});
+});

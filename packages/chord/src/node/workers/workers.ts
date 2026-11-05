@@ -1,7 +1,10 @@
 // The workers component (slice 10 §3, §4; decision "Slice 10's points"): a forked worker process per address of one
 // host kind, started on demand by the route it owns, stopped when idle, never restarted by itself (R2): a crash, a
-// `fatal`, a link lost while its child lives or a failed start leaves the address failed until `retry` or a rollout.
+// `fatal` or a failed start leaves the address failed until `retry` or a rollout. A running worker's lost link is a
+// stop its holders start a new worker after, once a minute (decision "A lost worker link is recovered from").
 // Per address, a child's events are recorded on that child as they happen; starts and stops run one after another.
+// Every worker is forked from the kind's worker base, bundled when the component is created (decision "Workers start
+// from the base code the server booted with").
 
 import type { Context } from "../../context/index.ts";
 import { awaitWithContext, BACKGROUND_CONTEXT, withAbortSignal } from "../../context/index.ts";
@@ -14,14 +17,19 @@ import { Batch, type BatchError, Source } from "../../state/internal.ts";
 import type { Watchable } from "../../watch.ts";
 import type { Plugins, RolloutHost, RolloutStep } from "../plugins/plugins.ts";
 import type { PluginScript } from "../plugins/runtime.ts";
+import { buildWorkerBase, type WorkerBase } from "./base.ts";
 import { type CrossedError, type CrossedReport, type FromWorker, uncrossed, uncrossedReport } from "./control.ts";
+import { clearStaleLock } from "./lock.ts";
 import { type Exit, WorkerProcess } from "./process.ts";
 
 /** What `createWorkers` takes. `kind`, `entry`, `execArgv` and `env` are bootstrap; the functions are called per use. */
 export type WorkersOptions<P extends Principal, K extends KindShape> = {
 	/** The facet kind its workers load (`"worker"`), shipped by the plugins component. */
 	readonly kind: string;
-	/** The worker's entry module (it calls `workerMain`), its Node flags and its environment. */
+	/**
+	 * The worker's entry module (it calls `workerMain`), bundled with the base code it imports when the component is
+	 * created; its Node flags (their `--conditions` resolve the bundle's imports too) and its environment.
+	 */
 	readonly entry: string;
 	readonly execArgv?: readonly string[];
 	readonly env?: Readonly<Record<string, string>>;
@@ -70,31 +78,43 @@ export type WorkersError =
 			readonly code: number | null;
 			readonly signal: string | null;
 	  }
+	| {
+			/** A running worker's link was lost (the heartbeat, a protocol error): it was stopped, its holders start anew. */
+			readonly kind: "worker_link_lost";
+			readonly address: string;
+			readonly error: unknown;
+	  }
 	| BatchError;
 
 /** The workers component. */
 export interface Workers<K extends KindShape> {
 	/** Per address key its `WorkerState`; no entry when stopped or never started. A JSON watchable. */
 	readonly state: Watchable<Readonly<Record<string, WorkerState>>>;
+	/** The files its worker base was built from: the app's base code for its workers. */
+	readonly inputs: readonly string[];
 	/** Suspends `address` while it has holders (`RouteHandle.suspend`), then stops its worker. */
 	stop(address: Address<K>, context: Context): Promise<void>;
 	/** Clears `address`'s failure and suspension: it starts again now if held (`RouteHandle.retry`). */
 	retry(address: Address<K>, context: Context): Promise<void>;
 	/** A rollout step shipping the kind's current set to every worker, one result per worker (§4). */
 	step(name: string): RolloutStep;
-	/** Cancels starts, stops every worker; new starts reject `released/closed`. */
+	/** Cancels starts, stops every worker, removes the worker base's file; new starts reject `released/closed`. */
 	close(context: Context): Promise<void>;
 }
 
-/** Creates the workers component on `host`: it routes `Kind` itself (`host.route`, before `load`). */
-export function createWorkers<P extends Principal, N extends string, Q extends Params>(
+/**
+ * Bundles the kind's worker base, then creates the workers component on `host`: it routes `Kind` itself (`host.route`,
+ * before `load`). Rejects with esbuild's failure when the base does not build: the server does not start with it.
+ */
+export async function createWorkers<P extends Principal, N extends string, Q extends Params>(
 	host: Host<P>,
 	Kind: HostKind<N, Q>,
 	options: WorkersOptions<P, HostKind<N, Q>>,
 	context: Context,
-): Workers<HostKind<N, Q>> {
+): Promise<Workers<HostKind<N, Q>>> {
+	const base = await buildWorkerBase(options.entry, options.execArgv ?? []);
 	// Its addresses are `Address<HostKind<N, Q>>`, as the route hands them over.
-	const component = new WorkersComponent(options as unknown as WorkersOptions<Principal, HostKind>, context);
+	const component = new WorkersComponent(options as unknown as WorkersOptions<Principal, HostKind>, base, context);
 	const route = host.route(
 		Kind,
 		{
@@ -137,6 +157,8 @@ type Cause = {
 	readonly public?: CrossedError;
 	/** The component ended the child itself (a failed start): its exit is no `worker_exited`. */
 	readonly killed?: true;
+	/** A running child's link was lost: its address may recover (`#recovers`) instead of failing. */
+	readonly lost?: true;
 };
 
 /** How a child's reloads end once it is gone: stopped cleanly (a stop's exit) or with an error. */
@@ -167,6 +189,8 @@ type Child = {
 	ended: Ended | undefined;
 	/** The grace timer of a stop or of a lost link. */
 	grace: ReturnType<typeof setTimeout> | undefined;
+	/** The lock its start message named; cleared after its exit when it was killed holding it. */
+	lock: string | undefined;
 };
 
 /** One address: its operations in a queue, its child, its failure. Kept while it has any of them. */
@@ -178,6 +202,8 @@ type Routed = {
 	failure: Failure | undefined;
 	/** A start was queued and has not settled. */
 	starting: Promise<unknown> | undefined;
+	/** When it last recovered from a lost link (`#recovers`). */
+	recovered: number | undefined;
 };
 
 /** Starts a worker may take until `started` (fork, lock, connect): 60 s. */
@@ -192,6 +218,9 @@ const IDLE_CHECK = 1_000;
 /** How long a worker idles before it is stopped unless `idleMs` says otherwise: 5 minutes. */
 const IDLE_MS = 5 * 60_000;
 
+/** How long after a recovered lost link another one fails the address: 1 minute. */
+const RECOVERY_WINDOW = 60_000;
+
 /** The public error of a start that failed. */
 const START_FAILED: CrossedError = { message: "worker failed to start", code: "unavailable" };
 
@@ -204,6 +233,7 @@ class WorkersComponent implements Workers<HostKind> {
 	readonly state: Watchable<Readonly<Record<string, WorkerState>>>;
 	readonly #state: WorkersState;
 	readonly #options: WorkersOptions<Principal, HostKind>;
+	readonly #base: WorkerBase;
 	readonly #addresses = new Map<string, Routed>();
 	/** Aborted at `close`: starts waiting in the app's `start` or for `started` end. */
 	readonly #closing = new AbortController();
@@ -213,12 +243,17 @@ class WorkersComponent implements Workers<HostKind> {
 	#routing = false;
 	#idleTimer: ReturnType<typeof setInterval> | undefined;
 
-	constructor(options: WorkersOptions<Principal, HostKind>, context: Context) {
+	constructor(options: WorkersOptions<Principal, HostKind>, base: WorkerBase, context: Context) {
 		this.#options = options;
+		this.#base = base;
 		this.#state = new WorkersState(this.#addresses, new Batch((error) => options.onError(error), undefined));
 		// Its value is a `Record<string, WorkerState>`.
 		this.state = this.#state as unknown as Watchable<Readonly<Record<string, WorkerState>>>;
 		this.#closeWith(context);
+	}
+
+	get inputs(): readonly string[] {
+		return this.#base.inputs;
 	}
 
 	/**
@@ -268,9 +303,14 @@ class WorkersComponent implements Workers<HostKind> {
 
 	async close(context: Context): Promise<void> {
 		if (!this.#closing.signal.aborted) this.#closing.abort(closed());
+		// Nothing forks once closing: running workers loaded their module already.
+		this.#base.remove();
 		clearInterval(this.#idleTimer);
 		this.#idleTimer = undefined;
-		const stops = [...this.#addresses.values()].map((routed) => this.#enqueue(routed, () => this.#stop(routed)));
+		// Each stop, then what its exit queued (the clear of a killed child's lock file).
+		const stops = [...this.#addresses.values()].map((routed) =>
+			this.#enqueue(routed, () => this.#stop(routed)).then(() => routed.queue),
+		);
 		await awaitWithContext(Promise.all(stops), context);
 	}
 
@@ -292,6 +332,7 @@ class WorkersComponent implements Workers<HostKind> {
 				child: undefined,
 				failure: undefined,
 				starting: undefined,
+				recovered: undefined,
 			};
 			this.#addresses.set(address.key, routed);
 		}
@@ -365,6 +406,12 @@ class WorkersComponent implements Workers<HostKind> {
 			const scripts = await this.#options.plugins.scripts(this.#options.kind, context);
 			child.shipped = keyOf(scripts);
 			const lock = this.#options.lock(address);
+			// A worker killed without its exit hooks (SIGKILL), maybe by an earlier server, left its socket file, which fails
+			// its successors closed. The component is the one clearer of its addresses' locks, in the address's queue: one
+			// clear at a time (decision "Stale lock files are cleared by the starter"). A live holder (an old worker still
+			// exiting) is kept and waited for.
+			await clearStaleLock(lock, context);
+			child.lock = lock;
 			child.process.send({ kind: "start", address, start: data, scripts, lock });
 			await awaitWithContext(child.started.promise, this.#closingContext);
 			return { link: child.process.link, principal: this.#options.principal(address), trusted: true };
@@ -388,8 +435,9 @@ class WorkersComponent implements Workers<HostKind> {
 		let child!: Child;
 		const process = new WorkerProcess(
 			{
-				entry: this.#options.entry,
-				...(this.#options.execArgv === undefined ? {} : { execArgv: this.#options.execArgv }),
+				entry: this.#base.file(),
+				// Stack traces name the base code's files; the app's flags come after (`--no-enable-source-maps` wins).
+				execArgv: ["--enable-source-maps", ...(this.#options.execArgv ?? [])],
 				...(this.#options.env === undefined ? {} : { env: this.#options.env }),
 				...(onOutput === undefined ? {} : { onOutput: (stream, chunk) => onOutput(address, stream, chunk) }),
 			},
@@ -414,6 +462,7 @@ class WorkersComponent implements Workers<HostKind> {
 			reloaded: undefined,
 			ended: undefined,
 			grace: undefined,
+			lock: undefined,
 		};
 		// Nobody may wait for them.
 		child.started.promise.catch(() => {});
@@ -450,31 +499,34 @@ class WorkersComponent implements Workers<HostKind> {
 		}
 	}
 
-	/** This side closed `child`'s link (the heartbeat, a protocol error): its child is stopped, its exit a crash. */
+	/** This side closed `child`'s link (the heartbeat, a protocol error): its child is stopped, its exit a lost link. */
 	#linkLost(child: Child): void {
 		this.#ended(child);
 		if (child.stopping) return;
-		child.cause ??= { error: new Error("worker: link lost") };
+		child.cause ??= lostLink(child);
 		this.#shutdown(child);
 		this.#state.refresh();
 	}
 
 	/**
 	 * The child's side closed its link (it is exiting, or it closed its IPC and lives on): its reloads end; one that does
-	 * not exit within the grace is killed, its exit a crash (link lost).
+	 * not exit within the grace is killed, its exit a lost link.
 	 */
 	#linkClosed(child: Child): void {
 		this.#ended(child);
 		if (child.stopping || child.grace !== undefined) return;
+		const lost = lostLink(child);
 		child.grace = setTimeout(() => {
-			child.cause ??= { error: new Error("worker: link lost") };
+			child.cause ??= lost;
 			child.process.kill();
 		}, GRACE);
 	}
 
 	/**
-	 * `child` exited: a stop's exit forgets it; any other is a crash that fails the address (`worker_exited` and
-	 * `worker_failed` once, the full error and stderr tail for the app's logs only), except once the component closes.
+	 * `child` exited: a stop's exit forgets it, as does a lost link the address recovers from (`worker_link_lost`: its
+	 * holders' route resolves again, a start after this exit); any other is a crash that fails the address
+	 * (`worker_exited` and `worker_failed` once, the full error and stderr tail for the app's logs only), except once the
+	 * component closes.
 	 */
 	#exited(routed: Routed, child: Child, exit: Exit): void {
 		clearTimeout(child.grace);
@@ -484,18 +536,39 @@ class WorkersComponent implements Workers<HostKind> {
 		child.started.reject(uncrossed(error));
 		child.ready.reject(uncrossed(error));
 		this.#ended(child);
+		const lock = child.lock;
+		// A child a signal ended (SIGKILL) ran no exit hooks: its socket file would stay until the address's next start.
+		// Cleared in the queue, like a start's clear; a failure here is the next start's to report (it clears again).
+		if (lock !== undefined && exit.signal !== null) {
+			void this.#enqueue(routed, () => clearStaleLock(lock, BACKGROUND_CONTEXT)).catch(() => {});
+		}
 		if (routed.child !== child) return;
 		routed.child = undefined;
 		if (!clean && !this.#closing.signal.aborted) {
-			const { code, signal } = exit;
-			// A failed start's kill is the component's own act (Opus's second recheck): only `worker_failed`.
-			if (cause.killed !== true) {
-				this.#options.onError({ kind: "worker_exited", address: routed.address.key, code, signal });
+			if (cause.lost === true && this.#recovers(routed)) {
+				this.#options.onError({ kind: "worker_link_lost", address: routed.address.key, error: cause.error });
+			} else {
+				const { code, signal } = exit;
+				// A failed start's kill is the component's own act (Opus's second recheck): only `worker_failed`.
+				if (cause.killed !== true) {
+					this.#options.onError({ kind: "worker_exited", address: routed.address.key, code, signal });
+				}
+				this.#fail(routed, { ...cause, public: error }, child.process.stderrTail);
 			}
-			this.#fail(routed, { ...cause, public: error }, child.process.stderrTail);
 		}
 		this.#state.refresh();
 		this.#forget(routed);
+	}
+
+	/**
+	 * Whether `routed` recovers from its running child's lost link, recorded when it does: not within a minute of the
+	 * last recovery, so a worker that loses every link fails instead of restarting in a loop.
+	 */
+	#recovers(routed: Routed): boolean {
+		const now = Date.now();
+		if (routed.recovered !== undefined && now - routed.recovered < RECOVERY_WINDOW) return false;
+		routed.recovered = now;
+		return true;
 	}
 
 	/**
@@ -666,6 +739,18 @@ class WorkersComponent implements Workers<HostKind> {
 /** What new starts reject with once the component closes. */
 function closed(): ChordError {
 	return new ChordError({ code: "released", reason: "closed", message: "workers: closed" });
+}
+
+/** The public error of a running worker's lost link that fails its address (a second one within the window). */
+const LINK_LOST: CrossedError = { message: "worker lost its link", code: "unavailable" };
+
+/**
+ * The cause of `child`'s lost link (the heartbeat, a protocol error, its own close of its link) while it lives: after
+ * `ready`, one its address may recover from; before it, a failed start.
+ */
+function lostLink(child: Child): Cause {
+	const error = new Error("worker: link lost");
+	return child.status === "running" ? { error, public: LINK_LOST, lost: true } : { error };
 }
 
 /** The full error of an exit nobody asked for (the app's logs). */

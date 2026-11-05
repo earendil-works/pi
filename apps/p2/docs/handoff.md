@@ -65,7 +65,7 @@ npm test                     # full suite; TUI tests need Node 26, browser tests
 ```
 
 Environment variables: `docs/p2-notes.md` (Running). Configuration in the data dir: `models.json`, `settings.json`
-(incl. `codemode`, default on in p2), `envs.json`, `auth.json`, `radius.json`, `forwards.json`.
+(incl. `codemode`, default on in p2), `envs.json`, `mcp.json`, `auth.json`, `radius.json`, `forwards.json`.
 
 **Sign-in.** Requests from the device itself are the owner. Other devices get owner rights with a link from `npm
 run owner-link` (single use, 10 minutes, long-lived signed cookie). Guests join through share links. Requests other
@@ -96,7 +96,7 @@ verifying an agent's files on their own before committing. Node 24: `~/node-v24.
 - **Runtime** (`src/runtime`): shared contracts and helpers (principals, worker and Harness, Durable registry,
   extension switches, input entries, settings, logs, fetch).
 - **Plugins**: chat, chat-mode, sessions, subagents, agent (one-shot agents), codemode, coding-tools, prompt,
-  models, login, search, status, drafts, files, send-file, artifacts, workspace, file-index, terminals, envs, ports,
+  models, login, search, status, drafts, files, send-file, artifacts, workspace, file-index, terminals, envs, mcp, ports,
   radius, sharing, devices, proxy-marker, logs, dev-tools, powershell, web-shell. Before writing one, read Chord's
   tutorial (`packages/chord/docs/tutorial/`) and plugin guide (`packages/chord/docs/plugin-authoring.md`), then an
   existing p2 plugin of the same shape.
@@ -109,7 +109,7 @@ verifying an agent's files on their own before committing. Node 24: `~/node-v24.
 - **Durable** (`packages/durable`) runs the agent: conversations, inputs as custom entries (`p2.input`,
   `chat.mention`), display-only writes placed immediately, code mode (QuickJS sandbox; scripts call tools as
   `tools.<name>`, one-shot agents via `tools.agent`), compaction with visible failures, deferred tools and
-  `tool_search` (unused until MCP lands).
+  `tool_search` (MCP tools are for code mode scripts, as in pi; `tool_search` loads them only while code mode is off).
 
 ## The TUI
 
@@ -155,7 +155,9 @@ From `AGENTS.md` and this project's history:
 3. **Cleanup leftovers:** two HTTP helpers were not merged because their semantics differ (byte ranges: files
    serves `bytes=-` whole, workspace answers 416; body readers: sharing answers 400 past the limit, devices 413);
    decide one behavior each.
-4. **MCP:** when it lands in Durable, mark MCP tools deferred and install `tool_search`.
+4. **MCP:** `plugins/mcp` (WP6-8 of `docs/mcp-durable.md`: owner `mcp.json`, host stdio and HTTP, code mode
+   tools (`tool_search` without code mode), servers on environments, project `.pi/mcp.json`, OAuth sign-in); code mode
+   namespaces (WP9) are open, and whether Radius sends its cookie on a sign-in's redirect back is unverified.
 5. **npm:** deprecate `@earendil-works/pi-client`, `pi-protocol` and `pi-server` (1.1.0), which no longer exist.
 6. `docs/p2-notes.md` TODO: the TypeScript 5.9.3 pin (Termux), an isolating plugin loader, sandboxing third-party
    facets.
@@ -172,5 +174,6 @@ From `AGENTS.md` and this project's history:
 | `docs/p2-notes.md` | decisions, configuration, plugin-by-plugin notes |
 | `docs/p2-tui-port.md` | TUI design, as-built notes, open phases |
 | `docs/workflows.md` | code mode workflows with one-shot agents |
+| `docs/tree.md` | `/tree`: branches of the main conversation as Durable forks |
 | `docs/remote-envs.md` | SSH environments |
 | `packages/chord/docs/` | Chord v2's design, slices and guides; `tutorial/` for writing plugins |

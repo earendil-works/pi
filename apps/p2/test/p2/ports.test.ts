@@ -149,7 +149,7 @@ test(
 		});
 		const guest = fixture.client({ ...headers, Cookie: String(joined.headers["set-cookie"]).split(";")[0]! }).host;
 		const guestChat = await holdIn(guest, Chat, { session: session.id, conversation: 1 }, "participant");
-		assert.match(text(await call({ action: "open", port: 8080 }, guestChat)), /guest input is not permitted/);
+		assert.match(text(await call({ action: "open", port: 8080 }, guestChat)), /needs a turn the owner started/);
 		await expectChord(whenLive(guest.hold(Ports, {}, BACKGROUND_CONTEXT)), "forbidden");
 		// `query` is the worker's: the owner calling it anyway is refused.
 		await expectChord(

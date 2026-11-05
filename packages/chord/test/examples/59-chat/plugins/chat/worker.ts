@@ -1,7 +1,7 @@
 // The chat plugin on a channel's worker: the room's messages in a table of the worker's store (every message kept),
-// written and read by one local object. Tables have no watch, so the object keeps the live window itself: the newest
-// 100 messages, read at activation and appended to after each post (it is the only writer); older ones are read by
-// page on request. Each principal's `Room` posts as them and shares files through the kit's `Files` of this worker.
+// written and read by one local object. The newest 100 are live through a live query (`self.query`: read before the
+// object goes live, read again after every commit writing the table); older ones are read by page on request. Each
+// principal's `Room` posts as them and shares files through the kit's `Files` of this worker.
 
 import {
 	Attachment,
@@ -33,7 +33,7 @@ const Messages = defineTable("chat.messages", {
 /** The messages, newest first. */
 const NEWEST = query(Messages).orderBy((message) => message.id, "desc");
 
-/** How many messages the live window and a page of history hold. */
+/** How many messages the live query and a page of history hold. */
 const PAGE = 100;
 
 const Store = local("chat.store", {
@@ -49,24 +49,18 @@ const Store = local("chat.store", {
 export default defineFacet((host) => {
 	host.serve(Store, (_params, self) => {
 		const messages = self.table(Messages);
-		// The newest messages (oldest first) and the next message's number: read once, then kept here.
-		const window = self.writable<Message[]>([]);
-		let next = 1;
-		self.open(
-			async (ctx) => {
-				const { items } = await messages.page(NEWEST, PAGE, ctx);
-				window.set([...items].reverse());
-				next = (items[0]?.id ?? 0) + 1;
-			},
-			() => {},
-		);
+		// The newest messages, live.
+		const newest = self.query(messages, NEWEST, PAGE);
 		return {
-			messages: self.derive([window], ([value]) => value),
+			// Oldest first, as the room shows them.
+			messages: self.derive([newest], ([rows]) => [...rows].reverse()),
 			add: async ({ author, text, file }, ctx) => {
-				const message = { id: next++, author, text, at: Date.now(), ...(file === undefined ? {} : { file }) };
-				await self.tx(async (tx) => tx.put(messages, message), ctx);
-				// In number order: two posts may commit in either order.
-				window.set([...window.value, message].sort((a, b) => a.id - b.id).slice(-PAGE));
+				await self.tx(async (tx) => {
+					// The number after the newest message's: the store's transactions run one after another.
+					const { items: last } = await tx.page(messages, NEWEST, 1);
+					const id = (last[0]?.id ?? 0) + 1;
+					tx.put(messages, { id, author, text, at: Date.now(), ...(file === undefined ? {} : { file }) });
+				}, ctx);
 				return null;
 			},
 			history: async ({ before }, ctx) => {

@@ -11,6 +11,7 @@ import { createInterface } from "node:readline/promises";
 import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME } from "../../config.ts";
 import { validateMcpServerConfig } from "../../core/mcp-servers.ts";
+import { ModelRuntime } from "../../core/model-runtime.ts";
 import { ProjectTrustStore } from "../../core/trust-manager.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
 import {
@@ -83,6 +84,8 @@ export interface McpCommandOptions {
 	agentDir: string;
 	/** Defaults to `mcp-auth.json` in the agent directory. */
 	credentials?: McpOAuthCredentialStore;
+	/** Token of a pi provider, for servers with `auth.provider`. Defaults to the agent directory's `auth.json`. */
+	providerToken?: (provider: string) => Promise<string | undefined>;
 	/** Defaults to the platform browser. */
 	openUrl?: (url: string) => void;
 	/** Defaults to console output. */
@@ -99,6 +102,8 @@ interface ServerReport {
 	enabled: boolean;
 	exposure: string;
 	transport: string;
+	/** The pi provider whose token the server receives, from `auth.provider`. */
+	authProvider?: string;
 	state: string;
 	tools: string[];
 	/** Tools whose exposure differs from the server's, from `toolExposure`. */
@@ -117,15 +122,47 @@ function describeTransport(entry: McpServerEntry): string {
 	return "url" in config ? config.url : [config.command, ...(config.args ?? [])].join(" ");
 }
 
-function createConnection(entry: McpServerEntry, options: McpCommandOptions, credentials: McpOAuthCredentialStore) {
+function getAuthProvider(entry: McpServerEntry): string | undefined {
+	return "url" in entry.config ? entry.config.auth?.provider : undefined;
+}
+
+function createConnection(
+	entry: McpServerEntry,
+	options: McpCommandOptions,
+	credentials: McpOAuthCredentialStore,
+	providerToken: (provider: string) => Promise<string | undefined>,
+) {
 	return new McpServerConnection({
 		entry,
 		cwd: options.cwd,
 		createTransport: createDefaultTransport,
 		credentials,
+		providerToken,
 		log: new McpServerLog(join(options.agentDir, "mcp.log")),
 		onTools: () => {},
 	});
+}
+
+/**
+ * Reads provider tokens from the agent directory's credentials, refreshing expired OAuth tokens like a
+ * session does. The model runtime is created on the first request, so servers without `auth.provider`
+ * do not load it.
+ */
+function createProviderTokenReader(agentDir: string): (provider: string) => Promise<string | undefined> {
+	let runtime: Promise<ModelRuntime> | undefined;
+	return async (provider) => {
+		runtime ??= ModelRuntime.create({
+			authPath: join(agentDir, "auth.json"),
+			modelsPath: join(agentDir, "models.json"),
+			refreshOnCreate: false,
+		});
+		try {
+			return (await (await runtime).getAuth(provider))?.auth.apiKey;
+		} catch {
+			// Missing or unrefreshable credentials: the server's 401 then reports that sign-in is needed.
+			return undefined;
+		}
+	};
 }
 
 /** Short spellings of options. `-l`/`--local` match `pi install`. */
@@ -207,6 +244,7 @@ export async function runMcpCommand(args: string[], options: McpCommandOptions):
 			? `${projectConfig} is ignored because the project is not trusted. Start ${APP_NAME} in the project to trust it.`
 			: undefined;
 	const credentials = options.credentials ?? new McpOAuthCredentialStore();
+	const providerToken = options.providerToken ?? createProviderTokenReader(options.agentDir);
 
 	switch (command) {
 		case "list": {
@@ -216,7 +254,7 @@ export async function runMcpCommand(args: string[], options: McpCommandOptions):
 				error(`Usage: ${APP_NAME} mcp list [--json]\n${HELP_HINT}`);
 				return 1;
 			}
-			return list(loaded, parsed.values.has("json"), untrustedNote, options, credentials, log);
+			return list(loaded, parsed.values.has("json"), untrustedNote, options, credentials, providerToken, log);
 		}
 		case "login":
 		case "logout": {
@@ -244,7 +282,14 @@ export async function runMcpCommand(args: string[], options: McpCommandOptions):
 				error(`MCP server "${name}" is defined in ${entry.source}, not in the project; omit --local.`);
 				return 1;
 			}
-			const connection = createConnection(entry, options, credentials);
+			const authProvider = getAuthProvider(entry);
+			if (authProvider) {
+				error(
+					`MCP server "${name}" uses the credentials of provider "${authProvider}". Run /${command} ${authProvider} in ${APP_NAME}.`,
+				);
+				return 1;
+			}
+			const connection = createConnection(entry, options, credentials, providerToken);
 			const url = connection.oauthUrl;
 			if (!url) {
 				error(`MCP server "${name}" does not use OAuth. Only HTTP servers without an Authorization header do.`);
@@ -468,10 +513,12 @@ async function list(
 	untrustedNote: string | undefined,
 	options: McpCommandOptions,
 	credentials: McpOAuthCredentialStore,
+	providerToken: (provider: string) => Promise<string | undefined>,
 	log: (line: string) => void,
 ): Promise<number> {
 	const reports = await Promise.all(
 		loaded.servers.map(async (entry): Promise<ServerReport> => {
+			const authProvider = getAuthProvider(entry);
 			const report: ServerReport = {
 				name: entry.name,
 				scope: entry.scope ?? "global",
@@ -480,11 +527,12 @@ async function list(
 				enabled: entry.config.enabled !== false,
 				exposure: entry.config.exposure ?? "codemode",
 				transport: describeTransport(entry),
+				...(authProvider ? { authProvider } : {}),
 				state: "disabled",
 				tools: [],
 			};
 			if (!report.enabled) return report;
-			const connection = createConnection(entry, options, credentials);
+			const connection = createConnection(entry, options, credentials, providerToken);
 			try {
 				await connection.getClient();
 			} catch {
@@ -528,7 +576,13 @@ async function list(
 		log(`${report.name}: ${state} (${report.exposure}, ${report.scope})`);
 		log(`  ${report.transport}`);
 		if (report.override) log(`  project override: ${report.override}`);
-		if (report.state === "needs-auth") log(`  sign in with: ${APP_NAME} mcp login ${report.name}`);
+		if (report.state === "needs-auth") {
+			log(
+				report.authProvider
+					? `  sign in with: /login ${report.authProvider} in ${APP_NAME}`
+					: `  sign in with: ${APP_NAME} mcp login ${report.name}`,
+			);
+		}
 		if (report.tools.length > 0) {
 			const tools = report.tools.map((tool) => {
 				const exposure = report.toolExposure?.[tool];

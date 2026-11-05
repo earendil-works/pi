@@ -1,6 +1,6 @@
 // Server host: HTTP + WebSocket accept, routes `session:` hosts to session workers, loads the server facets.
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -42,7 +42,7 @@ import {
 } from "./bundles.ts";
 import { devControl } from "./dev.ts";
 import { readDevCommand, sendDevCommand, serveDevChannel } from "./dev-channel.ts";
-import { LoadedModules, loadedModuleHashes, loadedPluginFiles } from "./dev-modules.ts";
+import { contentHash, LoadedModules, loadedModuleHashes, loadedPluginFiles } from "./dev-modules.ts";
 import { createP2Plugins, listPlugins, PLUGINS_DIRECTORY, SERVER_PACKAGES, selectPlugins } from "./plugins.ts";
 import {
 	contentSecurityPolicy,
@@ -174,7 +174,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	const address = http.address();
 	const actualPort = typeof address === "object" && address !== null ? address.port : port;
 	const info = { app: APP, dataDir, fake, allowedHosts: [...allowedHosts], port: actualPort };
-	const workers = new SessionWorkers(
+	const workers = await SessionWorkers.create(
 		{
 			host,
 			plugins: chordPlugins,
@@ -201,6 +201,14 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 			},
 		},
 		BACKGROUND_CONTEXT,
+	);
+	// Every session worker runs the worker base Chord bundled just now (not the files on disk): in dev mode its source
+	// files are a restart baseline, compared by content like the server's own modules.
+	devModules?.set(
+		"worker-base",
+		workers.workers.inputs
+			.filter((file) => !file.startsWith(PLUGINS_DIRECTORY))
+			.map((file) => ({ file, hash: contentHash(readFileSync(file)) })),
 	);
 	// Capture before plugin resources open (e.g. provider SDK startup), not only after the logs facet activates.
 	const stopLogs = captureProcessLogs("server");
@@ -707,14 +715,28 @@ function isOwnerNotice(error: HostError): boolean {
 	return !isChordError(failure, "released") && !isChordError(failure, "forbidden");
 }
 
+/** How long a signalled server may take to close before it exits anyway (below `scripts/dev.mjs`'s 10 s SIGKILL). */
+const CLOSE_DEADLINE_MS = 8000;
+
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	// Provider logins and server plugins (e.g. the Radius gateway) fetch in this process too.
 	configureFetch();
 	const server = await startServer();
 	console.log(`p2: http://127.0.0.1:${server.port} (data ${server.dataDir})`);
-	for (const signal of ["SIGINT", "SIGTERM"] as const) {
-		process.once(signal, () => {
-			void server.close().finally(() => process.exit(0));
-		});
-	}
+	// Every way out goes through `process.exit`: a signal's default action skips the exit hooks, which remove the
+	// macOS lock socket file (else the next start refuses) and kill the MCP servers' process groups.
+	let stopping = false;
+	const stop = (signal: NodeJS.Signals): void => {
+		if (stopping) {
+			console.error(`p2: ${signal} again, exiting without finishing the close`);
+			process.exit(1);
+		}
+		stopping = true;
+		setTimeout(() => {
+			console.error(`p2: the close did not finish within ${CLOSE_DEADLINE_MS / 1000} s, exiting`);
+			process.exit(1);
+		}, CLOSE_DEADLINE_MS).unref();
+		void server.close().finally(() => process.exit(0));
+	};
+	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, () => stop(signal));
 }

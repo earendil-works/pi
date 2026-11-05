@@ -6,13 +6,16 @@ import { test } from "node:test";
 import { stripTerminalSequences, TuiAltScreen } from "@earendil-works/pi-tui";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { VirtualTerminal } from "../../../../packages/tui/test/virtual-terminal.ts";
+import quietToolsTui from "../../plugins/quiet-tools/tui.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { launcherActions } from "../../src/hosts/tui-actions.ts";
 import { startTuiClient } from "../../src/hosts/tui-client.ts";
 import { loadLocalPreferences, watchLocalPreferences } from "../../src/hosts/tui-local-preferences.ts";
 import { applyPrefsPatch, prefsDiff, validatePrefsPatch } from "../../src/hosts/tui-prefs-save.ts";
+import type { Facet } from "../../src/runtime/chord.ts";
 import { TuiRuntime } from "../../src/runtime/tui.ts";
 import { tuiCoreFacet } from "../../src/tui/core-commands.ts";
+import { restoreRuntime, snapshotRuntime } from "../../src/tui/snapshot.ts";
 import { LIGHT_THEME } from "../../src/tui/theme/builtin-themes.ts";
 import { createTheme } from "../../src/tui/theme/theme.ts";
 import { holdIn, poll, startFixture, testHost } from "./helpers.ts";
@@ -88,8 +91,8 @@ test("savePrefs action: the diff is shown first; the write is atomic and keeps e
 	await assert.rejects(save.run({ patch: { settings: { externalEditor: "x" } } }, undefined as never));
 });
 
-async function runtimeWith(t: { after(fn: () => unknown): void }) {
-	const fixture = await testHost({ facets: [tuiCoreFacet] });
+async function runtimeWith(t: { after(fn: () => unknown): void }, facets: Facet[] = []) {
+	const fixture = await testHost({ facets: [tuiCoreFacet, ...facets] });
 	t.after(() => fixture.close());
 	const terminal = new VirtualTerminal(100, 40);
 	const tui = new TuiAltScreen(terminal);
@@ -128,13 +131,56 @@ test("/settings collects changes and proposes one patch; the theme preview never
 	send("\r");
 	await poll(async () => (await screen()).includes("Hide thinking"));
 	assert.equal(runtime.theme.current, live);
-	// Hide thinking: false → true.
+	// Hide thinking: true (p2's default) → false.
 	send("\x1b[B");
 	send("\r");
 	assert.deepEqual(grants, [], "nothing is proposed while the list is open");
 	send("\x1b");
 	await poll(() => grants.length === 1);
-	assert.deepEqual(grants[0], ["savePrefs", { patch: { settings: { hideThinkingBlock: true }, theme: "light" } }]);
+	assert.deepEqual(grants[0], ["savePrefs", { patch: { settings: { hideThinkingBlock: false }, theme: "light" } }]);
+});
+
+test("/settings lists plugin rows (TuiSettingFields) and saves them under plugins.<plugin>", async (t) => {
+	const { runtime, grants, screen, send } = await runtimeWith(t, [quietToolsTui]);
+	runtime.ctx.commands.runSlash("/settings");
+	await poll(async () => (await screen()).includes("Hide thinking"));
+	// The plugin row comes after the theme and the 15 built-in rows.
+	for (let index = 0; index < 16; index++) send("\x1b[B");
+	await poll(async () => /→ Tool calls +quiet/.test(stripTerminalSequences(await screen())));
+	send("\r");
+	send("\x1b");
+	await poll(() => grants.length === 1);
+	assert.deepEqual(grants[0], [
+		"savePrefs",
+		{ patch: { settings: { plugins: { "quiet-tools": { toolCalls: "full" } } } } },
+	]);
+});
+
+test("hideThinkingBlock sets the thinking view; the toggle holds until the setting changes and across a reload", async (t) => {
+	const { runtime } = await runtimeWith(t);
+	const local = (settings: { hideThinkingBlock?: boolean }) => ({
+		keybindings: {},
+		settings,
+		themes: {},
+		problems: [],
+	});
+	assert.equal(runtime.showThinking, false, "unset: hidden");
+	runtime.appearance.update({ local: local({ hideThinkingBlock: false }) });
+	assert.equal(runtime.showThinking, true);
+	runtime.ctx.view.showThinking = false;
+	runtime.appearance.update({ local: local({ hideThinkingBlock: false }) });
+	assert.equal(runtime.showThinking, false, "an unchanged setting keeps the toggle");
+	const next = new TuiRuntime(runtime.host, runtime.tui);
+	t.after(() => next.dispose());
+	restoreRuntime(next, JSON.parse(JSON.stringify(snapshotRuntime(runtime))));
+	next.appearance.update({ local: local({ hideThinkingBlock: false }) });
+	assert.equal(next.showThinking, false, "a reload keeps the toggle");
+	runtime.appearance.update({ local: local({}) });
+	assert.equal(runtime.showThinking, false);
+	runtime.ctx.view.showThinking = true;
+	runtime.appearance.update({ local: local({ hideThinkingBlock: false }) });
+	runtime.appearance.update({ local: local({ hideThinkingBlock: true }) });
+	assert.equal(runtime.showThinking, false, "a changed setting wins over the toggle");
 });
 
 test("/keybindings rebinds through savePrefs; launcher-owned keys are listed but not editable", async (t) => {
@@ -198,7 +244,7 @@ test(
 		for (const char of "/settings") terminal.sendInput(char);
 		terminal.sendInput("\r");
 		await poll(async () => (await screen()).includes("Hide thinking"));
-		// Theme → light (system, dark, light), then Hide thinking on, then Esc proposes both.
+		// Theme → light (system, dark, light), then Hide thinking off, then Esc proposes both.
 		terminal.sendInput("\r");
 		await poll(async () => (await screen()).includes("Preview"));
 		terminal.sendInput("\x1b[B");
@@ -209,7 +255,7 @@ test(
 		terminal.sendInput("\r");
 		terminal.sendInput("\x1b");
 		await poll(async () => (await screen()).includes("Save your TUI preferences on this computer"));
-		assert((await screen()).includes("+ settings.hideThinkingBlock: true"));
+		assert((await screen()).includes("+ settings.hideThinkingBlock: false"));
 		assert((await screen()).includes('+ theme: "light"'));
 		// The light theme's muted color (the live system theme uses the terminal's palette indices instead).
 		const muted = createTheme(LIGHT_THEME, "truecolor").getFgAnsi("muted");

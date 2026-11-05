@@ -23,6 +23,7 @@ import { openNodeSqliteDatabase } from "../../src/sqlite/node.ts";
 import { sqliteBackend } from "../../src/store/backend.ts";
 import { changeDocument, createDocument } from "../../src/store/engine.ts";
 import { lt } from "../../src/store/expression.ts";
+import { LiveQueries } from "../../src/store/live-query.ts";
 import { query } from "../../src/store/query.ts";
 import { TableSql, tableSqlName } from "../../src/store/sql.ts";
 import type { StagedWrite } from "../../src/store/step.ts";
@@ -336,6 +337,7 @@ async function filledEdits(count: number, body = VALUE.body, definition: typeof 
 	const handle = new TableHandle(definition, table, store, {
 		label: "bench",
 		scope: {},
+		queries: new LiveQueries(),
 		assertLive: () => {},
 		fail: () => {},
 	});

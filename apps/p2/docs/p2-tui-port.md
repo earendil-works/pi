@@ -164,7 +164,7 @@ Renderers are combined at `REN/index.ts:32`.
 | `/new` | `IM:6938` | (b) `Sessions.create({cwd, env})`. A separate `/new-context` uses **new** `Chat.reset(handoff?)` (`DUR/harness/types.ts:642`). |
 | `/name` | `IM:6680` | (b) `Sessions.rename`. pi distinguishes an explicit session name; p2 rows have only `title` (`P2/plugins/sessions/contract.ts:9-20`). |
 | `/session` | `IM:6705` | (b) Section 1.16 provenance. |
-| `/tree`, `/fork`, `/clone`, double-Esc action | `CMP/tree-selector.ts:1336`, `CMP/user-message-selector.ts:110`, `IM:5571`, `IM:5512`, `IM:5550`, `IM:3070-3093` | (c) `/tree` and double-Esc; (d) `/fork` and `/clone` via **new** `Sessions.fork` (`DUR/harness/types.ts:663`). |
+| `/tree`, `/fork`, `/clone`, double-Esc action | `CMP/tree-selector.ts:1336`, `CMP/user-message-selector.ts:110`, `IM:5571`, `IM:5512`, `IM:5550`, `IM:3070-3093` | (b) `/tree` and double-Esc on Durable forks (`docs/tree.md`); (d) `/fork` and `/clone` via **new** `Sessions.fork` (`DUR/harness/types.ts:663`). |
 | `/export`, `/import` | `IM:6532`, `IM:6579` | (c) |
 | `/share` | `IM:6623` | p2 sharing overlay (`P2/plugins/sharing/contract.ts:90`). |
 | `/compact [instructions]` | `IM:7092` | (b) **new** `Chat.compact` (`DUR/harness/types.ts:647`). |
@@ -179,7 +179,7 @@ registered only in the phase that implements it (section 10). Example: `/copy` a
 | --- | --- |
 | `/settings` | Overlay: guest UI prefs (section 4) plus a read-only view of server settings for the owner. |
 | `/model`, `/thinking`, `/scoped-models` | 1.7 |
-| `/tree`, `/export`, `/import`, `/bug`, `/changelog`, `/trust`, `/debug`, `/arminsayshi`, `/dementedelves` | (c) |
+| `/export`, `/import`, `/bug`, `/changelog`, `/trust`, `/debug`, `/arminsayshi`, `/dementedelves` | (c) |
 | `/share` | Sharing overlay |
 | `/copy` | **L:copy** with trusted confirmation (section 3.2) |
 | `/name`, `/session`, `/new`, `/resume`, `/compact` | 1.9 |
@@ -270,7 +270,7 @@ Nested keys are shown as pi spells them.
 
 | pi setting | Kind in p2 | Notes |
 | --- | --- | --- |
-| `theme`, `quietStartup`, `editorPaddingX`, `outputPad`, `autocompleteMaxVisible`, `showHardwareCursor`, `hideThinkingBlock`, `doubleEscapeAction` | **G** | `doubleEscapeAction` only supports `none` until `/tree`/`/fork` exist |
+| `theme`, `quietStartup`, `editorPaddingX`, `outputPad`, `autocompleteMaxVisible`, `showHardwareCursor`, `hideThinkingBlock`, `doubleEscapeAction` | **G** | `doubleEscapeAction`: `tree` (default, `docs/tree.md`), `fork`, `none` |
 | `terminal.clearOnShrink`, `terminal.showTerminalProgress`, `terminal.showImages`, `terminal.imageWidthCells`, `terminal.hyperlinks`, `terminal.images`, `terminal.trueColor` | **G** | Image protocol selection only matters once launcher images exist. Hyperlinks need the URL policy (section 3.4). |
 | `markdown.codeBlockIndent`, `markdown.mermaid` | **G** | |
 | `tuiMode` | (c) fullscreen only (1.1) | |
@@ -1450,7 +1450,8 @@ contract), so no plugin gains a dependency.
   editor would be (the web's read-only bar). GuestPresence is still held from the `widget-above:sharing` slot.
 - **P11c**:
   - **Artifacts** (`P2/plugins/artifacts/tui.ts`). The card adds "/artifacts opens". For text and Markdown it shows
-    the content the call wrote: 8 lines, all when expanded.
+    the content the call wrote: 8 lines, all when expanded. A call with `inline: true` shows all of it at once,
+    Markdown rendered; inline HTML and SVG keep the card line.
   - **`/artifacts`** lists `ArtifactList`. Enter shows an artifact inline: Markdown rendered with the instance
     theme, text and HTML/SVG source as sanitized lines. HTML/SVG carry a "Source only" note, because they run only in
     a browser. Ctrl+B is `openUrl` `{kind: "origin", path: "/artifact?…"}` and Ctrl+S is `download`
@@ -1589,7 +1590,7 @@ Tests: `P2/test/p2/shell.test.ts` (a bare session host with real Durable and a r
     under its own root context (the method returns at once). Closing the object cancels it.
   - When it ends, a Durable write submission places a `p2.shell` entry (`P2/src/runtime/shell.ts`, `ShellData`:
     author, command, output tail, `exitCode`, `cancelled`, `truncated`, `fullOutputPath`, `includeInContext`, `error`).
-  - **`!`:** the entry also carries a user message (the speaker block plus pi's `bashExecutionToText`,
+  - **`!`:** the entry also carries a user message (the sender block plus pi's `bashExecutionToText`,
     `shellContextText`). The agent reads it on its next run, and no run starts now.
   - **`!!`:** the entry is display-only.
   - **Busy agent:** while the agent runs, the entry is placed at the run's next boundary, like any write.
@@ -1693,7 +1694,7 @@ Tests: `P2/test/p2/fork-clone.test.ts` (real server and workers, fake provider),
     session".
   - **`/clone`** (`p2.session.clone`, owner) opens the copy ("Cloned to new session").
   - **Double Escape:** `doubleEscapeAction: "fork"` opens the picker on a second Escape within 500 ms on an empty,
-    idle editor (owner). `"tree"` behaves as `"none"` (no `/tree`).
+    idle editor (owner); `"tree"` (the default, as in pi) opens `/tree` (`docs/tree.md`).
 - **Web:** no UI yet.
 
 ---

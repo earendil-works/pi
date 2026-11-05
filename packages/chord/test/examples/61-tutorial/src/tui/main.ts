@@ -2,10 +2,10 @@
 // terminal modules, a core facet serving the `Screens` registry, and a redraw on every change. The screens are opened in
 // a scope of their own, opened again when a reload changes them; `q` quits.
 
+import * as v1 from "@todo/app/v1";
+import * as v1tui from "@todo/app/v1/tui";
 import { defineFacet } from "../../../../../src/index.ts";
 import { startTerminalRuntime, TuiScope } from "../../../../../src/tui/index.ts";
-import * as v1 from "../api/v1/index.ts";
-import * as v1tui from "../api/v1/tui.ts";
 
 /** The terminal's own facet: it serves `Screens`, composing the contributions in plugin-name order. */
 const core = defineFacet((host) => host.serve(v1tui.Screens, { compose: (table) => table.map(({ value }) => value) }));
@@ -24,7 +24,7 @@ void startTerminalRuntime({
 				const scope = new TuiScope(runtime.host, () => draw());
 				opened = { screens: current, scope, lines: current.map((screen) => screen.open(scope, theme)) };
 			}
-			const lines = current.flatMap((screen, n) => [theme.fg("accent", screen.title), ...opened!.lines[n]!()]);
+			const lines = opened.lines.flatMap((read) => read());
 			terminal.write(`\x1b[2J\x1b[H${lines.join("\r\n")}\r\n`);
 		};
 		theme.onChange(draw);

@@ -5,7 +5,7 @@
 
 import { BACKGROUND_CONTEXT } from "../../context/index.ts";
 import { type Address, method, obj, remote, str } from "../../contracts/index.ts";
-import { ChordError, type Principal } from "../../data/index.ts";
+import { forbidden, type Principal } from "../../data/index.ts";
 import { canonicalJson } from "../../data/principal.ts";
 import { defineFacet, type Facet } from "../../host/index.ts";
 import type { JsonValue } from "../../json.ts";
@@ -35,7 +35,7 @@ export function hostDataFacet<P extends Principal>(store: Store, files: string, 
 	return defineFacet<P>((host) =>
 		host.serve(HostData, (_params, principal) => {
 			if (canonicalJson(principal as JsonValue, BACKGROUND_CONTEXT) !== serverKey) {
-				throw new ChordError({ code: "forbidden", message: "chord.app.data: the server's only" });
+				throw forbidden("chord.app.data: the server's only");
 			}
 			return {
 				variant: "main",

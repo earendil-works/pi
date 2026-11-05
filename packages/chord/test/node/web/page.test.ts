@@ -4,9 +4,14 @@
 
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { renderTrace } from "@earendil-works/pi-telemetry/render";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
-import { Browser, CHROMIUM } from "./browser.ts";
+import { openNodeSqliteDatabase } from "../../../src/sqlite/node.ts";
+import { createSqliteTelemetry } from "../../../src/telemetry-sqlite/index.ts";
+import { NOTES_PLUGIN, tempDir } from "../app/support.ts";
+import { Browser, CHROMIUM, poll } from "./browser.ts";
 import { freePort, panelPlugin, signIn, versionedEntry, webApp } from "./support.ts";
 
 describe.skipIf(CHROMIUM === undefined)("a page", () => {
@@ -78,6 +83,49 @@ describe.skipIf(CHROMIUM === undefined)("a page", () => {
 			await browser.wait('document.querySelector(".panel")?.textContent === "Notes"');
 		} finally {
 			await second.app.close(context);
+		}
+	}, 120_000);
+
+	it("records a click as the root of one trace through the server into the worker, stored by the server", async () => {
+		const telemetry = await createSqliteTelemetry(await openNodeSqliteDatabase(join(await tempDir(), "t.sqlite")));
+		const entry = fileURLToPath(new URL("../fixtures/web/telemetry.ts", import.meta.url));
+		const { app } = await webApp(entry, await freePort(), {
+			plugins: { notes: NOTES_PLUGIN },
+			withWorkers: true,
+			telemetry,
+		});
+		try {
+			await signIn(browser, app.ownerLink());
+			await browser.evaluate("document.getElementById('write').click()");
+			await browser.wait("globalThis.written === 1");
+			// The page sends every few seconds, the worker every second, the server writes every second.
+			let spans: Awaited<ReturnType<typeof telemetry.findTraces>>["traces"][number]["spans"] = [];
+			await poll(
+				async () => {
+					await telemetry.flush();
+					spans = (await telemetry.findTraces({ name: "page.write" })).traces[0]?.spans ?? [];
+					return spans.some(({ attributes }) => attributes.type === "test.store");
+				},
+				30_000,
+				"the click's trace",
+			);
+			const tree = renderTrace(
+				spans.map((span) => ({ ...span, attributes: { host: span.attributes["chord.host"] ?? "?" } })),
+			).replaceAll(/ \(\+?[\d.]+ms\)/g, "");
+			expect(tree.split("\n").filter((line) => !line.includes("·"))).toEqual([
+				'page.write host="browser"',
+				'  chord.call host="browser"',
+				'    chord.relay host="server"',
+				'      chord.method host="project|p1"',
+				'        chord.method host="project|p1"',
+			]);
+			const [click] = spans;
+			expect(click!.id).toMatch(/^browser:[0-9a-f-]{36}:\d+$/);
+			expect(click!.attributes["chord.principal"]).toBe('{"kind":"owner"}');
+			expect(new Set(spans.map(({ traceId }) => traceId))).toEqual(new Set([click!.id]));
+		} finally {
+			await app.close(context);
+			await telemetry.close();
 		}
 	}, 120_000);
 });

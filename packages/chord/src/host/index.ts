@@ -17,6 +17,7 @@ export {
 	type LoadReport,
 	type PluginFailure,
 	type Position,
+	type PrincipalAttributes,
 	type ReloadedObject,
 	type ReloadOptions,
 	type ReloadReport,

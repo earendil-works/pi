@@ -2,6 +2,7 @@
 // registry as plugin commands so they are rebindable, listed and conflict-checked (p2-tui-port.md section 6.3).
 // Like the header/footer fallbacks (section 7.1), the worker runtime always loads this facet.
 
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
 	type Component,
 	type Focusable,
@@ -16,6 +17,7 @@ import { SHELL_ENTRY } from "../runtime/shell.ts";
 import { TuiSlots } from "../runtime/tui.ts";
 import { type TuiCommand, TuiCommands, TuiSlashSources } from "../runtime/tui-commands.ts";
 import type { TuiContext } from "../runtime/tui-context.ts";
+import { TuiSettingFields } from "../runtime/tui-preferences.ts";
 import {
 	TuiEntryRenderers,
 	TuiMarkdownTransformers,
@@ -245,7 +247,7 @@ export const CORE_COMMANDS: Record<string, TuiCommand> = {
 		category: "General",
 		slash: { name: "settings" },
 		when: "!overlay",
-		run: (ctx) => openSettings(ctx),
+		run: async (ctx) => openSettings(ctx, (await ctx.host.registry(TuiSettingFields, BACKGROUND_CONTEXT)).value),
 	},
 	"p2.keybindings": {
 		title: "Rebind keys",
@@ -267,6 +269,20 @@ export const CORE_COMMANDS: Record<string, TuiCommand> = {
 		category: "General",
 		slash: { name: "reload" },
 		run: (ctx) => ctx.reload(),
+	},
+	"p2.panel.focus": {
+		title: "Focus the side panel or the editor",
+		category: "View",
+		keys: "f2",
+		when: "panel && !overlay",
+		run: (ctx) => ctx.panel.focus(!ctx.panel.focused),
+	},
+	"p2.panel.close": {
+		title: "Close the side panel",
+		category: "View",
+		when: "panel && !overlay",
+		slash: { name: "close-panel" },
+		run: (ctx) => ctx.panel.close(),
 	},
 	"app.tools.expand": {
 		title: "Toggle tool output",
@@ -298,6 +314,7 @@ export const tuiCoreFacet = defineFacet((host, self) => {
 	serveKeyed(host, TuiToolRendererResolvers);
 	serveKeyed(host, TuiSessionSources);
 	serveKeyed(host, TuiSessionPlaces);
+	serveKeyed(host, TuiSettingFields);
 	serveKeyed(host, TuiEntryRenderers);
 	serveKeyed(host, TuiMarkdownTransformers);
 	self.contribute(TuiCommands, CORE_COMMANDS);

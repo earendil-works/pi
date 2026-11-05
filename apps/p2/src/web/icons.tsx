@@ -129,6 +129,15 @@ export const FileIcon = () => (
 		<path d="M14 3v5h5" />
 	</Icon>
 );
+/** A fork in a line: a `/tree` branch. */
+export const BranchIcon = ({ size = 15 }: { size?: number }) => (
+	<Icon size={size}>
+		<circle cx="6" cy="5" r="2" />
+		<circle cx="6" cy="19" r="2" />
+		<circle cx="18" cy="7" r="2" />
+		<path d="M6 7v10M18 9c0 5-12 3-12 8" />
+	</Icon>
+);
 export const PencilIcon = () => (
 	<Icon size={15}>
 		<path d="M4 20h4L19 9l-4-4L4 16z" />

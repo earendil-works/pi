@@ -2,6 +2,7 @@
 // the app's terminal entry, the bridged terminal, the theme lookup and `TuiScope`. The launcher and the server side are
 // `/tui/launcher` and `/surfaces`'s `tuiSurface`.
 
+export type { PageState } from "../surfaces/page-state.ts";
 export type { Bridge, BridgeRequest, BridgeStart, LauncherMessage, SandboxMessage } from "./bridge.ts";
 export {
 	type AttachedFile,

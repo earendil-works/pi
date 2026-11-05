@@ -1,5 +1,10 @@
 # p2
 
+> [!WARNING]
+> # EXPERIMENTAL
+> **p2 is a prototype. It will be gone soon.** It is not supported, its data formats and APIs change without notice,
+> and it will be replaced. Do not build on it or run it for anything you depend on.
+
 A self-hosted Pi Durable UI built from independent [Chord](../../packages/chord) plugins. Owners have full agent and
 shell control on that server and its workers; this is not server-side filesystem isolation. Downloaded TUI facets run in a
 locked-down worker on the visitor's machine.

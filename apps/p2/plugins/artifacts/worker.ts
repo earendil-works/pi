@@ -10,7 +10,7 @@ import {
 	forbidden,
 	signalOf,
 } from "@p2/app/v1";
-import { CommitSignal, Extensions, harnessOf, workerOf } from "@p2/app/v1/worker";
+import { agentConversation, CommitSignal, Extensions, harnessOf, workerOf } from "@p2/app/v1/worker";
 import { ArtifactContent, ArtifactInfoSchema, ArtifactList, MAX_ARTIFACT_PREVIEW } from "./contract.ts";
 import { Artifacts } from "./store.ts";
 import { ArtifactDoc, createArtifactExtension } from "./tool.ts";
@@ -64,8 +64,10 @@ export default defineFacet((host) => {
 		const harness = harnessOf(self);
 		const id = conversation as ConversationId;
 		const listed = self.state(Listed);
+		/** Where the viewed agent's list is (the main agent's on conversation 1); set when the object opens. */
+		let holder = id;
 		const show = async (ctx: Context) => {
-			const doc = await harness().durable.snapshot(ArtifactDoc, id, ctx);
+			const doc = await harness().durable.snapshot(ArtifactDoc, holder, ctx);
 			await listed.change((draft) => {
 				// A draft's arrays are mutable; the document's are the same JSON.
 				draft.artifacts = [...(doc?.artifacts ?? [])] as typeof draft.artifacts;
@@ -75,13 +77,14 @@ export default defineFacet((host) => {
 			async (ctx) => {
 				const durable = harness().durable;
 				if (!(await durable.conversation(id, ctx))) throw new Error(`Unknown conversation ${conversation}`);
+				holder = await agentConversation(durable, id, ctx);
 				await show(ctx);
 				return new CommitSignal(durable, (publication) =>
 					publication.changes.some(
 						(change) =>
 							change.type === "document" &&
 							change.record.kind === ArtifactDoc.definition.kind &&
-							change.conversationId === conversation,
+							change.conversationId === holder,
 					),
 				);
 			},

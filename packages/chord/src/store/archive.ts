@@ -18,6 +18,7 @@ import {
 	unknown,
 } from "../contracts/index.ts";
 import { invalid, validatorFor } from "../data/internal.ts";
+import { chordMetrics } from "../telemetry.ts";
 import type { DocumentWrite } from "./engine.ts";
 import type { TableWrite } from "./table-writes.ts";
 import type { StoreWrite } from "./writes.ts";
@@ -169,7 +170,7 @@ const WRITE_SCHEMA = { schema: WRITE };
 
 /** Checks one imported part against the archive schema (a trust boundary); `invalid/args` naming its position. */
 export function checkPart(part: unknown, position: number, context: Context): ArchivePart {
-	context.telemetry.metrics?.counter("chord.data.validations").add(1);
+	chordMetrics(context.telemetry.metrics).counter("chord.data.validations").add(1);
 	if (!validatorFor(PART_SCHEMA, context).check(part)) {
 		throw invalid("args", `import: part ${position}: not an archive part`);
 	}
@@ -179,7 +180,7 @@ export function checkPart(part: unknown, position: number, context: Context): Ar
 
 /** Checks one write of a batch's commit against the write schema (a trust boundary); `what` names its place. */
 export function checkWrite(write: unknown, what: string, context: Context): StoreWrite {
-	context.telemetry.metrics?.counter("chord.data.validations").add(1);
+	chordMetrics(context.telemetry.metrics).counter("chord.data.validations").add(1);
 	if (!validatorFor(WRITE_SCHEMA, context).check(write)) throw invalid("args", `${what}: not a store write`);
 	// The check above establishes the type, the nodes aside (the applier checks them).
 	return write as StoreWrite;

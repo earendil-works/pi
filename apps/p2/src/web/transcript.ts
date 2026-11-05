@@ -15,16 +15,15 @@ import type {
 
 type ArtifactState = { artifacts: ArtifactInfo[] };
 
-import { AGENT_MESSAGE_ENTRY, type AgentMessage, AgentMessageSchema, CONVERSATION_PREFIX } from "../runtime/entries.ts";
+import { type AgentMessage, agentMessage, peerMessage } from "../runtime/entries.ts";
 import type { ArtifactInfo } from "../runtime/schemas.ts";
 
 type ConversationPeer = { id: string; title: string };
 
-import { compile } from "@earendil-works/pi-schema";
 import { type AssistantCost, cacheHitRate } from "../runtime/conversation-stats.ts";
-import { type LegacyMessage, legacyMessage, messageData, messageOf } from "../runtime/input.ts";
+import { type MessageData, messageData } from "../runtime/input.ts";
+import type { Author } from "../runtime/sender.ts";
 import { SHELL_ENTRY, shellData } from "../runtime/shell.ts";
-import type { Author } from "../runtime/speaker.ts";
 
 // Pure display model of a Durable view: tool calls are joined with their live
 // slot and result entry, so one card follows a call from request to result.
@@ -151,38 +150,6 @@ function artifactInfo(value: unknown): ArtifactInfo | undefined {
 		return;
 	return details as ArtifactInfo;
 }
-
-/** Tool-originated input: a peer conversation's message starts with a server-written sender block. */
-export function peerInput(content: string | readonly { type: string; text?: string }[]): {
-	text: string;
-	peer?: Pick<ConversationPeer, "id" | "title">;
-} {
-	if (
-		typeof content !== "string" &&
-		content[0]?.type === "text" &&
-		content[0].text?.startsWith(CONVERSATION_PREFIX) &&
-		content[0].text.endsWith("</mobile-conversation>")
-	) {
-		try {
-			const peer: unknown = JSON.parse(
-				content[0].text.slice(CONVERSATION_PREFIX.length, -"</mobile-conversation>".length),
-			);
-			if (
-				peer &&
-				typeof peer === "object" &&
-				"id" in peer &&
-				typeof peer.id === "string" &&
-				/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(peer.id) &&
-				"title" in peer &&
-				typeof peer.title === "string"
-			)
-				return { text: text(content.slice(1)), peer: { id: peer.id, title: peer.title } };
-		} catch {}
-	}
-	return { text: text(content) };
-}
-
-const isAgentMessage = compile(AgentMessageSchema).check;
 
 /**
  * Display items of each entry, with what they were built from. Chord keeps unchanged entries (and documents' unchanged
@@ -408,7 +375,7 @@ export function buildTranscript(
 	const responseKeys = new Set<string>();
 	const items: Item[] = [];
 	/** A person's message: who wrote it and what, from its data; a plugin may add a reply quote or a note. */
-	const personItem = (entry: EntryRecord, person: LegacyMessage, images: ImageContent[], chat: boolean): Item => ({
+	const personItem = (entry: EntryRecord, person: MessageData, images: ImageContent[], chat: boolean): Item => ({
 		type: "user",
 		key: String(entry.id),
 		entryId: entry.id,
@@ -475,16 +442,21 @@ export function buildTranscript(
 				...cachedItems(entry, [display], () => {
 					const images =
 						typeof message.content === "string" ? [] : message.content.filter((part) => part.type === "image");
-					// A person's input from its data; old sessions' pi.user entries through the legacy reader.
-					const person = entry.kind === "pi.user" ? legacyMessage(message.content) : messageData(entry.data);
+					// A person's input from its data.
+					const person = messageData(entry.data);
 					if (person) return [personItem(entry, person, images, false)];
-					if (entry.kind === AGENT_MESSAGE_ENTRY && isAgentMessage(entry.data)) {
-						const { from, intent, text } = entry.data;
+					const fromAgent = agentMessage(entry.kind, entry.data);
+					if (fromAgent) {
+						const { from, intent, text } = fromAgent;
 						return [{ type: "user", key, entryId: entry.id, images, agent: { from, intent }, text, files: [] }];
 					}
-					// Tool-originated input: a peer conversation's message (sender block), or a plain text.
-					const input = peerInput(message.content);
-					return [{ type: "user", key, entryId: entry.id, images, peer: input.peer, text: input.text, files: [] }];
+					// A peer session's message from its data, or a tool's plain input.
+					const peer = peerMessage(entry.kind, entry.data);
+					if (peer)
+						return [
+							{ type: "user", key, entryId: entry.id, images, peer: peer.from, text: peer.text, files: [] },
+						];
+					return [{ type: "user", key, entryId: entry.id, images, text: text(message.content), files: [] }];
 				}),
 			);
 		} else if (message?.role === "assistant") {
@@ -619,8 +591,9 @@ export function buildTranscript(
 							id: item.id,
 							mode: item.mode,
 							text:
-								messageOf(item.entry?.data, item.entry ? undefined : (item.content as string))?.text ??
-								peerInput(item.content as string).text,
+								messageData(item.entry?.data)?.text ??
+								(item.entry && peerMessage(item.entry.kind, item.entry.data)?.text) ??
+								text(item.content),
 						},
 					],
 		),

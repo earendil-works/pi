@@ -10,7 +10,7 @@ export default defineFacet((host) => {
 		const catalog = self.get(Catalog, {});
 		const statuses = self.get(StatusStore, {});
 		return {
-			query: async ({ source, requestId, query }, ctx) => {
+			query: async ({ source, requestId, origin, query }, ctx) => {
 				const sender = await catalog.get({ id: source }, ctx);
 				if (sender.archivedAt !== null) throw forbidden("The sending session is archived");
 				if (query.action === "list") {
@@ -51,7 +51,14 @@ export default defineFacet((host) => {
 					if (await archived()) throw forbidden("Conversation is archived");
 					if (query.action === "answer") return { action: "answer" as const, answer: await peer.answer(ctx) };
 					const result = await peer.send(
-						{ source, title: sender.title, requestId, message: query.message, followUp: query.followUp },
+						{
+							source,
+							title: sender.title,
+							requestId,
+							message: query.message,
+							followUp: query.followUp,
+							...(origin ? { origin } : {}),
+						},
 						ctx,
 					);
 					return { action: "send" as const, result };
@@ -83,10 +90,10 @@ export default defineFacet((host) => {
 		return {
 			variant: "worker",
 			members: {
-				query: async ({ requestId, query }, ctx) => {
+				query: async ({ requestId, origin, query }, ctx) => {
 					const current = hosts.workers.value?.[principal.session];
 					if (!current?.running || current.generation !== principal.generation) throw forbidden("stale worker");
-					return broker.query({ source: principal.session, requestId, query }, ctx);
+					return broker.query({ source: principal.session, requestId, ...(origin ? { origin } : {}), query }, ctx);
 				},
 			},
 		};

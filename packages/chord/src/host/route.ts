@@ -2,14 +2,17 @@
 // makes the link of one address, at most once at a time. No timer (slice 10 R2): an address resolves for a new hold,
 // on `RouteHandle.retry`, or once after its link dropped while held; a rejected `resolve` (or a link closed before its
 // handshake) fails its holders `failed { waiting }` until then, and a suspended address resolves nothing while held.
+// Each `resolve` is a `chord.resolve` root span linked to the hold that started it (slice 9).
 
-import type { Context } from "../context/index.ts";
+import type { TelemetrySpan } from "@earendil-works/pi-telemetry";
+import { type Context, withTelemetry } from "../context/index.ts";
 import type { Address, HostKind, KindShape } from "../contracts/index.ts";
 import { kindParams, type ParamsData } from "../contracts/internal.ts";
-import { ChordError, type Principal } from "../data/index.ts";
+import { ChordError, forbidden, type Principal } from "../data/index.ts";
 import { asChordError, checkAddress } from "../data/internal.ts";
 import type { Codec, Link, PartLimits } from "../link/index.ts";
 import { type HostLink, Path, type PathEvent, type Upstream } from "../remote/internal.ts";
+import { capped, OpenSpan, spanFailed, untraced } from "../telemetry.ts";
 import type { AnyHost } from "./host.ts";
 
 /** What `host.route` takes for a kind. */
@@ -47,11 +50,16 @@ export type RouteHandle<K extends KindShape> = {
 	suspend(address: Address<K>): void;
 };
 
-/** One address of a route: its path, whether its `resolve` runs, why it fails its holders, whether it is suspended. */
+/**
+ * One address of a route: its path, whether its `resolve` runs (and its span, when recorded), why it fails its holders,
+ * whether it is suspended.
+ */
 type Routed = {
 	readonly address: Address;
 	readonly path: Path;
 	resolving: boolean;
+	/** The running `resolve`'s span: holders attaching meanwhile link to it (decision "Shared work"). */
+	span: TelemetrySpan | undefined;
 	/** A rejected `resolve`, or a link closed before its handshake: its holders fail with it until the next resolve. */
 	failure: ChordError | undefined;
 	suspended: boolean;
@@ -87,7 +95,7 @@ export class Route {
 	path(params: unknown, principal: Principal | undefined, context: Context): Path {
 		const address = checkAddress(this.kind, this.#params, params, context);
 		if (principal === undefined || !this.#options.authorize(principal, address)) {
-			throw new ChordError({ code: "forbidden", message: `${address.key}: not authorized` });
+			throw forbidden(`${address.key}: not authorized`);
 		}
 		let routed = this.#addresses.get(address.key);
 		if (routed === undefined) {
@@ -95,6 +103,7 @@ export class Route {
 				address,
 				path: new Path((event) => this.#changed(made, event)),
 				resolving: false,
+				span: undefined,
 				failure: undefined,
 				suspended: false,
 			};
@@ -165,7 +174,8 @@ export class Route {
 				return;
 			case "attached":
 				if (routed.suspended) event.holder.unreachable(suspended(routed));
-				else if (!routed.resolving) void this.#resolve(routed);
+				else if (!routed.resolving) void this.#resolve(routed, event.holder.span);
+				else if (routed.span !== undefined) event.holder.span?.addLink({ context: routed.span });
 				return;
 			case "dropped":
 				if (!routed.path.held) this.#addresses.delete(routed.address.key);
@@ -183,36 +193,55 @@ export class Route {
 	}
 
 	/**
-	 * Runs `resolve` once for the address. A rejection, or a link closed already, fails its holders with the error until
-	 * the next resolve; a link returned after the host closed is closed at once.
+	 * Runs `resolve` once for the address, in a `chord.resolve` root span linked to `trigger` (the span of the hold that
+	 * started it, which links back). A rejection, or a link closed already, fails its holders with the error until the
+	 * next resolve; a link returned after the host closed is closed at once.
 	 */
-	async #resolve(routed: Routed): Promise<void> {
+	async #resolve(routed: Routed, trigger?: TelemetrySpan): Promise<void> {
 		const key = routed.address.key;
+		const adapter = this.#host.telemetry;
+		const span = untraced(adapter)
+			? undefined
+			: new OpenSpan(adapter, "chord.resolve", {
+					"chord.host": this.#host.spanHost,
+					kind: this.kind,
+					address: capped(key),
+				});
+		if (span !== undefined && trigger !== undefined) {
+			span.span.addLink({ context: trigger });
+			trigger.addLink({ context: span.span });
+		}
 		routed.resolving = true;
+		routed.span = span?.span;
 		let resolved: Awaited<ReturnType<RouteOptions<Principal, KindShape>["resolve"]>>;
 		try {
-			resolved = await this.#options.resolve(routed.address, this.#context);
+			const context = span === undefined ? this.#context : withTelemetry(span.span, this.#context);
+			resolved = await this.#options.resolve(routed.address, context);
 		} catch (error) {
 			routed.resolving = false;
+			routed.span = undefined;
+			resolveEnded(span, error);
 			if (this.#host.closing) return;
 			this.#host.report({ kind: "resolve_failed", address: key, error });
 			this.#settle(routed, asChordError(error, key));
 			return;
 		}
 		routed.resolving = false;
+		routed.span = undefined;
 		if (this.#host.closing) {
+			resolveEnded(span, new ChordError({ code: "released", reason: "closed", message: "the host is closed" }));
 			resolved.link.close();
 			return;
 		}
 		const { link: made, ...options } = resolved;
 		const link = this.#host.routeLink(made, options, this.#context);
 		if (!link.open) {
-			this.#settle(
-				routed,
-				new ChordError({ code: "unavailable", message: `${key}: the link closed before its handshake` }),
-			);
+			const error = new ChordError({ code: "unavailable", message: `${key}: the link closed before its handshake` });
+			resolveEnded(span, error);
+			this.#settle(routed, error);
 			return;
 		}
+		resolveEnded(span, undefined);
 		routed.failure = undefined;
 		// A peer that greeted first had its `hello` handled while the link was made, before it was registered here.
 		this.#links.set(link, { routed, greeted: link.greeted });
@@ -231,6 +260,14 @@ export class Route {
 		routed.failure = error;
 		routed.path.unreachable(routed.suspended ? suspended(routed) : error);
 	}
+}
+
+/** A resolve's span ends: `linked`, or `failed` with `error`. */
+function resolveEnded(span: OpenSpan<"chord.resolve"> | undefined, error: unknown): void {
+	if (span === undefined) return;
+	if (error !== undefined) spanFailed(span.span, "resolve_failed", error);
+	span.span.setAttributes({ outcome: error === undefined ? "linked" : "failed" });
+	span.end();
 }
 
 /** The failure holders of a suspended address see. */

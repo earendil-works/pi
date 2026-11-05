@@ -282,6 +282,22 @@ describe("submit inside the caller's commit", () => {
 		await harness.close(context);
 	});
 
+	it("reads a submission by ID in a commit, with the entry its input was placed at", async () => {
+		const setup = chatSetup();
+		setup.faux.setResponses([fauxAssistantMessage([fauxText("answer")])]);
+		const { harness, root } = await openChat(new ControlledStorage(), setup);
+		const id = await harness.commit((tx) => root.submit(tx, { type: "input", content: "hi" }), context);
+		await settledStatus(harness, id);
+		const found = await harness.commit(async (tx) => {
+			const submission = await tx.submission(id);
+			const entry = submission?.entry === undefined ? undefined : await tx.entry(submission.entry);
+			return { status: submission?.status, conversationId: entry?.conversationId, kind: entry?.kind };
+		}, context);
+		expect(found).toEqual({ status: "done", conversationId: root.id, kind: "pi.user" });
+		expect(await harness.commit((tx) => tx.submission(999_999 as SubmissionId), context)).toBeUndefined();
+		await harness.close(context);
+	});
+
 	// #11149
 	it("queues a model-visible write while busy and places it at the next boundary", async () => {
 		const setup = chatSetup();

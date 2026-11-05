@@ -16,8 +16,8 @@ type SpanRow = {
 	trace_id: string;
 	parent_id: string | null;
 	name: string;
-	started_ms: number;
-	ended_ms: number;
+	started_us: number;
+	ended_us: number;
 	attributes: string;
 	events: string;
 	links: string;
@@ -95,6 +95,103 @@ describe("SQLite telemetry span and propagation conformance", () => {
 });
 
 describe("SQLite telemetry buffering and aggregation", () => {
+	it("orders spans started in the same millisecond as they started: a trace's first span, siblings (slice 9)", async () => {
+		vi.spyOn(Date, "now").mockReturnValue(20_001);
+		await using f = await fixture();
+		await f.telemetry.startSpan({ name: "root" }, async (span) => {
+			for (let index = 0; index < 11; index++) await span.startSpan({ name: `child ${index}` }, () => {});
+		});
+		await f.telemetry.flush();
+		const { traces } = await f.telemetry.findTraces({ name: "root" });
+		expect(traces[0]!.spans.map(({ name }) => name)).toEqual([
+			"root",
+			...Array.from({ length: 11 }, (_, index) => `child ${index}`),
+		]);
+	});
+
+	it("stores span times in whole microseconds of telemetryNow, read back as milliseconds", async () => {
+		vi.spyOn(Date, "now").mockReturnValue(20_001);
+		const clock = vi.spyOn(performance, "now").mockReturnValue(500);
+		await using f = await fixture();
+		await f.telemetry.startSpan({ name: "root" }, async (span) => {
+			clock.mockReturnValue(500.125);
+			await span.startSpan({ name: "child" }, () => {
+				clock.mockReturnValue(500.5);
+				span.addEvent("half", {});
+			});
+		});
+		await f.telemetry.flush();
+		expect(
+			await f.db.all("SELECT name, started_us, ended_us, events FROM telemetry_spans ORDER BY started_us"),
+		).toEqual([
+			{
+				name: "root",
+				started_us: 20_001_000,
+				ended_us: 20_001_500,
+				events: '[{"name":"half","time_ms":0.5,"attributes":{}}]',
+			},
+			{ name: "child", started_us: 20_001_125, ended_us: 20_001_500, events: "[]" },
+		]);
+		const { traces } = await f.telemetry.findTraces({ startMin: 20_001, startMax: 20_001 });
+		expect(traces[0]!.spans.map(({ startedMs, endedMs }) => [startedMs, endedMs])).toEqual([
+			[20_001, 20_001.5],
+			[20_001.125, 20_001.5],
+		]);
+	});
+
+	it("migrates a store of version 1 (milliseconds) to microseconds, its rows kept", async () => {
+		const db = await openNodeSqliteDatabase(":memory:");
+		try {
+			// Version 1 as it shipped: its tables and one span.
+			await db.exec(`CREATE TABLE telemetry_schema (singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+				version INTEGER NOT NULL CHECK (version >= 0)) STRICT`);
+			await db.run("INSERT INTO telemetry_schema VALUES (1, 1)");
+			await db.exec(`CREATE TABLE telemetry_spans (id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, parent_id TEXT,
+				name TEXT, started_ms REAL, ended_ms REAL NOT NULL, attributes TEXT, events TEXT, links TEXT, status TEXT)`);
+			await db.exec("CREATE INDEX telemetry_spans_started_ms ON telemetry_spans(started_ms)");
+			await db.exec(`CREATE TABLE telemetry_metrics (interval_ms INTEGER, series_key TEXT, name TEXT, kind TEXT,
+				unit TEXT, attributes TEXT, count INTEGER, sum REAL, min REAL, max REAL, PRIMARY KEY(interval_ms, series_key))`);
+			await db.run(
+				"INSERT INTO telemetry_spans VALUES ('old:1', 'old:1', NULL, 'old', 1000, 1002.5, '{}', '[]', '[]', '{\"status\":\"ok\"}')",
+			);
+			const telemetry = await createSqliteTelemetry(db);
+			expect(await db.get("SELECT version FROM telemetry_schema")).toEqual({ version: 2 });
+			expect(await db.all("SELECT started_us, ended_us FROM telemetry_spans")).toEqual([
+				{ started_us: 1_000_000, ended_us: 1_002_500 },
+			]);
+			expect(
+				(await telemetry.getTrace("old:1"))?.spans.map(({ startedMs, endedMs }) => [startedMs, endedMs]),
+			).toEqual([[1000, 1002.5]]);
+			await telemetry.close();
+		} finally {
+			await db.close();
+		}
+	});
+
+	it("writes ingested spans and metric rows with its own, never replacing a stored span", async () => {
+		vi.spyOn(Date, "now").mockReturnValue(20_001);
+		await using f = await fixture();
+		await f.telemetry.startSpan({ name: "own" }, () => {});
+		await f.telemetry.flush();
+		const [own] = (await f.telemetry.findTraces({ name: "own" })).traces[0]!.spans;
+		const span = { ...own!, id: "w:1", traceId: "w:1", name: "worker", startedMs: 1000.5, endedMs: 1001.25 };
+		const metric = {
+			intervalMs: 10_000,
+			name: "hits",
+			kind: "counter",
+			attributes: { b: 1, a: 2 },
+			count: 2,
+			sum: 6,
+			min: 2,
+			max: 4,
+		} as const;
+		expect(f.telemetry.ingest({ spans: [span, { ...own!, name: "impostor" }], metrics: [metric] })).toBe(2);
+		await f.telemetry.flush();
+		expect((await f.telemetry.getTrace("w:1"))?.spans).toEqual([span]);
+		expect((await f.telemetry.getTrace(own!.traceId))?.spans.map(({ name }) => name)).toEqual(["own"]);
+		expect(await f.telemetry.findMetrics({ name: "hits" })).toEqual([{ ...metric, attributes: { a: 2, b: 1 } }]);
+	});
+
 	it("does not execute SQL while recording and stores only settled spans", async () => {
 		await using f = await fixture();
 		const transaction = vi.spyOn(f.db, "transaction");
@@ -115,7 +212,7 @@ describe("SQLite telemetry buffering and aggregation", () => {
 		active.addEvent("late");
 		await f.telemetry.flush();
 		const row = await f.db.get<SpanRow>("SELECT * FROM telemetry_spans");
-		expect(row?.ended_ms).toBeGreaterThanOrEqual(row?.started_ms ?? Infinity);
+		expect(row?.ended_us).toBeGreaterThanOrEqual(row?.started_us ?? Infinity);
 		expect(JSON.parse(row?.events ?? "[]")).toEqual([{ name: "begin", time_ms: expect.any(Number), attributes: {} }]);
 	});
 

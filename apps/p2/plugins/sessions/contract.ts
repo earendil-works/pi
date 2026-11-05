@@ -1,6 +1,7 @@
 import { arr, bool, int, nul, num, obj, opt, type Static, str, union, unknown } from "@earendil-works/pi-schema";
 import type { Ctx } from "@p2/app/v1";
 import {
+	evolve,
 	keyedRegistry,
 	local,
 	ModelRefSchema,
@@ -19,7 +20,9 @@ export {
 	type ThinkingLevel,
 	ThinkingLevelSchema,
 } from "@p2/app/v1";
-export const SessionSchema = obj({
+
+/** A session row's fields before `/tree` (`Sessions` v3, `Catalog` v2). */
+const SESSION_FIELDS = {
 	id: str(),
 	env: opt(union([str(), nul()])),
 	cwd: str(),
@@ -30,6 +33,26 @@ export const SessionSchema = obj({
 	pinned: bool(),
 	model: ModelRefSchema,
 	thinkingLevel: str(),
+};
+const SessionSchemaV3 = obj(SESSION_FIELDS);
+
+/** `Sessions` v4 and `Catalog` v3: branch labels were always text. */
+const BranchSchemaV4 = obj({ conversation: int({ minimum: 1 }), label: str() });
+const SessionSchemaV4 = obj({ ...SESSION_FIELDS, main: int({ minimum: 1 }), branches: arr(BranchSchemaV4) });
+
+/**
+ * A `/tree` branch as the sidebar lists it: its conversation and its stored label (`MainDoc`); null shows the session
+ * title (conversation 1 until it is renamed).
+ */
+export const BranchSchema = obj({ conversation: int({ minimum: 1 }), label: union([str(), nul()]) });
+export type Branch = Static<typeof BranchSchema>;
+
+export const SessionSchema = obj({
+	...SESSION_FIELDS,
+	/** The current main conversation: 1, or the `/tree` branch the session continues in (`docs/tree.md`). */
+	main: int({ minimum: 1 }),
+	/** The top-level conversations, newest first; empty until the worker reported them. */
+	branches: arr(BranchSchema),
 });
 export type Session = Static<typeof SessionSchema>;
 
@@ -64,68 +87,89 @@ export const ArchivedStarts = local("p2.archived-starts", {
 	},
 });
 
-/** The session catalog (server, SQLite): every session, archived ones included. Host-internal. */
-export const Catalog = local("p2.catalog", {
-	/** 2: thinking levels are an enum. */
+const CatalogCreate = obj({
+	/** A chosen ID (a clone's or fork's, whose files exist before its entry); default a new one. */
+	id: opt(str({ pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" })),
+	env: opt(union([str(), nul()])),
+	cwd: str(),
+	title: str(),
+	/** The title was given, not the placeholder: automatic titles never replace it. */
+	titleEdited: opt(bool()),
+	model: ModelRefSchema,
+	thinkingLevel: ThinkingLevelSchema,
+});
+const UPDATE_FIELDS = {
+	id: str(),
+	cwd: opt(str()),
+	env: opt(union([str(), nul()])),
+	title: opt(str()),
+	pinned: opt(bool()),
+	archived: opt(bool()),
+	model: opt(ModelRefSchema),
+	thinkingLevel: opt(ThinkingLevelSchema),
+};
+
+/** The catalog before `/tree`, the base of its history (2: thinking levels are an enum). */
+const CatalogV2 = local("p2.catalog", {
 	version: 2,
 	params: {},
 	members: {
-		sessions: arr(SessionSchema),
-		get: method(Id, SessionSchema),
-		create: method(
-			obj({
-				/** A chosen ID (a clone's or fork's, whose files exist before its entry); default a new one. */
-				id: opt(str({ pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" })),
-				env: opt(union([str(), nul()])),
-				cwd: str(),
-				title: str(),
-				/** The title was given, not the placeholder: automatic titles never replace it. */
-				titleEdited: opt(bool()),
-				model: ModelRefSchema,
-				thinkingLevel: ThinkingLevelSchema,
-			}),
-			SessionSchema,
-		),
+		sessions: arr(SessionSchemaV3),
+		get: method(Id, SessionSchemaV3),
+		create: method(CatalogCreate, SessionSchemaV3),
 		/** Applies indexed activity without replacing an explicit title or moving time backwards. */
 		activity: method(obj({ id: str(), timestamp: num(), firstUserText: opt(str()) })),
-		update: method(
-			obj({
-				id: str(),
-				cwd: opt(str()),
-				env: opt(union([str(), nul()])),
-				title: opt(str()),
-				pinned: opt(bool()),
-				archived: opt(bool()),
-				model: opt(ModelRefSchema),
-				thinkingLevel: opt(ThinkingLevelSchema),
-			}),
-			SessionSchema,
-		),
+		update: method(obj(UPDATE_FIELDS), SessionSchemaV3),
 	},
 });
 
+/** 3: `main` and `branches`. */
+const CatalogV3 = evolve(CatalogV2, (e) =>
+	e
+		.state("sessions", arr(SessionSchemaV4))
+		.result("get", SessionSchemaV4)
+		.result("create", SessionSchemaV4)
+		.method(
+			"update",
+			obj({ ...UPDATE_FIELDS, main: opt(int({ minimum: 1 })), branches: opt(arr(BranchSchemaV4)) }),
+			SessionSchemaV4,
+		),
+);
+
 /**
- * Sessions as a principal sees them. The owner lists and manages all; a guest sees its own session; a worker sees
- * and renames only its own session (its principal names it).
+ * The session catalog (server, SQLite): every session, archived ones included. Host-internal. 4: a branch's label may
+ * be null (the session title). The provider still serves 2 and 3 (its `accepts`).
  */
-export const Sessions = remote("p2.sessions", {
-	/**
-	 * 2: thinking levels are an enum; configureSelf takes either field alone.
-	 * 3: `clone` and `fork` (owner).
-	 */
+export const Catalog = evolve(CatalogV3, (e) =>
+	e
+		.state("sessions", arr(SessionSchema))
+		.result("get", SessionSchema)
+		.result("create", SessionSchema)
+		.method(
+			"update",
+			obj({ ...UPDATE_FIELDS, main: opt(int({ minimum: 1 })), branches: opt(arr(BranchSchema)) }),
+			SessionSchema,
+		),
+);
+
+/**
+ * Sessions as a principal sees them, before `/tree`: the base of the history (2: thinking levels are an enum;
+ * configureSelf takes either field alone. 3: `clone` and `fork` (owner)).
+ */
+const SessionsV3 = remote("p2.sessions", {
 	version: 3,
 	params: {},
 	hostAddress: serverHost,
 	variants: {
 		owner: {
 			state: {
-				sessions: arr(SessionSchema),
+				sessions: arr(SessionSchemaV3),
 				/** Working directory suggested for a new session: the most recently active one, or the home directory. */
 				defaultCwd: str(),
 				defaultEnv: union([str(), nul()]),
 			},
 			methods: {
-				create: method(CreateSchema, SessionSchema),
+				create: method(CreateSchema, SessionSchemaV3),
 				relocate: method(
 					obj({
 						id: str(),
@@ -141,10 +185,10 @@ export const Sessions = remote("p2.sessions", {
 				 * A copy of the session as it is now (pi's `/clone`): its store with every conversation, and its artifacts,
 				 * downloads and uploads, under a new ID. Refused while the session's worker has work running.
 				 */
-				clone: method(Id, SessionSchema),
+				clone: method(Id, SessionSchemaV3),
 				/**
 				 * A new session holding the active context of `conversation` before the entry `before` (pi's `/fork` from a
-				 * user message: that message is not part of it). Only the main conversation (1) for now.
+				 * user message: that message is not part of it). The main conversation or one of its `/tree` branches.
 				 */
 				fork: method(
 					obj({
@@ -152,16 +196,16 @@ export const Sessions = remote("p2.sessions", {
 						conversation: int({ minimum: 1 }),
 						before: int({ minimum: 1 }),
 					}),
-					SessionSchema,
+					SessionSchemaV3,
 				),
 			},
 		},
 		/** A guest sees its one session while it is not archived. */
 		guest: {
-			state: { sessions: arr(SessionSchema) },
+			state: { sessions: arr(SessionSchemaV3) },
 		},
 		worker: {
-			state: { session: union([SessionSchema, nul()]) },
+			state: { session: union([SessionSchemaV3, nul()]) },
 			methods: {
 				renameSelf: method(obj({ title: Title }), obj({ previous: str() })),
 				/** The root conversation's configuration changed (either field alone): the catalog entry follows. */
@@ -170,6 +214,37 @@ export const Sessions = remote("p2.sessions", {
 		},
 	},
 });
+
+/** 4: rows carry `main` and `branches`; the worker's `treeSelf`. */
+const SessionsV4 = evolve(SessionsV3, (e) =>
+	e
+		.state("owner", "sessions", arr(SessionSchemaV4))
+		.state("guest", "sessions", arr(SessionSchemaV4))
+		.state("worker", "session", union([SessionSchemaV4, nul()]))
+		.result("create", SessionSchemaV4)
+		.result("clone", SessionSchemaV4)
+		.result("fork", SessionSchemaV4)
+		.addMethod("worker", "treeSelf", obj({ main: int({ minimum: 1 }), branches: arr(BranchSchemaV4) }), nul()),
+);
+
+/**
+ * Sessions as a principal sees them. The owner lists and manages all; a guest sees its own session; a worker sees
+ * and renames only its own session (its principal names it). 5: a branch's label may be null (the session title).
+ * The provider still serves 3 and 4 (its `accepts`): pages and TUIs loaded before a deploy keep working.
+ *
+ * The worker's `treeSelf`: the session's main conversation or its branches changed (a `/tree` switch or fork, a branch
+ * renamed), or the worker started; the catalog entry follows, so clients open the main one and list the branches.
+ */
+export const Sessions = evolve(SessionsV4, (e) =>
+	e
+		.state("owner", "sessions", arr(SessionSchema))
+		.state("guest", "sessions", arr(SessionSchema))
+		.state("worker", "session", union([SessionSchema, nul()]))
+		.result("create", SessionSchema)
+		.result("clone", SessionSchema)
+		.result("fork", SessionSchema)
+		.args("treeSelf", obj({ main: int({ minimum: 1 }), branches: arr(BranchSchema) })),
+);
 
 /**
  * Moving a session to another location (server, host-internal): `Sessions.relocate` for the owner, and the locations

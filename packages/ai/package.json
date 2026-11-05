@@ -46,6 +46,14 @@
 		"./bun-oauth": {
 			"types": "./dist/bun-oauth.d.ts",
 			"import": "./dist/bun-oauth.js"
+		},
+		"./lazy-bedrock-provider": {
+			"types": "./dist/lazy-bedrock-provider.d.ts",
+			"import": "./dist/lazy-bedrock-provider.js"
+		},
+		"./lazy-oauth": {
+			"types": "./dist/lazy-oauth.d.ts",
+			"import": "./dist/lazy-oauth.js"
 		}
 	},
 	"bin": {

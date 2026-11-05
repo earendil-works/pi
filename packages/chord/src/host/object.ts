@@ -9,6 +9,7 @@
 // native restart after the drain, a retry on the new code, or its end by its type's removal, after which its
 // references wait with their last values and follow the next object of the identity.
 
+import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { awaitWithContext, type Context } from "../context/index.ts";
 import type { Contract, ParamsOf } from "../contracts/index.ts";
 import type { ContractShape } from "../contracts/internal.ts";
@@ -21,6 +22,8 @@ import type { JsonValue } from "../json.ts";
 import { CHAIN } from "../link/internal.ts";
 import type { RegistryContribution } from "../registries/internal.ts";
 import type { DeriveSource } from "../state/internal.ts";
+import { LiveQueries } from "../store/live-query.ts";
+import { chordMetrics } from "../telemetry.ts";
 import { refusal } from "./adapted.ts";
 import { Attempt, type PinnedKey, type Self } from "./attempt.ts";
 import type { Caller } from "./ctx.ts";
@@ -62,6 +65,8 @@ type ServedType<C extends Contract> = {
 	readonly provider: Provider<Contract>;
 	/** How long a live object stays live after its last reference, in milliseconds (`serve`'s `linger`, 0 by default). */
 	readonly linger: number;
+	/** Whether its calls start method spans (`serve`'s `untraced`: not). */
+	readonly traced: boolean;
 };
 
 /** What holds an object: a reference's binding, or a hold arriving over a link. */
@@ -108,7 +113,7 @@ export type ReloadFate = "swap" | "restart" | "retry";
 /**
  * A pure swap in progress (slice 7b §5): the attempt it replaces (its calls run on, then it is sealed), whether the new
  * attempt parked (holders then see what it shows, and the old one's contributions left the tables), and the end of
- * the swap (its new attempt live, parked or failed, or the object ended), which calls arriving meanwhile wait for.
+ * the swap (its new attempt live, parked or failed, or the object ended), which the old attempt's retirement waits for.
  */
 type Swap = { readonly old: Attempt; parked: boolean; readonly done: PromiseWithResolvers<void> };
 
@@ -184,6 +189,13 @@ export class ChordObject implements Target {
 	readonly documents: Documents;
 	/** The context of every attempt: its creator's, without the creator's cancellation. */
 	readonly #context: Context;
+	/**
+	 * What its next attempt's activation span links to: its first trigger (the span that created it, a hold's carrier),
+	 * then the last attempt's span (a retry's trigger).
+	 */
+	#trigger: TelemetryContext;
+	/** Its attempts so far (the activation span's `attempt`). */
+	#attempts = 0;
 	/** Its job runs by job name, across its attempts. */
 	readonly #jobs = new Map<string, JobRecords>();
 	/** This instance's id (uuidv7), minted at its first attempt: a restarted object is a new instance (D4). */
@@ -223,6 +235,10 @@ export class ChordObject implements Target {
 	#wakes: RetryWakes | undefined;
 	/** Its swapped-out attempts while they retire (bounded by `closeTimeout`); made by the first swap. */
 	#retiring: Map<Attempt, Promise<void>> | undefined;
+	/** Its live queries by table, across its attempts; made by the first table it declares. */
+	#liveQueries: LiveQueries | undefined;
+	/** Resolves at its next change of state, for calls waiting at the gate; made by the first one. */
+	#changed: PromiseWithResolvers<void> | undefined;
 
 	constructor(
 		host: AnyHost,
@@ -231,6 +247,7 @@ export class ChordObject implements Target {
 		principal: Principal | undefined,
 		key: string,
 		identity: string,
+		trigger: TelemetryContext,
 		context: Context,
 		chain: readonly string[],
 	) {
@@ -242,6 +259,7 @@ export class ChordObject implements Target {
 		this.identity = identity;
 		this.label = key === "" ? served.contract.name : `${served.contract.name}(${key})`;
 		this.chain = chain;
+		this.#trigger = trigger;
 		this.#context = context;
 		const { store } = host;
 		this.documents = new Documents({
@@ -253,6 +271,7 @@ export class ChordObject implements Target {
 				if (this.#state.kind === "live") this.failLive(this.#state.attempt, { kind: "broken", error });
 			},
 			report: (error) => host.report(error),
+			telemetry: host.telemetry,
 		});
 	}
 
@@ -299,6 +318,11 @@ export class ChordObject implements Target {
 		return this.#lastFailure;
 	}
 
+	/** The span of the activation under way, when one runs and is recorded (getters waiting for it link to it). */
+	get activationSpan(): TelemetryContext | undefined {
+		return this.#state.kind === "activating" ? this.#state.attempt.activationSpan : undefined;
+	}
+
 	/** Its instance id while an attempt activates; `undefined` otherwise (a hold's chain names only activations). */
 	get activationId(): string | undefined {
 		return this.#state.kind === "activating" ? this.#instance : undefined;
@@ -338,7 +362,7 @@ export class ChordObject implements Target {
 		const state = this.#state;
 		if (state.kind !== "waiting" && state.kind !== "failed") return undefined;
 		this.#instance ??= uuidv7();
-		const attempt = new Attempt(this, this.#context);
+		const attempt = this.#newAttempt();
 		this.#state = { kind: "activating", attempt, shown: LOADING };
 		if (state.kind === "failed") this.#notify();
 		void this.#run(attempt, this.host.endingOf(this.identity));
@@ -376,12 +400,19 @@ export class ChordObject implements Target {
 
 	/**
 	 * Calls a method of the live object for `caller`, bound at `version` (an older one maps its arguments and result,
-	 * Q10). While a reload's pure swap runs, the call waits for its new attempt (the gate), bounded by `readyTimeout`.
+	 * Q10), its `chord.method` span under `parent` (the caller's span on this host, a call's carrier over a link). While
+	 * an attempt activates (a reload's swap or restart), the call waits for its outcome (the gate).
 	 */
-	async call(method: string, args: unknown, context: Context, caller: Caller, version: number): Promise<unknown> {
-		const state = this.#state;
-		if (state.kind === "activating" && state.swap !== undefined) await this.#gate(state.swap, context);
-		return this.#live().call(method, args, context, caller, version);
+	async call(
+		method: string,
+		args: unknown,
+		context: Context,
+		caller: Caller,
+		version: number,
+		parent?: TelemetryContext,
+	): Promise<unknown> {
+		if (this.#state.kind === "activating") await this.#gate(context);
+		return this.#live().call(method, args, context, caller, version, parent ?? context.telemetry);
 	}
 
 	/**
@@ -461,11 +492,34 @@ export class ChordObject implements Target {
 		return this.#live().keyMapping(member, version);
 	}
 
-	/** Waits until `swap` ended (its new attempt live, parked, failed, or the object ended). */
-	async #gate(swap: Swap, context: Context): Promise<void> {
-		// No timer of its own: the swap ends when its new attempt is live, parked or failed, and `readyTimeout` bounds
-		// the new attempt's own steps (Fable).
-		await awaitWithContext(swap.done.promise, context);
+	/**
+	 * Waits while an attempt activates until the object is live, failed or ended (`#live` then calls or throws);
+	 * rejects with the cause once the attempt parks on a failed dependency (`failed { waiting }`), and with
+	 * `unavailable/park_timeout` after `readyTimeout`, as a call parked on a reference. A hold over a link stays bound
+	 * while the old instance still changes (a swap, a restart's drain), so its consumer sees `live` and sends calls
+	 * that arrive here: they wait for the new attempt, never `not_ready` (decision "Swaps: dependents first").
+	 */
+	async #gate(context: Context): Promise<void> {
+		const { ready } = this.host.timeouts;
+		const due = Date.now() + ready;
+		for (;;) {
+			const state = this.#state;
+			if (state.kind !== "activating") return;
+			if (state.shown.kind === "failed") throw state.shown.cause.error;
+			const left = due - Date.now();
+			if (left <= 0) {
+				const message = `${this.label}: a call waited ${ready} ms for its object to go live`;
+				throw new ChordError({ code: "unavailable", reason: "park_timeout", message });
+			}
+			this.#changed ??= Promise.withResolvers();
+			const timer = Promise.withResolvers<void>();
+			const timeout = setTimeout(timer.resolve, left);
+			try {
+				await awaitWithContext(Promise.race([this.#changed.promise, timer.promise]), context);
+			} finally {
+				clearTimeout(timeout);
+			}
+		}
 	}
 
 	/** The keyed member `member` of the live object: its ultimate slot (slice 6a §12). */
@@ -543,6 +597,12 @@ export class ChordObject implements Target {
 	 */
 	claimTable(table: string): void {
 		this.host.store!.claims.table(table, this);
+	}
+
+	/** Its live queries by table (`self.query`), across its attempts: what its commits writing a table re-run. */
+	get liveQueries(): LiveQueries {
+		this.#liveQueries ??= new LiveQueries();
+		return this.#liveQueries;
 	}
 
 	/** Claims this object's documents in `namespace` of the host's store, as `claimTable`. */
@@ -626,7 +686,7 @@ export class ChordObject implements Target {
 	assertNoCycle(dependency: Target, context: Context): void {
 		const visited = new Set<Target>();
 		const cycle = dependency.pathTo(this, visited);
-		context.telemetry.metrics?.counter("chord.cycle.visits").add(visited.size);
+		chordMetrics(context.telemetry.metrics).counter("chord.cycle.visits").add(visited.size);
 		if (cycle === undefined) {
 			const across = dependency.activationId;
 			if (across === undefined || !this.chain.includes(across)) return;
@@ -753,7 +813,7 @@ export class ChordObject implements Target {
 		// A swap starts from a live object (`reloadFate`).
 		const old = (this.#state as Extract<ObjectState, { readonly kind: "live" }>).attempt;
 		const ending = this.host.endingOf(this.identity);
-		const attempt = new Attempt(this, this.#context);
+		const attempt = this.#newAttempt();
 		const swap: Swap = { old, parked: false, done: Promise.withResolvers() };
 		this.#state = { kind: "activating", attempt, shown: LOADING, swap };
 		old.handOver();
@@ -871,10 +931,15 @@ export class ChordObject implements Target {
 
 	/** A new attempt replacing the current one, holders told; its caller starts it (`#run`) after what it waits for. */
 	#replace(): Attempt {
-		const attempt = new Attempt(this, this.#context);
+		const attempt = this.#newAttempt();
 		this.#state = { kind: "activating", attempt, shown: LOADING };
 		this.#notify();
 		return attempt;
+	}
+
+	/** Its next attempt, its activation span linked to the trigger of the last (or its first trigger). */
+	#newAttempt(): Attempt {
+		return new Attempt(this, this.#context, { trigger: this.#trigger, attempt: ++this.#attempts });
 	}
 
 	/** The `released` error of an attempt a reload replaced. */
@@ -890,13 +955,23 @@ export class ChordObject implements Target {
 	/** Runs `attempt`'s activation once `ending` (its predecessors' teardowns, if any) finished; takes its outcome. */
 	async #run(attempt: Attempt, ending: Promise<void> | undefined): Promise<void> {
 		const outcome = await attempt.activate(ending);
+		this.#trigger = attempt.activationSpan ?? this.#trigger;
 		// The object may have ended after the activation's last step.
-		if (this.#state.kind !== "activating" || this.#state.attempt !== attempt) return;
+		if (this.#state.kind !== "activating" || this.#state.attempt !== attempt) {
+			attempt.activated({ kind: "ended" });
+			return;
+		}
 		switch (outcome.kind) {
 			case "live":
-				return this.#wentLive(attempt);
+				this.#wentLive(attempt);
+				attempt.activated(outcome);
+				return;
 			case "failed":
-				return this.#failed(attempt, outcome.cause);
+				this.#failed(attempt, outcome.cause);
+				attempt.activated({ ...outcome, retryAt: this.host.backoff.until(this.identity) });
+				return;
+			case "ended":
+				attempt.activated(outcome);
 		}
 	}
 
@@ -1089,6 +1164,7 @@ export class ChordObject implements Target {
 
 	/** Tells every holder that the state changed: references first follow what it shows now (`followed`). */
 	#notify(): void {
+		this.#wakeGate();
 		const holders = [...this.#holders];
 		// In one batch when some reference's members move (one frame each, a diamond over several sees one change); no
 		// commit at all for references that used none (activation churn).
@@ -1098,6 +1174,12 @@ export class ChordObject implements Target {
 		if (holders.some((holder) => holder.following)) this.host.batch.within(retarget, this.#context);
 		else retarget();
 		for (const holder of holders) holder.moved();
+	}
+
+	/** Calls waiting at the gate check the state again. */
+	#wakeGate(): void {
+		this.#changed?.resolve();
+		this.#changed = undefined;
 	}
 
 	/**
@@ -1116,6 +1198,7 @@ export class ChordObject implements Target {
 		// Its swapped-out attempts end before its teardown completes (they share its documents).
 		const previous = retiring === undefined ? endings : Promise.all([endings, retiring]).then(() => {});
 		this.#state = { kind: "ended", ended: { kind: "ended", error } };
+		this.#wakeGate();
 		for (const records of this.#jobs.values()) records.end(error);
 		if (this.#flush !== undefined) clearTimeout(this.#flush.timer);
 		this.#flush = undefined;

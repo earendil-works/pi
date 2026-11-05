@@ -128,7 +128,10 @@ function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean)
 		return { images: null, trueColor: true, hyperlinks: true };
 	}
 
-	if (termProgram === "alacritty" || termProgram === "vscode" || termProgram === "zed") {
+	// Alacritty does not set TERM_PROGRAM. It sets TERM=alacritty when its terminfo entry is
+	// installed (otherwise xterm-256color) and ALACRITTY_WINDOW_ID on Unix and macOS.
+	const isAlacritty = termProgram === "alacritty" || term.startsWith("alacritty") || process.env.ALACRITTY_WINDOW_ID;
+	if (isAlacritty || termProgram === "vscode" || termProgram === "zed") {
 		return { images: null, trueColor: true, hyperlinks: true };
 	}
 

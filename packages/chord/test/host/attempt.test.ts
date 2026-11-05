@@ -1,6 +1,7 @@
 import { createHook } from "node:async_hooks";
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
-import { type Context, BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
+import { type Context, BACKGROUND_CONTEXT as context, withCancel, withTelemetry } from "../../src/context/index.ts";
 import { arr, int, local, method, obj, opt, remote, str } from "../../src/contracts/index.ts";
 import { broken, ChordError, isChordError } from "../../src/data/index.ts";
 import { defineState, type SingletonHandle } from "../../src/documents/index.ts";
@@ -993,5 +994,133 @@ describe("parked attempts (dependency model §3)", () => {
 		expect(view.state.value).toEqual({ kind: "live" });
 		expect(failures(errors)).toEqual([]);
 		view.release();
+	});
+});
+
+describe("activation spans (slice 9)", () => {
+	const Dep = local("app.dep", { version: 1, params: { id: int() }, members: { n: int() } });
+
+	describe("a transient failure and its retry", () => {
+		fakeTimers();
+
+		it("is a root of the host's adapter, linked to its first trigger; a retry's links to the attempt before", async () => {
+			const telemetry = new InMemoryTelemetryContext();
+			let fail = true;
+			const { host } = await loaded(
+				(h) =>
+					h.serve(Page, ({ id }, self) => {
+						self.open(
+							async () => {
+								if (fail) throw new Error("flaky");
+							},
+							() => {},
+						);
+						return { label: constant(`p${id}`), slow: async () => null };
+					}),
+				{ telemetry },
+			);
+			await telemetry.startSpan({ name: "getter" }, async (span) => {
+				const getting = host.get(Page, { id: 1 }, withTelemetry(span, context));
+				await vi.advanceTimersByTimeAsync(0);
+				fail = false;
+				await vi.advanceTimersByTimeAsync(1_000);
+				await getting;
+			});
+			const spans = telemetry.getSpans();
+			const getter = spans.find(({ name }) => name === "getter")!;
+			const [first, second] = spans.filter(({ name }) => name === "chord.activate");
+			expect(first!.parentId).toBeNull();
+			expect(first!.links.map(({ context: carrier }) => carrier)).toEqual([getter.context]);
+			expect(first!.attributes).toMatchObject({
+				type: "app.page",
+				object: "app.page(1)",
+				attempt: 1,
+				outcome: "failed",
+			});
+			expect(first!.status).toMatchObject({ status: "error", error: { name: "activation_failed" } });
+			expect(first!.events).toEqual([{ name: "chord.retry", attributes: { backoff: 1_000 } }]);
+			expect(second!.links.map(({ context: carrier }) => carrier)).toEqual([first!.context]);
+			expect(second!.attributes).toMatchObject({ attempt: 2, outcome: "live" });
+			// The getter waited for the shared activation: it links to it.
+			expect(getter.links.map(({ context: carrier }) => carrier)).toEqual([first!.context]);
+		});
+	});
+
+	it("ends `parked` with the cause, records the park's duration, and resumes in a new span linked to it", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const opened = Promise.withResolvers<void>();
+		const { host } = await loaded(
+			(h) => {
+				h.serve(Dep, (_, self) => {
+					self.open(
+						() => opened.promise,
+						() => {},
+					);
+					return { n: constant(1) };
+				});
+				h.serve(Page, ({ id }, self) => ({
+					label: self.derive([self.get(Dep, { id }).n], ([n]) => `${n}`),
+					slow: async () => null,
+				}));
+			},
+			{ telemetry },
+		);
+		const getting = host.get(Page, { id: 1 }, context);
+		await flushed();
+		opened.resolve();
+		await getting;
+		const pages = telemetry
+			.getSpans()
+			.filter(({ name, attributes }) => name === "chord.activate" && attributes.type === "app.page");
+		expect(pages.map(({ attributes }) => [attributes.attempt, attributes.outcome])).toEqual([
+			[1, "parked"],
+			[1, "live"],
+		]);
+		expect(pages[0]!.events).toEqual([{ name: "chord.park", attributes: { cause: "loading" } }]);
+		expect(pages[1]!.links.map(({ context: carrier }) => carrier)).toEqual([pages[0]!.context]);
+		expect(telemetry.getMetrics().filter(({ name }) => name === "chord.park.duration")).toHaveLength(1);
+	});
+
+	it("records how a parked attempt ended in a short span linked to the parked one (review L4)", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { host } = await loaded(
+			(h) => {
+				h.serve(Dep, (_, self) => {
+					self.open(
+						() => new Promise(() => {}),
+						() => {},
+					);
+					return { n: constant(1) };
+				});
+				h.serve(Page, ({ id }, self) => ({
+					label: self.derive([self.get(Dep, { id }).n], ([n]) => `${n}`),
+					slow: async () => null,
+				}));
+			},
+			{ telemetry },
+		);
+		const page = host.hold(Page, { id: 1 }, context);
+		await flushed();
+		page.release();
+		await flushed();
+		const pages = telemetry
+			.getSpans()
+			.filter(({ name, attributes }) => name === "chord.activate" && attributes.type === "app.page");
+		expect(pages.map(({ attributes, settled }) => [attributes.outcome, settled])).toEqual([
+			["parked", true],
+			["ended", true],
+		]);
+		expect(pages[1]!.links.map(({ context: carrier }) => carrier)).toEqual([pages[0]!.context]);
+		await host.close(context);
+	});
+
+	it("starts nothing without an adapter that records", async () => {
+		const { host } = await loaded((h) =>
+			h.serve(Page, ({ id }) => ({ label: constant(`p${id}`), slow: async () => null })),
+		);
+		const ref = await host.get(Page, { id: 1 }, context);
+		expect(ref.label.value).toBe("p1");
+		const object = objects.at(-1)!.deref()!;
+		expect(object.activationSpan).toBeUndefined();
 	});
 });

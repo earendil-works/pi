@@ -90,9 +90,11 @@ Clients must also handle child-process startup failures, unexpected exits, stder
 
 ## Shutdown
 
-Close the child's stdin to request an orderly shutdown. Pi disposes the active runtime before exiting. Clients should still handle process signals and unexpected exits.
+Close the child's stdin to request an orderly shutdown. Pi disposes the active runtime and waits for pending work to finish before exiting, so give it time to exit before killing it. Clients should still handle process signals and unexpected exits.
 
-An extension can also request shutdown through its extension context. Pi completes shutdown after the current command or after the active run emits `agent_settled`.
+SIGTERM and SIGHUP also start an orderly shutdown. Once a shutdown has started, from either stdin EOF or a signal, a stdin EOF or a single signal does not interrupt it; a second signal exits at once. Closing stdin and sending SIGTERM together is safe.
+
+An extension can also request shutdown with `ctx.shutdown()`. If the session is idle and no command is being handled, Pi shuts down right away. Otherwise it shuts down once the current command finishes (for `prompt`, once the prompt settles) or the active run emits `agent_settled`. (A request made while an extension-started compaction is running waits for the next command or run to finish.)
 
 ## Minimal client
 

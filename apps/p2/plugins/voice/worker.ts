@@ -21,12 +21,15 @@ import {
 	signalOf,
 } from "@p2/app/v1";
 import { durableContext } from "@p2/app/v1/node";
-import { CommitSignal, Extensions, harnessOf } from "@p2/app/v1/worker";
+import { agentConversation, CommitSignal, Extensions, harnessOf } from "@p2/app/v1/worker";
 import { VoiceChoiceSchema, VoiceMode } from "./contract.ts";
 
 export type VoiceChoice = Static<typeof VoiceChoiceSchema>;
 
-/** The owner's switch and voice, stored in the conversation (a fork or a new subagent starts without voice). */
+/**
+ * The owner's switch and voice, stored per agent (`agentConversation`: the main agent's on conversation 1, whichever
+ * `/tree` branch it works in; a new subagent starts without voice).
+ */
 export const VoiceModeDoc = defineDoc<{ enabled: boolean; voice: VoiceChoice | null }>({
 	kind: "voice.mode",
 	version: 2,
@@ -85,7 +88,8 @@ export const voiceExtension = defineExtension({
 	name: "p2-voice",
 	sections: [
 		section("voice", async (input, context) => {
-			const doc = await input.read.snapshot(VoiceModeDoc, input.conversationId, context);
+			const holder = await agentConversation(input.read, input.conversationId, context);
+			const doc = await input.read.snapshot(VoiceModeDoc, holder, context);
 			return guestVoices.has(String(input.conversationId)) || doc?.enabled
 				? voicePrompt(doc?.voice?.language)
 				: undefined;
@@ -111,8 +115,10 @@ export default defineFacet((host) => {
 			if (!canSend(principal, session)) throw forbidden("participants only");
 			const id = conversation as ConversationId;
 			const harness = harnessOf(self);
+			/** Where the agent's voice mode is (the main agent's on conversation 1); set when the object opens. */
+			let holder = id;
 			const read = async (ctx: Context) =>
-				(await harness().durable.snapshot(VoiceModeDoc, id, ctx)) ?? {
+				(await harness().durable.snapshot(VoiceModeDoc, holder, ctx)) ?? {
 					enabled: false,
 					voice: null,
 				};
@@ -127,13 +133,14 @@ export default defineFacet((host) => {
 				async (ctx) => {
 					const durable = harness().durable;
 					if (!(await durable.conversation(id, ctx))) throw new Error(`Unknown conversation ${conversation}`);
+					holder = await agentConversation(durable, id, ctx);
 					await show(await read(ctx), ctx);
 					return new CommitSignal(durable, (publication) =>
 						publication.changes.some(
 							(change) =>
 								change.type === "document" &&
 								change.record.kind === VoiceModeDoc.definition.kind &&
-								change.conversationId === id,
+								change.conversationId === holder,
 						),
 					);
 				},
@@ -151,7 +158,7 @@ export default defineFacet((host) => {
 			const commit = async (ctx: Ctx, change: (doc: { enabled: boolean; voice: VoiceChoice | null }) => void) => {
 				const durable = await harness().durable.conversation(id, durableContext(ctx));
 				if (!durable) throw invalid("args", `Unknown conversation ${conversation}`);
-				await durable.commit(async (tx) => change(await tx.doc(VoiceModeDoc, id)), durableContext(ctx));
+				await durable.commit(async (tx) => change(await tx.doc(VoiceModeDoc, holder)), durableContext(ctx));
 				return null;
 			};
 			const enabled = self.derive([shown], ([value]) => value.enabled);

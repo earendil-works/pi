@@ -131,6 +131,7 @@ are the current ones. The early chapters wire hosts by hand to show the parts; t
 <li><a href="#reload">VIII. Changing a Plugin</a></li>
 <li><a href="#base">IX. Base Code and Plugins</a></li>
 <li><a href="#kit">X. The App Kit</a></li>
+<li><a href="#telemetry">XI. Seeing a Request Across Hosts</a></li>
 <li><a href="#reference">Appendix A: Reference</a></li>
 </ol></nav>
 
@@ -169,7 +170,7 @@ addressable hosts; an <strong>address</strong> (<code>Session({ id: &quot;p1&quo
 on its own host only) or <code>remote</code> (used from any host). An <strong>object</strong> is one instance of a type, per params. A
 <strong>facet</strong> is a plugin&#39;s declarations for one host kind. A <strong>plugin</strong> is a directory with a <code>package.json</code>. A
 <strong>reference</strong> is what you get when you ask for an object (<code>host.get</code>, <code>self.get</code>, <code>ctx.get</code>). A <strong>document</strong> is data an object
-stores, changed in <strong>transactions</strong>; a <strong>table</strong> holds many records with queries, in the host&#39;s <strong>store</strong>; a <strong>derive</strong> is a value computed from others; a <strong>native</strong> is an outside
+stores, changed in <strong>transactions</strong>; a <strong>table</strong> holds many records with queries, in the host&#39;s <strong>store</strong>, and a <strong>live query</strong> keeps some of its rows current; a <strong>derive</strong> is a value computed from others; a <strong>native</strong> is an outside
 resource an object opens and closes. A <strong>registry</strong> is an
 extension point: one plugin defines it, others contribute. A <strong>rollout</strong> applies a build to the hosts in order.</p>
 </section>
@@ -258,6 +259,15 @@ host.<span class="tk-f">serve</span>(<span class="tk-t">NoteStore</span>, (_para
 <p>Persisted data lives only in <code>local</code> objects with empty params (one per host and type), so its address never depends
 on who asked or with which params; an object with params (a view per project) reads from such a store. Writes go
 through the same transactions as documents: a note row and a document can change in one commit.</p>
+<p>A table has no watch of its own. To show rows live (the newest notes in a tab), the object declares a <strong>live query</strong>
+over its own table, with a limit:</p>
+<pre><code><span class="tk-k">const</span> newest = self.<span class="tk-f">query</span>(rows, recent, <span class="tk-n">50</span>);             <span class="tk-c">// the 50 newest rows, a value like a document's</span>
+<span class="tk-k">return</span> { newest, add, page };                            <span class="tk-c">// a member: tabs watch it and get only the changes</span></code></pre>
+<p>Chord runs the query before the object goes live, and again in every commit of the object that writes <code>rows</code>, and
+sends what changed. Only the object&#39;s own tables: it is their only writer, so its commits are exactly when the rows
+can change, and a commit that writes no such table costs nothing. Each writing commit runs the query once more, at
+most the limit&#39;s rows: right for data people edit, wrong for a table written hundreds of times a second (there may be
+dragons; keep what the tab shows in a document the object writes with each change instead). The limit is required.</p>
 <p>A <strong>derive</strong> is a value computed from other values, recomputed whenever they change. It is how an object offers
 something it does not store:</p>
 <pre><code><span class="tk-k">const</span> count = self.<span class="tk-f">derive</span>([doc], ([notes]) =&gt; notes.items.length);   <span class="tk-c">// 0, 1, 2, … as notes are added</span>
@@ -277,7 +287,8 @@ self.<span class="tk-f">onLive</span>(<span class="tk-k">async</span> (ctx) =&gt
 	<span class="tk-k">for</span> <span class="tk-k">await</span> (<span class="tk-k">const</span> file <span class="tk-k">of</span> inbox.value.<span class="tk-f">files</span>(ctx.abortSignal)) <span class="tk-k">await</span> <span class="tk-f">importNote</span>(file, ctx);
 });</code></pre>
 <p>Natives are why some objects restart when their plugin changes: an open connection cannot be moved to new code, so
-Chord closes it and opens it again. Objects without natives are swapped in place.</p>
+Chord closes it and opens it again. Objects without natives are swapped in place. A first read of a table is no
+native: declare it as a live query, not with <code>self.open</code>, or the object restarts at every change of its plugin.</p>
 <p><strong>Await what you start in a root or a handler.</strong> What is started with a context ends with it. Code outside objects
 gets its <code>ctx</code> from <code>host.root(fn, ctx)</code>, and that scope seals when <code>fn</code> returns; a handler&#39;s context ends when its
 caller cancels or its object ends. A change still waiting when its context ends is cancelled before it commits:</p>
@@ -387,6 +398,17 @@ gets the current value in one frame. The UI shows a banner from <code>ref.state<
 <code>tui</code> facets, rendering with whatever terminal library the app chose. <strong>What a client never does</strong>: serve a <code>remote</code>
 type, be routed to, or keep data others rely on. Data that must outlive a tab belongs in an object on the server or a
 worker.</p>
+<p><strong>Text in the viewer&#39;s language</strong> is a client&#39;s job too, because two people looking at the same object may read
+different languages. A plugin writes its texts once, in a shared <code>messages.ts</code>; a client renders them in its host&#39;s
+language (the user&#39;s pick, else the device&#39;s), and objects store messages as data, never sentences (design §23,
+&quot;Messages and languages&quot;):</p>
+<pre><code><span class="tk-c">// plugins/notes/messages.ts: the first catalog types the others</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> messages = <span class="tk-f">defineMessages</span>(<span class="tk-s">"notes"</span>, { en: { empty: <span class="tk-s">"No notes yet"</span> }, de: { empty: <span class="tk-s">"Noch keine Notizen"</span> } });
+<span class="tk-c">// plugins/notes/web.tsx: the facet contributes its catalogs; a component renders in the page's language</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Translations</span>, messages.translations);
+<span class="tk-k">const</span> { t } = <span class="tk-f">useMessages</span>(messages);                       <span class="tk-c">// re-renders when the user picks another language</span>
+<span class="tk-c">// plugins/notes/worker.ts: a notice as data; every client renders it with t.render(notice)</span>
+draft.notice = messages.<span class="tk-f">message</span>(<span class="tk-s">"empty"</span>);</code></pre>
 </section>
 
 <section class="chapter" id="plugins"><header class="opener"><div class="numeral">V</div><h2>Plugins</h2><p class="lede">Move the code into a directory that can be added, edited and removed while the app runs.</p></header>
@@ -583,6 +605,11 @@ then gives every object of the changed plugin its fate:</p>
 <p>The tab&#39;s reference follows the new object and gets one frame with the difference. Nothing reconnects. If the edit
 is broken (a syntax error, a factory that throws), that plugin keeps its old code on that host and the report says why;
 every other plugin of the rollout applies.</p>
+<p>A tab applies a new web script the same way, without reloading the page, and the UI keeps what lives outside the
+changed plugin. The changed plugin&#39;s own components are new functions, so React mounts them anew and their <code>useState</code>
+starts over. What must survive the update (a half-typed note, a scroll position) goes into <strong>page state</strong>, kept by the
+tab&#39;s host under a key: <code>usePageState(key, initial)</code> from <code>chord/react</code> instead of <code>useState</code>, and
+<code>scope.pageState(key, initial)</code> on a terminal&#39;s <code>TuiScope</code> (design §21, &quot;UI on client hosts&quot;).</p>
 <div class="note"><b class="tag">Versions</b><p>A change to a contract (a new field in <code>Notes</code>&#39;s state) gets a new <code>version</code>. A tab built with the old contract keeps
 working if the provider maps the old version (<code>accepts</code>); otherwise it waits with &quot;version mismatch&quot; until it reloads.</p>
 </div>
@@ -701,6 +728,57 @@ own store at one consistent point. <code>app.importData(path, Project({ id: &quo
 refuses one that already has data (example 55).</p>
 </section>
 
+<section class="chapter" id="telemetry"><header class="opener"><div class="numeral">XI</div><h2>Seeing a Request Across Hosts</h2><p class="lede">One trace from a click in a client through the server&#39;s relay into a worker&#39;s method: adapters, carriers and spans.</p></header>
+<p class="dropcap">A tab calls <code>notes.add(…)</code>. The call leaves the tab, the server relays it, the project&#39;s worker runs the method, the
+method commits. When it is slow, where did the time go? Each host is a different process, so no single log has the
+answer. Chord&#39;s telemetry makes the four steps one <strong>trace</strong>: a tree of <strong>spans</strong> (named, timed pieces of work), each
+host recording its own with its own <strong>adapter</strong>, joined by <strong>carriers</strong> (a few strings naming the caller&#39;s span) that
+ride on the wire with every <code>hold</code> and <code>call</code>.</p>
+<p>Give the server a store and the kit does the rest. The SQLite store (<code>@earendil-works/chord/telemetry-sqlite</code>)
+records settled spans and metrics in one file in the data directory, and the server is its only writer: every worker
+records in memory and sends its spans and metrics to the server once a second over its link, and a page that records
+(<code>startPage({ telemetry: true })</code>) sends its own every few seconds and when hidden (example 62):</p>
+<pre><code><span class="tk-c">// start.ts: the server, its store, and whom spans were for (default: the principal's key)</span>
+<span class="tk-k">const</span> telemetry = <span class="tk-k">await</span> <span class="tk-f">createSqliteTelemetry</span>(<span class="tk-k">await</span> <span class="tk-f">openNodeSqliteDatabase</span>(<span class="tk-f">join</span>(dataDir, <span class="tk-s">"telemetry.sqlite"</span>)));
+<span class="tk-k">await</span> <span class="tk-f">startServer</span>({ ...options, telemetry, principalAttributes: (p) =&gt; ({ <span class="tk-s">"chord.principal"</span>: p.kind }) }, ctx);
+<span class="tk-c">// worker.ts: nothing about telemetry (its own `principalAttributes`, if any)</span>
+<span class="tk-f">startWorker</span>({ api, kinds, onError });
+<span class="tk-c">// the web entry: the page records</span>
+<span class="tk-f">startPage</span>({ ...options, telemetry: <span class="tk-k">true</span> });</code></pre>
+<p>A page is untrusted: the server checks each batch&#39;s every field (sizes, no control characters, ids printable ASCII),
+keeps only spans under the page&#39;s own ids, caps them per page and minute, marks them <code>chord.host: browser</code> and stamps
+them with the principal of their link. A click is a trace of its own with <code>host.root(fn, ctx, { trace: { name } })</code>.</p>
+<p>Nothing else changes in plugin code. A method&#39;s <code>ctx.telemetry</code> is its <code>chord.method</code> span, so whatever it calls or
+commits is parented under it, on its host or the next one. <code>ctx.trace(name, attributes, fn)</code> adds a span of your own:</p>
+<pre><code>add: <span class="tk-k">async</span> (n, ctx) =&gt; {
+	<span class="tk-k">await</span> ctx.<span class="tk-f">trace</span>(<span class="tk-s">"tally.check"</span>, { n }, <span class="tk-k">async</span> () =&gt; {
+		<span class="tk-k">if</span> (!<span class="tk-t">Number</span>.<span class="tk-f">isSafeInteger</span>(n) || n &lt;= <span class="tk-n">0</span>) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">Error</span>(<span class="tk-s">"add a positive count"</span>);
+	});
+	<span class="tk-k">return</span> store.<span class="tk-f">add</span>(n, ctx);
+},</code></pre>
+<p>The store renders the click&#39;s trace across the three hosts (the client&#39;s spans, the server&#39;s relay, the worker&#39;s
+methods and the commit, an event of the method that made it); every span of Chord names the host that recorded it
+(<code>chord.host</code>: its address key, <code>client</code> without an address), and method and call spans whom they were for
+(<code>chord.principal</code>, the host&#39;s <code>principalAttributes</code> hook):</p>
+<pre><code>tally.click
+  chord.hold chord.host="client" type="tally.counter" object="tally.counter(t1)" address.kind="tally" outcome="bound"
+    chord.relay chord.host="server" type="tally.counter" member="hold" upstream.kind="tally" outcome="ok"
+      → link to chord.resolve
+  chord.call chord.host="client" type="tally.counter" member="add" object="tally.counter(t1)" address.kind="tally" outcome="ok"
+    chord.relay chord.host="server" type="tally.counter" member="#0" upstream.kind="tally" outcome="ok"
+      chord.method chord.host="tally|t1" type="tally.counter" member="add" object="tally.counter(t1)" principal.kind="owner" chord.principal="{\"kind\":\"owner\"}" outcome="ok"
+        tally.check chord.host="tally|t1" n=3
+        chord.method chord.host="tally|t1" type="tally.store" member="add" object="tally.store" principal.kind="worker" chord.principal="{\"kind\":\"worker\",\"tally\":\"tally|t1\"}" outcome="ok"
+          · chord.commit documents=1 ops=1 rows=0 duration=1.9</code></pre>
+<p>Work shared by several requests is its own trace, linked rather than nested: the worker&#39;s start (<code>chord.resolve</code>),
+an object&#39;s activation (<code>chord.activate</code>, linked to whoever asked first). Routines and job phases are roots too; a job&#39;s
+<code>run</code> and <code>finish</code> stay under the carrier its start stored, even when a restarted worker resumes the run. Metrics
+(<code>chord.link.bytes</code>, <code>chord.commit.duration</code>, <code>chord.calls.in_flight</code>, ...) are aggregated per 10 s; ids are never their
+attributes. Without an adapter (the default), Chord starts no span and sends no carrier: a call costs what it did before.
+A script or a viewer reads the file with <code>openTelemetryStore(path)</code> (<code>@earendil-works/chord/telemetry-sqlite/node</code>),
+which opens it read-only and offers only the read interface (<code>findTraces</code>, <code>getTrace</code>, <code>findMetrics</code>).</p>
+</section>
+
 <section class="chapter appendix" id="reference"><header class="opener"><div class="numeral">A</div><h2>Reference</h2></header>
 <table>
 <thead>
@@ -772,7 +850,7 @@ refuses one that already has data (example 55).</p>
 </tbody></table>
 </section>
 
-<p class="colophon">Hosts and Plugins · third edition · 2026-11-02 · Chord v2 slices 1-10, 12 and 13</p>
+<p class="colophon">Hosts and Plugins · fourth edition · 2026-11-04 · Chord v2 slices 1-13, messages and languages, telemetry</p>
 </div></div>
 <script>(function activate(root) {
 	const replay = (f) => {

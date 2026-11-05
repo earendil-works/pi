@@ -10,8 +10,9 @@ stats:
 note: |
   A proposal by the redesign session, asked for by the owner on 2026-11-02 ("i18n also needs to be part of the app
   kit"; "need code example"). It starts from mini-lit's `src/i18n.ts` (typed catalogs in code) and adapts it to
-  plugins that are built separately, reload live and run on several hosts. Not built; it would land in the app kit
-  with slice 11.
+  plugins that are built separately, reload live and run on several hosts. Accepted 2026-11-03 and built after slice
+  11, with three refinements (a contribution is a list, each rendering facet contributes its plugin's own catalogs,
+  `t` is bound per host): design.md §23 "Messages and languages" is the current statement.
 colophon: Speaking Every Language · proposal · 2026-11-02
 ---
 

@@ -1,12 +1,15 @@
 // Routines (§14): the standing behaviour an object or a facet declares, `self.on(source, fn)` and `self.onLive(fn)`.
 // They start once their owner went live and stop when it ends (their ctx aborted, the drain waits for running calls);
-// each call gets its own ctx; a call that throws is reported and called again after a backoff.
+// each call gets its own ctx and its own `chord.routine` root span; a call that throws is reported and called again
+// after a backoff.
 
-import type { Context } from "../context/index.ts";
+import type { TelemetryContext } from "@earendil-works/pi-telemetry";
+import { type Context, withTelemetry } from "../context/index.ts";
 import type { Principal } from "../data/index.ts";
 import { type Op, PendingOps } from "../delta/index.ts";
 import type { JsonValue } from "../json.ts";
 import { NativeSource, Source } from "../state/internal.ts";
+import { capped, ended, OpenSpan, untraced } from "../telemetry.ts";
 import {
 	NativeWatch,
 	type NativeWatchable,
@@ -27,6 +30,8 @@ import { sleep } from "./sleep.ts";
  */
 export type RoutineOwner = {
 	readonly label: string;
+	/** Its type's name (routine spans). */
+	readonly type: string;
 	readonly host: AnyHost;
 	readonly caller: Caller;
 	readonly context: Context;
@@ -83,16 +88,22 @@ export interface RoutineDeclarations<P extends Principal = Principal> {
 type Declaration =
 	| {
 			readonly kind: "on";
-			readonly at: Position;
+			readonly at: RoutinePosition;
 			readonly source: Watchable<unknown> | NativeWatchable<unknown>;
 			readonly fn: (...args: never[]) => void | Promise<void>;
 	  }
-	| { readonly kind: "onLive"; readonly at: Position; readonly fn: OnLiveHandler };
+	| { readonly kind: "onLive"; readonly at: RoutinePosition; readonly fn: OnLiveHandler };
+
+/** A routine's kind and position (`Position`, a routine's). */
+type RoutinePosition = Position & { readonly kind: "on" | "onLive" };
 
 /** How one routine call ended. */
 type Called = { readonly kind: "done" } | { readonly kind: "failed"; readonly error: unknown };
 
 const DONE: Called = { kind: "done" };
+
+/** One routine call: how it ended, and its span, which its routine ends once it knows whether a retry follows. */
+type CallEnd = { readonly called: Called; readonly span: OpenSpan<"chord.routine"> | undefined };
 
 /** What `#failing` says of a source failed now. */
 const FAILING = { kind: "failed" } as const;
@@ -142,10 +153,15 @@ async function live(owner: RoutineOwner, { at, fn }: Extract<Declaration, { kind
 	let delay: number | undefined;
 	while (!owner.context.abortSignal?.aborted) {
 		const started = Date.now();
-		const called = await call(owner, fn);
-		if (called.kind === "done" || owner.context.abortSignal?.aborted) return;
+		const end = await call(owner, at, fn, undefined);
+		const { called } = end;
+		if (called.kind === "done" || owner.context.abortSignal?.aborted) {
+			callEnded(end, owner, undefined);
+			return;
+		}
 		failed(owner, at, called.error);
 		delay = nextDelay(Date.now() - started >= LONG_RUN ? undefined : delay);
+		callEnded(end, owner, delay);
 		try {
 			await sleep(delay, owner.context);
 		} catch {
@@ -155,17 +171,34 @@ async function live(owner: RoutineOwner, { at, fn }: Extract<Declaration, { kind
 }
 
 /**
- * Runs one routine call under its own ctx (its `ctx.get` references released when it settles), admitted to the owner's
- * drain before the handler runs: a handler may end its own owner before its first await. Resolves with how it ended;
- * never rejects.
+ * Runs one routine call under its own ctx (its `ctx.get` references released when it settles) in its `chord.routine`
+ * root span, linked to `trigger` (the span of the commit that changed its source, when known), admitted to the owner's
+ * drain before the handler runs: a handler may end its own owner before its first await. Resolves with how it ended and
+ * its span, still open (`callEnded`); never rejects.
  */
-function call(owner: RoutineOwner, invoke: (ctx: Ctx) => void | Promise<void>): Promise<Called> {
-	const ctx = new CallContext(owner.context, owner.caller, owner.host);
-	const settled = Promise.withResolvers<Called>();
+function call(
+	owner: RoutineOwner,
+	at: RoutinePosition,
+	invoke: (ctx: Ctx) => void | Promise<void>,
+	trigger: TelemetryContext | undefined,
+): Promise<CallEnd> {
+	const { host, context } = owner;
+	const span = untraced(host.telemetry)
+		? undefined
+		: new OpenSpan(host.telemetry, "chord.routine", {
+				"chord.host": host.spanHost,
+				type: owner.type,
+				object: capped(owner.label),
+				routine: at.kind,
+				position: at.position,
+			});
+	if (span !== undefined && trigger !== undefined && !untraced(trigger)) span.span.addLink({ context: trigger });
+	const ctx = new CallContext(span === undefined ? context : withTelemetry(span.span, context), owner.caller, host);
+	const settled = Promise.withResolvers<CallEnd>();
 	owner.admit(settled.promise, () => ctx.settle());
 	const finish = (called: Called): void => {
 		ctx.settle();
-		settled.resolve(called);
+		settled.resolve({ called, span });
 	};
 	// Plugin code: a synchronous throw becomes the rejection.
 	(async () => invoke(ctx))().then(
@@ -173,6 +206,22 @@ function call(owner: RoutineOwner, invoke: (ctx: Ctx) => void | Promise<void>): 
 		(error: unknown) => finish({ kind: "failed", error }),
 	);
 	return settled.promise;
+}
+
+/**
+ * A routine call's span ends: `ok`, `aborted` (a cancel), or `error` with `routine_failed` and, when its routine calls
+ * again after a backoff, a `chord.retry` event with that delay.
+ */
+function callEnded({ called, span }: CallEnd, owner: RoutineOwner, backoff: number | undefined): void {
+	if (span === undefined) return;
+	if (called.kind === "done") {
+		span.span.setAttributes({ outcome: "ok" });
+	} else {
+		const outcome = ended(span.span, "routine_failed", called.error, owner.context.abortSignal);
+		if (outcome === "error" && backoff !== undefined) span.span.addEvent("chord.retry", { backoff });
+		span.span.setAttributes({ outcome });
+	}
+	span.end();
 }
 
 /** Reports a failed routine call or source. */
@@ -222,6 +271,8 @@ class OnRoutine {
 	#delay: number | undefined;
 	/** The source failed after its last value: no call until its next value (a retry waits too). */
 	#failed = false;
+	/** The span of the commit that made the newest frame (a frame's context), linked from the next call's span. */
+	#trigger: TelemetryContext | undefined;
 
 	constructor(owner: RoutineOwner, declaration: Extract<Declaration, { kind: "on" }>) {
 		this.#owner = owner;
@@ -256,8 +307,8 @@ class OnRoutine {
 		void watch.closed.then((end) => this.#end(end));
 		try {
 			// Both listeners return at once.
-			watch.start((call: WatchCall<unknown> | NativeWatchCall<unknown>) => {
-				if (call.kind === "value") this.#frame(call);
+			watch.start((call: WatchCall<unknown> | NativeWatchCall<unknown>, frame: Context) => {
+				if (call.kind === "value") this.#frame(call, frame.telemetry);
 				else this.#failure();
 				return Promise.resolve();
 			});
@@ -348,11 +399,12 @@ class OnRoutine {
 	 * A frame of the watch: kept as the newest; it is called at once when nothing runs or waits, during a backoff too
 	 * (the backoff ends); while a call runs or settles it waits for the next call.
 	 */
-	#frame(call: WatchValueCall<unknown> | NativeWatchValueCall<unknown>): void {
+	#frame(call: WatchValueCall<unknown> | NativeWatchValueCall<unknown>, trigger: TelemetryContext): void {
 		const state = this.#state;
 		if (state.kind === "ended") return;
 		this.#failed = false;
 		this.#pending = { value: call.value };
+		this.#trigger = trigger;
 		if (!this.#native) {
 			// A JSON watch's call, as its class decided.
 			const { ops, retired } = call as WatchValueCall<unknown>;
@@ -374,7 +426,9 @@ class OnRoutine {
 		const { value } = pending;
 		this.#state = { kind: "calling" };
 		this.#last = value;
-		void call(this.#owner, this.#invocation(value)).then((called) => this.#called(called));
+		const trigger = this.#trigger;
+		this.#trigger = undefined;
+		void call(this.#owner, this.#declaration.at, this.#invocation(value), trigger).then((end) => this.#called(end));
 	}
 
 	/**
@@ -401,7 +455,10 @@ class OnRoutine {
 	 * arrived during the call (a handler that changes its own source and throws would feed itself otherwise); its timer
 	 * calls with the newest value, or the last call's, as a whole value.
 	 */
-	#called(called: Called): void {
+	#called(end: CallEnd): void {
+		const { called } = end;
+		if (this.#state.kind === "ended" || called.kind === "done" || this.#aborted())
+			callEnded(end, this.#owner, undefined);
 		if (this.#state.kind === "ended") return;
 		if (called.kind === "done") {
 			this.#basis = "last";
@@ -418,9 +475,11 @@ class OnRoutine {
 		this.#delay = nextDelay(this.#delay);
 		// The source failed meanwhile: the retry waits for its next value, never the stale last one.
 		if (this.#failed) {
+			callEnded(end, this.#owner, undefined);
 			this.#state = { kind: "idle" };
 			return;
 		}
+		callEnded(end, this.#owner, this.#delay);
 		const timer = setTimeout(() => {
 			this.#pending ??= { value: this.#last };
 			this.#next();

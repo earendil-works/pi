@@ -11,6 +11,8 @@ import {
 	type FacetSelf,
 	type Host,
 	type HostError,
+	type PluginFacet,
+	type Reference,
 	type Self,
 	type StoreSelf,
 	untilAborted,
@@ -30,6 +32,7 @@ import {
 	flushed,
 	holdNextCommit,
 	instancesOf,
+	linked,
 	loaded,
 	memoryStore,
 	metered,
@@ -44,6 +47,7 @@ import {
 	StoreRestartable,
 	statesOf,
 	storeRestartable,
+	type TestPrincipal,
 	testCodec,
 	transported,
 	valuesOf,
@@ -1404,6 +1408,234 @@ describe("reload: fates (slice 7b §4)", () => {
 		await flushed();
 		expect(pure.state.value).toEqual({ kind: "live" });
 		expect(pure.label.value).toBe("with dep");
+		await host.close(context);
+	});
+});
+
+describe('reload: fates start dependents first (decision "Swaps: dependents first")', () => {
+	/** A provider: its name and `echo`, which answers it. */
+	const Base = local("app.base", { version: 1, params: {}, members: { name: str(), echo: method(undefined, str()) } });
+	/** `Base` v2: a member added, so a consumer of v2 binds only the new code. */
+	const BaseV2 = evolve(Base, (e) => e.addState("extra", str()));
+	/** A dependent with empty params (it contributes): its label over the provider's name, `ask` through `echo`. */
+	const User = local("app.user", { version: 1, params: {}, members: { label: str(), ask: method(undefined, str()) } });
+	/** A remote dependent held over a link. */
+	const Viewer = remote("app.viewer", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		variants: { v: { state: { label: str() }, methods: { ask: method(undefined, str()) } } },
+	});
+	const Names = defineRegistry<string, string[]>("app.user-names", { version: 1 });
+
+	/** A host loaded with `facets`, its background errors collected. */
+	async function loadedFacets(facets: readonly PluginFacet[]) {
+		const errors: HostError[] = [];
+		const host = createHost({ onError: (error) => errors.push(error) });
+		await host.load(facets, context);
+		return { host, errors };
+	}
+
+	/** Serves `Base` as code `code`; its new code opens a native that waits for `opened` when given (a restart). */
+	function serveBase(h: FacetHost, code: string, opened?: Promise<void>): void {
+		h.serve(Base, (_, self) => {
+			if (opened !== undefined)
+				self.open(
+					async () => await opened,
+					() => {},
+				);
+			return { name: constant(code), echo: async () => code };
+		});
+	}
+
+	/** A dependent's members as code `code` over `base`: its label over the provider's name, `ask` through `echo`. */
+	function over(own: Self, code: string, base: Reference<typeof Base>) {
+		return {
+			label: own.derive([base.name], ([name]) => `${code} ${name}`),
+			ask: async (ctx: Context) => `${code}>${await base.echo(ctx)}`,
+		};
+	}
+
+	/** Serves `User` as code `code` over `Base`. */
+	function serveUser(h: FacetHost, code: string): void {
+		h.serve(User, (_, own) => over(own, code, own.get(Base, {})));
+	}
+
+	it("a pure dependent and its provider in one plugin both swap: no parking, its contribution replaced in one batch", async () => {
+		const composed: string[][] = [];
+		const registry = defineFacet((h) =>
+			h.serve(Names, {
+				compose: (table) => {
+					const names = table.map(({ value }) => value);
+					composed.push(names);
+					return names;
+				},
+			}),
+		);
+		const app = (code: string) =>
+			defineFacet((h) => {
+				serveBase(h, code);
+				h.serve(User, (_, own) => {
+					(own as unknown as StoreSelf).contribute(Names, code);
+					return over(own, code, own.get(Base, {}));
+				});
+			});
+		const { host, errors } = await loadedFacets([
+			{ name: "@test/app", facet: app("v1") },
+			{ name: "@test/names", facet: registry },
+		]);
+		const user = await host.get(User, {}, context);
+		const names = await host.registry(Names, context);
+		expect(names.value).toEqual(["v1"]);
+		const frames: string[][] = [];
+		(await names.watch(context)).start(async (call) => {
+			if (call.kind === "value") frames.push(call.value);
+		});
+		composed.length = 0;
+		const report = await host.reload(
+			[
+				{ name: "@test/app", facet: app("v2") },
+				{ name: "@test/names", facet: registry },
+			],
+			context,
+		);
+		// The report keeps the order of the objects: the provider first.
+		expect(report.objects).toEqual([
+			{ object: "app.base", kind: "swapped" },
+			{ object: "app.user", kind: "swapped" },
+		]);
+		await flushed();
+		// The old contribution left in the batch the new one entered: one composition, never a table without it.
+		expect(names.value).toEqual(["v2"]);
+		expect(composed).toEqual([["v2"]]);
+		await delivered();
+		expect(frames).toEqual([["v2"]]);
+		expect(user.label.value).toBe("v2 v2");
+		expect(await user.ask(context)).toBe("v2>v2");
+		expect(failures(errors)).toEqual([]);
+		await host.close(context);
+	});
+
+	it("a remote dependent's holds never see loading; its calls reach the provider's new code", async () => {
+		const serve = (h: FacetHost<TestPrincipal>, code: string) => {
+			serveBase(h as FacetHost, code);
+			h.serve(Viewer, (_, _principal, own) => ({ variant: "v", members: over(own, code, own.get(Base, {})) }));
+		};
+		const { server, client } = await linked((h) => serve(h, "v1"));
+		const viewer = await client.get(Viewer, {}, context);
+		const states = statesOf(await viewer.state.watch(context));
+		const report = await server.reload(
+			[{ name: "@test/app", facet: defineFacet<TestPrincipal>((h) => serve(h, "v2")) }],
+			context,
+		);
+		expect(report.objects).toEqual([
+			{ object: "app.base", kind: "swapped" },
+			{ object: "app.viewer", kind: "swapped" },
+		]);
+		expect(await viewer.ask(context)).toBe("v2>v2");
+		await transported();
+		expect(viewer.label.value).toBe("v2 v2");
+		expect(states).toEqual([]);
+		await client.close(context);
+		await server.close(context);
+	});
+
+	it("a dependent whose new code needs the provider's new version parks, then goes live: never on the old instance", async () => {
+		const app = (code: string, next: boolean) =>
+			defineFacet((h) => {
+				if (next) {
+					h.serve(BaseV2, () => ({ name: constant(code), extra: constant("extra"), echo: async () => code }));
+				} else serveBase(h, code);
+				h.serve(User, (_, own) => {
+					if (next) {
+						const base = own.get(BaseV2, {});
+						return {
+							label: own.derive([base.name, base.extra], ([name, extra]) => `${code} ${name} ${extra}`),
+							ask: async (ctx: Context) => `${code}>${await base.echo(ctx)}`,
+						};
+					}
+					return over(own, code, own.get(Base, {}));
+				});
+			});
+		const { host, errors } = await loadedFacets([{ name: "@test/app", facet: app("v1", false) }]);
+		const user = await host.get(User, {}, context);
+		const report = await host.reload([{ name: "@test/app", facet: app("v2", true) }], context);
+		// Started first, the dependent's v2 request does not bind the provider still on v1 (`ChordObject.hold`): it
+		// waits unbound, then binds the provider's swap and parks until its new instance is live.
+		expect(report.objects).toEqual([
+			{ object: "app.base", kind: "swapped" },
+			{
+				object: "app.user",
+				kind: "parked",
+				cause: {
+					kind: "waiting",
+					error: expect.objectContaining({ message: expect.stringContaining("app.base v2 is not served here") }),
+				},
+			},
+		]);
+		await flushed();
+		expect(user.state.value).toEqual({ kind: "live" });
+		expect(user.label.value).toBe("v2 v2 extra");
+		expect(await user.ask(context)).toBe("v2>v2");
+		expect(errors.filter(({ kind }) => kind === "activation_failed" || kind === "object_failed")).toEqual([]);
+		await host.close(context);
+	});
+
+	it("a pure dependent of a provider that restarts swaps; its calls park until the provider's new instance is live", async () => {
+		const opened = Promise.withResolvers<void>();
+		const app = (code: string, natives: boolean) =>
+			defineFacet((h) => {
+				serveBase(h, code, natives ? opened.promise : undefined);
+				serveUser(h, code);
+			});
+		const { host } = await loadedFacets([{ name: "@test/app", facet: app("v1", false) }]);
+		const user = await host.get(User, {}, context);
+		const report = await host.reload([{ name: "@test/app", facet: app("v2", true) }], context);
+		expect(report.objects).toEqual([
+			{ object: "app.base", kind: "restarted" },
+			{ object: "app.user", kind: "swapped" },
+		]);
+		await flushed();
+		// Live on its new code over the provider's last values while the provider restarts.
+		expect(user.state.value).toEqual({ kind: "live" });
+		expect(user.label.value).toBe("v2 v1");
+		const asked = user.ask(context);
+		await flushed();
+		opened.resolve();
+		expect(await asked).toBe("v2>v2");
+		await flushed();
+		expect(user.label.value).toBe("v2 v2");
+		await host.close(context);
+	});
+
+	it("a provider that went live after its dependent (a retry after a failure) swaps first: the dependent parks and recovers", async () => {
+		const selves: Self[] = [];
+		const app = (code: string) =>
+			defineFacet((h) => {
+				h.serve(Base, (_, own) => {
+					selves.push(own);
+					return { name: constant(code), echo: async () => code };
+				});
+				serveUser(h, code);
+			});
+		const { host } = await loadedFacets([{ name: "@test/app", facet: app("v1") }]);
+		const user = await host.get(User, {}, context);
+		const base = await host.get(Base, {}, context);
+		failLive(attempted, selves.at(-1)!, new ChordError({ code: "unavailable", message: "boom" }));
+		await flushed();
+		base.retry();
+		await flushed();
+		expect(base.state.value).toEqual({ kind: "live" });
+		const report = await host.reload([{ name: "@test/app", facet: app("v2") }], context);
+		// The objects in the order they went live: the dependent first, so the provider's swap starts before it.
+		expect(report.objects).toEqual([
+			{ object: "app.user", kind: "parked", cause: expect.objectContaining({ kind: "waiting" }) },
+			{ object: "app.base", kind: "swapped" },
+		]);
+		await flushed();
+		expect(user.state.value).toEqual({ kind: "live" });
+		expect(user.label.value).toBe("v2 v2");
+		expect(await user.ask(context)).toBe("v2>v2");
 		await host.close(context);
 	});
 });

@@ -17,6 +17,7 @@
 			"@earendil-works/chord/telemetry-sqlite": ["./packages/chord/src/telemetry-sqlite/index.ts"],
 			"@earendil-works/chord/http": ["./packages/chord/src/node/http/index.ts"],
 			"@earendil-works/chord/workers": ["./packages/chord/src/node/workers/index.ts"],
+			"@earendil-works/chord/workers/child": ["./packages/chord/src/node/workers/child.ts"],
 			"@earendil-works/chord/plugins": ["./packages/chord/src/node/plugins/index.ts"],
 			"@earendil-works/chord/plugins/runtime": ["./packages/chord/src/node/plugins/runtime.ts"],
 			"@earendil-works/chord/app": ["./packages/chord/src/node/app/index.ts"],
@@ -30,10 +31,7 @@
 			"@notes/app/*": ["./packages/chord/test/examples/53-app/app/*.ts"],
 			"@board/app/*": ["./packages/chord/test/examples/56-web/app/*.ts"],
 			"@chat/app/*": ["./packages/chord/test/examples/59-chat/app/*.ts"],
-			"@todo/app/*": [
-				"./packages/chord/test/examples/61-tutorial/src/api/*.ts",
-				"./packages/chord/test/examples/61-tutorial/src/api/*/index.ts"
-			],
+			"@tally/app/*": ["./packages/chord/test/examples/62-telemetry/app/*.ts"],
 			"@earendil-works/pi-telemetry": ["./packages/telemetry/src/index.ts"],
 			"@earendil-works/pi-telemetry/testing": ["./packages/telemetry/src/testing/index.ts"],
 			"@earendil-works/pi-telemetry/render": ["./packages/telemetry/src/render.ts"],
@@ -72,5 +70,5 @@
 		}
 	},
 	"include": ["scripts/model-catalog-protocol.ts", "scripts/model-catalog-protocol.test.ts", "packages/*/src/**/*", "packages/*/test/**/*", "packages/ai/catalog/**/*", "packages/durable/test-workers/**/*", "packages/coding-agent/examples/**/*", "packages/agent/examples/**/*"],
-	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/**", "packages/coding-agent/test/suite/regressions/8261-subagent-project-trust.test.ts"]
+	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/**", "packages/coding-agent/test/suite/regressions/8261-subagent-project-trust.test.ts", "packages/coding-agent/test/subagent-extension.test.ts"]
 }

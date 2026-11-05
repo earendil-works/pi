@@ -32,7 +32,8 @@ export type TestPrincipal =
 	| { readonly kind: "worker"; readonly id: string }
 	| { readonly kind: "guest"; readonly id: string };
 
-const ENTRY = fileURLToPath(new URL("../fixtures/workers/worker.ts", import.meta.url));
+/** The fixture worker's entry. */
+export const ENTRY = fileURLToPath(new URL("../fixtures/workers/worker.ts", import.meta.url));
 
 const PLUGINS = fileURLToPath(new URL("../fixtures/workers/plugins/", import.meta.url));
 
@@ -67,6 +68,7 @@ export type Fleet = {
 /** Starts a server routing `Session` to fixture workers; `options` override the workers' defaults. */
 export async function fleet(
 	options: {
+		readonly entry?: string;
 		readonly idleMs?: number;
 		readonly heartbeat?: { readonly ping?: number; readonly close?: number };
 		readonly start?: (address: { readonly key: string }, context: Context) => Promise<JsonValue>;
@@ -92,12 +94,12 @@ export async function fleet(
 		onError: (error) => hostErrors.push(error),
 		...(options.heartbeat === undefined ? {} : { heartbeat: options.heartbeat }),
 	});
-	const workers = createWorkers(
+	const workers = await createWorkers(
 		server,
 		Session,
 		{
 			kind: "worker",
-			entry: ENTRY,
+			entry: options.entry ?? ENTRY,
 			execArgv: ["--conditions=source", "--experimental-strip-types", "--no-warnings"],
 			authorize: options.authorize ?? (() => true),
 			principal: options.principal ?? ((address) => ({ kind: "worker", id: address.params.id }) as const),

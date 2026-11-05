@@ -51,7 +51,10 @@ within each link's limits, compression at the origin, activation chains and revo
   it does not know is ignored (Q1), one reusing a live id is a protocol error, and so are more running calls than this
   side announced in `hello` (N = 256 per origin; a call on an unknown hold is ignored before it is counted). Its table
   has two kinds of entries: `Hold` (served here) and `RelayedHold` (relayed, never hydrated). A call on a pending hold
-  is answered `not_ready`; an aborted, released or gone call gets no reply. While the host closes, its holds are only
+  is answered `not_ready`, one crossing a `failed` or a removal with the cause its consumer was told; a call sent with
+  the indexes of a binding its consumer has not acknowledged a newer `bound` of yet is decoded by them (another
+  variant's indexes name other methods; one the new variant lacks fails `invalid/member`); an aborted, released or gone
+  call gets no reply. While the host closes, its holds are only
   dropped (the host ends the objects itself). It sends with its origin. A hold's `chain` is kept only from a trusted
   link and its stamped `limit` only from a parent link; its decoded limit is the smaller of the link's and the stamped
   one, which a relayed hold carries upstream as `limit`. A call on a relayed hold whose arguments are past the link's
@@ -95,7 +98,10 @@ within each link's limits, compression at the origin, activation chains and revo
   failed already; the next attempt (or the parked object's next `loading`) is announced with `loading`; the hold stays,
   so a `retry` (from any holder) renews even a broken object for every holder (a parked object passes it on, one walk
   of this host with one hop less of the message's budget). After a swap in place it gets a fresh `bound` once the new
-  instance is live, answering calls by the names it was bound with until that is sent (the window may hold it). Live,
+  instance is live, answering calls by the names it was bound with until that is sent (the window may hold it). An
+  object leaving `live` unbinds it with `failed` (its calls in flight rejected) or `loading`: then its calls in flight
+  stay, each answered by the instance it runs on or by the object's gate, and calls by the names it was bound with
+  still arrive and wait at the gate until its fresh `bound` (decision "Calls in flight survive a `loading` unbind"). Live,
   it binds through the window (`boundEntry`: the variant and each member's value as a part, names as indexes into the
   bound version). Its members' frames arrive as `Subscriber` calls inside the batch; at its
   end the hold's entry lists the members that changed with their ops, each encoded with that member's own Delta
@@ -138,7 +144,8 @@ within each link's limits, compression at the origin, activation chains and revo
   calls wait in one FIFO queue, sent in order as replies free slots; it does not preempt running calls. A relay
   forwards its downstream calls at once, so only this host's own calls wait here. A slot is freed once per call: its
   `result` or `error`, its `abort` (when sent), its hold's `release` or `gone`, or the link's close. A call still
-  waiting when its hold gets `loading` is rejected `unavailable` (it may name a method of the old variant).
+  waiting when its hold gets `loading` is rejected `unavailable` (it may name a method of the old variant); one sent
+  already waits for its reply.
 - `Path` (the parent, or one route address): its current link and its holders (`RemoteObject`s and `RelayedHold`s),
   held on that link and again on every next one; when the link drops, every holder is told (`dropped`). `changed`
   tells its owner (a route) what happened without a link: a holder `attached`, the link `dropped`, the last holder

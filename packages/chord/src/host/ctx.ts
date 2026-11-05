@@ -1,9 +1,12 @@
-// The `ctx` a method handler gets (§8): its call's context, who called, the calling host's incarnation, and
-// call-scoped references; and the abort signal of a call's context, linked to long-lived sources until it settles.
+// The `ctx` a method handler gets (§8): its call's context, who called, the calling host's incarnation, call-scoped
+// references and child spans (`ctx.trace`, slice 9); and the abort signal of a call's context, linked to long-lived
+// sources until it settles.
 
-import { type Context, type ContextKey, withAbortSignal, withoutAbortSignal } from "../context/index.ts";
+import type { SpanAttributes, TelemetrySpan } from "@earendil-works/pi-telemetry";
+import { type Context, type ContextKey, withAbortSignal, withoutAbortSignal, withTelemetry } from "../context/index.ts";
 import type { Contract, ParamsOf } from "../contracts/index.ts";
 import { ChordError, type Principal } from "../data/index.ts";
+import { ended, untraced } from "../telemetry.ts";
 import type { AnyHost, GetOptions } from "./host.ts";
 import type { Binding, Reference } from "./reference.ts";
 
@@ -18,6 +21,13 @@ export interface Ctx<P extends Principal = Principal> extends Context {
 	 * `released`.
 	 */
 	get<C extends Contract>(Type: C, params: ParamsOf<C>, options?: GetOptions): Promise<Reference<C>>;
+	/**
+	 * Runs `fn` in a child span `name` of this ctx's span (`telemetry`) with its host's `chord.host` and `attributes`:
+	 * `fn` gets a child ctx (the same principal, incarnation, signal and `get`, its references this ctx's), so calls
+	 * inside are parented under it. A throw marks the span failed (`trace_failed`; a cancel keeps it ok) and is rethrown.
+	 * Without an adapter that records, `fn` gets this ctx.
+	 */
+	trace<T>(name: string, attributes: SpanAttributes, fn: (ctx: Ctx<P>) => Promise<T>): Promise<T>;
 }
 
 /** Who makes a call: the principal it acts as and its host's incarnation. */
@@ -57,6 +67,11 @@ export class CallContext implements Ctx {
 		return `${this.#context}.Ctx`;
 	}
 
+	/** Its host's `chord.host`, for its child spans. */
+	get spanHost(): string {
+		return this.#host.spanHost;
+	}
+
 	async get<C extends Contract>(Type: C, params: ParamsOf<C>, options: GetOptions = {}): Promise<Reference<C>> {
 		// A settled scope refuses `released` whatever aborted it; an aborted call creates nothing.
 		if (this.#references === undefined) throw settled(Type);
@@ -83,12 +98,103 @@ export class CallContext implements Ctx {
 		return binding.reference as Reference<C>;
 	}
 
+	trace<T>(name: string, attributes: SpanAttributes, fn: (ctx: Ctx) => Promise<T>): Promise<T> {
+		return traceUnder(this, name, attributes, fn);
+	}
+
+	/** Its child under `span` (`ctx.trace`), every member kept. */
+	traced(span: TelemetrySpan): Ctx {
+		return new SpanCtx(this, span);
+	}
+
 	/** The handler settled: its references are released, waiting gets give up, and `get` throws from now on. */
 	settle(): void {
 		const references = this.#references ?? [];
 		this.#references = undefined;
 		this.#settling?.abort();
 		for (const binding of references) binding.release();
+	}
+}
+
+/**
+ * A ctx that makes its child under a span (`ctx.trace`): the same kind of ctx (a job's has `jobId` and `state`), and
+ * its host's `chord.host`.
+ */
+type Traceable = Ctx & { readonly spanHost: string; traced(span: TelemetrySpan): Ctx };
+
+/**
+ * `ctx.trace` of `ctx`: `fn` in a child span with its child ctx; with nothing recorded, `fn` with `ctx` itself. Either
+ * way a synchronous throw of `fn` rejects (review L5: recording changes nothing `fn` sees but its span).
+ */
+function traceUnder<T>(
+	ctx: Traceable,
+	name: string,
+	attributes: SpanAttributes,
+	fn: (ctx: Ctx) => Promise<T>,
+): Promise<T> {
+	const parent = ctx.telemetry;
+	// Plugin code: a synchronous throw becomes the rejection.
+	if (untraced(parent)) return (async () => fn(ctx))();
+	return parent.startSpan({ name, attributes: { "chord.host": ctx.spanHost, ...attributes } }, async (span) => {
+		try {
+			return await fn(ctx.traced(span));
+		} catch (error) {
+			ended(span, "trace_failed", error, ctx.abortSignal);
+			throw error;
+		}
+	});
+}
+
+/** A ctx under a child span (`ctx.trace`): its parent's caller, signal and references, `telemetry` the span. */
+export class SpanCtx implements Ctx {
+	readonly #parent: Traceable;
+	readonly #context: Context;
+
+	constructor(parent: Traceable, span: TelemetrySpan) {
+		this.#parent = parent;
+		this.#context = withTelemetry(span, parent);
+	}
+
+	/** Its host's `chord.host`, for its child spans. */
+	get spanHost(): string {
+		return this.#parent.spanHost;
+	}
+
+	get principal(): Principal | undefined {
+		return this.#parent.principal;
+	}
+
+	get incarnation(): string {
+		return this.#parent.incarnation;
+	}
+
+	get abortSignal(): AbortSignal | undefined {
+		return this.#context.abortSignal;
+	}
+
+	get telemetry(): Context["telemetry"] {
+		return this.#context.telemetry;
+	}
+
+	value<T>(key: ContextKey<T>): T | undefined {
+		return this.#context.value(key);
+	}
+
+	toString(): string {
+		return `${this.#parent}.Trace`;
+	}
+
+	get<C extends Contract>(Type: C, params: ParamsOf<C>, options?: GetOptions): Promise<Reference<C>> {
+		return this.#parent.get(Type, params, options);
+	}
+
+	trace<T>(name: string, attributes: SpanAttributes, fn: (ctx: Ctx) => Promise<T>): Promise<T> {
+		return traceUnder(this, name, attributes, fn);
+	}
+
+	/** Its child under `span`, of its own kind. */
+	traced(span: TelemetrySpan): Ctx {
+		return new SpanCtx(this, span);
 	}
 }
 

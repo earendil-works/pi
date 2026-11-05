@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- `unsafe<T>(schema)` types a schema as accepting `T` without checking it, as TypeBox's `Type.Unsafe` does.
+- `recursive<T>(id, build)` builds a schema that contains itself (a tree), with its type given as `T`.
+- `Validator.validate(value)` returns `{ ok: true, value }` or `{ ok: false, errors }` without coercing, on every validator.
+- `Static` types TypeBox's `Enum`, `Tuple`, `BigInt` and `Undefined` schemas.
+- TypeBox's JavaScript types validate and coerce as TypeBox does: `{ type: "bigint" }` (`Type.BigInt`) and `{ type: "undefined" }` (`Type.Undefined`), with `Value.Convert`'s rules for both; the number keywords apply to numbers and bigints alike, with bounds of either kind. The `bigint()` builder builds the former.
+- `equal(a, b)`: JSON equality as `const`, `enum` and `uniqueItems` compare, a drop-in for TypeBox's `Value.Equal`.
+
+### Changed
+
+- Faster checks, still without eval: object and array loops run `const`, small `enum`s, type lists, number bounds, string lengths and patterns inline instead of calling a closure; a closed object looks up keys in declared order first; `anyOf` branches that are bare types (as `nullable` builds) run as one type test. Checks take about 16% less time across the benchmark's speed cases, up to 30% less for tagged unions and 45% less for nullable properties.
+
+### Fixed
+
+- A required property set to `undefined` is valid when its schema takes `undefined` (a union with `Type.Undefined()`, `Type.Unknown()`, `Type.Any()`), as in TypeBox; before, it was always missing. An optional one set to `undefined` still counts as absent.
+- Fixed local `$ref`s in schemas whose root `$id` is a relative path with a directory, such as `schemas/tool.json`: the `$id` was applied twice, so `compile` threw and `unresolvedRefs: "reject"` rejected valid tool arguments. Relative `$id`s are now also applied once with `unevaluatedProperties`/`unevaluatedItems`, when explaining errors under nested resources, and on the first coercion of a schema with `$dynamicRef` ([#11697](https://github.com/earendil-works/pi/issues/11697))
+
 ## [1.5.0] - 2026-11-02
 
 ### Added

@@ -1,10 +1,25 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage } from "node:http";
+import type { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { forbidden } from "@p2/app/v1";
 import { WebSocket, WebSocketServer } from "ws";
-import { attachTerminalHost, type TerminalAttachment, terminalHostVersion } from "./detached.ts";
-import { MAX_BACKLOG, type TerminalEvent, type TerminalInfo, type TerminalRequest } from "./protocol.ts";
+import {
+	attachTerminalHost,
+	connectRunningTerminalHost,
+	type TerminalAttachment,
+	terminalHostVersion,
+} from "./detached.ts";
+import {
+	encodeFrame,
+	type HostCall,
+	type HostResult,
+	MAX_BACKLOG,
+	readFrames,
+	type TerminalEvent,
+	type TerminalInfo,
+	type TerminalRequest,
+} from "./protocol.ts";
 
 /**
  * How often a viewer's socket gets `{"type":"ping"}`. An idle terminal sends nothing, so without it a dead connection
@@ -170,6 +185,99 @@ export class TerminalView {
 	}
 }
 
+/** What a call to a terminal host running older code fails with: it does not know the calls. */
+export const OUTDATED_HOST =
+	"The terminal host runs older code: restart it from the terminal panel (this ends its terminals)";
+
+/**
+ * The server's connection for calls with replies (the agent's terminal tool, archiving): one attachment, made when
+ * the first call needs it and again after the host went away. Cancelling a call tells the host, which ends its wait.
+ */
+export class HostCalls {
+	readonly #directory: string;
+	readonly #app: string;
+	readonly #version: string;
+	#attachment: TerminalAttachment | undefined;
+	/** The attached host's version, from its hello. */
+	#hostVersion: string | undefined;
+	#next = 1;
+	readonly #pending = new Map<number, { resolve: (result: HostResult) => void; reject: (error: Error) => void }>();
+	#closed = false;
+
+	constructor(directory: string, app: string, version: string) {
+		this.#directory = directory;
+		this.#app = app;
+		this.#version = version;
+	}
+
+	async call(call: HostCall, signal?: AbortSignal): Promise<HostResult> {
+		signal?.throwIfAborted();
+		if (this.#closed) throw new Error("The terminal service is closed");
+		const attachment = this.#attach();
+		await attachment.ready;
+		if (this.#hostVersion !== this.#version) throw new Error(OUTDATED_HOST);
+		const id = this.#next++;
+		const reply = Promise.withResolvers<HostResult>();
+		this.#pending.set(id, reply);
+		const abort = () => {
+			if (!this.#pending.delete(id)) return;
+			try {
+				attachment.write({ type: "cancel", id });
+			} catch {}
+			reply.reject(signal?.reason instanceof Error ? signal.reason : new Error("Cancelled"));
+		};
+		signal?.addEventListener("abort", abort, { once: true });
+		try {
+			attachment.write({ type: "call", id, call });
+			return await reply.promise;
+		} finally {
+			this.#pending.delete(id);
+			signal?.removeEventListener("abort", abort);
+		}
+	}
+
+	#attach(): TerminalAttachment {
+		if (this.#attachment) return this.#attachment;
+		const attachment = attachTerminalHost(
+			this.#directory,
+			this.#app,
+			(frame) => this.#frame(frame),
+			() => {
+				if (this.#attachment !== attachment) return;
+				this.#attachment = undefined;
+				this.#fail(new Error("Terminal host disconnected"));
+			},
+		);
+		this.#attachment = attachment;
+		this.#hostVersion = undefined;
+		return attachment;
+	}
+
+	#frame(frame: unknown): void {
+		if (frame instanceof Uint8Array) return;
+		const event = frame as TerminalEvent;
+		if (event.type === "hello") this.#hostVersion = event.version;
+		if (event.type !== "reply") return;
+		const pending = this.#pending.get(event.id);
+		this.#pending.delete(event.id);
+		if ("error" in event) pending?.reject(new Error(event.error));
+		else pending?.resolve(event.result);
+	}
+
+	#fail(error: Error): void {
+		for (const pending of this.#pending.values()) pending.reject(error);
+		this.#pending.clear();
+	}
+
+	close(): void {
+		this.#closed = true;
+		const attachment = this.#attachment;
+		this.#attachment = undefined;
+		attachment?.detach();
+		this.#fail(new Error("The terminal service is closed"));
+	}
+}
+
 export class TerminalService {
 	readonly directory: string;
 	/** The p2 app directory (`Server.info.app`): where the terminal host's code is. */
@@ -177,10 +285,37 @@ export class TerminalService {
 	readonly #sockets = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 	readonly #views = new Set<TerminalView>();
 	readonly #tokens = new Map<string, { view: TerminalView; expires: number }>();
+	#calls: Promise<HostCalls> | undefined;
 
 	constructor(directory: string, app: string) {
 		this.directory = directory;
 		this.app = app;
+	}
+
+	/** One call to the terminal host (starting it when none runs); `signal` cancels it. */
+	async call(call: HostCall, signal?: AbortSignal): Promise<HostResult> {
+		this.#calls ??= terminalHostVersion(this.app).then((version) => new HostCalls(this.directory, this.app, version));
+		return (await this.#calls).call(call, signal);
+	}
+
+	/**
+	 * Closes the session's terminals; without a running host there are none, and none is started. A host running older
+	 * code does not know `closeSession`: it closes them as the panel does, attaching to each and closing it.
+	 */
+	async closeSession(sessionId: string): Promise<void> {
+		const socket = await connectRunningTerminalHost(this.directory);
+		if (!socket) return;
+		try {
+			const events = hostEvents(socket);
+			const hello = await events.next(
+				(event): event is Extract<TerminalEvent, { type: "hello" }> => event.type === "hello",
+			);
+			if (hello.version !== (await terminalHostVersion(this.app)))
+				return await closeAsViewer(socket, events, sessionId);
+		} finally {
+			socket.destroy();
+		}
+		await this.call({ op: "closeSession", sessionId });
 	}
 
 	async open(session: string): Promise<TerminalView> {
@@ -222,7 +357,69 @@ export class TerminalService {
 	}
 
 	async close(): Promise<void> {
+		void this.#calls?.then((calls) => calls.close());
 		await Promise.all([...this.#views].map((view) => this.release(view)));
 		await new Promise<void>((resolve) => this.#sockets.close(() => resolve()));
+	}
+}
+
+/** How long closing a session's terminals on a host running older code may take. */
+const VIEWER_CLOSE_MS = 10_000;
+
+/** A host connection's events, in order: `next` waits for the first one after the last taken that `wanted` accepts. */
+type HostEvents = { next<E extends TerminalEvent>(wanted: (event: TerminalEvent) => event is E): Promise<E> };
+
+function hostEvents(socket: Socket): HostEvents {
+	const queue: TerminalEvent[] = [];
+	let wake = () => {};
+	let ended = false;
+	readFrames(socket, (frame) => {
+		if (frame instanceof Uint8Array) return;
+		queue.push(frame as TerminalEvent);
+		wake();
+	});
+	socket.once("close", () => {
+		ended = true;
+		wake();
+	});
+	return {
+		async next(wanted) {
+			const deadline = Date.now() + VIEWER_CLOSE_MS;
+			for (;;) {
+				for (let event = queue.shift(); event; event = queue.shift()) if (wanted(event)) return event;
+				if (ended) throw new Error("Terminal host disconnected");
+				const left = deadline - Date.now();
+				if (left <= 0) throw new Error("The terminal host did not answer");
+				await new Promise<void>((resolve) => {
+					const timer = setTimeout(resolve, left);
+					wake = () => {
+						clearTimeout(timer);
+						resolve();
+					};
+				});
+			}
+		},
+	};
+}
+
+/**
+ * Closes the session's terminals with the viewer protocol every host version speaks: list them, then attach to each
+ * and force its close; resolves once the host reported each closed.
+ */
+async function closeAsViewer(socket: Socket, events: HostEvents, sessionId: string): Promise<void> {
+	socket.write(encodeFrame({ type: "list", sessionId } satisfies TerminalRequest));
+	const listed = await events.next(
+		(event): event is Extract<TerminalEvent, { type: "list" }> => event.type === "list",
+	);
+	const open = new Set(listed.terminals.map((terminal) => terminal.id));
+	for (const terminalId of open) {
+		socket.write(encodeFrame({ type: "attach", terminalId } satisfies TerminalRequest));
+		socket.write(encodeFrame({ type: "close", force: true } satisfies TerminalRequest));
+	}
+	while (open.size > 0) {
+		const closed = await events.next(
+			(event): event is Extract<TerminalEvent, { type: "closed" }> => event.type === "closed",
+		);
+		open.delete(closed.terminalId);
 	}
 }

@@ -1,7 +1,8 @@
 // The mobile drawer's component tree, with catalog/status/subagent/search handles supplying its data.
 
-import { Access, BACKGROUND_CONTEXT, contribute, defineFacet, liveIn } from "@p2/app/v1";
+import { Access, BACKGROUND_CONTEXT, contribute, defineFacet, type HeldIn, liveIn, whenLive } from "@p2/app/v1";
 import {
+	ChevronIcon,
 	Drawer,
 	navigate,
 	openLayer,
@@ -10,16 +11,19 @@ import {
 	toggleSidebar,
 	useComposerState,
 	useConnected,
+	useHost,
 	useNewSessionState,
 	useObject,
 	useReadable,
 	useRoute,
 	useStatus,
 } from "@p2/app/v1/web";
-import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Search, SessionReads } from "../search/contract.ts";
 import { SessionStatus } from "../status/contract.ts";
 import { Subagents } from "../subagents/contract.ts";
+import { SessionTree } from "../tree/contract.ts";
+import { BranchSheet } from "./BranchSheet.tsx";
 import { Sessions } from "./contract.ts";
 import { SessionOptions } from "./SessionOptions.tsx";
 
@@ -30,17 +34,59 @@ const subscribeVisibility = (listener: () => void) => {
 /** Whether the page is shown (not a background tab or a hidden app). */
 const usePageVisible = () => useSyncExternalStore(subscribeVisibility, () => document.visibilityState === "visible");
 
-// Explicit mobile ordering.
-const footer = (
-	<>
-		<Slot name="sidebar-foot:providers" />
-		<Slot name="sidebar-foot:envs" />
-		<Slot name="sidebar-foot:devices" />
-		<Slot name="sidebar-foot:ports" />
-		<Slot name="sidebar-foot:voice" />
-		<Slot name="sidebar-foot:logs" />
-	</>
-);
+/**
+ * The footer's owner entries, in an explicit order, behind one "More" button whose menu opens upwards: one row of
+ * buttons no longer fits them. The entries stay mounted while the menu is closed, because each renders the sheet it
+ * opens (through a portal, so the hidden menu does not hide it).
+ */
+function FooterMenu() {
+	const [open, setOpen] = useState(false);
+	const menu = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		if (!open) return;
+		const outside = (event: PointerEvent) => {
+			if (!menu.current?.contains(event.target as Node)) setOpen(false);
+		};
+		const onKey = (event: KeyboardEvent) => {
+			if (event.key === "Escape") setOpen(false);
+		};
+		document.addEventListener("pointerdown", outside);
+		document.addEventListener("keydown", onKey);
+		return () => {
+			document.removeEventListener("pointerdown", outside);
+			document.removeEventListener("keydown", onKey);
+		};
+	}, [open]);
+	return (
+		<div className="foot-menu" ref={menu}>
+			<button
+				type="button"
+				className={`foot-button ${open ? "on" : ""}`}
+				aria-haspopup="true"
+				aria-expanded={open}
+				onClick={() => setOpen(!open)}
+			>
+				More
+				<span className="foot-menu-chevron">
+					<ChevronIcon size={14} />
+				</span>
+			</button>
+			{/* An entry's click opens its sheet, then closes the menu. */}
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: the entries are buttons; this only notices their clicks. */}
+			<div className="foot-menu-list" hidden={!open} onClick={() => setOpen(false)}>
+				<Slot name="sidebar-foot:providers" />
+				<Slot name="sidebar-foot:mcp" />
+				<Slot name="sidebar-foot:envs" />
+				<Slot name="sidebar-foot:devices" />
+				<Slot name="sidebar-foot:ports" />
+				<Slot name="sidebar-foot:voice" />
+				<Slot name="sidebar-foot:logs" />
+			</div>
+		</div>
+	);
+}
+
+const footer = <FooterMenu />;
 function Sidebar() {
 	const connected = useConnected();
 	const route = useRoute();
@@ -75,9 +121,10 @@ function Sidebar() {
 			}),
 		[list, statuses, children, answers, reads],
 	);
-	// The open session's root conversation, shown on a visible page, is read through its latest answer.
+	// The open session's main conversation, shown on a visible page, is read through its latest answer.
 	const visible = usePageVisible();
-	const shown = visible && (route.conversation ?? 1) === 1 ? route.session : undefined;
+	const shownMain = (list ?? []).find((session) => session.id === route.session)?.main;
+	const shown = visible && route.conversation === shownMain ? route.session : undefined;
 	const latest = shown ? (answers?.[shown] ?? 0) : 0;
 	const read = shown ? (reads?.[shown] ?? 0) : 0;
 	useEffect(() => {
@@ -94,33 +141,84 @@ function Sidebar() {
 			catalog?.restore({ id }, BACKGROUND_CONTEXT) ?? Promise.reject(new Error("Only the owner restores sessions")),
 		[catalog],
 	);
-	const onOpen = useCallback((session: string, conversation = 1) => navigate({ session, conversation }), []);
+	// A session opens at its main conversation; `/s/<id>` would open conversation 1, which redirects there.
+	const onOpen = useCallback(
+		(session: string, conversation?: number) =>
+			navigate({ session, conversation: conversation ?? list?.find((each) => each.id === session)?.main ?? 1 }),
+		[list],
+	);
+	// A branch's switch or rename: a reference of its own (the change also reaches the session row).
+	const host = useHost();
+	const withTree = useCallback(
+		(session: string, action: (tree: HeldIn<typeof SessionTree, "owner">) => Promise<unknown>) => {
+			const held = host.hold(SessionTree, { session }, BACKGROUND_CONTEXT);
+			return whenLive(held)
+				.then(() => {
+					const tree = liveIn(held, "owner");
+					if (!tree) throw new Error("Only the owner changes branches");
+					return action(tree);
+				})
+				.finally(() => held.release());
+		},
+		[host],
+	);
+	// Errors go to the app's toast in main, as in Pi Mobile (not clipped inside the drawer).
+	const { setError } = useComposerState();
+	const onBranch = useCallback(
+		(session: string, conversation: number) =>
+			void withTree(session, (tree) => tree.select({ conversation }, BACKGROUND_CONTEXT))
+				.then(() => navigate({ session, conversation }))
+				.catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason))),
+		[withTree, setError],
+	);
+	const [renaming, setRenaming] = useState<{ session: string; conversation: number }>();
+	const onRenameBranch = useCallback(
+		(session: string, conversation: number) => setRenaming({ session, conversation }),
+		[],
+	);
+	const renamed = renaming && list?.find((each) => each.id === renaming.session);
+	const branch = renamed?.branches.find((each) => each.conversation === renaming?.conversation);
 	const { setChoice } = useNewSessionState();
 	const onNew = useCallback(() => {
 		setChoice(undefined);
 		navigate({});
 		setTimeout(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(), 50);
 	}, [setChoice]);
-	// Errors go to the app's toast in main, as in Pi Mobile (not clipped inside the drawer).
-	const { setError } = useComposerState();
 	return (
-		<Drawer
-			sessions={sessions}
-			guest={guest}
-			activeId={route.session}
-			conversationId={route.conversation}
-			connected={connected}
-			onOpen={onOpen}
-			onNew={onNew}
-			onCollapse={toggleSidebar}
-			onSearch={search ? onSearch : undefined}
-			onRestore={onRestore}
-			onError={setError}
-			footer={footer}
-			onProviders={() => openLayer({ kind: "sheet", name: "providers" }, { fromDrawer: true })}
-			onEnvs={() => openLayer({ kind: "sheet", name: "envs" }, { fromDrawer: true })}
-			onOwnerLink={() => openLayer({ kind: "sheet", name: "devices" }, { fromDrawer: true })}
-		/>
+		<>
+			<Drawer
+				sessions={sessions}
+				guest={guest}
+				activeId={route.session}
+				conversationId={route.conversation}
+				connected={connected}
+				onOpen={onOpen}
+				onBranch={owner ? onBranch : undefined}
+				onRenameBranch={owner ? onRenameBranch : undefined}
+				onNew={onNew}
+				onCollapse={toggleSidebar}
+				onSearch={search ? onSearch : undefined}
+				onRestore={onRestore}
+				onError={setError}
+				footer={footer}
+				onProviders={() => openLayer({ kind: "sheet", name: "providers" }, { fromDrawer: true })}
+				onEnvs={() => openLayer({ kind: "sheet", name: "envs" }, { fromDrawer: true })}
+				onOwnerLink={() => openLayer({ kind: "sheet", name: "devices" }, { fromDrawer: true })}
+			/>
+			{renamed && branch && (
+				<BranchSheet
+					title={renamed.title}
+					conversation={branch.conversation}
+					label={branch.label}
+					onSave={(label) =>
+						withTree(renamed.id, (tree) =>
+							tree.rename({ conversation: branch.conversation, label }, BACKGROUND_CONTEXT),
+						)
+					}
+					onClose={() => setRenaming(undefined)}
+				/>
+			)}
+		</>
 	);
 }
 export default defineFacet((host) => {

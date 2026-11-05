@@ -10,8 +10,7 @@ import {
 	fauxThinking,
 	fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
-import { SPEAKER_PREFIX } from "@p2/app/v1";
-import { CONVERSATION_PREFIX } from "../conversations/contract.ts";
+import { SENDER_PREFIX } from "@p2/app/v1";
 
 // Fake-mode prompts that make the faux model call one tool; anything else is echoed.
 const SCRIPTED: Record<string, () => ReturnType<typeof fauxToolCall>> = {
@@ -79,15 +78,13 @@ const SCRIPTED: Record<string, () => ReturnType<typeof fauxToolCall>> = {
 /** The system prompt of a one-shot agent (plugins/agent) ends its instructions with its schema on this line's end. */
 const ONE_SHOT_SCHEMA = "matching this JSON Schema, without prose or code fences:\n";
 
-/** The person's text of a user message, without the speaker or peer block in front. */
+/** The text of a user message, without the sender block in front. */
 function userText(message: Message | undefined): string {
 	if (message?.role !== "user") return "";
 	if (typeof message.content === "string") return message.content;
 	const first = message.content[0];
 	const parts =
-		first?.type === "text" && (first.text.startsWith(SPEAKER_PREFIX) || first.text.startsWith(CONVERSATION_PREFIX))
-			? message.content.slice(1)
-			: message.content;
+		first?.type === "text" && first.text.startsWith(SENDER_PREFIX) ? message.content.slice(1) : message.content;
 	return parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
 }
 
@@ -169,7 +166,8 @@ export function createFakeModels(options: CreateModelsOptions = {}) {
 					const task = userText(transcript.messages.find((message) => message.role === "user"));
 					if (schema !== undefined && !task.startsWith("json ") && !task.startsWith("slow"))
 						return fauxAssistantMessage([fauxText(JSON.stringify(sampleOf(schema)))]);
-					const last = transcript.messages.at(-1);
+					// A section that changed during the run (tools loaded by `tool_search`) adds a system message after the result.
+					const last = transcript.messages.findLast((message) => message.role !== "system");
 					if (last?.role !== "toolResult") {
 						const call = Object.hasOwn(SCRIPTED, text)
 							? SCRIPTED[text]?.()
@@ -186,7 +184,9 @@ export function createFakeModels(options: CreateModelsOptions = {}) {
 												? fauxToolCall("subagent", JSON.parse(text.slice("subagent ".length)))
 												: text.startsWith("team ")
 													? fauxToolCall("team", JSON.parse(text.slice("team ".length)))
-													: /^(history_(search|read|handoff)|location_(envs|dirs|move)) /.test(text)
+													: /^(artifact|history_(search|read|handoff)|location_(envs|dirs|move)|tool_search|terminal|mcp__\w+) /.test(
+																text,
+															)
 														? fauxToolCall(
 																text.slice(0, text.indexOf(" ")),
 																JSON.parse(text.slice(text.indexOf(" ") + 1)),

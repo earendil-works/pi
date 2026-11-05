@@ -552,6 +552,10 @@
           "type": "boolean",
           "description": "Whether a user message after tool results requires an assistant message in between. Default: auto-detected from URL."
         },
+        "requiresNonNullAssistantContent": {
+          "type": "boolean",
+          "description": "Whether replayed assistant messages with no text (e.g. tool-call-only messages) must send \"\" instead of null content. Default: false."
+        },
         "requiresThinkingAsText": {
           "type": "boolean",
           "description": "Whether thinking blocks must be converted to text blocks with <thinking> delimiters. Default: auto-detected from URL."
@@ -1012,6 +1016,23 @@
             }
           ],
           "description": "Session-affinity header format. Defaults are API-specific or auto-detected."
+        },
+        "promptCacheKeyMode": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "auto"
+            },
+            {
+              "type": "string",
+              "const": "enabled"
+            },
+            {
+              "type": "string",
+              "const": "disabled"
+            }
+          ],
+          "description": "Controls the prompt_cache_key request field for openai-completions and openai-responses: auto keeps each API's default, enabled sends it whenever caching is active, disabled never sends it. Default: auto."
         },
         "supportsLongCacheRetention": {
           "type": "boolean",

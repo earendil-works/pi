@@ -135,7 +135,8 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   is the default deadline of a `get` and of `host.registry`. `heartbeat: { ping?, close? }`: a link silent for `ping` ms (15 s)
   sends a `ping`, one silent for `close` ms (30 s), its handshake included, is closed (its references go `loading`);
   one interval timer per host (`min(ping, close) / 10`), running only while it has links. A handler that blocks the
-  event loop longer than `close` gets its links closed.
+  event loop longer than `close` gets its links closed by its peers; its own late tick counts the time it did not run
+  (a block, a sleeping laptop) as no silence, so its links ping at once instead of closing.
 - `revokedBy(principal) => R[]`: what revokes a principal; its revocation keys are the canonical JSON of each value,
   computed once per principal object (cached weakly). `host.revoke(r, ctx)`, synchronously: every remote object whose
   principal has `r` among its keys ends at once, whatever references remain (R11): each holder gets `forbidden` with
@@ -192,8 +193,9 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   `activation_failed` (`object`, `failure`: every failed attempt), `object_failed` (`object`, `failure`: a live object
   failed, slice 6a), `storage_failed` (`error`: the host's store stopped; the host closes itself), `derive_failed`
   (`object`, `member?`, `error`: a derive's compute threw, once per failure episode, watched or not; `member` when it is
-  an exposed state member), `close_failed` (`object`, `native` position, `error`: a close that threw while nobody
-  waited), `close_timeout` (`object`, `native`: a close still running at its `closeTimeout`, a possible leak), `drain_timeout` (`object`: calls still running at `closeTimeout`; their natives close anyway),
+  an exposed state member), `query_failed` (`object`, `table`, `error`: a live query's run in a commit threw, once per
+  failure episode; the query is a failed member until a good run), `close_failed` (`object`, `native` position,
+  `error`: a close that threw while nobody waited), `close_timeout` (`object`, `native`: a close still running at its `closeTimeout`, a possible leak), `drain_timeout` (`object`: calls still running at `closeTimeout`; their natives close anyway),
   `listener_error` (a throwing watch listener), `delivery_failed` (a frame delivery or a link's flush that threw) and
   `protocol_error` (`error`: what closed a link, see `link/`) and `resolve_failed` (`address`: its key, `error`: a
   route's `resolve` rejected; the address's holders fail `waiting` with it), `routine_failed` (`object`, `routine`: its position,
@@ -363,13 +365,23 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
 - `createHost({ store?, ... })` (slice 6a): the host's store (`openStore` in `store/`), which the app opens, gives to
   one open host at a time (`invalid/args` otherwise) and closes after it. A backend error stops the store: the host
   reports `storage_failed` once and closes itself. A `local` type with empty params may then declare
-  `self.table(definition)` (once per table name) and persisted documents (`defineState(..., { persist: true,
-  checkpointWhen })`); the types refuse both elsewhere (P3), and so does the factory at runtime. Its activation
-  loads the persisted singletons and pinned keys, then creates or migrates its tables (the `readyTimeout` deadline
-  paused meanwhile, resumed with its remaining budget), then binds its references. A table or document the code
-  cannot read (a newer version, a history edited in place, a failed `rows` step or `migrate`) fails the object
-  `broken`; a live object whose read fails so fails while live (`object_failed`), keeping its documents for the
-  next attempt.
+  `self.table(definition)` (once per table name), live queries over them (`self.query(table, q, limit)`, below) and
+  persisted documents (`defineState(..., { persist: true, checkpointWhen })`); the types refuse them elsewhere (P3),
+  and so does the factory at runtime. Its activation loads the persisted singletons and pinned keys, then creates or
+  migrates its tables (the `readyTimeout` deadline paused meanwhile, resumed with its remaining budget), then runs its
+  live queries, then binds its references.
+- `self.query(table, q, limit)` (decision "Live queries over an object's own tables"): a JSON watchable of `q`'s rows
+  (at most `limit`, in its order) over a table this factory declared; a state member, a derive source, an `on` source.
+  Run at activation (a failure fails it `broken`) and again inside the commit step of every commit of the object that
+  writes the table, after the commit's writes, published as the diff in the commit's batch (`store/live-query.ts`); a
+  commit writing no table with a query runs none (`chord.query.runs` counts the runs). Fixed for the attempt; refused
+  at declaration (`invalid/args`) without a positive integer `limit`, for a query of another table, or a table this
+  factory did not declare. A run that fails (a row its code cannot read) makes it a failed member, as a throwing
+  derive: one failure call, `query_failed` once, `[["r", rows]]` at the next good run; the object stays live. It is
+  no native: an object with live queries swaps on reload.
+- A table or document the code cannot read (a newer version, a history edited in place, a failed `rows` step or
+  `migrate`) fails the object `broken`; a live object whose read fails so fails while live (`object_failed`), keeping
+  its documents for the next attempt.
 - A factory `(params, self) => implementation` declares with `self.state`, `self.derive`, `self.get`, `self.open`,
   `self.on`, `self.onLive`, `self.job` (`jobs/`), `self.registry`, `self.writable` and `self.retryOn` (below), and
   writes with `self.tx`. It runs once per attempt. The implementation has exactly the contract's members: state
@@ -409,7 +421,9 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   named it; on a local object's handler the host's), `incarnation` (the calling host's over a link, the origin's
   through a relay, this host's otherwise, R20), `get(Type, params, { readyTimeout? })` (a reference as
   `ctx.principal` sees it, with `ctx.incarnation`, also over a route; released when the handler settles; afterwards
-  `get` throws `released`), the abort signal (the caller cancelled or released, or the object ends) and telemetry.
+  `get` throws `released`), the abort signal (the caller cancelled or released, or the object ends), telemetry (the
+  handler's `chord.method` span when the host records) and `trace(name, attributes, fn)` (`fn` in a child span with a
+  child ctx: the same principal, signal and references; slice 9).
 - `self.open(open, close, { closeTimeout? })` returns a `Native<T>`: its `value` is readable from the moment its open
   resolved until its close starts; before, it throws `not_ready`, after, `released`. `open(ctx)` gets a context
   aborted when the attempt is abandoned; `close(value, reason, ctx)` gets `{ kind: "end" | "close" | "reload" }` (end:

@@ -59,7 +59,7 @@ describe("search (fake provider)", () => {
 		await fixture?.close();
 	});
 
-	it("finds root user and assistant messages, never the speaker block", async () => {
+	it("finds root user and assistant messages, never the sender block", async () => {
 		const chat = await chatOf(session.id);
 		await chat.send({ text: "please index quokka pancakes", requestId: "q" }, BACKGROUND_CONTEXT);
 		const results = await found("quokka", (value) => value.messages.length === 2);
@@ -70,7 +70,7 @@ describe("search (fake provider)", () => {
 			assert.equal(hit.title, "Zebra migration");
 			assert.match(hit.text, /quokka/);
 		}
-		assert.deepEqual((await search.search({ query: "mobile-speaker" }, BACKGROUND_CONTEXT)).messages, []);
+		assert.deepEqual((await search.search({ query: "sender" }, BACKGROUND_CONTEXT)).messages, []);
 		assert.deepEqual(
 			(await search.search({ query: "owner" }, BACKGROUND_CONTEXT)).messages,
 			[],

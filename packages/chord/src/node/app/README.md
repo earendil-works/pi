@@ -33,6 +33,8 @@ const app = await startServer<P>({
 		uploads: 64, importBytes: 4 * 2 ** 30, importEntries: 100_000 },
 	web: { entry: "./src/web/main.tsx", page: (request, assets) => shell(request.nonce, assets) },   // slice 11
 	tui: { entry: "./src/tui/main.ts" },
+	base: ["./src/app/", "./start.ts"],             // base code besides worker entries and the base bundles' inputs
+	timeouts: { closeTimeout: 30_000, readyTimeout: 60_000 },   // every host's (server and workers; the defaults)
 	onError: (error) => log(error),                 // AppError: { kind: "host" | "http" | "workers" | "plugins", error }
 }, ctx);
 console.log(`Open ${app.ownerLink()}`);
@@ -58,11 +60,12 @@ startWorker<P>({ api, kinds, busy, onError });
   `principal.server`), `createHttp` (the links endpoint at `/chord`), the plugins component with the two roots, one
   workers component per worker kind (none without worker kinds), the server's plugins loaded with the kit's core
   facets (`chord.http`, `chord.app.info`, `chord.app.sessions`, `chord.app.owner`, `chord.app.pairing`,
-  `chord.app.files`), the owner token file, the listening port, the owner link. A plugin of the required root failing
+  `chord.app.files`, `chord.themes`, `chord.themes.choice`, `chord.translations`, `chord.locale.choice`), the owner token file, the listening port, the owner link. A plugin of the required root failing
   rejects with the plugins component's `PluginError`, everything closed. `close` is idempotent.
 - **`startWorker`** is `workerMain` plus: the worker's directory `workers/<kind>/<key>/` and its store there, the host
   at the address acting as `principal.worker(address)`, connected to the server first (trusted, as the server's
-  principal), its plugins loaded with the worker's core facets (`chord.app.worker-info`, `chord.app.files`), `busy`
+  principal), its plugins loaded with the worker's core facets (`chord.app.worker-info`, `chord.app.files`,
+  `chord.translations`), `busy`
   from the app. A worker's errors reach the server as a fixed "worker failed" (the error stays in the worker's
   `onError`).
 
@@ -195,9 +198,11 @@ archive leaves nothing. The next hold starts the worker on the imported store an
 ## Plugins
 
 Roots: the app's `root` (required: a plugin of it failing stops `startServer`) and `<dataDir>/plugins/` (the user's:
-installs go there). `app.plugins.state` is the plugins component's marks for the app's "apply changes" button;
-`applyChanges` builds the dirty plugins (and installed ones) and rolls out to the server, then each worker kind;
-nothing is applied by itself.
+installs go there). `app.plugins.state` is the plugins component's marks for the app's "apply changes" button; its
+`base` turns true when base code changes (the app restarts its hosts): `base`'s files and directories, each worker
+kind's `entry`, and every file the web and terminal base bundles were built from (esbuild's metafile), never files under
+`node_modules` (an npm upgrade is a restart anyway). `applyChanges` builds the dirty plugins (and installed ones) and
+rolls out to the server, then each worker kind; nothing is applied by itself.
 
 ## Internals
 

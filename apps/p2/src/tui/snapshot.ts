@@ -11,6 +11,7 @@ export type TuiSnapshot = {
 	conversation: number;
 	screen: TuiRuntime["screen"];
 	showThinking: boolean;
+	thinkingSetting: boolean;
 	expandedTools: boolean;
 	drafts: [string, string][];
 	submissions: [string, { text: string; id: string; mode: "steer" | "followUp" }][];
@@ -25,6 +26,7 @@ export function snapshotRuntime(runtime: TuiRuntime): TuiSnapshot {
 		conversation: runtime.conversation,
 		screen: runtime.screen,
 		showThinking: runtime.showThinking,
+		thinkingSetting: runtime.thinkingSetting,
 		expandedTools: runtime.expandedTools,
 		drafts: [...runtime.drafts],
 		submissions: [...runtime.submissions],
@@ -55,6 +57,7 @@ export function restoreRuntime(runtime: TuiRuntime, state: unknown): void {
 	// The model screen became an overlay (P4): back to where it was opened from.
 	else if (saved.screen === "models") runtime.screen = runtime.session ? "chat" : "sessions";
 	runtime.showThinking = saved.showThinking === true;
+	if (typeof saved.thinkingSetting === "boolean") runtime.thinkingSetting = saved.thinkingSetting;
 	runtime.expandedTools = saved.expandedTools === true;
 	for (const [key, value] of pairs(saved.drafts))
 		if (typeof value === "string") runtime.drafts.set(migrateKey(key), value);
