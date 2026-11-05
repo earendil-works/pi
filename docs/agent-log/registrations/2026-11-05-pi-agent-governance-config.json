@@ -1,0 +1,26 @@
+{
+  "agent_registration": {
+    "agent_name": "pi coding agent",
+    "platform": "Pi",
+    "version": "Not recorded",
+    "session_id": "pi-agent-governance-config-2026-11-05",
+    "entry_date": "2026-11-05T06:35:00Z",
+    "entry_point": "User-authorized alignment of repository agent configuration with the canonical NLT-PI-DEV-OTOI-1.0.1 governance contract and pull request creation for PR #25.",
+    "acknowledged_otoi": true,
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "working_repo": "NeuroLift-Technologies/nlt-pi",
+    "working_branch": "chore/nlt-agent-governance-config",
+    "scope": "Align repository-specific agent configuration with the canonical governance contract, mirror NLT governance workflow artifacts into Pi agent-native locations, and update the Pi PR-review prompt to consume the repository REVIEW.md standard. No runtime, harness, MCP, provider, deployment, or authorization behavior changed.",
+    "capabilities_self_reported": [
+      "Repository governance and agent configuration inspection",
+      "Documentation, prompt, and agent-configuration updates",
+      "GitHub feature branch and pull request creation",
+      "Agent session registration, handoff, and review records"
+    ],
+    "known_limitations": [
+      "No runtime behavior changed; Claude Code-specific agent/harness surfaces and Pi extension surfaces were not force-merged one-to-one.",
+      "No full repository test suite was run for this documentation/configuration-only change."
+    ],
+    "preferred_handoff_format": "structured JSON and Markdown"
+  }
+}

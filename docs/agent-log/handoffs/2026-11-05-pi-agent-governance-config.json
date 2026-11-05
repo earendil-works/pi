@@ -1,0 +1,38 @@
+{
+  "handoff_record": {
+    "session_id": "pi-agent-governance-config-2026-11-05",
+    "agent_name": "pi coding agent",
+    "date": "2026-11-05T06:40:00Z",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "chore/nlt-agent-governance-config",
+    "work_completed": [
+      "Reviewed PR #20 (agent building blocks) and posted the NLT-Pi Review with verdict APPROVED.",
+      "Aligned repository agent configuration with the canonical NLT-PI-DEV-OTOI-1.0.1 governance contract.",
+      "Mirrored NLT governance skills and commands into Pi-native project locations.",
+      "Updated the Pi PR-review prompt to consume the repository REVIEW.md standard.",
+      "Added the session registration and handoff records for the PR #25 contribution.",
+      "Updated the active-thread ledger for PR #25.",
+      "Posted a response to the ChatGPT (GPT-6) governance review of PR #25."
+    ],
+    "work_in_progress": [],
+    "blockers": [],
+    "decisions_made": [
+      "Mirror only portable governance artifacts into Pi-native locations; do not force-merge Claude-specific surfaces one-to-one.",
+      "Attribute agent identity as the pi coding agent."
+    ],
+    "decisions_pending": [],
+    "escalations": [],
+    "next_agent_notes": "Await human review of PR #25; after merge, proceed with agent runner and route wiring per the PR #20 follow-ups (sandbox lifecycle wiring, free-model selection usage).",
+    "files_modified": [
+      "docs/agent-log/registrations/2026-11-05-pi-agent-governance-config.json",
+      "docs/agent-log/handoffs/2026-11-05-pi-agent-governance-config.json",
+      "docs/active-threads.md"
+    ],
+    "tests_run": [
+      "bash .nltotoi/scripts/validate-governance.sh"
+    ],
+    "test_result": "passed",
+    "pr_url": "https://github.com/NeuroLift-Technologies/nlt-pi/pull/25"
+  }
+}

@@ -1,6 +1,6 @@
 # Active Threads — NLT-Pi
 
-**Last updated:** 2026-11-02
+**Last updated:** 2026-11-05
 
 ## Active
 
@@ -39,6 +39,17 @@
 **Owner:** Joshua W. Dorsey, Sr.  
 **Summary:** Maintain explicit separation between development governance, ASFDK foundation, and ASFDK MCP integration governance.  
 **Next action:** Keep repository documentation and agent profiles consistent with the actual package/runtime boundaries; do not infer enforcement from documentation alone.
+
+### NLTPI-GOV-003 — Align agent configuration with local governance contract
+**Status:** in_review  
+**Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
+**Summary:** Align repository-specific agent infrastructure with the canonical NLT-PI-DEV-OTOI-1.0.1 governance contract, mirror NLT governance workflow artifacts into Pi-native locations, and route PR reviews through the repository REVIEW.md standard.  
+**PR:** https://github.com/NeuroLift-Technologies/nlt-pi/pull/25  
+**Branch:** `chore/nlt-agent-governance-config`  
+**Agent registration:** `docs/agent-log/registrations/2026-11-05-pi-agent-governance-config.json`  
+**Handoff record:** `docs/agent-log/handoffs/2026-11-05-pi-agent-governance-config.json`  
+**Verification:** `bash .nltotoi/scripts/validate-governance.sh` → 71 passed, 0 failed.  
+**Next action:** Address the ChatGPT (GPT-6) governance review of PR #25 (registration, handoff, and active-thread evidence); merge only after human approval.
 
 ## Resolved
 
