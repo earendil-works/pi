@@ -677,9 +677,11 @@ translated phone drawer and intercept chat taps.
   and the TUI's `watch` go where the contract places the input. `WorkerBoundary`, `SessionTransfer`
   and `PluginRemoval` (version 2) take a `session` input for that. Moving a type is a contract break.
 - **Authors** are assigned by the worker from the principal and stored in the input's entry data (`p2.input`,
-  `src/runtime/input.ts`); a peer session's message is a `p2.peer-message` entry (`src/runtime/entries.ts`). The
-  model message of both starts with a `<sender kind="owner|guest|session" …/>` block (`src/runtime/sender.ts`,
-  values escaped), which the preamble explains and nothing reads back: readers and `originOf` use the entry data.
+  `src/runtime/input.ts`); a peer session's message is a `p2.peer-message` entry, a subagent's report or `team`
+  message a `p2.agent-message` entry (`src/runtime/entries.ts`). Their model message starts with a
+  `<sender kind="owner|guest|session|subagent" …/>` block (`src/runtime/sender.ts`, values escaped; a subagent's
+  text follows as `[<intent>] <text>`), which the preamble explains and nothing reads back: readers and `originOf`
+  use the entry data.
   Stop/dequeue restore text only to its author; removing a queued input (×,
   no restore) discards it, as in Pi Mobile.
 - **Windowed conversation view** (`plugins/chat/worker.ts`, `src/web/history.ts`, `src/runtime/conversation-stats.ts`):

@@ -1,5 +1,5 @@
-// The first block of every model message a person or a peer session sends (browser-safe): `<sender kind="owner"
-// name="Mario"/>`. The system prompt tells the model to attribute input by it; nothing reads it back, readers use the
+// The first block of every model message a person, a peer session or a subagent sends (browser-safe): `<sender
+// kind="owner" name="Mario"/>`. The system prompt tells the model to attribute input by it; nothing reads it back, readers use the
 // entry data.
 import type { Author } from "./principals.ts";
 
@@ -9,7 +9,8 @@ export type { Author } from "./principals.ts";
 export type Sender =
 	| { readonly kind: "owner"; readonly name: string }
 	| { readonly kind: "guest"; readonly id: string; readonly name: string }
-	| { readonly kind: "session"; readonly id: string; readonly title: string };
+	| { readonly kind: "session"; readonly id: string; readonly title: string }
+	| { readonly kind: "subagent"; readonly name: string };
 
 /** How a sender block starts; the fake provider strips it from the text it echoes. */
 export const SENDER_PREFIX = "<sender ";

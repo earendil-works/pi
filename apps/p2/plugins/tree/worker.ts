@@ -15,6 +15,7 @@ import {
 } from "@earendil-works/pi-durable";
 import {
 	type AcceptsTable,
+	agentMessage,
 	type Context,
 	type Ctx,
 	contribute,
@@ -273,13 +274,14 @@ function roleOf(entry: EntryRecord): TreeNode["role"] | undefined {
 	return message?.role === "user" && entry.head === undefined ? "user" : undefined;
 }
 
-/** What a person or a peer session wrote (structured input data), else the user message's text. */
+/** What a person, a peer session or a subagent wrote (structured input data), else the user message's text. */
 function userText(entry: EntryRecord): string {
 	const message = entry.model?.[0];
 	const content = message?.role === "user" ? message.content : "";
 	return (
 		messageData(entry.data)?.text ??
 		peerMessage(entry.kind, entry.data)?.text ??
+		agentMessage(entry.kind, entry.data)?.text ??
 		(typeof content === "string"
 			? content
 			: content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"))

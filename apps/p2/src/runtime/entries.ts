@@ -38,7 +38,7 @@ export const SUBAGENT_TASK_ENTRY = "p2.subagent-task";
 /**
  * A message from a subagent, as its own entry kind: its end-of-turn report to the main agent (`answered`, `failed`), or
  * what it sent with the `team` tool (`question`, `note`) to the main agent or another subagent. Readers use this data;
- * the model reads a server-written first line (`[subagent <name> …]`).
+ * the model reads a server-written `<sender kind="subagent" name="…"/>` block, then `[<intent>] <text>`.
  */
 export const AGENT_MESSAGE_ENTRY = "p2.agent-message";
 export const AgentMessageSchema = obj(
@@ -52,3 +52,8 @@ export const AgentMessageSchema = obj(
 	{ open: true },
 );
 export type AgentMessage = Static<typeof AgentMessageSchema>;
+const isAgentMessage = compile(AgentMessageSchema).check;
+
+/** The subagent message an entry of kind `kind` with `data` records, if it is one. */
+export const agentMessage = (kind: string, data: unknown): AgentMessage | undefined =>
+	kind === AGENT_MESSAGE_ENTRY && isAgentMessage(data) ? data : undefined;

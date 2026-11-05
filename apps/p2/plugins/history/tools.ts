@@ -16,7 +16,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { arr, int, obj, opt, str, union } from "@earendil-works/pi-schema";
 import type { JsonValue } from "@p2/app/v1";
-import { literal, messageData, peerMessage, SHELL_ENTRY, shellData } from "@p2/app/v1";
+import { agentMessage, literal, messageData, peerMessage, SHELL_ENTRY, shellData } from "@p2/app/v1";
 import type { HistoryHits } from "../search/contract.ts";
 
 export const HISTORY_SEARCH = "history_search";
@@ -27,8 +27,6 @@ export const HISTORY_HANDOFF = "history_handoff";
 export const READ_BUDGET = 50_000;
 /** A rendered entry's text in a card's list. */
 const PREVIEW = 200;
-/** Subagents' messages (plugins/subagents `AGENT_MESSAGE_ENTRY`), read without depending on that plugin. */
-const AGENT_MESSAGE = "p2.agent-message";
 
 /** Searches the calling conversation in the server's index (the search plugin's worker feed). */
 export type HistorySearch = (query: {
@@ -75,16 +73,14 @@ export function renderEntry(entry: EntryRecord, results: ReadonlyMap<string, boo
 			? { entry: id, role: "user", author: shell.author.name, text: `[shell: ${shell.command}]` }
 			: undefined;
 	}
-	if (entry.kind === AGENT_MESSAGE) {
-		const data = entry.data as { from?: { name?: unknown }; intent?: unknown; text?: unknown } | undefined;
-		if (typeof data?.text === "string")
-			return {
-				entry: id,
-				role: "user",
-				author: `subagent ${String(data.from?.name ?? "")}`.trim(),
-				text: `${data.intent === "question" ? "[asks] " : data.intent === "note" ? "[notes] " : ""}${data.text}`,
-			};
-	}
+	const fromAgent = agentMessage(entry.kind, entry.data);
+	if (fromAgent)
+		return {
+			entry: id,
+			role: "user",
+			author: `subagent ${fromAgent.from.name}`,
+			text: `${fromAgent.intent === "question" ? "[asks] " : fromAgent.intent === "note" ? "[notes] " : ""}${fromAgent.text}`,
+		};
 	if (!message) return undefined;
 	if (message.role === "user") {
 		const peer = peerMessage(entry.kind, entry.data);

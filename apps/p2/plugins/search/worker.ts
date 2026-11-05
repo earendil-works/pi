@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { bool } from "@earendil-works/pi-schema";
 import {
+	agentMessage,
 	type Ctx,
 	defineFacet,
 	forbidden,
@@ -38,7 +39,7 @@ const Indexer = local("p2.search-indexer", {
 const PAGE = 200;
 
 /**
- * What an input or answer said: a person's or a peer session's input by its data (what they typed, not a mention's
+ * What an input or answer said: a person's, a peer session's or a subagent's input by its data (what they typed, not a mention's
  * digest), a tool's input and an answer by their text.
  */
 function indexedMessage(entry: EntryRecord): IndexedMessage | undefined {
@@ -51,7 +52,11 @@ function indexedMessage(entry: EntryRecord): IndexedMessage | undefined {
 	if (role === "assistant" && !AssistantEntry.is(entry)) return undefined;
 	const messages = entry.model?.filter((message) => message.role === role) ?? [];
 	const typed =
-		role === "user" ? (messageData(entry.data)?.text ?? peerMessage(entry.kind, entry.data)?.text) : undefined;
+		role === "user"
+			? (messageData(entry.data)?.text ??
+				peerMessage(entry.kind, entry.data)?.text ??
+				agentMessage(entry.kind, entry.data)?.text)
+			: undefined;
 	const text =
 		typed ??
 		messages

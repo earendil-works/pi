@@ -15,12 +15,11 @@ import type {
 
 type ArtifactState = { artifacts: ArtifactInfo[] };
 
-import { AGENT_MESSAGE_ENTRY, type AgentMessage, AgentMessageSchema, peerMessage } from "../runtime/entries.ts";
+import { type AgentMessage, agentMessage, peerMessage } from "../runtime/entries.ts";
 import type { ArtifactInfo } from "../runtime/schemas.ts";
 
 type ConversationPeer = { id: string; title: string };
 
-import { compile } from "@earendil-works/pi-schema";
 import { type AssistantCost, cacheHitRate } from "../runtime/conversation-stats.ts";
 import { type MessageData, messageData } from "../runtime/input.ts";
 import type { Author } from "../runtime/sender.ts";
@@ -151,8 +150,6 @@ function artifactInfo(value: unknown): ArtifactInfo | undefined {
 		return;
 	return details as ArtifactInfo;
 }
-
-const isAgentMessage = compile(AgentMessageSchema).check;
 
 /**
  * Display items of each entry, with what they were built from. Chord keeps unchanged entries (and documents' unchanged
@@ -448,8 +445,9 @@ export function buildTranscript(
 					// A person's input from its data.
 					const person = messageData(entry.data);
 					if (person) return [personItem(entry, person, images, false)];
-					if (entry.kind === AGENT_MESSAGE_ENTRY && isAgentMessage(entry.data)) {
-						const { from, intent, text } = entry.data;
+					const fromAgent = agentMessage(entry.kind, entry.data);
+					if (fromAgent) {
+						const { from, intent, text } = fromAgent;
 						return [{ type: "user", key, entryId: entry.id, images, agent: { from, intent }, text, files: [] }];
 					}
 					// A peer session's message from its data, or a tool's plain input.

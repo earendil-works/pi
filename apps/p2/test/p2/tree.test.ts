@@ -171,7 +171,7 @@ describe("/tree (fake provider)", () => {
 		const tree = await (await treeRef()).tree(BACKGROUND_CONTEXT);
 		const chat = await chatOf(tree.main);
 		await chat.send({ text: "subagent", requestId: "subagent" }, BACKGROUND_CONTEXT);
-		await until(chat.view, (next) => text(next).includes("[subagent helper answered"));
+		await until(chat.view, (next) => text(next).includes('<sender kind="subagent" name="helper"/>'));
 		chat.release();
 		await idle();
 		const feed = await holdIn(owner, Subagents, {}, "reader");
@@ -191,7 +191,7 @@ describe("/tree (fake provider)", () => {
 		await until(chat.view, (next) => text(next).includes("Started slowpoke."));
 		// The subagent's bash call takes 4 seconds: the session switches meanwhile.
 		await ref.select({ conversation: 1 }, BACKGROUND_CONTEXT);
-		await until(chat.view, (next) => text(next).includes("[subagent slowpoke answered"));
+		await until(chat.view, (next) => text(next).includes('<sender kind="subagent" name="slowpoke"/>'));
 		const feed = await holdIn(owner, Subagents, {}, "reader");
 		const children = await until(
 			feed.children,
@@ -203,7 +203,7 @@ describe("/tree (fake provider)", () => {
 		const direct = await chatOf(slowpoke);
 		const team = { action: "send", to: "parent", message: "for the asker", intent: "note" };
 		await direct.send({ text: `team ${JSON.stringify(team)}`, requestId: "team-parent" }, BACKGROUND_CONTEXT);
-		await until(chat.view, (next) => text(next).includes("[subagent slowpoke notes, no reply needed] for the asker"));
+		await until(chat.view, (next) => text(next).includes("[notes, no reply needed] for the asker"));
 		direct.release();
 		chat.release();
 		await idle();

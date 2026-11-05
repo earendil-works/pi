@@ -26,7 +26,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { arr, bool, compile, nul, obj, opt, str, union } from "@earendil-works/pi-schema";
 import type { Context, JsonValue } from "@p2/app/v1";
-import { type Location, type LocationInput, literal, locationText } from "@p2/app/v1";
+import { type Location, type LocationInput, literal, locationText, senderText } from "@p2/app/v1";
 import { answerOrigin, defineP2Tool, mainConversation, originOf, type P2Tool } from "@p2/app/v1/worker";
 import { AGENT_MESSAGE_ENTRY, type AgentMessage, SUBAGENT_TASK_ENTRY, SubagentLocationsSchema } from "./contract.ts";
 import {
@@ -103,8 +103,9 @@ function textOf(message: AssistantMessage | undefined): string {
 }
 
 /**
- * A subagent's message as an input: the structural entry readers use, and the line the model reads. `replyWith` is the
- * tool call that answers a question (the main agent's `subagent send`, a sibling's `team send`).
+ * A subagent's message as an input: the structural entry readers use, and what the model reads: the sender block, then
+ * the intent and the text. `replyWith` is the tool call that answers a question (the main agent's `subagent send`, a
+ * sibling's `team send`).
  */
 function agentMessageInput(message: AgentMessage, replyWith: string) {
 	const label = {
@@ -114,7 +115,10 @@ function agentMessageInput(message: AgentMessage, replyWith: string) {
 		note: "notes, no reply needed",
 	}[message.intent];
 	return {
-		content: `[subagent ${message.from.name} ${label}] ${message.text}`,
+		content: [
+			{ type: "text" as const, text: senderText({ kind: "subagent", name: message.from.name }) },
+			{ type: "text" as const, text: `[${label}] ${message.text}` },
+		],
 		entry: { kind: AGENT_MESSAGE_ENTRY, data: message as unknown as JsonValue },
 	};
 }
@@ -387,8 +391,8 @@ export function createSubagentExtension(
 			"- status (optional name): list subagents and whether they are working; archived ones only by name.",
 			"- models: list models that have credentials configured.",
 			"Answers are reported back to you as messages when they arrive; do not wait or poll for them.",
-			"Subagents can also message you while they work: a [subagent <name> asks; …] message needs your answer (send to that",
-			"subagent); a note needs none.",
+			'Subagents can also message you while they work: a <sender kind="subagent"> message marked [asks; …] needs your',
+			"answer (send to that subagent); a note needs none.",
 		].join("\n"),
 		parameters: obj(
 			{

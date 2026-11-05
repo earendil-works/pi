@@ -94,7 +94,7 @@ describe("code mode agent (fake provider)", () => {
 		assert.match(value.error, /not usable after 3 attempts: it is not JSON/);
 		assert.ok(
 			!messages(view).some(
-				(message) => message.role === "user" && JSON.stringify(message.content).includes("[subagent"),
+				(message) => message.role === "user" && JSON.stringify(message.content).includes('kind=\\"subagent\\"'),
 			),
 			"answers are not reported to the main conversation",
 		);

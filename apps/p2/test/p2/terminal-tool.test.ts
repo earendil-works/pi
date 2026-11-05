@@ -223,7 +223,7 @@ test(
 			await until(
 				chat.view,
 				(value) =>
-					JSON.stringify(value?.entries ?? []).includes("[subagent own answered") &&
+					JSON.stringify(value?.entries ?? []).includes('<sender kind=\\"subagent\\" name=\\"own\\"/>') &&
 					!(value?.docs["pi.live"] as { run?: unknown })?.run,
 			);
 			const { windows } = (await script('return await tools.terminal({ command: "list-windows" });')) as {

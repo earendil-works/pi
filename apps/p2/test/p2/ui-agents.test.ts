@@ -46,7 +46,7 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		// The helper's report is a user message too: send the script once it has been answered.
 		await until(
 			chat.view,
-			(value) => !live(value)?.run && JSON.stringify(value).includes("Echo: [subagent helper answered"),
+			(value) => !live(value)?.run && JSON.stringify(value).includes("Echo: [answered, no reply needed]"),
 			30_000,
 		);
 		await chat.send({ text: `codemode ${SCRIPT}`, requestId: "script" }, BACKGROUND_CONTEXT);
@@ -167,7 +167,7 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		assert.deepEqual(wt.location, { cwd: worktree, env: null });
 		await until(
 			chat.view,
-			(value) => !live(value)?.run && JSON.stringify(value).includes("Echo: [subagent wt answered"),
+			(value) => !live(value)?.run && JSON.stringify(value).includes("Echo: [answered, no reply needed]"),
 		);
 		chat.release();
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
