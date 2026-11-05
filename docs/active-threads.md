@@ -49,6 +49,7 @@
 **Status:** step 1 in review (library code, not wired); the rest waits on owner answers  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
 **Summary:** The owner wants the chat page to become a personal coding agent with tools. Options for where tools run were put to the owner; the owner chose **Vercel Sandbox** (2026-11-05). Step 1 adds `mvp/src/sandbox/operations.ts`: sandbox-backed bash/read/write/edit operations behind the harness policy, confined to a workspace root, with no host environment forwarded, timeouts and size caps, tested with a fake sandbox (26 tests; 10 mutation checks each fail the tests). New dependency `@vercel/sandbox` 3.6.1, pinned; 3.7.0 and later are avoided because their transitive `zod@4.1.11` is flagged high by `npm audit`.  
+**Also in this step:** `mvp/src/gateway/free-models.ts` picks a free model from the live gateway catalog at use time and fails closed (18 tests; checked against the live catalog, which listed 3 selectable models on 2026-11-05).  
 **Not done, on purpose:** no route, no sandbox creation, no credentials, no model call. A route that starts sandboxes and runs model-directed commands must not be reachable by anyone with the URL.  
 **Open (owner):**
 - **Access control.** The owner's answer was "Vercel login for the model provider and model", which can mean the credentials come from the Vercel account (OIDC). That does not restrict who can call the route. Needs a decision: Vercel Authentication for the whole project, a passphrase held in a Vercel environment variable (set by the owner), or something else.
@@ -56,7 +57,9 @@
 - **Egress.** Proposal: `deny-all` by default; an allowlist only by explicit choice. `npm install` and `git clone` need it.
 - **Cost.** Vercel Sandbox usage is billed separately from "free models only"; the owner's plan allowance is not known.
 - **Model and agent loop.** A free gateway model (NLTPI-MVP-003) driving the sandbox tools, streamed to the chat page, is step 2. Function duration limits need streaming.  
-**Next action:** Owner answers the access-control question; then step 2 as a separate scoped PR.
+**Owner direction (2026-11-05):** "I'll add the vercel login once everything is running." The route is therefore built to ship **off by default**: it refuses to run unless the owner sets a flag in Vercel, so merging code exposes nothing. Turning the flag on before Vercel login is on leaves the route open to anyone with the URL (it can start billed sandboxes); that is the owner's decision to make.  
+**Plan:** (1) building blocks, unwired: sandbox operations, free-model selection (this PR); (2) agent runner: Pi session with the sandbox tools and a gateway credential from the Vercel OIDC token; (3) route with streaming, sandbox lifecycle and limits, `vercel.json` duration, chat-page streaming, default off.  
+**Next action:** Steps 2 and 3, each as a separate scoped PR. Owner: set the flag and Vercel login when ready; confirm sandbox cost against the plan.
 
 ### NLTPI-MVP-003 — Provider-agnostic model routing for the governed turn
 **Status:** gateway chosen (Vercel AI Gateway); not started  

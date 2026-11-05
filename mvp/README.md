@@ -74,6 +74,16 @@ The path checks are a guardrail for the file tools, not the security boundary. T
 
 `@vercel/sandbox` is pinned to 3.6.1. Newer releases (3.7.0 and later) pull in a transitive `zod@4.1.11` through `@vercel/cli-config` that `npm audit` flags as high severity (memory exhaustion on oversized collections), so they are not used until that is fixed upstream.
 
+## Free-model selection
+
+`src/gateway/free-models.ts` implements the owner's rule that only free models go through the Vercel AI Gateway. It reads the gateway's public model catalog (`https://ai-gateway.vercel.sh/v1/models`, no authentication) at the time of use and treats a model as free only if it is a language model whose input and output prices are listed and exactly zero, every other price field is also zero, and its price is not flagged `varies_by_provider`. Missing, tiered, regional, unrecognised or malformed pricing is not free.
+
+`pickFreeModel()` returns the best free model with tool support (preferred ids first, then larger context, then id order). A specific model can be requested, but it is used only if it is free right now; it is never swapped for another. If the catalog cannot be read, nothing is free, or the requested model is not free, it throws `NoFreeModelError`, and the caller must refuse the turn instead of using a priced model. No model identifiers are written in source.
+
+On 2026-11-05 the live catalog listed 320 language models; 3 were selectable. A fourth was listed at zero but flagged `varies_by_provider`, so it is excluded.
+
+Like the sandbox operations, this is unwired library code: it makes no model call and holds no credentials.
+
 ## Governed turn
 
 `createNltCodingAgent()` exposes a deterministic governed turn surface (`governedTurn`) that runs a user prompt through the ASFDK harness before any coding-agent turn may execute:

@@ -36,3 +36,6 @@ Execution environment: chosen by the owner. Still needs the owner before any rou
 
 ## Outcome
 See the handoff record `2026-11-05-sandbox-tool-operations.json` and the PR.
+
+## Addendum: free-model selection and owner direction (2026-11-05)
+The owner said "I'll add the vercel login once everything is running", so the rest of the agent is being built now with the route off by default (a flag the owner sets in Vercel). Stacked on this PR, because both are unwired agent building blocks and the designated branch was occupied: `mvp/src/gateway/free-models.ts`, which implements the owner's free-models-only rule by reading the live public gateway catalog at use time and failing closed. No new dependency, no credentials, no model call, no route. The remaining plan (agent runner, then the route and chat-page streaming) is in `docs/active-threads.md` NLTPI-MVP-005 and will be separate PRs. Risk noted: if the owner turns the route on before Vercel login is on, anyone with the URL could start billed sandboxes; the flag makes that an explicit decision.
