@@ -84,6 +84,20 @@ The path checks are a guardrail for the file tools, not the security boundary. T
 - The lock scripts are fixed text and every value is passed as an argument, so no model or user input reaches them. An agent with `bash` inside the sandbox could delete the lock, which would only allow two turns to overlap in the owner's own sandbox.
 - `src/sandbox/vercel-client.ts` is the real client. It is kept separate so the lifecycle logic and its tests never load the SDK, and it is compile-checked against the real SDK types. Calling it creates or resumes a real, billed sandbox, so nothing calls it yet.
 
+## Agent runner
+
+`src/agent/runner.ts` runs one governed coding turn: `runAgentTurn(deps, { prompt, signal, onText, onToolStart })` returns a status (`completed`, `blocked`, `busy`, `no_free_model`, `timed_out`, `error`) and never throws for an expected refusal. It is library code only. Nothing in the application calls it yet; the route that will is off unless the owner sets a per-environment flag.
+
+Order of events, each of which can stop the turn before the next starts:
+1. **Crisis gate** on the prompt. Anything other than a literal `allowed: true`, or a gate that throws, blocks the turn; no sandbox is touched, no model is chosen, no credential is read.
+2. **Free model** from the live gateway catalog (`pickFreeModel`). If none is free right now the turn does not run (`no_free_model`); no priced model is substituted.
+3. **The sandbox lock** (`withAgentSandbox`). If another turn holds it the result is `busy`, and the credential is not read.
+4. **The credential** is read inside the turn (`gatewayToken`, for example the Vercel OIDC token read inside the request), held in memory by the model runtime, and never put in the sandbox, a file, the session or a log.
+5. **The session** uses Pi's `bash`, `read`, `write` and `edit` tools bound to the sandbox operations, so every call is reviewed by the harness policy first. Pi's built-in host tools are disabled (`noTools: "builtin"`), and no extensions, skills, prompt files or context files from the machine running the code are loaded. The session's working directory is the sandbox workspace (`/vercel/sandbox`, unverified until a real sandbox exists).
+6. The caller's abort signal and the turn deadline both stop the model run; the lock is then released (or, if the turn ignores its deadline, left to expire).
+
+Tests run offline with Pi's faux provider and a recording fake sandbox (11 tests, including checks that a blocked gate, no free model, a busy sandbox, and a policy-blocked command each stop short of the next step, and that the token and host environment never reach the sandbox). They were mutation-checked: removing the policy review or loosening the gate check makes them fail. Not exercised: the real gateway call, a real sandbox, and the tool-name list Pi sends the model.
+
 ## Free-model selection
 
 `src/gateway/free-models.ts` implements the owner's rule that only free models go through the Vercel AI Gateway. It reads the gateway's public model catalog (`https://ai-gateway.vercel.sh/v1/models`, no authentication) at the time of use and treats a model as free only if it is a language model whose input and output prices are listed and exactly zero, every other price field is also zero, and its price is not flagged `varies_by_provider`. Missing, tiered, regional, unrecognised or malformed pricing is not free.

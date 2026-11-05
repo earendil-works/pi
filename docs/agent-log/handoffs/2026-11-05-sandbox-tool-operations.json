@@ -13,7 +13,8 @@
       "Found and fixed a hang: the walk up to the nearest existing ancestor could loop forever if the first path check were bypassed; it is now bounded by path depth.",
       "Added mvp/src/gateway/free-models.ts: picks a free model from the live gateway catalog at use time (listed zero input/output price, all other price fields zero, not varies_by_provider, tool-use), fails closed with NoFreeModelError. 18 tests; checked against the live catalog (3 selectable on 2026-11-05).",
       "Added mvp/src/sandbox/lifecycle.ts and vercel-client.ts: one fixed-name persistent sandbox via getOrCreate, one vCPU, deny-all network (exact-domain allowlist only), session capped at 40 minutes, and a lock so one turn runs at a time (18 tests including the lock script run in a real shell; 9 mutation checks each fail the tests; the SDK client is compile-checked against the real types).",
-      "Applied the owner's egress answer: lifecycle default is now an allowlist of package registries and GitHub (presets), deny-all still available; allow-all was added later as an explicit option (nlt-pi#21); 21 lifecycle tests, 4 more mutation checks."
+      "Applied the owner's egress answer: lifecycle default is now an allowlist of package registries and GitHub (presets), deny-all still available; allow-all was added later as an explicit option (nlt-pi#21); 21 lifecycle tests, 4 more mutation checks.",
+      "Added mvp/src/agent/runner.ts (nlt-pi#21): crisis gate, free model from the live catalog, sandbox lock, Pi bash/read/write/edit bound to the reviewed sandbox operations, host tools and host resources disabled, credential read inside the turn. 11 offline tests with the faux provider; mutation-checked. Not wired to any route."
     ],
     "work_in_progress": [],
     "blockers": [
