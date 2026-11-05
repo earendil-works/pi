@@ -45,6 +45,19 @@
 **Re-sync (2026-11-05):** `policy.ts`, `protocols.ts` and `tools.ts` in `mvp/src/harness/` now match asfdk-harness `5488262` (only the `.ts` import specifiers differ); headers and the harness README carry the new commit. The six `policy.ts` corpus commands moved to the asserted `bashMustBlock` list. Three glob variants raised in review of asfdk-harness#36 were measured as still allowed and are recorded as known gaps: `cat .EN?` (case), `cat cred*.yaml` and `cat .en?.staging` (suffix variants). Not yet filed upstream.  
 **Next action:** Owner: asfdk#41 is merged but not yet released, so here still pending is the `@neurolift-technologies/asfdk` bump and moving the "I want to die" corpus entry to asserted; decisions on rrt-advocate#49/#50, sleepwalker#33 and nlt-sdl#13. Then a draft asfdk-harness PR for the three glob variants (owner approval needed: `policy.ts` is escalate-before-change upstream).
 
+### NLTPI-MVP-005 — Coding agent with tools in a Vercel Sandbox
+**Status:** step 1 in review (library code, not wired); the rest waits on owner answers  
+**Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
+**Summary:** The owner wants the chat page to become a personal coding agent with tools. Options for where tools run were put to the owner; the owner chose **Vercel Sandbox** (2026-11-05). Step 1 adds `mvp/src/sandbox/operations.ts`: sandbox-backed bash/read/write/edit operations behind the harness policy, confined to a workspace root, with no host environment forwarded, timeouts and size caps, tested with a fake sandbox (26 tests; 10 mutation checks each fail the tests). New dependency `@vercel/sandbox` 3.6.1, pinned; 3.7.0 and later are avoided because their transitive `zod@4.1.11` is flagged high by `npm audit`.  
+**Not done, on purpose:** no route, no sandbox creation, no credentials, no model call. A route that starts sandboxes and runs model-directed commands must not be reachable by anyone with the URL.  
+**Open (owner):**
+- **Access control.** The owner's answer was "Vercel login for the model provider and model", which can mean the credentials come from the Vercel account (OIDC). That does not restrict who can call the route. Needs a decision: Vercel Authentication for the whole project, a passphrase held in a Vercel environment variable (set by the owner), or something else.
+- **Approval defaults.** Proposal: file edits and commands inside the sandbox run without asking; anything that leaves the sandbox (network, git push, exporting files) needs the owner's approval.
+- **Egress.** Proposal: `deny-all` by default; an allowlist only by explicit choice. `npm install` and `git clone` need it.
+- **Cost.** Vercel Sandbox usage is billed separately from "free models only"; the owner's plan allowance is not known.
+- **Model and agent loop.** A free gateway model (NLTPI-MVP-003) driving the sandbox tools, streamed to the chat page, is step 2. Function duration limits need streaming.  
+**Next action:** Owner answers the access-control question; then step 2 as a separate scoped PR.
+
 ### NLTPI-MVP-003 — Provider-agnostic model routing for the governed turn
 **Status:** gateway chosen (Vercel AI Gateway); not started  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  

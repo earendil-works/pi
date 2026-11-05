@@ -1,0 +1,47 @@
+{
+  "handoff_record": {
+    "session_id": "session_01UNjnjm3TZ7Tg4MRswGt24P",
+    "agent_name": "Claude Code",
+    "date": "2026-11-05T02:23:05+00:00",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "ccr-0d5033af-1rkbla",
+    "work_completed": [
+      "Added mvp/src/sandbox/operations.ts: sandbox-backed bash/read/write/edit operations, policy-reviewed, confined to a workspace root (lexical and symlink-aware), no host env forwarded, timeouts and size caps, fail closed.",
+      "Added @vercel/sandbox 3.6.1 (exact). Chose it over 3.9.0 because 3.7.0+ pull a transitive zod@4.1.11 that npm audit flags high; repo-wide npm audit is 0 vulnerabilities.",
+      "26 tests with a fake sandbox plus a type-level check against the real Sandbox type; 10 mutation checks each make the tests fail.",
+      "Found and fixed a hang: the walk up to the nearest existing ancestor could loop forever if the first path check were bypassed; it is now bounded by path depth."
+    ],
+    "work_in_progress": [],
+    "blockers": [
+      "Access control for the chat/agent route is undecided; the owner's answer (Vercel login for the model provider and model) does not say who can call the route."
+    ],
+    "decisions_made": [
+      "Execution environment: Vercel Sandbox (owner, 2026-11-05).",
+      "Build the unwired library part first; do not add any route or sandbox creation until access control is decided.",
+      "Narrow SandboxLike interface, checked against the real Sandbox type."
+    ],
+    "decisions_pending": [
+      "Access control: Vercel Authentication for the project, a passphrase env var set by the owner, or other.",
+      "Approval defaults: proposed auto-run inside the sandbox, owner approval for anything that leaves it.",
+      "Egress policy: proposed deny-all by default; allowlist by explicit choice.",
+      "Sandbox cost against the owner's plan.",
+      "Retention settings for gateway requests (NLTPI-MVP-003)."
+    ],
+    "escalations": [],
+    "next_agent_notes": "Step 2 is a free gateway model driving these operations behind the crisis gate, streamed to the chat page, behind whatever access control the owner picks. Create sandboxes with networkPolicy deny-all and never pass host env or credentials into them. Keep the policy review inside the operations; do not add a path around it. Do not use @vercel/sandbox 3.7.0+ until the zod advisory chain is fixed. Timeout expiry behavior of sandbox.runCommand (rejects vs exit code 137) was not verified against a live sandbox.",
+    "files_modified": [
+      "mvp/src/sandbox/operations.ts",
+      "mvp/test/sandbox-operations.test.ts",
+      "mvp/package.json",
+      "package-lock.json",
+      "mvp/README.md",
+      "docs/active-threads.md",
+      "docs/agent-log/intent/2026-11-05-sandbox-tool-operations.md",
+      "docs/agent-log/handoffs/2026-11-05-sandbox-tool-operations.json"
+    ],
+    "tests_run": "see PR description",
+    "tests_passing": null,
+    "pr_url": null
+  }
+}

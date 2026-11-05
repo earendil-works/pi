@@ -57,6 +57,23 @@ The coding-agent workspace packages resolve through their built `dist`, so build
 
 `test/corpus/` holds prompts and shell commands with the expected gate / policy outcome (`test/corpus.test.ts`). `must*` entries are asserted. `known*` entries are things the upstream component (the RRT keyword detector, the harness `policy.ts`) should handle but does not yet; they are `it.fails` tests, so they turn red when an upstream fix is re-synced and must then be moved to the asserted list. The crisis detector currently allows several unambiguous statements (for example "I want to die"), and `policy.ts` does not match forms such as `rm -fr ~` or `cat .en?`. Do not describe the gate or the guardrail as complete.
 
+## Sandbox tool operations
+
+`src/sandbox/operations.ts` builds the swappable `bash`, `read`, `write` and `edit` operations that the Pi coding-agent tools accept, so they act inside a Vercel Sandbox instead of on the machine running the agent loop. The owner chose Vercel Sandbox as the first execution environment (2026-11-05).
+
+It is library code only. It does not create a sandbox, read credentials, open a connection, or expose a route, and nothing in the application calls it yet. Enabling it needs an access-control decision first (`NLTPI-MVP-005`).
+
+What it enforces, with tests that use a fake sandbox:
+- every call is reviewed by the harness policy (`reviewToolCall`) first; anything other than `allow: true` is refused;
+- file paths and the command directory must stay inside one workspace root, including after symlink resolution, and including creating a file under a symlinked directory that leads outside;
+- the caller's environment is never forwarded to the sandbox (it comes from the host process and can hold credentials); only a fixed, configured environment is;
+- commands always have a timeout (default 2 minutes, at most 10), and output (1 MiB), file reads (10 MiB) and writes (2 MiB) are capped;
+- any sandbox error is an error, never a pass.
+
+The path checks are a guardrail for the file tools, not the security boundary. The sandbox is: it is isolated, and new sandboxes should be created with `networkPolicy: "deny-all"` (`DEFAULT_SANDBOX_NETWORK_POLICY`). `bash` inside the sandbox can do anything the sandbox allows, which is why egress and secrets must be handled at the sandbox level.
+
+`@vercel/sandbox` is pinned to 3.6.1. Newer releases (3.7.0 and later) pull in a transitive `zod@4.1.11` through `@vercel/cli-config` that `npm audit` flags as high severity (memory exhaustion on oversized collections), so they are not used until that is fixed upstream.
+
 ## Governed turn
 
 `createNltCodingAgent()` exposes a deterministic governed turn surface (`governedTurn`) that runs a user prompt through the ASFDK harness before any coding-agent turn may execute:
