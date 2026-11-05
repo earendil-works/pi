@@ -48,7 +48,11 @@ export function entryOrigin(entry: EntryRecord | undefined): ConversationOrigin 
 
 /**
  * The origin of the run that ended with the answer `answer` of `conversationId`, read after it ended (a subagent's
- * report): its inputs are the input entries after the previous run's last answer. The owner's only if all are.
+ * report, when `pi.live.run` is gone): its inputs are the input entries after the previous run's final answer. The
+ * owner's only if all are. Only a final answer (`stop`, `length`) bounds the scan: a retried model error appends an
+ * `error` answer and an overflow compaction a head marker inside a run, and scanning past a failed or aborted run only
+ * adds inputs, so the result can only be stricter. (An `onYield` continuation after a final answer would hide the
+ * inputs before it; p2 installs no such hook.)
  */
 export async function answerOrigin(
 	tx: Tx,
@@ -61,9 +65,9 @@ export async function answerOrigin(
 		const page = await tx.scanEntries({ conversationId, maxEntryId: (answer - 1) as EntryId }, 100, cursor);
 		for (const entry of page.items) {
 			const message = entry.model?.[0];
-			// The previous run ended at its last answer; a reset or compaction marker starts the context afresh.
-			if (message?.role === "assistant" && message.stopReason !== "toolUse") return found ? "owner" : undefined;
-			if (entry.head !== undefined) return found ? "owner" : undefined;
+			if (message?.role === "assistant" && (message.stopReason === "stop" || message.stopReason === "length"))
+				return found ? "owner" : undefined;
+			// Durable's own entries with user messages (compaction summaries, handoffs) are not inputs.
 			if (message?.role !== "user" || (entry.kind.startsWith("pi.") && entry.kind !== "pi.user")) continue;
 			if (entryOrigin(entry) !== "owner") return undefined;
 			found = true;

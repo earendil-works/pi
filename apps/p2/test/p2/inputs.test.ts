@@ -163,5 +163,14 @@ describe("structured inputs", () => {
 		// The guest's input before the previous answer belongs to the previous run.
 		assert.equal(await answerOrigin(tx([]), 1 as ConversationId, 6 as EntryId), "owner");
 		assert.equal(await answerOrigin(tx([]), 1 as ConversationId, 3 as EntryId), undefined, "no input of its own");
+		// A retried model error and an overflow compaction's marker are inside the run: the guest's input before them
+		// counts.
+		const midRun = [
+			entry({ id: 6, kind: "p2.input", data: { author: ALICE, text: "x", attachments: [] }, model: user("x") }),
+			entry({ id: 7, kind: "pi.assistant", model: [{ role: "assistant", stopReason: "error", content: [] }] }),
+			entry({ id: 8, kind: "pi.compaction", head: 8, model: user("summary") }),
+			entry({ id: 9, kind: "pi.assistant", model: [{ role: "assistant", stopReason: "aborted", content: [] }] }),
+		];
+		assert.equal(await answerOrigin(tx(midRun), 1 as ConversationId, 10 as EntryId), undefined);
 	});
 });

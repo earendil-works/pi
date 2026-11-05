@@ -1073,7 +1073,7 @@ translated phone drawer and intercept chat taps.
   by its author in the entry data, an agent-written one by its `origin`. Agent-written inputs record the writing
   turn's origin: subagent tasks and one-shot agents' prompts (`p2.subagent-task`), `team` messages and reports
   (`p2.agent-message`; a report has the origin of the subagent's run that answered, `answerOrigin`: its inputs after
-  the previous run's last answer), and peer messages (`p2.peer-message`). A guest's input steered into a run takes the
+  the previous run's final answer, `stop` or `length`, past mid-run error answers and compaction markers), and peer messages (`p2.peer-message`). A guest's input steered into a run takes the
   owner's tools away for the rest of it; a guest-started chain never reaches them. Known gap: inputs of earlier runs
   still in the context are not considered. `test/p2/inputs.test.ts`, `dev-tools.test.ts`, `tool-access.test.ts`.
 - **Code mode** (`plugins/codemode`): the worker facet registers Durable's `codemode` extension
