@@ -224,7 +224,9 @@ async function runAgent(prompt, conversation) {
       body: JSON.stringify({ prompt }),
     });
   } catch {
-    return undefined;
+    // The turn may have started before the connection failed; report it as an unavailable outcome rather than
+    // falling back to the gate check (which would render stale "nothing was run" wording).
+    return { text: "The agent could not be reached. The turn may have started, so check the sandbox before retrying.", kind: "unavailable" };
   }
   if (response.status === 404 || !response.body) return undefined;
   if (!response.ok) {
@@ -270,7 +272,7 @@ async function runAgent(prompt, conversation) {
     bubble.textContent = reply.text;
     bubble.dataset.kind = reply.kind;
   }
-  return { streamed: true, status: done?.status };
+  return { streamed: true, status: done?.status, done };
 }
 
 function setPending(value) {
@@ -310,6 +312,15 @@ async function submit(raw) {
       if (conversation === active) appendMessage(failure);
     }
     logEvent(`Agent turn: ${agent.status ?? "ended"}`, agent.status === "completed" ? "online" : "idle");
+    // Refresh the governance card from the turn's final outcome.
+    if (agent.done?.status === "blocked") {
+      showGate(
+        { kind: "blocked", components: [], reason: agent.done.reason, crisisLevel: agent.done.crisisLevel, failClosed: false },
+        performance.now() - started,
+      );
+    } else if (agent.done?.status) {
+      showGate({ kind: "unavailable", components: [], failClosed: true }, performance.now() - started);
+    }
     els.prompt.focus();
     return;
   }

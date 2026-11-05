@@ -104,6 +104,31 @@ describe("handleAgentRequest", () => {
     expect(run.mock.calls[0]?.[1].prompt).toBe("list files");
   });
 
+  it("writes tool and text events while the run is pending, then ends after release", async () => {
+    const { deps } = makeDeps(on);
+    let releaseRun: (() => void) | undefined;
+    const runPromise = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    deps.run = async (_runnerDeps: AgentRunnerDeps, input: AgentTurnInput): Promise<AgentTurnResult> => {
+      input.onToolStart?.("bash");
+      input.onText?.("hi");
+      await runPromise;
+      return { status: "completed", text: "hi", model: "free/model" };
+    };
+    const { out, response } = makeResponse();
+    const pending = handleAgentRequest(post({ prompt: "list files" }), response, deps);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(out.chunks.map((chunk) => JSON.parse(chunk))).toEqual([
+      { type: "tool", name: "bash" },
+      { type: "text", delta: "hi" },
+    ]);
+    expect(out.ended).toBe(false);
+    releaseRun?.();
+    await pending;
+    expect(out.ended).toBe(true);
+  });
+
   it("uses the allowlist by default and logs it without the prompt", async () => {
     const { deps, createDeps, log } = makeDeps(on);
     await handleAgentRequest(post({ prompt: "secret-prompt-text" }), makeResponse().response, deps);

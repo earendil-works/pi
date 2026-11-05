@@ -107,6 +107,15 @@ test("parseNdjson returns complete events, keeps the remainder, and drops junk",
   assert.equal(parsed.rest, '{"type":"done","sta');
 });
 
+test("parseNdjson buffers a partial done event behind a complete tool event, then emits it", () => {
+  const first = parseNdjson('{"type":"tool","name":"bash"}\n{"type":"done","status":"completed');
+  assert.deepEqual(first.events, [{ type: "tool", name: "bash" }]);
+  assert.equal(first.rest, '{"type":"done","status":"completed');
+  const second = parseNdjson(`${first.rest}"}\n`);
+  assert.deepEqual(second.events, [{ type: "done", status: "completed" }]);
+  assert.equal(second.rest, "");
+});
+
 test("only an explicit completed status is a success", () => {
   assert.equal(agentDoneMessage({ status: "completed" }), undefined);
   for (const event of [undefined, {}, { status: "weird" }, { status: "blocked" }, { status: "error" }]) {
