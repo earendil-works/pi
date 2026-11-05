@@ -61,7 +61,7 @@ The coding-agent workspace packages resolve through their built `dist`, so build
 
 `src/sandbox/operations.ts` builds the swappable `bash`, `read`, `write` and `edit` operations that the Pi coding-agent tools accept, so they act inside a Vercel Sandbox instead of on the machine running the agent loop. The owner chose Vercel Sandbox as the first execution environment (2026-11-05).
 
-It is library code only. It does not create a sandbox, read credentials, open a connection, or expose a route, and nothing in the application calls it yet. The route that will use it will be off by default, switched on only by a flag the owner sets in Vercel per environment (see `NLTPI-MVP-005`).
+It is library code only. It does not create a sandbox, read credentials, open a connection, or expose a route. When the owner sets `NLT_AGENT_ENABLED=1`, the application calls it through the off-by-default agent route (`mvp/api/agent.ts` → `src/agent/route.ts` → `runAgentTurn`); while the flag is unset, nothing calls it.
 
 What it enforces, with tests that use a fake sandbox:
 - every call is reviewed by the harness policy (`reviewToolCall`) first; anything other than `allow: true` is refused;
@@ -137,7 +137,7 @@ The MVP does not yet persist continuity or run a separate post-turn response-gov
 
 ## Chat page
 
-`public/index.html` (with `app.css`, `app.js`, `lib/decision.js`) is a chat page for the Vercel preview. It uses no framework and no build step. Each message goes to `POST /api/agent` first and falls back to `POST /api/govern`; the page itself calls no model and runs no tool, and it saves nothing: conversations live in memory for the open tab only, and user text is only written with `textContent`. While the agent route is off (`NLT_AGENT_ENABLED` unset) the fallback is the gate check.
+`public/index.html` (with `app.css`, `app.js`, `lib/decision.js`) is a chat page for the Vercel preview. It uses no framework and no build step. Each message goes to `POST /api/agent` first and falls back to `POST /api/govern`; the page itself does not call a model or run a tool directly, and it saves nothing: conversations live in memory for the open tab only, and user text is only written with `textContent`. When `NLT_AGENT_ENABLED=1`, `/api/agent` runs the governed runner (gate, free-model selection, sandbox tools); while the flag is unset the route is off and the page falls back to the gate-only check.
 
 Values on the page come from `GET /api/health`, `GET /api/status` and the gate response (verification state, crisis level, components that checked, execution state). Where nothing is connected it says so ("None connected", "Disabled"); it does not show a governance "green" state. Anything other than a literal `allowed: true` from the gate (a 503, a 404 on production, a malformed body, a network error) is shown as not allowed. The previous status page is at `/status.html`.
 

@@ -143,7 +143,7 @@ function newConversation() {
         role: "assistant",
         kind: "info",
         at: new Date(),
-        text: "Hello. This is the NLT Coding Agent. Messages are checked by the ASFDK governance gate; agent turns run when the owner enables them. You can still try the check.",
+        text: "Hello. This is the NLT Coding Agent. Messages are checked by the ASFDK governance gate; agent turns run only when the owner enables them for this deployment. If a turn is unavailable, the page reports the governance check result instead.",
       },
     ],
   };
@@ -186,10 +186,12 @@ function showGate(view, latencyMs) {
   els.govComponents.textContent = view.components.length > 0 ? view.components.join(", ") : "—";
   els.govReason.hidden = !view.reason;
   els.govReason.textContent = view.reason ? `Reason from gate: ${view.reason}` : "";
-  els.lastLatency.textContent = `${Math.round(latencyMs)} ms`;
-  latencies.push(latencyMs);
-  if (latencies.length > SPARK_POINTS) latencies.shift();
-  drawSpark();
+  if (typeof latencyMs === "number" && Number.isFinite(latencyMs)) {
+    els.lastLatency.textContent = `${Math.round(latencyMs)} ms`;
+    latencies.push(latencyMs);
+    if (latencies.length > SPARK_POINTS) latencies.shift();
+    drawSpark();
+  }
 }
 
 async function askGate(prompt) {
@@ -316,11 +318,19 @@ async function submit(raw) {
     // Refresh the governance card from the turn's final outcome.
     if (agent.done?.status === "blocked") {
       showGate(
-        { kind: "blocked", components: [], reason: agent.done.reason, crisisLevel: agent.done.crisisLevel, failClosed: false },
+        {
+          kind: "blocked",
+          components: [],
+          reason: agent.done.reason,
+          crisisLevel: agent.done.crisisLevel,
+          failClosed: false,
+        },
         performance.now() - started,
       );
+    } else if (agent.done?.status === "completed" || agent.done?.status === "no_free_model") {
+      showGate({ kind: "allowed", components: [], failClosed: false }, NaN);
     } else if (agent.done?.status) {
-      showGate({ kind: "unavailable", components: [], failClosed: true }, performance.now() - started);
+      showGate({ kind: "unavailable", components: [], failClosed: true }, NaN);
     }
     els.prompt.focus();
     return;

@@ -243,14 +243,55 @@ describe("runAgentTurn", () => {
     expect(client.sandbox.commands.filter((command) => command.cmd !== "sh" && command.cmd !== "test")).toEqual([]);
   });
 
-  it("stops and releases the lock when the caller aborts before the turn starts", async () => {
-    const { client, deps } = setup();
+  it("disposes a late model binding when setup is cancelled after bind starts", async () => {
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+    const { client, deps, faux, state } = setup();
+    faux.setResponses([fauxAssistantMessage("should not run")]);
+    let disposed = 0;
+    let releaseBind: (() => void) | undefined;
+    const bindGate = new Promise<void>((resolve) => {
+      releaseBind = resolve;
+    });
     const controller = new AbortController();
-    controller.abort();
+    const inner = deps.bindModel!;
+    deps.bindModel = async (model, token) => {
+      const binding = await inner(model, token);
+      const wrapped: ModelBinding = {
+        ...binding,
+        dispose: async () => {
+          disposed += 1;
+          await binding.dispose?.();
+        },
+      };
+      controller.abort();
+      await bindGate;
+      return wrapped;
+    };
     const result = await runAgentTurn(deps, { prompt: "x", signal: controller.signal });
-    expect(result.status).toBe("aborted");
-    expect((result as { reason?: string }).reason).toBe("The turn was cancelled by the caller");
+    expect(result).toMatchObject({ status: "aborted" });
+    releaseBind?.();
+    await sleep(20);
+    expect(disposed).toBe(1);
+    expect(state.binds).toBe(1);
     expect(client.sandbox.held).toBe(false);
+  });
+
+  it("stops an active turn when the caller aborts mid-run", async () => {
+    const { client, faux, deps } = setup();
+    const controller = new AbortController();
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("write", { path: "first.txt", content: "a" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("bash", { command: "echo later" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage("finished"),
+    ]);
+    const result = await runAgentTurn(deps, {
+      prompt: "work",
+      signal: controller.signal,
+      onToolStart: () => controller.abort(),
+    });
+    expect(result.status).toBe("aborted");
+    expect(client.sandbox.held).toBe(false);
+    expect(client.sandbox.commands.some((command) => command.cmd === "bash")).toBe(false);
   });
 
   it("aborts setup stages after the lock is held and never calls the model or binds credentials", async () => {

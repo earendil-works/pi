@@ -187,6 +187,22 @@ function raceSetup<T>(work: Promise<T>, signal: AbortSignal | undefined, turnSig
   });
 }
 
+/** Races a setup/resource promise against signals and disposes a late result that the caller never received. */
+async function raceOwnedSetup<T>(
+  work: Promise<T>,
+  signal: AbortSignal | undefined,
+  turnSignal: AbortSignal | undefined,
+  cleanup: (value: T) => void | Promise<void>,
+): Promise<T> {
+  const raced = raceSetup(work, signal, turnSignal);
+  void work
+    .then(async (value) => {
+      if ((await raced.then(() => true).catch(() => false)) === false) await cleanup(value);
+    })
+    .catch(() => undefined);
+  return raced;
+}
+
 /** Short human-readable description of an error, for turn results that report reasons. */
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : "unknown error";
@@ -251,10 +267,11 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
         // The credential is read now, inside the request, and goes only to the model runtime.
         const token = await raceSetup(withinDeadline(deps.gatewayToken(), input.deadlineAt), input.signal, turnSignal);
         assertSetupSignals(input.signal, turnSignal);
-        const binding = await raceSetup(
+        const binding = await raceOwnedSetup(
           withinDeadline((deps.bindModel ?? bindGatewayModel)(chosen, token), input.deadlineAt),
           input.signal,
           turnSignal,
+          (value) => value.dispose?.(),
         );
         // Everything created below is released inside the turn, so work that finishes after the deadline is still
         // cleaned up.
@@ -272,7 +289,12 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
 
           // No host resources: no extensions, skills, prompt files or context files from the machine running this.
           assertSetupSignals(input.signal, turnSignal);
-          scratch = await raceSetup(mkdtemp(join(tmpdir(), "nlt-agent-res-")), input.signal, turnSignal);
+          scratch = await raceOwnedSetup(
+            mkdtemp(join(tmpdir(), "nlt-agent-res-")),
+            input.signal,
+            turnSignal,
+            (dir) => rm(dir, { recursive: true, force: true }),
+          );
           const resourceLoader = new DefaultResourceLoader({
             cwd: root,
             agentDir: scratch,
@@ -287,7 +309,7 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
           await raceSetup(resourceLoader.reload(), input.signal, turnSignal);
 
           assertSetupSignals(input.signal, turnSignal);
-          ({ session } = await raceSetup(
+          ({ session } = await raceOwnedSetup(
             createAgentSession({
               // The session's cwd is the sandbox workspace: Pi hands it to the tools, and it is shown to the model.
               // Nothing is read from it on this machine (no context files, extensions or skills are loaded).
@@ -303,6 +325,7 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
             }),
             input.signal,
             turnSignal,
+            (value) => value.session.dispose(),
           ));
           const live = session;
 
