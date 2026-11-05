@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { gateWorkDir } from "../src/agent/gate-workdir.ts";
 import {
+  AGENT_FUNCTION_MAX_DURATION_MS,
+  AGENT_LOCK_STALE_MS,
   type AgentResponse,
   type AgentRouteDeps,
   agentEnabled,
@@ -169,5 +172,39 @@ describe("handleAgentRequest", () => {
     };
     await handleAgentRequest(post({ prompt: "hi" }), response, deps);
     expect(signal?.aborted).toBe(true);
+  });
+});
+
+describe("function and lock timing", () => {
+  it("settles the whole abort-plus-grace window inside the function limit, and expires locks after it", async () => {
+    const { readFileSync } = await import("node:fs");
+    const config = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
+    const maxDurationMs = config.functions["api/agent.ts"].maxDuration * 1000;
+    expect(maxDurationMs).toBe(AGENT_FUNCTION_MAX_DURATION_MS);
+    // withAgentSandbox: deadline = 80% of the stale age, grace = 10%.
+    const settledBy = AGENT_LOCK_STALE_MS * 0.8 + AGENT_LOCK_STALE_MS * 0.1;
+    expect(settledBy).toBeLessThan(maxDurationMs);
+    expect(AGENT_LOCK_STALE_MS).toBeGreaterThan(maxDurationMs);
+  });
+});
+
+describe("gateWorkDir", () => {
+  it("picks one directory per process and never changes it again", async () => {
+    const start = process.cwd();
+    try {
+      const { realpathSync } = await import("node:fs");
+      const results = await Promise.all(Array.from({ length: 20 }, async () => {
+        const dir = gateWorkDir();
+        return { dir, cwd: process.cwd() };
+      }));
+      const first = results[0] as { dir: string; cwd: string };
+      for (const result of results) {
+        expect(result.dir).toBe(first.dir);
+        expect(realpathSync(result.cwd)).toBe(realpathSync(first.dir));
+      }
+      expect(gateWorkDir()).toBe(first.dir);
+    } finally {
+      process.chdir(start);
+    }
   });
 });

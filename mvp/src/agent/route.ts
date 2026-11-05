@@ -16,6 +16,17 @@ import { DEFAULT_AGENT_EGRESS } from "../sandbox/lifecycle.ts";
 
 export const MAX_AGENT_PROMPT_LENGTH = 8000;
 
+/** The function limit in `vercel.json`. A test checks the two agree. */
+export const AGENT_FUNCTION_MAX_DURATION_MS = 300_000;
+
+/**
+ * Lock stale age for the route. The sandbox lifecycle aborts a turn at 80% of this (256 s) and allows a
+ * further 10% (32 s) to stop, so a turn settles by 288 s, inside the function limit, and the lock is
+ * released by the invocation itself. The stale age is above the function limit, so a lock older than it
+ * can only belong to an invocation that Vercel already terminated.
+ */
+export const AGENT_LOCK_STALE_MS = 320_000;
+
 export interface AgentRequest {
   method?: string;
   body?: unknown;

@@ -107,7 +107,8 @@ Tests run offline with Pi's faux provider and a recording fake sandbox (11 tests
 - **Network.** The default is the named allowlist (package registries and GitHub). `NLT_AGENT_EGRESS_ALL=1`, also owner-set, switches to allow-all; the request body cannot. Each turn logs the effective policy (`allowlist:packages,git` or `allow-all`), never the prompt.
 - **Streaming.** The response is newline-delimited JSON: `{type:"text",delta}`, `{type:"tool",name}`, then one `{type:"done",status,...}`. The chat page tries this route first and falls back to the gate-only check on 404. A client that disconnects aborts the turn.
 - **Credential.** The Vercel OIDC token (`@vercel/oidc` 3.2.0, `getVercelOidcToken()`) is read inside the turn and held in memory; it is never put in the sandbox.
-- **Duration.** `vercel.json` sets `maxDuration` 300 for this function.
+- **Duration.** `vercel.json` sets `maxDuration` 300 for this function. The route sets the sandbox lock stale age to 320 s, so a turn aborts at 256 s and settles by 288 s, inside the limit, and a lock older than 320 s can only belong to an invocation Vercel already ended. A test checks `vercel.json` against these numbers. A longer window needs the plan's limit verified first.
+- **Working directory.** The gate's writable directory is chosen once per process (`src/agent/gate-workdir.ts`), never per request. This is still a process-wide change, made once; moving the gate to its own process would remove it.
 - **Not verified.** The offline tests use fakes and the faux provider. A real gateway call, a real sandbox, the workspace root `/vercel/sandbox`, the OIDC token on a deployment, and the stream through Vercel's edge have not been run.
 
 ## Free-model selection
