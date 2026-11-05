@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
-import { runAgentTurn, type AgentRunnerDeps, type ModelBinding } from "../src/agent/runner.ts";
+import { GATEWAY_API_URL, bindGatewayModel, runAgentTurn, type AgentRunnerDeps, type ModelBinding } from "../src/agent/runner.ts";
 import { NoFreeModelError, type GatewayCatalogModel } from "../src/gateway/free-models.ts";
 import type { AgentSandbox, AgentSandboxParams, SandboxClient } from "../src/sandbox/lifecycle.ts";
 import type { SandboxLike } from "../src/sandbox/operations.ts";
@@ -35,7 +35,7 @@ class RecordingSandbox implements AgentSandbox {
       this.fsCalls.push(`mkdir ${path}`);
       return undefined;
     },
-    access: async () => {},
+    access: async (_path: string) => {},
     realpath: async (path: string) => path,
   };
 
@@ -261,28 +261,41 @@ describe("runAgentTurn", () => {
     expect(result.status).toBe("completed");
   });
 
-  it("M1: creates the workspace root when it does not exist", async () => {
+  it("M1: creates a missing workspace root first, so the first turn still runs", async () => {
     const sandbox = new RecordingSandbox();
-    sandbox.files.clear();
-    const origAccess = sandbox.fs.access.bind(sandbox);
+    let rootExists = false;
+    const { access, realpath, mkdir } = sandbox.fs;
     sandbox.fs.access = async (path: string) => {
-      if (path === "/vercel/sandbox") throw new Error("ENOENT");
-      return origAccess(path);
+      if (path === "/vercel/sandbox" && !rootExists) throw new Error("ENOENT");
+      return access(path);
     };
-    const client = new Client(sandbox);
-    const { deps } = setup({ sandboxClient: client });
+    sandbox.fs.realpath = async (path: string) => {
+      if (path === "/vercel/sandbox" && !rootExists) throw new Error("ENOENT: realpath");
+      return realpath(path);
+    };
+    sandbox.fs.mkdir = async (path: string) => {
+      if (path === "/vercel/sandbox") rootExists = true;
+      return mkdir(path);
+    };
+    const { deps, faux } = setup({ sandboxClient: new Client(sandbox) });
+    faux.setResponses([fauxAssistantMessage("ok")]);
     const result = await runAgentTurn(deps, { prompt: "x" });
-    expect(result.status).toBe("completed");
-    expect(sandbox.fsCalls.some((call) => call.startsWith("mkdir /vercel/sandbox"))).toBe(true);
+    expect(result).toMatchObject({ status: "completed", text: "ok" });
+    expect(rootExists).toBe(true);
   });
 
   it("L1: bindGatewayModel registers an OpenAI-compatible provider", async () => {
     const binding = await bindGatewayModel(FREE, TOKEN);
     try {
-      const provider = binding.modelRuntime.getProvider("nlt-gateway");
-      expect(provider).toBeDefined();
       const model = binding.modelRuntime.getModel("nlt-gateway", FREE.id);
-      expect(model).toBeDefined();
+      expect(model).toMatchObject({
+        id: FREE.id,
+        provider: "nlt-gateway",
+        api: "openai-completions",
+        baseUrl: GATEWAY_API_URL,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: FREE.context_window,
+      });
     } finally {
       await binding.dispose?.();
     }

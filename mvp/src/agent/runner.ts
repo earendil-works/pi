@@ -128,6 +128,14 @@ export async function bindGatewayModel(model: GatewayCatalogModel, token: string
   return { modelRuntime, model: bound, dispose: () => rm(dir, { recursive: true, force: true }) };
 }
 
+/** Thrown inside the turn when the caller cancels; mapped to the `aborted` status. */
+class CallerAbortedError extends Error {
+  constructor() {
+    super("The turn was cancelled by the caller");
+    this.name = "CallerAbortedError";
+  }
+}
+
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : "unknown error";
 }
@@ -237,11 +245,9 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
           input.signal?.addEventListener("abort", stop, { once: true });
           turnSignal.addEventListener("abort", stop, { once: true });
 
-          // L2: honour caller cancellation as a distinct `aborted` status, not an error.
-          if (input.signal?.aborted) {
-            return { status: "aborted", reason: "The turn was cancelled by the caller" };
-          }
           try {
+            // A cancellation or deadline that already happened means the model is never called.
+            if (input.signal?.aborted) throw new CallerAbortedError();
             if (turnSignal.aborted) throw new SandboxTurnTimeoutError();
             await session.prompt(input.prompt);
           } finally {
@@ -250,6 +256,7 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
             unsubscribe();
           }
           if (turnSignal.aborted) throw new SandboxTurnTimeoutError();
+          if (input.signal?.aborted) throw new CallerAbortedError();
           return out;
         } finally {
           session?.dispose();
@@ -262,6 +269,7 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
   } catch (error) {
     if (error instanceof SandboxBusyError) return { status: "busy" };
     if (error instanceof SandboxTurnTimeoutError) return { status: "timed_out" };
+    if (error instanceof CallerAbortedError) return { status: "aborted", reason: error.message };
     return { status: "error", reason: describeError(error) };
   } finally {
     await binding?.dispose?.().catch(() => undefined);
