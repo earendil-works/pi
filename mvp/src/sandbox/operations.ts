@@ -131,7 +131,14 @@ export function createSandboxToolOperations(
 
   let realRootPromise: Promise<string> | undefined;
   const realRoot = (): Promise<string> => {
-    realRootPromise ??= sandbox.fs.realpath(root).then((resolved) => posix.normalize(resolved));
+    realRootPromise ??= sandbox.fs.realpath(root).then(
+      (resolved) => posix.normalize(resolved),
+      (error: unknown) => {
+        // Do not cache a failure: a transient error must not make every later call fail.
+        realRootPromise = undefined;
+        throw error;
+      },
+    );
     return realRootPromise;
   };
 
@@ -252,6 +259,7 @@ export function createSandboxToolOperations(
       if (typeof command !== "string" || command.trim().length === 0) {
         throw new SandboxPolicyError("Empty command");
       }
+      if (execOptions.signal?.aborted) throw new Error("aborted");
       authorize("bash", { command });
       const dir = await confineReal(cwd);
       authorizePath("bash", dir);

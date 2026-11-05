@@ -136,8 +136,9 @@ export interface PickOptions extends SelectOptions {
   url?: string;
   timeoutMs?: number;
   /**
-   * A specific model the caller wants (for example set by the owner). It is used only if it is free right now;
-   * otherwise this throws and does not substitute a different model.
+   * A specific model the caller wants (for example set by the owner). It is used only if it is free right now
+   * and also passes the other filters (by default it must have the "tool-use" tag; set `requireToolUse: false`
+   * to allow one without); otherwise this throws and does not substitute a different model.
    */
   requested?: string;
 }

@@ -129,6 +129,29 @@ describe("limits and probes", () => {
   });
 });
 
+describe("robustness", () => {
+  it("does not run a command whose signal is already aborted", async () => {
+    const { sandbox, ops } = setup();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(ops.bash.exec("echo hi", "/ws", { onData: () => {}, signal: controller.signal })).rejects.toThrow("aborted");
+    expect(sandbox.commands).toEqual([]);
+  });
+
+  it("retries resolving the workspace root after a transient failure", async () => {
+    const { sandbox, ops } = setup();
+    const original = sandbox.fs.realpath;
+    let calls = 0;
+    sandbox.fs.realpath = async (path: string) => {
+      calls += 1;
+      if (calls === 1) throw new Error("transient");
+      return original(path);
+    };
+    await expect(ops.read.readFile("a.txt")).rejects.toThrow();
+    expect((await ops.read.readFile("a.txt")).toString()).toBe("hello");
+  });
+});
+
 describe("compatibility", () => {
   it("a real @vercel/sandbox Sandbox satisfies SandboxLike (checked by the type checker)", () => {
     const accepts = (sandbox: Sandbox): SandboxLike => sandbox;

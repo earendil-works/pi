@@ -52,8 +52,8 @@
       "mvp/src/sandbox/vercel-client.ts",
       "mvp/test/sandbox-lifecycle.test.ts"
     ],
-    "tests_run": "see PR description",
-    "tests_passing": null,
+    "tests_run": "mvp typecheck (tsc --noEmit -p tsconfig.typecheck.json) and mvp vitest run in the cloud container: operations, lifecycle (including the lock scripts in a real shell, with 8 concurrent reclaimers) and free-model tests; governance validator. Root npm run check and CI not run by the author.",
+    "tests_passing": true,
     "pr_url": null
   }
 }
