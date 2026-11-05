@@ -77,6 +77,10 @@ export interface AgentRunnerDeps {
    * right now, otherwise an error; with no request, the best free tool-capable model in the live catalog.
    */
   pickModel?: (requested?: string) => Promise<GatewayCatalogModel>;
+  /** Owner-set model allow-list for the default `pickModel` (see `SelectOptions.allowed`). Unset: no restriction. */
+  allowedModels?: readonly string[];
+  /** Owner-set model ids to prefer when none is requested (see `SelectOptions.preferred`). Only a preference. */
+  preferredModels?: readonly string[];
   /** Builds the model binding. Default: the Vercel AI Gateway with `gatewayToken`. Tests inject an offline one. */
   bindModel?: (model: GatewayCatalogModel, token: string) => Promise<ModelBinding>;
   workspaceRoot?: string;
@@ -241,7 +245,7 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
   // 2. A free model, chosen from the live catalog.
   let chosen: GatewayCatalogModel;
   try {
-    chosen = await raceSetup(withinDeadline((deps.pickModel ?? ((requested) => pickFreeModel({ requireToolUse: true, requested })))(input.model), input.deadlineAt), input.signal, undefined);
+    chosen = await raceSetup(withinDeadline((deps.pickModel ?? ((requested) => pickFreeModel({ requireToolUse: true, requested, allowed: deps.allowedModels, preferred: deps.preferredModels })))(input.model), input.deadlineAt), input.signal, undefined);
   } catch (error) {
     if (error instanceof CallerAbortedError) return { status: "aborted", reason: error.message };
     if (error instanceof SandboxTurnTimeoutError) return { status: "timed_out" };

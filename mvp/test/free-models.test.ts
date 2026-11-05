@@ -4,6 +4,8 @@ import {
   NoFreeModelError,
   fetchGatewayCatalog,
   isFreeLanguageModel,
+  parseAllowedModels,
+  parseDefaultModel,
   pickFreeModel,
   selectFreeModels,
   type GatewayCatalogModel,
@@ -117,6 +119,66 @@ describe("selectFreeModels", () => {
 
   it("returns an empty list for an empty catalog", () => {
     expect(selectFreeModels([])).toEqual([]);
+  });
+});
+
+describe("owner default model", () => {
+  const catalog = [
+    model({ id: "priced", pricing: { input: "0.000002", output: "0.000012" } }),
+    model({ id: "free-small", context_window: 8000 }),
+    model({ id: "free-big", context_window: 1_000_000 }),
+  ];
+
+  it("parses one trimmed id, and blank as no default", () => {
+    expect(parseDefaultModel("  free-small ")).toEqual(["free-small"]);
+    for (const value of [undefined, "", "   "]) expect(parseDefaultModel(value)).toEqual([]);
+  });
+
+  it("is picked when none is requested, but never makes a priced or disallowed model eligible", async () => {
+    expect((await pickFreeModel({ fetchImpl: response({ data: catalog }), preferred: ["free-small"] })).id).toBe("free-small");
+    expect((await pickFreeModel({ fetchImpl: response({ data: catalog }), preferred: ["priced"] })).id).toBe("free-big");
+    expect((await pickFreeModel({ fetchImpl: response({ data: catalog }), preferred: ["free-small"], allowed: ["free-big"] })).id).toBe("free-big");
+  });
+
+  it("does not override an explicit request", async () => {
+    expect((await pickFreeModel({ fetchImpl: response({ data: catalog }), preferred: ["free-small"], requested: "free-big" })).id).toBe("free-big");
+  });
+});
+
+describe("owner model allow-list", () => {
+  const catalog = [
+    model({ id: "priced", pricing: { input: "0.000002", output: "0.000012" } }),
+    model({ id: "free-small", context_window: 8000 }),
+    model({ id: "free-big", context_window: 1_000_000 }),
+    model({ id: "free-no-tools", tags: ["reasoning"] }),
+  ];
+
+  it("keeps only allowed free models, and never lets the list add a priced or tool-less one", () => {
+    expect(selectFreeModels(catalog, { allowed: ["free-small"] }).map((m) => m.id)).toEqual(["free-small"]);
+    expect(selectFreeModels(catalog, { allowed: ["priced", "free-no-tools", "free-small"] }).map((m) => m.id)).toEqual(["free-small"]);
+    expect(selectFreeModels(catalog, { allowed: ["not-in-catalog"] })).toEqual([]);
+  });
+
+  it("is no restriction when empty or unset", () => {
+    expect(selectFreeModels(catalog, { allowed: [] }).map((m) => m.id)).toEqual(["free-big", "free-small"]);
+    expect(selectFreeModels(catalog, { allowed: undefined }).map((m) => m.id)).toEqual(["free-big", "free-small"]);
+  });
+
+  it("parses a comma-separated value and treats blank as unset", () => {
+    expect(parseAllowedModels(" a/one , b/two,,  ")).toEqual(["a/one", "b/two"]);
+    for (const value of [undefined, "", " ", " , ,"]) expect(parseAllowedModels(value)).toBeUndefined();
+  });
+
+  it("picks only from the allow-list, refuses a request outside it, and says why when nothing is left", async () => {
+    expect((await pickFreeModel({ fetchImpl: response({ data: catalog }), allowed: ["free-small"] })).id).toBe("free-small");
+    await expect(pickFreeModel({ fetchImpl: response({ data: catalog }), allowed: ["free-small"], requested: "free-big" })).rejects.toThrow(
+      /not in the owner's allowed models \(NLT_AGENT_MODELS\): free-big/,
+    );
+    // A priced request is reported as not free, whether or not an allow-list is set.
+    await expect(pickFreeModel({ fetchImpl: response({ data: catalog }), allowed: ["free-small"], requested: "priced" })).rejects.toThrow(
+      /not a free model right now: priced/,
+    );
+    await expect(pickFreeModel({ fetchImpl: response({ data: catalog }), allowed: ["priced"] })).rejects.toThrow(/NLT_AGENT_MODELS/);
   });
 });
 

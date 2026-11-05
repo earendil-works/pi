@@ -453,6 +453,32 @@ describe("runAgentTurn", () => {
       const result = await runAgentTurn(deps, { prompt: "x" });
       expect(result).toMatchObject({ status: "completed", model: "synthetic/other-free-model" });
     });
+
+    it("uses the owner's default model when none is requested", async () => {
+      stubCatalog();
+      const { deps, faux } = setup({ pickModel: undefined, preferredModels: ["synthetic/free-model"] });
+      faux.setResponses([fauxAssistantMessage("fine")]);
+      expect(await runAgentTurn(deps, { prompt: "x" })).toMatchObject({ status: "completed", model: "synthetic/free-model" });
+    });
+
+    it("keeps an explicit request over the owner's default", async () => {
+      stubCatalog();
+      const { deps, faux } = setup({ pickModel: undefined, preferredModels: ["synthetic/free-model"] });
+      faux.setResponses([fauxAssistantMessage("fine")]);
+      expect(await runAgentTurn(deps, { prompt: "x", model: "synthetic/other-free-model" })).toMatchObject({
+        status: "completed",
+        model: "synthetic/other-free-model",
+      });
+    });
+
+    it("picks only from the owner's allow-list, and refuses a request outside it", async () => {
+      stubCatalog();
+      const { deps, faux } = setup({ pickModel: undefined, allowedModels: ["synthetic/free-model"] });
+      faux.setResponses([fauxAssistantMessage("fine")]);
+      expect(await runAgentTurn(deps, { prompt: "x" })).toMatchObject({ status: "completed", model: "synthetic/free-model" });
+      const refused = await runAgentTurn(deps, { prompt: "y", model: "synthetic/other-free-model" });
+      expect(refused.status).toBe("no_free_model");
+    });
   });
 
   it("accepts an injected free model after re-validation", async () => {

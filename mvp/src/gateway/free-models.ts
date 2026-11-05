@@ -78,6 +78,12 @@ export interface SelectOptions {
   requireToolUse?: boolean;
   /** Model ids to prefer, in order, if they are free at this moment. */
   preferred?: readonly string[];
+  /**
+   * Owner-set allow-list (`NLT_AGENT_MODELS`). When given and non-empty, only free models with one of these ids are
+   * kept. It narrows the free list and never adds to it, so a listed model that is priced is still excluded. Used
+   * because the catalog does not say which free models a plan can call (the free tier is refused some of them).
+   */
+  allowed?: readonly string[];
 }
 
 const contextWindowOf = (model: GatewayCatalogModel): number =>
@@ -90,8 +96,12 @@ export function selectFreeModels(
 ): GatewayCatalogModel[] {
   const requireToolUse = options.requireToolUse ?? true;
   const preferred = options.preferred ?? [];
+  const allowed = options.allowed && options.allowed.length > 0 ? new Set(options.allowed) : undefined;
   const free = catalog.filter(
-    (model) => isFreeLanguageModel(model) && (!requireToolUse || (Array.isArray(model.tags) && model.tags.includes("tool-use"))),
+    (model) =>
+      isFreeLanguageModel(model) &&
+      (!requireToolUse || (Array.isArray(model.tags) && model.tags.includes("tool-use"))) &&
+      (allowed === undefined || allowed.has(model.id)),
   );
   const rank = (model: GatewayCatalogModel): number => {
     const index = preferred.indexOf(model.id);
@@ -104,6 +114,29 @@ export function selectFreeModels(
     if (byContext !== 0) return byContext;
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
+}
+
+/**
+ * Reads the owner's model allow-list from a comma-separated value (`NLT_AGENT_MODELS`). Blank entries are dropped.
+ * Returns undefined when nothing usable is set, which means no restriction beyond "free and tool-capable".
+ */
+export function parseAllowedModels(value: string | undefined): string[] | undefined {
+  if (typeof value !== "string") return undefined;
+  const ids = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return ids.length > 0 ? ids : undefined;
+}
+
+/**
+ * Reads the owner's default model (`NLT_AGENT_DEFAULT_MODEL`) as a preference list of at most one id. The default is
+ * only a preference: it is used when it is free, tool-capable and allowed right now, and otherwise the usual order
+ * applies. Blank means no default.
+ */
+export function parseDefaultModel(value: string | undefined): string[] {
+  const id = typeof value === "string" ? value.trim() : "";
+  return id.length > 0 ? [id] : [];
 }
 
 /** Reads and shape-checks the public catalog. Throws if it cannot be read or is not a model list. */
@@ -150,11 +183,27 @@ export async function pickFreeModel(options: PickOptions = {}): Promise<GatewayC
   if (options.requested !== undefined) {
     const match = free.find((model) => model.id === options.requested);
     if (!match) {
-      throw new NoFreeModelError(`The requested model is not a free model right now: ${options.requested}`);
+      // Say which rule refused it: the owner's allow-list, or "not free / not tool-capable right now".
+      const requested = options.requested;
+      const refusedOnlyByAllowList =
+        options.allowed !== undefined &&
+        options.allowed.length > 0 &&
+        selectFreeModels(catalog, { ...options, allowed: undefined }).some((model) => model.id === requested);
+      throw new NoFreeModelError(
+        refusedOnlyByAllowList
+          ? `The requested model is not in the owner's allowed models (NLT_AGENT_MODELS): ${requested}`
+          : `The requested model is not a free model right now: ${requested}`,
+      );
     }
     return match;
   }
   const best = free[0];
-  if (!best) throw new NoFreeModelError("No free language model with tool support is listed right now");
+  if (!best) {
+    throw new NoFreeModelError(
+      options.allowed && options.allowed.length > 0
+        ? "None of the allowed models (NLT_AGENT_MODELS) is a free model with tool support right now"
+        : "No free language model with tool support is listed right now",
+    );
+  }
   return best;
 }

@@ -3,10 +3,10 @@
  *
  * Same access rules as the agent route: 404 unless the owner set `NLT_AGENT_ENABLED=1`, 401 without a signed-in
  * owner. It lists only models that are free right now and support tools (`selectFreeModels`), read from the
- * public catalog at request time. If the catalog cannot be read the answer is 503 with an empty list; a priced
+ * public catalog at request time, narrowed to the owner's `NLT_AGENT_MODELS` allow-list when it is set. If the catalog cannot be read the answer is 503 with an empty list; a priced
  * model is never listed. The list is informational: `/api/agent` re-checks a chosen model inside the turn.
  */
-import { type GatewayCatalogModel, selectFreeModels } from "../gateway/free-models.ts";
+import { type GatewayCatalogModel, parseAllowedModels, parseDefaultModel, selectFreeModels } from "../gateway/free-models.ts";
 import { type AgentRequest, type AgentResponse, agentEnabled } from "./route.ts";
 
 export interface ListedModel {
@@ -16,7 +16,7 @@ export interface ListedModel {
 }
 
 export interface ModelsRouteDeps {
-  env: { NLT_AGENT_ENABLED?: string | undefined };
+  env: { NLT_AGENT_ENABLED?: string | undefined; NLT_AGENT_MODELS?: string | undefined; NLT_AGENT_DEFAULT_MODEL?: string | undefined };
   /** True only for a signed-in owner. */
   authorize: (request: AgentRequest) => boolean;
   /** Reads the live gateway catalog. Throws when it cannot be read. */
@@ -48,7 +48,10 @@ export async function handleModelsRequest(request: AgentRequest, response: Agent
   }
   try {
     const catalog = await deps.fetchCatalog();
-    const models = selectFreeModels(catalog, { requireToolUse: true }).map(toListedModel);
+    const allowed = parseAllowedModels(deps.env.NLT_AGENT_MODELS);
+    // The owner's default comes first, so the list matches what "Auto" picks.
+    const preferred = parseDefaultModel(deps.env.NLT_AGENT_DEFAULT_MODEL);
+    const models = selectFreeModels(catalog, { requireToolUse: true, allowed, preferred }).map(toListedModel);
     response.status(200).json({ models });
   } catch {
     response.status(503).json({ error: "Model list unavailable", models: [] });

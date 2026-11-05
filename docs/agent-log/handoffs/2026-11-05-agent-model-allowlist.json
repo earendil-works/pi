@@ -1,0 +1,35 @@
+{
+  "handoff_record": {
+    "session_id": "session_01UNjnjkGsveT9DW8pC9UXhf",
+    "agent_name": "Claude Code",
+    "date": "2026-11-05T21:20:00+00:00",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "ccr-50842984-model-allowlist",
+    "work_completed": [
+      "After nlt-pi#33 deployed, the owner's screenshot showed the failure reasons: Vercel AI Gateway 403 for reflection/beam-free ('Free tier users do not have access to this model', type no_providers_available) and stealth/glyph-cluster ('requires an active Pro plan with purchased AI Gateway credits'). A turn with nvidia/nemotron-3.5-lightning-free completed in the sandbox. First real end-to-end turn: gate, model, sandbox, OIDC token and streaming all worked.",
+      "Checked the live public catalog: the three models have identical relevant fields (zero input/output price, tool-use tag); nothing marks free-tier access, so it cannot be detected from the catalog.",
+      "Added an owner-set allow-list NLT_AGENT_MODELS (comma-separated ids). free-models.ts: SelectOptions.allowed narrows selectFreeModels (never adds; priced or tool-less ids stay excluded), parseAllowedModels parses the value (blank means unset), pickFreeModel names the variable when nothing is left. models-route.ts and the runner's default picker (AgentRunnerDeps.allowedModels, set in api/agent.ts) use it. README documents it.",
+      "Tests: allow-list narrowing, priced/tool-less ids still excluded, blank/unset is no restriction, parsing, pickFreeModel refuses a request outside the list, /api/models lists only allowed free models, runner default picker honours it. Mutation check: dropping the runner wiring fails the runner test.",
+      "At the owner's request ('Set default model to nvidia/nemotron-3.5-lightning-free'): added NLT_AGENT_DEFAULT_MODEL, wired to the existing SelectOptions.preferred. parseDefaultModel reads one trimmed id. /api/models lists it first and the runner's default picker prefers it when no model is requested. It is only a preference: a priced, tool-less or disallowed default is skipped, and an explicit request is not overridden. Set in Production to nvidia/nemotron-3.5-lightning-free. Tests plus a mutation check on the runner wiring."
+    ],
+    "verification": [
+      "cd mvp && npx tsc --noEmit -p . : passed",
+      "cd mvp && npx vitest --run : 12 files, 235 passed, 10 expected fail",
+      "cd mvp && node --test test/*.test.js : 26 passed",
+      "npm run check:mvp, check:pinned-deps, check:runtime-deps, check:ts-imports, check:entry-graphs : passed",
+      "bash .nltotoi/scripts/validate-governance.sh : 71 passed, 0 failed",
+      "Not run: either variable on a deployment (needs merge and deploy)."
+    ],
+    "work_in_progress": [],
+    "blockers": [],
+    "decisions_made": [
+      "Owner (2026-11-05): only nvidia/nemotron-3.5-lightning-free is usable on the owner's plan.",
+      "Owner (2026-11-05): default model nvidia/nemotron-3.5-lightning-free."
+    ],
+    "decisions_pending": [
+      "Owner: review and merge this PR (redeploys production from main)."
+    ],
+    "next_action": "After merge and deploy, reload the chat page: the selector should list only Nemotron, and Auto should use it."
+  }
+}
