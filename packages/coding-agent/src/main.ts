@@ -55,6 +55,7 @@ import {
 	getMissingSessionCwdIssue,
 	MissingSessionCwdError,
 	type SessionCwdIssue,
+	updateSessionFileCwd,
 } from "./core/session-cwd.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
 import { collectSettingsDiagnostics, deduplicateDiagnostics } from "./core/settings-diagnostics.ts";
@@ -700,6 +701,12 @@ export async function main(args: string[], options?: MainOptions) {
 			const selectedCwd = await promptForMissingSessionCwd(missingSessionCwdIssue, startupSettingsManager);
 			if (!selectedCwd) {
 				process.exit(0);
+			}
+			try {
+				updateSessionFileCwd(missingSessionCwdIssue.sessionFile!, selectedCwd);
+			} catch (error: unknown) {
+				const message = error instanceof Error ? error.message : String(error);
+				console.error(chalk.yellow(`Warning: could not save the session cwd: ${message}`));
 			}
 			sessionManager = SessionManager.open(missingSessionCwdIssue.sessionFile!, sessionDir, selectedCwd);
 		} else {

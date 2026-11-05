@@ -106,7 +106,7 @@ import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { DefaultPackageManager } from "../../core/package-manager.ts";
 import { RADIUS_MCP_URL, RADIUS_PROVIDER_ID } from "../../core/radius.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
-import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
+import { formatMissingSessionCwdPrompt, MissingSessionCwdError, updateSessionFileCwd } from "../../core/session-cwd.ts";
 import {
 	type SessionEntry,
 	SessionManager,
@@ -5771,6 +5771,11 @@ export class InteractiveMode {
 					this.showStatus("Resume cancelled");
 					return { cancelled: true };
 				}
+				try {
+					updateSessionFileCwd(error.issue.sessionFile ?? sessionPath, selectedCwd);
+				} catch {
+					this.showWarning("Could not save the session working directory; pi will ask again on the next resume.");
+				}
 				const result = await this.runtimeHost.switchSession(sessionPath, {
 					cwdOverride: selectedCwd,
 					withSession: options?.withSession,
@@ -6597,6 +6602,16 @@ export class InteractiveMode {
 				if (result.cancelled) {
 					this.showStatus("Import cancelled");
 					return;
+				}
+				const importedFile = this.sessionManager.getSessionFile();
+				if (importedFile) {
+					try {
+						updateSessionFileCwd(importedFile, selectedCwd);
+					} catch {
+						this.showWarning(
+							"Could not save the session working directory; pi will ask again on the next resume.",
+						);
+					}
 				}
 				this.showStatus(`Session imported from: ${inputPath}`);
 				return;

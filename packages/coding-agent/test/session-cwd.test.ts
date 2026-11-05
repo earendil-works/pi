@@ -1,10 +1,10 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
-import { getMissingSessionCwdIssue, MissingSessionCwdError } from "../src/core/session-cwd.ts";
-import { SessionManager } from "../src/core/session-manager.ts";
+import { getMissingSessionCwdIssue, MissingSessionCwdError, updateSessionFileCwd } from "../src/core/session-cwd.ts";
+import { loadEntriesFromFile, SessionManager } from "../src/core/session-manager.ts";
 
 function createTempDir(name: string): string {
 	const dir = join(tmpdir(), `${name}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -87,5 +87,66 @@ describe("session cwd handling", () => {
 			}),
 		).rejects.toBeInstanceOf(MissingSessionCwdError);
 		expect(createRuntimeCalled).toBe(false);
+	});
+
+	// #11060: once the user picks a folder for a moved session, later resumes must not ask again
+	it("persists the chosen cwd in the session file header", () => {
+		const fallbackCwd = createTempDir("pi-session-cwd-save");
+		const missingCwd = join(fallbackCwd, "does-not-exist");
+		const sessionDir = createTempDir("pi-session-cwd-save-session-dir");
+		const sessionFile = join(sessionDir, "session.jsonl");
+		cleanupPaths.push(fallbackCwd, sessionDir);
+		writeSessionFile(sessionFile, missingCwd);
+
+		updateSessionFileCwd(sessionFile, fallbackCwd);
+
+		const sessionManager = SessionManager.open(sessionFile);
+		expect(sessionManager.getCwd()).toBe(fallbackCwd);
+		expect(getMissingSessionCwdIssue(sessionManager, fallbackCwd)).toBeUndefined();
+	});
+
+	it("keeps leading non-header lines and later entries byte-identical", () => {
+		const fallbackCwd = createTempDir("pi-session-cwd-entries");
+		const missingCwd = join(fallbackCwd, "does-not-exist");
+		const sessionDir = createTempDir("pi-session-cwd-entries-session-dir");
+		const sessionFile = join(sessionDir, "session.jsonl");
+		cleanupPaths.push(fallbackCwd, sessionDir);
+
+		const messageLine =
+			'{"type":"message","id":"1","parentId":null,"timestamp":"2025-01-01T00:00:01Z","message":{"role":"user","content":"hi","timestamp":1}}';
+		writeFileSync(
+			sessionFile,
+			`junk line\n\n${JSON.stringify({
+				type: "session",
+				version: 3,
+				id: "session-id",
+				timestamp: "2025-01-01T00:00:00Z",
+				cwd: missingCwd,
+			})}\n${messageLine}\n`,
+		);
+
+		updateSessionFileCwd(sessionFile, fallbackCwd);
+
+		expect(readFileSync(sessionFile, "utf8")).toBe(
+			`junk line\n\n${JSON.stringify({
+				type: "session",
+				version: 3,
+				id: "session-id",
+				timestamp: "2025-01-01T00:00:00Z",
+				cwd: fallbackCwd,
+			})}\n${messageLine}\n`,
+		);
+		expect(loadEntriesFromFile(sessionFile)).toHaveLength(2);
+	});
+
+	it("rejects files whose first entry is not a session header", () => {
+		const sessionDir = createTempDir("pi-session-cwd-invalid");
+		const sessionFile = join(sessionDir, "not-a-session.jsonl");
+		cleanupPaths.push(sessionDir);
+		writeFileSync(sessionFile, '{"type":"message","id":"1"}\n');
+
+		expect(() => updateSessionFileCwd(sessionFile, sessionDir)).toThrow("not a valid");
+		expect(readFileSync(sessionFile, "utf8")).toBe('{"type":"message","id":"1"}\n');
+		expect(existsSync(`${sessionFile}.${process.pid}.tmp`)).toBe(false);
 	});
 });
