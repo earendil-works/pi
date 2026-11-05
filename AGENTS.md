@@ -72,13 +72,6 @@ npm run build                     # workspace type declarations; without dist/, 
                                   # @earendil-works/pi-* fail to resolve
 ```
 
-`npm run build` does not build `packages/schema` or `packages/telemetry`, which
-`packages/ai` imports. Until that is fixed, build those two first:
-
-```
-( cd packages/schema && npm run build ) && ( cd packages/telemetry && npm run build )
-```
-
 Use `npm run build:offline` when `generate-models` cannot reach provider APIs.
 
 ### The MVP
@@ -87,7 +80,8 @@ cd mvp && npx tsc --noEmit -p . && npx vitest --run
 ```
 
 `npm run check:mvp` is not the same check: it runs `tsc -p tsconfig.typecheck.json`, while
-`-p .` uses `mvp/tsconfig.json`, and the two cover different file sets. Run both.
+`-p .` uses `mvp/tsconfig.json`. They check the same files (the typecheck config extends the other
+and adds `types: ["node"]`), so the difference is compiler settings, not coverage. Run both.
 
 ### From the repository root
 ```
