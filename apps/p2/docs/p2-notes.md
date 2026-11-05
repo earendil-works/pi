@@ -342,6 +342,11 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
   where it lives with `hostAddress` (`serverHost`, `sessionHost`); a worker serves only its own session, so factories
   no longer compare `host.name`. The session workers are Chord's `createWorkers` (`src/hosts/session-workers.ts`:
   generations, logs and notices, relocation and pauses on `stop`/`retry`).
+- **Worker base:** session workers fork from Chord's worker base of `src/hosts/worker.ts` (split at dynamic imports).
+  The entry imports only the worker's side (`@earendil-works/chord/workers/child`, `src/hosts/host-packages.ts`), so a
+  fork loads no esbuild and no server API; pi-ai's provider SDKs load with their first request. It registers pi-ai's
+  lazy OAuth flows and Bedrock (`registerLazyOAuthFlows`, `registerLazyBedrockProvider`): chunks of the snapshot, not
+  pi-ai's source files (`test/p2/worker-base.test.ts`, `worker-oauth.test.ts`).
 - **Worker failures:** a failed start stays failed (status error, Retry) and its holders wait (`failed { waiting }`,
   `whenLive` does not reject: tests use `failureOf`). A running worker that crashes is restarted for its holders, at
   most five times a minute per session; the next crash waits for Retry. A worker stays alive while objects
