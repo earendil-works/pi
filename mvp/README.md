@@ -133,6 +133,8 @@ On 2026-11-05 the live catalog listed 320 language models; 3 were selectable. A 
 
 Like the sandbox operations, this is unwired library code: it makes no model call and holds no credentials.
 
+**Data handling (owner decision, 2026-11-05: free models only).** Checked against the live catalog that day: all 3 selectable free models are marked `zdr: "none"` and `no_training: "none"`, and two descriptions say the provider retains prompts and outputs (one "for model improvement"). The owner chose free models over zero-retention guarantees, so no privacy filter or `zeroDataRetention`/`disallowPromptTraining` request option is applied (with them, the gateway would refuse every free model). What a turn sends to the provider: the user's message, Pi's system prompt and tool descriptions, and every tool call and result in that turn (files the agent reads, command output). Not sent: earlier turns (each turn is a fresh in-memory session), the ASFDK assessment, and the gateway credential. Any credential you type in a message, or that sits in a file or command output the agent reads, is sent with the rest of that turn. A message the crisis gate blocks never reaches a model. This is a personal tool for the owner only; the chat page states the same conditions in a reminder next to the check notice, worded for the case where a turn actually runs (not while the route is off or the owner is signed out).
+
 ## Governed turn
 
 `createNltCodingAgent()` exposes a deterministic governed turn surface (`governedTurn`) that runs a user prompt through the ASFDK harness before any coding-agent turn may execute:
