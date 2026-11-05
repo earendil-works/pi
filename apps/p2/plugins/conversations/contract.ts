@@ -1,7 +1,7 @@
 import { arr, bool, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
 import { literal, local, method, param, propertiesOf, remote, serverHost, sessionHost } from "@p2/app/v1";
 
-export { CONVERSATION_PREFIX, type ConversationOrigin } from "@p2/app/v1";
+export type { ConversationOrigin } from "@p2/app/v1";
 
 export const QuerySchema = union([
 	obj({ action: literal("list") }),
@@ -43,14 +43,20 @@ export const ConversationBroker = local("p2.conversation-broker", {
 	version: 1,
 	params: {},
 	members: {
-		query: method(obj({ source: str(), requestId: str(), query: QuerySchema }), ReplySchema),
+		query: method(
+			obj({ source: str(), requestId: str(), origin: opt(literal("owner")), query: QuerySchema }),
+			ReplySchema,
+		),
 	},
 });
 
 /** Only a current worker generation can broker a root tool invocation. */
 export const Conversations = remote("p2.conversations", {
-	/** 2: request IDs up to 500 characters (Pi Mobile's limit: nested code mode calls make long ones). */
-	version: 2,
+	/**
+	 * 2: request IDs up to 500 characters (Pi Mobile's limit: nested code mode calls make long ones). 3: `origin` is the
+	 * sending turn's (`originOf`): `"owner"` or absent, no `"peer"`.
+	 */
+	version: 3,
 	params: {},
 	hostAddress: serverHost,
 	variants: {
@@ -60,7 +66,7 @@ export const Conversations = remote("p2.conversations", {
 					obj({
 						conversation: literal(1),
 						requestId: str({ minLength: 1, maxLength: 500 }),
-						origin: union([literal("owner"), literal("peer")]),
+						origin: opt(literal("owner")),
 						query: QuerySchema,
 					}),
 					ReplySchema,
@@ -70,7 +76,10 @@ export const Conversations = remote("p2.conversations", {
 	},
 });
 
-/** Server-to-worker ingress; the server has already authorized and attributed the sender. */
+/**
+ * Server-to-worker ingress; the server has already authorized and attributed the sender. `origin` is the sending turn's,
+ * which the recipient's entry records (`originOf`).
+ */
 export const PeerConversation = remote("p2.peer-conversation", {
 	version: 1,
 	params: { session: param.str() },
@@ -85,6 +94,7 @@ export const PeerConversation = remote("p2.peer-conversation", {
 						requestId: str(),
 						message: str(),
 						followUp: opt(bool()),
+						origin: opt(literal("owner")),
 					}),
 					obj({ submissionId: num() }),
 				),

@@ -188,3 +188,38 @@ test(
 		}
 	},
 );
+
+test(
+	"a crash reports its sanitized stack: an uncaught exception and a throwing message handler",
+	{ skip: !supported, timeout: 10000 },
+	async () => {
+		for (const [source, expected] of [
+			[
+				`class Broken{render(){throw new TypeError("bad \\x1b]52;c;secret\\x07 render")}}export default()=>{setTimeout(()=>new Broken().render(),0)}`,
+				/^TUI sandbox crashed with an uncaught exception:\nTypeError: bad \]52;c;secret render\n\s+at Broken\.render \(p2-tui-bundle\.mjs:1:\d+\)/,
+			],
+			[
+				`export default({onMessage})=>onMessage(function handle(){throw new RangeError("no")})`,
+				/^TUI sandbox message handler threw:\nRangeError: no\n\s+at handle \(p2-tui-bundle\.mjs:1:\d+\)/,
+			],
+		] as const) {
+			let failure = "";
+			const worker = new TuiSandbox(source, {
+				onMessage: () => {},
+				onFailure: (message) => {
+					failure = message;
+				},
+			});
+			try {
+				await worker.ready;
+				worker.post(null);
+				const deadline = Date.now() + 5000;
+				while (!failure && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+				assert.match(failure, expected);
+				assert(!failure.includes("data:") && !failure.includes("\x1b"));
+			} finally {
+				await worker.terminate();
+			}
+		}
+	},
+);

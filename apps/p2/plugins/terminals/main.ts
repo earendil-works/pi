@@ -7,15 +7,34 @@ import { takeProcessLock } from "../../src/runtime/process-lock.ts";
 import { localSystem, requireTerminalSupport, terminalDaemon } from "./daemon.ts";
 import { terminalHostAddress, terminalHostVersion } from "./detached.ts";
 import { envRevision, loadEnvs, sshOptions } from "./envs.ts";
-import { Ghostty, type VtTerminal } from "./ghostty.ts";
+import {
+	BLINK,
+	BOLD,
+	type Cell,
+	FAINT,
+	Ghostty,
+	INVERSE,
+	INVISIBLE,
+	ITALIC,
+	STRIKETHROUGH,
+	UNDERLINE,
+	type VtTerminal,
+} from "./ghostty.ts";
+import { tmuxKey } from "./keys.ts";
+import { OutputRing, plainText } from "./plain.ts";
 import {
 	encodeFrame,
+	type HostCall,
+	type HostResult,
+	READ_TEXT_LIMIT,
 	readFrames,
 	TERMINAL_OUTPUT_WINDOW,
 	type TerminalEvent,
 	type TerminalInfo,
+	type TerminalRead,
 	type TerminalRequest,
 	type TerminalTheme,
+	type TerminalWait,
 } from "./protocol.ts";
 
 // The terminal host: owns the pi-env connections and the programs running in terminals, independent of the server and
@@ -24,6 +43,10 @@ import {
 // and no connections for a while. One per data directory. It is its own program, started by path (not a facet built by
 // the plugin loader), so it and the files only it runs (daemon.ts, envs.ts, log-preload.ts) import p2's base code and
 // Chord directly.
+//
+// The agent's terminal tool reaches the same terminals through calls with replies (`call`, see `HostCall`): each
+// terminal keeps its last MiB of output and a read cursor for it here, so reads continue where the last one ended,
+// also across server and worker restarts.
 
 const IDLE_EXIT_MS = 10 * 60_000;
 const SCROLLBACK = 10_000;
@@ -31,6 +54,18 @@ const SCROLLBACK = 10_000;
 const MAX_BACKLOG = 8 * 1024 * 1024;
 /** The colors programs see until a viewer reports its theme: the browser's dark theme. */
 const DEFAULT_THEME: TerminalTheme = { foreground: 0xe6e6e6, background: 0x141414, scheme: "dark" };
+/** Output each terminal keeps for the agent's reads. */
+const RING_BYTES = 1024 * 1024;
+/** Running terminals the agent may have opened in one session. */
+const MAX_AGENT_TERMINALS = 8;
+/** Results of calls with a key the host remembers, so a repeated call (a replayed tool call) is not done twice. */
+const REMEMBERED_CALLS = 1024;
+/** A `match` wait tests the plain text of at most this much of the latest output. */
+const MATCH_WINDOW = 64 * 1024;
+/** How long without output a `quiet` wait waits by default. */
+const DEFAULT_QUIET_MS = 500;
+/** Lines of scrollback `capture` returns at most. */
+const MAX_CAPTURE_SCROLLBACK = 5000;
 
 const directory = process.argv[2];
 if (!directory) throw new Error("usage: main.ts <data directory>");
@@ -69,6 +104,10 @@ type Client = {
 	/** `sent` right after the latest snapshot. */
 	snapshotEnd: number;
 	behind: boolean;
+	/** The session it listed last: it hears about that session's terminals changing (`terminals`). */
+	session?: string;
+	/** Cancels of its calls still running, by call id. */
+	calls: Map<number, () => void>;
 };
 type Hosted = {
 	info: TerminalInfo;
@@ -81,6 +120,12 @@ type Hosted = {
 	pendingBytes: number;
 	clients: Set<Client>;
 	connection: string;
+	/** The last MiB of output, for the agent's reads. */
+	ring: OutputRing;
+	/** Where the agent's next read starts (an offset into `ring`). */
+	cursor: number;
+	/** Waits for output, called on each output, the exit and the close. */
+	waiters: Set<() => void>;
 };
 
 const terminals = new Map<string, Hosted>();
@@ -122,6 +167,18 @@ function resync(client: Client, hosted: Hosted): void {
 
 function changed(hosted: Hosted): void {
 	for (const client of hosted.clients) send(client, { type: "changed", terminal: hosted.info });
+	listed(hosted.info.sessionId);
+}
+
+/** The session's terminals, oldest first. */
+function sessionTerminals(sessionId: string): Hosted[] {
+	return [...terminals.values()].filter((hosted) => hosted.info.sessionId === sessionId);
+}
+
+/** Tells every connection that listed the session (its viewers) its terminals now. */
+function listed(sessionId: string): void {
+	const list = sessionTerminals(sessionId).map((hosted) => hosted.info);
+	for (const client of clients) if (client.session === sessionId) send(client, { type: "terminals", terminals: list });
 }
 
 async function connection(env: string | null): Promise<{ connection: Connection; shellEnv: Record<string, string> }> {
@@ -198,11 +255,28 @@ function attach(client: Client, hosted: Hosted): void {
 	resync(client, hosted);
 }
 
-async function open(client: Client, request: Extract<TerminalRequest, { type: "open" }>): Promise<void> {
+type Opening = {
+	sessionId: string;
+	cwd: string;
+	env: string | null;
+	cols: number;
+	rows: number;
+	name?: string;
+	agent?: true;
+};
+
+/** A new terminal, listed at once; `started` settles once its program started or failed to. */
+function create(request: Opening, theme: TerminalTheme): { hosted: Hosted; started: Promise<void> } {
 	const id = randomBytes(6).toString("base64url");
+	const taken = new Set(sessionTerminals(request.sessionId).map((each) => each.info.index));
+	let index = 1;
+	while (taken.has(index)) index++;
 	const info: TerminalInfo = {
 		id,
 		sessionId: request.sessionId,
+		index,
+		...(request.name ? { name: request.name } : {}),
+		...(request.agent ? { agent: true as const } : {}),
 		cwd: request.cwd,
 		env: request.env,
 		title: "",
@@ -211,76 +285,102 @@ async function open(client: Client, request: Extract<TerminalRequest, { type: "o
 		rows: request.rows,
 	};
 	let pty: RemoteTerminal | undefined;
-	let hosted: Hosted | undefined;
 	const vt = ghostty.terminal({
 		cols: request.cols,
 		rows: request.rows,
 		scrollback: SCROLLBACK,
-		colors: client.theme,
-		colorScheme: () => hosted?.theme.scheme,
+		colors: theme,
+		colorScheme: () => hosted.theme.scheme,
 		// Answers to queries (cursor position, device attributes) come from here, never from the browsers.
 		onReply: (bytes) => {
 			if (terminals.has(id)) pty?.write(bytes);
 		},
 	});
-	hosted = {
+	const hosted: Hosted = {
 		info,
 		vt,
-		theme: client.theme,
+		theme,
 		pending: [],
 		pendingBytes: 0,
 		clients: new Set(),
 		connection: request.env ?? "",
+		ring: new OutputRing(RING_BYTES),
+		cursor: 0,
+		waiters: new Set(),
 	};
 	terminals.set(id, hosted);
-	attach(client, hosted);
+	listed(request.sessionId);
 	const end = (exited: TerminalInfo["exited"]) => {
 		if (terminals.get(id) !== hosted) return;
 		info.exited = exited;
 		changed(hosted);
+		poke(hosted);
 		release(hosted.connection);
 	};
-	try {
-		const { connection: daemon, shellEnv } = await connection(request.env);
-		pty = await openTerminal(daemon, {
-			cwd: request.cwd,
-			// COLORFGBG: light or dark for programs that only look at the environment.
-			env: {
-				...shellEnv,
-				TERM: "xterm-256color",
-				COLORTERM: "truecolor",
-				COLORFGBG: client.theme.scheme === "dark" ? "15;0" : "0;15",
-			},
-			cols: request.cols,
-			rows: request.rows,
-			onData: (bytes) => {
-				// Output racing a close: the headless terminal is already freed.
-				if (!terminals.has(id)) return;
-				vt.write(bytes);
-				for (const viewer of hosted.clients) output(viewer, bytes);
-				const title = vt.title();
-				if (title !== info.title) {
-					info.title = title;
-					changed(hosted);
-				}
-			},
-		});
-		hosted.pty = pty;
-		// Closed meanwhile: the program must not outlive its terminal.
-		if (!terminals.has(id)) pty.close();
-		if (info.cols !== request.cols || info.rows !== request.rows) pty.resize(info.cols, info.rows);
-		for (const bytes of hosted.pending.splice(0)) pty.write(bytes);
-		hosted.pendingBytes = 0;
-		pty.exited.then(
-			(code) => end({ code }),
-			(error: unknown) => end({ error: error instanceof Error ? error.message : String(error) }),
-		);
-	} catch (error) {
-		end({ error: error instanceof Error ? error.message : String(error) });
+	const started = (async () => {
+		try {
+			const { connection: daemon, shellEnv } = await connection(request.env);
+			pty = await openTerminal(daemon, {
+				cwd: request.cwd,
+				// COLORFGBG: light or dark for programs that only look at the environment.
+				env: {
+					...shellEnv,
+					TERM: "xterm-256color",
+					COLORTERM: "truecolor",
+					COLORFGBG: theme.scheme === "dark" ? "15;0" : "0;15",
+				},
+				cols: request.cols,
+				rows: request.rows,
+				onData: (bytes) => {
+					// Output racing a close: the headless terminal is already freed.
+					if (!terminals.has(id)) return;
+					vt.write(bytes);
+					hosted.ring.append(bytes);
+					for (const viewer of hosted.clients) output(viewer, bytes);
+					const title = vt.title();
+					if (title !== info.title) {
+						info.title = title;
+						changed(hosted);
+					}
+					poke(hosted);
+				},
+			});
+			hosted.pty = pty;
+			// Closed meanwhile: the program must not outlive its terminal.
+			if (!terminals.has(id)) pty.close();
+			if (info.cols !== request.cols || info.rows !== request.rows) pty.resize(info.cols, info.rows);
+			for (const bytes of hosted.pending.splice(0)) pty.write(bytes);
+			hosted.pendingBytes = 0;
+			pty.exited.then(
+				(code) => end({ code }),
+				(error: unknown) => end({ error: error instanceof Error ? error.message : String(error) }),
+			);
+		} catch (error) {
+			end({ error: error instanceof Error ? error.message : String(error) });
+		}
+	})();
+	return { hosted, started };
+}
+
+/** Wakes the terminal's waits. */
+function poke(hosted: Hosted): void {
+	for (const waiter of hosted.waiters) waiter();
+}
+
+/** Input for the program; held until it started. False when too much is held already. */
+function input(hosted: Hosted, bytes: Uint8Array): boolean {
+	if (hosted.pty) {
+		hosted.pty.write(bytes);
+		return true;
 	}
+	if (hosted.pendingBytes + bytes.length > MAX_BACKLOG) return false;
+	hosted.pending.push(bytes);
+	hosted.pendingBytes += bytes.length;
+	return true;
 }
 
 function close(hosted: Hosted): void {
+	if (terminals.get(hosted.info.id) !== hosted) return;
 	terminals.delete(hosted.info.id);
 	hosted.pty?.close();
 	for (const client of hosted.clients) {
@@ -290,37 +390,31 @@ function close(hosted: Hosted): void {
 	hosted.clients.clear();
 	hosted.vt.free();
 	release(hosted.connection);
+	poke(hosted);
+	listed(hosted.info.sessionId);
 }
 
 function handle(client: Client, message: unknown): void {
 	if (message instanceof Uint8Array) {
 		const hosted = client.attached;
 		if (!hosted || hosted.info.exited) return;
-		if (hosted.pty) hosted.pty.write(message);
-		else {
-			if (hosted.pendingBytes + message.length > MAX_BACKLOG) {
-				client.socket.destroy();
-				return;
-			}
-			hosted.pending.push(message);
-			hosted.pendingBytes += message.length;
-		}
+		if (!input(hosted, message)) client.socket.destroy();
 		return;
 	}
 	const request = message as TerminalRequest;
 	switch (request.type) {
 		case "list":
-			send(client, {
-				type: "list",
-				terminals: [...terminals.values()]
-					.filter((hosted) => hosted.info.sessionId === request.sessionId)
-					.map((hosted) => hosted.info),
-			});
+			client.session = request.sessionId;
+			send(client, { type: "list", terminals: sessionTerminals(request.sessionId).map((hosted) => hosted.info) });
 			return;
 		case "open":
-			void open(client, request).catch((error: unknown) =>
-				send(client, { type: "error", message: error instanceof Error ? error.message : String(error) }),
-			);
+			attach(client, create(request, client.theme).hosted);
+			return;
+		case "call":
+			call(client, request.id, request.call);
+			return;
+		case "cancel":
+			client.calls.get(request.id)?.();
 			return;
 		case "attach": {
 			const hosted = terminals.get(request.terminalId);
@@ -385,8 +479,292 @@ function handle(client: Client, message: unknown): void {
 	}
 }
 
+/** Results of calls with a key, by session, operation and key; the oldest go first. */
+const remembered = new Map<string, Promise<HostResult>>();
+
+/** Runs a call and replies; the caller may cancel it while it waits. */
+function call(client: Client, id: number, request: HostCall): void {
+	const cancelled = Promise.withResolvers<never>();
+	cancelled.promise.catch(() => {});
+	client.calls.set(id, () => cancelled.reject(new Error("cancelled")));
+	const result = "key" in request ? once(request) : perform(request, cancelled.promise);
+	Promise.race([result, cancelled.promise])
+		.then(
+			(value) => send(client, { type: "reply", id, result: value }),
+			(error: unknown) =>
+				send(client, { type: "reply", id, error: error instanceof Error ? error.message : String(error) }),
+		)
+		.finally(() => client.calls.delete(id));
+}
+
+/** A call with a key, done once: a call with a key the host has seen gets the first one's result. */
+function once(request: Extract<HostCall, { key: string }>): Promise<HostResult> {
+	const key = JSON.stringify([request.sessionId, request.op, request.key]);
+	const known = remembered.get(key);
+	if (known) return known;
+	// Calls with a key never wait, so nothing cancels them.
+	const first = perform(request, new Promise<never>(() => {}));
+	remembered.set(key, first);
+	// A failed call may be tried again.
+	first.catch(() => {
+		if (remembered.get(key) === first) remembered.delete(key);
+	});
+	for (const old of remembered.keys()) {
+		if (remembered.size <= REMEMBERED_CALLS) break;
+		remembered.delete(old);
+	}
+	return first;
+}
+
+/** One call; `cancelled` rejects when the caller gives up (a wait then ends). */
+async function perform(request: HostCall, cancelled: Promise<never>): Promise<HostResult> {
+	switch (request.op) {
+		case "list":
+			return {
+				kind: "list",
+				windows: await Promise.all(
+					sessionTerminals(request.sessionId).map(async (hosted) => {
+						const job = await foreground(hosted);
+						return { terminal: hosted.info, ...(job ? { foreground: job } : {}) };
+					}),
+				),
+			};
+		case "open":
+			return { kind: "terminal", terminal: await openForAgent(request) };
+		case "send": {
+			const hosted = target(request.sessionId, request.target);
+			if (hosted.info.exited) throw new Error(`window ${hosted.info.index} has exited`);
+			const parts: Uint8Array[] = [];
+			for (const key of request.keys) {
+				const press = request.literal ? undefined : tmuxKey(key);
+				const bytes = press ? hosted.vt.encodeKey(press) : new TextEncoder().encode(key);
+				if (!bytes) throw new Error(`unknown key: ${key}`);
+				parts.push(bytes);
+			}
+			if (!input(hosted, Buffer.concat(parts))) throw new Error("too much input before the program started");
+			return { kind: "terminal", terminal: hosted.info };
+		}
+		case "cursor": {
+			const hosted = target(request.sessionId, request.target);
+			return { kind: "cursor", terminal: hosted.info, offset: hosted.cursor };
+		}
+		case "read":
+			return { kind: "read", ...(await read(request, cancelled)) };
+		case "capture": {
+			const hosted = target(request.sessionId, request.target);
+			return {
+				kind: "capture",
+				terminal: hosted.info,
+				text: capture(hosted.vt, request.scrollback, request.escapes === true),
+			};
+		}
+		case "close": {
+			const hosted = target(request.sessionId, request.target);
+			close(hosted);
+			return { kind: "closed", terminalId: hosted.info.id };
+		}
+		case "closeSession":
+			for (const hosted of sessionTerminals(request.sessionId)) close(hosted);
+			return { kind: "done" };
+	}
+}
+
+/** The session's terminal `name`: its id, its number (`2` or tmux's `:2`), or its name. */
+function target(sessionId: string, name: string): Hosted {
+	const own = sessionTerminals(sessionId);
+	const bare = name.startsWith(":") ? name.slice(1) : name;
+	const found =
+		own.find((hosted) => hosted.info.id === name) ??
+		own.find((hosted) => String(hosted.info.index) === bare) ??
+		own.find((hosted) => hosted.info.name === bare);
+	if (!found) throw new Error(`can't find window: ${name}`);
+	return found;
+}
+
+/** A terminal the agent opens; its program has started when this returns, or it is gone with the error. */
+async function openForAgent(request: Extract<HostCall, { op: "open" }>): Promise<TerminalInfo> {
+	const running = sessionTerminals(request.sessionId).filter((hosted) => hosted.info.agent && !hosted.info.exited);
+	if (running.length >= MAX_AGENT_TERMINALS)
+		throw new Error(
+			`the agent has ${MAX_AGENT_TERMINALS} terminals running in this session already: close one with kill-window`,
+		);
+	const { hosted, started } = create(
+		{
+			sessionId: request.sessionId,
+			cwd: request.cwd,
+			env: request.env,
+			cols: request.cols,
+			rows: request.rows,
+			agent: true,
+			...(request.name ? { name: request.name } : {}),
+		},
+		DEFAULT_THEME,
+	);
+	// The shell reads it once it is ready, as typed ahead.
+	if (request.command) input(hosted, new TextEncoder().encode(`${request.command}\r`));
+	await started;
+	const failed = hosted.info.exited?.error;
+	if (failed) {
+		close(hosted);
+		throw new Error(failed);
+	}
+	return hosted.info;
+}
+
+/** Output since `from` (default: the read cursor) as plain text, after the wait; moves the read cursor past it. */
+async function read(request: Extract<HostCall, { op: "read" }>, cancelled: Promise<never>): Promise<TerminalRead> {
+	const hosted = target(request.sessionId, request.target);
+	const from = request.from ?? hosted.cursor;
+	const waited = request.wait ? await Promise.race([waitFor(hosted, from, request.wait), cancelled]) : undefined;
+	const { bytes, skipped } = hosted.ring.since(from);
+	const to = hosted.ring.end;
+	hosted.cursor = Math.max(hosted.cursor, to);
+	const plain = plainText(new TextDecoder().decode(bytes));
+	const truncated = Math.max(0, plain.length - READ_TEXT_LIMIT);
+	const open = terminals.get(hosted.info.id) === hosted;
+	const screen = open && hosted.vt.alternateScreen() ? capture(hosted.vt, 0, false) : undefined;
+	const job = await foreground(hosted);
+	return {
+		terminal: hosted.info,
+		from,
+		to,
+		text: truncated ? plain.slice(truncated) : plain,
+		skipped,
+		truncated,
+		...(screen === undefined ? {} : { screen }),
+		...(waited ? { waited } : {}),
+		...(job ? { foreground: job } : {}),
+	};
+}
+
+/** The name of the job in front of the terminal's shell, while one runs. */
+async function foreground(hosted: Hosted): Promise<string | undefined> {
+	if (terminals.get(hosted.info.id) !== hosted || !hosted.pty || hosted.info.exited) return undefined;
+	const job = await hosted.pty.foreground().catch(() => undefined);
+	return job ? (job.name ?? `process ${job.pid}`) : undefined;
+}
+
+/**
+ * Waits for the terminal: until its output is quiet, matches, or it exits, whichever was asked, or the timeout. It
+ * also ends when the program exits or the terminal closes.
+ */
+function waitFor(hosted: Hosted, from: number, wait: TerminalWait): Promise<NonNullable<TerminalRead["waited"]>> {
+	// A bad pattern fails the read before it waits.
+	const pattern = wait.until === "match" ? new RegExp(wait.pattern ?? "", wait.ignoreCase ? "mi" : "m") : undefined;
+	return new Promise((resolve) => {
+		let quiet: ReturnType<typeof setTimeout> | undefined;
+		let check: ReturnType<typeof setTimeout> | undefined;
+		const matches = () => {
+			const { bytes } = hosted.ring.since(Math.max(from, hosted.ring.end - MATCH_WINDOW));
+			return pattern?.test(plainText(new TextDecoder().decode(bytes))) === true;
+		};
+		const finish = (why: NonNullable<TerminalRead["waited"]>) => {
+			clearTimeout(timeout);
+			clearTimeout(quiet);
+			clearTimeout(check);
+			hosted.waiters.delete(waiter);
+			resolve(why);
+		};
+		const waiter = () => {
+			if (terminals.get(hosted.info.id) !== hosted) finish(pattern && matches() ? "match" : "closed");
+			else if (hosted.info.exited) finish(pattern && matches() ? "match" : "exit");
+			else if (wait.until === "quiet") {
+				clearTimeout(quiet);
+				quiet = setTimeout(() => finish("quiet"), wait.quietMs ?? DEFAULT_QUIET_MS);
+			} else if (pattern && check === undefined)
+				// Output comes in many small chunks: test once they settled a little.
+				check = setTimeout(() => {
+					check = undefined;
+					if (matches()) finish("match");
+				}, 50);
+		};
+		const timeout = setTimeout(() => finish("timeout"), wait.timeoutMs);
+		hosted.waiters.add(waiter);
+		if (pattern && matches()) finish("match");
+		else waiter();
+	});
+}
+
+/**
+ * The screen as plain text, with up to `scrollback` lines before it; trailing blank lines left out. `escapes` keeps
+ * colors and attributes as SGR sequences (tmux's `capture-pane -e`).
+ */
+function capture(vt: VtTerminal, scrollback: number, escapes: boolean): string {
+	const { total, length } = vt.scrollbar();
+	const first = Math.max(0, total - length - Math.min(scrollback, MAX_CAPTURE_SCROLLBACK));
+	const lines: string[] = [];
+	// The viewport shows `length` rows at a time: page from `first` to the bottom, then scroll back down.
+	vt.scroll("bottom");
+	vt.scroll(first - (total - length));
+	let next = first;
+	for (;;) {
+		const shown = vt.scrollbar();
+		const rows = vt.frame(true).changed.map((row) => (escapes ? styledRow(row.cells) : plainRow(row.cells)));
+		lines.push(...rows.slice(next - shown.offset));
+		next = shown.offset + rows.length;
+		if (shown.offset + shown.length >= shown.total) break;
+		vt.scroll(shown.length);
+	}
+	vt.scroll("bottom");
+	while (lines.length > 0 && plainText(lines.at(-1) as string) === "") lines.pop();
+	return lines.join("\n");
+}
+
+function plainRow(cells: readonly Cell[]): string {
+	return cells
+		.filter((cell) => cell.width !== 0)
+		.map((cell) => cell.text || " ")
+		.join("")
+		.replace(/\s+$/, "");
+}
+
+/** SGR parameters of cell flags, in `Cell.flags` bit order. */
+const SGR_FLAGS: [number, number][] = [
+	[BOLD, 1],
+	[FAINT, 2],
+	[ITALIC, 3],
+	[UNDERLINE, 4],
+	[BLINK, 5],
+	[INVERSE, 7],
+	[INVISIBLE, 8],
+	[STRIKETHROUGH, 9],
+];
+
+/** A row with its colors and attributes as SGR sequences, reset at its end. */
+function styledRow(cells: readonly Cell[]): string {
+	const color = (base: number, value: number) =>
+		value < 0 ? [] : [base, 2, (value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff];
+	let row = "";
+	let style = "0";
+	for (const cell of cells) {
+		if (cell.width === 0) continue;
+		const params = [
+			0,
+			...SGR_FLAGS.filter(([flag]) => cell.flags & flag).map(([, sgr]) => sgr),
+			...color(38, cell.fg),
+			...color(48, cell.bg),
+		].join(";");
+		if (params !== style) {
+			row += `\x1b[${params}m`;
+			style = params;
+		}
+		row += cell.text || " ";
+	}
+	// Unstyled trailing blanks carry nothing.
+	const trimmed = style === "0" ? row.replace(/ +$/, "") : row;
+	return `${trimmed}${style === "0" ? "" : "\x1b[0m"}`;
+}
+
 const server = createServer((socket) => {
-	const client: Client = { socket, theme: DEFAULT_THEME, sent: 0, acked: 0, snapshotEnd: 0, behind: false };
+	const client: Client = {
+		socket,
+		theme: DEFAULT_THEME,
+		sent: 0,
+		acked: 0,
+		snapshotEnd: 0,
+		behind: false,
+		calls: new Map(),
+	};
 	clients.add(client);
 	send(client, {
 		type: "hello",
@@ -405,6 +783,7 @@ const server = createServer((socket) => {
 	socket.on("close", () => {
 		clients.delete(client);
 		client.attached?.clients.delete(client);
+		for (const cancel of client.calls.values()) cancel();
 		idleSince = Date.now();
 	});
 });

@@ -14,20 +14,30 @@ export type ArtifactType = (typeof TYPES)[number];
 export type ArtifactInfo = { name: string; title: string; type: ArtifactType; version: number };
 export type ArtifactInput = { name: string; title: string; type: ArtifactType; content: string };
 
-const DIAGNOSTIC_BOOTSTRAP = `<script>(()=>{const channel="p2-artifact-diagnostic";const send=(level,args)=>{try{parent.postMessage({channel,level,message:args.map(value=>{try{return typeof value==="string"?value:JSON.stringify(value)}catch{return String(value)}}).join(" ").slice(0,4000)},"*")}catch{}};for(const level of ["error","warn"]){const original=console[level];console[level]=(...args)=>{send(level,args);original.apply(console,args)}}addEventListener("error",event=>send("error",[event.message,event.filename&&(event.filename+":"+event.lineno+":"+event.colno)].filter(Boolean)));addEventListener("unhandledrejection",event=>send("error",[event.reason?.stack||event.reason||"Unhandled promise rejection"]));addEventListener("securitypolicyviolation",event=>send("csp",[event.violatedDirective,event.blockedURI||"blocked"]));addEventListener("webglcontextlost",event=>send("webgl",["WebGL context lost"]),true);send("ready",["Preview diagnostics connected"]);})();</script>`;
+// The preview's diagnostics bridge: console errors and warnings, uncaught errors, CSP violations and lost WebGL
+// contexts, plus the document's content height (level "size", for inline previews sized to their content). Drawings fill
+// the frame's width: an SVG document with a viewBox (or an absolute width and height, made its viewBox) is set to
+// 100% wide and high, so it scales with its aspect and reports viewBox height at its width; an HTML document whose
+// body is just a viewBox SVG or an image gets them 100% wide at height auto (zero specificity: any author rule wins).
+// HTML is measured without its scrollbar: a frame still too short shows one, and the narrower page would report a
+// taller height, which keeps the scrollbar once the frame grows to it.
+const DIAGNOSTIC_SCRIPT = `(()=>{const channel="p2-artifact-diagnostic";const send=(level,args)=>{try{parent.postMessage({channel,level,message:args.map(value=>{try{return typeof value==="string"?value:JSON.stringify(value)}catch{return String(value)}}).join(" ").slice(0,4000)},"*")}catch{}};for(const level of ["error","warn"]){const original=console[level];console[level]=(...args)=>{send(level,args);original.apply(console,args)}}addEventListener("error",event=>send("error",[event.message,event.filename&&(event.filename+":"+event.lineno+":"+event.colno)].filter(Boolean)));addEventListener("unhandledrejection",event=>send("error",[event.reason?.stack||event.reason||"Unhandled promise rejection"]));addEventListener("securitypolicyviolation",event=>send("csp",[event.violatedDirective,event.blockedURI||"blocked"]));addEventListener("webglcontextlost",event=>send("webgl",["WebGL context lost"]),true);send("ready",["Preview diagnostics connected"]);const fit=()=>{const root=document.documentElement;if(root instanceof SVGSVGElement){const width=root.width.baseVal,height=root.height.baseVal,absolute=length=>length.unitType!==SVGLength.SVG_LENGTHTYPE_PERCENTAGE&&length.value>0;if(!root.hasAttribute("viewBox")&&absolute(width)&&absolute(height))root.setAttribute("viewBox","0 0 "+width.value+" "+height.value);const box=root.viewBox.baseVal;if(box&&box.width>0&&box.height>0){root.setAttribute("width","100%");root.setAttribute("height","100%")}}else if(root){const style=document.createElement("style");style.textContent=":where(body>svg[viewBox]:only-child,body>img:only-child){display:block;width:100%;height:auto}";(document.head||root).prepend(style)}};try{fit()}catch{}let reported=0;const measure=()=>{const root=document.documentElement;if(!root)return;let height;if(root instanceof SVGSVGElement){const box=root.viewBox.baseVal;height=root.height.baseVal.unitType===SVGLength.SVG_LENGTHTYPE_PERCENTAGE&&box&&box.width>0&&box.height>0?root.getBoundingClientRect().width*box.height/box.width:root.getBoundingClientRect().height}else{const overflow=root.style.overflow;root.style.overflow="hidden";height=Math.max(root.getBoundingClientRect().height,document.body?document.body.scrollHeight:0);root.style.overflow=overflow}height=Math.ceil(height);if(height===reported)return;reported=height;try{parent.postMessage({channel,level:"size",message:"",height},"*")}catch{}};const observe=()=>{try{const observer=new ResizeObserver(measure);observer.observe(document.documentElement);if(document.body)observer.observe(document.body)}catch{}measure()};addEventListener("load",measure);addEventListener("resize",measure);if(document.readyState==="loading")addEventListener("DOMContentLoaded",observe);else observe();})();`;
 
 /** Add a diagnostics bridge without changing the immutable stored source. */
 export function instrumentArtifact(info: ArtifactInfo, content: string): string {
 	if (info.type === "html") {
 		const head = /<head(?:\s[^>]*)?>/i.exec(content);
+		const script = `<script>${DIAGNOSTIC_SCRIPT}</script>`;
 		if (head)
-			return `${content.slice(0, head.index + head[0].length)}${DIAGNOSTIC_BOOTSTRAP}${content.slice(head.index + head[0].length)}`;
-		return `${DIAGNOSTIC_BOOTSTRAP}${content}`;
+			return `${content.slice(0, head.index + head[0].length)}${script}${content.slice(head.index + head[0].length)}`;
+		return `${script}${content}`;
 	}
 	if (info.type === "svg") {
 		const root = /<svg(?:\s[^>]*)?>/i.exec(content);
-		if (root)
-			return `${content.slice(0, root.index + root[0].length)}${DIAGNOSTIC_BOOTSTRAP}${content.slice(root.index + root[0].length)}`;
+		// SVG is XML: the script's `&&` would end the document without CDATA. An empty root (`<svg/>`) has no inside.
+		const script = `<script><![CDATA[${DIAGNOSTIC_SCRIPT}]]></script>`;
+		if (root && !root[0].endsWith("/>"))
+			return `${content.slice(0, root.index + root[0].length)}${script}${content.slice(root.index + root[0].length)}`;
 	}
 	return content;
 }

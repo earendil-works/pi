@@ -40,13 +40,15 @@ version 2; absent: `{ 1, [{ 1, null }] }`):
   list, `Sessions.fork`) uses `isTopLevel`, a document read every tool (`api`) and section (`input.read`) can do.
 - **Current main** = `conversation`. It answers "which top-level conversation is shown and followed": the session row
   (`main`; model and thinking level follow it), the web home route, the drawer, the chat's back links, TUI checks,
-  terminals, unread answers, `Sessions.fork`, peer messages (the conversations broker), and where subagents report.
+  terminals, reading unread answers, `Sessions.fork`, and peer messages (the conversations broker).
 - Clients learn it through the session row (`Sessions` version 4, catalog schema 4; version 5: null labels); the
   worker reports it after a switch and at every start (`treeSelf`). Clients built before still bind: the providers
   accept `Sessions` 3 and 4 and `SessionTree` 1, mapping rows and the tree back (no `main`/`branches` for 3, a null
   label as the session title for 4, no labels for `SessionTree` 1). A web page or TUI viewing the previous main conversation follows a switch.
-- Earlier branches are read-only (`ReadOnlyConversations`): only the main conversation runs. The web shows only the
-  main conversation and subagents (others redirect to the main one).
+- Earlier branches are read-only (`ReadOnlyConversations`): only the main conversation takes input (send, dequeue,
+  configure); Stop stays allowed. A branch left while it works keeps running in the background: its run and queued
+  input go on, its sidebar row shows the working dot, and its answer counts as unread. To watch or stop it, switch
+  back to it. The web shows only the main conversation and subagents (others redirect to the main one).
 - **Labels** are stored per branch (see [Labels](#labels)).
 
 ## 2. Per-agent state
@@ -55,7 +57,7 @@ The main agent's state stays on conversation 1, whichever branch it works in; a 
 
 | Document | Where |
 | --- | --- |
-| `p2.subagents` | Conversation 1, as before. Subagents are session-wide; their reports and `team send to: "parent"` go to the current main. TODO on `Subagents`: should probably become session-scoped (a migration). |
+| `p2.subagents` | Conversation 1, as before. Subagents are session-wide. A subagent's report goes to the top-level conversation that sent the message (reporter input `parent`), and `team send to: "parent"` to the one that last spawned it or sent it a message (`Subagent.parent`), even after a `/tree` switch; records from before fall back to the current main. TODO on `Subagents`: should probably become session-scoped (a migration). |
 | `p2.location-move` | Conversation 1: the move belongs to the session, whichever top-level conversation asked. |
 | `p2.artifacts`, `voice.mode`, `chat-mode.settings` | `agentConversation(id)`: conversation 1 for a top-level conversation, the conversation itself for a subagent or one-shot agent. No copying at switches, no migration. |
 
@@ -77,8 +79,10 @@ A branch forked before a subagent was spawned still lists that subagent (accepte
 Where the session continues: the top-level conversation whose history ends there (the main one first; switching back
 moves only `p2.main`), else a fork of the conversation storing that entry (same history, shorter chain than forking
 the one it was picked in), else, before the first message, a new ownerless conversation with the agent as it was then.
-The new conversation, its label and `p2.main` are one commit. Refused while the current main has a run or queued input;
-subagents keep running.
+The new conversation, its label and `p2.main` are one commit. Allowed while the current main has a run or queued
+input: that work goes on in the branch left (see Top-level conversations), as do subagents. Shared per-agent state
+(section 2) is then used by two runs at once; accepted. A subagent's report still goes to the branch that asked
+(section 2).
 
 ### Labels
 

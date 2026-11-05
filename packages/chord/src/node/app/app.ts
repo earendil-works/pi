@@ -72,7 +72,10 @@ export type AppKind = { readonly platform: "node" | "browser"; readonly packages
 export type AppWorkerKind<P extends Principal> = {
 	/** The host kind (`hostKind("project", { id: str() })`). */
 	readonly kind: KindShape;
-	/** The worker's entry module (it calls `startWorker`), its Node flags and environment. */
+	/**
+	 * The worker's entry module (it calls `startWorker`), bundled with the base code it imports at start (every worker of
+	 * the kind runs that snapshot until the server restarts); its Node flags and environment.
+	 */
 	readonly entry: string;
 	readonly execArgv?: readonly string[];
 	readonly env?: Readonly<Record<string, string>>;
@@ -137,7 +140,8 @@ export type AppOptions<P extends Principal> = {
 	readonly principalAttributes?: PrincipalAttributes<P>;
 	/**
 	 * The app's base code beside what the kit knows (files or directories: its API modules, its start script): a change
-	 * sets `plugins.state.base`. The kit adds each worker kind's `entry` and every file its base bundles were built from.
+	 * sets `plugins.state.base`. The kit adds every file its base bundles were built from: the web's, the terminal's and
+	 * each worker kind's.
 	 */
 	readonly base?: readonly string[];
 	/** The `closeTimeout` and `readyTimeout` of every host (the server's and each worker's): 30 s and 60 s by default. */
@@ -260,9 +264,7 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 		context,
 	);
 	// Base code by kind: directories are watched as trees, files one by one (`watchBase`).
-	const base = [...(options.base ?? []), ...(options.workers ?? []).map(({ entry }) => entry)].map((path) =>
-		resolve(path),
-	);
+	const base = (options.base ?? []).map((path) => resolve(path));
 	const baseDirs = base.filter((path) => statSync(path, { throwIfNoEntry: false })?.isDirectory() === true);
 	const plugins = createPlugins(
 		{
@@ -284,9 +286,6 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 	const workers = new Map<string, Workers<HostKind>>();
 	// The address key of each worker by its principal's key: the principal its link stamps on its telemetry batches.
 	const workerHosts = new Map<string, string>();
-	for (const kind of options.workers ?? []) {
-		workers.set(kind.kind.kind, workersOf(host, kind, options, layout.dataDir, plugins, workerHosts, context));
-	}
 	const link = new OwnerLink();
 	const core: PluginFacet<P>[] = [
 		{ name: "chord.http", facet: http.facet },
@@ -319,12 +318,20 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 	const surfaces: Surface<P>[] = [];
 	const app = new RunningApp(host, http, workers, plugins, surfaces, { store, lock }, layout, options);
 	try {
+		// Each worker kind's base bundled now: one that does not build fails the start, everything closed.
+		for (const kind of options.workers ?? []) {
+			workers.set(
+				kind.kind.kind,
+				await workersOf(host, kind, options, layout.dataDir, plugins, workerHosts, context),
+			);
+		}
 		for (const surface of await surfacesOf(host, options, plugins, context)) {
 			surfaces.push(surface);
 			core.push({ name: `chord.${surface.name}`, facet: surface.facet });
 		}
 		const files = base.filter((path) => !baseDirs.includes(path));
-		plugins.watchBase([...files, ...surfaces.flatMap(({ inputs }) => inputs)]);
+		const bundled = [...surfaces, ...workers.values()].flatMap(({ inputs }) => inputs);
+		plugins.watchBase([...files, ...bundled]);
 		await plugins.load(host, { kind: "server", core, modules: modulesOf(api, options.kinds.server) }, context);
 		await ownerTokenFile(layout.ownerToken, host, context);
 		app.started(link.renew(), await http.listening(context));
@@ -401,7 +408,10 @@ function modulesOf(api: AppApi, kind: AppKind | undefined): HostPackages {
 	return { ...api.modules, ...kind?.packages };
 }
 
-/** The workers component of one worker kind: started with the kit's part of the start data beside the app's. */
+/**
+ * The workers component of one worker kind, its base bundled: started with the kit's part of the start data beside the
+ * app's.
+ */
 function workersOf<P extends Principal>(
 	host: Host<P>,
 	kind: AppWorkerKind<P>,
@@ -410,7 +420,7 @@ function workersOf<P extends Principal>(
 	plugins: Plugins,
 	workerHosts: Map<string, string>,
 	context: Context,
-): Workers<HostKind> {
+): Promise<Workers<HostKind>> {
 	const facet = kind.facet ?? "worker";
 	const serverKey = canonicalJson(options.principal.server as unknown as JsonValue, context);
 	const isServer = (principal: P): boolean => canonicalJson(principal as unknown as JsonValue, context) === serverKey;

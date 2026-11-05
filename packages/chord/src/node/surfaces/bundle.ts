@@ -5,7 +5,7 @@
 
 import { createHash } from "node:crypto";
 import { basename, extname, resolve } from "node:path";
-import { build } from "esbuild";
+import { build, type Metafile } from "esbuild";
 import { CSS, JAVASCRIPT, mimeOf, type ServedFile } from "./served.ts";
 
 /**
@@ -69,9 +69,13 @@ export async function buildBase(entry: string, platform: BasePlatform, prefix: s
 			files.set(`${prefix}assets/${basename(output.path)}`, { mime: mimeOf(output.path), bytes: output.contents });
 		}
 	}
+	return { hash: digest, script, style, files, inputs: metafileInputs(result.metafile) };
+}
+
+/** The files a build read, absolute (a base bundle's and the worker base's inputs). */
+export function metafileInputs(metafile: Metafile): string[] {
 	// Metafile inputs are relative to the working directory; a namespaced one (`ns:path`) is no file.
-	const inputs = Object.keys(result.metafile.inputs)
+	return Object.keys(metafile.inputs)
 		.filter((input) => !/^[a-z-]+:/.test(input))
 		.map((input) => resolve(input));
-	return { hash: digest, script, style, files, inputs };
 }

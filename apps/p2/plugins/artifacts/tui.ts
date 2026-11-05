@@ -1,10 +1,11 @@
 // Artifacts in the TUI (p2-tui-port.md P11c), after the web's artifact card, picker and viewer. The card shows the
-// title, type and version; expanded, a text or Markdown artifact shows the content the call wrote. `/artifacts` lists
+// title, type and version; expanded, a text or Markdown artifact shows the content the call wrote. A call with
+// `inline: true` shows all of it at once (Markdown rendered); inline HTML and SVG keep the card line. `/artifacts` lists
 // the conversation's artifacts (`ArtifactList`): Enter shows one inline (`ArtifactContent`; Markdown rendered, HTML and
 // SVG as source; in the side panel, where it follows new versions, when the terminal is wide enough), Ctrl+B opens it in the browser (launcher `openUrl`; the browser needs its own sign-in) and Ctrl+S
 // downloads it (launcher `download`). The worker never fetches the `/artifact` route itself: it has no cookie.
 
-import { Markdown, Text } from "@earendil-works/pi-tui";
+import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { BACKGROUND_CONTEXT, contribute, defineFacet, follow, statusOf, whenLive } from "@p2/app/v1";
 import type { TuiContext } from "@p2/app/v1/tui";
 import {
@@ -39,7 +40,9 @@ const artifactRenderers: ToolRenderers = {
 		return text;
 	},
 	renderResult(result, options, theme, context) {
-		const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+		const component = context.lastComponent instanceof Container ? context.lastComponent : new Container();
+		component.clear();
+		component.addChild(new Spacer(1));
 		const details = record(result.details);
 		const saved =
 			!context.isError &&
@@ -47,28 +50,35 @@ const artifactRenderers: ToolRenderers = {
 			typeof details.type === "string" &&
 			typeof details.version === "number";
 		if (!saved) {
-			text.setText(`\n${theme.fg(context.isError ? "error" : "toolOutput", getTextOutput(result))}`);
-			return text;
+			component.addChild(new Text(theme.fg(context.isError ? "error" : "toolOutput", getTextOutput(result)), 0, 0));
+			return component;
 		}
-		const lines = [
-			`${theme.fg("success", "■")} ${lineText(String(details.title))} ${theme.fg("muted", `· ${lineText(String(details.type)).toUpperCase()} · version ${details.version}`)} ${theme.fg("dim", "· /artifacts opens")}`,
-		];
-		// What the call wrote (text and Markdown; HTML and SVG run only in a browser).
+		component.addChild(
+			new Text(
+				`${theme.fg("success", "■")} ${lineText(String(details.title))} ${theme.fg("muted", `· ${lineText(String(details.type)).toUpperCase()} · version ${details.version}`)} ${theme.fg("dim", "· /artifacts opens")}`,
+				0,
+				0,
+			),
+		);
+		// What the call wrote (text and Markdown; HTML and SVG run only in a browser): the version this call produced.
 		const content = str(context.args.content);
-		if (content && (details.type === "text" || details.type === "markdown")) {
-			const all = content.split("\n").map((line) => theme.fg("toolOutput", lineText(line)));
-			const shown = options.expanded ? all : all.slice(0, PREVIEW_LINES);
-			lines.push("", ...shown);
-			if (shown.length < all.length)
-				lines.push(
-					theme.fg(
-						"muted",
-						`... (${all.length - shown.length} more lines, ${context.ui.keyText("app.tools.expand")} to expand)`,
-					),
-				);
+		if (!content || (details.type !== "text" && details.type !== "markdown")) return component;
+		component.addChild(new Spacer(1));
+		if (details.inline === true && details.type === "markdown") {
+			component.addChild(new Markdown(safeText(content), 0, 0, context.ui.theme.markdown));
+			return component;
 		}
-		text.setText(`\n${lines.join("\n")}`);
-		return text;
+		const all = content.split("\n").map((line) => theme.fg("toolOutput", lineText(line)));
+		const shown = options.expanded || details.inline === true ? all : all.slice(0, PREVIEW_LINES);
+		if (shown.length < all.length)
+			shown.push(
+				theme.fg(
+					"muted",
+					`... (${all.length - shown.length} more lines, ${context.ui.keyText("app.tools.expand")} to expand)`,
+				),
+			);
+		component.addChild(new Text(shown.join("\n"), 0, 0));
+		return component;
 	},
 };
 

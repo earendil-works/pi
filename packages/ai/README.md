@@ -1771,6 +1771,18 @@ setBedrockProviderModule(bedrockProviderModule);
 
 That explicit override bundles the AWS SDK. Without it, Bedrock's opaque runtime import expects the package's Bedrock implementation file to be available at runtime.
 
+Node bundles that split at dynamic imports (esbuild `splitting: true`) can keep Bedrock and the OAuth login flows inside the bundle but lazy: register loaders with literal dynamic imports, which the bundler turns into chunks that load on first use:
+
+```typescript
+import { registerLazyBedrockProvider } from '@earendil-works/pi-ai/lazy-bedrock-provider';
+import { registerLazyOAuthFlows } from '@earendil-works/pi-ai/lazy-oauth';
+
+registerLazyBedrockProvider();
+registerLazyOAuthFlows();
+```
+
+Both modules are Node-only; never import them into a browser bundle.
+
 ### Provider-Scoped Environment Overrides
 
 Pass `env` in stream options to scope provider configuration to a request. Values in `env` are used before process environment variables for provider auth and configuration such as Cloudflare account IDs, Azure OpenAI settings, Vertex project/location, Bedrock settings, `PI_CACHE_RETENTION`, and `HTTP_PROXY`/`HTTPS_PROXY`.

@@ -57,14 +57,14 @@ const SessionTreeV1 = remote("p2.tree", {
 				/**
 				 * Continues the session at `entry` (pi's `/tree`): after it for an answer, before it for a user message, whose
 				 * text comes back for the editor (null otherwise). Switches to the branch ending there, else forks a new one
-				 * (a new empty conversation before the first message), labelled with the chosen message's start. Refused
-				 * while the main conversation works. Returns the new main conversation.
+				 * (a new empty conversation before the first message), labelled with the chosen message's start. A run of
+				 * the conversation left goes on in the background. Returns the new main conversation.
 				 */
 				navigate: method(
 					obj({ entry: int({ minimum: 1 }) }),
 					obj({ conversation: int({ minimum: 1 }), text: union([str(), nul()]) }),
 				),
-				/** Continues the session at the end of the branch `conversation` (a sidebar row); refused while busy. */
+				/** Continues the session at the end of the branch `conversation` (a sidebar row); a run goes on. */
 				select: method(obj({ conversation: int({ minimum: 1 }) })),
 			},
 		},

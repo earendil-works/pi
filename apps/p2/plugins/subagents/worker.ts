@@ -2,7 +2,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { Models } from "@earendil-works/pi-ai/models";
 import { type ConversationId, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import { canSend, contribute, defineFacet, expectVariant, forbidden, signalOf } from "@p2/app/v1";
-import { durableContext } from "@p2/app/v1/node";
+import { durableContext, ExtensionSwitches } from "@p2/app/v1/node";
 import {
 	CommitSignal,
 	ConversationConfigured,
@@ -15,12 +15,14 @@ import {
 	locateConversation,
 	ReadOnlyConversations,
 	resolveDirectory,
+	toolsByName,
 	workerOf,
 } from "@p2/app/v1/worker";
 import { type Child, SubagentControl, Subagents } from "./contract.ts";
-import { ALWAYS, Subagents as Registry } from "./contract.worker.ts";
+import { calledByModel, choosableTools, Subagents as Registry } from "./contract.worker.ts";
 import {
 	createSubagentExtension,
+	enableScriptTools,
 	ownLocation,
 	placeSubagents,
 	setArchived,
@@ -54,12 +56,33 @@ export default defineFacet((host, self) => {
 				return typeof value === "function" ? value.bind(current) : value;
 			},
 		});
+		// The worker's tools by name, with what they declare: which ones an agent may give to its subagents.
+		const extensions = self.registry(Extensions);
+		const access = () => toolsByName(extensions.value);
 		// A spawned subagent's own location is on its caller's machine: where the caller works now.
-		const extension = createSubagentExtension(models, {
-			locate: (conversationId, read, context) => locateConversation(harnessValue, conversationId, context, read),
-			directory: (target, from, context) => resolveDirectory(harness().environments, target, from, context),
-		});
+		const extension = createSubagentExtension(
+			models,
+			{
+				locate: (conversationId, read, context) => locateConversation(harnessValue, conversationId, context, read),
+				directory: (target, from, context) => resolveDirectory(harness().environments, target, from, context),
+			},
+			access,
+		);
 		self.contribute(Extensions, { [extension.name]: extension, [teamExtension.name]: teamExtension });
+		// The tools behind code mode, as the Harness's registry installs them (switched-off extensions left out).
+		const scriptTools = self.derive(
+			[self.registry(Extensions), self.registry(ExtensionSwitches)],
+			([extensions, switches]) =>
+				[...extensions]
+					.filter(([name]) => switches.get(name) !== false)
+					.flatMap(([, each]) =>
+						(each.tools ?? []).filter((tool) => !calledByModel(tool)).map((tool) => tool.name),
+					)
+					.sort(),
+		);
+		self.on(scriptTools, async ({ value }, ctx) => {
+			await enableScriptTools(harness().durable, value, durableContext(ctx));
+		});
 		self.contribute(ConversationConfigured, {
 			subagents: async (conversation, ctx) => {
 				if (conversation.id === ROOT_CONVERSATION_ID) return;
@@ -71,7 +94,7 @@ export default defineFacet((host, self) => {
 					if (!child) return;
 					child.model = agent.model ? `${agent.model.provider}/${agent.model.modelId}` : child.model;
 					child.thinkingLevel = agent.thinkingLevel;
-					child.tools = agent.tools.map((tool) => tool.name).filter((tool) => !ALWAYS.includes(tool));
+					child.tools = choosableTools(agent, access()).map((tool) => tool.name);
 				}, context);
 			},
 		});

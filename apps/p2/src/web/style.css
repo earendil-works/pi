@@ -1433,6 +1433,36 @@ textarea.input {
 	background: var(--hover);
 	color: var(--text);
 }
+/* An artifact rendered at its tool call site (`inline: true`): below the card, at most about 70vh high. */
+.inline-artifact {
+	margin-top: var(--s2);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	overflow: hidden;
+}
+.inline-artifact.markdown,
+.inline-artifact.text {
+	max-height: 70vh;
+	overflow: auto;
+	padding: var(--s3);
+}
+.inline-artifact > pre {
+	margin: 0;
+	font-family: var(--mono);
+	font-size: var(--fs-sm);
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
+}
+.inline-artifact > iframe {
+	display: block;
+	width: 100%;
+	max-height: 70vh;
+	border: 0;
+	background: white;
+}
+.inline-artifact > .notice {
+	margin: 0;
+}
 .file-media {
 	display: block;
 	width: 100%;
@@ -1821,6 +1851,14 @@ audio.file-media {
 }
 .terminal-tabs > button.exited {
 	text-decoration: line-through;
+}
+/* Opened by the agent (the terminal tool). */
+.terminal-agent {
+	margin-right: 0.4em;
+	padding: 0 0.3em;
+	border: 1px solid var(--line);
+	border-radius: 3px;
+	font-size: 0.85em;
 }
 .terminal-tabs > .icon-button[aria-pressed="true"] {
 	color: var(--text);
@@ -2979,6 +3017,43 @@ button.diff-number:hover {
 }
 .foot-button.on {
 	font-weight: var(--fw-strong);
+}
+/* The footer's "More" menu: owner entries in a list opening upwards from the button. */
+.foot-menu {
+	position: relative;
+}
+.foot-menu-chevron {
+	display: flex;
+	transform: rotate(-90deg);
+	transition: transform 0.15s ease-out;
+}
+.foot-button[aria-expanded="true"] .foot-menu-chevron {
+	transform: rotate(90deg);
+}
+.foot-menu-list {
+	position: absolute;
+	bottom: calc(100% + var(--s1));
+	left: 0;
+	z-index: 5;
+	display: flex;
+	flex-direction: column;
+	min-width: 180px;
+	padding: var(--s1) 0;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	box-shadow: 0 6px 24px rgb(0 0 0 / 0.18);
+}
+.foot-menu-list[hidden] {
+	display: none;
+}
+.foot-menu-list .foot-button {
+	width: 100%;
+	padding: 0 var(--x);
+	text-align: left;
+}
+.foot-menu-list .foot-button:hover {
+	background: var(--hover);
 }
 
 /* Sheets: bottom sheet on phones, centred dialog on wide screens. Above the workspace

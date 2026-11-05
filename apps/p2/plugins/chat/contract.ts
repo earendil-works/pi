@@ -146,7 +146,7 @@ export const DequeueOwnResultSchema = obj({
 /**
  * An input as `Conversation.submit` takes it: the text the model reads, who wrote it, and its resolved attachments.
  * It is placed as its own entry: `entry`, or by default a `p2.input` entry whose data is the author, the text and the
- * attachments (see src/runtime/input.ts). The model message also starts with the author's speaker block.
+ * attachments (see src/runtime/input.ts). The model message also starts with the author's sender block.
  */
 export const SubmitSchema = obj({
 	...propertiesOf(SendSchema),

@@ -1,6 +1,6 @@
 // `/tree` (docs/tree.md) on the real server and session worker with the fake provider: the tree of the main
 // conversation and its branches, switching (forking, reusing a branch, before the first message), the session row's
-// `main`, read-only earlier branches, main-only tools in a branch, the refusals, branch labels (stored at the fork,
+// `main`, read-only earlier branches, main-only tools in a branch, switching while busy, branch labels (stored at the fork,
 // renamed, conversation 1's null for the session title) and `p2.main` version 1's migration.
 
 import assert from "node:assert/strict";
@@ -167,11 +167,11 @@ describe("/tree (fake provider)", () => {
 		}
 	});
 
-	it("registers a branch's subagents on conversation 1 and reports to the current main", async () => {
+	it("registers a branch's subagents on conversation 1 and reports to the branch", async () => {
 		const tree = await (await treeRef()).tree(BACKGROUND_CONTEXT);
 		const chat = await chatOf(tree.main);
 		await chat.send({ text: "subagent", requestId: "subagent" }, BACKGROUND_CONTEXT);
-		await until(chat.view, (next) => text(next).includes("[subagent helper answered"));
+		await until(chat.view, (next) => text(next).includes('<sender kind="subagent" name="helper"/>'));
 		chat.release();
 		await idle();
 		const feed = await holdIn(owner, Subagents, {}, "reader");
@@ -180,6 +180,39 @@ describe("/tree (fake provider)", () => {
 			(children) => children?.[session.id]?.some((child) => child.name === "helper") ?? false,
 		);
 		feed.release();
+	});
+
+	it("reports to the branch that asked, also after a switch; team send to parent goes there too", async () => {
+		const ref = await treeRef();
+		const asking = (await ref.tree(BACKGROUND_CONTEXT)).main;
+		const chat = await chatOf(asking);
+		const spawn = { action: "spawn", name: "slowpoke", message: "slow-tool", tools: ["bash"] };
+		await chat.send({ text: `subagent ${JSON.stringify(spawn)}`, requestId: "slowpoke" }, BACKGROUND_CONTEXT);
+		await until(chat.view, (next) => text(next).includes("Started slowpoke."));
+		// The subagent's bash call takes 4 seconds: the session switches meanwhile.
+		await ref.select({ conversation: 1 }, BACKGROUND_CONTEXT);
+		await until(chat.view, (next) => text(next).includes('<sender kind="subagent" name="slowpoke"/>'));
+		const feed = await holdIn(owner, Subagents, {}, "reader");
+		const children = await until(
+			feed.children,
+			(value) => value?.[session.id]?.some((child) => child.name === "slowpoke") ?? false,
+		);
+		feed.release();
+		const slowpoke = children?.[session.id]?.find((child) => child.name === "slowpoke")?.conversationId;
+		assert(slowpoke !== undefined);
+		const direct = await chatOf(slowpoke);
+		const team = { action: "send", to: "parent", message: "for the asker", intent: "note" };
+		await direct.send({ text: `team ${JSON.stringify(team)}`, requestId: "team-parent" }, BACKGROUND_CONTEXT);
+		await until(chat.view, (next) => text(next).includes("[notes, no reply needed] for the asker"));
+		direct.release();
+		chat.release();
+		await idle();
+		const main = await chatOf(1);
+		const view = await until(main.view, (next) => next !== null && next !== undefined);
+		assert.doesNotMatch(text(view), /subagent slowpoke/);
+		main.release();
+		await ref.select({ conversation: asking }, BACKGROUND_CONTEXT);
+		ref.release();
 	});
 
 	it("lists the branches in the session row and switches with select", async () => {
@@ -288,19 +321,29 @@ describe("/tree (fake provider)", () => {
 		assert.equal((await ref.tree(BACKGROUND_CONTEXT)).branches[1]?.label, "Second try");
 	});
 
-	it("refuses while the main conversation works", async () => {
+	it("switches while the main conversation works; the branch left runs on, read-only, and stops", async () => {
 		const ref = await treeRef();
 		const tree = await ref.tree(BACKGROUND_CONTEXT);
-		const chat = await chatOf(tree.main);
+		const left = tree.main;
+		const chat = await chatOf(left);
 		await chat.send({ text: "slow answer", requestId: "slow" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (next) => Boolean((next?.docs["pi.live"] as { run?: unknown } | undefined)?.run));
+		await ref.select({ conversation: 1 }, BACKGROUND_CONTEXT);
+		const sessions = await sessionsRef();
+		await until(sessions.sessions, (list) => list.find((each) => each.id === session.id)?.main === 1);
+		const status = await holdIn(owner, SessionStatus, {}, "reader");
+		await until(status.statuses, (value) => value?.[session.id]?.busy.includes(left) ?? false);
+		status.release();
 		await assert.rejects(
-			ref.navigate({ entry: nodeWith(tree, "user", "first").entry }, BACKGROUND_CONTEXT),
-			/Stop the current run/,
+			chat.send({ text: "no", requestId: "no-left" }, BACKGROUND_CONTEXT),
+			/earlier branch of the session/,
 		);
 		await chat.stop(BACKGROUND_CONTEXT);
+		await until(chat.view, (next) => !(next?.docs["pi.live"] as { run?: unknown } | undefined)?.run);
 		chat.release();
 		await idle();
+		await ref.select({ conversation: left }, BACKGROUND_CONTEXT);
+		await until(sessions.sessions, (list) => list.find((each) => each.id === session.id)?.main === left);
 		await assert.rejects(ref.navigate({ entry: 999_999 }, BACKGROUND_CONTEXT), /Unknown message/);
 		ref.release();
 	});

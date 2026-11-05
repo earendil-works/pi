@@ -109,6 +109,7 @@ const cleanTitle = (title: string): string => title.replace(/\s+/g, " ").trim();
  * server's own (see `lifecycle`).
  */
 async function fenceWorker(
+	catalog: Ref<typeof Catalog>,
 	children: Ref<typeof ChildStore>,
 	id: string,
 	doing: string,
@@ -119,18 +120,28 @@ async function fenceWorker(
 	const result = await boundary.prepare(to ? { to } : null, root);
 	if (result.accepted) return undefined;
 	if (result.refusal !== undefined) return result.refusal;
+	const row = await catalog.get({ id }, root);
+	// A `/tree` branch left while running goes on in the background (docs/tree.md); conversation 1 is top-level before
+	// the worker first reports `branches`.
+	const branchOf = (conversation: number) => row.branches.find((branch) => branch.conversation === conversation);
+	const topLevel = (conversation: number) => conversation === 1 || branchOf(conversation) !== undefined;
+	const branches = result.busy
+		.filter((conversation) => topLevel(conversation) && conversation !== row.main)
+		.map((conversation) => `"${branchOf(conversation)?.label ?? row.title}"`);
 	const agents = result.busy
-		.filter((id) => id !== 1)
+		.filter((conversation) => !topLevel(conversation))
 		.map(
 			(conversation) =>
 				children.children.value[id]?.find((child) => child.conversationId === conversation)?.name ??
 				`#${conversation}`,
 		);
-	return result.busy.includes(1)
+	return result.busy.includes(row.main)
 		? `Stop the current run before ${doing}`
-		: agents.length
-			? `Subagent ${agents.join(", ")} is still running: stop it before ${doing}`
-			: `Background work is still running (for example a message waiting for a subagent's answer): wait for it or stop the subagent before ${doing}`;
+		: branches.length
+			? `Branch ${branches.join(", ")} is still running: switch to it and stop it before ${doing}`
+			: agents.length
+				? `Subagent ${agents.join(", ")} is still running: stop it before ${doing}`
+				: `Background work is still running (for example a message waiting for a subagent's answer): wait for it or stop the subagent before ${doing}`;
 }
 
 export default defineFacet((host) => {
@@ -239,7 +250,7 @@ export default defineFacet((host) => {
 						const boundary = () => root.get(WorkerBoundary, { session: id });
 						return server().workers.relocate(id, {
 							prepare: async () => {
-								const refusal = await fenceWorker(children, id, "changing directory", root, location);
+								const refusal = await fenceWorker(catalog, children, id, "changing directory", root, location);
 								refused = refusal ?? null;
 								return refusal;
 							},
@@ -320,7 +331,7 @@ export default defineFacet((host) => {
 			const server = self.get(Server, {});
 			const moves = self.get(SessionMoves, {});
 			const fence = (id: string, doing: string, root: Ctx, to?: Location) =>
-				fenceWorker(children, id, doing, root, to);
+				fenceWorker(catalog, children, id, doing, root, to);
 			/**
 			 * Runs a lifecycle operation's steps in a root of the server's own, not the caller's: a caller giving up (an
 			 * aborted call, a closed tab) must not cut a fenced worker off between its steps.

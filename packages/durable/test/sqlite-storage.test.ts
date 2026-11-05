@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
-import type { SqliteDatabase } from "@earendil-works/chord/sqlite";
+import type { SqliteDatabase, SqliteValue } from "@earendil-works/chord/sqlite";
 import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { idFromNumber } from "../src/ids.ts";
@@ -691,46 +691,92 @@ describe("Pico SqliteStorage", () => {
 });
 
 describe("SqliteStorage batches", () => {
+	/** `database` whose transactions' `get` and `all` calls fail where `fail` returns a failure for the call. */
+	function faultyDatabase(
+		database: SqliteDatabase,
+		fail: (method: "get" | "all", sql: string) => (() => Promise<never>) | undefined,
+	): SqliteDatabase {
+		return {
+			exec: (sql) => database.exec(sql),
+			run: (sql, ...params) => database.run(sql, ...params),
+			runCounted: (sql, ...params) => database.runCounted(sql, ...params),
+			get: (sql, ...params) => database.get(sql, ...params),
+			all: (sql, ...params) => database.all(sql, ...params),
+			close: () => database.close(),
+			transaction: (callback) =>
+				database.transaction((transaction) =>
+					callback({
+						exec: (sql) => transaction.exec(sql),
+						run: (sql, ...params) => transaction.run(sql, ...params),
+						runCounted: (sql, ...params) => transaction.runCounted(sql, ...params),
+						get: <T extends object>(sql: string, ...params: SqliteValue[]) => {
+							const failure = fail("get", sql);
+							return failure === undefined ? transaction.get<T>(sql, ...params) : failure();
+						},
+						all: <T extends object>(sql: string, ...params: SqliteValue[]) => {
+							const failure = fail("all", sql);
+							return failure === undefined ? transaction.all<T>(sql, ...params) : failure();
+						},
+					}),
+				),
+		};
+	}
+
+	async function openDatabase(): Promise<SqliteDatabase> {
+		const directory = await mkdtemp(join(tmpdir(), "pi-durable-sqlite-"));
+		tempDirectories.add(directory);
+		return openNodeSqliteDatabase(join(directory, "storage.sqlite"));
+	}
+
 	for (const mode of ["undefined rejection", "synchronous throw"] as const) {
-		it(`rejects the whole call, the batches before it included, when a later batch's check read fails with a ${mode}`, async () => {
-			// Sol's: the first batch passes its checks and is written; the second batch's check read fails.
-			const directory = await mkdtemp(join(tmpdir(), "pi-durable-sqlite-"));
-			tempDirectories.add(directory);
-			const database = await openNodeSqliteDatabase(join(directory, "storage.sqlite"));
-			let failCheck = false;
-			let reads = 0;
-			const faulty: SqliteDatabase = {
-				exec: (sql) => database.exec(sql),
-				run: (sql, ...params) => database.run(sql, ...params),
-				runCounted: (sql, ...params) => database.runCounted(sql, ...params),
-				get: (sql, ...params) => database.get(sql, ...params),
-				all: (sql, ...params) => database.all(sql, ...params),
-				close: () => database.close(),
-				transaction: (callback) =>
-					database.transaction((transaction) =>
-						callback({
-							exec: (sql) => transaction.exec(sql),
-							run: (sql, ...params) => transaction.run(sql, ...params),
-							runCounted: (sql, ...params) => transaction.runCounted(sql, ...params),
-							all: (sql, ...params) => transaction.all(sql, ...params),
-							get: (sql, ...params) => {
-								if (failCheck && sql.includes("record_type") && ++reads === 2) {
-									if (mode === "synchronous throw") throw new Error("sync driver failure");
-									return Promise.reject(undefined);
-								}
-								return transaction.get(sql, ...params);
-							},
-						}),
-					),
-			};
-			const storage = await SqliteStorageClass.open(faulty);
+		it(`rejects the whole call, the batches written before it included, when a copy's source read fails with a ${mode}`, async () => {
+			// The first batch passes its checks; the second batch's copy reads its source from the database, so the first
+			// is written before that read, which fails.
+			let failCopy = false;
+			const storage = await SqliteStorageClass.open(
+				faultyDatabase(await openDatabase(), (method, sql) => {
+					if (!failCopy || method !== "get" || !sql.includes("SELECT record FROM documents WHERE id = ?")) return;
+					return () => {
+						if (mode === "synchronous throw") throw new Error("sync driver failure");
+						return Promise.reject(undefined);
+					};
+				}),
+			);
 			openStorages.add(storage);
 			await commitWrites(storage, [{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
-			const ids = [await storage.mintId<EntryId>(), await storage.mintId<EntryId>()];
-			const batches: StorageWrite[][] = ids.map((id) => [
-				{ type: "entry", value: { id, conversationId: ROOT_CONVERSATION_ID, kind: "note" } },
-			]);
-			failCheck = true;
+			const record = (id: DocumentId, conversationId: ConversationId): DocumentCreate => ({
+				id,
+				kind: "copied",
+				scope: { kind: "conversation", conversationId },
+				history: "rewindable",
+				fork: "asOf",
+			});
+			const sourceId = await storage.mintId<DocumentId>();
+			await commitWrites(
+				storage,
+				[
+					{
+						type: "document.create",
+						record: record(sourceId, ROOT_CONVERSATION_ID),
+						content: { kind: "base", version: 1, value: { n: 1 } },
+					},
+				],
+				context,
+			);
+			const entryId = await storage.mintId<EntryId>();
+			const childId = await storage.mintId<ConversationId>();
+			const batches: StorageWrite[][] = [
+				[{ type: "entry", value: { id: entryId, conversationId: ROOT_CONVERSATION_ID, kind: "note" } }],
+				[
+					{ type: "conversation", value: { id: childId } },
+					{
+						type: "document.copy",
+						record: record(await storage.mintId<DocumentId>(), childId),
+						source: { id: sourceId, at: "current" },
+					},
+				],
+			];
+			failCopy = true;
 			const receipts: number[] = [];
 			const outcome = await storage
 				.commit(batches, (index) => receipts.push(index), context)
@@ -738,10 +784,11 @@ describe("SqliteStorage batches", () => {
 					() => "resolved",
 					() => "rejected",
 				);
-			failCheck = false;
+			failCopy = false;
 			expect(outcome).toBe("rejected");
 			expect(receipts).toEqual([]);
-			expect(await storage.entry(ids[0]!, context)).toBeUndefined();
+			expect(await storage.entry(entryId, context)).toBeUndefined();
+			expect(await storage.conversation(childId, context)).toBeUndefined();
 		});
 	}
 
@@ -756,33 +803,13 @@ describe("SqliteStorage batches", () => {
 	};
 	for (const [name, fail] of Object.entries(failures)) {
 		it(`rejects a batch call whose check read fails in the database with ${name}, and refuses only for its own checks`, async () => {
-			const directory = await mkdtemp(join(tmpdir(), "pi-durable-sqlite-"));
-			tempDirectories.add(directory);
-			const database = await openNodeSqliteDatabase(join(directory, "storage.sqlite"));
-			// A driver failure in a check's read, armed for the next batch call.
+			// A driver failure in the checks' read of record types, armed for the next batch call.
 			let failCheck = false;
-			const faulty: SqliteDatabase = {
-				exec: (sql) => database.exec(sql),
-				run: (sql, ...params) => database.run(sql, ...params),
-				runCounted: (sql, ...params) => database.runCounted(sql, ...params),
-				get: (sql, ...params) => database.get(sql, ...params),
-				all: (sql, ...params) => database.all(sql, ...params),
-				close: () => database.close(),
-				transaction: (callback) =>
-					database.transaction((transaction) =>
-						callback({
-							exec: (sql) => transaction.exec(sql),
-							run: (sql, ...params) => transaction.run(sql, ...params),
-							runCounted: (sql, ...params) => transaction.runCounted(sql, ...params),
-							all: (sql, ...params) => transaction.all(sql, ...params),
-							get: (sql, ...params) => {
-								if (failCheck && sql.includes("record_type")) return fail();
-								return transaction.get(sql, ...params);
-							},
-						}),
-					),
-			};
-			const storage = await SqliteStorageClass.open(faulty);
+			const storage = await SqliteStorageClass.open(
+				faultyDatabase(await openDatabase(), (_method, sql) =>
+					failCheck && sql.includes("record_type") ? fail : undefined,
+				),
+			);
 			openStorages.add(storage);
 			await commitWrites(storage, [{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
 			const first = await storage.mintId<EntryId>();

@@ -71,6 +71,11 @@
 			"types": "./dist/node/workers/index.d.ts",
 			"import": "./dist/node/workers/index.js"
 		},
+		"./workers/child": {
+			"source": "./src/node/workers/child.ts",
+			"types": "./dist/node/workers/child.d.ts",
+			"import": "./dist/node/workers/child.js"
+		},
 		"./plugins": {
 			"source": "./src/node/plugins/index.ts",
 			"types": "./dist/node/plugins/index.d.ts",

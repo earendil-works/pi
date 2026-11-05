@@ -43,6 +43,9 @@
 			"@earendil-works/chord/workers": [
 				"../../../packages/chord/src/node/workers/index.ts"
 			],
+			"@earendil-works/chord/workers/child": [
+				"../../../packages/chord/src/node/workers/child.ts"
+			],
 			"@earendil-works/chord/plugins": [
 				"../../../packages/chord/src/node/plugins/index.ts"
 			],

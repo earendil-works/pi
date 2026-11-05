@@ -338,7 +338,7 @@ export class Transaction implements Tx {
 		return this.#read("scanTasks", () => this.#host.storage.scanTasks(query, limit, cursor, this.#context));
 	}
 
-	/** Internal: committed submission record. */
+	/** Committed submission record. */
 	submission(id: SubmissionId): Promise<SubmissionRecord | undefined> {
 		return this.#read("submission", () => this.#host.storage.submission(id, this.#context));
 	}

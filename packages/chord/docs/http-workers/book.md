@@ -75,7 +75,7 @@ const plugins = createPlugins({
 	onError,
 }, ctx);
 const http = createHttp(server, { listen: { host: "127.0.0.1", port: 8788 }, onError }, ctx);   // settings are arguments
-const workers = createWorkers(server, Session, {
+const workers = await createWorkers(server, Session, {
 	kind: "worker", entry: "./worker.ts", plugins, principal: (a) => ({ kind: "worker", session: a.params.id }),
 	start: (address, ctx) => ({ id: address.params.id, dir: sessionDir(address) }),
 	lock: (address) => `chat:${dataDir}:${address.key}`, authorize: mayReach, onError,

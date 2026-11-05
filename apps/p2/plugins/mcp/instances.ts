@@ -14,10 +14,10 @@ import {
 } from "@earendil-works/pi-mcp";
 import { McpOAuthAuthorizationRequiredError } from "@earendil-works/pi-mcp/oauth";
 import { PluginError } from "@p2/app/v1";
-import type { Instance, McpTool } from "./contract.ts";
+import { type Instance, type McpTool, signInLink } from "./contract.ts";
 import { type ConnectEnv, EnvConnections } from "./environments.ts";
 import type { InstanceSpec, Placement } from "./placement.ts";
-import { DaemonTooOldError, type Opened, type Transports, transportsFor } from "./transports.ts";
+import { type AuthProviders, DaemonTooOldError, type Opened, type Transports, transportsFor } from "./transports.ts";
 
 /** How the p2 server names itself to MCP servers (`initialize`'s `clientInfo`). */
 export type ClientInfo = { readonly name: string; readonly version: string };
@@ -35,16 +35,27 @@ export class Instances {
 	/** Tools last listed per instance ID (a reload's previous supervisor): listed until the server answers again. */
 	readonly #seed: ReadonlyMap<string, readonly McpTool[]>;
 	readonly #envs: EnvConnections;
+	readonly #auth: AuthProviders;
 	readonly #running = new Map<string, Connection>();
 	readonly #listeners = new Set<() => void>();
 	#closed = false;
 
-	/** `connect` opens the connection to an environment its instances share. */
-	constructor(client: ClientInfo, backoff: Backoff, seed: readonly Instance[], connect: ConnectEnv) {
+	/**
+	 * `connect` opens the connection to an environment its instances share; `auth` gives the auth provider of an HTTP
+	 * server that signs in with OAuth.
+	 */
+	constructor(
+		client: ClientInfo,
+		backoff: Backoff,
+		seed: readonly Instance[],
+		connect: ConnectEnv,
+		auth: AuthProviders,
+	) {
 		this.#client = client;
 		this.#backoff = backoff;
 		this.#seed = new Map(seed.map((instance) => [instance.id, instance.tools]));
 		this.#envs = new EnvConnections(connect);
+		this.#auth = auth;
 	}
 
 	/** `listener` is called after every change of `list`; the result stops it. */
@@ -69,7 +80,7 @@ export class Instances {
 			if (!this.#running.has(id)) {
 				// Every leased ID comes from the same placement's instances.
 				const spec = placement.instances.get(id)!;
-				const transports = transportsFor(spec.connect, this.#envs);
+				const transports = transportsFor(spec.connect, this.#envs, this.#auth);
 				const connection = new Connection(
 					spec,
 					transports,
@@ -106,6 +117,11 @@ export class Instances {
 		connection.restart();
 	}
 
+	/** Connects every HTTP instance of owner server `server` again now (its credentials changed). */
+	reconnect(server: string): void {
+		for (const connection of this.#running.values()) if (connection.isHttp(server)) connection.restart();
+	}
+
 	/** Closes every instance (stdio servers get MCP's shutdown: stdin closed, then killed) and so every connection. */
 	async close(): Promise<void> {
 		this.#closed = true;
@@ -136,6 +152,9 @@ type State =
 
 /** Why the last attempt failed: the message for everybody, the stderr tail for the owner only. */
 type Failure = { readonly message: string; readonly stderr?: string };
+
+/** The status message of an instance waiting for a sign-in. */
+const SIGN_IN_NEEDED: Failure = { message: "This server needs a sign-in" };
 
 /** One instance: its connection state, and its status, failure and tools as listed. */
 class Connection {
@@ -172,8 +191,13 @@ class Connection {
 		else void this.#connect();
 	}
 
+	/** Whether this is an instance of HTTP server `server`. */
+	isHttp(server: string): boolean {
+		return this.#spec.server === server && this.#spec.connect.kind === "http";
+	}
+
 	view(): Instance {
-		const { id, server, source, location, runsOn } = this.#spec;
+		const { id, server, source, location, runsOn, connect } = this.#spec;
 		const failure = this.#failure;
 		return {
 			id,
@@ -181,6 +205,7 @@ class Connection {
 			source,
 			location,
 			runsOn,
+			...(connect.kind === "http" && connect.oauth !== undefined ? { auth: "oauth" as const } : {}),
 			status: this.#status,
 			...(failure === undefined
 				? {}
@@ -189,13 +214,31 @@ class Connection {
 		};
 	}
 
-	/** The error says why it is not connected, never the server's stderr (the model reads it). */
+	/**
+	 * The error says why it is not connected, never the server's stderr (the model reads it); for a sign-in, where the
+	 * user signs in. Tokens refused for good during a call (revoked, say) make it wait for a sign-in.
+	 */
 	async call(tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<CallToolResult> {
-		if (this.#state.kind !== "connected") {
+		const { server } = this.#spec;
+		const signInNeeded = () =>
+			new Error(
+				`MCP server "${server}" needs a sign-in: ask the user to sign in from the MCP panel in p2's sidebar (or at ${signInLink(server)} on p2)`,
+			);
+		if (this.#status === "sign-in") throw signInNeeded();
+		const state = this.#state;
+		if (state.kind !== "connected") {
 			const why = this.#failure === undefined ? "" : `: ${this.#failure.message}`;
-			throw new Error(`MCP server "${this.#spec.server}" is not connected${why}`);
+			throw new Error(`MCP server "${server}" is not connected${why}`);
 		}
-		return await this.#state.client.callTool(tool, args, { signal, timeoutMs: this.#spec.timeoutMs });
+		try {
+			return await state.client.callTool(tool, args, { signal, timeoutMs: this.#spec.timeoutMs });
+		} catch (error) {
+			// A restart meanwhile (a sign-in that just finished) decides on its own.
+			if (!this.#needsSignIn(error) || this.#state !== state) throw error;
+			void this.#stop();
+			this.#show("sign-in", SIGN_IN_NEEDED);
+			throw signInNeeded();
+		}
 	}
 
 	restart(): void {
@@ -271,11 +314,14 @@ class Connection {
 		}
 	}
 
-	/** A connect failed: wait for a sign-in, stay failed (a daemon too old), or try again after the backoff. */
+	/**
+	 * A connect failed: wait for a sign-in (an OAuth server without usable tokens), stay failed (a daemon too old), or
+	 * try again after the backoff (a server refusing its configured headers too).
+	 */
 	#failed(error: unknown, transport: McpTransport | undefined): void {
-		if (error instanceof McpAuthRequiredError || error instanceof McpOAuthAuthorizationRequiredError) {
+		if (this.#needsSignIn(error)) {
 			this.#state = { kind: "idle" };
-			this.#show("sign-in", { message: "This server needs a sign-in" });
+			this.#show("sign-in", SIGN_IN_NEEDED);
 			return;
 		}
 		if (error instanceof DaemonTooOldError) {
@@ -285,6 +331,16 @@ class Connection {
 		}
 		this.#show("failed", failureOf(error, transport));
 		this.#wait();
+	}
+
+	/** Whether `error` means the user has to sign in: an OAuth server refusing the request with the tokens it has. */
+	#needsSignIn(error: unknown): boolean {
+		const { connect } = this.#spec;
+		return (
+			connect.kind === "http" &&
+			connect.oauth !== undefined &&
+			(error instanceof McpAuthRequiredError || error instanceof McpOAuthAuthorizationRequiredError)
+		);
 	}
 
 	/** The connection dropped (a stdio server exited, say): reconnect after the backoff, tools still listed. */

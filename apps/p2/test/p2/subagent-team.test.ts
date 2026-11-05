@@ -62,13 +62,23 @@ describe("subagent team messaging (fake provider)", () => {
 		const asked = agentMessages(view).find((m) => m.data.intent === "question");
 		assert.equal(asked?.data.from.name, "asker");
 		assert.equal(asked?.data.text, "Which API should I use?");
-		assert.match(asked?.model ?? "", /\[subagent asker asks; answer with subagent send to asker\] Which API/);
+		assert.match(asked?.model ?? "", /<sender kind=\\"subagent\\" name=\\"asker\\"\/>/);
+		assert.match(asked?.model ?? "", /\[asks; answer with subagent send to asker\] Which API/);
+		// The owner started the turn that spawned it: what it writes records that, so the main agent's turn on it may act
+		// for the owner.
+		assert.equal(asked?.data.origin, "owner");
 		// The question started a root turn, and every report is an entry with the subagent's name.
-		await until(root.view, (value) => JSON.stringify(value).includes("Echo: [subagent asker asks"));
+		await until(root.view, (value) =>
+			JSON.stringify(value).includes("Echo: [asks; answer with subagent send to asker]"),
+		);
 		await idle();
 		const reports = agentMessages(root.view.value).filter((m) => m.data.intent === "answered");
 		assert.deepEqual(reports.map((m) => m.data.from.name).sort(), ["asker", "first"]);
-		assert.match(reports[0]?.model ?? "", /\[subagent \w+ answered, no reply needed\]/);
+		assert.match(reports[0]?.model ?? "", /\[answered, no reply needed\]/);
+		assert.deepEqual(
+			reports.map((m) => m.data.origin),
+			["owner", "owner"],
+		);
 
 		// A note to a sibling arrives in its conversation; reading a sibling's answer.
 		const children = await until(agents.children, (value) => (value?.[session.id]?.length ?? 0) === 2);
@@ -87,7 +97,8 @@ describe("subagent team messaging (fake provider)", () => {
 		const noted = await until(sibling.view, (value) => agentMessages(value).some((m) => m.data.intent === "note"));
 		const received = agentMessages(noted).find((m) => m.data.intent === "note");
 		assert.equal(received?.data.from.name, "asker");
-		assert.match(received?.model ?? "", /\[subagent asker notes, no reply needed\] FYI/);
+		assert.match(received?.model ?? "", /\[notes, no reply needed\] FYI/);
+		assert.equal(received?.data.origin, "owner");
 		await idle();
 		await root.send(
 			{

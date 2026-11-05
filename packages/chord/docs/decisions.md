@@ -793,6 +793,21 @@ validation and copies the v2 kernel added around Delta.
   order, `tx.update` per row, chunks of N rows per commit; table version `migrating` → `ready`; a crash resumes the
   scan). Indexes are local and created after `ready` (**superseded in part** by "Index definitions are recorded": the
   index changes after `ready` are recorded).
+- **S18, group commit (owner, 2026-11-04):** the commits queued behind a running commit step form one group, which the
+  next turn of the commit queue admits at its entry and writes in one backend transaction: each commit keeps its own
+  step, seq and outbox commit, the metadata is written once, and after `COMMIT` memory follows commit by commit, each
+  adopted when memory stands at it, in queue order, before the next turn (S1 as for lone steps). Fewer transactions are
+  always good, and a remote SQLite backend would pay a round trip per statement. A series, an export or a batch apply
+  queued after an open group ends it (queue order stays); an empty commit never joins one. A refusal in a group (one
+  commit's own writes throw, D4) rolls the group back whole and its admitted commits run again one by one, not admitted
+  again, so only the refusing commit is refused; their live queries run again too (`chord.query.runs` counts both
+  attempts, the statements only the stored one). The ids the rolled-back attempt took stay unused (D3: the allocator
+  is shared with Durable's `mintId`, never rewound; so within a group's worth of ids of `Number.MAX_SAFE_INTEGER` a
+  refused group can exhaust the id space a little earlier, accepted). A group that would pass the end of the seq range
+  runs its commits one by one, so the ones that fit are stored. A backend failure while the store closes (a commit's,
+  a read's, a maintenance write's) still refuses the admitted commits after it. No savepoints (two statements per
+  commit, and Durable Objects refuse them) and no check/write split of Chord's writes (their counted conditional writes
+  are the checks).
 - **Blobs and derived data (owner, 2026-10-21):** blobs (artifact versions, uploads, sent files) are app layer: files in
   the session directory named by the hash of their content, never changed, written (tmp, fsync, rename) before the row
   or document that names them; any process may write one. Export copies `blobs/` with the store snapshot; import
@@ -2566,6 +2581,29 @@ validation and copies the v2 kernel added around Delta.
   `not_ready`. Consumers and relays need no change (they keep sent calls across `loading`; a method the new variant
   lacks fails `invalid/member`, a dropped version `contract_mismatch`). Cost: kept calls hold call-window slots up to
   `readyTimeout` while the object is parked.
+- **The rollout order stays; no `loading` grace (owner, 2026-11-04: "either order has the problem, just in the
+  opposite host", "keep"; "no loading grace"; part of the restart-only discussion, `/tmp/restart-study.md`):** (1) The
+  kit keeps server, then workers, then clients. A contract change between hosts made in one rollout leaves a gap
+  whatever the order: a consumer on an earlier step whose provider on a later step moves to a new version waits
+  `failed { waiting }` (with its last values) until the provider's step commits (server first: server consumers of
+  worker types; workers first: worker consumers of server types). `accepts` cannot close it within one rollout (the
+  old provider never serves the new version). Documented with the recipe that avoids it: two applies, the provider
+  first (serving the new version and accepting the old one), then its consumers. The reload suite's two `it.fails`
+  targets for it become documented-behaviour tests. Rejected: the kit ordering steps by the direction of the changed
+  contracts (works only when every change points one way). (2) No grace on consumers' `loading` (a reference with
+  values reporting `loading` only after ~300 ms): rejected from the restart-only proposal.
+- **Workers start from the base code the server booted with (owner, 2026-11-04: "let's do this for armin"; Armin's
+  incident report, Radius artifact 01m6m3xek8fveayqgstayg8w92):** the problem: a worker loads its entry module and the
+  base code it imports from disk when it is forked, while the server keeps what it loaded at boot. An edit of the
+  app's own source while it runs (an agent half way through a change) makes every later fork run other base code than
+  the server: a crash while loading modules fails the start before `started` (and R2 keeps the address failed after
+  the edit is finished), or the two sides run skewed code silently (`PROTOCOL_VERSION` stays 1 until p3). Design §21
+  says base code applies only through a restart of the server; nothing enforced it for workers. Rule: the workers
+  component builds its worker entry once when it is created, as the surfaces build their base bundles at start (one
+  esbuild bundle for Node), and forks every worker of its kind from that snapshot; a change of base code reaches
+  workers only through a server restart, which the kit's `base` mark flags. Plugins are unaffected (workers get the
+  server's built scripts). What the bundle keeps external (Node builtins, packages that cannot be bundled, such as
+  native addons) is settled by the build. p2 adopts it through its own `createWorkers`.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a

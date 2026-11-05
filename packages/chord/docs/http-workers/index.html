@@ -185,7 +185,7 @@ workers component, then loads its plugins:</p>
 	onError,
 }, ctx);
 <span class="tk-k">const</span> http = <span class="tk-f">createHttp</span>(server, { listen: { host: <span class="tk-s">"127.0.0.1"</span>, port: <span class="tk-n">8788</span> }, onError }, ctx);   <span class="tk-c">// settings are arguments</span>
-<span class="tk-k">const</span> workers = <span class="tk-f">createWorkers</span>(server, <span class="tk-t">Session</span>, {
+<span class="tk-k">const</span> workers = <span class="tk-k">await</span> <span class="tk-f">createWorkers</span>(server, <span class="tk-t">Session</span>, {
 	kind: <span class="tk-s">"worker"</span>, entry: <span class="tk-s">"./worker.ts"</span>, plugins, principal: (a) =&gt; ({ kind: <span class="tk-s">"worker"</span>, session: a.params.id }),
 	start: (address, ctx) =&gt; ({ id: address.params.id, dir: <span class="tk-f">sessionDir</span>(address) }),
 	lock: (address) =&gt; <span class="tk-s">`chat:${dataDir}:${address.key}`</span>, authorize: mayReach, onError,

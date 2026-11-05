@@ -2056,7 +2056,7 @@ worker (the reload suite), not only by unit tests. "The page" is any client over
 | a contract change the new code still `accepts` | the old page keeps working through the mapping | answered through the mapping | unchanged |
 | a contract change not accepted, or a type removed | the reference waits with its last values (`failed { waiting }`) until the page's code updates or the type returns | calls fail at once with the cause (`contract_mismatch`, `unavailable` not served; §7) | unchanged |
 | a web or terminal plugin | the other plugins untouched, scroll kept; the reloaded plugin's components remount | the reloaded plugin's calls as above | component state starts over; `usePageState`/`scope.pageState` survive |
-| base code (the app's client entry, Chord, React) | applied by restarting the server (the kit builds base bundles at start; no reload applies them); the page reconnects to a new base and reloads (the terminal restarts its sandbox): the only case losing what is on screen | calls in flight end with the link | page state lost; in-memory server and worker state lost; stores unchanged |
+| base code (the app's client and worker entries, Chord, React) | applied by restarting the server (the kit builds base bundles at start, the workers component its worker base when it is created; no reload applies them, and a worker forked meanwhile runs the server's boot code); the page reconnects to a new base and reloads (the terminal restarts its sandbox): the only case losing what is on screen | calls in flight end with the link | page state lost; in-memory server and worker state lost; stores unchanged |
 
 Order: the server, then every running worker by the same rules, then the clients' scripts.
 
@@ -2374,17 +2374,43 @@ route's checks, never instead of them.
 
 ### Workers (`@earendil-works/chord/workers`)
 
-`createWorkers(host, Kind, { kind, entry, execArgv?, env?, authorize, principal, start, lock, idleMs?, plugins,
-onOutput?, onError }, ctx)` routes `Kind` itself (`host.route`, keeping its `RouteHandle`): a forked worker per
-address over IPC, the link made at the fork, a start message `{ address, start, scripts, lock }` with the app's start
-data and the kind's complete current scripts (`plugins.scripts(kind)`); the 60 s start timer covers fork, lock and
-connect only (Q4). `workers.state` (a JSON watchable per address key), `stop`, `retry`, `step(name)`, `close`;
-`workerMain(fn, { hostPackages, redact, onError })` is the child's side (`fn({ address, start, parent, plugins,
-onClose }, ctx)`, `plugins` a `WorkerPlugins` evaluating the shipped scripts, closers in reverse order). One live
-worker per address (`processLock`: an abstract socket on Linux, a named pipe on Windows, a socket file elsewhere that
-fails closed when stale, the stale file cleared by the component before a start and after a child's exit by a signal,
-decision "Stale lock files are cleared by the starter"; a start waits for a draining old holder without polling).
+`await createWorkers(host, Kind, { kind, entry, execArgv?, env?, authorize, principal, start, lock, idleMs?, plugins,
+onOutput?, onError }, ctx)` bundles the kind's worker base, then routes `Kind` itself (`host.route`, keeping its
+`RouteHandle`): a forked worker per address over IPC, the link made at the fork, a start message `{ address, start,
+scripts, lock }` with the app's start data and the kind's complete current scripts (`plugins.scripts(kind)`); the 60 s
+start timer covers fork, lock and connect only (Q4). `workers.state` (a JSON watchable per address key), `inputs`,
+`stop`, `retry`, `step(name)`, `close`; `workerMain(fn, { hostPackages, redact, onError })` is the child's side
+(`fn({ address, start, parent, plugins, onClose }, ctx)`, `plugins` a `WorkerPlugins` evaluating the shipped scripts,
+closers in reverse order). One live worker per address (`processLock`: an abstract socket on Linux, a named pipe on
+Windows, a socket file elsewhere that fails closed when stale, the stale file cleared by the component before a start
+and after a child's exit by a signal, decision "Stale lock files are cleared by the starter"; a start waits for a
+draining old holder without polling).
 
+- **The worker base** (decision "Workers start from the base code the server booted with"): `entry` and the base code
+  it imports are bundled once by esbuild when the component is created (`workers.inputs`: the files read), as the
+  surfaces build their base bundles at start, and every worker of the kind is forked from that snapshot: an edit of the
+  app's source while the server runs (an agent half way through a change) reaches no worker; a server restart applies
+  it (the kit gives the inputs to the watcher's `base` mark). A base that does not build rejects `createWorkers` (the
+  server does not start with it). What it holds: the app's files and workspace packages linked into `node_modules` (by
+  their real paths); external, loaded by Node at each fork from where the build resolved them: Node builtins and every
+  package resolved under a `node_modules` directory (native addons and packages reading their own files work as
+  installed; they change only through an install, which needs a restart anyway). Resolution as the child's Node does it
+  (its `execArgv` `--conditions`, `main` only, `tsconfig.json` paths as esbuild reads them); every imported module runs
+  (`sideEffects: false` drops nothing); `import.meta.url`, `.dirname`, `.filename`, `__dirname` and `__filename` name
+  each module's source file. Split at each dynamic `import()` with a literal specifier: the entry and the chunks it
+  imports statically load at each fork, a lazily imported module and the packages it imports only when the worker
+  first imports it (an app's lazily loaded providers stay lazy; a module still runs after its imports, but modules
+  that do not import each other may run in another order than unbundled); a variable-specifier import resolves at run
+  time against its module's source file, outside the snapshot. ES modules with inline source maps, forked with
+  `--enable-source-maps` before the app's `execArgv` (stack traces name the source files); `execArgv` and `env` apply to
+  every fork as before (modules an `--import` names load from disk at each fork). The files live in one private
+  temporary directory (0700, written again into a new one when a cleaner removed one of them), removed at `close`. The
+  worker's side alone is `@earendil-works/chord/workers/child` (`workerMain`, `processLock`): a worker entry importing
+  it loads no esbuild. Plugins are unaffected: workers evaluate the server's built scripts. Cost: a build at start
+  (the kit's test worker 55-100 ms, p2's session worker 215-250 ms, 4.2 MB of code); a fork then loads the entry and
+  its static chunks (the kit's test worker 60 ms instead of 360 ms from source, p2's 350 ms instead of 760 ms; on a
+  phone, splitting and the child entry took p2's fork from 690 to 301 loaded modules, no provider SDK or esbuild among them, about 300 ms
+  less to `workerMain`).
 - **Keep-alive** (D9, R3, Q5): the child reports when `host.activity`'s references, jobs and lingering objects and the
   app's `busy` counts flip between all zero and not (local calls do not count; the first state with `ready`, which
   also carries the load report); the server stops a worker idle for `idleMs` (5 min).

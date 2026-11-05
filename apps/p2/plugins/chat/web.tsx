@@ -42,6 +42,7 @@ import {
 	navigate,
 	OneShotAgents,
 	OpenConversation,
+	OpenTerminal,
 	OpenWorkspaceFile,
 	openLayer,
 	type PickedFile,
@@ -127,12 +128,30 @@ function refused(error: unknown): boolean {
 	);
 }
 
-/** Picked files: shown above the textarea, removable; the attach button adds more. */
+/** Picked files: shown above the textarea, removable; the attach button and pasted images add more. */
 type Attaching = {
 	readonly files: readonly PickedFile[];
 	readonly add: (files: File[]) => void;
 	readonly remove: (file: PickedFile) => void;
 };
+
+/**
+ * The images a paste attaches, or none to leave the paste to the textarea. Plain text wins: Office apps put a rendered
+ * picture of the copied cells beside the text, and Chrome on macOS pastes a Finder file as its icon beside its name.
+ */
+function pastedImages(data: DataTransfer): File[] {
+	if (data.getData("text/plain") !== "") return [];
+	return [...data.items]
+		.filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+		.map((item) => item.getAsFile())
+		.filter((file) => file !== null)
+		.map((file) =>
+			// The server infers an upload's image type from its extension; a nameless paste gets one from its type.
+			/\.[a-z0-9]+$/i.test(file.name)
+				? file
+				: new File([file], `pasted-image.${file.type.slice(6).replace("jpeg", "jpg")}`, { type: file.type }),
+		);
+}
 
 /** The composer's attachments from its state. */
 const attachingOf = ({ files, setFiles, addFiles }: ReturnType<typeof useComposerState>): Attaching => ({
@@ -263,6 +282,13 @@ function Composer({
 					completion?.update();
 				}}
 				onClick={() => completion?.update()}
+				onPaste={(event) => {
+					if (!attaching) return;
+					const images = pastedImages(event.clipboardData);
+					if (!images.length) return;
+					event.preventDefault();
+					attaching.add(images);
+				}}
 				onFocus={() => completion?.onFocus()}
 				onBlur={() => completion?.onBlur()}
 				onCompositionStart={() => completion?.onCompositionStart()}
@@ -455,6 +481,18 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 					file: { path, view: "file", line },
 				},
 			});
+		},
+		[nav],
+	);
+	// The terminal panel where it is open (the workspace's tab), else below the chat.
+	const openTerminal = useCallback(
+		(terminalId: string) => {
+			const current = nav.route;
+			void nav.push(
+				current.workspace?.tab === "terminal"
+					? { ...current, workspace: { ...current.workspace, terminal: terminalId, startTerminal: undefined } }
+					: { ...current, terminal: terminalId, startTerminal: undefined },
+			);
 		},
 		[nav],
 	);
@@ -973,33 +1011,35 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 									<OpenConversation.Provider value={openConversation}>
 										<OneShotAgents.Provider value={oneShots}>
 											<OpenWorkspaceFile.Provider value={canWrite ? openWorkspaceFile : undefined}>
-												<ReplyTo.Provider value={participant && canReply ? startReply : undefined}>
-													<BranchFrom.Provider value={canBranch ? branchFrom : undefined}>
-														<RevealEntry.Provider value={reveal}>
-															<FillGap.Provider value={fillGap}>
-																<Messages
-																	transcript={shown ?? transcript}
-																	rows={rows}
-																	list={follow.list}
-																	range={follow.range}
-																	stopped={
-																		stopped?.sessionId === sessionId &&
-																		stopped?.conversationId === conversationId &&
-																		!view?.entries.some((entry) =>
-																			entry.model?.some(
-																				(message) =>
-																					message.role === "assistant" &&
-																					message.stopReason === "aborted",
-																			),
-																		)
-																	}
-																	earlier={earlier}
-																	onEarlier={() => void loadEarlier()}
-																/>
-															</FillGap.Provider>
-														</RevealEntry.Provider>
-													</BranchFrom.Provider>
-												</ReplyTo.Provider>
+												<OpenTerminal.Provider value={owner ? openTerminal : undefined}>
+													<ReplyTo.Provider value={participant && canReply ? startReply : undefined}>
+														<BranchFrom.Provider value={canBranch ? branchFrom : undefined}>
+															<RevealEntry.Provider value={reveal}>
+																<FillGap.Provider value={fillGap}>
+																	<Messages
+																		transcript={shown ?? transcript}
+																		rows={rows}
+																		list={follow.list}
+																		range={follow.range}
+																		stopped={
+																			stopped?.sessionId === sessionId &&
+																			stopped?.conversationId === conversationId &&
+																			!view?.entries.some((entry) =>
+																				entry.model?.some(
+																					(message) =>
+																						message.role === "assistant" &&
+																						message.stopReason === "aborted",
+																				),
+																			)
+																		}
+																		earlier={earlier}
+																		onEarlier={() => void loadEarlier()}
+																	/>
+																</FillGap.Provider>
+															</RevealEntry.Provider>
+														</BranchFrom.Provider>
+													</ReplyTo.Provider>
+												</OpenTerminal.Provider>
 											</OpenWorkspaceFile.Provider>
 										</OneShotAgents.Provider>
 									</OpenConversation.Provider>

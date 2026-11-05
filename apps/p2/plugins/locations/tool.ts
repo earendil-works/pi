@@ -1,19 +1,17 @@
 // The location tools: an agent lists the environments it may work on and their directories, and moves itself. Every main
-// agent has them; a subagent only when its main agent chose them (`subagent spawn/configure tools`). Only turns the owner
-// started may use them (`originOf`: the owner's input, or a main agent's message from such a turn): guests can neither
-// discover environments nor move agents.
+// agent has them, and the subagents and one-shot agents it gives them to. Only turns the owner started may use them (their
+// `origin: "owner"`): guests can neither discover environments nor move agents.
 
 import {
 	type ConversationId,
 	type DocumentReader,
 	defineExtension,
-	defineTool,
 	ROOT_CONVERSATION_ID,
 } from "@earendil-works/pi-durable";
 import { nul, obj, opt, str, union } from "@earendil-works/pi-schema";
 import type { Context, DirectoryListing } from "@p2/app/v1";
 import { type Location, locationText, parseLocation, sameLocation } from "@p2/app/v1";
-import { isTopLevel, originOf } from "@p2/app/v1/worker";
+import { defineP2Tool, isTopLevel, type P2Tool } from "@p2/app/v1/worker";
 import { placeSubagent } from "../subagents/contract.worker.ts";
 import type { EnvInfo } from "./contract.ts";
 import { LocationMoveDoc } from "./contract.worker.ts";
@@ -30,9 +28,6 @@ export type LocationTools = {
 	/** Where a conversation works now. */
 	readonly locate: (id: ConversationId, read: DocumentReader, context: Context) => Promise<Location>;
 };
-
-const DENIED =
-	"The location tools need a turn the owner started: guest, peer and unattributed input cannot list environments or move agents.";
 
 const describeEnv = (env: EnvInfo, here: Location): string => {
 	const target = `${env.user ? `${env.user}@` : ""}${env.host}${env.port ? `:${env.port}` : ""}`;
@@ -85,22 +80,22 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 		),
 		cwd: opt(str({ description: "Instead of location: a path on env (default your environment)" })),
 	};
-	return defineExtension({
+	return defineExtension<P2Tool>({
 		name: "p2-locations",
 		tools: [
-			defineTool({
+			defineP2Tool({
 				name: "location_envs",
 				description:
 					"List the environments you can work on: this device and the configured SSH environments (host, last test). Shows where you work now.",
 				parameters: obj({}, { open: true }),
 				replay: "safe",
+				origin: "owner",
 				execute: async (_args, api, context) => {
 					const reply = (text: string, isError = false) => ({
 						output: [{ type: "text" as const, text }],
 						details: {},
 						isError,
 					});
-					if ((await originOf(api, context)) !== "owner") return reply(DENIED, true);
 					const here = await locate(api.conversationId, api, context);
 					const envs = await server.envs(context);
 					// The session's move is kept on conversation 1 whichever top-level conversation asked for it.
@@ -123,19 +118,19 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 					);
 				},
 			}),
-			defineTool({
+			defineP2Tool({
 				name: "location_dirs",
 				description:
 					"List the folders of a directory on an environment (default: your cwd), to find where to work. Shows at most 200.",
 				parameters: obj(where, { open: true }),
 				replay: "safe",
+				origin: "owner",
 				execute: async (args, api, context) => {
 					const reply = (text: string, isError = false) => ({
 						output: [{ type: "text" as const, text }],
 						details: {},
 						isError,
 					});
-					if ((await originOf(api, context)) !== "owner") return reply(DENIED, true);
 					const here = await locate(api.conversationId, api, context);
 					const found = await target(
 						args.location === undefined && args.cwd === undefined && args.env === undefined
@@ -160,7 +155,7 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 					);
 				},
 			}),
-			defineTool({
+			defineP2Tool({
 				name: "location_move",
 				description: [
 					"Move yourself to another directory or environment.",
@@ -172,6 +167,7 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 				parameters: obj(where, { open: true }),
 				// Setting the same destination again changes nothing.
 				replay: "safe",
+				origin: "owner",
 				execute: async (args, api, context) => {
 					const reply = (text: string, details: { env?: string | null; cwd?: string } = {}, isError = false) => ({
 						output: [{ type: "text" as const, text }],
@@ -180,7 +176,6 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 					});
 					if (args.location === undefined && args.cwd === undefined && args.env === undefined)
 						return reply("location_move needs location, or env and cwd.", {}, true);
-					if ((await originOf(api, context)) !== "owner") return reply(DENIED, {}, true);
 					const here = await locate(api.conversationId, api, context);
 					const found = await target(args, here, context);
 					if (typeof found === "string") return reply(found, {}, true);

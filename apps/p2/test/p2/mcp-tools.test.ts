@@ -27,7 +27,7 @@ const names = (tools: readonly ServerTool[]) =>
 
 /** What the worker offers for `tools`: their servers, reached from code mode unless `reach` says otherwise. */
 function offer(tools: readonly ServerTool[], reach: McpReach = "codemode") {
-	return { servers: [...new Set(tools.map((entry) => entry.server))].sort(), tools, reach };
+	return { servers: [...new Set(tools.map((entry) => entry.server))].sort(), signIn: [], tools, reach };
 }
 
 test("tool names: pi's, and every tool of a colliding name gets the hash suffix whatever the order", () => {
@@ -103,10 +103,19 @@ test("the mcp_servers section names each server's namespace and how its tools ar
 		"MCP servers whose tools are not declared to you. Load the tools of `tool_search` servers with `tool_search`.\n- mcp__app (tool_search)\n- mcp__my_docs (tool_search)",
 	);
 	// A server still connecting has no tools yet, and is listed; without servers there is no section.
-	const starting = createMcpExtension({ servers: ["slow"], tools: [], reach: "codemode" }, async () => ({
+	const starting = createMcpExtension({ servers: ["slow"], signIn: [], tools: [], reach: "codemode" }, async () => ({
 		content: [],
 	}));
 	assert.match(String(await render(starting)), /- mcp__slow \(codemode\)$/);
+	// A server waiting for a sign-in is listed with the link the user signs in with.
+	const locked = createMcpExtension(
+		{ servers: ["my-docs"], signIn: ["my-docs"], tools: [], reach: "codemode" },
+		async () => ({ content: [] }),
+	);
+	assert.match(
+		String(await render(locked)),
+		/- mcp__my_docs \(codemode; needs a sign-in, no tools yet: the user signs in from the MCP panel in p2's sidebar or at \/mcp\/sign-in\/my-docs on p2\)$/,
+	);
 	assert.deepEqual(createMcpExtension(offer([]), async () => ({ content: [] })).sections, []);
 });
 

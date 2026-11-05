@@ -174,7 +174,12 @@ describe("session relocation (fake provider)", () => {
 					20_000,
 				);
 				// The answer's report runs the root once more: idle before the next message, which would steer it.
-				await until(current.view, (value) => text(value).includes(`Echo: [subagent ${name} answered`));
+				await until(
+					current.view,
+					(value) =>
+						text(value).includes(`<sender kind="subagent" name="${name}"/>`) &&
+						!(value?.docs["pi.live"] as { run?: unknown } | undefined)?.run,
+				);
 				await until(status.statuses, (value) => value?.[session.id]?.tasks === 0);
 				return { child, agent: settled?.docs["pi.agent"] as { cwd?: string }, settled };
 			} finally {
@@ -423,7 +428,12 @@ describe("session relocation (fake provider)", () => {
 			{ text: `subagent ${JSON.stringify(spawn)}`, requestId: "own-location-spawn" },
 			BACKGROUND_CONTEXT,
 		);
-		await until(s.chat.view, (view) => text(view).includes("Echo: [subagent mine answered"));
+		await until(
+			s.chat.view,
+			(view) =>
+				text(view).includes('<sender kind="subagent" name="mine"/>') &&
+				!(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run,
+		);
 		await s.answers();
 		await fixture.server.host.root(async (ctx) => {
 			const boundary = await ctx.get(WorkerBoundary, { session: s.session.id });

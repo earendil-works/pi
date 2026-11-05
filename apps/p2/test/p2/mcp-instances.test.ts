@@ -21,6 +21,10 @@ const SIGNAL = new AbortController().signal;
 const NO_ENVIRONMENTS = (): never => {
 	throw new Error("no environments in this test");
 };
+/** No HTTP servers either. */
+const NO_OAUTH = (): never => {
+	throw new Error("no OAuth servers in this test");
+};
 
 /** A supervisor running the fixture once for session s1 at a temporary directory; `env` added to its environment. */
 function supervisor(t: { after(fn: () => unknown): void }, env: Record<string, string> = {}, seed: Instance[] = []) {
@@ -45,7 +49,7 @@ function supervisor(t: { after(fn: () => unknown): void }, env: Record<string, s
 		{},
 		{ s1: [null] },
 	);
-	const instances = new Instances(CLIENT, BACKOFF, seed, NO_ENVIRONMENTS);
+	const instances = new Instances(CLIENT, BACKOFF, seed, NO_ENVIRONMENTS, NO_OAUTH);
 	t.after(async () => {
 		await instances.close();
 		rmSync(root, { recursive: true, force: true });
@@ -129,7 +133,7 @@ test("a new supervisor lists the tools its predecessor listed until the server a
 		status: "connected",
 		tools: [{ name: "echo", inputSchema: { type: "object" } }],
 	};
-	const instances = new Instances(CLIENT, BACKOFF, [seed], NO_ENVIRONMENTS);
+	const instances = new Instances(CLIENT, BACKOFF, [seed], NO_ENVIRONMENTS, NO_OAUTH);
 	t.after(() => instances.close());
 	instances.reconcile(first.placement);
 	assert.deepEqual(

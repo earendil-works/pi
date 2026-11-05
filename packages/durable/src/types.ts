@@ -1007,6 +1007,8 @@ export interface Tx {
 		limit: number,
 		cursor?: Cursor,
 	): Promise<Page<TaskRecord<JsonValue, JsonValue, JsonValue>, Cursor>>;
+	/** Committed submission record, such as one of `pi.live.run.inputs`; a placed input's `entry` is its transcript entry. */
+	submission(id: SubmissionId): Promise<SubmissionRecord | undefined>;
 	/** Committed submission with a conversation-scoped request ID. */
 	submissionByRequest(conversationId: ConversationId, requestId: string): Promise<SubmissionRecord | undefined>;
 

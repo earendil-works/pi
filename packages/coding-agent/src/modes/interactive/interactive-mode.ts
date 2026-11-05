@@ -504,6 +504,8 @@ export class InteractiveMode {
 	private changelogMarkdown: string | undefined = undefined;
 	private extensionChangelogUpdates: ExtensionChangelogUpdate[] = [];
 	private startupNoticesShown = false;
+	/** Last cache-warming notice, extended in place while it is the last chat line. */
+	private cacheWarmingNotice: { component: ThemedText; total: { cost: number }; note: string | undefined } | undefined;
 	private anthropicSubscriptionWarningShown = false;
 
 	// Status line tracking (for mutating immediately-sequential status updates)
@@ -4239,9 +4241,18 @@ export class InteractiveMode {
 
 	private addCacheWarmingUsage(entry: UsageEntry): void {
 		if (!this.settingsManager.getShowCacheMissNotices()) return;
+		// Back-to-back warms collapse into one line with the cumulative cost.
+		const previous = this.cacheWarmingNotice;
+		if (previous && this.chatContainer.children.at(-1) === previous.component && previous.note === entry.note) {
+			previous.total.cost += entry.usage.cost.total;
+			previous.component.invalidate();
+			return;
+		}
+		const total = { cost: entry.usage.cost.total };
+		const component = new ThemedText(() => theme.fg("dim", formatCacheWarmingUsage(total.cost, entry.note)), 1, 0);
+		this.cacheWarmingNotice = { component, total, note: entry.note };
 		this.chatContainer.addChild(new Spacer(1));
-		const usage = formatCacheWarmingUsage(entry);
-		this.chatContainer.addChild(new ThemedText(() => theme.fg("dim", usage), 1, 0));
+		this.chatContainer.addChild(component);
 	}
 
 	/**

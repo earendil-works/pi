@@ -1450,7 +1450,8 @@ contract), so no plugin gains a dependency.
   editor would be (the web's read-only bar). GuestPresence is still held from the `widget-above:sharing` slot.
 - **P11c**:
   - **Artifacts** (`P2/plugins/artifacts/tui.ts`). The card adds "/artifacts opens". For text and Markdown it shows
-    the content the call wrote: 8 lines, all when expanded.
+    the content the call wrote: 8 lines, all when expanded. A call with `inline: true` shows all of it at once,
+    Markdown rendered; inline HTML and SVG keep the card line.
   - **`/artifacts`** lists `ArtifactList`. Enter shows an artifact inline: Markdown rendered with the instance
     theme, text and HTML/SVG source as sanitized lines. HTML/SVG carry a "Source only" note, because they run only in
     a browser. Ctrl+B is `openUrl` `{kind: "origin", path: "/artifact?…"}` and Ctrl+S is `download`
@@ -1589,7 +1590,7 @@ Tests: `P2/test/p2/shell.test.ts` (a bare session host with real Durable and a r
     under its own root context (the method returns at once). Closing the object cancels it.
   - When it ends, a Durable write submission places a `p2.shell` entry (`P2/src/runtime/shell.ts`, `ShellData`:
     author, command, output tail, `exitCode`, `cancelled`, `truncated`, `fullOutputPath`, `includeInContext`, `error`).
-  - **`!`:** the entry also carries a user message (the speaker block plus pi's `bashExecutionToText`,
+  - **`!`:** the entry also carries a user message (the sender block plus pi's `bashExecutionToText`,
     `shellContextText`). The agent reads it on its next run, and no run starts now.
   - **`!!`:** the entry is display-only.
   - **Busy agent:** while the agent runs, the entry is placed at the run's next boundary, like any write.

@@ -1,10 +1,11 @@
 // Worker-side contracts of the subagents plugin: the session's subagent registry (a Durable document other worker
-// plugins read: one-shot agents, search, PowerShell), the tool choices subagents and one-shot agents validate alike,
-// and giving a subagent its own location (a granted `location_move`).
+// plugins read: one-shot agents, search, PowerShell), the tool choices subagents and one-shot agents resolve alike
+// from their caller's tools, and giving a subagent its own location (a granted `location_move`).
 
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { clampThinkingLevel, type Models } from "@earendil-works/pi-ai/models";
 import {
+	type Agent,
 	type ConversationId,
 	configure,
 	defineDoc,
@@ -17,19 +18,10 @@ import {
 	type Tx,
 } from "@earendil-works/pi-durable";
 import type { Context, Location } from "@p2/app/v1";
+import type { P2Tool } from "@p2/app/v1/worker";
 
-export const CODING_TOOLS = ["read", "write", "edit", "bash", "send_file", "artifact"];
-/** The location tools (plugins/locations): every main agent has them; a subagent only when chosen. */
-export const LOCATION_TOOLS = ["location_envs", "location_dirs", "location_move"];
-/** What a subagent's `tools` may name: the coding tools (its default) and the location tools. */
-export const CHOOSABLE = [...CODING_TOOLS, ...LOCATION_TOOLS];
 export const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-
 export const TEAM_TOOL = "team";
-/** The history tools (plugins/history), when installed: every subagent gets them. */
-export const HISTORY_TOOLS = ["history_search", "history_read", "history_handoff"];
-/** Tools every subagent has, outside its chosen tools. */
-export const ALWAYS = [TEAM_TOOL, ...HISTORY_TOOLS];
 
 export type Subagent = {
 	conversationId: ConversationId;
@@ -46,14 +38,15 @@ export type Subagent = {
 	 * environment it was spawned on before the Harness is live, so no one else reads it.
 	 */
 	unplacedCwd?: string;
+	/**
+	 * The top-level conversation that last spawned it or sent it a message (the main conversation or a `/tree` branch):
+	 * where `team send to: "parent"` goes. Absent (spawned before it was recorded): the current main conversation.
+	 */
+	parent?: ConversationId;
 	/** Answers already reported: several messages can end in one answer, reported once. */
 	reported: EntryId[];
 	/** Hidden from the sidebar's list and `status`; still usable, and `send` restores it. */
 	archived?: true;
-	/** Its tools include `team` (subagents spawned before it existed get it at their next send or configure). */
-	team?: true;
-	/** Its tools include the history tools (likewise added at the next send or configure). */
-	history?: true;
 };
 /** A code mode script's one-shot agent (plugins/agent), listed for inspection from the script's tool card. */
 export type OneShot = {
@@ -101,23 +94,36 @@ export const Subagents = defineDoc<SubagentState>({
 /** A subagent's model ('provider/modelId'), thinking level and tools, as the tools take them. */
 export type AgentChoice = { model?: string; thinkingLevel?: string; tools?: string[] };
 
+/** The tools an agent gets, as `resolveTools` resolves them. */
+export type ToolChoice = {
+	/** The tools it chose (or got by default), by name: what its registry entry records and `configure` keeps. */
+	readonly chosen: string[];
+	/** Every tool it gets: the chosen ones, the script-only ones with code mode, a subagent's `scope: "subagent"` ones. */
+	readonly tools: ToolRegistration[];
+	/** Deferred tools it is offered from the start: the `scope: "subagent"` ones, and deferred ones chosen by name. */
+	readonly loaded: ToolRegistration[];
+};
+
 /**
- * Validate a choice before any commit, so a typo changes nothing; an error is returned as text. Unset fields keep
- * `current`'s, or for a new agent the caller's model and thinking level and every coding tool.
+ * Validates a choice before any commit, so a typo changes nothing; an error is returned as text. Unset fields keep
+ * `current`'s (its recorded tools as far as the caller can still give them), or for a new agent the caller's model and
+ * thinking level and every tool the caller may give (`resolveTools`).
  */
 export async function resolveChoice(
 	models: Models,
-	api: Pick<ToolExecutionApi, "agent" | "registry">,
+	api: Pick<ToolExecutionApi, "agent">,
+	access: ReadonlyMap<string, P2Tool>,
 	choice: AgentChoice,
 	current: Subagent | undefined,
+	kind: AgentKind,
 	context: Context,
-): Promise<{ model: ModelRef; thinkingLevel: ModelThinkingLevel; tools: ToolRegistration[] } | string> {
-	const own = current ? undefined : await api.agent(context);
+): Promise<({ model: ModelRef; thinkingLevel: ModelThinkingLevel } & ToolChoice) | string> {
+	const own = await api.agent(context);
 	const text = choice.model ?? current?.model;
 	const slash = text?.indexOf("/") ?? -1;
 	const ref =
 		text === undefined
-			? own?.model
+			? own.model
 			: slash > 0
 				? { provider: text.slice(0, slash), modelId: text.slice(slash + 1) }
 				: undefined;
@@ -126,20 +132,80 @@ export async function resolveChoice(
 		return `Unknown model ${choice.model ?? "(none)"}. Use the subagent tool's models action to list them.`;
 	if (choice.thinkingLevel !== undefined && !THINKING.includes(choice.thinkingLevel))
 		return `Invalid thinkingLevel ${choice.thinkingLevel}.`;
-	const requested = (choice.thinkingLevel ??
-		current?.thinkingLevel ??
-		own?.thinkingLevel ??
-		"off") as ModelThinkingLevel;
-	const names = (choice.tools ?? current?.tools ?? CODING_TOOLS).filter((tool) => !ALWAYS.includes(tool));
-	const unknown = names.filter((tool) => !CHOOSABLE.includes(tool));
-	if (unknown.length) return `Unknown tools: ${unknown.join(", ")}. Choose from ${CHOOSABLE.join(", ")}.`;
-	const installed = api.registry.tools().map((entry) => entry.tool);
+	const requested = (choice.thinkingLevel ?? current?.thinkingLevel ?? own.thinkingLevel) as ModelThinkingLevel;
+	const tools = resolveTools(own, access, choice.tools ?? stillGiven(own, access, current), choice.tools ?? [], kind);
+	if (typeof tools === "string") return tools;
+	return { model: ref, thinkingLevel: clampThinkingLevel(model, requested), ...tools };
+}
+
+/** Which agent gets the tools: a persistent subagent also gets the `scope: "subagent"` ones. */
+export type AgentKind = "subagent" | "one-shot";
+
+/** The caller's tools an agent may be given: the ones its model calls, except `scope: "main"` and `"subagent"` ones. */
+export function choosableTools(caller: CallerTools, access: ReadonlyMap<string, P2Tool>): ToolRegistration[] {
+	return everyTool(caller).filter((tool) => calledByModel(tool) && scopeOf(tool, access) === "any");
+}
+
+/** `current`'s recorded tools that the caller can still give; undefined for a new agent (all of them). */
+export function stillGiven(
+	caller: CallerTools,
+	access: ReadonlyMap<string, P2Tool>,
+	current: Subagent | undefined,
+): string[] | undefined {
+	const choosable = new Set(choosableTools(caller, access).map((tool) => tool.name));
+	return current?.tools.filter((name) => choosable.has(name));
+}
+
+/**
+ * The tools an agent of `kind` gets from a caller with tools `caller`: `names` among its choosable tools (default: all),
+ * with code mode the caller's script-only tools (MCP tools, the terminal, `agent`, code mode's own), and for a
+ * subagent the `scope: "subagent"` ones. Deferred tools stay deferred, except those in `load`. Text names the tools
+ * `names` may not choose.
+ */
+export function resolveTools(
+	caller: CallerTools,
+	access: ReadonlyMap<string, P2Tool>,
+	names: readonly string[] | undefined,
+	load: readonly string[],
+	kind: AgentKind,
+): ToolChoice | string {
+	const all = everyTool(caller);
+	const choosable = choosableTools(caller, access);
+	const unknown = (names ?? []).filter((name) => !choosable.some((tool) => tool.name === name));
+	if (unknown.length)
+		return `Unknown tools: ${unknown.join(", ")}. Choose from your own tools: ${choosable.map((tool) => tool.name).join(", ")}.`;
+	// In the order given, each once.
+	const chosen =
+		names === undefined
+			? choosable
+			: [...new Set(names)].flatMap((name) => choosable.filter((tool) => tool.name === name));
+	const scripts = chosen.some((tool) => tool.name === CODEMODE_TOOL)
+		? all.filter((tool) => !calledByModel(tool) && scopeOf(tool, access) !== "main")
+		: [];
+	const own = kind === "subagent" ? all.filter((tool) => scopeOf(tool, access) === "subagent") : [];
 	return {
-		model: ref,
-		thinkingLevel: clampThinkingLevel(model, requested),
-		tools: [...new Set(names)].flatMap((tool) => installed.filter((entry) => entry.name === tool).slice(0, 1)),
+		chosen: chosen.map((tool) => tool.name),
+		tools: [...chosen, ...scripts, ...own],
+		loaded: [...own, ...chosen.filter((tool) => tool.deferred && load.includes(tool.name))],
 	};
 }
+
+/** A caller's resolved agent: the tools offered to its model, its deferred ones and the ones scripts call. */
+export type CallerTools = Pick<Agent, "tools" | "deferred" | "callable">;
+
+/** The code mode tool (plugins/codemode): choosing it brings the tools only scripts call. */
+export const CODEMODE_TOOL = "codemode";
+
+/** Whether the model may call `tool` (`callers`); the others are script-only: MCP tools in code mode, `agent`, … */
+export const calledByModel = (tool: ToolRegistration): boolean => tool.callers?.includes("model") ?? true;
+
+/** Every tool the caller has, each once. */
+const everyTool = (caller: CallerTools): ToolRegistration[] => [
+	...new Map([...caller.tools, ...caller.deferred, ...caller.callable].map((tool) => [tool.name, tool])).values(),
+];
+
+/** Where a tool works, as its plugin declared it. */
+const scopeOf = (tool: ToolRegistration, access: ReadonlyMap<string, P2Tool>) => access.get(tool.name)?.scope ?? "any";
 
 /**
  * Gives the subagent working in `conversationId` its own location `location` (a granted `location_move`), in `tx`:

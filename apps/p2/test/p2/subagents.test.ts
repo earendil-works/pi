@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
+import { Mcp } from "../../plugins/mcp/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
@@ -14,6 +16,8 @@ import { Workspace } from "../../plugins/workspace/contract.ts";
 import { startServer } from "../../src/hosts/server.ts";
 import type { Host, RefIn } from "../../src/runtime/chord.ts";
 import { expectChord, type Fixture, failureOf, holdIn, http, startFixture, until } from "./helpers.ts";
+
+const MCP_FIXTURE = fileURLToPath(new URL("../fixtures/mcp-server.mjs", import.meta.url));
 
 const texts = (view: ConversationView | null | undefined): string[] =>
 	(view?.entries ?? []).flatMap((entry) =>
@@ -66,7 +70,7 @@ describe("subagents (fake provider)", () => {
 		await chat.send({ text: "subagent", requestId: "spawn" }, BACKGROUND_CONTEXT);
 		const view = await until(chat.view, (value) =>
 			texts(value).some(
-				(text) => text.startsWith("[subagent helper answered") && text.includes("Echo: hello helper"),
+				(text) => text.startsWith("[answered, no reply needed]") && text.includes("Echo: hello helper"),
 			),
 		);
 		const spawned = result(view, "spawn");
@@ -89,7 +93,7 @@ describe("subagents (fake provider)", () => {
 		await chat.send({ text: "subagent-answer", requestId: "answer" }, BACKGROUND_CONTEXT);
 		const answered = await until(chat.view, (value) => Boolean(result(value, "answer")));
 		assert.deepEqual(result(answered, "answer")?.content, [{ type: "text", text: "Echo: hello helper" }]);
-		assert.equal(texts(answered).filter((text) => text.startsWith("[subagent helper answered")).length, 1);
+		assert.equal(texts(answered).filter((text) => text.startsWith("[answered, no reply needed]")).length, 1);
 	});
 
 	it("configures tools and opens a child's independent transcript", async () => {
@@ -97,18 +101,10 @@ describe("subagents (fake provider)", () => {
 		await until(children.children, (value) => value?.[session]?.[0]?.tools.join() === "bash,artifact");
 		const sub = await holdIn(owner, Chat, { session, conversation: child.conversationId }, "participant");
 		const view = await until(sub.view, (value) => texts(value).includes("Echo: hello helper"));
-		// The sidebar lists the chosen tools; the agent also has `team` and the history tools, which every subagent gets.
-		assert.deepEqual((view?.docs["pi.agent"] as { tools: string[] }).tools, [
-			"bash",
-			"artifact",
-			"team",
-			"history_search",
-			"history_read",
-			"history_handoff",
-		]);
-		assert.ok(
-			(view?.docs["pi.agent"] as { extensions: { remove: string[] } }).extensions.remove.includes("subagent-tools"),
-		);
+		// The sidebar lists the chosen tools; the agent also has `team` (`scope: "subagent"`), offered from the start.
+		const agent = view?.docs["pi.agent"] as { tools: string[]; modelTools: { add: string[] } };
+		assert.deepEqual(agent.tools, ["bash", "artifact", "team"]);
+		assert.deepEqual(agent.modelTools.add, ["team"]);
 		await sub.configure({ model: { provider: "faux", modelId: "faux-1" }, thinkingLevel: "off" }, BACKGROUND_CONTEXT);
 		await until(children.children, (value) => value?.[session]?.[0]?.thinkingLevel === "off");
 		await sub.send({ text: "direct child message", requestId: "direct" }, BACKGROUND_CONTEXT);
@@ -169,7 +165,7 @@ describe("subagents (fake provider)", () => {
 		const listed = await until(children.children, (value) => value?.[session]?.[0]?.lastEntryId !== undefined);
 		assert.equal(listed?.[session]?.[0]?.name, "helper");
 		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		await until(chat.view, (view) => texts(view).some((text) => text.startsWith("[subagent helper answered")));
+		await until(chat.view, (view) => texts(view).some((text) => text.startsWith("[answered, no reply needed]")));
 		await chat.send({ text: "subagent-answer", requestId: "answer-again" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => texts(view).some((text) => text.startsWith("Echo: slow child")));
 		await until(status.statuses, (value) => value?.[session]?.tasks === 0);
@@ -264,7 +260,7 @@ describe("a subagent spawned with its own cwd (fake provider)", () => {
 		await spawn({ action: "spawn", name: "wt", message: "bash", cwd: "worktree", tools: ["bash"] }, "spawn");
 		const view = await until(
 			chat.view,
-			(value) => texts(value).some((text) => text.startsWith("[subagent wt answered")),
+			(value) => texts(value).includes('<sender kind="subagent" name="wt"/>'),
 			20_000,
 		);
 		assert.equal((result(view, "spawn")?.details as { cwd?: string }).cwd, join(project, "worktree"));
@@ -323,5 +319,171 @@ describe("a subagent spawned with its own cwd (fake provider)", () => {
 		assert.equal(await readFile(join(project, "worktree", "up.txt"), "utf8"), "uploaded");
 		chat.release();
 		children.release();
+	});
+});
+
+describe("subagents with code mode (fake provider)", () => {
+	let fixture: Fixture;
+	let owner: Host;
+	let chat: RefIn<typeof Chat, "participant">;
+	let children: RefIn<typeof Subagents, "reader">;
+	let session: string;
+	let sent = 0;
+	/** Sends `subagent <args>` and waits for that call's result. */
+	const subagent = async (args: object): Promise<ToolResultMessage> => {
+		const count = results(chat.view.value).length;
+		await chat.send(
+			{ text: `subagent ${JSON.stringify(args)}`, requestId: `codemode-${++sent}` },
+			BACKGROUND_CONTEXT,
+		);
+		return results(await until(chat.view, (view) => results(view).length > count)).at(-1)!;
+	};
+	/** Waits until `name`'s answer was reported and the main agent's turn on it ended, so it cannot race a later send. */
+	const reported = (name: string) =>
+		until(
+			chat.view,
+			(view) =>
+				texts(view).includes(`<sender kind="subagent" name="${name}"/>`) &&
+				!(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run,
+		);
+	const results = (view: ConversationView | null | undefined) =>
+		(view?.entries ?? [])
+			.flatMap((entry) => entry.model ?? [])
+			.filter(
+				(message): message is ToolResultMessage => message.role === "toolResult" && message.toolName === "subagent",
+			);
+	const text = (message: ToolResultMessage | undefined) =>
+		(message?.content ?? []).flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+
+	before(async () => {
+		fixture = await startFixture();
+		await writeFile(join(fixture.workspace, "marker.txt"), "inside\n");
+		owner = fixture.browser();
+		session = (
+			await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+		).id;
+		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		children = await holdIn(owner, Subagents, {}, "reader");
+	});
+	after(async () => {
+		await fixture?.close();
+	});
+
+	it("validates tools against the caller's own, session-level ones excluded", async () => {
+		const bad = await subagent({ action: "spawn", name: "bad", message: "x", tools: ["codemode", "bogus"] });
+		assert.equal(bad.isError, true);
+		assert.match(text(bad), /^Unknown tools: bogus\. Choose from your own tools: .*\bcodemode\b/);
+		const main = await subagent({
+			action: "spawn",
+			name: "bad",
+			message: "x",
+			tools: ["subagent", "rename_session"],
+		});
+		assert.match(text(main), /^Unknown tools: subagent, rename_session\. /);
+		const chosen = await subagent({ action: "spawn", name: "chosen", message: "x", tools: ["bash", "codemode"] });
+		assert.deepEqual((chosen.details as { tools?: string[] }).tools, ["bash", "codemode"]);
+		await reported("chosen");
+	});
+
+	it("gives all the caller's tools by default; a script calls its tools and the tools behind code mode", async () => {
+		// The subagent's script reads with a coding tool, then starts one-shot agents (`agent` is script-only:
+		// `callers: ["tools"]`), which may get code mode too, but not the tools that work only in the main conversation.
+		const script = [
+			'const read = await tools.read({ path: "marker.txt" });',
+			'const answer = await tools.agent({ prompt: \'json {"n":1}\', schema: { type: "object" } });',
+			'const nested = await tools.agent({ prompt: \'json {"n":2}\', schema: { type: "object" }, tools: ["codemode", "read"] });',
+			"let refused;",
+			'try { await tools.agent({ prompt: "x", schema: {}, tools: ["subagent"] }); } catch (error) { refused = String(error.message ?? error); }',
+			"return { read, answer, nested, refused };",
+		].join("\n");
+		const spawned = await subagent({ action: "spawn", name: "coder", message: `codemode ${script}` });
+		assert.equal(spawned.isError, false, text(spawned));
+		const given = (spawned.details as { tools?: string[] }).tools ?? [];
+		for (const each of ["read", "bash", "codemode", "history_search", "location_move"])
+			assert.ok(given.includes(each), each);
+		for (const each of ["subagent", "rename_session", "team", "agent"]) assert.ok(!given.includes(each), each);
+		const listed = await until(children.children, (value) =>
+			Boolean(value?.[session]?.some((each) => each.name === "coder")),
+		);
+		const coder = listed![session]!.find((each) => each.name === "coder")!;
+		const sub = await holdIn(owner, Chat, { session, conversation: coder.conversationId }, "participant");
+		const view = await until(sub.view, (value) =>
+			(value?.entries ?? []).some((entry) =>
+				entry.model?.some((message) => message.role === "toolResult" && message.toolName === "codemode"),
+			),
+		);
+		const ran = (view?.entries ?? [])
+			.flatMap((entry) => entry.model ?? [])
+			.find(
+				(message): message is ToolResultMessage => message.role === "toolResult" && message.toolName === "codemode",
+			);
+		assert.equal(ran?.isError, false, text(ran));
+		const output = text(ran);
+		assert.match(output, /^Script completed/);
+		const value = JSON.parse(output.slice(output.indexOf("{"))) as {
+			read: string;
+			answer: unknown;
+			nested: unknown;
+			refused: string;
+		};
+		assert.match(value.read, /inside/);
+		assert.deepEqual(value.answer, { n: 1 });
+		assert.deepEqual(value.nested, { n: 2 });
+		assert.match(value.refused, /^Unknown tools: subagent\. Choose from your own tools: /);
+		// The script-only tools were enabled by name before the script started; the model is still offered its choice.
+		const tools = (sub.view.value?.docs["pi.agent"] as { tools: string[] }).tools;
+		assert.ok(tools.includes("agent"), tools.join());
+		await reported("coder");
+		await until(children.children, (value) =>
+			Boolean(value?.[session]?.find((each) => each.name === "coder")?.tools.includes("codemode")),
+		);
+		sub.release();
+	});
+
+	it("reaches MCP tools installed after the spawn", async () => {
+		// The server connects after `coder` was spawned: the worker adds its tools to the subagent's tool list.
+		await writeFile(
+			join(fixture.dataDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { files: { command: process.execPath, args: [MCP_FIXTURE] } } }),
+		);
+		const mcp = await holdIn(owner, Mcp, {}, "owner");
+		await until(mcp.instances, (instances) => instances.some((item) => item.status === "connected"));
+		const coder = (await until(children.children, (value) => Boolean(value?.[session]?.length)))![session]!.find(
+			(each) => each.name === "coder",
+		)!;
+		const sub = await holdIn(owner, Chat, { session, conversation: coder.conversationId }, "participant");
+		const scripts = () =>
+			(sub.view.value?.entries ?? [])
+				.flatMap((entry) => entry.model ?? [])
+				.filter(
+					(message): message is ToolResultMessage =>
+						message.role === "toolResult" && message.toolName === "codemode",
+				);
+		const before = scripts().length;
+		const script = 'return await tools.mcp__files__echo({ text: "from coder" });';
+		await subagent({ action: "send", name: "coder", message: `codemode ${script}` });
+		await until(sub.view, () => scripts().length > before);
+		const ran = scripts().at(-1);
+		assert.equal(ran?.isError, false, text(ran));
+		assert.match(text(ran), /echo: from coder$/);
+		await reported("coder");
+		sub.release();
+		mcp.release();
+	});
+
+	it("leaves code mode out while the codemode setting is off, and refuses choosing it", async () => {
+		await writeFile(join(fixture.dataDir, "settings.json"), JSON.stringify({ codemode: false }));
+		// The worker applies the settings file asynchronously: spawn (a new name each time) until it refuses.
+		let refused: ToolResultMessage | undefined;
+		for (let attempt = 0; attempt < 20 && !refused?.isError; attempt++) {
+			if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 200));
+			refused = await subagent({ action: "spawn", name: `off-${attempt}`, message: "x", tools: ["codemode"] });
+			if (!refused.isError) await reported(`off-${attempt}`);
+		}
+		assert.equal(refused?.isError, true);
+		assert.match(text(refused), /^Unknown tools: codemode\. Choose from your own tools: /);
+		const plain = await subagent({ action: "spawn", name: "plain", message: "x" });
+		const given = (plain.details as { tools?: string[] }).tools ?? [];
+		assert.ok(given.includes("read") && !given.includes("codemode"), given.join());
 	});
 });

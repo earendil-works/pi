@@ -10,7 +10,7 @@ import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import type { Host, RefIn } from "../../src/runtime/chord.ts";
 import { Hosts } from "../../src/runtime/server.ts";
-import { expectChord, type Fixture, holdIn, http, startFixture, until } from "./helpers.ts";
+import { expectChord, type Fixture, holdIn, http, settled, startFixture, until } from "./helpers.ts";
 
 const results = (view: ConversationView | null | undefined): ToolResultMessage[] =>
 	(view?.entries ?? []).flatMap((entry) =>
@@ -148,6 +148,35 @@ describe("artifacts (fake provider)", () => {
 		sharing.release();
 	});
 
+	it("carries inline in the result details only, and keeps the index and stored version unchanged", async () => {
+		const svg =
+			"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 100'><rect width='200' height='100'/></svg>";
+		const call = { name: "flow", title: "Flow", type: "svg", content: svg, inline: true };
+		const before = results(await settled(chat.view)).length;
+		await chat.send({ text: `artifact ${JSON.stringify(call)}`, requestId: "inline-svg" }, BACKGROUND_CONTEXT);
+		const view = await until(
+			chat.view,
+			(value) => results(value).length === before + 1 && !(value?.docs["pi.live"] as { run?: unknown })?.run,
+		);
+		const result = results(view).at(-1);
+		assert.equal(result?.isError, false);
+		assert.deepEqual(result?.details, { name: "flow", title: "Flow", type: "svg", version: 1, inline: true });
+		assert.match(JSON.stringify(result?.content), /Shown inline in the transcript/);
+		// The plain call has no flag at all.
+		assert.deepEqual(results(view)[0]?.details, { name: "demo", title: "Demo artifact", type: "html", version: 1 });
+		const index = await until(list.artifacts, (value) => Boolean(value?.some((entry) => entry.name === "flow")));
+		assert.deepEqual(
+			index?.find((entry) => entry.name === "flow"),
+			{ name: "flow", title: "Flow", type: "svg", version: 1 },
+		);
+		assert.equal((await http(fixture.server.port, `${url("flow")}&download=1`)).body, svg);
+		// The preview's bridge is CDATA inside the root (SVG is XML) and reports the content height.
+		const preview = (await http(fixture.server.port, url("flow"))).body;
+		assert.ok(preview.startsWith("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 100'><script><![CDATA["));
+		assert.match(preview, /level:"size"/);
+		assert.ok(preview.endsWith("]]></script><rect width='200' height='100'/></svg>"));
+	});
+
 	it("serves Markdown/text as non-executable documents and validates byte bounds", async () => {
 		const store = new Store(fixture.dataDir);
 		for (const type of ["markdown", "text", "svg"] as const) {
@@ -159,7 +188,9 @@ describe("artifacts (fake provider)", () => {
 			});
 			const response = await http(fixture.server.port, url(info.name, info.version));
 			assert.equal(response.status, 200);
-			if (type !== "svg") {
+			// An empty root has no inside for the bridge: served as stored, still well-formed XML.
+			if (type === "svg") assert.equal(response.body, "<svg xmlns='http://www.w3.org/2000/svg'/>");
+			else {
 				assert.equal(response.headers["content-type"], "text/plain; charset=utf-8");
 				assert.match(String(response.headers["content-security-policy"]), /; sandbox$/);
 				assert.ok(!response.body.includes("p2-artifact-diagnostic"));
