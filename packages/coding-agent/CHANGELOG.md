@@ -32,6 +32,7 @@
 - Fixed grep match lines, codemode output, compaction summaries of tool results, and MCP error and server summaries cutting an emoji or other non-BMP character in half when truncating, which left an invalid lone surrogate in the text ([#7121](https://github.com/earendil-works/pi/issues/7121))
 - Fixed the read tool loading whole files into memory, which ran out of memory on large files even with `offset`/`limit`; it now streams the file and keeps only the shown lines. Custom `ReadOperations` can stream too by providing the new optional `createReadStream` ([#9654](https://github.com/earendil-works/pi/issues/9654))
 - Fixed OAuth logins such as `openai` and `anthropic` failing with `invalid_grant` after pi was stopped while it refreshed an expired token, for example an RPC client that stops pi right after startup while the background catalog refresh runs. The token endpoint had already replaced the refresh token, but pi exited before saving the new one. On exit, pi now waits for a token refresh in progress to be saved ([#11692](https://github.com/earendil-works/pi/issues/11692))
+- Fixed Ctrl+P not switching to the only model in scope (or the only available model) when the active model is a different one; it showed "Only one model in scope" instead. Cycling forward from a model outside the scope now also selects the first scoped model instead of skipping it ([#11806](https://github.com/earendil-works/pi/issues/11806))
 
 
 ## [1.5.0] - 2026-11-02
