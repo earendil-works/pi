@@ -9,6 +9,14 @@ Allowed types: `feat`, `fix`, `docs`, `refactor`, `chore`, `test`, `ci`.
 Use a stable agent name for Kilo sessions — `[kilo]` — so provenance in the history is
 readable. If a named Kilo agent profile did the work, use that profile's name.
 
+## Before pushing
+Run the verification sequence in `AGENTS.md` under "Pre-push verification", including its
+fresh-clone prerequisites and the conflict-marker check. The commands are listed there and
+deliberately not repeated here.
+
+Never skip hooks: no `--no-verify`, no `core.hooksPath` override. If the hook cannot run or
+cannot pass, stop, say which step failed and whether your change caused it, and escalate.
+
 ## Branches
 Never push directly to `main`. Use a feature branch and a pull request. Do not force-push
 or rewrite shared history.

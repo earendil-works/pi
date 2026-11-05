@@ -25,6 +25,9 @@ This repository is the NLT-owned runtime and SDK foundation for the NeuroLift Te
 - Never bypass ASFDK controls or convert model output into authority.
 - Never push directly to `main`; use a feature branch and pull request.
 - Follow the commit format `[AGENT_NAME] type(scope): description` and keep PRs focused on one independently reviewable concern.
+- Before pushing, run the verification sequence in `AGENTS.md` ("Pre-push verification"),
+  including its fresh-clone prerequisites and the conflict-marker check. Never skip hooks:
+  no `--no-verify`, no `core.hooksPath` override. If the hook cannot pass, stop and escalate.
 - Do not claim tests, builds, scans, or deployments ran unless they actually ran.
 - Keep diffs scoped. Do not remove functionality without approval.
 - No secrets, credentials, tokens, or private data in source control.

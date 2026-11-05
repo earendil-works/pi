@@ -110,3 +110,55 @@ Deviation from the original request: the first draft gitignored `.kilocode/`,
 `.kilocodemodes`, and `.kilocodeignore` as a guard against a drifting dual config. That was
 reverted, because it would have made a repository-level file that Kilo may require there
 uncommittable.
+
+---
+
+## Addendum — 2026-11-05T05:15:00+00:00 — pre-push verification rule
+
+**Scope added at the owner's direction.** The owner relayed a pre-push verification recipe
+from a Claude Code session and asked that it be added to the rules, choosing `AGENTS.md` as
+canonical with pointers from `CLAUDE.md` and `.kilo/rules/20-commits-and-prs.md`, shipped in
+this PR rather than a separate one, and with the conflict-marker check documented as a rule
+line rather than a new script. This broadens the PR beyond Kilo configuration to a
+repository-wide verification rule; that was the owner's explicit choice when asked.
+
+**Dependencies were installed in this container (`npm ci`), so the checks could actually be
+run** — unlike the original commit on this branch, where they could not.
+
+**Four pre-existing defects were found by running the sequence,** all red on `main` and none
+caused by this branch (`git diff --name-only origin/main...HEAD` touches no file under
+`mvp/` or `packages/`). They are recorded as thread `NLTPI-CI-001` and filed as issue #23
+(https://github.com/NeuroLift-Technologies/nlt-pi/issues/23): gitignored generated
+model data required by the type checks; `packages/schema` and `packages/telemetry` missing
+from the root `build` chain; `@earendil-works/chord` imported by
+`scripts/browser-smoke-entry.ts` but declared in no `package.json`; and
+`npm run check:mvp` differing from `npx tsc --noEmit -p .`.
+
+**Now verified as passing** (after `npm ci`, `hydrate:model-data`, building schema and
+telemetry, then `build:offline`): biome with no rewrites, `check:pinned-deps`,
+`check:runtime-deps`, `check:ts-imports`, `check:entry-graphs`,
+`check:install-lock:coding-agent`, root and examples `tsc --noEmit`, mvp `vitest --run`
+(169 passed, 10 expected fail), the governance validator (71/0), and a clean
+conflict-marker scan.
+
+**Still failing:** `check:browser-smoke`, per the undeclared `@earendil-works/chord`
+dependency. Because the pre-commit hook runs the full root `npm run check`, the hook cannot
+pass in this container. Installing that package even with `--no-save` was attempted and
+**denied by this environment's safeguards**; no attempt was made to work around the denial.
+
+**Open decision at the boundary — resolved by the owner.** The rule being added says never
+to skip hooks, yet the commit adding it cannot satisfy the hook. Rather than decide, the
+agent stopped and escalated, which is what the new rule prescribes. The owner reviewed the
+blocker and issue #23 and authorised the bypass for this commit on 2026-11-05 ("You can
+bypass"). The commit therefore sets `core.hooksPath=/dev/null` with that authorisation
+recorded in its message. This is a disclosed, owner-approved exception, not a silent
+bypass, and it does not establish a precedent: the rule stands as written, and the next
+commit that cannot pass the hook must escalate again until issue #23 is fixed.
+
+**Checks actually run before this commit** (the hook's own chain could not complete, so the
+steps were run directly): biome via `npm run check` with no rewrites, `check:pinned-deps`,
+`check:runtime-deps`, `check:ts-imports`, `check:entry-graphs`,
+`check:install-lock:coding-agent`, root and examples `tsc --noEmit`, mvp
+`npx tsc --noEmit -p .` and `npx vitest --run`, `node scripts/check-lockfile-commit.mjs`,
+the governance validator, the skill-parity script, and a conflict-marker scan.
+`check:browser-smoke` remains failing per issue #23.
