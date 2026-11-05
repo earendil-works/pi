@@ -16,7 +16,8 @@
       "Applied the owner's egress answer: lifecycle default is now an allowlist of package registries and GitHub (presets), deny-all still available; allow-all was added later as an explicit option (nlt-pi#21); 21 lifecycle tests, 4 more mutation checks.",
       "Added mvp/src/agent/runner.ts (nlt-pi#21): crisis gate, free model from the live catalog, sandbox lock, Pi bash/read/write/edit bound to the reviewed sandbox operations, host tools and host resources disabled, credential read inside the turn. 11 offline tests with the faux provider; mutation-checked. Not wired to any route.",
       "Added the agent route (mvp/api/agent.ts, src/agent/route.ts, vercel.json): off unless NLT_AGENT_ENABLED=1, egressAll only from NLT_AGENT_EGRESS_ALL=1, effective policy logged, NDJSON streaming, chat-page streaming with gate-only fallback, @vercel/oidc 3.2.0 pinned. Offline tests only (10 route tests, 2 page-helper tests).",
-      "Addressed PR #26 review: aligned route lock stale age (320 s) with the 300 s function limit with a vercel.json test; replaced per-request chdir with a once-per-process work directory (gate-workdir.ts) with an overlap test."
+      "Addressed PR #26 review: aligned route lock stale age (320 s) with the 300 s function limit with a vercel.json test; replaced per-request chdir with a once-per-process work directory (gate-workdir.ts) with an overlap test.",
+      "Addressed second PR #26 review: absolute invocation deadline set at route entry and propagated to gate, model lookup, sandbox acquire, lock, policy update and turn; tests with delayed setup stages (mutation-checked)."
     ],
     "work_in_progress": [],
     "blockers": [

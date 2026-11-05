@@ -38,6 +38,7 @@ import {
   SandboxBusyError,
   SandboxTurnTimeoutError,
   withAgentSandbox,
+  withinDeadline,
   type AgentSandboxOptions,
   type SandboxClient,
 } from "../sandbox/lifecycle.ts";
@@ -83,6 +84,8 @@ export interface AgentRunnerDeps {
 export interface AgentTurnInput {
   prompt: string;
   signal?: AbortSignal;
+  /** Absolute time (epoch ms) by which the whole invocation must have settled. Every stage is bounded by it. */
+  deadlineAt?: number;
   onText?: (delta: string) => void;
   onToolStart?: (name: string) => void;
 }
@@ -161,8 +164,9 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
   // 1. Crisis gate. Anything but a literal `allowed: true` stops here.
   let gate: GateResult;
   try {
-    gate = await deps.gate(input.prompt);
+    gate = await withinDeadline(deps.gate(input.prompt), input.deadlineAt);
   } catch (error) {
+    if (error instanceof SandboxTurnTimeoutError) return { status: "timed_out" };
     return { status: "blocked", reason: `The safety check could not run: ${describeError(error)}`, crisisLevel: null };
   }
   if (gate?.allowed !== true) {
@@ -172,8 +176,9 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
   // 2. A free model, chosen from the live catalog.
   let chosen: GatewayCatalogModel;
   try {
-    chosen = await (deps.pickModel ?? (() => pickFreeModel({ requireToolUse: true })))();
+    chosen = await withinDeadline((deps.pickModel ?? (() => pickFreeModel({ requireToolUse: true })))(), input.deadlineAt);
   } catch (error) {
+    if (error instanceof SandboxTurnTimeoutError) return { status: "timed_out" };
     if (error instanceof NoFreeModelError) return { status: "no_free_model", reason: error.message };
     return { status: "error", reason: describeError(error) };
   }
@@ -285,7 +290,7 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
           await binding.dispose?.().catch(() => undefined);
         }
       },
-      deps.sandbox,
+      { ...deps.sandbox, deadlineAt: input.deadlineAt },
     );
     return { status: "completed", text: outcome, model: chosen.id };
   } catch (error) {

@@ -126,6 +126,17 @@ describe("runAgentTurn", () => {
     return { client, faux, deps, state };
   }
 
+  it("times out when the gate or model lookup outlives the invocation deadline, without touching the sandbox", async () => {
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+    const slowGate = setup({ gate: async () => { await sleep(200); return { allowed: true }; } });
+    expect(await runAgentTurn(slowGate.deps, { prompt: "hi", deadlineAt: Date.now() + 40 })).toEqual({ status: "timed_out" });
+    expect(slowGate.client.calls).toHaveLength(0);
+
+    const slowPick = setup({ pickModel: async () => { await sleep(200); return FREE; } });
+    expect(await runAgentTurn(slowPick.deps, { prompt: "hi", deadlineAt: Date.now() + 40 })).toEqual({ status: "timed_out" });
+    expect(slowPick.client.calls).toHaveLength(0);
+  });
+
   it("runs a turn and returns the model's text, with the gate first and the lock released", async () => {
     const { client, faux, deps, state } = setup();
     faux.setResponses([fauxAssistantMessage("All done.")]);

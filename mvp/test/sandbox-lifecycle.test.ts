@@ -331,6 +331,87 @@ describe("withAgentSandbox", () => {
   });
 });
 
+describe("invocation deadline", () => {
+  const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  it("cuts off a slow getOrCreate at the deadline and never runs the work", async () => {
+    const client = new FakeClient();
+    client.getOrCreate = async () => {
+      await sleep(200);
+      return client.sandbox;
+    };
+    let ran = false;
+    const started = Date.now();
+    await expect(
+      withAgentSandbox(client, async () => {
+        ran = true;
+      }, { deadlineAt: Date.now() + 40 }),
+    ).rejects.toBeInstanceOf(SandboxTurnTimeoutError);
+    expect(Date.now() - started).toBeLessThan(150);
+    expect(ran).toBe(false);
+  });
+
+  it("cuts off a slow lock acquire and a slow network-policy update", async () => {
+    for (const slow of ["acquire", "policy"] as const) {
+      const client = new FakeClient();
+      const inner = client.sandbox;
+      if (slow === "policy") inner.updateNetworkPolicy = async () => sleep(200);
+      else {
+        const run = inner.runCommand;
+        inner.runCommand = async (params) => {
+          if (params.args?.[1]?.includes("mkdir")) await sleep(200);
+          return run(params);
+        };
+      }
+      let ran = false;
+      await expect(
+        withAgentSandbox(client, async () => {
+          ran = true;
+        }, { deadlineAt: Date.now() + 40 }),
+      ).rejects.toBeInstanceOf(SandboxTurnTimeoutError);
+      expect(ran).toBe(false);
+    }
+  });
+
+  it("does not start the turn when setup used the budget, and releases the lock it took", async () => {
+    const client = new FakeClient();
+    client.sandbox.updateNetworkPolicy = async () => sleep(60);
+    let ran = false;
+    // Grace is 10% of the stale age (10 ms here): after a 60 ms policy update only ~0 ms is left to abort.
+    await expect(
+      withAgentSandbox(client, async () => {
+        ran = true;
+      }, { lockStaleMs: 100, deadlineAt: Date.now() + 65 }),
+    ).rejects.toBeInstanceOf(SandboxTurnTimeoutError);
+    expect(ran).toBe(false);
+    expect(client.sandbox.held).toBe(false);
+  });
+
+  it("aborts the turn early enough that abort plus grace ends by the deadline, not a fresh window", async () => {
+    const client = new FakeClient();
+    const deadlineAt = Date.now() + 1200;
+    let abortedAt = 0;
+    const started = Date.now();
+    await expect(
+      withAgentSandbox(
+        client,
+        (_sandbox, signal) =>
+          new Promise<void>((resolve) => {
+            signal.addEventListener("abort", () => {
+              abortedAt = Date.now();
+              resolve();
+            });
+          }),
+        { lockStaleMs: 10_000, deadlineAt },
+      ),
+    ).resolves.toBeUndefined();
+    // A 10 s stale age alone would abort at 8 s. Grace is 1 s, so the invocation deadline (1.2 s) forces the abort
+    // at about 200 ms, leaving the whole grace period before the deadline.
+    expect(abortedAt - started).toBeGreaterThan(100);
+    expect(abortedAt - started).toBeLessThan(500);
+  });
+});
+
 describe("real client", () => {
   it("has the SandboxClient shape (checked by the type checker)", () => {
     const factory: typeof createVercelSandboxClient = (() => ({ getOrCreate: async () => new FakeLockedSandbox() })) as never;

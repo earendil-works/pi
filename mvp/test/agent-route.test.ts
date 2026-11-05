@@ -3,6 +3,7 @@ import { gateWorkDir } from "../src/agent/gate-workdir.ts";
 import {
   AGENT_FUNCTION_MAX_DURATION_MS,
   AGENT_LOCK_STALE_MS,
+  AGENT_REQUEST_BUDGET_MS,
   type AgentResponse,
   type AgentRouteDeps,
   agentEnabled,
@@ -185,6 +186,15 @@ describe("function and lock timing", () => {
     const settledBy = AGENT_LOCK_STALE_MS * 0.8 + AGENT_LOCK_STALE_MS * 0.1;
     expect(settledBy).toBeLessThan(maxDurationMs);
     expect(AGENT_LOCK_STALE_MS).toBeGreaterThan(maxDurationMs);
+    // The request budget is measured from route entry and leaves room for the final write and release.
+    expect(AGENT_REQUEST_BUDGET_MS).toBeLessThanOrEqual(maxDurationMs - 30_000);
+  });
+
+  it("gives every turn an absolute deadline measured from route entry", async () => {
+    const { deps, run } = makeDeps(on);
+    deps.now = () => 1_000_000;
+    await handleAgentRequest(post({ prompt: "hi" }), makeResponse().response, deps);
+    expect(run.mock.calls[0]?.[1].deadlineAt).toBe(1_000_000 + AGENT_REQUEST_BUDGET_MS);
   });
 });
 

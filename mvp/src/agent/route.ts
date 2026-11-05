@@ -27,6 +27,12 @@ export const AGENT_FUNCTION_MAX_DURATION_MS = 300_000;
  */
 export const AGENT_LOCK_STALE_MS = 320_000;
 
+/**
+ * Time from route entry by which the whole invocation (gate, model lookup, sandbox acquire, lock, policy,
+ * turn, release) must have settled. It leaves 30 s below the function limit for the final write and release.
+ */
+export const AGENT_REQUEST_BUDGET_MS = 270_000;
+
 export interface AgentRequest {
   method?: string;
   body?: unknown;
@@ -52,6 +58,7 @@ export interface AgentRouteDeps {
   createDeps: (options: { egressAll: boolean }) => AgentRunnerDeps;
   run: (deps: AgentRunnerDeps, input: AgentTurnInput) => Promise<AgentTurnResult>;
   log: (line: string) => void;
+  now?: () => number;
 }
 
 export function agentEnabled(env: AgentRouteEnv): boolean {
@@ -98,6 +105,7 @@ export async function handleAgentRequest(
   response: AgentResponse,
   deps: AgentRouteDeps,
 ): Promise<void> {
+  const deadlineAt = (deps.now ?? Date.now)() + AGENT_REQUEST_BUDGET_MS;
   response.setHeader("Cache-Control", "no-store");
 
   if (!agentEnabled(deps.env)) {
@@ -147,6 +155,7 @@ export async function handleAgentRequest(
     result = await deps.run(runnerDeps, {
       prompt,
       signal: controller.signal,
+      deadlineAt,
       onText: (delta) => send({ type: "text", delta }),
       onToolStart: (name) => send({ type: "tool", name }),
     });
