@@ -327,7 +327,7 @@ export class Compiler {
 
 	private objectCore(node: SchemaObject, base: string, guard: Guard): Check | undefined {
 		const properties = isSchemaObject(node.properties) ? node.properties : {};
-		const required = requiredKeys(node, properties);
+		const required = Array.isArray(node.required) ? node.required.filter((k) => typeof k === "string") : [];
 		const patterns = isSchemaObject(node.patternProperties) ? node.patternProperties : {};
 		const additional = node.additionalProperties;
 		const keys = Object.keys(properties);
@@ -600,18 +600,6 @@ function tagOf(branch: SchemaObject, key: string): unknown {
 	const tag = isSchemaObject(properties) ? properties[key] : undefined;
 	if (!isSchemaObject(tag) || !Object.hasOwn(tag, "const")) return undefined;
 	return typeof tag.const === "object" && tag.const !== null ? undefined : tag.const;
-}
-
-/**
- * The keys `node` requires. An `undefined` property counts as absent, so a required property whose schema accepts only
- * `undefined` (TypeBox's `Type.Undefined()`) is satisfied by `undefined` or by leaving it out.
- */
-export function requiredKeys(node: SchemaObject, properties: SchemaObject): string[] {
-	const required = Array.isArray(node.required) ? node.required.filter((k) => typeof k === "string") : [];
-	return required.filter((k) => {
-		const property = Object.hasOwn(properties, k) ? properties[k] : undefined;
-		return !(isSchemaObject(property) && property.type === "undefined");
-	});
 }
 
 /** A number keyword's value: a number, or a bigint (TypeBox's `Type.BigInt` bounds). */

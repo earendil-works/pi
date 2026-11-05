@@ -129,8 +129,8 @@ import Type from "typebox";
 const user = compile(Type.Object({ name: Type.String(), tags: Type.Array(Type.String()) }));
 ```
 
-TypeBox's JavaScript-only types (`BigInt`, `Undefined`, `Function`, ...), refinements and codecs are not JSON Schema
-and are not supported.
+TypeBox's `BigInt` and `Undefined` are supported (see Values). Its other JavaScript-only types (`Function`, `Symbol`,
+...), refinements and codecs are not JSON Schema and are not supported.
 
 ### Coercion
 
@@ -164,6 +164,9 @@ Three passes run in order:
    - `integer`: as `number`, then truncated (`"3.5"` and `3.5` become 3).
    - `boolean`: `"true"`/`"false"` (any case), `"1"`/`"0"`, 1/0, `null` to `false`.
    - `null`: `"null"`, `"undefined"`, `""`, `"0"`, 0 and `false`.
+   - `bigint`: integer strings (`"12"`, `"12n"`; `"12.9"` truncated), numbers truncated, `"true"`/`"false"` and
+     booleans to 1n/0n, `null` to 0n.
+   - `undefined`: `"undefined"`, `"null"`, `""`, `"0"`, 0, 0n, `false` and `null`.
    - `array`: a single value becomes a one-item array, then each item converts; a tuple (`prefixItems` or an `items`
      array) converts its items and never wraps.
    - `object`: each property converts by `properties`, `patternProperties` or `additionalProperties`.
@@ -184,13 +187,15 @@ coerced by any pass.
 
 ### Values
 
-- A property whose value is `undefined` counts as absent, as in TypeBox.
+- An optional property whose value is `undefined` counts as absent, as in TypeBox. A required property set to
+  `undefined` is present: valid when its schema takes `undefined` (`Type.Undefined()` in it, `Type.Unknown()`,
+  `Type.Any()`), else missing.
 - `{ type: "bytes", minLength, maxLength }` matches a `Uint8Array` of that length, an extension for values that never
   pass through JSON.
-- `{ type: "bigint" }` (TypeBox's `Type.BigInt`) matches a `bigint`, with bigint `minimum`, `maximum`,
-  `exclusiveMinimum`, `exclusiveMaximum` and `multipleOf`.
-- `{ type: "undefined" }` (TypeBox's `Type.Undefined`) matches `undefined`. A required property with this schema may be
-  left out, since a property set to `undefined` counts as absent.
+- `{ type: "bigint" }` (TypeBox's `Type.BigInt`) matches a `bigint`. The number keywords (`minimum`, `maximum`,
+  `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`) apply to numbers and bigints alike, with bounds of either kind,
+  as in TypeBox.
+- `{ type: "undefined" }` (TypeBox's `Type.Undefined`) matches `undefined`.
 - `equal(a, b)` is JSON equality as `const`, `enum` and `uniqueItems` compare (TypeBox's `Value.Equal`).
 
 ## Supported keywords

@@ -138,6 +138,25 @@ describe("validate", () => {
 	});
 });
 
+describe("bigint and undefined, as TypeBox's Value.Convert", () => {
+	it("converts to a bigint like TypeBox's TryBigInt", () => {
+		const schema = Type.Object({ n: Type.BigInt({ minimum: 0n }) });
+		expect(compile(schema, { coerce: true }).parse({ n: "42" })).toEqual({ ok: true, value: { n: 42n } });
+		expect(coerceValue(Type.BigInt(), "12n")).toBe(12n);
+		expect(coerceValue(Type.BigInt(), "12.9")).toBe(12n);
+		expect(coerceValue(Type.BigInt(), 3.7)).toBe(3n);
+		expect(coerceValue(Type.BigInt(), true)).toBe(1n);
+		expect(coerceValue(Type.BigInt(), "x")).toBe("x");
+	});
+
+	it("converts to undefined like TypeBox's TryUndefined", () => {
+		for (const value of [null, 0, 0n, false, "", "0", "null", "undefined"]) {
+			expect(coerceValue(Type.Undefined(), value)).toBeUndefined();
+		}
+		expect(coerceValue(Type.Undefined(), "x")).toBe("x");
+	});
+});
+
 describe("pass 1: optional nulls", () => {
 	it("drops null in optional non-nullable properties, also nested", () => {
 		const schema = obj(

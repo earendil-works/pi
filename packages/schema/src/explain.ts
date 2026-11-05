@@ -14,7 +14,7 @@ import {
 	TYPE_CHECKS,
 	uniqueCheck,
 } from "./checks.ts";
-import { type Compiler, requiredKeys } from "./compiler.ts";
+import type { Compiler } from "./compiler.ts";
 import { isSchemaObject } from "./resolver.ts";
 import { sharedRegex } from "./shared.ts";
 import type { SchemaObject, ValidationError } from "./types.ts";
@@ -179,8 +179,12 @@ export class Explainer {
 		push: Push,
 	): void {
 		const properties = isSchemaObject(node.properties) ? node.properties : {};
-		for (const k of requiredKeys(node, properties)) {
-			if (!Object.hasOwn(v, k) || v[k] === undefined) push("required", "missing", pointer(path, k));
+		const required = Array.isArray(node.required) ? node.required : [];
+		for (const k of required) {
+			if (typeof k !== "string") continue;
+			// Present and set to undefined: missing unless its schema takes undefined (see declaredObject).
+			const accepted = v[k] === undefined && Object.hasOwn(properties, k) && this.ok(properties[k], b, undefined);
+			if (!Object.hasOwn(v, k) || (v[k] === undefined && !accepted)) push("required", "missing", pointer(path, k));
 		}
 		for (const k of Object.keys(properties)) {
 			if (Object.hasOwn(v, k) && v[k] !== undefined) this.walk(properties[k], b, v[k], pointer(path, k), out);

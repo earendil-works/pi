@@ -460,18 +460,48 @@ describe("TypeBox's JavaScript types", () => {
 		]);
 	});
 
-	it("check Type.Undefined: only undefined, and a required undefined property may be left out", () => {
+	it("check Type.Undefined: only undefined, and a required property with it must be present", () => {
 		expect(compile(Type.Undefined()).check(undefined)).toBe(true);
 		expect(compile(Type.Undefined()).check(null)).toBe(false);
-		// A property set to undefined counts as absent, so a required one is satisfied by leaving it out too.
 		const schema = Type.Object({ selection: Type.Literal("average"), principalId: Type.Undefined() });
 		const validator = compile(schema);
 		expect(validator.check({ selection: "average", principalId: undefined })).toBe(true);
-		expect(validator.check({ selection: "average" })).toBe(true);
+		expect(validator.check({ selection: "average" })).toBe(false);
 		expect(validator.check({ selection: "average", principalId: "x" })).toBe(false);
 		expect(validator.check({ selection: "average", principalId: null })).toBe(false);
+		expect(validator.errors({ selection: "average" })).toEqual([
+			{ path: "/principalId", keyword: "required", message: "missing" },
+		]);
 		expect(validator.errors({ selection: "average", principalId: "x" })).toEqual([
 			{ path: "/principalId", keyword: "type", message: "expected undefined, got string" },
 		]);
+	});
+
+	it("check a required property set to undefined by its schema, as TypeBox does", () => {
+		// Present and undefined: valid when the schema takes undefined (Undefined in a union, Unknown, Any).
+		for (const property of [Type.Union([Type.String(), Type.Undefined()]), Type.Unknown(), Type.Any()]) {
+			for (const additionalProperties of [undefined, false]) {
+				const validator = compile(
+					Type.Object({ a: property }, additionalProperties === false ? { additionalProperties } : {}),
+				);
+				expect(validator.check({ a: undefined })).toBe(true);
+				expect(validator.check({})).toBe(false);
+			}
+		}
+		// A required property whose schema does not take undefined stays missing when set to undefined.
+		const name = compile(Type.Object({ name: Type.String() }));
+		expect(name.check({ name: undefined })).toBe(false);
+		expect(name.errors({ name: undefined })).toEqual([{ path: "/name", keyword: "required", message: "missing" }]);
+		// An optional property set to undefined still counts as absent.
+		expect(compile(Type.Object({ name: Type.Optional(Type.String()) })).check({ name: undefined })).toBe(true);
+	});
+
+	it("check multipleOf of bigints exactly, however large", () => {
+		const five = compile(Type.BigInt({ multipleOf: 5n }));
+		expect(five.check(10n ** 400n)).toBe(true);
+		expect(five.check(10n ** 400n + 1n)).toBe(false);
+		// A bigint is no multiple of 0 or of a fraction.
+		expect(compile({ multipleOf: 0n }).check(4n)).toBe(false);
+		expect(compile({ multipleOf: 0.5 }).check(3n)).toBe(false);
 	});
 });

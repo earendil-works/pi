@@ -308,8 +308,10 @@ export function numberCheck(
  */
 export function isMultiple(v: Bound, d: Bound): boolean {
 	if (typeof v === "bigint" || typeof d === "bigint") {
-		if (!Number.isInteger(Number(v)) || !Number.isInteger(Number(d)) || BigInt(d) === 0n) return false;
-		return BigInt(v) % BigInt(d) === 0n;
+		if ((typeof v === "number" && !Number.isInteger(v)) || (typeof d === "number" && !Number.isInteger(d)))
+			return false;
+		const divisor = BigInt(d);
+		return divisor !== 0n && BigInt(v) % divisor === 0n;
 	}
 	const q = v / d;
 	if (Number.isInteger(q)) return true;
@@ -367,8 +369,10 @@ export function declaredObject(
 			}
 			next = i + 3;
 			const x = o[k];
-			if (x === undefined) continue;
 			const f = entries[i + 2] as number;
+			// An optional property set to undefined counts as absent; a required one is present, and its schema decides
+			// whether undefined is a value of it (TypeBox's Type.Undefined, Unknown, Any).
+			if (x === undefined && !(f & REQUIRED)) continue;
 			const c = f & CODE;
 			if (c !== 0 ? !leafOk(c, x, entries[i + 1]) : !(entries[i + 1] as Check)(x)) return false;
 			if (f & REQUIRED) required++;
@@ -394,7 +398,8 @@ export function openObject(
 			const k = entries[i] as string;
 			const x = o[k];
 			const f = entries[i + 2] as number;
-			if (x === undefined || (f & INHERITED && !Object.hasOwn(o, k))) {
+			// Absent, or an optional property set to undefined (which counts as absent); see declaredObject.
+			if ((x === undefined && !(f & REQUIRED && Object.hasOwn(o, k))) || (f & INHERITED && !Object.hasOwn(o, k))) {
 				if (f & REQUIRED) return false;
 				continue;
 			}
