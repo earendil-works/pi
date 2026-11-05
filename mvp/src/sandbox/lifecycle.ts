@@ -4,7 +4,7 @@
  * The owner's Vercel plan allows one sandbox (and Hobby caps a session at 45 minutes), so the agent uses
  * exactly one fixed-name, persistent sandbox that is found or created on demand, never one per
  * conversation, and runs at most one turn in it at a time. The settings here are deliberately small:
- * one vCPU, outbound network denied unless the caller lists exact domains, a bounded session length.
+ * one vCPU, outbound network limited to a short list of named domains, a bounded session length.
  *
  * This module is written against a small `SandboxClient` interface. It never imports the Vercel SDK, never
  * reads credentials, and nothing in the application calls it yet. The real client is in `vercel-client.ts`.
@@ -37,6 +37,20 @@ export class SandboxBusyError extends Error {
 
 export type AgentNetworkPolicy = "deny-all" | { allow: string[] };
 
+/**
+ * Named groups of exact domains the sandbox may reach. Owner decision (2026-11-05): outbound access is allowed
+ * for package installs and public git clones. No credentials are placed in the sandbox, so these domains give
+ * read access to public content; they do not give a way to publish or push.
+ */
+export const EGRESS_PRESETS = {
+  packages: ["registry.npmjs.org", "registry.yarnpkg.com", "pypi.org", "files.pythonhosted.org"],
+  git: ["github.com", "codeload.github.com", "*.githubusercontent.com"],
+} as const;
+export type EgressPreset = keyof typeof EGRESS_PRESETS;
+
+/** What the agent's sandbox may reach when the caller does not say otherwise. */
+export const DEFAULT_AGENT_EGRESS: readonly EgressPreset[] = ["packages", "git"];
+
 export interface AgentSandboxParams {
   name: string;
   persistent: true;
@@ -55,8 +69,13 @@ export interface AgentSandboxOptions {
   /** Virtual CPUs, 1 or 2. Default 1, to keep the plan's allowance. */
   vcpus?: number;
   /**
-   * Exact domains the sandbox may reach (for example `registry.npmjs.org` or `*.npmjs.org`). Default: none,
-   * so all outbound traffic is denied. There is deliberately no way to allow everything.
+   * Named groups of allowed domains. Default `DEFAULT_AGENT_EGRESS` (package registries and GitHub). Pass an empty
+   * list, with no `egressAllow`, to deny all outbound traffic.
+   */
+  egressPresets?: readonly EgressPreset[];
+  /**
+   * Extra exact domains the sandbox may reach (for example `registry.npmjs.org` or `*.npmjs.org`), added to the
+   * presets. There is deliberately no way to allow everything.
    */
   egressAllow?: readonly string[];
   /** How long a turn may hold the lock before it is treated as abandoned, in ms. */
@@ -66,6 +85,15 @@ export interface AgentSandboxOptions {
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 // A hostname, or a "*." wildcard in front of one. Not "*", not a scheme, port, path or whitespace.
 const DOMAIN_PATTERN = /^(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
+
+function presetDomains(presets: readonly EgressPreset[]): string[] {
+  const domains: string[] = [];
+  for (const preset of presets) {
+    if (!Object.hasOwn(EGRESS_PRESETS, preset)) throw new SandboxPolicyError(`Unknown egress preset: ${String(preset)}`);
+    domains.push(...EGRESS_PRESETS[preset]);
+  }
+  return domains;
+}
 
 function validateEgress(domains: readonly string[]): string[] {
   const unique = new Set<string>();
@@ -90,7 +118,7 @@ export function agentSandboxParams(options: AgentSandboxOptions = {}): AgentSand
   const vcpus = options.vcpus ?? 1;
   if (!Number.isInteger(vcpus) || vcpus < 1 || vcpus > 2) throw new SandboxPolicyError("vcpus must be 1 or 2");
 
-  const egress = options.egressAllow ? validateEgress(options.egressAllow) : [];
+  const egress = validateEgress([...presetDomains(options.egressPresets ?? DEFAULT_AGENT_EGRESS), ...(options.egressAllow ?? [])]);
   const networkPolicy: AgentNetworkPolicy = egress.length > 0 ? { allow: egress } : "deny-all";
 
   return {

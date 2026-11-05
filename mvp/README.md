@@ -61,7 +61,7 @@ The coding-agent workspace packages resolve through their built `dist`, so build
 
 `src/sandbox/operations.ts` builds the swappable `bash`, `read`, `write` and `edit` operations that the Pi coding-agent tools accept, so they act inside a Vercel Sandbox instead of on the machine running the agent loop. The owner chose Vercel Sandbox as the first execution environment (2026-11-05).
 
-It is library code only. It does not create a sandbox, read credentials, open a connection, or expose a route, and nothing in the application calls it yet. Enabling it needs an access-control decision first (`NLTPI-MVP-005`).
+It is library code only. It does not create a sandbox, read credentials, open a connection, or expose a route, and nothing in the application calls it yet. The route that will use it must refuse to run on production deployments (see `NLTPI-MVP-005`).
 
 What it enforces, with tests that use a fake sandbox:
 - every call is reviewed by the harness policy (`reviewToolCall`) first; anything other than `allow: true` is refused;
@@ -70,7 +70,7 @@ What it enforces, with tests that use a fake sandbox:
 - commands always have a timeout (default 2 minutes, at most 10), and output (1 MiB), file reads (10 MiB) and writes (2 MiB) are capped;
 - any sandbox error is an error, never a pass.
 
-The path checks are a guardrail for the file tools, not the security boundary. The sandbox is: it is isolated, and new sandboxes should be created with `networkPolicy: "deny-all"` (`DEFAULT_SANDBOX_NETWORK_POLICY`). `bash` inside the sandbox can do anything the sandbox allows, which is why egress and secrets must be handled at the sandbox level.
+The path checks are a guardrail for the file tools, not the security boundary. The sandbox is: it is isolated, and new sandboxes get a limited outbound policy (see Sandbox lifecycle); `DEFAULT_SANDBOX_NETWORK_POLICY` remains `deny-all` for callers that build their own. `bash` inside the sandbox can do anything the sandbox allows, which is why egress and secrets must be handled at the sandbox level.
 
 `@vercel/sandbox` is pinned to 3.6.1. Newer releases (3.7.0 and later) pull in a transitive `zod@4.1.11` through `@vercel/cli-config` that `npm audit` flags as high severity (memory exhaustion on oversized collections), so they are not used until that is fixed upstream.
 
@@ -78,7 +78,7 @@ The path checks are a guardrail for the file tools, not the security boundary. T
 
 `src/sandbox/lifecycle.ts` decides how the agent's one sandbox is found, created and shared. The owner's Vercel plan allows one sandbox (and the Hobby plan caps a session at 45 minutes), so the agent uses exactly one fixed-name, persistent sandbox (`nlt-agent`), found or created on demand with `Sandbox.getOrCreate`, never one per conversation.
 
-- **Settings are a small envelope:** one vCPU by default (1 or 2 allowed), a session length from 1 to 40 minutes (default 30), a one-day-snapshot keep of the last snapshot only, and outbound traffic denied. There is no way to allow all traffic; the only alternative is a list of exact domains (a bare `*`, a scheme, a port or a path is refused). Hobby does not support transform or forwarding rules, which are not used.
+- **Settings are a small envelope:** one vCPU by default (1 or 2 allowed), a session length from 1 to 40 minutes (default 30), and only the last snapshot kept. Outbound traffic is limited to named domains: by default package registries (npm, yarn, PyPI) and GitHub (clone and raw content), as the owner allowed on 2026-11-05. Pass an empty preset list to deny everything. There is no way to allow all traffic; extra domains must be exact hosts (a bare `*`, a scheme, a port or a path is refused). No credentials are placed in the sandbox, so these domains give read access to public content, not a way to publish or push. Hobby does not support transform or forwarding rules, which are not used.
 - **One turn at a time:** `withAgentSandbox` takes a lock inside the sandbox (an atomic `mkdir`) and releases it afterwards. A second turn gets `SandboxBusyError` and does not touch the first turn's lock. A lock older than 15 minutes is treated as abandoned and taken over. Anything unexpected while locking is a failure, not permission to run.
 - The lock commands are fixed text; no model or user input reaches them. An agent with `bash` inside the sandbox could delete the lock, which would only allow two turns to overlap in the owner's own sandbox.
 - `src/sandbox/vercel-client.ts` is the real client. It is kept separate so the lifecycle logic and its tests never load the SDK, and it is compile-checked against the real SDK types. Calling it creates or resumes a real, billed sandbox, so nothing calls it yet.

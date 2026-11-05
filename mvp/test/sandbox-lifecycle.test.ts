@@ -3,7 +3,9 @@ import { existsSync, mkdirSync, rmSync, utimesSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   AGENT_SANDBOX_NAME,
+  DEFAULT_AGENT_EGRESS,
   DEFAULT_SESSION_MS,
+  EGRESS_PRESETS,
   MAX_SESSION_MS,
   SandboxBusyError,
   agentSandboxParams,
@@ -65,13 +67,13 @@ class FakeClient implements SandboxClient {
 }
 
 describe("agentSandboxParams", () => {
-  it("defaults to one named, persistent, one-vCPU sandbox with outbound traffic denied", () => {
+  it("defaults to one named, persistent, one-vCPU sandbox that can reach only package registries and GitHub", () => {
     expect(agentSandboxParams()).toEqual({
       name: AGENT_SANDBOX_NAME,
       persistent: true,
       timeout: DEFAULT_SESSION_MS,
       resources: { vcpus: 1 },
-      networkPolicy: "deny-all",
+      networkPolicy: { allow: [...EGRESS_PRESETS.packages, ...EGRESS_PRESETS.git] },
       keepLastSnapshots: { count: 1, expiration: 7 * 24 * 60 * 60 * 1000 },
     });
   });
@@ -99,13 +101,33 @@ describe("agentSandboxParams", () => {
     }
   });
 
-  it("turns an exact-domain list into an allowlist, and offers no way to allow everything", () => {
-    expect(agentSandboxParams({ egressAllow: ["Registry.NPMJS.org", "*.npmjs.org", "registry.npmjs.org"] }).networkPolicy).toEqual({
+  it("allows outbound traffic to the default presets only, and denies everything when asked to", () => {
+    expect([...DEFAULT_AGENT_EGRESS]).toEqual(["packages", "git"]);
+    expect(agentSandboxParams({ egressPresets: [] }).networkPolicy).toBe("deny-all");
+    expect(agentSandboxParams({ egressPresets: [], egressAllow: [] }).networkPolicy).toBe("deny-all");
+    expect(agentSandboxParams({ egressPresets: ["git"] }).networkPolicy).toEqual({ allow: [...EGRESS_PRESETS.git] });
+  });
+
+  it("adds extra exact domains to the presets, lowercased and without duplicates", () => {
+    expect(agentSandboxParams({ egressPresets: [], egressAllow: ["Registry.NPMJS.org", "*.npmjs.org", "registry.npmjs.org"] }).networkPolicy).toEqual({
       allow: ["registry.npmjs.org", "*.npmjs.org"],
     });
-    expect(agentSandboxParams({ egressAllow: [] }).networkPolicy).toBe("deny-all");
+    const merged = agentSandboxParams({ egressPresets: ["git"], egressAllow: ["github.com", "example.org"] }).networkPolicy;
+    expect(merged).toEqual({ allow: ["github.com", "codeload.github.com", "*.githubusercontent.com", "example.org"] });
+  });
+
+  it("refuses unknown presets and any domain that would widen access beyond an exact host", () => {
+    expect(() => agentSandboxParams({ egressPresets: ["everything" as never] })).toThrow(SandboxPolicyError);
+    expect(() => agentSandboxParams({ egressPresets: ["__proto__" as never] })).toThrow(SandboxPolicyError);
+    expect(() => agentSandboxParams({ egressPresets: ["constructor" as never] })).toThrow(SandboxPolicyError);
     for (const bad of ["*", "*.*.com", "http://example.com", "example.com/path", "example.com:443", "localhost", "", " example.com", "exa mple.com", "-x.com"]) {
       expect(() => agentSandboxParams({ egressAllow: ["good.example.com", bad] }), bad).toThrow(SandboxPolicyError);
+    }
+  });
+
+  it("every preset domain is itself a valid exact host", () => {
+    for (const domains of Object.values(EGRESS_PRESETS)) {
+      expect(() => agentSandboxParams({ egressPresets: [], egressAllow: [...domains] })).not.toThrow();
     }
   });
 });
@@ -203,6 +225,7 @@ describe("withAgentSandbox", () => {
     await expect(withAgentSandbox(client, async () => 1, { lockStaleMs: Number.NaN })).rejects.toBeInstanceOf(SandboxPolicyError);
     await expect(withAgentSandbox(client, async () => 1, { name: "Bad Name" })).rejects.toBeInstanceOf(SandboxPolicyError);
     await expect(withAgentSandbox(client, async () => 1, { egressAllow: ["*"] })).rejects.toBeInstanceOf(SandboxPolicyError);
+    await expect(withAgentSandbox(client, async () => 1, { egressPresets: ["nope" as never] })).rejects.toBeInstanceOf(SandboxPolicyError);
     expect(client.calls).toEqual([]);
   });
 
