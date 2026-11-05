@@ -61,7 +61,7 @@ The coding-agent workspace packages resolve through their built `dist`, so build
 
 `src/sandbox/operations.ts` builds the swappable `bash`, `read`, `write` and `edit` operations that the Pi coding-agent tools accept, so they act inside a Vercel Sandbox instead of on the machine running the agent loop. The owner chose Vercel Sandbox as the first execution environment (2026-11-05).
 
-It is library code only. It does not create a sandbox, read credentials, open a connection, or expose a route, and nothing in the application calls it yet. The route that will use it must refuse to run on production deployments (see `NLTPI-MVP-005`).
+It is library code only. It does not create a sandbox, read credentials, open a connection, or expose a route, and nothing in the application calls it yet. The route that will use it will be off by default, switched on only by a flag the owner sets in Vercel per environment (see `NLTPI-MVP-005`).
 
 What it enforces, with tests that use a fake sandbox:
 - every call is reviewed by the harness policy (`reviewToolCall`) first; anything other than `allow: true` is refused;
