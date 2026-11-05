@@ -1,5 +1,7 @@
 # NLT-Pi
 
+> **Personal use only.** The current NLT-Pi MVP deployment is intended for the owner's personal use. Repository code remains subject to the licenses and notices documented below.
+
 **NLT-Pi is NeuroLift Technologies' agent runtime and SDK foundation for the NLT Coding Agent (NCA).** It is an NLT-owned project with its own architecture, governance, and development lifecycle. It is not an upstream Pi project or a contribution branch.
 
 NLT-Pi provides the modular TypeScript runtime foundation for a governed coding agent. Its inherited code lineage and third-party notices are documented for licensing provenance; they do not define the project's ownership, governance, roadmap, or contribution workflow.
