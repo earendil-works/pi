@@ -4,7 +4,7 @@ import { streamSimple } from "../src/api/openai-completions.ts";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { findEnvKeys, getEnvApiKey } from "../src/env-api-keys.ts";
 import { getSupportedThinkingLevels } from "../src/models.ts";
-import { builtinModels, getBuiltinModel } from "../src/providers/all.ts";
+import { builtinModels } from "../src/providers/all.ts";
 import type { Context, FetchFunction, Model } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
@@ -230,7 +230,7 @@ describe("LongCat provider", () => {
 			const messages = payload?.messages as Record<string, unknown>[];
 			expect(messages.map((message) => message.role)).toEqual(["system", "user", "assistant", "tool", "user"]);
 			expect(messages[2]).toMatchObject({
-				content: "",
+				content: null,
 				reasoning_content: "Check the weather.",
 				tool_calls: [{ id: "call_weather", function: { name: "weather", arguments: '{"city":"Paris"}' } }],
 			});
@@ -273,62 +273,4 @@ describe("LongCat provider", () => {
 			},
 		]);
 	});
-});
-
-describe("assistant content compatibility", () => {
-	it.each([true, false, undefined])(
-		"uses an empty string only when required (%s)",
-		async (requiresAssistantContentString) => {
-			const base = getBuiltinModel("openai", "gpt-4o");
-			const model: Model<"openai-completions"> = {
-				...base,
-				api: "openai-completions",
-				compat: { requiresAssistantContentString },
-			};
-			const messages: Context = {
-				...context,
-				messages: [
-					...context.messages,
-					{
-						role: "assistant",
-						api: model.api,
-						provider: model.provider,
-						model: model.id,
-						content: [{ type: "toolCall", id: "call_weather", name: "weather", arguments: { city: "Paris" } }],
-						usage: {
-							input: 0,
-							output: 0,
-							cacheRead: 0,
-							cacheWrite: 0,
-							totalTokens: 0,
-							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-						},
-						stopReason: "toolUse",
-						timestamp: 1,
-					},
-					{
-						role: "toolResult",
-						toolCallId: "call_weather",
-						toolName: "weather",
-						content: [{ type: "text", text: "Sunny" }],
-						isError: false,
-						timestamp: 2,
-					},
-				],
-			};
-			let payload: Record<string, unknown> | undefined;
-			const result = await streamSimple(model, normalizeContext(messages), {
-				apiKey: "test-key",
-				fetch: async (input, init) => {
-					payload = (await new Request(input, init).json()) as Record<string, unknown>;
-					return sse([chunk({ content: "ok" }, "stop")]);
-				},
-			}).result();
-			expect(result.stopReason).toBe("stop");
-			const assistant = (payload?.messages as Record<string, unknown>[]).find(
-				(message) => message.role === "assistant",
-			);
-			expect(assistant?.content).toBe(requiresAssistantContentString ? "" : null);
-		},
-	);
 });

@@ -32,7 +32,6 @@ export default defineProvider({
 			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,
 			maxTokensField: "max_tokens",
-			requiresAssistantContentString: true,
 			requiresReasoningContentOnAssistantMessages: true,
 			thinkingFormat: "deepseek",
 			supportsStrictMode: false,
