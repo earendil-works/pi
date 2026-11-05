@@ -74,6 +74,15 @@ The path checks are a guardrail for the file tools, not the security boundary. T
 
 `@vercel/sandbox` is pinned to 3.6.1. Newer releases (3.7.0 and later) pull in a transitive `zod@4.1.11` through `@vercel/cli-config` that `npm audit` flags as high severity (memory exhaustion on oversized collections), so they are not used until that is fixed upstream.
 
+## Sandbox lifecycle
+
+`src/sandbox/lifecycle.ts` decides how the agent's one sandbox is found, created and shared. The owner's Vercel plan allows one sandbox (and the Hobby plan caps a session at 45 minutes), so the agent uses exactly one fixed-name, persistent sandbox (`nlt-agent`), found or created on demand with `Sandbox.getOrCreate`, never one per conversation.
+
+- **Settings are a small envelope:** one vCPU by default (1 or 2 allowed), a session length from 1 to 40 minutes (default 30), a one-day-snapshot keep of the last snapshot only, and outbound traffic denied. There is no way to allow all traffic; the only alternative is a list of exact domains (a bare `*`, a scheme, a port or a path is refused). Hobby does not support transform or forwarding rules, which are not used.
+- **One turn at a time:** `withAgentSandbox` takes a lock inside the sandbox (an atomic `mkdir`) and releases it afterwards. A second turn gets `SandboxBusyError` and does not touch the first turn's lock. A lock older than 15 minutes is treated as abandoned and taken over. Anything unexpected while locking is a failure, not permission to run.
+- The lock commands are fixed text; no model or user input reaches them. An agent with `bash` inside the sandbox could delete the lock, which would only allow two turns to overlap in the owner's own sandbox.
+- `src/sandbox/vercel-client.ts` is the real client. It is kept separate so the lifecycle logic and its tests never load the SDK, and it is compile-checked against the real SDK types. Calling it creates or resumes a real, billed sandbox, so nothing calls it yet.
+
 ## Free-model selection
 
 `src/gateway/free-models.ts` implements the owner's rule that only free models go through the Vercel AI Gateway. It reads the gateway's public model catalog (`https://ai-gateway.vercel.sh/v1/models`, no authentication) at the time of use and treats a model as free only if it is a language model whose input and output prices are listed and exactly zero, every other price field is also zero, and its price is not flagged `varies_by_provider`. Missing, tiered, regional, unrecognised or malformed pricing is not free.
