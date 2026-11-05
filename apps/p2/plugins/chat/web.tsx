@@ -408,18 +408,39 @@ function Composer({
 				{children}
 				<span className="spacer" />
 				{busy && onStop && (
-					<button type="button" className="round stop" aria-label="Stop" onClick={onStop}>
+					<button
+						type="button"
+						className="round stop"
+						aria-label="Stop"
+						onPointerDown={keepComposerFocus}
+						onClick={onStop}
+					>
 						<StopIcon />
 					</button>
 				)}
 				{(!busy || content) && (
-					<button type="submit" className="round send" aria-label="Send" disabled={!content || disabled}>
+					<button
+						type="submit"
+						className="round send"
+						aria-label="Send"
+						disabled={!content || disabled}
+						onPointerDown={keepComposerFocus}
+					>
 						<SendIcon />
 					</button>
 				)}
 			</div>
 		</form>
 	);
+}
+
+/**
+ * Keeps the focus in the composer's textarea when Send or Stop is pressed. Without this the press blurs the textarea, a
+ * phone's keyboard closes, the page shrinks back and the button moves out from under the finger before the click: the
+ * first tap only closed the keyboard. The click still fires; the keyboard stays open for the next message.
+ */
+function keepComposerFocus(event: React.PointerEvent<HTMLButtonElement>): void {
+	event.preventDefault();
 }
 
 /** The composer's settings from the screen in the frame; the frame owns its textarea (`Frame.composer`). */

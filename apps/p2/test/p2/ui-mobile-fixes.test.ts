@@ -433,4 +433,36 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		);
 		hosts.release();
 	});
+
+	it("sends with one tap on Send: the press keeps the composer focused, so a phone's keyboard does not close first", async () => {
+		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+			{ cwd: fixture.workspace, title: "Tap send" },
+			BACKGROUND_CONTEXT,
+		);
+		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const stop = follow(chat.view, () => {});
+		try {
+			await browser.metrics(390, 844);
+			await browser.open(url(`/s/${session.id}`));
+			await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+			await browser.evaluate(`document.querySelector('.composer textarea').focus()`);
+			await browser.call("Input.insertText", { text: "tap send" });
+			await browser.wait(`!document.querySelector('.composer .send').disabled`);
+			const [x, y] = await browser.evaluate<[number, number]>(
+				`(() => { const r = document.querySelector('.composer .send').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`,
+			);
+			// Pressing Send leaves the focus in the textarea (blurring it would close a phone's keyboard and move the button).
+			await browser.call("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+			assert.equal(
+				await browser.evaluate<boolean>(`document.activeElement === document.querySelector('.composer textarea')`),
+				true,
+			);
+			// Releasing it sends: one tap, no second press.
+			await browser.call("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+			await until(chat.view, answered("Echo: tap send"), 30_000);
+		} finally {
+			stop();
+			chat.release();
+		}
+	});
 });
