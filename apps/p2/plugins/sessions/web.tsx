@@ -178,12 +178,20 @@ function Sidebar() {
 	);
 	const renamed = renaming && list?.find((each) => each.id === renaming.session);
 	const branch = renamed?.branches.find((each) => each.conversation === renaming?.conversation);
-	const { setChoice } = useNewSessionState();
+	const { setChoice, setLocation } = useNewSessionState();
 	const onNew = useCallback(() => {
 		setChoice(undefined);
 		navigate({});
 		setTimeout(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(), 50);
 	}, [setChoice]);
+	// A folder's "+": the new session starts in that folder's location.
+	const onNewIn = useCallback(
+		(env: string | null, cwd: string) => {
+			setLocation({ env, cwd });
+			onNew();
+		},
+		[setLocation, onNew],
+	);
 	return (
 		<>
 			<Drawer
@@ -196,6 +204,7 @@ function Sidebar() {
 				onBranch={owner ? onBranch : undefined}
 				onRenameBranch={owner ? onRenameBranch : undefined}
 				onNew={onNew}
+				onNewIn={owner ? onNewIn : undefined}
 				onCollapse={toggleSidebar}
 				onSearch={search ? onSearch : undefined}
 				onRestore={onRestore}

@@ -146,6 +146,16 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 			"Pinned parent",
 			"Recent sibling",
 		]);
+		// A folder's "+" opens a new session in that folder.
+		const label = await browser.evaluate<string>(
+			`document.querySelector('.session-scroll .group h3 .group-label').textContent`,
+		);
+		await browser.click(".session-scroll .group h3 .group-new");
+		await browser.wait(
+			`location.pathname==='/' && document.querySelector('.cwd-pick span')?.textContent===${JSON.stringify(label)}`,
+		);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${pinned.id}`);
+		await browser.wait(`[...document.querySelectorAll('.session-title')].some(e=>e.textContent==='Pinned parent')`);
 		const chat = await holdIn(owner, Chat, { session: pinned.id, conversation: 1 }, "participant");
 		await chat.send({ text: "subagent", requestId: "drawer-child" }, BACKGROUND_CONTEXT);
 		const agents = await holdIn(owner, Subagents, {}, "reader");

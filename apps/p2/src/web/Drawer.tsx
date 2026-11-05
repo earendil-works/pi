@@ -274,6 +274,7 @@ export const Drawer = memo(function Drawer({
 	onBranch,
 	onRenameBranch,
 	onNew,
+	onNewIn,
 	onCollapse,
 	onProviders,
 	onEnvs,
@@ -294,6 +295,8 @@ export const Drawer = memo(function Drawer({
 	/** Asks for a new label of one of a session's `/tree` branches (the owner's). */
 	onRenameBranch?: (id: string, conversationId: number) => void;
 	onNew: () => void;
+	/** Starts a new session in a sidebar folder's location; absent: folders have no "+". */
+	onNewIn?: (env: string | null, cwd: string) => void;
 	onCollapse: () => void;
 	onProviders: () => void;
 	onEnvs: () => void;
@@ -412,45 +415,62 @@ export const Drawer = memo(function Drawer({
 				/>
 			</label>
 			<div className="session-scroll">
-				{ordered.map(([location, list]) => (
-					<section key={location} className="group">
-						<h3 title={list[0] ? `${list[0].env ? `${list[0].env}:` : ""}${list[0].cwd}` : location}>
-							<FolderIcon /> {location}
-						</h3>
-						{list.map((session) => (
-							<SessionRow
-								key={session.id}
-								session={session}
-								archived={archived}
-								conversationId={session.id === activeId ? conversationId : session.main}
-								onOpen={onOpen}
-								onBranch={onBranch}
-								onRenameBranch={onRenameBranch}
-								active={session.id === activeId}
-							>
-								<button
-									type="button"
-									className={`session-main ${session.id === activeId && conversationId === session.main ? "active" : ""}`}
-									onClick={() => (archived ? restore(session.id) : onOpen(session.id))}
+				{ordered.map(([location, list]) => {
+					// A group holds at least one session; its first names the folder's location.
+					const first = list[0];
+					return (
+						<section key={location} className="group">
+							<h3 title={first ? `${first.env ? `${first.env}:` : ""}${first.cwd}` : location}>
+								<FolderIcon />
+								<span className="group-label">{location}</span>
+								{onNewIn && !archived && first && (
+									<button
+										type="button"
+										className="group-new"
+										aria-label={`New session in ${location}`}
+										title={`New session in ${location}`}
+										disabled={!connected}
+										onClick={() => onNewIn(first.env ?? null, first.cwd)}
+									>
+										<PlusIcon size={14} />
+									</button>
+								)}
+							</h3>
+							{list.map((session) => (
+								<SessionRow
+									key={session.id}
+									session={session}
+									archived={archived}
+									conversationId={session.id === activeId ? conversationId : session.main}
+									onOpen={onOpen}
+									onBranch={onBranch}
+									onRenameBranch={onRenameBranch}
+									active={session.id === activeId}
 								>
-									<span className="session-title">
-										{session.pinned && <PinIcon size={12} />}
-										{session.title}
-									</span>
-									<span className="session-meta">
-										{session.worker.error && (
-											<span className="error session-worker-error" title={session.worker.error}>
-												Worker failed
-											</span>
-										)}
-										<SessionDot worker={session.worker} />
-										{archived ? "Tap to restore" : ago(session.updatedAt)}
-									</span>
-								</button>
-							</SessionRow>
-						))}
-					</section>
-				))}
+									<button
+										type="button"
+										className={`session-main ${session.id === activeId && conversationId === session.main ? "active" : ""}`}
+										onClick={() => (archived ? restore(session.id) : onOpen(session.id))}
+									>
+										<span className="session-title">
+											{session.pinned && <PinIcon size={12} />}
+											{session.title}
+										</span>
+										<span className="session-meta">
+											{session.worker.error && (
+												<span className="error session-worker-error" title={session.worker.error}>
+													Worker failed
+												</span>
+											)}
+											<SessionDot worker={session.worker} />
+											{archived ? "Tap to restore" : ago(session.updatedAt)}
+										</span>
+									</button>
+								</SessionRow>
+							))}
+						</section>
+					);
+				})}
 				{results && results.messages.length > 0 && (
 					<section className="group">
 						<h3>Messages</h3>

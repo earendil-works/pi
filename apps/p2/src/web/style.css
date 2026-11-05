@@ -2830,6 +2830,25 @@ button.diff-number:hover {
 	letter-spacing: 0;
 	white-space: nowrap;
 }
+.group-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.group-new {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: var(--control-sm);
+	height: var(--control-sm);
+	margin: calc(-1 * var(--s1)) 0;
+	color: var(--faint);
+}
+.group-new:hover:not(:disabled) {
+	color: var(--text);
+}
 .session-main {
 	min-height: var(--control);
 	padding-top: var(--s1);
