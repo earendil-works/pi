@@ -10,6 +10,7 @@ repository's existing governance, not a second source of policy.
 - `agents/`: governance steward, code reviewer, and implementation agent profiles.
 - `skills/`: the seven NLT governance skills — OTOI, registration, intent, escalation,
   handoff, commit format, incident response.
+- `commands/`: the five governance slash commands, ported from `.claude/commands/`.
 
 ## Skills
 `skills/` is a byte-identical copy of `.claude/skills/`. Kilo auto-discovers
@@ -39,6 +40,29 @@ because a copy drifts and a drifted copy is a false authority claim.
 Engineering authority and architecture boundaries are defined in root `AGENTS.md` and
 `NLT-DEV-OTOI.md`. Agent profiles here are guidance, not an authorization system; actual
 capability enforcement belongs to the applicable ASFDK harness and integration controls.
+
+## Commands (slash commands)
+`commands/` holds the Kilo ports of the five `.claude/commands/`: `/escalate`,
+`/governance-check`, `/handoff`, `/intent-log`, `/register-session`. Kilo calls these
+commands rather than workflows and auto-discovers `.kilo/commands/*.md`, so they need no
+`kilo.jsonc` entry. A legacy `.kilo/workflows/` directory is converted to commands at
+startup; this repository does not use that path.
+
+These are **ports, not copies**, so the parity check that guards `skills/` does not apply:
+
+- `description` carries over unchanged.
+- `argument-hint` has no Kilo equivalent. Kilo passes arguments as `$ARGUMENTS`, so the
+  three commands that took an argument (`/escalate`, `/intent-log`, `/register-session`)
+  interpolate it in the body and ask for it when it is missing.
+- No `agent` is pinned. Pinning one of the read-only profiles would be self-defeating:
+  those commands write governance records, and those profiles cannot write.
+
+No command name collides with a skill name, and none uses Kilo's reserved `goal`.
+
+`.claude/hooks/session-start.sh` is **not** ported, because Kilo has no lifecycle-hook
+mechanism — its customization points are instructions, commands, agents and skills, none
+of which fire on session start. `rules/00-session-start.md` is the substitute: it is loaded
+through `instructions`, so Kilo reads it at the start of every session.
 
 ## Config scheme
 This directory uses Kilo's current `kilo.jsonc` scheme. One config file is read by the VS

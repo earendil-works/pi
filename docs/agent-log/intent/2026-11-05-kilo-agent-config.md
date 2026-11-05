@@ -162,3 +162,41 @@ steps were run directly): biome via `npm run check` with no rewrites, `check:pin
 `npx tsc --noEmit -p .` and `npx vitest --run`, `node scripts/check-lockfile-commit.mjs`,
 the governance validator, the skill-parity script, and a conflict-marker scan.
 `check:browser-smoke` remains failing per issue #23.
+
+---
+
+## Addendum — 2026-11-05T06:00:00+00:00 — command ports
+
+**Scope added at the owner's direction.** A Kilo review note on PR #22 observed that the five
+`.claude/commands/` had no Kilo equivalent and that `.claude/hooks/session-start.sh` was not
+replicated. The owner asked for the commands to be ported.
+
+Ported to `.kilo/commands/`: `/escalate`, `/governance-check`, `/handoff`, `/intent-log`,
+`/register-session`. Kilo calls these commands rather than workflows and auto-discovers
+`.kilo/commands/*.md`, so no `kilo.jsonc` entry is needed. A legacy `.kilo/workflows/`
+directory would be converted to commands at startup; that path is not used here.
+
+**Ports, not copies.** `description` carries over unchanged. `argument-hint` has no Kilo
+equivalent, so the three commands that took an argument interpolate `$ARGUMENTS` in the body
+and ask for it when absent. Because the files are deliberately not byte-identical to their
+`.claude/` originals, `scripts/check-agent-skill-parity.mjs` does not and should not cover
+them; it still guards `skills/` only.
+
+**One self-inflicted error, corrected before commit.** The first draft of `escalate.md`
+pinned `agent: nlt-governance-steward`, then carried a note explaining that the steward
+cannot write files. That is self-defeating — the command exists to write an escalation
+record — so the pin was removed rather than documented around. No command pins an agent.
+
+**Not ported, and not portable.** `.claude/hooks/session-start.sh` has no Kilo counterpart:
+Kilo's customization points are instructions, commands, agents and skills, and none of them
+fire on session start. `rules/00-session-start.md`, loaded through `instructions`, is the
+substitute. This is a recorded limitation, not an outstanding task.
+
+**Checked:** all five frontmatter blocks parse and use only Kilo-supported keys
+(`description`, `agent`, `model`, `variant`, `subtask`); no `argument-hint` survives; no
+command name collides with one of the seven skill names; none uses Kilo's reserved `goal`.
+Full `npm run check` exit 0, governance validator 71/0, skill parity in sync, clean
+conflict-marker scan. The pre-commit hook ran in full.
+
+**Still unverified:** no Kilo client has loaded any of this, commands included. Discovery,
+`$ARGUMENTS` interpolation and permission behaviour are all unexercised.
