@@ -213,12 +213,16 @@ export function withinDeadline<T>(work: Promise<T>, deadlineAt: number | undefin
   if (deadlineAt === undefined) return work;
   const remaining = deadlineAt - Date.now();
   if (remaining <= 0) {
-    work.catch(() => undefined);
+    work.catch((error: unknown) => {
+      console.warn(`withinDeadline: work failed after the deadline (${error instanceof Error ? error.name : "unknown"})`);
+    });
     return Promise.reject(new SandboxTurnTimeoutError());
   }
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
-      work.catch(() => undefined);
+      work.catch((error: unknown) => {
+        console.warn(`withinDeadline: work failed after the deadline (${error instanceof Error ? error.name : "unknown"})`);
+      });
       reject(new SandboxTurnTimeoutError());
     }, remaining);
     work.then(

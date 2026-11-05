@@ -282,6 +282,7 @@ function setPending(value) {
   els.currentTask.textContent = value ? "Governance check" : "Idle";
 }
 
+/** Handles a submitted prompt: validates it, tries the agent route, falls back to the governance check. */
 async function submit(raw) {
   if (pending) return;
   const checked = validatePrompt(raw);

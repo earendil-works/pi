@@ -16,6 +16,7 @@ const LEVEL_TONES = {
   emergency: "alert",
 };
 
+/** Maps a foundation crisis level to a display tone; unknown levels stay neutral. */
 export function levelTone(level) {
   if (typeof level !== "string") return "neutral";
   const key = level.toLowerCase();

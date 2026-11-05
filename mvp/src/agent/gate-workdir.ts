@@ -21,6 +21,7 @@ import { join } from "node:path";
 
 let workDir: string | undefined;
 
+/** Returns the process-wide working directory for the crisis gate, creating it once on first use. */
 export function gateWorkDir(): string {
   if (workDir === undefined) {
     const created = mkdtempSync(join(tmpdir(), "nlt-gate-"));
