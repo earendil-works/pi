@@ -33,6 +33,7 @@ import openrouter from "./openrouter.ts";
 import qwenTokenPlan from "./qwen-token-plan.ts";
 import qwenTokenPlanCn from "./qwen-token-plan-cn.ts";
 import qwenTokenPlanIndividual from "./qwen-token-plan-individual.ts";
+import qwenTokenPlanIndividualCn from "./qwen-token-plan-individual-cn.ts";
 import radius from "./radius.ts";
 import together from "./together.ts";
 import typesafe from "./typesafe.ts";
@@ -77,6 +78,7 @@ export const PROVIDERS: readonly ProviderDefinition[] = [
 	openrouter,
 	qwenTokenPlanCn,
 	qwenTokenPlanIndividual,
+	qwenTokenPlanIndividualCn,
 	qwenTokenPlan,
 	radius,
 	together,

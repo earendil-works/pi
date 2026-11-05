@@ -51,3 +51,4 @@ export type { StagedWrite, Step } from "./store/step.ts";
 /** @internal */
 export type { ChordStore, SeriesCommit, SeriesResult } from "./store/store.ts";
 export * from "./surfaces/index.ts";
+export { CHORD_TELEMETRY_SCHEMA, type ChordSpanName } from "./telemetry.ts";

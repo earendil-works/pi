@@ -1,8 +1,10 @@
 // An object held over a link (§7): what one remote reference is bound to on the consumer, across the links of its path
 // (the parent, or a route address). Its state, the replicas of its last bound variant (kept while its link is down),
-// its hold on the path's current link and calls through it.
+// its hold on the path's current link and calls through it: its hold in a `chord.hold` span until bound, each call in a
+// `chord.call` span, their carriers on the wire (slice 9).
 
-import { BACKGROUND_CONTEXT, type Context } from "../context/index.ts";
+import type { TelemetryCarrier, TelemetryContext, TelemetrySpan } from "@earendil-works/pi-telemetry";
+import { BACKGROUND_CONTEXT, type Context, withTelemetry } from "../context/index.ts";
 import type { Contract, ParamsOf } from "../contracts/index.ts";
 import {
 	currentVariants,
@@ -39,6 +41,7 @@ import {
 	type WireAddress,
 } from "../link/internal.ts";
 import type { DeriveSource } from "../state/internal.ts";
+import { capped, carrierOf, chordSpans, ended, OpenSpan, parentOf, spanFailed, untraced } from "../telemetry.ts";
 import type { ConsumerSide } from "./consumer.ts";
 import type { HoldRequest } from "./hold.ts";
 import type { HostLink } from "./host-link.ts";
@@ -81,6 +84,12 @@ export class RemoteObject implements Target {
 	#hold: { readonly side: ConsumerSide; readonly id: number } | undefined;
 	#binding: Binding | undefined;
 	#lastFailure: ChordError | undefined;
+	/** Its current `chord.hold` span until its hold's `bound` or failure; none when nothing records. */
+	#holding: OpenSpan<"chord.hold"> | undefined;
+	/** The carrier of its first hold's span: a re-hold's span links to it. */
+	#firstHold: TelemetryCarrier | undefined;
+	/** How many times it was held (on the links of its path). */
+	#holds = 0;
 
 	constructor(
 		host: AnyHost,
@@ -90,18 +99,23 @@ export class RemoteObject implements Target {
 		caller: Caller,
 		path: Path,
 		dependent: ChordObject | undefined,
+		holder: TelemetryContext,
 	) {
 		this.#host = host;
 		this.contract = contract;
 		this.label = key === "" ? contract.name : `${contract.name}(${key})`;
 		const { name: type, version, fingerprint } = contract;
-		this.request = {
-			type,
-			version,
-			fingerprint,
-			params: jsonPart(params),
-			address,
-		};
+		// Its first hold carries the carrier of its `chord.hold` span, under its holder's span (`#holdTrace`).
+		if (!untraced(holder)) {
+			this.#holding = new OpenSpan(holder, "chord.hold", {
+				"chord.host": host.spanHost,
+				type,
+				object: capped(this.label),
+				"address.kind": address.kind,
+			});
+			this.#firstHold = carrierOf(this.#holding.span);
+		}
+		this.request = { type, version, fingerprint, params: jsonPart(params), address };
 		this.caller = caller;
 		this.#params = params;
 		this.#path = path;
@@ -110,6 +124,11 @@ export class RemoteObject implements Target {
 
 	get state(): RefState {
 		return this.#state;
+	}
+
+	/** Its `chord.hold` span until its first `bound` or failure (a route's resolve links to it); none when not recorded. */
+	get span(): TelemetrySpan | undefined {
+		return this.#holding?.span;
 	}
 
 	/** An object over a link is no blocker of this host's first pass. */
@@ -150,7 +169,29 @@ export class RemoteObject implements Target {
 	 */
 	attach(link: HostLink): void {
 		const chain = this.#dependent?.activationChain();
-		this.#hold = { side: link.consumer, id: link.consumer.attach(this, chain) };
+		this.#hold = { side: link.consumer, id: link.consumer.attach(this, chain, this.#holdTrace()) };
+	}
+
+	/**
+	 * The carrier of this hold: the first one's span's (a child of its holder's span); a re-hold on a later link (a
+	 * reconnect, days later for a page kept open) is a fresh `chord.hold` root of this host's adapter linked to the first,
+	 * so nothing keeps adding children under a span long ended (review L1).
+	 */
+	#holdTrace(): TelemetryCarrier | undefined {
+		if (this.#holds++ === 0) return this.#firstHold;
+		const adapter = this.#host.telemetry;
+		if (this.#firstHold === undefined || untraced(adapter)) return undefined;
+		// A hold that dropped before it was bound ends here.
+		this.#held("ended");
+		const attributes = {
+			"chord.host": this.#host.spanHost,
+			type: this.contract.name,
+			object: capped(this.label),
+			"address.kind": this.request.address.kind,
+		};
+		this.#holding = new OpenSpan(adapter, "chord.hold", attributes);
+		this.#holding.span.addLink({ context: parentOf(this.#firstHold, adapter) });
+		return carrierOf(this.#holding.span);
 	}
 
 	/**
@@ -159,6 +200,7 @@ export class RemoteObject implements Target {
 	 */
 	unreachable(error: ChordError): void {
 		this.#lastFailure = error;
+		this.#held("failed", error);
 		if (this.#state.kind !== "ended")
 			this.#move({ kind: "failed", cause: { kind: "waiting", error }, retryAt: undefined });
 	}
@@ -180,8 +222,28 @@ export class RemoteObject implements Target {
 		if (data === undefined) {
 			throw invalid("member", `${this.label} (variant ${bound.variant}) has no method "${method}"`);
 		}
+		const index = bound.names.methods.indexOf(method);
 		// Arguments are checked by the provider.
-		return hold.side.call(hold.id, bound.names.methods.indexOf(method), data, args, context);
+		const parent = context.telemetry;
+		if (untraced(parent)) return hold.side.call(hold.id, index, data, args, context);
+		const attributes = {
+			"chord.host": this.#host.spanHost,
+			type: this.contract.name,
+			member: method,
+			object: capped(this.label),
+			"address.kind": this.request.address.kind,
+			...this.#host.principalAttributes(this.caller.principal, context),
+		};
+		return chordSpans(parent)("chord.call", attributes, async (span) => {
+			try {
+				const result = await hold.side.call(hold.id, index, data, args, withTelemetry(span, context));
+				span.setAttributes({ outcome: "ok" });
+				return result;
+			} catch (error) {
+				span.setAttributes({ outcome: ended(span, "call_failed", error, context.abortSignal) });
+				throw error;
+			}
+		});
 	}
 
 	/**
@@ -300,6 +362,7 @@ export class RemoteObject implements Target {
 	/** Fails broken with `error`: no automatic retry. */
 	#fail(error: ChordError): void {
 		this.#lastFailure = error;
+		this.#held("failed", error);
 		this.#move({ kind: "failed", cause: { kind: "broken", error }, retryAt: undefined });
 	}
 
@@ -355,6 +418,7 @@ export class RemoteObject implements Target {
 	/** After a `bound` message's batch: the reference goes live (its parked calls are sent, a parked dependent goes on). */
 	wentLive(): void {
 		this.#lastFailure = undefined;
+		this.#held("bound");
 		this.#move(LIVE);
 	}
 
@@ -367,6 +431,7 @@ export class RemoteObject implements Target {
 		// A plugin's error a provider failed with is this object's failure, as a ChordError.
 		const error = asChordError(errorFromWire(message.cause.error), this.label);
 		this.#lastFailure = error;
+		this.#held("failed", error);
 		const retryAt = message.retryIn === undefined ? undefined : Date.now() + message.retryIn;
 		this.#move({ kind: "failed", cause: { kind: message.cause.kind, error }, retryAt });
 	}
@@ -441,6 +506,7 @@ export class RemoteObject implements Target {
 
 	/** Ends the object: detached from its path, waits rejected, replicas ended; keeps nothing of its reference. */
 	#end(error: ChordError): void {
+		this.#held("ended");
 		const bound = this.#bound;
 		this.#state = { kind: "ended", error };
 		this.#binding = undefined;
@@ -449,6 +515,16 @@ export class RemoteObject implements Target {
 		this.#bound = undefined;
 		this.#path.detach(this);
 		for (const replica of bound?.replicas.values() ?? []) replica.end(error);
+	}
+
+	/** Its first `bound` or failure (or its end before either): its `chord.hold` span ends with `outcome`. */
+	#held(outcome: "bound" | "failed" | "ended", error?: ChordError): void {
+		const holding = this.#holding;
+		if (holding === undefined) return;
+		this.#holding = undefined;
+		if (error !== undefined) spanFailed(holding.span, "hold_failed", error);
+		holding.span.setAttributes({ outcome });
+		holding.end();
 	}
 
 	/**

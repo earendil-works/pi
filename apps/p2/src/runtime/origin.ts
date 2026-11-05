@@ -1,81 +1,78 @@
-// Who started a tool's turn (worker): owner-only and peer-aware tools (locations, ports, dev-tools, subagents)
-// check it.
+// Who started a tool's turn (worker): tools with `origin: "owner"` (`tool-access.ts`) and agents writing into another
+// conversation (subagent tasks and reports, `team`, peer messages, one-shot agents) read it.
 import type { Context } from "@earendil-works/chord/context";
-import type { Cursor, EntryId, ToolExecutionApi } from "@earendil-works/pi-durable";
-import { CONVERSATION_PREFIX, type ConversationOrigin, SUBAGENT_TASK_ENTRY } from "./entries.ts";
-import { messageOf } from "./input.ts";
-
-/** Nested calls followed up to the model-issued call; deeper chains are refused. */
-const MAX_NESTING = 32;
+import {
+	type ConversationId,
+	type EntryId,
+	type EntryRecord,
+	LiveDoc,
+	type ToolExecutionApi,
+	type Tx,
+} from "@earendil-works/pi-durable";
+import type { ConversationOrigin } from "./entries.ts";
+import { messageData } from "./input.ts";
 
 /**
- * Who started the calling tool's turn: the owner, an authenticated peer, or nobody allowed (undefined). Attribution is
- * fixed at the calling assistant entry, not a newer/racing browser input; only the first block counts. A call a
- * running tool made (code mode's `tools.<name>()`) is a nested tool task without an assistant entry: its `parent`
- * chain leads to the model-issued call, whose turn it inherits. Missing or malformed tasks, and cycles, deny.
+ * Who started the calling tool's turn: the owner, or nobody allowed (undefined). The turn is the conversation's current
+ * run, a code mode script's nested calls included: it is the owner's only if every input the run placed so far is
+ * (`entryOrigin`). A guest's message steered into the run takes it away for the rest of the run.
  */
 export async function originOf(api: ToolExecutionApi, context: Context): Promise<ConversationOrigin | undefined> {
-	let taskId = api.taskId;
-	let at: EntryId | undefined;
-	for (let depth = 0; depth <= MAX_NESTING && at === undefined; depth++) {
-		const task = await api.getTask(taskId, context);
-		const input = task?.input;
-		if (task?.kind !== "pi.tool" || !input || typeof input !== "object" || Array.isArray(input)) return undefined;
-		if (input.kind === "nested") {
-			if (typeof input.parent !== "number" || !Number.isSafeInteger(input.parent)) return undefined;
-			taskId = input.parent as typeof taskId;
-		} else if (typeof input.assistant === "number" && Number.isSafeInteger(input.assistant))
-			at = input.assistant as EntryId;
-		else return undefined;
-	}
-	if (at === undefined) return undefined;
-	const turn = at;
+	const inputs = (await api.snapshot(LiveDoc, api.conversationId, context))?.run?.inputs ?? [];
+	if (inputs.length === 0) return undefined;
 	return api.commit(async (tx) => {
-		let cursor: Cursor | undefined;
-		for (let scanned = 0; scanned < 2000; ) {
-			const page = await tx.scanEntries({ conversationId: api.conversationId, maxEntryId: turn }, 100, cursor);
-			for (const entry of page.items) {
-				scanned++;
-				// The latest input before the calling answer, of any kind (p2.input, chat.mention, a tool's pi.user);
-				// Durable's own entries with user messages (compaction summaries, handoffs) are not inputs.
-				if (entry.kind.startsWith("pi.") && entry.kind !== "pi.user") continue;
-				const message = entry.model?.find((message) => message.role === "user");
-				if (!message) continue;
-				// A main agent's message to its subagent carries the main turn's attribution, written by the worker.
-				if (entry.kind === SUBAGENT_TASK_ENTRY) {
-					const data = entry.data;
-					return data && typeof data === "object" && !Array.isArray(data) && data.origin === "owner"
-						? "owner"
-						: undefined;
-				}
-				// A person's input: its author is in the data the worker wrote.
-				const person = messageOf(entry.data, entry.kind === "pi.user" ? message.content : undefined);
-				if (person) return person.author.kind === "owner" && person.author.id === "owner" ? "owner" : undefined;
-				const header = Array.isArray(message.content) ? message.content[0] : undefined;
-				if (header?.type !== "text") return undefined;
-				try {
-					if (header.text.startsWith(CONVERSATION_PREFIX) && header.text.endsWith("</mobile-conversation>")) {
-						const sender: unknown = JSON.parse(
-							header.text.slice(CONVERSATION_PREFIX.length, -"</mobile-conversation>".length),
-						);
-						return sender &&
-							typeof sender === "object" &&
-							"id" in sender &&
-							typeof sender.id === "string" &&
-							"title" in sender &&
-							typeof sender.title === "string"
-							? "peer"
-							: undefined;
-					}
-				} catch {
-					return undefined;
-				}
-				// Unattributed input (including a subagent report) cannot inherit an earlier owner's grant.
-				return undefined;
-			}
-			if (!page.next) break;
-			cursor = page.next;
+		let placed = 0;
+		for (const id of inputs) {
+			const submission = await tx.submission(id);
+			// A continue places no entry: it adds no input, and only inputs grant.
+			if (submission?.type === "continue") continue;
+			const entry = submission?.entry === undefined ? undefined : await tx.entry(submission.entry);
+			if (entryOrigin(entry) !== "owner") return undefined;
+			placed++;
 		}
-		return undefined;
+		return placed > 0 ? "owner" : undefined;
 	}, context);
+}
+
+/**
+ * The origin an input entry records in its data: a person's input is the owner's when its author is the owner; what an
+ * agent wrote (a subagent's task or report, a `team` or peer message, a one-shot agent's task) says `origin: "owner"`
+ * when the turn that wrote it was the owner's. Anything else, a tool's plain input included, grants nothing.
+ */
+export function entryOrigin(entry: EntryRecord | undefined): ConversationOrigin | undefined {
+	const person = messageData(entry?.data);
+	if (person) return person.author.kind === "owner" && person.author.id === "owner" ? "owner" : undefined;
+	const data = entry?.data;
+	return data && typeof data === "object" && !Array.isArray(data) && data.origin === "owner" ? "owner" : undefined;
+}
+
+/**
+ * The origin of the run that ended with the answer `answer` of `conversationId`, read after it ended (a subagent's
+ * report, when `pi.live.run` is gone): its inputs are the input entries after the previous run's final answer. The
+ * owner's only if all are. Only a final answer (`stop`, `length`) bounds the scan: a retried model error appends an
+ * `error` answer and an overflow compaction a head marker inside a run, and scanning past a failed or aborted run only
+ * adds inputs, so the result can only be stricter. (An `onYield` continuation after a final answer would hide the
+ * inputs before it; p2 installs no such hook.)
+ */
+export async function answerOrigin(
+	tx: Tx,
+	conversationId: ConversationId,
+	answer: EntryId,
+): Promise<ConversationOrigin | undefined> {
+	let found = false;
+	let cursor: Parameters<Tx["scanEntries"]>[2];
+	for (;;) {
+		const page = await tx.scanEntries({ conversationId, maxEntryId: (answer - 1) as EntryId }, 100, cursor);
+		for (const entry of page.items) {
+			const message = entry.model?.[0];
+			if (message?.role === "assistant" && (message.stopReason === "stop" || message.stopReason === "length"))
+				return found ? "owner" : undefined;
+			// Durable's own entries with user messages (compaction summaries, handoffs) are not inputs.
+			if (message?.role !== "user" || (entry.kind.startsWith("pi.") && entry.kind !== "pi.user")) continue;
+			if (entryOrigin(entry) !== "owner") return undefined;
+			found = true;
+		}
+		if (!page.next) return found ? "owner" : undefined;
+		cursor = page.next;
+	}
 }

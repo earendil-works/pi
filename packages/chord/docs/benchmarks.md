@@ -994,3 +994,43 @@ The diff depends on the reuse: with every row decoded anew, `diffRevisions` comp
 previous 100 by content and the watched commit took 885 µs; with unchanged rows the same objects it compares them by
 identity. "There may be dragons": at 100 rows a table written more than a few thousand times a second spends most of
 its time in the query.
+
+## Slice 9: telemetry (2026-11-04)
+
+`test/bench/telemetry.ts`, Node 24.4.1, CPU 10, medians of nine bursts after a warm-up, three runs each; heap
+allocated per operation includes what the collections during a burst freed. "Before" is the same script (`--noop`,
+its imports pointed at a checkout of the commit before slice 9) run alternately with this one.
+
+A call over a memory link (a client host holding a remote counter on a server host; `bump` returns at once, `add`
+commits one document change):
+
+| Call | Before slice 9 | NOOP adapter | In-memory adapter on both hosts |
+| --- | --- | --- | --- |
+| over a link | 10.46-10.64 µs, 13,083 B | 10.24-10.30 µs, 12,766 B | 31.3 µs, 28,886 B |
+| that commits | 32.91-34.06 µs, 28,898 B | 31.44-31.61 µs, 28,598 B | 64.6 µs, 53,902 B |
+
+With the NOOP adapter the span code is within noise (the target): every span site is one identity check of its parent
+against the NOOP context's span starter, and nothing else runs (no span, no attribute object, no carrier). A call
+allocates 317 B less than before slice 9 (300 B less for one that commits), from the review's three code shapes (fix
+round): the call message takes its optional `trace` as a plain key (a key holding `undefined`, which both codecs and the
+schema treat as absent) instead of a conditional spread, `ChordObject.call`'s optional `parent` has no default
+expression (an async function with a non-simple parameter list allocated 48 B more), and `ProviderSide.#run` is a
+`.then` chain instead of an `async` function (its frame, about 85 B, held the extra argument). The first build's 206 B
+more per call were these shapes, not the `trace` field. Recording costs what the adapter does: the in-memory one keeps
+every span and measurement (each call records `chord.call`, `chord.method`, the commit's event, the host metrics,
+`chord.link.bytes` per message and, since the fix round, the links' cost counters on the host's adapter), about 21 µs
+and 16 KB per call here.
+
+Container width (R24, design §12): one item of a flat array changed per commit (a new text each time), alone and
+under a watched `mapShared` derive of the array (one mapper run per change: only the changed item is mapped again;
+the derive still visits every element once by identity and `diffRevisions` compares the arrays):
+
+| Width | One item changed | Under a watched `mapShared` derive |
+| --- | --- | --- |
+| 1,000 | 43.7-45.8 µs, 27.8 KB | 89.0-97.5 µs, 40.8 KB |
+| 10,000 | 84.5-88.7 µs, 131.7 KB | 299.8-310.0 µs, 262.8 KB |
+| 100,000 | 552.5-670.1 µs, 819.7 KB | 3,711-4,197 µs, 1,624.8 KB |
+
+A change costs O(width): the array's slots are copied (about 8 bytes per element) and a derive over it walks them. The
+documented limit: up to about 10,000 elements a list in one document stays below 0.3 ms per change with a derive; past
+that, keyed documents or a bounded window (design §12) keep commits O(change).

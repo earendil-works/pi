@@ -141,7 +141,35 @@ describe("renderTrace", () => {
 		expect(rendered.endsWith(`${"  ".repeat(1999)}1999 (10ms)`)).toBe(true);
 	});
 
+	it("renders lengths of time to the microsecond, as the adapters record them", () => {
+		const root = span("root", {
+			startedMs: 1_793_789_452_816.123,
+			endedMs: 1_793_789_452_816.431,
+			events: [{ name: "half", timeMs: 0.15400000002, attributes: {} }],
+		});
+		expect(renderTrace([root])).toBe("root (0.308ms)\n  · half (+0.154ms)");
+	});
+
 	it("renders an empty input as an empty string", () => {
 		expect(renderTrace([])).toBe("");
+	});
+
+	it("escapes control characters in ids, names, attribute keys and error messages", () => {
+		const hostile = "\u001b]0;PWNED\u0007\u001b[2J";
+		const rendered = renderTrace([
+			span("root", {
+				name: `name${hostile}`,
+				attributes: { [`key${hostile}`]: hostile },
+				events: [{ name: `event${hostile}`, timeMs: 1, attributes: {} }],
+				links: [{ traceId: hostile, spanId: `span\u009b${hostile}` }],
+				status: { status: "error", error: { name: `error${hostile}`, message: `message\u007f${hostile}` } },
+			}),
+		]);
+		for (const line of rendered.split("\n")) expect(line).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+		expect(rendered).toContain("name\\u001b]0;PWNED\\u0007\\u001b[2J");
+		expect(rendered).toContain("→ link trace \\u001b]0;PWNED");
+		expect(rendered).toContain("span\\u009b");
+		expect(rendered).toContain("message\\u007f");
+		expect(rendered).toContain('key\\u001b]0;PWNED\\u0007\\u001b[2J="\\u001b]0;PWNED\\u0007\\u001b[2J"');
 	});
 });

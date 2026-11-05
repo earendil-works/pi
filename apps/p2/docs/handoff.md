@@ -155,9 +155,9 @@ From `AGENTS.md` and this project's history:
 3. **Cleanup leftovers:** two HTTP helpers were not merged because their semantics differ (byte ranges: files
    serves `bytes=-` whole, workspace answers 416; body readers: sharing answers 400 past the limit, devices 413);
    decide one behavior each.
-4. **MCP:** `plugins/mcp` (WP6 and WP7 of `docs/mcp-durable.md`: owner `mcp.json`, host stdio and HTTP, code mode
-   tools (`tool_search` without code mode), servers on environments, project `.pi/mcp.json`); OAuth (WP8) and code mode namespaces (WP9)
-   are open.
+4. **MCP:** `plugins/mcp` (WP6-8 of `docs/mcp-durable.md`: owner `mcp.json`, host stdio and HTTP, code mode
+   tools (`tool_search` without code mode), servers on environments, project `.pi/mcp.json`, OAuth sign-in); code mode
+   namespaces (WP9) are open, and whether Radius sends its cookie on a sign-in's redirect back is unverified.
 5. **npm:** deprecate `@earendil-works/pi-client`, `pi-protocol` and `pi-server` (1.1.0), which no longer exist.
 6. `docs/p2-notes.md` TODO: the TypeScript 5.9.3 pin (Termux), an isolating plugin loader, sandboxing third-party
    facets.
@@ -174,5 +174,6 @@ From `AGENTS.md` and this project's history:
 | `docs/p2-notes.md` | decisions, configuration, plugin-by-plugin notes |
 | `docs/p2-tui-port.md` | TUI design, as-built notes, open phases |
 | `docs/workflows.md` | code mode workflows with one-shot agents |
+| `docs/tree.md` | `/tree`: branches of the main conversation as Durable forks |
 | `docs/remote-envs.md` | SSH environments |
 | `packages/chord/docs/` | Chord v2's design, slices and guides; `tutorial/` for writing plugins |

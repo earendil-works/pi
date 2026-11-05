@@ -171,8 +171,9 @@ const extension = createPortsExtension(
 contribute(host, "p2.port-tools", (self) => self.register(Extensions, { [extension.name]: extension }));
 ```
 
-Who: tools run for whoever's input started the turn. Durable knows no principal; tools that need one derive it from
-the calling assistant entry with `originOf` (ports, dev-tools). Reload: a running phase keeps its snapshot; tool code
+Who: tools run for whoever's input started the turn. Durable knows no principal; a tool declares what it needs
+(`P2Tool`: `origin: "owner"`, `scope: "main"`) and the worker's registry checks it before each call (`guardTool`,
+`originOf` over the run's inputs; see p2-notes **Tool requirements**). Reload: a running phase keeps its snapshot; tool code
 that must survive reload reads live resources through getters (`plugins/codemode/worker.ts:37-43`).
 
 ### 3.2 Worker registries and locals
@@ -314,7 +315,8 @@ Prompt registers templates and skills (`plugins/prompt/tui.ts:87`).
 | Registry | Key → value | Order | Users |
 | --- | --- | --- | --- |
 | `TuiToolRenderers` | tool name → pi `ToolRenderers` (`renderCall`, `renderResult`, `renderShell`; `src/tui/tools/types.ts:15-62`) | overrides built-ins | artifacts, ports, send-file, subagents |
-| `TuiToolRendererResolvers` | `<order>:<plugin>` → `(toolName, next) => renderers` | key order, then the registry, then built-ins (`src/tui/tools/index.ts:20-28`) | none yet |
+| `TuiToolRendererResolvers` | `<order>:<plugin>` → `(toolName, next) => renderers` | key order, then the registry, then built-ins (`src/tui/tools/index.ts:20-28`) | quiet-tools (`10:`: one line per call, full content when expanded or failed) |
+| `TuiSettingFields` | `<plugin>.<name>` → `/settings` row (label, values, fallback), stored at `settings.plugins.<plugin>.<name>` of the visitor's prefs; read with `pluginSetting`; resolvers get the settings, a change redraws every card (`src/runtime/tui-preferences.ts`) | after the built-in rows, key order | quiet-tools |
 | `TuiEntryRenderers` | entry kind → `(entry, ctx) => Component \| undefined` (replaces the display; `undefined` hides) | — | core `p2.shell` (`src/tui/core-commands.ts:290`) |
 | `TuiMarkdownTransformers` | `<order>:<plugin>` → pi `MarkdownTransformer` | key order | core `00:mermaid` |
 | `TranscriptEntries` | shared with web (4.3) | — | chat-mode |

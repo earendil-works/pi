@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- `telemetryNow()`, the span clock: wall-clock milliseconds at microsecond resolution from `performance.now()` anchored to `Date.now()`, anchored anew when the two part by more than 10 ms. The in-memory adapter stamps span starts with it (span times rounded to the microsecond), and `renderTrace` prints lengths of time to the microsecond.
+
+### Fixed
+
+- `renderTrace` escapes control characters (C0, C1, DEL) as `\uXXXX` in span and event names, trace and span ids of links, attribute keys and error names and messages, so ids taken from another process's carrier never reach a terminal or viewer raw.
+
 ## [1.5.0] - 2026-11-02
 
 ### Fixed

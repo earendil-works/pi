@@ -1,5 +1,6 @@
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
-import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
+import { BACKGROUND_CONTEXT as context, withCancel, withTelemetry } from "../../src/context/index.ts";
 import { int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { PluginError } from "../../src/data/index.ts";
 import { defineState } from "../../src/documents/index.ts";
@@ -846,5 +847,69 @@ forEachCodec(() => {
 			await expectCollected(...closed);
 			expect(notes.state.value).toEqual({ kind: "live" });
 		});
+	});
+});
+
+describe("consumer spans (slice 9)", () => {
+	it("holds in a `chord.hold` span until bound, its carrier on the hold; a call in a `chord.call` span, its carrier on the call", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { client, peer } = await rawProvider({ telemetry });
+		await telemetry.startSpan({ name: "view" }, async (span) => {
+			const traced = withTelemetry(span, context);
+			const getting = client.get(Notes, { session: "S1" }, traced);
+			const held = await peer.next("hold");
+			bindHold(peer, held.hold);
+			const notes = await getting;
+			const calling = (notes as RefIn<typeof Notes, "editor">).add({ text: "a" }, traced);
+			const call = await peer.next("call");
+			peer.send({ kind: "error", call: call.call, error: wireError(new PluginError("quota", "full")) });
+			await rejection(calling);
+			const spans = telemetry.getSpans();
+			const hold = spans.find(({ name }) => name === "chord.hold")!;
+			const chordCall = spans.find(({ name }) => name === "chord.call")!;
+			expect(held.trace).toEqual(hold.context);
+			expect(call.trace).toEqual(chordCall.context);
+			expect(hold.attributes).toEqual({
+				"chord.host": "client",
+				type: "app.notes",
+				object: "app.notes(S1)",
+				"address.kind": "server",
+				outcome: "bound",
+			});
+			expect(chordCall.attributes).toMatchObject({ member: "add", outcome: "error" });
+			expect(chordCall.status).toEqual({ status: "error", error: { name: "call_failed", message: "full" } });
+		});
+	});
+
+	it("keeps a call its caller cancelled ok, outcome `aborted` (a thrown cancel is no error)", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { client, peer } = await rawProvider({ telemetry });
+		const getting = client.get(Notes, { session: "S1" }, context);
+		bindHold(peer, (await peer.next("hold")).hold);
+		const notes = (await getting) as RefIn<typeof Notes, "editor">;
+		const { context: cancellable, cancel } = withCancel(context);
+		await telemetry.startSpan({ name: "view" }, async (span) => {
+			const calling = notes.add({ text: "a" }, withTelemetry(span, cancellable));
+			await peer.next("call");
+			cancel();
+			await rejection(calling);
+		});
+		const call = telemetry.getSpans().find(({ name }) => name === "chord.call")!;
+		expect([call.attributes.outcome, call.status]).toEqual(["aborted", { status: "ok" }]);
+	});
+
+	it("ends a hold's span failed when its first answer is a failure", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { client, peer } = await rawProvider({ telemetry });
+		await telemetry.startSpan({ name: "view" }, async (span) => {
+			client.hold(Notes, { session: "S1" }, withTelemetry(span, context));
+			const { hold } = await peer.next("hold");
+			const error = { kind: "chord", error: { code: "unavailable", message: "not served" } } as const;
+			peer.send({ kind: "failed", hold, cause: { kind: "waiting", error } });
+			await delivered();
+		});
+		const hold = telemetry.getSpans().find(({ name }) => name === "chord.hold")!;
+		expect(hold.attributes.outcome).toBe("failed");
+		expect(hold.status).toEqual({ status: "error", error: { name: "hold_failed", message: "not served" } });
 	});
 });

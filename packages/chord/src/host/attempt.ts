@@ -5,7 +5,8 @@
 // routines stop and hand over to the new attempt's, its jobs to the new attempt's, and it is sealed once its calls
 // settled.
 
-import { awaitWithContext, type Context, withAbortSignal } from "../context/index.ts";
+import type { TelemetryContext, TelemetrySpan } from "@earendil-works/pi-telemetry";
+import { awaitWithContext, type Context, withAbortSignal, withTelemetry } from "../context/index.ts";
 import type { Contract, Implementation, ParamsOf } from "../contracts/index.ts";
 import { contractData, type ShapeOf } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
@@ -33,6 +34,7 @@ import type { ChordStore } from "../store/store.ts";
 import type { TableDefinition } from "../store/table.ts";
 import { type Table, TableHandle } from "../store/table-handle.ts";
 import { prepareTables } from "../store/table-migration.ts";
+import { capped, MAX_MESSAGE, OpenSpan, spanFailed, untraced } from "../telemetry.ts";
 import type { NativeWatchable, Watchable, WatchEnd } from "../watch.ts";
 import { AdaptedMembers } from "./adapted.ts";
 import { CallContext, type Caller, type Ctx, withLinkedAbortSignal } from "./ctx.ts";
@@ -58,7 +60,7 @@ import {
 	type NativeSlot,
 } from "./native.ts";
 import type { ChordObject, Served } from "./object.ts";
-import type { Failed } from "./ref-state.ts";
+import type { Failed, RefState } from "./ref-state.ts";
 import type { Binding, CheckedParams, Reference, RetryWalk } from "./reference.ts";
 import { type RetrySource, retrySource } from "./retry-on.ts";
 import {
@@ -232,6 +234,18 @@ type Activation =
 /** How an activation that did not go live ended. */
 type NotLive = Exclude<Activation, { readonly kind: "live" }>;
 
+/** What an attempt's activation span links to (its object's first trigger, or its last attempt's span) and its number. */
+export type AttemptTrace = { readonly trigger: TelemetryContext; readonly attempt: number };
+
+/**
+ * How an attempt's activation ended, for its span: live, failed (a transient failure's next attempt at `retryAt`), or
+ * ended (abandoned, its object gone).
+ */
+export type Activated =
+	| { readonly kind: "live" }
+	| { readonly kind: "failed"; readonly cause: FailureCause; readonly retryAt: number | undefined }
+	| { readonly kind: "ended" };
+
 /** The error of an object, or a getter, that waited `ms` without the object going live. */
 export function notLive(label: string, ms: number): ChordError {
 	return new ChordError({ code: "unavailable", message: `${label}: did not become live within ${ms} ms` });
@@ -255,8 +269,13 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	readonly #context: Context;
 	/** Aborted when the attempt is abandoned or ends: openers, activation's waits and calls run under its signal. */
 	readonly #abort = new AbortController();
-	/** The object's context under this attempt's signal. */
-	readonly #opening: Context;
+	/** The object's context under this attempt's signal, and its activation span while one is recorded. */
+	#opening: Context;
+	readonly #trace: AttemptTrace;
+	/** Its activation span while it runs (none when the host records nothing); a parked attempt resumes in a new one. */
+	#activation: OpenSpan<"chord.activate"> | undefined;
+	/** When it parked (`performance.now()`), while it is parked: `chord.park.duration` once it leaves. */
+	#parkedAt: number | undefined;
 	/** The seal token its handles and transactions carry (the seal fence). */
 	readonly #token = new SealToken();
 	/** Its routines once they started (most attempts have none). */
@@ -325,11 +344,12 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	/** What a reload did to it, made by the first such step (most attempts never meet one). */
 	#reloaded: Reloaded | undefined;
 
-	constructor(object: ChordObject, context: Context) {
+	constructor(object: ChordObject, context: Context, trace: AttemptTrace) {
 		this.#object = object;
 		this.#served = object.served;
 		this.#context = context;
 		this.#opening = withAbortSignal(this.#abort.signal, context);
+		this.#trace = trace;
 	}
 
 	state<D extends StateDefinition<JsonObject, boolean, boolean>>(definition: D): HandleOf<D> {
@@ -481,8 +501,11 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		const closeTimeout = options.closeTimeout ?? host.timeouts.close;
 		const owner = {
 			object: label,
+			type: this.#object.served.contract.name,
 			position: this.#natives.length + 1,
 			context: this.#context,
+			telemetry: host.telemetry,
+			host: host.spanHost,
 			report: (error: HostError) => host.report(error),
 		};
 		const native = new NativeHandle(open, close, closeTimeout, owner);
@@ -552,6 +575,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	 * while it waits has opened nothing).
 	 */
 	async activate(ending: Promise<void> | undefined): Promise<Activation> {
+		this.#startActivation(this.#trace.trigger);
 		const { ready } = this.#object.host.timeouts;
 		const deadline = new Deadline(ready, () => {
 			this.abandon({ kind: "failed", cause: { kind: "transient", error: notLive(this.#object.label, ready) } });
@@ -571,6 +595,71 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			// Ended before its first dependency check (its factory threw, it was abandoned): nothing parked.
 			this.#settleCheck(undefined);
 		}
+	}
+
+	/** Its current (or last) activation span; `undefined` when the host records nothing. */
+	get activationSpan(): TelemetrySpan | undefined {
+		return this.#activation?.span;
+	}
+
+	/**
+	 * Its activation's outcome, as its object took it: its span ends with it (a failure's error and a transient one's
+	 * backoff an event). An attempt still parked (its span ended `parked`) that fails or ends there records it in a short
+	 * span linked to the parked one, as its resumed steps would run in one (review L4).
+	 */
+	activated(outcome: Activated): void {
+		const current = this.#activation;
+		if (current === undefined) return;
+		if (current.ended) {
+			if (outcome.kind === "live") return;
+			this.#startActivation(current.span);
+		}
+		const activation = this.#activation!;
+		const { span } = activation;
+		if (outcome.kind === "failed") {
+			spanFailed(span, "activation_failed", outcome.cause.error);
+			if (outcome.retryAt !== undefined)
+				span.addEvent("chord.retry", { backoff: Math.max(0, outcome.retryAt - Date.now()) });
+		}
+		span.setAttributes({ outcome: outcome.kind });
+		activation.end();
+	}
+
+	/**
+	 * Starts an activation span on the host's adapter linked to `link` (none when it records nothing); the activation's
+	 * steps (its natives' opens, its references' holds) run under it.
+	 */
+	#startActivation(link: TelemetryContext): void {
+		const { host, served, label } = this.#object;
+		if (untraced(host.telemetry)) return;
+		const attributes = {
+			"chord.host": host.spanHost,
+			type: served.contract.name,
+			object: capped(label),
+			attempt: this.#trace.attempt,
+		};
+		const activation = new OpenSpan(host.telemetry, "chord.activate", attributes);
+		if (!untraced(link)) activation.span.addLink({ context: link });
+		this.#activation = activation;
+		this.#opening = withTelemetry(activation.span, this.#opening);
+	}
+
+	/** It parked showing `shown`: its activation span ends `parked` with the cause as an event. */
+	#parkedOn(shown: RefState): void {
+		this.#parkedAt ??= performance.now();
+		const activation = this.#activation;
+		if (activation === undefined || activation.ended) return;
+		const cause = shown.kind === "failed" ? shown.cause.error.message.slice(0, MAX_MESSAGE) : "loading";
+		activation.span.addEvent("chord.park", { cause });
+		activation.span.setAttributes({ outcome: "parked" });
+		activation.end();
+	}
+
+	/** It leaves its parking (its dependencies live, or abandoned): its park's duration is recorded. */
+	#parkEnded(): void {
+		if (this.#parkedAt === undefined) return;
+		this.#object.host.metrics.histogram("chord.park.duration").record(performance.now() - this.#parkedAt);
+		this.#parkedAt = undefined;
 	}
 
 	/** Abandons the activation with `outcome` (once): its waits stop and the openers' contexts are aborted. */
@@ -628,6 +717,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		this.#routineRun = run;
 		this.#routines.start({
 			label,
+			type: this.#object.served.contract.name,
 			host,
 			caller: this.#caller(),
 			context: withAbortSignal(run.abort.signal, this.#context),
@@ -765,7 +855,14 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	 * call over a link was about 10% slower in the links benchmark), and no `async` (a check's throw is returned as a
 	 * rejection; as an async function a local call allocated about 250 B more).
 	 */
-	call(method: string, args: unknown, context: Context, caller: Caller, version: number): Promise<unknown> {
+	call(
+		method: string,
+		args: unknown,
+		context: Context,
+		caller: Caller,
+		version: number,
+		parent: TelemetryContext,
+	): Promise<unknown> {
 		let checked: ReturnType<typeof checkArgs>;
 		let handler: Method | undefined;
 		try {
@@ -786,15 +883,24 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		// A local object's handlers act as the host, its principal and its incarnation (§4); a remote one's as their
 		// caller. The caller stays the reference's (presence, §19).
 		const acting = served.kind === "remote" ? caller : { principal: host.principal, incarnation: host.incarnation };
-		const ctx = new CallContext(callContext, acting, host);
+		// Its span only when something records (§30: nothing else is made per call).
+		const span = !served.traced || untraced(parent) ? undefined : this.#methodSpan(parent, method, acting, context);
+		const ctx = new CallContext(
+			span === undefined ? callContext : withTelemetry(span.span, callContext),
+			acting,
+			host,
+		);
 		// Admitted to the drain before the handler runs: the handler may end its own object before it returns.
 		const running = Promise.withResolvers<unknown>();
 		host.count("calls", 1);
+		host.metrics.upDownCounter("chord.calls.in_flight").add(1);
 		this.#admit(this.#running, running.promise, () => {
 			host.count("calls", -1);
+			host.metrics.upDownCounter("chord.calls.in_flight").add(-1);
 			linked.release();
 			ctx.settle();
 		});
+		span?.endWhen(running.promise, "method_failed", callContext.abortSignal);
 		// Plugin code, not type-checked: a synchronous throw or a plain value becomes the promise. Constants: the closure
 		// captures them, not the `let`s above.
 		const run = handler;
@@ -805,6 +911,19 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		// The handler's result is the current version's: its mapping back is the provider's (results are not validated).
 		const back = checked.result;
 		return settled.then((result) => back(result as Value));
+	}
+
+	/** The `chord.method` span of a call of `method` acting as `acting`, under `parent`. */
+	#methodSpan(parent: TelemetryContext, method: string, acting: Caller, context: Context): OpenSpan<"chord.method"> {
+		const { host, served, label } = this.#object;
+		return new OpenSpan(parent, "chord.method", {
+			"chord.host": host.spanHost,
+			type: served.contract.name,
+			member: method,
+			object: capped(label),
+			"principal.kind": capped(acting.principal?.kind ?? "none"),
+			...host.principalAttributes(acting.principal, context),
+		});
 	}
 
 	/** The `invalid/member` error of a method outside the variant. */
@@ -1061,23 +1180,36 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 					if (pinned === undefined && !this.#moved) {
 						// Its own steps follow: `loading` until its outcome (a failure shows as the failure, not this).
 						object.unparked(this);
+						this.#unparked();
 						return undefined;
 					}
-					if (pinned !== undefined) object.parked(this, pinned, true);
+					if (pinned !== undefined) {
+						object.parked(this, pinned, true);
+						this.#parkedOn(pinned);
+					}
 				} else {
 					object.parked(this, check.shown, check.firstPass);
 					this.#settleCheck(parkedCause(check));
 					long.blockedBy(check.blocker);
+					this.#parkedOn(check.shown);
 				}
 				if (!(await this.#nextChange())) return this.#abandoned!;
 			}
 		} finally {
+			this.#parkEnded();
 			long.stop();
 			for (const release of waits) release();
 			this.#parked = undefined;
 			object.waitsFor(NONE);
 			deadline.resume();
 		}
+	}
+
+	/** Its dependencies are live after it parked: its own steps run in a new activation span, linked to the parked one. */
+	#unparked(): void {
+		this.#parkEnded();
+		const parked = this.#activation;
+		if (parked?.ended) this.#startActivation(parked.span);
 	}
 
 	/**

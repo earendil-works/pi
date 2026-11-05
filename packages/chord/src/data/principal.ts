@@ -2,6 +2,7 @@
 
 import type { Context } from "../context/index.ts";
 import type { JsonValue } from "../json.ts";
+import { chordMetrics } from "../telemetry.ts";
 
 /** An app's principal: plain JSON with a `kind`. Chord never persists it. */
 export type Principal = { readonly kind: string; readonly [field: string]: JsonValue };
@@ -42,7 +43,7 @@ function customKeyCache(customKey: PrincipalKeyFunction<never>): WeakMap<Princip
 
 /** Canonical JSON: sorted object keys, `-0` written as `0`. Counts one walk. */
 export function canonicalJson(value: JsonValue, context: Context): string {
-	context.telemetry.metrics?.counter("chord.data.walks").add(1);
+	chordMetrics(context.telemetry.metrics).counter("chord.data.walks").add(1);
 	return canonical(value);
 }
 

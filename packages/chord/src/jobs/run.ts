@@ -73,7 +73,11 @@ export class JobRun {
 	/** A persisted run cut off by a crash or a clean stop, to be resumed per its job's `resume` (no new start). */
 	resuming = false;
 	blocked: BlockedReason | undefined;
-	/** The start's trace carrier, when the adapter propagates (stored, slice 9 uses it). */
+	/**
+	 * The start's trace carrier, when the adapter propagates (stored for a persisted run): its run and finish spans are
+	 * children of it, in a new attempt and a new process too (a carrier, not the span: a settled span starts no
+	 * recorded children).
+	 */
 	readonly trace: { readonly [key: string]: string } | undefined;
 	/** What it ended with, once recorded (finishing and blocked). */
 	outcome: AnyOutcome | undefined;

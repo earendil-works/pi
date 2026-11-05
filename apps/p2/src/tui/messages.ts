@@ -27,7 +27,7 @@ export function transcriptComponent(
 			requestRender: () => {},
 			cwd: options.cwd ?? "",
 			markdownTransformers: [],
-			toolRenderers: (name) => resolveToolRenderers(name, new Map(), new Map()),
+			toolRenderers: (name) => resolveToolRenderers(name, new Map(), new Map(), {}),
 			entryRenderers: new Map(),
 		},
 		{ expanded: expandedTools, showThinking },

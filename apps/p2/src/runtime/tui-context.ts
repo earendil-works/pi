@@ -41,6 +41,30 @@ export interface TuiOverlayHandle {
 	readonly closed: boolean;
 }
 
+export interface TuiPanelHandle {
+	readonly id: string;
+	close(): void;
+	readonly closed: boolean;
+}
+
+/** The side panel next to the screen: one at a time, hidden on narrow terminals. */
+export interface TuiPanel {
+	/**
+	 * Shows `content` in the panel under `title`, replacing what it showed (that content is disposed). The editor keeps
+	 * the focus; `p2.panel.focus` moves it into the panel. Closed on navigation to another conversation and on reload.
+	 */
+	open(id: string, content: Component & { dispose?(): void }, title: () => string): TuiPanelHandle;
+	/** Whether the terminal is wide enough to show the panel next to the screen. */
+	readonly fits: boolean;
+	/** The id of the panel's content, undefined when closed. */
+	readonly current: string | undefined;
+	/** Whether the panel has the focus (it keeps scroll keys; Escape gives the focus back). */
+	readonly focused: boolean;
+	/** Moves the focus into the panel or back to the screen. */
+	focus(focused: boolean): void;
+	close(): void;
+}
+
 /** Commands as seen from contexts: run by id, slash text, palette and help. */
 export interface TuiCommandRunner {
 	/** Runs a registered command if its `when` currently holds. Returns false if unknown or not applicable. */
@@ -96,7 +120,8 @@ export interface TuiContext extends RenderContext {
 	/** Guest-local display preferences (validated data from the launcher over server defaults). */
 	readonly settings: TuiSettings;
 	readonly role: TuiRole | undefined;
-	readonly identity: { readonly session: string | undefined; readonly conversation: number };
+	/** The viewed session and conversation, and the session's main conversation (1, or its current `/tree` branch). */
+	readonly identity: { readonly session: string | undefined; readonly conversation: number; readonly main: number };
 	/** Shows a screen; with `conversation`, that conversation of the session (default: the main one on a switch). */
 	navigate(screen: string, session?: string, conversation?: number): void;
 	readonly view: { expandedTools: boolean; showThinking: boolean };
@@ -114,6 +139,7 @@ export interface TuiContext extends RenderContext {
 		component: Component & Partial<Focusable> & { dispose?(): void },
 		options?: OverlayOptions,
 	): TuiOverlayHandle;
+	readonly panel: TuiPanel;
 	exit(): void;
 	reload(): void;
 	/**

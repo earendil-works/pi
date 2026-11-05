@@ -70,6 +70,8 @@ const session = (id: string, env: string | null): Session => ({
 	pinned: false,
 	model: { provider: "faux", modelId: "faux-1" },
 	thinkingLevel: "off",
+	main: 1,
+	branches: [],
 });
 
 /** The fixture server as a stdio entry; every start appends its pid to `log`. */
@@ -582,9 +584,16 @@ test("placement: environments not in envs.json fail; HTTP servers connect with h
 	// One shared docs connection for both sessions, one unshared one per session.
 	assert.equal(status(all, "docs").length, 1);
 	assert.equal([...sessions].filter((session) => session.startsWith("/mine:")).length, 2);
-	assert.equal(host.starts().length, 0);
+	// Only s2's own stdio server runs on this machine; s1's are on environments.
+	await until(s2.servers, isUp("here"));
+	assert.equal(host.starts().length, 1);
 	assert.ok(authorizations.includes("Bearer secret-token"));
 	assert.equal(textOf(await s1.call({ location: remote, server: "docs", tool: "lookup", args: {} }, TEST)), "found");
+	// A call of a server waiting for a sign-in tells the model where the user signs in.
+	await assert.rejects(
+		s1.call({ location: remote, server: "locked", tool: "lookup", args: {} }, TEST),
+		/needs a sign-in: ask the user to sign in from the MCP panel in p2's sidebar \(or at \/mcp\/sign-in\/locked on p2\)/,
+	);
 });
 
 test("a project's mcp.json: its servers run at its location for its session, it turns the owner's on and off there, refusals are reported", async (t) => {

@@ -1,15 +1,18 @@
 // Jobs (§15), in memory: the handle `self.job` returns, one per attempt, over the job's records on its object. It
 // holds the implementation and the invocations: `run` runs outside transactions, `finish` in one with the cleanup,
-// both on the attempt that is live; the attempt's seal cuts its invocations off (slice 6a §1.3).
+// both on the attempt that is live; the attempt's seal cuts its invocations off (slice 6a §1.3). Each phase of a run
+// (its start's intent, its run, its finish) is a `chord.job` span, under the run's stored carrier or its starter's span.
 
-import { type Context, withAbortSignal, withoutAbortSignal } from "../context/index.ts";
+import type { TelemetrySpan } from "@earendil-works/pi-telemetry";
+import { type Context, withAbortSignal, withoutAbortSignal, withTelemetry } from "../context/index.ts";
 import { ChordError, isChordError, PluginError, type Principal } from "../data/index.ts";
 import type { Draft } from "../delta/index.ts";
 import type { CommitPersistence, JsonObject, Tx } from "../documents/index.ts";
 import type { Documents, SealToken, Transaction } from "../documents/internal.ts";
 import { type Ctx, sleep } from "../host/index.ts";
-import { type AnyHost, CallContext, type Caller, nextDelay } from "../host/internal.ts";
+import { type AnyHost, CallContext, type Caller, nextDelay, SpanCtx } from "../host/internal.ts";
 import type { JsonValue } from "../json.ts";
+import { capped, chordSpans, ended, OpenSpan, parentOf, spanFailed, untraced } from "../telemetry.ts";
 import type { Watchable } from "../watch.ts";
 import type { JobDefinition, Outcome } from "./definition.ts";
 import type { JobRecords, Settled } from "./records.ts";
@@ -146,7 +149,26 @@ export class Job implements JobHandle<JsonValue, unknown, JsonValue | undefined>
 
 	async start(args: JsonValue, context: Context, options: StartOptions = {}): Promise<Run<AnyOutcome>> {
 		const { documents, token } = this.#owner;
-		return documents.tx((tx) => this.stage(tx, args, context, options), token, context);
+		const parent = context.telemetry;
+		if (untraced(parent)) return documents.tx((tx) => this.stage(tx, args, context, options), token, context);
+		// The intent: the start's transaction, in its span (the run keeps it: its later phases are its children).
+		const attributes = {
+			"chord.host": this.#owner.host.spanHost,
+			job: this.#definition.name,
+			phase: "intent",
+			object: capped(documents.label),
+		} as const;
+		return chordSpans(parent)("chord.job", attributes, async (span) => {
+			const traced = withTelemetry(span, context);
+			try {
+				const run = await documents.tx((tx) => this.stage(tx, args, traced, options), token, traced);
+				span.setAttributes({ outcome: "ok", "job.id": run.id });
+				return run;
+			} catch (error) {
+				span.setAttributes({ outcome: ended(span, "job_failed", error, context.abortSignal) });
+				throw error;
+			}
+		});
 	}
 
 	outcome(id: string, context: Context): Promise<AnyOutcome> {
@@ -264,12 +286,17 @@ export class Job implements JobHandle<JsonValue, unknown, JsonValue | undefined>
 		this.#owner.admit(reserving);
 	}
 
-	/** Starts `invocation` of `run` on this attempt: its ctx and its settling act for this invocation only. */
+	/**
+	 * Starts `invocation` of `run` on this attempt, in its run phase's span: its ctx and its settling act for this
+	 * invocation only.
+	 */
 	#start(run: JobRun, invocation: Invocation): void {
 		const { context, caller, host } = this.#owner;
 		const signal = invocation.abort.signal;
+		const span = this.#phaseSpan(run, "run");
+		const scope = withAbortSignal(signal, context);
 		const ctx = new JobContext(
-			withAbortSignal(signal, context),
+			span === undefined ? scope : withTelemetry(span.span, scope),
 			caller,
 			host,
 			run.id,
@@ -294,6 +321,24 @@ export class Job implements JobHandle<JsonValue, unknown, JsonValue | undefined>
 			)
 			.finally(() => invocation.ended())
 			.then(work.resolve);
+		span?.endWhen(running, "job_failed", signal);
+	}
+
+	/**
+	 * The span of `run`'s phase `phase`, under its start's carrier (a persisted run resumed in a new attempt or process
+	 * too: the same trace; without one the adapter's root); none when nothing records.
+	 */
+	#phaseSpan(run: JobRun, phase: "run" | "finish"): OpenSpan<"chord.job"> | undefined {
+		const { host, documents } = this.#owner;
+		const parent = parentOf(run.trace, host.telemetry);
+		if (untraced(parent)) return undefined;
+		return new OpenSpan(parent, "chord.job", {
+			"chord.host": host.spanHost,
+			job: this.#definition.name,
+			phase,
+			object: capped(documents.label),
+			"job.id": run.id,
+		});
 	}
 
 	/**
@@ -326,14 +371,35 @@ export class Job implements JobHandle<JsonValue, unknown, JsonValue | undefined>
 		this.#records.settled(run, ended);
 	}
 
+	/**
+	 * `run`'s finish phase in its span: each failed try a `chord.retry` event with its backoff; ends `ok`, `error`
+	 * (blocked) or `aborted` (the attempt's seal).
+	 */
 	async #finish(run: JobRun): Promise<void> {
-		const { documents, token, context, signal } = this.#owner;
+		const span = this.#phaseSpan(run, "finish");
+		const { context } = this.#owner;
+		let outcome: "ok" | "error" | "aborted" = "error";
+		try {
+			outcome = await this.#finishTries(run, span, span === undefined ? context : withTelemetry(span.span, context));
+		} finally {
+			span?.span.setAttributes({ outcome });
+			span?.end();
+		}
+	}
+
+	/** The tries of `run`'s finish under `context`, retried with backoff; how the phase ended. */
+	async #finishTries(
+		run: JobRun,
+		span: OpenSpan<"chord.job"> | undefined,
+		context: Context,
+	): Promise<"ok" | "error" | "aborted"> {
+		const { documents, token, signal } = this.#owner;
 		this.#finishing.add(run);
 		let delay: number | undefined;
 		try {
 			for (;;) {
 				try {
-					return await documents.tx(
+					await documents.tx(
 						async (tx) => {
 							const staging = this.#records.staging(tx);
 							staging.finishing = run;
@@ -343,20 +409,24 @@ export class Job implements JobHandle<JsonValue, unknown, JsonValue | undefined>
 						token,
 						context,
 					);
+					return "ok";
 				} catch (error) {
-					if (this.#state === "sealed") return;
+					if (this.#state === "sealed") return "aborted";
 					this.#records.report({ kind: "job_finish_failed", id: run.id, error });
 					// The count is the run's (stored for a persisted job): failures count across a crash.
 					const finishFailures = run.finishFailures + 1;
 					if (finishFailures >= FINISH_ATTEMPTS) {
-						return await this.#records.record(run, { kind: "block", run, reason: "finish_failed" });
+						if (span !== undefined) spanFailed(span.span, "job_failed", error);
+						await this.#records.record(run, { kind: "block", run, reason: "finish_failed" });
+						return "error";
 					}
 					await this.#records.record(run, { kind: "update", run, fields: { finishFailures } });
 					delay = nextDelay(delay);
+					span?.span.addEvent("chord.retry", { backoff: delay });
 					try {
 						await sleep(delay, withAbortSignal(signal, context));
 					} catch {
-						return;
+						return "aborted";
 					}
 				}
 			}
@@ -456,5 +526,31 @@ export class JobContext extends CallContext {
 		super(context, caller, host);
 		this.jobId = jobId;
 		if (state !== undefined) this.state = state;
+	}
+
+	/** Its child under `span` (`ctx.trace`): a job's ctx still, its id and state kept. */
+	override traced(span: TelemetrySpan): Ctx {
+		return new JobSpanContext(this, span, this.jobId, this.state);
+	}
+}
+
+/** A run's ctx under a child span (`ctx.trace`): its parent's members, its run's id and state. */
+class JobSpanContext extends SpanCtx {
+	readonly jobId: string;
+	declare readonly state: RunState<JsonObject> | undefined;
+
+	constructor(
+		parent: JobContext | JobSpanContext,
+		span: TelemetrySpan,
+		jobId: string,
+		state: RunState<JsonObject> | undefined,
+	) {
+		super(parent, span);
+		this.jobId = jobId;
+		if (state !== undefined) this.state = state;
+	}
+
+	override traced(span: TelemetrySpan): Ctx {
+		return new JobSpanContext(this, span, this.jobId, this.state);
 	}
 }

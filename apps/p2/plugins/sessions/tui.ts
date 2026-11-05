@@ -116,6 +116,7 @@ export class SessionsSurface implements TuiSurface {
 			if (!viewer) return;
 			follow(viewer.sessions, (rows) => {
 				this.rows = rows;
+				this.followMains(rows);
 				this.rebuild();
 			});
 			if (ref.variant === "owner") {
@@ -278,6 +279,25 @@ export class SessionsSurface implements TuiSurface {
 		}
 	}
 
+	/**
+	 * Keeps the runtime's main conversations; a `/tree` switch (here or on another device) moves a TUI viewing the
+	 * previous main conversation to the new one.
+	 */
+	private followMains(rows: readonly Session[]): void {
+		const runtime = this.runtime;
+		for (const row of rows) {
+			const before = runtime.mains.get(row.id);
+			runtime.mains.set(row.id, row.main);
+			if (
+				before !== undefined &&
+				before !== row.main &&
+				runtime.session === row.id &&
+				runtime.conversation === before
+			)
+				runtime.navigate(runtime.screen, row.id, row.main);
+		}
+	}
+
 	private create(location: Location): void {
 		const service = this.service();
 		if (statusOf(service) !== "live" || service.variant !== "owner") return;
@@ -390,7 +410,7 @@ export class SessionsSurface implements TuiSurface {
 	private open(row: Row | undefined): void {
 		if (!row) return;
 		if (row.kind === "new") this.command("new");
-		else if (row.kind === "session") this.runtime.navigate("chat", row.session.id, 1);
+		else if (row.kind === "session") this.runtime.navigate("chat", row.session.id, row.session.main);
 		else if (row.kind === "child") this.runtime.navigate("chat", row.session.id, row.child.conversationId);
 		else if (row.kind === "message") this.runtime.navigate("chat", row.hit.session, row.hit.conversationId);
 	}

@@ -142,6 +142,10 @@ export class Transaction implements Tx {
 	#state: "open" | "committing" | "stepping" | "committed" | "discarded" | "cut" = "open";
 	/** Rejected by `cut` while the commit waits in the store's queue: its caller is told at once (rule 3). */
 	#queued: PromiseWithResolvers<never> | undefined;
+	/** What its commit adopts, once it started (telemetry's `chord.commit` counts it when asked). */
+	#adoptions: readonly Adoption[] = [];
+	/** The table rows its commit's step changed, once it committed through the store. */
+	#rows = 0;
 
 	constructor(
 		documents: Documents,
@@ -164,6 +168,16 @@ export class Transaction implements Tx {
 	stageStore(store: ChordStore): StagedWrite[] {
 		this.#writes ??= { store, staged: [] };
 		return this.#writes.staged;
+	}
+
+	/**
+	 * What its commit adopted: its documents, their ops, its store writes and the table rows they changed (all 0 before
+	 * it committed).
+	 */
+	committed(): { readonly documents: number; readonly ops: number; readonly writes: number; readonly rows: number } {
+		let ops = 0;
+		for (const { prepared } of this.#adoptions) ops += prepared?.ops.length ?? 0;
+		return { documents: this.#adoptions.length, ops, writes: this.#writes?.staged.length ?? 0, rows: this.#rows };
 	}
 
 	/** The object whose transaction this is. */
@@ -358,6 +372,7 @@ export class Transaction implements Tx {
 			}
 		}
 		const writes = this.#writes;
+		this.#adoptions = adoptions;
 		if (writes === undefined) {
 			this.#adopt(adoptions);
 			this.#state = "committed";
@@ -378,7 +393,10 @@ export class Transaction implements Tx {
 				this.#state = "stepping";
 				return true;
 			},
-			adopt: () => this.#adopt(adoptions),
+			adopt: (_seq: number, _ids: readonly number[], rows: number) => {
+				this.#rows = rows;
+				this.#adopt(adoptions);
+			},
 		};
 		this.#queued = Promise.withResolvers<never>();
 		try {

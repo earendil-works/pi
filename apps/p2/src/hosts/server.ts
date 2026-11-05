@@ -1,6 +1,6 @@
 // Server host: HTTP + WebSocket accept, routes `session:` hosts to session workers, loads the server facets.
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -42,7 +42,7 @@ import {
 } from "./bundles.ts";
 import { devControl } from "./dev.ts";
 import { readDevCommand, sendDevCommand, serveDevChannel } from "./dev-channel.ts";
-import { LoadedModules, loadedModuleHashes, loadedPluginFiles } from "./dev-modules.ts";
+import { contentHash, LoadedModules, loadedModuleHashes, loadedPluginFiles } from "./dev-modules.ts";
 import { createP2Plugins, listPlugins, PLUGINS_DIRECTORY, SERVER_PACKAGES, selectPlugins } from "./plugins.ts";
 import {
 	contentSecurityPolicy,
@@ -174,7 +174,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	const address = http.address();
 	const actualPort = typeof address === "object" && address !== null ? address.port : port;
 	const info = { app: APP, dataDir, fake, allowedHosts: [...allowedHosts], port: actualPort };
-	const workers = new SessionWorkers(
+	const workers = await SessionWorkers.create(
 		{
 			host,
 			plugins: chordPlugins,
@@ -201,6 +201,14 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 			},
 		},
 		BACKGROUND_CONTEXT,
+	);
+	// Every session worker runs the worker base Chord bundled just now (not the files on disk): in dev mode its source
+	// files are a restart baseline, compared by content like the server's own modules.
+	devModules?.set(
+		"worker-base",
+		workers.workers.inputs
+			.filter((file) => !file.startsWith(PLUGINS_DIRECTORY))
+			.map((file) => ({ file, hash: contentHash(readFileSync(file)) })),
 	);
 	// Capture before plugin resources open (e.g. provider SDK startup), not only after the logs facet activates.
 	const stopLogs = captureProcessLogs("server");

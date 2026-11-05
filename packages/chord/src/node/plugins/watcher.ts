@@ -49,6 +49,10 @@ export class PluginWatcher extends Source {
 	readonly #options: WatcherOptions;
 	readonly #roots: readonly string[];
 	readonly #baseDirs: readonly string[];
+	/** Base code given file by file (`baseFiles`), by real path. */
+	readonly #baseFiles = new Set<string>();
+	/** The watches of the directories holding those files, each of the directory alone. */
+	readonly #baseWatchers = new Map<string, FSWatcher>();
 	/** The trees it watches: the roots, the base code, and plugin directories linked from outside the roots. */
 	readonly #trees = new Set<string>();
 	/** Its watches, one per directory of its trees. */
@@ -174,10 +178,23 @@ export class PluginWatcher extends Source {
 		this.#changed();
 	}
 
+	/**
+	 * Adds `files` to the base code: a change of one sets `base`. Each one's directory is watched alone (not its tree);
+	 * files under ignored directories are skipped.
+	 */
+	baseFiles(files: readonly string[]): void {
+		for (const file of files) {
+			const path = real(file);
+			if (path.split(sep).some((part) => IGNORED.has(part))) continue;
+			this.#baseFiles.add(path);
+			this.#watchBaseDir(dirname(path));
+		}
+	}
+
 	/** Marks what a change of the file or directory at `path` (absolute) asks for. */
 	mark(path: string): void {
 		if (path.split(sep).some((part) => IGNORED.has(part))) return;
-		if (this.#baseDirs.some((dir) => inside(dir, path))) {
+		if (this.#baseFiles.has(path) || this.#baseDirs.some((dir) => inside(dir, path))) {
 			this.#baseChanged = true;
 		} else {
 			this.#markPlugin(path, this.#generation++);
@@ -187,8 +204,9 @@ export class PluginWatcher extends Source {
 
 	/** Stops watching. */
 	close(): void {
-		for (const watcher of this.#watchers.values()) watcher.close();
+		for (const watcher of [...this.#watchers.values(), ...this.#baseWatchers.values()]) watcher.close();
 		this.#watchers.clear();
+		this.#baseWatchers.clear();
 		this.#trees.clear();
 	}
 
@@ -221,6 +239,22 @@ export class PluginWatcher extends Source {
 	/** Whether `file` (at a plugin's top) is named as a facet file of one of the app's kinds. */
 	#isFacetFile(file: string): boolean {
 		return this.#options.kinds.some((kind) => FACET_EXTENSIONS.some((extension) => file === `${kind}${extension}`));
+	}
+
+	/** Watches directory `dir` alone (once) for base files: a change of one of them marks `base`. */
+	#watchBaseDir(dir: string): void {
+		if (this.#baseWatchers.has(dir) || this.#reported) return;
+		let watcher: FSWatcher;
+		try {
+			watcher = watch(dir, (_event, file) => {
+				if (file !== null && this.#baseFiles.has(join(dir, file))) this.mark(join(dir, file));
+			});
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.#failed(error);
+			return;
+		}
+		watcher.on("error", (error) => this.#failed(error));
+		this.#baseWatchers.set(dir, watcher);
 	}
 
 	/** Watches the tree at `dir` (once): it and every directory under it but ignored ones; a missing one is skipped. */

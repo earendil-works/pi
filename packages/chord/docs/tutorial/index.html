@@ -111,8 +111,8 @@ table{max-width:100%}
 <section class="cover">
   <div class="kicker">A tutorial · Chord v2 and its app kit · 2026-11-03</div>
   <h1>Build It<br>Together</h1>
-  <p class="subtitle">One small app, built a step at a time, from an empty server to two people, a page, a terminal, a theme, three languages and an edit applied while they are connected</p>
-  <div class="cover-stats"><div class="stat"><b>10</b><span>steps, one runnable example</span></div><div class="stat"><b>4</b><span>host kinds one plugin runs on</span></div><div class="stat"><b>1</b><span>worker process per list</span></div><div class="stat"><b>0</b><span>restarts for a new theme, a language or an edit</span></div></div>
+  <p class="subtitle">One small app, built a step at a time, from an empty server to two people, a page, a terminal, a theme, three languages, an edit applied while they are connected, and one click traced across its processes</p>
+  <div class="cover-stats"><div class="stat"><b>11</b><span>steps, one runnable example</span></div><div class="stat"><b>4</b><span>host kinds one plugin runs on</span></div><div class="stat"><b>1</b><span>worker process per list</span></div><div class="stat"><b>0</b><span>restarts for a new theme, a language or an edit</span></div></div>
   <div class="cover-note"><p>The app is <code>packages/chord/test/examples/61-tutorial/</code>, runnable with the line in its <code>main.ts</code>. Every code block
 below is quoted from its files, and every console output from what its steps print:
 <code>test/examples/61-tutorial/tutorial.test.ts</code> fails when a quote or an output drifts. The design is
@@ -132,8 +132,9 @@ chapter is about p2, whose code lives outside this repository.</p>
 <li><a href="#languages">VIII. Languages</a></li>
 <li><a href="#reload">IX. Changing Code</a></li>
 <li><a href="#export">X. Moving a List</a></li>
-<li><a href="#testing">XI. Testing One Plugin</a></li>
-<li><a href="#p2">XII. Writing a p2 Plugin</a></li>
+<li><a href="#telemetry">XI. Seeing What Happened</a></li>
+<li><a href="#testing">XII. Testing One Plugin</a></li>
+<li><a href="#p2">XIII. Writing a p2 Plugin</a></li>
 <li><a href="#traps-and-open-questions">Traps and Open Questions</a></li>
 <li><a href="#the-app-s-files">Appendix A: The App&#39;s Files</a></li>
 <li><a href="#reference">Appendix B: Reference</a></li>
@@ -156,7 +157,7 @@ states the rule behind it. The app is one directory, <code>test/examples/61-tuto
 <pre><code>node --conditions=source --experimental-strip-types test/examples/<span class="tk-n">61</span>-tutorial/main.ts</code></pre>
 <p>With Node 26.5.1 or later the terminal client of chapter V runs too (its sandbox needs that Node); with an older one,
 that step says so and the rest runs.</p>
-<h3 id="nine-things-to-know">Nine things to know</h3>
+<h3 id="ten-things-to-know">Ten things to know</h3>
 <ol class="findings">
 <li><strong>An app is its API, its plugins and a start script.</strong> <code>startServer</code> makes the data directory, the store, the
 server host, HTTP with sign-in, the workers and the plugin roots; <code>startWorker</code> does a worker&#39;s half.</li>
@@ -175,8 +176,11 @@ plugins contribute, one plugin (or the entry) composes.</li>
 server, the workers, the pages and the terminals, in place.</li>
 <li><strong>Text is rendered per viewer.</strong> A plugin&#39;s messages are typed code, a translation is a plugin, each user picks a
 language, and servers store keys, never sentences.</li>
-<li><strong>Five traps:</strong> load before use; a reference acts as whoever made it; await what you start; a watch starts at the
-current value; the plain <code>t</code> has no language of its own.</li>
+<li><strong>One click is one trace.</strong> The server writes the telemetry store (here one SQLite file in the data directory); the
+page and the workers send it their spans; carriers in the calls&#39; headers join the page&#39;s click, the server&#39;s relay
+and the worker&#39;s method into one trace, which <code>TelemetryStore</code> reads back. <code>ctx.trace</code> adds spans of your own.</li>
+<li><strong>Six traps:</strong> load before use; a reference acts as whoever made it; await what you start; a watch starts at the
+   current value; the plain <code>t</code> has no language of its own; a trace starts where a span starts.</li>
 </ol>
 <h3 id="words-used-throughout">Words used throughout</h3>
 <p>A <strong>host</strong> is one participant of the app, with an <strong>address</strong> if others can reach it (the server, <code>List({ id })</code>) or
@@ -188,7 +192,8 @@ are the member sets different principals get. A <strong>factory</strong> declare
 (values computed from others), <strong>natives</strong> (things opened and closed, such as a file or a database cursor). A <strong>reference</strong> is what asking for an object returns. A <strong>facet</strong> is a
 plugin&#39;s code for one host kind; a <strong>registry</strong> is an extension point plugins <strong>contribute</strong> to. A <strong>message</strong> is a
 text with a key, a <strong>catalog</strong> a plugin&#39;s messages in one language, a <strong>locale</strong> a language tag (<code>de</code>, <code>pt-BR</code>). A <strong>rollout</strong> applies
-new plugin code to the hosts in order.</p>
+new plugin code to the hosts in order. A <strong>span</strong> is one timed piece of work a host recorded, a <strong>trace</strong> the spans of
+one request across hosts, joined by the <strong>carriers</strong> calls carry.</p>
 </section>
 
 <section class="chapter" id="server"><header class="opener"><div class="numeral">I</div><h2>One Server</h2><p class="lede">The API, the principals and a start script: the smallest app the kit runs, and who may come in.</p></header>
@@ -295,7 +300,12 @@ facet kinds (which files a plugin may have), and the principals:</p>
 	tui: { platform: <span class="tk-s">"node"</span> },
 } <span class="tk-k">as</span> <span class="tk-k">const</span>;</code></pre>
 <!-- quote: start.ts -->
-<pre><code><span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">startTodo</span>(dataDir: string, root: string, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">App</span>&lt;<span class="tk-t">TodoPrincipal</span>&gt;&gt; {
+<pre><code><span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">startTodo</span>(
+	dataDir: string,
+	root: string,
+	telemetry: <span class="tk-t">TodoTelemetry</span>,
+	context: <span class="tk-t">Context</span>,
+): <span class="tk-t">Promise</span>&lt;<span class="tk-t">App</span>&lt;<span class="tk-t">TodoPrincipal</span>&gt;&gt; {
 	<span class="tk-k">return</span> <span class="tk-f">startServer</span>&lt;<span class="tk-t">TodoPrincipal</span>&gt;(
 		{
 			name: <span class="tk-s">"todo"</span>,
@@ -305,6 +315,10 @@ facet kinds (which files a plugin may have), and the principals:</p>
 			api: API,
 			kinds: KINDS,
 			principal: { server: { kind: <span class="tk-s">"server"</span> }, worker: (address) =&gt; ({ kind: <span class="tk-s">"worker"</span>, list: address.key }) },
+			<span class="tk-c">// The store the server writes: its own spans and metrics, and what the workers and recording pages send.</span>
+			telemetry: telemetry.store,
+			<span class="tk-c">// Who a span was for: a short key and a user's name (each worker's `startWorker` gets the same hook).</span>
+			principalAttributes,
 			workers: [
 				{
 					kind: v1.<span class="tk-t">List</span>,
@@ -315,28 +329,33 @@ facet kinds (which files a plugin may have), and the principals:</p>
 					authorize: (principal) =&gt; principal.kind !== <span class="tk-s">"worker"</span>,
 				},
 			],
-			web: { entry: <span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./src/web/main.ts"</span>, <span class="tk-k">import</span>.meta.url)), page },
+			<span class="tk-c">// The page, and the owner's trace viewer: the same page, which shows the viewer at `/traces`.</span>
+			web: { entry: <span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./src/web/main.ts"</span>, <span class="tk-k">import</span>.meta.url)), page, paths: [<span class="tk-s">"/"</span>, <span class="tk-s">"/traces"</span>] },
 			tui: { entry: <span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./src/tui/main.ts"</span>, <span class="tk-k">import</span>.meta.url)) },
 			onError: (error) =&gt; console.<span class="tk-f">error</span>(<span class="tk-s">"todo:"</span>, error.kind, error.error),
 		},
 		context,
 	);
 }</code></pre>
-<p><code>workers</code> is chapter II, <code>web</code> chapter IV, <code>tui</code> chapter V. <code>listen</code> asks for a free port on loopback, as the example
-does; a real app picks a port. The worker entry is three lines:</p>
+<p><code>workers</code> is chapter II, <code>web</code> chapter IV (its second path, <code>/traces</code>, chapter XI), <code>tui</code> chapter V, <code>telemetry</code> and
+<code>principalAttributes</code> chapter XI. <code>listen</code> asks for a free port on loopback, as the example does; a real app picks a
+port. The worker entry is a few lines (its <code>principalAttributes</code> is chapter XI&#39;s too):</p>
 <!-- quote: worker.ts -->
 <pre><code><span class="tk-c">// The todo app's worker entry: one process per list. `startWorker` opens the list's store in its directory, connects</span>
-<span class="tk-c">// to the server and loads the plugins' worker facets.</span>
+<span class="tk-c">// to the server and loads the plugins' worker facets. The worker records its spans in memory and sends them to the</span>
+<span class="tk-c">// server, which stores them: its methods called through the server continue the caller's trace.</span>
 
 <span class="tk-k">import</span> { startWorker } <span class="tk-k">from</span> <span class="tk-s">"../../../src/node/app/index.ts"</span>;
+<span class="tk-k">import</span> { principalAttributes } <span class="tk-k">from</span> <span class="tk-s">"./src/principals.ts"</span>;
 <span class="tk-k">import</span> { API, KINDS } <span class="tk-k">from</span> <span class="tk-s">"./start.ts"</span>;
 
-<span class="tk-f">startWorker</span>({ api: API, kinds: KINDS, onError: (error) =&gt; console.<span class="tk-f">error</span>(<span class="tk-s">"list:"</span>, error) });</code></pre>
+<span class="tk-f">startWorker</span>({ api: API, kinds: KINDS, principalAttributes, onError: (error) =&gt; console.<span class="tk-f">error</span>(<span class="tk-s">"list:"</span>, error) });</code></pre>
 <h3 id="running-it">Running it</h3>
 <p>Step 1 of <code>main.ts</code> starts the app, tries the page without signing in, then does what a browser does with the owner
 link:</p>
 <!-- quote: main.ts -->
-<pre><code><span class="tk-k">const</span> app = <span class="tk-k">await</span> <span class="tk-f">startTodo</span>(dataDir, root, context);
+<pre><code><span class="tk-k">const</span> telemetry = <span class="tk-k">await</span> <span class="tk-f">openTelemetry</span>(<span class="tk-f">telemetryFile</span>(dataDir));
+<span class="tk-k">const</span> app = <span class="tk-k">await</span> <span class="tk-f">startTodo</span>(dataDir, root, telemetry, context);
 <span class="tk-k">const</span> link = <span class="tk-k">new</span> <span class="tk-f">URL</span>(app.<span class="tk-f">ownerLink</span>());
 <span class="tk-k">const</span> url = link.origin;
 console.<span class="tk-f">log</span>(<span class="tk-s">"1. owner link:"</span>, <span class="tk-s">`http://127.0.0.1:&lt;port&gt;${link.pathname}#&lt;token&gt;`</span>);
@@ -352,12 +371,14 @@ console.<span class="tk-f">log</span>(<span class="tk-s">"   the owner signs in:
 console.<span class="tk-f">log</span>(<span class="tk-s">"   GET / signed in:"</span>, (<span class="tk-k">await</span> <span class="tk-f">fetch</span>(url, { headers: { cookie } })).status);</code></pre>
 <!-- output: main -->
 <pre class="plain"><code>1. owner link: http://127.0.0.1:&lt;port&gt;/_chord/owner#&lt;token&gt;
-   data directory: logs, owner-token, plugins, server, workers
+   data directory: logs, owner-token, plugins, server, telemetry.sqlite, telemetry.sqlite-shm, telemetry.sqlite-wal, workers
    GET / signed out: 401
    the owner signs in: 200 chord-session=…
    GET / signed in: 200</code></pre>
 <p><code>startServer</code> made the data directory: <code>server/</code> (its store, the cookie secret, its files), <code>workers/</code> (one directory
-per worker), <code>plugins/</code> (the user&#39;s plugin root, beside the app&#39;s built-in one), <code>logs/</code> and <code>owner-token</code>. The page
+per worker), <code>plugins/</code> (the user&#39;s plugin root, beside the app&#39;s built-in one), <code>logs/</code> and <code>owner-token</code>;
+<code>telemetry.sqlite</code> (with SQLite&#39;s <code>-shm</code> and <code>-wal</code> files) is the app&#39;s own, opened before the server starts
+(chapter XI). The page
 answered 401: HTTP <strong>denies by default</strong>, before any plugin code runs, unless a route says <code>public: true</code>.</p>
 <p>The <strong>owner link</strong> (<code>/_chord/owner#&lt;token&gt;</code>) is how the owner gets in: a single-use token, valid ten minutes, made at
 each start. It sits in the URL&#39;s fragment, which browsers never send, so it never reaches a log; the link&#39;s page posts
@@ -437,7 +458,8 @@ it on to its parent or to a route (design §3, &quot;Host kinds and addresses&qu
 					authorize: (principal) =&gt; principal.kind !== <span class="tk-s">"worker"</span>,
 				},
 			],</code></pre>
-<p><code>authorize</code> runs for every request routed to a list before anything starts; the first request for an address starts
+<p><code>authorize</code> runs for every request routed to a
+list before anything starts; the first request for an address starts
 its worker, and a worker idle for five minutes (the default <code>idleMs</code>) stops. <strong>Variants</strong> are the member sets a
 contract offers: the owner&#39;s <code>Todos</code> has <code>clear</code>, a member&#39;s does not. The factory picks one per principal.</p>
 <h3 id="the-worker-facet">The worker facet</h3>
@@ -499,8 +521,11 @@ when <code>fn</code> returns, or not at all if it throws. The live query follows
 else in memory, not even the next todo&#39;s number, which it reads in the transaction:</p>
 <!-- quote: plugins/lists/worker.ts -->
 <pre><code>			add: <span class="tk-k">async</span> ({ text, by }, ctx) =&gt; {
-				<span class="tk-c">// Refused as Chord refuses arguments that fail their schema: the caller gets `invalid/args`.</span>
-				<span class="tk-k">if</span> (text === <span class="tk-s">""</span>) <span class="tk-k">throw</span> <span class="tk-f">invalid</span>(<span class="tk-s">"args"</span>, <span class="tk-s">"a todo needs text"</span>);
+				<span class="tk-c">// A span of its own under the method's: a trace shows the check, and why it refused.</span>
+				<span class="tk-k">await</span> ctx.<span class="tk-f">trace</span>(<span class="tk-s">"todos.validate"</span>, { chars: text.length }, <span class="tk-k">async</span> () =&gt; {
+					<span class="tk-c">// Refused as Chord refuses arguments that fail their schema: the caller gets `invalid/args`.</span>
+					<span class="tk-k">if</span> (text === <span class="tk-s">""</span>) <span class="tk-k">throw</span> <span class="tk-f">invalid</span>(<span class="tk-s">"args"</span>, <span class="tk-s">"a todo needs text"</span>);
+				});
 				<span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; {
 					<span class="tk-c">// The number after the newest todo's: the store's transactions run one after another.</span>
 					<span class="tk-k">const</span> { items: last } = <span class="tk-k">await</span> tx.<span class="tk-f">page</span>(items, NEWEST, <span class="tk-n">1</span>);
@@ -509,7 +534,7 @@ else in memory, not even the next todo&#39;s number, which it reads in the trans
 				<span class="tk-k">return</span> <span class="tk-k">null</span>;</code></pre>
 <p>A todo without text is refused with <code>invalid(&quot;args&quot;, …)</code>, from the API: the error crosses every link as it is, so a
 caller on a page or in a terminal gets <code>{ code: &quot;invalid&quot;, reason: &quot;args&quot; }</code>, as for arguments that fail the
-contract&#39;s schema.</p>
+contract&#39;s schema. The check runs in a span of its own (<code>ctx.trace</code>), which chapter XI shows in a trace.</p>
 <h3 id="the-view-per-principal">The view per principal</h3>
 <p><code>Todos</code> is the remote face of the store, one object per principal. Its factory gets the principal the link stamped:</p>
 <!-- quote: plugins/lists/worker.ts -->
@@ -640,7 +665,7 @@ for them:</p>
 <pre><code><span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">ComponentType</span> } <span class="tk-k">from</span> <span class="tk-s">"react"</span>;
 <span class="tk-k">import</span> { defineRegistry } <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/index.ts"</span>;
 
-<span class="tk-k">export</span> { useHold, useMessages, usePageState, useWatch } <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/react/index.ts"</span>;
+<span class="tk-k">export</span> { useHold, useHost, useMessages, usePageState, useWatch } <span class="tk-k">from</span> <span class="tk-s">"../../../../../../src/react/index.ts"</span>;
 
 <span class="tk-c">/** A panel of the page: its name (a key, never shown) and its React component, which shows its own title. */</span>
 <span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Panel</span> = { <span class="tk-k">readonly</span> name: string; <span class="tk-k">readonly</span> <span class="tk-t">Component</span>: <span class="tk-t">ComponentType</span> };
@@ -655,6 +680,8 @@ for them:</p>
 
 <span class="tk-k">function</span> <span class="tk-t">Page</span>() {
 	<span class="tk-k">const</span> panels = <span class="tk-f">useRegistry</span>(v1web.<span class="tk-t">Panels</span>) ?? [];
+	<span class="tk-c">// The page's one other path (`start.ts` serves the page at `/` and `/traces`).</span>
+	<span class="tk-k">if</span> (location.pathname === <span class="tk-s">"/traces"</span>) <span class="tk-k">return</span> <span class="tk-f">h</span>(<span class="tk-s">"main"</span>, { className: <span class="tk-s">"wide"</span> }, <span class="tk-f">h</span>(<span class="tk-s">"h1"</span>, <span class="tk-k">null</span>, <span class="tk-s">"Todo"</span>), <span class="tk-f">h</span>(<span class="tk-t">TraceViewer</span>));
 	<span class="tk-k">return</span> <span class="tk-f">h</span>(
 		<span class="tk-s">"main"</span>,
 		<span class="tk-k">null</span>,
@@ -667,16 +694,20 @@ for them:</p>
 	connect: () =&gt; <span class="tk-k">new</span> <span class="tk-t">WebSocket</span>(<span class="tk-s">`${location.origin.replace(/^http/, "ws")}/chord`</span>),
 	modules: { <span class="tk-s">"@todo/app/v1"</span>: v1, <span class="tk-s">"@todo/app/v1/web"</span>: v1web, react: <span class="tk-t">React</span>, <span class="tk-s">"react/jsx-runtime"</span>: jsx },
 	core: [{ name: <span class="tk-s">"@todo/web"</span>, facet: core }],
+	<span class="tk-c">// The page records its clicks and the calls under them, and sends them to the server every few seconds.</span>
+	telemetry: <span class="tk-k">true</span>,
 	render: (host) =&gt; <span class="tk-f">createRoot</span>(document.<span class="tk-f">getElementById</span>(<span class="tk-s">"root"</span>)!).<span class="tk-f">render</span>(<span class="tk-f">h</span>(<span class="tk-t">HostProvider</span>, { host }, <span class="tk-f">h</span>(<span class="tk-t">Page</span>))),
 });</code></pre>
-<p><code>startPage</code> makes the page&#39;s host, connects it to <code>/chord</code> (reconnecting after drops), loads the current plugin
-scripts with the entry&#39;s core facets, and keeps them current. <code>HostProvider</code> gives the React tree that host.</p>
+<p>The path <code>/traces</code> is the owner&#39;s trace viewer, and <code>telemetry</code> what it shows (chapter XI). <code>startPage</code> makes the page&#39;s host, connects it to <code>/chord</code>
+(reconnecting after drops), loads the current plugin scripts with the entry&#39;s core facets, and keeps them current.
+<code>HostProvider</code> gives the React tree that host.</p>
 <h3 id="the-web-facet">The web facet</h3>
 <p><code>plugins/lists/web.ts</code> contributes a panel. Its component holds the list&#39;s <code>Todos</code> while it is mounted and re-renders
 when its items change:</p>
 <!-- quote: plugins/lists/web.ts -->
 <pre><code><span class="tk-k">function</span> <span class="tk-t">TodoList</span>() {
 	<span class="tk-k">const</span> { t } = <span class="tk-f">useMessages</span>(messages);
+	<span class="tk-k">const</span> host = <span class="tk-f">useHost</span>();
 	<span class="tk-k">const</span> list = location.hash.<span class="tk-f">slice</span>(<span class="tk-n">1</span>) || <span class="tk-s">"groceries"</span>;
 	<span class="tk-k">const</span> todos = <span class="tk-f">useHold</span>(<span class="tk-t">Todos</span>, { list });
 	<span class="tk-k">const</span> items = <span class="tk-f">useWatch</span>(todos?.items) ?? [];
@@ -685,8 +716,11 @@ when its items change:</p>
 	<span class="tk-k">const</span> [text, setText] = <span class="tk-f">usePageState</span>(<span class="tk-s">`lists.draft.${list}`</span>, <span class="tk-s">""</span>);
 	<span class="tk-k">const</span> add = (event: { <span class="tk-f">preventDefault</span>(): <span class="tk-k">void</span> }) =&gt; {
 		event.<span class="tk-f">preventDefault</span>();
-		<span class="tk-k">if</span> (todos === <span class="tk-k">undefined</span> || text.<span class="tk-f">trim</span>() === <span class="tk-s">""</span>) <span class="tk-k">return</span>;
-		<span class="tk-k">void</span> todos.<span class="tk-f">add</span>(text, context);
+		<span class="tk-c">// An empty todo too: the list's store refuses it, and the click's trace shows where.</span>
+		<span class="tk-k">if</span> (todos === <span class="tk-k">undefined</span>) <span class="tk-k">return</span>;
+		<span class="tk-c">// The click is a trace of its own: a root span of the page, the call to the list's worker under it.</span>
+		<span class="tk-k">const</span> trace = { name: <span class="tk-s">"page.add"</span>, attributes: { chars: text.length } };
+		<span class="tk-k">void</span> host.<span class="tk-f">root</span>((ctx) =&gt; todos.<span class="tk-f">add</span>(text, ctx), context, { trace }).<span class="tk-k">catch</span>(() =&gt; {});
 		<span class="tk-f">setText</span>(<span class="tk-s">""</span>);
 	};
 	<span class="tk-k">return</span> <span class="tk-f">h</span>(
@@ -733,7 +767,8 @@ when its items change:</p>
 <code>messages.ts</code>, and the facet contributes its catalogs to the page&#39;s <code>Translations</code>). <code>useHold</code> holds a reference while
 the component is mounted and releases it on unmount; it is <code>undefined</code> on the first render. <code>useWatch</code> follows a member. <code>usePageState</code> is <code>useState</code> whose value the page keeps under a key instead of the
 component: chapter IX shows why the half-typed todo needs it. Clicks call methods with <code>BACKGROUND_CONTEXT</code>, which never ends, so a click&#39;s call
-is not cancelled when the handler returns. <code>todos?.variant === &quot;owner&quot;</code> narrows the reference: only the owner&#39;s has
+is not cancelled when the handler returns; adding a todo runs in <code>host.root</code> (<code>useHost</code> gives the page&#39;s host), which
+makes the click a trace of its own (chapter XI). <code>todos?.variant === &quot;owner&quot;</code> narrows the reference: only the owner&#39;s has
 <code>clear</code>, and TypeScript knows it. The panel&#39;s look reads the active theme&#39;s CSS variables, with class names prefixed
 by the plugin&#39;s name (a <code>*.module.css</code> file would scope them instead):</p>
 <!-- quote: plugins/lists/lists.css -->
@@ -1251,7 +1286,323 @@ replacing a list is a delete, then an import (decision &quot;App kit naming and 
 an index of the app&#39;s, if it had one, is the app&#39;s.</p>
 </section>
 
-<section class="chapter" id="testing"><header class="opener"><div class="numeral">XI</div><h2>Testing One Plugin</h2><p class="lede">testPlugin builds a plugin as production does and loads it alone on a host of its own.</p></header>
+<section class="chapter" id="telemetry"><header class="opener"><div class="numeral">XI</div><h2>Seeing What Happened</h2><p class="lede">One telemetry store on the server, one trace from a click in the browser to a commit on a worker, a span of your own, whom each span was for, and a small viewer for the owner.</p></header>
+<p class="dropcap">Ada says that adding a todo from her phone feels slow some evenings. Her todo crosses three processes: her page, the
+server&#39;s relay and the list&#39;s worker. A log line per process would say what each one did, but not which lines belong
+to her click, or where the time went. Chord records <strong>telemetry</strong> through pi-telemetry: <strong>spans</strong> (a named, timed
+piece of work with attributes), <strong>events</strong> on spans, and <strong>metrics</strong> (counters and histograms). Each host has one
+<strong>adapter</strong>, given to <code>createHost({ telemetry })</code> and NOOP by default, which decides where they go. A <strong>carrier</strong> in
+each call&#39;s header names the caller&#39;s span, so the spans of one request, recorded by different processes, form one
+<strong>trace</strong> (design §29). Mara wants to see them without reading SQL: a small trace viewer would be nice. This chapter
+stores telemetry in one place, follows a click from the browser to the worker, adds a span, names whom each span was
+for, reads the store from a script, and ends with the viewer.</p>
+<h3 id="one-store-on-the-server">One store, on the server</h3>
+<p>The app keeps its telemetry in one SQLite file in the data directory, through Chord&#39;s store
+(<code>@earendil-works/chord/telemetry-sqlite</code>), and the server is the only process that writes it. The app&#39;s base code opens
+it for the server:</p>
+<!-- quote: src/telemetry.ts -->
+<pre><code><span class="tk-c">/** The telemetry store's file in the data directory `dataDir`. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">telemetryFile</span>(dataDir: string): string {
+	<span class="tk-k">return</span> <span class="tk-f">join</span>(dataDir, <span class="tk-s">"telemetry.sqlite"</span>);
+}
+
+<span class="tk-c">/** Opens the telemetry store at `file` for this process (its directory made, private, when missing). */</span>
+<span class="tk-k">export</span> <span class="tk-k">async</span> <span class="tk-k">function</span> <span class="tk-f">openTelemetry</span>(file: string): <span class="tk-t">Promise</span>&lt;<span class="tk-t">TodoTelemetry</span>&gt; {
+	<span class="tk-c">// Spans carry who called what: the data directory is private before the store's first file appears in it.</span>
+	<span class="tk-k">await</span> <span class="tk-f">mkdir</span>(<span class="tk-f">dirname</span>(file), { recursive: <span class="tk-k">true</span>, mode: 0o700 });
+	<span class="tk-k">const</span> db = <span class="tk-k">await</span> <span class="tk-f">openNodeSqliteDatabase</span>(file);
+	<span class="tk-k">const</span> store = <span class="tk-k">await</span> <span class="tk-f">createSqliteTelemetry</span>(db);
+	<span class="tk-k">return</span> {
+		store,
+		close: <span class="tk-k">async</span> () =&gt; {
+			<span class="tk-k">await</span> store.<span class="tk-f">close</span>();
+			<span class="tk-k">await</span> db.<span class="tk-f">close</span>();
+		},
+	};
+}</code></pre>
+<p><code>createSqliteTelemetry</code> returns a <strong>recorder</strong>: an adapter that keeps each settled span in memory and writes them in
+one batch a second, one row per span with its events and links inline and its start and end in microseconds (a
+monotonic clock anchored to the wall clock, so spans of one process keep their order and spacing); metrics are summed
+per series and 10 seconds; rows older than seven days are deleted in the same batch, and when 10,000 spans wait, new
+ones are dropped and counted. Recording never runs SQL. The same object is the store&#39;s <strong>read interface</strong>,
+<code>TelemetryStore</code> (below).</p>
+<p>Step 1 opened the store before the server (chapter I), and <code>startTodo</code> gives it to <code>startServer</code>:</p>
+<!-- quote: start.ts -->
+<pre><code>			<span class="tk-c">// The store the server writes: its own spans and metrics, and what the workers and recording pages send.</span>
+			telemetry: telemetry.store,</code></pre>
+<p>With a store, the kit does the rest. Every list&#39;s worker records in memory and sends its finished spans and metrics to
+the server once a second, over the link it already has; nothing tells a worker where the file is, and the worker&#39;s
+entry has no telemetry of its own to set up:</p>
+<!-- quote: worker.ts -->
+<pre><code><span class="tk-f">startWorker</span>({ api: API, kinds: KINDS, principalAttributes, onError: (error) =&gt; console.<span class="tk-f">error</span>(<span class="tk-s">"list:"</span>, error) });</code></pre>
+<p>A page records when the app asks it to, in its web entry:</p>
+<!-- quote: src/web/main.ts -->
+<pre><code>	<span class="tk-c">// The page records its clicks and the calls under them, and sends them to the server every few seconds.</span>
+	telemetry: <span class="tk-k">true</span>,</code></pre>
+<p>The page keeps its finished spans in memory and sends them every three seconds, and at once when it is hidden (a tab
+switched away may not come back). Both send to an object the kit serves on the server, <code>WorkerTelemetry</code> and
+<code>PageTelemetry</code>, whose <code>ingest(batch)</code> hands the spans to the store; its calls record no span of their own, or every
+batch would write a span about itself. A worker is the server&#39;s own child: its batches are written as they are,
+marked with its host. A page is anyone&#39;s: sign-in and the link&#39;s limits apply as for any call, and the server checks
+everything (next section).</p>
+<h3 id="one-trace-from-the-browser">One trace from the browser</h3>
+<p>The lists plugin&#39;s panel starts a trace where Ada&#39;s click starts: in its form&#39;s <code>submit</code>, a root span of the page&#39;s host
+with the call under it:</p>
+<!-- quote: plugins/lists/web.ts -->
+<pre><code>		<span class="tk-c">// The click is a trace of its own: a root span of the page, the call to the list's worker under it.</span>
+		<span class="tk-k">const</span> trace = { name: <span class="tk-s">"page.add"</span>, attributes: { chars: text.length } };
+		<span class="tk-k">void</span> host.<span class="tk-f">root</span>((ctx) =&gt; todos.<span class="tk-f">add</span>(text, ctx), context, { trace }).<span class="tk-k">catch</span>(() =&gt; {});</code></pre>
+<p><code>host.root(fn, context, { trace })</code> runs <code>fn</code> in a new root span of the host&#39;s adapter, <code>ctx.telemetry</code> that span, so
+the call of <code>add</code> starts its <code>chord.call</code> under it and puts that span&#39;s carrier in the call&#39;s header (<code>useHost</code> gives a
+component its page&#39;s host). Without a recording adapter it starts nothing. <code>screenshots.ts</code> has the owner signed in
+to the real page in Chromium (the app&#39;s page from chapter IV, by now in Harbor and French), types honey and submits,
+then submits again with nothing typed:</p>
+<!-- quote: screenshots.ts -->
+<pre><code>	<span class="tk-k">await</span> browser.<span class="tk-k">type</span>(<span class="tk-s">"honey"</span>);
+	<span class="tk-k">await</span> <span class="tk-f">shoot</span>(<span class="tk-s">"click-before.png"</span>);
+	<span class="tk-k">const</span> submit = <span class="tk-s">"document.querySelector('.lists-panel form').requestSubmit()"</span>;
+	<span class="tk-k">await</span> browser.<span class="tk-f">evaluate</span>(submit);</code></pre>
+<!-- output: screenshots -->
+<pre class="plain"><code>wrote docs/tutorial/screens/click-before.png
+wrote docs/tutorial/screens/click-after.png</code></pre>
+<figure class="fig wide"><div style="display: flex; gap: 1rem; align-items: flex-start"><img src="screens/click-before.png" alt="The page with honey typed" style="width: 50%; min-width: 0"><img src="screens/click-after.png" alt="The page after the click: honey in the list" style="width: 50%; min-width: 0"></div><figcaption><span class="fignum">Figure 5.</span> The click, on the real page: honey typed (left), then submitted (right). The list shows honey once the worker&#39;s store committed it and its live query reached the page; the page has recorded <code>page.add</code> and the <code>chord.call</code> under it, and sends them to the server within three seconds.</figcaption></figure>
+<p>It then reads the store until the worker&#39;s spans of both clicks are there and prints honey&#39;s trace with pi-telemetry&#39;s
+<code>renderTrace</code> (ids and lengths of time masked, which differ at every run), and opens the owner&#39;s trace viewer (the last
+section builds it) on the same trace:</p>
+<!-- output: screenshots -->
+<pre class="plain"><code>adding honey from the page:
+   page.add chord.host="browser" chars=5 chord.principal="owner"
+     chord.call chord.host="browser" type="todo.todos" member="add" object="todo.todos(groceries)" address.kind="list" outcome="ok" chord.principal="owner"
+       chord.relay chord.host="server" type="todo.todos" member="#0" upstream.kind="list" outcome="ok"
+         chord.method chord.host="list|groceries" type="todo.todos" member="add" object="todo.todos(groceries)" principal.kind="owner" chord.principal="owner" outcome="ok"
+           chord.method chord.host="list|groceries" type="todo.store" member="add" object="todo.store" principal.kind="worker" chord.principal="worker:list|groceries" outcome="ok"
+             · chord.commit documents=0 ops=0 rows=1 duration=&lt;ms&gt;
+             todos.validate chord.host="list|groceries" chars=5</code></pre>
+<figure class="fig wide"><p><img src="screens/traces.png" alt="The trace viewer with the click&#39;s trace"></p>
+<figcaption><span class="fignum">Figure 6.</span> The same trace in the owner&#39;s trace viewer at <code>/traces</code>, in the Harbor theme: the tree <code>renderTrace</code> printed above, each span with the host that recorded it (<code>browser</code>, <code>server</code>, <code>list|groceries</code>) and its length as a bar on the trace&#39;s time line, all written by the server. Starts are stored to the microsecond, so even bars of a fraction of a millisecond line up. On the left the newest traces: the refused click in red, each with whom it was for; the rest the app&#39;s own work (relays, activations, HTTP requests).</figcaption></figure>
+<p>Three processes recorded these six spans, and the server wrote them all. Each span says which host recorded it:
+<code>chord.host</code> is the host&#39;s address key (<code>server</code>, <code>list|groceries</code>), and <code>browser</code> for what a page sent. The page
+recorded <code>page.add</code> and <code>chord.call</code>, the consumer&#39;s call until its reply. The server recorded <code>chord.relay</code>: it
+forwarded the call to the list&#39;s worker without knowing member names (<code>#0</code> is the method&#39;s index). The worker recorded
+the rest: <code>chord.method</code> for the owner&#39;s <code>Todos</code> view, then the view&#39;s call of the store, which is a method span too,
+by <code>worker</code>, because the store acts as its host (chapter II). The commit is an event on the span its transaction ran
+under, and the renderer prints a span&#39;s events before its children. It counts the documents it changed, their ops and
+the table rows its writes changed: the store keeps todos in a table, so one row and no documents. <code>chord.principal</code>
+says whom a span was for (below).</p>
+<figure class="fig anim"><svg viewBox="0 0 720 390" width="100%" role="img" aria-label="One click, one trace: each process starts its spans with its own adapter, the carrier in each call's header names the parent span on the other side, and the page and the worker send their spans to the server, which writes them." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f7m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f7a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f7b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="130.7" y1="52" x2="130.7" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="45.7" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="130.7" y="27" font-size="11" fill="#2a2723" text-anchor="middle">page</text><text x="130.7" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">browser</text><line x1="360" y1="52" x2="360" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="275" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">server</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">the store</text><line x1="589.3" y1="52" x2="589.3" y2="382" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="504.3" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="589.3" y="27" font-size="11" fill="#2a2723" text-anchor="middle">list|groceries</text><text x="589.3" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">worker</text><g class="step edge" style="--i:1"><path d="M130.7 72 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f7m)"/><text x="172.7" y="82" font-size="10" fill="#2a2723" text-anchor="start">page.add, chord.call</text></g><g class="step edge" style="--i:2"><line x1="130.7" y1="118" x2="357" y2="118" stroke="#b4472f" marker-end="url(#f7a)"/><text x="245.3" y="112" font-size="10" fill="#b4472f" text-anchor="middle">call add, carrier of chord.call</text></g><g class="step edge" style="--i:3"><path d="M360 144 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f7m)"/><text x="402" y="154" font-size="10" fill="#2a2723" text-anchor="start">chord.relay</text></g><g class="step edge" style="--i:4"><line x1="360" y1="190" x2="586.3" y2="190" stroke="#b4472f" marker-end="url(#f7a)"/><text x="474.7" y="184" font-size="10" fill="#b4472f" text-anchor="middle">call #0, carrier of chord.relay</text></g><g class="step edge" style="--i:5"><path d="M589.3 216 h-34 v14 h32" fill="none" stroke="#7b7468" marker-end="url(#f7m)"/><text x="547.3" y="226" font-size="10" fill="#2a2723" text-anchor="end">chord.method ×2, todos.validate, commit</text></g><g class="step edge" style="--i:6"><line x1="589.3" y1="262" x2="363" y2="262" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f7m)"/><text x="474.7" y="256" font-size="10" fill="#2a2723" text-anchor="middle">reply</text></g><g class="step edge" style="--i:7"><line x1="360" y1="294" x2="133.7" y2="294" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f7m)"/><text x="245.3" y="288" font-size="10" fill="#2a2723" text-anchor="middle">reply</text></g><g class="step edge" style="--i:8"><line x1="589.3" y1="326" x2="363" y2="326" stroke="#b4472f" marker-end="url(#f7a)"/><text x="474.7" y="320" font-size="10" fill="#b4472f" text-anchor="middle">ingest: its spans (every second)</text></g><g class="step edge" style="--i:9"><line x1="130.7" y1="358" x2="357" y2="358" stroke="#b4472f" marker-end="url(#f7a)"/><text x="245.3" y="352" font-size="10" fill="#b4472f" text-anchor="middle">ingest: its spans (every 3 s, or hidden)</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 7.</span> One click, one trace: each process starts its spans with its own adapter, the carrier in each call&#39;s header names the parent span on the other side, and the page and the worker send their spans to the server, which writes them.</figcaption></figure>
+<p>The carrier is a field of the <code>call</code> and <code>hold</code> headers, at most 8 keys of at most 256 characters each. The receiver
+reads it with its own adapter; an absent or malformed one gives a new root, never an error. With the NOOP adapter
+nothing is injected and no span starts: a span site costs one check (§30).</p>
+<p>What a page sends, the server treats as untrusted. A batch is checked by its schema: at most 100 spans, every field
+bounded (names 128 characters, 32 attributes of at most 256 characters, 16 events, 8 links, a 500-character error
+message), ids printable ASCII and no control characters anywhere; a batch outside it is refused whole. A page&#39;s span
+ids are <code>browser:&lt;its host&#39;s incarnation&gt;:&lt;n&gt;</code>, and the server takes only spans whose id, trace and parent carry the
+calling page&#39;s own prefix: a page can neither write into another sender&#39;s trace nor pose as a server span, and the
+store never replaces a stored span. A page may send 1,200 spans a minute; past that they are dropped and counted in
+<code>ingest</code>&#39;s answer. The server marks each span <code>chord.host: browser</code> and stamps it with the principal of the link it came
+over, dropping the page&#39;s own <code>chord.*</code> attributes: what a page says about itself counts for nothing.</p>
+<p>The trace holds the click and nothing else. Work that serves many requests is its own trace, <strong>linked</strong> to the span that
+first needed it: a worker&#39;s start (<code>chord.resolve</code>), an object&#39;s activation (<code>chord.activate</code>). A link is a reference to
+a span of another trace; the renderer prints it and never follows it.</p>
+<h3 id="trap-a-trace-starts-where-a-span-starts">Trap: a trace starts where a span starts</h3>
+<p>The panel took its reference to <code>Todos</code> before the click (<code>useHold</code>), under <code>BACKGROUND_CONTEXT</code>, and that hold is in no
+trace of the page: <strong>a context without a recording span records nothing.</strong> A host gives such work no span of its own,
+so its calls start no <code>chord.call</code> and send no carrier, and the provider&#39;s <code>chord.method</code> becomes a root of its own trace
+(the server&#39;s relay of the page&#39;s hold is one: <code>chord.relay</code> with <code>member=&quot;hold&quot;</code>). So were the server&#39;s calls in step 2:
+on the worker each is a root <code>chord.method</code>. Start a span where the work begins, a click handler or a job
+(<code>host.root(fn, context, { trace })</code>), and pass its <code>ctx</code> down. The kit&#39;s HTTP component does this for every request: a
+<code>chord.http</code> span (method, route pattern, status), with the route&#39;s <code>ctx</code> under it. Step 11 adds honey from the command
+line, as step 3 did; the request is the trace&#39;s root, the server&#39;s call to the worker under it:</p>
+<!-- output: main -->
+<pre class="plain"><code>11. adding honey from the command line:
+   chord.http chord.host="server" method="POST" route="POST /api/lists/:list" status=200
+     chord.hold chord.host="server" type="todo.todos" object="todo.todos(groceries)" address.kind="list" outcome="bound"
+     chord.call chord.host="server" type="todo.todos" member="add" object="todo.todos(groceries)" address.kind="list" chord.principal="owner" outcome="ok"
+       chord.method chord.host="list|groceries" type="todo.todos" member="add" object="todo.todos(groceries)" principal.kind="owner" chord.principal="owner" outcome="ok"
+         chord.method chord.host="list|groceries" type="todo.store" member="add" object="todo.store" principal.kind="worker" chord.principal="worker:list|groceries" outcome="ok"
+           · chord.commit documents=0 ops=0 rows=1 duration=&lt;ms&gt;
+           todos.validate chord.host="list|groceries" chars=5</code></pre>
+<h3 id="a-span-of-your-own">A span of your own</h3>
+<p>The store&#39;s <code>add</code> checks the text in a span of its own:</p>
+<!-- quote: plugins/lists/worker.ts -->
+<pre><code>				<span class="tk-k">await</span> ctx.<span class="tk-f">trace</span>(<span class="tk-s">"todos.validate"</span>, { chars: text.length }, <span class="tk-k">async</span> () =&gt; {
+					<span class="tk-c">// Refused as Chord refuses arguments that fail their schema: the caller gets `invalid/args`.</span>
+					<span class="tk-k">if</span> (text === <span class="tk-s">""</span>) <span class="tk-k">throw</span> <span class="tk-f">invalid</span>(<span class="tk-s">"args"</span>, <span class="tk-s">"a todo needs text"</span>);
+				});</code></pre>
+<p><code>ctx.trace(name, attributes, fn)</code> starts a child of the method&#39;s span and gives <code>fn</code> a child <code>ctx</code> with the same
+principal and <code>get</code>, so calls made inside are parented under it, and names its host as Chord&#39;s spans do. It is the last
+line of both traces above: <code>todos.validate chord.host=&quot;list|groceries&quot; chars=5</code>. Its attributes are small, flat values;
+the todo&#39;s text is data and stays out of telemetry, its length is enough. When <code>fn</code> throws, the span fails and the error
+passes through as it was: the caller still gets <code>invalid/args</code>. A check this small does not need a span of its own; a
+lookup, a model request or a file read does.</p>
+<h3 id="whom-a-span-was-for">Whom a span was for</h3>
+<p>Method and call spans record whom they were for: by default <code>chord.principal</code>, the principal&#39;s key (its canonical
+JSON). An app may record other attributes instead, through a hook each host takes (<code>principalAttributes</code>): the todo
+app&#39;s records a short key and, for a user, the name she signed in with:</p>
+<!-- quote: src/principals.ts -->
+<pre><code><span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">principalAttributes</span>(principal: <span class="tk-t">TodoPrincipal</span>): <span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, string&gt;&gt; {
+	<span class="tk-k">let</span> attributes = recorded.<span class="tk-f">get</span>(principal);
+	<span class="tk-k">if</span> (attributes === <span class="tk-k">undefined</span>) {
+		attributes =
+			principal.kind === <span class="tk-s">"user"</span>
+				? { <span class="tk-s">"chord.principal"</span>: <span class="tk-s">`user:${principal.id}`</span>, <span class="tk-s">"user.name"</span>: principal.name }
+				: { <span class="tk-s">"chord.principal"</span>: principal.kind === <span class="tk-s">"worker"</span> ? <span class="tk-s">`worker:${principal.list}`</span> : principal.kind };
+		recorded.<span class="tk-f">set</span>(principal, attributes);
+	}
+	<span class="tk-k">return</span> attributes;
+}</code></pre>
+<p>Chord calls the hook for every span it records with a principal, so it must be synchronous and cheap; any caching is
+the hook&#39;s own (here a <code>WeakMap</code> by principal: a link stamps one principal object on all its calls). <code>startTodo</code> gives
+it to the server (<code>principalAttributes</code> beside <code>telemetry</code>) and the worker&#39;s entry to <code>startWorker</code> (above): each host
+has its own, the same function. The server also stamps a page&#39;s spans with it, for the principal of the link the batch
+came over: <code>page.add</code> above was the owner&#39;s. Only what the hook returns is recorded, never other app data, and the
+attributes are for the owner&#39;s eyes: the store, like the viewer below, is the owner&#39;s.</p>
+<h3 id="reading">Reading</h3>
+<p>The store is read through <code>TelemetryStore</code>, pi-telemetry&#39;s read interface modeled on Jaeger&#39;s: <code>findTraces</code> (complete
+traces, newest first, filtered by their first span&#39;s name, attributes, errors or a time window, paged by a cursor),
+<code>getTrace(id)</code> and <code>findMetrics</code> (a metric&#39;s rows, one per series and 10 seconds, with count, sum, min and max).
+<code>trace.ts</code> is a script for a data directory, the app running or not. It opens the file with Chord&#39;s read-only store,
+<code>openTelemetryStore</code> (<code>@earendil-works/chord/telemetry-sqlite/node</code>), which implements only the read interface and
+opens SQLite read-only: it never writes the file the server writes, never creates or migrates it, and refuses a file
+without a store or with a store of another version.</p>
+<!-- quote: trace.ts -->
+<pre><code><span class="tk-c">// The shared file, read-only: the app's processes may be writing it meanwhile.</span>
+<span class="tk-k">const</span> store = <span class="tk-k">await</span> <span class="tk-f">openTelemetryStore</span>(<span class="tk-f">telemetryFile</span>(dataDir));
+<span class="tk-k">try</span> {
+	<span class="tk-k">if</span> (id !== <span class="tk-k">undefined</span>) {
+		<span class="tk-k">const</span> trace = <span class="tk-k">await</span> store.<span class="tk-f">getTrace</span>(id);
+		console.<span class="tk-f">log</span>(trace === <span class="tk-k">undefined</span> ? <span class="tk-s">`no trace ${id}`</span> : <span class="tk-f">renderTrace</span>(trace.spans));
+	} <span class="tk-k">else</span> {
+		<span class="tk-c">// Complete traces, newest first; a trace's first span (its root, by start time) names it, and the app's</span>
+		<span class="tk-c">// `principalAttributes` hook named whom each span was for.</span>
+		<span class="tk-k">const</span> attributes = values.principal === <span class="tk-k">undefined</span> ? <span class="tk-k">undefined</span> : { <span class="tk-s">"chord.principal"</span>: values.principal };
+		<span class="tk-k">const</span> { traces } = <span class="tk-k">await</span> store.<span class="tk-f">findTraces</span>({ name: values.name, attributes, limit: <span class="tk-n">10</span> });
+		<span class="tk-k">for</span> (<span class="tk-k">const</span> { traceId, spans } <span class="tk-k">of</span> traces) {
+			<span class="tk-k">const</span> start = <span class="tk-t">Math</span>.<span class="tk-f">min</span>(...spans.<span class="tk-f">map</span>((span) =&gt; span.startedMs));
+			<span class="tk-k">const</span> length = <span class="tk-t">Math</span>.<span class="tk-f">max</span>(...spans.<span class="tk-f">map</span>((span) =&gt; span.endedMs)) - start;
+			<span class="tk-k">const</span> failed = spans.<span class="tk-f">some</span>((span) =&gt; span.status.status === <span class="tk-s">"error"</span>) ? <span class="tk-s">"  error"</span> : <span class="tk-s">""</span>;
+			console.<span class="tk-f">log</span>(<span class="tk-s">`${traceId}  ${spans[0]!.name}  ${spans.length} spans  ${length.toFixed(2)} ms${failed}`</span>);
+		}
+		<span class="tk-c">// Metrics are stored per series and 10 s: a series is one set of attributes, here the direction.</span>
+		<span class="tk-k">for</span> (<span class="tk-k">const</span> direction <span class="tk-k">of</span> [<span class="tk-s">"sent"</span>, <span class="tk-s">"received"</span>]) {
+			<span class="tk-k">const</span> rows = <span class="tk-k">await</span> store.<span class="tk-f">findMetrics</span>({ name: <span class="tk-s">"chord.link.bytes"</span>, attributes: { direction } });
+			<span class="tk-k">const</span> bytes = rows.<span class="tk-f">reduce</span>((sum, row) =&gt; sum + row.sum, <span class="tk-n">0</span>);
+			<span class="tk-k">const</span> messages = rows.<span class="tk-f">reduce</span>((sum, row) =&gt; sum + row.count, <span class="tk-n">0</span>);
+			console.<span class="tk-f">log</span>(<span class="tk-s">`chord.link.bytes ${direction}: ${bytes} bytes in ${messages} messages`</span>);
+		}
+	}</code></pre>
+<p><code>screenshots.ts</code> runs it twice from a process of its own while the app runs: the newest <code>page.add</code> traces with a span
+for the owner, then the refused click by its id (ids, lengths and counts masked):</p>
+<!-- output: screenshots -->
+<pre class="plain"><code>trace.ts &lt;data directory&gt; --name page.add --principal owner:
+   &lt;id&gt;  page.add  6 spans  &lt;ms&gt;  error
+   &lt;id&gt;  page.add  6 spans  &lt;ms&gt;
+   chord.link.bytes sent: &lt;n&gt; bytes in &lt;n&gt; messages
+   chord.link.bytes received: &lt;n&gt; bytes in &lt;n&gt; messages
+trace.ts &lt;data directory&gt; &lt;the refused one's id&gt;:
+   page.add chord.host="browser" chars=0 chord.principal="owner" error trace_failed: a todo needs text
+     chord.call chord.host="browser" type="todo.todos" member="add" object="todo.todos(groceries)" address.kind="list" outcome="error" chord.principal="owner" error call_failed: a todo needs text
+       chord.relay chord.host="server" type="todo.todos" member="#0" upstream.kind="list" outcome="error" error relay_failed: a todo needs text
+         chord.method chord.host="list|groceries" type="todo.todos" member="add" object="todo.todos(groceries)" principal.kind="owner" chord.principal="owner" outcome="error" error method_failed: a todo needs text
+           chord.method chord.host="list|groceries" type="todo.store" member="add" object="todo.store" principal.kind="worker" chord.principal="worker:list|groceries" outcome="error" error method_failed: a todo needs text
+             todos.validate chord.host="list|groceries" chars=0 error trace_failed: a todo needs text</code></pre>
+<p>A trace&#39;s id is its root span&#39;s. The refused add failed on every span of its path, each with a fixed category
+(<code>trace_failed</code>, <code>call_failed</code>, <code>relay_failed</code>, <code>method_failed</code>) and the message cut at 500 characters; a cancelled call
+is not an error. It has no commit: nothing was written. <code>chord.link.bytes</code> counts the encoded messages of the server&#39;s
+and the workers&#39; links (a page sends no metrics), each message once where it was sent and once where it was received.
+A metric carries no ids, only attributes with few values (<code>direction</code>), so its series stay few. A metric&#39;s current 10
+seconds are sent and written only once they are over, or when a process closes.</p>
+<h3 id="a-trace-viewer">A trace viewer</h3>
+<p>Two halves make the viewer: routes on the server that read the store, and a page that shows what they answer. Server
+code of an app is either the start script or a plugin, and routes come from plugins (chapter III), so the routes are a
+small plugin, <code>plugins/traces/</code>. Its server facet serves one host-lifetime object, which opens the store&#39;s file
+read-only as a native and contributes the routes while it is live:</p>
+<!-- quote: plugins/traces/server.ts -->
+<pre><code>	host.<span class="tk-f">serve</span>(<span class="tk-t">Traces</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> info = self.<span class="tk-f">get</span>(<span class="tk-t">AppInfo</span>, {});
+		<span class="tk-c">// The server records to the same file with its own recorder; this object only reads it.</span>
+		<span class="tk-k">const</span> telemetry = self.<span class="tk-f">open</span>(
+			<span class="tk-k">async</span> () =&gt; <span class="tk-f">openTelemetryStore</span>(<span class="tk-f">telemetryFile</span>(info.dataDir.value)),
+			(store) =&gt; store.<span class="tk-f">close</span>(),
+		);
+		self.<span class="tk-f">contribute</span>(<span class="tk-t">Http</span>, {
+			routes: {
+				<span class="tk-s">"GET /api/traces"</span>: <span class="tk-k">async</span> (request, ctx) =&gt; {
+					<span class="tk-f">ownerOnly</span>(ctx);
+					<span class="tk-c">// `?principal=user:u1`: the traces with a span for that principal (`principalAttributes`).</span>
+					<span class="tk-k">const</span> principal = request.query.<span class="tk-f">get</span>(<span class="tk-s">"principal"</span>);
+					<span class="tk-k">const</span> attributes = principal === <span class="tk-k">null</span> ? <span class="tk-k">undefined</span> : { <span class="tk-s">"chord.principal"</span>: principal };
+					<span class="tk-k">const</span> { traces } = <span class="tk-k">await</span> telemetry.value.<span class="tk-f">findTraces</span>({ limit: RECENT, attributes });
+					<span class="tk-k">return</span> { kind: <span class="tk-s">"json"</span>, value: traces.<span class="tk-f">map</span>(({ traceId, spans }) =&gt; <span class="tk-f">summaryOf</span>(traceId, spans)) };
+				},
+				<span class="tk-s">"GET /api/traces/:id"</span>: <span class="tk-k">async</span> (request, ctx) =&gt; {
+					<span class="tk-f">ownerOnly</span>(ctx);
+					<span class="tk-k">const</span> trace = <span class="tk-k">await</span> telemetry.value.<span class="tk-f">getTrace</span>(request.params.id!);
+					<span class="tk-k">if</span> (trace === <span class="tk-k">undefined</span>) <span class="tk-k">return</span> { kind: <span class="tk-s">"error"</span>, status: <span class="tk-n">404</span> };
+					<span class="tk-k">return</span> { kind: <span class="tk-s">"json"</span>, value: { id: trace.traceId, spans: <span class="tk-f">rowsOf</span>(<span class="tk-f">clamped</span>(trace.spans)) } };
+				},
+			},
+		});
+		<span class="tk-k">return</span> {};
+	});</code></pre>
+<p>The kit gives a plugin the server&#39;s process values as objects: <code>AppInfo</code> names the data directory, and the API&#39;s server
+module re-exports it with <code>telemetryFile</code> and Chord&#39;s <code>openTelemetryStore</code>. <code>self.open</code> declares a native, opened once
+<code>AppInfo</code> is live and closed when the object ends; a reload of the plugin restarts the object and opens the file anew.
+An object may contribute when it lives as long as its host (<code>local</code>, empty params; decision R21). Spans name who called
+what, so only the owner reads them:</p>
+<!-- quote: plugins/traces/server.ts -->
+<pre><code><span class="tk-k">function</span> <span class="tk-f">ownerOnly</span>(ctx: <span class="tk-t">Ctx</span>): <span class="tk-k">void</span> {
+	<span class="tk-k">if</span> (ctx.principal?.kind !== <span class="tk-s">"owner"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"the traces are the owner's"</span>);
+}</code></pre>
+<p>A route&#39;s principal is <code>undefined</code> only on a public route, which these are not; a signed-in member gets 403. The list
+filters by whom the traces were for (<code>?principal=</code>), and shows each with its user&#39;s name or principal key. <code>rowsOf</code>
+orders a trace&#39;s spans as a tree, parents before their children, each row&#39;s host its span&#39;s <code>chord.host</code>, and turns
+attributes, events and links into text. A page&#39;s spans carry the page&#39;s clock, which may be off by seconds against the
+server&#39;s, so a span of the page could show starting after the server span under it. Before drawing, <code>clamped</code> moves
+the page&#39;s spans of the trace by the least amount that puts every server span under a page span inside it
+(<code>plugins/traces/clock.ts</code>, with its own test):</p>
+<!-- quote: plugins/traces/clock.ts -->
+<pre><code><span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">clamped</span>(spans: <span class="tk-k">readonly</span> <span class="tk-t">StoredSpan</span>[]): <span class="tk-k">readonly</span> <span class="tk-t">StoredSpan</span>[] {
+	<span class="tk-k">const</span> skew = <span class="tk-f">skewOf</span>(spans);
+	<span class="tk-k">if</span> (skew === <span class="tk-n">0</span>) <span class="tk-k">return</span> spans;
+	<span class="tk-k">return</span> spans.<span class="tk-f">map</span>((span) =&gt;
+		<span class="tk-f">hostOf</span>(span) === <span class="tk-s">"browser"</span> ? { ...span, startedMs: span.startedMs + skew, endedMs: span.endedMs + skew } : span,
+	);
+}</code></pre>
+<p>The page is the app&#39;s own page at a second path: <code>start.ts</code> serves it at <code>/</code> and <code>/traces</code> (chapter I), and the web
+entry picks the viewer by the path:</p>
+<!-- quote: src/web/main.ts -->
+<pre><code>	<span class="tk-c">// The page's one other path (`start.ts` serves the page at `/` and `/traces`).</span>
+	<span class="tk-k">if</span> (location.pathname === <span class="tk-s">"/traces"</span>) <span class="tk-k">return</span> <span class="tk-f">h</span>(<span class="tk-s">"main"</span>, { className: <span class="tk-s">"wide"</span> }, <span class="tk-f">h</span>(<span class="tk-s">"h1"</span>, <span class="tk-k">null</span>, <span class="tk-s">"Todo"</span>), <span class="tk-f">h</span>(<span class="tk-t">TraceViewer</span>));</code></pre>
+<p><code>TraceViewer</code> (<code>src/web/traces.ts</code>) fetches the list and the trace chosen in the URL&#39;s fragment, and draws each span
+with its host&#39;s name, its length as a bar on the trace&#39;s time line, its attributes and events, a failed span in the
+theme&#39;s error colour, and each link as the ids it refers to, never fetched. The bars are positioned with inline
+styles, which the page&#39;s CSP allows only because React sets them through the DOM:</p>
+<!-- quote: src/web/traces.ts -->
+<pre><code>	<span class="tk-k">const</span> bar = {
+		left: <span class="tk-s">`${(row.offsetMs / total) * 100}%`</span>,
+		width: <span class="tk-s">`${Math.max((row.durationMs / total) * 100, 0.5)}%`</span>,
+	};</code></pre>
+<p>After the two clicks, <code>screenshots.ts</code> opened the viewer on honey&#39;s trace (the figure in &quot;One trace from the browser&quot;),
+then types <code>user:u1</code> into its filter:</p>
+<!-- quote: screenshots.ts -->
+<pre><code>	<span class="tk-k">await</span> browser.<span class="tk-f">open</span>(<span class="tk-s">`${origin}/traces#${encodeURIComponent(trace.traceId)}`</span>);
+	<span class="tk-k">await</span> browser.<span class="tk-f">wait</span>(<span class="tk-s">"document.querySelectorAll('.traces-tree li').length === 6"</span>);
+	<span class="tk-k">await</span> <span class="tk-f">shoot</span>(<span class="tk-s">"traces.png"</span>);</code></pre>
+<!-- output: screenshots -->
+<pre class="plain"><code>wrote docs/tutorial/screens/traces.png
+the viewer shows page.add: 6 spans on 3 hosts
+wrote docs/tutorial/screens/traces-ada.png
+the viewer for user:u1 lists chord.method for ada</code></pre>
+<figure class="fig wide"><p><img src="screens/traces-ada.png" alt="The trace viewer filtered by principal"></p>
+<figcaption><span class="fignum">Figure 8.</span> The traces for Ada (<code>user:u1</code>): the coffee <code>screenshots.ts</code> adds at its start as her (a root of the server acting as her), recorded by the list&#39;s worker; the app&#39;s hook named her <code>ada</code>.</figcaption></figure>
+<p>The list is mostly the app&#39;s own work: each HTTP request, relayed hold and activation is a trace of its own, as the
+trap above says. A real viewer would filter by name too (<code>findTraces({ name })</code>) or by error (<code>errors: true</code>), both of
+which the read interface has; this one is about 330 lines of TypeScript in three files and 20 of CSS, on Chord&#39;s
+read-only store.</p>
+</section>
+
+<section class="chapter" id="testing"><header class="opener"><div class="numeral">XII</div><h2>Testing One Plugin</h2><p class="lede">testPlugin builds a plugin as production does and loads it alone on a host of its own.</p></header>
 <p class="dropcap">The steps above test the whole app. Most rules are checked faster on one plugin. <code>testPlugin</code> builds the plugin as
 production builds it (the same esbuild call, the API&#39;s imports checked), evaluates it with the app&#39;s real API module and
 loads it on a new host with an in-memory store, here at a list&#39;s address so it may serve <code>Todos</code>:</p>
@@ -1306,7 +1657,7 @@ the refusal of chapter II:</p>
 				<span class="tk-f">expect</span>(refused).<span class="tk-f">toMatchObject</span>({ code: <span class="tk-s">"invalid"</span>, reason: <span class="tk-s">"args"</span> });</code></pre>
 </section>
 
-<section class="chapter" id="p2"><header class="opener"><div class="numeral">XII</div><h2>Writing a p2 Plugin</h2><p class="lede">What is different in p2, and one small plugin: a tool for the agent and a chip for the people.</p></header>
+<section class="chapter" id="p2"><header class="opener"><div class="numeral">XIII</div><h2>Writing a p2 Plugin</h2><p class="lede">What is different in p2, and one small plugin: a tool for the agent and a chip for the people.</p></header>
 <p class="dropcap">p2, the coding agent&#39;s server with its web page and terminal, runs on Chord v2 but not on the app kit. It is older than
 the kit and keeps its own decisions: its own data directory and SQLite files, its own sign-in, devices and sharing,
 its own page and terminal bundles. It uses Chord&#39;s components directly: <code>createHost</code> with p2&#39;s principals,
@@ -1449,25 +1800,30 @@ reload. The trap of chapter II applies with p2&#39;s names: a server method that
 server runs in a root of the server&#39;s own (<code>serverOf(self)().root</code>), not through its caller&#39;s <code>ctx.get</code>.</p>
 </section>
 
-<section class="chapter epilogue" id="traps-and-open-questions"><header class="opener"><div class="numeral">∴</div><h2>Traps and Open Questions</h2><p class="lede">The five traps once more, and what in Chord v2 was hard to explain while writing this.</p></header>
+<section class="chapter epilogue" id="traps-and-open-questions"><header class="opener"><div class="numeral">∴</div><h2>Traps and Open Questions</h2><p class="lede">The six traps once more, and what in Chord v2 was hard to explain while writing this.</p></header>
 <p class="dropcap"><strong>The traps.</strong> Load before use: a host binds nothing before <code>load</code>; a client with nothing to load calls <code>load([])</code>. A
 reference acts as whoever made it: <code>ctx.get</code> as the caller, <code>host.get</code> and a local object&#39;s <code>self.get</code> as the host.
 Await what you start: a write started with a context that ends is cancelled and reported <code>transaction_cancelled</code>. A
 watch starts at the current value: read <code>handle.value</code>, then <code>start</code>; the listener gets changes only. The plain <code>t</code>
-has no language of its own: components and screens render with <code>useMessages(t)</code> and <code>scope.messages(t)</code>.</p>
-<p><strong>Hard to explain, found while writing the example.</strong> Each is a candidate for a fix in Chord rather than a paragraph in
-a tutorial.</p>
-<ul>
-<li><strong>Integer table keys do not type-check.</strong> <code>KeyOf</code> in <code>src/store/table.ts</code> still tests TypeBox&#39;s
-<code>&quot;~kind&quot;: &quot;Integer&quot;</code>, which pi-schema&#39;s <code>int()</code> lacks, so the key of an <code>int</code> key column is typed <code>string</code>:
-<code>tx.get(items, { id })</code> with a number fails <code>tsc</code>. The store here uses <code>updateWhere</code> with <code>eq</code> instead of
-<code>tx.update</code>.
-Four more, found the same way, are fixed: a reloaded web plugin lost its own React state (now <code>usePageState</code>,
+has no language of its own: components and screens render with <code>useMessages(t)</code> and <code>scope.messages(t)</code>. A trace
+starts where a span starts: work under a context without a recording span records nothing, and its provider&#39;s span is
+a root of its own.</p>
+<p><strong>Found while writing the example, and fixed in Chord since.</strong> Integer table keys were typed <code>string</code> (a leftover
+of the switch from TypeBox), so <code>tx.update(items, { id }, ...)</code> with a number failed <code>tsc</code>; the store now uses it. A
+reloaded web plugin lost its own React state (now <code>usePageState</code>,
 chapter IX), a plugin&#39;s <code>contract.ts</code> could not be imported outside builds (the API is now a workspace package,
 chapter I), plugins could not throw Chord&#39;s <code>invalid</code> (Chord exports <code>invalid</code> and <code>forbidden</code>, chapter II), and a
 live window over a table needed a one-time read in <code>self.open</code>, which made the store restart at every reload of its
-plugin (now <code>self.query</code>, a live query Chord runs, chapters II and IX).</li>
-</ul>
+plugin (now <code>self.query</code>, a live query Chord runs, chapters II and IX).</p>
+<p><strong>Found while writing the telemetry chapter, and fixed in Chord since.</strong> <code>chord.commit</code> counted documents and their
+ops only, so a commit that wrote table rows reported <code>documents=0 ops=0</code> (it counts <code>rows</code> now). Spans named no host,
+and the viewer told processes apart by the SQLite store&#39;s id format (every Chord span carries <code>chord.host</code> now). The
+store kept a span&#39;s start in whole milliseconds, so the viewer&#39;s bars shifted by up to one (starts are microseconds
+now, the store&#39;s version 2, which a recorder migrates its file to). Reading needed a recorder that recorded nothing
+(<code>openTelemetryStore</code> reads read-only). A page could not record, so the chapter&#39;s click was a client host in Node
+standing in for the page (<code>startPage({ telemetry: true })</code> now, its spans sent to the server). And every process wrote
+the one file itself, each worker told its path (the server is the store&#39;s only writer now, the workers and pages
+sending it their spans), and spans said nothing of whom they were for (<code>principalAttributes</code>).</p>
 </section>
 
 <section class="chapter appendix" id="the-app-s-files"><header class="opener"><div class="numeral">A</div><h2>The App&#39;s Files</h2></header>
@@ -1482,7 +1838,7 @@ plugin (now <code>self.query</code>, a live query Chord runs, chapters II and IX
 <tbody><tr>
 <td><code>src/principals.ts</code></td>
 <td>base</td>
-<td>the principal type</td>
+<td>the principal type, <code>principalAttributes</code> (whom a span was for)</td>
 </tr>
 <tr>
 <td><code>package.json</code></td>
@@ -1497,12 +1853,12 @@ plugin (now <code>self.query</code>, a live query Chord runs, chapters II and IX
 <tr>
 <td><code>src/api/v1/server.ts</code></td>
 <td>base, server</td>
-<td><code>Http</code>, the ephemeral <code>login</code></td>
+<td><code>Http</code>, the ephemeral <code>login</code>, <code>AppInfo</code>, <code>telemetryFile</code>, <code>openTelemetryStore</code></td>
 </tr>
 <tr>
 <td><code>src/api/v1/web.ts</code></td>
 <td>base, web</td>
-<td><code>Panels</code>, <code>useHold</code>, <code>useMessages</code>, <code>usePageState</code>, <code>useWatch</code></td>
+<td><code>Panels</code>, <code>useHold</code>, <code>useHost</code>, <code>useMessages</code>, <code>usePageState</code>, <code>useWatch</code></td>
 </tr>
 <tr>
 <td><code>src/api/v1/tui.ts</code></td>
@@ -1512,12 +1868,22 @@ plugin (now <code>self.query</code>, a live query Chord runs, chapters II and IX
 <tr>
 <td><code>start.ts</code>, <code>worker.ts</code></td>
 <td>base</td>
-<td><code>startServer</code>, <code>startWorker</code></td>
+<td><code>startServer</code> with the telemetry store, <code>startWorker</code>, each with <code>principalAttributes</code></td>
+</tr>
+<tr>
+<td><code>src/telemetry.ts</code></td>
+<td>base</td>
+<td>the telemetry store&#39;s file in the data directory, <code>openTelemetry</code> (the server&#39;s)</td>
 </tr>
 <tr>
 <td><code>src/web/main.ts</code>, <code>src/web/style.css</code></td>
 <td>base, web entry</td>
-<td><code>startPage</code>, the panels</td>
+<td><code>startPage</code> (recording), the panels, the viewer at <code>/traces</code></td>
+</tr>
+<tr>
+<td><code>src/web/traces.ts</code></td>
+<td>base, web entry</td>
+<td>the owner&#39;s trace viewer</td>
 </tr>
 <tr>
 <td><code>src/tui/main.ts</code></td>
@@ -1540,6 +1906,11 @@ plugin (now <code>self.query</code>, a live query Chord runs, chapters II and IX
 <td>the kit&#39;s ephemeral login</td>
 </tr>
 <tr>
+<td><code>plugins/traces/</code></td>
+<td>plugin</td>
+<td>the trace viewer&#39;s routes over the telemetry store (server), the owner&#39;s only; the page&#39;s clock moved onto the server&#39;s (<code>clock.ts</code>, its test)</td>
+</tr>
+<tr>
 <td><code>later/harbor/</code></td>
 <td>plugin, added in step 6</td>
 <td>the Harbor theme for pages and terminals</td>
@@ -1547,7 +1918,12 @@ plugin (now <code>self.query</code>, a live query Chord runs, chapters II and IX
 <tr>
 <td><code>main.ts</code>, <code>screenshots.ts</code>, <code>tutorial.test.ts</code></td>
 <td>example</td>
-<td>the steps, the screenshots, the checks</td>
+<td>the steps, the screenshots (with the page&#39;s traced click), the checks</td>
+</tr>
+<tr>
+<td><code>trace.ts</code></td>
+<td>example</td>
+<td>a data directory&#39;s newest traces, one trace, a metric</td>
 </tr>
 </tbody></table>
 </section>
@@ -1567,8 +1943,8 @@ plugin (now <code>self.query</code>, a live query Chord runs, chapters II and IX
 <td>the app&#39;s server, with the kit</td>
 </tr>
 <tr>
-<td><code>startWorker({ api, kinds, onError })</code></td>
-<td>I</td>
+<td><code>startWorker({ api, kinds, principalAttributes, onError })</code></td>
+<td>I, XI</td>
 <td>a worker&#39;s entry</td>
 </tr>
 <tr>
@@ -1652,8 +2028,28 @@ plugin (now <code>self.query</code>, a live query Chord runs, chapters II and IX
 <td>moving a worker&#39;s data</td>
 </tr>
 <tr>
-<td><code>testPlugin(dir, { kind, api, modules, address, principal, stubs }, ctx)</code></td>
+<td><code>createSqliteTelemetry(db)</code>, <code>startServer({ telemetry, principalAttributes })</code>, <code>startPage({ telemetry: true })</code>, <code>createHost({ telemetry, principalAttributes })</code></td>
 <td>XI</td>
+<td>the telemetry store on the server, pages and workers sending it their spans</td>
+</tr>
+<tr>
+<td><code>host.root(fn, ctx, { trace })</code>, <code>ctx.trace(name, attributes, fn)</code></td>
+<td>XI</td>
+<td>spans of your own</td>
+</tr>
+<tr>
+<td><code>openTelemetryStore(path)</code>, <code>store.findTraces({ name, attributes, errors, startMin, startMax, limit, cursor })</code>, <code>store.getTrace(id)</code>, <code>store.findMetrics({ name, attributes })</code>, <code>renderTrace(spans)</code></td>
+<td>XI</td>
+<td>reading traces and metrics</td>
+</tr>
+<tr>
+<td><code>AppInfo</code>, <code>self.open(open, close)</code></td>
+<td>XI</td>
+<td>the data directory, a native (the viewer&#39;s store)</td>
+</tr>
+<tr>
+<td><code>testPlugin(dir, { kind, api, modules, address, principal, stubs }, ctx)</code></td>
+<td>XII</td>
 <td>one plugin alone</td>
 </tr>
 </tbody></table>
@@ -1661,5 +2057,51 @@ plugin (now <code>self.query</code>, a live query Chord runs, chapters II and IX
 
 <p class="colophon">Together · first edition · 2026-11-03 · Chord v2 slices 1-13, the app kit, example 61</p>
 </div></div>
-
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
 </body></html>

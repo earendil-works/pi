@@ -136,9 +136,9 @@ function openAgents(ctx: TuiContext): void {
 	};
 	const rows = (): ListRow[] => [
 		{
-			key: "1",
+			key: String(ctx.identity.main),
 			label: "main",
-			detail: ctx.identity.conversation === 1 ? "✓ shown" : "conversation 1",
+			detail: ctx.identity.conversation === ctx.identity.main ? "✓ shown" : `conversation ${ctx.identity.main}`,
 		},
 		...children
 			.filter((child) => showArchived || !child.archived)
@@ -206,7 +206,7 @@ const AGENT_COMMANDS: Record<string, TuiCommand> = {
 		category: "Session",
 		when: "chat && !overlay",
 		slash: { name: "main" },
-		run: (ctx) => ctx.navigate("chat", ctx.identity.session, 1),
+		run: (ctx) => ctx.navigate("chat", ctx.identity.session, ctx.identity.main),
 	},
 };
 

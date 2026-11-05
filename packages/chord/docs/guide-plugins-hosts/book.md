@@ -13,7 +13,7 @@ note: |
   `slice-10.md`, `slice-12.md`, `slice-13.md`, the decision log and the code in `packages/chord/src`. API names
   are the current ones. The early chapters wire hosts by hand to show the parts; the last chapter shows the app kit
   (`chord/app`), which does that wiring for an app.
-colophon: Hosts and Plugins · third edition · 2026-11-03 · Chord v2 slices 1-10, 12 and 13, messages and languages
+colophon: Hosts and Plugins · fourth edition · 2026-11-04 · Chord v2 slices 1-13, messages and languages, telemetry
 ---
 
 # Before we begin {.preface}
@@ -808,6 +808,71 @@ A project's data is what its worker created: its store and its files. `app.expor
 writes them as one archive (a manifest, the store's export, the files) and stops nothing: a running worker writes its
 own store at one consistent point. `app.importData(path, Project({ id: "copy" }), ctx)` makes a new project from it and
 refuses one that already has data (example 55).
+
+# Seeing a Request Across Hosts {#telemetry lede="One trace from a click in a client through the server's relay into a worker's method: adapters, carriers and spans."}
+
+A tab calls `notes.add(…)`. The call leaves the tab, the server relays it, the project's worker runs the method, the
+method commits. When it is slow, where did the time go? Each host is a different process, so no single log has the
+answer. Chord's telemetry makes the four steps one **trace**: a tree of **spans** (named, timed pieces of work), each
+host recording its own with its own **adapter**, joined by **carriers** (a few strings naming the caller's span) that
+ride on the wire with every `hold` and `call`.
+
+Give the server a store and the kit does the rest. The SQLite store (`@earendil-works/chord/telemetry-sqlite`)
+records settled spans and metrics in one file in the data directory, and the server is its only writer: every worker
+records in memory and sends its spans and metrics to the server once a second over its link, and a page that records
+(`startPage({ telemetry: true })`) sends its own every few seconds and when hidden (example 62):
+
+```ts
+// start.ts: the server, its store, and whom spans were for (default: the principal's key)
+const telemetry = await createSqliteTelemetry(await openNodeSqliteDatabase(join(dataDir, "telemetry.sqlite")));
+await startServer({ ...options, telemetry, principalAttributes: (p) => ({ "chord.principal": p.kind }) }, ctx);
+// worker.ts: nothing about telemetry (its own `principalAttributes`, if any)
+startWorker({ api, kinds, onError });
+// the web entry: the page records
+startPage({ ...options, telemetry: true });
+```
+
+A page is untrusted: the server checks each batch's every field (sizes, no control characters, ids printable ASCII),
+keeps only spans under the page's own ids, caps them per page and minute, marks them `chord.host: browser` and stamps
+them with the principal of their link. A click is a trace of its own with `host.root(fn, ctx, { trace: { name } })`.
+
+Nothing else changes in plugin code. A method's `ctx.telemetry` is its `chord.method` span, so whatever it calls or
+commits is parented under it, on its host or the next one. `ctx.trace(name, attributes, fn)` adds a span of your own:
+
+```ts
+add: async (n, ctx) => {
+	await ctx.trace("tally.check", { n }, async () => {
+		if (!Number.isSafeInteger(n) || n <= 0) throw new Error("add a positive count");
+	});
+	return store.add(n, ctx);
+},
+```
+
+The store renders the click's trace across the three hosts (the client's spans, the server's relay, the worker's
+methods and the commit, an event of the method that made it); every span of Chord names the host that recorded it
+(`chord.host`: its address key, `client` without an address), and method and call spans whom they were for
+(`chord.principal`, the host's `principalAttributes` hook):
+
+```
+tally.click
+  chord.hold chord.host="client" type="tally.counter" object="tally.counter(t1)" address.kind="tally" outcome="bound"
+    chord.relay chord.host="server" type="tally.counter" member="hold" upstream.kind="tally" outcome="ok"
+      → link to chord.resolve
+  chord.call chord.host="client" type="tally.counter" member="add" object="tally.counter(t1)" address.kind="tally" outcome="ok"
+    chord.relay chord.host="server" type="tally.counter" member="#0" upstream.kind="tally" outcome="ok"
+      chord.method chord.host="tally|t1" type="tally.counter" member="add" object="tally.counter(t1)" principal.kind="owner" chord.principal="{\"kind\":\"owner\"}" outcome="ok"
+        tally.check chord.host="tally|t1" n=3
+        chord.method chord.host="tally|t1" type="tally.store" member="add" object="tally.store" principal.kind="worker" chord.principal="{\"kind\":\"worker\",\"tally\":\"tally|t1\"}" outcome="ok"
+          · chord.commit documents=1 ops=1 rows=0 duration=1.9
+```
+
+Work shared by several requests is its own trace, linked rather than nested: the worker's start (`chord.resolve`),
+an object's activation (`chord.activate`, linked to whoever asked first). Routines and job phases are roots too; a job's
+`run` and `finish` stay under the carrier its start stored, even when a restarted worker resumes the run. Metrics
+(`chord.link.bytes`, `chord.commit.duration`, `chord.calls.in_flight`, ...) are aggregated per 10 s; ids are never their
+attributes. Without an adapter (the default), Chord starts no span and sends no carrier: a call costs what it did before.
+A script or a viewer reads the file with `openTelemetryStore(path)` (`@earendil-works/chord/telemetry-sqlite/node`),
+which opens it read-only and offers only the read interface (`findTraces`, `getTrace`, `findMetrics`).
 
 # Reference {.appendix}
 

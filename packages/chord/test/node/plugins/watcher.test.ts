@@ -82,6 +82,21 @@ describe("the watcher's marks", () => {
 		watcher.close();
 	});
 
+	it("marks base for a base file given one by one, not for its siblings; never under node_modules", async () => {
+		const { base, watcher } = await watched();
+		const elsewhere = await realpath(await tempRoot());
+		await writeFiles(elsewhere, { "entry.ts": "", "sibling.ts": "", "node_modules/react/index.js": "" });
+		watcher.baseFiles([join(elsewhere, "entry.ts"), join(elsewhere, "node_modules", "react", "index.js")]);
+		watcher.mark(join(elsewhere, "sibling.ts"));
+		watcher.mark(join(elsewhere, "node_modules", "react", "index.js"));
+		expect(watcher.value).toMatchObject({ base: false });
+		// A real event on the file: its directory is watched.
+		await writeFile(join(elsewhere, "entry.ts"), "export {};");
+		await vi.waitFor(() => expect(watcher.value).toMatchObject({ base: true }), { timeout: 5_000 });
+		expect(base).not.toBe(elsewhere);
+		watcher.close();
+	});
+
 	it("ignores node_modules and .git", async () => {
 		const { root, watcher } = await watched();
 		watcher.mark(join(root, "a", "node_modules", "x", "index.js"));

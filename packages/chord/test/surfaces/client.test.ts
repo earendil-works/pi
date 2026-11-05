@@ -48,8 +48,19 @@ function setOf(base: string, scripts: readonly RegisteredScript[]): ScriptSet {
 	};
 }
 
-/** A server serving `WebScripts` with `initial`, and a client started against it with `scripts` available to fetch. */
-async function setup(initial: readonly RegisteredScript[], available: readonly RegisteredScript[] = []) {
+/** A timer of the client's environment the test fires itself: its pause and its callback. */
+type ManualTimer = { readonly ms: number; readonly fire: () => void };
+
+/**
+ * A server serving `WebScripts` with `initial`, and a client started against it with `scripts` available to fetch;
+ * `failing` fetches fail first (a network error), `manual` collects the environment's timers instead of running them.
+ */
+async function setup(
+	initial: readonly RegisteredScript[],
+	available: readonly RegisteredScript[] = [],
+	more: { readonly failing?: number; readonly manual?: ManualTimer[] } = {},
+) {
+	let failing = more.failing ?? 0;
 	const server = createHost<TestPrincipal>({
 		address: hostKind("server")(),
 		principal: { kind: "server" },
@@ -81,6 +92,10 @@ async function setup(initial: readonly RegisteredScript[], available: readonly R
 		},
 		fetchScript: async (entry) => {
 			fetched.push(entry.url);
+			if (failing > 0) {
+				failing--;
+				throw new Error(`${entry.url}: network error`);
+			}
 			const found = available.find(({ plugin, digest }) => plugin === entry.name && digest === entry.digest);
 			if (found === undefined) throw new Error(`no ${entry.url}`);
 			return found;
@@ -90,6 +105,14 @@ async function setup(initial: readonly RegisteredScript[], available: readonly R
 		environment: {
 			now: () => Date.now(),
 			after: (ms, callback) => {
+				if (more.manual !== undefined) {
+					const timer = { ms, fire: callback };
+					more.manual.push(timer);
+					return () => {
+						const at = more.manual?.indexOf(timer) ?? -1;
+						if (at >= 0) more.manual?.splice(at, 1);
+					};
+				}
 				const timer = setTimeout(callback, ms);
 				return () => clearTimeout(timer);
 			},
@@ -152,6 +175,49 @@ describe("applying a new set in place", () => {
 		await until(() => errors.length > 0);
 		expect(errors[0]).toMatchObject({ kind: "plugins", failed: [{ plugin: "@test/a" }] });
 		expect(greeting.text.value).toBe("hello");
+		await client.stop(context);
+		await server.close(context);
+	});
+});
+
+describe("a failed update (audit F7)", () => {
+	it("tries a set whose script did not load again after 1 s, then 2 s, until it applies", async () => {
+		const a1 = script("@test/a", "d1", "hello");
+		const a2 = script("@test/a", "d2", "hello again");
+		const timers: ManualTimer[] = [];
+		const { client, server, errors, fetched } = await setup([a1], [a2], { failing: 2, manual: timers });
+		const greeting = await client.host.get(Greeting, {}, context);
+		const retries = () => timers.filter(({ ms }) => ms === 1000 || ms === 2000);
+		await publishTo(server, "web", setOf("B1", [a2]), context);
+		await until(() => retries().length === 1);
+		expect(errors.map(({ kind }) => kind)).toEqual(["update_failed"]);
+		expect(retries()[0]!.ms).toBe(1000);
+		retries()[0]!.fire();
+		await until(() => retries().some(({ ms }) => ms === 2000));
+		expect(errors.map(({ kind }) => kind)).toEqual(["update_failed", "update_failed"]);
+		retries()
+			.find(({ ms }) => ms === 2000)!
+			.fire();
+		await until(() => greeting.text.value === "hello again");
+		expect(fetched).toEqual(["/@test/a.d2.js", "/@test/a.d2.js", "/@test/a.d2.js"]);
+		await client.stop(context);
+		await server.close(context);
+	});
+
+	it("drops the retry of a set a newer one replaced, and applies the newer one", async () => {
+		const a1 = script("@test/a", "d1", "hello");
+		const a2 = script("@test/a", "d2", "hello again");
+		const a3 = script("@test/a", "d3", "hello at last");
+		const timers: ManualTimer[] = [];
+		const { client, server, fetched } = await setup([a1], [a2, a3], { failing: 1, manual: timers });
+		const greeting = await client.host.get(Greeting, {}, context);
+		await publishTo(server, "web", setOf("B1", [a2]), context);
+		await until(() => timers.some(({ ms }) => ms === 1000));
+		await publishTo(server, "web", setOf("B1", [a3]), context);
+		await until(() => greeting.text.value === "hello at last");
+		// The retry was cancelled with the newer set: nothing is left to fire.
+		expect(timers.some(({ ms }) => ms === 1000)).toBe(false);
+		expect(fetched).toEqual(["/@test/a.d2.js", "/@test/a.d3.js"]);
 		await client.stop(context);
 		await server.close(context);
 	});

@@ -1,11 +1,12 @@
 // Native catalog operations beneath the copied mobile Session sheet.
-import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, liveIn, whenLive } from "@p2/app/v1";
 import {
 	closeLayers,
 	conversationRoute,
 	MoreIcon,
 	openLayer,
 	useComposerState,
+	useHost,
 	useNavigation,
 	useObject,
 	useReadable,
@@ -16,7 +17,8 @@ import { directoryPickerLayer } from "../envs/contract.web.tsx";
 import { Sessions } from "./contract.ts";
 import { SessionSheet } from "./SessionSheet.tsx";
 export function SessionOptions() {
-	const nav = useNavigation(),
+	const host = useHost(),
+		nav = useNavigation(),
 		route = useRoute();
 	const service = useObject(Sessions, {}, { variant: "owner" }),
 		rows = useReadable(service?.sessions);
@@ -25,7 +27,7 @@ export function SessionOptions() {
 	const { setError } = useComposerState();
 	const perform = (operation: Promise<unknown> | undefined) =>
 		void operation?.catch((error) => setError(error instanceof Error ? error.message : String(error)));
-	if (!service || !session || route.conversation !== 1) return null;
+	if (!service || !session || route.conversation !== session.main) return null;
 	return (
 		<>
 			<button
@@ -47,7 +49,14 @@ export function SessionOptions() {
 					onArchive={() => {
 						closeLayers();
 						void nav.replace(conversationRoute(route, undefined));
-						perform(service?.archive({ id: session.id }, BACKGROUND_CONTEXT));
+						// Leaving the session unmounts this view and releases `service`, which cancels its calls: the
+						// archive holds a reference of its own until it is done.
+						const archiving = host.hold(Sessions, {}, BACKGROUND_CONTEXT);
+						perform(
+							whenLive(archiving)
+								.then(() => liveIn(archiving, "owner")?.archive({ id: session.id }, BACKGROUND_CONTEXT))
+								.finally(() => archiving.release()),
+						);
 					}}
 				/>
 			)}

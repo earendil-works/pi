@@ -1,5 +1,11 @@
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
-import { BACKGROUND_CONTEXT as context, createContextKey, withContextValue } from "../../src/context/index.ts";
+import {
+	BACKGROUND_CONTEXT as context,
+	createContextKey,
+	withContextValue,
+	withTelemetry,
+} from "../../src/context/index.ts";
 import { hostKind, int, method, remote, str } from "../../src/contracts/index.ts";
 import { createHost, defineFacet, type Host } from "../../src/host/index.ts";
 import { memoryLinkPair } from "../../src/link/index.ts";
@@ -486,6 +492,38 @@ forEachCodec(() => {
 			})();
 			await expectCollected(...refs);
 			expect(server).toBeDefined();
+		});
+	});
+});
+
+describe("resolve spans (slice 9)", () => {
+	it("marks a resolve that rejected failed (`resolve_failed`), a root linked to the hold that started it", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { tab } = await relayed({
+			telemetry: { tab: telemetry, server: telemetry },
+			resolve: async () => {
+				throw new Error("no worker");
+			},
+		});
+		await telemetry.startSpan({ name: "request" }, async (span) => {
+			await rejection(tab.get(PlacedNotes, { session: "S1" }, withTelemetry(span, context), { readyTimeout: 50 }));
+		});
+		const spans = telemetry.getSpans();
+		const resolve = spans.find(({ name }) => name === "chord.resolve")!;
+		const relay = spans.find(({ name }) => name === "chord.relay")!;
+		expect(resolve.parentId).toBeNull();
+		expect(resolve.attributes).toEqual({
+			"chord.host": "server",
+			kind: "session",
+			address: "session|S1",
+			outcome: "failed",
+		});
+		expect(resolve.status).toEqual({ status: "error", error: { name: "resolve_failed", message: "no worker" } });
+		expect(resolve.links.map(({ context: carrier }) => carrier)).toEqual([relay.context]);
+		expect(relay.links.map(({ context: carrier }) => carrier)).toEqual([resolve.context]);
+		expect(relay.status).toEqual({
+			status: "error",
+			error: { name: "relay_failed", message: "session|S1: no worker" },
 		});
 	});
 });

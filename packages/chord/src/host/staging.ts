@@ -150,7 +150,7 @@ function stageEntry(
 		throw new Error(`${contract.name}: a host without an address serves only local types`);
 	}
 	const provider = bindProvider(contract, options.accepts ?? {});
-	const common = { plugin, provider, linger: options.linger ?? 0 };
+	const common = { plugin, provider, linger: options.linger ?? 0, traced: options.untraced !== true };
 	// The contract's kind decides the factory's signature and the contract's shape.
 	const served: Served =
 		contract.kind === "local"

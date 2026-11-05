@@ -18,6 +18,7 @@ The design, the rule book for all of this, is [docs/design.md](docs/design.md).
 | `@earendil-works/chord` | Contracts (`local`, `remote`, `method`, the schema builders), errors (`ChordError`, `isChordError`), hosts and facets (`createHost`, `defineFacet`), documents (`defineState`), derives and natives (`constant`, `mapShared`), routines and jobs (`defineJob`), links (`memoryLinkPair`, `ipcLink`, `webSocketLink`), registries (`defineRegistry`), the store (`openStore`, `defineTable`, queries, export and import), and the client surfaces' shared part (`Themes`, `ThemeChoice`, `WebScripts`, `TuiScripts`, messages and languages: `defineMessages`, `Translations`, `LocaleChoice`, `formatTime`, `formatNumber`). | Node and browsers |
 | `@earendil-works/chord/http` | HTTP: a Web-standard `fetch` handler (`createHttp`) built from the routes, wraps and sockets plugins contribute to the registry `Http`, authenticators (`Authenticators`), responses as descriptions, a security baseline on by default, Chord's Node listener and `nodeRequest`, the links endpoint. | Node |
 | `@earendil-works/chord/workers` | Workers: `createWorkers` runs a forked worker per address of a host kind, started on demand and stopped when idle; `workerMain` is a worker's entry; `processLock`. | Node |
+| `@earendil-works/chord/workers/child` | The worker's side alone: `workerMain` and `processLock`, without esbuild (a worker entry imports this). | Node |
 | `@earendil-works/chord/plugins` | Plugins: discovery, builds with esbuild (`buildFacet`), evaluation, the watcher, rollouts, `createPlugins`, `installPlugin`, `testPlugin`, `pluginFile`. | Node |
 | `@earendil-works/chord/plugins/runtime` | `createPluginRuntime`: loads built plugins without esbuild (a worker's side). | Node |
 | `@earendil-works/chord/app` | The app kit: `startServer`, `startWorker`, the start-data objects, sessions and the owner's sign-in, device pairing, files, export and import per address, optional plugins (users, invites, ephemeral login). | Node |
@@ -36,7 +37,7 @@ The design, the rule book for all of this, is [docs/design.md](docs/design.md).
 | `@earendil-works/chord/sqlite/node` | `NodeSqliteDatabase`, `openNodeSqliteDatabase`, and `NodeSqliteDatabaseOptions`. | Node |
 | `@earendil-works/chord/sqlite/cloudflare` | `DurableObjectSqliteDatabase` and the structural `DurableObjectSqliteStorage` binding type. | Cloudflare Durable Objects |
 
-`esbuild` (for `/plugins` and `/surfaces`), `ws` (for `/http` and `/tui/launcher`) and `react` (for `/react`) are optional peer dependencies, imported only there; `/app` uses all but `react`.
+`esbuild` (for `/plugins`, `/surfaces` and `/workers`), `ws` (for `/http` and `/tui/launcher`) and `react` (for `/react`) are optional peer dependencies, imported only there; `/app` uses all but `react`.
 
 ## Quick start
 

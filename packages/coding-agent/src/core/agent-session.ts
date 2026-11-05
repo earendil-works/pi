@@ -43,6 +43,7 @@ import type {
 	TextContent,
 	ToolResultMessage,
 	Usage,
+	UserMessage,
 } from "@earendil-works/pi-ai/compat";
 import {
 	clampThinkingLevel,
@@ -400,6 +401,7 @@ export class AgentSession {
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _isAgentRunActive = false;
+	private _promptPreflightCount = 0;
 	private _agentRunAbortRequested = false;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
@@ -408,6 +410,8 @@ export class AgentSession {
 	private _steeringMessages: string[] = [];
 	/** Tracks pending follow-up messages for UI display. Removed when delivered. */
 	private _followUpMessages: string[] = [];
+	/** Queued user messages whose images are normalized when they are delivered. */
+	private _queuedMessagesWithImages = new WeakSet<AgentMessage>();
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 	/** Context-only custom messages queued during a run, flushed once the current turn's tool results are in. */
@@ -1138,20 +1142,24 @@ export class AgentSession {
 		if (event.type === "message_start" && event.message.role === "user") {
 			this._overflowRecoveryAttempted = false;
 			const messageText = contentText(event.message.content, "");
-			if (messageText) {
-				// Check steering queue first
-				const steeringIndex = this._steeringMessages.indexOf(messageText);
-				if (steeringIndex !== -1) {
-					this._steeringMessages.splice(steeringIndex, 1);
+			// Check steering queue first
+			const steeringIndex = this._steeringMessages.indexOf(messageText);
+			if (steeringIndex !== -1) {
+				this._steeringMessages.splice(steeringIndex, 1);
+				this._emitQueueUpdate();
+			} else {
+				// Check follow-up queue
+				const followUpIndex = this._followUpMessages.indexOf(messageText);
+				if (followUpIndex !== -1) {
+					this._followUpMessages.splice(followUpIndex, 1);
 					this._emitQueueUpdate();
-				} else {
-					// Check follow-up queue
-					const followUpIndex = this._followUpMessages.indexOf(messageText);
-					if (followUpIndex !== -1) {
-						this._followUpMessages.splice(followUpIndex, 1);
-						this._emitQueueUpdate();
-					}
 				}
+			}
+			// Normalize queued images at delivery, before events and persistence see the message,
+			// so they get the same resize as idle prompts with the current model's limits (#11738).
+			if (this._queuedMessagesWithImages.has(event.message)) {
+				this._queuedMessagesWithImages.delete(event.message);
+				await this._normalizeQueuedMessageImages(event.message);
 			}
 		}
 
@@ -2128,11 +2136,31 @@ export class AgentSession {
 			}
 		}
 
-		if (this._compactionAbortController !== undefined) {
+		if (this._compactionAbortController !== undefined || this._branchSummaryAbortController !== undefined) {
 			throw new Error(
 				"Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.",
 			);
 		}
+
+		// Reserve the context through async input hooks and auth checks so tree navigation cannot
+		// start meanwhile (#9154). _startRun marks the run active synchronously, so there is no gap.
+		this._promptPreflightCount++;
+		let trigger: BeforeAgentStartTrigger | undefined;
+		try {
+			trigger = await this._preparePrompt(text, options);
+		} finally {
+			this._promptPreflightCount--;
+		}
+		if (trigger) await this._startRun(trigger, () => preflightResult?.("started"));
+	}
+
+	/**
+	 * Run input hooks, expand templates, queue while streaming, and validate model and auth.
+	 * Returns the run trigger, or undefined when the prompt was handled or queued.
+	 */
+	private async _preparePrompt(text: string, options?: PromptOptions): Promise<BeforeAgentStartTrigger | undefined> {
+		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
+		const preflightResult = options?.preflightResult;
 
 		// Emit input event for extension interception (before skill/template expansion)
 		const processedInput = await this._runInputHandlers(
@@ -2143,7 +2171,7 @@ export class AgentSession {
 		);
 		if (!processedInput) {
 			preflightResult?.("handled");
-			return;
+			return undefined;
 		}
 		const { text: currentText, images: currentImages } = processedInput;
 
@@ -2167,7 +2195,7 @@ export class AgentSession {
 				await this._queueSteer(expandedText, currentImages);
 			}
 			preflightResult?.("queued");
-			return;
+			return undefined;
 		}
 
 		// Validate model
@@ -2190,9 +2218,7 @@ export class AgentSession {
 			throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
 		}
 
-		await this._startRun({ messageType: "user", prompt: expandedText, images: currentImages }, () =>
-			preflightResult?.("started"),
-		);
+		return { messageType: "user", prompt: expandedText, images: currentImages };
 	}
 
 	/**
@@ -2327,11 +2353,9 @@ export class AgentSession {
 		if (images) {
 			content.push(...images);
 		}
-		this.agent.steer({
-			role: "user",
-			content,
-			timestamp: Date.now(),
-		});
+		const message: AgentMessage = { role: "user", content, timestamp: Date.now() };
+		if (images?.length) this._queuedMessagesWithImages.add(message);
+		this.agent.steer(message);
 	}
 
 	/**
@@ -2344,7 +2368,24 @@ export class AgentSession {
 		if (images) {
 			content.push(...images);
 		}
-		this.agent.followUp({ role: "user", content, timestamp: Date.now() });
+		const message: AgentMessage = { role: "user", content, timestamp: Date.now() };
+		if (images?.length) this._queuedMessagesWithImages.add(message);
+		this.agent.followUp(message);
+	}
+
+	/** Replace a queued user message's images in place with normalized ones, appending hints to its text. */
+	private async _normalizeQueuedMessageImages(message: UserMessage): Promise<void> {
+		if (typeof message.content === "string") return;
+		const [first, ...rest] = message.content;
+		if (first?.type !== "text") return;
+		const images = rest.filter((block): block is ImageContent => block.type === "image");
+		const normalized = await this._normalizePromptImages(images);
+		const text = normalized.hints.length > 0 ? `${first.text}\n\n${normalized.hints.join("\n")}` : first.text;
+		message.content = [
+			{ type: "text", text },
+			...rest.filter((block) => block.type !== "image"),
+			...normalized.images,
+		];
 	}
 
 	/**
@@ -3739,6 +3780,13 @@ export class AgentSession {
 	}
 
 	async reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void> {
+		if (this.isStreaming) {
+			throw new Error("Wait for the current response to finish before reloading.");
+		}
+		if (this.isCompacting) {
+			throw new Error("Wait for compaction to finish before reloading.");
+		}
+
 		const oldRunner = this._extensionRunner;
 		const previousFlagValues = oldRunner.getFlagValues();
 		await emitSessionShutdownEvent(oldRunner, { type: "session_shutdown", reason: "reload" });
@@ -4046,7 +4094,7 @@ export class AgentSession {
 		targetId: string,
 		options: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string } = {},
 	): Promise<{ editorText?: string; cancelled: boolean; aborted?: boolean; summaryEntry?: BranchSummaryEntry }> {
-		if (this.isStreaming) {
+		if (this.isStreaming || this._promptPreflightCount > 0) {
 			throw new Error("Wait for the current response to finish before navigating the session tree.");
 		}
 		if (this.isCompacting) {
@@ -4096,7 +4144,8 @@ export class AgentSession {
 		};
 
 		// Set up abort controller for summarization
-		this._branchSummaryAbortController = new AbortController();
+		const abortController = new AbortController();
+		this._branchSummaryAbortController = abortController;
 
 		try {
 			let extensionSummary: { summary: string; details?: unknown; usage?: Usage } | undefined;
@@ -4107,7 +4156,7 @@ export class AgentSession {
 				const result = (await this._extensionRunner.emit({
 					type: "session_before_tree",
 					preparation,
-					signal: this._branchSummaryAbortController.signal,
+					signal: abortController.signal,
 				})) as SessionBeforeTreeResult | undefined;
 
 				if (result?.cancel) {
@@ -4136,7 +4185,7 @@ export class AgentSession {
 			let summaryDetails: unknown;
 			let summaryUsage: Usage | undefined;
 			if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
-				const signal = this._branchSummaryAbortController.signal;
+				const signal = abortController.signal;
 				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
 				const result = await generateBranchSummary(entriesToSummarize, {
 					...(await this._getSummarizationRequestAuth(this.model!, signal)),
@@ -4218,7 +4267,8 @@ export class AgentSession {
 			this._refreshFinalizedContext();
 			this._restoreToolsFromTranscript();
 
-			// Emit session_tree event
+			// The selected context is installed; session_tree handlers may now prompt or navigate again.
+			this._branchSummaryAbortController = undefined;
 			await this._extensionRunner.emit({
 				type: "session_tree",
 				newLeafId: this.sessionManager.getLeafId(),
@@ -4231,7 +4281,10 @@ export class AgentSession {
 
 			return { editorText, cancelled: false, summaryEntry };
 		} finally {
-			this._branchSummaryAbortController = undefined;
+			// A navigation started from session_tree owns the controller now; do not clear it.
+			if (this._branchSummaryAbortController === abortController) {
+				this._branchSummaryAbortController = undefined;
+			}
 			this._resolveIdleWaitIfIdle();
 		}
 	}

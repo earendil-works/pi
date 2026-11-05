@@ -86,12 +86,41 @@ export class Browser {
 		await browser.call("Page.setLifecycleEventsEnabled", { enabled: true });
 		return browser;
 	}
-	call(method: string, params: object = {}): Promise<unknown> {
+	/** Sends a DevTools command to the page, or to an attached target's flat session (`evaluateInFrame`). */
+	call(method: string, params: object = {}, sessionId?: string): Promise<unknown> {
 		return new Promise((resolve, reject) => {
 			const id = ++this.id;
 			this.pending.set(id, { resolve, reject });
-			this.socket.send(JSON.stringify({ id, method, params }));
+			this.socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
 		});
+	}
+	/**
+	 * Evaluates `expression` in the out-of-process frame whose URL contains `url`: an artifact preview has an opaque
+	 * origin, so the page itself cannot reach into it.
+	 */
+	async evaluateInFrame<T>(url: string, expression: string): Promise<T> {
+		const { targetInfos } = (await this.call("Target.getTargets")) as {
+			targetInfos: { targetId: string; type: string; url: string }[];
+		};
+		const target = targetInfos.find((info) => info.type === "iframe" && info.url.includes(url));
+		if (!target) throw new Error(`No frame target for ${url}`);
+		const { sessionId } = (await this.call("Target.attachToTarget", {
+			targetId: target.targetId,
+			flatten: true,
+		})) as {
+			sessionId: string;
+		};
+		try {
+			const response = (await this.call(
+				"Runtime.evaluate",
+				{ expression, returnByValue: true, awaitPromise: true },
+				sessionId,
+			)) as { result: { value: T }; exceptionDetails?: unknown };
+			if (response.exceptionDetails) throw new Error(JSON.stringify(response.exceptionDetails));
+			return response.result.value;
+		} finally {
+			await this.call("Target.detachFromTarget", { sessionId }).catch(() => {});
+		}
 	}
 	async evaluate<T>(expression: string): Promise<T> {
 		const response = (await this.call("Runtime.evaluate", {

@@ -793,6 +793,21 @@ validation and copies the v2 kernel added around Delta.
   order, `tx.update` per row, chunks of N rows per commit; table version `migrating` → `ready`; a crash resumes the
   scan). Indexes are local and created after `ready` (**superseded in part** by "Index definitions are recorded": the
   index changes after `ready` are recorded).
+- **S18, group commit (owner, 2026-11-04):** the commits queued behind a running commit step form one group, which the
+  next turn of the commit queue admits at its entry and writes in one backend transaction: each commit keeps its own
+  step, seq and outbox commit, the metadata is written once, and after `COMMIT` memory follows commit by commit, each
+  adopted when memory stands at it, in queue order, before the next turn (S1 as for lone steps). Fewer transactions are
+  always good, and a remote SQLite backend would pay a round trip per statement. A series, an export or a batch apply
+  queued after an open group ends it (queue order stays); an empty commit never joins one. A refusal in a group (one
+  commit's own writes throw, D4) rolls the group back whole and its admitted commits run again one by one, not admitted
+  again, so only the refusing commit is refused; their live queries run again too (`chord.query.runs` counts both
+  attempts, the statements only the stored one). The ids the rolled-back attempt took stay unused (D3: the allocator
+  is shared with Durable's `mintId`, never rewound; so within a group's worth of ids of `Number.MAX_SAFE_INTEGER` a
+  refused group can exhaust the id space a little earlier, accepted). A group that would pass the end of the seq range
+  runs its commits one by one, so the ones that fit are stored. A backend failure while the store closes (a commit's,
+  a read's, a maintenance write's) still refuses the admitted commits after it. No savepoints (two statements per
+  commit, and Durable Objects refuse them) and no check/write split of Chord's writes (their counted conditional writes
+  are the checks).
 - **Blobs and derived data (owner, 2026-10-21):** blobs (artifact versions, uploads, sent files) are app layer: files in
   the session directory named by the hash of their content, never changed, written (tmp, fsync, rename) before the row
   or document that names them; any process may write one. Export copies `blobs/` with the store snapshot; import
@@ -2526,6 +2541,69 @@ validation and copies the v2 kernel added around Delta.
   `live` during a swap by changing `ChordObject.state` (holds, keyed pins, versions and `variant` read it as "a live
   instance exists"; a per-binding view is possible later, the blip is cosmetic). Carry-over: calls surviving a
   `loading` unbind (slices.md, "Later: reload").
+- **Telemetry from browser pages (owner, 2026-11-04: "I just need this implemented"; "it couldn't really fuck the
+  server up"; tutorial gap):** a page records spans in memory (the click and the calls it makes, carriers on its calls
+  as any client) and sends finished spans in batches every few seconds and when hidden, over its existing Chord link,
+  to a telemetry object on the server (`ingest(batch)`): sign-in, principals, part limits and flow control apply as for
+  any call; an app may admit anonymous pages. The server treats them as untrusted, best effort: batch size and rate
+  capped per connection, every field checked and capped (names, attributes, events, ids printable ASCII), spans marked
+  as from that browser (`chord.host` `browser`, ids prefixed per sender by the store), never overwriting or posing as
+  server spans; the store writes finished spans it receives (a new ingest path). The viewer clamps a browser span
+  against its server children (clock skew). General Chord: the page recorder in the web surface, the ingest facet, the
+  store's ingest; the app kit serves the object when given a telemetry store and `startPage` records when the app asks.
+- **Who a span was for (owner, 2026-11-04: "that hook could also allow us to resolve the username and put that in the
+  telemetry if we're fine with that"; refines "IDs are attributes of spans" for principals):** method and call spans
+  record the principal's attributes, by default its principal key (`chord.principal`), never other app data. A hook in
+  the host's telemetry options maps a principal to the attributes to record (none, the key, or more, e.g. a user name
+  the app resolves from its own data). Chord calls the hook for each span it records with a principal; the hook must be
+  synchronous and cheap, and caching is the hook's own (owner: "the caching should be done by the hook"). The hook is
+  a Chord host option (`createHost({ telemetry, principalAttributes })`); the app kit passes it through `startServer`
+  and `startWorker`. Browser spans are stamped with the principal of the
+  link their batch came over. The viewer stays the owner's and filters by principal.
+- **The server is the one place telemetry is stored (owner, 2026-11-04: "who stores all the telemetry? There must be a
+  single place ... the client and the worker would just talk to that object on the server"; refines "Telemetry from
+  browser pages" and "Telemetry store"):** the server owns the telemetry store and is its only writer. Browsers and
+  workers record in memory and send finished spans in batches over the links they already have to the server's
+  telemetry object (`ingest(batch)`), which checks, stamps (`chord.host`, the link's principal for browsers) and writes
+  them. Browser batches get the strict checks and caps; a worker's (the server's own child, a trusted link) are
+  written as they are, stamped with the worker's host. No worker opens the store file; nothing passes its path to
+  workers. The store stays its own SQLite file in the data directory, not the server's Chord store (high volume, 7-day
+  retention: it would compete with app data in the commit queue and travel in exports and sync).
+- **Calls in flight survive a `loading` unbind (owner, 2026-11-04: "dunno, ask reviewers"; both reviewers, Opus
+  `/tmp/calls-survive-opus.md` and `/tmp/calls-survive-2.md`: build it; refines slice 7b's wire rule "A `failed` on a
+  bound hold unbinds it"):** a hold unbinding with `loading` (a restart, a parked swap, a live failure retrying) keeps
+  its calls in flight instead of rejecting them `unavailable`; `failed` and removal still reject. Each kept call gets
+  exactly one answer from what it already waits on: the instance it runs on (its result within `closeTimeout`, else
+  `released` at the seal) or the gate (the new code's result, `park_timeout` after `readyTimeout`, the parked cause, or
+  the object's end). Not rare: every restart of an object with natives hit it (a client still `live` during the drain
+  sends a call that waited at the gate). Calls sent before the client learns of the `loading` and arriving after the
+  unbind wait at the gate too (the unbound hold keeps its old method names, as the swap-in-place rebind does), never
+  `not_ready`. Consumers and relays need no change (they keep sent calls across `loading`; a method the new variant
+  lacks fails `invalid/member`, a dropped version `contract_mismatch`). Cost: kept calls hold call-window slots up to
+  `readyTimeout` while the object is parked.
+- **The rollout order stays; no `loading` grace (owner, 2026-11-04: "either order has the problem, just in the
+  opposite host", "keep"; "no loading grace"; part of the restart-only discussion, `/tmp/restart-study.md`):** (1) The
+  kit keeps server, then workers, then clients. A contract change between hosts made in one rollout leaves a gap
+  whatever the order: a consumer on an earlier step whose provider on a later step moves to a new version waits
+  `failed { waiting }` (with its last values) until the provider's step commits (server first: server consumers of
+  worker types; workers first: worker consumers of server types). `accepts` cannot close it within one rollout (the
+  old provider never serves the new version). Documented with the recipe that avoids it: two applies, the provider
+  first (serving the new version and accepting the old one), then its consumers. The reload suite's two `it.fails`
+  targets for it become documented-behaviour tests. Rejected: the kit ordering steps by the direction of the changed
+  contracts (works only when every change points one way). (2) No grace on consumers' `loading` (a reference with
+  values reporting `loading` only after ~300 ms): rejected from the restart-only proposal.
+- **Workers start from the base code the server booted with (owner, 2026-11-04: "let's do this for armin"; Armin's
+  incident report, Radius artifact 01m6m3xek8fveayqgstayg8w92):** the problem: a worker loads its entry module and the
+  base code it imports from disk when it is forked, while the server keeps what it loaded at boot. An edit of the
+  app's own source while it runs (an agent half way through a change) makes every later fork run other base code than
+  the server: a crash while loading modules fails the start before `started` (and R2 keeps the address failed after
+  the edit is finished), or the two sides run skewed code silently (`PROTOCOL_VERSION` stays 1 until p3). Design §21
+  says base code applies only through a restart of the server; nothing enforced it for workers. Rule: the workers
+  component builds its worker entry once when it is created, as the surfaces build their base bundles at start (one
+  esbuild bundle for Node), and forks every worker of its kind from that snapshot; a change of base code reaches
+  workers only through a server restart, which the kit's `base` mark flags. Plugins are unaffected (workers get the
+  server's built scripts). What the bundle keeps external (Node builtins, packages that cannot be bundled, such as
+  native addons) is settled by the build. p2 adopts it through its own `createWorkers`.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a

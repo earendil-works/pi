@@ -5,6 +5,7 @@ import {
 	ArtifactPicker,
 	closeLayers,
 	FilePanel,
+	InlineArtifactView,
 	OpenViewer,
 	openLayer,
 	SessionId,
@@ -17,7 +18,7 @@ import {
 import type { ReactNode } from "react";
 import { DownloadInfoSchema } from "../files/contract.ts";
 import { ArtifactInfoSchema, ArtifactList } from "./contract.ts";
-import { ArtifactPanel } from "./preview.tsx";
+import { ArtifactPanel, InlineArtifact } from "./preview.tsx";
 
 const ViewerSchema = union([
 	obj({ kind: literal("file"), file: DownloadInfoSchema }, { open: true }),
@@ -51,7 +52,7 @@ function Content({ children }: { children?: ReactNode }) {
 	return (
 		<SessionId.Provider value={route.session}>
 			<OpenViewer.Provider value={open}>
-				{children}
+				<InlineArtifactView.Provider value={InlineArtifact}>{children}</InlineArtifactView.Provider>
 				{top?.kind === "sheet" && top.name === "artifacts" && (
 					<ArtifactPicker
 						artifacts={artifacts.toReversed()}

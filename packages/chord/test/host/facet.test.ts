@@ -1,7 +1,15 @@
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, expectTypeOf, it } from "vitest";
-import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { int, local } from "../../src/contracts/index.ts";
-import { defineFacet, type Facet, type FacetHost, type FacetSelf, type Host } from "../../src/host/index.ts";
+import { BACKGROUND_CONTEXT as context, withTelemetry } from "../../src/context/index.ts";
+import { int, local, method } from "../../src/contracts/index.ts";
+import {
+	createHost,
+	defineFacet,
+	type Facet,
+	type FacetHost,
+	type FacetSelf,
+	type Host,
+} from "../../src/host/index.ts";
 import { defineRegistry } from "../../src/registries/index.ts";
 import { constant } from "../../src/state/index.ts";
 import { loaded } from "../support.ts";
@@ -61,5 +69,31 @@ describe("facets", () => {
 		expectTypeOf<Facet<App>>().toExtend<Facet<App>>();
 		expectTypeOf<Facet<{ kind: "owner" }>>().not.toExtend<Facet<App>>();
 		expectTypeOf<Facet<App | { kind: "robot" }>>().not.toExtend<Facet<App>>();
+	});
+});
+
+describe("serve options", () => {
+	it("starts no method span for a type served `untraced`", async () => {
+		const Quiet = local("app.quiet", { version: 1, params: {}, members: { ping: method() } });
+		const Loud = local("app.loud", { version: 1, params: {}, members: { ping: method() } });
+		const telemetry = new InMemoryTelemetryContext();
+		const host = createHost({ telemetry, onError: () => {} });
+		const facet = defineFacet((h) => {
+			h.serve(Quiet, () => ({ ping: async () => null }), { untraced: true });
+			h.serve(Loud, () => ({ ping: async () => null }));
+		});
+		await host.load([{ name: "@test/app", facet }], context);
+		const [quiet, loud] = [await host.get(Quiet, {}, context), await host.get(Loud, {}, context)];
+		await telemetry.startSpan({ name: "work" }, async (span) => {
+			const traced = withTelemetry(span, context);
+			await quiet.ping(traced);
+			await loud.ping(traced);
+		});
+		expect(
+			telemetry
+				.getSpans()
+				.filter(({ name }) => name === "chord.method")
+				.map(({ attributes }) => attributes.type),
+		).toEqual(["app.loud"]);
 	});
 });

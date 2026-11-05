@@ -16,6 +16,7 @@ import {
 	AlertIcon,
 	ArtifactIcon,
 	BotIcon,
+	BranchIcon,
 	CheckIcon,
 	ChevronIcon,
 	CodeIcon,
@@ -33,7 +34,7 @@ import { Markdown } from "./Markdown.tsx";
 import { RowEstimator, type RowFeatures } from "./row-estimate.ts";
 import type { Item, NestedCall, ToolView, Transcript } from "./transcript.ts";
 import { type RowRange, revealInTranscripts, type TranscriptScroll } from "./use-chat-scroll.ts";
-import { artifactUrls, FileCard, fileMeta, fileUrl, OpenViewer } from "./Viewer.tsx";
+import { artifactUrls, FileCard, fileMeta, fileUrl, InlineArtifactView, OpenViewer } from "./Viewer.tsx";
 
 function tokens(count: number): string {
 	return count < 1000
@@ -88,10 +89,18 @@ export const OpenPeerConversation = createContext<((sessionId: string) => void) 
 export const WorkingDirectory = createContext<string | undefined>(undefined);
 /** Opens a cwd-relative file in the workspace panel; absent when the viewer has no workspace access. */
 export const OpenWorkspaceFile = createContext<((path: string, line?: number) => void) | undefined>(undefined);
+/** Shows one of the session's terminals in the terminal panel (owner only: guests have none). */
+export const OpenTerminal = createContext<((terminalId: string) => void) | undefined>(undefined);
 /** Download and artifact locators are scoped to the containing session, including child views. */
 export const SessionId = createContext<string | undefined>(undefined);
 /** Starts a reply to an entry; absent while the conversation accepts no replies (chat-mode turns them on). */
 export const ReplyTo = createContext<((target: { entryId: number; name: string }) => void) | undefined>(undefined);
+
+/**
+ * Continues the session from a message (`/tree`, docs/tree.md): before a user message, whose text goes back to the
+ * composer ("Edit"), after an answer ("Branch from here"). Absent unless the owner views the main conversation.
+ */
+export const BranchFrom = createContext<((entryId: number) => void) | undefined>(undefined);
 
 /** Loads older history until an entry is retained; false when the conversation has no such entry. */
 export const RevealEntry = createContext<((entryId: number) => Promise<boolean>) | undefined>(undefined);
@@ -225,8 +234,14 @@ function callSummary(args: NestedCall["args"], cwd: string | undefined): string 
 	const key = ["command", "path", "pattern", "url", "query", "name", "label", "prompt"].find(
 		(name) => typeof args[name] === "string",
 	);
+	// A command with an argv (the terminal tool's tmux commands): the whole command line.
+	const argv = key === "command" && Array.isArray(args.args) ? args.args.map(str) : [];
 	const value =
-		key === undefined ? JSON.stringify(args) : key === "path" ? relativePath(cwd, str(args.path)) : str(args[key]);
+		key === undefined
+			? JSON.stringify(args)
+			: key === "path"
+				? relativePath(cwd, str(args.path))
+				: [str(args[key]), ...argv].join(" ");
 	return value === "{}" ? "" : value.replace(/\s+/g, " ").trim();
 }
 
@@ -380,6 +395,7 @@ const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
 	const [open, setOpen] = useState(false);
 	const openConversation = useContext(OpenConversation);
 	const openViewer = useContext(OpenViewer);
+	const InlineArtifact = useContext(InlineArtifactView);
 	const sessionId = useContext(SessionId);
 	const cwd = useContext(WorkingDirectory)?.replace(/\/+$/, "");
 	const active = tool.status === "running" || tool.status === "pending";
@@ -393,6 +409,7 @@ const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
 	let body: React.ReactNode = null;
 	let extra: React.ReactNode = null;
 	const openWorkspace = useContext(OpenWorkspaceFile);
+	const openTerminal = useContext(OpenTerminal);
 	// File tools link into the workspace panel when the path stays inside the working directory.
 	const inside = sourcePath && !path.startsWith("/") && path !== "." && !path.split("/").includes("..");
 	const workspaceLink = (line?: number) =>
@@ -536,17 +553,28 @@ const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
 				Number.isSafeInteger(details.version) &&
 				details.version > 0
 			) {
-				const artifact = details as ArtifactInfo;
+				// The version this call produced, without the details' `inline` flag (the viewer's locator is closed).
+				const artifact: ArtifactInfo = {
+					name: details.name,
+					title: details.title,
+					type: details.type as ArtifactInfo["type"],
+					version: details.version,
+				};
 				const urls = artifactUrls(sessionId, artifact);
 				card = (
-					<FileCard
-						icon={<ArtifactIcon />}
-						title={artifact.title}
-						meta={`${artifact.type.toUpperCase()} · version ${artifact.version}`}
-						href={urls.download}
-						download={urls.filename}
-						onOpen={() => openViewer({ kind: "artifact", artifact })}
-					/>
+					<>
+						<FileCard
+							icon={<ArtifactIcon />}
+							title={artifact.title}
+							meta={`${artifact.type.toUpperCase()} · version ${artifact.version}`}
+							href={urls.download}
+							download={urls.filename}
+							onOpen={() => openViewer({ kind: "artifact", artifact })}
+						/>
+						{details.inline === true && InlineArtifact && (
+							<InlineArtifact sessionId={sessionId} artifact={artifact} />
+						)}
+					</>
 				);
 			}
 			break;
@@ -587,6 +615,28 @@ const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
 							</a>
 						)}
 					</>
+				);
+			break;
+		}
+		case "terminal": {
+			icon = <TerminalIcon />;
+			title = "Terminal";
+			const argv = Array.isArray(tool.args.args) ? tool.args.args.map(str) : [];
+			summary = [str(tool.args.command), ...argv].join(" ");
+			body = (
+				<>
+					<pre className="tool-command">{summary}</pre>
+					{tool.output && (
+						<pre className={`term ${tool.status === "error" ? "tool-error" : ""}`}>{tool.output}</pre>
+					)}
+				</>
+			);
+			const terminalId = typeof details.terminalId === "string" ? details.terminalId : undefined;
+			if (openTerminal && terminalId && tool.status === "done" && str(tool.args.command) !== "kill-window")
+				extra = (
+					<button type="button" className="tool-link" onClick={() => openTerminal(terminalId)}>
+						Open terminal{typeof details.window === "number" ? ` ${details.window}` : ""} →
+					</button>
 				);
 			break;
 		}
@@ -783,6 +833,7 @@ function Assistant({
 	streaming: boolean;
 }) {
 	const reply = useReply(streaming ? undefined : entryId, "Pi");
+	const branch = useContext(BranchFrom);
 	const byId = new Map(tools.map((tool) => [tool.id, tool]));
 	const parts = message.content;
 	const lastText = parts.findLastIndex((part) => part.type === "text" && part.text.trim());
@@ -811,6 +862,17 @@ function Assistant({
 							{index === lastText && answer && !streaming && (
 								<div className="message-actions">
 									<CopyButton text={answer} />
+									{branch && entryId !== undefined && (
+										<button
+											type="button"
+											className="copy"
+											aria-label="Branch from here"
+											title="Branch from here: continue the session after this answer"
+											onClick={() => branch(entryId)}
+										>
+											<BranchIcon />
+										</button>
+									)}
 									{reply.button}
 								</div>
 							)}
@@ -965,11 +1027,25 @@ function UserMessage({ item }: { item: Extract<Item, { type: "user" }> }) {
 	const reveal = useContext(RevealEntry);
 	const peer = item.peer;
 	const reply = useReply(item.author ? item.entryId : undefined, item.author?.name ?? "");
+	const branch = useContext(BranchFrom);
+	// Only what reached the agent can be edited: a chat message (chat mode) is not part of its history.
+	const entryId = item.chat ? undefined : item.entryId;
 	return (
 		<div
 			className={`user ${item.author?.kind === "guest" ? "guest-message" : ""} ${item.chat ? "chat-message" : ""}`}
 			data-entry={item.entryId}
 		>
+			{branch && entryId !== undefined && (
+				<button
+					type="button"
+					className="edit-button"
+					aria-label="Edit"
+					title="Edit: continue the session before this message, with its text in the composer"
+					onClick={() => branch(entryId)}
+				>
+					<PencilIcon />
+				</button>
+			)}
 			{reply.button}
 			<div className="bubble" {...reply.gesture}>
 				{item.replyTo && (
@@ -1032,9 +1108,6 @@ const ItemView = memo(function ItemView({ item }: { item: Item }) {
 		case "user": {
 			// Subagents' messages (reports, questions, notes), from their entry data.
 			if (item.agent) return <Report name={item.agent.from.name} status={item.agent.intent} text={item.text} />;
-			// LEGACY: reports from before they were entries, recognized by their first line.
-			const report = !item.author && !item.peer && /^\[subagent (\S+) ([^\]]*)\] ?([\s\S]*)$/.exec(item.text);
-			if (report) return <Report name={report[1] ?? ""} status={report[2] ?? ""} text={report[3] ?? ""} />;
 			return <UserMessage item={item} />;
 		}
 		case "assistant":

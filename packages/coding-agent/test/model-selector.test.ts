@@ -1,3 +1,4 @@
+import type { ModelsRefreshResult } from "@earendil-works/pi-ai";
 import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
@@ -8,6 +9,13 @@ import { createHarness, type Harness } from "./suite/harness.ts";
 
 function createFakeTui(): TUI {
 	return { requestRender: () => {} } as unknown as TUI;
+}
+
+function selectedModelId(selector: ModelSelectorComponent): string | undefined {
+	const row = stripAnsi(selector.render(120).join("\n"))
+		.split("\n")
+		.find((line) => line.startsWith("→"));
+	return row?.replace(/^→\s*(✓\s*)?/, "").split(" ")[0];
 }
 
 describe("model selector", () => {
@@ -151,6 +159,94 @@ describe("model selector", () => {
 		await vi.waitFor(() => {
 			const rendered = stripAnsi(selector.render(120).join("\n"));
 			expect(rendered).toContain("Could not refresh 2 model catalogs (openai, anthropic); showing cached models.");
+		});
+	});
+
+	// #9109
+	describe("when the catalog refresh lands", () => {
+		// Opens the selector with the refresh in flight, so a test can browse first and then let it land.
+		async function openWithPendingRefresh(): Promise<{
+			activeHarness: Harness;
+			selector: ModelSelectorComponent;
+			finishRefresh: () => Promise<void>;
+		}> {
+			const activeHarness = await createHarness({
+				models: [{ id: "alpha-1" }, { id: "alpha-2" }, { id: "alpha-3" }, { id: "beta-1" }],
+			});
+			harness = activeHarness;
+			const { promise, resolve } = Promise.withResolvers<ModelsRefreshResult>();
+			vi.spyOn(activeHarness.session.modelRuntime, "refresh").mockReturnValue(promise);
+			const selector = new ModelSelectorComponent(
+				createFakeTui(),
+				activeHarness.getModel("alpha-1"),
+				activeHarness.session.modelRuntime,
+				[],
+				() => {},
+				() => {},
+			);
+			const finishRefresh = async () => {
+				resolve({ aborted: false, errors: new Map() });
+				await vi.waitFor(() => {
+					expect(stripAnsi(selector.render(120).join("\n"))).toContain("Model catalogs refreshed.");
+				});
+			};
+			return { activeHarness, selector, finishRefresh };
+		}
+
+		it("keeps the selection on the browsed model", async () => {
+			const { selector, finishRefresh } = await openWithPendingRefresh();
+			selector.handleInput("\x1b[B");
+			selector.handleInput("\x1b[B");
+
+			await finishRefresh();
+
+			expect(selectedModelId(selector)).toBe("alpha-3");
+			selector.dispose();
+		});
+
+		it("keeps the selection while a search query is active", async () => {
+			const { selector, finishRefresh } = await openWithPendingRefresh();
+			for (const char of "alpha") selector.handleInput(char);
+			selector.handleInput("\x1b[B");
+			const browsed = selectedModelId(selector);
+
+			await finishRefresh();
+
+			expect(selectedModelId(selector)).toBe(browsed);
+			expect(browsed).not.toBe("alpha-1");
+			selector.dispose();
+		});
+
+		it("follows the selected model when new rows shift its position", async () => {
+			const { activeHarness, selector, finishRefresh } = await openWithPendingRefresh();
+			selector.handleInput("\x1b[B");
+			const modelRuntime = activeHarness.session.modelRuntime;
+			const snapshot = modelRuntime.getAvailableSnapshot();
+			vi.spyOn(modelRuntime, "getAvailableSnapshot").mockReturnValue([
+				{ ...snapshot[0], id: "added-model" },
+				...snapshot,
+			]);
+
+			await finishRefresh();
+
+			expect(selectedModelId(selector)).toBe("alpha-2");
+			selector.handleInput("\x1b[A");
+			selector.handleInput("\x1b[A");
+			expect(selectedModelId(selector)).toBe("alpha-1");
+			selector.dispose();
+		});
+
+		it("falls back to the current model when the selected model disappears", async () => {
+			const { activeHarness, selector, finishRefresh } = await openWithPendingRefresh();
+			selector.handleInput("\x1b[B");
+			const modelRuntime = activeHarness.session.modelRuntime;
+			const remaining = modelRuntime.getAvailableSnapshot().filter((model) => model.id !== "alpha-2");
+			vi.spyOn(modelRuntime, "getAvailableSnapshot").mockReturnValue(remaining);
+
+			await finishRefresh();
+
+			expect(selectedModelId(selector)).toBe("alpha-1");
+			selector.dispose();
 		});
 	});
 });

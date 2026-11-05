@@ -85,7 +85,13 @@ export interface SessionWorkerControl {
 	): Promise<void>;
 	/** Owner-requested retry: stops the previous instance and clears the failure before a fresh reference. */
 	retry(session: string): Promise<void>;
+	/** Stops the session's worker; its holders start a new one (a restart, e.g. for a changed environment). */
 	stop(session: string): Promise<void>;
+	/**
+	 * Stops an archived session's worker and starts none for its holders: they wait (suspended) until `retry` (restore)
+	 * or their release, instead of a start the archived session refuses.
+	 */
+	suspend(session: string): Promise<void>;
 	/** Every change of a worker's state. */
 	subscribe(listener: (event: HostEvent) => void): () => void;
 }
@@ -234,7 +240,7 @@ export const WorkerStateSchema = obj({
 export type WorkerState = Static<typeof WorkerStateSchema>;
 export type HostEvent = { readonly session: string } & WorkerState;
 
-/** Session worker processes: which run (by session ID), and stopping one (archive). */
+/** Session worker processes: which run (by session ID), and restarting one for its holders (`stop`). */
 export const Hosts = local("p2.hosts", {
 	version: 2,
 	params: {},

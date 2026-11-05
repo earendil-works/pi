@@ -56,6 +56,11 @@
 			"types": "./dist/telemetry-sqlite/index.d.ts",
 			"import": "./dist/telemetry-sqlite/index.js"
 		},
+		"./telemetry-sqlite/node": {
+			"source": "./src/telemetry-sqlite/node.ts",
+			"types": "./dist/telemetry-sqlite/node.d.ts",
+			"import": "./dist/telemetry-sqlite/node.js"
+		},
 		"./http": {
 			"source": "./src/node/http/index.ts",
 			"types": "./dist/node/http/index.d.ts",
@@ -65,6 +70,11 @@
 			"source": "./src/node/workers/index.ts",
 			"types": "./dist/node/workers/index.d.ts",
 			"import": "./dist/node/workers/index.js"
+		},
+		"./workers/child": {
+			"source": "./src/node/workers/child.ts",
+			"types": "./dist/node/workers/child.d.ts",
+			"import": "./dist/node/workers/child.js"
 		},
 		"./plugins": {
 			"source": "./src/node/plugins/index.ts",

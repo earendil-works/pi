@@ -905,6 +905,17 @@ class TerminalSession {
 				this.#autoOpen = false;
 				return;
 			}
+			case "terminals": {
+				// Another viewer or the agent opened, closed or renamed one. The shown terminal stays; only a panel showing
+				// none attaches the newest that runs (the agent just opened it).
+				const known = new Set(this.#state.terminals.map((terminal) => terminal.id));
+				this.#emit({ terminals: event.terminals });
+				const added = event.terminals.filter((terminal) => !known.has(terminal.id) && !terminal.exited);
+				if (!this.#state.current && added.length > 0) this.attach((added.at(-1) as TerminalInfo).id);
+				return;
+			}
+			case "reply":
+				return;
 			case "attached": {
 				const terminal = event.terminal;
 				const loaded = await loadGhostty();
@@ -1115,8 +1126,10 @@ const KEYS: { label: string; input?: KeyInput; text?: string }[] = [
 	{ label: "-", text: "-" },
 ];
 
-function label(terminal: TerminalInfo, index: number): string {
-	const name = terminal.title || `Terminal ${index + 1}`;
+/** A tab's text: the name it was opened with, else its program's title, else its number (the agent's `-t`). */
+function label(terminal: TerminalInfo): string {
+	// A host running older code numbers none.
+	const name = terminal.name || terminal.title || (terminal.index ? `Terminal ${terminal.index}` : "Terminal");
 	return terminal.exited ? `${name} (exited)` : name;
 }
 
@@ -1237,17 +1250,18 @@ export function TerminalView({
 	return (
 		<div className="terminal">
 			<div className="terminal-tabs">
-				{state.terminals.map((terminal, index) => (
+				{state.terminals.map((terminal) => (
 					<button
 						type="button"
 						key={terminal.id}
 						aria-pressed={terminal.id === current?.id}
 						className={terminal.exited ? "exited" : ""}
-						title={terminal.env ? `${terminal.env}:${terminal.cwd}` : terminal.cwd}
+						title={`${terminal.index}: ${terminal.env ? `${terminal.env}:${terminal.cwd}` : terminal.cwd}${terminal.agent ? " (opened by the agent)" : ""}`}
 						onPointerDown={keepFocus}
 						onClick={() => session.current?.attach(terminal.id)}
 					>
-						{label(terminal, index)}
+						{terminal.agent && <span className="terminal-agent">Pi</span>}
+						{label(terminal)}
 					</button>
 				))}
 				<button

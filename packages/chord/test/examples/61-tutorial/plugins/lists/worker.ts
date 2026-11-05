@@ -3,7 +3,7 @@
 // before the store goes live and again after every commit that writes the table. Each principal's `Todos` view adds
 // todos as that principal, and gives the owner `clear`, which leaves a notice: a message as data (`messages.message`),
 // never a sentence, so each viewer reads it in its own language. The store refuses a todo without text with Chord's
-// `invalid/args`.
+// `invalid/args`, in a span of its own (`ctx.trace`) that the app's traces show.
 
 import {
 	arr,
@@ -69,8 +69,11 @@ export default defineFacet((host) => {
 			items: self.derive([newest], ([rows]) => [...rows].reverse()),
 			notice: self.derive([notices], ([value]) => value.notice),
 			add: async ({ text, by }, ctx) => {
-				// Refused as Chord refuses arguments that fail their schema: the caller gets `invalid/args`.
-				if (text === "") throw invalid("args", "a todo needs text");
+				// A span of its own under the method's: a trace shows the check, and why it refused.
+				await ctx.trace("todos.validate", { chars: text.length }, async () => {
+					// Refused as Chord refuses arguments that fail their schema: the caller gets `invalid/args`.
+					if (text === "") throw invalid("args", "a todo needs text");
+				});
 				await self.tx(async (tx) => {
 					// The number after the newest todo's: the store's transactions run one after another.
 					const { items: last } = await tx.page(items, NEWEST, 1);
@@ -79,7 +82,7 @@ export default defineFacet((host) => {
 				return null;
 			},
 			tick: async ({ id, done }, ctx) => {
-				await self.tx(async (tx) => tx.updateWhere(items, (item) => eq(item.id, id), { done }), ctx);
+				await self.tx(async (tx) => tx.update(items, { id }, { done }), ctx);
 				return null;
 			},
 			clear: async ({ by }, ctx) => {

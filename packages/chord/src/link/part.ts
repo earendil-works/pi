@@ -4,6 +4,7 @@
 
 import type { Context } from "../context/index.ts";
 import { ChordError } from "../data/index.ts";
+import { chordMetrics } from "../telemetry.ts";
 
 /**
  * A part (R1): a value as JSON text at its origin (and after a text decode), its UTF-8 bytes once a binary codec
@@ -82,7 +83,7 @@ export function originPart(json: string, compression: Compression | undefined, c
 	if (compression === undefined || json.length * 3 <= COMPRESS_ABOVE) return json;
 	const bytes = UTF8.encode(json);
 	if (bytes.byteLength <= COMPRESS_ABOVE) return bytes;
-	context.telemetry.metrics?.counter("chord.link.deflates").add(1);
+	chordMetrics(context.telemetry.metrics).counter("chord.link.deflates").add(1);
 	const deflated = compression.deflate(bytes);
 	return deflated.byteLength < bytes.byteLength ? new DeflatedPart(deflated) : bytes;
 }
@@ -121,7 +122,7 @@ export function openPart(
 	let inflated = part.inflated;
 	if (inflated === undefined) {
 		if (compression === undefined) throw new Error("part: a deflated part this host did not inflate");
-		context.telemetry.metrics?.counter("chord.link.inflates").add(1);
+		chordMetrics(context.telemetry.metrics).counter("chord.link.inflates").add(1);
 		inflated = compression.inflate(part.bytes, limits.decoded);
 	}
 	switch (inflated.kind) {
@@ -145,7 +146,7 @@ export async function inflateAsync(
 	signal: AbortSignal,
 	context: Context,
 ): Promise<void> {
-	context.telemetry.metrics?.counter("chord.link.inflates").add(1);
+	chordMetrics(context.telemetry.metrics).counter("chord.link.inflates").add(1);
 	const reader = new Blob([part.bytes as Uint8Array<ArrayBuffer>])
 		.stream()
 		.pipeThrough(new DecompressionStream("deflate-raw"))

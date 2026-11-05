@@ -5,7 +5,8 @@ import type { Location } from "@p2/app/v1";
 
 /**
  * The main agent's move, waiting for its turn to end (the worker applies it, `worker.ts`), and the last one that
- * failed. On the main conversation.
+ * failed. Kept on conversation 1 for the session, whichever top-level conversation (the main one or a `/tree` branch)
+ * asked for it.
  */
 export type LocationMoveState = { pending?: Location; failed?: { to: Location; error: string } };
 export const LocationMoveDoc = defineDoc<LocationMoveState>({

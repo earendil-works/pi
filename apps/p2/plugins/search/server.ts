@@ -54,7 +54,14 @@ export default defineFacet((host) => {
 					0,
 					...messages.filter((message) => message.role === "assistant").map((message) => message.entryId),
 				);
-				if (conversation === 1 && answer > (markers.value.answers[session] ?? 0))
+				// Unread answers are the top-level conversations' (the main one and the other `/tree` branches): a branch left
+				// while running answers in the background. `branches` is empty until the worker first reports it.
+				const row =
+					answer > (markers.value.answers[session] ?? 0) ? await catalog.get({ id: session }, ctx) : undefined;
+				if (
+					row &&
+					(conversation === row.main || row.branches.some((branch) => branch.conversation === conversation))
+				)
 					await markers.change((draft) => {
 						draft.answers[session] = answer;
 					}, ctx);
@@ -137,7 +144,7 @@ export default defineFacet((host) => {
 			} finally {
 				if (archived) {
 					await archivedStarts.end({ session }, ctx);
-					await hosts.stop({ session }, ctx);
+					await server().workers.suspend(session);
 				}
 			}
 		};

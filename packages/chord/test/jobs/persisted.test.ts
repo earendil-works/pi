@@ -6,8 +6,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
+import { BACKGROUND_CONTEXT as context, withCancel, withTelemetry } from "../../src/context/index.ts";
 import { arr, int, local, num, obj, str } from "../../src/contracts/index.ts";
 import { ChordError } from "../../src/data/index.ts";
 import { MAX_PENDING_OPS } from "../../src/delta/pending.ts";
@@ -105,10 +106,11 @@ async function opened(
 	run: JobImplementation<ImportArgs, ImportResult, { done: number }>["run"],
 	finish?: (outcome: ImportOutcome) => void,
 	declared: typeof Import = Import,
+	telemetry?: InMemoryTelemetryContext,
 ): Promise<Opened> {
 	const errors: HostError[] = [];
 	const finished: ImportOutcome[] = [];
-	const host = createHost({ store, onError: (error) => errors.push(error), closeTimeout: 200 });
+	const host = createHost({ store, telemetry, onError: (error) => errors.push(error), closeTimeout: 200 });
 	let found: Pick<Opened, "imports" | "abandoned" | "self"> | undefined;
 	await host.load(
 		[
@@ -282,6 +284,49 @@ describe("crashes and restarts (D6)", () => {
 	});
 });
 
+describe("trace (slice 9)", () => {
+	it("runs, resumed after a crash in a new attempt and host, and finishes under its start's stored carrier", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const open = await storeFile();
+		let jobs = await opened(await open(), () => new Promise(() => {}), undefined, Import, telemetry);
+		const run = await telemetry.startSpan({ name: "request" }, (span) =>
+			jobs.imports.start({ path: "a" }, withTelemetry(span, context)),
+		);
+		await delivered();
+		expect(await record(jobs.store, run.id)).toHaveProperty("trace");
+		await jobs.crash();
+		jobs = await opened(await open(), async () => ({ count: 1 }), undefined, Import, telemetry);
+		await delivered();
+		await delivered();
+		expect(jobs.finished).toMatchObject([{ kind: "done", result: { count: 1 } }]);
+		const spans = telemetry.getSpans();
+		const request = spans.find(({ name }) => name === "request")!;
+		const phases = spans.filter(({ name }) => name === "chord.job");
+		const [intent] = phases;
+		expect([intent!.attributes, intent!.parentId]).toEqual([
+			{
+				"chord.host": "client",
+				job: "notes.import",
+				phase: "intent",
+				object: "notes.store",
+				outcome: "ok",
+				"job.id": run.id,
+			},
+			request.id,
+		]);
+		// The run cut off by the crash (never settled), the rerun and the finish: one trace, children of the intent.
+		expect(phases.slice(1).map(({ attributes, parentId, settled }) => [attributes.phase, parentId, settled])).toEqual(
+			[
+				["run", intent!.id, false],
+				["run", intent!.id, true],
+				["finish", intent!.id, true],
+			],
+		);
+		expect(new Set(phases.map(({ context: carrier }) => carrier["pi-memory-trace"])).size).toBe(1);
+		await jobs.close();
+	});
+});
+
 describe("versions", () => {
 	it.each([
 		["another version", ImportV2],
@@ -397,8 +442,8 @@ describe("a seal during the reservation (review regressions)", () => {
 			first = false;
 			const holding = {
 				admit: () => fence.admit(),
-				adopt: (seq: number, ids: readonly number[]) => {
-					fence.adopt(seq, ids);
+				adopt: (seq: number, ids: readonly number[], rows: number) => {
+					fence.adopt(seq, ids, rows);
 					void jobs.store.take(() => {}).then(held.resolve);
 				},
 			};

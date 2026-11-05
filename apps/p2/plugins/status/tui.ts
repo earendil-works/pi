@@ -160,7 +160,7 @@ export class FooterSurface implements TuiSurface {
 		if (branch) where += ` (${branch})`;
 		if (session?.title) where += `${where ? " • " : ""}${session.title}`;
 		// The subagent crumb (the web's top-bar crumb): the session › the shown subagent conversation.
-		if (this.runtime.conversation !== 1) {
+		if (this.runtime.conversation !== (session?.main ?? 1)) {
 			const child = this.children[this.session ?? ""]?.find(
 				(row) => row.conversationId === this.runtime.conversation,
 			);

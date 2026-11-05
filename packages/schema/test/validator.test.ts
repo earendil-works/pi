@@ -292,6 +292,60 @@ describe("unresolved references", () => {
 	});
 });
 
+describe("leaf checks inlined by object and array loops", () => {
+	const leaves: [object, unknown[]][] = [
+		[{ const: "a" }, ["a", "b", 1, null]],
+		[{ const: null }, [null, 0, false, "null"]],
+		[{ enum: ["a", 1, null] }, ["a", 1, null, "b", 2, true]],
+		[{ type: ["string", "null"] }, ["a", null, 1, {}, []]],
+		[{ type: ["integer", "boolean"] }, [1, 1.5, true, "1"]],
+		[{ type: ["number", "array"] }, [1.5, 2, [], {}, new Uint8Array(1)]],
+		[{ type: ["object", "bytes"] }, [{}, new Uint8Array(1), [], null]],
+		[{ anyOf: [{ type: "string" }, { type: "null" }] }, ["a", null, 1]],
+		[{ anyOf: [{ type: "integer" }, { type: "string", minLength: 2 }] }, [1, 1.5, "ab", "a"]],
+		[{ type: "integer", minimum: 1, exclusiveMaximum: 5 }, [1, 4, 5, 0, 2.5, "2"]],
+		[{ type: "number", exclusiveMinimum: 0, maximum: 1 }, [0.5, 1, 0, 1.5, "0.5"]],
+		[{ type: "integer", multipleOf: 2 }, [2, 3, 2.5]],
+		[{ type: "string", minLength: 2, maxLength: 3 }, ["ab", "abc", "a", "abcd", "😀😀", 12]],
+		[{ type: "string", pattern: "^a+$" }, ["aa", "ab", 1]],
+		[{ minimum: 1 }, [1, 0, "x", null]],
+	];
+
+	it("agree with the standalone check as a property, a pattern property and an item", () => {
+		for (const [schema, values] of leaves) {
+			const alone = compile(schema).check;
+			const closed = compile({ type: "object", properties: { p: schema }, additionalProperties: false }).check;
+			const open = compile({ type: "object", properties: { p: schema }, required: ["q"] }).check;
+			const items = compile({ type: "array", items: schema }).check;
+			for (const v of values) {
+				const expected = alone(v);
+				expect([closed({ p: v }), open({ p: v, q: 1 }), items([v])], JSON.stringify({ schema, v })).toEqual([
+					expected,
+					expected,
+					expected,
+				]);
+			}
+		}
+	});
+
+	it("find properties in any order", () => {
+		const { check } = compile({
+			type: "object",
+			properties: { a: { const: 1 }, b: { type: "string" }, c: { type: "integer", minimum: 0 } },
+			required: ["a", "c"],
+			additionalProperties: false,
+		});
+		expect(check({ a: 1, b: "x", c: 0 })).toBe(true);
+		expect(check({ c: 0, b: "x", a: 1 })).toBe(true);
+		expect(check({ b: "x", c: 0, a: 1 })).toBe(true);
+		expect(check({ a: 1, c: 0, a2: 1 })).toBe(false);
+		expect(check({ c: -1, a: 1 })).toBe(false);
+		expect(check({ c: 0, b: 1, a: 1 })).toBe(false);
+		expect(check({ c: 0, b: undefined, a: 1 })).toBe(true);
+		expect(check({ c: 0, b: "x" })).toBe(false);
+	});
+});
+
 describe("string lengths", () => {
 	it("count an unpaired high surrogate as one code point and a pair as one", () => {
 		expect(compile({ type: "string", minLength: 2 }).check("\ud800A")).toBe(true);

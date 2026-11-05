@@ -11,6 +11,7 @@ import { diffRevisions, type Op } from "../delta/index.ts";
 import type { JsonValue } from "../json.ts";
 import type { SqliteValue } from "../sqlite/index.ts";
 import { type Batch, handedOut, Source, type WatchStart } from "../state/internal.ts";
+import { chordMetrics } from "../telemetry.ts";
 import type { Query } from "./query.ts";
 import type { Statement } from "./sql.ts";
 import type { StagedWrite, Step } from "./step.ts";
@@ -129,6 +130,8 @@ export class QueryRefresh {
 	}
 
 	async #rerun(step: Step): Promise<readonly StoreWrite[]> {
+		// A grouped commit that rolled back applies again alone (store.ts): only the last application's runs count.
+		this.#runs.length = 0;
 		for (const query of this.#queries) this.#runs.push(await query.rerun(step, this.#context));
 		return NO_WRITES;
 	}
@@ -268,7 +271,7 @@ export class LiveQuery extends Source {
 
 	/** One run, counted where it happens (the cost guard: a commit not writing the table runs none). */
 	#count(context: Context): void {
-		context.telemetry.metrics?.counter("chord.query.runs").add(1);
+		chordMetrics(context.telemetry.metrics).counter("chord.query.runs").add(1);
 	}
 
 	/**

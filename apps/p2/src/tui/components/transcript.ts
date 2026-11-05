@@ -437,13 +437,17 @@ export class TranscriptView implements Component {
 		const lines: string[] = this.header ? [...this.header.render(width)] : [];
 		const starts = new Map<string, number>();
 		const rendered: { key: string; start: number; entryId?: number }[] = [];
-		this.order.forEach((view, index) => {
-			const key = this.keys[index]!;
+		// The callbacks below may sync synchronously (store change -> runtime.changed()) and replace `this.order`:
+		// everything after this point works on the views that were actually rendered.
+		const order = this.order;
+		const keys = this.keys;
+		order.forEach((view, index) => {
+			const key = keys[index]!;
 			starts.set(key, lines.length);
 			rendered.push({ key, start: lines.length, entryId: itemEntryId(view.item) });
 			lines.push(...view.component.render(width));
 		});
-		if (this.order.length === 0 && this.empty && !this.tail) lines.push("", ` ${this.empty}`);
+		if (order.length === 0 && this.empty && !this.tail) lines.push("", ` ${this.empty}`);
 		if (this.tail) lines.push(...this.tail.render(width));
 		// One empty line between the transcript and the dock (DTUI).
 		lines.push("");
@@ -472,7 +476,7 @@ export class TranscriptView implements Component {
 		// At the top of a laid-out viewport (or everything fits): older history may continue above.
 		if (scroll && scroll.viewportHeight > 0 && scroll.scrollTop === 0 && !this.pendingAnchor) this.onTop?.();
 		if (scroll && scroll.viewportHeight > 0 && !this.pendingAnchor)
-			this.order.forEach((view, index) => {
+			order.forEach((view, index) => {
 				const start = rendered[index]!.start;
 				const end = rendered[index + 1]?.start ?? lines.length;
 				const visible = end > scroll.scrollTop && start < scroll.scrollTop + scroll.viewportHeight;

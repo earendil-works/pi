@@ -46,6 +46,11 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
   launcher and its child-process sandbox); examples 56-59.
 - **Live queries** (built 2026-11-03, decision "Live queries over an object's own tables"): `self.query` in
   `src/store/live-query.ts`; examples 59 and 61 use it; `test/bench/live-query.ts`.
+- **Slice 9** (built 2026-11-04, `slice-9.md`): telemetry, `src/telemetry.ts` (`CHORD_TELEMETRY_SCHEMA`, the span sites'
+  NOOP rule, open spans, typed instruments), spans of calls, methods, relays, holds, activations, natives, loads,
+  reloads, resolves, revocations, routines, job phases and HTTP requests, carriers on `hold` and `call`, `ctx.trace`,
+  commit events and the host-wide metrics, `telemetry` options of `createHttp`, `startServer` and `startWorker`;
+  example 62; `test/bench/telemetry.ts` (with R24's container width).
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
@@ -195,18 +200,6 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 
 - **`rebuild` of tables** (key and column-type changes): `evolveTable` has no edit for them; build one only when a
   real case needs it. (Slice 6a's second spec review; out of slice 7b's scope, `slice-7b.md` §12.)
-- **Calls surviving a `loading` unbind** (decision "Swaps: dependents first; calls during a swap never see
-  `not_ready`", option B): today a call over a link already waiting at the gate when its object's swap parks is
-  answered `unavailable` when the hold leaves the old instance (`Hold.#unbind` → `Provider.unbound` rejects every
-  call in flight on the hold, with `loading`; consistent, rare after the dependents-first order). Sketch, about 5
-  lines: on an unbind for `loading` (no error: the object activates), `Provider.unbound` unbinds the hold but rejects
-  none of its calls: by then the old attempt is always sealed (`failLive`, `#restart` and `#retire` seal before
-  `#stopFollowing`), so its running calls were rejected `released` by the seal fence, and the calls left in flight
-  wait at the gate; they are answered after the fresh `bound` (or by the gate's `readyTimeout`). Checks it needs: the
-  consumer keeps in-flight calls across `loading` (`Consumer.#loading` rejects only calls still waiting for a slot,
-  which may name a method of the old variant; in-flight ones wait for the provider's reply), a relay forwarding
-  `loading` keeps its mapped call ids, a reply on a hold that is pending or binding is accepted, and a variant change
-  across the rebind (the call was decoded by the old names). (Owner, 2026-11-04: separate change, its own risk.)
 
 ### Later: live queries (when a case needs it)
 
@@ -218,13 +211,6 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 
 - **Small examples** (owner, 2026-10-30: the 7c examples are complete but complex): once HTTP, workers, web and TUI
   exist, a pass of small, easy-to-read examples, each showing one thing a plugin author or app does.
-
-### Slice 9: telemetry
-
-- Spans for routine calls and job runs (from slice 5).
-- The use of a persisted run's stored start trace carrier (`trace`, stored since slice 6b).
-
-- Round-3 cut to decide: C11 (`ctx.trace`).
 
 ### When v2 goes upstream
 

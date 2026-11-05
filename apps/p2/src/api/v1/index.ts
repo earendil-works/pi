@@ -3,6 +3,7 @@
 // relative paths into `src`: a plugin is built and reloaded on its own, and the API is the code its host provides.
 
 export {
+	type AcceptsTable,
 	type Address,
 	broken,
 	ChordError,
@@ -10,6 +11,7 @@ export {
 	constant,
 	defineRegistry,
 	defineState,
+	evolve,
 	type HandleOf,
 	isChordError,
 	type KeyedHandle,
@@ -56,6 +58,6 @@ export * from "../../runtime/principals.ts";
 export * from "../../runtime/refs.ts";
 export * from "../../runtime/schema.ts";
 export * from "../../runtime/schemas.ts";
+export * from "../../runtime/sender.ts";
 export * from "../../runtime/session-worker.ts";
 export * from "../../runtime/shell.ts";
-export * from "../../runtime/speaker.ts";

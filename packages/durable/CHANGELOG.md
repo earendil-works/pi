@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- `Tx.submission(id)` reads a committed submission record by ID, so a tool can find the entries of its run's inputs (`pi.live.run.inputs`) without scanning the transcript.
+
+### Changed
+
+- `SqliteStorage.commit()` costs a few SQL statements per call instead of about eight per batch: it reads the check state of all batches up front, checks them in memory, and writes the accepted batches per table in multi-row statements (rows as one JSON array parameter; rows with much text bound column by column), so a group commit over a remote SQLite takes a few round trips, not hundreds. A stored document record that cannot be parsed now rejects the call as a storage failure instead of refusing the batch.
+
 ## [1.5.0] - 2026-11-02
 
 ### Breaking Changes

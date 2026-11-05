@@ -37,7 +37,8 @@ const CRASH_RESTARTS = 5;
 const CRASH_WINDOW_MS = 60_000;
 
 export class SessionWorkers implements SessionWorkerControl {
-	readonly workers: Workers<typeof Session>;
+	/** Chord's workers component, made by `create` (its worker base bundled first). */
+	#workers: Workers<typeof Session> | undefined;
 	readonly #options: SessionWorkersOptions;
 	readonly #generations = new Map<string, number>();
 	readonly #operations = new Map<string, Promise<unknown>>();
@@ -53,14 +54,35 @@ export class SessionWorkers implements SessionWorkerControl {
 	#states: Readonly<Record<string, WorkerState>> = {};
 	#generation = 0;
 
-	constructor(options: SessionWorkersOptions, context: Context) {
+	private constructor(options: SessionWorkersOptions) {
 		this.#options = options;
 		processLogs.redactor.addDirectory(options.dataDir);
 		for (const [key, value] of Object.entries(options.env ?? {})) {
 			if (/(?:key|token|secret|password|cookie|auth)/i.test(key)) processLogs.redactor.addSecret(value);
 		}
+	}
+
+	/**
+	 * The session workers: Chord's workers component created (it bundles the worker entry once, so every worker runs the
+	 * code the server booted with; a broken entry rejects), then followed.
+	 */
+	static async create(options: SessionWorkersOptions, context: Context): Promise<SessionWorkers> {
+		const made = new SessionWorkers(options);
+		made.#workers = await made.#createWorkers(context);
+		void made.#follow();
+		return made;
+	}
+
+	/** Chord's workers component for the sessions. */
+	get workers(): Workers<typeof Session> {
+		// Set by `create` before the instance is handed out.
+		return this.#workers!;
+	}
+
+	#createWorkers(context: Context): Promise<Workers<typeof Session>> {
+		const options = this.#options;
 		const dataDir = realpathSync(options.dataDir);
-		this.workers = createWorkers(
+		return createWorkers(
 			options.host,
 			Session,
 			{
@@ -99,7 +121,6 @@ export class SessionWorkers implements SessionWorkerControl {
 			},
 			context,
 		);
-		void this.#follow();
 	}
 
 	/** Generation of the session's latest worker (0: never started). */
@@ -231,6 +252,20 @@ export class SessionWorkers implements SessionWorkerControl {
 					if (notice.source === `${SESSION_PREFIX}${session}`) processLogs.dismissNotice(notice.id);
 			}),
 		);
+	}
+
+	/**
+	 * Stops an archived session's worker for good: its holders (a page's lingering conversation, say) wait suspended
+	 * instead of starting a worker the archived session refuses, which failed with an owner notice. `retry` (restore)
+	 * ends the suspension; so does the release of its last holder (a later hold is refused as archived).
+	 */
+	async suspend(session: string): Promise<void> {
+		this.#crashRestarts.delete(session);
+		await this.#serially(session, async () => {
+			await this.workers.stop(Session({ id: session }), BACKGROUND_CONTEXT);
+			for (const notice of processLogs.notices())
+				if (notice.source === `${SESSION_PREFIX}${session}`) processLogs.dismissNotice(notice.id);
+		});
 	}
 
 	/** Stops every worker; their exits are no news to subscribers (the server's objects close next). */

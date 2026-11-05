@@ -1,3 +1,4 @@
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { type Contract, int, local, map, method, obj, remote } from "../../src/contracts/index.ts";
@@ -1021,3 +1022,80 @@ function notesHold(id: number): Extract<Message, { kind: "hold" }> {
 }
 
 const UTF8 = new TextEncoder();
+
+describe("telemetry at the provider (slice 9)", () => {
+	/** A server recording to `telemetry`, serving `Notes`, and a raw consumer holding S1 (bound). */
+	async function traced() {
+		const telemetry = new InMemoryTelemetryContext();
+		const { peer, server } = await rawLinked((h) => void serveNotes(h), { telemetry });
+		hold(peer, 0, Notes, { session: "S1" });
+		await peer.next("bound");
+		return { telemetry, peer, server };
+	}
+
+	it("runs a call's method under its carrier, extracted with the host's adapter; an absent or unknown one is a root", async () => {
+		const { telemetry, peer } = await traced();
+		const carrier = await telemetry.startSpan({ name: "caller" }, (span) => telemetry.inject(span));
+		const { add: addIndex } = EDITOR.methods as { add: number };
+		peer.send({ kind: "call", call: 0, hold: 0, method: addIndex, args: jsonPart({ text: "a" }), trace: carrier });
+		await peer.next("result");
+		call(peer, 1, 0, addIndex, { text: "b" });
+		await peer.next("result");
+		peer.send({ kind: "call", call: 2, hold: 0, method: addIndex, args: jsonPart({ text: "c" }), trace: { x: "y" } });
+		await peer.next("result");
+		const spans = telemetry.getSpans();
+		const caller = spans.find(({ name }) => name === "caller")!;
+		const methods = spans.filter(
+			({ name, attributes }) => name === "chord.method" && attributes.type === "app.notes",
+		);
+		expect(methods.map(({ parentId }) => parentId)).toEqual([caller.id, null, null]);
+		expect(methods[0]!.attributes).toEqual({
+			"chord.host": "server",
+			type: "app.notes",
+			member: "add",
+			object: "app.notes(S1)",
+			"principal.kind": "owner",
+			"chord.principal": '{"kind":"owner"}',
+			outcome: "ok",
+		});
+	});
+
+	it("counts holds placed here up and down, its own state messages, and the bytes of its link", async () => {
+		const { telemetry, peer, server } = await traced();
+		await addNote(server, "S1", "a");
+		await peer.next("state");
+		peer.send({ kind: "release", hold: 0 });
+		await transported();
+		const sums: Record<string, number> = {};
+		for (const { name, value } of telemetry.getMetrics()) sums[name] = (sums[name] ?? 0) + value;
+		expect(sums["chord.holds.active"]).toBe(0);
+		expect(
+			telemetry
+				.getMetrics()
+				.filter(({ name }) => name === "chord.holds.active")
+				.map(({ value }) => value),
+		).toEqual([1, -1]);
+		expect(sums["chord.link.state_messages"]).toBe(1);
+		expect(sums["chord.links.open"]).toBe(1);
+		const bytes = telemetry.getMetrics().filter(({ name }) => name === "chord.link.bytes");
+		expect(new Set(bytes.map(({ attributes }) => attributes.direction))).toEqual(new Set(["sent", "received"]));
+	});
+
+	it("records how long state waited for a slot of the window", async () => {
+		const telemetry = new InMemoryTelemetryContext();
+		const { server } = await rawLinked((h) => void serveNotes(h), { telemetry });
+		const [a, b] = memoryLinkPair();
+		server.accept(a, { principal: { kind: "owner" }, codec: testCodec() }, context);
+		const slow = new RawPeer(b, { ack: false });
+		hold(slow, 0, Notes, { session: "S1" });
+		await slow.next("bound");
+		await addNote(server, "S1", "a");
+		await slow.next("state");
+		// The window (two messages) is full: the next change waits for an ack.
+		await addNote(server, "S1", "b");
+		expect(telemetry.getMetrics().filter(({ name }) => name === "chord.backpressure.wait")).toHaveLength(0);
+		slow.ack();
+		await slow.next("state");
+		expect(telemetry.getMetrics().filter(({ name }) => name === "chord.backpressure.wait")).toHaveLength(1);
+	});
+});

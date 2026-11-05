@@ -9,6 +9,7 @@ export {
 	type AppKind,
 	type AppOptions,
 	type AppPlugins,
+	type AppTimeouts,
 	type AppWorkerKind,
 	Server,
 	startServer,

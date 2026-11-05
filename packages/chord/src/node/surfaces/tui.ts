@@ -30,6 +30,8 @@ export type TuiSurface<P extends Principal> = {
 	readonly facet: Facet<P>;
 	step(name: string): RolloutStep;
 	readonly base: string;
+	/** The files its base bundle was built from: the app's base code for this surface. */
+	readonly inputs: readonly string[];
 };
 
 /** Where the terminal surface's files live. */
@@ -63,5 +65,5 @@ export async function tuiSurface<P extends Principal>(
 			},
 		});
 	});
-	return { facet, step: (name) => published.step(name), base: base.hash };
+	return { facet, step: (name) => published.step(name), base: base.hash, inputs: base.inputs };
 }

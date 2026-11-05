@@ -137,6 +137,7 @@ test("/fork picks a message and opens the fork with it in the editor; /clone; do
 	runtime.navigate("chat", "s", 1);
 	await poll(() => chat().editable);
 	// doubleEscapeAction "fork": a second Escape within 500 ms on an empty editor opens the picker; "none" never.
+	runtime.appearance.settings = { doubleEscapeAction: "none" };
 	send(ESC);
 	send(ESC);
 	await new Promise((resolve) => setTimeout(resolve, 50));

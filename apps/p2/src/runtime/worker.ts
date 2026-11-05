@@ -31,6 +31,7 @@ import {
 } from "./chord.ts";
 import { durableContext, durableRegistry, ExtensionSwitches, Extensions } from "./durable.ts";
 import { isRooted, type Location, type LocationInput, sameLocation } from "./location.ts";
+import { topLevelConversations } from "./main-conversation.ts";
 import { type SessionInit, WorkerBoundary } from "./session-worker.ts";
 
 export { ExtensionSwitches, Extensions } from "./durable.ts";
@@ -573,8 +574,9 @@ class Execution implements ExecutionEnvironments {
 }
 
 /**
- * Moves the root and the conversations following the session to `session.cwd` in one commit (those already there stay
- * untouched), after the placement provider committed what an older version left unplaced. Children copied the session's
+ * Moves the top-level conversations (the root and its `/tree` branches) and the conversations following the session to
+ * `session.cwd` in one commit (those already there stay untouched), after the placement provider committed what an older
+ * version left unplaced. Children copied the session's
  * cwd when created, so a move leaves them behind; this runs at every start (sessions moved before subagents tracked
  * their own cwd still hold the old path) and at every in-place relocation. Nothing resolves against this process's cwd.
  * Returns the own locations of the other conversations.
@@ -588,13 +590,12 @@ async function followSession(
 		  ) => Promise<{ readonly followers: readonly ConversationId[]; readonly own: readonly Location[] }>)
 		| undefined,
 	harness: DurableHarness,
-	root: ConversationId,
 	session: Location,
 	context: Context,
 ): Promise<readonly Location[]> {
 	const placed = place ? await place(harness, session, context) : { followers: [], own: [] };
 	const stale: ConversationId[] = [];
-	for (const id of [root, ...placed.followers]) {
+	for (const id of [...(await topLevelConversations(harness, context)), ...placed.followers]) {
 		const current = (await (await harness.conversation(id, context))?.agent(context))?.cwd;
 		if (current !== undefined && current !== session.cwd && !stale.includes(id)) stale.push(id);
 	}
@@ -692,7 +693,7 @@ function openHarness(self: Self, init: WorkerInit, location: SessionLocation): H
 			const agent = await root.agent(ctx);
 			// Before the Harness is live: nothing can run or resume in a stale cwd first.
 			try {
-				await followSession(place, harness, root.id, location.value, ctx);
+				await followSession(place, harness, location.value, ctx);
 			} catch (error) {
 				await harness.close(ctx).catch(() => {});
 				throw error;
@@ -727,8 +728,7 @@ function openHarness(self: Self, init: WorkerInit, location: SessionLocation): H
 			// catalog.
 			await environments.at(next);
 			environments.switch(next);
-			const root = await harness.root(context);
-			const own = await followSession(place, harness, root.id, next, context);
+			const own = await followSession(place, harness, next, context);
 			location.set(next);
 			await environments
 				.retire([next, ...own])

@@ -1,7 +1,7 @@
 // Main-view controls exercise real browser events against fake providers and disposable data.
 
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
@@ -126,5 +126,40 @@ describe("chat control parity", { skip: !browserTests }, () => {
 			`document.querySelector('.toast')?.textContent.includes('Stop the current run before changing directory')`,
 		);
 		await browser.click("button[aria-label=Stop]");
+	});
+	it("attaches pasted images like picked files and leaves text pastes to the textarea", async () => {
+		const pasted = (
+			await (
+				await holdIn(fixture.browser(), Sessions, {}, "owner")
+			).create({ cwd: fixture.workspace, title: "Paste" }, BACKGROUND_CONTEXT)
+		).id;
+		await browser.metrics(1280, 900);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${pasted}`);
+		await browser.wait(`document.querySelector('.chat .composer textarea')`);
+		// A 1x1 PNG; `paste(text, names)` dispatches a paste of that text and PNGs and returns whether it was cancelled.
+		await browser.evaluate(
+			`window.paste=(text,names)=>{const png=Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='),c=>c.charCodeAt(0));const d=new DataTransfer();if(text)d.setData('text/plain',text);for(const name of names)d.items.add(new File([png],name,{type:'image/png'}));return !document.querySelector('.composer textarea').dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:d}))}`,
+		);
+		assert.equal(await browser.evaluate<boolean>(`paste('', ['image.png', ''])`), true);
+		await browser.wait(`document.querySelectorAll('.attachment img').length===2`);
+		assert.deepEqual(
+			await browser.evaluate<string[]>(`[...document.querySelectorAll('.attachment-name')].map(e=>e.textContent)`),
+			["image.png", "pasted-image.png"],
+		);
+		// Text with a picture of it (an Office copy) and plain text keep the default paste and attach nothing.
+		assert.equal(await browser.evaluate<boolean>(`paste('a1\\tb1', ['cells.png'])`), false);
+		assert.equal(await browser.evaluate<boolean>(`paste('just text', [])`), false);
+		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.attachment').length`), 2);
+		await browser.evaluate(input(".composer textarea", "with screenshots"));
+		await browser.click("button[aria-label=Send]");
+		await browser.wait(
+			`[...document.querySelectorAll('.bubble-files span')].map(e=>e.textContent).join()==='image.png,pasted-image.png' && !document.querySelector('.attachment')`,
+		);
+		assert.deepEqual(
+			readdirSync(join(fixture.dataDir, "uploads", pasted))
+				.map((file) => file.slice(37))
+				.sort(),
+			["image.png", "pasted-image.png"],
+		);
 	});
 });
