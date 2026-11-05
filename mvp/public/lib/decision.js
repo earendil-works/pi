@@ -150,21 +150,3 @@ export function agentDoneMessage(event) {
   if (event?.status === "timed_out") return "The turn ran out of time.";
   return "The agent could not finish this turn.";
 }
-
-/**
- * What the header shows for the sign-in state. Only an explicit `signedIn: true` counts as signed in.
- *
- * @param {{ status?: number, body?: unknown, networkError?: boolean }} result
- * @returns {{ state: "signed-in" | "signed-out" | "not-configured" | "unknown", label: string }}
- */
-export function interpretSession(result) {
-  const { status, body, networkError } = result ?? {};
-  if (networkError || status !== 200 || body === null || typeof body !== "object") {
-    return { state: "unknown", label: "Sign-in unavailable" };
-  }
-  if (body.signedIn === true && typeof body.name === "string" && body.name.length > 0) {
-    return { state: "signed-in", label: `Signed in as ${body.name}` };
-  }
-  if (body.configured === false) return { state: "not-configured", label: "Sign-in not set up" };
-  return { state: "signed-out", label: "Not signed in" };
-}

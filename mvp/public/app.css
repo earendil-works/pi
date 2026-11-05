@@ -65,8 +65,6 @@ button, textarea { font: inherit; color: inherit; }
   font-size: 0.85rem;
 }
 .pill-muted { color: var(--muted); }
-.signin { font: inherit; font-size: 0.85rem; color: var(--text, inherit); background: transparent; border: 1px solid var(--border, currentColor); border-radius: 8px; padding: 4px 10px; cursor: pointer; text-decoration: none; }
-.signin:hover { text-decoration: underline; }
 .account { margin-left: auto; display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 0.9rem; }
 .avatar {
   display: inline-grid;

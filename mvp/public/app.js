@@ -1,7 +1,6 @@
 import {
   MAX_PROMPT_LENGTH,
   agentDoneMessage,
-  interpretSession,
   assistantMessage,
   formatClock,
   interpretGate,
@@ -49,10 +48,6 @@ const els = {
   sessionId: $("session-id"),
   sessionStarted: $("session-started"),
   events: $("events"),
-  accountAvatar: $("account-avatar"),
-  accountLabel: $("account-label"),
-  signinLink: $("signin-link"),
-  signout: $("signout"),
 };
 
 const tabSession = { id: crypto.randomUUID().slice(0, 8), startedAt: new Date() };
@@ -236,9 +231,6 @@ async function runAgent(prompt, conversation) {
     return { text: "The agent could not be reached. The turn may have started, so check the sandbox before retrying.", kind: "unavailable" };
   }
   if (response.status === 404 || !response.body) return undefined;
-  if (response.status === 401) {
-    return { text: "Sign in with Vercel (top right) to use the agent.", kind: "unavailable" };
-  }
   if (!response.ok) {
     return { text: "The agent is unavailable right now.", kind: "unavailable" };
   }
@@ -421,28 +413,3 @@ drawSpark();
 autosize();
 newConversation();
 loadStatus();
-
-/** Shows who is signed in, or the sign-in link. The server decides; this only displays. */
-async function loadSession() {
-  let result;
-  try {
-    const response = await fetch("/api/auth/session", { headers: { accept: "application/json" } });
-    result = { status: response.status, body: await response.json().catch(() => undefined) };
-  } catch {
-    result = { networkError: true };
-  }
-  const view = interpretSession(result);
-  els.accountLabel.textContent = view.label;
-  els.accountAvatar.textContent = view.state === "signed-in" ? view.label.slice(-1).toUpperCase() : "?";
-  els.signinLink.hidden = view.state !== "signed-out";
-  els.signout.hidden = view.state !== "signed-in";
-  if (new URLSearchParams(location.search).get("signin") === "failed") {
-    els.accountLabel.textContent = "Sign-in failed, or this Vercel account is not allowed";
-  }
-}
-
-els.signout.addEventListener("click", async () => {
-  await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
-  await loadSession();
-});
-loadSession();

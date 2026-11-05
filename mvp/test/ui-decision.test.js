@@ -5,7 +5,6 @@ import {
   agentDoneMessage,
   assistantMessage,
   interpretGate,
-  interpretSession,
   levelTone,
   parseNdjson,
   resultLabel,
@@ -121,15 +120,5 @@ test("only an explicit completed status is a success", () => {
   assert.equal(agentDoneMessage({ status: "completed" }), undefined);
   for (const event of [undefined, {}, { status: "weird" }, { status: "blocked" }, { status: "error" }]) {
     assert.equal(typeof agentDoneMessage(event), "string");
-  }
-});
-
-test("only an explicit signedIn true with a name shows as signed in", () => {
-  assert.equal(interpretSession({ status: 200, body: { configured: true, signedIn: true, name: "Josh" } }).state, "signed-in");
-  assert.equal(interpretSession({ status: 200, body: { configured: true, signedIn: true } }).state, "signed-out");
-  assert.equal(interpretSession({ status: 200, body: { configured: true, signedIn: "yes", name: "x" } }).state, "signed-out");
-  assert.equal(interpretSession({ status: 200, body: { configured: false, signedIn: false } }).state, "not-configured");
-  for (const result of [undefined, { networkError: true }, { status: 500, body: { signedIn: true, name: "x" } }, { status: 200, body: null }]) {
-    assert.equal(interpretSession(result).state, "unknown");
   }
 });

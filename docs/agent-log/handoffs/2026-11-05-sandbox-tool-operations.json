@@ -18,8 +18,7 @@
       "Added the agent route (mvp/api/agent.ts, src/agent/route.ts, vercel.json): off unless NLT_AGENT_ENABLED=1, egressAll only from NLT_AGENT_EGRESS_ALL=1, effective policy logged, NDJSON streaming, chat-page streaming with gate-only fallback, @vercel/oidc 3.2.0 pinned. Offline tests only (10 route tests, 2 page-helper tests).",
       "Addressed PR #26 review: aligned route lock stale age (320 s) with the 300 s function limit with a vercel.json test; replaced per-request chdir with a once-per-process work directory (gate-workdir.ts) with an overlap test.",
       "Addressed second PR #26 review: absolute invocation deadline set at route entry and propagated to gate, model lookup, sandbox acquire, lock, policy update and turn; tests with delayed setup stages (mutation-checked).",
-      "Fixed the failing Vercel preview build on 6ae8735 (root cause from the Vercel build log: model data not hydrated before build:offline); build now hydrates, builds, and asserts the Pi package entry.",
-      "Owner sign-in with Vercel (OAuth + PKCE), signed session cookie, owner allow-list, 401 on /api/agent without a session, header shows sign-in state. Offline tests only."
+      "Fixed the failing Vercel preview build on 6ae8735 (root cause from the Vercel build log: model data not hydrated before build:offline); build now hydrates, builds, and asserts the Pi package entry."
     ],
     "work_in_progress": [],
     "blockers": [
@@ -42,8 +41,7 @@
       "Which caller may set egressAll, and by what owner-set environment flag (the agent route; see NLTPI-MVP-005).",
       "Owner: set NLT_AGENT_ENABLED in one environment, approve a first real gateway/sandbox run (cost), and confirm the workspace root, the OIDC token on a deployment and streaming through Vercel; none were run.",
       "Owner: accept the once-per-process chdir, or request a child-process gate (needs a verified way to bundle the worker on Vercel).",
-      "Owner: accept build-time model-data hydration (network at build, data can vary) or commit/pin a snapshot.",
-      "Owner: create the Sign in with Vercel app and set VERCEL_APP_CLIENT_ID, VERCEL_APP_CLIENT_SECRET, VERCEL_APP_REDIRECT_URI, NLT_SESSION_SECRET and NLT_OWNER_VERCEL_SUBS; confirm whether to keep sign-in in PR #26 or split it."
+      "Owner: accept build-time model-data hydration (network at build, data can vary) or commit/pin a snapshot."
     ],
     "escalations": [],
     "next_agent_notes": "Step 2 is a free gateway model driving these operations behind the crisis gate, streamed to the chat page, behind whatever access control the owner picks. Create the sandbox through withAgentSandbox/agentSandboxParams(): egressAll: true allows every host and must only come from the agent route's owner-set environment flag; the defaults allow only the package-registry and GitHub presets (pass egressPresets: [] for deny-all), the name is fixed, and the work function receives an AbortSignal it must honor. Never pass host env or credentials into the sandbox. Keep the policy review inside the operations; do not add a path around it. Do not use @vercel/sandbox 3.7.0+ until the zod advisory chain is fixed. Timeout expiry behavior of sandbox.runCommand (rejects vs exit code 137) was not verified against a live sandbox. Step 2: Pi createAgentSession accepts customTools, noTools:'builtin', model, modelRuntime, sessionManager and settingsManager, so the sandbox operations can be passed via createBashToolDefinition etc. with in-memory session and settings. The gateway accepts the Vercel OIDC token as a Bearer token on /v1/chat/completions; read it with getVercelOidcToken() from @vercel/oidc inside the request (not at module level), pin it to 3.2.0 (the version @vercel/sandbox 3.6.1 uses; 3.6.0 to 4.0.5 is in an audited range). Pi's bundled vercel-ai-gateway model list is a snapshot and does not track free models, so build the model entry from the live catalog. Previews are behind Vercel login again, so curl against a preview returns 302; the route cannot be tested live from the agent session without the owner's help. Pi's createAgentSession takes modelRuntime/model/customTools/sessionManager/settingsManager; ModelRuntime is file-backed (auth.json, models.json), and pi-ai exports a faux provider (registerFauxProvider, fauxAssistantMessage, fauxToolCall) that Pi's own session tests use, which allows testing the runner offline. Update: the whole project is behind Vercel login (all deployments), including production, so the agent route is gated by an owner-set per-environment flag (off by default). Previews and production both return 302/401 to automated callers, so live tests of the route need the owner.",
@@ -70,12 +68,7 @@
       "mvp/src/agent/gate-workdir.ts",
       "mvp/vercel.json",
       "mvp/package.json",
-      "mvp/scripts/assert-agent-entry.mjs",
-      "mvp/api/auth/*.ts",
-      "mvp/src/auth/*.ts",
-      "mvp/test/auth.test.ts",
-      "mvp/public/index.html",
-      "mvp/public/app.css"
+      "mvp/scripts/assert-agent-entry.mjs"
     ],
     "tests_run": "mvp typecheck (tsc --noEmit -p tsconfig.typecheck.json) and mvp vitest run in the cloud container: operations, lifecycle (including the lock scripts in a real shell, with 8 concurrent reclaimers) and free-model tests; governance validator. Root npm run check and CI not run by the author.",
     "tests_passing": true,
