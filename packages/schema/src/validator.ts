@@ -53,7 +53,14 @@ export class Validator<T = unknown> {
 		return this.explainer.errors(value);
 	}
 
-	/** `value` itself when it is valid, else its errors: check() and errors() in one result, without coercion. */
+	/**
+	 * `value` itself when it is valid, else its errors: check() and errors() in one result, without coercion.
+	 *
+	 * Not TypeBox's `Value.Parse`, which also clones, fills defaults, converts and strips undeclared properties before
+	 * it checks. This only checks: the strict replacement where `Value.Parse` is used to validate (its other steps
+	 * change nothing for a valid value of a schema without defaults or extra properties). Use `parse()` with
+	 * `coerce: true` for conversion.
+	 */
 	validate(value: unknown): ParseResult<T> {
 		return this.check(value) ? { ok: true, value } : { ok: false, errors: this.errors(value) };
 	}

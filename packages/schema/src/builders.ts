@@ -169,6 +169,10 @@ export function unsafe<T>(schema: Schema = {}): Schema<T> {
  * returns. TypeScript cannot infer a recursive type from the builders, so `T` is given:
  * `recursive<Tree>("Tree", (tree) => obj({ name: str(), children: arr(tree) }))`. `id` becomes the schema's `$id`
  * and the target of the reference, so it must be unique among the recursive schemas within one schema.
+ *
+ * The counterpart of TypeBox's `Type.Cyclic` + `Type.Ref`, with other JSON: an `$id` on the schema instead of `$defs`
+ * and a root `$ref`. It validates the same values. The JSON differs only where a schema is published, and its type is
+ * written once instead of inferred, which a recursive schema (a file tree) needs only once.
  */
 export function recursive<T>(id: string, build: (self: Schema<T>) => Schema<T>): Schema<T> {
 	return { ...build({ $ref: id }), $id: id };

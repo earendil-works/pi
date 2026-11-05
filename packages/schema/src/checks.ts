@@ -305,6 +305,9 @@ export function numberCheck(
 /**
  * Whether `v` is a multiple of `d`, exactly for decimals: 0.0075 / 0.0001 is 74.99999999999999 in floating point. With
  * a bigint on either side, exact integer arithmetic; a bigint is no multiple of 0 or of a fraction.
+ *
+ * Deliberately unlike TypeBox, which throws there (`BigInt(0.5)`, division by zero): a check answers for every value
+ * and never throws, and no real schema pairs a bigint with a fractional or zero `multipleOf`.
  */
 export function isMultiple(v: Bound, d: Bound): boolean {
 	if (typeof v === "bigint" || typeof d === "bigint") {

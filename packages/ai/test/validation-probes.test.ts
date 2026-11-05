@@ -1,7 +1,7 @@
 // The reviewers' probes of the schema switch (round 1) as regression tests: TypeBox-built and plain JSON
 // (MCP-shaped) tool schemas with arguments through validateToolArguments. Each case's outcome is "ok <coerced
 // arguments>", "REJECT <first error line>" or "THROW <message>". Cases marked as TypeBox-only record the documented
-// differences from TypeBox (see the CHANGELOG): Refine and BigInt.
+// differences from TypeBox (see the CHANGELOG): Refine. BigInt and Undefined convert as TypeBox converted them.
 
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: TypeBox template literal syntax.
 // biome-ignore-all lint/suspicious/noThenProperty: JSON Schema's `then` keyword.
@@ -465,8 +465,8 @@ const expected: Record<string, string> = {
 	'codec {"c":12}': 'ok {"c":"12"}',
 	"undefined-optional {}": "ok {}",
 	'undefined-optional {"u":null}': "ok {}",
-	'bigint {"n":1}': "REJECT - n: expected bigint, got integer",
-	'bigint {"n":"12"}': "REJECT - n: expected bigint, got string",
+	'bigint {"n":1}': 'ok {"n":"1n"}',
+	'bigint {"n":"12"}': 'ok {"n":"12n"}',
 	'refine {"n":5}': 'ok {"n":5}',
 	'refine {"n":-5}': 'ok {"n":-5}',
 	'template-literal {"t":"id-12"}': 'ok {"t":"id-12"}',
@@ -631,19 +631,9 @@ describe("reviewer probes (Sol)", () => {
 		$defs: { Tree: { anyOf: [{ type: "string" }, { type: "array", items: { $ref: "#/$defs/Tree" } }] } },
 	};
 	const solCases: Array<[string, object, unknown, string]> = [
-		// TypeBox-only: Type.BigInt and Type.Undefined have no JSON form; TypeBox converted to them.
-		[
-			"BigInt from a JSON string",
-			Type.Object({ n: Type.BigInt() }),
-			{ n: "42" },
-			"REJECT - n: expected bigint, got string",
-		],
-		[
-			"Undefined from JSON null",
-			Type.Object({ n: Type.Undefined() }),
-			{ n: null },
-			"REJECT - n: expected undefined, got null",
-		],
+		// Type.BigInt and Type.Undefined have no JSON form: arguments convert to them, as TypeBox converted them.
+		["BigInt from a JSON string", Type.Object({ n: Type.BigInt() }), { n: "42" }, 'ok {"n":"42n"}'],
+		["Undefined from JSON null", Type.Object({ n: Type.Undefined() }), { n: null }, "ok {}"],
 		// TypeBox-only: its additionalProperties also converted declared properties; pi-schema converts only undeclared ones.
 		[
 			"additionalProperties on declared properties",
