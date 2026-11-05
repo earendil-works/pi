@@ -576,6 +576,13 @@ export class InteractiveMode {
 	// Extension dialogs shown in the editor slot (select, confirm, input, editor, inline custom).
 	// The last entry is visible; see pushExtensionDialog().
 	private extensionDialogs: Array<{ component: ExtensionDialogComponent; blocked: BlockedStatus | undefined }> = [];
+	/** Numbers the program status sources of blocking overlays, so closing one keeps the others. */
+	private nextBlockingOverlayId = 0;
+	/**
+	 * Open extension overlays (custom with overlay: true) and the function that removes each, in opening
+	 * order. Reset removes only these, not pi's own overlays.
+	 */
+	private readonly extensionOverlays = new Map<OverlayHandle, () => void>();
 	private extensionTerminalInputSubscriptions = new Set<{
 		handler: (data: string) => { consume?: boolean; data?: string } | undefined;
 		unsubscribe: () => void;
@@ -2583,7 +2590,9 @@ export class InteractiveMode {
 			this.extensionDialogs = [];
 			this.showTopExtensionDialog();
 		}
-		this.ui.hideOverlay();
+		// Reload and session switches replace every extension without calling done(): remove their overlays,
+		// newest first, the same way done() does, but leave the promises pending as for inline dialogs.
+		for (const removeOverlay of [...this.extensionOverlays.values()].reverse()) removeOverlay();
 		this.clearExtensionTerminalInputListeners();
 		this.setExtensionFooter(undefined);
 		this.setExtensionHeader(undefined);
@@ -3072,6 +3081,9 @@ export class InteractiveMode {
 		return new Promise((resolve, reject) => {
 			let component: ExtensionDialogComponent | undefined;
 			let overlayHandle: OverlayHandle | undefined;
+			// An overlay stays blocked until its interaction ends, also while setHidden() hides it.
+			const overlayStatusSource =
+				isOverlay && options?.blocked ? `extension-overlay:${this.nextBlockingOverlayId++}` : undefined;
 			let closed = false;
 
 			const restoreEditor = () => {
@@ -3080,18 +3092,33 @@ export class InteractiveMode {
 				this.ui.requestRender();
 			};
 
-			const close = (result: T) => {
-				if (closed) return;
-				closed = true;
-				// Remove this overlay, not the topmost one: another overlay may have opened above it.
-				if (isOverlay) overlayHandle?.hide();
-				else restoreEditor();
-				// Note: both branches above already call requestRender
-				resolve(result);
+			const disposeComponent = () => {
 				try {
 					component?.dispose?.();
 				} catch {
 					/* ignore dispose errors */
+				}
+			};
+
+			// Shared by done() and resetExtensionUI(). Removing the map entry first makes a second call a no-op.
+			const removeOverlay = () => {
+				if (!overlayHandle || !this.extensionOverlays.delete(overlayHandle)) return;
+				// Remove this overlay, not the topmost one: another overlay may have opened above it.
+				overlayHandle.hide();
+				if (overlayStatusSource) this.programStatus.setBlocked(overlayStatusSource, undefined);
+				disposeComponent();
+			};
+
+			const close = (result: T) => {
+				if (closed) return;
+				closed = true;
+				if (isOverlay) {
+					removeOverlay();
+					resolve(result);
+				} else {
+					restoreEditor();
+					resolve(result);
+					disposeComponent();
 				}
 			};
 
@@ -3114,6 +3141,8 @@ export class InteractiveMode {
 							return w ? { width: w } : undefined;
 						};
 						overlayHandle = this.ui.showOverlay(c, resolveOptions());
+						this.extensionOverlays.set(overlayHandle, removeOverlay);
+						if (overlayStatusSource) this.programStatus.setBlocked(overlayStatusSource, options?.blocked);
 						// Expose handle to caller for visibility control
 						options?.onHandle?.(overlayHandle);
 					} else {
