@@ -51,9 +51,14 @@
   "permission": {
     "*": "ask",
 
-    // Read-only inspection is unrestricted — the repository requires agents to
-    // read source, tests, and package docs before changing behavior.
-    "read": "allow",
+    // Read-only inspection is broadly allowed — the repository requires agents to
+    // read source, tests, and package docs before changing behavior — except for
+    // environment files, which hold credentials.
+    "read": {
+      "*": "allow",
+      ".env*": "deny",
+      "**/.env*": "deny"
+    },
     "glob": "allow",
     "grep": "allow",
     "todoread": "allow",
@@ -88,10 +93,23 @@
       "tsc --noEmit*": "allow",
       "bash .nltotoi/scripts/validate-governance.sh*": "allow",
 
-      // History rewriting and shared-history damage.
+      // Hook bypass. AGENTS.md "Pre-push verification" forbids skipping hooks; these
+      // make the common mechanisms fail closed rather than relying on the rule text.
+      "*--no-verify*": "deny",
+      "*core.hooksPath*": "deny",
+      "*hooksPath=*": "deny",
+      "git commit*-n *": "deny",
+
+      // History rewriting and shared-history damage. The `git -C <dir>` forms are
+      // listed separately because the leading subcommand no longer matches.
       "git push*--force*": "deny",
       "git push* -f*": "deny",
       "git push*--delete*": "deny",
+      "git -C*push*--force*": "deny",
+      "git -C*push* -f*": "deny",
+      "git -C*reset*--hard*": "deny",
+      "git -C*clean*-f*": "deny",
+      "git -C*push*main*": "deny",
       "git reset --hard*": "deny",
       "git reset*--hard*": "deny",
       "git clean -f*": "deny",
@@ -112,6 +130,9 @@
       "rm *-r *": "deny",
       "rm *--recursive*": "deny",
       "rm *--force*": "deny",
+      "find *-delete*": "deny",
+      "find *-exec rm*": "deny",
+      "find *-exec unlink*": "deny",
 
       // Publishing is an owner decision.
       "npm publish*": "deny",

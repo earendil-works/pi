@@ -68,6 +68,19 @@ Credentials belong in Kilo's credential store (`kilo auth`), the global config a
 None of those are in this repository. `.gitignore` excludes `.kilo/*.local.jsonc` and Kilo's
 local cache, index, and plans directories.
 
+The `read` permission denies `.env*` and `**/.env*`. **Known residual gap:** `grep` and
+`glob` remain unrestricted, so environment-file contents are still reachable through a
+search. Kilo's pattern semantics for those tools are path-based for `glob` but not clearly
+documented for `grep`, and a wrong guess there would block ordinary searches, so no rule was
+added rather than one whose behaviour is unverified. The deny rules are defense-in-depth,
+not a secrets boundary — do not keep live credentials in the working tree.
+
+The `bash` permission also denies the hook-bypass mechanisms (`--no-verify`,
+`core.hooksPath`), the `git -C <dir>` forms of the destructive commands, and
+`find -delete` / `find -exec rm`. These make the "never skip hooks" rule in `AGENTS.md`
+fail closed instead of resting on rule text alone. Pattern matching is still only pattern
+matching: a command phrased another way can slip past, and the rule governs regardless.
+
 ## Codebase indexing
 `indexing.enabled` and `experimental.semantic_indexing` are both off. Indexing sends code
 snippets to an embedding provider, which is both a provider decision and an
