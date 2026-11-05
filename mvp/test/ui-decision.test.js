@@ -5,6 +5,8 @@ import {
   agentDoneMessage,
   assistantMessage,
   interpretGate,
+  interpretModels,
+  modelToSend,
   interpretSession,
   levelTone,
   parseNdjson,
@@ -132,4 +134,44 @@ test("only an explicit signedIn true with a name shows as signed in", () => {
   for (const result of [undefined, { networkError: true }, { status: 500, body: { signedIn: true, name: "x" } }, { status: 200, body: null }]) {
     assert.equal(interpretSession(result).state, "unknown");
   }
+});
+
+test("the model list is ready only for a 200 with usable entries", () => {
+  const ready = interpretModels({
+    status: 200,
+    body: { models: [{ id: "a/one", name: "One" }, { id: "a/two" }, { id: "a/one", name: "Dup" }, { id: "" }, null, { name: "no id" }] },
+  });
+  assert.equal(ready.state, "ready");
+  assert.deepEqual(ready.models, [
+    { id: "a/one", label: "One (a/one)" },
+    { id: "a/two", label: "a/two" },
+  ]);
+  assert.equal(interpretModels({ status: 200, body: { models: [] } }).state, "empty");
+});
+
+test("every other model-list answer leaves the selector unavailable", () => {
+  for (const result of [
+    { status: 401, body: { error: "Sign in required" } },
+    { status: 404, body: { error: "Not found" } },
+    { status: 503, body: { models: [{ id: "a/one" }] } },
+    { status: 200, body: { models: "nope" } },
+    { status: 200, body: null },
+    { status: 200 },
+    { networkError: true },
+    undefined,
+  ]) {
+    const view = interpretModels(result);
+    assert.equal(view.state, "unavailable");
+    assert.deepEqual(view.models, []);
+  }
+  assert.equal(interpretModels({ status: 200, body: { models: [{ id: "x".repeat(201) }] } }).state, "empty");
+});
+
+test("only a model still in the loaded list is sent; otherwise the choice is automatic", () => {
+  const models = [{ id: "a/one" }, { id: "a/two" }];
+  assert.equal(modelToSend("a/two", models), "a/two");
+  assert.equal(modelToSend("a/gone", models), undefined);
+  assert.equal(modelToSend("", models), undefined);
+  assert.equal(modelToSend(undefined, models), undefined);
+  assert.equal(modelToSend("a/one", []), undefined);
 });

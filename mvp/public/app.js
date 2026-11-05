@@ -1,7 +1,9 @@
 import {
   MAX_PROMPT_LENGTH,
   agentDoneMessage,
+  interpretModels,
   interpretSession,
+  modelToSend,
   assistantMessage,
   formatClock,
   interpretGate,
@@ -38,6 +40,9 @@ const els = {
   governanceSummary: $("governance-summary"),
   activityDot: $("activity-dot"),
   currentTask: $("current-task"),
+  modelSelect: $("model-select"),
+  modelNote: $("model-note"),
+  activityModel: $("activity-model"),
   lastLatency: $("last-latency"),
   spark: $("spark"),
   govVerification: $("gov-verification"),
@@ -228,7 +233,7 @@ async function runAgent(prompt, conversation) {
     response = await fetch("/api/agent", {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/x-ndjson" },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, model: modelToSend(els.modelSelect.value, loadedModels) }),
     });
   } catch {
     // The turn may have started before the connection failed; report it as an unavailable outcome rather than
@@ -322,6 +327,7 @@ async function submit(raw) {
       conversation.messages.push(failure);
       if (conversation === active) appendMessage(failure);
     }
+    if (agent.done?.status === "completed" && typeof agent.done.model === "string") els.activityModel.textContent = agent.done.model;
     logEvent(`Agent turn: ${agent.status ?? "ended"}`, agent.status === "completed" ? "online" : "idle");
     // Refresh the governance card from the turn's final outcome.
     if (agent.done?.status === "blocked") {
@@ -446,3 +452,31 @@ els.signout.addEventListener("click", async () => {
   await loadSession();
 });
 loadSession();
+
+/** Models from the last successful /api/models call. Held in memory only. */
+let loadedModels = [];
+
+/** Fills the model selector with the free models the server lists. Any failure leaves it on automatic. */
+async function loadModels() {
+  let result;
+  try {
+    const response = await fetch("/api/models", { headers: { accept: "application/json" } });
+    result = { status: response.status, body: await response.json().catch(() => undefined) };
+  } catch {
+    result = { networkError: true };
+  }
+  const view = interpretModels(result);
+  loadedModels = view.models;
+  const previous = els.modelSelect.value;
+  els.modelSelect.replaceChildren(new Option("Auto (best free)", ""));
+  for (const model of view.models) els.modelSelect.append(new Option(model.label, model.id));
+  els.modelSelect.value = modelToSend(previous, view.models) ?? "";
+  els.modelSelect.disabled = view.state !== "ready";
+  els.modelNote.textContent =
+    view.state === "ready"
+      ? `${view.models.length} free model${view.models.length === 1 ? "" : "s"} available`
+      : view.state === "empty"
+        ? "No free models listed right now"
+        : "Model list unavailable; using automatic choice";
+}
+loadModels();

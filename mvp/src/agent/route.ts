@@ -16,6 +16,9 @@ import { DEFAULT_AGENT_EGRESS } from "../sandbox/lifecycle.ts";
 
 export const MAX_AGENT_PROMPT_LENGTH = 8000;
 
+/** Longest model id accepted from a client. Gateway ids are short; anything longer is not one. */
+export const MAX_AGENT_MODEL_LENGTH = 200;
+
 /** The function limit in `vercel.json`. A test checks the two agree. */
 export const AGENT_FUNCTION_MAX_DURATION_MS = 300_000;
 
@@ -91,6 +94,27 @@ function readPrompt(body: unknown): string | null {
     : null;
 }
 
+/**
+ * Reads the optional `model` field. Returns undefined when absent or a blank string (automatic choice), the trimmed id
+ * when valid, or null when present but not a usable string, including JSON null (the caller rejects the request).
+ */
+function readModel(body: unknown): string | undefined | null {
+  let parsed = body;
+  if (typeof body === "string") {
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return null;
+    }
+  }
+  if (parsed === null || typeof parsed !== "object") return null;
+  const model = (parsed as Record<string, unknown>).model;
+  if (model === undefined) return undefined;
+  if (typeof model !== "string" || model.length > MAX_AGENT_MODEL_LENGTH) return null;
+  const trimmed = model.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
+}
+
 /** Maps a turn result to the NDJSON `done` event payload. */
 function describeResult(result: AgentTurnResult): Record<string, unknown> {
   switch (result.status) {
@@ -139,6 +163,12 @@ export async function handleAgentRequest(
     return;
   }
 
+  const model = readModel(request.body);
+  if (model === null) {
+    response.status(400).json({ error: `"model" must be a string of at most ${MAX_AGENT_MODEL_LENGTH} characters` });
+    return;
+  }
+
   const egressAll = egressAllEnabled(deps.env);
   deps.log(
     JSON.stringify({
@@ -168,6 +198,7 @@ export async function handleAgentRequest(
   try {
     result = await deps.run(runnerDeps, {
       prompt,
+      model,
       signal: controller.signal,
       deadlineAt,
       onText: (delta) => send({ type: "text", delta }),

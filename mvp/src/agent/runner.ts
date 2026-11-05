@@ -72,8 +72,11 @@ export interface AgentRunnerDeps {
   sandboxClient: SandboxClient;
   /** Reads the gateway credential. Called inside the turn, never at module level. */
   gatewayToken: () => Promise<string>;
-  /** Chooses the model. Default: the best free tool-capable model in the live catalog. */
-  pickModel?: () => Promise<GatewayCatalogModel>;
+  /**
+   * Chooses the model. `requested` is the caller's choice (untrusted). Default: the requested model if it is free
+   * right now, otherwise an error; with no request, the best free tool-capable model in the live catalog.
+   */
+  pickModel?: (requested?: string) => Promise<GatewayCatalogModel>;
   /** Builds the model binding. Default: the Vercel AI Gateway with `gatewayToken`. Tests inject an offline one. */
   bindModel?: (model: GatewayCatalogModel, token: string) => Promise<ModelBinding>;
   workspaceRoot?: string;
@@ -83,6 +86,8 @@ export interface AgentRunnerDeps {
 
 export interface AgentTurnInput {
   prompt: string;
+  /** A model id the caller chose. Used only if it is free right now; never substituted. Omitted means automatic. */
+  model?: string;
   signal?: AbortSignal;
   /** Absolute time (epoch ms) by which the whole invocation must have settled. Every stage is bounded by it. */
   deadlineAt?: number;
@@ -236,7 +241,7 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
   // 2. A free model, chosen from the live catalog.
   let chosen: GatewayCatalogModel;
   try {
-    chosen = await raceSetup(withinDeadline((deps.pickModel ?? (() => pickFreeModel({ requireToolUse: true })))(), input.deadlineAt), input.signal, undefined);
+    chosen = await raceSetup(withinDeadline((deps.pickModel ?? ((requested) => pickFreeModel({ requireToolUse: true, requested })))(input.model), input.deadlineAt), input.signal, undefined);
   } catch (error) {
     if (error instanceof CallerAbortedError) return { status: "aborted", reason: error.message };
     if (error instanceof SandboxTurnTimeoutError) return { status: "timed_out" };

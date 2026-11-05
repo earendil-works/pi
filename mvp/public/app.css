@@ -287,3 +287,9 @@ button, textarea { font: inherit; color: inherit; }
   .msg { animation: rise 0.18s ease-out; }
   @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 }
+
+.model-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 0.85rem; }
+.model-row select { min-width: 0; max-width: 100%; flex: 0 1 320px; padding: 4px 8px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.25); background: rgba(255, 255, 255, 0.08); color: inherit; font: inherit; }
+.model-row select option { color: #111; background: #fff; }
+.model-row select:disabled { opacity: 0.6; }
+.model-note { opacity: 0.7; }

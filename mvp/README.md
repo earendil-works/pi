@@ -101,7 +101,10 @@ Tests run offline with Pi's faux provider and a recording fake sandbox (11 tests
 
 ## Agent route
 
-`mvp/api/agent.ts` (logic in `src/agent/route.ts`) exposes the runner as `POST /api/agent` with `{ "prompt": string }` (at most 8000 characters).
+`mvp/api/agent.ts` (logic in `src/agent/route.ts`) exposes the runner as `POST /api/agent` with `{ "prompt": string, "model"?: string }` (prompt at most 8000 characters).
+
+- **Model choice.** `model` is optional (absent or blank means automatic, the best free tool-capable model). It is untrusted input: a non-string or an id over 200 characters is a 400, and a valid id is re-checked against the live free list inside the turn, after the crisis gate. A model that is not free right now ends the turn with `no_free_model`; no other model is substituted.
+- **`GET /api/models`** (`api/models.ts`, logic in `src/agent/models-route.ts`) lists the free, tool-capable models for the chat page's selector, as `{ "models": [{ "id", "name", "contextWindow" }] }`. Same rules as the agent route: 404 unless `NLT_AGENT_ENABLED=1`, 401 without an owner session. If the public catalog cannot be read it answers 503 with an empty list; a priced model is never listed. The list is informational only; the selection is enforced by `/api/agent`.
 
 - **Off by default.** Without `NLT_AGENT_ENABLED=1` in that Vercel environment the route answers 404 and touches nothing (no gate, sandbox, catalog or token). Only the owner sets this flag. Vercel login covers all deployments, so the flag is the second control.
 - **Network.** The default is the named allowlist (package registries and GitHub). `NLT_AGENT_EGRESS_ALL=1`, also owner-set, switches to allow-all; the request body cannot. Each turn logs the effective policy (`allowlist:packages,git` or `allow-all`), never the prompt.
@@ -151,7 +154,7 @@ The MVP does not yet persist continuity or run a separate post-turn response-gov
 
 ## Chat page
 
-`public/index.html` (with `app.css`, `app.js`, `lib/decision.js`) is a chat page for the Vercel preview. It uses no framework and no build step. Each message goes to `POST /api/agent` first and falls back to `POST /api/govern`; the page itself does not call a model or run a tool directly, and it saves nothing: conversations live in memory for the open tab only, and user text is only written with `textContent`. When `NLT_AGENT_ENABLED=1`, `/api/agent` runs the governed runner (gate, free-model selection, sandbox tools); while the flag is unset the route is off and the page falls back to the gate-only check.
+`public/index.html` (with `app.css`, `app.js`, `lib/decision.js`) is a chat page for the Vercel preview. It uses no framework and no build step. A model selector (default "Auto (best free)") is filled from `GET /api/models` and its choice, held in memory only, is sent as `model`; if the list cannot be loaded it stays disabled on automatic. Each message goes to `POST /api/agent` first and falls back to `POST /api/govern`; the page itself does not call a model or run a tool directly, and it saves nothing: conversations live in memory for the open tab only, and user text is only written with `textContent`. When `NLT_AGENT_ENABLED=1`, `/api/agent` runs the governed runner (gate, free-model selection, sandbox tools); while the flag is unset the route is off and the page falls back to the gate-only check.
 
 Values on the page come from `GET /api/health`, `GET /api/status` and the gate response (verification state, crisis level, components that checked, execution state). Where nothing is connected it says so ("None connected", "Disabled"); it does not show a governance "green" state. Anything other than a literal `allowed: true` from the gate (a 503, a 404 on production, a malformed body, a network error) is shown as not allowed. The previous status page is at `/status.html`.
 

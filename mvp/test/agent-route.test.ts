@@ -4,6 +4,7 @@ import {
   AGENT_FUNCTION_MAX_DURATION_MS,
   AGENT_LOCK_STALE_MS,
   AGENT_REQUEST_BUDGET_MS,
+  MAX_AGENT_MODEL_LENGTH,
   type AgentResponse,
   type AgentRouteDeps,
   agentEnabled,
@@ -100,6 +101,34 @@ describe("handleAgentRequest", () => {
     for (const body of [undefined, {}, { prompt: "" }, { prompt: "  " }, { prompt: 5 }, "not json", { prompt: "x".repeat(8001) }]) {
       const r = makeResponse();
       await handleAgentRequest(post(body), r.response, deps);
+      expect(r.out.status).toBe(400);
+    }
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("passes a valid model id to the run, trimmed, and treats absent or blank as automatic", async () => {
+    const { deps, run } = makeDeps(on);
+    for (const [body, expected] of [
+      [{ prompt: "hi", model: "synthetic/free-model" }, "synthetic/free-model"],
+      [{ prompt: "hi", model: "  synthetic/free-model  " }, "synthetic/free-model"],
+      [{ prompt: "hi" }, undefined],
+      [{ prompt: "hi", model: "" }, undefined],
+      [{ prompt: "hi", model: "   " }, undefined],
+      [JSON.stringify({ prompt: "hi", model: "synthetic/free-model" }), "synthetic/free-model"],
+    ] as const) {
+      run.mockClear();
+      const r = makeResponse();
+      await handleAgentRequest(post(body), r.response, deps);
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(run.mock.calls[0]?.[1].model).toBe(expected);
+    }
+  });
+
+  it("rejects a model that is not a string or is too long, without running", async () => {
+    const { deps, run } = makeDeps(on);
+    for (const model of [null, 5, true, {}, ["a"], "x".repeat(MAX_AGENT_MODEL_LENGTH + 1)]) {
+      const r = makeResponse();
+      await handleAgentRequest(post({ prompt: "hi", model }), r.response, deps);
       expect(r.out.status).toBe(400);
     }
     expect(run).not.toHaveBeenCalled();

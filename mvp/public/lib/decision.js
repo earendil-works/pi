@@ -168,3 +168,43 @@ export function interpretSession(result) {
   if (body.configured === false) return { state: "not-configured", label: "Sign-in not set up" };
   return { state: "signed-out", label: "Not signed in" };
 }
+
+/** Longest model id the page will send; the server rejects anything longer. */
+export const MAX_MODEL_ID_LENGTH = 200;
+
+/**
+ * What the model selector shows for a `/api/models` answer. Only a 200 with a list counts; each entry needs a
+ * non-empty string id. Anything else leaves the selector on automatic choice.
+ *
+ * @param {{ status?: number, body?: unknown, networkError?: boolean }} result
+ * @returns {{ state: "ready" | "empty" | "unavailable", models: { id: string, label: string }[] }}
+ */
+export function interpretModels(result) {
+  const { status, body, networkError } = result ?? {};
+  if (networkError || status !== 200 || body === null || typeof body !== "object" || !Array.isArray(body.models)) {
+    return { state: "unavailable", models: [] };
+  }
+  const seen = new Set();
+  const models = [];
+  for (const item of body.models) {
+    if (item === null || typeof item !== "object") continue;
+    const id = typeof item.id === "string" ? item.id.trim() : "";
+    if (id.length === 0 || id.length > MAX_MODEL_ID_LENGTH || seen.has(id)) continue;
+    seen.add(id);
+    const name = typeof item.name === "string" && item.name.trim().length > 0 ? item.name.trim() : id;
+    models.push({ id, label: name === id ? id : `${name} (${id})` });
+  }
+  return { state: models.length > 0 ? "ready" : "empty", models };
+}
+
+/**
+ * The model id to send with a turn: the chosen one only if it is still in the loaded list, otherwise undefined
+ * (automatic). The server re-checks it either way.
+ *
+ * @param {string} selected
+ * @param {{ id: string }[]} models
+ */
+export function modelToSend(selected, models) {
+  if (typeof selected !== "string" || selected.length === 0) return undefined;
+  return Array.isArray(models) && models.some((model) => model.id === selected) ? selected : undefined;
+}

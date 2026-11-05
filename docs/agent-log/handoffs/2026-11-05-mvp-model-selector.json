@@ -1,0 +1,45 @@
+{
+  "handoff_record": {
+    "session_id": "01UNjnjmtbn8V5V114283EeV",
+    "agent_name": "Claude Code",
+    "date": "2026-11-05T16:55:00+00:00",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "feat/mvp-model-selector",
+    "work_completed": [
+      "Added GET /api/models (mvp/api/models.ts, src/agent/models-route.ts): lists free, tool-capable gateway models from the live catalog; 404 unless NLT_AGENT_ENABLED=1, 401 without an owner session, 503 with an empty list if the catalog cannot be read.",
+      "POST /api/agent accepts an optional model string (blank means automatic); non-string or over 200 characters is a 400. AgentTurnInput.model is passed to the picker, which calls pickFreeModel({ requested }) after the crisis gate; a non-free id gives no_free_model with no substitution.",
+      "Chat page: model selector (default Auto (best free)) filled from /api/models, disabled with a note when the list is unavailable, choice held in memory only and sent as model; Agent Activity shows the model that ran.",
+      "Tests: models route (5), route model parsing (2), runner requested-model (2) plus default-picker (4), page helpers interpretModels and modelToSend (3)."
+    ],
+    "work_in_progress": [],
+    "blockers": [],
+    "decisions_made": [
+      "Owner approved the design in chat (2026-11-05): /api/models gated by the owner session and the agent flag; selection enforced server-side, never trusted from the client."
+    ],
+    "decisions_pending": [
+      "Owner: first live run (sign-in setup, NLT_AGENT_ENABLED, cost approval) is still needed to see the selector against the real gateway."
+    ],
+    "escalations": [],
+    "next_agent_notes": "Selector is built and tested offline only. Do not trust the client's model id: the runner re-checks it against the live free list. Once the owner can sign in on a deployment, verify /api/models returns the free list and that a chosen model completes a turn.",
+    "files_modified": [
+      "mvp/api/models.ts",
+      "mvp/src/agent/models-route.ts",
+      "mvp/src/agent/route.ts",
+      "mvp/src/agent/runner.ts",
+      "mvp/public/index.html",
+      "mvp/public/app.js",
+      "mvp/public/app.css",
+      "mvp/public/lib/decision.js",
+      "mvp/test/models-route.test.ts",
+      "mvp/test/agent-route.test.ts",
+      "mvp/test/agent-runner.test.ts",
+      "mvp/test/ui-decision.test.js",
+      "mvp/README.md",
+      "docs/active-threads.md"
+    ],
+    "tests_run": "In a fresh-clone setup (npm ci, hydrate:model-data, build:offline): root npm run check exit 0 (biome, all check:* scripts, root and examples tsc, check:browser-smoke, check:mvp); cd mvp && npx tsc --noEmit -p . and -p tsconfig.typecheck.json (0 errors); npx vitest --run (215 passed, 10 expected fail after the review follow-ups: null rejected with 400, and four default-picker runner tests, mutation-checked by dropping `requested` from the default picker, which fails three of them); node --test mvp/test/*.test.js (25 passed); governance validator 71 passed / 0 failed; conflict-marker scan clean. The chat page was rendered in headless Chrome at 1440x900 and 390x1000 against a local mock of /api/models only: the selector listed Auto plus two models and showed '2 free models available'; other endpoints were absent. Not run: root npm test and test:scripts; no live gateway, sandbox, sign-in or deployment.",
+    "tests_passing": true,
+    "pr_url": null
+  }
+}

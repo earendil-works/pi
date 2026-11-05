@@ -1,0 +1,24 @@
+{
+  "agent_registration": {
+    "agent_name": "Claude",
+    "platform": "Claude Code (claude.ai, cloud container)",
+    "version": "Claude Sonnet 5.5 (claude-sonnet-5-5)",
+    "session_id": "01UNjnjmtbn8V5V114283EeV",
+    "entry_date": "2026-11-05T16:45:27+00:00",
+    "entry_point": "Owner request: finish the three remaining model-selector items for the MVP chat UI (selector, list of free models, selected model passed to backend)",
+    "acknowledged_otoi": true,
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "working_repo": "NeuroLift-Technologies/nlt-pi",
+    "working_branch": "feat/mvp-model-selector",
+    "capabilities_self_reported": [
+      "Read and edit repository files in a cloud container clone",
+      "Run shell commands, Node and npm in that container",
+      "Git operations and GitHub PR creation via gh"
+    ],
+    "known_limitations": [
+      "No live Vercel AI Gateway turn, sandbox, or signed-in session is available; nothing was run against the real gateway or a deployment",
+      "Browser behaviour of the selector is checked only through unit tests of its logic unless stated otherwise in the handoff"
+    ],
+    "preferred_handoff_format": "structured Markdown or JSON"
+  }
+}

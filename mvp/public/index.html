@@ -84,6 +84,14 @@
 
         <div class="log" id="log" role="log" aria-live="polite" aria-relevant="additions" tabindex="0"></div>
 
+        <div class="model-row">
+          <label for="model-select">Model</label>
+          <select id="model-select" disabled>
+            <option value="">Auto (best free)</option>
+          </select>
+          <span class="model-note" id="model-note">Free models only</span>
+        </div>
+
         <form class="composer" id="composer" autocomplete="off">
           <label class="sr-only" for="prompt">Message</label>
           <textarea id="prompt" rows="1" maxlength="2000" placeholder="Ask the NLT Coding Agent anything…" enterkeyhint="send"></textarea>
@@ -105,7 +113,7 @@
         <section class="card" aria-labelledby="activity-heading">
           <h2 id="activity-heading"><span class="dot" id="activity-dot" data-state="idle" aria-hidden="true"></span> Agent Activity</h2>
           <dl class="rows">
-            <div><dt>Model</dt><dd>None connected</dd></div>
+            <div><dt>Model</dt><dd id="activity-model">None connected</dd></div>
             <div><dt>Tools</dt><dd>Disabled</dd></div>
             <div><dt>Current task</dt><dd id="current-task">Idle</dd></div>
             <div><dt>Last check</dt><dd id="last-latency">—</dd></div>
