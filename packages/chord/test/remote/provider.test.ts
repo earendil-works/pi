@@ -1166,3 +1166,68 @@ describe("telemetry at the provider (slice 9)", () => {
 		expect(telemetry.getMetrics().filter(({ name }) => name === "chord.backpressure.wait")).toHaveLength(1);
 	});
 });
+
+describe('old work from another host (decision "Reload restarts every affected object", `call.old`)', () => {
+	/** A remote type whose `slow` waits for `gate` (the call a restart drains) and whose `ping` answers its code. */
+	const Coded = remote("app.coded", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		variants: { v: { state: {}, methods: { slow: method(undefined, int()), ping: method(undefined, int()) } } },
+	});
+	const CODED = wireNames(Coded, "v");
+
+	/** Serves `Coded` as code `code`, `slow` first awaiting `gate`. */
+	const serveCoded = (h: FacetHost<TestPrincipal>, code: number, gate?: Promise<void>) =>
+		h.serve(Coded, () => ({
+			variant: "v",
+			members: {
+				slow: async () => {
+					await gate;
+					return code;
+				},
+				ping: async () => code,
+			},
+		}));
+
+	/**
+	 * Holds `Coded` on a server restarting it while its call `slow` drains, then sends `ping` (marked old when `old`) on
+	 * a link trusted when `trusted`: resolves with the code that answered it and whether that came before the drain.
+	 */
+	async function pingDuringDrain(old: boolean, trusted: boolean) {
+		const gate = Promise.withResolvers<void>();
+		const { server, peer } = await rawLinked((h) => serveCoded(h, 1, gate.promise), { trusted });
+		await peer.next("hello");
+		hold(peer, 0, Coded, {});
+		await peer.next("bound");
+		call(peer, 0, 0, CODED.methods.slow!);
+		await transported();
+		await server.reload([{ name: "@test/app", facet: defineFacet<TestPrincipal>((h) => serveCoded(h, 2)) }], context);
+		peer.send({
+			kind: "call",
+			call: 1,
+			hold: 0,
+			method: CODED.methods.ping!,
+			...(old ? { old: true as const } : {}),
+		});
+		await transported();
+		const early = peer.received.some((message) => message.kind === "result" && message.call === 1);
+		gate.resolve();
+		const first = await peer.next("result");
+		const result = first.call === 1 ? first : await peer.next("result");
+		await server.close(context);
+		return { code: partValue(result.value!), early };
+	}
+
+	it("runs a marked call from a trusted link on the open old attempt: answered by the old code, before the drain", async () => {
+		expect(await pingDuringDrain(true, true)).toEqual({ code: 1, early: true });
+	});
+
+	it("ignores the mark from a link that is not trusted: the call is new work and waits for the new code", async () => {
+		expect(await pingDuringDrain(true, false)).toEqual({ code: 2, early: false });
+	});
+
+	it("runs an unmarked call from a trusted link as new work", async () => {
+		expect(await pingDuringDrain(false, true)).toEqual({ code: 2, early: false });
+	});
+});

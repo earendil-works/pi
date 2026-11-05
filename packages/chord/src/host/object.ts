@@ -5,8 +5,9 @@
 // (the start barrier, decision (a)), a live object's failure (slice 6a §1.4), the waits and cycle checks of activations
 // (Q5, its instance id and the activation chain it was created for), lingering after its last reference (§3, D8), the
 // job runs that keep it alive (§15), its contributions to registries while live and its wake signals (`retryOn`, slice
-// 8), its ending, revocation included (§4, R11), and what a reload does to it (slice 7b §4): a pure swap in place, a
-// native restart after the drain, a retry on the new code, or its end by its type's removal, after which its
+// 8), its ending, revocation included (§4, R11), and what a reload does to it (decision "Reload restarts every affected
+// object; old work finishes on old code"): a restart, whose old attempt serves old work until it drained and its
+// successor's requests are ready, a retry on the new code, or its end by its type's removal, after which its
 // references wait with their last values and follow the next object of the identity.
 
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
@@ -30,10 +31,12 @@ import type { Caller } from "./ctx.ts";
 import type { Dependency } from "./dependencies.ts";
 import type { AnyHost } from "./host.ts";
 import type { CloseFailed, NativeCloseReason } from "./native.ts";
+import { OPENING } from "./old-work.ts";
+import { Readiness } from "./readiness.ts";
 import { type Ended, type Failed, LIVE, LOADING, type RefState } from "./ref-state.ts";
 import { type CheckedParams, type Followed, type RetryWalk, retryWalk, type Target } from "./reference.ts";
 import { type RetrySource, RetryWakes } from "./retry-on.ts";
-import { migratesTables, type Recorded } from "./staging.ts";
+import type { Request } from "./staging.ts";
 import { uuidv7 } from "./uuid.ts";
 
 /** A `local` contract, as a served type has it. */
@@ -77,6 +80,8 @@ export interface Holder {
 	readonly caller: Caller;
 	/** The consumer's contract version and fingerprint (its request's): the provider binds it or it waits unbound. */
 	readonly contract: { readonly version: number; readonly fingerprint: string };
+	/** Whether presence lists show it (§19): not a restart's readiness binding, which is no consumer of its own. */
+	readonly listed: boolean;
 	/**
 	 * Inside a batch, before `moved`: what it follows of the object changed (`ChordObject.followed`): a reference moves its
 	 * members' subscriptions to the new instance, or keeps their last values; a hold over a link has nothing to do here.
@@ -107,15 +112,8 @@ export type Removal = {
 	readonly context: Context;
 };
 
-/** What a reload does to a live, activating, parked or failed object whose type is still served (slice 7b §4). */
-export type ReloadFate = "swap" | "restart" | "retry";
-
-/**
- * A pure swap in progress (slice 7b §5): the attempt it replaces (its calls run on, then it is sealed), whether the new
- * attempt parked (holders then see what it shows, and the old one's contributions left the tables), and the end of
- * the swap (its new attempt live, parked or failed, or the object ended), which the old attempt's retirement waits for.
- */
-type Swap = { readonly old: Attempt; parked: boolean; readonly done: PromiseWithResolvers<void> };
+/** What a reload does to an object whose type is still served: a live one restarts, any other is retried. */
+export type ReloadFate = "restart" | "retry";
 
 /**
  * Where an object stands. `waiting`: for its identity's backoff window before its first attempt. `activating` has what
@@ -128,8 +126,6 @@ type ObjectState =
 			readonly kind: "activating";
 			readonly attempt: Attempt;
 			readonly shown: RefState;
-			/** Set while a reload's pure swap replaces the live attempt. */
-			readonly swap?: Swap;
 	  }
 	| { readonly kind: "live"; readonly attempt: Attempt }
 	| { readonly kind: "failed"; readonly failure: Failed }
@@ -169,8 +165,10 @@ const NO_CONTRIBUTIONS: readonly RegistryContribution[] = [];
  * or when the host closes.
  */
 export class ChordObject implements Target {
+	/** An object on this host (a reference's target that is not held over a link). */
+	readonly kind = "local";
 	readonly host: AnyHost;
-	/** Its served type: replaced by a reload that swaps, restarts or retries it. */
+	/** Its served type: replaced by a reload that restarts or retries it. */
 	served: Served;
 	readonly params: ParamsOf<Contract>;
 	/** Its params' identity key (empty for empty params). */
@@ -218,23 +216,39 @@ export class ChordObject implements Target {
 	/** Its running and finishing job runs: they keep it alive like references (D4), without being references. */
 	#runs = 0;
 	/**
-	 * The instance its references follow (`followed`): the live one, the old one while a swap brings its successor in
-	 * place, or the last one that went live while it still changes after a failure or a restart (references take their
-	 * last values from it when it stops); `undefined` before the first went live and once it stopped changing.
+	 * The instance its references follow (`followed`): the live one, or the last one that went live while it still
+	 * changes after a failure or during a restart (references take their last values from it when it stops);
+	 * `undefined` before the first went live and once it stopped changing.
 	 */
 	#exposed: Attempt | undefined;
 	/**
-	 * Whether references still follow `#exposed`, which may still change: while it is live, drains (a restart), retires
-	 * (a swap's old instance until its successor is live or it retired), or failed live until the commits admitted
-	 * before it published (every member, its own and re-exposed ones: audit A10); not once it stopped changing.
+	 * Whether references still follow `#exposed`, which may still change: while it is live, while a restart keeps it
+	 * open for old work, or failed live until the commits admitted before it published (every member, its own and
+	 * re-exposed ones: audit A10); not once it stopped changing.
 	 */
 	#following = false;
 	/** The one timer storing its jobs' held state changes by their earliest deadline (D8), while one is held. */
 	#flush: { readonly deadline: number; readonly timer: ReturnType<typeof setTimeout> } | undefined;
 	/** Its wake signals (`retryOn`), the last attempt's declaration; made by the first. */
 	#wakes: RetryWakes | undefined;
-	/** Its swapped-out attempts while they retire (bounded by `closeTimeout`); made by the first swap. */
-	#retiring: Map<Attempt, Promise<void>> | undefined;
+	/**
+	 * A restart's old attempt while it is open (until it stopped changing): old work runs on it, and consumers whose
+	 * version it binds see it live (decision "Reload restarts every affected object", rules 2 and 5).
+	 */
+	#old: Attempt | undefined;
+	/**
+	 * A restart's old attempt without natives whose contributions stay in the tables until its successor is live (F-c),
+	 * replaced there in one batch; they leave if the successor fails, parks on a failure or the object ends.
+	 */
+	#kept: Attempt | undefined;
+	/** A restart's readiness, until its successor's first dependency check. */
+	#readiness: Readiness | undefined;
+	/** A restart's successor that shows its readiness's failures, until the old attempt ended. */
+	#showsReadiness: Attempt | undefined;
+	/** Starts a restart's readiness and successor, once every fate of its reload started (`startSuccessor`). */
+	#startSuccessor: (() => void) | undefined;
+	/** The objects whose gate its activation's opener waits at now: its wait edges for reload cycles. */
+	#gateWaits: Set<ChordObject> | undefined;
 	/** Its live queries by table, across its attempts; made by the first table it declares. */
 	#liveQueries: LiveQueries | undefined;
 	/** Resolves at its next change of state, for calls waiting at the gate; made by the first one. */
@@ -284,9 +298,39 @@ export class ChordObject implements Target {
 		return state.kind === "activating" ? state.shown : LOADING;
 	}
 
-	/** Whether its state members have values: once live (a local object stays live until it ends). */
+	/**
+	 * Whether its state members have values: once live (a local object stays live until it ends), and while a
+	 * restart's old attempt is open (its consumers check their version through `stateFor`).
+	 */
 	get hydrated(): boolean {
-		return this.#state.kind === "live";
+		return this.#state.kind === "live" || this.openOldAttempt !== undefined;
+	}
+
+	/**
+	 * The state a same-host consumer of `version` and `fingerprint` sees (rule 5): `live` while a restart's open old
+	 * attempt binds that version and its successor is not parked on a failure; otherwise `state`.
+	 */
+	stateFor(version: number, fingerprint: string): RefState {
+		const state = this.#state;
+		if (state.kind === "activating" && state.shown.kind !== "failed" && this.oldServes(version, fingerprint)) {
+			return LIVE;
+		}
+		return this.state;
+	}
+
+	/** Whether a restart's open old attempt binds `version` and `fingerprint`: its consumers of that version may use it. */
+	oldServes(version: number, fingerprint: string): boolean {
+		const old = this.openOldAttempt;
+		return old !== undefined && binds(old.served.provider, version, fingerprint);
+	}
+
+	/**
+	 * A restart's old attempt while it is open (draining, not sealed yet): old work runs on it, and consumers whose
+	 * version it binds see it as the live instance; `undefined` otherwise.
+	 */
+	get openOldAttempt(): Attempt | undefined {
+		const old = this.#old;
+		return old?.draining ? old : undefined;
 	}
 
 	/** Resolves at its first outcome (the start barrier waits for it); never rejects. */
@@ -344,9 +388,12 @@ export class ChordObject implements Target {
 		return this.#holders;
 	}
 
-	/** The variant a live remote object's factory chose; `undefined` for a local object and before it is live. */
+	/**
+	 * The variant a live remote object's factory chose (a restart's open old attempt's meanwhile); `undefined` for a
+	 * local object and before it is live.
+	 */
 	get variant(): string | undefined {
-		return this.#state.kind === "live" ? this.#state.attempt.variant : undefined;
+		return this.#state.kind === "live" ? this.#state.attempt.variant : this.openOldAttempt?.variant;
 	}
 
 	/** The live object's state members, as Chord follows them. */
@@ -401,7 +448,8 @@ export class ChordObject implements Target {
 	/**
 	 * Calls a method of the live object for `caller`, bound at `version` (an older one maps its arguments and result,
 	 * Q10), its `chord.method` span under `parent` (the caller's span on this host, a call's carrier over a link). While
-	 * an attempt activates (a reload's swap or restart), the call waits for its outcome (the gate).
+	 * an attempt activates (a reload's restart, a retry), new work waits for its outcome (the gate); old work runs on a
+	 * restart's open old attempt.
 	 */
 	async call(
 		method: string,
@@ -411,17 +459,17 @@ export class ChordObject implements Target {
 		version: number,
 		parent?: TelemetryContext,
 	): Promise<unknown> {
-		if (this.#state.kind === "activating") await this.#gate(context);
+		if (this.#state.kind === "activating") {
+			// Old work runs on the open old attempt (rule 2): work begun before the reload finishes on old code, and a
+			// restart's drain never waits on itself. The old attempt checks the call's version against its own contract.
+			const old = this.openOldAttempt;
+			if (old !== undefined && this.host.oldWork.of(context)) {
+				return old.call(method, args, context, caller, version, parent ?? context.telemetry);
+			}
+			// Old work here found no open old attempt (else it was routed above): any version cycles through the gate.
+			await this.host.waitAsOldWork(this.#openerGate(context), this, this.served.contract, context);
+		}
 		return this.#live().call(method, args, context, caller, version, parent ?? context.telemetry);
-	}
-
-	/**
-	 * Whether a reload's pure swap runs in place: the new attempt neither parked nor failed yet. Holds stay bound
-	 * meanwhile (their calls wait at the gate) and get a fresh `bound` once it is live.
-	 */
-	get swapsInPlace(): boolean {
-		const state = this.#state;
-		return state.kind === "activating" && state.swap !== undefined && !state.swap.parked;
 	}
 
 	/** Whether a consumer of `contract`'s version and fingerprint binds to this object's provider now (R6, Q10). */
@@ -437,7 +485,7 @@ export class ChordObject implements Target {
 	/**
 	 * What a reference of `version` follows for state member `member` now (decision "References are the only
 	 * indirection"): the shown instance's member (its mapping at an older version) while that instance is live, while a
-	 * swap brings its successor in place, and after a live failure until its admitted commits published; else nothing:
+	 * restart keeps it open, and after a live failure until its admitted commits published; else nothing:
 	 * `failed` with the cause's error, or `loading`, with that member to take a last value from.
 	 */
 	followed(member: string, version: number): Followed {
@@ -449,7 +497,7 @@ export class ChordObject implements Target {
 				shown = exposed.memberAt(member, version);
 			} catch (error) {
 				const failure = asChordError(error, this.label);
-				// The shown instance does not serve this version (a swap's old one, while a reload brings it): nothing yet.
+				// The shown instance does not serve this version (a restart's old one, while a reload brings it): nothing yet.
 				if (failure.code !== "contract_mismatch") lacking = failure;
 			}
 		}
@@ -477,9 +525,12 @@ export class ChordObject implements Target {
 		return this.#following ? this.#exposed : undefined;
 	}
 
-	/** The live instance, which references pin their keys on (a new one: they pin again); `undefined` when not live. */
+	/**
+	 * The live instance, which references pin their keys on (a new one: they pin again), or a restart's open old
+	 * attempt; `undefined` otherwise.
+	 */
 	get instance(): Attempt | undefined {
-		return this.#state.kind === "live" ? this.#state.attempt : undefined;
+		return this.#state.kind === "live" ? this.#state.attempt : this.openOldAttempt;
 	}
 
 	/** The live instance's state member `member` as a consumer of `version` follows it (a hold over a link). */
@@ -493,11 +544,42 @@ export class ChordObject implements Target {
 	}
 
 	/**
+	 * The gate, with an activation's opener waiting here recorded as an edge of its object (a wait of old work on that
+	 * object then sees it), the waits of old work checked again when one starts.
+	 */
+	async #openerGate(context: Context): Promise<void> {
+		const opener = context.value(OPENING);
+		if (opener === undefined) return this.#gate(context);
+		opener.#gateWaits ??= new Set();
+		const waits = opener.#gateWaits;
+		waits.add(this);
+		this.host.reloadCycles.recheck();
+		try {
+			await this.#gate(context);
+		} finally {
+			waits.delete(this);
+		}
+	}
+
+	/**
+	 * What its activation waits for now (reload cycles, rule 6): the objects its parked attempt's dependencies are bound
+	 * to, and those whose gate its opener waits at.
+	 */
+	waitEdges(): ChordObject[] {
+		const edges = [...(this.#gateWaits ?? [])];
+		for (const dependency of this.#waitingFor) {
+			const target = dependency.kind === "reference" ? dependency.binding.target : undefined;
+			if (target instanceof ChordObject) edges.push(target);
+		}
+		return edges;
+	}
+
+	/**
 	 * Waits while an attempt activates until the object is live, failed or ended (`#live` then calls or throws);
 	 * rejects with the cause once the attempt parks on a failed dependency (`failed { waiting }`), and with
 	 * `unavailable/park_timeout` after `readyTimeout`, as a call parked on a reference. A hold over a link stays bound
-	 * while the old instance still changes (a swap, a restart's drain), so its consumer sees `live` and sends calls
-	 * that arrive here: they wait for the new attempt, never `not_ready` (decision "Swaps: dependents first").
+	 * while a restart's old attempt is open, so its consumer sees `live` and sends calls that arrive here: new work
+	 * waits for the new attempt, never `not_ready`.
 	 */
 	async #gate(context: Context): Promise<void> {
 		const { ready } = this.host.timeouts;
@@ -724,16 +806,18 @@ export class ChordObject implements Target {
 	parked(attempt: Attempt, shown: RefState, firstPass: boolean): void {
 		const state = this.#state;
 		if (state.kind !== "activating" || state.attempt !== attempt) return;
-		const { swap } = state;
-		// A swap's new attempt parks (decision 4): no overlap of old and new code, holders see what it shows.
-		const parks = swap !== undefined && !swap.parked;
-		if (parks) this.#swapParked(swap);
-		if (parks || !sameState(state.shown, shown)) {
-			this.#state = { kind: "activating", attempt, shown, ...(swap === undefined ? {} : { swap }) };
-			if (shown.kind === "failed") this.#lastFailure = shown.cause.error;
+		if (!sameState(state.shown, shown)) {
+			this.#state = { kind: "activating", attempt, shown };
+			if (shown.kind === "failed") {
+				this.#lastFailure = shown.cause.error;
+				// A restart's successor parked on a failure: the old attempt's kept contributions leave (F-c).
+				this.#dropKept();
+			}
 			this.#notify();
 		}
 		if (firstPass) this.#settleFirstOutcome();
+		// A park may close a cycle with a wait of old work (rule 6).
+		this.host.reloadCycles.recheck();
 	}
 
 	/** Its attempt `attempt` left parking for its own steps: it shows `loading` until its outcome. */
@@ -743,11 +827,12 @@ export class ChordObject implements Target {
 		if (!sameState(state.shown, LOADING)) this.parked(attempt, LOADING, false);
 	}
 
-	/** A swap's new attempt parked: the old attempt's contributions leave the tables (it is not live any more). */
-	#swapParked(swap: Swap): void {
-		swap.parked = true;
-		this.#withdraw(swap.old);
-		swap.done.resolve();
+	/** The contributions a restart kept for its successor leave the tables (F-c): it will not take them over now. */
+	#dropKept(): void {
+		const kept = this.#kept;
+		if (kept === undefined) return;
+		this.#kept = undefined;
+		this.#withdraw(kept);
 	}
 
 	/**
@@ -779,119 +864,136 @@ export class ChordObject implements Target {
 		if (teardown.kind !== "none") this.host.ending(this.identity, this.#reported(this.#tearDown(teardown, END)));
 	}
 
-	/**
-	 * What a reload with `recorded` (the new factory's declarations) does to this object, whose type is still served:
-	 * a live object swaps in place when neither its live attempt nor the new factory opens natives and no table of the
-	 * new factory is newer than the store's, else it restarts; any other is retried.
-	 */
-	reloadFate(recorded: Recorded): ReloadFate {
-		const state = this.#state;
-		if (state.kind !== "live") return "retry";
-		if (state.attempt.opensNatives || recorded.natives > 0 || migratesTables(this, recorded)) return "restart";
-		return "swap";
+	/** What a reload does to this object, whose type is still served: a live object restarts, any other is retried. */
+	reloadFate(): ReloadFate {
+		return this.#state.kind === "live" ? "restart" : "retry";
 	}
 
 	/**
-	 * Takes `fate` with its new served type (after the reload's commit); returns the new attempt, whose first
-	 * dependency check the reload's report waits for.
+	 * Takes `fate` with its new served type (after the reload's commit) and, for a restart, its new factory's requests as
+	 * staging recorded them; returns the new attempt, whose first dependency check the reload's report waits for (a
+	 * retry's).
 	 */
-	reload(served: Served, fate: ReloadFate): Attempt {
+	reload(served: Served, fate: ReloadFate, requests: readonly Request[]): Attempt {
 		// Its members per version stay: the previous version's are mapped once the new attempt goes live.
 		this.served = served;
-		const attempt = fate === "swap" ? this.#swap() : fate === "restart" ? this.#restart() : this.#retryReloaded();
+		const attempt = fate === "restart" ? this.#restart(requests) : this.#retryReloaded();
 		attempt.startedByReload();
 		return attempt;
 	}
 
 	/**
-	 * A pure swap (slice 7b §5): a new attempt of the same object (its documents, line and job records, its instance id),
-	 * its activation at once; the live attempt keeps its running calls, its routines aborted, its jobs handed over,
-	 * and is sealed once its calls settled and the new attempt's requests bound (`#retire`). Calls arriving meanwhile
-	 * wait at the gate.
+	 * A restart (decision "Reload restarts every affected object; old work finishes on old code"): its routines stop,
+	 * new calls wait at the gate, old work runs on the old attempt, and consumers whose version it binds see it live; its
+	 * contributions stay (until its seal with natives, F-b; until its successor is live without, F-c). It is sealed once
+	 * its successor's recorded requests are ready and its calls, routed old work included, drained, bounded by the
+	 * reload drain bound; then its natives close with reason `reload` and the successor, a new instance (D4), runs its
+	 * factory. Readiness and successor start once every fate of the reload started (`startSuccessor`).
 	 */
-	#swap(): Attempt {
-		// A swap starts from a live object (`reloadFate`).
+	#restart(requests: readonly Request[]): Attempt {
+		// A restart starts from a live object (`reloadFate`).
 		const old = (this.#state as Extract<ObjectState, { readonly kind: "live" }>).attempt;
+		this.#old = old;
+		old.beginDrain();
+		old.stopRoutines();
+		if (!old.opensNatives) this.#kept = old;
+		this.#instance = uuidv7();
+		const attempt = this.#replace();
+		const shows = (cause: FailureCause | undefined): void => this.#readinessShown(attempt, cause);
+		const readiness = new Readiness(this.host, this.#caller(), requests, shows, this.#context);
+		this.#readiness = readiness;
+		const due = Date.now() + this.host.timeouts.reload;
+		const ended = this.#endOld(old, readiness, due);
+		this.host.ending(this.identity, this.#reported(ended));
 		const ending = this.host.endingOf(this.identity);
-		const attempt = this.#newAttempt();
-		const swap: Swap = { old, parked: false, done: Promise.withResolvers() };
-		this.#state = { kind: "activating", attempt, shown: LOADING, swap };
-		old.handOver();
-		this.#retiringAdd(old, this.#retire(swap));
-		this.#notify();
-		void this.#run(attempt, ending);
+		this.#startSuccessor = () => this.#startRestarted(attempt, old, readiness, ended, ending);
 		return attempt;
 	}
 
 	/**
-	 * Keeps `retire` (a swapped-out attempt's) until it settled: a restart, an end and the host's close wait for it; a
-	 * later swap does not (it holds no natives, its documents are the object's: Fable, Opus F1), so a second reload is
-	 * never held up by the first one's old calls.
+	 * Ends a restart's old attempt: once its successor's requests are ready and its calls drained (routed old work joins
+	 * while the drain runs), by `due`; sealed (in-memory job runs end `aborted { reload }`), its references take their
+	 * last values once its admitted commits published (a store write is not a running call's promise), its natives
+	 * close with reason `reload`.
 	 */
-	#retiringAdd(old: Attempt, retire: Promise<void>): void {
-		this.#retiring ??= new Map();
-		const retiring = this.#retiring;
-		retiring.set(old, retire);
-		void retire.finally(() => {
-			retiring.delete(old);
+	async #endOld(old: Attempt, readiness: Readiness, due: number): Promise<CloseFailed[]> {
+		await readiness.ready(due);
+		await old.drainCalls(due);
+		// With natives its contributions leave at the seal (F-b); without, they stay for its successor (F-c), unless a
+		// failure dropped them already.
+		if (old.opensNatives) this.#withdraw(old);
+		old.seal(this.#reloaded(), "reload");
+		// Sealed, it is no longer the instance its holders bind (`instance`, `stateFor`): a hold waiting for a window
+		// slot unbinds now, before an `ack` could bind it to nothing; bound holds and references follow it on until it
+		// stopped changing.
+		this.#notify();
+		await this.documents.settled();
+		this.#stopFollowing(old);
+		const failures = await old.close(RELOAD);
+		old.detach();
+		return failures;
+	}
+
+	/** Starts a restart's readiness and its successor, once every fate of the reload started (its served types are new). */
+	startSuccessor(): void {
+		const start = this.#startSuccessor;
+		this.#startSuccessor = undefined;
+		start?.();
+	}
+
+	/**
+	 * Binds the readiness, whose failures the successor shows until the old attempt ended (`#readinessShown`). The
+	 * successor runs after `ending`; once the old attempt ended (`ended`) and the successor's own requests bound, the old
+	 * attempt's references and the readiness bindings are released (F-a: a dependency held only by them never ends; a
+	 * successor a later reload replaces never releases them early).
+	 */
+	#startRestarted(
+		attempt: Attempt,
+		old: Attempt,
+		readiness: Readiness,
+		ended: Promise<unknown>,
+		ending: Promise<void> | undefined,
+	): void {
+		this.#showsReadiness = attempt;
+		// Before the successor's own steps (`ending` settles after `ended`): its own checks show what it waits for then.
+		void ended.then(() => {
+			if (this.#showsReadiness === attempt) this.#showsReadiness = undefined;
+		});
+		readiness.start();
+		void this.#run(attempt, ending);
+		void Promise.all([ended, attempt.checked]).then(() => {
+			old.releaseReferences();
+			readiness.release();
+			if (this.#readiness === readiness) this.#readiness = undefined;
 		});
 	}
 
-	/** Its swapped-out attempts still retiring, as one wait; `undefined` when none is. */
-	#retiringNow(): Promise<void> | undefined {
-		const retiring = this.#retiring;
-		if (retiring === undefined || retiring.size === 0) return undefined;
-		return Promise.all(retiring.values()).then(() => {});
+	/** What a restart's readiness finds now: a failed request the successor waits for, if any (the report's). */
+	get readinessCause(): FailureCause | undefined {
+		return this.#readiness?.cause;
 	}
 
 	/**
-	 * Seals a swapped attempt once its running calls (and routine calls) settled, bounded by `closeTimeout`, and the swap
-	 * ended (the new attempt live, parked, failed: its requests bound, so no request it shares with the old one ends in
-	 * between, M§3.9, and its holders compared the old members with the new); a parked swap's references take their last
-	 * values from it once the commits it admitted before the seal published; then its references are released. Its job
-	 * invocations run on, on their old code.
+	 * A restart's readiness found `cause` (a failed request), or none any more: while the old attempt has not ended, the
+	 * successor `attempt` shows it (new calls get the cause, consumers see the failure; old work still runs on the old
+	 * attempt), and shows `loading` again once the request recovered. Its kept contributions stay: only the successor's
+	 * own failure or park drops them (F-c).
 	 */
-	async #retire({ old, done }: Swap): Promise<void> {
-		await Promise.all([old.drainCalls(), done.promise]);
-		old.seal(this.#reloaded());
-		// A parked swap's old instance stops changing once its admitted commits published (its successor, live, took over
-		// its references before).
-		await this.documents.settled();
-		this.#stopFollowing(old);
-		const failures = await old.close(END);
-		old.detach();
-		old.releaseReferences();
-		for (const failure of failures) this.host.report(failure);
+	#readinessShown(attempt: Attempt, cause: FailureCause | undefined): void {
+		const state = this.#state;
+		if (this.#showsReadiness !== attempt || state.kind !== "activating" || state.attempt !== attempt) return;
+		const shown: RefState = cause === undefined ? LOADING : { kind: "failed", cause, retryAt: undefined };
+		if (sameState(state.shown, shown)) return;
+		this.#state = { kind: "activating", attempt, shown };
+		if (cause !== undefined) this.#lastFailure = cause.error;
+		this.#notify();
+		this.host.reloadCycles.recheck();
 	}
 
-	/**
-	 * A native restart (decision "A native restart drains first"): new calls park (it shows `loading`), its
-	 * contributions leave, the live attempt's running calls drain (bounded by `closeTimeout`), then it is sealed (its
-	 * in-memory job runs end `aborted { reload }`), its references take their last values once its admitted commits
-	 * published, its natives close with reason `reload`; the new attempt, a new instance (D4), activates after that
-	 * teardown.
-	 */
-	#restart(): Attempt {
-		const old = (this.#state as Extract<ObjectState, { readonly kind: "live" }>).attempt;
-		this.#withdraw(old);
-		old.stopRoutines();
-		this.#instance = uuidv7();
-		const teardown = (async () => {
-			await Promise.all([old.drainCalls(), this.#retiringNow()]);
-			old.seal(this.#reloaded(), "reload");
-			// Drained and sealed: its references take their last values once the commits it admitted before published
-			// (a store write is not a running call's promise; Sol).
-			await this.documents.settled();
-			this.#stopFollowing(old);
-			const failures = await old.close(RELOAD);
-			old.detach();
-			old.releaseReferences();
-			return failures;
-		})();
-		this.host.ending(this.identity, this.#reported(teardown));
-		const attempt = this.#replace();
-		void this.#run(attempt, this.host.endingOf(this.identity));
-		return attempt;
+	/** Whom its own requests act as: the host for a local object, its principal for a remote one. */
+	#caller(): Caller {
+		const { host, served, principal } = this;
+		return { principal: served.kind === "remote" ? principal : host.principal, incarnation: host.incarnation };
 	}
 
 	/**
@@ -903,9 +1005,7 @@ export class ChordObject implements Target {
 	#retryReloaded(): Attempt {
 		const state = this.#state;
 		if (state.kind === "activating") {
-			const { attempt: old, swap } = state;
-			if (swap !== undefined && !swap.parked) this.#swapParked(swap);
-			swap?.done.resolve();
+			const { attempt: old } = state;
 			const parked = old.isParked;
 			// A parked attempt's successor waits for no teardown of it (its references are released after it bound).
 			const ending = this.host.endingOf(this.identity);
@@ -977,7 +1077,6 @@ export class ChordObject implements Target {
 
 	#wentLive(attempt: Attempt): void {
 		if (this.#wakes !== undefined) this.#wakes.during = undefined;
-		const swap = this.#swapOf(attempt);
 		// Before the new instance is shown: holders of a version its provider does not bind leave with their last values,
 		// which their references take from the instance shown so far.
 		const unbound = this.#unbindUnfit(attempt);
@@ -985,8 +1084,9 @@ export class ChordObject implements Target {
 		this.#exposed = attempt;
 		this.#following = true;
 		const { contributions } = attempt;
-		// The old attempt's contributions leave in the batch the new ones enter (slice 7b §5), so no reader sees a gap.
-		const leaving = swap !== undefined && !swap.parked ? swap.old.contributions : NO_CONTRIBUTIONS;
+		// A restart's kept contributions leave in the batch the new ones enter (F-c), so no reader sees a gap.
+		const leaving = this.#kept?.contributions ?? NO_CONTRIBUTIONS;
+		this.#kept = undefined;
 		// In the registries' tables before anyone sees it live (a getter released now reads them recomposed).
 		if (contributions.length > 0 || leaving.length > 0) {
 			this.host.batch.within(() => {
@@ -1001,9 +1101,7 @@ export class ChordObject implements Target {
 		// Its references move to the new instance (one frame each); holds get a fresh `bound`.
 		this.#notify();
 		this.#settleFirstOutcome();
-		swap?.done.resolve();
-		// A swap's routines start once the old attempt's routine calls finished (the handover, §14).
-		attempt.live(swap?.old);
+		attempt.live();
 		this.#takeJobs(attempt);
 		// Its last holders may have left for their version: it ends as at their release.
 		if (unbound) this.#idle();
@@ -1073,21 +1171,13 @@ export class ChordObject implements Target {
 		holder.removed({ cause, host: this.host, params: this.checkedParams, context: this.#context });
 	}
 
-	/** The swap `attempt` (still the current one) ends: `undefined` when it is no swap's new attempt. */
-	#swapOf(attempt: Attempt): Swap | undefined {
-		const state = this.#state;
-		return state.kind === "activating" && state.attempt === attempt ? state.swap : undefined;
-	}
-
 	/**
 	 * Records a failed attempt: reported, torn down in the background (reason `end`), its references released once its
 	 * natives closed, its holders told. Transient: a backoff window, whose end is the failure's `retryAt`; broken: no
 	 * automatic retry.
 	 */
 	#failed(attempt: Attempt, cause: FailureCause): void {
-		const swap = this.#swapOf(attempt);
-		if (swap !== undefined && !swap.parked) this.#swapParked(swap);
-		swap?.done.resolve();
+		this.#dropKept();
 		const wokenBy = this.#wakes?.during === attempt;
 		if (this.#wakes !== undefined) this.#wakes.during = undefined;
 		if (cause.kind === "transient") this.host.backoff.failed(this.identity);
@@ -1150,11 +1240,12 @@ export class ChordObject implements Target {
 	}
 
 	/**
-	 * `attempt`, the instance shown, stopped changing (a live failure's admitted commits published, a restart's drain, a
-	 * swapped or parked old instance retiring): its references take their last values from it, holds leave it, and the
-	 * object lets it go (a reference made later never attached to it: it takes nothing from it).
+	 * `attempt`, the instance shown, stopped changing (a live failure's admitted commits published, a restart's old
+	 * attempt sealed): its references take their last values from it, holds leave it, and the object lets it go (a
+	 * reference made later never attached to it: it takes nothing from it).
 	 */
 	#stopFollowing(attempt: Attempt): void {
+		if (this.#old === attempt) this.#old = undefined;
 		if (this.#exposed !== attempt || !this.#following) return;
 		this.#following = false;
 		this.#notify();
@@ -1191,12 +1282,15 @@ export class ChordObject implements Target {
 		const { error } = ending;
 		const state = this.#state;
 		if (state.kind === "ended") return { kind: "none" };
-		const endings = this.host.endingOf(this.identity);
-		// Its ending rejects the callers of its swapped-out attempts' calls too, at once.
-		if (this.#retiring !== undefined) for (const old of this.#retiring.keys()) old.seal(error);
-		const retiring = this.#retiringNow();
-		// Its swapped-out attempts end before its teardown completes (they share its documents).
-		const previous = retiring === undefined ? endings : Promise.all([endings, retiring]).then(() => {});
+		// A restart's teardown (its old attempt's end) finishes before this one (they share its documents).
+		const previous = this.host.endingOf(this.identity);
+		// Its ending rejects the callers of a restart's old attempt too, at once; that attempt's end closes it.
+		this.#old?.seal(error);
+		this.#dropKept();
+		this.#readiness?.release();
+		this.#readiness = undefined;
+		this.#showsReadiness = undefined;
+		this.#startSuccessor = undefined;
 		this.#state = { kind: "ended", ended: { kind: "ended", error } };
 		this.#wakeGate();
 		for (const records of this.#jobs.values()) records.end(error);
@@ -1224,11 +1318,6 @@ export class ChordObject implements Target {
 			else holder.removed(removal);
 		}
 		this.#exposed = undefined;
-		if (state.kind === "activating" && state.swap !== undefined) {
-			if (!state.swap.parked) this.#withdraw(state.swap.old);
-			state.swap.old.seal(error);
-			state.swap.done.resolve();
-		}
 		// A failed attempt is closed (or closing) since it failed.
 		if (state.kind === "waiting" || state.kind === "failed") return { kind: "end", previous };
 		if (state.kind === "live") this.#withdraw(state.attempt);
@@ -1302,12 +1391,14 @@ export class ChordObject implements Target {
 	}
 
 	/**
-	 * The live attempt; `not_ready` before the object went live and while it activates again, the cause while failed,
-	 * `released` once it ended.
+	 * The live attempt, or a restart's open old attempt (its consumers saw it live); `not_ready` before the object went
+	 * live and while it activates again, the cause while failed, `released` once it ended.
 	 */
 	#live(): Attempt {
 		const state = this.#state;
 		if (state.kind === "live") return state.attempt;
+		const old = this.openOldAttempt;
+		if (old !== undefined && state.kind === "activating") return old;
 		if (state.kind === "ended") throw this.ended();
 		if (state.kind === "failed") throw state.failure.cause.error;
 		throw new ChordError({ code: "not_ready", message: `${this.label}: not live yet` });

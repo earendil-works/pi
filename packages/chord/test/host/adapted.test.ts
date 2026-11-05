@@ -867,7 +867,7 @@ describe("reload: an older consumer's reads while its type is removed (fix round
 	});
 });
 
-describe("reload: an older consumer's first read during a parked swap (fix round 2)", () => {
+describe("reload: an older consumer's first read during a parked restart (fix round 2)", () => {
 	it("maps with the provider whose attempt is shown until the new one goes live (Sol)", async () => {
 		const V1 = local("app.lazy", { version: 1, params: {}, members: { x: int() } });
 		const V2 = evolve(V1, (e) => e.state("x", obj({ n: int() })));
@@ -878,7 +878,7 @@ describe("reload: an older consumer's first read during a parked swap (fix round
 			context,
 		);
 		const old = await host.get(V1, {}, context);
-		// Nothing read before the swap: the first read comes while the new attempt parks on a missing dependency.
+		// Nothing read before the reload: the first read comes while the new attempt parks on a missing dependency.
 		const v2 = defineFacet((h) =>
 			h.serve(
 				V2,
@@ -1172,8 +1172,8 @@ describe("reload: stopping a keyed watch drops its pin and last value while its 
 	});
 });
 
-describe("reload: a reference that never had values reads none during a parked swap (fix round 4)", () => {
-	it("has a newer reference read nothing during a parked swap, its watch waiting, then the new instance's values (Sol)", async () => {
+describe("reload: a reference that never had values reads none during a parked restart (fix round 4)", () => {
+	it("has a newer reference read nothing during a parked restart, its watch waiting, then the new instance's values (Sol)", async () => {
 		const N1 = local("app.unshown", { version: 1, params: {}, members: { x: int() } });
 		const N2 = evolve(N1, (e) => e.state("x", obj({ n: int() })));
 		const Missing = local("app.unshown.missing", { version: 1, params: {}, members: {} });
@@ -1196,8 +1196,8 @@ describe("reload: a reference that never had values reads none during a parked s
 		await host.reload([{ name: "@app/unshown", facet: v2 }], context);
 		const newer = host.hold(N2, {}, context);
 		expect(newer.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
-		// The swap parks: the shown values are v1's; a v2 reference never had values, never v1's shape: its read throws
-		// the parked swap's failure.
+		// The restart parks: the shown values are v1's; a v2 reference never had values, never v1's shape: its read throws
+		// the parked restart's failure.
 		expect(old.x.value).toBe(1);
 		expect(() => newer.x.value).toThrow(expect.objectContaining({ code: "unavailable" }));
 		// A watch waits for its first values through the failure (Opus G3).
@@ -1238,7 +1238,7 @@ describe("reload: a reference reads its last value while its version's return pa
 			context,
 		);
 		expect(ref.x.value).toEqual({ n: 7 });
-		// v2 is served again but its swap parks: the sources taken back are v2's own, shown before.
+		// v2 is served again but its restart parks: the sources taken back are v2's own, shown before.
 		const parked = defineFacet((h) =>
 			h.serve(R2, (_, self) => {
 				self.get(Missing, {});

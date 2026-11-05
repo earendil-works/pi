@@ -1,6 +1,6 @@
 // Tests of live queries (decision "Live queries over an object's own tables"): `self.query(table, q, limit)` runs
 // before its object goes live, again in the commit step of every commit of the object that writes its table, and
-// publishes the diff in that commit's batch; a commit writing another table runs none; a reload swaps the object;
+// publishes the diff in that commit's batch; a commit writing another table runs none; a reload restarts the object;
 // the limit is required; a failing run is a failed member; an ended attempt's query is collected; a refresh applied
 // again adopts only its last runs.
 
@@ -221,12 +221,12 @@ describe("publication", () => {
 });
 
 describe("reload", () => {
-	it("swaps the object (no restart): the new attempt's query runs at its activation and takes over", async () => {
+	it("restarts the object: the new attempt's query runs at its activation and takes over", async () => {
 		const store = await memoryStore();
 		const { board: b, host, context: counting, counts } = await board(store);
 		for (const id of [1, 2, 3]) await b.put({ id, text: `t${id}` }, context);
 		const report = await host.reload([{ name: "@test/app", facet: defineFacet((h) => serveBoard(h, 2)) }], context);
-		expect(report.objects).toEqual([{ object: "app.board", kind: "swapped" }]);
+		expect(report.objects).toEqual([{ object: "app.board", kind: "restarted" }]);
 		await flushed();
 		expect(ids(b.items.value)).toEqual([3, 2]);
 		const runs = counts()["chord.query.runs"] ?? 0;
@@ -324,7 +324,7 @@ describe("failure", () => {
 });
 
 describe("memory", () => {
-	it("collects a swapped-out attempt's query: no commit re-runs it", async () => {
+	it("collects a restarted attempt's query: no commit re-runs it", async () => {
 		const store = await memoryStore();
 		const { host } = await board(store);
 		const from = queries.length - 1;

@@ -49,6 +49,9 @@ const ORIGIN = 0x80;
 /** The kind byte's flag for a trace carrier (a `hold`'s or `call`'s; the message schema refuses it elsewhere). */
 const TRACE = 0x40;
 
+/** The kind byte's flag for a `call` that is old work of a reload (`call.old`); another kind with it is unknown. */
+const OLD = 0x20;
+
 /** A payload's flags: present, and carrying byte segments. */
 const PRESENT = 1;
 
@@ -73,8 +76,9 @@ export const binaryCodec: Codec = {
 		const writer = new Writer();
 		const origin = "origin" in message ? message.origin : undefined;
 		const trace = message.kind === "hold" || message.kind === "call" ? message.trace : undefined;
+		const old = message.kind === "call" && message.old === true ? OLD : 0;
 		writer.byte(
-			KIND_BYTES.get(message.kind)! | (origin === undefined ? 0 : ORIGIN) | (trace === undefined ? 0 : TRACE),
+			KIND_BYTES.get(message.kind)! | (origin === undefined ? 0 : ORIGIN) | (trace === undefined ? 0 : TRACE) | old,
 		);
 		if (origin !== undefined) writer.varint(origin);
 		if (trace !== undefined) writer.json(trace);
@@ -84,8 +88,8 @@ export const binaryCodec: Codec = {
 	decode(bytes) {
 		const reader = new Reader(bytes);
 		const byte = reader.byte();
-		const kind = KINDS[byte & ~(ORIGIN | TRACE)];
-		if (kind === undefined) throw new Error("binary: an unknown kind");
+		const kind = KINDS[byte & ~(ORIGIN | TRACE | OLD)];
+		if (kind === undefined || (byte & OLD && kind !== "call")) throw new Error("binary: an unknown kind");
 		const origin = byte & ORIGIN ? reader.varint() : undefined;
 		const trace = byte & TRACE ? reader.json() : undefined;
 		const message = decodeFields(kind, reader);
@@ -93,6 +97,7 @@ export const binaryCodec: Codec = {
 		// A fresh object; the message schema refuses an origin or a trace on a kind without one, and checks the trace.
 		if (origin !== undefined) (message as { origin?: number }).origin = origin;
 		if (trace !== undefined) (message as { trace?: unknown }).trace = trace;
+		if (byte & OLD) (message as { old?: true }).old = true;
 		return message;
 	},
 };

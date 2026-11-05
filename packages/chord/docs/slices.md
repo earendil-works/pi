@@ -51,6 +51,10 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
   reloads, resolves, revocations, routines, job phases and HTTP requests, carriers on `hold` and `call`, `ctx.trace`,
   commit events and the host-wide metrics, `telemetry` options of `createHttp`, `startServer` and `startWorker`;
   example 62; `test/bench/telemetry.ts` (with R24's container width).
+- **Reload restarts every affected object** (built 2026-11-05, decision "Reload restarts every affected object; old
+  work finishes on old code"): the pure swap removed; old work through the call chain (`host/old-work.ts`) and
+  `call.old`, a restart's readiness (`host/readiness.ts`), reload cycles (`host/reload-cycle.ts`),
+  `reloadDrainTimeout`; example 64.
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
@@ -74,7 +78,7 @@ telemetry last, since it instruments the app kit too; 2026-11-01: the plugin mod
 | 6b | **Durable and jobs on the store** | persisted jobs, Durable's `StoreStorage`, the Chord source over Durable's views (`self.follow`) |
 | 8 | **Registries and `host.root`** | registries, `self.writable`, `retryOn`, Durable's `registryReader`, `host.root` (`chord(fn, context)` and the harness object are p3's base code) |
 | 7a | **The dependency model** | requests that outlive providers, parked attempts without timers, wakes, the publication gate, getters, registries as dependencies, `parked_long` (`slice-7a.md`, `dependencies/model.md`) |
-| 7b | **Reload in the kernel** | `host.reload`: staging, commit, rollback; swaps, restarts, removal and re-serving; holds and `accepts` across a reload; jobs and registries across a reload; per-name wakes (`slice-7b/` brief) |
+| 7b | **Reload in the kernel** | `host.reload`: staging, commit, rollback; restarts (swaps until 2026-11-05), removal and re-serving; holds and `accepts` across a reload; jobs and registries across a reload; per-name wakes (`slice-7b/` brief) |
 | 7c | **Plugins** | `chord/plugins` (discovery, `buildFacet`, `evaluateFacet`, `pluginFile`, `installDependencies`, the watcher, `rollout`, `mapStack`; no dev/prod split; the kernel's `load`/`reload` per plugin; `slice-7c.md`) |
 | 10 | **HTTP and workers** | `chord/http` (server, `Http` registry, responses as descriptions, WebSocket entry) and `chord/workers` (a worker per address, IPC, idle stop) |
 | 12 | **The plugin model** | imports (relative within a repository, package names pinned across), versioned app API with Chord re-exported, per-kind API modules and contract files with the build's import check, single-file plugins, git installs, `testPlugin`, a required root (`slice-12.md`) |
@@ -147,7 +151,7 @@ pattern, no code. Decided cuts are noted where they apply.
 | 12 | `self.derive`, failures per member, lazy when unwatched, `mapShared` | 1 |
 | 12 | container-width benchmark (R24) | 9 |
 | 13 | `self.open`, close reasons, order, restart patterns (R16) | 2 (restarts on reload: 7b) |
-| 14 | `self.on` (W2b), `self.onLive`, `sleep`, `untilAborted` (C4 decided); the handover per object on reload | 5 (handover: 7b) |
+| 14 | `self.on` (W2b), `self.onLive`, `sleep`, `untilAborted` (C4 decided); routines across a restart | 5 (reload: 7b) |
 | 15 | `defineJob`, `self.job`, intent/run/finish, state documents, dedupe (Q9), `busy`, `running`, blocked `finish` (C3 decided); persistence, resume, restart limit; `accepts` in use | 5 (persistence: 6b; `accepts` and reload: 7b) |
 | 16 | `defineFacet<P>`, facet as declarations only (documents and routines removed in 6a) | 1, 6a |
 | 17 | registries: `defineRegistry`, contributions, `compose`, versions (Q8), use-site guards | 8 |
@@ -156,7 +160,7 @@ pattern, no code. Decided cuts are noted where they apply.
 | 18 | platform bindings as core objects | doc (8) |
 | 19 | `host.references` (presence) | 4b |
 | 20 | flows kept by their owner, the `steps` helper, the Questions service | doc (5); deferred decisions #9, #11 |
-| 21 | `host.reload`: staging, atomic commit, pure swaps, native restarts, removal and re-serving | 7b |
+| 21 | `host.reload`: staging, atomic commit, restarts with old work on old code, removal and re-serving | 7b, restart-only 2026-11-05 |
 | 21 | loading plugins (loader D), dev loop; the rollout across hosts is the app's (decision "Slice 7b's open points" (3)) | 7c |
 | 22 | message format, header schema, unknown ids, one message per commit per link, consumers apply ops, plugin errors | 3a |
 | 22 | relays, size limits per part, compression at the origin, adapted bindings get diffs | 4a (relays), 4b (limits, compression), 7b |
@@ -186,8 +190,8 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 
 - **Bump `PROTOCOL_VERSION`** for any message or reason change once p3 has shipped (slice 3b added `retry`, `loading`
   and `failed`'s `retryIn`; slice 4a parts, the list `bound`, `hello`'s `calls`, `ack`, `ping`, `pong`, `closed`,
-  `origin` and the hold's `address`, `principal` and `incarnation`; all without a bump: nothing is deployed). (Owner,
-  slice 3b.)
+  `origin` and the hold's `address`, `principal` and `incarnation`; the reload build `call`'s `old` and the
+  `unavailable` reasons `version` and `reload_cycle`; all without a bump: nothing is deployed). (Owner, slice 3b.)
 - **The park deadline's per-type override** is not built: a parked call waits the reference's `readyTimeout`. Build
   it only if a real case needs it. (Slice 3b spec.)
 - No CBOR; revisit only if benchmarks show encoding as a bottleneck (slice 3a's and 4a's do not). (L2 decisions.)

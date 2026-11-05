@@ -201,6 +201,8 @@ const EVERY_KIND: Message[] = [
 	},
 	{ kind: "call", call: 7, hold: 0, method: 1, args: '{"text":"x"}', trace: { a: "b" } },
 	{ kind: "call", origin: 2, call: 8, hold: 3, method: 0, trace: {} },
+	{ kind: "call", call: 9, hold: 0, method: 1, args: '{"text":"x"}', old: true },
+	{ kind: "call", origin: 2, call: 10, hold: 3, method: 0, trace: { a: "b" }, old: true },
 ];
 
 /** A carrier at the bounds: 8 keys, keys and values of 256 characters. */
@@ -306,7 +308,7 @@ forEachCodec(() => {
 			const trailing = new Uint8Array([...release, ...(codec === binaryCodec ? [0] : [0x20, 0x31])]);
 			expect(() => codec.decode(new Uint8Array())).toThrow();
 			expect(() =>
-				codec.decode(codec === binaryCodec ? new Uint8Array([99]) : new TextEncoder().encode('["?"]')),
+				codec.decode(codec === binaryCodec ? new Uint8Array([31]) : new TextEncoder().encode('["?"]')),
 			).toThrow("unknown kind");
 			expect(() => codec.decode(trailing)).toThrow();
 		});
@@ -496,6 +498,15 @@ describe("the binary codec", () => {
 		expect(plainCall[0]).toBe(3);
 	});
 
+	it("flags a call that is old work of a reload in the kind byte (0x20); another kind with that flag is unknown", () => {
+		const call = binaryCodec.encode({ kind: "call", call: 0, hold: 0, method: 0, old: true });
+		expect(call[0]).toBe(3 | 0x20);
+		expect(binaryCodec.decode(call)).toEqual({ kind: "call", call: 0, hold: 0, method: 0, old: true });
+		const release = binaryCodec.encode({ kind: "release", hold: 1 });
+		release[0]! |= 0x20;
+		expect(() => binaryCodec.decode(release)).toThrow("unknown kind");
+	});
+
 	it("refuses unknown hold flags", () => {
 		const hold = binaryCodec.encode({
 			kind: "hold",
@@ -624,6 +635,19 @@ describe("the text codec", () => {
 		expect(text({ ...call, trace: { a: "b" } })).toBe('["c",0,1,2,null,null,{"a":"b"}]');
 		expect(text({ ...call, args: "[1]", trace: { a: "b" } })).toBe('["c",0,1,2,[0,[1]],null,{"a":"b"}]');
 		expect(text({ ...call, args: "[1]" })).toBe('["c",0,1,2,[0,[1]]]');
+	});
+
+	it("writes a call's old-work flag after its carrier (null when absent), its payload's fields positional then", () => {
+		const call = { kind: "call", call: 0, hold: 1, method: 2 } as const;
+		expect(text({ ...call, old: true })).toBe('["c",0,1,2,null,null,null,true]');
+		expect(text({ ...call, args: "[1]", trace: { a: "b" }, old: true })).toBe(
+			'["c",0,1,2,[0,[1]],null,{"a":"b"},true]',
+		);
+	});
+
+	it("leaves the old-work flag's value to the message schema: only true passes", () => {
+		const decoded = textCodec.decode(new TextEncoder().encode('["c",0,1,2,null,null,null,1]'));
+		expect(() => checkMessage(decoded, context)).toThrow("message schema");
 	});
 
 	it("puts byte segments after the tuple and a newline, their lengths the tuple's last field", () => {

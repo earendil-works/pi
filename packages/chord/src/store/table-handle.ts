@@ -132,9 +132,9 @@ export class TableHandle implements Table<Columns, readonly string[]> {
 	}
 
 	/**
-	 * The version fence of old table handles (R15, slice 7b §5): once the store's table is at a newer version than this
-	 * handle's definition (a reload's new code migrated it), old code reads and writes it no more (`released/version`),
-	 * so it never issues SQL for a dropped column.
+	 * The version fence of old table handles (R15): once the store's table is at a newer version than this handle's
+	 * definition (a reload's new code migrated it), old code still running (a call cut off at its restart's seal) reads
+	 * and writes it no more (`released/version`), so it never issues SQL for a dropped column.
 	 */
 	assertVersion(): void {
 		const stored = this.store.tableVersion(this.sql.table);

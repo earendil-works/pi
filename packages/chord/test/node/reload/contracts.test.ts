@@ -64,7 +64,8 @@ describe.skipIf(CHROMIUM === undefined)("a reload changing a contract", () => {
 			expect(await page.result(await page.call("alpha", "add", 1))).toEqual(ok("v2:3"));
 			await page.waitText("alpha", ".label", "v2:3");
 			expect(await page.result(await page.call("alpha", "code"))).toEqual(ok("v2"));
-			expect((await page.states("alpha")).slice(settled)).toEqual([]);
+			// The counter restarted: `loading` once its old attempt ended, then the new code's fresh snapshot.
+			expect((await page.states("alpha")).slice(settled)).toEqual(["loading", "live"]);
 			expect(await page.text("alpha", ".count")).toBe("3");
 			expect(await page.result(await page.call("alpha", "visits"))).toEqual(ok(2));
 			expect(await page.value("alpha", ".draft")).toBe("half-typed");

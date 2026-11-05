@@ -17,6 +17,7 @@ import {
 import { defineJob } from "../../src/jobs/index.ts";
 import { defineRegistry } from "../../src/registries/index.ts";
 import { constant } from "../../src/state/index.ts";
+import { tableSqlName } from "../../src/store/sql.ts";
 import { defineTable } from "../../src/store/table.ts";
 import { evolveTable } from "../../src/store/table-evolve.ts";
 import { flushed, memoryStore, Server } from "../support.ts";
@@ -133,8 +134,10 @@ describe("staging: recorded declarations decide the fate", () => {
 			self.state(defineState("fresh", { schema: obj({ n: int() }), version: 1, initial: () => ({ n: 0 }) }));
 		});
 		const report = await host.reload([{ name: "@test/app", facet }], context);
-		// It opens natives now: a restart, whose activation opened its native once.
-		expect(report.objects).toEqual([{ object: "app.store", kind: "restarted" }]);
+		// Its readiness binds the recorded request: `Dep` is missing, so the restart is reported parked.
+		expect(report.objects).toEqual([
+			{ object: "app.store", kind: "parked", cause: expect.objectContaining({ kind: "waiting" }) },
+		]);
 		await flushed();
 		// Neither staging nor the restart opened it: the new attempt parks on the missing `Dep` first.
 		expect(opened).toEqual([]);
@@ -142,7 +145,7 @@ describe("staging: recorded declarations decide the fate", () => {
 		await host.close(context);
 	});
 
-	it("a table of the new factory at a newer version than the store's restarts the object (its eager migration)", async () => {
+	it("a table of the new factory at a newer version migrates at the restart's new attempt", async () => {
 		const store = await memoryStore();
 		const V1 = defineTable("items", { version: 1, columns: { id: str(), name: str() }, key: ["id"] });
 		const V2 = evolveTable(V1, (t) => t.rename("name", "title"));
@@ -153,12 +156,15 @@ describe("staging: recorded declarations decide the fate", () => {
 			[{ name: "@test/app", facet: serveStore("v2", (self) => self.table(V1)) }],
 			context,
 		);
-		expect(same.objects).toEqual([{ object: "app.store", kind: "swapped" }]);
+		expect(same.objects).toEqual([{ object: "app.store", kind: "restarted" }]);
+		await flushed();
 		const newer = await host.reload(
 			[{ name: "@test/app", facet: serveStore("v3", (self) => self.table(V2)) }],
 			context,
 		);
 		expect(newer.objects).toEqual([{ object: "app.store", kind: "restarted" }]);
+		await flushed();
+		expect(store.table(tableSqlName("app.store", "items"))?.version).toBe(2);
 		await host.close(context);
 		await store.close(context);
 	});
@@ -268,7 +274,7 @@ describe("staging per plugin (slice 7c §4)", () => {
 		);
 		expect(report.plugins).toEqual({ added: [], changed: ["@test/store"], removed: [] });
 		expect(failedOf(report)).toEqual([["@test/notes", 'plugin "@test/notes": setup threw']]);
-		expect(report.objects).toEqual([{ object: "app.store", kind: "swapped" }]);
+		expect(report.objects).toEqual([{ object: "app.store", kind: "restarted" }]);
 		await flushed();
 		expect([store.label.value, counted.count.value, counted.state.value]).toEqual(["v2", 1, { kind: "live" }]);
 		// Fixed later, it applies as any change does.
@@ -481,7 +487,7 @@ describe("staging per plugin (slice 7c §4)", () => {
 		);
 		expect([report.plugins.changed, report.failed]).toEqual([["@test/notes", "@test/view"], []]);
 		expect(report.objects).toEqual([
-			{ object: "app.notes", kind: "swapped" },
+			{ object: "app.notes", kind: "restarted" },
 			expect.objectContaining({ object: "app.view", kind: "parked" }),
 		]);
 		await flushed();

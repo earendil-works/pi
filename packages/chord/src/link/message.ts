@@ -114,6 +114,8 @@ const MESSAGE = union([
 		args: opt(part),
 		segments,
 		trace,
+		// Old work of a reload (decision "Reload restarts every affected object"): honoured only from a trusted link.
+		old: opt(lit(true)),
 	}),
 	obj({ kind: lit("abort"), origin: opt(origin), call: id }),
 	// Asks the provider for an attempt of a failed hold's object now (`ref.retry()`); `hops` is its budget: the host

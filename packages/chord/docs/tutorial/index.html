@@ -1185,7 +1185,7 @@ console.<span class="tk-f">log</span>(<span class="tk-s">"   ada adds '  tea  ':
 console.<span class="tk-f">log</span>(<span class="tk-s">"   ada adds ' ':"</span>, refused);</code></pre>
 <!-- output: main -->
 <pre class="plain"><code>9. lists changed, rolled out to: server, list, web, tui
-   on list|groceries: todo.store swapped, todo.todos(groceries) swapped
+   on list|groceries: todo.store restarted, todo.todos(groceries) restarted
    ada adds '  tea  ': [ ] tea (ada)
    ada adds ' ': { code: 'invalid', reason: 'args' }</code></pre>
 <p>The watcher marked <code>@todo/lists</code> dirty when the file changed; <code>applyChanges</code> rebuilt it (one esbuild call per facet)
@@ -1200,12 +1200,12 @@ and rolled it out host by host. On each host Chord stages the new code (it runs 
 </tr>
 </thead>
 <tbody><tr>
-<td>opens no natives, and neither does its new factory</td>
-<td><strong>swapped</strong> in place: new methods, the same documents; running calls finish on the old code</td>
+<td>live</td>
+<td><strong>restarted</strong>: running calls finish on the old code, new calls wait for the new code, the same documents and tables</td>
 </tr>
 <tr>
-<td>opens natives</td>
-<td><strong>restarted</strong>: calls wait, running ones finish, natives close and open again with the new code</td>
+<td>not live (failed, parked, activating)</td>
+<td><strong>retried</strong> on the new code</td>
 </tr>
 <tr>
 <td>its new code waits for a dependency</td>
@@ -1216,21 +1216,20 @@ and rolled it out host by host. On each host Chord stages the new code (it runs 
 <td><strong>ended</strong>; its holders wait until something serves it again</td>
 </tr>
 </tbody></table>
-<p>The store opens no natives, and neither does its new factory: its live query is not a native, Chord runs it. So the
-store was <strong>swapped</strong>, not restarted. The sequence on the list&#39;s worker:</p>
+<p>Both the store and the view were live, so both <strong>restarted</strong>. The sequence on the list&#39;s worker:</p>
 <ol>
-<li>The store&#39;s new attempt starts beside the old one: the same object, instance, table and line. Calls arriving now
-wait at a gate; calls already running finish on the old code.</li>
-<li>The new attempt runs its live query (the same read as at the first activation) and goes live; the gate opens,
-and references move to its members by name, each with one frame from its last value.</li>
-<li>The old attempt is sealed once its calls settled; its query leaves with it, so later commits run only the new one.</li>
+<li>The old attempts stay open: calls already running finish on the old code, and so does every call they make with
+their <code>ctx</code> (<strong>old work</strong>: the view&#39;s running <code>add</code> reaches the store&#39;s old attempt, never waiting for the new
+one). Calls arriving now are new work: they wait at a gate.</li>
+<li>Each old attempt is sealed once its calls drained and the requests its new factory made in staging are ready (the
+view&#39;s new code needs the store, whose old attempt still serves it). That takes as long as the running calls, at
+most <code>reloadDrainTimeout</code> (5 s); a call still running then is cut.</li>
+<li>The new attempt runs its factory, its live query runs again (the same read as at the first activation), and it
+goes live: the gate opens, and references move to its members by name, each with one frame from its last value.</li>
 </ol>
-<p>The views were swapped too, and before the store: Chord starts the fates dependents first, so each view&#39;s new
-attempt found the store still live, read its old values until step 2 and moved to its new members with one frame;
-its calls to the store waited at the gate. Had the store gone first, the views would have found it between steps 1
-and 2 and <strong>parked</strong> for that moment. Ada&#39;s reference never showed <code>loading</code>, and her next add was trimmed.
-Had the store kept its window as a one-time read in <code>self.open</code>, it would count as holding a native and <strong>restart</strong>
-at every reload of its plugin: running calls drained, natives closed and opened again, a new instance.</p>
+<p>Ada&#39;s reference stayed <code>live</code> while the old code drained, showed <code>loading</code> for a moment, then the new code&#39;s values;
+her next add was trimmed. Long work does not belong in a method: a call longer than the drain bound is cut at a
+reload, so it goes into a job.</p>
 <p>Ada&#39;s blank todo is now empty after trimming, so the store refused it with
 <code>invalid(&quot;args&quot;, …)</code> (chapter II): her client got <code>{ code: &quot;invalid&quot;, reason: &quot;args&quot; }</code>, Chord&#39;s own error, which
 crossed the worker&#39;s link and the server&#39;s as it was. Had the edit broken the plugin, that plugin alone would have kept its old code

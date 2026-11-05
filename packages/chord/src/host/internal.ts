@@ -1,11 +1,12 @@
-// Hosts for Chord's layers: what the remote sides of links use of a host, its objects and references; what jobs use of
-// a handler's ctx, the backoff and ids.
+// Hosts for Chord's layers: what the remote sides of links use of a host, its objects and references (and old work
+// arriving from another host); what jobs use of a handler's ctx, the backoff and ids.
 
-export type { PinnedKey } from "./attempt.ts";
+export type { Attempt, PinnedKey } from "./attempt.ts";
 export { nextDelay } from "./backoff.ts";
 export { CallContext, type Caller, SpanCtx } from "./ctx.ts";
 export type { AnyHost, ChordHost, Serving } from "./host.ts";
 export type { ChordObject, Holder, Removal } from "./object.ts";
+export { asRemoteOldWork } from "./old-work.ts";
 export { LIVE, LOADING, type RefState } from "./ref-state.ts";
 export {
 	type Attachable,

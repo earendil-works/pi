@@ -28,7 +28,7 @@ export type ReloadApp = Awaited<ReturnType<typeof testApp>>;
  * The hosts' timeouts of the suite's apps (the server's and the workers'): a call outliving a restart's drain is cut
  * off after 2 s, a call waits at most 5 s for its object to go live.
  */
-export const TIMEOUTS = { closeTimeout: 2000, readyTimeout: 5000 } as const;
+export const TIMEOUTS = { closeTimeout: 2000, readyTimeout: 5000, reloadDrainTimeout: 1000 } as const;
 
 /**
  * Starts the suite's app with `plugins` (directory name to files; each plugin is `@test/<dir>`) and project workers;
@@ -203,7 +203,7 @@ export class ReloadPage {
 
 	/**
 	 * Signs in with a new owner browser session (the owner link is single use: a second page needs its own session)
-	 * and waits as `signIn` does.
+	 * and waits as `signIn` does, and until each view (each holding the counter) registered its reference.
 	 */
 	async signInAgain(app: ReloadApp, views: readonly string[]): Promise<void> {
 		const sessions = await app.app.host.get(Sessions, {}, context);
@@ -218,7 +218,19 @@ export class ReloadPage {
 		await this.browser.call("Network.setCookie", { name: pair!.slice(0, at), value: pair!.slice(at + 1), url });
 		await this.browser.open(url);
 		await this.browser.wait('globalThis.page?.connection === "connected"');
-		for (const view of views) await this.browser.wait(`document.querySelector('[data-view="${view}"]')`);
+		await this.#viewsShown(views);
+	}
+
+	/**
+	 * Waits until each view is on the page and has registered its reference: a component tracks it in an effect one
+	 * render after `useHold` returned it, so a call made right after the view appeared could find none (a test calling
+	 * at once needs this).
+	 */
+	async #viewsShown(views: readonly string[]): Promise<void> {
+		for (const view of views) {
+			await this.browser.wait(`document.querySelector('[data-view="${view}"]')`);
+			await this.browser.wait(`globalThis.reload.refs[${JSON.stringify(view)}] !== undefined`);
+		}
 	}
 
 	/** The text of `selector` within view `view`, `null` when absent. */

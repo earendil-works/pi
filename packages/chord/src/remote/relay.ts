@@ -169,9 +169,11 @@ export class RelayedHold {
 			this.#downstream.reply(message.call, { kind: "error", call: message.call, error: wireError(error) });
 			return undefined;
 		}
+		// A downstream link that is not trusted (a page) cannot claim old work: its flag is dropped here.
+		const forwarded = message.old === true && !this.#downstream.link.trusted ? unmarked(message) : message;
 		const adapter = upstream.link.host.telemetry;
 		if (untraced(adapter)) {
-			upstream.link.send({ ...message, origin: upstream.origin });
+			upstream.link.send({ ...forwarded, origin: upstream.origin });
 			return undefined;
 		}
 		const span = new OpenSpan(
@@ -180,7 +182,7 @@ export class RelayedHold {
 			this.#attributes(`#${message.method}`),
 		);
 		const trace = carrierOf(span.span) ?? message.trace;
-		upstream.link.send({ ...message, origin: upstream.origin, ...(trace === undefined ? {} : { trace }) });
+		upstream.link.send({ ...forwarded, origin: upstream.origin, ...(trace === undefined ? {} : { trace }) });
 		return span;
 	}
 
@@ -237,4 +239,10 @@ export function relayEnded(
 				: ended(span.span, "relay_failed", errorFromWire(reply.error), undefined);
 	span.span.setAttributes({ outcome });
 	span.end();
+}
+
+/** `message` without its old-work flag (`call.old`), as a relay forwards it from a link that is not trusted. */
+function unmarked(message: Extract<Message, { readonly kind: "call" }>): Extract<Message, { readonly kind: "call" }> {
+	const { old: _old, ...rest } = message;
+	return rest;
 }

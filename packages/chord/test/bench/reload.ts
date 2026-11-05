@@ -1,7 +1,8 @@
-// Benchmark of `host.reload` (slice 7b §11): one plugin of 20 reloaded on a host with 1,000 live objects, as a pure
-// swap and as a native restart. Per case: the reload's time until it resolves (staging, commit, every fate started and
-// every swap checked), the time until every object of the plugin is live again, and the heap retained after 20
-// reloads against after the first (old attempts and facets collected). Medians over the reloads after a warm-up.
+// Benchmark of `host.reload` (slice 7b §11; decision "Reload restarts every affected object"): one plugin of 20
+// reloaded on a host with 1,000 live objects, every one of its objects restarted, pure code and code holding a native.
+// Per case: the reload's time until it resolves (staging, commit, every fate started), the time until every object of
+// the plugin is live again, and the heap retained after 20 reloads against after the first (old attempts, their
+// readiness and facets collected). Medians over the reloads after a warm-up.
 // Run by hand from packages/chord (not in CI), pinned for comparisons:
 //   taskset -c 6 node --conditions=source --experimental-strip-types --expose-gc test/bench/reload.ts
 import { performance } from "node:perf_hooks";
@@ -68,8 +69,8 @@ function median(values: readonly number[]): number {
 }
 
 /**
- * One case: `perPlugin(index)` objects per plugin (1,000 in all), plugin 0 reloaded `RELOADS` times; `native` makes
- * plugin 0 a native object (restarts) instead of a pure one (swaps).
+ * One case: `counts[index]` objects per plugin (1,000 in all), plugin 0 reloaded `RELOADS` times; `native` makes
+ * plugin 0's objects open a native.
  */
 async function run(name: string, counts: readonly number[], native: boolean): Promise<void> {
 	const host: Host = createHost({ onError: (error) => console.log("onError", error.kind) });
@@ -112,7 +113,7 @@ async function run(name: string, counts: readonly number[], native: boolean): Pr
 
 const spread = Array.from({ length: PLUGINS }, () => OBJECTS / PLUGINS);
 const concentrated = [OBJECTS, ...Array.from({ length: PLUGINS - 1 }, () => 0)];
-await run("swap, 50 of 1,000 objects in the reloaded plugin", spread, false);
-await run("swap, all 1,000 objects in the reloaded plugin", concentrated, false);
-await run("restart, 50 of 1,000 objects in the reloaded plugin", spread, true);
-await run("restart, all 1,000 objects in the reloaded plugin", concentrated, true);
+await run("pure, 50 of 1,000 objects in the reloaded plugin", spread, false);
+await run("pure, all 1,000 objects in the reloaded plugin", concentrated, false);
+await run("native, 50 of 1,000 objects in the reloaded plugin", spread, true);
+await run("native, all 1,000 objects in the reloaded plugin", concentrated, true);

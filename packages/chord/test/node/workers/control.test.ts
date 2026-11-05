@@ -28,7 +28,7 @@ describe("errors", () => {
 			plugins: { added: ["@a/x"], changed: [], removed: [] },
 			failed: [{ plugin: "@a/y", error: new Error("broken") }],
 			objects: [
-				{ object: "a.one", kind: "swapped" },
+				{ object: "a.one", kind: "restarted" },
 				{
 					object: "a.two",
 					kind: "parked",

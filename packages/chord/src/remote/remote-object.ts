@@ -126,6 +126,11 @@ export class RemoteObject implements Target {
 		return this.#state;
 	}
 
+	/** Over a link the provider decides what each version sees: its state as it is. */
+	stateFor(): RefState {
+		return this.#state;
+	}
+
 	/** Its `chord.hold` span until its first `bound` or failure (a route's resolve links to it); none when not recorded. */
 	get span(): TelemetrySpan | undefined {
 		return this.#holding?.span;

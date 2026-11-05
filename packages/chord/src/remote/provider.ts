@@ -7,7 +7,7 @@
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { type Context, withAbortSignal } from "../context/index.ts";
 import { ChordError, isChordError, type Principal } from "../data/index.ts";
-import type { Caller } from "../host/internal.ts";
+import { asRemoteOldWork, type Caller } from "../host/internal.ts";
 import {
 	type BoundEntry,
 	type ConsumerMessage,
@@ -393,7 +393,7 @@ export class ProviderSide {
 	 * A call: one on a hold this side does not know is ignored (Q1), more than this side's N at once and compressed
 	 * arguments from a child (clients never compress) are protocol errors. On a relayed hold it is forwarded, its
 	 * arguments checked against this link's part limit first (the bytes are here). On a served hold that is not callable
-	 * (not bound yet, nor rebinding by the names its consumer still has after a swap in place or a `loading`) it is
+	 * (not bound yet, nor rebinding by the names its consumer still has after a `loading`) it is
 	 * refused `not_ready`; its method is an index into the bound variant (one outside it is a protocol error) and its
 	 * arguments are opened and parsed here within the hold's limits (past one the call fails `too_large/part`; a
 	 * malformed part is a protocol error), absent ones `null`. Arguments this host must inflate asynchronously are
@@ -441,12 +441,25 @@ export class ProviderSide {
 		this.#calls.set(message.call, call);
 		// The caller's span over the link: its carrier with this host's adapter (absent or unknown: the adapter's root).
 		const parent = parentOf(message.trace, this.link.host.telemetry);
-		this.#run(message.call, call, method.name, args, parent);
+		// Old work of another host's reload (`call.old`), honoured only from a trusted link (decision "Reload restarts
+		// every affected object"): it runs on open old attempts here, and counts as this host's old work while it runs.
+		if (message.old === true && this.link.trusted) {
+			const { oldWork } = this.link.host;
+			oldWork.open();
+			const close = (): void => oldWork.close();
+			this.#run(message.call, call, method.name, args, parent, asRemoteOldWork(this.link.context)).then(
+				close,
+				close,
+			);
+			return;
+		}
+		this.#run(message.call, call, method.name, args, parent, this.link.context);
 	}
 
 	/**
-	 * Runs a call and sends its result (absent when `null`) or error, unless it was aborted, released or gone
-	 * meanwhile. A result that cannot be encoded is sent as its error.
+	 * Runs a call under `scope` (the link's context, marked when it is another host's old work) and sends its result
+	 * (absent when `null`) or error, unless it was aborted, released or gone meanwhile. A result that cannot be encoded
+	 * is sent as its error. Returns the handler's settling.
 	 */
 	#run(
 		id: number,
@@ -454,8 +467,9 @@ export class ProviderSide {
 		method: string,
 		args: unknown,
 		parent: TelemetryContext,
-	): void {
-		const context = withAbortSignal(call.abort.signal, this.link.context);
+		scope: Context,
+	): Promise<unknown> {
+		const context = withAbortSignal(call.abort.signal, scope);
 		let running: Promise<unknown>;
 		try {
 			running = call.hold.call(method, args, parent, context);
@@ -477,6 +491,7 @@ export class ProviderSide {
 			},
 			(error: unknown) => this.reply(id, { kind: "error", call: id, error: wireError(error) }),
 		);
+		return running;
 	}
 
 	/** Answers call `id` with `error` before it was admitted: it took no slot. */

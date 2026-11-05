@@ -59,8 +59,8 @@ describe.skipIf(CHROMIUM === undefined)("a rollout across hosts", () => {
 				["web", ["web"]],
 			]);
 			expect(rolloutFates(result)).toEqual([
-				"project/project|p1: reload.store swapped",
-				"project/project|p1: reload.counter(p1) swapped",
+				"project/project|p1: reload.store restarted",
+				"project/project|p1: reload.counter(p1) restarted",
 			]);
 			// Project p2 had no worker during the rollout: its first hold starts one on the current set.
 			await page.hold("p2", "alpha", 10_000, "p2");
@@ -110,7 +110,10 @@ describe.skipIf(CHROMIUM === undefined)("a rollout across hosts", () => {
 			expect(rolloutFailures(await second)).toEqual([]);
 			await page.waitText("alpha", ".label", "v3:2");
 			expect(await page.result(await page.call("alpha", "add", 1))).toEqual(ok("v3:3"));
-			expect((await page.states("alpha")).slice(settled)).toEqual([]);
+			// Each restart shows `loading` once its old attempt ended, never a failure.
+			const states = (await page.states("alpha")).slice(settled);
+			expect(states.filter((state) => state.startsWith("failed"))).toEqual([]);
+			expect(states.at(-1)).toBe("live");
 			expect(app.app.plugins.state.value.dirty).toEqual([]);
 		} finally {
 			await app.app.close(context);
@@ -148,7 +151,8 @@ describe.skipIf(CHROMIUM === undefined)("a rollout across hosts", () => {
 	// A case the table leaves out (the audit's "a contract change between hosts, consumer first"): the counter's
 	// contract moves to v2 without `accepts`, and the server's summary, which holds it, changes with it (it copies the
 	// contract file). The server step runs first: the summary's new request meets the old worker serving v1.
-	// Expected to fail until the open design point is settled: "a parked swap keeps the old instance serving" (under review).
+	// The documented gap (decision "The rollout order stays; no `loading` grace", design §21 "Rollout across hosts"): a
+	// consumer on an earlier step waits for its provider's later step; the recipe is two applies, the provider first.
 	it.fails(
 		"keeps the view of a server consumer bound while its worker provider moves to a new version with it",
 		async () => {

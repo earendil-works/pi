@@ -69,10 +69,17 @@ type Lifecycle = {
  * or a route address (`RemoteObject`). It tells its holders of each change of `state`.
  */
 export interface Target {
+	/** Where it is: an object on this host, or one held over a link (another host decides what it serves). */
+	readonly kind: "local" | "remote";
 	/** The object in errors: its type, and its params key when it has params. */
 	readonly label: string;
 	/** Its state as its references show it. */
 	readonly state: RefState;
+	/**
+	 * Its state as a reference of `version` and `fingerprint` sees it: on this host `live` also while a restart's open
+	 * old attempt binds that version (decision "Reload restarts every affected object", rule 5); `state` over a link.
+	 */
+	stateFor(version: number, fingerprint: string): RefState;
 	/** Whether its state members have values: live once, for a remote object bound once. */
 	readonly hydrated: boolean;
 	/** The variant bound last; `undefined` for a local object and before the first binding. */
@@ -248,6 +255,8 @@ export class Binding implements Holder, UnboundRequest {
 	#heldKeys: ReferenceKeys | undefined;
 	/** The instance it attached to last: it takes last values only from that one (never one it never followed). */
 	#attached: Attachable | undefined;
+	/** Whether presence lists show it: every reference but a restart's readiness bindings (`unlist`). */
+	#listed = true;
 
 	constructor(
 		contract: Contract,
@@ -302,7 +311,11 @@ export class Binding implements Holder, UnboundRequest {
 	/** The reference's state. */
 	get refState(): RefState {
 		const state = this.#state;
-		if (state.kind === "bound") return state.target.state;
+		if (state.kind === "bound") {
+			// A bound reference keeps its contract until it is released.
+			const { version, fingerprint } = this.#contract!;
+			return state.target.stateFor(version, fingerprint);
+		}
 		if (state.kind === "waiting") return state.failure ?? LOADING;
 		if (state.kind === "refused") return state.failure;
 		return state.kind === "unbound" ? LOADING : state.state;
@@ -456,6 +469,27 @@ export class Binding implements Holder, UnboundRequest {
 		this.dependent?.dependencyMoved();
 	}
 
+	/** Whether presence lists show it (§19). */
+	get listed(): boolean {
+		return this.#listed;
+	}
+
+	/** Keeps it out of presence lists, before it binds: a restart's readiness binding is no consumer of its own. */
+	unlist(): void {
+		this.#listed = false;
+	}
+
+	/** Whether its members have values now: bound to an object that shows it live and has them. */
+	#hydratedNow(): boolean {
+		const state = this.#state;
+		return state.kind === "bound" && state.target.hydrated && this.refState.kind === "live";
+	}
+
+	/** Resolves once `done(state)` holds, checked now and at every change; rejects at its end or `context`'s abort. */
+	until(done: (state: RefState) => boolean, context: Context): Promise<void> {
+		return this.#until((state) => (done(state) ? DONE : WAIT), context);
+	}
+
 	/** Resolves when the reference is live; rejects with a broken failure's error, or its end. Getters wait for it. */
 	live(context: Context): Promise<void> {
 		return this.#until((state) => {
@@ -530,7 +564,7 @@ export class Binding implements Holder, UnboundRequest {
 		const state = this.#state;
 		switch (state.kind) {
 			case "bound": {
-				const current = state.target.state;
+				const current = this.refState;
 				if (current.kind === "failed") throw current.cause.error;
 				return state.target;
 			}
@@ -568,13 +602,13 @@ export class Binding implements Holder, UnboundRequest {
 	 * through (Opus G3).
 	 */
 	async firstValues(context: Context): Promise<void> {
-		if (this.#state.kind === "bound" && this.#state.target.hydrated) return;
+		if (this.#hydratedNow()) return;
 		await this.#until((state) => (state.kind === "live" ? DONE : WAIT), context);
 	}
 
 	/** Resolves once the object's members have values; rejects when the reference fails or is released first. */
 	async hydrated(context: Context): Promise<void> {
-		if (this.#state.kind === "bound" && this.#state.target.hydrated) return;
+		if (this.#hydratedNow()) return;
 		await this.#until((state) => {
 			if (state.kind === "live") return DONE;
 			if (state.kind === "failed") return { kind: "failed", error: state.cause.error };

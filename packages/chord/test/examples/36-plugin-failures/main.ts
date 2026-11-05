@@ -3,17 +3,16 @@
 // is listed in the report's `failed`: a syntax error (its build failed), a module that throws while it is evaluated
 // (`mapStack` names the plugin's file and line), a factory that throws while the host stages it. The closure rule: a
 // provider and its consumer edited together, the provider broken, the consumer kept on its old code too (its new code
-// needs the provider's new version) and still working; the next good edit applies both. Last, a reload whose context
-// aborts after its commit: the commit stands, and the component keeps what was committed.
+// needs the provider's new version) and still working; the next good edit applies both. Last, a restart whose new code
+// needs an object that takes a while to open: the old code keeps serving until it is open.
 // Run from packages/chord:
 //   node --conditions=source --experimental-strip-types test/examples/36-plugin-failures/main.ts
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT, withAbortSignal } from "../../../src/context/index.ts";
+import { BACKGROUND_CONTEXT } from "../../../src/context/index.ts";
 import { int, local, str } from "../../../src/contracts/index.ts";
-import { isChordError } from "../../../src/data/index.ts";
 import { createHost, type ReloadReport } from "../../../src/host/index.ts";
 import * as chord from "../../../src/index.ts";
 import { createPlugins, mapStack } from "../../../src/node/plugins/index.ts";
@@ -125,30 +124,21 @@ console.log("   running:", values());
 await until(() => summary.text.value.startsWith("price v2"));
 console.log("   then:", values());
 
-// 4. A reload whose context aborts after its commit, while it waits for its report: here the app shuts down the moment
-//    it sees the status object leave `live` (its new code waits for a new `Cache`, which takes 200 ms to open). The
-//    reload rejects `aborted`, but its commit stands: `details.committed` says what it applied, and the component's
-//    loaded set is what was committed (a later reload does not roll the cache plugin back).
+// 4. A restart whose new code needs a new `Cache` (a native that takes 200 ms to open): the reload resolves at once;
+//    the status reference stays live on the old code until that `Cache` is open, then shows `loading` briefly and
+//    the new code's values.
 console.log("4. status:", status.text.value);
 await edit("cache/server.ts", 'const generation = "v1"', 'const generation = "v2"');
-const cache = await buildDirty(["@example/cache"]);
-const abort = new AbortController();
 const watchStatus = await status.state.watch(context);
 watchStatus.start(async (call) => {
-	if (call.kind !== "value") return;
-	console.log("   the status reference:", call.value.kind);
-	if (call.value.kind !== "live") abort.abort(new Error("the app shuts down"));
+	if (call.kind === "value") console.log("   the status reference:", call.value.kind, "|", status.text.value);
 });
-try {
-	await plugins.reload(host, cache, withAbortSignal(abort.signal, context));
-} catch (error) {
-	if (!isChordError(error, "aborted")) throw error;
-	console.log("   rejected:", error.code, error.message, JSON.stringify(error.details));
-}
+print(await plugins.reload(host, await buildDirty(["@example/cache"]), context));
 await until(() => status.text.value === "cache v2");
 console.log("   status:", status.text.value);
 await edit("greeter/label.ts", '"hi"', '"hey"');
 print(await plugins.reload(host, await buildDirty(["@example/greeter"]), context));
+await until(() => greeting.text.value === "hey");
 console.log("   after another reload:", status.text.value, "| greeting:", greeting.text.value);
 
 await watchStatus.stop();

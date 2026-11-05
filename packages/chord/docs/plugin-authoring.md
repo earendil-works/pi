@@ -82,8 +82,8 @@ host.serve(Store, (_params, self) => {                 // a local type with empt
   (`invalid/args` without one).
 - One query per writing commit, at most `limit` rows (for 100 rows about 60 µs more per commit, 80 µs when watched;
   `benchmarks.md`): there may be dragons for a table written hundreds of times a second. Keep a document for those.
-- Never read a table in `self.open` to fill a window: that makes a native, and the object restarts at every reload of
-  its plugin instead of swapping in place. A live query is no native.
+- Never read a table in `self.open` to fill a window: a live query reruns by itself after every commit and at a
+  reload's restart; a read in `self.open` is a one-time snapshot.
 
 ## What a plugin may import
 
@@ -157,6 +157,14 @@ pinned to a version: an npm version, or a git ref (`"@bob/notes": "github:bob/no
 The app's own contracts for third parties come with its API (`@acme/app/v3` exports `Notes`). When a contract
 changes shape, bump its `version`; the provider serves older consumers through `accepts`, else they wait "contract
 mismatch" (visible, never wrong data).
+
+## Reloads
+
+A reload of the plugin restarts each of its live objects. The calls running at that moment, and every call they make
+with their `ctx`, finish on the old code; new calls wait for the new code; documents and tables stay. Two rules keep
+that working: a root opened inside a method takes the method's `ctx` (`host.root(fn, withoutAbortSignal(ctx))`), so its
+calls count as the method's; and work longer than a few seconds is a job, since a call still running at
+`reloadDrainTimeout` (5 s) is cut `released`.
 
 ## How the app builds it
 

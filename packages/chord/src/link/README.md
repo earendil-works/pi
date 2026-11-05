@@ -77,7 +77,9 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
   `hold { hold, type, version, fingerprint, params, address, principal?, incarnation? }` (`address`: `{ kind, params }`
   the caller's `hostAddress` computed, it routes the hold; the provider places it by its params; `principal` and `incarnation`: whom it acts for, read only
   on a parent link; `chain?`: the instance ids of the activations waiting for the hold, at most 32, read only on a
-  trusted link; `limit?`: the decoded limit per part of the link a relay admitted it on, read only on a parent link), `release`, `call { call, hold, method, args?, segments? }`, `abort`, `bound { holds: [{ hold,
+  trusted link; `limit?`: the decoded limit per part of the link a relay admitted it on, read only on a parent link), `release`, `call { call, hold, method, args?, segments?, old? }` (`old: true`: old work of a reload on the
+  caller's host, honoured only from a trusted link and dropped by a relay from one that is not; binary: `0x20` in the
+  call's kind byte, text: the seventh element, after the trace carrier), `abort`, `bound { holds: [{ hold,
   variant, members: [{ member, value }], failed }] }` (one message may bind several holds: first bindings, re-holds),
   `state { holds: [{ hold, members: [{ member, ops }], failed }] }`, `ack {}` (one per applied `bound` or `state` of
   its origin), `closed { origin }` (a relay's downstream origin ended: its holds and calls go), `ping {}`, `pong {}`,

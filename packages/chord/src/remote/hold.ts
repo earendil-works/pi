@@ -2,11 +2,11 @@
 // unbound index until then), why it is unbound (refused: kept in the index while it waits for a name, dependency
 // model §1), the object it keeps, the notices of its object's failures and new attempts, the snapshot and subscription
 // taken in one synchronous step when a slot of the window is free, and the ops of its members per batch (sent at
-// once, or pending while the window is full), each member with its own Delta encoder. Across a reload (slice 7b §6) a
-// bound hold is kept: a swap in place sends it a fresh `bound` once the new instance is live (it answers calls
-// meanwhile), an object leaving `live` unbinds it (`loading` or `failed`, then a fresh `bound`; a `loading` one keeps
-// its calls in flight and takes more by its old names), a version no longer bound or a removed type leaves it waiting
-// unbound. A hold of an older version follows its object's adapted members (Q10).
+// once, or pending while the window is full), each member with its own Delta encoder. Across a reload a bound hold is
+// kept while its object shows it live (a restart's open old attempt that binds its version, decision "Reload restarts
+// every affected object"), then unbound (`loading` or `failed`, then a fresh `bound`; a `loading` one keeps its calls
+// in flight and takes more by its old names); a version no longer bound or a removed type leaves it waiting unbound. A
+// hold of an older version follows its object's adapted members (Q10).
 
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import type { Context } from "../context/index.ts";
@@ -15,9 +15,11 @@ import { ChordError, type FailureCause, isChordError, type Principal } from "../
 import { asChordError } from "../data/internal.ts";
 import { type Encoder, encoder, type Op, PendingOps } from "../delta/index.ts";
 import {
+	type Attempt,
 	type Caller,
 	type ChordObject,
 	type Holder,
+	type RefState,
 	type Removal,
 	retryWalk,
 	type Serving,
@@ -70,9 +72,9 @@ type Followed = {
  * object is live (the activation, parking and retries; `told`: the failure its consumer was told, so the next attempt
  * is announced with `loading` and a call that crossed the failure on the wire gets it); `binding` while its object is live and its `bound` waits for a slot;
  * `bound` with the object's variant and the members it follows. A `pending` hold unbound with `loading` and the
- * `binding` after it, or a `binding` after a swap in place, keep the names it was bound with, `previous`: its consumer's
- * calls sent by those names (before it learnt of the `loading`, or still bound) wait at its object's gate and are
- * answered by name, design §22; only contract data, so the old instance and its sources go meanwhile.
+ * `binding` after it keep the names it was bound with, `previous`: its consumer's calls sent by those names (before it
+ * learnt of the `loading`) wait at its object's gate and are answered by name, design §22; only contract data, so the
+ * old instance and its sources go meanwhile.
  */
 type HoldState =
 	| { readonly kind: "unplaced"; readonly request: HoldRequest }
@@ -86,7 +88,7 @@ type HoldState =
 			readonly names: VariantNames;
 			/** The members it follows, in the order they were subscribed. */
 			readonly followed: Followed[];
-			/** The instance it was bound to: a swap brings another, which it binds to afresh. */
+			/** The instance it was bound to: it follows it on while it still changes (a restart's open old attempt). */
 			readonly instance: unknown;
 			/**
 			 * A rebinding's names before it (`until`: its `bound`, this host's own message number): calls its consumer sent
@@ -126,6 +128,8 @@ export class Hold implements Holder, UnboundRequest {
 	readonly id: number;
 	/** A hold is declared by no object on this host. */
 	readonly dependent = undefined;
+	/** Presence lists show every hold. */
+	readonly listed = true;
 	/** Whom the hold acts for: its calls run as it, with its origin's incarnation. */
 	readonly caller: Caller;
 	/** The limits per part of its params and its calls' arguments: its link's, the decoded one smaller when stamped (Q2). */
@@ -161,8 +165,8 @@ export class Hold implements Holder, UnboundRequest {
 	}
 
 	/**
-	 * Whether calls on it reach its object: bound, or by the names it was bound with while it rebinds (a swap in place, a
-	 * `loading` unbind: its fresh `bound` not sent yet).
+	 * Whether calls on it reach its object: bound, or by the names it was bound with while it rebinds (after a `loading`
+	 * unbind: its fresh `bound` not sent yet).
 	 */
 	get callable(): boolean {
 		return this.#names() !== undefined;
@@ -272,28 +276,32 @@ export class Hold implements Holder, UnboundRequest {
 	}
 
 	/**
-	 * The object's state changed, or the hold took it: a pending hold binds once it is live (when a slot is free),
-	 * sends each failure, and announces the attempt after a failure with `loading`. A bound hold (or one whose `bound`
-	 * waits for a slot) whose object leaves `live` goes back to pending (slice 7b §6), except while a reload's swap runs
-	 * in place; a bound one whose object went live with another attempt (a swap) gets a fresh `bound` (audit A9).
+	 * The object's state changed, or the hold took it: a pending hold binds once its object shows it live (when a slot
+	 * is free), sends each failure, and announces the attempt after a failure with `loading`. A bound hold (or one whose
+	 * `bound` waits for a slot) whose object no longer shows it live goes back to pending (slice 7b §6).
 	 */
 	moved(): void {
 		const current = this.#state;
 		const object = this.#object;
 		if (object === undefined) return;
 		if (current.kind === "bound" || current.kind === "binding") {
-			const { kind } = object.state;
-			if (kind === "live") {
-				if (current.kind === "bound" && object.instance !== current.instance) this.#rebind(current);
-				return;
-			}
-			// Its instance still changes (a swap's old one, a restart's drain, a live failure's admitted commits): it follows
-			// it on until it stopped (slice 7b, decision "References are the only indirection").
+			const shown = this.#shown(object);
+			if (shown.kind === "live") return;
+			// Its instance still changes (a live failure's admitted commits, a restart's old attempt draining): it follows it
+			// on until it stopped (decision "References are the only indirection").
 			if (current.kind === "bound" && object.attachable === current.instance) return;
-			if (current.kind === "binding" && kind === "loading" && object.swapsInPlace) return;
-			this.#unbind(object.state.kind === "failed" ? object.state.cause.error : undefined);
+			this.#unbind(shown.kind === "failed" ? shown.cause.error : undefined);
 		}
 		this.#pending(object);
+	}
+
+	/**
+	 * What its object shows to its version and fingerprint: `live` also while a restart's open old attempt binds them
+	 * (decision "Reload restarts every affected object", rule 5).
+	 */
+	#shown(object: ChordObject): RefState {
+		const { version, fingerprint } = this.contract;
+		return object.stateFor(version, fingerprint);
 	}
 
 	/** Member `followed` failed with `error`: its failure waits to be sent, replacing one still waiting. */
@@ -312,7 +320,7 @@ export class Hold implements Holder, UnboundRequest {
 	}
 
 	/**
-	 * Its object left `live` (a restart, a parked swap, a live failure): no longer subscribed or waiting for a slot,
+	 * Its object no longer shows it live (a restart, a live failure): no longer subscribed or waiting for a slot,
 	 * pending again. With `error` (a failure, sent by `#pending`, which a consumer applies to a bound hold as a rebinding
 	 * too, model §5) its calls in flight are rejected. Without (`loading`, which tells the consumer it rebinds) they stay,
 	 * and calls by the names it was bound with keep arriving (sent before its consumer learnt of the `loading`): each gets
@@ -341,21 +349,6 @@ export class Hold implements Holder, UnboundRequest {
 	}
 
 	/**
-	 * A swap of its object went live in place (slice 7b §5, audit A9): no longer subscribed to the old instance, it gets
-	 * a fresh `bound` of the new one's members (as a restart, a variant or a version change does), answering calls by
-	 * the names its consumer has until it applied that.
-	 */
-	#rebind(state: Bound): void {
-		// The names its consumer has: the old binding's, or older ones while it has not applied that `bound` yet.
-		const { variant, names } = this.#names()!;
-		unfollow(state);
-		// Its ops still waiting for a slot are the old instance's: the `bound` replaces them.
-		this.#provider.unbind(this);
-		this.#state = { kind: "binding", previous: { variant, names } };
-		this.#provider.bind(this, this.#provider.link.context);
-	}
-
-	/**
 	 * A `retry` message with `hops` left of its budget: the object is asked for an attempt now (it ignores this unless
 	 * failed; parked, it passes it on, to other hosts with one hop less); a refused hold is started again (a route's
 	 * `authorize` may admit it now).
@@ -374,7 +367,7 @@ export class Hold implements Holder, UnboundRequest {
 	#pending(object: ChordObject): void {
 		const current = this.#state;
 		if (current.kind !== "pending") return;
-		const state = object.state;
+		const state = this.#shown(object);
 		if (state.kind === "live") {
 			// Calls by the names it was bound with are still answered until the fresh `bound` is sent.
 			this.#state = current.previous === undefined ? BINDING : { kind: "binding", previous: current.previous };
@@ -424,10 +417,11 @@ export class Hold implements Holder, UnboundRequest {
 	 */
 	boundEntry(context: Context): BoundEntry {
 		const object = this.#object!;
-		const { contract } = object.served;
-		// A live remote object has its variant.
-		const variant = object.variant!;
-		const state = this.#bindTo(object);
+		// It binds the instance its object shows it (`#shown` live): the live one, or a restart's open old attempt; the
+		// object tells its holds at that attempt's seal (`moved`), so a hold waiting for a slot never binds it later.
+		const instance = object.instance!;
+		const { contract } = instance.served;
+		const state = this.#bindTo(instance);
 		const members: BoundEntry["members"][number][] = [];
 		const failed: FailedMember[] = [];
 		const { version } = this.contract;
@@ -458,7 +452,7 @@ export class Hold implements Holder, UnboundRequest {
 		this.#failed = [];
 		this.#retired = NO_RETIRED;
 		chordMetrics(context.telemetry.metrics).counter("chord.link.encodes").add(1);
-		return { hold: this.id, variant: variantOrder(contract).indexOf(variant), members, failed };
+		return { hold: this.id, variant: variantOrder(contract).indexOf(instance.variant!), members, failed };
 	}
 
 	/**
@@ -536,15 +530,16 @@ export class Hold implements Holder, UnboundRequest {
 	 * The binding: its variant and names at the hold's version, with no member followed yet, and the names its consumer
 	 * still has (a rebinding's) until it acknowledged this `bound`, the next of this host's own messages.
 	 */
-	#bindTo(object: ChordObject): Bound {
-		const variant = variantsAt(object.served.contract, this.contract.version).get(object.variant!)!;
+	#bindTo(instance: Attempt): Bound {
+		// A live remote object's instance has its variant.
+		const variant = variantsAt(instance.served.contract, this.contract.version).get(instance.variant!)!;
 		const previous = this.#names();
 		const state: Bound = {
 			kind: "bound",
 			variant,
 			names: variantNames(variant),
 			followed: [],
-			instance: object.instance,
+			instance,
 			...(previous === undefined
 				? {}
 				: { previous: { variant: previous.variant, names: previous.names, until: this.#provider.nextOwn } }),

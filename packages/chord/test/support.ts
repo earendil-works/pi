@@ -241,12 +241,14 @@ export async function loaded(
 		readonly context?: Context;
 		readonly closeTimeout?: number;
 		readonly readyTimeout?: number;
+		readonly reloadDrainTimeout?: number;
 		readonly store?: Store;
 	} = {},
 ): Promise<{ readonly host: Host; readonly errors: HostError[]; readonly failed: readonly PluginFailure[] }> {
 	const errors: HostError[] = [];
-	const { telemetry, closeTimeout, readyTimeout, store } = options;
-	const host = createHost({ telemetry, closeTimeout, readyTimeout, store, onError: (error) => errors.push(error) });
+	const { telemetry, closeTimeout, readyTimeout, reloadDrainTimeout, store } = options;
+	const onError = (error: HostError) => errors.push(error);
+	const host = createHost({ telemetry, closeTimeout, readyTimeout, reloadDrainTimeout, store, onError });
 	const facets = [{ name: "@test/app", facet: defineFacet(setup) }];
 	const { failed } = await host.load(facets, options.context ?? BACKGROUND_CONTEXT);
 	return { host, errors, failed };
@@ -544,7 +546,7 @@ export function wireNames(Type: Contract, variant: string) {
 	};
 }
 
-/** A server host as in `linked` and a raw peer on a link it accepted as `child`, with `limits`. */
+/** A server host as in `linked` and a raw peer on a link it accepted as `child` (trusted when `trusted`), with `limits`. */
 export async function rawLinked(
 	setup: (host: FacetHost<TestPrincipal>) => void,
 	options: {
@@ -556,6 +558,8 @@ export async function rawLinked(
 		/** What the raw peer is to the host: a child (`accept`, the default) or its parent (`connect`). */
 		readonly role?: "child" | "parent";
 		readonly telemetry?: TelemetryContext;
+		/** Whether the host trusts the raw peer's link (its messages are not checked; `call.old` is honoured). */
+		readonly trusted?: boolean;
 	} = {},
 ): Promise<{ readonly server: Host<TestPrincipal>; readonly peer: RawPeer; readonly errors: HostError[] }> {
 	const errors: HostError[] = [];
@@ -570,7 +574,7 @@ export async function rawLinked(
 	await server.load([{ name: "@test/app", facet: defineFacet<TestPrincipal>(setup) }], BACKGROUND_CONTEXT);
 	const [a, b] = memoryLinkPair();
 	const child = (options.child ?? { kind: "owner" }) as TestPrincipal;
-	const link = { principal: child, codec: testCodec(), limits: options.limits };
+	const link = { principal: child, codec: testCodec(), limits: options.limits, trusted: options.trusted };
 	if (options.role === "parent") server.connect(a, link, BACKGROUND_CONTEXT);
 	else server.accept(a, link, BACKGROUND_CONTEXT);
 	return { server, peer: new RawPeer(b, { hello: options.hello }), errors };

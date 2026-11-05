@@ -75,10 +75,11 @@ await rm(join(root, "hello.web.ts"));
 await until(() => plugins.state.value.set && plugins.state.value.dirty.includes("hello"));
 console.log("3. marks:", JSON.stringify(plugins.state.value));
 
-// 3. A build discovers again; the reload changes `hello` in place (the same plugin, its object swapped), a holder
-//    sees the new text.
+// 3. A build discovers again; the reload changes `hello` (the same plugin, its object restarted), a holder sees the
+//    new text once the new attempt is live.
 const built = await plugins.build(plugins.state.value.dirty, context);
 const report = await plugins.reload(host, built, context);
+await until(() => hello.text.value === "hello from a directory");
 console.log("4. reload:", JSON.stringify(report.plugins), "| hello:", hello.text.value);
 console.log("   hello is now:", plugins.discovery.plugins.find(({ name }) => name === "hello")?.layout);
 

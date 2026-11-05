@@ -5,7 +5,7 @@
 // one), their lengths the tuple's last field. A message with an origin is wrapped: `["@", origin, tuple]`. Every part
 // is tagged with its codec, so no JSON value is reserved: `[0, json]`, or `[1, base64]` for a part its origin deflated
 // (the text codec itself never compresses). A `hold`'s or `call`'s trace carrier is an optional element after its
-// other fields (slice 9).
+// other fields (slice 9); a `call`'s old-work flag (`old`) follows it as `true` (the carrier then `null` when absent).
 
 import {
 	type BoundEntry,
@@ -86,12 +86,14 @@ function ownTuple(message: Message): string {
 			return json(["R", message.hold]);
 		case "call": {
 			const head = json(["c", message.call, message.hold, message.method]);
-			const { args, segments, trace } = message;
-			if (trace === undefined) return withPayload(head, args, segments);
-			// With a trace the payload's fields are positional (null when absent), the carrier last.
+			const { args, segments, trace, old } = message;
+			if (trace === undefined && old !== true) return withPayload(head, args, segments);
+			// With a trace or the old-work flag the payload's fields are positional (null when absent), the carrier next
+			// (null when absent before the flag), the flag last.
 			const lengths = segments === undefined ? "null" : json(segments.map((segment) => segment.byteLength));
 			const part = args === undefined ? "null" : partText(args);
-			return `${head.slice(0, -1)},${part},${lengths},${json(trace)}]`;
+			const tail = old === true ? `${json(trace ?? null)},true` : json(trace);
+			return `${head.slice(0, -1)},${part},${lengths},${tail}]`;
 		}
 		case "abort":
 			return json(["x", message.call]);
@@ -214,7 +216,7 @@ function fromFields(fields: unknown[], rest: Uint8Array): Message {
 			arity(1);
 			return { kind: "release", hold: field(0) };
 		case "c": {
-			arity(3, 4, 5, 6);
+			arity(3, 4, 5, 6, 7);
 			const call = {
 				kind: "call",
 				call: field<number>(0),
@@ -222,9 +224,12 @@ function fromFields(fields: unknown[], rest: Uint8Array): Message {
 				method: field<number>(2),
 			} as const;
 			if (f.length < 6) return { ...call, ...payload("args", f.slice(3), rest) };
-			// With a trace: the payload's fields positional, null when absent.
+			// With a trace or the old-work flag: the payload's fields positional, null when absent.
 			const fields = f[3] === null ? [] : f[4] === null ? [f[3]] : [f[3], f[4]];
-			return { ...call, ...payload("args", fields, rest), trace: f[5] as Record<string, string> };
+			// The message schema checks the carrier and the flag (`true` only).
+			const trace = f[5] === null ? {} : { trace: f[5] as Record<string, string> };
+			const old = f.length === 7 ? { old: f[6] as true } : {};
+			return { ...call, ...payload("args", fields, rest), ...trace, ...old };
 		}
 		case "x":
 			arity(1);

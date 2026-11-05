@@ -1456,6 +1456,7 @@ describe("reload: the API (slice 7b §1)", () => {
 			code: "aborted",
 			details: { committed: { added: ["@app/new"], changed: ["@app/info"], removed: ["@app/gone"], failed: [] } },
 		});
+		await flushed();
 		expect(info.title.value).toBe("b");
 		await host.close(context);
 	});
@@ -1492,6 +1493,8 @@ describe("reload: the API (slice 7b §1)", () => {
 		expect(report.failed.map(({ plugin, error }) => [plugin, (error as Error).message])).toEqual([
 			["@app/other", 'plugin "@app/other": app.info is served twice (plugin "@app/info")'],
 		]);
+		// Restarted: the new attempt goes live once the old one ended.
+		await flushed();
 		expect(info.title.value).toBe("b");
 		expect(info.state.value).toEqual({ kind: "live" });
 		await host.close(context);
@@ -1812,7 +1815,7 @@ describe("the host's spans (slice 9)", () => {
 			fates: 1,
 		});
 		expect(reload.events).toEqual([
-			{ name: "chord.reload.fate", attributes: { object: "app.info", fate: "swapped" } },
+			{ name: "chord.reload.fate", attributes: { object: "app.info", fate: "restarted" } },
 		]);
 	});
 

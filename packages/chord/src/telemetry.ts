@@ -101,7 +101,7 @@ const fate = {
 		fate: {
 			type: "string",
 			required: true,
-			values: ["swapped", "restarted", "ended", "parked", "retried"],
+			values: ["restarted", "ended", "parked", "retried"],
 			description: "What the object did.",
 		},
 	},

@@ -124,7 +124,7 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
 ```
 
 - `createHost<P, R>({ address?, principal?, principalKey?, telemetry?, onError, closeTimeout?, readyTimeout?,
-  heartbeat?, revokedBy?, compression? })`; `R` is the app's revocation type (JSON). `address` (`Session({ id: "S1" })`, see `contracts/`'s `hostKind`) makes the host addressable: it serves only
+  reloadDrainTimeout?, heartbeat?, revokedBy?, compression? })`; `R` is the app's revocation type (JSON). `address` (`Session({ id: "S1" })`, see `contracts/`'s `hostKind`) makes the host addressable: it serves only
   objects placed there; without one it is a client. A host with a `principal` acts as it for its own requests; a host
   without one (a client) has none. A host serves remote types only with both a principal and an address (`serve` of a
   remote type throws at `load` otherwise).
@@ -132,7 +132,9 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   to its part of an identity (L1's canonical JSON by default; the same function on every host). `closeTimeout` (30 s)
   bounds each native's close and the drain of an ending object's calls; `readyTimeout` (60 s) bounds every activation
   attempt (its wait for the previous instance's teardown included; paused while it is parked on its dependencies) and
-  is the default deadline of a `get` and of `host.registry`. `heartbeat: { ping?, close? }`: a link silent for `ping` ms (15 s)
+  is the default deadline of a `get` and of `host.registry`. `reloadDrainTimeout` (5 s, at most `closeTimeout`) bounds
+  a restart's old attempt at a reload: its old work and its successor's readiness (`host.reload` below).
+  `heartbeat: { ping?, close? }`: a link silent for `ping` ms (15 s)
   sends a `ping`, one silent for `close` ms (30 s), its handshake included, is closed (its references go `loading`);
   one interval timer per host (`min(ping, close) / 10`), running only while it has links. A handler that blocks the
   event loop longer than `close` gets its links closed by its peers; its own late tick counts the time it did not run
@@ -195,7 +197,7 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   (`object`, `member?`, `error`: a derive's compute threw, once per failure episode, watched or not; `member` when it is
   an exposed state member), `query_failed` (`object`, `table`, `error`: a live query's run in a commit threw, once per
   failure episode; the query is a failed member until a good run), `close_failed` (`object`, `native` position,
-  `error`: a close that threw while nobody waited), `close_timeout` (`object`, `native`: a close still running at its `closeTimeout`, a possible leak), `drain_timeout` (`object`: calls still running at `closeTimeout`; their natives close anyway),
+  `error`: a close that threw while nobody waited), `close_timeout` (`object`, `native`: a close still running at its `closeTimeout`, a possible leak), `drain_timeout` (`object`: calls still running at `closeTimeout`, or at `reloadDrainTimeout` for a reload's restart; their natives close anyway),
   `listener_error` (a throwing watch listener), `delivery_failed` (a frame delivery or a link's flush that threw) and
   `protocol_error` (`error`: what closed a link, see `link/`) and `resolve_failed` (`address`: its key, `error`: a
   route's `resolve` rejected; the address's holders fail `waiting` with it), `routine_failed` (`object`, `routine`: its position,
@@ -273,7 +275,18 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   because their new code failed before (a build, an evaluation: the plugins component): the same for the closure rule.
   The report lists them all in `failed`; the rest commits. `ctx`'s abort before the commit rejects `aborted` and
   changes nothing; after it, it ends only the wait for the report: `aborted` with `details.committed`
-  (`CommittedReload`: `added`, `changed`, `removed`, `failed` by plugin name), the commit standing.
+  (`CommittedReload`: `added`, `changed`, `removed`, `failed` by plugin name), the commit standing. The report's
+  `objects` give each affected object's fate: `ended` (its type removed; holders wait `not_served`), `retried` (it was
+  not live), `restarted`, or `parked { cause }` (a restart whose successor's recorded requests found a failure, a
+  retry whose new attempt waits for a dependency). Every live object restarts (decision "Reload restarts every
+  affected object; old work finishes on old code"): **old work** (the calls running at the commit and every call they
+  cause through their `ctx`, on this host or, marked `old`, over a trusted link) runs on the open old attempt; a getter
+  of old work for a version the new code dropped binds that attempt or fails at once; new calls wait at the gate for
+  the new code. The old attempt is sealed once that work drained and its successor's requests (as staging recorded
+  them) are ready, bounded by `reloadDrainTimeout` (a method still running then is cut `released`); then its natives
+  close (`reload`) and the successor runs its factory. Consumers whose version the old attempt binds see the object
+  `live` meanwhile. A wait of old work that its own old attempt blocks fails at once with `unavailable/reload_cycle`.
+  A root opened inside a method takes the method's `ctx` (`withoutAbortSignal(ctx)`), so its calls are old work too.
 - `host.hold(Type, params, ctx, { readyTimeout? })`: a reference at once (`Held<C>`: its `variant` is `undefined` until
   its first binding), which follows its object until released and never rejects: `loading`
   while the object activates, retries or is parked on dependencies under way, while there is no parent link or it is
@@ -378,7 +391,7 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   at declaration (`invalid/args`) without a positive integer `limit`, for a query of another table, or a table this
   factory did not declare. A run that fails (a row its code cannot read) makes it a failed member, as a throwing
   derive: one failure call, `query_failed` once, `[["r", rows]]` at the next good run; the object stays live. It is
-  no native: an object with live queries swaps on reload.
+  no native: a reload's restart runs the successor's live queries again at its activation.
 - A table or document the code cannot read (a newer version, a history edited in place, a failed `rows` step or
   `migrate`) fails the object `broken`; a live object whose read fails so fails while live (`object_failed`), keeping
   its documents for the next attempt.
@@ -542,7 +555,7 @@ alive:
 - **Drain in the background:** `close` detaches the old resource and returns at once; the resource disposes of itself
   when its work has finished, or after the native's `closeTimeout` at most (code mode's sandbox). Chord then opens the
   new one immediately; callers look the current resource up when they start (`watcher.value` at each use).
-- **Swap through a registry** (slice 8): the resource is a registry contribution; readers always find the current one,
+- **Replace through a registry** (slice 8): the resource is a registry contribution; readers always find the current one,
   and a reader that must wait for one waits, cancellably, until one is present.
 
 A native that follows a relocation (design §6) is not restarted at all: the native is a stable manager opened once; a

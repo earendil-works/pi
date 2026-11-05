@@ -55,7 +55,7 @@ describe.skipIf(CHROMIUM === undefined)("a reload restarting an object with nati
 				expect(rolloutFailures(result)).toEqual([]);
 				const step = placement === "worker" ? "project/project|p1" : "server/server";
 				expect(rolloutFates(result)).toEqual([
-					`${step}: reload.store swapped`,
+					`${step}: reload.store restarted`,
 					`${step}: reload.counter(p1) restarted`,
 				]);
 
@@ -96,7 +96,7 @@ describe.skipIf(CHROMIUM === undefined)("a reload restarting an object with nati
 	});
 
 	it.each<Placement>(["worker", "server"])(
-		"cuts a running call off after closeTimeout on the %s, then runs the waiting call on the new code",
+		"cuts a running call off at the reload drain bound on the %s, then runs the waiting call on the new code",
 		async (placement) => {
 			const app = await startReloadApp({
 				latch: LATCH_PLUGIN,
@@ -113,7 +113,9 @@ describe.skipIf(CHROMIUM === undefined)("a reload restarting an object with nati
 				await editAndApply(app, "counter", counterPlugin({ code: "v2", placement, native: true }));
 				const arriving = await page.call("alpha", "code");
 				const cut = await page.result(stuck);
-				expect(Date.now() - started).toBeGreaterThanOrEqual(TIMEOUTS.closeTimeout - 100);
+				// The kit passes `reloadDrainTimeout` to the server and the workers: the cut comes before `closeTimeout`.
+				expect(Date.now() - started).toBeGreaterThanOrEqual(TIMEOUTS.reloadDrainTimeout - 100);
+				expect(Date.now() - started).toBeLessThan(TIMEOUTS.closeTimeout);
 				expect(cut).toMatchObject({ status: "error", code: "released" });
 				expect(await page.result(arriving)).toEqual(ok("v2"));
 				await page.waitText("alpha", ".state", "live");

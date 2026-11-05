@@ -1,27 +1,30 @@
 import { describe, expect, it, vi } from "vitest";
-import { type Context, BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
+import { type Context, BACKGROUND_CONTEXT as context, withoutAbortSignal } from "../../src/context/index.ts";
 import { arr, evolve, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { broken, ChordError } from "../../src/data/index.ts";
 import { defineState, type SingletonHandle } from "../../src/documents/index.ts";
 import { Attempt } from "../../src/host/attempt.ts";
 import {
+	type Ctx,
 	createHost,
 	defineFacet,
 	type FacetHost,
 	type FacetSelf,
 	type Host,
 	type HostError,
-	type PluginFacet,
 	type Reference,
 	type Self,
 	type StoreSelf,
 	untilAborted,
 } from "../../src/host/index.ts";
 import { ChordObject } from "../../src/host/object.ts";
+import { defineJob } from "../../src/jobs/index.ts";
 import { memoryLinkPair } from "../../src/link/index.ts";
 import { jsonPart, type Message } from "../../src/link/internal.ts";
 import { defineRegistry } from "../../src/registries/index.ts";
 import { constant, type Watchable } from "../../src/state/index.ts";
+import { query } from "../../src/store/query.ts";
+import { defineTable } from "../../src/store/table.ts";
 import {
 	changesOf,
 	delivered,
@@ -32,7 +35,6 @@ import {
 	flushed,
 	holdNextCommit,
 	instancesOf,
-	linked,
 	loaded,
 	memoryStore,
 	metered,
@@ -47,7 +49,6 @@ import {
 	StoreRestartable,
 	statesOf,
 	storeRestartable,
-	type TestPrincipal,
 	testCodec,
 	transported,
 	valuesOf,
@@ -1234,14 +1235,14 @@ function servePure(h: FacetHost, label: string, by: number, gates: Promise<void>
 	});
 }
 
-describe("reload: fates (slice 7b §4)", () => {
-	it("swaps a pure object in place: same documents and instance id, new code for new calls", async () => {
+describe('reload: fates (decision "Reload restarts every affected object")', () => {
+	it("restarts a live object: its documents kept, new code for new calls", async () => {
 		const { host } = await loaded((h) => servePure(h, "v1", 1));
 		const pure = await host.get(Pure, {}, context);
 		await pure.bump(context);
 		const objects = instancesOf(ChordObject, "reloadFate");
 		const report = await reloadApp(host, (h) => servePure(h, "v2", 10));
-		expect(report.objects).toEqual([{ object: "app.pure", kind: "swapped" }]);
+		expect(report.objects).toEqual([{ object: "app.pure", kind: "restarted" }]);
 		expect(objects).toHaveLength(1);
 		await flushed();
 		expect(pure.state.value).toEqual({ kind: "live" });
@@ -1250,7 +1251,7 @@ describe("reload: fates (slice 7b §4)", () => {
 		await host.close(context);
 	});
 
-	it("restarts an object with natives: the drain first, its natives closed with reason reload, a new instance", async () => {
+	it("shows the old attempt live while it drains, closes its natives with reason reload, then opens the new ones", async () => {
 		const closes: string[] = [];
 		const serve = (h: FacetHost, label: string, gates: Promise<void>[] = []) =>
 			h.serve(Pure, (_, self) => {
@@ -1279,14 +1280,15 @@ describe("reload: fates (slice 7b §4)", () => {
 		await flushed();
 		const report = await reloadApp(host, (h) => serve(h, "v2"));
 		expect(report.objects).toEqual([{ object: "app.pure", kind: "restarted" }]);
-		expect(pure.state.value).toEqual({ kind: "loading" });
-		// A new call parks until the new attempt is live.
-		const parked = pure.bump(context);
+		// The old attempt binds this reference's version: it sees it live while it drains (rule 5).
+		expect(pure.state.value).toEqual({ kind: "live" });
+		// A new call waits at the gate until the new attempt is live.
+		const waiting = pure.bump(context);
 		await flushed();
 		expect(closes).toEqual([]);
 		gate.resolve();
 		expect(await running).toBe(1);
-		expect(await parked).toBe(2);
+		expect(await waiting).toBe(2);
 		expect(closes).toEqual(["bump done on v1", "v1 reload", "bump done on v2"]);
 		expect(pure.label.value).toBe("v2");
 		await host.close(context);
@@ -1375,7 +1377,7 @@ describe("reload: fates (slice 7b §4)", () => {
 		await host.close(context);
 	});
 
-	it("parks a swap whose new factory needs a missing dependency; it goes live when the dependency is served", async () => {
+	it("reports a restart parked whose new factory needs a missing dependency; it goes live once that is served", async () => {
 		const Dep = local("app.dep", { version: 1, params: {}, members: { name: str() } });
 		const { host } = await loaded((h) => servePure(h, "v1", 1));
 		const pure = await host.get(Pure, {}, context);
@@ -1412,235 +1414,67 @@ describe("reload: fates (slice 7b §4)", () => {
 	});
 });
 
-describe('reload: fates start dependents first (decision "Swaps: dependents first")', () => {
-	/** A provider: its name and `echo`, which answers it. */
-	const Base = local("app.base", { version: 1, params: {}, members: { name: str(), echo: method(undefined, str()) } });
-	/** `Base` v2: a member added, so a consumer of v2 binds only the new code. */
-	const BaseV2 = evolve(Base, (e) => e.addState("extra", str()));
-	/** A dependent with empty params (it contributes): its label over the provider's name, `ask` through `echo`. */
-	const User = local("app.user", { version: 1, params: {}, members: { label: str(), ask: method(undefined, str()) } });
-	/** A remote dependent held over a link. */
-	const Viewer = remote("app.viewer", {
-		version: 1,
-		params: {},
-		hostAddress: () => Server(),
-		variants: { v: { state: { label: str() }, methods: { ask: method(undefined, str()) } } },
-	});
-	const Names = defineRegistry<string, string[]>("app.user-names", { version: 1 });
-
-	/** A host loaded with `facets`, its background errors collected. */
-	async function loadedFacets(facets: readonly PluginFacet[]) {
-		const errors: HostError[] = [];
-		const host = createHost({ onError: (error) => errors.push(error) });
-		await host.load(facets, context);
-		return { host, errors };
-	}
-
-	/** Serves `Base` as code `code`; its new code opens a native that waits for `opened` when given (a restart). */
-	function serveBase(h: FacetHost, code: string, opened?: Promise<void>): void {
-		h.serve(Base, (_, self) => {
-			if (opened !== undefined)
+describe("reload: a restart's readiness while the old attempt drains", () => {
+	it("shows a failed request while it lasts: a request that recovers shows the object live again, new calls wait", async () => {
+		const Flaky = local("app.flaky", { version: 1, params: { id: int() }, members: { name: str() } });
+		let failing = true;
+		const flaky = defineFacet((h) =>
+			h.serve(Flaky, (_, self) => {
 				self.open(
-					async () => await opened,
+					async () => {
+						if (failing) throw new Error("flaky is down");
+						return null;
+					},
 					() => {},
 				);
-			return { name: constant(code), echo: async () => code };
-		});
-	}
-
-	/** A dependent's members as code `code` over `base`: its label over the provider's name, `ask` through `echo`. */
-	function over(own: Self, code: string, base: Reference<typeof Base>) {
-		return {
-			label: own.derive([base.name], ([name]) => `${code} ${name}`),
-			ask: async (ctx: Context) => `${code}>${await base.echo(ctx)}`,
-		};
-	}
-
-	/** Serves `User` as code `code` over `Base`. */
-	function serveUser(h: FacetHost, code: string): void {
-		h.serve(User, (_, own) => over(own, code, own.get(Base, {})));
-	}
-
-	it("a pure dependent and its provider in one plugin both swap: no parking, its contribution replaced in one batch", async () => {
-		const composed: string[][] = [];
-		const registry = defineFacet((h) =>
-			h.serve(Names, {
-				compose: (table) => {
-					const names = table.map(({ value }) => value);
-					composed.push(names);
-					return names;
-				},
+				return { name: constant("flaky") };
 			}),
 		);
-		const app = (code: string) =>
-			defineFacet((h) => {
-				serveBase(h, code);
-				h.serve(User, (_, own) => {
-					(own as unknown as StoreSelf).contribute(Names, code);
-					return over(own, code, own.get(Base, {}));
-				});
-			});
-		const { host, errors } = await loadedFacets([
-			{ name: "@test/app", facet: app("v1") },
-			{ name: "@test/names", facet: registry },
-		]);
-		const user = await host.get(User, {}, context);
-		const names = await host.registry(Names, context);
-		expect(names.value).toEqual(["v1"]);
-		const frames: string[][] = [];
-		(await names.watch(context)).start(async (call) => {
-			if (call.kind === "value") frames.push(call.value);
-		});
-		composed.length = 0;
-		const report = await host.reload(
+		const gate = Promise.withResolvers<void>();
+		const gates = [gate.promise];
+		const host = createHost({ onError: () => {} });
+		await host.load(
 			[
-				{ name: "@test/app", facet: app("v2") },
-				{ name: "@test/names", facet: registry },
+				{ name: "@test/app", facet: defineFacet((h) => servePure(h, "v1", 1, gates)) },
+				{ name: "@test/flaky", facet: flaky },
 			],
 			context,
 		);
-		// The report keeps the order of the objects: the provider first.
-		expect(report.objects).toEqual([
-			{ object: "app.base", kind: "swapped" },
-			{ object: "app.user", kind: "swapped" },
-		]);
+		const pure = await host.get(Pure, {}, context);
+		const down = host.hold(Flaky, { id: 1 }, context);
+		await vi.waitFor(() => expect(down.state.value.kind).toBe("failed"));
+		const running = pure.bump(context);
 		await flushed();
-		// The old contribution left in the batch the new one entered: one composition, never a table without it.
-		expect(names.value).toEqual(["v2"]);
-		expect(composed).toEqual([["v2"]]);
-		await delivered();
-		expect(frames).toEqual([["v2"]]);
-		expect(user.label.value).toBe("v2 v2");
-		expect(await user.ask(context)).toBe("v2>v2");
-		expect(failures(errors)).toEqual([]);
-		await host.close(context);
-	});
-
-	it("a remote dependent's holds never see loading; its calls reach the provider's new code", async () => {
-		const serve = (h: FacetHost<TestPrincipal>, code: string) => {
-			serveBase(h as FacetHost, code);
-			h.serve(Viewer, (_, _principal, own) => ({ variant: "v", members: over(own, code, own.get(Base, {})) }));
-		};
-		const { server, client } = await linked((h) => serve(h, "v1"));
-		const viewer = await client.get(Viewer, {}, context);
-		const states = statesOf(await viewer.state.watch(context));
-		const report = await server.reload(
-			[{ name: "@test/app", facet: defineFacet<TestPrincipal>((h) => serve(h, "v2")) }],
+		const needsFlaky = (h: FacetHost) =>
+			h.serve(Pure, (_, self) => {
+				self.get(Flaky, { id: 1 });
+				return { n: constant(0), label: constant("v2"), bump: async () => 2 };
+			});
+		await host.reload(
+			[
+				{ name: "@test/app", facet: defineFacet(needsFlaky) },
+				{ name: "@test/flaky", facet: flaky },
+			],
 			context,
 		);
-		expect(report.objects).toEqual([
-			{ object: "app.base", kind: "swapped" },
-			{ object: "app.viewer", kind: "swapped" },
-		]);
-		expect(await viewer.ask(context)).toBe("v2>v2");
-		await transported();
-		expect(viewer.label.value).toBe("v2 v2");
-		expect(states).toEqual([]);
-		await client.close(context);
-		await server.close(context);
-	});
-
-	it("a dependent whose new code needs the provider's new version parks, then goes live: never on the old instance", async () => {
-		const app = (code: string, next: boolean) =>
-			defineFacet((h) => {
-				if (next) {
-					h.serve(BaseV2, () => ({ name: constant(code), extra: constant("extra"), echo: async () => code }));
-				} else serveBase(h, code);
-				h.serve(User, (_, own) => {
-					if (next) {
-						const base = own.get(BaseV2, {});
-						return {
-							label: own.derive([base.name, base.extra], ([name, extra]) => `${code} ${name} ${extra}`),
-							ask: async (ctx: Context) => `${code}>${await base.echo(ctx)}`,
-						};
-					}
-					return over(own, code, own.get(Base, {}));
-				});
-			});
-		const { host, errors } = await loadedFacets([{ name: "@test/app", facet: app("v1", false) }]);
-		const user = await host.get(User, {}, context);
-		const report = await host.reload([{ name: "@test/app", facet: app("v2", true) }], context);
-		// Started first, the dependent's v2 request does not bind the provider still on v1 (`ChordObject.hold`): it
-		// waits unbound, then binds the provider's swap and parks until its new instance is live.
-		expect(report.objects).toEqual([
-			{ object: "app.base", kind: "swapped" },
-			{
-				object: "app.user",
-				kind: "parked",
-				cause: {
-					kind: "waiting",
-					error: expect.objectContaining({ message: expect.stringContaining("app.base v2 is not served here") }),
-				},
-			},
-		]);
-		await flushed();
-		expect(user.state.value).toEqual({ kind: "live" });
-		expect(user.label.value).toBe("v2 v2 extra");
-		expect(await user.ask(context)).toBe("v2>v2");
-		expect(errors.filter(({ kind }) => kind === "activation_failed" || kind === "object_failed")).toEqual([]);
-		await host.close(context);
-	});
-
-	it("a pure dependent of a provider that restarts swaps; its calls park until the provider's new instance is live", async () => {
-		const opened = Promise.withResolvers<void>();
-		const app = (code: string, natives: boolean) =>
-			defineFacet((h) => {
-				serveBase(h, code, natives ? opened.promise : undefined);
-				serveUser(h, code);
-			});
-		const { host } = await loadedFacets([{ name: "@test/app", facet: app("v1", false) }]);
-		const user = await host.get(User, {}, context);
-		const report = await host.reload([{ name: "@test/app", facet: app("v2", true) }], context);
-		expect(report.objects).toEqual([
-			{ object: "app.base", kind: "restarted" },
-			{ object: "app.user", kind: "swapped" },
-		]);
-		await flushed();
-		// Live on its new code over the provider's last values while the provider restarts.
-		expect(user.state.value).toEqual({ kind: "live" });
-		expect(user.label.value).toBe("v2 v1");
-		const asked = user.ask(context);
-		await flushed();
-		opened.resolve();
-		expect(await asked).toBe("v2>v2");
-		await flushed();
-		expect(user.label.value).toBe("v2 v2");
-		await host.close(context);
-	});
-
-	it("a provider that went live after its dependent (a retry after a failure) swaps first: the dependent parks and recovers", async () => {
-		const selves: Self[] = [];
-		const app = (code: string) =>
-			defineFacet((h) => {
-				h.serve(Base, (_, own) => {
-					selves.push(own);
-					return { name: constant(code), echo: async () => code };
-				});
-				serveUser(h, code);
-			});
-		const { host } = await loadedFacets([{ name: "@test/app", facet: app("v1") }]);
-		const user = await host.get(User, {}, context);
-		const base = await host.get(Base, {}, context);
-		failLive(attempted, selves.at(-1)!, new ChordError({ code: "unavailable", message: "boom" }));
-		await flushed();
-		base.retry();
-		await flushed();
-		expect(base.state.value).toEqual({ kind: "live" });
-		const report = await host.reload([{ name: "@test/app", facet: app("v2") }], context);
-		// The objects in the order they went live: the dependent first, so the provider's swap starts before it.
-		expect(report.objects).toEqual([
-			{ object: "app.user", kind: "parked", cause: expect.objectContaining({ kind: "waiting" }) },
-			{ object: "app.base", kind: "swapped" },
-		]);
-		await flushed();
-		expect(user.state.value).toEqual({ kind: "live" });
-		expect(user.label.value).toBe("v2 v2");
-		expect(await user.ask(context)).toBe("v2>v2");
+		// The successor's request failed: holders see it while it lasts (old work still runs on the old attempt).
+		expect(pure.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
+		failing = false;
+		down.retry();
+		await vi.waitFor(() => expect(down.state.value.kind).toBe("live"));
+		// Recovered during the drain: the old attempt is shown again, and a new call waits for the new code.
+		expect(pure.state.value).toEqual({ kind: "live" });
+		const next = pure.bump(context);
+		gate.resolve();
+		expect(await running).toBe(1);
+		expect(await next).toBe(2);
+		expect(pure.label.value).toBe("v2");
+		down.release();
 		await host.close(context);
 	});
 });
 
-describe("reload: the pure swap (slice 7b §5)", () => {
+describe("reload: a restart's old attempt (rules 1-4)", () => {
 	it("lets a running call finish on the old attempt's handles; a new call waits at the gate for the new code", async () => {
 		const gate = Promise.withResolvers<void>();
 		const { host } = await loaded((h) => servePure(h, "v1", 1, [gate.promise]));
@@ -1648,14 +1482,14 @@ describe("reload: the pure swap (slice 7b §5)", () => {
 		const old = pure.bump(context);
 		await flushed();
 		await reloadApp(host, (h) => servePure(h, "v2", 10));
-		// The old call commits through its old handle after the swap.
+		// The old call commits through its old handle after the commit.
 		gate.resolve();
 		expect(await old).toBe(1);
 		expect(await pure.bump(context)).toBe(11);
 		await host.close(context);
 	});
 
-	it("an old call touching a document whose version rose throws once (R15); the document is migrated", async () => {
+	it("old work writes a document whose version the reload raises; the new code migrates what it wrote", async () => {
 		const V1 = defineState("doc", COUNTER);
 		const V2 = defineState("doc", {
 			schema: obj({ n: int(), unit: str() }),
@@ -1686,10 +1520,13 @@ describe("reload: the pure swap (slice 7b §5)", () => {
 		await flushed();
 		await reloadApp(host, (h) => serve(h, V2, []));
 		await flushed();
-		expect(pure.label.value).toBe('{"n":1,"unit":"pcs"}');
+		// The new factory has not run: the old attempt's documents are as the old code declared them.
+		expect(pure.label.value).toBe('{"n":1}');
 		gate.resolve();
-		expect(await rejection(old)).toMatchObject({ code: "released", reason: "version" });
-		expect(await pure.bump(context)).toBe(2);
+		expect(await old).toBe(2);
+		await flushed();
+		expect(pure.label.value).toBe('{"n":2,"unit":"pcs"}');
+		expect(await pure.bump(context)).toBe(3);
 		await host.close(context);
 	});
 
@@ -1765,7 +1602,7 @@ describe("reload: the pure swap (slice 7b §5)", () => {
 		await host.close(context);
 	});
 
-	it("hands its routines over: the old ones aborted, the new ones start after the old calls finished", async () => {
+	it("stops its routines at once; their calls drain before the new ones start", async () => {
 		const events: string[] = [];
 		const release = Promise.withResolvers<void>();
 		const serve = (h: FacetHost, label: string) =>
@@ -1836,10 +1673,10 @@ describe("reload: the pure swap (slice 7b §5)", () => {
 	});
 });
 
-describe("reload: a stuck routine call past the handover", () => {
+describe("reload: a stuck routine call past the drain", () => {
 	fakeTimers();
 
-	it("an old routine call stuck past the handover: drain_timeout, the old attempt sealed, its commit refused (audit A12)", async () => {
+	it("an old routine call stuck past the reload drain bound: drain_timeout, the old attempt sealed, its commit refused", async () => {
 		const stuck = Promise.withResolvers<void>();
 		let late: Promise<unknown> | undefined;
 		const errors: HostError[] = [];
@@ -1871,10 +1708,404 @@ describe("reload: a stuck routine call past the handover", () => {
 	});
 });
 
+/** The provider of the old-work shapes: `work` reaches back into the plugin after its gate; `x` answers at once. */
+const Provider = local("app.provider", {
+	version: 1,
+	params: {},
+	members: { work: method(undefined, str()), x: method(undefined, str()) },
+});
+
+/** `Provider` raised by a reload: a new member, `accepts` keeping version 1. */
+const ProviderV2 = evolve(Provider, (e) => e.addState("extra", str()));
+
+/** The dependent of the old-work shapes: it holds the provider; `ping` may call it back. */
+const Dependent = local("app.dependent", {
+	version: 1,
+	params: {},
+	members: { ping: method(undefined, str()), slow: method(undefined, str()) },
+});
+
+/** `Dependent` raised by a reload: a new member, `accepts` keeping version 1. */
+const DependentV2 = evolve(Dependent, (e) => e.addState("extra", str()));
+
+/** A third object the shapes create or chain through: it holds the provider. */
+const Third = local("app.third", { version: 1, params: { id: str() }, members: { ping: method(undefined, str()) } });
+
+/** How a shape's plugin behaves: what `work` does after its gate, what `ping` does, which contracts the reload raises. */
+type Shape = {
+	readonly work: (ctx: Ctx, code: string) => Promise<string>;
+	readonly ping?: (provider: Reference<typeof Provider>, ctx: Ctx, code: string) => Promise<string>;
+	readonly slow?: (provider: Reference<typeof Provider>, ctx: Ctx, code: string) => Promise<string>;
+	readonly raise?: "provider" | "both";
+};
+
+/** The shape's plugin at `code` (`v1`, then `v2` for the reload); `work` and `slow` first await `gates.shift()`. */
+function shapePlugin(code: string, shape: Shape, gates: Promise<void>[]) {
+	const raised = code !== "v1";
+	const P = raised && shape.raise !== undefined ? ProviderV2 : Provider;
+	const D = raised && shape.raise === "both" ? DependentV2 : Dependent;
+	const extra = P === ProviderV2 ? { extra: constant("x") } : {};
+	return defineFacet((h) => {
+		h.serve(
+			P as typeof Provider,
+			() => ({
+				...extra,
+				work: async (ctx: Ctx) => {
+					await gates.shift();
+					return shape.work(ctx, code);
+				},
+				x: async () => `${code} x`,
+			}),
+			P === ProviderV2 ? { accepts: { 1: {} } } : {},
+		);
+		h.serve(
+			D as typeof Dependent,
+			(_, self) => {
+				const provider = self.get(P as typeof Provider, {});
+				return {
+					...(D === DependentV2 ? { extra: constant("x") } : {}),
+					ping: async (ctx: Ctx) => (shape.ping === undefined ? `${code} ping` : shape.ping(provider, ctx, code)),
+					slow: async (ctx: Ctx) => {
+						await gates.shift();
+						return shape.slow === undefined ? `${code} slow` : shape.slow(provider, ctx, code);
+					},
+				};
+			},
+			D === DependentV2 ? { accepts: { 1: {} } } : {},
+		);
+		h.serve(Third, (_, self) => {
+			self.get(P as typeof Provider, {});
+			return { ping: async () => `${code} third` };
+		});
+	});
+}
+
+/**
+ * Loads the shape, starts the provider's `work` (held at a gate), reloads to `v2` and opens the gate: resolves with
+ * `work`'s answer (or its error's message) and how long it took after the gate opened.
+ */
+async function runShape(shape: Shape, options: { readonly before?: (host: Host) => Promise<void> } = {}) {
+	const gates: Promise<void>[] = [];
+	const gate = Promise.withResolvers<void>();
+	const host = createHost({ onError: () => {} });
+	await host.load([{ name: "@test/app", facet: shapePlugin("v1", shape, gates) }], context);
+	const provider = await host.get(Provider, {}, context);
+	await host.get(Dependent, {}, context);
+	await options.before?.(host);
+	gates.push(gate.promise);
+	const work = provider.work(context).catch((error: Error) => `rejected: ${error.message}`);
+	await flushed();
+	await host.reload([{ name: "@test/app", facet: shapePlugin("v2", shape, gates) }], context);
+	const opened = performance.now();
+	gate.resolve();
+	const answer = await work;
+	const took = performance.now() - opened;
+	await host.close(context);
+	return { answer, took };
+}
+
+describe('reload: old work finishes on old code (decision "Reload restarts every affected object")', () => {
+	it("a provider's running call reaches its dependent through ctx.get while both restart: no stall", async () => {
+		const { answer, took } = await runShape({
+			work: async (ctx, code) => `${code} work -> ${await (await ctx.get(Dependent, {})).ping(ctx)}`,
+		});
+		// The dependent's new attempt binds the provider's open old attempt (rule 5) and goes live.
+		expect(answer).toBe("v1 work -> v2 ping");
+		expect(took).toBeLessThan(1_000);
+	});
+
+	it("a chain of three: the work reaches an object whose new attempt needs the dependent, which needs the provider", async () => {
+		const { answer } = await runShape({
+			work: async (ctx, code) => `${code} work -> ${await (await ctx.get(Third, { id: "a" })).ping(ctx)}`,
+		});
+		expect(answer).toBe("v1 work -> v2 third");
+	});
+
+	it("re-entry: work → dependent → the provider again runs on the provider's old attempt", async () => {
+		const { answer } = await runShape({
+			work: async (ctx, code) => `${code} work -> ${await (await ctx.get(Dependent, {})).ping(ctx)}`,
+			ping: async (provider, ctx, code) => `${code} ping -> ${await provider.x(ctx)}`,
+		});
+		expect(answer).toBe("v1 work -> v2 ping -> v1 x");
+	});
+
+	it("self re-entry: work → ctx.get of its own object runs on its old attempt", async () => {
+		const { answer } = await runShape({
+			work: async (ctx, code) => `${code} work -> ${await (await ctx.get(Provider, {})).x(ctx)}`,
+		});
+		expect(answer).toBe("v1 work -> v1 x");
+	});
+
+	it("mutual drains: the provider's call reaches the dependent while the dependent's call reaches the provider", async () => {
+		const gates: Promise<void>[] = [];
+		const shape: Shape = {
+			work: async (ctx, code) => `${code} work -> ${await (await ctx.get(Dependent, {})).ping(ctx)}`,
+			slow: async (provider, ctx, code) => `${code} slow -> ${await provider.x(ctx)}`,
+		};
+		const host = createHost({ onError: () => {} });
+		await host.load([{ name: "@test/app", facet: shapePlugin("v1", shape, gates) }], context);
+		const provider = await host.get(Provider, {}, context);
+		const dependent = await host.get(Dependent, {}, context);
+		const first = Promise.withResolvers<void>();
+		const second = Promise.withResolvers<void>();
+		gates.push(first.promise, second.promise);
+		const work = provider.work(context);
+		const slow = dependent.slow(context);
+		await flushed();
+		await host.reload([{ name: "@test/app", facet: shapePlugin("v2", shape, gates) }], context);
+		second.resolve();
+		first.resolve();
+		expect(await slow).toBe("v1 slow -> v1 x");
+		expect(await work).toMatch(/^v1 work -> v[12] ping$/);
+		await host.close(context);
+	});
+
+	it("the reload raises the provider's version and the dependent's new code needs it: the work runs on the dependent's old attempt", async () => {
+		const { answer, took } = await runShape({
+			raise: "provider",
+			work: async (ctx, code) => `${code} work -> ${await (await ctx.get(Dependent, {})).ping(ctx)}`,
+		});
+		// The dependent's successor waits for the provider's: its old attempt stays open for old work (rule 3).
+		expect(answer).toBe("v1 work -> v1 ping");
+		expect(took).toBeLessThan(1_000);
+	});
+
+	it("both versions raised (with accepts): old work's getter at the old version binds the dependent's open old attempt", async () => {
+		const { answer } = await runShape({
+			raise: "both",
+			work: async (ctx, code) => `${code} work -> ${await (await ctx.get(Dependent, {})).ping(ctx)}`,
+		});
+		expect(answer).toBe("v1 work -> v1 ping");
+	});
+
+	it("old work asking for a version the new code dropped, with no old attempt serving it, fails at once", async () => {
+		const Dropped = local("app.dropped", { version: 1, params: {}, members: { ping: method(undefined, str()) } });
+		const Raised = local("app.dropped", {
+			version: 2,
+			params: {},
+			members: { ping: method(undefined, str()), n: int() },
+		});
+		const app = (code: string, gate: Promise<void>) =>
+			defineFacet((h) => {
+				h.serve(Provider, () => ({
+					work: async (ctx: Ctx) => {
+						await gate;
+						return (await ctx.get(Dropped, {})).ping(ctx);
+					},
+					x: async () => code,
+				}));
+				if (code === "v1") h.serve(Dropped, () => ({ ping: async () => "v1 ping" }));
+				else h.serve(Raised, () => ({ ping: async () => "v2 ping", n: constant(0) }));
+			});
+		const gate = Promise.withResolvers<void>();
+		const host = createHost({ onError: () => {} });
+		await host.load([{ name: "@test/app", facet: app("v1", gate.promise) }], context);
+		const provider = await host.get(Provider, {}, context);
+		const work = rejection(provider.work(context));
+		await flushed();
+		await host.reload([{ name: "@test/app", facet: app("v2", gate.promise) }], context);
+		const opened = performance.now();
+		gate.resolve();
+		// No object of the dropped version is open: old work never waits for a code update (rule 2).
+		expect(await work).toMatchObject({ code: "contract_mismatch" });
+		expect(performance.now() - opened).toBeLessThan(1_000);
+		await host.close(context);
+	});
+
+	it("old work creating an object that did not exist: it starts on the new code and binds the provider's open old attempt", async () => {
+		const { answer } = await runShape({
+			work: async (ctx, code) => `${code} work -> ${await (await ctx.get(Third, { id: "fresh" })).ping(ctx)}`,
+		});
+		expect(answer).toBe("v1 work -> v2 third");
+	});
+
+	it("a root given the method's ctx (without its signal) is old work; one without it is new work", async () => {
+		let host: Host | undefined;
+		const viaRoot = (scope: (ctx: Ctx) => Context): Shape => ({
+			work: async (ctx, code) => {
+				const answer = await host!.root(async (root) => (await root.get(Provider, {})).x(root), scope(ctx));
+				return `${code} work -> ${answer}`;
+			},
+		});
+		const run = async (shape: Shape) => {
+			const gates: Promise<void>[] = [];
+			const gate = Promise.withResolvers<void>();
+			host = createHost({ reloadDrainTimeout: 300, onError: () => {} });
+			await host.load([{ name: "@test/app", facet: shapePlugin("v1", shape, gates) }], context);
+			const provider = await host.get(Provider, {}, context);
+			gates.push(gate.promise);
+			const work = provider.work(context).catch((error: Error) => `rejected: ${error.message}`);
+			await flushed();
+			await host.reload([{ name: "@test/app", facet: shapePlugin("v2", shape, gates) }], context);
+			gate.resolve();
+			const answer = await work;
+			await host.close(context);
+			return answer;
+		};
+		expect(await run(viaRoot((ctx) => withoutAbortSignal(ctx)))).toBe("v1 work -> v1 x");
+		// Without the ctx the root's call is new work: it waits for the provider's new attempt, which waits for this
+		// call's drain, until the reload drain bound cuts the call.
+		expect(await run(viaRoot(() => context))).toMatch(/^rejected: .*replaced by a reload/);
+	});
+
+	it("a call routed to an old attempt after its drain began joins the drain: it is not cut at the seal", async () => {
+		const gates: Promise<void>[] = [];
+		const long = Promise.withResolvers<void>();
+		const shape: Shape = {
+			raise: "provider",
+			work: async (ctx, code) => `${code} work -> ${await (await ctx.get(Dependent, {})).slow(ctx)}`,
+		};
+		const host = createHost({ onError: () => {} });
+		await host.load([{ name: "@test/app", facet: shapePlugin("v1", shape, gates) }], context);
+		const provider = await host.get(Provider, {}, context);
+		await host.get(Dependent, {}, context);
+		const gate = Promise.withResolvers<void>();
+		gates.push(gate.promise, long.promise);
+		const work = provider.work(context);
+		await flushed();
+		await host.reload([{ name: "@test/app", facet: shapePlugin("v2", shape, gates) }], context);
+		gate.resolve();
+		// The dependent's old attempt runs the routed `slow` while its successor waits for the provider's.
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		long.resolve();
+		expect(await work).toBe("v1 work -> v1 slow");
+		await host.close(context);
+	});
+
+	it("old work starts a job, writes documents and tables and reads a live query on the old code; the new factory runs after", async () => {
+		const store = await memoryStore();
+		const opened: string[] = [];
+		const latch = Promise.withResolvers<void>();
+		const Notes1 = defineState("notes", {
+			schema: obj({ list: arr(str()) }),
+			version: 1,
+			initial: () => ({ list: [] }),
+			persist: true,
+			checkpointWhen: () => true,
+		});
+		const Notes2 = defineState("notes", {
+			schema: obj({ list: arr(str()), count: int() }),
+			version: 2,
+			initial: () => ({ list: [], count: 0 }),
+			migrate: (old) => ({ list: old.list as string[], count: (old.list as string[]).length }),
+			persist: true,
+			checkpointWhen: () => true,
+		});
+		const Job1 = defineJob("app.job", { version: 1, args: obj({ text: str() }), result: str() });
+		const Job2 = defineJob("app.job", {
+			version: 2,
+			args: obj({ text: str(), priority: int() }),
+			result: str(),
+			accepts: { 1: { args: (old: { text: string }) => ({ ...old, priority: 0 }), result: (result) => result } },
+		});
+		const Items = defineTable("items", { version: 1, columns: { id: int(), text: str() }, key: ["id"] });
+		const Store = local("app.store", {
+			version: 1,
+			params: {},
+			members: {
+				rows: arr(obj({ id: int(), text: str() })),
+				work: method(undefined, str()),
+				read: method(undefined, str()),
+			},
+		});
+		const v1 = defineFacet((h) =>
+			h.serve(Store, (_, self) => {
+				self.open(
+					async () => void opened.push("v1"),
+					() => {},
+				);
+				const notes = self.state(Notes1);
+				const job = self.job(Job1, { run: async ({ text }) => `v1 ran ${text}` });
+				const items = self.table(Items);
+				const rows = self.query(
+					items,
+					query(Items).orderBy((item) => item.id, "desc"),
+					10,
+				);
+				return {
+					rows,
+					work: async (ctx: Ctx) => {
+						await latch.promise;
+						await notes.change((draft) => void draft.list.push("old"), ctx);
+						await self.tx(async (tx) => tx.put(items, { id: 1, text: "old" }), ctx);
+						const outcome = await (await job.start({ text: "a" }, ctx)).outcome(ctx);
+						const result = outcome.kind === "done" ? outcome.result : outcome.error.kind;
+						return `v1: ${notes.value.list.join(",")} | ${JSON.stringify(rows.value)} | ${result}`;
+					},
+					read: async () => `v1: ${JSON.stringify(notes.value)}`,
+				};
+			}),
+		);
+		const v2 = defineFacet((h) =>
+			h.serve(Store, (_, self) => {
+				self.open(
+					async () => void opened.push("v2"),
+					() => {},
+				);
+				const notes = self.state(Notes2);
+				self.job(Job2, { run: async ({ text, priority }) => `v2 ran ${text} ${priority}` });
+				const items = self.table(Items);
+				return {
+					rows: self.query(
+						items,
+						query(Items).orderBy((item) => item.id, "desc"),
+						10,
+					),
+					work: async () => "v2",
+					read: async () => `v2: ${JSON.stringify(notes.value)}`,
+				};
+			}),
+		);
+		const host = createHost({ store, onError: () => {} });
+		await host.load([{ name: "@test/app", facet: v1 }], context);
+		const reference = await host.get(Store, {}, context);
+		const working = reference.work(context);
+		await flushed();
+		await host.reload([{ name: "@test/app", facet: v2 }], context);
+		await flushed();
+		expect(opened).toEqual(["v1"]);
+		latch.resolve();
+		expect(await working).toBe('v1: old | [{"id":1,"text":"old"}] | v1 ran a');
+		expect(await reference.read(context)).toBe('v2: {"list":["old"],"count":1}');
+		expect(opened).toEqual(["v1", "v2"]);
+		await host.close(context);
+		await store.close(context);
+	});
+});
+
+describe("reload: the reload drain bound", () => {
+	fakeTimers();
+
+	it("cuts a call still running at reloadDrainTimeout (released), reports drain_timeout, then the new code serves", async () => {
+		const stuck = Promise.withResolvers<void>();
+		const { host, errors } = await loaded((h) => servePure(h, "v1", 1, [stuck.promise]), {
+			reloadDrainTimeout: 2_000,
+		});
+		const pure = await host.get(Pure, {}, context);
+		const old = rejection(pure.bump(context));
+		await vi.advanceTimersByTimeAsync(0);
+		await reloadApp(host, (h) => servePure(h, "v2", 10));
+		await vi.advanceTimersByTimeAsync(1_999);
+		expect(errors.map(({ kind }) => kind)).not.toContain("drain_timeout");
+		await vi.advanceTimersByTimeAsync(1);
+		expect(errors.map(({ kind }) => kind)).toContain("drain_timeout");
+		expect(await old).toMatchObject({ code: "released" });
+		await vi.advanceTimersByTimeAsync(0);
+		expect(pure.label.value).toBe("v2");
+		stuck.resolve();
+		await host.close(context);
+	});
+
+	it("is at most closeTimeout", () => {
+		const host = createHost({ closeTimeout: 1_000, reloadDrainTimeout: 5_000, onError: () => {} });
+		expect((host as unknown as { readonly timeouts: { readonly reload: number } }).timeouts.reload).toBe(1_000);
+	});
+});
+
 describe("reload: GC", () => {
 	const attempts = instancesOf(Attempt, "activate");
 
-	it("collects a swapped-out attempt and its closures once its calls settled", async () => {
+	it("collects a restart's old attempt and its closures once it ended", async () => {
 		const gate = Promise.withResolvers<void>();
 		const { host } = await loaded((h) => servePure(h, "v1", 1, [gate.promise]));
 		const pure = await host.get(Pure, {}, context);
@@ -2014,8 +2245,8 @@ describe("reload: a parked attempt's handover (fix round 1)", () => {
 	});
 });
 
-describe("reload: swaps one after another (fix round 1)", () => {
-	it("a second swap does not wait for the first swap's old call; that call still finishes on its old code", async () => {
+describe("reload: two reloads in a row", () => {
+	it("the second does not wait for the first's old call, which finishes on its old code; the last code serves", async () => {
 		const gate = Promise.withResolvers<void>();
 		const { host, errors } = await loaded((h) => servePure(h, "v1", 1, [gate.promise]), { closeTimeout: 60_000 });
 		const pure = await host.get(Pure, {}, context);
@@ -2027,19 +2258,21 @@ describe("reload: swaps one after another (fix round 1)", () => {
 			resolved = true;
 		});
 		await flushed();
-		// Not held up by v1's call (Fable, Opus F1): resolved within a few turns, the gate open for new calls.
+		// Its report does not wait for the old attempt's drain: resolved within a few turns.
 		expect(resolved).toBe(true);
 		await second;
-		expect(pure.label.value).toBe("v3");
+		// The old attempt still runs v1's call: the reference sees it live meanwhile.
+		expect(pure.label.value).toBe("v1");
 		gate.resolve();
 		expect(await old).toBe(1);
 		expect(await pure.bump(context)).toBe(101);
+		expect(pure.label.value).toBe("v3");
 		expect(errors).toEqual([]);
 		await host.close(context);
 	});
 });
 
-describe("reload: a reference detaching from a parked swap's old instance (Opus G1)", () => {
+describe("reload: a reference detaching from a parked restart's old attempt (Opus G1)", () => {
 	it("follows the old instance while its call drains, then keeps its last value with the failure once", async () => {
 		const Missing = local("app.missing", { version: 1, params: {}, members: {} });
 		const gate = Promise.withResolvers<void>();
@@ -2057,7 +2290,7 @@ describe("reload: a reference detaching from a parked swap's old instance (Opus 
 		const report = await host.reload([{ name: "@test/app", facet: parked }], context);
 		expect(report.objects[0]).toMatchObject({ kind: "parked" });
 		expect(pure.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
-		// The old instance's call still commits: the reference follows it until it retires.
+		// The old attempt's call still commits: the reference follows it until it ended.
 		gate.resolve();
 		expect(await bumping).toBe(1);
 		await delivered();

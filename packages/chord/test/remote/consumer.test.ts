@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
-import { int, local, map, method, remote, str } from "../../src/contracts/index.ts";
+import { evolve, int, local, map, method, remote, str } from "../../src/contracts/index.ts";
 import { PluginError } from "../../src/data/index.ts";
-import { createHost, defineFacet, type HostError } from "../../src/host/index.ts";
+import { type Ctx, createHost, defineFacet, type FacetHost, type HostError } from "../../src/host/index.ts";
 import { resolveWatchable } from "../../src/host/reference.ts";
 import { memoryLinkPair } from "../../src/link/index.ts";
 import { DeflatedPart, jsonPart, type Part, wireError } from "../../src/link/internal.ts";
 import { nodeCompression } from "../../src/node/compression.ts";
 import { RemoteObject } from "../../src/remote/remote-object.ts";
+import { constant } from "../../src/state/index.ts";
 import {
 	addNote,
 	bindNext,
@@ -19,13 +20,17 @@ import {
 	linked,
 	metered,
 	Notes,
+	PlacedNotes,
 	RawPeer,
 	rawParent,
 	rawProvider,
 	rejection,
+	relayed,
 	SERVER_ADDRESS,
 	Server,
+	Session,
 	serveNotes,
+	type TestPrincipal,
 	testCodec,
 	transported,
 } from "../support.ts";
@@ -718,5 +723,141 @@ forEachCodec(() => {
 			expect(two.count.value).toBe(7);
 			expect(peer.closed).toBe(false);
 		});
+	});
+});
+
+describe('old work across hosts (decision "Reload restarts every affected object", `call.old`)', () => {
+	type Side = "server" | "worker";
+	const at = { server: () => Server(), worker: () => Session({ id: "S1" }) } as const;
+
+	/**
+	 * A provider on `side` whose `work` (after its gate) calls a dependent on the other host, which holds the provider
+	 * and calls its `x` back over the link: both reload at once while `work` runs. `work` runs as the worker's principal:
+	 * the server's link to the worker is trusted, so the dependent's hold of the provider names it either way, and the
+	 * back-call reaches the very object running `work`. When `raised`, the reload raises the provider's version (no
+	 * `accepts`) and the dependent's new code needs it; `dependentFirst` reloads the dependent's host first and the
+	 * provider's 50 ms later.
+	 */
+	async function backCall(side: Side, options: { readonly raised?: boolean; readonly dependentFirst?: boolean } = {}) {
+		const { raised = false, dependentFirst = false } = options;
+		const other: Side = side === "server" ? "worker" : "server";
+		const Provider = remote(`app.provider-${side}`, {
+			version: 1,
+			params: {},
+			hostAddress: at[side],
+			variants: { v: { state: {}, methods: { work: method(undefined, str()), x: method(undefined, str()) } } },
+		});
+		const ProviderV2 = evolve(Provider, (e) => e.addState("v", "more", str()));
+		const Dependent = remote(`app.dependent-${other}`, {
+			version: 1,
+			params: {},
+			hostAddress: at[other],
+			variants: { v: { state: {}, methods: { ping: method(undefined, str()) } } },
+		});
+		const gates: Promise<void>[] = [];
+		const serve = (h: FacetHost<TestPrincipal>, onSide: Side, code: string) => {
+			const P = raised && code === "v2" ? ProviderV2 : Provider;
+			const more = P === ProviderV2 ? { more: constant("m") } : {};
+			if (onSide === side)
+				h.serve(P as typeof Provider, () => ({
+					variant: "v",
+					members: {
+						...more,
+						work: async (ctx: Ctx) => {
+							await gates.shift();
+							return `${code} work -> ${await (await ctx.get(Dependent, {})).ping(ctx)}`;
+						},
+						x: async () => `${code} x`,
+					},
+				}));
+			else
+				h.serve(Dependent, (_, _principal, self) => {
+					const provider = self.get(P as typeof Provider, {});
+					return {
+						variant: "v",
+						members: { ping: async (ctx: Ctx) => `${code} ping -> ${await provider.x(ctx)}` },
+					};
+				});
+		};
+		const workerFacet = (code: string) =>
+			defineFacet<TestPrincipal>((h) => {
+				serveNotes(h, PlacedNotes);
+				serve(h, "worker", code);
+			});
+		const { tab, server, workers } = await relayed({
+			trusted: true,
+			server: (h) => serve(h, "server", "v1"),
+			worker: (h) => serve(h, "worker", "v1"),
+		});
+		// The worker exists once a hold reached it.
+		await tab.get(PlacedNotes, { session: "S1" }, context);
+		const worker = workers.get("session|S1")!;
+		const host = side === "server" ? server : worker;
+		const principal: TestPrincipal = { kind: "worker", session: "S1" };
+		const work = () => host.root(async (ctx) => (await ctx.get(Provider, {})).work(ctx), context, { principal });
+		// A root keeps the dependent referenced (else it ends after each run, and the work would create it afresh).
+		const held = Promise.withResolvers<void>();
+		const kept = host.root(
+			async (ctx) => {
+				await ctx.get(Dependent, {});
+				await held.promise;
+			},
+			context,
+			{ principal },
+		);
+		expect(await work()).toBe("v1 work -> v1 ping -> v1 x");
+		const gate = Promise.withResolvers<void>();
+		gates.push(gate.promise);
+		const running = work();
+		await transported();
+		const reloadServer = () =>
+			server.reload(
+				[{ name: "@test/server", facet: defineFacet<TestPrincipal>((h) => serve(h, "server", "v2")) }],
+				context,
+			);
+		const reloadWorker = () => worker.reload([{ name: "@test/worker", facet: workerFacet("v2") }], context);
+		const [first, second] = side === "server" ? [reloadWorker, reloadServer] : [reloadServer, reloadWorker];
+		const reports = dependentFirst
+			? [await first(), await new Promise((resolve) => setTimeout(resolve, 50)).then(second)]
+			: await Promise.all([first(), second()]);
+		expect(reports.flatMap(({ failed }) => failed)).toEqual([]);
+		const opened = performance.now();
+		gate.resolve();
+		const answer = await running;
+		const took = performance.now() - opened;
+		held.resolve();
+		await kept;
+		await server.close(context);
+		return { answer, took };
+	}
+
+	it("a back-call from the dependent on the worker runs on the server provider's open old attempt", async () => {
+		const { answer, took } = await backCall("server");
+		// Without the flag, `x` would wait for the provider's new attempt, which waits for this very call's drain.
+		expect(answer).toBe("v1 work -> v2 ping -> v1 x");
+		expect(took).toBeLessThan(1_000);
+	});
+
+	it("a back-call from the dependent on the server runs on the worker provider's open old attempt", async () => {
+		const { answer, took } = await backCall("worker");
+		expect(answer).toBe("v1 work -> v2 ping -> v1 x");
+		expect(took).toBeLessThan(1_000);
+	});
+
+	it("the provider's version raised, which the dependent's new code needs: the work runs on the dependent's old attempt", async () => {
+		for (const side of ["server", "worker"] as const) {
+			const { answer, took } = await backCall(side, { raised: true });
+			// The dependent's successor waits for the provider's: its old attempt stays open for the work.
+			expect(answer).toBe("v1 work -> v1 ping -> v1 x");
+			expect(took).toBeLessThan(1_000);
+		}
+	});
+
+	it("the same with the dependent's host reloaded first: its readiness waits out the other host's version refusal", async () => {
+		for (const side of ["server", "worker"] as const) {
+			const { answer, took } = await backCall(side, { raised: true, dependentFirst: true });
+			expect(answer).toBe("v1 work -> v1 ping -> v1 x");
+			expect(took).toBeLessThan(1_000);
+		}
 	});
 });

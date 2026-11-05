@@ -8,6 +8,7 @@ import { defineState } from "../../src/documents/index.ts";
 import { type Ctx, createHost, defineFacet, type FacetHost, type Host, type Self } from "../../src/host/index.ts";
 import type { ChordHost } from "../../src/host/internal.ts";
 import { ChordObject } from "../../src/host/object.ts";
+import { defineJob } from "../../src/jobs/index.ts";
 import { type Link, memoryLinkPair } from "../../src/link/index.ts";
 import { binaryCodec, jsonPart, type Message } from "../../src/link/internal.ts";
 import { Hold } from "../../src/remote/hold.ts";
@@ -20,10 +21,8 @@ import {
 	fakeTimers,
 	flushed,
 	forEachCodec,
-	holdNextCommit,
 	instancesOf,
 	linked,
-	memoryStore,
 	PlacedNotes,
 	partValue,
 	RawPeer,
@@ -975,23 +974,6 @@ function reloadServer(server: Host<TestPrincipal>, setup: (host: FacetHost<TestP
 }
 
 describe("holds across a reload (slice 7b §6)", () => {
-	it("a swapped object keeps its holds: a fresh bound once the new instance is live, never loading (audit A9)", async () => {
-		const { server, client } = await linked((h) => serveShown(h, "v1"));
-		const shown = await client.get(Shown, {}, context);
-		await shown.bump(context);
-		const states = statesOf(await shown.state.watch(context));
-		const label = changesOf(await shown.label.watch(context));
-		const n = changesOf(await shown.n.watch(context));
-		await reloadServer(server, (h) => serveShown(h, "v2"));
-		await transported();
-		expect(label).toEqual([{ kind: "value", value: "v2", ops: [["r", "v2"]], retired: false }]);
-		// The fresh bound carries every member: an unchanged one may show one frame (nothing lost or stale).
-		expect(valuesOf(n)).toEqual([1]);
-		expect(states).toEqual([]);
-		expect(await shown.bump(context)).toBe(2);
-		await server.close(context);
-	});
-
 	it("a restarted object's holds see loading, then a fresh bound", async () => {
 		const { server, client } = await linked((h) => serveShown(h, "v1", true));
 		const shown = await client.get(Shown, {}, context);
@@ -1086,7 +1068,7 @@ describe("holds across a reload (slice 7b §6)", () => {
 		await server.close(context);
 	});
 
-	it("a swap sends each bound hold one fresh bound with the new instance's values, no state (audit A9)", async () => {
+	it("a restart sends each bound hold loading, then one fresh bound with the new instance's values", async () => {
 		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 		await server.load(
 			[{ name: "@test/app", facet: defineFacet<TestPrincipal>((h) => serveShown(h, "v1")) }],
@@ -1104,14 +1086,14 @@ describe("holds across a reload (slice 7b §6)", () => {
 		peer.received.length = 0;
 		await reloadServer(server, (h) => serveShown(h, "v2"));
 		await transported();
-		expect(new Set(peer.kinds())).toEqual(new Set(["bound"]));
+		expect(new Set(peer.kinds())).toEqual(new Set(["loading", "bound"]));
 		const entries = peer.received.flatMap((message) => (message.kind === "bound" ? message.holds : []));
 		expect(entries.map(({ hold }) => hold).sort()).toEqual([0, 1]);
 		for (const entry of entries) expect(SHOWN.named(entry.members)).toEqual({ label: "v2", n: 0 });
 		await server.close(context);
 	});
 
-	it("a swap during a full window: calls are answered by the old names until the fresh bound goes (audit A9)", async () => {
+	it("reloads during a full window: calls are answered by the old names until the fresh bound goes (audit A9)", async () => {
 		const Two = remote("app.two-variants", {
 			version: 1,
 			params: {},
@@ -1159,7 +1141,7 @@ describe("holds across a reload (slice 7b §6)", () => {
 		);
 		await server.reload([{ name: "@test/app", facet: changed }], context);
 		await peer.next("bound");
-		// Swaps in place while the window is full: the fresh bound waits for a slot, the hold answers by its old names.
+		// Restarts while the window is full: the fresh bound waits for a slot, the hold answers by its old names.
 		await server.reload([{ name: "@test/app", facet: serveTwo("a", "v2") }], context);
 		await transported();
 		peer.send({ kind: "call", call: 0, hold: 0, method: A.methods.bump! });
@@ -1179,7 +1161,7 @@ describe("holds across a reload (slice 7b §6)", () => {
 		await server.close(context);
 	});
 
-	it("collects the swapped-out instance while the hold's fresh bound waits for a slot (Astra, audit A9 GC)", async () => {
+	it("collects the old instance while the hold's fresh bound waits for a slot (Astra, audit A9 GC)", async () => {
 		const Type = remote("astra.audit-gc", {
 			version: 1,
 			params: {},
@@ -1218,6 +1200,112 @@ describe("holds across a reload (slice 7b §6)", () => {
 		await server.close(context);
 	});
 
+	it("a hold waiting for a window slot whose slot frees between the old attempt's seal and its end binds safely", async () => {
+		const Window = remote("app.window", {
+			version: 1,
+			params: {},
+			hostAddress: () => Server(),
+			variants: {
+				main: {
+					state: { n: int() },
+					methods: { bump: method(undefined, int()), slow: method(undefined, str()), start: method() },
+				},
+			},
+		});
+		const Wait = defineJob("app.window-wait", { version: 1, args: obj({}), result: str() });
+		const gate = Promise.withResolvers<void>();
+		/** Called once the old attempt's seal cut the job's run: the test frees the window's slots then. */
+		let atSeal = (): void => {};
+		const serveWindow = (code: string) =>
+			defineFacet<TestPrincipal>((h) =>
+				h.serve(Window, (_, _principal, self) => {
+					self.open(
+						async () => code,
+						() => {},
+					);
+					const doc = self.state(N);
+					const job = self.job(Wait, {
+						run: (_args, ctx) =>
+							new Promise<string>((resolve) =>
+								ctx.abortSignal?.addEventListener("abort", () => {
+									atSeal();
+									resolve("cut");
+								}),
+							),
+					});
+					return {
+						variant: "main",
+						members: {
+							n: self.derive([doc], ([d]) => d.n),
+							bump: async (ctx: Context) => {
+								await doc.change((draft) => {
+									draft.n += 1;
+								}, ctx);
+								return doc.value.n;
+							},
+							start: async (ctx: Context) => {
+								await job.start({}, ctx);
+								return null;
+							},
+							slow: async () => {
+								await gate.promise;
+								return `${code} slow`;
+							},
+						},
+					};
+				}),
+			);
+		const errors: string[] = [];
+		const server = createHost<TestPrincipal>({
+			address: Server(),
+			principal: { kind: "server" },
+			onError: (error) => errors.push(error.kind),
+		});
+		await server.load([{ name: "@test/app", facet: serveWindow("v1") }], context);
+		const [a, b] = memoryLinkPair();
+		server.accept(a, { principal: { kind: "owner" }, codec: testCodec() }, context);
+		const peer = new RawPeer(b, { ack: false });
+		const names = wireNames(Window, "main");
+		await peer.next("hello");
+		hold(peer, 0, Window);
+		await peer.next("bound");
+		peer.ack();
+		peer.send({ kind: "call", call: 0, hold: 0, method: names.methods.start! });
+		await peer.next("result");
+		// Two messages unacknowledged: the window (two) is full.
+		peer.send({ kind: "call", call: 1, hold: 0, method: names.methods.bump! });
+		await peer.next("state");
+		peer.send({ kind: "call", call: 2, hold: 0, method: names.methods.bump! });
+		await peer.next("result");
+		await peer.next("result");
+		await transported();
+		// A running call keeps the old attempt open; the acks come right at its seal (the job's run is cut there).
+		peer.send({ kind: "call", call: 3, hold: 0, method: names.methods.slow! });
+		await transported();
+		atSeal = () => {
+			peer.ack();
+			peer.ack();
+		};
+		await server.reload([{ name: "@test/app", facet: serveWindow("v2") }], context);
+		// A second hold during the drain: it binds the old attempt shown live, but waits for a slot.
+		hold(peer, 1, Window);
+		await transported();
+		gate.resolve();
+		expect(partValue((await peer.next("result")).value!)).toBe("v1 slow");
+		await transported();
+		await transported();
+		expect(errors).not.toContain("protocol_error");
+		expect(peer.closed).toBe(false);
+		// Both holds end on the new code.
+		for (let rounds = 0; rounds < 10 && !peer.received.some((m) => m.kind === "bound"); rounds++) await transported();
+		peer.ack();
+		peer.ack();
+		await transported();
+		const bound = peer.received.filter((message) => message.kind === "bound").flatMap(({ holds }) => holds);
+		expect(new Set(bound.map(({ hold }) => hold))).toEqual(new Set([0, 1]));
+		await server.close(context);
+	});
+
 	it("through a relay: a worker's reload reaches the tab as it reaches a direct consumer", async () => {
 		const { tab, workers, server } = await relayed();
 		const notes = await tab.get(PlacedNotes, { session: "S1" }, context);
@@ -1237,7 +1325,7 @@ describe("holds across a reload (slice 7b §6)", () => {
 	});
 });
 
-describe("holds across more than one swap (fix round 1)", () => {
+describe("holds across more than one reload (fix round 1)", () => {
 	it("keeps a real subscriber when a changed constant later becomes dynamic", async () => {
 		type P = { kind: "server" } | { kind: "tab" };
 		const Server = hostKind("sol-server");
@@ -1328,7 +1416,7 @@ describe("a hold after its object's live failure (final review)", () => {
 	});
 });
 
-describe("a hold across a swap whose mapping fails (final review)", () => {
+describe("a hold across a reload whose mapping fails (final review)", () => {
 	it("gets the member's failure in its fresh bound and heals with the new source (Sol, audit A9)", async () => {
 		const W1 = remote("app.swap-failed", {
 			version: 1,
@@ -1374,7 +1462,7 @@ describe("a hold across a swap whose mapping fails (final review)", () => {
 	});
 });
 
-describe('calls over a link while a swap parks (decision "Swaps: dependents first")', () => {
+describe('calls over a link while a restart waits (decision "Reload restarts every affected object")', () => {
 	/** A provider on the server: its name, its keys (`entries`) and `set`, which writes key `x`. */
 	const Provider = local("app.gate-provider", {
 		version: 1,
@@ -1459,7 +1547,7 @@ describe('calls over a link while a swap parks (decision "Swaps: dependents firs
 		});
 	}
 
-	it("a call arriving after the swap parked, while an old call drains, waits for the new attempt (never not_ready)", async () => {
+	it("a call arriving while the old attempt drains and the successor's request opens waits for the new code (never not_ready)", async () => {
 		const gate = Promise.withResolvers<void>();
 		const opened = Promise.withResolvers<void>();
 		const { server, client } = await linked((h) => {
@@ -1482,12 +1570,12 @@ describe('calls over a link while a swap parks (decision "Swaps: dependents firs
 			],
 			context,
 		);
-		// The new code of `Gated` waits for `Slow`, a new type still opening: its swap parks.
+		// The new code of `Gated` needs `Slow`, a new type still opening: its old attempt stays open meanwhile.
 		expect(report.objects).toEqual([
-			{ object: "app.gate-provider", kind: "swapped" },
-			{ object: "app.gated", kind: "parked", cause: expect.objectContaining({ kind: "waiting" }) },
+			{ object: "app.gate-provider", kind: "restarted" },
+			{ object: "app.gated", kind: "restarted" },
 		]);
-		// The old call still runs, so the hold stays bound: the client sees live and sends.
+		// The old attempt still runs its call, so the hold stays bound: the client sees live and sends new work.
 		const outcome = gated.bump(context).then(
 			(value) => ({ value }),
 			(error: ChordError) => ({ code: error.code }),
@@ -1495,100 +1583,13 @@ describe('calls over a link while a swap parks (decision "Swaps: dependents firs
 		await transported();
 		expect(gated.state.value).toEqual({ kind: "live" });
 		opened.resolve();
-		expect(await outcome).toEqual({ value: 2 });
 		gate.resolve();
 		expect(await old).toBe(1);
+		expect(await outcome).toEqual({ value: 2 });
 		await transported();
 		expect(gated.label.value).toBe("v2 p2");
 		await client.close(context);
 		await server.close(context);
-	});
-
-	it("a call already waiting at the gate when the swap parks survives its hold's loading: answered by the new code", async () => {
-		const store = await memoryStore();
-		const server = createHost<TestPrincipal>({
-			address: Server(),
-			principal: { kind: "server" },
-			store,
-			onError: () => {},
-		});
-		const client = createHost<TestPrincipal>({ onError: () => {} });
-		const providerV1 = defineFacet<TestPrincipal>((h) => serveProvider(h, "p1", { persisted: true }));
-		await server.load(
-			[
-				{ name: "@test/provider", facet: providerV1 },
-				{ name: "@test/app", facet: defineFacet<TestPrincipal>((h) => serveGated(h, 1, {})) },
-			],
-			context,
-		);
-		await client.load([], context);
-		const [up, down] = memoryLinkPair();
-		server.accept(up, { principal: { kind: "owner" }, codec: testCodec() }, context);
-		client.connect(down, { principal: { kind: "server" }, codec: testCodec() }, context);
-		try {
-			const gated = await client.get(Gated, {}, context);
-			const provider = await server.get(Provider, {}, context);
-			// The provider's line is held by a commit: a key loads only after it.
-			const held = holdNextCommit(store);
-			const setting = provider.set(1, context);
-			await held.entered;
-			// `Gated`'s new code pins the provider's key `k`: its swap stays in place while the key waits for the line.
-			const appV2 = defineFacet<TestPrincipal>((h) => serveGated(h, 2, { pin: true }));
-			const report = await server.reload(
-				[
-					{ name: "@test/provider", facet: providerV1 },
-					{ name: "@test/app", facet: appV2 },
-				],
-				context,
-			);
-			expect(report.objects).toEqual([{ object: "app.gated", kind: "swapped" }]);
-			const states = statesOf(await gated.state.watch(context));
-			const outcome = gated.bump(context).then(
-				(value) => ({ value }),
-				(error: ChordError) => ({ code: error.code, message: error.message }),
-			);
-			await transported();
-			// The provider swaps too while the key waits; its new code needs \`Slow\`, still opening. Once the key loaded,
-			// the swap of \`Gated\` checks again, finds the provider loading and parks, with the call waiting at the gate.
-			const opened = Promise.withResolvers<void>();
-			const reloading = server.reload(
-				[
-					{
-						name: "@test/provider",
-						facet: defineFacet<TestPrincipal>((h) => {
-							serveSlow(h, opened.promise);
-							serveProvider(h, "p2", { persisted: true, slow: true });
-						}),
-					},
-					{ name: "@test/app", facet: appV2 },
-				],
-				context,
-			);
-			held.release();
-			await setting;
-			expect((await reloading).objects).toEqual([
-				{ object: "app.gate-provider", kind: "parked", cause: expect.objectContaining({ kind: "waiting" }) },
-			]);
-			await transported();
-			// Parked: its hold left the old instance and tells the client \`loading\`; the call that waited at the gate stays
-			// (decision "Calls in flight survive a \`loading\` unbind"), unanswered until the new attempt's outcome.
-			expect(states).toEqual(["loading"]);
-			let answered = false;
-			void outcome.then(() => {
-				answered = true;
-			});
-			await transported();
-			expect(answered).toBe(false);
-			opened.resolve();
-			expect(await outcome).toEqual({ value: 2 });
-			await transported();
-			expect(states).toEqual(["loading", "live"]);
-			expect(await gated.bump(context)).toBe(2);
-			expect(gated.label.value).toBe("v2 0");
-		} finally {
-			await client.close(context);
-			await server.close(context);
-		}
 	});
 });
 
@@ -1864,33 +1865,6 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 		await peer.next("bound");
 		const result = await peer.next("result");
 		expect([result.call, partValue(result.value!)]).toEqual([0, 2]);
-		await server.close(context);
-	});
-
-	it("binding with the previous names, then a restart: the call running on the swapped-in instance drains to its result", async () => {
-		const gate = Promise.withResolvers<void>();
-		const opened = Promise.withResolvers<void>();
-		const { server, peer, reload } = await keptServer({ n: 1 }, { ack: false });
-		// A second `bound` in flight fills the window (two); the next swap in place leaves its fresh `bound` waiting.
-		await reload({ n: 2 });
-		await peer.next("bound");
-		await reload({ n: 3, gate: gate.promise });
-		await transported();
-		expect(peer.kinds()).toEqual([]);
-		call(peer, 0, "bump");
-		await transported();
-		// A restart unbinds the binding hold at once: the call runs on the live (unsealed) instance and stays.
-		await reload({ n: 4, native: true, opened: opened.promise });
-		await peer.next("loading");
-		await transported();
-		expect(answersTo(peer, 0)).toEqual([]);
-		gate.resolve();
-		const result = await peer.next("result");
-		expect([result.call, partValue(result.value!)]).toEqual([0, 3]);
-		opened.resolve();
-		peer.ack();
-		peer.ack();
-		await peer.next("bound");
 		await server.close(context);
 	});
 

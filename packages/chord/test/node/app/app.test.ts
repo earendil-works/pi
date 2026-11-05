@@ -11,7 +11,7 @@ import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { hostKind, local, remote, str, unknown } from "../../../src/contracts/index.ts";
 import { addressParam, HostData } from "../../../src/node/app/data.ts";
 import { AppInfo } from "../../../src/node/app/index.ts";
-import { changesOf, rejection } from "../../support.ts";
+import { changesOf, flushed, rejection } from "../../support.ts";
 import { send } from "../http/support.ts";
 import { gitRepository, writePlugin } from "../plugins/support.ts";
 import { ECHO_SERVER, NOTES_PLUGIN, Notes, Project, tempDir, testApp, WORKER_ENTRY } from "./support.ts";
@@ -186,6 +186,8 @@ describe("workers", () => {
 		const result = await app.applyChanges(context);
 		expect(result.stopped).toBeUndefined();
 		expect(result.steps.map(({ name }) => name)).toEqual(["server"]);
+		// Restarted: the new attempt goes live once the old one ended.
+		await flushed();
 		expect(echo.text.value).toBe("changed");
 		expect(app.plugins.state.value.dirty).toEqual([]);
 		await app.close(context);
@@ -235,6 +237,7 @@ describe("applying changes one after another", () => {
 			await first;
 			await second;
 			expect(events).toEqual(["build 1", "rollout", "build 2", "rollout"]);
+			await flushed();
 			expect(echo.text.value).toBe("v3");
 		} finally {
 			echo.release();

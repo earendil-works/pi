@@ -93,7 +93,7 @@ export type JobOwner = {
 	 * when it settles or when the attempt ends with it still running.
 	 */
 	admit(running: Promise<unknown>, cleanup?: () => void): void;
-	/** Adds a run's invocation to the attempt's drain at its end (a swap does not wait for it), as `admit`. */
+	/** Adds a run's invocation to the attempt's drain at its end, as `admit`. */
 	admitRun(running: Promise<unknown>, cleanup: () => void): void;
 };
 
@@ -122,11 +122,8 @@ export class Job implements JobHandle<JsonValue, unknown, JsonValue | undefined>
 	readonly #definition: JobDefinition<unknown, unknown, unknown>;
 	readonly #implementation: AnyJobImplementation;
 	readonly #owner: JobOwner;
-	/**
-	 * `declared` until the attempt is live (starts are refused), `handed` once a reload's swap gave its records to the
-	 * new attempt's job (starts refused, its invocations finish here), `sealed` once it is sealed.
-	 */
-	#state: "declared" | "live" | "handed" | "sealed" = "declared";
+	/** `declared` until the attempt is live (starts are refused), `sealed` once it is sealed. */
+	#state: "declared" | "live" | "sealed" = "declared";
 	/** Runs whose `run` runs on this attempt. */
 	readonly #invocations = new Set<JobRun>();
 	/** The seal's error and cut reason, once sealed: a reservation committing after it cuts its run off with them. */
@@ -207,7 +204,7 @@ export class Job implements JobHandle<JsonValue, unknown, JsonValue | undefined>
 		if (tx.documents !== this.#owner.documents) {
 			throw new Error(`${this.#owner.documents.label}: a transaction starts only its own object's jobs`);
 		}
-		if (this.#state === "sealed" || this.#state === "handed") {
+		if (this.#state === "sealed") {
 			throw new ChordError({
 				code: "released",
 				reason: "ended",
@@ -227,26 +224,12 @@ export class Job implements JobHandle<JsonValue, unknown, JsonValue | undefined>
 	 */
 	seal(error: ChordError, reason: CutReason): void {
 		if (this.#state === "sealed") return;
-		const handed = this.#state === "handed";
 		this.#state = "sealed";
 		this.#sealed = { error, reason };
 		this.#records.detach(this, this.#finishing);
 		this.#finishing.clear();
-		// A handed-over job's invocations finish on its code; their outcomes go to the new attempt's job.
-		if (!handed) for (const run of this.#invocations) this.#records.cut(run, error, reason);
+		for (const run of this.#invocations) this.#records.cut(run, error, reason);
 		this.#invocations.clear();
-	}
-
-	/**
-	 * A reload swapped its attempt out (slice 7b §8): starts are refused, the records go to the new attempt's job once it
-	 * is live, the runs it invokes finish on this code (their outcome is finished by the new code), a finish running here
-	 * completes here.
-	 */
-	handOver(): void {
-		if (this.#state !== "live" && this.#state !== "declared") return;
-		this.#state = "handed";
-		// Runs needing a live attempt meanwhile wait for the new one.
-		this.#records.detach(this, []);
 	}
 
 	/**
@@ -307,7 +290,7 @@ export class Job implements JobHandle<JsonValue, unknown, JsonValue | undefined>
 		this.#invocations.add(run);
 		const running = (async () => {
 			try {
-				// Its own version's args: a handed-over attempt's late start runs its own code (Sol, reservation).
+				// Its own version's args: a run started by old work during a restart runs on the old code (its definition).
 				return await this.#implementation.run(this.#records.argsOf(run, this.#definition), ctx);
 			} finally {
 				// The fence closes as `run` settles: a change made later is refused.

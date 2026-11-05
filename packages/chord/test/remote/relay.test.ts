@@ -64,10 +64,14 @@ async function rawRelay(options: { readonly principal?: TestPrincipal; readonly 
 	return { ...relay, workers, raw: tab };
 }
 
-/** A raw tab on a new link the server accepts as `principal` (owner by default). */
-function rawTab(server: Awaited<ReturnType<typeof relayed>>["server"], principal?: TestPrincipal): RawPeer {
+/** A raw tab on a new link the server accepts as `principal` (owner by default), trusted when `trusted`. */
+function rawTab(
+	server: Awaited<ReturnType<typeof relayed>>["server"],
+	principal?: TestPrincipal,
+	trusted = false,
+): RawPeer {
 	const [a, b] = memoryLinkPair();
-	server.accept(a, { principal: principal ?? { kind: "owner" }, codec: testCodec() }, context);
+	server.accept(a, { principal: principal ?? { kind: "owner" }, codec: testCodec(), trusted }, context);
 	return new RawPeer(b);
 }
 
@@ -148,6 +152,22 @@ forEachCodec(() => {
 			raw.send({ kind: "retry", hold: 7, hops: 5 });
 			// Forwarded with its budget as it is: a relay visits no object.
 			expect(await worker.next("retry")).toEqual({ kind: "retry", origin: 1, hold: 7, hops: 5 });
+		});
+
+		it("forward a call's old-work flag from a trusted downstream link only (a page cannot claim old work)", async () => {
+			const { raw, server, workers } = await rawRelay();
+			holdPlaced(raw, 0);
+			const worker = await workerAt(workers);
+			bindPlaced(worker, await worker.next("hold"));
+			await raw.next("bound");
+			raw.send({ kind: "call", call: 0, hold: 0, method: wait, old: true });
+			expect((await worker.next("call")).old).toBeUndefined();
+			const trusted = rawTab(server, undefined, true);
+			holdPlaced(trusted, 0);
+			bindPlaced(worker, await worker.next("hold"));
+			await trusted.next("bound");
+			trusted.send({ kind: "call", call: 0, hold: 0, method: wait, old: true });
+			expect(await worker.next("call")).toMatchObject({ call: 0, origin: 2, old: true });
 		});
 
 		it("give each downstream link its own origin, never reused", async () => {

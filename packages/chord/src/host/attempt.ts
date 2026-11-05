@@ -1,12 +1,12 @@
 // Attempts (§6, §13, §14, §15): one activation of an object, a fresh instance each time. It is the `self` its factory
 // declares with (handles to the object's documents and jobs, under its seal token); it runs the activation steps,
 // each failing with its own kind; it takes the live object's calls and starts its routines and jobs; and it ends with
-// its seal (slice 6a §1.3), the drain and the closes of its natives. A reload's swap hands it over (slice 7b §5): its
-// routines stop and hand over to the new attempt's, its jobs to the new attempt's, and it is sealed once its calls
-// settled.
+// its seal (slice 6a §1.3), the drain and the closes of its natives. A reload's restart drains it (decision "Reload
+// restarts every affected object; old work finishes on old code"): its routines stop, it serves old work under its
+// own contract, and it is sealed once that work settled.
 
 import type { TelemetryContext, TelemetrySpan } from "@earendil-works/pi-telemetry";
-import { awaitWithContext, type Context, withAbortSignal, withTelemetry } from "../context/index.ts";
+import { awaitWithContext, type Context, withAbortSignal, withContextValue, withTelemetry } from "../context/index.ts";
 import type { Contract, Implementation, ParamsOf } from "../contracts/index.ts";
 import { contractData, type ShapeOf } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
@@ -60,6 +60,7 @@ import {
 	type NativeSlot,
 } from "./native.ts";
 import type { ChordObject, Served } from "./object.ts";
+import { OPENING } from "./old-work.ts";
 import type { Failed, RefState } from "./ref-state.ts";
 import type { Binding, CheckedParams, Reference, RetryWalk } from "./reference.ts";
 import { type RetrySource, retrySource } from "./retry-on.ts";
@@ -191,11 +192,11 @@ type Work = Map<Promise<unknown>, (() => void) | undefined>;
 type RoutineRun = { readonly abort: AbortController; readonly calls: Work };
 
 /**
- * What a reload did to an attempt: `started` (a reload started it), `handedOver` (a swap: its jobs are the new
- * attempt's, its invocations finish on their own), `callsDrained` (a swap or restart waited for its calls: its end's
- * drain does not again), `routinesStopped` (its routines stopped, and do not start late after a handover).
+ * What a reload did to an attempt: `started` (a reload started it), `callsDrained` (a restart drains its calls: old
+ * work runs on it until its seal, and its end's drain does not wait for them again), `routinesStopped` (its routines
+ * stopped, and do not start late).
  */
-type Reloaded = { started: boolean; handedOver: boolean; callsDrained: boolean; routinesStopped: boolean };
+type Reloaded = { started: boolean; callsDrained: boolean; routinesStopped: boolean };
 
 /** A first dependency check that did not park: the shared answer. */
 const NOT_PARKED = { done: true, cause: undefined } as const;
@@ -317,8 +318,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	 */
 	readonly #running: Work = new Map();
 	/**
-	 * Its running job invocations, as `#running`: the drain at its end waits for them; a swap does not (they finish on
-	 * their old code, slice 7b §8). Made by the first.
+	 * Its running job invocations, as `#running`: the drain at its end waits for them (a restart's drain does not: they
+	 * are cut at its seal). Made by the first.
 	 */
 	#runs: Work | undefined;
 	/** What activation returns once the attempt was abandoned: a timeout, a cycle through its object, or its end. */
@@ -334,8 +335,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	/** Its registry reads, contributions, wake signals and writables, made by the first: most attempts have none. */
 	#registryDeclarations: RegistryDeclarations | undefined;
 	/**
-	 * Its first dependency check, for a reload (its report, a swap's handover): waited for by someone, or done with why
-	 * it parked (`undefined`: it did not). Made by the first who asks or by the check.
+	 * Its first dependency check, for a reload (its report, its predecessor's references): waited for by someone, or
+	 * done with why it parked (`undefined`: it did not). Made by the first who asks or by the check.
 	 */
 	#check:
 		| { readonly done: false; readonly waiting: PromiseWithResolvers<FailureCause | undefined> }
@@ -348,7 +349,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		this.#object = object;
 		this.#served = object.served;
 		this.#context = context;
-		this.#opening = withAbortSignal(this.#abort.signal, context);
+		// Its opener's calls are known as its object's: their gate waits are the object's edges for reload cycles.
+		this.#opening = withContextValue(OPENING, object, withAbortSignal(this.#abort.signal, context));
 		this.#trace = trace;
 	}
 
@@ -691,12 +693,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		this.abandon({ kind: "failed", cause: { kind: "transient", error } });
 	}
 
-	/**
-	 * The object went live: its jobs take starts and its routines start, in this turn; both stop when it is sealed.
-	 * After a swap (`previous`, the attempt it replaced) its routines start once the previous attempt's routine calls
-	 * finished (the handover per object, §14), calls never wait for it.
-	 */
-	live(previous?: Attempt): void {
+	/** The object went live: its jobs take starts and its routines start, in this turn; both stop when it is sealed. */
+	live(): void {
 		this.#isLive = true;
 		const early = this.#endedEarly;
 		if (early !== undefined) {
@@ -704,9 +702,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			return;
 		}
 		for (const job of this.#jobs.values()) job.live();
-		if (this.#routines.empty) return;
-		if (previous === undefined) this.#startRoutines();
-		else void previous.handOverRoutines().then(() => this.#startRoutines());
+		if (!this.#routines.empty) this.#startRoutines();
 	}
 
 	/** Starts its routines, unless it was sealed meanwhile. */
@@ -730,17 +726,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		this.#routineRun?.abort.abort(reason);
 	}
 
-	/**
-	 * A reload swaps this live attempt out (slice 7b §5): its routines stop, its jobs are handed over (their running
-	 * invocations finish on this code), it takes no new starts; its calls run on until `drainCalls` settled.
-	 */
-	handOver(): void {
-		this.#reload().handedOver = true;
-		this.stopRoutines();
-		for (const job of this.#jobs.values()) job.handOver();
-	}
-
-	/** Its routines stop (their ctx aborted); their running calls are waited for by the drain or the handover. */
+	/** Its routines stop (their ctx aborted); their running calls are waited for by the drain. */
 	stopRoutines(): void {
 		this.#reload().routinesStopped = true;
 		this.#stopRoutines(
@@ -749,31 +735,39 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	}
 
 	/**
-	 * The new attempt's routines may start: once this attempt's routine calls finished, bounded by `closeTimeout` (a
-	 * stuck one is reported `drain_timeout`; the whole attempt is sealed by then: the swap's retirement drains its
-	 * calls and routine calls on the same bound from the swap's start, then seals it, so a stuck call's later commit
-	 * is refused `released`).
+	 * A restart drains it: from now on it serves old work (calls caused by calls on old attempts, routed by its object)
+	 * until its seal, counted as the host's old work.
 	 */
-	async handOverRoutines(): Promise<void> {
-		const { host, label } = this.#object;
-		const calls = this.#routineRun?.calls ?? NO_WORK;
-		if ((await drained(calls.keys(), calls.size, host.timeouts.close)) === "timeout") {
-			host.report({ kind: "drain_timeout", object: label });
-		}
+	beginDrain(): void {
+		this.#reload().callsDrained = true;
+		this.#object.host.oldWork.open();
+	}
+
+	/** Whether a restart drains it and it is not sealed yet: old work runs on it. */
+	get draining(): boolean {
+		return this.#reloaded?.callsDrained === true && this.#abandoned === undefined;
 	}
 
 	/**
-	 * Waits for its running calls and routine calls (not its job invocations), bounded by `closeTimeout`
-	 * (`drain_timeout` reported): a reload's swap or restart lets them finish before the seal. Its end's drain then
-	 * waits for them no more.
+	 * Waits until no call or routine call runs on it, routed old work included (it joins while the drain runs), or until
+	 * `due` (`Date.now()` time; `drain_timeout` reported). Its end's drain then waits for them no more.
 	 */
-	async drainCalls(): Promise<void> {
+	async drainCalls(due: number): Promise<void> {
 		const { host, label } = this.#object;
-		const calls = [...this.#running.keys(), ...(this.#routineRun?.calls ?? NO_WORK).keys()];
-		this.#reload().callsDrained = true;
-		if ((await drained(calls, calls.length, host.timeouts.close)) === "timeout") {
-			host.report({ kind: "drain_timeout", object: label });
+		for (;;) {
+			const calls = [...this.#running.keys(), ...(this.#routineRun?.calls ?? NO_WORK).keys()];
+			if (calls.length === 0) return;
+			const left = due - Date.now();
+			if (left <= 0 || (await drained(calls, calls.length, left)) === "timeout") {
+				host.report({ kind: "drain_timeout", object: label });
+				return;
+			}
 		}
+	}
+
+	/** The type it was made with: its contract and provider (old work and its consumers use it by that contract). */
+	get served(): Served {
+		return this.#served;
 	}
 
 	/** A reload started it: once live, its object retries its blocked job runs (slice 7b §8). */
@@ -788,7 +782,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 
 	/** What a reload did to it, made by the first such step. */
 	#reload(): Reloaded {
-		this.#reloaded ??= { started: false, handedOver: false, callsDrained: false, routinesStopped: false };
+		this.#reloaded ??= { started: false, callsDrained: false, routinesStopped: false };
 		return this.#reloaded;
 	}
 
@@ -797,14 +791,14 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		return this.#jobs.has(name);
 	}
 
-	/** Whether its factory opens natives (`self.open`): a reload restarts it instead of swapping it. */
+	/** Whether its factory opens natives (`self.open`): a restart's contributions then leave at its seal (F-b). */
 	get opensNatives(): boolean {
 		return this.#natives.length > 0;
 	}
 
 	/**
 	 * Its first dependency check: why it parked (`parkedCause`), `undefined` when it went on (its dependencies live) or
-	 * its activation ended before (a reload's report and a swap's handover wait for it).
+	 * its activation ended before (its predecessor's references are released once it is done).
 	 */
 	get checked(): Promise<FailureCause | undefined> {
 		const check = this.#check;
@@ -867,7 +861,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		let handler: Method | undefined;
 		try {
 			context.abortSignal?.throwIfAborted();
-			const { served } = this.#object;
+			// Its own served type: an old attempt answers old work by the contract it was made with.
+			const served = this.#served;
 			const own = this.#members!.methods.get(method);
 			if (own === undefined && version === served.contract.version) throw this.#noMethod(method);
 			checked = checkArgs(served.provider, method, args, version, context);
@@ -889,6 +884,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			span === undefined ? callContext : withTelemetry(span.span, callContext),
 			acting,
 			host,
+			this,
 		);
 		// Admitted to the drain before the handler runs: the handler may end its own object before it returns.
 		const running = Promise.withResolvers<unknown>();
@@ -1035,6 +1031,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	 * stay readable.
 	 */
 	seal(error: ChordError, runs: CutReason = "restart"): void {
+		// A drained old attempt stops counting as old work at its seal (once: an abandoned attempt is not draining).
+		if (this.draining) this.#object.host.oldWork.close();
 		this.abandon({ kind: "ended", error });
 		const { documents } = this.#object;
 		documents.fence(this.#token);
@@ -1049,12 +1047,11 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		const { host, label } = this.#object;
 		if ((await this.#drained()) === "timeout") host.report({ kind: "drain_timeout", object: label });
 		// The close writer: the persisted runs the seal stopped, and the held state changes (slice 6b §4.2).
-		const handedOver = this.#reloaded?.handedOver === true;
-		if (!handedOver) for (const job of this.#jobs.values()) await job.writeAtClose(this.#context);
+		for (const job of this.#jobs.values()) await job.writeAtClose(this.#context);
 		// Work stuck past the drain keeps running, but no longer counts as a call or holds its `ctx.get` references.
 		cleanUp(this.#running);
 		cleanUp(this.#routineRun?.calls);
-		if (!handedOver) cleanUp(this.#runs);
+		cleanUp(this.#runs);
 		const failures: CloseFailed[] = [];
 		for (const native of [...this.#natives].reverse()) {
 			const failure = await native.close(reason);
@@ -1064,14 +1061,13 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	}
 
 	/**
-	 * The drain at its end, bounded by `closeTimeout`: its running calls (unless a reload's `drainCalls` waited for them
-	 * already), routine calls and job invocations (unless a swap handed its jobs over: they finish on their own).
+	 * The drain at its end, bounded by `closeTimeout`: its running calls (unless a restart's `drainCalls` waited for them
+	 * already), routine calls and job invocations.
 	 */
 	#drained(): Promise<"settled" | "timeout"> {
 		const { close } = this.#object.host.timeouts;
-		const reloaded = this.#reloaded;
-		const running = reloaded?.callsDrained === true ? NO_WORK : this.#running;
-		const runs = reloaded?.handedOver === true ? undefined : this.#runs;
+		const running = this.#reloaded?.callsDrained === true ? NO_WORK : this.#running;
+		const runs = this.#runs;
 		const routineCalls = this.#routineRun?.calls;
 		// Most attempts have only calls: no list is made for them.
 		if (routineCalls === undefined && runs === undefined) return drained(running.keys(), running.size, close);

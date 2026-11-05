@@ -144,7 +144,10 @@ export type AppOptions<P extends Principal> = {
 	 * each worker kind's.
 	 */
 	readonly base?: readonly string[];
-	/** The `closeTimeout` and `readyTimeout` of every host (the server's and each worker's): 30 s and 60 s by default. */
+	/**
+	 * The `closeTimeout`, `readyTimeout` and `reloadDrainTimeout` of every host (the server's and each worker's): 30 s,
+	 * 60 s and 5 s by default.
+	 */
 	readonly timeouts?: AppTimeouts;
 	readonly onError: (error: AppError) => void;
 } & (OwnerPrincipal extends P ? unknown : { readonly "the app's principal type must have { kind: 'owner' }": never });
@@ -164,8 +167,15 @@ export type AppLimits = {
 	readonly importEntries?: number;
 };
 
-/** The hosts' timeouts in milliseconds (`HostOptions.closeTimeout`, `HostOptions.readyTimeout`). */
-export type AppTimeouts = { readonly closeTimeout?: number; readonly readyTimeout?: number };
+/**
+ * The hosts' timeouts in milliseconds (`HostOptions.closeTimeout`, `HostOptions.readyTimeout`,
+ * `HostOptions.reloadDrainTimeout`).
+ */
+export type AppTimeouts = {
+	readonly closeTimeout?: number;
+	readonly readyTimeout?: number;
+	readonly reloadDrainTimeout?: number;
+};
 
 /** The kit's web surface options (`webSurface`'s, its kind `web` and plugins the kit's). */
 export type AppWeb = Pick<WebSurfaceOptions, "entry" | "page" | "paths" | "public">;

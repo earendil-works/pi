@@ -5,6 +5,7 @@ import { int, local, method, remote, str } from "../../src/contracts/index.ts";
 import { withLinkedAbortSignal } from "../../src/host/ctx.ts";
 import type { ChordHost } from "../../src/host/host.ts";
 import type { Ctx, Host, Reference } from "../../src/host/index.ts";
+import { CALL_CHAIN } from "../../src/host/old-work.ts";
 import { constant } from "../../src/state/index.ts";
 import {
 	flushed,
@@ -152,6 +153,39 @@ describe("ctx", () => {
 	it("a local handler's ctx.principal is the host's, its incarnation this host's", async () => {
 		const { desk: ref, host } = await desk();
 		expect(await ref.who(context)).toBe(`none ${(host as ChordHost).incarnation}`);
+	});
+});
+
+describe('the call chain (decision "Reload restarts every affected object": old work)', () => {
+	it("a method's ctx is its own chain node, above it the chain of the call that made it; a root's has none", async () => {
+		const Inner = local("app.inner", { version: 1, params: {}, members: { run: method() } });
+		const Outer = local("app.outer", { version: 1, params: {}, members: { run: method() } });
+		const seen: { inner?: Ctx; outer?: Ctx; root?: Ctx } = {};
+		const { host } = await loaded((h) => {
+			h.serve(Inner, () => ({
+				run: async (ctx) => {
+					seen.inner = ctx;
+					return null;
+				},
+			}));
+			h.serve(Outer, () => ({
+				run: async (ctx) => {
+					seen.outer = ctx;
+					await (await ctx.get(Inner, {})).run(ctx);
+					return null;
+				},
+			}));
+		});
+		await host.root(async (root) => {
+			seen.root = root;
+			await (await root.get(Outer, {})).run(root);
+		}, context);
+		const inner = seen.inner!.value(CALL_CHAIN);
+		expect(inner).toBe(seen.inner);
+		expect(inner!.up()).toBe(seen.outer);
+		expect(inner!.up()!.up()).toBeUndefined();
+		expect(seen.root!.value(CALL_CHAIN)).toBeUndefined();
+		await host.close(context);
 	});
 });
 

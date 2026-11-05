@@ -97,9 +97,9 @@ within each link's limits, compression at the origin, activation chains and revo
   waiting), each new cause of an object parked on a failed dependency too, the current one at once when the object is
   failed already; the next attempt (or the parked object's next `loading`) is announced with `loading`; the hold stays,
   so a `retry` (from any holder) renews even a broken object for every holder (a parked object passes it on, one walk
-  of this host with one hop less of the message's budget). After a swap in place it gets a fresh `bound` once the new
-  instance is live, answering calls by the names it was bound with until that is sent (the window may hold it). An
-  object leaving `live` unbinds it with `failed` (its calls in flight rejected) or `loading`: then its calls in flight
+  of this host with one hop less of the message's budget). Across a reload's restart it stays bound while the old
+  attempt serves its version; a fresh `bound` follows once the new instance is live, the hold answering calls by the
+  names it was bound with until that is sent (the window may hold it). An object leaving `live` unbinds it with `failed` (its calls in flight rejected) or `loading`: then its calls in flight
   stay, each answered by the instance it runs on or by the object's gate, and calls by the names it was bound with
   still arrive and wait at the gate until its fresh `bound` (decision "Calls in flight survive a `loading` unbind"). Live,
   it binds through the window (`boundEntry`: the variant and each member's value as a part, names as indexes into the

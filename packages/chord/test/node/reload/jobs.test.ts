@@ -1,7 +1,7 @@
 // Reload suite, a case the table leaves out (the audit's "jobs running across a reload"; design §15 "Versions"): a job
-// run started from the page, running on a worker while its object reloads. A pure swap: the run finishes on its old
-// code and `finish` runs on the new code. A native restart: the in-memory run ends `aborted { reload }` and `finish`
-// runs on the new code. The page watches the finished runs' entries.
+// run started from the page, running on a worker while its object restarts (with or without natives: every reload
+// restarts). The in-memory run ends `aborted { reload }` at the old attempt's seal and `finish` runs on the new code.
+// The page watches the finished runs' entries.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
@@ -30,11 +30,13 @@ describe.skipIf(CHROMIUM === undefined)("a job running across a reload", () => {
 	});
 
 	it.each([
-		["a pure swap", false, "swapped", "v2-finish(done:run-v1:a)"],
-		["a native restart", true, "restarted", "v2-finish(aborted:reload)"],
+		["pure code", false],
+		["code holding natives", true],
 	] as const)(
-		"across %s",
-		async (_change, native, fate, entry) => {
+		"across a restart of %s",
+		async (_change, native) => {
+			const fate = "restarted";
+			const entry = "v2-finish(aborted:reload)";
 			const app = await startReloadApp({ latch: LATCH_PLUGIN, tasks: tasksPlugin("v1", native) });
 			const hand = await latches(app, "worker");
 			try {

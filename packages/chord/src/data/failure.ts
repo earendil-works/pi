@@ -52,7 +52,12 @@ export function waitingFor(blocker: string, error: ChordError): FailureCause {
 		if (label.length + root.length > room) label = clipped(label, room - root.length);
 	}
 	const message = `${PREFIX}${label}${SEPARATOR}${root}`;
-	return { kind: "waiting", error: new ChordError({ code: "unavailable", message }, { cause: error }) };
+	// A version refusal, here or along the chain, keeps its reason: it heals with another host's reload.
+	const version = error.code === "contract_mismatch" || (error.code === "unavailable" && error.reason === "version");
+	const init = version
+		? ({ code: "unavailable", reason: "version", message } as const)
+		: ({ code: "unavailable", message } as const);
+	return { kind: "waiting", error: new ChordError(init, { cause: error }) };
 }
 
 /** `text` within `length` characters, clipped with "…" when longer. */

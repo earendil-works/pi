@@ -279,9 +279,9 @@ the app exits with its own code for its supervisor or reopens.
 | `readyTimeout` | an activation attempt's own steps (its wait for the previous instance's teardown included; paused while the attempt is parked on its dependencies, slice 7a); a getter's whole wait; how long a call made while its reference is loading waits (the park deadline) | 60 s | per `get`/`hold`/`registry`: `{ readyTimeout }` |
 
 The park deadline's per-type override is not built (only if a real case needs it). Timeouts of later slices belong to
-their mechanisms: the routine handover uses `closeTimeout`, a job `finish` backs off 1 s to 60 s, provider-side
-`linger` is per type; a reload has no install timeout (it takes the app's context, slice 7b); a per-type drain
-override only if a case needs it (section 26). A route's `resolve` is bounded by the app.
+their mechanisms: a restart's old attempt is bounded by `reloadDrainTimeout` (default 5 s, at most `closeTimeout`;
+section 21), a job `finish` backs off 1 s to 60 s, provider-side `linger` is per type; a reload has no install timeout
+(it takes the app's context, slice 7b); a per-type drain override only if a case needs it (section 26). A route's `resolve` is bounded by the app.
 
 - **Incarnations** are minted by Chord (uuidv7, code copied from pi-ai, no dependency), never passed in, and carried
   in the link handshake (`hello`): the other side sees a restart as a new incarnation of the same identity;
@@ -395,7 +395,7 @@ host.route(Session, {
     its consumer acknowledges it before it sends the call that answer frees a slot for, so running calls and messages
     past the window stay within N per origin together. Nothing extra is sent when nothing waits (the common path: a
     free window sent the commit's `state` already). Bindings waiting for a slot are not sent past it: their `bound`
-    carries the latest state when it goes (a hold rebinding after a reload's swap shows its old values until then).
+    carries the latest state when it goes (a hold rebinding after a restart's old attempt ended shows its old values until then).
     Not covered: changes committed after the answer (a method that returns before its effect lands) or on another host
     that does not relay the answer.
   Not built, by decision: a byte window, credit messages, snapshot admission or debt, an adapter `backlog()` API,
@@ -677,8 +677,7 @@ host.serve(Notes, ({ session }, principal, self) =>
   a job or routine start); commits are checked when they enter the store's commit step (sealed: rejected `released`,
   nothing written) and at adopt (sealed during the SQL: durable, adopted into the object's documents, its staged job
   changes adopted into the object too: decision "Second spec review: the majority" (3)); at the seal a transaction not yet in the step is aborted and the line released, a started step
-  finishes before teardown completes; cleanup (references, presence, activity counts) still runs. A pure swap is not a
-  replacement.
+  finishes before teardown completes; cleanup (references, presence, activity counts) still runs.
 - **Ending** (slice 1, 2): new calls are rejected; every caller of a running call gets `released` at once; the
   handler keeps running in the background under an aborted context and its `self.tx` throws `released` (a running
   method can change nothing after the end). Each call runs under a context aborted by its caller and by the object's
@@ -789,9 +788,9 @@ host.serve(NoteStore, ({ session }, self) => {
   routines and jobs.
 - Handles stay valid for their attempt's life (owner, 2026-10-26: documents and the line belong to the object; each
   attempt's handles carry its seal token and definition version); nothing is "read at use" or re-fetched.
-- On a reload the factory runs again: in staging against a recording `self` (declarations only), then for real; pure
-  objects swap in place (new methods and derives, same documents), native objects restart after their drain,
-  objects of a removed type end and their holders wait (section 21).
+- On a reload the factory runs again: in staging against a recording `self` (declarations only), then for real; every
+  live object restarts (same documents; its running calls and the calls they cause finish on the old attempt, the new
+  factory runs once that drained), objects of a removed type end and their holders wait (section 21).
 
 ### Pattern: shared store, per-principal views
 
@@ -848,8 +847,8 @@ location are dropped.
   reload, retry, restart; a new object after its type was removed and served again; another variant), the reference
   moves its subscriptions to the new one and sends one frame, a diff from the last value (consumers' derives recompute,
   a failed one heals; a member the new variant lacks fails `invalid/member`). While it points at nothing, its members
-  keep their last values (a pointer, no copy): while loading (a restart, a retry, a swap whose new instance is not live
-  yet) its watches get no call (`ref.state` says `loading`); while failed (a live failure, its version refused, its type
+  keep their last values (a pointer, no copy): while loading (a restart's successor not live yet, a retry) its watches
+  get no call (`ref.state` says `loading`); while failed (a live failure, its version refused, its type
   removed, a failed dependency) they get one `failed` call with the cause's error and stay open (decision "Failures are
   watch calls"); a reference that never had a value reads `not_ready` while loading and its failure's error while failed, and its
   watches wait for its first values. A member the new variant lacks is not a failed reference: it fails `invalid/member`
@@ -865,8 +864,8 @@ location are dropped.
   the re-exposing object's reference member, followed the same way. Over a link the same rule: the replica keeps its
   last values readable while its hold is failed. Nothing outlives its object instance and nothing is handed between
   objects.
-- **References across a reload** (slice 7b §6): a reference is never ended by a code change. Its object swapped in
-  place or restarted: it follows the new instance (above; a hold over a link gets a fresh `bound`, §22). Its version no longer accepted, or a member of it refused (`contract_mismatch`): it leaves the object and waits
+- **References across a reload** (slice 7b §6): a reference is never ended by a code change. Its object restarted: it
+  follows the old instance while that serves its version, then the new instance (above; a hold over a link gets a fresh `bound`, §22). Its version no longer accepted, or a member of it refused (`contract_mismatch`): it leaves the object and waits
   unbound (`failed { waiting }`) with its last values; the object and its other holders stay. Its type removed: it
   waits unbound `not_served` with its last values; a publication that serves the name again binds it to the next
   object (a new object: its in-memory documents start over from `initial()`, persisted ones load again). On a removal
@@ -936,7 +935,10 @@ parented under it; a throw marks the span failed (`trace_failed`) and is rethrow
 `fn` gets `ctx` itself (slice 9; round-3 cut C11 kept, as this section already stated it); in a job's `run` also `jobId`
 and `state` (slice 5). Pass `ctx` to everything you wait
 on. Code outside objects gets a `ctx` from `host.root` (slice 8). Durable's `Context` is the same module
-(`../context`); bridging is explicit. No code versions, no request ids.
+(`../context`); bridging is explicit. No code versions, no request ids. A method's `ctx` is also a node of its **call
+chain** (the attempt the method runs on, then the chain of the call that made it): during a reload it tells old work
+from new (section 21), so a root opened inside a method takes the method's `ctx` (`withoutAbortSignal(ctx)`), never a
+fresh context.
 
 **Await what you start in a root or a handler** (decision "Mistakes that wait are reported at once" (e), owner,
 2026-11-03; footgun 10 of the p2 port). What is started with a context ends with it: a root's scope seals when `fn`
@@ -1296,7 +1298,7 @@ commits are the exact invalidation: a commit not writing the table runs nothing)
 (params decide it); **a limit is required** (`invalid/args` at declaration; the store's query language keeps the limit
 an argument of the runner, as `page` has it). A run that fails (a row the code cannot read) is a failed member, as a
 throwing derive (one failure call, `query_failed` once per episode, `[["r", rows]]` at the next good run); the object
-stays live. It is no native, so an object with live queries swaps on reload (section 21). Cost: one query per
+stays live. It is no native: a restart's successor runs its live queries again at its activation (section 21). Cost: one query per
 touching commit, bounded by the limit (100 rows: about 60 µs unwatched, 80 µs watched, `benchmarks.md`); **there may
 be dragons** for tables written hundreds of times a second. Incremental maintenance of the result (row-level changes
 kept in memory, a re-run only when a removal empties the window or a bulk write hides which rows changed) is left for
@@ -1457,7 +1459,7 @@ self.onLive(async (ctx) => { for await (const f of watcher.value.files(ctx.abort
     has finished or after `closeTimeout` (30 s at most, Q7: a longer script is aborted); Chord then opens the new one
     immediately. Code mode's sandbox does
     this; its tool entry looks up the current sandbox at `execute()`.
-  - **Swap through a registry:** the resource is a registry contribution; readers always find the current one, and a
+  - **Replace through a registry:** the resource is a registry contribution; readers always find the current one, and a
     reader that must wait for one uses a cancellable "wait until present" with the park deadline.
 
 ---
@@ -1487,12 +1489,11 @@ self.onLive(async (ctx) => {                                    // set up, wait 
   and stop when it ends (their `ctx` is aborted, then
   the drain waits for running calls, bounded by `closeTimeout`). Each call gets its own `ctx` (the object's principal
   for a remote type, the host's for a local one; the host's incarnation; `ctx.get` released when the call settles).
-- **On reload** the old routines' `ctx` is aborted; the new routines start once all old routine calls of the object
-  have finished (bounded; a stuck call is reported and the new routines start anyway): a handover per object, so
-  routines need no names. Example it prevents: an old handler midway through `restart(W1)` and a new one seeing W1
-  still pending and restarting it again. The bound is `closeTimeout` (owner, 2026-10-24); calls do not wait for the
-  handover, only the new routines do (slice 7b). A stuck old call past the handover is reported `drain_timeout` and
-  the whole old attempt is sealed then (audit A12: one seal token per attempt; its method calls had the same bound).
+- **On reload** the old routines' `ctx` is aborted at the restart; their calls drain with the old attempt, and the
+  new routines start when the successor goes live, after the old attempt's seal: routines need no names. Example it
+  prevents: an old handler midway through `restart(W1)` and a new one seeing W1 still pending and restarting it again.
+  The bound is the reload drain bound (`reloadDrainTimeout`); a call still running then is reported `drain_timeout`
+  and the whole old attempt is sealed (audit A12: one seal token per attempt).
 - **`on(source, fn)`:** any watchable (a document, a derive, a reference member, a registry value, `ref.state`). The
   first call gets the current value (`[["r", value]]`, W2b), then one call per change; calls never overlap (S8);
   changes made during a call arrive folded in the next (newest value, folded ops); a running call is not aborted by a
@@ -1507,8 +1508,8 @@ self.onLive(async (ctx) => {                                    // set up, wait 
   job for long work. Chord keeps no state for routines across reloads or restarts; what must survive is a document of
   the object (e.g. a `lastCleanup` time, which also survives a crash).
 - **Helpers:** `sleep(ms, ctx)` (rejects when `ctx` is aborted, leaves no timer or listener) and `untilAborted(ctx)`.
-  Routines and handlers wait only through calls that take `ctx`; otherwise Chord cannot stop them, and the handover
-  and the drain report them stuck.
+  Routines and handlers wait only through calls that take `ctx`; otherwise Chord cannot stop them, and the drain
+  reports them stuck.
 - **Errors:** `onError` gets `routine_failed { object, routine, error }`, `routine` a `Position` (`{ kind: "on" |
   "onLive", position }`; natives use the same type); never uncaught.
 - **Keep-alive:** routines do not count in `host.activity` (an `onLive` runs forever).
@@ -1633,12 +1634,10 @@ host.serve(ChatStore, ({ conversation }, self) => {          // local: no princi
   forwards and its result forwards (`{ 1: { args: (old) => current, result: (old) => current } }`; a producer's
   direction, unlike a contract's). Its records keep every run's version: a new attempt's `self.job(Def, impl)` at
   another version takes the records over (the same version with another fingerprint, over args, result and state, is
-  refused at declaration, as documents). A run started on an older version and still running finishes on its old
-  code across a pure swap (its invocation keeps the old implementation); `finish` runs on the new code with the
-  outcome's args and result mapped forwards (once per run, never per publication); `running` shows its args mapped; a
-  run not invoked yet runs on the new code with its args mapped. Its state document keeps its version while the old
-  code writes it and migrates through its own `migrate` once its run settled or moved to the new code (the outcome
-  `finish` gets). Without an adapter, for a run of a newer version than the code (a rollback), or for a job the new
+  refused at declaration, as documents). A reload restarts the job's object: a running in-memory run ends `aborted
+  { reload }` at the old attempt's seal (a persisted one is stopped and resumed per `resume`, R3); `finish` runs on the
+  new code with the outcome's args and result mapped forwards (once per run, never per publication); a run not invoked
+  yet runs on the new code with its args mapped, and its state document migrates through its own `migrate`. Without an adapter, for a run of a newer version than the code (a rollback), or for a job the new
   code no longer declares, the run is `blocked { version }` (kept, not invoked) until a reload brings matching code;
   blocked runs (`finish_failed` ones too) are retried on every reload of their object's plugin; a persisted run of
   another version or fingerprint stays blocked with its record as stored until the reload that brings its version
@@ -1899,9 +1898,9 @@ agent asks everyone present. Its store must live in an object (it predates "nati
 **complete new plugin set** after `load`: a plugin in it and not loaded is added; one loaded with another facet value is
 changed (Chord compares no code); one passed as the very same facet object is unchanged and untouched (owner,
 2026-10-29: base code passes its core facet value every time); one loaded and not in it is removed. It resolves with a
-report once the commit happened and every object took its fate (swaps and retries had their first dependency check;
-it does not wait for objects to go live); a plugin whose new code fails keeps its old code and is listed in the
-report's `failed` (per plugin, below).
+report once the commit happened and every object took its fate (a restart reports what its successor's recorded
+requests found at once, a retry its new attempt's first dependency check; it does not wait for objects to go live); a
+plugin whose new code fails keeps its old code and is listed in the report's `failed` (per plugin, below).
 Reloads run one after another per host; before `load` resolved it throws, and so does a plugin set with an invalid
 name (before anything changes); after `close` it rejects `released/closed`;
 `context` bounds it (decision 4: no install watchdog): its abort before the commit rejects `aborted` and changes
@@ -1914,8 +1913,8 @@ type ReloadReport = {
   readonly plugins: { readonly added: readonly string[]; readonly changed: readonly string[]; readonly removed: readonly string[] };
   readonly failed: readonly { readonly plugin: string; readonly error: unknown }[];   // new code failed: old code kept, an added one left out
   readonly objects: readonly ({ readonly object: string } & (
-    | { readonly kind: "swapped" } | { readonly kind: "restarted" } | { readonly kind: "ended" }
-    | { readonly kind: "parked"; readonly cause: FailureCause } | { readonly kind: "retried" }))[];
+    | { readonly kind: "restarted" } | { readonly kind: "ended" } | { readonly kind: "retried" }
+    | { readonly kind: "parked"; readonly cause: FailureCause }))[];
 };
 ```
 
@@ -1948,8 +1947,8 @@ type ReloadReport = {
   `linger` and provider, `bindProvider(contract, options.accepts)`; registry providers; facet contributions by
   plugin), then, for
   every live, activating, parked or failed object of a changed or removed plugin whose type is still served, its new
-  factory with the object's params (and principal) against a recording `self`: it records what the factory opens,
-  the documents, tables and jobs it declares with their versions, its contributions and requests, runs the checks an
+  factory with the object's params (and principal) against a recording `self`: it records the documents, tables
+  and jobs it declares with their versions, its contributions and requests, runs the checks an
   attempt makes without effects (declared twice; persisted data outside a stable identity; contributions outside a
   host-lifetime object; a document or job at an older version, or at its version with another schema), and hands out
   inert handles. Staging is synchronous, so no request or arriving hold meets it half done (audit A1: model §1's
@@ -1961,56 +1960,73 @@ type ReloadReport = {
   After the batch, each object takes its fate, host-lifetime objects of new types start (no barrier), and the
   publication wakes the requests indexed under the names the reload serves (`UnboundIndex.wake(names)`, per name),
   refused holds of those names re-run their start.
-- **Fates** (decided in staging; objects of plugins not in the reload are untouched):
+- **Fates** (decided in staging; objects of plugins not in the reload are untouched; decision "Reload restarts every
+  affected object; old work finishes on old code", which superseded the pure swap):
 
   | The object | Fate |
   | --- | --- |
   | its type is removed | **ended**: as an end (natives close `end`, callers of running calls rejected `released`, handlers drained, in-memory documents gone, persisted ones kept); its holders' requests are not ended: they wait unbound `not_served` (§7) |
   | failed, parked, activating or waiting for its backoff | **retried** on the new code (`ref.retry()`'s rule, whatever broke it); an activating attempt is sealed and its natives close `reload` |
-  | live, neither its live attempt nor the new factory opens natives, and no table of the new factory is newer than the store's | **swapped** in place (below); live queries are no natives (section 11): an object showing table rows through `self.query` swaps, one reading them in `self.open` restarts |
-  | live, otherwise | **restarted**: new calls park (it shows `loading`), its contributions leave, running calls drain (bounded by `closeTimeout`; a call outliving the drain is cut off by the seal fence), the attempt is sealed (in-memory job runs end `aborted { reload }`, persisted ones are stopped and resumed, R3), natives close `reload`, the new attempt activates after that teardown (documents stay; eager table migrations run as at activation) |
-  | any of the above whose new code waits for a dependency | **parked** (decision 4): no overlap of old and new code; reported with the cause |
+  | live (natives or not) | **restarted** (below): its old attempt serves old work until that drained and its successor's requests are ready, bounded by the reload drain bound; then it is sealed (in-memory job runs end `aborted { reload }`, persisted ones are stopped and resumed, R3), natives close `reload`, and the successor runs its factory and activates (documents stay; eager table migrations run as at activation) |
+  | a restart whose successor's recorded requests find a failure, or a retry whose new attempt waits for a dependency | **parked** (decision 4): reported with the cause; the successor activates once the dependency is there |
 
-  A restarted object gets a new instance id (an old activation chain never matches it); a swapped one keeps it; a
-  retried one keeps it as any retry does. Cycles are checked again for the new attempts; `parked_long` is unchanged.
-- **Fates start dependents first** (decision "Swaps: dependents first; calls during a swap never see `not_ready`"):
-  the removals first, then the other fates in the reverse of the order the objects went live (a dependent goes live
-  after its providers). Example: `todo.store` and its view `todo.todos(groceries)`, both pure, in one plugin. Started
-  provider first, the view's new attempt would bind the store while its swap shows `loading` and park (its
-  contributions leaving, its holds over a link unbinding) until the store's new instance is live. Started first, it
-  binds the store while that is still live, passes its dependency check and reads the store's old instance until
-  the new one is live (one frame), its calls waiting at the store's gate: both are reported `swapped`, nothing parks.
-  This is the path a provider-only reload under a live dependent already takes. A removed provider ends first, so a
-  dependent whose new code still needs it parks (decision 4); a provider takes its new served type with its own fate,
-  so a dependent needing a version only the new code serves waits unbound until then and parks on the provider's swap
-  (never reading that version off the old instance). A pure dependent still parks only then, or when its provider
-  went live after it (a provider that failed live and came back), or when its new code needs something that is not
-  live (a new or missing dependency).
-- **The pure swap** (decision "The seal fence": not a replacement while its calls run): a new attempt of the same
-  object (its documents, line and job records) activates at once; calls arriving meanwhile wait at
-  the gate (bounded by `readyTimeout`, `unavailable/park_timeout`). The gate holds a call while any attempt of the
-  object activates (a swap, parked or not, a restart after its drain), until the object is live, failed or ended;
-  a parked attempt showing `failed { waiting }` rejects it with that cause. A call never gets `not_ready` there: a
-  hold over a link stays bound while the old instance still changes, so its consumer sees `live` and sends. When the
-  hold then leaves the old instance (a parked swap's retirement), it tells the consumer `loading` and keeps the calls
-  still in flight: they go on waiting at the gate (§22, decision "Calls in flight survive a `loading` unbind"). The
-  new attempt's requests are made and bound
-  before the old attempt's are released (a request equal to an old one binds to the same target with no gap, M§3.9).
-  Running calls finish on the old attempt with its handles valid, except R15: an old call touching a document whose
-  version rose throws once (`released/version`), the document intact, the call not resent; the same for a table whose
-  version rose (old table handles' version fence: old code never issues SQL for a dropped column). Once the swap
-  ended (the new attempt live, parked or failed) and the old attempt's calls settled (bounded by `closeTimeout`,
-  `drain_timeout`), the old attempt is sealed and its references released; its job invocations finish on their old
-  code. Retiring attempts are bounded by `closeTimeout` each; a later swap never waits for them (several may retire
-  at once after quick reloads), while a restart, an end and the host's close do (an end rejects their callers at
-  once). The references move to the new instance's members by name (one frame from the last value; a member the new
-  variant lacks fails `invalid/member`; §7); exposed derives are matched by their member names, internal ones are
-  rebuilt; in-memory documents migrate through `migrate` when the new code declares a higher version; the
-  contributions are replaced in one batch; `self.writable` starts at its new initial value (decision 2); `retryOn`
-  sources are re-declared; the new attempt's live queries run at its activation (the old attempt's are re-run by the
-  commits of its remaining calls until it is sealed, then dropped). **Routines hand over per object:** the old attempt's routines are aborted; the new ones
-  start once the old routine calls finished, bounded by `closeTimeout` (a stuck one is reported `drain_timeout` and
-  the whole old attempt is sealed then, audit A12: one seal token per attempt); calls never wait.
+  A restarted object gets a new instance id (an old activation chain never matches it); a retried one keeps it as
+  any retry does. Cycles are checked again for the new attempts; `parked_long` is unchanged. Live queries are no
+  natives (section 11): the successor's run at its activation.
+- **Fates start in the plan's order**, removals first; the restarts' readiness and successors start once every fate
+  started, so the requests they bind meet the new served types only.
+- **Old work** (decision "Reload restarts every affected object; old work finishes on old code", rule 2): the calls
+  running on an object at the commit and every call they cause. On one host they are found through `ctx`: a method's
+  `ctx` is a node of its call chain (the attempt it runs on, then the chain of the call that made it), so a call,
+  `ctx.get` or root scope given the method's `ctx` (`withoutAbortSignal(ctx)` for a root) is old work while any
+  attempt in its chain drains for a restart. The host counts its draining attempts and the old calls it runs for
+  other hosts, so outside reloads no chain is walked. Across hosts a consumer marks such a call `old` (§22); a
+  provider honours the mark only from a trusted link and runs the call as old work, counted while it runs; a relay
+  drops it from a link that is not trusted (a page cannot claim old work).
+- **Old work runs on old attempts:** a call of old work on an object whose old attempt is open runs there, with its
+  handles valid; a getter of old work binds that attempt for any version it serves. A getter for a version the new
+  code dropped binds the open old attempt or fails at once (`contract_mismatch`, never a wait for a code update). An
+  object that did not exist starts on the new code; its requests bind open old attempts as any request does (rule 5
+  below). **New work** (anything else) waits at the gate and runs on the new code (bounded by `readyTimeout`,
+  `unavailable/park_timeout`); a parked successor showing `failed { waiting }` rejects it with that cause. A call
+  never gets `not_ready` there: a hold over a link stays bound while the old attempt is open, so its consumer sees
+  `live` and sends; when the hold then leaves the old instance, it tells the consumer `loading` and keeps the calls
+  still in flight: they go on waiting at the gate (§22, decision "Calls in flight survive a `loading` unbind").
+- **The seal** (rule 3): the old attempt is sealed once its own calls and the old work routed to it drained (a call
+  routed after the drain began joins it) and its **readiness** holds: the requests its successor's factory made in
+  staging, bound once every fate started, are each live, ended, or failed for a reason other than another host's
+  version skew (`contract_mismatch` or `unavailable/version` from a remote provider, kept on `waiting` causes along a
+  chain; it heals when that host's reload lands). Registry requests are not waited for (the old attempt's
+  contributions keep them). All of it is bounded by the **reload drain bound** `reloadDrainTimeout` (a host option,
+  default 5 s, at most `closeTimeout`; the app kit passes `timeouts.reloadDrainTimeout` to the server and every
+  worker): a method still running then is cut `released` and reported `drain_timeout`; long work belongs in jobs.
+  Only after the seal does the successor's factory run, so no new declaration meets old work: old work writes the
+  documents and tables at their old versions, and the successor migrates what it wrote. The readiness bindings and
+  the old attempt's references are released only once the successor's own requests bound (a dependency held only by
+  them never ends, M§3.9); presence lists (§19) never show readiness bindings (they are no consumers of their own).
+  A failed request is shown by the successor while it lasts (new calls get the cause, consumers of the old attempt
+  see the failure) and no longer once it recovered; from the old attempt's end on, the successor's own dependency
+  checks decide what it shows. The version fences stay for calls cut by the seal (R15: a document or table whose version
+  rose throws `released/version` there).
+- **Consumers meanwhile** (rule 5): a same-host consumer whose version the open old attempt binds sees the object
+  `live` and follows the old instance (its new code may read the provider's old state for up to the drain); a
+  reference or hold of a version only the new code serves shows `loading` until the successor is live. At the seal
+  the old attempt stops being the instance its holders bind (`loading`; a hold waiting for a window slot unbinds);
+  once its admitted commits published it stops changing and the references take their last values from it. When the
+  successor goes live they move to its members by name (one frame from the last value; a member the new variant
+  lacks fails `invalid/member`; §7); internal derives are rebuilt; in-memory documents migrate through `migrate` when
+  the new code declares a higher version; `self.writable` starts at its new initial value (decision 2); `retryOn`
+  sources are re-declared.
+- **Contributions:** an old attempt with natives withdraws its contributions at the seal (F-b); one without keeps
+  them until its successor is live, which replaces them in one batch, or drops them when the successor fails or parks
+  (F-c). **Routines** stop at the restart; their calls drain with the old attempt's; the successor's start when it
+  goes live.
+- **Reload cycles** (rule 6): a wait of old work on an object whose activation waits, through its parked
+  dependencies or the gates its opener waits at, on the old attempt that very work runs on fails at once with
+  `unavailable/reload_cycle`, naming the chain (`app.f(fresh) → app.p`: old work creating an object whose new code
+  needs the raised provider). Checked when the wait starts and whenever an attempt parks or an opener begins waiting
+  at a gate. What leaves Chord (roots opened without the method's `ctx`, Durable tasks, an app's locks) and cycles
+  across hosts end at the reload drain bound.
 - **Natives are not kept across reloads by name:** natives have no line, transactions or schema, so old and new code
   would interleave unchecked. In practice a restart costs little (the Durable harness is base code, terminal PTYs live
   in their own process, model runtimes, sandboxes and the search index rebuild in milliseconds); reloading the plugin
@@ -2056,6 +2072,13 @@ type ReloadReport = {
   another host sees follows §7: kept and freshly bound while its version is accepted; `failed
   { waiting }` (`version`, `not_served`) otherwise, bound again by the install that serves it; a consumer whose own
   code moves to a new version releases its old request and makes a new one.
+- **A contract change between hosts in one rollout leaves a gap** (decision "The rollout order stays; no `loading`
+  grace"): a consumer on an earlier step whose provider on a later step moves to a new version waits for the
+  provider's step (server first: server consumers of worker types). A restarting consumer's readiness waits out the
+  other host's version refusal, so its old attempt keeps serving meanwhile, up to the reload drain bound; past it, or
+  for a consumer created meanwhile, the reference waits `failed { waiting }` with its last values. `accepts` cannot
+  close the gap within one rollout (the old provider never serves the new version). The recipe: two applies, the
+  provider first (serving the new version and accepting the old one), then its consumers.
 - **The app's loader keeps its own duties:** the desired code set, a digest over the facet bundles' content hashes (an
   unchanged server restart reinstalls nothing), serialized installs, a host that starts or reconnects installing the
   current set before anything is routed to it, a rejected own install failing its own requests with the reason.
@@ -2069,8 +2092,8 @@ worker (the reload suite), not only by unit tests. "The page" is any client over
 | Change rolled out | What stays on screen | Calls | State |
 | --- | --- | --- | --- |
 | a plugin whose new build, evaluation or staging fails | everything; the plugin keeps its old code, the error is reported to the app (a page's own evaluation failure is reported in that page) | unaffected | unaffected |
-| pure code (no natives) on the server or a worker | the view stays bound; one fresh snapshot once the new code is live; values change only where the new code computes differently | a running call finishes on the old code; a call arriving meanwhile waits and runs on the new code; never `not_ready` | documents and tables unchanged; `self.writable` values start over |
-| code holding natives (restart) | `live` with the last values (and what the draining old code still commits) while the old code drains, up to `closeTimeout`; then `loading` briefly; then a fresh snapshot | running calls get up to `closeTimeout` on the old code; calls arriving meanwhile wait (the provider host's `readyTimeout`) and run on the new code | documents and tables unchanged; natives reopened; `self.writable` values start over |
+| pure code (no natives) on the server or a worker (a restart) | `live` with the last values (and what the old code still commits) while the old code drains, up to `reloadDrainTimeout`; then `loading` briefly; then a fresh snapshot from the new code | running calls, and the calls they cause on any host, finish on the old code (up to `reloadDrainTimeout`, then `released`); calls arriving meanwhile wait (the provider host's `readyTimeout`) and run on the new code; never `not_ready` | documents and tables unchanged; `self.writable` values start over; in-memory job runs end `aborted { reload }`, their `finish` on the new code |
+| code holding natives (a restart) | as pure code; the old code's natives close (`reload`) at the seal, the new code's open before the fresh snapshot | as pure code | as pure code; natives reopened |
 | a contract change the new code still `accepts` | the old page keeps working through the mapping | answered through the mapping | unchanged |
 | a contract change not accepted, or a type removed | the reference waits with its last values (`failed { waiting }`) until the page's code updates or the type returns | calls fail at once with the cause (`contract_mismatch`, `unavailable` not served; §7) | unchanged |
 | a web or terminal plugin | the other plugins untouched, scroll kept; the reloaded plugin's components remount | the reloaded plugin's calls as above | component state starts over; `usePageState`/`scope.pageState` survive |
@@ -2172,7 +2195,7 @@ validation, no clone of snapshots or ops.
   | `revoke` | parent to child (route link) | the revocation value (4b) |
   | `release` | to provider | `origin?`, `hold` |
   | `retry` | to provider | `origin?`, `hold`, `hops` (the retry's hop budget, 1-16: 16 from the first host, one less for each host it passes on from, none sent at 0; audit A5); relays forward it unchanged |
-  | `call` | to provider | `origin?`, `call`, `hold`, `method` (index), `args?` (part; absent: no arguments), `segments?` |
+  | `call` | to provider | `origin?`, `call`, `hold`, `method` (index), `args?` (part; absent: no arguments), `segments?`, `old?` (`true`: old work of a reload, §21) |
   | `abort` | to provider | `origin?`, `call` (named `cancel` until 2026-10-27) |
   | `ack` | to provider | `origin?`; one per applied `bound`/`state` message |
   | `closed` | relay to provider | `origin`: the downstream origin ended |
@@ -2186,7 +2209,7 @@ validation, no clone of snapshots or ops.
   | `ping`, `pong` | both | the heartbeat |
 
   A `bound` on a hold that is bound already replaces its replicas in one batch, another variant allowed (re-holds,
-  slice 7b's restarted objects and its swaps to another variant).
+  slice 7b's restarted objects, another variant included).
 - **Codecs are pluggable per link** (both ends use the same): `binaryCodec` (default: a kind byte with a flag for a
   following origin varint, varints, raw incarnations and fingerprints, length-prefixed strings and parts; about 23 B
   for a streamed token) and `textCodec` (Delta-style JSON tuples without field names, a message with an origin wrapped
@@ -2260,6 +2283,12 @@ validation, no clone of snapshots or ops.
   the text codec writes it as the last element (a hold's after `limit`, absent ones before it `null`; a call's after its
   payload, whose two fields are then positional, `null` when absent). Relays read it from the envelope and forward
   their own span's carrier (a relay recording nothing forwards it as it came). `PROTOCOL_VERSION` stays 1.
+- **Old work across hosts** (decision "Reload restarts every affected object; old work finishes on old code"): a
+  consumer marks a `call` `old: true` when its caller is old work of a reload on its host (§21); the provider honours
+  the mark only from a trusted link (it runs the call on open old attempts, as old work of its own host while it
+  runs) and ignores it otherwise; a relay drops it from a downstream link that is not trusted. The binary codec flags
+  it in the call's kind byte (`0x20`; on any other kind that bit makes an unknown kind); the text codec writes it as a
+  call's seventh element, after the trace carrier (`null` when absent). `PROTOCOL_VERSION` stays 1.
 - **Adapted bindings get diffs** (slice 7b; decision "References are the only indirection" (5)): a consumer bound
   through `accepts` attaches to the object instance's shared mapping for its version: per member one derive of the
   instance's member through `(current) => old` (a changed member), of its whole state (a removed member), or the
@@ -2273,16 +2302,14 @@ validation, no clone of snapshots or ops.
   failure (its calls waiting for a slot reject with it; the provider rejects its calls in flight once); the provider
   detaches the hold's sources, drops its unsent pending ops and a queued `bound`, and keeps the ack slots of `bound`
   and `state` messages already sent until their `ack` or the link's loss. A reload sends it when the object's type is
-  removed (`not_served`), its version is no longer accepted (`version`), or a swap parks on a failed dependency; a
-  restart, a parked swap still loading or a live failure already retrying sends `loading`; both are followed by a fresh
-  `bound` when the object is live again (applied as a re-binding). A swap in place keeps the hold bound and sends it a
-  fresh `bound` once the new instance is live (audit A9, 2026-10-30: one rebind path; a tab's watchers may get a frame
-  for an unchanged member).
+  removed (`not_served`), its version is no longer accepted (`version`), or a restart's successor parks on a failed
+  dependency; a restart (once its old attempt no longer serves the hold's version) or a live failure already retrying
+  sends `loading`; both are followed by a fresh `bound` when the object is live again (applied as a re-binding; a
+  tab's watchers may get a frame for an unchanged member).
 - **A `loading` unbind keeps the calls in flight** (decision "Calls in flight survive a `loading` unbind"): the
   provider unbinds the hold as above but rejects none of its calls, and the consumer keeps them (only its calls still
   waiting for a slot reject `unavailable`). Each kept call gets exactly one answer from what it already waits on: the
-  instance it runs on (its result within `closeTimeout`, else `released` at the seal; a hold binding afresh after a swap
-  in place may unbind while its live instance still runs calls) or the gate (the new instance's result, the parked
+  instance it runs on (its result within the drain, else `released` at the seal) or the gate (the new instance's result, the parked
   cause, `unavailable` after `readyTimeout`, the object's end); an `abort`, a `release`, `gone` or the link's close
   ends it as any call. Until its fresh `bound` is sent the hold takes calls by the names it was bound with (sent before
   its consumer learnt of the `loading`): they wait at the gate too, never `not_ready`; after a `failed` it takes none.
@@ -2687,7 +2714,7 @@ this document):
 | 11 | where a flow lives | 20 | when login is ported |
 | 14 | project plugins | 21 | own pass over `plugin-loading.md` |
 | 16 | a Durable Object profile | 24 | when a DO target becomes concrete |
-| 24 | a per-type drain override: a host option or fixed (no install watchdog: `reload` takes the app's context, decision "Slice 7b's open points" (4); the routine handover uses `closeTimeout`; a failing job `finish` backs off 1-60 s and blocks after five failures, decided) | 3 | if a real case needs it |
+| 24 | a per-type drain override: a host option or fixed (no install watchdog: `reload` takes the app's context, decision "Slice 7b's open points" (4); a restart's old attempt is bounded by `reloadDrainTimeout`; a failing job `finish` backs off 1-60 s and blocks after five failures, decided) | 3 | if a real case needs it |
 | 28 | Astra's circuit breaker (a hard transport-buffer cap plus a stall deadline); the heartbeat is built, the cap was never decided | 3 | if a real case needs it |
 
 Apps (p3), from the functionality map, decided per domain when p3 is designed:

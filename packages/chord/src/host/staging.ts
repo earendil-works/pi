@@ -2,8 +2,9 @@
 // its own (the types it serves with their providers, the registries it serves, its facet contributions) with `load`'s
 // checks, merged into the staged table beside the live one, where a type or registry another plugin serves already
 // fails the plugin; and an object's new factory run against a recording `self`, which keeps what the factory declares
-// (natives, documents, tables, jobs, contributions, requests with their contract versions) and activates, binds and
-// opens nothing, so a reload decides each object's fate, and which plugins keep their old code, before its commit.
+// (documents, tables, jobs, contributions, requests with their contract versions) and activates, binds and opens
+// nothing, so a reload decides which plugins keep their old code before its commit, and a restart knows the requests
+// its successor will make (its readiness).
 // `load` stages its facets the same way and publishes them.
 
 import type { Context } from "../context/index.ts";
@@ -172,8 +173,6 @@ function stageEntry(
 
 /** What a recorded factory declared: what a reload's fate and checks need, nothing activated. */
 export type Recorded = {
-	/** How many natives it opens (`self.open`). */
-	readonly natives: number;
 	readonly documents: readonly AnyDefinition[];
 	readonly tables: readonly TableDefinition[];
 	readonly jobs: readonly JobDefinition<unknown, unknown, unknown>[];
@@ -232,7 +231,6 @@ class RecordingSelf {
 	readonly #object: ChordObject;
 	readonly #served: Served;
 	readonly #context: Context;
-	#natives = 0;
 	readonly #documents = new Map<string, AnyDefinition>();
 	readonly #tables = new Map<string, TableDefinition>();
 	readonly #jobs = new Map<string, JobDefinition<unknown, unknown, unknown>>();
@@ -247,7 +245,6 @@ class RecordingSelf {
 
 	get recorded(): Recorded {
 		return {
-			natives: this.#natives,
 			documents: [...this.#documents.values()],
 			tables: [...this.#tables.values()],
 			jobs: [...this.#jobs.values()],
@@ -331,7 +328,6 @@ class RecordingSelf {
 
 	open(): never {
 		this.#assertDeclaring("open");
-		this.#natives++;
 		return INERT;
 	}
 
@@ -386,18 +382,4 @@ class RecordingSelf {
 	#assertDeclaring(declaration: string): void {
 		if (!this.declaring) throw new Error(`${this.#object.label}: self.${declaration} is valid only in the factory`);
 	}
-}
-
-/**
- * Whether `recorded`'s tables are at a version newer than `object`'s store has them: their eager migration runs at an
- * activation, so the object restarts instead of swapping (§4).
- */
-export function migratesTables(object: ChordObject, recorded: Recorded): boolean {
-	const { store } = object.host;
-	if (store === undefined) return false;
-	const owner = object.served.contract.name;
-	return recorded.tables.some((table) => {
-		const stored = store.table(tableSqlName(owner, table.name));
-		return stored !== undefined && stored.version < table.version;
-	});
 }
