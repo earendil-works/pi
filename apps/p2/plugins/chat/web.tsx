@@ -265,8 +265,6 @@ function ErrorToast({ error, onDismiss }: { error: string | undefined; onDismiss
 
 /** Textarea with send, stop, steer and attachments; Enter sends with a fine pointer, Escape stops. */
 function Composer({
-	draft,
-	setDraft,
 	busy,
 	steer,
 	setSteer,
@@ -279,8 +277,6 @@ function Composer({
 	textareaRef,
 	children,
 }: {
-	draft: string;
-	setDraft: (text: string) => void;
 	busy: boolean;
 	steer: boolean;
 	setSteer: (steer: boolean) => void;
@@ -295,6 +291,10 @@ function Composer({
 	textareaRef?: React.RefObject<HTMLTextAreaElement | null>;
 	children?: React.ReactNode;
 }) {
+	// The draft straight from the app's composer state, not through the screen's dock content: that arrives a layout
+	// effect after a keystroke, so the controlled textarea rendered the previous text first, which put the caret at the
+	// end on every keystroke and broke a phone keyboard's composition (its first tap on Send only closed the keyboard).
+	const { draft, setDraft } = useComposerState();
 	const ownRef = useRef<HTMLTextAreaElement>(null);
 	const textarea = textareaRef ?? ownRef;
 	// biome-ignore lint/correctness/useExhaustiveDependencies: resizing follows the rendered draft, as in Pi Mobile.
@@ -1303,8 +1303,6 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 									toBottom,
 									queued: queuedRows,
 									props: {
-										draft,
-										setDraft,
 										busy,
 										steer,
 										setSteer,
@@ -1575,7 +1573,7 @@ function NewSession() {
 		{
 			composer: owner
 				? {
-						props: { draft, setDraft, busy: false, steer, setSteer, disabled: false, onSend: send, attaching },
+						props: { busy: false, steer, setSteer, disabled: false, onSend: send, attaching },
 						footer: (
 							<div className="session-usage">
 								<div className="session-controls">

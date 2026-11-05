@@ -465,4 +465,26 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 			chat.release();
 		}
 	});
+
+	it("keeps the caret where the user types inside the draft (the composer renders the draft it was given at once)", async () => {
+		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+			{ cwd: fixture.workspace, title: "Caret" },
+			BACKGROUND_CONTEXT,
+		);
+		await browser.metrics(390, 844);
+		await browser.open(url(`/s/${session.id}`));
+		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+		await browser.evaluate(`document.querySelector('.composer textarea').focus()`);
+		await browser.call("Input.insertText", { text: "hello world" });
+		await browser.wait(`document.querySelector('.composer textarea').value === 'hello world'`);
+		// Put the caret after "hello" and type there, one character at a time as a keyboard does.
+		await browser.evaluate(`document.querySelector('.composer textarea').setSelectionRange(5, 5)`);
+		for (const character of " there") await browser.call("Input.insertText", { text: character });
+		assert.deepEqual(
+			await browser.evaluate<[string, number]>(
+				`(() => { const t = document.querySelector('.composer textarea'); return [t.value, t.selectionStart]; })()`,
+			),
+			["hello there world", 11],
+		);
+	});
 });
