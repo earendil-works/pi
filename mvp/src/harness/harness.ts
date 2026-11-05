@@ -1,4 +1,4 @@
-// Vendored from NeuroLift-Technologies/asfdk-harness src/harness.ts @ f28136d1cece7f5dd20734020346075efc2f6d9d
+// Vendored from NeuroLift-Technologies/asfdk-harness src/harness.ts @ 5488262c96d97026b27703d6580da65c2bcb1fb6
 // Only change from upstream: relative import specifiers use .ts (repo check:ts-imports). Do not edit otherwise: re-sync from upstream. See mvp/src/harness/README.md.
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
