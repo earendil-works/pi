@@ -113,7 +113,13 @@ The TUI launcher requires **Node >=26.5.1**; the server still supports Node 22.1
 npm run tui                          # device owner on http://127.0.0.1:$PORT (8788 when unset)
 npm run tui -- https://your-domain    # prompts for an owner link if no valid cookie is saved
 npm run tui -- https://your-domain --owner-link 'https://your-domain/owner#<token>'
+npm run tui -- --radius               # through Radius: your only online server, or --radius <server-id>
 ```
+
+With `--radius` the TUI reaches a server signed in with `npm run radius:login`, from anywhere and without a tunnel or
+owner link. The first run signs the TUI in to Radius by device code (saved in `~/.pi/p2-tui/radius.json`); Radius
+admits only the server's owner. For now each request is its own Radius connection, so a new server bundle shows up
+within 10 seconds rather than one (see [p2 notes](docs/p2-notes.md#tui-through-radius)).
 
 Direct loopback auto-signs in as the device owner without a link prompt; a proxy marker cannot use that path.
 For remote URLs (HTTPS required), get an owner link on the host, then pass `--owner-link` or paste it at the prompt.

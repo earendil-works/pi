@@ -26,9 +26,10 @@ import {
 	readClipboardImage,
 	readClipboardText,
 } from "./tui-clipboard.ts";
-import { configDirectory, connectionHeaders, type TuiCredentials } from "./tui-config.ts";
+import { configDirectory, type TuiCredentials } from "./tui-config.ts";
 import type { LauncherAction, LauncherActionContext } from "./tui-grants.ts";
 import { applyPrefsPatch, prefsDiff, readPrefsFile, validatePrefsPatch, writePrefsFile } from "./tui-prefs-save.ts";
+import { cookieTransport, type TuiRequestInit, type TuiTransport } from "./tui-transport.ts";
 import type { ConsentRequest } from "./tui-trusted-ui.ts";
 
 export const MAX_COPY = 1024 * 1024;
@@ -40,6 +41,8 @@ const ARTIFACT = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 export type LauncherActionOptions = {
 	url: URL;
 	credentials: TuiCredentials;
+	/** How requests reach the server; default: directly to `url` with `credentials`. */
+	transport?: TuiTransport;
 	role: "owner" | "guest";
 	/** Download folder (launcher-only preference; default ~/Downloads/p2). */
 	downloads?: string;
@@ -277,13 +280,12 @@ function suspendThisProcess(): Promise<void> {
 export function launcherActions(options: LauncherActionOptions): Record<string, LauncherAction> {
 	const { url } = options;
 	const platform = options.platform ?? process.platform;
-	const headers = connectionHeaders(url, options.credentials);
+	const transport = options.transport ?? cookieTransport(url, options.credentials);
 	const clipboard = options.clipboard ?? ((text, write) => copyToClipboard(text, write));
 	const open = options.openBrowser ?? ((target) => openBrowser(target));
 	const folder = options.downloads ?? join(homedir(), "Downloads", "p2");
 	const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && url.protocol === "http:";
-	const request = (path: string, init: RequestInit & { signal: AbortSignal }) =>
-		fetch(new URL(path, url), { ...init, headers: { ...headers, ...init.headers }, redirect: "error" });
+	const request = (path: string, init: TuiRequestInit) => transport.request(path, init);
 	const copyText = (value: unknown): string | undefined => {
 		const text = record(value)?.text;
 		return typeof text === "string" && text.length > 0 && Buffer.byteLength(text) <= MAX_COPY ? text : undefined;
@@ -321,17 +323,12 @@ export function launcherActions(options: LauncherActionOptions): Record<string, 
 						}
 					})();
 		if (body instanceof Uint8Array && body.byteLength > MAX_UPLOAD) throw new Error("Larger than 25 MiB");
-		const response = await fetch(new URL(`/upload?${query}`, url), {
+		const response = await request(`/upload?${query}`, {
 			method: "POST",
-			headers: { ...headers, "Content-Type": "application/octet-stream" },
-			body:
-				body instanceof Uint8Array
-					? Buffer.from(body)
-					: (stream as AsyncIterable<Uint8Array> as unknown as BodyInit),
-			redirect: "error",
+			headers: { "Content-Type": "application/octet-stream" },
+			body: body instanceof Uint8Array ? Buffer.from(body) : (stream as AsyncIterable<Uint8Array>),
 			signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
-			...(stream ? { duplex: "half" } : {}),
-		} as RequestInit);
+		});
 		const text = (await response.text()).slice(0, 8192);
 		let value: Record<string, unknown> | undefined;
 		try {

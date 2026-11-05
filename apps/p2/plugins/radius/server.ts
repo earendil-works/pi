@@ -50,7 +50,7 @@ export default defineFacet((host) => {
 					origin: relayed.publicOrigin,
 					remote: true,
 					port: server.info.value.port,
-					relayShellOrigin: relayed.shellOrigin,
+					...(relayed.shellOrigin === undefined ? {} : { relayShellOrigin: relayed.shellOrigin }),
 				};
 				// Anyone else is whom sharing finds by their email (the sessions shared with them), or nobody.
 				return relayed.user === undefined

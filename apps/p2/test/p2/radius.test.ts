@@ -10,9 +10,7 @@ import { BACKGROUND_CONTEXT, statusOf, whenLive } from "@p2/app/v1";
 import { WebSocket, WebSocketServer } from "ws";
 import { Devices } from "../../plugins/devices/contract.ts";
 import { ProviderLogin } from "../../plugins/login/contract.ts";
-import { ForwardsNative } from "../../plugins/ports/contract.ts";
 import { RadiusBrain, type RadiusStatus, readRadiusConfig, writeRadiusConfig } from "../../plugins/radius/brain.ts";
-import { RadiusConnections } from "../../plugins/radius/contract.ts";
 import {
 	encodeRelayUser,
 	RELAY_ORIGIN_HEADER,
@@ -24,230 +22,10 @@ import {
 import { radiusStatusText } from "../../plugins/radius/server.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
-import { startServer } from "../../src/hosts/server.ts";
+import { radiusTransport } from "../../src/hosts/tui-radius.ts";
 import { Access } from "../../src/runtime/access.ts";
-import { defineFacet } from "../../src/runtime/chord.ts";
-import { isOwner } from "../../src/runtime/principals.ts";
-import { Routes } from "../../src/runtime/server.ts";
 import { clientHost, expectChord, holdIn, http, poll, until } from "./helpers.ts";
-
-const OWNER = { kind: "user", id: "usr_1", organization_id: "org_1" };
-const PUBLIC_ORIGIN = "https://0123456789abcdef0123456789abcdef.rdtun.com";
-type Frame = { id: string; type: number; payload: Buffer };
-
-/**
- * Local stand-in for the Radius context endpoint and relay v4, or v5 with `channels`: then the brain's channel sockets
- * (`/v1/servers/<id>/channels/<connection>`) are accepted unless `rejectChannels`, and `channel(id)` resolves with the
- * relay's end of one. Never contacts Radius.
- */
-async function fakeRadius(options: { channels?: boolean; rejectChannels?: boolean } = {}) {
-	const version = options.channels ? "pi-server.host.v5" : "pi-server.host.v4";
-	const sockets = new WebSocketServer({
-		noServer: true,
-		handleProtocols: (protocols) =>
-			protocols.has(version) ? version : protocols.has("pi-server.channel.v1") ? "pi-server.channel.v1" : false,
-	});
-	const channels = new Map<string, WebSocket>();
-	const channelWaiters = new Map<string, (socket: WebSocket) => void>();
-	const shares: string[][] = [];
-	const server = createServer((request, response) => {
-		const shared = /^\/v1\/servers\/[^/]+\/shares$/.test(request.url ?? "") && request.method === "PUT";
-		if (shared) {
-			let body = "";
-			request.on("data", (chunk: Buffer) => {
-				body += chunk.toString("utf8");
-			});
-			request.on("end", () => {
-				shares.push((JSON.parse(body) as { emails: string[] }).emails);
-				response.writeHead(204);
-				response.end();
-			});
-			return;
-		}
-		if (request.url !== "/v1/context") {
-			response.writeHead(404);
-			response.end();
-			return;
-		}
-		response.writeHead(200, { "content-type": "application/json" });
-		response.end(
-			JSON.stringify({
-				actor: { principal_id: OWNER.id, principal_kind: OWNER.kind },
-				organization: { id: OWNER.organization_id },
-			}),
-		);
-	});
-	let host: WebSocket | undefined;
-	const controls: Array<Record<string, unknown>> = [];
-	const frames: Frame[] = [];
-	const hostReady = new Promise<WebSocket>((resolve) =>
-		server.on("upgrade", (request, socket, head) => {
-			const channelId = /^\/v1\/servers\/[^/]+\/channels\/([^/]+)$/.exec(request.url ?? "")?.[1];
-			if (channelId !== undefined) {
-				assert.equal(request.headers.authorization, "Bearer fixture-token");
-				if (options.rejectChannels) {
-					socket.end("HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n");
-					return;
-				}
-				sockets.handleUpgrade(request, socket, head, (connection) => {
-					channels.set(channelId, connection);
-					channelWaiters.get(channelId)?.(connection);
-				});
-				return;
-			}
-			sockets.handleUpgrade(request, socket, head, (connection) => {
-				host = connection;
-				connection.on("message", (data: Buffer, binary) => {
-					if (!binary) controls.push(JSON.parse(data.toString("utf8")) as Record<string, unknown>);
-					else {
-						const hex = data.subarray(2, 18).toString("hex");
-						frames.push({
-							id: `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`,
-							type: data[1] ?? 0,
-							payload: data.subarray(18),
-						});
-					}
-				});
-				resolve(connection);
-			});
-		}),
-	);
-	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-	const address = server.address();
-	assert(address && typeof address !== "string");
-	const sendData = (id: string, payload: Buffer, type = 1) => {
-		const frame = Buffer.alloc(18 + payload.length);
-		frame[0] = 2;
-		frame[1] = type;
-		Buffer.from(id.replaceAll("-", ""), "hex").copy(frame, 2);
-		payload.copy(frame, 18);
-		host?.send(frame);
-	};
-	return {
-		gateway: `http://127.0.0.1:${address.port}`,
-		/** Every set of emails the brain reported, in order. */
-		shares,
-		hostReady,
-		controls,
-		frames,
-		sendData,
-		send: (message: object) => host?.send(JSON.stringify(message)),
-		channel: (id: string) => channels.get(id) ?? new Promise<WebSocket>((resolve) => channelWaiters.set(id, resolve)),
-		reading: (on: boolean) => {
-			if (on) host?.resume();
-			else host?.pause();
-		},
-		response: async (id: string) => {
-			await poll(() => controls.some((message) => message.type === "response" && message.connection_id === id));
-			return controls.find((message) => message.type === "response" && message.connection_id === id)!;
-		},
-		body: async (id: string) => {
-			await poll(() => frames.some((frame) => frame.id === id && frame.type === 3));
-			return Buffer.concat(frames.filter((frame) => frame.id === id).map((frame) => frame.payload));
-		},
-		close: async () => {
-			for (const client of sockets.clients) client.terminate();
-			await new Promise<void>((resolve) => server.close(() => resolve()));
-		},
-	};
-}
-
-async function fixture(t: TestContext, content = Buffer.from("body"), relay: Parameters<typeof fakeRadius>[0] = {}) {
-	const directory = await mkdtemp(join(tmpdir(), "p2-radius-"));
-	const radius = await fakeRadius(relay);
-	t.after(async () => {
-		await radius.close();
-		await rm(directory, { recursive: true, force: true });
-	});
-	await writeRadiusConfig(directory, {
-		gateway: radius.gateway,
-		serverId: randomUUID(),
-		credential: {
-			type: "oauth",
-			access: "fixture-token",
-			refresh: "fixture-refresh",
-			expires: Date.now() + 3_600_000,
-		},
-	});
-	// A probe plugin's routes: who the server sees, a large body, an echo.
-	const probe = defineFacet((_host, self) =>
-		self.contribute(Routes, {
-			"GET /probe": (_request, response, access) => {
-				response.writeHead(isOwner(access.principal) ? 200 : 403);
-				response.end(JSON.stringify(access));
-			},
-			"GET /body": (_request, response) => {
-				response.writeHead(200);
-				response.end(content);
-			},
-			"POST /echo": async (request, response, access) => {
-				if (!isOwner(access.principal)) {
-					response.writeHead(403);
-					response.end();
-					return;
-				}
-				const chunks: Buffer[] = [];
-				for await (const chunk of request) chunks.push(Buffer.from(chunk));
-				response.writeHead(200);
-				response.end(Buffer.concat(chunks));
-			},
-		}),
-	);
-	const server = await startServer({
-		dataDir: directory,
-		port: 0,
-		fake: true,
-		web: false,
-		facets: [{ name: "radius-probe", facet: probe }],
-	});
-	t.after(() => server.close());
-	await radius.hostReady;
-	// The natives the radius and ports plugins contribute once open (their objects live from the load).
-	const natives = await Promise.all([
-		server.host.registry(RadiusConnections, BACKGROUND_CONTEXT),
-		server.host.registry(ForwardsNative, BACKGROUND_CONTEXT),
-	]);
-	const native = { relay: natives[0].value!.connection.relay, forwards: natives[1].value!.forwards };
-	const open = (
-		path: string,
-		options: {
-			method?: string;
-			kind?: "http" | "ws" | "stream";
-			forward?: string;
-			anonymous?: boolean;
-			principal?: typeof OWNER & { email?: string };
-			window?: number;
-			headers?: [string, string][];
-		} = {},
-	) => {
-		const id = randomUUID();
-		const origin = options.forward
-			? `https://fwd--0123456789abcdef0123456789abcdef--${options.forward}.rdtun.com`
-			: PUBLIC_ORIGIN;
-		radius.send({
-			version: 2,
-			type: "connection_open",
-			connection_id: id,
-			kind: options.kind ?? "http",
-			...(options.anonymous ? {} : { principal: options.principal ?? OWNER }),
-			public_origin: origin,
-			request: {
-				method: options.method ?? "GET",
-				path,
-				headers: options.headers ?? [
-					["origin", origin],
-					["x-radius-shell-origin", "https://radius.earendil.com"],
-				],
-			},
-			...(options.forward ? { forward: options.forward } : {}),
-			window: options.window ?? 64 * 1024,
-		});
-		if ((!options.kind || options.kind === "http") && options.method !== "POST")
-			radius.sendData(id, Buffer.alloc(0), 3);
-		return id;
-	};
-	return { directory, server, radius, open, ...native };
-}
+import { radiusFixture as fixture, OWNER, PUBLIC_ORIGIN } from "./radius-fixture.ts";
 
 test(
 	"Radius plugin admits its authenticated remote owner including provider login, without local cookies",
@@ -600,6 +378,79 @@ test(
 		await poll(() =>
 			f.radius.controls.some(
 				(message) => message.type === "connection_close" && message.connection_id === id && message.code === 1011,
+			),
+		);
+	},
+);
+
+test(
+	"Radius client channels: the owner's TUI launcher reaches the server, one Radius connection per request",
+	{ timeout: 30_000 },
+	async (t) => {
+		const content = randomBytes(3 * 1024 * 1024);
+		const f = await fixture(t, content, { channels: true });
+		const transport = radiusTransport(
+			{ gateway: f.radius.gateway, access: async () => "fixture-token" },
+			randomUUID(),
+		);
+		const signal = AbortSignal.timeout(20_000);
+		const probe = await transport.request("/probe", { signal });
+		assert.equal(probe.status, 200);
+		// The owner by Radius alone, framed by no shell; until a browser opened the brain, its origin is a placeholder.
+		const access = (await probe.json()) as { principal: unknown; origin: unknown };
+		assert.deepEqual(access.principal, { kind: "owner", access: "relay" });
+		assert.deepEqual(access.origin, { origin: "https://radius.invalid", remote: true, port: f.server.port });
+		assert.equal(transport.origin, "https://radius.invalid");
+		// Bodies larger than one message, both ways; a request body may stream.
+		assert(Buffer.from(await (await transport.request("/body", { signal })).arrayBuffer()).equals(content));
+		const upload = randomBytes(1024 * 1024);
+		const echo = await transport.request("/echo", {
+			method: "POST",
+			body: (async function* () {
+				yield upload.subarray(0, 1000);
+				yield upload.subarray(1000);
+			})(),
+			signal,
+		});
+		assert(Buffer.from(await echo.arrayBuffer()).equals(upload));
+		// Only the device itself mints owner links.
+		assert.equal((await transport.request("/owner-token", { signal })).status, 403);
+		// Once the owner opened the brain in a browser, clients get its Radius origin.
+		assert.equal((await f.radius.response(f.open("/probe"))).status, 200);
+		await (await transport.request("/probe", { signal })).arrayBuffer();
+		assert.equal(transport.origin, PUBLIC_ORIGIN);
+	},
+);
+
+test(
+	"Radius client channels admit only the owner, and only through channel sockets",
+	{ timeout: 30_000 },
+	async (t) => {
+		const f = await fixture(t, undefined, { channels: true });
+		const stranger = radiusTransport(
+			{ gateway: f.radius.gateway, access: async () => "stranger-token" },
+			randomUUID(),
+		);
+		assert.equal((await stranger.request("/probe", { signal: AbortSignal.timeout(10_000) })).status, 403);
+		const refused = await new Promise<number>((resolve) =>
+			stranger.socket("/chord", { open: () => {}, message: () => {}, refused: resolve, close: () => {} }),
+		);
+		assert.equal(refused, 403);
+		// A request that is not one is refused on the channel.
+		const id = randomUUID();
+		f.radius.send({ version: 2, type: "connection_open", connection_id: id, kind: "ws", principal: OWNER });
+		const channel = await f.radius.channel(id);
+		const closed = new Promise<number>((resolve) => channel.once("close", resolve));
+		channel.send(JSON.stringify({ type: "http", method: "GET", path: "//elsewhere.example/", headers: {} }));
+		assert.equal(await closed, 1008);
+		// Relays before channel sockets do not carry them.
+		const old = await fixture(t);
+		const oldId = randomUUID();
+		old.radius.send({ version: 2, type: "connection_open", connection_id: oldId, kind: "ws", principal: OWNER });
+		await poll(() =>
+			old.radius.controls.some(
+				(message) =>
+					message.type === "connection_close" && message.connection_id === oldId && message.code === 1008,
 			),
 		);
 	},

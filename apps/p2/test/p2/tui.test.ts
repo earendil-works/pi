@@ -48,6 +48,13 @@ test("TUI auth options, private config and owner-claim cookie round trip", async
 	);
 	assert.throws(() => parseTuiArgs(["http://remote.test"], {}), /HTTPS/);
 	assert.throws(() => parseTuiArgs(["https://fixture:secret@example.test"], {}), /without credentials/);
+	// Through Radius: optionally the server's ID; Radius admits the owner, so no URL or link, and no owner link from env.
+	const radiusServer = "0b5a3e8e-6f1d-4c55-9d3a-2a7b1c9e4f10";
+	assert.deepEqual(parseTuiArgs(["--radius"], {}).radius, {});
+	assert.deepEqual(parseTuiArgs(["--radius", radiusServer, "--theme", "dark"], {}).radius, { server: radiusServer });
+	assert.equal(parseTuiArgs(["--radius"], { P2_TUI_OWNER_LINK: link }).ownerLink, undefined);
+	assert.throws(() => parseTuiArgs(["--radius", "https://example.test"], {}), /no URL/);
+	assert.throws(() => parseTuiArgs(["https://example.test", "--radius", "--owner-link", link], {}), /no URL/);
 	saveConfig({ connections: { "https://example.test": { cookie: "owner=fixture" } } }, directory);
 	assert.equal(statSync(join(directory, "config.json")).mode & 0o777, 0o600);
 	assert.equal(statSync(directory).mode & 0o777, 0o700);

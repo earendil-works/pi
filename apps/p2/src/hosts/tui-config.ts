@@ -293,9 +293,14 @@ export function parseTuiArgs(args: readonly string[], env: NodeJS.ProcessEnv = p
 	let joinLink: string | undefined;
 	let theme: string | undefined;
 	let noThemes = false;
+	let radius: { server?: string } | undefined;
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i]!;
-		if (arg === "--owner-link") {
+		if (arg === "--radius") {
+			// Optionally followed by the server's ID; without it, the user's only online server.
+			const next = args[i + 1];
+			radius = next !== undefined && SERVER_ID.test(next) ? { server: args[++i] } : {};
+		} else if (arg === "--owner-link") {
 			ownerLink = args[++i];
 			if (!ownerLink) throw new Error("--owner-link needs a value");
 		} else if (arg === "--join") {
@@ -310,7 +315,9 @@ export function parseTuiArgs(args: readonly string[], env: NodeJS.ProcessEnv = p
 		else urlText = arg;
 	}
 	if (joinLink && ownerLink && args.includes("--owner-link")) throw new Error("Use either --join or --owner-link");
-	if (joinLink) ownerLink = undefined;
+	if (radius && (urlText !== undefined || joinLink || args.includes("--owner-link")))
+		throw new Error("--radius signs in through Radius: no URL, owner link or share link");
+	if (joinLink || radius) ownerLink = undefined;
 	// Without a URL argument, --join takes the origin from its link; otherwise the link must match the URL.
 	const url =
 		urlText === undefined && joinLink
@@ -318,5 +325,7 @@ export function parseTuiArgs(args: readonly string[], env: NodeJS.ProcessEnv = p
 			: ownerOrigin(urlText ?? `http://127.0.0.1:${env.PORT ?? 8788}`);
 	if (ownerLink) ownerLinkToken(ownerLink, url);
 	if (joinLink) joinLinkToken(joinLink, url);
-	return { url, ownerLink, joinLink, theme, noThemes };
+	return { url, ownerLink, joinLink, theme, noThemes, radius };
 }
+
+const SERVER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

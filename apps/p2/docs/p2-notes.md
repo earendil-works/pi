@@ -432,6 +432,25 @@ npm start
   admission and provider access, HTTP credit in both directions, congestion, forwards, redirects, WebSockets,
   unavailable ports and anonymous public/private gates. All listeners use port 0 and private temporary data.
 
+### TUI through Radius
+
+`npm run tui -- --radius [<server-id>]` reaches the server through Radius, without a tunnel or owner link. The
+launcher signs in to Radius itself (device code, saved in `~/.pi/p2-tui/radius.json`, separate from any server's
+`radius.json`), picks the given server or the user's only online one (`GET /v1/servers`), and connects to
+`/v1/servers/<id>/connect` with its bearer token (`pi-server.client.v2`). Radius admits only the server's owner and
+opens a `ws` channel without a request; the brain ("Client channels" in `brain.ts`) reads the request from the
+client's first message and makes it a loopback request marked like the owner's browser requests, without a shell
+origin (`access: "relay"`: no owner links). The launcher's requests go through a transport (`tui-transport.ts`,
+`tui-radius.ts`); the direct cookie transport is unchanged. Only v5 relays (channel sockets) carry client channels.
+
+**Temporary: one Radius connection per request.** Radius allows 120 new connections a minute per user, shared with
+the server's own reconnects, so through Radius the launcher checks for a new bundle every 10 s instead of every
+second, and every request (owner check, manifest, bundle, downloads, uploads) and every chord link reconnect costs a
+connection setup. The proper form keeps one connection per launcher and carries all of its requests and its chord
+link over it: every message labelled with the request it belongs to, both sides sorting them, and large transfers
+taking turns with the chord link so a download cannot hold up live output. Then the 1 s bundle check returns.
+`test/p2/radius.test.ts` and `test/p2/tui-radius.test.ts` cover client channels with the same fake relay.
+
 ## Browser navigation
 
 `src/web/navigation.ts` is an independent, minimized copy of Pi Mobile's stack. `src/runtime/web.tsx` exposes
