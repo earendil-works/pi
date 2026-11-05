@@ -1,8 +1,20 @@
 # Active Threads — NLT-Pi
 
-**Last updated:** 2026-11-04
+**Last updated:** 2026-11-05
 
 ## Active
+
+### NLTPI-GOV-003 — Kilo Code agent configuration (`.kilo/`)
+**Status:** in review (PR open); unverified against a real Kilo client  
+**Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
+**Summary:** The owner runs Kilo Cloud Agents against this repository and a `[kilo]`-tagged commit is already in `main` (`0514e09`), but there was no project configuration, so Kilo worked here on default permissions and without the repository's governance in context. `.kilo/` is now the Kilo peer of `.claude/` and `.pi/`: `kilo.jsonc` (rule loading, tool permissions, empty `mcp`, watcher ignores, indexing off), `rules/` (four Kilo-specific files), `agents/` (steward, reviewer, implementation), `skills/` (byte-identical copies of the seven `.claude/skills/`), and a README. `kilo.jsonc` loads `AGENTS.md`, `CLAUDE.md`, `NLT-DEV-OTOI.md`, `GOVERNANCE.md` and `REVIEW.md` directly through `instructions`; governance text is not duplicated. Current Kilo reads one `kilo.jsonc` across the VS Code extension, the CLI and Cloud Agents, and `.kilo/kilo.jsonc` takes priority over a root `kilo.jsonc`; the legacy `.kilocode/` scheme is not used.  
+**Branch:** `feat/kilo-agent-config`  
+**Registration:** `docs/agent-log/registrations/2026-11-05T044506Z-claude-code-01UNjnjmtbn8V5V114283EeV.json`  
+**Intent record:** `docs/agent-log/intent/2026-11-05-kilo-agent-config.md`  
+**Verification:** `kilo.jsonc` parses and holds no secret or placeholder token; all nine `instructions` paths resolve; agent frontmatter valid; all seven skill folder names match their frontmatter `name`; `scripts/check-agent-skill-parity.mjs` passes and was confirmed to fail on deliberate drift; governance validator 71 passed / 0 failed. **Not run:** `npm run check`, biome, and the repository test suites — this container has no installed `node_modules`. **Not verified:** no Kilo client was available, so Kilo has never loaded this config; permission rules, agent discovery and skill discovery are unverified end to end.  
+**Known issues / notes:** The `permission` rules are convenience and defense-in-depth, not enforcement — real mediation belongs to the ASFDK harness. A credential or environment-variable placeholder added to `kilo.jsonc` would cause Kilo to reject the whole file and silently discard those deny rules; this is warned about in the file and the README. `.kilo/skills/` duplicates `.claude/skills/`, which Kilo also reads as a compatibility directory, so the copy may be redundant; the parity script guards the drift. Kilo's own docs disagree about whether any hosted indexing engages without being enabled — recorded, not resolved. Legacy `.kilocode/` paths are intentionally not gitignored so a repository-level opt-out could be committed there.  
+**Open decisions (owner):** (1) keep `.kilo/skills/` or rely on Kilo's `.claude/skills/` compatibility path; (2) wire `scripts/check-agent-skill-parity.mjs` into `npm run check`; (3) add a `.kilocode/config.json` hosted-indexing opt-out, pending clarity on whether it applies to Cloud Agents.  
+**Next action:** Owner confirms Kilo loads `.kilo/` and decides the three open items. Porting `.claude/commands/` as Kilo workflows is not done and not scoped.
 
 ### NLTPI-MVP-002 — Vendor ASFDK harness into the MVP and test on Vercel
 **Status:** merged (PR #15, `6d1b909`); `POST /api/govern` verified on a deployed preview on 2026-11-04 (see below)  
