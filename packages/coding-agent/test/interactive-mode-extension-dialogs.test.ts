@@ -8,7 +8,14 @@ type DialogContext = {
 	editorContainer: Container;
 	editor: Component & { getText(): string; setText(text: string): void };
 	focused: Component | undefined;
-	ui: { setFocus: (component: Component) => void; requestRender: () => void };
+	ui: {
+		setFocus: (component: Component) => void;
+		requestRender: () => void;
+		showOverlay: (component: Component) => { hide: () => void; setHidden: (hidden: boolean) => void };
+	};
+	overlays: Component[];
+	nextBlockingOverlayId: number;
+	extensionOverlays: Map<unknown, () => void>;
 	programStatus: { setBlocked: ReturnType<typeof vi.fn> };
 	disposeActiveSelector: () => void;
 	toggleToolOutputExpansion: () => void;
@@ -18,11 +25,16 @@ type DialogMethods = {
 	showExtensionConfirm(title: string, message: string, opts?: { signal?: AbortSignal }): Promise<boolean>;
 	showExtensionCustom<T>(
 		factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (result: T) => void) => Component,
-		options?: { blocked?: { kind: "permission" | "question" | "auth"; message: string } },
+		options?: {
+			overlay?: boolean;
+			onHandle?: (handle: { setHidden: (hidden: boolean) => void }) => void;
+			blocked?: { kind: "permission" | "question" | "auth"; message: string };
+		},
 	): Promise<T>;
 	setCustomEditorComponent(
 		factory: ((tui: unknown, theme: unknown, keybindings: unknown) => Component) | undefined,
 	): void;
+	resetExtensionUI(): void;
 };
 
 function createContext(): DialogContext & DialogMethods {
@@ -44,7 +56,19 @@ function createContext(): DialogContext & DialogMethods {
 				context.focused = component;
 			},
 			requestRender: vi.fn(),
+			showOverlay: (component) => {
+				context.overlays.push(component);
+				return {
+					hide: () => {
+						context.overlays = context.overlays.filter((overlay) => overlay !== component);
+					},
+					setHidden: vi.fn(),
+				};
+			},
 		},
+		overlays: [],
+		nextBlockingOverlayId: 0,
+		extensionOverlays: new Map(),
 		programStatus: { setBlocked: vi.fn() },
 		disposeActiveSelector: vi.fn(),
 		toggleToolOutputExpansion: vi.fn(),
@@ -189,6 +213,83 @@ describe("InteractiveMode extension dialogs", () => {
 		await expect(first).resolves.toBe("yes");
 		expect(context.focused).toBe(context.editor);
 		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-dialog", undefined);
+	});
+
+	// Regression for #11816: overlays ignored the blocked option.
+	it("reports blocked status for each opted-in overlay until it is done, also while hidden", async () => {
+		const context = createContext();
+		const dones: Array<(result: string) => void> = [];
+		const handles: Array<{ setHidden: (hidden: boolean) => void }> = [];
+		const open = (text: string, blocked?: { kind: "question"; message: string }) =>
+			context.showExtensionCustom<string>(
+				(_tui, _theme, _keybindings, done) => {
+					dones.push(done);
+					return new Text(text);
+				},
+				{ overlay: true, onHandle: (handle) => handles.push(handle), blocked },
+			);
+
+		const first = open("first", { kind: "question", message: "First?" });
+		await vi.waitFor(() => expect(context.overlays).toHaveLength(1));
+		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-overlay:0", {
+			kind: "question",
+			message: "First?",
+		});
+
+		const second = open("second", { kind: "question", message: "Second?" });
+		await vi.waitFor(() => expect(context.overlays).toHaveLength(2));
+		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-overlay:1", {
+			kind: "question",
+			message: "Second?",
+		});
+
+		const loader = open("loading");
+		await vi.waitFor(() => expect(context.overlays).toHaveLength(3));
+		dones[2]("loaded");
+		await expect(loader).resolves.toBe("loaded");
+
+		handles[0].setHidden(true);
+		dones[1]("two");
+		await expect(second).resolves.toBe("two");
+		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-overlay:1", undefined);
+
+		dones[0]("one");
+		await expect(first).resolves.toBe("one");
+		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-overlay:0", undefined);
+		expect(context.programStatus.setBlocked).toHaveBeenCalledTimes(4);
+	});
+
+	// Regression for #11816: /reload and session switches drop overlays without calling done().
+	it("clears overlay blocked status when the extension UI is reset", async () => {
+		const context = createContext();
+		Object.assign(context, {
+			clearExtensionTerminalInputListeners: vi.fn(),
+			setExtensionFooter: vi.fn(),
+			setExtensionHeader: vi.fn(),
+			clearExtensionWidgets: vi.fn(),
+			footerDataProvider: { clearExtensionStatuses: vi.fn() },
+			footer: { invalidate: vi.fn() },
+			setCustomEditorComponent: vi.fn(),
+			setupAutocompleteProvider: vi.fn(),
+			defaultEditor: {},
+			updateTerminalTitle: vi.fn(),
+			setWorkingIndicator: vi.fn(),
+			setHiddenThinkingLabel: vi.fn(),
+		});
+		void context.showExtensionCustom<string>(() => new Text("question"), {
+			overlay: true,
+			blocked: { kind: "question", message: "Question?" },
+		});
+		await vi.waitFor(() => expect(context.overlays).toHaveLength(1));
+		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-overlay:0", {
+			kind: "question",
+			message: "Question?",
+		});
+
+		context.resetExtensionUI();
+		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-overlay:0", undefined);
+		expect(context.extensionOverlays.size).toBe(0);
+		expect(context.overlays).toHaveLength(0);
 	});
 
 	// Regression for #11431: replacing the editor while a dialog was open hid the dialog and left it unanswerable.
