@@ -18,7 +18,6 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@base-ui/react": "1.8.0",
 		"@earendil-works/chord": "1.5.0",
 		"@earendil-works/design-tokens": "0.1.0",
 		"@earendil-works/elanor-fonts": "0.1.0",
