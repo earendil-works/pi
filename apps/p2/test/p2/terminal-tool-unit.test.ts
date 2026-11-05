@@ -108,8 +108,6 @@ test("code mode only while code mode is on; tool_search reaches it otherwise", (
 	assert.deepEqual(terminal(backend).callers, ["tools"]);
 	assert.equal(terminal(backend).deferred, true);
 	assert.equal(terminal(backend).replay, "safe");
-	// The owner's terminals: only turns the owner started (checked by the worker's registry).
-	assert.equal(terminal(backend).origin, "owner");
 	assert.equal(terminal(backend, "tool_search").callers, undefined);
 	assert.equal(terminal(backend, "tool_search").deferred, true);
 	assert.match(terminal(backend).description, /Only when the user asks for a terminal/);

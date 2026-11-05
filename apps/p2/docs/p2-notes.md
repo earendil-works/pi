@@ -888,9 +888,8 @@ translated phone drawer and intercept chat taps.
   viewer or the agent); a panel showing a terminal keeps it, one showing none attaches the newest new one. Archiving a
   session closes its terminals (`SessionArchived`, a host-lifetime contribution; no host is started for it).
   **Agent terminal tool** (owner decisions): the agent drives the same terminals the owner sees (shared: the owner
-  watches and types; the agent may read, type into and close any terminal of its session, the owner's too). Only
-  turns the owner started may use it (`origin: "owner"`, owner decision): a terminal may be connected beyond the
-  session's environment (ssh, a waiting sudo prompt), where a guest's bash would not reach. Code mode only, like MCP tools (`deferred`, `callers: ["tools"]`; scripts find it with
+  watches and types; the agent may read, type into and close any terminal of its session, the owner's too). Guest
+  turns may use it, like bash. Code mode only, like MCP tools (`deferred`, `callers: ["tools"]`; scripts find it with
   `searchTools()`); while code mode is off `tool_search` loads it (installed once by `durableRegistry`, not by each
   plugin: two plugins contributing `tool-search` would be a registry conflict). The description says to use it only
   when the user asks for a terminal or for driving an interactive program in one, never instead of bash; no prompt
@@ -1066,8 +1065,7 @@ translated phone drawer and intercept chat taps.
   `origin` (`"any"` default, or `"owner"`: only a turn the owner started) and `scope` (`"any"` default, `"main"`: only
   top-level conversations, or `"subagent"`: given to subagents only). The worker's Durable registry wraps every tool
   with requirements (`guardTool`, in `durableRegistry`), so no tool checks them itself. `origin: "owner"`: the location
-  tools, `reload_plugins`, `conversations`, `ports`, MCP tools (the owner's accounts are behind them), `terminal`
-  (the owner's terminals, possibly connected beyond the session's environment). A turn's origin
+  tools, `reload_plugins`, `conversations`, `ports`, MCP tools (the owner's accounts are behind them). A turn's origin
   (`originOf`, `src/runtime/origin.ts`) is the conversation's current run (`pi.live.run.inputs`, each submission's
   entry through `tx.submission`): the owner's only if every input the run placed is (`entryOrigin`): a person's input
   by its author in the entry data, an agent-written one by its `origin`. Agent-written inputs record the writing
