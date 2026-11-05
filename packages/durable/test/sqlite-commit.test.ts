@@ -423,7 +423,8 @@ describe("SqliteStorage batch commits against the memory reference", () => {
 			expect(refusals).toBeGreaterThan(10);
 			expect(prefixes).toBeGreaterThan(10);
 			expect(groups).toBeGreaterThan(10);
-		});
+			// About 1.3 s alone; parallel test files on CI runners push it past the 5 s default.
+		}, 30_000);
 	}
 });
 
