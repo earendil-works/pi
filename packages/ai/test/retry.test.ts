@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "../src/providers/faux.ts";
 import { isRetryableAssistantError, type RetryPolicy, retryAssistantCall, retryDelayMs } from "../src/utils/retry.ts";
 
@@ -166,8 +166,30 @@ describe("provider retry classification", () => {
 	});
 });
 
+afterEach(() => vi.restoreAllMocks());
+
 describe("retryDelayMs", () => {
+	it.each([
+		[0, 2000],
+		[0.5, 1750],
+		[0.999, 1500.5],
+	])("jitters exponential backoff with random value %s", (random, expected) => {
+		vi.spyOn(Math, "random").mockReturnValue(random);
+
+		expect(retryDelayMs({ baseDelayMs: 2000 }, 1)).toBeCloseTo(expected);
+		expect(retryDelayMs({ baseDelayMs: 2000 }, 2)).toBeCloseTo(expected * 2);
+	});
+
+	it("jitters capped delays so retries stay spread at the ceiling", () => {
+		vi.spyOn(Math, "random").mockReturnValue(0.5);
+
+		expect(retryDelayMs({ baseDelayMs: 2000 }, 6)).toBe(52500);
+		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 5000 }, 5)).toBe(4375);
+		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 0 }, 5)).toBe(0);
+	});
+
 	it("caps agent retry delay", () => {
+		vi.spyOn(Math, "random").mockReturnValue(0);
 		// Regression for #8826.
 		expect(retryDelayMs({ baseDelayMs: 2000 }, 6)).toBe(60000);
 		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 5000 }, 5)).toBe(5000);
@@ -221,6 +243,7 @@ describe("retryAssistantCall", () => {
 
 	it("reports capped retry delays", async () => {
 		// Regression for #8826.
+		vi.spyOn(Math, "random").mockReturnValue(0);
 		let n = 0;
 		const policy: RetryPolicy = { enabled: true, maxRetries: 4, baseDelayMs: 10, maxAgentDelayMs: 15 };
 		const produce = vi.fn(async () => {

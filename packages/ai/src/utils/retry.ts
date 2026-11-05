@@ -125,7 +125,7 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 ]);
 
 /**
- * Retry policy: bounded attempts with exponential backoff (`baseDelayMs * 2^(attempt-1)`).
+ * Retry policy: bounded attempts with exponential backoff and up to 25% downward jitter.
  * `maxAgentDelayMs` caps each computed delay and defaults to 60 seconds.
  * Matches `settings.retry` (`enabled`, `maxRetries`, `baseDelayMs`, `maxAgentDelayMs`) in coding-agent; kept
  * here so the classifier and the policy-driven retry loop live together and stay reusable
@@ -146,7 +146,8 @@ export const DEFAULT_MAX_AGENT_RETRY_DELAY_MS = 60_000;
 export function retryDelayMs(policy: Pick<RetryPolicy, "baseDelayMs" | "maxAgentDelayMs">, attempt: number): number {
 	const delay = policy.baseDelayMs * 2 ** Math.max(0, attempt - 1);
 	const safeDelay = Number.isSafeInteger(delay) ? delay : Number.MAX_SAFE_INTEGER;
-	return Math.min(safeDelay, policy.maxAgentDelayMs ?? DEFAULT_MAX_AGENT_RETRY_DELAY_MS);
+	const cappedDelay = Math.min(safeDelay, policy.maxAgentDelayMs ?? DEFAULT_MAX_AGENT_RETRY_DELAY_MS);
+	return cappedDelay * (1 - Math.random() * 0.25);
 }
 
 /** Optional callbacks emitted by {@link retryAssistantCall} around each retry. */
