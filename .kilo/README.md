@@ -68,18 +68,34 @@ Credentials belong in Kilo's credential store (`kilo auth`), the global config a
 None of those are in this repository. `.gitignore` excludes `.kilo/*.local.jsonc` and Kilo's
 local cache, index, and plans directories.
 
-The `read` permission denies `.env*` and `**/.env*`. **Known residual gap:** `grep` and
-`glob` remain unrestricted, so environment-file contents are still reachable through a
-search. Kilo's pattern semantics for those tools are path-based for `glob` but not clearly
-documented for `grep`, and a wrong guess there would block ordinary searches, so no rule was
-added rather than one whose behaviour is unverified. The deny rules are defense-in-depth,
-not a secrets boundary — do not keep live credentials in the working tree.
+The `read` permission denies `.env*` and `**/.env*`, and the `bash` block ends with a
+`*.env*` deny that wins over every allow above it.
+
+**Known residual gap:** Kilo's `grep` and `glob` tools remain unrestricted, so
+environment-file contents are still reachable through a search. Kilo documents path
+semantics for `glob` but not clearly for `grep`, and a rule whose behaviour is unverified
+could block ordinary searches, so none was added. The deny rules are defense-in-depth, not
+a secrets boundary — do not keep live credentials in the working tree.
 
 The `bash` permission also denies the hook-bypass mechanisms (`--no-verify`,
-`core.hooksPath`), the `git -C <dir>` forms of the destructive commands, and
-`find -delete` / `find -exec rm`. These make the "never skip hooks" rule in `AGENTS.md`
-fail closed instead of resting on rule text alone. Pattern matching is still only pattern
-matching: a command phrased another way can slip past, and the rule governs regardless.
+`core.hooksPath`), the `git -C <dir>` forms of the destructive commands, destructive
+`git branch` operations, and `git --output` (which writes a file). `find` is not allowed at
+all, because `find -exec <cmd>` and `-delete` reach past rules that match on the leading
+command word. `rg --pre=CMD` is downgraded to `ask`, because it runs `CMD` once per searched
+file.
+
+## A bash allowlist cannot make an agent read-only
+`.kilo/agents/nlt-code-reviewer.md` and `nlt-governance-steward.md` set `edit: deny`, but
+**`edit` rules do not apply to bash.** Shell redirection turns any permitted command into a
+file write — `git diff > GOVERNANCE.md` matches a `git diff*` allow — and so do `tee`,
+`git --output` and `rg --pre`. Both profiles therefore close with deny rules for `*>*`,
+`*tee *`, `rg *--pre*`, `git *--output*` and `*.env*`, placed last so that last-match-wins
+makes them override the allows above. **Any new `allow` must go above those closing rules**,
+or it silently defeats them.
+
+That is a mitigation, not a guarantee: pattern matching cannot enumerate every way a shell
+writes a file. Treat these profiles as "intended read-only, best-effort enforced". The ASFDK
+harness remains the only real boundary, exactly as `.kilo/rules/10-boundaries.md` says.
 
 ## Codebase indexing
 `indexing.enabled` and `experimental.semantic_indexing` are both off. Indexing sends code

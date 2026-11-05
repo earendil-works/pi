@@ -18,6 +18,15 @@ permission:
     "rg *": "allow"
     "grep *": "allow"
     "bash .nltotoi/scripts/validate-governance.sh*": "allow"
+    # Closing rules — last match wins, so these override the allows above.
+    # `rg --pre=CMD` executes CMD per file; `git log/diff/show --output=FILE` writes FILE.
+    "rg *--pre*": "deny"
+    "git *--output*": "deny"
+    # Shell redirection and tee turn any allowed command into a file write. `edit: deny`
+    # does not apply to bash, so without these the profile is not actually read-only.
+    "*>*": "deny"
+    "*tee *": "deny"
+    "*.env*": "deny"
 ---
 
 You are the NLT-Pi Governance Steward. Your mode is read-only guidance and audit.

@@ -75,7 +75,10 @@
       "git diff*": "allow",
       "git log*": "allow",
       "git show*": "allow",
-      "git branch*": "allow",
+      "git branch": "allow",
+      "git branch --list*": "allow",
+      "git branch -a*": "allow",
+      "git branch -v*": "allow",
       "git remote -v*": "allow",
       "ls *": "allow",
       "cat *": "allow",
@@ -83,7 +86,14 @@
       "tail *": "allow",
       "rg *": "allow",
       "grep *": "allow",
-      "find *": "allow",
+
+      // `rg --pre=CMD` runs CMD once per searched file, so the allow above would be
+      // arbitrary execution without approval. Verified against ripgrep.
+      "rg *--pre*": "ask",
+
+      // `find` is deliberately NOT allowed. `find -exec <cmd>` and `-delete` reach past
+      // every rule below, because those patterns match on the leading command word and a
+      // find invocation starts with "find". It falls through to the "*" ask default.
       "npm test*": "allow",
       "npm run test*": "allow",
       "npm run check*": "allow",
@@ -92,6 +102,20 @@
       "npx vitest*": "allow",
       "tsc --noEmit*": "allow",
       "bash .nltotoi/scripts/validate-governance.sh*": "allow",
+
+      // `git log/diff/show --output=FILE` writes the output to FILE. Verified: all three
+      // create the file. Without this, an allowed "read-only" git command is a file write
+      // that the `edit` deny rules below never see, because they do not apply to bash.
+      "git *--output*": "deny",
+
+      // Destructive branch operations.
+      "git branch -D*": "deny",
+      "git branch -d*": "deny",
+      "git branch --delete*": "deny",
+      "git branch -M*": "deny",
+      "git branch -m*": "deny",
+      "git branch --move*": "deny",
+      "git branch -f*": "deny",
 
       // Hook bypass. AGENTS.md "Pre-push verification" forbids skipping hooks; these
       // make the common mechanisms fail closed rather than relying on the rule text.
@@ -138,7 +162,11 @@
       "npm publish*": "deny",
       "npm run publish*": "deny",
       "npm run release*": "deny",
-      "gh release create*": "deny"
+      "gh release create*": "deny",
+
+      // Last rule, so it wins for any command naming an environment file. Deny only ever
+      // strengthens an earlier decision, so placing it last cannot weaken the rules above.
+      "*.env*": "deny"
     },
 
     "edit": {
@@ -147,6 +175,9 @@
       // Governance and authority documents are not agent-editable. Agents may
       // propose changes in a PR body or an escalation record; they do not
       // rewrite the policy that governs them.
+      "AGENTS.md": "deny",
+      "CLAUDE.md": "deny",
+      "REVIEW.md": "deny",
       "GOVERNANCE.md": "deny",
       "NLT-DEV-OTOI.md": "deny",
       "governance.json": "deny",

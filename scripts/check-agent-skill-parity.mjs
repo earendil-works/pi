@@ -56,7 +56,10 @@ for (const [name, text] of canonical) {
 for (const mirrorRoot of mirrorRoots) {
 	const mirror = skillMap(mirrorRoot);
 	if (!mirror) {
-		problems.push(`${mirrorRoot} does not exist`);
+		// Removing the mirror and relying on Kilo's own .claude/skills/ compatibility path
+		// is a documented, supported arrangement (.kilo/README.md), so an absent mirror is
+		// nothing to compare rather than a failure.
+		console.log(`SKIP  ${mirrorRoot} does not exist; no mirror to compare`);
 		continue;
 	}
 	for (const [name, text] of canonical) {
@@ -87,6 +90,8 @@ if (problems.length) {
 }
 
 for (const mirrorRoot of mirrorRoots) {
-	console.log(`PASS  ${mirrorRoot} matches ${canonicalRoot} (${canonical.size} skills)`);
+	if (existsSync(mirrorRoot)) {
+		console.log(`PASS  ${mirrorRoot} matches ${canonicalRoot} (${canonical.size} skills)`);
+	}
 }
 console.log("Results: agent skill surfaces in sync");
