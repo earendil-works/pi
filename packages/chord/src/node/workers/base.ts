@@ -4,13 +4,15 @@
 // server runs reaches workers only through a restart of the server. Packages installed under `node_modules` (native
 // addons, packages reading their own files) and Node builtins stay external: Node loads them at each fork from where
 // the build resolved them. Everything else, the app's files and workspace packages linked into `node_modules`, is
-// inlined. The bundle is one ES module with an inline source map in a private temporary directory.
+// inlined. The bundle is split at each dynamic `import()` esbuild can follow: the entry module and the chunks it imports
+// statically load at each fork, a lazily imported module (pi-ai's provider APIs and the packages they import) only when
+// the worker imports it. Every file is an ES module with an inline source map, in one private temporary directory.
 
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, extname, join, parse, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, parse, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build, type Loader, type Plugin } from "esbuild";
 import { metafileInputs } from "../surfaces/bundle.ts";
@@ -19,7 +21,10 @@ import { metafileInputs } from "../surfaces/bundle.ts";
 export interface WorkerBase {
 	/** The files esbuild read for it (absolute): the app's base code a change of which outdates it. */
 	readonly inputs: readonly string[];
-	/** The bundle's path, written again into a new private directory when a temporary-file cleaner removed it. */
+	/**
+	 * The entry module's path, its chunks beside it; all written again into a new private directory when a
+	 * temporary-file cleaner removed one of them.
+	 */
 	file(): string;
 	/** Removes the bundle's directory. */
 	remove(): void;
@@ -33,6 +38,9 @@ const MODULE_URL = "__chordModuleUrl";
 const MODULE_DIRNAME = "__chordModuleDirname";
 const MODULE_FILENAME = "__chordModuleFilename";
 
+/** The entry module's name in the bundle's directory (`worker.mjs`); chunks are named `<name>-<hash>.mjs`. */
+const ENTRY_NAME = "worker";
+
 /**
  * Bundles `entry` for workers forked with `execArgv` (its `--conditions` resolve imports as the child's Node would).
  * Rejects with esbuild's failure: the server does not start with a broken worker base.
@@ -41,8 +49,16 @@ export async function buildWorkerBase(entry: string, execArgv: readonly string[]
 	// Built as if at the file system's root: the source map's paths relative to it, made absolute by `sourceRoot`.
 	const root = parse(resolve(entry)).root;
 	const result = await build({
-		entryPoints: [entry],
-		outfile: join(root, "worker.mjs"),
+		entryPoints: [{ in: entry, out: ENTRY_NAME }],
+		// One flat directory: every chunk imports the others as `./<name>`, and the source maps' paths stay relative to
+		// the root.
+		outdir: root,
+		entryNames: "[name]",
+		chunkNames: "[name]-[hash]",
+		outExtension: { ".js": ".mjs" },
+		// A dynamic `import()` esbuild can follow becomes a chunk Node loads only when the worker imports it, with the
+		// packages it imports: inlined into one module, every lazily imported module would load and run at each fork.
+		splitting: true,
 		write: false,
 		bundle: true,
 		format: "esm",
@@ -58,7 +74,8 @@ export async function buildWorkerBase(entry: string, execArgv: readonly string[]
 		sourcemap: "inline",
 		sourcesContent: false,
 		sourceRoot: pathToFileURL(root).href,
-		// A CommonJS file of the base code requires through this; external packages by their absolute paths.
+		// A CommonJS file of the base code requires through this (each chunk has its own); external packages by their
+		// absolute paths.
 		banner: {
 			js: 'import { createRequire as __chordCreateRequire } from "node:module"; const require = __chordCreateRequire(import.meta.url);',
 		},
@@ -73,9 +90,8 @@ export async function buildWorkerBase(entry: string, execArgv: readonly string[]
 		logLevel: "silent",
 		metafile: true,
 	});
-	// One entry, one output file.
-	const [output] = result.outputFiles;
-	return new BundleFile(output!.contents, metafileInputs(result.metafile));
+	const files = result.outputFiles.map((output) => ({ name: basename(output.path), contents: output.contents }));
+	return new BundleFiles(files, metafileInputs(result.metafile));
 }
 
 /** The conditions of `--conditions=<name>`, `--conditions <name>`, `-C <name>` and `-C=<name>` in `execArgv`. */
@@ -160,37 +176,42 @@ function moduleLocations(): Plugin {
 	};
 }
 
-/** The bundle as a file: written into a private temporary directory, again into a new one when it is gone. */
-class BundleFile implements WorkerBase {
-	readonly inputs: readonly string[];
-	readonly #contents: Uint8Array;
-	#dir = "";
-	#path = "";
+/** One output file of the bundle: its name in the bundle's directory and its contents. */
+interface BundleFile {
+	readonly name: string;
+	readonly contents: Uint8Array;
+}
 
-	constructor(contents: Uint8Array, inputs: readonly string[]) {
-		this.#contents = contents;
+/** The bundle as files: written into a private temporary directory, again into a new one when one of them is gone. */
+class BundleFiles implements WorkerBase {
+	readonly inputs: readonly string[];
+	readonly #files: readonly BundleFile[];
+	#dir = "";
+
+	constructor(files: readonly BundleFile[], inputs: readonly string[]) {
+		this.#files = files;
 		this.inputs = inputs;
 		this.#write();
 	}
 
 	file(): string {
-		// A long-running server's temporary directory may be cleaned (systemd-tmpfiles, macOS): a fork needs the file. A
-		// new directory, never the old name: another user may have made that one since.
-		if (!existsSync(this.#path)) {
+		// A long-running server's temporary directory may be cleaned (systemd-tmpfiles, macOS), a chunk no worker
+		// imported for a while first: a fork needs all of them. A new directory, never the old name: another user may
+		// have made that one since.
+		if (!this.#files.every((file) => existsSync(join(this.#dir, file.name)))) {
 			this.remove();
 			this.#write();
 		}
-		return this.#path;
+		return join(this.#dir, `${ENTRY_NAME}.mjs`);
 	}
 
 	remove(): void {
 		rmSync(this.#dir, { recursive: true, force: true });
 	}
 
-	/** Writes the bundle into a new private directory (mode 0700, the file 0600). */
+	/** Writes the bundle's files into a new private directory (mode 0700, each file 0600). */
 	#write(): void {
 		this.#dir = mkdtempSync(join(tmpdir(), "chord-worker-"));
-		this.#path = join(this.#dir, "worker.mjs");
-		writeFileSync(this.#path, this.#contents, { mode: 0o600 });
+		for (const file of this.#files) writeFileSync(join(this.#dir, file.name), file.contents, { mode: 0o600 });
 	}
 }

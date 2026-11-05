@@ -1,11 +1,12 @@
 // Tests of the worker base (decision "Workers start from the base code the server booted with"): the entry and its base
-// code bundled once (an edit after the build runs nowhere, every imported module runs), installed packages external and
-// Node builtins kept, a workspace package linked into `node_modules` inlined, the child's `--conditions`, module
-// locations and stack traces naming the source files, a broken entry rejected, and the file in a private directory
-// restored when a cleaner removed it.
+// code bundled once (an edit after the build runs nowhere, every imported module runs), split at dynamic imports (a
+// lazily imported module and the packages it imports load only when imported, still from the snapshot), installed
+// packages external and Node builtins kept, a workspace package linked into `node_modules` inlined, the child's
+// `--conditions`, module locations and stack traces naming the source files, a broken entry rejected, and the files in a
+// private directory restored when a cleaner removed one.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -63,6 +64,35 @@ describe("the snapshot", () => {
 			"effect.ts": 'console.log("effect");\n',
 		});
 		expect(run(await built(join(dir, "entry.ts")))).toBe("effect\nentry");
+	});
+
+	it("splits at a dynamic import: the module and the package it imports load only when imported, from the snapshot", async () => {
+		const dir = await project({
+			"entry.ts": [
+				'import { shared } from "./shared.ts";',
+				'console.log("entry", shared);',
+				'const lazy = await import("./lazy.ts");',
+				"console.log(lazy.lazy);",
+			].join("\n"),
+			"shared.ts": 'export const shared = "shared";\n',
+			"lazy.ts": [
+				'import { shared } from "./shared.ts";',
+				'import { where } from "installed";',
+				'console.log("lazy runs");',
+				'export const lazy = ["lazy", shared, where].join(" ");',
+			].join("\n"),
+			"node_modules/installed/package.json": '{ "name": "installed", "type": "module", "exports": "./index.js" }',
+			"node_modules/installed/index.js": 'console.log("installed runs");\nexport const where = "installed";\n',
+		});
+		const base = await built(join(dir, "entry.ts"));
+		await writeFile(join(dir, "lazy.ts"), 'export const lazy = "edited";\n');
+		expect(run(base)).toBe("entry shared\ninstalled runs\nlazy runs\nlazy shared installed");
+		expect([...base.inputs].sort()).toEqual([join(dir, "entry.ts"), join(dir, "lazy.ts"), join(dir, "shared.ts")]);
+		// The entry imports neither the lazy module's chunk nor the installed package statically: a fork loads neither.
+		const entry = await readFile(base.file(), "utf8");
+		expect(entry).not.toContain("installed/index.js");
+		expect(entry).toMatch(/await import\("\.\/lazy-[A-Z0-9]+\.mjs"\)/);
+		expect(readdirSync(dirname(base.file())).length).toBeGreaterThan(1);
 	});
 
 	it("a broken entry rejects with esbuild's failure", async () => {
@@ -150,16 +180,25 @@ describe("module locations and stack traces", () => {
 		});
 	});
 
-	it("maps stack traces to the source files and lines with --enable-source-maps", async () => {
+	it("maps stack traces to the source files and lines with --enable-source-maps, in the entry and in a chunk", async () => {
 		const dir = await project({
 			"entry.ts": 'import { fail } from "./fail.ts";\nfail();\n',
+			"lazy-entry.ts": 'const { failLater } = await import("./lazy.ts");\nfailLater();\n',
+			"lazy.ts": 'import { fail } from "./fail.ts";\n\nexport function failLater(): void {\n\tfail();\n}\n',
 			"fail.ts":
 				"const at: string = import.meta.url;\n\nexport function fail(): void {\n\tthrow new Error(at);\n}\n",
 		});
-		const base = await built(join(dir, "entry.ts"));
-		const { stderr } = spawnSync(process.execPath, ["--enable-source-maps", base.file()], { encoding: "utf8" });
-		expect(stderr).toContain(`${join(dir, "fail.ts")}:4:`);
-		expect(stderr).toContain(`${join(dir, "entry.ts")}:2:`);
+		const stderrOf = async (entry: string): Promise<string> => {
+			const base = await built(join(dir, entry));
+			return spawnSync(process.execPath, ["--enable-source-maps", base.file()], { encoding: "utf8" }).stderr;
+		};
+		const direct = await stderrOf("entry.ts");
+		expect(direct).toContain(`${join(dir, "fail.ts")}:4:`);
+		expect(direct).toContain(`${join(dir, "entry.ts")}:2:`);
+		const lazy = await stderrOf("lazy-entry.ts");
+		expect(lazy).toContain(`${join(dir, "fail.ts")}:4:`);
+		expect(lazy).toContain(`${join(dir, "lazy.ts")}:4:`);
+		expect(lazy).toContain(`${join(dir, "lazy-entry.ts")}:2:`);
 	});
 });
 
@@ -175,5 +214,22 @@ describe("the bundle's file", () => {
 		expect(run(base)).toBe("ran");
 		base.remove();
 		expect(existsSync(dirname(second))).toBe(false);
+	});
+
+	it("written again when a cleaner removed only a chunk: a fork may import every chunk", async () => {
+		const dir = await project({
+			"entry.ts": 'const { lazy } = await import("./lazy.ts");\nconsole.log(lazy);\n',
+			"lazy.ts": 'export const lazy = "lazy";\n',
+		});
+		const base = await built(join(dir, "entry.ts"));
+		const first = base.file();
+		const chunks = readdirSync(dirname(first)).filter((name) => name !== "worker.mjs");
+		expect(chunks).toHaveLength(1);
+		expect(statSync(join(dirname(first), chunks[0]!)).mode & 0o777).toBe(0o600);
+		await rm(join(dirname(first), chunks[0]!));
+		const second = base.file();
+		expect(dirname(second)).not.toBe(dirname(first));
+		expect(existsSync(dirname(first))).toBe(false);
+		expect(run(base)).toBe("lazy");
 	});
 });

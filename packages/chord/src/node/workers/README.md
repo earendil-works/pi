@@ -3,7 +3,9 @@
 The workers component (slice 10 §3, §4, design §23, decision "Slice 10's points"): a forked worker process per address
 of one host kind, started on demand by the route it owns, stopped when idle, never restarted by itself; forked from the
 kind's worker base, bundled when the component is created; its plugins are built by the server and shipped.
-`workerMain` is the worker's side. Node-only. Exported as `@earendil-works/chord/workers`.
+`workerMain` is the worker's side. Node-only. Exported as `@earendil-works/chord/workers`; the worker's side alone
+(`workerMain`, `processLock`) as `@earendil-works/chord/workers/child`, which loads no esbuild: a worker entry imports
+that.
 
 ## For apps (`index.ts`)
 
@@ -27,7 +29,7 @@ await workers.retry(Session({ id }), ctx);      // a failed or suspended address
 await plugins.rollout([plugins.step("server", server), workers.step("workers")], built, ctx);
 await workers.close(ctx);
 
-// worker.ts
+// worker.ts (imports `workerMain` from "@earendil-works/chord/workers/child")
 workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
 	const host = createHost({ address, principal: { kind: "worker" }, store, onError });
 	onClose((ctx) => host.close(ctx));                                    // closers run in reverse order
@@ -49,10 +51,18 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   builtins and every package resolved under `node_modules` (native addons, packages reading their own files). Imports
   resolve as the child's Node would (`--conditions` from `execArgv`, `main` only, `tsconfig.json` paths); every
   imported module runs (`sideEffects: false` drops none); `import.meta.url`, `.dirname`, `.filename`, `__dirname` and
-  `__filename` name each module's source file. One ES module with an inline source map, forked with
-  `--enable-source-maps` ahead of the app's `execArgv` (stack traces name the source files). Its file is in a private
-  temporary directory, written again into a new one when a cleaner removed it, removed at `close`. `inputs` lists the
-  files it was built from: the kit marks `base` when one changes.
+  `__filename` name each module's source file. Split at each dynamic `import()` esbuild can follow (a literal
+  specifier): the entry module and the chunks it imports statically load at each fork; a lazily imported module, with
+  the packages it imports, is a chunk Node loads when the worker first imports it (pi-ai's provider APIs and their
+  SDKs). A module the entry's graph shares with a lazy chunk moves into a shared chunk, which runs before the
+  importing chunk's own modules: a module still runs after its imports, but two modules that do not import each other
+  may run in another order than unbundled (esbuild's splitting; base code must not rely on sibling order). A variable
+  specifier stays an import Node resolves at run time, against the module's source file (its
+  `import.meta.url`): outside the snapshot, so base code that must be in it imports with a literal specifier. ES modules
+  with inline source maps, forked with `--enable-source-maps` ahead of the app's `execArgv` (stack traces name the
+  source files). The files are in one private temporary directory, written again into a new one when a cleaner removed
+  one of them (checked at each fork; a chunk removed while a worker runs fails that worker's import of it), removed at
+  `close`. `inputs` lists the files it was built from: the kit marks `base` when one changes.
 - **Per address:** a child's events (`started`, `ready`, `idle`, `fatal`, its exit, its link closed by this side) are
   recorded on that child as they happen (a late event of an old child changes nothing); starts and stops run one after
   another. A start waits for the previous child's exit and rejects with a crash recorded meanwhile; a stop records its
@@ -112,6 +122,7 @@ stays failed, Retry brings it back), `43-rollout` (an edit rolled out to the ser
 
 ## Inside the directory
 
-`base.ts` (the worker base: the entry bundled once), `control.ts` (control messages and errors as they cross),
+`base.ts` (the worker base: the entry bundled once), `child.ts` (the worker's side as its own entry point),
+`control.ts` (control messages and errors as they cross),
 `lock.ts` (process locks), `process.ts` (one forked worker as the server sees it), `workers.ts` (the component: the
 route, per-address records, idle stops, the rollout step, the state), `main.ts` (`workerMain`).

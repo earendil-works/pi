@@ -2397,13 +2397,20 @@ draining old holder without polling).
   installed; they change only through an install, which needs a restart anyway). Resolution as the child's Node does it
   (its `execArgv` `--conditions`, `main` only, `tsconfig.json` paths as esbuild reads them); every imported module runs
   (`sideEffects: false` drops nothing); `import.meta.url`, `.dirname`, `.filename`, `__dirname` and `__filename` name
-  each module's source file. One ES module with an inline source map, forked with `--enable-source-maps` before the
-  app's `execArgv` (stack traces name the source files); `execArgv` and `env` apply to every fork as before (modules an
-  `--import` names load from disk at each fork). The file lives in a private temporary directory (0700, written again
-  into a new one when a cleaner removed it), removed at `close`. Plugins are unaffected: workers evaluate the server's
-  built scripts. Cost: a build at start (the kit's test worker 55-100 ms, p2's session worker 215-250 ms, 4.2 MB of
-  code); a fork then loads one file (the kit's test worker 60 ms instead of 360 ms from source, p2's 350 ms instead of
-  760 ms).
+  each module's source file. Split at each dynamic `import()` with a literal specifier: the entry and the chunks it
+  imports statically load at each fork, a lazily imported module and the packages it imports only when the worker
+  first imports it (an app's lazily loaded providers stay lazy; a module still runs after its imports, but modules
+  that do not import each other may run in another order than unbundled); a variable-specifier import resolves at run
+  time against its module's source file, outside the snapshot. ES modules with inline source maps, forked with
+  `--enable-source-maps` before the app's `execArgv` (stack traces name the source files); `execArgv` and `env` apply to
+  every fork as before (modules an `--import` names load from disk at each fork). The files live in one private
+  temporary directory (0700, written again into a new one when a cleaner removed one of them), removed at `close`. The
+  worker's side alone is `@earendil-works/chord/workers/child` (`workerMain`, `processLock`): a worker entry importing
+  it loads no esbuild. Plugins are unaffected: workers evaluate the server's built scripts. Cost: a build at start
+  (the kit's test worker 55-100 ms, p2's session worker 215-250 ms, 4.2 MB of code); a fork then loads the entry and
+  its static chunks (the kit's test worker 60 ms instead of 360 ms from source, p2's 350 ms instead of 760 ms; on a
+  phone, splitting and the child entry took p2's fork from 690 to 301 loaded modules, no provider SDK or esbuild among them, about 300 ms
+  less to `workerMain`).
 - **Keep-alive** (D9, R3, Q5): the child reports when `host.activity`'s references, jobs and lingering objects and the
   app's `busy` counts flip between all zero and not (local calls do not count; the first state with `ready`, which
   also carries the load report); the server stops a worker idle for `idleMs` (5 min).
