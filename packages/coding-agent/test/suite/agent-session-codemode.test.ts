@@ -230,6 +230,50 @@ describe("AgentSession codemode tool", () => {
 		expect(description("count")).toBe("count tool\n\nCodemode: `tools.count(args)` resolves to `number`.");
 	});
 
+	it("summarizes output fields behind local schema references", async () => {
+		const outputTool = (name: string, outputSchema: Record<string, unknown>): AgentTool => ({
+			name,
+			label: name,
+			description: `${name} tool`,
+			parameters: Type.Object({}),
+			outputSchema: Type.Unsafe(outputSchema),
+			execute: async () => ({ content: [], details: {} }),
+		});
+		const report = outputTool("report", {
+			$ref: "#/$defs/Report",
+			$defs: {
+				Report: {
+					type: "object",
+					properties: { kind: { $ref: "#/$defs/Kind" }, summary: { $ref: "#/$defs/Summary" } },
+					required: ["kind", "summary"],
+				},
+				Kind: { const: "ledger" },
+				Summary: { type: "object", properties: { total: { type: "number" } }, required: ["total"] },
+			},
+		});
+		const result = outputTool("result", {
+			anyOf: [{ $ref: "#/$defs/Ok" }, { $ref: "#/$defs/Failed" }],
+			$defs: {
+				Ok: { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
+				Failed: { type: "object", properties: { error: { type: "string" } }, required: ["error"] },
+			},
+		});
+		const harness = await setup([
+			(pi: ExtensionAPI) => {
+				for (const tool of [report, result]) pi.registerTool(createToolDefinitionFromAgentTool(tool));
+			},
+		]);
+		harness.session.setActiveToolsByName(["report", "result", "codemode"]);
+		const description = (name: string) =>
+			harness.session.agent.state.tools.find((tool) => tool.name === name)?.description ?? "";
+		expect(description("report")).toBe(
+			'report tool\n\nCodemode: `tools.report(args)` resolves to `{ kind: "ledger", summary: { total } }`.',
+		);
+		expect(description("result")).toBe(
+			"result tool\n\nCodemode: `tools.result(args)` resolves to `{ value } | { error }`.",
+		);
+	});
+
 	// #10343
 	it("shows the guidelines of tools that do not fit the inline budget through describeTool()", async () => {
 		const harness = await setup();
