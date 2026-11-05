@@ -5,7 +5,7 @@
   "type": "module",
   "description": "NLT Coding Agent MVP application boundary",
   "scripts": {
-    "build": "cd .. && npm run build:offline && node -e \"require.resolve('@earendil-works/pi-coding-agent')\"",
+    "build": "cd .. && npm run hydrate:model-data && npm run build:offline && node mvp/scripts/assert-agent-entry.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "node --test test/*.test.js && vitest --run"
   },
