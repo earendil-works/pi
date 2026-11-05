@@ -40,7 +40,7 @@ export {
 import { Access } from "./access.ts";
 import type { KeyedRegistry } from "./chord.ts";
 import { canonicalJson } from "./json.ts";
-import { follow, followRegistry, type HeldIn, type HeldRef, statusOf, UI_LINGER } from "./refs.ts";
+import { follow, followRegistry, type HeldIn, type HeldRef, knownRegistry, statusOf, UI_LINGER } from "./refs.ts";
 import { Slots } from "./web-core.ts";
 
 export { Slots, webCoreFacet } from "./web-core.ts";
@@ -58,7 +58,9 @@ const EMPTY: ReadonlyMap<string, never> = new Map<string, never>();
 /** A keyed registry's composed table (empty until the host published it); re-renders when it changes. */
 export function useRegistry<V>(registry: KeyedRegistry<V>): ReadonlyMap<string, V> {
 	const host = useHost();
-	const [table, setTable] = useState<ReadonlyMap<string, V>>(EMPTY);
+	// The table known already, at once: a slot mounted with an empty table renders its children unwrapped first, and
+	// wrapping them a render later would mount them again (losing their state and focus).
+	const [table, setTable] = useState<ReadonlyMap<string, V>>(() => knownRegistry(host, registry) ?? EMPTY);
 	useEffect(() => followRegistry(host, registry, (next) => setTable(next)), [host, registry]);
 	return table;
 }

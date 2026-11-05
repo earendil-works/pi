@@ -760,7 +760,25 @@ translated phone drawer and intercept chat taps.
   a send failing six times while connected put the text, attachments and reply target back into the composer with
   the error; Stop takes back what was not sent yet. The outbox lives for the page: leaving with unsent messages asks
   first. Who the page is (`useOwner`, a guest's grant) is kept while reconnecting, so the composer never turns into
-  the "Connecting…" bar after a drop; only a page that never connected shows it.
+  the "Connecting…" bar after a drop; only a page that never connected shows it. A message sent before the
+  conversation has loaded shows alone until it does. A message whose send started while no run was busy stays a
+  message until its entry shows: the run it starts lists it as queued for a moment, and the server's state can arrive
+  before the send's answer, so it would otherwise flash as a queued row above the composer and move it.
+- **A new session's first message** (`plugins/chat/session-start.ts`) does not wait either: Send on the new-session
+  screen clears the composer and shows the message there at once, online or not, above the session's (empty) context
+  bar, so the composer stays in place when the session opens; it is the same composer (see **Chat frame**), so it
+  keeps its focus and a phone's keyboard. The session is created (with the location and model chosen at that Send) whenever the owner's catalog is live, its messages move to the main
+  conversation's outbox, which delivers them, and the page opens the session. Messages sent meanwhile join the same
+  session. A creation the server refuses (its own errors: a missing directory, an unknown model) puts the messages
+  back into the composer with the error; a connection failure is retried like an outbox send. A creation whose answer
+  was lost with the connection can leave an empty session behind (`create` takes no request ID).
+- **Chat frame** (`Main` in `plugins/chat/web.tsx`): the chat's `.chat` area and its dock outlive the screens shown in
+  it (the new-session screen, a conversation, the next one). There is one composer, in the dock: a screen publishes
+  what the dock shows (`useChatScreen`: a bar above, the composer's settings, queued rows, the footer, or a bar in the
+  composer's place) after each of its renders, and renders its transcript into the frame's `.chat-view` (a
+  `display: contents` element) through a portal. Changing screens never replaces the composer's textarea, so it keeps
+  its focus and a phone's keyboard. Slots wrapping a screen start with the plugin registry's known table
+  (`knownRegistry`), so a screen mounts once, not again when its wrappers arrive a render later.
 - **Virtual transcript** (`src/web/use-chat-scroll.ts`, `virtual-list.ts`, `row-estimate.ts`, `scroll-gesture.ts`;
   after TanStack Virtual and react-virtuoso, without depending on either): the web transcript renders only the rows
   near the viewport (one viewport of overscan each way, everything up to the first row near the list's start) between

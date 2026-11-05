@@ -1,14 +1,14 @@
 // Main-view controls exercise real browser events against fake providers and disposable data.
 
 import assert from "node:assert/strict";
-import { mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
 
 const input = (selector: string, value: string) =>
 	`(()=>{const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
@@ -155,11 +155,13 @@ describe("chat control parity", { skip: !browserTests }, () => {
 		await browser.wait(
 			`[...document.querySelectorAll('.bubble-files span')].map(e=>e.textContent).join()==='image.png,pasted-image.png' && !document.querySelector('.attachment')`,
 		);
-		assert.deepEqual(
+		// The message shows before it is sent (plugins/chat/outbox.ts), even before the conversation has loaded; the
+		// uploads follow once its chat object is live.
+		const uploaded = () =>
 			readdirSync(join(fixture.dataDir, "uploads", pasted))
 				.map((file) => file.slice(37))
-				.sort(),
-			["image.png", "pasted-image.png"],
-		);
+				.sort();
+		await poll(() => existsSync(join(fixture.dataDir, "uploads", pasted)) && uploaded().length === 2);
+		assert.deepEqual(uploaded(), ["image.png", "pasted-image.png"]);
 	});
 });

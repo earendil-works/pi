@@ -452,6 +452,10 @@ textarea.input {
 	flex-direction: column;
 	min-height: 0;
 }
+/* The place of a screen's transcript in the chat (plugins/chat): the scroller is .chat's flex item. */
+.chat-view {
+	display: contents;
+}
 .drop-overlay {
 	position: absolute;
 	inset: var(--s2);

@@ -20,13 +20,10 @@ type State = {
 	setFiles: Dispatch<SetStateAction<PickedFile[]>>;
 	steer: boolean;
 	setSteer: Dispatch<SetStateAction<boolean>>;
-	sending: boolean;
-	setSending: Dispatch<SetStateAction<boolean>>;
 	error: string | undefined;
 	setError: Dispatch<SetStateAction<string | undefined>>;
 	stopped: { sessionId: string; conversationId: number } | undefined;
 	setStopped: Dispatch<SetStateAction<{ sessionId: string; conversationId: number } | undefined>>;
-	submission: { current: { key: string; id: string } | undefined };
 	viewer: string;
 	addFiles: (files: File[]) => void;
 	replyTo: ReplyTarget | undefined;
@@ -44,10 +41,8 @@ export function ComposerState({ children }: { children: ReactNode }) {
 	const [draft, setDraft] = useState("");
 	const [files, setFiles] = useState<PickedFile[]>([]);
 	const [steer, setSteer] = useState(true);
-	const [sending, setSending] = useState(false);
 	const [error, setError] = useState<string>();
 	const [stopped, setStopped] = useState<State["stopped"]>();
-	const submission = useRef<{ key: string; id: string } | undefined>(undefined);
 	const viewer = useRef(crypto.randomUUID());
 	const [replyTo, setReplyTo] = useState<ReplyTarget>();
 	const [canReply, setCanReply] = useState(false);
@@ -98,13 +93,10 @@ export function ComposerState({ children }: { children: ReactNode }) {
 				setFiles,
 				steer,
 				setSteer,
-				sending,
-				setSending,
 				error,
 				setError,
 				stopped,
 				setStopped,
-				submission,
 				viewer: viewer.current,
 				addFiles,
 				replyTo,

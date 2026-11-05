@@ -18,6 +18,7 @@ import {
 	buildTranscript,
 	ChevronIcon,
 	CloseIcon,
+	ContextUsage,
 	CostPanel,
 	closeLayers,
 	conversationRoute,
@@ -63,6 +64,7 @@ import {
 	seedSizes,
 	setDrawer,
 	setSidebarCollapsed,
+	type Transcript,
 	takeReveal,
 	transcriptOf,
 	transcriptRows,
@@ -83,7 +85,19 @@ import {
 	useStatus,
 	WorkingDirectory,
 } from "@p2/app/v1/web";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+	createContext,
+	type ReactNode,
+	useCallback,
+	useContext,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+	useSyncExternalStore,
+} from "react";
+import { createPortal } from "react-dom";
 import { Drafts } from "../drafts/contract.ts";
 import { DirectoryPicker, directoryPickerLayer } from "../envs/contract.web.tsx";
 import { Models } from "../models/contract.ts";
@@ -94,6 +108,7 @@ import { type Child, conversationLocation, SubagentControl, Subagents } from "..
 import { SessionTree } from "../tree/contract.ts";
 import { Chat, ChatCosts, TranscriptEntries } from "./contract.ts";
 import { type Outgoing, outboxOf } from "./outbox.ts";
+import { sessionStart } from "./session-start.ts";
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -127,6 +142,38 @@ function refused(error: unknown): boolean {
 		["forbidden", "invalid", "not_in_variant", "contract_mismatch", "upgrade_required"].includes(error.code)
 	);
 }
+
+/** The owner on an outgoing message before the transcript has shown one of theirs (the default owner name). */
+const OWNER_AUTHOR = { kind: "owner", id: "owner", name: "Owner" } as const;
+
+/** A message sent from here as the transcript will show it, until the server shows it (outbox.ts). */
+function outgoingItem(
+	id: string,
+	text: string,
+	files: readonly PickedFile[],
+	author: Outgoing["item"]["author"],
+): Outgoing["item"] {
+	return {
+		type: "user",
+		key: `outgoing-${id}`,
+		text,
+		images: [],
+		files: files.map((file) => file.file.name),
+		...(author ? { author } : {}),
+	};
+}
+
+/** A transcript of only messages sent from here: what shows before the server has the conversation (a new session). */
+const outgoingTranscript = (messages: readonly Outgoing[]): Transcript => ({
+	items: messages.map((message) => message.item),
+	earlier: false,
+	artifacts: [],
+	busy: false,
+	working: false,
+	compactions: [],
+	queued: [],
+	agent: {},
+});
 
 /** Picked files: shown above the textarea, removable; the attach button and pasted images add more. */
 type Attaching = {
@@ -346,6 +393,100 @@ function Composer({
 				)}
 			</div>
 		</form>
+	);
+}
+
+/** The composer's settings from the screen in the frame; the frame owns its textarea (`Frame.composer`). */
+type ComposerProps = Omit<Parameters<typeof Composer>[0], "textareaRef">;
+
+/**
+ * What the chat's dock shows for the screen in the frame: a bar above (a subagent's), and the composer's place with the
+ * scroll-down button, holding either a bar (read-only, unavailable, connecting) or the queued inputs, the composer
+ * and its footer. Absent: nothing below the bar above (a one-shot agent's view).
+ */
+type DockContent = {
+	readonly above?: ReactNode;
+	readonly composer?: { readonly toBottom?: ReactNode } & (
+		| { readonly bar: ReactNode }
+		| { readonly queued?: ReactNode; readonly props: ComposerProps; readonly footer: ReactNode }
+	);
+};
+
+/** The dock's content, set by the screen in the frame after each of its renders. */
+class DockContents {
+	#content: DockContent | undefined;
+	readonly #listeners = new Set<() => void>();
+	subscribe = (listener: () => void): (() => void) => {
+		this.#listeners.add(listener);
+		return () => this.#listeners.delete(listener);
+	};
+	snapshot = (): DockContent | undefined => this.#content;
+	set(content: DockContent | undefined): void {
+		this.#content = content;
+		for (const listener of [...this.#listeners]) listener();
+	}
+}
+
+/**
+ * The chat's frame (`Main`), kept while screens change (the new-session screen, a conversation, another one): the
+ * place of a screen's transcript in `.chat`, the dock floating over the transcript's bottom, what the dock shows, and
+ * the composer's textarea. There is one composer: opening the session a new session's first message started keeps it,
+ * with its focus (and a phone's keyboard) and what was typed meanwhile.
+ */
+type Frame = {
+	readonly view: HTMLDivElement | null;
+	readonly dock: HTMLDivElement | null;
+	readonly contents: DockContents;
+	readonly composer: React.RefObject<HTMLTextAreaElement | null>;
+};
+const ChatFrame = createContext<Frame | undefined>(undefined);
+
+/**
+ * A screen in the chat's frame: `dock` is what the dock shows while it does, and `room` (its transcript's
+ * `useChatScroll().dock`) keeps room for the dock. Returns where the transcript goes.
+ */
+function useChatScreen(
+	dock: DockContent | undefined,
+	room?: (dock: HTMLDivElement) => (() => void) | undefined,
+): (transcript: ReactNode) => ReactNode {
+	const { view, dock: docked, contents } = useFrame();
+	// After the transcript's scroller is attached: it is rendered into `view`, a child of this screen.
+	useLayoutEffect(() => (view && docked && room ? room(docked) : undefined), [view, docked, room]);
+	useLayoutEffect(() => contents.set(dock));
+	// The next screen sets its own in the same commit, after this cleanup: the dock never shows nothing in between.
+	useLayoutEffect(() => () => contents.set(undefined), [contents]);
+	return (transcript) => (view ? createPortal(transcript, view) : null);
+}
+
+/** The chat's frame, for a screen in it. */
+function useFrame(): Frame {
+	const frame = useContext(ChatFrame);
+	if (!frame) throw new Error("Missing the chat frame");
+	return frame;
+}
+
+/** The dock: what the screen in the frame says, around the one composer. */
+function Dock({ frame, dockRef }: { frame: Frame; dockRef: (element: HTMLDivElement | null) => void }) {
+	const content = useSyncExternalStore(frame.contents.subscribe, frame.contents.snapshot);
+	const composer = content?.composer;
+	return (
+		<div className="dock" ref={dockRef}>
+			{content?.above}
+			{composer && (
+				<div className="composer-wrap">
+					{composer.toBottom}
+					{"bar" in composer ? (
+						composer.bar
+					) : (
+						<>
+							{composer.queued}
+							<Composer {...composer.props} textareaRef={frame.composer} />
+							{composer.footer}
+						</>
+					)}
+				</div>
+			)}
+		</div>
 	);
 }
 
@@ -657,7 +798,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	// Kept while reconnecting, as the composer is (`canWrite`).
 	const replying = canWrite && canReply ? replyTo : undefined;
 	// `@`/Tab file completion for participants; in chat mode (`canReply`) the agent's mention (`@pi`) is offered first.
-	const composerRef = useRef<HTMLTextAreaElement>(null);
+	const { composer: composerRef } = useFrame();
 	const fileCompletion = useFileCompletion(
 		composerRef,
 		setDraft,
@@ -711,30 +852,57 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	);
 	const stats = useReadable(chat?.stats) ?? undefined;
 	// Messages sent from here that the server does not show yet (outbox.ts): shown as they will look, a person's
-	// message at the end, or a queued input while a run is busy. An accepted one is shown by the server once its queued
-	// input is listed or the view has an entry newer than any before it was sent.
+	// message at the end, or a queued input while a run is busy. An accepted one is shown by the server once the view
+	// has an entry newer than any before it was sent, or, if a run was busy when its send started, once its queued input
+	// is listed. One sent to an idle conversation is listed as queued only until the run it starts takes it, and the
+	// server's state can arrive before the send's answer: it stays a message until its entry shows, never turning into a
+	// queued row for a moment (the composer would move).
 	const outbox = outboxOf(`${sessionId}#${conversationId}`);
 	const outgoing = useSyncExternalStore(outbox.subscribe, outbox.snapshot);
 	const newestEntry = view?.entries.at(-1)?.id ?? 0;
 	const newest = useRef(newestEntry);
 	newest.current = newestEntry;
+	const busy = transcript?.busy ?? false;
+	// Where each message's first send started: the newest entry then, and whether no run was busy (written by the sender).
+	const started = useRef(new Map<string, { after: number; idle: boolean }>()).current;
 	const queuedIds = useMemo(() => new Set(transcript?.queued.map((item) => item.id)), [transcript]);
 	const shownByServer = useCallback(
 		(message: Outgoing) =>
-			message.sent !== undefined && (queuedIds.has(message.sent.submissionId) || newestEntry > message.sent.after),
-		[queuedIds, newestEntry],
+			message.sent !== undefined &&
+			((!started.get(message.id)?.idle && queuedIds.has(message.sent.submissionId)) ||
+				newestEntry > message.sent.after),
+		[started, queuedIds, newestEntry],
 	);
-	useEffect(() => outbox.settle(shownByServer), [outbox, shownByServer]);
-	const pending = useMemo(() => outgoing.filter((message) => !shownByServer(message)), [outgoing, shownByServer]);
-	const busy = transcript?.busy ?? false;
-	const shown = useMemo(
+	useEffect(() => {
+		outbox.settle(shownByServer);
+		for (const id of started.keys()) if (!outgoing.some((message) => message.id === id)) started.delete(id);
+	}, [outbox, shownByServer, started, outgoing]);
+	// Not shown by the server yet; a message in flight whose entry has arrived before the answer already is.
+	const pending = useMemo(
 		() =>
-			transcript && pending.length > 0 && !busy
-				? { ...transcript, items: [...transcript.items, ...pending.map((message) => message.item)] }
-				: transcript,
-		[transcript, pending, busy],
+			outgoing.filter((message) => {
+				const start = started.get(message.id);
+				return !shownByServer(message) && (!start || newestEntry <= start.after);
+			}),
+		[outgoing, shownByServer, started, newestEntry],
 	);
-	const pendingQueued = busy ? pending : [];
+	const pendingQueued = useMemo(
+		() => (busy ? pending.filter((message) => !started.get(message.id)?.idle) : []),
+		[pending, busy, started],
+	);
+	// The server's queued inputs, without those still shown as messages sent from here.
+	const queued = useMemo(() => {
+		const sentIds = new Set(pending.map((message) => message.sent?.submissionId));
+		return transcript?.queued.filter((item) => !sentIds.has(item.id)) ?? [];
+	}, [transcript, pending]);
+	// Before the server shows the conversation (a new session's first message), the messages sent from here show alone.
+	const shown = useMemo(() => {
+		const messages = pending.filter((message) => !pendingQueued.includes(message));
+		if (!messages.length) return transcript;
+		return transcript
+			? { ...transcript, items: [...transcript.items, ...messages.map((message) => message.item)] }
+			: outgoingTranscript(messages);
+	}, [transcript, pending, pendingQueued]);
 	const rows = useMemo(() => (shown ? transcriptRows(shown.items) : undefined), [shown]);
 	const follow = useChatScroll({
 		cache: `${sessionId}#${conversationId}`,
@@ -770,14 +938,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			files: [...files],
 			whenBusy: steer ? "steer" : "followUp",
 			...(replying ? { replyTo: replying } : {}),
-			item: {
-				type: "user",
-				key: `outgoing-${id}`,
-				text,
-				images: [],
-				files: files.map((file) => file.file.name),
-				...(author ? { author } : owner ? { author: { kind: "owner", id: "owner", name: "Owner" } } : {}),
-			},
+			item: outgoingItem(id, text, files, author ?? (owner ? OWNER_AUTHOR : undefined)),
 		});
 		setDraft("");
 		setFiles([]);
@@ -785,8 +946,8 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		setSteer(true);
 	};
 	// The outbox sends while this conversation's chat object is live; the latest values, for its sender.
-	const latest = useRef({ chat: writer, host, sessionId, conversationId });
-	latest.current = { chat: writer, host, sessionId, conversationId };
+	const latest = useRef({ chat: writer, host, sessionId, conversationId, busy });
+	latest.current = { chat: writer, host, sessionId, conversationId, busy };
 	const live = connected && status === "live" && writer !== undefined;
 	useEffect(() => {
 		if (!live) {
@@ -797,7 +958,10 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			send: async (message) => {
 				const { chat: current, host: client, sessionId: session, conversationId: conversation } = latest.current;
 				if (!current) throw new Error("not connected");
-				const after = newest.current;
+				// The first try's: a retry after a lost answer must not count the entry the first one wrote.
+				const start = started.get(message.id) ?? { after: newest.current, idle: !latest.current.busy };
+				started.set(message.id, start);
+				const { after } = start;
 				const attachments: string[] = [];
 				for (const file of message.files) {
 					if (file.session !== session) {
@@ -832,7 +996,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			},
 		});
 		return () => outbox.connect(undefined);
-	}, [live, outbox, restore, setFiles, setReplyTo, setError]);
+	}, [live, outbox, started, restore, setFiles, setReplyTo, setError]);
 	// Leaving the page loses what the outbox has not delivered: the browser asks first.
 	useEffect(() => {
 		if (outgoing.every((message) => message.sent)) return;
@@ -927,6 +1091,152 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			controls={modelControl}
 		/>
 	);
+	const toBottom = !follow.atBottom && (
+		<button type="button" className="to-bottom" onClick={follow.toBottom} aria-label="Scroll to bottom">
+			<DownIcon />
+		</button>
+	);
+	// The dock (`Dock`): a subagent's bar above, then the composer, or a bar in its place for those who may not write.
+	const subagentBar = child && (
+		<div className="composer-wrap subagent-wrap">
+			{/* A one-shot view has no composer, which otherwise carries this button. */}
+			{oneShot && toBottom}
+			<div className="subagent-bar">
+				<span>
+					{oneShot ? "One-shot agent of a script · read-only · " : ""}
+					Tools: {child.tools.join(", ") || "none"}
+					{!oneShot && viewLocation && ` · in ${locationLabel(viewLocation.env, viewLocation.cwd)}`}
+					{!oneShot && !child.location && " · follows the session"}
+					{child.archived ? " · archived" : ""}
+				</span>
+				{canWrite && !oneShot && (
+					<button
+						type="button"
+						className="text-action"
+						title={
+							child.archived
+								? "Show it in the sidebar again"
+								: "Stop it and move it to the sidebar's archived row"
+						}
+						onClick={() =>
+							perform(
+								subagentControl?.archive(
+									{
+										conversation: child.conversationId,
+										archived: !child.archived,
+									},
+									BACKGROUND_CONTEXT,
+								),
+							)
+						}
+					>
+						{child.archived ? "Restore" : "Archive"}
+					</button>
+				)}
+				{canWrite && oneShot && busy && (
+					<button type="button" className="round stop" aria-label="Stop" onClick={stop}>
+						<StopIcon />
+					</button>
+				)}
+			</div>
+		</div>
+	);
+	const readOnlyBar = (!canWrite || failure) && (
+		<div className="subagent-bar">
+			<span>{failure ? "Session unavailable" : grant ? `Joined as ${grant.name} · read-only` : "Connecting…"}</span>
+		</div>
+	);
+	const queuedRows = queued.length + pendingQueued.length > 0 && (
+		<div className="queued">
+			{pendingQueued.map((message) => (
+				<div key={`outgoing-${message.id}`}>
+					<button
+						type="button"
+						className="queue-edit"
+						title="Move back to editor"
+						onClick={() => {
+							if (!outbox.take(message.id)) return;
+							restore([message.text], true);
+							setFiles((current) => [...current, ...message.files]);
+						}}
+					>
+						<span>{message.whenBusy === "steer" ? "Steer" : "Queued"}</span> {message.text}
+					</button>
+					<button
+						type="button"
+						className="queue-remove"
+						aria-label="Remove from queue"
+						onClick={() => outbox.remove(message.id)}
+					>
+						<CloseIcon />
+					</button>
+				</div>
+			))}
+			{queued.map((item) => (
+				<div key={item.id}>
+					<button
+						type="button"
+						className="queue-edit"
+						title="Move back to editor"
+						onClick={() =>
+							perform(
+								writer
+									?.dequeue({ submissionId: item.id, restore: true }, BACKGROUND_CONTEXT)
+									.then(({ text }) => {
+										if (text) restore([text], true);
+									}),
+							)
+						}
+					>
+						<span>{item.mode === "steer" ? "Steer" : "Queued"}</span> {item.text}
+					</button>
+					<button
+						type="button"
+						className="queue-remove"
+						aria-label="Remove from queue"
+						onClick={() => perform(writer?.dequeue({ submissionId: item.id }, BACKGROUND_CONTEXT))}
+					>
+						<CloseIcon />
+					</button>
+				</div>
+			))}
+		</div>
+	);
+	const place = useChatScreen(
+		{
+			above: subagentBar,
+			// A one-shot agent's view has no composer: its bar above has the Stop.
+			...(oneShot && canWrite
+				? {}
+				: {
+						composer: readOnlyBar
+							? // As in Pi Mobile, the read-only bar has no scroll-down button.
+								{ bar: readOnlyBar }
+							: {
+									toBottom,
+									queued: queuedRows,
+									props: {
+										draft,
+										setDraft,
+										busy,
+										steer,
+										setSteer,
+										disabled: false,
+										onSend: send,
+										onStop: stop,
+										attaching,
+										completion: fileCompletion,
+										...(replying
+											? { replying: { name: replying.name, onCancel: () => setReplyTo(undefined) } }
+											: {}),
+										children: <SlotList prefix="composer" />,
+									},
+									footer,
+								},
+					}),
+		},
+		follow.dock,
+	);
 	return (
 		<>
 			<TopBar session={session} child={child} owner={owner} />
@@ -977,7 +1287,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			)}
 
 			<ErrorToast error={error} onDismiss={() => setError(undefined)} />
-			<div className="chat">
+			{place(
 				<div className="scroller transcript" ref={follow.scroller}>
 					{failure && connected ? (
 						<div className="hero worker-start-error">
@@ -1004,8 +1314,8 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 								<p className="muted">Ask the owner to retry this session.</p>
 							)}
 						</div>
-					) : transcript ? (
-						shown?.items.length && rows ? (
+					) : shown ? (
+						shown.items.length && rows ? (
 							<SessionId.Provider value={sessionId}>
 								<WorkingDirectory.Provider value={viewCwd}>
 									<OpenConversation.Provider value={openConversation}>
@@ -1017,7 +1327,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 															<RevealEntry.Provider value={reveal}>
 																<FillGap.Provider value={fillGap}>
 																	<Messages
-																		transcript={shown ?? transcript}
+																		transcript={shown}
 																		rows={rows}
 																		list={follow.list}
 																		range={follow.range}
@@ -1055,180 +1365,14 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 							<div className="spinner large" />
 						</div>
 					)}
-				</div>
-				<div className="dock" ref={follow.dock}>
-					{child && (
-						<div className="composer-wrap subagent-wrap">
-							{/* A one-shot view has no composer, which otherwise carries this button. */}
-							{oneShot && !follow.atBottom && (
-								<button
-									type="button"
-									className="to-bottom"
-									onClick={follow.toBottom}
-									aria-label="Scroll to bottom"
-								>
-									<DownIcon />
-								</button>
-							)}
-							<div className="subagent-bar">
-								<span>
-									{oneShot ? "One-shot agent of a script · read-only · " : ""}
-									Tools: {child.tools.join(", ") || "none"}
-									{!oneShot && viewLocation && ` · in ${locationLabel(viewLocation.env, viewLocation.cwd)}`}
-									{!oneShot && !child.location && " · follows the session"}
-									{child.archived ? " · archived" : ""}
-								</span>
-								{canWrite && !oneShot && (
-									<button
-										type="button"
-										className="text-action"
-										title={
-											child.archived
-												? "Show it in the sidebar again"
-												: "Stop it and move it to the sidebar's archived row"
-										}
-										onClick={() =>
-											perform(
-												subagentControl?.archive(
-													{
-														conversation: child.conversationId,
-														archived: !child.archived,
-													},
-													BACKGROUND_CONTEXT,
-												),
-											)
-										}
-									>
-										{child.archived ? "Restore" : "Archive"}
-									</button>
-								)}
-								{canWrite && oneShot && busy && (
-									<button type="button" className="round stop" aria-label="Stop" onClick={stop}>
-										<StopIcon />
-									</button>
-								)}
-							</div>
-						</div>
-					)}
-					{oneShot && canWrite ? null : (
-						<div className="composer-wrap">
-							{/* Only with the composer, as in Pi Mobile: the read-only bar has no scroll button. */}
-							{canWrite && !failure && !follow.atBottom && (
-								<button
-									type="button"
-									className="to-bottom"
-									onClick={follow.toBottom}
-									aria-label="Scroll to bottom"
-								>
-									<DownIcon />
-								</button>
-							)}
-							{!canWrite || failure ? (
-								<div className="subagent-bar">
-									<span>
-										{failure
-											? "Session unavailable"
-											: grant
-												? `Joined as ${grant.name} · read-only`
-												: "Connecting…"}
-									</span>
-								</div>
-							) : (
-								<>
-									{transcript && transcript.queued.length + pendingQueued.length > 0 && (
-										<div className="queued">
-											{pendingQueued.map((message) => (
-												<div key={`outgoing-${message.id}`}>
-													<button
-														type="button"
-														className="queue-edit"
-														title="Move back to editor"
-														onClick={() => {
-															if (!outbox.take(message.id)) return;
-															restore([message.text], true);
-															setFiles((current) => [...current, ...message.files]);
-														}}
-													>
-														<span>{message.whenBusy === "steer" ? "Steer" : "Queued"}</span>{" "}
-														{message.text}
-													</button>
-													<button
-														type="button"
-														className="queue-remove"
-														aria-label="Remove from queue"
-														onClick={() => outbox.remove(message.id)}
-													>
-														<CloseIcon />
-													</button>
-												</div>
-											))}
-											{transcript.queued.map((item) => (
-												<div key={item.id}>
-													<button
-														type="button"
-														className="queue-edit"
-														title="Move back to editor"
-														onClick={() =>
-															perform(
-																writer
-																	?.dequeue(
-																		{ submissionId: item.id, restore: true },
-																		BACKGROUND_CONTEXT,
-																	)
-																	.then(({ text }) => {
-																		if (text) restore([text], true);
-																	}),
-															)
-														}
-													>
-														<span>{item.mode === "steer" ? "Steer" : "Queued"}</span> {item.text}
-													</button>
-													<button
-														type="button"
-														className="queue-remove"
-														aria-label="Remove from queue"
-														onClick={() =>
-															perform(writer?.dequeue({ submissionId: item.id }, BACKGROUND_CONTEXT))
-														}
-													>
-														<CloseIcon />
-													</button>
-												</div>
-											))}
-										</div>
-									)}
-									<Composer
-										draft={draft}
-										setDraft={setDraft}
-										busy={busy}
-										steer={steer}
-										setSteer={setSteer}
-										disabled={false}
-										onSend={send}
-										onStop={stop}
-										attaching={attaching}
-										completion={fileCompletion}
-										textareaRef={composerRef}
-										replying={replying && { name: replying.name, onCancel: () => setReplyTo(undefined) }}
-									>
-										<SlotList prefix="composer" />
-									</Composer>
-									{footer}
-								</>
-							)}
-						</div>
-					)}
-				</div>
-			</div>
-			<Slot name="chat-bottom" />
+				</div>,
+			)}
 		</>
 	);
 }
 
 function NewSession() {
-	const follow = useChatScroll();
 	const connected = useConnected();
-	const host = useHost();
 	const owner = useOwner();
 	const catalog = useObject(Sessions, {});
 	const listed = useReadable(liveIn(catalog, "owner", "guest")?.sessions);
@@ -1244,77 +1388,118 @@ function NewSession() {
 	const choice: ModelChoice | undefined =
 		selectedChoice ??
 		(fallback ? { model: fallback, thinkingLevel: resources?.settings.thinkingLevel ?? "high" } : undefined);
+	const contextWindow = resources?.models.find(
+		(entry) => entry.provider === choice?.model.provider && entry.modelId === choice?.model.modelId,
+	)?.contextWindow;
 	const composer = useComposerState();
-	const {
-		draft,
-		setDraft,
-		files,
-		setFiles,
-		error,
-		setError,
-		sending,
-		setSending,
-		submission,
-		steer,
-		setSteer,
-		setStopped,
-	} = composer;
+	const { draft, setDraft, files, setFiles, error, setError, steer, setSteer, setStopped } = composer;
 	const cwdSheet = useSheet("cwd");
 	const modelSheet = useSheet("model");
 	const attaching = attachingOf(composer);
-	const send = async () => {
+	// The first messages, shown at once while the session is created (session-start.ts).
+	const start = useSyncExternalStore(sessionStart.subscribe, sessionStart.snapshot);
+	const outgoing = useMemo(() => (start ? outgoingTranscript(start.messages) : undefined), [start]);
+	const rows = useMemo(() => (outgoing ? transcriptRows(outgoing.items) : undefined), [outgoing]);
+	const follow = useChatScroll({ ...(rows ? { rows } : {}), estimates: rowEstimates });
+	/**
+	 * Sends the composer's message without waiting for the session or the connection: it leaves the composer and shows
+	 * at once; the session is created when the page is connected, and its outbox delivers the message (session-start.ts).
+	 */
+	const send = () => {
 		const text = draft.trim();
-		if ((!text && !files.length) || !sessions || sending || !connected || !owner) return;
+		if ((!text && !files.length) || !owner) return;
 		if (!choice) {
 			openLayer({ kind: "sheet", name: "model" });
 			return;
 		}
 		setStopped(undefined);
-		const key = `new:1:${text}\u0000${files.map((file) => file.key).join()}`;
-		if (submission.current?.key !== key) submission.current = { key, id: crypto.randomUUID() };
-		setSending(true);
-		try {
-			const session = await sessions?.create(
-				{
-					env: location.env,
-					cwd: location.cwd,
-					model: choice.model,
-					thinkingLevel: choice.thinkingLevel,
-				},
-				BACKGROUND_CONTEXT,
-			);
-			const chat = host.hold(Chat, { session: session.id, conversation: 1 }, BACKGROUND_CONTEXT);
-			try {
-				navigate({ session: session.id }, { replace: true });
-				await whenLive(chat);
-				const attachments: string[] = [];
-				for (const file of files) {
-					// Upload IDs are session-scoped: a new creation must not reuse an earlier failed creation's IDs.
-					file.session = session.id;
-					file.uploaded = await upload(session.id, file.file);
-					attachments.push(file.uploaded);
-				}
-				await liveIn(chat, "participant")!.send(
-					{
-						text,
-						requestId: submission.current.id,
-						...(attachments.length ? { attachments } : {}),
-					},
-					BACKGROUND_CONTEXT,
-				);
-				setDraft("");
-				setFiles([]);
-				setSteer(true);
-				submission.current = undefined;
-			} finally {
-				chat.release();
-			}
-		} catch (error) {
-			setError(errorText(error));
-		} finally {
-			setSending(false);
-		}
+		const id = crypto.randomUUID();
+		sessionStart.add(
+			{
+				id,
+				text,
+				files: [...files],
+				whenBusy: steer ? "steer" : "followUp",
+				item: outgoingItem(id, text, files, OWNER_AUTHOR),
+			},
+			{ location, choice },
+		);
+		setDraft("");
+		setFiles([]);
+		setSteer(true);
 	};
+	// The session is created while the owner's catalog is live; the session opens once it exists, if this screen still
+	// shows (the outbox delivers the messages whenever the session is opened).
+	const shownHere = useRef(true);
+	useEffect(() => {
+		shownHere.current = true;
+		return () => {
+			shownHere.current = false;
+		};
+	}, []);
+	useEffect(() => {
+		if (!connected || !sessions) {
+			sessionStart.connect(undefined);
+			return;
+		}
+		sessionStart.connect({
+			create: async ({ location, choice }) =>
+				(
+					await sessions.create(
+						{
+							env: location.env,
+							cwd: location.cwd,
+							model: choice.model,
+							thinkingLevel: choice.thinkingLevel,
+						},
+						BACKGROUND_CONTEXT,
+					)
+				).id,
+			// The server's own errors (a missing directory, an unknown model) refuse; a lost connection is tried again.
+			refused: (error) => !isChordError(error) || refused(error),
+			created: (session) => {
+				if (shownHere.current) navigate({ session }, { replace: true });
+			},
+			restore: (messages, error) => {
+				setDraft((current) => joinDraft(...messages.map((message) => message.text), current));
+				setFiles((current) => [...messages.flatMap((message) => message.files), ...current]);
+				setError(errorText(error));
+			},
+		});
+		return () => sessionStart.connect(undefined);
+	}, [connected, sessions, setDraft, setFiles, setError]);
+	// Leaving the page loses a session not created yet: the browser asks first.
+	useEffect(() => {
+		if (!start) return;
+		const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+		window.addEventListener("beforeunload", warn);
+		return () => window.removeEventListener("beforeunload", warn);
+	}, [start]);
+	const place = useChatScreen(
+		{
+			composer: owner
+				? {
+						props: { draft, setDraft, busy: false, steer, setSteer, disabled: false, onSend: send, attaching },
+						footer: (
+							<div className="session-usage">
+								<div className="session-controls">
+									<ModelControl resources={resources} {...(choice ? { choice } : {})} />
+								</div>
+								{/* The session's context bar, empty: the dock keeps its height when Send opens the session. */}
+								<ContextUsage {...(contextWindow ? { used: 0, limit: contextWindow } : {})} />
+							</div>
+						),
+					}
+				: {
+						bar: (
+							<div className="subagent-bar">
+								<span>Connecting…</span>
+							</div>
+						),
+					},
+		},
+		follow.dock,
+	);
 	return (
 		<>
 			<TopBar />
@@ -1346,76 +1531,52 @@ function NewSession() {
 				/>
 			)}
 			<ErrorToast error={error} onDismiss={() => setError(undefined)} />
-			<div className="chat">
-				<div className="scroller" ref={follow.scroller}>
-					<div className="hero">
-						<div className="hero-title">
-							<PiLogo />
-							<h2>What should Pi do?</h2>
-						</div>
-						<button
-							type="button"
-							className="cwd-pick"
-							onClick={() => openLayer(directoryPickerLayer(location.env, location.cwd))}
-						>
-							<FolderIcon />
-							<span>{locationLabel(location.env, location.cwd)}</span>
-							<ChevronIcon size={14} />
-						</button>
-						{owner && resources && !resources.credentials.length && (
+			{place(
+				<div className={outgoing ? "scroller transcript" : "scroller"} ref={follow.scroller}>
+					{outgoing && rows ? (
+						<Messages transcript={outgoing} rows={rows} list={follow.list} range={follow.range} />
+					) : (
+						<div className="hero">
+							<div className="hero-title">
+								<PiLogo />
+								<h2>What should Pi do?</h2>
+							</div>
 							<button
 								type="button"
-								className="button"
-								onClick={() => openLayer({ kind: "sheet", name: "providers" })}
+								className="cwd-pick"
+								onClick={() => openLayer(directoryPickerLayer(location.env, location.cwd))}
 							>
-								Sign in to a provider
+								<FolderIcon />
+								<span>{locationLabel(location.env, location.cwd)}</span>
+								<ChevronIcon size={14} />
 							</button>
-						)}
-					</div>
-				</div>
-				<div className="dock" ref={follow.dock}>
-					<div className="composer-wrap">
-						{owner ? (
-							<>
-								<Composer
-									draft={draft}
-									setDraft={setDraft}
-									busy={false}
-									steer={steer}
-									setSteer={setSteer}
-									disabled={!connected || sending}
-									onSend={() => void send()}
-									attaching={attaching}
-								/>
-								<div className="session-usage">
-									<div className="session-controls">
-										<ModelControl resources={resources} {...(choice ? { choice } : {})} />
-									</div>
-								</div>
-							</>
-						) : (
-							<div className="subagent-bar">
-								<span>Connecting…</span>
-							</div>
-						)}
-					</div>
-				</div>
-			</div>
+							{owner && resources && !resources.credentials.length && (
+								<button
+									type="button"
+									className="button"
+									onClick={() => openLayer({ kind: "sheet", name: "providers" })}
+								>
+									Sign in to a provider
+								</button>
+							)}
+						</div>
+					)}
+				</div>,
+			)}
 		</>
 	);
 }
 
 /** A guest's share ended: Pi Mobile clears the view and says so in its toast; nothing reconnects. */
 function ShareEnded() {
+	const place = useChatScreen(undefined);
 	return (
 		<>
 			<TopBar />
 			<button type="button" className="toast">
 				This share has ended.
 			</button>
-			<div className="chat">
-				<div className="scroller" />
-			</div>
+			{place(<div className="scroller" />)}
 		</>
 	);
 }
@@ -1430,19 +1591,34 @@ function Main() {
 	useEffect(() => {
 		if (grant && !grantMode(grant, route.session)) void nav.replace(conversationRoute(route, grant.session), route);
 	}, [grant, route, nav]);
-	if (ended) return <ShareEnded />;
-	return route.session ? (
-		<Slot name="chat-content">
-			<Slot name="chat-attribution">
-				<SessionChat
-					key={`${route.session}:${route.conversation ?? 1}`}
-					sessionId={route.session}
-					conversationId={route.conversation ?? 1}
-				/>
-			</Slot>
-		</Slot>
-	) : (
-		<NewSession />
+	// The frame outlives the screens in it: its dock, with the one composer, stays while they change.
+	const [view, setView] = useState<HTMLDivElement | null>(null);
+	const [dock, setDock] = useState<HTMLDivElement | null>(null);
+	const [contents] = useState(() => new DockContents());
+	const composer = useRef<HTMLTextAreaElement>(null);
+	const frame = useMemo(() => ({ view, dock, contents, composer }), [view, dock, contents]);
+	const conversation = route.session && `${route.session}:${route.conversation ?? 1}`;
+	return (
+		<ChatFrame.Provider value={frame}>
+			{ended ? (
+				<ShareEnded />
+			) : route.session ? (
+				<Slot name="chat-content">
+					<Slot name="chat-attribution">
+						<SessionChat key={conversation} sessionId={route.session} conversationId={route.conversation ?? 1} />
+					</Slot>
+				</Slot>
+			) : (
+				<NewSession />
+			)}
+			{/* The transcript of the screen above goes into the view (`useChatScreen`), the dock floats over its bottom. */}
+			<div className="chat">
+				<div className="chat-view" ref={setView} />
+				<Dock frame={frame} dockRef={setDock} />
+			</div>
+			{/* Below the chat, per conversation (the bottom terminal panel). */}
+			{conversation && !ended && <Slot key={conversation} name="chat-bottom" />}
+		</ChatFrame.Provider>
 	);
 }
 
