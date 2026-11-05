@@ -148,8 +148,13 @@ export function agentDoneMessage(event) {
   if (event?.status === "busy") return "The agent is busy with another turn. Try again in a moment.";
   if (event?.status === "no_free_model") return "No free model is available right now.";
   if (event?.status === "timed_out") return "The turn ran out of time.";
-  return "The agent could not finish this turn.";
+  // The server's reason is shown as plain text (the page sets it with textContent), shortened to keep the note readable.
+  const reason = typeof event?.reason === "string" ? event.reason.trim().slice(0, MAX_SHOWN_REASON_LENGTH) : "";
+  return reason ? `The agent could not finish this turn: ${reason}` : "The agent could not finish this turn.";
 }
+
+/** Longest server reason shown in a failed turn's note. */
+const MAX_SHOWN_REASON_LENGTH = 300;
 
 /**
  * What the header shows for the sign-in state. Only an explicit `signedIn: true` counts as signed in.

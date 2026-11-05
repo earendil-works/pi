@@ -13,6 +13,7 @@
  */
 import type { AgentRunnerDeps, AgentTurnInput, AgentTurnResult } from "./runner.ts";
 import { DEFAULT_AGENT_EGRESS } from "../sandbox/lifecycle.ts";
+import { redactForLog } from "./log-redact.ts";
 
 export const MAX_AGENT_PROMPT_LENGTH = 8000;
 
@@ -207,6 +208,20 @@ export async function handleAgentRequest(
   } catch {
     result = { status: "error", reason: "Agent turn failed" };
   }
-  send({ type: "done", ...describeResult(result) });
+  const done = describeResult(result);
+  // The outcome goes to the server log so a failed turn can be diagnosed; the prompt and the model's text never do.
+  deps.log(JSON.stringify({ event: "agent_turn_done", ...logSafeOutcome(done) }));
+  send({ type: "done", ...done });
   response.end();
+}
+
+/**
+ * The status, model and reason of a finished turn, for the server log. `status` is the stable category; the reason is
+ * redacted (credentials, query strings, control characters) and shortened. The browser's copy is not changed.
+ */
+function logSafeOutcome(done: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { status: done.status };
+  if (typeof done.model === "string") out.model = redactForLog(done.model);
+  if (typeof done.reason === "string") out.reason = redactForLog(done.reason);
+  return out;
 }

@@ -126,6 +126,18 @@ test("only an explicit completed status is a success", () => {
   }
 });
 
+test("a failed turn shows the server's reason, shortened, and falls back to the generic note", () => {
+  assert.equal(agentDoneMessage({ status: "error", reason: "Gateway returned 401" }), "The agent could not finish this turn: Gateway returned 401");
+  assert.equal(agentDoneMessage({ status: "aborted", reason: "  cancelled  " }), "The agent could not finish this turn: cancelled");
+  for (const reason of [undefined, "", "   ", 42, null]) {
+    assert.equal(agentDoneMessage({ status: "error", reason }), "The agent could not finish this turn.");
+  }
+  const long = agentDoneMessage({ status: "error", reason: "x".repeat(1000) });
+  assert.equal(long, `The agent could not finish this turn: ${"x".repeat(300)}`);
+  // Statuses with their own message keep it.
+  assert.equal(agentDoneMessage({ status: "timed_out", reason: "ignored" }), "The turn ran out of time.");
+});
+
 test("only an explicit signedIn true with a name shows as signed in", () => {
   assert.equal(interpretSession({ status: 200, body: { configured: true, signedIn: true, name: "Josh" } }).state, "signed-in");
   assert.equal(interpretSession({ status: 200, body: { configured: true, signedIn: true } }).state, "signed-out");

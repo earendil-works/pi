@@ -1,0 +1,35 @@
+{
+  "handoff_record": {
+    "session_id": "session_01UNjnjkGsveT9DW8pC9UXhf",
+    "agent_name": "Claude Code",
+    "date": "2026-11-05T20:55:00+00:00",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "ccr-50842984-agent-reason",
+    "work_completed": [
+      "Read the sign-in failure line added by nlt-pi#32: every attempt logged `reason=bad_request vercel_error=invalid_scope`. The owner enabled the Sign in with Vercel app's permissions; sign-in now works (no failure lines after 20:42 UTC; the owner's screenshot shows 'Signed in as jdub1216').",
+      "At the owner's request, created NLT_AGENT_ENABLED=1 (Production only; NLT_AGENT_EGRESS_ALL left unset, so egress stays on the allowlist) and redeployed production (dpl_A9SaAPSGDKfNfRV694pFfHnrtvJM, commit 5ffce5e).",
+      "The model selector lists three free models. The first real turn ended with 'The agent could not finish this turn.' The runtime log shows only the route's start line (`agent_turn`, `allowlist:packages,git`); the reason was sent to the browser in the NDJSON done event but neither logged nor shown.",
+      "src/agent/route.ts: logs one `agent_turn_done` line per turn with status, model (on success) and reason. Never the prompt or the model's text (tested).",
+      "public/lib/decision.js: agentDoneMessage appends the server's reason (trimmed, cut to 300 characters) to the generic failure note; app.js already sets it with textContent. Statuses with their own message are unchanged.",
+      "Addressed the owner's review on nlt-pi#33 (changes requested): added src/agent/log-redact.ts. Before logging, it turns control characters and line breaks into spaces, redacts authorization schemes, JWTs, URL query strings, secret-named values (api_key, token, password, cookie, ...), well-known token prefixes (sk-, ghp_, github_pat_, xox*, AKIA, vck_) and any run of 32+ token characters, then shortens to 300 characters. The route's log line uses it; the browser's reason is unchanged. Pattern-based: words quoted from a prompt are not recognised. Reconciled docs/active-threads.md (stale sign-in blocker and open item)."
+    ],
+    "verification": [
+      "cd mvp && npx tsc --noEmit -p . : passed",
+      "cd mvp && npx vitest --run : see PR #33 for counts after the review fix",
+      "Mutation check: replacing redactForLog with the raw reason in route.ts makes the route test fail (1 failed); restored.",
+      "Not run: a real agent turn with this change (needs merge, deploy and the owner's browser)."
+    ],
+    "work_in_progress": [],
+    "blockers": [
+      "Root cause of the failed first agent turn is unknown until this change is deployed and one prompt is sent."
+    ],
+    "decisions_made": [
+      "Owner (2026-11-05): enable the agent in Production (NLT_AGENT_ENABLED=1) and redeploy."
+    ],
+    "decisions_pending": [
+      "Owner: review and merge this PR, which redeploys production from main."
+    ],
+    "next_action": "After merge and deploy, send one prompt; the chat bubble and the `agent_turn_done` log line will both show the reason."
+  }
+}
