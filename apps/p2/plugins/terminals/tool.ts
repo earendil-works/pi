@@ -1,17 +1,19 @@
 // The agent's `terminal` tool (worker): tmux commands as argv on the session's terminals, the ones the owner sees in
 // the terminal panel. Code mode scripts call it (`tools.terminal({ command, args })`); without code mode `tool_search`
-// loads it, as MCP tools. Replay-safe: the host does a call with the tool call's key once, and reads start where the
-// first attempt's did (memoized), so a call a restart interrupted runs again without typing or opening twice.
+// loads it, as MCP tools. Only turns the owner started may call it (`origin: "owner"`): the terminals are the owner's
+// too, possibly connected where the session's `bash` would not reach (an ssh session, a waiting sudo prompt).
+// Replay-safe: the host does a call with the tool call's key once, and reads start where the first attempt's did
+// (memoized), so a call a restart interrupted runs again without typing or opening twice.
 
 import {
 	defineExtension,
-	defineTool,
 	type Extension,
 	type ToolExecutionApi,
 	type ToolExecutionResult,
 } from "@earendil-works/pi-durable";
 import { arr, bool, int, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
 import { type Context, isRooted, joinPath, type Location, literal } from "@p2/app/v1";
+import { defineP2Tool, type P2Tool } from "@p2/app/v1/worker";
 import {
 	COMMANDS,
 	CommandError,
@@ -99,11 +101,11 @@ export function createTerminalExtension(
 	reach: TerminalReach,
 	backend: TerminalBackend,
 	locate: (api: ToolExecutionApi, context: Context) => Promise<Location>,
-): Extension {
-	return defineExtension({
+): Extension<P2Tool> {
+	return defineExtension<P2Tool>({
 		name: TERMINAL_EXTENSION,
 		tools: [
-			defineTool({
+			defineP2Tool({
 				name: "terminal",
 				description: DESCRIPTION,
 				parameters: obj({
@@ -116,6 +118,7 @@ export function createTerminalExtension(
 				...(reach === "codemode" ? { callers: ["tools" as const] } : {}),
 				outputLimits: { maxBytes: OUTPUT_CHARS + 1024, retain: "tail" },
 				replay: "safe",
+				origin: "owner",
 				execute: async (args, api, context) => {
 					let command: TerminalCommand;
 					try {
