@@ -55,6 +55,65 @@ There are **no time restraints** for any agent working in this repository.
 - Never push directly to `main`; use feature branches and PRs.
 - Do not force-push or rewrite shared history.
 
+## Pre-push verification
+
+Run these before pushing. Do not report a check as passing unless it actually ran and
+passed, and name any you could not run.
+
+### Prerequisites in a fresh clone
+A clean clone cannot pass the checks until generated and built artifacts exist, because
+`.gitignore` excludes them. In order:
+
+```
+npm ci
+npm run hydrate:model-data        # packages/ai/src/providers/data/ is gitignored; without it
+                                  # model-catalog types resolve to `never`
+npm run build                     # workspace type declarations; without dist/, imports of
+                                  # @earendil-works/pi-* fail to resolve
+```
+
+Use `npm run build:offline` when `generate-models` cannot reach provider APIs.
+
+### The MVP
+```
+cd mvp && npx tsc --noEmit -p . && npx vitest --run
+```
+
+`npm run check:mvp` is not the same check: it runs `tsc -p tsconfig.typecheck.json`, while
+`-p .` uses `mvp/tsconfig.json`. They check the same files (the typecheck config extends the other
+and adds `types: ["node"]`), so the difference is compiler settings, not coverage. Run both.
+
+### From the repository root
+```
+npm run check:mvp
+npm run check:pinned-deps
+npm run check:runtime-deps
+npm run check:ts-imports
+npm run check:entry-graphs
+bash .nltotoi/scripts/validate-governance.sh
+```
+
+`check:runtime-deps` only covers public packages, so an undeclared import under `scripts/`
+will not be caught here.
+
+### Leftover conflict markers
+The governance validator does not detect these. Check explicitly:
+
+```
+git grep -nE '^(<{7}|={7}|>{7})( |$)' -- . ':!package-lock.json'
+```
+
+### Never skip hooks
+Do not pass `--no-verify`, override `core.hooksPath`, or otherwise bypass the pre-commit
+hook. If the hook cannot run or cannot pass, stop and say so — including which step failed
+and whether it is caused by your change — and escalate rather than committing around it. A
+bypassed hook that goes unreported turns an unverified commit into an apparently verified
+one, which is worse than a blocked commit.
+
+Note that the hook runs the full root `npm run check`, which is a superset of the root
+checks listed above: it also runs biome, the root and examples `tsc --noEmit`,
+`check:install-lock:coding-agent`, and `check:browser-smoke`.
+
 ## Commit and contribution rules
 
 Use the organization public baseline commit format:

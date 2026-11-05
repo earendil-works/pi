@@ -44,3 +44,10 @@ plans/
 .pi/settings.json
 collect.sh
 packages/agent/docs/extensions/pi-server-artifact/index.md
+
+# Kilo Code local state (committed config lives in .kilo/)
+.kilo/*.local.jsonc
+.kilo/*.local.json
+.kilo/cache/
+.kilo/index/
+.kilo/plans/

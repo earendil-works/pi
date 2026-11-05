@@ -1,0 +1,246 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+
+  // ===========================================================================
+  // DO NOT PUT A SECRET OR AN ENVIRONMENT-VARIABLE PLACEHOLDER IN THIS FILE.
+  //
+  // This is a project config committed to a repository. Kilo does not resolve
+  // environment-variable placeholders in a project config, and a project config
+  // containing one is rejected AS A WHOLE — the permission deny rules below
+  // would be silently discarded along with it. An agent would then run with
+  // default permissions and nothing here would say so.
+  //
+  // (Deliberately not spelling the placeholder syntax out here, in case the
+  // check is a raw text scan rather than a parse. See Kilo's config docs.)
+  //
+  // Provider credentials belong in Kilo's own credential store (`kilo auth`),
+  // the global config at ~/.config/kilo/kilo.jsonc, or the Kilo account used by
+  // Cloud Agents. None of those live in this repository.
+  // ===========================================================================
+
+  // ---------------------------------------------------------------------------
+  // Rule loading.
+  //
+  // Order matters: entries load in array order, and the canonical root documents
+  // come first so Kilo reads the repository's own authority model before any
+  // Kilo-specific guidance. The files under .kilo/rules/ add only what Kilo needs
+  // on top of those documents; they never restate governance.
+  // ---------------------------------------------------------------------------
+  "instructions": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "NLT-DEV-OTOI.md",
+    "GOVERNANCE.md",
+    "REVIEW.md",
+    ".kilo/rules/00-session-start.md",
+    ".kilo/rules/10-boundaries.md",
+    ".kilo/rules/20-commits-and-prs.md",
+    ".kilo/rules/30-governance-records.md"
+  ],
+
+  // ---------------------------------------------------------------------------
+  // Tool permissions.
+  //
+  // Within a tool, the LAST matching pattern wins, so "*" is written first and
+  // specific rules follow it. These mirror the deny list in .claude/settings.json:
+  // no history rewriting, no recursive force-deletes, no direct pushes to main.
+  //
+  // This is convenience and defense-in-depth, not enforcement. Capability does
+  // not equal authority; real mediation belongs to the ASFDK harness.
+  // ---------------------------------------------------------------------------
+  "permission": {
+    "*": "ask",
+
+    // Read-only inspection is broadly allowed — the repository requires agents to
+    // read source, tests, and package docs before changing behavior — except for
+    // environment files, which hold credentials.
+    "read": {
+      "*": "allow",
+      ".env*": "deny",
+      "**/.env*": "deny"
+    },
+    "glob": "allow",
+    "grep": "allow",
+    "todoread": "allow",
+    "todowrite": "allow",
+
+    "webfetch": "ask",
+    "websearch": "ask",
+
+    "bash": {
+      "*": "ask",
+
+      // Inspection and the repository's declared checks.
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "git show*": "allow",
+      "git branch": "allow",
+      "git branch --list*": "allow",
+      "git branch -a*": "allow",
+      "git branch -v*": "allow",
+      "git remote -v*": "allow",
+      "ls *": "allow",
+      "cat *": "allow",
+      "head *": "allow",
+      "tail *": "allow",
+      "rg *": "allow",
+      "grep *": "allow",
+
+      // `rg --pre=CMD` runs CMD once per searched file, so the allow above would be
+      // arbitrary execution without approval. Verified against ripgrep.
+      "rg *--pre*": "ask",
+
+      // `find` is deliberately NOT allowed. `find -exec <cmd>` and `-delete` reach past
+      // every rule below, because those patterns match on the leading command word and a
+      // find invocation starts with "find". It falls through to the "*" ask default.
+      "npm test*": "allow",
+      "npm run test*": "allow",
+      "npm run check*": "allow",
+      "npm run typecheck*": "allow",
+      "node --test*": "allow",
+      "npx vitest*": "allow",
+      "tsc --noEmit*": "allow",
+      "bash .nltotoi/scripts/validate-governance.sh*": "allow",
+
+      // `git log/diff/show --output=FILE` writes the output to FILE. Verified: all three
+      // create the file. Without this, an allowed "read-only" git command is a file write
+      // that the `edit` deny rules below never see, because they do not apply to bash.
+      "git *--output*": "deny",
+
+      // Destructive branch operations.
+      "git branch -D*": "deny",
+      "git branch -d*": "deny",
+      "git branch --delete*": "deny",
+      "git branch -M*": "deny",
+      "git branch -m*": "deny",
+      "git branch --move*": "deny",
+      "git branch -f*": "deny",
+
+      // Hook bypass. AGENTS.md "Pre-push verification" forbids skipping hooks; these
+      // make the common mechanisms fail closed rather than relying on the rule text.
+      "*--no-verify*": "deny",
+      "*core.hooksPath*": "deny",
+      "*hooksPath=*": "deny",
+      "git commit*-n *": "deny",
+
+      // History rewriting and shared-history damage. The `git -C <dir>` forms are
+      // listed separately because the leading subcommand no longer matches.
+      "git push*--force*": "deny",
+      "git push* -f*": "deny",
+      "git push*--delete*": "deny",
+      "git -C*push*--force*": "deny",
+      "git -C*push* -f*": "deny",
+      "git -C*reset*--hard*": "deny",
+      "git -C*clean*-f*": "deny",
+      "git -C*push*main*": "deny",
+      "git reset --hard*": "deny",
+      "git reset*--hard*": "deny",
+      "git clean -f*": "deny",
+      "git clean*-f*": "deny",
+      "git rebase*--force*": "deny",
+      "git filter-branch*": "deny",
+      "git update-ref -d*": "deny",
+
+      // Never push directly to main.
+      "git push origin main*": "deny",
+      "git push* main:*": "deny",
+      "git push* HEAD:main*": "deny",
+
+      // Recursive / forced deletion.
+      "rm -rf*": "deny",
+      "rm -fr*": "deny",
+      "rm -r *": "deny",
+      "rm *-r *": "deny",
+      "rm *--recursive*": "deny",
+      "rm *--force*": "deny",
+      "find *-delete*": "deny",
+      "find *-exec rm*": "deny",
+      "find *-exec unlink*": "deny",
+
+      // Publishing is an owner decision.
+      "npm publish*": "deny",
+      "npm run publish*": "deny",
+      "npm run release*": "deny",
+      "gh release create*": "deny",
+
+      // Last rule, so it wins for any command naming an environment file. Deny only ever
+      // strengthens an earlier decision, so placing it last cannot weaken the rules above.
+      "*.env*": "deny"
+    },
+
+    "edit": {
+      "*": "ask",
+
+      // Governance and authority documents are not agent-editable. Agents may
+      // propose changes in a PR body or an escalation record; they do not
+      // rewrite the policy that governs them.
+      "AGENTS.md": "deny",
+      "CLAUDE.md": "deny",
+      "REVIEW.md": "deny",
+      "GOVERNANCE.md": "deny",
+      "NLT-DEV-OTOI.md": "deny",
+      "governance.json": "deny",
+      "governance.yaml": "deny",
+      "nltotoi.json": "deny",
+      ".nltotoi/**": "deny",
+      "LICENSE*": "deny",
+      "NOTICE": "deny",
+      "SECURITY.md": "deny",
+
+      // Secrets and lockfiles.
+      ".env*": "deny",
+      "**/.env*": "deny",
+      "package-lock.json": "ask",
+
+      // CI and release surfaces are owner decisions.
+      ".github/workflows/**": "ask",
+
+      // Governance records are meant to be written by agents.
+      "docs/agent-log/**": "allow",
+      "docs/escalations/**": "allow",
+      "docs/active-threads.md": "allow"
+    }
+  },
+
+  // ---------------------------------------------------------------------------
+  // Agents. Profiles live as Markdown in .kilo/agents/ (filename = agent name).
+  // They mirror the role definitions in the repository's root agents/ directory.
+  // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+  // MCP servers.
+  //
+  // Intentionally empty. ASFDK MCP is the integration-governance layer: adding
+  // an external tool or service here is an external-integration decision and
+  // requires the owner's approval. Do not add a server to get unblocked.
+  // ---------------------------------------------------------------------------
+  "mcp": {},
+
+  // ---------------------------------------------------------------------------
+  // Context hygiene.
+  // ---------------------------------------------------------------------------
+  "watcher": {
+    "ignore": [
+      "node_modules/**",
+      "dist/**",
+      "packages/*/dist/**",
+      ".artifacts/**",
+      "coverage/**",
+      ".git/**",
+      "**/*.tsbuildinfo",
+      "**/*.log"
+    ]
+  },
+
+  // Semantic indexing sends code snippets to an embedding provider, which is a
+  // provider decision and an external-integration decision. Left off until the
+  // owner selects a provider. If it is ever enabled, the provider's API key does
+  // NOT go in this file — see the warning at the top.
+  "experimental": {
+    "semantic_indexing": false
+  },
+  "indexing": {
+    "enabled": false
+  }
+}
