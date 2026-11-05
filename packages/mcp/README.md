@@ -147,7 +147,7 @@ if (started.kind === "redirect") {
 
 For a browser on the same machine, `listenForLoopbackSignIn()` starts a loopback callback server and returns its redirect URI, and `waitForLoopbackSignIn()` waits for the response on it or for a pasted redirect URL. `clientMetadataDocuments` lets authorization servers that support Client ID Metadata Documents identify the application by a document it publishes instead of registering a client. `createMcpAuthProvider()` is the matching `AuthProvider` for connections: it refreshes the stored tokens and throws `McpOAuthAuthorizationRequiredError` when the user has to sign in.
 
-The OAuth implementation is adapted from the MIT-licensed Model Context Protocol TypeScript SDK v1.29.0. Its license is included under `LICENSES/`.
+The OAuth implementation is adapted from the MIT-licensed Model Context Protocol TypeScript SDK v1.29.0. Its license is included under `THIRD_PARTY_NOTICES/`.
 
 ### Configuration
 

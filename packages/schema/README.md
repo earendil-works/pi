@@ -316,4 +316,4 @@ schemas that arrive later.
 `npm test` runs the official test suite (drafts 2020-12 and 7, including the optional and format tests, vendored in
 `test/fixtures/`) and the package's own tests.
 
-The format checks are adapted from TypeBox 1.3.27 (MIT); its license is in `LICENSES/`.
+The format checks are adapted from TypeBox 1.3.27 (MIT); its license is in `THIRD_PARTY_NOTICES/`.
