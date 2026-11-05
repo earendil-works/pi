@@ -11,6 +11,7 @@ import type { SandboxClient } from "./lifecycle.ts";
 
 export function createVercelSandboxClient(): SandboxClient {
   return {
+    // A real Sandbox has updateNetworkPolicy, so it satisfies AgentSandbox (checked by the type checker).
     getOrCreate: (params) =>
       // `resume: true` wakes the existing sandbox if it has stopped, instead of failing.
       Sandbox.getOrCreate({

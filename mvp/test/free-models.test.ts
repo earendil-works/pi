@@ -42,6 +42,20 @@ describe("isFreeLanguageModel", () => {
     }
   });
 
+  it("rejects prices that only round to zero, and pricing with inherited fields", () => {
+    for (const input of ["1e-400", "1e-324", "0x0", "0b0", "1E-999", "+1e-400"]) {
+      expect(isFreeLanguageModel(model({ id: "a", pricing: { input, output: "0" } }))).toBe(false);
+    }
+    const inherited = Object.create({ input: "1", output: "1" });
+    expect(isFreeLanguageModel(model({ id: "a", pricing: inherited }))).toBe(false);
+    const hidden = Object.create({ input_cache_write: "9" });
+    hidden.input = "0";
+    hidden.output = "0";
+    expect(isFreeLanguageModel(model({ id: "a", pricing: hidden }))).toBe(false);
+    const bare = Object.assign(Object.create(null), { input: "0", output: "0" });
+    expect(isFreeLanguageModel(model({ id: "a", pricing: bare }))).toBe(true);
+  });
+
   it("rejects a price that varies by provider", () => {
     expect(isFreeLanguageModel(model({ id: "a", pricing: { input: "0", output: "0", varies_by_provider: true } }))).toBe(false);
     expect(isFreeLanguageModel(model({ id: "a", pricing: { input: "0", output: "0", varies_by_provider: false } }))).toBe(true);
@@ -89,6 +103,16 @@ describe("selectFreeModels", () => {
   it("breaks ties by id so the choice is stable", () => {
     const ties = [model({ id: "b" }), model({ id: "a" }), model({ id: "c" })];
     expect(selectFreeModels(ties).map((m) => m.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("ignores malformed tags and context windows instead of throwing or misordering", () => {
+    const messy = [
+      model({ id: "bad-tags", tags: 42 as never }),
+      model({ id: "obj-tags", tags: {} as never }),
+      model({ id: "nan-ctx", context_window: "big" as never }),
+      model({ id: "ok", context_window: 10 }),
+    ];
+    expect(selectFreeModels(messy).map((m) => m.id)).toEqual(["ok", "nan-ctx"]);
   });
 
   it("returns an empty list for an empty catalog", () => {

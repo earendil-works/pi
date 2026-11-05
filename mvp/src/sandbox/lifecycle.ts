@@ -10,6 +10,7 @@
  * reads credentials, and nothing in the application calls it yet. The real client is in `vercel-client.ts`.
  */
 
+import { randomUUID } from "node:crypto";
 import { SandboxPolicyError, type SandboxLike } from "./operations.ts";
 
 /** The one sandbox's name. It identifies the sandbox within the Vercel project, so it is stable on purpose. */
@@ -23,9 +24,18 @@ const MIN_SESSION_MS = 60 * 1000;
 /** Longest a turn may hold the lock before it is considered abandoned. */
 export const DEFAULT_LOCK_STALE_MS = 15 * 60 * 1000;
 
-const LOCK_PATH = "/tmp/nlt-agent.lock";
+const DEFAULT_LOCK_PATH = "/tmp/nlt-agent.lock";
+const LOCK_PATH_PATTERN = /^\/tmp\/[a-z0-9][a-z0-9._-]{0,80}$/;
 const BUSY_EXIT_CODE = 75;
 const SNAPSHOT_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Thrown when a turn outlived its deadline and did not stop. The lock is left to expire, not released. */
+export class SandboxTurnTimeoutError extends Error {
+  constructor() {
+    super("The sandbox turn did not stop at its deadline");
+    this.name = "SandboxTurnTimeoutError";
+  }
+}
 
 /** Thrown when another turn holds the sandbox. The caller should tell the user to wait, not retry in a loop. */
 export class SandboxBusyError extends Error {
@@ -62,8 +72,6 @@ export interface AgentSandboxParams {
 }
 
 export interface AgentSandboxOptions {
-  /** Sandbox name. Default `AGENT_SANDBOX_NAME`. Lowercase letters, digits and dashes. */
-  name?: string;
   /** Session length in ms, clamped to 1 minute .. `MAX_SESSION_MS`. Default 30 minutes. */
   sessionMs?: number;
   /** Virtual CPUs, 1 or 2. Default 1, to keep the plan's allowance. */
@@ -78,11 +86,15 @@ export interface AgentSandboxOptions {
    * presets. There is deliberately no way to allow everything.
    */
   egressAllow?: readonly string[];
-  /** How long a turn may hold the lock before it is treated as abandoned, in ms. */
+  /**
+   * How long a lock may sit before another turn may take it over, in ms. A turn is told to stop (its signal
+   * aborts) at 80% of this, so it has stopped before the lock can be taken over.
+   */
   lockStaleMs?: number;
+  /** Where the lock lives inside the sandbox. A single path under /tmp. Tests use this; callers normally do not. */
+  lockPath?: string;
 }
 
-const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 // A hostname, or a "*." wildcard in front of one. Not "*", not a scheme, port, path or whitespace.
 const DOMAIN_PATTERN = /^(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
 
@@ -108,8 +120,8 @@ function validateEgress(domains: readonly string[]): string[] {
 
 /** Builds the settings for the agent's sandbox, refusing anything outside the safe envelope. */
 export function agentSandboxParams(options: AgentSandboxOptions = {}): AgentSandboxParams {
-  const name = options.name ?? AGENT_SANDBOX_NAME;
-  if (!NAME_PATTERN.test(name)) throw new SandboxPolicyError(`Invalid sandbox name: ${name}`);
+  // The name is fixed: a different name would make getOrCreate build a second sandbox.
+  const name = AGENT_SANDBOX_NAME;
 
   const requested = options.sessionMs ?? DEFAULT_SESSION_MS;
   if (!Number.isFinite(requested)) throw new SandboxPolicyError("Invalid session length");
@@ -131,54 +143,117 @@ export function agentSandboxParams(options: AgentSandboxOptions = {}): AgentSand
   };
 }
 
+/** What the lifecycle needs of a sandbox beyond running tools: changing its outbound policy. */
+export interface AgentSandbox extends SandboxLike {
+  updateNetworkPolicy(policy: AgentNetworkPolicy): Promise<unknown>;
+}
+
 export interface SandboxClient {
   /** Finds the sandbox by name, resuming it if stopped, or creates it with these settings. Never creates a second. */
-  getOrCreate(params: AgentSandboxParams): Promise<SandboxLike>;
+  getOrCreate(params: AgentSandboxParams): Promise<AgentSandbox>;
 }
 
 /**
- * Takes the lock with one shell command. Exit 0 means acquired; exit 75 means another turn holds it.
- * `mkdir` is atomic, and a lock older than the stale age is taken over. The command contains only fixed text
- * and a validated integer, never model or user input.
+ * Takes the lock with one shell command. Exit 0 means acquired; exit 75 means another turn holds it; any other
+ * exit is a failure to lock. The lock is a directory holding the owner's token.
+ *
+ * A lock older than the stale age is taken over under a second, short-lived mutex (`<lock>.reap`, also made with
+ * the atomic `mkdir`): only the process holding it may judge the lock stale, re-check its age, and replace it.
+ * Two takeovers therefore cannot interleave. A reap mutex left behind by a killed process expires on the same
+ * age. One window remains, a few milliseconds wide: if the owner releases and a new turn acquires between the
+ * re-check and the removal, the new lock is removed. The turn deadline (see `withAgentSandbox`) bounds the cost.
+ * All values arrive as positional arguments, never interpolated into the script.
  */
-function acquireCommand(staleMs: number): string[] {
-  const staleMinutes = Math.max(1, Math.ceil(staleMs / 60_000));
-  const script = [
-    `if mkdir ${LOCK_PATH} 2>/dev/null; then exit 0; fi`,
-    `if [ -n "$(find ${LOCK_PATH} -maxdepth 0 -mmin +${staleMinutes} 2>/dev/null)" ]; then`,
-    `  rmdir ${LOCK_PATH} 2>/dev/null; mkdir ${LOCK_PATH} 2>/dev/null && exit 0`,
-    `fi`,
-    `exit ${BUSY_EXIT_CODE}`,
-  ].join("\n");
-  return ["-c", script];
-}
+export const ACQUIRE_SCRIPT = [
+  'L="$1"; T="$2"; S="$3"; M="$1.reap"',
+  'age() { m=$(stat -c %Y "$1" 2>/dev/null) || return 1; echo $(( $(date +%s) - m )); }',
+  'take() { if mkdir "$L" 2>/dev/null; then printf %s "$T" > "$L/owner" && return 0; rmdir "$L" 2>/dev/null; return 1; fi; return 2; }',
+  'take; r=$?; [ "$r" -eq 0 ] && exit 0; [ "$r" -eq 1 ] && exit 1',
+  'if [ ! -d "$L" ]; then take; r=$?; [ "$r" -eq 0 ] && exit 0; [ -d "$L" ] && exit 75; exit 1; fi',
+  'a=$(age "$L") || exit 75',
+  '[ "$a" -gt "$S" ] || exit 75',
+  'if ! mkdir "$M" 2>/dev/null; then',
+  '  c=$(age "$M") || exit 75',
+  '  [ "$c" -gt "$S" ] && rmdir "$M" 2>/dev/null',
+  '  exit 75',
+  'fi',
+  'a=$(age "$L") || { rmdir "$M" 2>/dev/null; exit 75; }',
+  'if [ "$a" -gt "$S" ]; then rm -rf "$L"; take; r=$?; rmdir "$M" 2>/dev/null; [ "$r" -eq 0 ] && exit 0; [ "$r" -eq 1 ] && exit 1; exit 75; fi',
+  'rmdir "$M" 2>/dev/null',
+  'exit 75',
+].join("\n");
+
+/** Releases the lock only if it still carries this turn's token. */
+const RELEASE_SCRIPT = '[ "$(cat "$1/owner" 2>/dev/null)" = "$2" ] && rm -rf "$1"; exit 0';
 
 /**
- * Runs `fn` with the agent's sandbox while holding its lock, and always releases the lock. Throws
- * `SandboxBusyError` without running `fn` if another turn holds it.
+ * Runs `fn` with the agent's sandbox while holding its lock, and releases the lock if this turn still owns it.
+ * Throws `SandboxBusyError` without running `fn` if another turn holds it.
+ *
+ * `fn` receives an AbortSignal that aborts at 80% of the stale age. It must stop its work when the signal aborts
+ * (the agent runner passes it to the model and the tools). If it has not settled shortly after, this throws
+ * `SandboxTurnTimeoutError` and leaves the lock to expire rather than releasing it under a running turn.
+ * The sandbox network policy is applied after the lock is held, so a turn that is refused never changes it.
  */
 export async function withAgentSandbox<T>(
   client: SandboxClient,
-  fn: (sandbox: SandboxLike) => Promise<T>,
+  fn: (sandbox: SandboxLike, signal: AbortSignal) => Promise<T>,
   options: AgentSandboxOptions = {},
 ): Promise<T> {
   const params = agentSandboxParams(options);
   const staleMs = options.lockStaleMs ?? DEFAULT_LOCK_STALE_MS;
   if (!Number.isFinite(staleMs) || staleMs <= 0) throw new SandboxPolicyError("Invalid lock stale age");
+  const lockPath = options.lockPath ?? DEFAULT_LOCK_PATH;
+  if (!LOCK_PATH_PATTERN.test(lockPath)) throw new SandboxPolicyError("Invalid lock path");
+
+  const staleSeconds = Math.max(1, Math.ceil(staleMs / 1000));
+  const deadlineMs = Math.max(1, Math.floor(staleMs * 0.8));
+  const graceMs = Math.max(1, Math.floor(staleMs * 0.1));
+  const token = randomUUID();
 
   const sandbox = await client.getOrCreate(params);
 
-  const acquired = await sandbox.runCommand({ cmd: "sh", args: acquireCommand(staleMs), timeoutMs: 15_000 });
+  const acquired = await sandbox.runCommand({
+    cmd: "sh",
+    args: ["-c", ACQUIRE_SCRIPT, "sh", lockPath, token, String(staleSeconds)],
+    timeoutMs: 15_000,
+  });
   if (acquired.exitCode === BUSY_EXIT_CODE) throw new SandboxBusyError();
   // Anything other than a clean acquire is a failure to lock, not permission to proceed.
   if (acquired.exitCode !== 0) throw new Error(`Could not take the sandbox lock (exit ${String(acquired.exitCode)})`);
 
+  let release = true;
+  const controller = new AbortController();
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  let graceTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await fn(sandbox);
+    // Existing sandboxes keep the policy they were created with, so state this turn's policy while holding the lock.
+    await sandbox.updateNetworkPolicy(params.networkPolicy);
+
+    const turn = fn(sandbox, controller.signal);
+    const overran = new Promise<"overran">((resolve) => {
+      deadline = setTimeout(() => {
+        controller.abort();
+        graceTimer = setTimeout(() => resolve("overran"), graceMs);
+      }, deadlineMs);
+    });
+    const outcome = await Promise.race([turn.then((value) => ({ value }), (error: unknown) => ({ error })), overran]);
+    if (outcome === "overran") {
+      release = false;
+      // The turn is still running; make sure a late rejection is not left unhandled.
+      turn.catch(() => undefined);
+      throw new SandboxTurnTimeoutError();
+    }
+    if ("error" in outcome) throw outcome.error;
+    return outcome.value;
   } finally {
-    // Best effort: a failed release must not hide the turn's own result or error. The stale age recovers it.
-    await sandbox
-      .runCommand({ cmd: "rmdir", args: [LOCK_PATH], timeoutMs: 15_000 })
-      .catch(() => undefined);
+    clearTimeout(deadline);
+    clearTimeout(graceTimer);
+    if (release) {
+      // Best effort: a failed release must not hide the turn's own result or error. The stale age recovers it.
+      await sandbox
+        .runCommand({ cmd: "sh", args: ["-c", RELEASE_SCRIPT, "sh", lockPath, token], timeoutMs: 15_000 })
+        .catch(() => undefined);
+    }
   }
 }

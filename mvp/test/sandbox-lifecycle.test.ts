@@ -1,27 +1,33 @@
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, utimesSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  ACQUIRE_SCRIPT as ACQUIRE_FOR_TEST,
   AGENT_SANDBOX_NAME,
   DEFAULT_AGENT_EGRESS,
   DEFAULT_SESSION_MS,
   EGRESS_PRESETS,
   MAX_SESSION_MS,
   SandboxBusyError,
+  SandboxTurnTimeoutError,
   agentSandboxParams,
   withAgentSandbox,
+  type AgentSandbox,
   type AgentSandboxParams,
   type SandboxClient,
 } from "../src/sandbox/lifecycle.ts";
 import { SandboxPolicyError, type SandboxLike } from "../src/sandbox/operations.ts";
 import type { createVercelSandboxClient } from "../src/sandbox/vercel-client.ts";
 
-/** A fake sandbox whose lock behaves like the real shell command: mkdir is atomic, old locks can be taken over. */
-class FakeLockedSandbox implements SandboxLike {
+/** A fake sandbox whose lock behaves like the real shell command: one holder, old locks can be taken over. */
+class FakeLockedSandbox implements AgentSandbox {
   held = false;
-  heldAgeMinutes = 0;
+  heldAgeSeconds = 0;
+  owner = "";
   commands: { cmd: string; args?: string[] }[] = [];
+  policies: unknown[] = [];
   failRelease = false;
+  failPolicy = false;
   forceExit: number | null | undefined;
 
   fs = {
@@ -32,25 +38,27 @@ class FakeLockedSandbox implements SandboxLike {
     realpath: async (path: string) => path,
   };
 
+  updateNetworkPolicy = async (policy: unknown) => {
+    if (this.failPolicy) throw new Error("policy update failed");
+    this.policies.push(policy);
+  };
+
   runCommand: SandboxLike["runCommand"] = async (params) => {
     this.commands.push({ cmd: params.cmd, args: params.args });
-    if (params.cmd === "sh") {
+    const [, script, , , token, staleSeconds] = params.args ?? [];
+    if (script?.includes("mkdir")) {
       if (this.forceExit !== undefined) return { exitCode: this.forceExit };
-      const staleMinutes = Number(/-mmin \+(\d+)/.exec(params.args?.[1] ?? "")?.[1]);
-      if (!this.held) {
+      if (!this.held || this.heldAgeSeconds > Number(staleSeconds)) {
         this.held = true;
-        this.heldAgeMinutes = 0;
-        return { exitCode: 0 };
-      }
-      if (this.heldAgeMinutes > staleMinutes) {
-        this.heldAgeMinutes = 0;
+        this.heldAgeSeconds = 0;
+        this.owner = token ?? "";
         return { exitCode: 0 };
       }
       return { exitCode: 75 };
     }
-    if (params.cmd === "rmdir") {
+    if (script?.includes("rm -rf")) {
       if (this.failRelease) throw new Error("release failed");
-      this.held = false;
+      if (this.held && this.owner === params.args?.[4]) this.held = false;
       return { exitCode: 0 };
     }
     return { exitCode: 0 };
@@ -94,11 +102,9 @@ describe("agentSandboxParams", () => {
     }
   });
 
-  it("accepts only a plain lowercase name", () => {
-    expect(agentSandboxParams({ name: "my-agent-2" }).name).toBe("my-agent-2");
-    for (const name of ["", "Bad_Name", "-lead", "has space", "x".repeat(64), "a/b", "../x"]) {
-      expect(() => agentSandboxParams({ name })).toThrow(SandboxPolicyError);
-    }
+  it("always uses the one fixed name, even if a caller tries to pass another", () => {
+    expect(agentSandboxParams().name).toBe(AGENT_SANDBOX_NAME);
+    expect(agentSandboxParams({ name: "other" } as never).name).toBe(AGENT_SANDBOX_NAME);
   });
 
   it("allows outbound traffic to the default presets only, and denies everything when asked to", () => {
@@ -175,7 +181,7 @@ describe("withAgentSandbox", () => {
   it("refuses with SandboxBusyError while another turn holds the lock, and does not release the other turn's lock", async () => {
     const client = new FakeClient();
     client.sandbox.held = true;
-    client.sandbox.heldAgeMinutes = 1;
+    client.sandbox.heldAgeSeconds = 60;
     let ran = false;
     await expect(
       withAgentSandbox(client, async () => {
@@ -184,18 +190,18 @@ describe("withAgentSandbox", () => {
     ).rejects.toBeInstanceOf(SandboxBusyError);
     expect(ran).toBe(false);
     expect(client.sandbox.held).toBe(true);
-    expect(client.sandbox.commands.some((command) => command.cmd === "rmdir")).toBe(false);
+    expect(client.sandbox.commands).toHaveLength(1);
   });
 
   it("takes over a lock older than the stale age, and respects a custom stale age", async () => {
     const stale = new FakeClient();
     stale.sandbox.held = true;
-    stale.sandbox.heldAgeMinutes = 30;
+    stale.sandbox.heldAgeSeconds = 30 * 60;
     await expect(withAgentSandbox(stale, async () => "ok")).resolves.toBe("ok");
 
     const custom = new FakeClient();
     custom.sandbox.held = true;
-    custom.sandbox.heldAgeMinutes = 30;
+    custom.sandbox.heldAgeSeconds = 30 * 60;
     await expect(withAgentSandbox(custom, async () => "ok", { lockStaleMs: 60 * 60 * 1000 })).rejects.toBeInstanceOf(SandboxBusyError);
   });
 
@@ -223,17 +229,81 @@ describe("withAgentSandbox", () => {
     const client = new FakeClient();
     await expect(withAgentSandbox(client, async () => 1, { lockStaleMs: 0 })).rejects.toBeInstanceOf(SandboxPolicyError);
     await expect(withAgentSandbox(client, async () => 1, { lockStaleMs: Number.NaN })).rejects.toBeInstanceOf(SandboxPolicyError);
-    await expect(withAgentSandbox(client, async () => 1, { name: "Bad Name" })).rejects.toBeInstanceOf(SandboxPolicyError);
+    await expect(withAgentSandbox(client, async () => 1, { lockPath: "/etc/passwd" })).rejects.toBeInstanceOf(SandboxPolicyError);
+    await expect(withAgentSandbox(client, async () => 1, { lockPath: "/tmp/a b" })).rejects.toBeInstanceOf(SandboxPolicyError);
+    await expect(withAgentSandbox(client, async () => 1, { lockPath: "/tmp/../etc" })).rejects.toBeInstanceOf(SandboxPolicyError);
     await expect(withAgentSandbox(client, async () => 1, { egressAllow: ["*"] })).rejects.toBeInstanceOf(SandboxPolicyError);
     await expect(withAgentSandbox(client, async () => 1, { egressPresets: ["nope" as never] })).rejects.toBeInstanceOf(SandboxPolicyError);
     expect(client.calls).toEqual([]);
   });
 
-  it("issues only fixed lock commands", async () => {
+  it("issues only fixed lock scripts, with every value passed as an argument and never spliced into the script", async () => {
     const client = new FakeClient();
-    await withAgentSandbox(client, async () => 1);
-    expect(client.sandbox.commands.map((command) => command.cmd)).toEqual(["sh", "rmdir"]);
-    expect(client.sandbox.commands[0]?.args?.[1]).toContain("mkdir /tmp/nlt-agent.lock");
+    await withAgentSandbox(client, async () => 1, { lockPath: "/tmp/test-lock" });
+    const [acquire, release] = client.sandbox.commands;
+    expect(acquire?.cmd).toBe("sh");
+    expect(release?.cmd).toBe("sh");
+    expect(acquire?.args?.slice(3, 4)).toEqual(["/tmp/test-lock"]);
+    expect(acquire?.args?.[1]).not.toContain("/tmp/test-lock");
+    expect(acquire?.args?.[1]).not.toContain(acquire?.args?.[4] ?? "?");
+    expect(release?.args?.[1]).not.toContain(release?.args?.[4] ?? "?");
+    expect(release?.args?.[4]).toBe(acquire?.args?.[4]);
+  });
+
+  it("applies the turn's network policy only after taking the lock, and never when it is refused", async () => {
+    const client = new FakeClient();
+    await withAgentSandbox(client, async (sandbox) => {
+      expect((sandbox as FakeLockedSandbox).policies).toEqual([agentSandboxParams().networkPolicy]);
+    });
+    const busy = new FakeClient();
+    busy.sandbox.held = true;
+    await expect(withAgentSandbox(busy, async () => 1)).rejects.toBeInstanceOf(SandboxBusyError);
+    expect(busy.sandbox.policies).toEqual([]);
+  });
+
+  it("releases the lock and does not run the work if applying the network policy fails", async () => {
+    const client = new FakeClient();
+    client.sandbox.failPolicy = true;
+    let ran = false;
+    await expect(withAgentSandbox(client, async () => { ran = true; })).rejects.toThrow("policy update");
+    expect(ran).toBe(false);
+    expect(client.sandbox.held).toBe(false);
+  });
+
+  it("does not release a lock that another turn now owns", async () => {
+    const client = new FakeClient();
+    await withAgentSandbox(client, async () => {
+      client.sandbox.owner = "someone-else";
+    });
+    expect(client.sandbox.held).toBe(true);
+  });
+
+  it("aborts the turn's signal before the lock can be taken over, and releases once the turn stops", async () => {
+    const client = new FakeClient();
+    let aborted = false;
+    await expect(
+      withAgentSandbox(
+        client,
+        (_sandbox, signal) =>
+          new Promise<string>((resolve) => {
+            signal.addEventListener("abort", () => {
+              aborted = true;
+              resolve("stopped");
+            });
+          }),
+        { lockStaleMs: 100 },
+      ),
+    ).resolves.toBe("stopped");
+    expect(aborted).toBe(true);
+    expect(client.sandbox.held).toBe(false);
+  });
+
+  it("keeps the lock, and says so, when a turn ignores its deadline", async () => {
+    const client = new FakeClient();
+    await expect(withAgentSandbox(client, () => new Promise<never>(() => undefined), { lockStaleMs: 100 })).rejects.toBeInstanceOf(
+      SandboxTurnTimeoutError,
+    );
+    expect(client.sandbox.held).toBe(true);
   });
 });
 
@@ -254,41 +324,90 @@ class ShellSandbox extends FakeLockedSandbox {
 }
 
 describe("the lock script in a real shell", () => {
-  const LOCK = "/tmp/nlt-agent.lock";
-  const clean = () => rmSync(LOCK, { recursive: true, force: true });
+  const LOCK = `/tmp/nlt-lock-test-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+  const clean = () => {
+    rmSync(LOCK, { recursive: true, force: true });
+    for (const leftover of readdirSync("/tmp").filter((name) => name.startsWith(`${LOCK.slice(5)}.reap.`))) {
+      rmSync(`/tmp/${leftover}`, { recursive: true, force: true });
+    }
+  };
   afterEach(clean);
+  const turn = <T>(client: SandboxClient, fn: Parameters<typeof withAgentSandbox<T>>[1], extra: object = {}) =>
+    withAgentSandbox(client, fn, { lockPath: LOCK, ...extra });
+  const longAgo = (seconds: number) => new Date(Date.now() - seconds * 1000);
 
   it("takes the lock, blocks a second turn while it is held, and frees it afterwards", async () => {
     clean();
     const client = new FakeClient(new ShellSandbox());
     let heldInside = false;
     let secondTurn: unknown;
-    await withAgentSandbox(client, async () => {
+    await turn(client, async () => {
       heldInside = existsSync(LOCK);
-      secondTurn = await withAgentSandbox(client, async () => "should not run").catch((error) => error);
+      secondTurn = await turn(client, async () => "should not run").catch((error) => error);
     });
     expect(heldInside).toBe(true);
     expect(secondTurn).toBeInstanceOf(SandboxBusyError);
     expect(existsSync(LOCK)).toBe(false);
-    await expect(withAgentSandbox(client, async () => "again")).resolves.toBe("again");
+    await expect(turn(client, async () => "again")).resolves.toBe("again");
     expect(existsSync(LOCK)).toBe(false);
   });
 
-  it("takes over a lock that has been held longer than the stale age, and not before", async () => {
+  it("takes over a lock held longer than the stale age, to the second, and not before", async () => {
     clean();
     mkdirSync(LOCK);
     const client = new FakeClient(new ShellSandbox());
     // Fresh lock: busy.
-    await expect(withAgentSandbox(client, async () => "no")).rejects.toBeInstanceOf(SandboxBusyError);
+    await expect(turn(client, async () => "no")).rejects.toBeInstanceOf(SandboxBusyError);
     expect(existsSync(LOCK)).toBe(true);
-    // Lock last touched 30 minutes ago, default stale age is 15: taken over, then released.
-    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-    utimesSync(LOCK, thirtyMinutesAgo, thirtyMinutesAgo);
-    await expect(withAgentSandbox(client, async () => "yes")).resolves.toBe("yes");
+    // 100 seconds old with a 60 second stale age: taken over, then released. (Whole-minute rounding would refuse.)
+    utimesSync(LOCK, longAgo(100), longAgo(100));
+    await expect(turn(client, async () => "yes", { lockStaleMs: 60_000 })).resolves.toBe("yes");
     expect(existsSync(LOCK)).toBe(false);
+    // 30 minutes old with the default 15 minute stale age: taken over.
+    mkdirSync(LOCK);
+    utimesSync(LOCK, longAgo(30 * 60), longAgo(30 * 60));
+    await expect(turn(client, async () => "yes")).resolves.toBe("yes");
     // A lock 30 minutes old is still respected when the configured stale age is longer.
     mkdirSync(LOCK);
-    utimesSync(LOCK, thirtyMinutesAgo, thirtyMinutesAgo);
-    await expect(withAgentSandbox(client, async () => "no", { lockStaleMs: 60 * 60 * 1000 })).rejects.toBeInstanceOf(SandboxBusyError);
+    utimesSync(LOCK, longAgo(30 * 60), longAgo(30 * 60));
+    await expect(turn(client, async () => "no", { lockStaleMs: 60 * 60 * 1000 })).rejects.toBeInstanceOf(SandboxBusyError);
+  });
+
+  it("does not report busy when the lock directory cannot be made and does not exist", async () => {
+    clean();
+    writeFileSync(LOCK, "a file in the way");
+    const client = new FakeClient(new ShellSandbox());
+    const error = await turn(client, async () => "no").catch((caught) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(SandboxBusyError);
+    expect(String(error)).toMatch(/lock/i);
+  });
+
+  it("releases only a lock that still carries its own token", async () => {
+    clean();
+    const client = new FakeClient(new ShellSandbox());
+    await turn(client, async () => {
+      // Another turn took the lock over while this one was running.
+      writeFileSync(`${LOCK}/owner`, "someone-else");
+    });
+    expect(existsSync(LOCK)).toBe(true);
+    expect(readFileSync(`${LOCK}/owner`, "utf8")).toBe("someone-else");
+  });
+
+  it("lets only one of several simultaneous reclaimers win a stale lock", async () => {
+    for (let round = 0; round < 5; round += 1) {
+      clean();
+      mkdirSync(LOCK);
+      utimesSync(LOCK, longAgo(3600), longAgo(3600));
+      const args = (token: string) => ["-c", ACQUIRE_FOR_TEST, "sh", LOCK, token, "60"];
+      const runs = await Promise.all(
+        Array.from({ length: 8 }, (_, index) => new Promise<number | null>((resolve) => {
+          const child = spawn("sh", args(`t${index}`));
+          child.on("close", (code) => resolve(code));
+        })),
+      );
+      expect(runs.filter((code) => code === 0)).toHaveLength(1);
+      expect(runs.every((code) => code === 0 || code === 75)).toBe(true);
+    }
   });
 });

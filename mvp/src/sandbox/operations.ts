@@ -108,14 +108,22 @@ function within(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(`${root}/`);
 }
 
+function requireLimit(name: string, value: number): number {
+  // NaN and fractions would otherwise make the size comparisons false and let oversized data through.
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new SandboxPolicyError(`${name} must be a non-negative integer`);
+  }
+  return value;
+}
+
 export function createSandboxToolOperations(
   sandbox: SandboxLike,
   options: SandboxOperationsOptions,
 ): SandboxToolOperations {
   const root = requireRoot(options.root);
   const review = options.review ?? reviewToolCall;
-  const maxReadBytes = options.maxReadBytes ?? DEFAULTS.maxReadBytes;
-  const maxWriteBytes = options.maxWriteBytes ?? DEFAULTS.maxWriteBytes;
+  const maxReadBytes = requireLimit("maxReadBytes", options.maxReadBytes ?? DEFAULTS.maxReadBytes);
+  const maxWriteBytes = requireLimit("maxWriteBytes", options.maxWriteBytes ?? DEFAULTS.maxWriteBytes);
   const defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULTS.defaultTimeoutMs;
   const maxTimeoutMs = options.maxTimeoutMs ?? DEFAULTS.maxTimeoutMs;
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULTS.maxOutputBytes;
@@ -149,12 +157,17 @@ export function createSandboxToolOperations(
 
   /**
    * Resolves symlinks for the path, or for its nearest existing ancestor when the path does not exist yet
-   * (a file about to be created), and requires the result to stay inside the real workspace root.
+   * (a file about to be created), and requires the result to stay inside the real workspace root. Returns the
+   * lexical path and the resolved one; the resolved path is the one that is authorized and used for I/O.
+   *
+   * This is a check made just before use, not an atomic check-and-use: the sandbox SDK takes a path and resolves
+   * it again. The sandbox, not this check, is the security boundary (see the README).
    */
-  async function confineReal(path: string): Promise<string> {
+  async function confineReal(path: string): Promise<{ lexical: string; real: string }> {
     const lexical = confine(path);
     const base = await realRoot();
     let probe = lexical;
+    let suffix = "";
     // Bounded by path depth, so the walk upward can never loop even if a check above is wrong.
     for (let remaining = lexical.split("/").length; remaining > 0; remaining -= 1) {
       try {
@@ -162,10 +175,11 @@ export function createSandboxToolOperations(
         if (!within(base, resolved)) {
           throw new SandboxPolicyError(`Path resolves outside the sandbox workspace: ${path}`);
         }
-        return lexical;
+        return { lexical, real: suffix ? posix.join(resolved, suffix) : resolved };
       } catch (error) {
         if (error instanceof SandboxPolicyError) throw error;
         if (probe === root) throw error;
+        suffix = suffix ? posix.join(posix.basename(probe), suffix) : posix.basename(probe);
         probe = posix.dirname(probe);
         // The walk upward may never leave the workspace.
         if (!within(root, probe)) {
@@ -176,14 +190,41 @@ export function createSandboxToolOperations(
     throw new SandboxPolicyError(`Could not resolve path inside the sandbox workspace: ${path}`);
   }
 
+  /** Reviews both the path as given and where it really points, so a link cannot hide a sensitive target. */
+  function authorizePath(toolName: string, paths: { lexical: string; real: string }): void {
+    authorize(toolName, { path: paths.lexical });
+    if (paths.real !== paths.lexical) authorize(toolName, { path: paths.real });
+  }
+
   async function prepareRead(path: string, toolName: "read" | "edit"): Promise<string> {
-    const confined = await confineReal(path);
-    authorize(toolName, { path: confined });
-    return confined;
+    const paths = await confineReal(path);
+    authorizePath(toolName, paths);
+    return paths.real;
+  }
+
+  /** File size in bytes, asked of the sandbox before any content is transferred. Unknown is an error. */
+  async function sizeOf(path: string): Promise<number> {
+    let out = "";
+    const collect = new Writable({
+      write(chunk: Buffer, _encoding, done) {
+        out += chunk.toString("utf8");
+        done();
+      },
+    });
+    const probe = await sandbox.runCommand({ cmd: "stat", args: ["-c", "%s", "--", path], stdout: collect, timeoutMs: 15_000 });
+    const size = Number(out.trim());
+    if (probe.exitCode !== 0 || !/^\d+$/.test(out.trim()) || !Number.isSafeInteger(size)) {
+      throw new SandboxPolicyError(`Could not determine the size of: ${path}`);
+    }
+    return size;
   }
 
   async function readCapped(path: string): Promise<Buffer> {
+    if ((await sizeOf(path)) > maxReadBytes) {
+      throw new SandboxPolicyError(`File is larger than the ${maxReadBytes} byte read limit: ${path}`);
+    }
     const data = await sandbox.fs.readFile(path);
+    // The file may have grown since the probe.
     if (data.byteLength > maxReadBytes) {
       throw new SandboxPolicyError(`File is larger than the ${maxReadBytes} byte read limit: ${path}`);
     }
@@ -194,9 +235,9 @@ export function createSandboxToolOperations(
     if (Buffer.byteLength(content, "utf8") > maxWriteBytes) {
       throw new SandboxPolicyError(`Content is larger than the ${maxWriteBytes} byte write limit`);
     }
-    const confined = await confineReal(path);
-    authorize(toolName, { path: confined });
-    await sandbox.fs.writeFile(confined, content);
+    const paths = await confineReal(path);
+    authorizePath(toolName, paths);
+    await sandbox.fs.writeFile(paths.real, content);
   }
 
   const bash: BashOperations = {
@@ -205,7 +246,9 @@ export function createSandboxToolOperations(
         throw new SandboxPolicyError("Empty command");
       }
       authorize("bash", { command });
-      const workDir = await confineReal(cwd);
+      const dir = await confineReal(cwd);
+      authorizePath("bash", dir);
+      const workDir = dir.real;
 
       // Never forward the caller's environment (execOptions.env): it comes from the host process.
       let timeoutMs = defaultTimeoutMs;
@@ -256,9 +299,9 @@ export function createSandboxToolOperations(
       await writeCapped(path, content, "write");
     },
     async mkdir(dir) {
-      const confined = await confineReal(dir);
-      authorize("write", { path: confined });
-      await sandbox.fs.mkdir(confined, { recursive: true });
+      const paths = await confineReal(dir);
+      authorizePath("write", paths);
+      await sandbox.fs.mkdir(paths.real, { recursive: true });
     },
   };
 

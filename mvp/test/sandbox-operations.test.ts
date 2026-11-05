@@ -17,6 +17,8 @@ class FakeSandbox implements SandboxLike {
   commands: Parameters<SandboxLike["runCommand"]>[0][] = [];
   script: { stdout?: string; stderr?: string; exitCode?: number | null; fail?: Error } = {};
   reads: string[] = [];
+  statFail = false;
+  statOutput: string | undefined;
   writes: string[] = [];
 
   private resolve(path: string): string {
@@ -57,6 +59,13 @@ class FakeSandbox implements SandboxLike {
   };
 
   runCommand: SandboxLike["runCommand"] = async (params) => {
+    if (params.cmd === "stat") {
+      // The size probe made before a read. Not recorded as an agent command.
+      const data = this.files.get(this.resolve(params.args?.[3] ?? ""));
+      if (this.statFail || !data) return { exitCode: 1 };
+      params.stdout?.write(Buffer.from(`${this.statOutput ?? data.byteLength}\n`));
+      return { exitCode: 0 };
+    }
     this.commands.push(params);
     if (this.script.fail) throw this.script.fail;
     if (this.script.stdout) params.stdout?.write(Buffer.from(this.script.stdout));
@@ -73,6 +82,41 @@ function setup(options: Partial<SandboxOperationsOptions> = {}) {
 }
 
 const rejects = (promise: Promise<unknown>) => expect(promise).rejects.toBeInstanceOf(SandboxPolicyError);
+
+describe("limits and probes", () => {
+  it("rejects limits that are not non-negative integers", () => {
+    const sandbox = new FakeSandbox();
+    for (const bad of [Number.NaN, Infinity, -1, 1.5]) {
+      expect(() => createSandboxToolOperations(sandbox, { root: "/ws", maxReadBytes: bad })).toThrow(SandboxPolicyError);
+      expect(() => createSandboxToolOperations(sandbox, { root: "/ws", maxWriteBytes: bad })).toThrow(SandboxPolicyError);
+    }
+  });
+
+  it("checks a file's size before transferring it", async () => {
+    const { sandbox, ops } = setup({ maxReadBytes: 3 });
+    await rejects(ops.read.readFile("a.txt"));
+    expect(sandbox.reads).toEqual([]);
+  });
+
+  it("refuses to read when the size cannot be determined", async () => {
+    const { sandbox, ops } = setup();
+    sandbox.statFail = true;
+    await rejects(ops.read.readFile("a.txt"));
+    sandbox.statFail = false;
+    sandbox.statOutput = "not a number";
+    await rejects(ops.read.readFile("a.txt"));
+    expect(sandbox.reads).toEqual([]);
+  });
+
+  it("reviews where a link really points, so a link cannot hide a sensitive file", async () => {
+    const { sandbox, ops } = setup();
+    sandbox.files.set("/ws/.env", Buffer.from("SECRET=1"));
+    sandbox.links.set("/ws/safe.txt", "/ws/.env");
+    await rejects(ops.read.readFile("safe.txt"));
+    await rejects(ops.write.writeFile("safe.txt", "x"));
+    expect(sandbox.reads).toEqual([]);
+  });
+});
 
 describe("compatibility", () => {
   it("a real @vercel/sandbox Sandbox satisfies SandboxLike (checked by the type checker)", () => {
@@ -153,7 +197,7 @@ describe("file paths stay inside the workspace", () => {
     // The link lives at its real location, because /ws itself resolves to /data/ws.
     sandbox.links.set("/data/ws/escape", "/data/other");
     await rejects(ops.read.readFile("/ws/escape/b"));
-    expect(sandbox.reads).toEqual(["/ws/a"]);
+    expect(sandbox.reads).toEqual(["/data/ws/a"]);
   });
 
   it("writes and creates directories inside the root", async () => {

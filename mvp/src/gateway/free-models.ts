@@ -35,9 +35,11 @@ const PRICE_FIELDS = new Set(["input", "output", "input_cache_read", "input_cach
 
 function isZeroPrice(value: unknown): boolean {
   if (typeof value === "number") return Number.isFinite(value) && value === 0;
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed === 0;
+  if (typeof value === "string") {
+    const text = value.trim();
+    // Plain decimal notation only. Number() would round "1e-400" down to 0, so check the digits instead.
+    if (!/^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i.test(text)) return false;
+    return !/[1-9]/.test(text.split(/e/i)[0] ?? "");
   }
   return false;
 }
@@ -52,6 +54,9 @@ export function isFreeLanguageModel(model: GatewayCatalogModel): boolean {
   if (model.type !== "language") return false;
   const pricing = model.pricing;
   if (pricing === null || typeof pricing !== "object") return false;
+  // Inherited properties would pass the presence checks below without being checked as prices.
+  const prototype = Object.getPrototypeOf(pricing);
+  if (prototype !== Object.prototype && prototype !== null) return false;
 
   // A price that depends on the serving provider is not guaranteed to be zero.
   if (pricing.varies_by_provider === true) return false;
@@ -75,6 +80,9 @@ export interface SelectOptions {
   preferred?: readonly string[];
 }
 
+const contextWindowOf = (model: GatewayCatalogModel): number =>
+  typeof model.context_window === "number" && Number.isFinite(model.context_window) ? model.context_window : 0;
+
 /** Free language models from a catalog, best first: preferred ids, then larger context, then id order. */
 export function selectFreeModels(
   catalog: readonly GatewayCatalogModel[],
@@ -83,7 +91,7 @@ export function selectFreeModels(
   const requireToolUse = options.requireToolUse ?? true;
   const preferred = options.preferred ?? [];
   const free = catalog.filter(
-    (model) => isFreeLanguageModel(model) && (!requireToolUse || (model.tags ?? []).includes("tool-use")),
+    (model) => isFreeLanguageModel(model) && (!requireToolUse || (Array.isArray(model.tags) && model.tags.includes("tool-use"))),
   );
   const rank = (model: GatewayCatalogModel): number => {
     const index = preferred.indexOf(model.id);
@@ -92,7 +100,7 @@ export function selectFreeModels(
   return free.slice().sort((a, b) => {
     const byPreference = rank(a) - rank(b);
     if (byPreference !== 0) return byPreference;
-    const byContext = (b.context_window ?? 0) - (a.context_window ?? 0);
+    const byContext = contextWindowOf(b) - contextWindowOf(a);
     if (byContext !== 0) return byContext;
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
