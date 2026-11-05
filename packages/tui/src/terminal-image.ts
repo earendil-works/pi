@@ -393,6 +393,13 @@ function getExplicitKittyImageRows(controls: string): number | undefined {
 	return rows > 0 ? rows : undefined;
 }
 
+function getExplicitKittyImageColumns(controls: string): number | undefined {
+	const value = /(?:^|,)c=(\d+)(?:,|$)/.exec(controls)?.[1];
+	if (value === undefined) return undefined;
+	const columns = Number.parseInt(value, 10);
+	return columns > 0 ? columns : undefined;
+}
+
 function getKittyImageRowsFromControls(controls: string, fallbackRows: number): number {
 	return getExplicitKittyImageRows(controls) ?? fallbackRows;
 }
@@ -438,22 +445,46 @@ export function getKittyImagePlacementRows(line: string): number | undefined {
 	return getRegisteredKittyImageMetadataFromControls(controls)?.rows;
 }
 
-/** Row range occupied by an image, relative to the line containing its protocol sequence. */
-export interface ImagePlacementRowRange {
-	start: number;
-	end: number;
+/** Screen extent occupied by an image, relative to the line containing its protocol sequence. */
+export interface ImagePlacementExtent {
+	protocol: "kitty" | "iterm2";
+	sequenceStart: number;
+	startRow: number;
+	endRow: number;
+	columns?: number;
 }
 
-export function getImagePlacementRowRange(line: string): ImagePlacementRowRange | undefined {
-	const kittyRows = getKittyImagePlacementRows(line);
-	if (kittyRows !== undefined) return { start: 0, end: kittyRows - 1 };
+/** Read the screen extent of an image without scanning its payload. */
+export function getImagePlacementExtent(line: string): ImagePlacementExtent | undefined {
+	const kittyMatch = /\x1b_G([^;]*);/.exec(line);
+	if (kittyMatch) {
+		const metadata = getRegisteredKittyImageMetadataFromControls(kittyMatch[1]);
+		const rows = getExplicitKittyImageRows(kittyMatch[1]) ?? metadata?.rows;
+		if (rows === undefined) return undefined;
+		return {
+			protocol: "kitty",
+			sequenceStart: kittyMatch.index,
+			startRow: 0,
+			endRow: rows - 1,
+			columns: getExplicitKittyImageColumns(kittyMatch[1]) ?? metadata?.columns,
+		};
+	}
 
 	const imageIndex = line.indexOf(ITERM2_PREFIX);
 	if (imageIndex === -1) return undefined;
 
 	const cursorUpMatch = /\x1b\[(\d+)A$/.exec(line.slice(0, imageIndex));
 	const rowsAbove = cursorUpMatch ? Number.parseInt(cursorUpMatch[1], 10) : 0;
-	return { start: -rowsAbove, end: 0 };
+	const width = /(?:^|;)width=(\d+)(?:;|:)/.exec(
+		line.slice(imageIndex + ITERM2_PREFIX.length, line.indexOf(":", imageIndex) + 1),
+	)?.[1];
+	return {
+		protocol: "iterm2",
+		sequenceStart: imageIndex,
+		startRow: -rowsAbove,
+		endRow: 0,
+		columns: width === undefined ? undefined : Number.parseInt(width, 10),
+	};
 }
 
 /** Build a placement-only command for an image line emitted by {@link renderImage}. */

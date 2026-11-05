@@ -12,7 +12,13 @@ import {
 	type TerminalColorScheme,
 	type TerminalColors,
 } from "./terminal-colors.ts";
-import { getCapabilities, getImagePlacementRowRange, isImageLine, setCellDimensions } from "./terminal-image.ts";
+import {
+	getCapabilities,
+	getImagePlacementExtent,
+	getMaxKittyImageRows,
+	isImageLine,
+	setCellDimensions,
+} from "./terminal-image.ts";
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
 
 /**
@@ -436,9 +442,10 @@ export function compositeTuiLine(
 	overlayWidth: number,
 	totalWidth: number,
 ): string {
+	if (isImageLine(baseLine)) return baseLine;
+
 	const afterStart = startCol + overlayWidth;
-	const compositableBase = isImageLine(baseLine) ? "" : baseLine;
-	const base = extractSegments(compositableBase, startCol, afterStart, totalWidth - afterStart, true);
+	const base = extractSegments(baseLine, startCol, afterStart, totalWidth - afterStart, true);
 	const overlay = sliceWithWidth(overlayLine, 0, overlayWidth, true);
 	const beforePad = Math.max(0, startCol - base.beforeWidth);
 	const overlayPad = Math.max(0, overlayWidth - overlay.width);
@@ -1434,22 +1441,35 @@ export abstract class TuiBase extends Container implements TUI {
 		}
 
 		const viewportStart = Math.max(0, workingHeight - termHeight);
+		const viewportEnd = Math.min(result.length - 1, viewportStart + termHeight - 1);
+		const imageScanStart = Math.max(0, viewportStart - Math.max(0, getMaxKittyImageRows() - 1));
+
+		for (let anchor = imageScanStart; anchor <= viewportEnd; anchor++) {
+			const imageLine = result[anchor];
+			if (!isImageLine(imageLine)) continue;
+
+			const placement = getImagePlacementExtent(imageLine);
+			const intersectsOverlay = rendered.some(({ overlayLines, row, col, w }) => {
+				if (overlayLines.length === 0) return false;
+				const overlayStartRow = viewportStart + row;
+				const overlayEndRow = overlayStartRow + overlayLines.length - 1;
+				const imageStartRow = anchor + (placement?.startRow ?? 0);
+				const imageEndRow = anchor + (placement?.endRow ?? 0);
+				if (imageStartRow > overlayEndRow || imageEndRow < overlayStartRow) return false;
+
+				// iTerm2 restores the cursor after drawing above the anchor, so repaint the
+				// whole placement when any of its rows intersects an overlay.
+				if (!placement || placement.protocol === "iterm2" || placement.columns === undefined) return true;
+				const imageStartCol = visibleWidth(imageLine.slice(0, placement.sequenceStart));
+				const imageEndCol = imageStartCol + placement.columns;
+				return imageStartCol < col + w && imageEndCol > col;
+			});
+
+			if (intersectsOverlay) result[anchor] = "";
+		}
 
 		// Composite each overlay
 		for (const { overlayLines, row, col, w } of rendered) {
-			if (overlayLines.length > 0) {
-				const overlayStart = viewportStart + row;
-				const overlayEnd = overlayStart + overlayLines.length - 1;
-				for (let anchor = 0; anchor < result.length; anchor++) {
-					const placement = getImagePlacementRowRange(result[anchor]);
-					if (!placement) continue;
-
-					const imageStart = anchor + placement.start;
-					const imageEnd = anchor + placement.end;
-					if (imageStart <= overlayEnd && imageEnd >= overlayStart) result[anchor] = "";
-				}
-			}
-
 			for (let i = 0; i < overlayLines.length; i++) {
 				const idx = viewportStart + row + i;
 				if (idx >= 0 && idx < result.length) {
@@ -1483,6 +1503,11 @@ export abstract class TuiBase extends Container implements TUI {
 		overlayWidth: number,
 		totalWidth: number,
 	): string {
+		if (isImageLine(baseLine)) {
+			const overlay = sliceWithWidth(overlayLine, 0, overlayWidth, true);
+			const overlayPad = Math.max(0, overlayWidth - overlay.width);
+			return `${baseLine}${SEGMENT_RESET}\x1b[${startCol + 1}G${overlay.text}${" ".repeat(overlayPad)}${SEGMENT_RESET}`;
+		}
 		return compositeTuiLine(baseLine, overlayLine, startCol, overlayWidth, totalWidth);
 	}
 
