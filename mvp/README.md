@@ -61,7 +61,7 @@ The coding-agent workspace packages resolve through their built `dist`, so build
 
 `src/sandbox/operations.ts` builds the swappable `bash`, `read`, `write` and `edit` operations that the Pi coding-agent tools accept, so they act inside a Vercel Sandbox instead of on the machine running the agent loop. The owner chose Vercel Sandbox as the first execution environment (2026-11-05).
 
-It is library code only. It does not create a sandbox, read credentials, open a connection, or expose a route, and nothing in the application calls it yet. The route that will use it will be off by default, switched on only by a flag the owner sets in Vercel per environment (see `NLTPI-MVP-005`).
+It is library code only. It does not create a sandbox, read credentials, open a connection, or expose a route. When the owner sets `NLT_AGENT_ENABLED=1`, the application calls it through the off-by-default agent route (`mvp/api/agent.ts` → `src/agent/route.ts` → `runAgentTurn`); while the flag is unset, nothing calls it.
 
 What it enforces, with tests that use a fake sandbox:
 - every call is reviewed by the harness policy (`reviewToolCall`) first; anything other than `allow: true` is refused;
@@ -86,7 +86,7 @@ The path checks are a guardrail for the file tools, not the security boundary. T
 
 ## Agent runner
 
-`src/agent/runner.ts` runs one governed coding turn: `runAgentTurn(deps, { prompt, signal, onText, onToolStart })` returns a status (`completed`, `blocked`, `busy`, `no_free_model`, `timed_out`, `aborted`, `error`) and never throws for an expected refusal. It is library code only. Nothing in the application calls it yet; the route that will is off unless the owner sets a per-environment flag.
+`src/agent/runner.ts` runs one governed coding turn: `runAgentTurn(deps, { prompt, signal, onText, onToolStart })` returns a status (`completed`, `blocked`, `busy`, `no_free_model`, `timed_out`, `aborted`, `error`) and never throws for an expected refusal. It is library code only. The application calls it through the off-by-default agent route (`mvp/api/agent.ts` → `src/agent/route.ts` → `runAgentTurn`) when the owner sets `NLT_AGENT_ENABLED=1`; while the flag is unset, nothing calls it.
 
 Order of events, each of which can stop the turn before the next starts:
 0. **Cancellation.** A request already cancelled returns `aborted` before any of the steps below.
@@ -98,6 +98,19 @@ Order of events, each of which can stop the turn before the next starts:
 6. The caller's abort signal and the turn deadline both stop the model run; the lock is then released (or, if the turn ignores its deadline, left to expire).
 
 Tests run offline with Pi's faux provider and a recording fake sandbox (11 tests, including checks that a blocked gate, no free model, a busy sandbox, and a policy-blocked command each stop short of the next step, and that the token and host environment never reach the sandbox). They were mutation-checked: removing the policy review or loosening the gate check makes them fail. Not exercised: the real gateway call, a real sandbox, and the tool-name list Pi sends the model.
+
+## Agent route
+
+`mvp/api/agent.ts` (logic in `src/agent/route.ts`) exposes the runner as `POST /api/agent` with `{ "prompt": string }` (at most 8000 characters).
+
+- **Off by default.** Without `NLT_AGENT_ENABLED=1` in that Vercel environment the route answers 404 and touches nothing (no gate, sandbox, catalog or token). Only the owner sets this flag. Vercel login covers all deployments, so the flag is the second control.
+- **Network.** The default is the named allowlist (package registries and GitHub). `NLT_AGENT_EGRESS_ALL=1`, also owner-set, switches to allow-all; the request body cannot. Each turn logs the effective policy (`allowlist:packages,git` or `allow-all`), never the prompt.
+- **Streaming.** The response is newline-delimited JSON: `{type:"text",delta}`, `{type:"tool",name}`, then one `{type:"done",status,...}`. The chat page tries this route first and falls back to the gate-only check on 404. A client that disconnects aborts the turn.
+- **Credential.** The Vercel OIDC token (`@vercel/oidc` 3.2.0, `getVercelOidcToken()`) is read inside the turn and held in memory; it is never put in the sandbox.
+- **Duration.** `vercel.json` sets `maxDuration` 300 for this function. The route fixes an absolute deadline at entry (270 s later) and passes it to every stage: gate, model lookup, sandbox get-or-create, lock, network-policy update and the turn are each cut off at it, and the turn is aborted early enough that its grace period also ends by it (stale age 320 s gives a 32 s grace). If setup used the budget the turn never starts and the lock is released. Tests cover delayed setup stages and `vercel.json`. A longer window needs the plan's limit verified first.
+- **Deployment build.** `mvp/vercel.json` installs and builds from the repository root (`npm run build` in `mvp/`): `npm ci --ignore-scripts`, `hydrate:model-data` (the model data files are generated and not committed, so `build:offline` fails without them), `build:offline`, then `mvp/scripts/assert-agent-entry.mjs` fails the build if the Pi package entry is missing. Hydration fetches public model lists (models.dev, OpenRouter, the Vercel gateway catalog) at build time, so a build needs outbound network and its model data can differ between builds. Verified from the Vercel build log that the earlier `build:offline`-only command failed on missing model data (preview deployment for 6ae8735).
+- **Working directory.** The gate's writable directory is chosen once per process (`src/agent/gate-workdir.ts`), never per request. This is still one process-wide change, made once, not removed; an explicit Sleepwalker storage path or a child-process gate would remove it, and other code in the same warm process inherits that cwd.
+- **Not verified.** The offline tests use fakes and the faux provider. A real gateway call, a real sandbox, the workspace root `/vercel/sandbox`, the OIDC token on a deployment, and the stream through Vercel's edge have not been run.
 
 ## Free-model selection
 
@@ -125,7 +138,7 @@ The MVP does not yet persist continuity or run a separate post-turn response-gov
 
 ## Chat page
 
-`public/index.html` (with `app.css`, `app.js`, `lib/decision.js`) is a chat page for the Vercel preview. It uses no framework and no build step. Each message is sent to `POST /api/govern` and the page shows the gate's verdict. It does not call a model, run a tool, sign anyone in, or save anything: conversations live in memory for the open tab only, and user text is only written with `textContent`.
+`public/index.html` (with `app.css`, `app.js`, `lib/decision.js`) is a chat page for the Vercel preview. It uses no framework and no build step. Each message goes to `POST /api/agent` first and falls back to `POST /api/govern`; the page itself does not call a model or run a tool directly, and it saves nothing: conversations live in memory for the open tab only, and user text is only written with `textContent`. When `NLT_AGENT_ENABLED=1`, `/api/agent` runs the governed runner (gate, free-model selection, sandbox tools); while the flag is unset the route is off and the page falls back to the gate-only check.
 
 Values on the page come from `GET /api/health`, `GET /api/status` and the gate response (verification state, crisis level, components that checked, execution state). Where nothing is connected it says so ("None connected", "Disabled"); it does not show a governance "green" state. Anything other than a literal `allowed: true` from the gate (a 503, a 404 on production, a malformed body, a network error) is shown as not allowed. The previous status page is at `/status.html`.
 

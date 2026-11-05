@@ -38,6 +38,7 @@ import {
   SandboxBusyError,
   SandboxTurnTimeoutError,
   withAgentSandbox,
+  withinDeadline,
   type AgentSandboxOptions,
   type SandboxClient,
 } from "../sandbox/lifecycle.ts";
@@ -83,6 +84,8 @@ export interface AgentRunnerDeps {
 export interface AgentTurnInput {
   prompt: string;
   signal?: AbortSignal;
+  /** Absolute time (epoch ms) by which the whole invocation must have settled. Every stage is bounded by it. */
+  deadlineAt?: number;
   onText?: (delta: string) => void;
   onToolStart?: (name: string) => void;
 }
@@ -107,6 +110,7 @@ export async function bindGatewayModel(model: GatewayCatalogModel, token: string
   }
 }
 
+/** Binds one gateway model into a temporary model runtime; the temporary dir is removed on completion or failure. */
 async function bindInto(dir: string, model: GatewayCatalogModel, token: string): Promise<ModelBinding> {
   const modelRuntime = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
@@ -145,6 +149,61 @@ class CallerAbortedError extends Error {
   }
 }
 
+/** Thrown when the turn deadline aborts setup; mapped to the `timed_out` status. */
+class SetupTimedOutError extends Error {
+  constructor() {
+    super("The turn did not stop at its deadline");
+    this.name = "SetupTimedOutError";
+  }
+}
+
+/** Rejects if either signal is already aborted, preferring the caller's cancellation. */
+function assertSetupSignals(signal: AbortSignal | undefined, turnSignal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new CallerAbortedError();
+  if (turnSignal?.aborted) throw new SetupTimedOutError();
+}
+
+/** Races a setup promise against caller cancellation and the turn deadline. */
+function raceSetup<T>(work: Promise<T>, signal: AbortSignal | undefined, turnSignal: AbortSignal | undefined): Promise<T> {
+  assertSetupSignals(signal, turnSignal);
+  if (!signal && !turnSignal) return work;
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      turnSignal?.removeEventListener("abort", onTurnAbort);
+      fn();
+    };
+    const onAbort = () => finish(() => reject(new CallerAbortedError()));
+    const onTurnAbort = () => finish(() => reject(new SetupTimedOutError()));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    turnSignal?.addEventListener("abort", onTurnAbort, { once: true });
+    work.then(
+      (value) => finish(() => resolve(value)),
+      (error: unknown) => finish(() => reject(error)),
+    );
+  });
+}
+
+/** Races a setup/resource promise against signals and disposes a late result that the caller never received. */
+async function raceOwnedSetup<T>(
+  work: Promise<T>,
+  signal: AbortSignal | undefined,
+  turnSignal: AbortSignal | undefined,
+  cleanup: (value: T) => void | Promise<void>,
+): Promise<T> {
+  const raced = raceSetup(work, signal, turnSignal);
+  void work
+    .then(async (value) => {
+      if ((await raced.then(() => true).catch(() => false)) === false) await cleanup(value);
+    })
+    .catch(() => undefined);
+  return raced;
+}
+
+/** Short human-readable description of an error, for turn results that report reasons. */
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : "unknown error";
 }
@@ -161,19 +220,26 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
   // 1. Crisis gate. Anything but a literal `allowed: true` stops here.
   let gate: GateResult;
   try {
-    gate = await deps.gate(input.prompt);
+    gate = await raceSetup(withinDeadline(deps.gate(input.prompt), input.deadlineAt), input.signal, undefined);
   } catch (error) {
+    if (error instanceof CallerAbortedError) return { status: "aborted", reason: error.message };
+    if (error instanceof SandboxTurnTimeoutError) return { status: "timed_out" };
     return { status: "blocked", reason: `The safety check could not run: ${describeError(error)}`, crisisLevel: null };
   }
   if (gate?.allowed !== true) {
     return { status: "blocked", reason: gate?.blockedReason ?? "Blocked by the safety check", crisisLevel: gate?.crisisLevel ?? null };
   }
 
+  // A cancellation that arrived during the gate stops the turn before any model work starts.
+  if (input.signal?.aborted) return { status: "aborted", reason: "The turn was cancelled by the caller" };
+
   // 2. A free model, chosen from the live catalog.
   let chosen: GatewayCatalogModel;
   try {
-    chosen = await (deps.pickModel ?? (() => pickFreeModel({ requireToolUse: true })))();
+    chosen = await raceSetup(withinDeadline((deps.pickModel ?? (() => pickFreeModel({ requireToolUse: true })))(), input.deadlineAt), input.signal, undefined);
   } catch (error) {
+    if (error instanceof CallerAbortedError) return { status: "aborted", reason: error.message };
+    if (error instanceof SandboxTurnTimeoutError) return { status: "timed_out" };
     if (error instanceof NoFreeModelError) return { status: "no_free_model", reason: error.message };
     return { status: "error", reason: describeError(error) };
   }
@@ -199,13 +265,20 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
         const ops = createSandboxToolOperations(sandbox, { ...deps.operations, root });
 
         // The credential is read now, inside the request, and goes only to the model runtime.
-        const token = await deps.gatewayToken();
-        const binding = await (deps.bindModel ?? bindGatewayModel)(chosen, token);
+        const token = await raceSetup(withinDeadline(deps.gatewayToken(), input.deadlineAt), input.signal, turnSignal);
+        assertSetupSignals(input.signal, turnSignal);
+        const binding = await raceOwnedSetup(
+          withinDeadline((deps.bindModel ?? bindGatewayModel)(chosen, token), input.deadlineAt),
+          input.signal,
+          turnSignal,
+          (value) => value.dispose?.(),
+        );
         // Everything created below is released inside the turn, so work that finishes after the deadline is still
         // cleaned up.
         let scratch: string | undefined;
         let session: AgentSession | undefined;
         try {
+          assertSetupSignals(input.signal, turnSignal);
           // The tool factories return differently typed definitions; the session takes them as one list.
           const tools: CustomTools = [
             createBashToolDefinition(root, { operations: ops.bash, exposeSessionEnvironment: false }) as CustomTools[number],
@@ -215,7 +288,13 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
           ];
 
           // No host resources: no extensions, skills, prompt files or context files from the machine running this.
-          scratch = await mkdtemp(join(tmpdir(), "nlt-agent-res-"));
+          assertSetupSignals(input.signal, turnSignal);
+          scratch = await raceOwnedSetup(
+            mkdtemp(join(tmpdir(), "nlt-agent-res-")),
+            input.signal,
+            turnSignal,
+            (dir) => rm(dir, { recursive: true, force: true }),
+          );
           const resourceLoader = new DefaultResourceLoader({
             cwd: root,
             agentDir: scratch,
@@ -226,21 +305,28 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
             noContextFiles: true,
             settingsManager: SettingsManager.inMemory(),
           });
-          await resourceLoader.reload();
+          assertSetupSignals(input.signal, turnSignal);
+          await raceSetup(resourceLoader.reload(), input.signal, turnSignal);
 
-          ({ session } = await createAgentSession({
-            // The session's cwd is the sandbox workspace: Pi hands it to the tools, and it is shown to the model.
-            // Nothing is read from it on this machine (no context files, extensions or skills are loaded).
-            cwd: root,
-            agentDir: scratch,
-            modelRuntime: binding.modelRuntime,
-            model: binding.model,
-            noTools: "builtin",
-            customTools: tools,
-            resourceLoader,
-            sessionManager: SessionManager.inMemory(root),
-            settingsManager: SettingsManager.inMemory(),
-          }));
+          assertSetupSignals(input.signal, turnSignal);
+          ({ session } = await raceOwnedSetup(
+            createAgentSession({
+              // The session's cwd is the sandbox workspace: Pi hands it to the tools, and it is shown to the model.
+              // Nothing is read from it on this machine (no context files, extensions or skills are loaded).
+              cwd: root,
+              agentDir: scratch,
+              modelRuntime: binding.modelRuntime,
+              model: binding.model,
+              noTools: "builtin",
+              customTools: tools,
+              resourceLoader,
+              sessionManager: SessionManager.inMemory(root),
+              settingsManager: SettingsManager.inMemory(),
+            }),
+            input.signal,
+            turnSignal,
+            (value) => value.session.dispose(),
+          ));
           const live = session;
 
           let out = "";
@@ -285,12 +371,12 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
           await binding.dispose?.().catch(() => undefined);
         }
       },
-      deps.sandbox,
+      { ...deps.sandbox, deadlineAt: input.deadlineAt },
     );
     return { status: "completed", text: outcome, model: chosen.id };
   } catch (error) {
     if (error instanceof SandboxBusyError) return { status: "busy" };
-    if (error instanceof SandboxTurnTimeoutError) return { status: "timed_out" };
+    if (error instanceof SandboxTurnTimeoutError || error instanceof SetupTimedOutError) return { status: "timed_out" };
     if (error instanceof CallerAbortedError) return { status: "aborted", reason: error.message };
     return { status: "error", reason: describeError(error) };
   }

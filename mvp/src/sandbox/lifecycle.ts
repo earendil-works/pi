@@ -100,6 +100,12 @@ export interface AgentSandboxOptions {
    * aborts) at 80% of this, so it has stopped before the lock can be taken over.
    */
   lockStaleMs?: number;
+  /**
+   * Absolute time (epoch ms) by which the whole invocation must have settled, set by the route at entry. Setup
+   * stages are cut off at it, and the turn is aborted early enough to stop and settle by it. Without it the
+   * turn gets a fresh window of 80% of the stale age after setup.
+   */
+  deadlineAt?: number;
   /** Where the lock lives inside the sandbox. One or two plain path segments under /tmp. Tests use this; callers normally do not. */
   lockPath?: string;
 }
@@ -202,6 +208,52 @@ export const ACQUIRE_SCRIPT = [
 /** Releases the lock only if it still carries this turn's token. */
 const RELEASE_SCRIPT = '[ "$(cat "$1/owner" 2>/dev/null)" = "$2" ] && rm -rf "$1"; exit 0';
 
+/** Rejects with `SandboxTurnTimeoutError` if `work` has not settled by `deadlineAt`. The work itself is not cancelled. */
+export function withinDeadline<T>(work: Promise<T>, deadlineAt: number | undefined): Promise<T> {
+  if (deadlineAt === undefined) return work;
+  const remaining = deadlineAt - Date.now();
+  if (remaining <= 0) {
+    work.catch((error: unknown) => {
+      console.warn(`withinDeadline: work failed after the deadline (${error instanceof Error ? error.name : "unknown"})`);
+    });
+    return Promise.reject(new SandboxTurnTimeoutError());
+  }
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      work.catch((error: unknown) => {
+        console.warn(`withinDeadline: work failed after the deadline (${error instanceof Error ? error.name : "unknown"})`);
+      });
+      reject(new SandboxTurnTimeoutError());
+    }, remaining);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+/** Releases the lock only if it still carries this turn's token, logging the outcome for timed-out reconciliation. */
+async function reconcileTimedOutAcquire(sandbox: SandboxLike, lockPath: string, token: string): Promise<void> {
+  try {
+    const released = await sandbox.runCommand({
+      cmd: "sh",
+      args: ["-c", RELEASE_SCRIPT, "sh", lockPath, token],
+      timeoutMs: 15_000,
+    });
+    console.warn(`withinDeadline: reconciled a late lock acquire (release exit ${String(released.exitCode)})`);
+  } catch (error) {
+    console.warn(
+      `withinDeadline: could not reconcile a late lock acquire (${error instanceof Error ? error.name : "unknown"})`,
+    );
+  }
+}
+
 /**
  * Runs `fn` with the agent's sandbox while holding its lock, and releases the lock if this turn still owns it.
  * Throws `SandboxBusyError` without running `fn` if another turn holds it.
@@ -227,13 +279,48 @@ export async function withAgentSandbox<T>(
   const graceMs = Math.max(1, Math.floor(staleMs * 0.1));
   const token = randomUUID();
 
-  const sandbox = await client.getOrCreate(params);
+  const { deadlineAt } = options;
+  const sandbox = await withinDeadline(client.getOrCreate(params), deadlineAt);
 
-  const acquired = await sandbox.runCommand({
+  const acquiredWork = sandbox.runCommand({
     cmd: "sh",
     args: ["-c", ACQUIRE_SCRIPT, "sh", lockPath, token, String(staleSeconds)],
     timeoutMs: 15_000,
   });
+  const acquired = await (async (): Promise<Awaited<typeof acquiredWork>> => {
+    if (deadlineAt === undefined) return acquiredWork;
+    const remaining = deadlineAt - Date.now();
+    if (remaining <= 0) {
+      void acquiredWork.then((result) => {
+        if (result.exitCode === 0) void reconcileTimedOutAcquire(sandbox, lockPath, token);
+      }).catch((error: unknown) => {
+        console.warn(`withinDeadline: work failed after the deadline (${error instanceof Error ? error.name : "unknown"})`);
+      });
+      throw new SandboxTurnTimeoutError();
+    }
+    return new Promise<Awaited<typeof acquiredWork>>((resolve, reject) => {
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        void acquiredWork.then((result) => {
+          if (result.exitCode === 0) void reconcileTimedOutAcquire(sandbox, lockPath, token);
+        }).catch((error: unknown) => {
+          console.warn(`withinDeadline: work failed after the deadline (${error instanceof Error ? error.name : "unknown"})`);
+        });
+        reject(new SandboxTurnTimeoutError());
+      }, remaining);
+      acquiredWork.then(
+        (value) => {
+          clearTimeout(timer);
+          if (!timedOut) resolve(value);
+        },
+        (error: unknown) => {
+          clearTimeout(timer);
+          if (!timedOut) reject(error);
+        },
+      );
+    });
+  })();
   if (acquired.exitCode === BUSY_EXIT_CODE) throw new SandboxBusyError();
   // Anything other than a clean acquire is a failure to lock, not permission to proceed.
   if (acquired.exitCode !== 0) throw new Error(`Could not take the sandbox lock (exit ${String(acquired.exitCode)})`);
@@ -244,14 +331,19 @@ export async function withAgentSandbox<T>(
   let graceTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     // Existing sandboxes keep the policy they were created with, so state this turn's policy while holding the lock.
-    await sandbox.updateNetworkPolicy(params.networkPolicy);
+    await withinDeadline(sandbox.updateNetworkPolicy(params.networkPolicy), deadlineAt);
+
+    // With an invocation deadline, abort early enough that the grace period also ends by it. If setup used the
+    // whole budget the turn never starts, and the lock is released by the finally block.
+    const abortAfterMs = deadlineAt === undefined ? deadlineMs : Math.min(deadlineMs, deadlineAt - graceMs - Date.now());
+    if (abortAfterMs <= 0) throw new SandboxTurnTimeoutError();
 
     const turn = fn(sandbox, controller.signal);
     const overran = new Promise<"overran">((resolve) => {
       deadline = setTimeout(() => {
         controller.abort();
         graceTimer = setTimeout(() => resolve("overran"), graceMs);
-      }, deadlineMs);
+      }, abortAfterMs);
     });
     const outcome = await Promise.race([turn.then((value) => ({ value }), (error: unknown) => ({ error })), overran]);
     if (outcome === "overran") {

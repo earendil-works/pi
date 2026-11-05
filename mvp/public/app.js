@@ -1,9 +1,11 @@
 import {
   MAX_PROMPT_LENGTH,
+  agentDoneMessage,
   assistantMessage,
   formatClock,
   interpretGate,
   levelTone,
+  parseNdjson,
   resultLabel,
   validatePrompt,
 } from "./lib/decision.js";
@@ -121,6 +123,8 @@ function renderSessions() {
 }
 
 function select(conversation) {
+  // Do not switch conversations while a turn is streaming; the in-flight reply belongs to the captured conversation.
+  if (pending) return;
   active = conversation;
   els.title.textContent = conversation.title;
   renderLog();
@@ -128,6 +132,8 @@ function select(conversation) {
 }
 
 function newConversation() {
+  // Do not switch conversations while a turn is streaming.
+  if (pending) return;
   const conversation = {
     id: conversations.length + 1,
     title: "New conversation",
@@ -137,7 +143,7 @@ function newConversation() {
         role: "assistant",
         kind: "info",
         at: new Date(),
-        text: "Hello. This is a preview of the NLT Coding Agent. Messages are checked by the ASFDK governance gate; no model is connected yet, so I can’t answer them. You can still try the check.",
+        text: "Hello. This is the NLT Coding Agent. Messages are checked by the ASFDK governance gate; agent turns run only when the owner enables them for this deployment. If a turn is unavailable, the page reports the governance check result instead.",
       },
     ],
   };
@@ -180,10 +186,12 @@ function showGate(view, latencyMs) {
   els.govComponents.textContent = view.components.length > 0 ? view.components.join(", ") : "—";
   els.govReason.hidden = !view.reason;
   els.govReason.textContent = view.reason ? `Reason from gate: ${view.reason}` : "";
-  els.lastLatency.textContent = `${Math.round(latencyMs)} ms`;
-  latencies.push(latencyMs);
-  if (latencies.length > SPARK_POINTS) latencies.shift();
-  drawSpark();
+  if (typeof latencyMs === "number" && Number.isFinite(latencyMs)) {
+    els.lastLatency.textContent = `${Math.round(latencyMs)} ms`;
+    latencies.push(latencyMs);
+    if (latencies.length > SPARK_POINTS) latencies.shift();
+    drawSpark();
+  }
 }
 
 async function askGate(prompt) {
@@ -205,6 +213,70 @@ async function askGate(prompt) {
   }
 }
 
+/**
+ * Tries the agent route. Returns undefined when the route is off or unreachable (the caller falls back to the
+ * gate check). Otherwise streams text into a live bubble and returns once the turn is done.
+ */
+async function runAgent(prompt, conversation) {
+  let response;
+  try {
+    response = await fetch("/api/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/x-ndjson" },
+      body: JSON.stringify({ prompt }),
+    });
+  } catch {
+    // The turn may have started before the connection failed; report it as an unavailable outcome rather than
+    // falling back to the gate check (which would render stale "nothing was run" wording).
+    return { text: "The agent could not be reached. The turn may have started, so check the sandbox before retrying.", kind: "unavailable" };
+  }
+  if (response.status === 404 || !response.body) return undefined;
+  if (!response.ok) {
+    return { text: "The agent is unavailable right now.", kind: "unavailable" };
+  }
+  const reply = { role: "assistant", kind: "allowed", text: "", at: new Date() };
+  conversation.messages.push(reply);
+  const node = renderMessage(reply);
+  const bubble = node.querySelector(".bubble");
+  if (conversation === active) {
+    els.log.append(node);
+  }
+  const decoder = new TextDecoder();
+  const reader = response.body.getReader();
+  let buffer = "";
+  let done;
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      const parsed = parseNdjson(buffer);
+      buffer = parsed.rest;
+      for (const event of parsed.events) {
+        if (event.type === "text" && typeof event.delta === "string") {
+          reply.text += event.delta;
+          bubble.textContent = reply.text;
+        } else if (event.type === "tool" && typeof event.name === "string") {
+          els.currentTask.textContent = `Running ${event.name}`;
+        } else if (event.type === "done") {
+          done = event;
+        }
+      }
+      els.log.scrollTop = els.log.scrollHeight;
+    }
+  } catch {
+    // fall through: a stream that ended without a done event is a failure
+  }
+  const note = agentDoneMessage(done);
+  if (note) {
+    reply.kind = done?.status === "blocked" ? "blocked" : "unavailable";
+    reply.text = reply.text ? `${reply.text}\n\n${note}` : note;
+    bubble.textContent = reply.text;
+    bubble.dataset.kind = reply.kind;
+  }
+  return { streamed: true, status: done?.status, done };
+}
+
 function setPending(value) {
   pending = value;
   els.send.disabled = value;
@@ -212,6 +284,7 @@ function setPending(value) {
   els.currentTask.textContent = value ? "Governance check" : "Idle";
 }
 
+/** Handles a submitted prompt: validates it, tries the agent route, falls back to the governance check. */
 async function submit(raw) {
   if (pending) return;
   const checked = validatePrompt(raw);
@@ -233,6 +306,35 @@ async function submit(raw) {
   setPending(true);
   logEvent("Governance check sent", "busy");
   const started = performance.now();
+  const agent = await runAgent(checked.prompt, conversation);
+  if (agent) {
+    setPending(false);
+    if (agent.text) {
+      const failure = { role: "assistant", kind: agent.kind, text: agent.text, at: new Date() };
+      conversation.messages.push(failure);
+      if (conversation === active) appendMessage(failure);
+    }
+    logEvent(`Agent turn: ${agent.status ?? "ended"}`, agent.status === "completed" ? "online" : "idle");
+    // Refresh the governance card from the turn's final outcome.
+    if (agent.done?.status === "blocked") {
+      showGate(
+        {
+          kind: "blocked",
+          components: [],
+          reason: agent.done.reason,
+          crisisLevel: agent.done.crisisLevel,
+          failClosed: false,
+        },
+        performance.now() - started,
+      );
+    } else if (agent.done?.status === "completed" || agent.done?.status === "no_free_model") {
+      showGate({ kind: "allowed", components: [], failClosed: false }, NaN);
+    } else if (agent.done?.status) {
+      showGate({ kind: "unavailable", components: [], failClosed: true }, NaN);
+    }
+    els.prompt.focus();
+    return;
+  }
   const result = await askGate(checked.prompt);
   const elapsed = performance.now() - started;
   const view = interpretGate(result);

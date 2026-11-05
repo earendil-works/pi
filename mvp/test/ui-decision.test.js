@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   MAX_PROMPT_LENGTH,
+  agentDoneMessage,
   assistantMessage,
   interpretGate,
   levelTone,
+  parseNdjson,
   resultLabel,
   validatePrompt,
 } from "../public/lib/decision.js";
@@ -97,4 +99,26 @@ test("prompt validation matches the endpoint limits", () => {
   assert.equal(validatePrompt(undefined).ok, false);
   assert.equal(validatePrompt("x".repeat(MAX_PROMPT_LENGTH)).ok, true);
   assert.deepEqual(validatePrompt("x".repeat(MAX_PROMPT_LENGTH + 1)), { ok: false, reason: "too-long" });
+});
+
+test("parseNdjson returns complete events, keeps the remainder, and drops junk", () => {
+  const parsed = parseNdjson('{"type":"text","delta":"a"}\nnot json\n[1]\n{"x":1}\n{"type":"done","sta');
+  assert.deepEqual(parsed.events, [{ type: "text", delta: "a" }]);
+  assert.equal(parsed.rest, '{"type":"done","sta');
+});
+
+test("parseNdjson buffers a partial done event behind a complete tool event, then emits it", () => {
+  const first = parseNdjson('{"type":"tool","name":"bash"}\n{"type":"done","status":"completed');
+  assert.deepEqual(first.events, [{ type: "tool", name: "bash" }]);
+  assert.equal(first.rest, '{"type":"done","status":"completed');
+  const second = parseNdjson(`${first.rest}"}\n`);
+  assert.deepEqual(second.events, [{ type: "done", status: "completed" }]);
+  assert.equal(second.rest, "");
+});
+
+test("only an explicit completed status is a success", () => {
+  assert.equal(agentDoneMessage({ status: "completed" }), undefined);
+  for (const event of [undefined, {}, { status: "weird" }, { status: "blocked" }, { status: "error" }]) {
+    assert.equal(typeof agentDoneMessage(event), "string");
+  }
 });

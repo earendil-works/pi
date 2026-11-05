@@ -16,6 +16,7 @@ const LEVEL_TONES = {
   emergency: "alert",
 };
 
+/** Maps a foundation crisis level to a display tone; unknown levels stay neutral. */
 export function levelTone(level) {
   if (typeof level !== "string") return "neutral";
   const key = level.toLowerCase();
@@ -115,4 +116,37 @@ export function validatePrompt(raw) {
   if (prompt.length === 0) return { ok: false, reason: "empty" };
   if (prompt.length > MAX_PROMPT_LENGTH) return { ok: false, reason: "too-long" };
   return { ok: true, prompt };
+}
+
+/**
+ * Splits streamed NDJSON text into complete events. Returns the parsed events and the unfinished remainder.
+ * Lines that are not valid JSON objects with a string `type` are dropped, never trusted.
+ *
+ * @param {string} buffer
+ * @returns {{ events: { type: string, [key: string]: unknown }[], rest: string }}
+ */
+export function parseNdjson(buffer) {
+  const lines = buffer.split("\n");
+  const rest = lines.pop() ?? "";
+  const events = [];
+  for (const line of lines) {
+    if (line.trim() === "") continue;
+    try {
+      const value = JSON.parse(line);
+      if (value !== null && typeof value === "object" && typeof value.type === "string") events.push(value);
+    } catch {
+      // ignore a malformed line
+    }
+  }
+  return { events, rest };
+}
+
+/** What to tell the user for a finished agent turn. Anything but an explicit completed status is not a success. */
+export function agentDoneMessage(event) {
+  if (event?.status === "completed") return undefined;
+  if (event?.status === "blocked") return "The governance gate stopped this message. Please talk to a person you trust.";
+  if (event?.status === "busy") return "The agent is busy with another turn. Try again in a moment.";
+  if (event?.status === "no_free_model") return "No free model is available right now.";
+  if (event?.status === "timed_out") return "The turn ran out of time.";
+  return "The agent could not finish this turn.";
 }

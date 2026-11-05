@@ -1,0 +1,9 @@
+{
+  "installCommand": "cd .. && npm ci --ignore-scripts",
+  "buildCommand": "npm run build",
+  "functions": {
+    "api/agent.ts": {
+      "maxDuration": 300
+    }
+  }
+}

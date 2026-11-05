@@ -331,6 +331,82 @@ describe("withAgentSandbox", () => {
   });
 });
 
+describe("invocation deadline", () => {
+  const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  it("cuts off a slow getOrCreate at the deadline and never runs the work", async () => {
+    const client = new FakeClient();
+    client.getOrCreate = async () => {
+      await sleep(200);
+      return client.sandbox;
+    };
+    let ran = false;
+    const started = Date.now();
+    await expect(
+      withAgentSandbox(client, async () => {
+        ran = true;
+      }, { deadlineAt: Date.now() + 40 }),
+    ).rejects.toBeInstanceOf(SandboxTurnTimeoutError);
+    expect(Date.now() - started).toBeLessThan(150);
+    expect(ran).toBe(false);
+  });
+
+  it("cuts off a slow lock acquire and a slow network-policy update", async () => {
+    for (const slow of ["acquire", "policy"] as const) {
+      const client = new FakeClient();
+      const inner = client.sandbox;
+      if (slow === "policy") inner.updateNetworkPolicy = async () => sleep(200);
+      else {
+        const run = inner.runCommand;
+        inner.runCommand = async (params) => {
+          if (params.args?.[1]?.includes("mkdir")) await sleep(200);
+          return run(params);
+        };
+      }
+      let ran = false;
+      await expect(
+        withAgentSandbox(client, async () => {
+          ran = true;
+        }, { deadlineAt: Date.now() + 40 }),
+      ).rejects.toBeInstanceOf(SandboxTurnTimeoutError);
+      expect(ran).toBe(false);
+    }
+  });
+
+  it("does not start the turn when setup used the budget, and releases the lock it took", async () => {
+    const client = new FakeClient();
+    client.sandbox.updateNetworkPolicy = async () => sleep(60);
+    let ran = false;
+    // Grace is 10% of the stale age (10 ms here): after a 60 ms policy update only ~0 ms is left to abort.
+    await expect(
+      withAgentSandbox(client, async () => {
+        ran = true;
+      }, { lockStaleMs: 100, deadlineAt: Date.now() + 65 }),
+    ).rejects.toBeInstanceOf(SandboxTurnTimeoutError);
+    expect(ran).toBe(false);
+    expect(client.sandbox.held).toBe(false);
+  });
+
+  it("reconciles a lock acquired after the deadline so a timed-out turn does not orphan the lock", async () => {
+    const client = new FakeClient();
+    const inner = client.sandbox.runCommand.bind(client.sandbox);
+    let releaseCalls = 0;
+    client.sandbox.runCommand = async (params) => {
+      if (params.args?.[1]?.includes("mkdir")) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 80));
+      }
+      if (params.args?.[1]?.includes("rm -rf")) releaseCalls += 1;
+      return inner(params);
+    };
+    await expect(withAgentSandbox(client, async () => "ran", { deadlineAt: Date.now() + 20 })).rejects.toBeInstanceOf(
+      SandboxTurnTimeoutError,
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 140));
+    expect(client.sandbox.held).toBe(false);
+    expect(releaseCalls).toBeGreaterThanOrEqual(1);
+  });
+});
+
 describe("real client", () => {
   it("has the SandboxClient shape (checked by the type checker)", () => {
     const factory: typeof createVercelSandboxClient = (() => ({ getOrCreate: async () => new FakeLockedSandbox() })) as never;

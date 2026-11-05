@@ -5,12 +5,14 @@
   "type": "module",
   "description": "NLT Coding Agent MVP application boundary",
   "scripts": {
+    "build": "cd .. && npm run hydrate:model-data && npm run build:offline && node mvp/scripts/assert-agent-entry.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "node --test test/*.test.js && vitest --run"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "1.4.0",
     "@neurolift-technologies/asfdk": "0.2.4",
+    "@vercel/oidc": "3.2.0",
     "@vercel/sandbox": "3.6.1",
     "typebox": "1.3.27"
   },
