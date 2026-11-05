@@ -10,10 +10,10 @@ import { createBashTool } from "../../../src/core/tools/bash.ts";
  * When the timeout then hit, the tool reported only "Command timed out", so the shell's real exit code
  * and the fact that it had already finished were lost. The tool now reports both.
  *
- * Unix only: on Windows the deadline cannot kill background processes once the shell pid is gone, so the
- * tool keeps waiting until their output pauses; this test would hang there.
+ * On Windows the deadline used to miss the background processes once the shell pid was gone, so the tool kept
+ * waiting until their output paused. The shell now runs in a job object that the deadline terminates.
  */
-describe.skipIf(process.platform === "win32")("issue #11613 bash timeout after the shell exited", () => {
+describe("issue #11613 bash timeout after the shell exited", () => {
 	const bashTool = createBashTool(tmpdir());
 
 	async function runExpectingTimeout(command: string, timeout: number): Promise<string> {

@@ -500,6 +500,14 @@ export function getInteractiveAssetsDir(): string {
 	return join(packageDir, srcOrDist, "modes", "interactive", "assets");
 }
 
+/**
+ * Get path to pi-job.exe, the Windows helper that runs shell commands in a job object (native/win32/src/pi-job.c).
+ * The package root and a Bun binary's directory both contain native/win32/prebuilds/.
+ */
+export function getWindowsJobHelperPath(): string {
+	return join(getPackageDir(), "native", "win32", "prebuilds", `win32-${process.arch}`, "pi-job.exe");
+}
+
 /** Get path to a bundled interactive asset */
 export function getBundledInteractiveAssetPath(name: string): string {
 	return join(getInteractiveAssetsDir(), name);

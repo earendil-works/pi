@@ -25,7 +25,7 @@ import {
 	waitForRawStdoutBackpressure,
 	writeRawStdout,
 } from "../../core/output-guard.ts";
-import { killTrackedDetachedChildren } from "../../utils/shell.ts";
+import { killTrackedProcessTrees } from "../../utils/shell.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { toJsonEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
@@ -382,7 +382,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			// the process before dispose() finishes (for example a pending MCP token refresh).
 			process.on(signal, () => {
 				signalCount++;
-				killTrackedDetachedChildren();
+				killTrackedProcessTrees();
 				if (!shuttingDown) {
 					void shutdown(exitCode, signal);
 				} else if (signalCount > 1) {
