@@ -1,8 +1,8 @@
 // The provider side of one origin on a link (§3, §22, W1; decision "Relay flow control per origin"): the holds the
 // peer sent for that origin, served here or relayed, by their ids; the calls on them, at most this side's N at once;
-// and the window: at most K unacknowledged `bound` and `state` messages of this host's own, with what waits meanwhile,
-// and the sender of every message in flight, so each `ack` reaches the host that sent its message. A served call's
-// method runs under the call's carrier (slice 9).
+// and the window: at most K unacknowledged `bound` and `state` messages of this host's own, with what waits meanwhile
+// (a call's answer sends the waiting state first, past the window), and the sender of every message in flight, so each
+// `ack` reaches the host that sent its message. A served call's method runs under the call's carrier (slice 9).
 
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { type Context, withAbortSignal } from "../context/index.ts";
@@ -41,15 +41,19 @@ type Sender = "local" | HostLink;
 /** A relaying origin: its number on upstream links, and the open upstream links it relayed holds to. */
 type Relay = { readonly origin: number; readonly links: Set<HostLink> };
 
-/** At most this many of this host's own `bound` and `state` messages unacknowledged per origin. */
+/**
+ * At most this many of this host's own `bound` and `state` messages unacknowledged per origin; past it only the waiting
+ * state a call's answer sends first.
+ */
 const WINDOW = 2;
 
 /**
  * The provider side of one origin on a link. Ids are the origin's; a message naming an id this side does not know is
  * ignored (Q1), one reusing a live id is a protocol error, and so are more concurrent calls than this side announced.
  * This host's own `bound` and `state` messages go through the window: locally served holds wait while it is full
- * (their ops in their members' pending queues, their bindings for the next slot). A relay forwards upstream messages
- * at once (each upstream host keeps its own window for the origin it sees), so a slow consumer stalls only its origin.
+ * (their ops in their members' pending queues, their bindings for the next slot); a call's answer, its own or a
+ * relayed one, sends the waiting state first. A relay forwards upstream messages at once (each upstream host keeps its
+ * own window for the origin it sees), so a slow consumer stalls only its origin.
  */
 export class ProviderSide {
 	readonly link: HostLink;
@@ -173,11 +177,11 @@ export class ProviderSide {
 
 	/**
 	 * A message from upstream link `from` for this origin's relayed holds, forwarded with this origin: `bound` and
-	 * `state` join the window's senders (their `ack` goes back to `from`), a reply ends its call, `gone` forgets its
-	 * hold. A link answers only for what was relayed over it: an entry, a notice or a reply naming a hold (or a call)
-	 * this origin did not relay over `from` is dropped (Q1); a `bound` or `state` left without entries is acknowledged
-	 * to `from` at once. Parts travel unchecked and unparsed: the end that parses a part checks it against its own
-	 * link's limits.
+	 * `state` join the window's senders (their `ack` goes back to `from`), a reply ends its call (after this host's own
+	 * waiting state: `reply`), `gone` forgets its hold. A link answers only for what was relayed over it: an entry, a
+	 * notice or a reply naming a hold (or a call) this origin did not relay over `from` is dropped (Q1); a `bound` or
+	 * `state` left without entries is acknowledged to `from` at once. Parts travel unchecked and unparsed: the end that
+	 * parses a part checks it against its own link's limits.
 	 */
 	forward(message: ConsumerMessage, from: HostLink): void {
 		const relay = this.#relay;
@@ -247,11 +251,19 @@ export class ProviderSide {
 		this.#settle();
 	}
 
-	/** A call ended with `reply` (a result or an error): its slot is free; nothing is sent for one already gone. */
+	/**
+	 * A call ended with `reply` (a result or an error, its own or forwarded from upstream): its slot is free; nothing is
+	 * sent for one already gone. The state waiting for a slot goes first, past the window if it is full (decision "A
+	 * call's answer follows its state"): when the call settles at the consumer, every change this host committed before
+	 * answering is applied there.
+	 */
 	reply(id: number, reply: Extract<OriginMessage, { readonly kind: "result" | "error" }>): void {
 		const call = this.#calls.get(id);
 		if (call === undefined) return;
 		this.#calls.delete(id);
+		// At most one extra message per answer, acknowledged before the call its answer frees a slot for (one direction keeps
+		// its order): running calls and messages past the window stay within this side's N together.
+		if (this.#waiting.size > 0) this.#sendWaiting(this.link.context);
 		this.send(reply);
 		if (call.kind === "relayed" && call.span !== undefined) relayEnded(call.span, reply);
 		this.#settle();
@@ -559,15 +571,23 @@ export class ProviderSide {
 				// Every snapshot in one synchronous step: the binding shows all of them at one moment.
 				this.#sendOwn({ kind: "bound", holds: holds.map((hold) => hold.boundEntry(context)) });
 			} else if (this.#waiting.size > 0) {
-				const holds = [...this.#waiting];
-				this.#waiting.clear();
-				this.#waited();
-				this.#bindingTurn = this.#binding.size > 0;
-				this.#sendOwn({ kind: "state", holds: holds.map((hold) => hold.pendingEntry(context)) });
+				this.#sendWaiting(context);
 			} else {
 				return;
 			}
 		}
+	}
+
+	/**
+	 * The waiting state as one `state` message, taking a slot: a freed one, or one past the window before an answer.
+	 * Waiting bindings take the next slot.
+	 */
+	#sendWaiting(context: Context): void {
+		const holds = [...this.#waiting];
+		this.#waiting.clear();
+		this.#waited();
+		this.#bindingTurn = this.#binding.size > 0;
+		this.#sendOwn({ kind: "state", holds: holds.map((hold) => hold.pendingEntry(context)) });
 	}
 
 	/**

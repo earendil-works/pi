@@ -409,6 +409,45 @@ self.<span class="tk-f">contribute</span>(<span class="tk-t">Translations</span>
 <span class="tk-k">const</span> { t } = <span class="tk-f">useMessages</span>(messages);                       <span class="tk-c">// re-renders when the user picks another language</span>
 <span class="tk-c">// plugins/notes/worker.ts: a notice as data; every client renders it with t.render(notice)</span>
 draft.notice = messages.<span class="tk-f">message</span>(<span class="tk-s">"empty"</span>);</code></pre>
+<h3 id="optimistic-ui">Optimistic UI</h3>
+<p>A user renames a session. The call goes from the tab through the server to the session&#39;s worker, which renames it and
+reports the new title to the server&#39;s index of sessions, then answers. That round trip takes a moment, and the title
+should change at once. React&#39;s <code>useOptimistic</code> shows a value while a transition runs, and Chord&#39;s references fit it:</p>
+<pre><code><span class="tk-c">// plugins/sessions/web.tsx</span>
+<span class="tk-k">function</span> <span class="tk-t">SessionName</span>({ id }: { id: string }) {
+	<span class="tk-k">const</span> sessions = <span class="tk-f">useHold</span>(<span class="tk-t">Sessions</span>, {});                       <span class="tk-c">// the server's index, which every list shows</span>
+	<span class="tk-k">const</span> session = <span class="tk-f">useHold</span>(<span class="tk-t">SessionTitle</span>, { id });                <span class="tk-c">// on the session's worker</span>
+	<span class="tk-k">const</span> title = <span class="tk-f">useWatch</span>(sessions?.titles)?.[id] ?? <span class="tk-s">""</span>;
+	<span class="tk-k">const</span> [shown, showOptimistic] = <span class="tk-f">useOptimistic</span>(title);
+	<span class="tk-k">const</span> rename = (next: string) =&gt;
+		<span class="tk-f">startTransition</span>(<span class="tk-k">async</span> () =&gt; {
+			<span class="tk-f">showOptimistic</span>(next);                                    <span class="tk-c">// drawn at once</span>
+			<span class="tk-k">await</span> session?.<span class="tk-f">rename</span>(next, BACKGROUND_CONTEXT);         <span class="tk-c">// settles once the index has `next`</span>
+		});
+	<span class="tk-k">return</span> &lt;<span class="tk-t">TitleField</span> value={shown} onRename={rename} /&gt;;
+}</code></pre>
+<p>When the transition ends, React drops the optimistic value and draws <code>title</code> again. That is only right if <code>title</code> is
+already the new name by then. <strong>Chord guarantees it:</strong> a call settles in the page only after every change its answering
+host committed before answering is applied there, and so does every change a host that relays the answer committed
+before it forwarded it. Here the worker&#39;s own changes travel before its answer, and the server sends its index change
+for this tab before it forwards the worker&#39;s answer, even on a slow connection whose window of unacknowledged state is
+full (design §3). Without that, the answer could overtake the index change and the old title flickered back.</p>
+<p><strong>What it does not cover:</strong></p>
+<ul>
+<li>Changes committed after the answer: a method that starts work and returns before it lands (a <code>void</code> call, a job, a
+routine) answers first; the optimistic value goes and the old one shows until the change arrives.</li>
+<li>Changes on a host that neither answers nor relays the answer. A server method that calls a worker and then answers
+the tab orders only the server&#39;s own changes before its answer; what the worker changed for the tab travels on its
+own and may come later.</li>
+</ul>
+<p>So the rule for a method that should feel instant: it awaits its own changes, the pushes to other hosts included (the
+worker&#39;s <code>rename</code> awaits its report to the index), and keeps them on the host that answers or relays the answer.</p>
+<p>A terminal UI does the same with its component scope: <code>scope.optimistic(read)</code> wraps a reader and returns it with
+<code>show(value, call)</code>, which shows <code>value</code> until the call settles (until every call shown, when they overlap):</p>
+<pre><code><span class="tk-k">const</span> titles = scope.<span class="tk-f">watch</span>(sessions.titles);
+<span class="tk-k">const</span> [title, show] = scope.<span class="tk-f">optimistic</span>(() =&gt; <span class="tk-f">titles</span>()?.[id]);
+<span class="tk-k">await</span> <span class="tk-f">show</span>(next, session.<span class="tk-f">rename</span>(next, ctx));              <span class="tk-c">// title() is `next` at once, the real one when it settles</span></code></pre>
+<p><code>test/examples/63-optimistic-answers.ts</code> runs this with a stalled terminal client and prints what each redraw showed.</p>
 </section>
 
 <section class="chapter" id="plugins"><header class="opener"><div class="numeral">V</div><h2>Plugins</h2><p class="lede">Move the code into a directory that can be added, edited and removed while the app runs.</p></header>

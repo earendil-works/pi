@@ -5,7 +5,7 @@ import { broken, ChordError } from "../../src/data/index.ts";
 import type * as Delta from "../../src/delta/index.ts";
 import { decoder } from "../../src/delta/index.ts";
 import { defineState } from "../../src/documents/index.ts";
-import { createHost, defineFacet, type FacetHost, type Host, type Self } from "../../src/host/index.ts";
+import { type Ctx, createHost, defineFacet, type FacetHost, type Host, type Self } from "../../src/host/index.ts";
 import type { ChordHost } from "../../src/host/internal.ts";
 import { ChordObject } from "../../src/host/object.ts";
 import { type Link, memoryLinkPair } from "../../src/link/index.ts";
@@ -632,7 +632,10 @@ const RETIRING = wireNames(Retiring, "v");
 /** Every member of `Retiring` retired with its document, sorted. */
 const retiredAll = [RETIRING.state.doc!, RETIRING.state.big!, RETIRING.state.t!].sort();
 
-/** A server serving `Retiring` to a raw peer that acks only when told; `call` calls a method of hold 0. */
+/**
+ * A server serving `Retiring` to a raw peer that acks only when told; `call` calls a method of the object hold 0 holds,
+ * from the server itself as the hold's principal (an answer over the link would send the waiting state before it).
+ */
 async function retiring() {
 	const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 	await server.load(
@@ -673,13 +676,15 @@ async function retiring() {
 	server.accept(a, { principal: { kind: "owner" }, codec: testCodec() }, context);
 	const peer = new RawPeer(b, { ack: false });
 	await transported();
-	let calls = 0;
-	const call = async (method: "set" | "retire", args?: number) => {
-		const id = calls++;
-		const payload = args === undefined ? {} : { args: jsonPart(args) };
-		peer.send({ kind: "call", call: id, hold: 0, method: RETIRING.methods[method]!, ...payload });
-		expect((await peer.next("result")).call).toBe(id);
-	};
+	const call = (method: "set" | "retire", args?: number) =>
+		server.root(
+			async (ctx) => {
+				const object = await ctx.get(Retiring, {});
+				await (method === "set" ? object.set(args!, ctx) : object.retire(ctx));
+			},
+			context,
+			{ principal: { kind: "owner" } },
+		);
 	const { name: type, version, fingerprint } = Retiring;
 	peer.send({ kind: "hold", hold: 0, type, version, fingerprint, params: "{}", address: SERVER_ADDRESS });
 	await peer.next("bound");
@@ -1063,14 +1068,12 @@ describe("holds across a reload (slice 7b §6)", () => {
 		const [a, b] = memoryLinkPair();
 		server.accept(a, { principal: { kind: "owner" }, codec: testCodec() }, context);
 		const peer = new RawPeer(b, { ack: false });
-		const SHOWN = wireNames(Shown, "v");
 		await peer.next("hello");
 		hold(peer, 0, Shown);
 		await peer.next("bound");
-		for (let call = 0; call < 3; call++) {
-			peer.send({ kind: "call", call, hold: 0, method: SHOWN.methods.bump! });
-			await peer.next("result");
-		}
+		// Commits from the server itself as the hold's principal: an answer over the link would send the waiting state.
+		const bump = async (ctx: Ctx<TestPrincipal>) => (await ctx.get(Shown, {})).bump(ctx);
+		for (let commit = 0; commit < 3; commit++) await server.root(bump, context, { principal: { kind: "owner" } });
 		// One state in flight with the bound: the third commit's ops wait in their pending queue.
 		await peer.next("state");
 		await server.reload([], context);

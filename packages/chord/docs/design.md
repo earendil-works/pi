@@ -382,7 +382,22 @@ host.route(Session, {
   - a hold that binds waits for a slot; its snapshot and subscription are taken in one synchronous step when its
     `bound` is sent; bindings and waiting state take turns when both wait, so neither starves;
   - a hold whose object leaves `live` while its `bound` waits goes back to pending (D1, owner, 2026-10-24; built in
-    slice 7b with the reload, which makes a live object leave `live`); so does a bound one, unbound (§7, §22).
+    slice 7b with the reload, which makes a live object leave `live`); so does a bound one, unbound (§7, §22);
+  - **a call's answer follows its state** (decision "A call's answer follows its state", owner, 2026-11-05): before
+    the provider sends a call's `result` or `error` (its own, or one it forwards as a relay), it sends the origin's
+    waiting state (every hold with pending ops, one `state` message), past the window if it is full. So when the call
+    settles at the consumer, every change the answering host committed before answering is applied there, and an
+    optimistic value (React's `useOptimistic`, `TuiScope.optimistic`) is replaced by the real one, never by the old.
+    Trace: window full (`bound`, `state` unacknowledged), a call commits (its ops wait), its `result`: the provider
+    sends `state` (the waiting ops), then `result`; without the rule the result overtook its own commit and the page
+    showed the old value until the next `ack`. A message past the window is counted and acknowledged like any other
+    (once, in order; the window opens only when fewer than K are in flight again); there is at most one per answer, and
+    its consumer acknowledges it before it sends the call that answer frees a slot for, so running calls and messages
+    past the window stay within N per origin together. Nothing extra is sent when nothing waits (the common path: a
+    free window sent the commit's `state` already). Bindings waiting for a slot are not sent past it: their `bound`
+    carries the latest state when it goes (a hold rebinding after a reload's swap shows its old values until then).
+    Not covered: changes committed after the answer (a method that returns before its effect lands) or on another host
+    that does not relay the answer.
   Not built, by decision: a byte window, credit messages, snapshot admission or debt, an adapter `backlog()` API,
   `reset` from anyone.
 - **Calls: a call window N** (default 256, the same on every host) announced in `hello`: how many concurrent calls a
@@ -433,7 +448,10 @@ drops, folds or resets.
   `result` and `error` by its call is checked against the relay's table; an answer for a hold or call not relayed over
   the link it came from is dropped (Q1: also one crossing a release). A `bound` or `state` left with some entries is
   forwarded with those; left with none, it is acknowledged to that link at once. A message for an origin from a link
-  the origin relayed nothing to is ignored whole.
+  the origin relayed nothing to is ignored whole. A `result` or `error` forwarded goes after the relay's own waiting
+  state for that origin (the rule above: a worker's answer whose effect the worker pushed to the server arrives after
+  that server state); the upstream host sent its own waiting state before its answer, and the relay forwarded that at
+  once.
 - **Acks:** the relay forwards each upstream `bound`/`state` at once and returns its `ack` to the upstream link that
   sent it when the downstream acknowledges it (the senders FIFO). A tab served by W workers may have 2W messages in
   flight (plus the relay's own 2), each worker's window bounding its own. A slow tab stalls only its origin at each
@@ -2197,7 +2215,9 @@ validation, no clone of snapshots or ops.
   provider and consumer), restarted with every snapshot. Two holds of the same principal (two tabs) encode the same
   ops separately (O(change) each). A part is encoded once at its origin; relays never re-encode it.
 - **Sending:** one `state` message per commit per link and origin while the window has a slot; otherwise the ops wait
-  in the members' pending queues and leave as one message when an `ack` frees a slot (section 3).
+  in the members' pending queues and leave as one message when an `ack` frees a slot, or before a call's `result` or
+  `error` of that origin, past the window (section 3, "a call's answer follows its state"; a relay sends its own before
+  each answer it forwards). No message kind or field changes.
 - **Relays** read and rewrite only envelopes (section 3, "Relays").
 - **Size limits per part (R2, Q2; slice 4b):** limits apply to each part (wire and decoded size), configurable per
   link, checked from the part's length before it is parsed or inflated; the decoded limit is enforced in the one
@@ -2474,7 +2494,8 @@ Decision "Slice 11's points", "Slice 11, P3" to "P9", and "Tutorial gaps" (1) (p
   with an empty environment, `--permission` granting nothing and no SQLite; the builtin allowlist and a frozen
   substitute `process` inside; a bridge terminal; the trusted launcher outside, confirming copy, open and attach on its
   own prompt); a component scope (`hold`, `watch`, `registry`, released on dispose, one `changed` callback for the
-  app's redraw; `pageState(key, initial)`, the host's page state shared with `usePageState`), no pi-tui dependency.
+  app's redraw; `pageState(key, initial)`, the host's page state shared with `usePageState`; `optimistic(read)`, a
+  reader showing an optimistic value while a call is pending, React's `useOptimistic`, §3), no pi-tui dependency.
 
 ### Messages and languages (built after slice 11)
 

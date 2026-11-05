@@ -1,7 +1,8 @@
 // Tests of `TuiScope` (slice 11 §4, decision "Slice 11, P9"): references held for a component, watchables and
 // registries followed, one `changed` callback for every change, everything released at `dispose`, and the host's page
 // state shared by every scope (decision "Tutorial gaps" (1)), and messages in the host's language, a change redrawing
-// (decision "Messages and languages in the app kit").
+// (decision "Messages and languages in the app kit"), and an optimistic value shown while a call is pending (decision
+// "A call's answer follows its state").
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
@@ -88,6 +89,62 @@ describe("a component's scope", () => {
 		});
 		expect(read()).toBeUndefined();
 		scope.dispose();
+		await h.close(context);
+	});
+});
+
+describe("a scope's optimistic values", () => {
+	it("show the value while its call is pending, then the reader's, calling changed on each change", async () => {
+		const h = await host();
+		let changes = 0;
+		const scope = new TuiScope(h, () => changes++);
+		const notes = scope.hold(Notes, {});
+		const [text, show] = scope.optimistic(scope.watch(notes.text));
+		await until(() => text() === "first");
+		const before = changes;
+		const written = show("second", notes.write("second", context));
+		expect(text()).toBe("second");
+		expect(changes).toBe(before + 1);
+		await written;
+		await until(() => changes > before + 1);
+		expect(text()).toBe("second");
+		scope.dispose();
+		await h.close(context);
+	});
+
+	it("show the last value until every call settled; a rejected call drops it as a resolved one does", async () => {
+		const h = await host();
+		const calls: string[] = [];
+		const scope = new TuiScope(h, () => calls.push(text()!));
+		const [text, show] = scope.optimistic(() => "real");
+		const first = Promise.withResolvers<null>();
+		const second = Promise.withResolvers<null>();
+		show("one", first.promise);
+		const failing = show("two", second.promise);
+		first.resolve(null);
+		await first.promise;
+		await Promise.resolve();
+		expect(text()).toBe("two");
+		second.reject(new Error("refused"));
+		await expect(failing).rejects.toThrow("refused");
+		await Promise.resolve();
+		expect(calls).toEqual(["one", "two", "two", "real"]);
+		scope.dispose();
+		await h.close(context);
+	});
+
+	it("never call changed after dispose", async () => {
+		const h = await host();
+		let changes = 0;
+		const scope = new TuiScope(h, () => changes++);
+		const [, show] = scope.optimistic(() => "real");
+		const call = Promise.withResolvers<null>();
+		show("shown", call.promise);
+		scope.dispose();
+		call.resolve(null);
+		await call.promise;
+		await Promise.resolve();
+		expect(changes).toBe(1);
 		await h.close(context);
 	});
 });

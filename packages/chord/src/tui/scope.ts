@@ -2,7 +2,8 @@
 // counterpart of the React bindings for terminal UI libraries. It holds references, follows watchables and registries,
 // calls one `changed` callback (the app's redraw) on every change, and releases everything at `dispose`. Its page state
 // is the host's, shared by every scope (React's `usePageState`): a scope opened again after a plugin reload finds it.
-// Its messages render in the host's language, and a change of the locale or a translation redraws.
+// Its messages render in the host's language, and a change of the locale or a translation redraws. A reader can show
+// an optimistic value while a call is pending (React's `useOptimistic`).
 // References wait and rebind by themselves (no retry loop, unlike p2's); no terminal library dependency.
 
 import { BACKGROUND_CONTEXT, withAbortSignal } from "../context/index.ts";
@@ -70,6 +71,35 @@ export class TuiScope<P extends Principal = Principal> {
 			() => {},
 		);
 		return () => read();
+	}
+
+	/**
+	 * `read` with an optimistic value (React's `useOptimistic`): `show(value, call)` returns `call` and shows `value` in
+	 * place of `read`'s until every call shown so settled, then `read`'s again; each change calls `changed`. A call over
+	 * a link settles after the changes its answering host committed before answering (decision "A call's answer follows
+	 * its state"), so the value shown next is the real one.
+	 */
+	optimistic<T>(
+		read: () => T | undefined,
+	): readonly [read: () => T | undefined, show: <R>(value: T, call: Promise<R>) => Promise<R>] {
+		let shown: T | undefined;
+		let pending = 0;
+		const redraw = (): void => {
+			if (!this.#abort.signal.aborted) this.#changed();
+		};
+		const settled = (): void => {
+			if (--pending === 0) shown = undefined;
+			redraw();
+		};
+		const show = <R>(value: T, call: Promise<R>): Promise<R> => {
+			shown = value;
+			pending++;
+			// Its caller handles a rejection of `call`; this only follows it.
+			call.then(settled, settled);
+			redraw();
+			return call;
+		};
+		return [() => (pending > 0 ? shown : read()), show];
 	}
 
 	/**

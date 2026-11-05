@@ -405,6 +405,57 @@ const { t } = useMessages(messages);                       // re-renders when th
 draft.notice = messages.message("empty");
 ```
 
+## Optimistic UI
+
+A user renames a session. The call goes from the tab through the server to the session's worker, which renames it and
+reports the new title to the server's index of sessions, then answers. That round trip takes a moment, and the title
+should change at once. React's `useOptimistic` shows a value while a transition runs, and Chord's references fit it:
+
+```tsx
+// plugins/sessions/web.tsx
+function SessionName({ id }: { id: string }) {
+	const sessions = useHold(Sessions, {});                       // the server's index, which every list shows
+	const session = useHold(SessionTitle, { id });                // on the session's worker
+	const title = useWatch(sessions?.titles)?.[id] ?? "";
+	const [shown, showOptimistic] = useOptimistic(title);
+	const rename = (next: string) =>
+		startTransition(async () => {
+			showOptimistic(next);                                    // drawn at once
+			await session?.rename(next, BACKGROUND_CONTEXT);         // settles once the index has `next`
+		});
+	return <TitleField value={shown} onRename={rename} />;
+}
+```
+
+When the transition ends, React drops the optimistic value and draws `title` again. That is only right if `title` is
+already the new name by then. **Chord guarantees it:** a call settles in the page only after every change its answering
+host committed before answering is applied there, and so does every change a host that relays the answer committed
+before it forwarded it. Here the worker's own changes travel before its answer, and the server sends its index change
+for this tab before it forwards the worker's answer, even on a slow connection whose window of unacknowledged state is
+full (design §3). Without that, the answer could overtake the index change and the old title flickered back.
+
+**What it does not cover:**
+
+- Changes committed after the answer: a method that starts work and returns before it lands (a `void` call, a job, a
+  routine) answers first; the optimistic value goes and the old one shows until the change arrives.
+- Changes on a host that neither answers nor relays the answer. A server method that calls a worker and then answers
+  the tab orders only the server's own changes before its answer; what the worker changed for the tab travels on its
+  own and may come later.
+
+So the rule for a method that should feel instant: it awaits its own changes, the pushes to other hosts included (the
+worker's `rename` awaits its report to the index), and keeps them on the host that answers or relays the answer.
+
+A terminal UI does the same with its component scope: `scope.optimistic(read)` wraps a reader and returns it with
+`show(value, call)`, which shows `value` until the call settles (until every call shown, when they overlap):
+
+```ts
+const titles = scope.watch(sessions.titles);
+const [title, show] = scope.optimistic(() => titles()?.[id]);
+await show(next, session.rename(next, ctx));              // title() is `next` at once, the real one when it settles
+```
+
+`test/examples/63-optimistic-answers.ts` runs this with a stalled terminal client and prints what each redraw showed.
+
 # Plugins {#plugins lede="Move the code into a directory that can be added, edited and removed while the app runs."}
 
 So far the facets were part of the app's own code. A **plugin** is the same code in its own directory:
