@@ -7,7 +7,7 @@ import type { Check } from "./types.ts";
 export const ALWAYS: Check = () => true;
 export const NEVER: Check = () => false;
 const IS_STRING: Check = (v) => typeof v === "string";
-const IS_NUMBER: Check = (v) => typeof v === "number";
+const IS_NUMBER: Check = (v) => Number.isFinite(v);
 const IS_INTEGER: Check = (v) => Number.isInteger(v);
 const IS_BOOLEAN: Check = (v) => typeof v === "boolean";
 const IS_NULL: Check = (v) => v === null;
@@ -24,7 +24,8 @@ export function isObject(v: unknown): v is Record<string, unknown> {
 
 /**
  * The check of a `type` name. `bytes` (a Uint8Array), `bigint` (TypeBox's `Type.BigInt`) and `undefined` (TypeBox's
- * `Type.Undefined`) extend JSON Schema for values that never pass through JSON.
+ * `Type.Undefined`) extend JSON Schema for values that never pass through JSON. A `number` is finite, as in TypeBox:
+ * JSON has no NaN or Infinity, so only a value built in code can be one.
  */
 export const TYPE_CHECKS: ReadonlyMap<string, Check> = new Map([
 	["string", IS_STRING],
@@ -85,7 +86,7 @@ function leafOk(code: number, x: unknown, arg: unknown): boolean {
 		case 1:
 			return typeof x === "string";
 		case 2:
-			return typeof x === "number";
+			return Number.isFinite(x);
 		case 3:
 			return Number.isInteger(x);
 		case 4:
@@ -104,7 +105,7 @@ function leafOk(code: number, x: unknown, arg: unknown): boolean {
 		case 10:
 			return Number.isInteger(x) && inBounds(x as number, arg as Bounds);
 		case 11:
-			return typeof x === "number" && inBounds(x, arg as Bounds);
+			return Number.isFinite(x) && inBounds(x as number, arg as Bounds);
 		case 12:
 			return typeof x === "string" && lengthOk(x, (arg as Bounds).min, (arg as Bounds).max);
 		case 13:
@@ -193,13 +194,13 @@ export function typeMask(types: readonly unknown[]): number {
 	return mask;
 }
 
-/** The type bits of `v`: an integer has the bits of `number` and `integer`. */
+/** The type bits of `v`: an integer has the bits of `number` and `integer`; NaN and Infinity have neither. */
 function typeBits(v: unknown): number {
 	switch (typeof v) {
 		case "string":
 			return 1;
 		case "number":
-			return Number.isInteger(v) ? 6 : 2;
+			return Number.isInteger(v) ? 6 : Number.isFinite(v) ? 2 : 0;
 		case "boolean":
 			return 8;
 		case "object":
@@ -292,7 +293,7 @@ export function numberCheck(
 ): Check {
 	const check: Check = (v) => {
 		if (typeof v !== "number" && typeof v !== "bigint") return mode === 0;
-		if (mode === 3 ? typeof v !== "bigint" : mode !== 0 && typeof v !== "number") return false;
+		if (mode === 3 ? typeof v !== "bigint" : mode !== 0 && !Number.isFinite(v)) return false;
 		if (mode === 2 && !Number.isInteger(v)) return false;
 		return v >= min && v <= max && v > xmin && v < xmax && (multipleOf === undefined || isMultiple(v, multipleOf));
 	};

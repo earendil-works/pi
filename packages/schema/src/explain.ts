@@ -394,5 +394,6 @@ function typeName(v: unknown): string {
 	if (v instanceof Uint8Array) return "bytes";
 	if (typeof v === "bigint") return "bigint";
 	if (typeof v === "number" && Number.isInteger(v)) return "integer";
+	if (typeof v === "number" && !Number.isFinite(v)) return String(v);
 	return typeof v;
 }

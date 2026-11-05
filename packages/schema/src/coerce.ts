@@ -535,7 +535,7 @@ function typesOf(schema: SchemaObject): string[] {
 function matchesType(value: unknown, type: string): boolean {
 	switch (type) {
 		case "number":
-			return typeof value === "number";
+			return Number.isFinite(value);
 		case "integer":
 			return typeof value === "number" && Number.isInteger(value);
 		case "boolean":

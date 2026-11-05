@@ -1,6 +1,7 @@
 // compile() and Validator: checks, errors, values, options and schemas from other sources.
 
 import Type from "typebox";
+import { Check } from "typebox/value";
 import { describe, expect, it } from "vitest";
 import { formats } from "../src/formats/index.ts";
 import { compile } from "../src/index.ts";
@@ -107,6 +108,28 @@ describe("values", () => {
 
 	it("does not accept every value for a type named like an Object.prototype member", () => {
 		expect(compile({ type: "constructor" }).check(1)).toBe(false);
+	});
+
+	it("rejects NaN and Infinity as a number or an integer, with or without bounds, as TypeBox does", () => {
+		const schemas = [
+			{ type: "number" },
+			{ type: "integer" },
+			{ type: "number", minimum: 0 },
+			{ type: ["number", "string"] },
+			{ anyOf: [{ type: "number" }, { type: "null" }] },
+			{ type: "object", properties: { a: { type: "number" } } },
+		];
+		for (const schema of schemas) {
+			const { check } = compile(schema);
+			for (const v of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+				const value = schema.type === "object" ? { a: v } : v;
+				expect(check(value), `${JSON.stringify(schema)}: ${v}`).toBe(false);
+				expect(check(value)).toBe(Check(schema, value));
+			}
+		}
+		expect(compile({ type: "number" }).errors(Number.NaN)).toEqual([
+			{ path: "", keyword: "type", message: "expected number, got NaN" },
+		]);
 	});
 
 	it("checks a detached check function", () => {
