@@ -133,6 +133,11 @@ button, textarea { font: inherit; color: inherit; }
 .session-list button[aria-current="true"] { background: rgb(36 120 255 / 22%); color: var(--text); }
 .session-list .when { flex: none; font-size: 0.75rem; }
 .session-list .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-list li { display: flex; align-items: stretch; gap: 4px; }
+.session-list li > button:first-child { flex: 1 1 auto; min-width: 0; }
+.session-list .save-state { flex: none; font-size: 0.7rem; opacity: 0.75; }
+.session-list .save-state.unsaved { color: var(--warn); opacity: 1; }
+.session-list .delete { flex: none; width: 2rem; justify-content: center; padding: 0; }
 
 .chat {
   grid-area: chat;

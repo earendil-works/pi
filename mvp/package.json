@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "1.4.0",
+    "@neondatabase/serverless": "1.2.0",
     "@neurolift-technologies/asfdk": "0.2.4",
     "@vercel/oidc": "3.2.0",
     "@vercel/sandbox": "3.6.1",

@@ -107,6 +107,15 @@
 **Open (owner):** sign-in setup and `NLT_AGENT_ENABLED=1` (Production) are done; the first real run has been attempted and failed, and its cause is the next item. Still open: decide on the once-per-process working directory for the gate, the Node version, and build-time model-data hydration versus a pinned snapshot. Gateway retention is decided: free models only, with a data notice (NLTPI-MVP-003).  
 **Next action:** Owner: sign-in setup. Agent: help verify the first sign-in and the first agent turn once set up.
 
+### NLTPI-MVP-006 — Chat history in Neon
+**Status:** implemented on `ccr-50842984-chat-history` (nlt-pi#35); off until the owner sets `NLT_HISTORY_ENABLED=1`  
+**Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
+**Summary:** The owner added Neon and Mem0 to the Vercel project (2026-11-05) and chose chat history in Neon first. The owner-approved spec is `docs/superpowers/specs/2026-11-05-chat-history-neon-design.md`. Conversations are saved for the signed-in owner only and kept until deleted. Blocked messages are stored as a marker without text. The page saves through an owner-only `/api/conversations`, so `/api/agent` and `/api/govern` are unchanged. The agent still answers each message on its own. `@neondatabase/serverless` 1.2.0 is pinned.  
+**Verified:** offline tests (store SQL against a recording stub; route against an in-memory store; page helpers), mutation checks (owner filter, blocked-text clearing, session owner), and a Playwright check of the page with stubbed API routes (history off, and on: list, save, open, delete).  
+**Not verified:** a real Neon connection and schema creation.  
+**Next (owner):** merge nlt-pi#35, set `NLT_HISTORY_ENABLED=1` in Production, redeploy, reload and send one message, then reload again to see it listed.  
+**Planned next phase:** Mem0 as the agent's memory layer, with its own design. `@mem0/pi-agent-plugin` 0.3.2 has been reviewed: it fits Pi, but its auto-capture, model-callable delete and machine-based scoping need locking down before use in the hosted runner (`noExtensions: true` today).
+
 ### NLTPI-MVP-003 — Provider-agnostic model routing for the governed turn
 **Status:** gateway chosen (Vercel AI Gateway) and wired (nlt-pi#21, #26, #27); not yet run against the real gateway  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  

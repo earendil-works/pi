@@ -161,6 +161,24 @@ Values on the page come from `GET /api/health`, `GET /api/status` and the gate r
 
 The blocked-message wording in `lib/decision.js` is placeholder copy and needs owner (and clinician) review. A framework such as Next.js is a separate decision for the owner.
 
+## Chat history
+
+Saved conversations for the signed-in owner, in the Neon database the owner added to the Vercel project (`DATABASE_URL`). Design: `docs/superpowers/specs/2026-11-05-chat-history-neon-design.md`.
+
+- **Off by default.** Without `NLT_HISTORY_ENABLED=1` in that Vercel environment, `/api/conversations` answers 404 and touches nothing, and the chat page behaves exactly as before: conversations live in the open tab only, and the notice says so.
+- **`/api/conversations`** (`api/conversations.ts`, logic in `src/history/route.ts`, SQL in `src/history/store.ts`). Owner session required (401 without). The routes:
+  - `GET`: list, newest first, at most 100.
+  - `GET ?id=`: one conversation and its messages.
+  - `POST`: save an exchange.
+  - `DELETE ?id=`: delete one conversation.
+
+  The owner is taken from the signed session only. Every statement is parameterised and filtered by `owner_sub`, so another owner's id is answered with 404. Two tables (`chat_conversations`, `chat_messages`) are created on first use.
+- **What is stored.** The owner's messages and the replies, with times and the conversation title. A message the ASFDK gate blocks is stored only as a `blocked` marker with empty text, both for the prompt and for the reply. The page's welcome message is not stored.
+- **Kept until deleted.** Each saved conversation has a ✕ button that asks for confirmation. Nothing expires.
+- **Failure.** A database error answers 503 and logs only `{"event":"history_error","op":"…"}`. Chat keeps working, and the page retries an unsaved exchange with the next one (marked "Not saved").
+- **Not included.** The agent still answers each message on its own: no earlier messages are given to the model. Mem0 (planned as the agent's memory layer), Neon Auth and Neon realtime are not used.
+- **Not verified offline.** A real Neon connection, and the schema being created on Neon. The tests use a stand-in store and a recording SQL stub.
+
 ## Current deployment posture
 
 The Vercel project is configured with `mvp/` as its root and the repository root included as a source directory. This change does not trigger a deployment, configure production environment variables, select an authentication provider, or provision persistence.

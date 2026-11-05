@@ -51,7 +51,7 @@
         <section class="card sessions" aria-labelledby="sessions-heading">
           <h2 id="sessions-heading">Recent sessions</h2>
           <ul id="session-list" class="session-list"></ul>
-          <p class="fine">Kept in this tab only. Closing or reloading the page clears them.</p>
+          <p class="fine" id="session-fine">Kept in this tab only. Closing or reloading the page clears them.</p>
         </section>
         <section class="card brand-card">
           <h2>Governance</h2>
@@ -74,7 +74,7 @@
         <div class="notice" role="note">
           <strong>Preview.</strong> When the owner has turned the agent on and you are signed in, the ASFDK governance
           check runs on each message before the agent does. Otherwise nothing runs: the page asks you to sign in, or shows
-          the check result where the check is offered (it is not on production). Messages are not saved by this page.
+          the check result where the check is offered (it is not on production). <span id="save-notice">Messages are not saved by this page.</span>
         </div>
         <div class="notice" role="note">
           <strong>Reminder.</strong> Free models only. When an agent turn is allowed and runs, your message and any

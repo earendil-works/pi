@@ -12,13 +12,15 @@ import {
   resultLabel,
   validatePrompt,
 } from "./lib/decision.js";
+import { BLOCKED_PLACEHOLDER, HISTORY_NOTICE, createSaver, interpretConversation, interpretHistoryList, shortTitle } from "./lib/history.js";
 
 /**
  * Chat page for the nlt-pi MVP.
  *
  * What it does: sends each message to POST /api/govern (the ASFDK governance gate) and shows the verdict.
- * What it does not do: call a model, run a tool, sign anyone in, or save anything. Conversations live in
- * memory for this tab only. User text is only ever written with textContent.
+ * What it does not do: call a model, run a tool or sign anyone in. Conversations live in memory for this tab,
+ * unless the owner turned on saved history (NLT_HISTORY_ENABLED): then each exchange is also saved through
+ * /api/conversations, and saved conversations can be reopened and deleted. User text is only ever written with textContent.
  */
 
 const REQUEST_TIMEOUT_MS = 20000;
@@ -34,6 +36,8 @@ const els = {
   chips: document.querySelectorAll(".chip"),
   newChat: $("new-chat"),
   sessionList: $("session-list"),
+  sessionFine: $("session-fine"),
+  saveNotice: $("save-notice"),
   title: $("chat-title"),
   healthDot: $("health-dot"),
   healthLabel: $("health-label"),
@@ -61,8 +65,15 @@ const els = {
 };
 
 const tabSession = { id: crypto.randomUUID().slice(0, 8), startedAt: new Date() };
-/** @type {{ id: number, title: string, startedAt: Date, messages: { role: string, text: string, kind?: string, at: Date }[] }[]} */
+/**
+ * @type {{ id: string, title: string, startedAt: Date, messages: { id?: string, role: string, text: string, kind?: string, at: Date }[],
+ *   stored?: boolean, loaded?: boolean, saveState?: "saved" | "unsaved", unsaved?: object[] }[]}
+ */
 const conversations = [];
+/** True only after GET /api/conversations answered 200 for this tab. */
+let historyOn = false;
+/** One save at a time per conversation; see lib/history.js. */
+const saver = createSaver((body) => historyRequest("POST", { body }));
 let active = null;
 let pending = false;
 const latencies = [];
@@ -125,8 +136,18 @@ function renderSessions() {
         button.type = "button";
         if (conversation === active) button.setAttribute("aria-current", "true");
         button.append(el("span", "name", conversation.title), el("span", "when", formatClock(conversation.startedAt)));
+        if (historyOn && conversation.saveState) {
+          button.append(el("span", `save-state ${conversation.saveState}`, conversation.saveState === "saved" ? "Saved" : "Not saved"));
+        }
         button.addEventListener("click", () => select(conversation));
         item.append(button);
+        if (historyOn && conversation.stored) {
+          const remove = el("button", "delete", "✕");
+          remove.type = "button";
+          remove.setAttribute("aria-label", `Delete conversation: ${conversation.title}`);
+          remove.addEventListener("click", () => deleteConversation(conversation));
+          item.append(remove);
+        }
         return item;
       }),
   );
@@ -139,15 +160,18 @@ function select(conversation) {
   els.title.textContent = conversation.title;
   renderLog();
   renderSessions();
+  if (conversation.stored && !conversation.loaded) loadSaved(conversation);
 }
 
 function newConversation() {
   // Do not switch conversations while a turn is streaming.
   if (pending) return;
   const conversation = {
-    id: conversations.length + 1,
+    id: crypto.randomUUID(),
     title: "New conversation",
     startedAt: new Date(),
+    // Started in this tab, so everything it holds is already here.
+    loaded: true,
     messages: [
       {
         role: "assistant",
@@ -247,7 +271,7 @@ async function runAgent(prompt, conversation) {
   if (!response.ok) {
     return { text: "The agent is unavailable right now.", kind: "unavailable" };
   }
-  const reply = { role: "assistant", kind: "allowed", text: "", at: new Date() };
+  const reply = { id: crypto.randomUUID(), role: "assistant", kind: "allowed", text: "", at: new Date() };
   conversation.messages.push(reply);
   const node = renderMessage(reply);
   const bubble = node.querySelector(".bubble");
@@ -304,11 +328,19 @@ async function submit(raw) {
   if (!checked.ok) return;
 
   const conversation = active;
+  // A saved conversation is not ready until its messages have loaded: sending earlier would mix the new exchange with
+  // the loading one. Keep the prompt and (re)try the load instead.
+  if (conversation.stored && !conversation.loaded) {
+    logEvent("Loading the saved conversation first", "busy");
+    loadSaved(conversation);
+    return;
+  }
   const isFirst = conversation.messages.filter((message) => message.role === "user").length === 0;
-  const userMessage = { role: "user", text: checked.prompt, at: new Date() };
+  const exchangeStart = conversation.messages.length;
+  const userMessage = { id: crypto.randomUUID(), role: "user", text: checked.prompt, at: new Date() };
   conversation.messages.push(userMessage);
   if (isFirst) {
-    conversation.title = checked.prompt.length > 28 ? `${checked.prompt.slice(0, 28)}…` : checked.prompt;
+    conversation.title = shortTitle(checked.prompt, 28);
     els.title.textContent = conversation.title;
   }
   els.prompt.value = "";
@@ -323,7 +355,7 @@ async function submit(raw) {
   if (agent) {
     setPending(false);
     if (agent.text) {
-      const failure = { role: "assistant", kind: agent.kind, text: agent.text, at: new Date() };
+      const failure = { id: crypto.randomUUID(), role: "assistant", kind: agent.kind, text: agent.text, at: new Date() };
       conversation.messages.push(failure);
       if (conversation === active) appendMessage(failure);
     }
@@ -346,6 +378,7 @@ async function submit(raw) {
     } else if (agent.done?.status) {
       showGate({ kind: "unavailable", components: [], failClosed: true }, NaN);
     }
+    saveExchange(conversation, conversation.messages.slice(exchangeStart));
     els.prompt.focus();
     return;
   }
@@ -354,7 +387,7 @@ async function submit(raw) {
   const view = interpretGate(result);
   setPending(false);
 
-  const reply = { role: "assistant", kind: view.kind, text: assistantMessage(view), at: new Date() };
+  const reply = { id: crypto.randomUUID(), role: "assistant", kind: view.kind, text: assistantMessage(view), at: new Date() };
   conversation.messages.push(reply);
   showGate(view, elapsed);
   logEvent(
@@ -362,7 +395,90 @@ async function submit(raw) {
     view.kind === "allowed" ? "online" : view.kind === "blocked" ? "idle" : "offline",
   );
   if (conversation === active) appendMessage(reply);
+  saveExchange(conversation, conversation.messages.slice(exchangeStart));
   els.prompt.focus();
+}
+
+/** GET/POST/DELETE /api/conversations. Never throws: a failure is `{ networkError: true }`. */
+async function historyRequest(method, { id, body } = {}) {
+  try {
+    const response = await fetch(`/api/conversations${id ? `?id=${encodeURIComponent(id)}` : ""}`, {
+      method,
+      headers: { accept: "application/json", ...(body ? { "content-type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    return { status: response.status, body: await response.json().catch(() => undefined) };
+  } catch {
+    return { networkError: true };
+  }
+}
+
+/** Saves a finished exchange (one save at a time per conversation). Chat never waits on it. */
+function saveExchange(conversation, exchange) {
+  if (!historyOn) return;
+  saver.enqueue(conversation, exchange).then(renderSessions);
+  renderSessions();
+}
+
+/** Loads a saved conversation's messages the first time it is opened. */
+async function loadSaved(conversation) {
+  if (conversation.loading) return;
+  conversation.loading = true;
+  const read = interpretConversation(await historyRequest("GET", { id: conversation.id }));
+  conversation.loading = false;
+  if (!read) {
+    // Stays not loaded, so opening it again or sending in it retries the load.
+    logEvent("Could not load the saved conversation", "offline");
+    return;
+  }
+  conversation.loaded = true;
+  conversation.messages = read.messages.map((m) => ({
+    id: m.id,
+    role: m.role,
+    kind: m.kind === "blocked" ? "blocked" : m.kind === "unavailable" ? "unavailable" : m.role === "assistant" ? "allowed" : undefined,
+    text: m.kind === "blocked" && m.text === "" ? BLOCKED_PLACEHOLDER : m.text,
+    at: new Date(m.createdAt),
+  }));
+  if (conversation === active) renderLog();
+}
+
+/** Deletes a saved conversation after confirmation; removes it from the sidebar only when the server agreed. */
+async function deleteConversation(conversation) {
+  if (pending || !window.confirm("Delete this conversation?")) return;
+  // Let a save that is still running finish first, so it cannot re-create the conversation after the delete.
+  await saver.idle(conversation);
+  const result = await historyRequest("DELETE", { id: conversation.id });
+  if (result.status !== 200) {
+    logEvent("Could not delete the conversation", "offline");
+    return;
+  }
+  conversation.unsaved = [];
+  conversations.splice(conversations.indexOf(conversation), 1);
+  logEvent("Conversation deleted", "idle");
+  if (conversation === active) newConversation();
+  else renderSessions();
+}
+
+/** Turns saved history on for this tab when the server lists conversations; anything else leaves the page as it was. */
+async function loadHistory() {
+  const view = interpretHistoryList(await historyRequest("GET"));
+  if (view.state !== "on") return;
+  historyOn = true;
+  els.saveNotice.textContent = HISTORY_NOTICE;
+  els.sessionFine.textContent = "Saved until you delete them (✕).";
+  // The sidebar shows the array newest-last; the server lists newest-first.
+  const saved = view.conversations.map((c) => ({
+    id: c.id,
+    title: c.title,
+    startedAt: new Date(c.updatedAt ?? c.createdAt ?? Date.now()),
+    messages: [],
+    stored: true,
+    loaded: false,
+    saveState: "saved",
+  }));
+  conversations.unshift(...saved.reverse());
+  renderSessions();
 }
 
 function autosize() {
@@ -445,6 +561,7 @@ async function loadSession() {
   if (new URLSearchParams(location.search).get("signin") === "failed") {
     els.accountLabel.textContent = "Sign-in failed, or this Vercel account is not allowed";
   }
+  if (view.state === "signed-in" && !historyOn) await loadHistory();
 }
 
 els.signout.addEventListener("click", async () => {
