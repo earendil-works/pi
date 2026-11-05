@@ -178,6 +178,8 @@ export function createSandboxToolOperations(
         return { lexical, real: suffix ? posix.join(resolved, suffix) : resolved };
       } catch (error) {
         if (error instanceof SandboxPolicyError) throw error;
+        // A link that points nowhere resolves to nothing, so climbing past it would let a write create its target.
+        if (await isSymlink(probe)) throw new SandboxPolicyError(`Path is a link that does not resolve: ${path}`);
         if (probe === root) throw error;
         suffix = suffix ? posix.join(posix.basename(probe), suffix) : posix.basename(probe);
         probe = posix.dirname(probe);
@@ -188,6 +190,11 @@ export function createSandboxToolOperations(
       }
     }
     throw new SandboxPolicyError(`Could not resolve path inside the sandbox workspace: ${path}`);
+  }
+
+  async function isSymlink(path: string): Promise<boolean> {
+    const result = await sandbox.runCommand({ cmd: "test", args: ["-L", path], timeoutMs: 15_000 });
+    return result.exitCode === 0;
   }
 
   /** Reviews both the path as given and where it really points, so a link cannot hide a sensitive target. */

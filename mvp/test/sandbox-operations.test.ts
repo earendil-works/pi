@@ -59,6 +59,9 @@ class FakeSandbox implements SandboxLike {
   };
 
   runCommand: SandboxLike["runCommand"] = async (params) => {
+    if (params.cmd === "test") {
+      return { exitCode: this.links.has(params.args?.[1] ?? "") ? 0 : 1 };
+    }
     if (params.cmd === "stat") {
       // The size probe made before a read. Not recorded as an agent command.
       const data = this.files.get(this.resolve(params.args?.[3] ?? ""));
@@ -106,6 +109,14 @@ describe("limits and probes", () => {
     sandbox.statOutput = "not a number";
     await rejects(ops.read.readFile("a.txt"));
     expect(sandbox.reads).toEqual([]);
+  });
+
+  it("refuses to write through a link that points nowhere, so it cannot create a file outside the workspace", async () => {
+    const { sandbox, ops } = setup();
+    sandbox.links.set("/ws/dangling", "/outside/new.txt");
+    await rejects(ops.write.writeFile("dangling", "x"));
+    await rejects(ops.edit.writeFile("dangling", "x"));
+    expect(sandbox.writes).toEqual([]);
   });
 
   it("reviews where a link really points, so a link cannot hide a sensitive file", async () => {
