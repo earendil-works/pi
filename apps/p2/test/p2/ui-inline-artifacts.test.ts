@@ -101,11 +101,11 @@ describe("inline artifacts in Chromium", { skip: !browserTests }, () => {
 		await browser.metrics(390, 844);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
 		await browser.wait(
-			`document.querySelector('.inline-artifact[data-artifact="notes:1"] .md h3')?.textContent==='Inline heading'`,
+			`document.querySelector('.inline-artifact[data-artifact="notes:1"] .elanor-markdown h3')?.textContent==='Inline heading'`,
 		);
 		assert.equal(
 			await browser.evaluate<string>(
-				`document.querySelector('.inline-artifact[data-artifact="notes:1"] .md strong').textContent`,
+				`document.querySelector('.inline-artifact[data-artifact="notes:1"] .elanor-markdown strong').textContent`,
 			),
 			"bold",
 		);

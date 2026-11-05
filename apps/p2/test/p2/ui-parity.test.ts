@@ -324,7 +324,7 @@ describe("Pi Mobile UI regressions", { skip: !browserTests }, () => {
 			);
 			await browser.wait(`document.querySelector('.composer textarea')?.clientHeight >= 96`);
 			await browser.evaluate(`document.querySelector('.composer').requestSubmit()`);
-			await browser.wait(`document.querySelector('.streaming .md')?.textContent.length > 100`);
+			await browser.wait(`document.querySelector('.streaming .elanor-markdown')?.textContent.length > 100`);
 			await browser.call("Input.dispatchMouseEvent", {
 				type: "mouseWheel",
 				x: before.x,
@@ -340,9 +340,11 @@ describe("Pi Mobile UI regressions", { skip: !browserTests }, () => {
 				`(async () => { let previous=${answerTop},stable=0;for(let frame=0;frame<90;frame++){await new Promise(requestAnimationFrame);const next=${answerTop};stable=next===previous?stable+1:0;previous=next;if(stable>=5)return;}throw new Error('Wheel scrolling did not settle');})()`,
 			);
 			const paused = await browser.evaluate<{ top: number; length: number }>(
-				`({top:${answerTop},length:document.querySelector('.streaming .md').textContent.length})`,
+				`({top:${answerTop},length:document.querySelector('.streaming .elanor-markdown').textContent.length})`,
 			);
-			await browser.wait(`document.querySelector('.streaming .md')?.textContent.length > ${paused.length + 150}`);
+			await browser.wait(
+				`document.querySelector('.streaming .elanor-markdown')?.textContent.length > ${paused.length + 150}`,
+			);
 			const after = await browser.evaluate<number>(answerTop);
 			assert(
 				Math.abs(after - paused.top) < 20,

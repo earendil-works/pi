@@ -1,6 +1,7 @@
 // Browser host: a Chord client host over a WebSocket to the server, the selected plugins' web facets, a React root.
 // The server bundles it with those facets (src/hosts/bundles.ts), whose generated entry calls `startWeb`.
 import { createRoot } from "react-dom/client";
+import "../../web/elanor.css";
 import "../../web/style.css";
 import { type WebSocketLike, webSocketLink } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";

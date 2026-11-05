@@ -110,38 +110,41 @@ body,
 	overflow: hidden;
 	overscroll-behavior: none;
 }
-button,
-input,
-textarea,
-select {
-	font: inherit;
-	color: inherit;
-}
-button {
-	cursor: pointer;
-	background: none;
-	border: 0;
-	padding: 0;
-	text-align: inherit;
-}
-button:disabled {
-	cursor: default;
-	opacity: 0.45;
+/* Element resets in a layer below Elanor's (elanor.css): its components style their own elements. */
+@layer p2-reset {
+	button,
+	input,
+	textarea,
+	select {
+		font: inherit;
+		color: inherit;
+	}
+	button {
+		cursor: pointer;
+		background: none;
+		border: 0;
+		padding: 0;
+		text-align: inherit;
+	}
+	button:disabled {
+		cursor: default;
+		opacity: 0.45;
+	}
+	h1,
+	h2,
+	h3,
+	p,
+	figure {
+		margin: 0;
+	}
+	a {
+		color: inherit;
+		text-underline-offset: 3px;
+	}
 }
 :focus-visible {
 	outline: 1px solid var(--text);
 	outline-offset: 2px;
-}
-h1,
-h2,
-h3,
-p,
-figure {
-	margin: 0;
-}
-a {
-	color: inherit;
-	text-underline-offset: 3px;
 }
 .muted {
 	color: var(--muted);
@@ -772,17 +775,6 @@ textarea.input {
 	gap: var(--s3);
 	min-width: 0;
 }
-.streaming > .md > :last-child::after {
-	content: "";
-	display: inline-block;
-	width: 6px;
-	height: 6px;
-	margin-left: var(--s1);
-	border-radius: 50%;
-	background: var(--muted);
-	vertical-align: middle;
-	animation: pulse 1s ease-in-out infinite;
-}
 .message-actions {
 	display: flex;
 	margin: calc(-1 * var(--s2)) 0 0 calc(-1 * var(--s2));
@@ -929,124 +921,6 @@ textarea.input {
 	animation-delay: 0.3s;
 }
 
-/* Markdown */
-.md {
-	overflow-wrap: anywhere;
-}
-.md > * + * {
-	margin-top: 0.7em;
-}
-.marker > .md {
-	margin-top: var(--s2);
-}
-.md p,
-.md li {
-	line-height: 1.6;
-}
-.md ul,
-.md ol {
-	padding-left: 1.3em;
-}
-/* Browser margins off without outweighing the spacing between blocks (zero specificity). */
-:where(.md ul, .md ol, .md h3, .md h4, .md h5, .md h6) {
-	margin: 0;
-}
-/* Room for the widest marker: "10." needs more than "9." (Markdown sets --digits for two or more). */
-.md ol {
-	padding-left: calc(0.7em + var(--digits, 1) * 0.6em);
-}
-/* A short list inside a long one sets no --digits: it must not inherit the outer width. */
-.md li ol {
-	--digits: 1;
-}
-.md li + li {
-	margin-top: 0.25em;
-}
-/* Blocks inside an item (nested lists, code, quotes) sit as close as the next item would, whether the item's text
-   starts with markup or not; a loose item's paragraphs are as far apart as top-level ones. */
-.md li > :is(ul, ol, blockquote, div, hr) {
-	margin-top: 0.25em;
-}
-.md li > p + p {
-	margin-top: 0.7em;
-}
-/* Task items show their checkbox instead of a bullet (in a loose item it sits in the first paragraph). */
-.md li.task {
-	list-style: none;
-}
-.md li.task > input,
-.md li.task > p:first-child > input {
-	margin: 0 0.4em 0 -1.2em;
-	vertical-align: -0.1em;
-}
-.md h3,
-.md h4,
-.md h5,
-.md h6 {
-	font-size: 1em;
-	font-weight: var(--fw-strong);
-}
-.md > * + :is(h3, h4, h5, h6) {
-	margin-top: 1.1em;
-}
-.md code {
-	padding: 0.1em 0.35em;
-	border-radius: var(--radius);
-	background: var(--hover);
-	font-family: var(--mono);
-	font-size: 0.86em;
-}
-.md blockquote {
-	margin: 0;
-	padding-left: var(--s3);
-	border-left: 1px solid var(--line);
-	color: var(--muted);
-}
-.md hr {
-	border: 0;
-	border-top: 1px solid var(--line);
-}
-.md .table-wrap {
-	overflow-x: auto;
-	border: 1px solid var(--line);
-	border-radius: var(--radius);
-}
-.md table {
-	width: 100%;
-	border-collapse: collapse;
-	font-size: 0.92em;
-}
-/* Headers stay on one line; long cells wrap at words instead of making the table scroll far. */
-.md th {
-	white-space: nowrap;
-}
-.md td {
-	overflow-wrap: normal;
-}
-.md th,
-.md td {
-	padding: var(--s1) var(--s2);
-	border-right: 1px solid var(--line);
-	border-bottom: 1px solid var(--line);
-	text-align: left;
-}
-.md th {
-	background: var(--code);
-	font-weight: var(--fw-strong);
-}
-.md th:last-child,
-.md td:last-child {
-	border-right: 0;
-}
-.md tbody tr:last-child td {
-	border-bottom: 0;
-}
-.md .align-center {
-	text-align: center;
-}
-.md .align-right {
-	text-align: right;
-}
 .code-block {
 	overflow: hidden;
 	border: 1px solid var(--line);
@@ -1070,11 +944,6 @@ textarea.input {
 	font-size: var(--fs-sm);
 	line-height: 1.5;
 	tab-size: 3;
-}
-.md .code-block code {
-	padding: 0;
-	background: none;
-	font-size: inherit;
 }
 
 /* highlight.js tokens */

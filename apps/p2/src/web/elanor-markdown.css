@@ -1,0 +1,46 @@
+/* p2's additions to Markdown in Elanor's components (ElanorMarkdown.tsx). */
+
+/* Code indents with tabs as p2's other code does: three columns, not the browser's eight. */
+.elanor-markdown pre {
+	tab-size: 3;
+}
+
+/*
+ * A task item: its checkbox is its marker. It sits in the list's marker column, centred on the first line, so lines
+ * keep their height and a wrapped line starts under the text, not under the checkbox. Read-only: no touch-size target.
+ */
+.elanor-markdown li.task {
+	position: relative;
+	list-style: none;
+}
+.elanor-markdown li.task > .markdown-checkbox,
+.elanor-markdown li.task > p:first-child > .markdown-checkbox {
+	position: absolute;
+	inset-block-start: calc((1lh - var(--semantic-dimension-size-small)) / 2);
+	inset-inline-start: calc(
+		-1 *
+		var(--semantic-dimension-space-padding-xx-large) -
+		var(--semantic-dimension-space-gap-xx-small)
+	);
+	inline-size: var(--semantic-dimension-size-small);
+	block-size: var(--semantic-dimension-size-small);
+	cursor: default;
+}
+
+/* A streaming answer ends in a pulsing dot after its last block. */
+.streaming > .elanor-markdown > :last-child::after {
+	display: inline-block;
+	inline-size: 6px;
+	block-size: 6px;
+	margin-inline-start: var(--semantic-dimension-space-gap-x-small);
+	border-radius: var(--semantic-dimension-radius-full);
+	background: var(--semantic-color-text-secondary);
+	content: "";
+	vertical-align: middle;
+	animation: pulse 1s ease-in-out infinite;
+}
+
+/* A marker's details (a compaction's summary) below its line. */
+.marker > .elanor-markdown {
+	margin-block-start: var(--semantic-dimension-space-gap-small);
+}
