@@ -112,6 +112,16 @@ Tests run offline with Pi's faux provider and a recording fake sandbox (11 tests
 - **Working directory.** The gate's writable directory is chosen once per process (`src/agent/gate-workdir.ts`), never per request. This is still one process-wide change, made once, not removed; an explicit Sleepwalker storage path or a child-process gate would remove it, and other code in the same warm process inherits that cwd.
 - **Not verified.** The offline tests use fakes and the faux provider. A real gateway call, a real sandbox, the workspace root `/vercel/sandbox`, the OIDC token on a deployment, and the stream through Vercel's edge have not been run.
 
+## Owner sign-in
+
+The agent route also requires a signed-in owner. The Vercel Authentication wall in front of the project stays on; this is a second, application-level check, using Sign in with Vercel (OAuth 2.0 code flow with PKCE) at `/api/auth/login`, `/api/auth/callback`, `/api/auth/session` and `/api/auth/logout`.
+
+- `POST /api/agent` answers 401 without a valid session (after the 404 for a disabled route), before the gate, sandbox or token are touched.
+- A session is a signed, HttpOnly, Secure cookie (8 hours). The allow-list is re-checked on every request, so removing a user or changing the secret ends their access.
+- **Owner setup (nothing here is set by the code):** create a Sign in with Vercel app in the Vercel dashboard with the redirect URI `https://<your host>/api/auth/callback`, then set these environment variables in the environment: `VERCEL_APP_CLIENT_ID`, `VERCEL_APP_CLIENT_SECRET`, `VERCEL_APP_REDIRECT_URI` (the exact registered URI), `NLT_SESSION_SECRET` (at least 32 random characters), and `NLT_OWNER_VERCEL_SUBS` (comma-separated Vercel user ids or usernames allowed to sign in). Any missing setting, or an empty allow-list, means nobody can sign in.
+- The redirect URI is fixed per environment, so each host that should sign in needs its own registered URI (a preview URL changes per deployment).
+- Not verified: the live Vercel OAuth endpoints, and whether the userinfo `sub` equals the Vercel account id (usernames are accepted for that reason; ids are more stable). The chat page header shows the sign-in state and a "Sign in with Vercel" link.
+
 ## Free-model selection
 
 `src/gateway/free-models.ts` implements the owner's rule that only free models go through the Vercel AI Gateway. It reads the gateway's public model catalog (`https://ai-gateway.vercel.sh/v1/models`, no authentication) at the time of use and treats a model as free only if it is a language model whose input and output prices are listed and exactly zero, every other price field is also zero, and its price is not flagged `varies_by_provider`. Missing, tiered, regional, unrecognised or malformed pricing is not free.

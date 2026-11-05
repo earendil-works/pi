@@ -38,9 +38,11 @@
           <span class="pill">Vercel MVP</span>
           <span class="pill pill-muted">Preview shell</span>
         </div>
-        <div class="account" title="Sign-in is not built yet">
-          <span class="avatar avatar-muted" aria-hidden="true">?</span>
-          <span>Not signed in</span>
+        <div class="account" id="account" aria-live="polite">
+          <span class="avatar avatar-muted" id="account-avatar" aria-hidden="true">?</span>
+          <span id="account-label">Checking sign-in</span>
+          <a class="signin" id="signin-link" href="/api/auth/login" hidden>Sign in with Vercel</a>
+          <button class="signin" id="signout" type="button" hidden>Sign out</button>
         </div>
       </header>
 

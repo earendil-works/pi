@@ -36,6 +36,7 @@ export const AGENT_REQUEST_BUDGET_MS = 270_000;
 export interface AgentRequest {
   method?: string;
   body?: unknown;
+  headers?: Record<string, string | string[] | undefined>;
 }
 
 export interface AgentResponse {
@@ -59,6 +60,8 @@ export interface AgentRouteDeps {
   run: (deps: AgentRunnerDeps, input: AgentTurnInput) => Promise<AgentTurnResult>;
   log: (line: string) => void;
   now?: () => number;
+  /** True only for a signed-in owner. Required, so a route built without it cannot be reached by anyone. */
+  authorize: (request: AgentRequest) => boolean;
 }
 
 /** Whether the owner enabled the agent route (`NLT_AGENT_ENABLED=1`). Fails closed: anything else is off. */
@@ -122,6 +125,10 @@ export async function handleAgentRequest(
   if (request.method !== "POST") {
     response.setHeader("Allow", "POST");
     response.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+  if (!deps.authorize(request)) {
+    response.status(401).json({ error: "Sign in required" });
     return;
   }
   const prompt = readPrompt(request.body);
