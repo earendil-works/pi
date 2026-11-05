@@ -19,7 +19,8 @@
       "Addressed PR #26 review: aligned route lock stale age (320 s) with the 300 s function limit with a vercel.json test; replaced per-request chdir with a once-per-process work directory (gate-workdir.ts) with an overlap test.",
       "Addressed second PR #26 review: absolute invocation deadline set at route entry and propagated to gate, model lookup, sandbox acquire, lock, policy update and turn; tests with delayed setup stages (mutation-checked).",
       "Fixed the failing Vercel preview build on 6ae8735 (root cause from the Vercel build log: model data not hydrated before build:offline); build now hydrates, builds, and asserts the Pi package entry.",
-      "Owner sign-in with Vercel (OAuth + PKCE), signed session cookie, owner allow-list, 401 on /api/agent without a session, header shows sign-in state. Offline tests only."
+      "Owner sign-in with Vercel (OAuth + PKCE), signed session cookie, owner allow-list, 401 on /api/agent without a session, header shows sign-in state. Offline tests only.",
+      "Copy and records cleanup after #26/#27 merged: chat banner no longer says no model is connected; README notes sign-in needs HTTPS; active-threads MVP-004/005 brought up to date, including the parked client-secret question."
     ],
     "work_in_progress": [],
     "blockers": [
