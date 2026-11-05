@@ -17,6 +17,7 @@ import {
 	BranchIcon,
 	ChevronIcon,
 	FolderIcon,
+	LockIcon,
 	MoonIcon,
 	PencilIcon,
 	PinIcon,
@@ -294,6 +295,7 @@ export const Drawer = memo(function Drawer({
 	onEnvs,
 	onOwnerLink,
 	guest,
+	sandboxes,
 }: {
 	onSearch?: (query: string, archived: boolean) => Promise<SearchResults>;
 	/** Restores an archived session and opens it (at `conversationId`, a message hit's). */
@@ -316,6 +318,8 @@ export const Drawer = memo(function Drawer({
 	onEnvs: () => void;
 	onOwnerLink: () => void;
 	guest?: Grant;
+	/** Environments that are sandboxes (the owner's view): their groups show a lock. */
+	sandboxes?: ReadonlySet<string>;
 }) {
 	const [query, setQuery] = useState("");
 	const [archived, setArchived] = useState(false);
@@ -432,6 +436,11 @@ export const Drawer = memo(function Drawer({
 						<section key={location} className="group">
 							<h3 title={first ? `${first.env ? `${first.env}:` : ""}${first.cwd}` : location}>
 								<FolderIcon />
+								{first?.env && sandboxes?.has(first.env) && (
+									<span className="group-lock" title="Sandbox">
+										<LockIcon size={12} />
+									</span>
+								)}
 								<span className="group-label">{location}</span>
 								{onNewIn && !archived && first && (
 									<button

@@ -174,8 +174,13 @@ export type Machine = { at: (cwd: string) => ExecutionEnv; close: () => void };
 export type HarnessEnvironmentEntry = {
 	/** The machine of the remote environment `env`. Connecting may wait for its first operation. */
 	open: (env: string) => Promise<Machine>;
-	/** The SSH host environment `env`'s tools run on, for the prompt's `cwd` section. */
-	readonly host?: (env: string) => Promise<string | undefined>;
+	/** Where environment `env`'s tools run, for the prompt's `cwd` section, e.g. `the SSH host gpu-box`. */
+	readonly describe?: (env: string) => Promise<string | undefined>;
+	/**
+	 * Whether environment `env` is a sandbox, decided by its configuration's type (never its name): conversations
+	 * working there cannot leave it. Cheap: read on every confinement check.
+	 */
+	readonly sandbox: (env: string) => boolean;
 };
 export const HarnessEnvironments = keyedRegistry<HarnessEnvironmentEntry>("p2.harness-environments");
 
@@ -463,7 +468,24 @@ export type ExecutionEnvironments = {
 	locate(id: ConversationId, context: Context, read?: DocumentReader): Promise<Location>;
 	/** The environment at `location`: one per directory, on one connection per machine, opened at its first use. */
 	at(location: Location): Promise<ExecutionEnv>;
+	/** `env` itself when it is a sandbox (see `HarnessEnvironmentEntry.sandbox`), else undefined; this device never is. */
+	sandbox(env: string | null): Promise<string | undefined>;
 };
+
+/**
+ * The sandbox conversation `id` is confined to: the environment it works in, when that is a sandbox. Decided from its
+ * current location at each call, so it holds per conversation (a subagent placed in a sandbox is confined, its main
+ * agent elsewhere is not) and follows moves.
+ */
+export async function conversationConfinement(
+	environments: ExecutionEnvironments,
+	id: ConversationId,
+	context: Context,
+	read?: DocumentReader,
+): Promise<{ sandbox: string } | undefined> {
+	const sandbox = await environments.sandbox((await environments.locate(id, context, read)).env);
+	return sandbox === undefined ? undefined : { sandbox };
+}
 
 /** Where conversation `id` works and its environment there. */
 export async function conversationEnvironment(
@@ -486,6 +508,7 @@ export async function conversationEnvironment(
 class Execution implements ExecutionEnvironments {
 	#session: Location;
 	readonly #open: (env: string | null, signal: AbortSignal) => Promise<Machine>;
+	readonly #sandbox: (env: string, signal: AbortSignal) => Promise<boolean>;
 	readonly #own: (
 		read: DocumentReader | undefined,
 		id: ConversationId,
@@ -500,11 +523,17 @@ class Execution implements ExecutionEnvironments {
 	constructor(
 		session: Location,
 		open: (env: string | null, signal: AbortSignal) => Promise<Machine>,
+		sandbox: (env: string, signal: AbortSignal) => Promise<boolean>,
 		own: (read: DocumentReader | undefined, id: ConversationId, context: Context) => Promise<Location | undefined>,
 	) {
 		this.#session = session;
 		this.#open = open;
+		this.#sandbox = sandbox;
 		this.#own = own;
+	}
+	async sandbox(env: string | null): Promise<string | undefined> {
+		if (env === null) return undefined;
+		return (await this.#sandbox(env, this.#closing.signal)) ? env : undefined;
 	}
 	get session(): Location {
 		return this.#session;
@@ -645,12 +674,15 @@ function openHarness(self: Self, init: WorkerInit, location: SessionLocation): H
 		const remote = await whenPresent(environments, "remote", signal);
 		return remote.open(env);
 	};
+	/** Whether a remote environment is a sandbox, once the plugin providing them is there. */
+	const sandbox = async (env: string, signal: AbortSignal): Promise<boolean> =>
+		(await whenPresent(environments, "remote", signal)).sandbox(env);
 	const place = async (harness: DurableHarness, at: Location, context: Context) =>
 		(await placements.value.get("subagents")?.place(harness, at, values, context)) ?? { followers: [], own: [] };
 	let reader: DocumentReader | undefined;
 	const execution: Native<Execution> = self.open(
 		async () => {
-			const created = new Execution(location.value, open, async (read, id, context) => {
+			const created = new Execution(location.value, open, sandbox, async (read, id, context) => {
 				const documents = read ?? reader;
 				if (!documents) throw new Error("The session's Harness is not open");
 				return placements.value.get("subagents")?.own(documents, id, context);

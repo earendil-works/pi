@@ -125,6 +125,7 @@ export default defineFacet((host, self) => {
 			{
 				locate: (conversationId, read, context) => locateConversation(harnessValue, conversationId, context, read),
 				directory: (target, from, context) => resolveDirectory(harness().environments, target, from, context),
+				sandbox: (location) => harness().environments.sandbox(location.env),
 			},
 			access,
 		);

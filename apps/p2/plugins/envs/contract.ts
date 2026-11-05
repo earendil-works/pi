@@ -1,7 +1,24 @@
-import { arr, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
+import { arr, bool, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
 import { DirectoryListingSchema, defineRegistry, literal, local, method, record, remote, serverHost } from "@p2/app/v1";
 import type { EnvManager } from "./manager.ts";
 import { EnvConfigSchema } from "./schema.ts";
+
+/** Whether an SSH env can host sandboxes: natively, through Docker, or not (`detail` says why or how). */
+export const SandboxSupportSchema = obj({
+	runtime: union([literal("native"), literal("docker"), literal("none")]),
+	detail: str(),
+});
+export type SandboxSupport = Static<typeof SandboxSupportSchema>;
+
+/**
+ * A sandbox's VM: stopped, or running since `startedAt`; `current` is false while it runs an older configuration
+ * (changes apply when it restarts).
+ */
+export const SandboxStatusSchema = union([
+	obj({ state: literal("stopped") }),
+	obj({ state: literal("running"), startedAt: num(), cpus: num(), memoryMb: num(), current: bool() }),
+]);
+export type SandboxStatus = Static<typeof SandboxStatusSchema>;
 
 export const EnvTestSchema = union([
 	obj({
@@ -14,6 +31,8 @@ export const EnvTestSchema = union([
 		latencyMs: num(),
 		watchMode: union([literal("native"), literal("polling")]),
 		warnings: arr(str()),
+		/** SSH envs: whether the host can run sandboxes. */
+		sandboxes: opt(SandboxSupportSchema),
 	}),
 	obj({
 		ok: literal(false),
@@ -81,6 +100,12 @@ export const Envs = remote("p2.envs", {
 				uploadKey: method(obj({ name: str(), key: str({ maxLength: 16384 }) }), Key),
 				publicKey: method(Name, union([str(), nul()])),
 				listDirectory: method(obj({ env: opt(str()), path: str() }), DirectoryListingSchema),
+				/** A sandbox's VM state, read from its host. */
+				sandboxStatus: method(Name, SandboxStatusSchema),
+				/** Starts a sandbox's VM (with its current configuration) unless it runs. */
+				sandboxStart: method(Name, SandboxStatusSchema),
+				/** Stops a sandbox's VM; conversations working there reconnect and start it again at their next tool call. */
+				sandboxStop: method(Name, SandboxStatusSchema),
 			},
 		},
 	},

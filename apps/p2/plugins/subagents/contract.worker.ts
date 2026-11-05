@@ -208,6 +208,20 @@ const everyTool = (caller: CallerTools): ToolRegistration[] => [
 const scopeOf = (tool: ToolRegistration, access: ReadonlyMap<string, P2Tool>) => access.get(tool.name)?.scope ?? "any";
 
 /**
+ * The own location a one-shot agent inherited from the conversation whose script started it (a subagent with its own
+ * location, or another one-shot agent of one); absent: it follows the session like its caller.
+ */
+export const InheritedLocation = defineDoc<{ location?: Location }>({
+	kind: "p2.inherited-location",
+	version: 1,
+	scope: "conversation",
+	history: "latest",
+	fork: "initial",
+	initial: () => ({}),
+	checkpointWhen: () => true,
+});
+
+/**
  * Gives the subagent working in `conversationId` its own location `location` (a granted `location_move`), in `tx`:
  * its registry entry and its agent cwd. False when the conversation is not a subagent (one-shot agents are not).
  */

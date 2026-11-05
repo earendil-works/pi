@@ -3787,3 +3787,13 @@ button.history-edge:disabled {
 	color: var(--muted);
 	overflow-wrap: anywhere;
 }
+
+/* The lock of a sandboxed location: in the top bar's location line and on sidebar groups. */
+.title-lock {
+	display: inline-flex;
+	margin-right: 3px;
+	vertical-align: -1px;
+}
+.group-lock {
+	display: inline-flex;
+}

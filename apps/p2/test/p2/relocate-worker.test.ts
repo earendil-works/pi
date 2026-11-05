@@ -102,7 +102,8 @@ async function worker(t: test.TestContext, start: Location, machines: Record<str
 						close: () => closed.push(env),
 					};
 				},
-				host: async (env) => env,
+				describe: async (env) => `the test machine ${env}`,
+				sandbox: () => false,
 			},
 		}),
 	);

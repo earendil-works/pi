@@ -36,6 +36,7 @@ import {
 	keepSessions,
 	keptSizes,
 	knownMain,
+	LockIcon,
 	loadKept,
 	locationLabel,
 	MenuIcon,
@@ -103,6 +104,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Drafts } from "../drafts/contract.ts";
+import { Envs } from "../envs/contract.ts";
 import { DirectoryPicker, directoryPickerLayer } from "../envs/contract.web.tsx";
 import { Models } from "../models/contract.ts";
 import type { ResourceSnapshot } from "../models/resources.ts";
@@ -552,6 +554,14 @@ function TopBar({
 	const connected = useConnected();
 	const nav = useNavigation();
 	const route = useRoute();
+	// Only the owner reads environments: guests see the location without the sandbox lock.
+	const envs = useReadable(useObject(Envs, owner ? {} : undefined)?.envs);
+	const sandboxed = envs?.find((env) => env.name === session?.env)?.config.type === "gondolin";
+	const lock = sandboxed && (
+		<span className="title-lock">
+			<LockIcon size={11} />
+		</span>
+	);
 	return (
 		<header className="topbar">
 			<button
@@ -587,8 +597,16 @@ function TopBar({
 									type="button"
 									className="title-cwd"
 									onClick={() => openLayer(directoryPickerLayer(session.env ?? null, session.cwd))}
+									{...(sandboxed ? { title: `Sandbox ${session.env}: tools run in its VM` } : {})}
 								>
-									{moving ? "Moving…" : locationLabel(session.env, session.cwd)}
+									{moving ? (
+										"Moving…"
+									) : (
+										<>
+											{lock}
+											{locationLabel(session.env, session.cwd)}
+										</>
+									)}
 								</button>
 							) : (
 								<p>{locationLabel(session.env, session.cwd)}</p>

@@ -1,0 +1,42 @@
+/* Sandboxes (Gondolin VMs on an SSH environment): list rows, VM state, folders. */
+.env-sandbox {
+	padding-left: calc(var(--x) + var(--s5));
+}
+.vm-dot {
+	display: inline-block;
+	width: 7px;
+	height: 7px;
+	margin-right: var(--s1);
+	border-radius: 50%;
+	background: var(--faint);
+	vertical-align: middle;
+}
+.vm-dot.running {
+	background: var(--ok);
+}
+.vm-dot.unknown {
+	border: 1px solid var(--faint);
+	background: transparent;
+}
+.sandbox-intro {
+	margin-bottom: var(--s3);
+}
+.sandbox-status {
+	margin-bottom: var(--s3);
+}
+.sandbox-folders {
+	gap: var(--s2);
+}
+.sandbox-folder {
+	display: flex;
+	align-items: center;
+	gap: var(--s3);
+}
+.sandbox-folder > span:first-child {
+	flex: 1;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.directory-leave {
+	margin-top: var(--s3);
+}

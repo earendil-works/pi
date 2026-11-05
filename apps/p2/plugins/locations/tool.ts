@@ -29,15 +29,25 @@ export type LocationTools = {
 	readonly locate: (id: ConversationId, read: DocumentReader, context: Context) => Promise<Location>;
 };
 
+/**
+ * The sandbox a conversation working at `here` is confined to, decided by its environment's configured type: it may
+ * move within the sandbox, never out of it (only the owner's Relocate leaves it).
+ */
+export const sandboxAt = (here: Location, envs: readonly EnvInfo[]): string | undefined =>
+	here.env !== null && envs.some((env) => env.name === here.env && env.type === "gondolin") ? here.env : undefined;
+
 const describeEnv = (env: EnvInfo, here: Location): string => {
-	const target = `${env.user ? `${env.user}@` : ""}${env.host}${env.port ? `:${env.port}` : ""}`;
+	const target =
+		env.type === "gondolin"
+			? `sandbox (a VM on ${env.host})`
+			: `ssh ${env.user ? `${env.user}@` : ""}${env.host}${env.port ? `:${env.port}` : ""}`;
 	const tested =
 		env.tested === undefined
 			? "not tested"
 			: env.tested.ok
 				? `tested ok (${env.tested.platform} ${env.tested.arch})`
 				: `last test failed: ${env.tested.error}`;
-	return `- ${env.name}: ssh ${target} · ${tested}${here.env === env.name ? " · you are here" : ""}`;
+	return `- ${env.name}: ${target} · ${tested}${here.env === env.name ? " · you are here" : ""}`;
 };
 
 export function createLocationExtension({ server, locate }: LocationTools) {
@@ -47,7 +57,9 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 		here: Location,
 		context: Context,
 	): Promise<{ listing: DirectoryListing; env: string | null } | string> => {
-		const names = (await server.envs(context)).map((env) => env.name);
+		const envs = await server.envs(context);
+		const names = envs.map((env) => env.name);
+		const sandbox = sandboxAt(here, envs);
 		const parsed =
 			args.location !== undefined
 				? parseLocation(args.location, names, here)
@@ -56,6 +68,8 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 						...(args.env === undefined || args.env === here.env ? { cwd: here.cwd } : {}),
 					});
 		if ("error" in parsed) return parsed.error;
+		if (sandbox !== undefined && parsed.env !== sandbox)
+			return `You work in sandbox ${sandbox} and cannot leave it; use paths inside ${sandbox}.`;
 		if (parsed.env !== null && !names.includes(parsed.env))
 			return `Unknown environment "${parsed.env}" (location_envs lists them).`;
 		try {
@@ -86,7 +100,7 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 			defineP2Tool({
 				name: "location_envs",
 				description:
-					"List the environments you can work on: this device and the configured SSH environments (host, last test). Shows where you work now.",
+					"List the environments you can work on: this device, the configured SSH environments (host, last test) and sandboxes. Shows where you work now.",
 				parameters: obj({}, { open: true }),
 				replay: "safe",
 				origin: "owner",
@@ -98,6 +112,15 @@ export function createLocationExtension({ server, locate }: LocationTools) {
 					});
 					const here = await locate(api.conversationId, api, context);
 					const envs = await server.envs(context);
+					const sandbox = sandboxAt(here, envs);
+					if (sandbox !== undefined)
+						return reply(
+							[
+								`You work at ${locationText(here)}, in sandbox ${sandbox}: a VM whose tools reach only its own files and allowed hosts.`,
+								"You cannot leave it; location_dirs and location_move take paths inside it.",
+								...envs.filter((env) => env.name === sandbox).map((env) => describeEnv(env, here)),
+							].join("\n"),
+						);
 					// The session's move is kept on conversation 1 whichever top-level conversation asked for it.
 					const move = (await isTopLevel(api, api.conversationId, context))
 						? await api.snapshot(LocationMoveDoc, ROOT_CONVERSATION_ID, context)

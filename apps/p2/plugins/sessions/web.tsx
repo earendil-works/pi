@@ -28,6 +28,7 @@ import {
 	useSheet,
 } from "@p2/app/v1/web";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Envs } from "../envs/contract.ts";
 import { directoryPickerLayer } from "../envs/contract.web.tsx";
 import { Search, SessionReads } from "../search/contract.ts";
 import { SessionStatus } from "../status/contract.ts";
@@ -199,6 +200,12 @@ function Sidebar() {
 		if (shown && marks && latest > read)
 			void marks.markRead({ session: shown, through: latest }, BACKGROUND_CONTEXT).catch(() => {});
 	}, [marks, shown, latest, read]);
+	// Sandboxed groups show a lock; only the owner reads environments.
+	const envs = useReadable(useObject(Envs, owner ? {} : undefined)?.envs);
+	const sandboxes = useMemo(
+		() => new Set((envs ?? []).flatMap((env) => (env.config.type === "gondolin" ? [env.name] : []))),
+		[envs],
+	);
 	const search = liveIn(useObject(Search, owner ? {} : undefined), "owner");
 	// A rebuild shows as running at once; it is long work (a job), so the sheet shows it running until it is done.
 	const [rebuilds, reindex] = useOptimisticCall(
@@ -293,6 +300,7 @@ function Sidebar() {
 			<Drawer
 				sessions={sessions}
 				guest={guest}
+				sandboxes={sandboxes}
 				activeId={route.session}
 				conversationId={route.conversation}
 				connected={connected}

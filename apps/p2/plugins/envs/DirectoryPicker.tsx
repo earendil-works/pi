@@ -130,6 +130,16 @@ export function DirectoryPicker({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: lists again when the folder or environment changes; load is recreated each render.
 	useEffect(() => load(shown), [shown, env, service]);
 	const moves = moving !== undefined && moving.env !== env;
+	const sandboxHost = (name: string | null) => {
+		const config = envs.find((entry) => entry.name === name)?.config;
+		return config?.type === "gondolin" ? config.host : undefined;
+	};
+	const sandbox = sandboxHost(env) !== undefined;
+	// Leaving a sandbox is confirmed: outside every sandbox its tools run unconfined, in another one they get its
+	// folders and network access.
+	const leaves = moves && sandboxHost(moving.env) !== undefined;
+	const [leaving, setLeaving] = useState<string>();
+	const target = listing ? listingKey(env, listing.path) : undefined;
 
 	return (
 		<Sheet title="Working directory" onClose={onClose}>
@@ -144,11 +154,26 @@ export function DirectoryPicker({
 						disabled={loading}
 					>
 						<option value="">This device</option>
-						{envs.map((entry) => (
-							<option key={entry.name} value={entry.name}>
-								{entry.name} (remote)
-							</option>
-						))}
+						{envs.map(
+							(entry) =>
+								entry.config.type === "ssh" && (
+									<option key={entry.name} value={entry.name}>
+										{entry.name} (remote)
+									</option>
+								),
+						)}
+						{envs.some((entry) => entry.config.type === "gondolin") && (
+							<optgroup label="Sandboxes">
+								{envs.map(
+									(entry) =>
+										entry.config.type === "gondolin" && (
+											<option key={entry.name} value={entry.name}>
+												{entry.name} · sandbox on {entry.config.host}
+											</option>
+										),
+								)}
+							</optgroup>
+						)}
 					</select>
 				)}
 				<form
@@ -168,16 +193,47 @@ export function DirectoryPicker({
 						disabled={loading}
 					/>
 				</form>
-				{listing && (
-					<button
-						type="button"
-						className="button primary block directory-use"
-						disabled={loading}
-						onClick={() => onChange(env, listing.path)}
-					>
-						{moves ? "Move session to" : "Use"} {locationLabel(env, listing.path)}
-					</button>
+				{sandbox && (
+					<p className="muted small directory-note">
+						Tools of this session run in the {env} VM and can't leave it. Only you can move the session out.
+					</p>
 				)}
+				{listing &&
+					(leaves && leaving === target ? (
+						<div className="notice env-test directory-leave" role="alert">
+							<p>
+								<strong>Leave sandbox {moving?.env}?</strong>
+							</p>
+							<p>
+								{sandbox
+									? `Moving to ${locationLabel(env, listing.path)} gives this session's tools sandbox ${env}'s folders and allowed hosts instead.`
+									: `Moving to ${locationLabel(env, listing.path)} lets this session's tools run directly on ${env ?? "this device"}, with its full network access and files.`}
+							</p>
+							<p className="muted small">Files written in the sandbox stay in its folders.</p>
+							<div className="inline-form">
+								<button
+									type="button"
+									className="button danger"
+									disabled={loading}
+									onClick={() => onChange(env, listing.path)}
+								>
+									Move out
+								</button>
+								<button type="button" className="button" onClick={() => setLeaving(undefined)}>
+									Cancel
+								</button>
+							</div>
+						</div>
+					) : (
+						<button
+							type="button"
+							className="button primary block directory-use"
+							disabled={loading}
+							onClick={() => (leaves ? setLeaving(target) : onChange(env, listing.path))}
+						>
+							{moves ? "Move session to" : "Use"} {locationLabel(env, listing.path)}
+						</button>
+					))}
 				{moves && (
 					<p className="muted small directory-note">
 						Tools will run {env === null ? "on this device" : `on ${env}`}. The history stays; files are not

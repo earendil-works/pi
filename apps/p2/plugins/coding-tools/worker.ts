@@ -23,8 +23,9 @@ export default defineFacet((host) => {
 					if (input.env?.cwd === undefined) return undefined;
 					const { env } = await locateConversation(harness, input.conversationId, context, input.read);
 					if (!env) return input.env.cwd;
-					const ssh = await environments.value.get("remote")?.host?.(env);
-					return `${input.env.cwd}\nTools run on the remote environment "${env}" (SSH host ${ssh}), not on the machine running p2.`;
+					const where =
+						(await environments.value.get("remote")?.describe?.(env)) ?? `the remote environment "${env}"`;
+					return `${input.env.cwd}\nTools run on ${where}, not on the machine running p2.`;
 				}),
 			],
 		});

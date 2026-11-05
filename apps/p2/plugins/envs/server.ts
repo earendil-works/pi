@@ -1,3 +1,4 @@
+import { pluginFile } from "@earendil-works/chord/plugins";
 import { nul, num, obj, str, union } from "@earendil-works/pi-schema";
 import {
 	contribute,
@@ -16,7 +17,7 @@ import { Hosts, Server } from "@p2/app/v1/server";
 import { Catalog, type Session } from "../sessions/contract.ts";
 import { StatusStore } from "../status/contract.ts";
 import { type Child, ChildStore } from "../subagents/contract.ts";
-import { envRevision } from "./config.ts";
+import { envRevision, sandboxesOn } from "./config.ts";
 import { EnvManagers, EnvService, Envs, EnvTestSchema } from "./contract.ts";
 import { EnvManager } from "./manager.ts";
 import { EnvStore } from "./store.ts";
@@ -74,7 +75,9 @@ export default defineFacet((host) => {
 				const edited = Object.keys({ ...previous, ...revisions }).filter(
 					(name) => previous[name] !== revisions[name],
 				);
-				for (const name of edited)
+				// A host's edit reaches its sandboxes too: their connections go through it.
+				const affected = new Set(edited.flatMap((name) => [name, ...sandboxesOn(configs, name).map(([on]) => on)]));
+				for (const name of affected)
 					for (const session of sessionsUsing(name, sessions, children))
 						if (workers[session.id]?.running) draft.pending[session.id] = workers[session.id]!.generation;
 			}, ctx);
@@ -108,6 +111,7 @@ export default defineFacet((host) => {
 				new EnvManager(
 					server.info.value.dataDir,
 					async (name) => sessionsUsing(name, catalog.sessions.value, children.children.value).length,
+					pluginFile("sandbox"),
 				),
 			(opened) => opened.close(),
 		);
@@ -204,6 +208,9 @@ export default defineFacet((host) => {
 				publicKey: async ({ name }) => (await manager().manager.publicKey(name)) ?? null,
 				listDirectory: ({ env, path }) =>
 					env ? manager().manager.listDirectory(env, path) : listLocalDirectory(path),
+				sandboxStatus: ({ name }) => manager().manager.sandboxStatus(name),
+				sandboxStart: ({ name }) => manager().manager.sandboxStart(name),
+				sandboxStop: ({ name }) => manager().manager.sandboxStop(name),
 			},
 		};
 	});

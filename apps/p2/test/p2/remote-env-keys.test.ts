@@ -50,10 +50,10 @@ for (const via of ["token", "relay", "proxy"] as const)
 			assert.equal(stored.identityFile, join(fixture.dataDir, "ssh", "keys", "box"));
 			assert.equal(await readFile(stored.identityFile, "utf8"), key);
 			assert.equal((await stat(stored.identityFile)).mode & 0o777, 0o600);
-			const published = await until(
-				envs.envs,
-				(entries) => entries?.[0]?.config.identityFile === stored.identityFile,
-			);
+			const published = await until(envs.envs, (entries) => {
+				const config = entries?.[0]?.config;
+				return config?.type === "ssh" && config.identityFile === stored.identityFile;
+			});
 			assert(!JSON.stringify(published).includes("PRIVATE KEY"));
 			await assert.rejects(envs.uploadKey({ name: "box", key: "invalid" }, BACKGROUND_CONTEXT), /private key/i);
 			await assert.rejects(envs.uploadKey({ name: "box", key: "PRIVATE KEY".repeat(2000) }, BACKGROUND_CONTEXT));
