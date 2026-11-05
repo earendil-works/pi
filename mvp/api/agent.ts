@@ -10,6 +10,7 @@ import { getVercelOidcToken } from "@vercel/oidc";
 import type { AgentRunnerDeps, AgentTurnInput, AgentTurnResult } from "../src/agent/runner.ts";
 import { gateWorkDir } from "../src/agent/gate-workdir.ts";
 import { AGENT_LOCK_STALE_MS, type AgentRequest, type AgentResponse, handleAgentRequest } from "../src/agent/route.ts";
+import { sessionFromCookie } from "../src/auth/owner.ts";
 import { evaluateGate } from "../src/gate.ts";
 import { AsfdkHarness, Channel } from "../src/harness/harness.ts";
 import { createVercelSandboxClient } from "../src/sandbox/vercel-client.ts";
@@ -37,6 +38,8 @@ async function gate(prompt: string) {
 export default async function handler(request: AgentRequest, response: AgentResponse) {
   await handleAgentRequest(request, response, {
     env: process.env,
+    // Only a signed-in owner (allow-listed Vercel user) may call the route; see src/auth/owner.ts.
+    authorize: (req) => sessionFromCookie(process.env, req.headers?.cookie) !== undefined,
     createDeps: ({ egressAll }) => ({
       gate,
       sandboxClient: createVercelSandboxClient(),

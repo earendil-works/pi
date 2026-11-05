@@ -45,7 +45,7 @@ function makeDeps(env: AgentRouteDeps["env"], result?: AgentTurnResult | (() => 
     return result ?? { status: "completed", text: "hi", model: "free/model" };
   });
   const log = vi.fn();
-  const deps: AgentRouteDeps = { env, createDeps, run, log };
+  const deps: AgentRouteDeps = { env, createDeps, run, log, authorize: () => true };
   return { deps, createDeps, run, log };
 }
 
@@ -72,6 +72,23 @@ describe("handleAgentRequest", () => {
     expect(createDeps).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalled();
+  });
+
+  it("answers 401 and runs nothing without a signed-in owner, but still 404 when disabled", async () => {
+    const closed = makeDeps(on);
+    closed.deps.authorize = () => false;
+    const r = makeResponse();
+    await handleAgentRequest(post({ prompt: "hi" }), r.response, closed.deps);
+    expect(r.out.status).toBe(401);
+    expect(closed.createDeps).not.toHaveBeenCalled();
+    expect(closed.run).not.toHaveBeenCalled();
+    expect(closed.log).not.toHaveBeenCalled();
+
+    const off = makeDeps({});
+    off.deps.authorize = () => false;
+    const o = makeResponse();
+    await handleAgentRequest(post({ prompt: "hi" }), o.response, off.deps);
+    expect(o.out.status).toBe(404);
   });
 
   it("rejects non-POST and bad bodies without running", async () => {
