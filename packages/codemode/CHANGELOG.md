@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `resolveSchemaRef(ref, root)`, which returns the subschema a local `$ref` (`#`, `#/$defs/Item`) names in a schema, with URI-decoded and JSON Pointer unescaped segments ([#11803](https://github.com/earendil-works/pi/issues/11803))
+
+### Fixed
+
+- Fixed `schemaToType()`, `renderDeclarations()`, `renderToolSignature()`, and `renderToolSample()` throwing `URIError` for a local `$ref` with a malformed percent escape (`#/$defs/%E0`), so one such tool schema failed every caller that renders all tools. The reference now renders as `unknown`, like a reference that names nothing ([#11803](https://github.com/earendil-works/pi/issues/11803))
+
 ## [1.5.0] - 2026-11-02
 
 ### Changed
