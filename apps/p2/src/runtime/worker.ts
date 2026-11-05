@@ -181,13 +181,13 @@ export const HarnessEnvironments = keyedRegistry<HarnessEnvironmentEntry>("p2.ha
 
 /**
  * What keeps the worker process alive besides held references (Chord's own count): its Durable tasks, calls under way
- * (`call`), viewers plugins count themselves, and the relocation fence. A JSON watchable of those counts
- * (`workerMain`'s `busy`): the worker is idle when every count is zero.
+ * (`call`), viewers plugins count themselves, conversations whose prompt cache is kept warm, and the relocation fence.
+ * A JSON watchable of those counts (`workerMain`'s `busy`): the worker is idle when every count is zero.
  */
 export class Liveness implements Watchable<Readonly<Record<string, number>>> {
 	#relocating = false;
 	#stopping = false;
-	#counts: Readonly<Record<string, number>> = { activeCalls: 0, viewers: 0, durableTasks: 0 };
+	#counts: Readonly<Record<string, number>> = { activeCalls: 0, viewers: 0, durableTasks: 0, cacheWarming: 0 };
 	readonly #listeners = new Set<() => void>();
 	get value(): Readonly<Record<string, number>> {
 		return this.#counts;
@@ -225,7 +225,7 @@ export class Liveness implements Watchable<Readonly<Record<string, number>>> {
 		this.#counts = { ...this.#counts, [kind]: count };
 		for (const listener of [...this.#listeners]) listener();
 	}
-	add(kind: "activeCalls" | "viewers", delta: number): void {
+	add(kind: "activeCalls" | "viewers" | "cacheWarming", delta: number): void {
 		this.#set(kind, (this.#counts[kind] ?? 0) + delta);
 	}
 	setDurableTasks(count: number): void {

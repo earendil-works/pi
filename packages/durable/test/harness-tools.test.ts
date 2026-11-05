@@ -20,6 +20,7 @@ import {
 	defineTask,
 	defineTool,
 	type EntryRecord,
+	type GenerationRequest,
 	GenerationTask,
 	type Harness,
 	hook,
@@ -736,7 +737,7 @@ describe("generation hooks", () => {
 		});
 		const responses: string[] = [];
 		addHooks(setup.registry, GenerationTask, {
-			afterResponse: (message) => void responses.push(textOf(message) ?? ""),
+			afterResponse: ({ message }) => void responses.push(textOf(message) ?? ""),
 		});
 		let yields = 0;
 		addHooks(setup.registry, GenerationTask, {
@@ -789,6 +790,48 @@ describe("generation hooks", () => {
 			{ hook: "first", model: "faux/faux-1", payload: { body: 2 } },
 			{ hook: "keep", model: "faux/faux-1", payload: { body: 2, first: true } },
 		]);
+		await harness.close(context);
+	});
+
+	it("gives afterResponse the request each attempt sent", async () => {
+		const setup = chatSetup();
+		addHooks(setup.registry, GenerationTask, {
+			beforeRequest: ({ messages }) => ({
+				messages: [...messages, { role: "user", content: "injected", timestamp: 0 }],
+			}),
+		});
+		let replace = false;
+		addHooks(setup.registry, GenerationTask, {
+			beforeProviderRequest: ({ payload }) =>
+				replace ? { payload: { ...(payload as object), changed: true } } : undefined,
+		});
+		const requests: GenerationRequest[] = [];
+		addHooks(setup.registry, GenerationTask, {
+			afterResponse: ({ request }) => void requests.push(request!),
+		});
+		let yields = 0;
+		addHooks(setup.registry, GenerationTask, {
+			onYield: () => (yields++ === 0 ? { continue: "again" } : undefined),
+		});
+		const respond: FauxResponseStep = async (_context, options, _state, model) => {
+			await options!.onPayload!({ body: 1 }, model);
+			replace = true;
+			return DONE;
+		};
+		const { harness, status } = await run(setup, [respond, respond]);
+		expect(status).toBe("done");
+		const [first, second] = requests;
+		expect(`${first!.model.provider}/${first!.model.id}`).toBe("faux/faux-1");
+		// The messages are the ones sent: after the `beforeRequest` chain.
+		expect(textOf(first!.messages.at(-1) as never)).toBe("injected");
+		// The options are the request's own, without what belongs to the attempt.
+		expect(typeof first!.options.sessionId).toBe("string");
+		expect(first!.options.sessionId).toBe(second!.options.sessionId);
+		expect(first!.options.signal).toBeUndefined();
+		expect(first!.options.onPayload).toBeUndefined();
+		expect(first!.options.telemetry).toBeUndefined();
+		// Only the second request's body was replaced by a hook.
+		expect([first!.payloadReplaced, second!.payloadReplaced]).toEqual([false, true]);
 		await harness.close(context);
 	});
 
@@ -851,13 +894,16 @@ describe("generation hooks", () => {
 		const setup = chatSetup({ deferred: { pendingFetches: 1, pollAfterMs: 1 } });
 		const observed: string[] = [];
 		addHooks(setup.registry, GenerationTask, {
-			afterResponse: (message) => void observed.push(`${message.stopReason}:${textOf(message) ?? ""}`),
+			afterResponse: ({ message, request }) =>
+				void observed.push(
+					`${message.stopReason}:${textOf(message) ?? ""}:${request === undefined ? "polled" : "sent"}`,
+				),
 		});
 		setup.settings.stream = { deferred: true };
 		const result = await run(setup, [fauxAssistantMessage([fauxText("late")])]);
 		expect(result.status).toBe("done");
 		// The still-deferred results are not terminal.
-		expect(observed).toEqual(["stop:late"]);
+		expect(observed).toEqual(["stop:late:polled"]);
 		await result.harness.close(context);
 	});
 

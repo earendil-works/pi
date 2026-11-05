@@ -48,6 +48,12 @@ const schema = obj({
 	 */
 	codemode: opt(bool()),
 	/**
+	 * pi's `cacheWarming`, kept by the cache-warming plugin: "idle" (default) keeps a conversation's prompt cache entry
+	 * warm while its run streams and for up to 30 minutes after it settled, "streaming" only while it streams, "off"
+	 * never.
+	 */
+	cacheWarming: opt(StringEnum(["off", "streaming", "idle"] as const)),
+	/**
 	 * p2 addition: the owner's name on the entries the owner writes from now on (default "Owner"); entries already
 	 * written keep the name they were written with. No control characters, `<` or `>`.
 	 */

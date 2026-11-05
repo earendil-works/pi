@@ -10,6 +10,7 @@ import type {
 	Model,
 	Models,
 	ModelThinkingLevel,
+	SimpleStreamOptions,
 	ThinkingBudgets,
 	Tool,
 	ToolCall,
@@ -980,6 +981,30 @@ export interface HookApi extends DocumentReader {
 
 export type HookResult<T> = T | undefined | Promise<T | undefined>;
 
+/**
+ * A provider request one generation attempt sent, as it was passed to `models.streamSimple()`: sending it again with the
+ * same model, messages and options repeats it, which keeps its prompt cache entry alive (cache warming).
+ */
+export type GenerationRequest = {
+	readonly model: Model<Api>;
+	/** The model context after the `beforeRequest` chain. */
+	readonly messages: readonly Message[];
+	/** The request's options without the attempt's `signal`, `telemetry` and `onPayload`. */
+	readonly options: SimpleStreamOptions;
+	/**
+	 * Whether a `beforeProviderRequest` hook replaced the provider request body. A resend without that chain then
+	 * sends a different body.
+	 */
+	readonly payloadReplaced: boolean;
+};
+
+/** A terminal provider message for `afterResponse`. */
+export type GenerationResponse = {
+	readonly message: AssistantMessage;
+	/** The request that produced it; `undefined` for a polled deferred response, which sent no request. */
+	readonly request: GenerationRequest | undefined;
+};
+
 /** Hooks of the built-in generation task. */
 export interface GenerationHooks {
 	/** Before every request attempt, including recovery; the result is used for that request only. */
@@ -998,8 +1023,8 @@ export interface GenerationHooks {
 		api: HookApi,
 		context: Context,
 	): HookResult<{ readonly payload: unknown }>;
-	/** Every terminal provider message, before classification. */
-	afterResponse(message: AssistantMessage, api: HookApi, context: Context): void | Promise<void>;
+	/** Every terminal provider message, before classification, with the request that produced it. */
+	afterResponse(response: GenerationResponse, api: HookApi, context: Context): void | Promise<void>;
 	/** A final answer; the first `continue` appends a user message and continues the run. */
 	onYield(answer: AssistantMessage, api: HookApi, context: Context): HookResult<{ readonly continue: UserInput }>;
 	/** After every tool of the round is terminal; `results` are the round's result entries in call order. */

@@ -3382,8 +3382,8 @@ interface GenerationHooks {
     api: HookApi,
     context: Context,
   ): HookResult<{ readonly payload: unknown }>;
-  /** Every terminal provider message, before classification. */
-  afterResponse(message: AssistantMessage, api: HookApi, context: Context): void | Promise<void>;
+  /** Every terminal provider message, before classification, with the request that produced it. */
+  afterResponse(response: GenerationResponse, api: HookApi, context: Context): void | Promise<void>;
   /** A final answer; `continue` appends a user message and continues the run. */
   onYield(answer: AssistantMessage, api: HookApi, context: Context): HookResult<{ readonly continue: UserInput }>;
   /** After every tool of the round is terminal; `results` are the round's result entries in call order. */
@@ -3391,6 +3391,26 @@ interface GenerationHooks {
   /** After a run answered: the tasks to run before it ends (section 8.3). */
   afterRun(run: RunSummary, api: HookApi, context: Context): HookResult<{ readonly tasks: readonly RunEndTask[] }>;
 }
+
+/**
+ * A provider request one attempt sent, as passed to `models.streamSimple()`: sending
+ * it again repeats it, which keeps its prompt cache entry alive (cache warming).
+ */
+type GenerationRequest = {
+  readonly model: Model<Api>;
+  /** The model context after the `beforeRequest` chain. */
+  readonly messages: readonly Message[];
+  /** The request's options without the attempt's `signal`, `telemetry` and `onPayload`. */
+  readonly options: SimpleStreamOptions;
+  /** Whether a `beforeProviderRequest` hook replaced the body; a resend without the chain differs. */
+  readonly payloadReplaced: boolean;
+};
+
+/** `request` is `undefined` for a polled deferred response, which sent no request. */
+type GenerationResponse = {
+  readonly message: AssistantMessage;
+  readonly request: GenerationRequest | undefined;
+};
 
 /** How a run ended, for `afterRun`. */
 type RunSummary = {
@@ -4915,7 +4935,10 @@ The run's inputs live in `pi.live.run`, not in the task input.
   stream options, and reruns `beforeRequest`; after a crash the attempt is
   charged instead, as above.
 - `afterResponse` observes every terminal message, from `request` or `poll`,
-  before classification; a still deferred result is not terminal.
+  before classification; a still deferred result is not terminal. It gets the
+  request the attempt sent (model, messages after `beforeRequest`, options
+  without the attempt's signal, telemetry and payload callback, and whether a
+  `beforeProviderRequest` hook replaced the body); a polled response has none.
 - Before classifying, the handler stops the partial throttle and awaits any
   partial commit in flight, so no stale partial lands after the outcome. The
   terminal message is classified in one commit that also clears the partial:
