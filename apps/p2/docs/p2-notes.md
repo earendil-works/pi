@@ -897,6 +897,12 @@ translated phone drawer and intercept chat taps.
   Web: route-owned side sheet or resizable bottom panel, tabs, new/close/foreground-job confirmation, browser-native
   selection/copy, mouse/touch scrolling, pastes, IME corrections and the remembered Ctrl/Alt/Esc/Tab/arrows/symbol key
   row. Placement is remembered. The wasm, wrapper, renderer and input helper are independent copies under p2.
+  Touch: a long press on a character of the output is Chrome's (word selection, handles, Copy); one on a blank cell
+  puts the transparent textarea under the finger for Chrome's Paste (sent as a paste, bracketed when the program asks).
+  Touch long presses and their contextmenu are never cancelled. While output is selected, rows are not redrawn (15 s
+  after the selection last changed, or until it ends, the user types, pastes or scrolls), since redrawing a row drops
+  a selection in it. Copy joins soft-wrapped rows and drops the blanks that fill rows. `terminal-clipboard.test.ts`
+  covers this as far as CDP can (headless Chromium has no long-press gesture, selection handles or native menus).
   SSH configuration comes from the envs plugin and the conversation's location environment; the separate `terminal-sessions.json`
   mapping is no longer read. Host keys use `ssh/known_hosts` and `pi-env-<name>` aliases. `envs.test.ts` exercises a
   remote terminal against a disposable localhost SSH fixture; no real remote host is used. Windows PTYs remain unsupported. The workspace has an owner-only

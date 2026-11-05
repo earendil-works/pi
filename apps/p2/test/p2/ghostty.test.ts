@@ -29,6 +29,19 @@ function terminal(cols = 20, rows = 5, onReply?: (bytes: Uint8Array) => void): P
 	return ghostty.then((loaded) => loaded.terminal({ cols, rows, scrollback: 1000, ...(onReply ? { onReply } : {}) }));
 }
 
+// The web view joins these rows when copying, so a long command copies as one line.
+test("ghostty: marks soft-wrapped rows", async () => {
+	const vt = await terminal(10, 4);
+	vt.write(encoder.encode("0123456789abcdef\r\nshort"));
+	const frame = vt.frame(true);
+	assert.deepEqual(text(frame).slice(0, 3), ["0123456789", "abcdef", "short"]);
+	assert.deepEqual(
+		frame.changed.map((row) => row.wrapped),
+		[true, false, false, false],
+	);
+	vt.free();
+});
+
 test("ghostty: renders text, styles, colors and the cursor", async () => {
 	const vt = await terminal();
 	vt.write(encoder.encode("hello\r\n\x1b[1;31mred\x1b[0m \x1b[7mrev\x1b[0m\r\n\x1b[38;2;1;2;3m日本"));

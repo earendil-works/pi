@@ -30,7 +30,10 @@ const RENDER_CURSOR_X = 15;
 const RENDER_CURSOR_Y = 16;
 const RENDER_CURSOR_WIDE_TAIL = 17;
 const ROW_DIRTY = 1;
+const ROW_RAW = 2;
 const ROW_CELLS = 3;
+// GhosttyRowData
+const ROW_DATA_WRAP = 1;
 const CELL_RAW = 1;
 const CELL_STYLE = 2;
 const CELL_GRAPHEMES_LEN = 3;
@@ -82,8 +85,8 @@ export interface Frame {
 		blinking: boolean;
 		color?: number;
 	};
-	/** Changed rows, top to bottom, by viewport row. */
-	changed: { y: number; cells: Cell[] }[];
+	/** Changed rows, top to bottom, by viewport row; `wrapped`: soft-wrapped, its line continues on the next row. */
+	changed: { y: number; cells: Cell[]; wrapped: boolean }[];
 }
 
 export interface KeyInput {
@@ -687,6 +690,9 @@ export class VtTerminal {
 				ghostty.call("ghostty_render_state_row_get", this.#rows, ROW_DIRTY, scratch);
 				const rowDirty = ghostty.view().getUint8(scratch) !== 0;
 				if (!(all || dirty === "full" || rowDirty)) continue;
+				ghostty.call("ghostty_render_state_row_get", this.#rows, ROW_RAW, scratch);
+				ghostty.call("ghostty_row_get", ghostty.view().getBigUint64(scratch, true), ROW_DATA_WRAP, scratch);
+				const wrapped = ghostty.view().getUint8(scratch) !== 0;
 				ghostty.view().setUint32(scratch, this.#cells, true);
 				ghostty.call("ghostty_render_state_row_get", this.#rows, ROW_CELLS, scratch);
 				const cells: Cell[] = [];
@@ -732,7 +738,7 @@ export class VtTerminal {
 							: -1;
 					cells.push({ text, width, fg, bg, flags: cellFlags });
 				}
-				changed.push({ y, cells });
+				changed.push({ y, cells, wrapped });
 				ghostty.view().setUint8(scratch, 0);
 				ghostty.call("ghostty_render_state_row_set", this.#rows, 0, scratch);
 			}

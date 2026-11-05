@@ -47,6 +47,11 @@ import "./terminal-clipboard.css";
 // terminal's cursor some other way (Enter, arrows, a paste), so the keyboard's idea of the text matches the field. A
 // field kept empty by cancelling every insertion does not: the keyboard deletes and corrects text the field never
 // had, which changes nothing and sends nothing.
+//
+// Touch: a long press on output text is the browser's own (word selection, handles, Copy); a long press on a blank
+// spot puts the textarea under the finger, so the browser offers Paste into it. Example: on "$ ls -la", a long press
+// on "ls" selects "ls"; one right of the prompt's end gets the Paste menu. While output is selected, rows are not
+// redrawn (`#held`): replacing a row's spans would drop the selection the moment the program printed.
 
 /** Where terminals open: a tab of the workspace panel, or a panel below the chat. Kept per browser. */
 export type TerminalPlacement = "side" | "bottom";
@@ -58,6 +63,10 @@ const ACK_BATCH_BYTES = 64 * 1024;
 const ACK_DELAY_MS = 50;
 /** The server pings every 15 s (TERMINAL_PING_MS in service.ts): a socket silent for three of them is replaced. */
 const SILENCE_TIMEOUT_MS = 45_000;
+/** A touch held this long without moving is a long press (before Chrome's own, about 400 to 500 ms). */
+const LONG_PRESS_MS = 350;
+/** Selected output stays drawn as it is for this long after the selection last changed, despite new output. */
+const SELECTION_HOLD_MS = 15_000;
 const PLACEMENT = "p2-terminal-position";
 
 export function terminalPlacement(): TerminalPlacement {
@@ -330,13 +339,19 @@ class TerminalSession {
 	};
 	#fling = 0;
 	#longPress?: ReturnType<typeof setTimeout>;
+	/** Rows are not redrawn while output is selected (`#holdForSelection`), until `#holdTimer` or `#release`. */
+	#held = false;
+	#holdTimer?: ReturnType<typeof setTimeout>;
 	/** The next frame redraws every row (after a resize, a snapshot or a theme change). */
 	#full = false;
 	/** The textarea's text the terminal got, with its cursor after it (see the top of this file). */
 	#typed = "";
 	#composing = false;
 	readonly #conversation: () => number;
-	readonly #selectionChange = () => this.#caretMoved();
+	readonly #selectionChange = () => {
+		this.#caretMoved();
+		this.#holdForSelection();
+	};
 
 	constructor(options: {
 		control: Held<typeof Terminals>;
@@ -402,9 +417,11 @@ class TerminalSession {
 			this.#pressed = undefined;
 			this.#touch = undefined;
 		});
-		// The right button goes to programs that track the mouse.
+		// The right button goes to programs that track the mouse. A long press (pointerType "touch") is never a right
+		// button: cancelling it would take the selection's Copy or the field's Paste menu away.
 		screen.addEventListener("contextmenu", (event) => {
 			if (
+				event.pointerType !== "touch" &&
 				!input.hasAttribute("data-native-menu") &&
 				window.getSelection()?.isCollapsed !== false &&
 				this.#vt?.mouseTracking() &&
@@ -412,6 +429,7 @@ class TerminalSession {
 			)
 				event.preventDefault();
 		});
+		screen.addEventListener("copy", (event) => this.#copy(event));
 	}
 
 	restartHost(): void {
@@ -430,6 +448,7 @@ class TerminalSession {
 		this.#stopped = true;
 		this.#connection?.stop();
 		clearTimeout(this.#longPress);
+		clearTimeout(this.#holdTimer);
 		clearTimeout(this.#ackTimer);
 		cancelAnimationFrame(this.#pumpFrame);
 		cancelAnimationFrame(this.#frame);
@@ -468,6 +487,7 @@ class TerminalSession {
 
 	/** Keys from the on-screen key row. */
 	key(input: KeyInput): void {
+		this.#release();
 		const bytes = this.#vt?.encodeKey(input);
 		if (bytes) this.#send(bytes);
 		this.#clearInput();
@@ -475,6 +495,7 @@ class TerminalSession {
 
 	/** Text from the key row. */
 	text(text: string): void {
+		this.#release();
 		this.#send(this.#encodeText(text).bytes);
 		this.#clearInput();
 	}
@@ -487,6 +508,7 @@ class TerminalSession {
 	}
 
 	paste(text: string): void {
+		this.#release();
 		const bytes = this.#vt?.encodePaste(text);
 		if (bytes) this.#send(bytes);
 		this.#clearInput();
@@ -543,6 +565,77 @@ class TerminalSession {
 		const arrow = this.#vt?.encodeKey({ code: "ArrowLeft", key: "ArrowLeft" });
 		if (arrow) this.#send(concat(new Array<Uint8Array>(left).fill(arrow)));
 		this.#clearInput();
+	}
+
+	/** The document's selection, when it is a range of the output rows. */
+	#outputSelection(): Range | undefined {
+		const selection = window.getSelection();
+		if (!selection || selection.isCollapsed || selection.rangeCount === 0) return undefined;
+		const range = selection.getRangeAt(0);
+		return range.intersectsNode(this.#rows) ? range : undefined;
+	}
+
+	/**
+	 * Selected output keeps its rows: a redraw replaces a changed row's spans, and a selection in them is gone (Chrome
+	 * then also drops its handles and Copy menu). Each change of the selection holds the rows for SELECTION_HOLD_MS more;
+	 * a selection that ends (Copy, a tap elsewhere) draws what arrived meanwhile at once.
+	 */
+	#holdForSelection(): void {
+		clearTimeout(this.#holdTimer);
+		if (this.#outputSelection()) {
+			this.#held = true;
+			this.#holdTimer = setTimeout(() => this.#release(), SELECTION_HOLD_MS);
+		} else this.#release();
+	}
+
+	/** Draw again: the selection ended or expired, or the user typed, pasted or scrolled. */
+	#release(): void {
+		clearTimeout(this.#holdTimer);
+		if (!this.#held) return;
+		this.#held = false;
+		this.#schedule();
+	}
+
+	/**
+	 * Copy selected output as a terminal does: a soft-wrapped line (a long command) as one line, without the blanks
+	 * that fill each row to the terminal's width.
+	 */
+	#copy(event: ClipboardEvent): void {
+		const range = this.#outputSelection();
+		if (!range || !event.clipboardData || !this.#rows.contains(range.commonAncestorContainer)) return;
+		const rows = [...this.#rows.children].filter((row) => range.intersectsNode(row));
+		let text = "";
+		for (const [index, row] of rows.entries()) {
+			const part = document.createRange();
+			part.selectNodeContents(row);
+			if (row.contains(range.startContainer)) part.setStart(range.startContainer, range.startOffset);
+			if (row.contains(range.endContainer)) part.setEnd(range.endContainer, range.endOffset);
+			const last = index === rows.length - 1;
+			if (row.hasAttribute("data-wrapped") && !last) text += part.toString();
+			else text += part.toString().trimEnd() + (last ? "" : "\n");
+		}
+		event.preventDefault();
+		event.clipboardData.setData("text/plain", text);
+	}
+
+	/**
+	 * Whether a character of the output is under a point: a long press there selects it natively; on a blank cell (the
+	 * cursor's, the rest of a line) the textarea goes under the finger for Paste. Columns come from the row's spans:
+	 * ASCII runs have a character per column, other characters are `.cell` boxes of their width (drawRow).
+	 */
+	#textAt(x: number, y: number): boolean {
+		const box = this.#rows.getBoundingClientRect();
+		const row = this.#rows.children[Math.floor((y - box.top) / this.#cell.height)];
+		const column = Math.floor((x - box.left) / this.#cell.width);
+		let start = 0;
+		for (const span of row?.children ?? []) {
+			const text = span.textContent ?? "";
+			const cell = span instanceof HTMLElement && span.classList.contains("cell");
+			const width = cell ? Math.round(Number.parseFloat(span.style.width) / this.#cell.width) : text.length;
+			if (column < start + width) return /\S/.test(cell ? text : (text[column - start] ?? ""));
+			start += width;
+		}
+		return false;
 	}
 
 	#keydown(event: KeyboardEvent): void {
@@ -613,7 +706,8 @@ class TerminalSession {
 
 	// Mouse buttons go to programs that track the mouse, as in a terminal; Shift keeps the browser's text selection.
 	// A finger taps, long-presses for the native menu, or scrolls (`scroll`). Capture only once it moves: rows can be
-	// replaced while scrolling, but capture during a stationary long press interferes with Chrome's text menu.
+	// replaced while scrolling, but capture during a stationary long press interferes with Chrome's text menu. Never
+	// cancel a touch's pointerdown, touchstart or contextmenu: that takes away the long press's selection and menus.
 	#pointerDown(event: PointerEvent): void {
 		if (event.pointerType === "touch") {
 			cancelAnimationFrame(this.#fling);
@@ -627,7 +721,7 @@ class TerminalSession {
 			clearTimeout(this.#longPress);
 			delete this.#input.dataset.nativeMenu;
 			// Leave an existing output selection alone: Chrome owns its Copy menu and handles.
-			if (window.getSelection()?.isCollapsed === false) return;
+			if (this.#outputSelection()) return;
 			this.#scrolled = 0;
 			const { clientX: x, clientY: y } = event;
 			const touch = {
@@ -641,16 +735,21 @@ class TerminalSession {
 				velocity: 0,
 			};
 			this.#touch = touch;
-			// Put a real, transparent editing target under the finger BEFORE Chrome's long-press deadline.
-			// Do not capture the pointer or cancel touch/contextmenu: those suppress the native text menu.
-			const box = (this.#input.parentElement ?? this.#screen).getBoundingClientRect();
-			this.#input.dataset.nativeMenu = "";
-			this.#input.style.transform = `translate(${x - box.left - this.#input.offsetLeft - 22}px, ${y - box.top - this.#input.offsetTop - 22}px)`;
+			// On output text the long press is Chrome's: it selects the word under the finger. The textarea must not be
+			// there, or Chrome selects in the (empty) field and offers only Paste.
+			const text = this.#textAt(x, y);
+			if (!text) {
+				// A blank spot: put a real, transparent editing target under the finger BEFORE Chrome's long-press deadline.
+				const box = (this.#input.parentElement ?? this.#screen).getBoundingClientRect();
+				this.#input.dataset.nativeMenu = "";
+				this.#input.style.transform = `translate(${x - box.left - this.#input.offsetLeft - 22}px, ${y - box.top - this.#input.offsetTop - 22}px)`;
+			}
+			// A long press neither scrolls when the finger then moves (it extends Chrome's selection) nor taps on lifting.
 			this.#longPress = setTimeout(() => {
-				if (this.#touch !== touch || touch.moved || window.getSelection()?.isCollapsed === false) return;
+				if (this.#touch !== touch || touch.moved || this.#outputSelection()) return;
 				touch.longPressed = true;
-				this.#input.focus({ preventScroll: true });
-			}, 350);
+				if (!text) this.#input.focus({ preventScroll: true });
+			}, LONG_PRESS_MS);
 			return;
 		}
 		if (event.shiftKey || !this.#vt?.mouseTracking()) return;
@@ -734,6 +833,7 @@ class TerminalSession {
 	): void {
 		const vt = this.#vt;
 		if (!vt) return;
+		this.#release();
 		this.#scrolled += pixels;
 		const rows = Math.trunc(this.#scrolled / this.#cell.height);
 		if (!rows) return;
@@ -923,6 +1023,8 @@ class TerminalSession {
 				this.#vt = loaded.terminal({ cols: terminal.cols, rows: terminal.rows, scrollback: 10_000 });
 				this.#snapshot = true;
 				this.#ready = true;
+				// A selection in the previous terminal's rows must not keep this one from being drawn.
+				this.#release();
 				this.#pump();
 				this.#emit({
 					current: terminal,
@@ -1077,7 +1179,8 @@ class TerminalSession {
 
 	#draw(): void {
 		const vt = this.#vt;
-		if (!vt) return;
+		// Libghostty keeps the changes until the next frame, so the release draws everything that arrived meanwhile.
+		if (!vt || (this.#held && this.#outputSelection())) return;
 		const all = this.#full;
 		this.#full = false;
 		const frame = vt.frame(all);
@@ -1087,9 +1190,12 @@ class TerminalSession {
 			this.#rows.append(row);
 		}
 		while (this.#rows.children.length > frame.rows) this.#rows.lastElementChild?.remove();
-		for (const { y, cells } of frame.changed) {
+		for (const { y, cells, wrapped } of frame.changed) {
 			const row = this.#rows.children[y];
-			if (row instanceof HTMLElement) drawRow(row, cells, this.#cell.width);
+			if (!(row instanceof HTMLElement)) continue;
+			drawRow(row, cells, this.#cell.width);
+			// Copying joins it with the next row (`#copy`).
+			row.toggleAttribute("data-wrapped", wrapped);
 		}
 		const cursor = frame.cursor;
 		this.#cursor.hidden = !cursor;
