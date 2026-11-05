@@ -48,6 +48,7 @@ export class OutputAccumulator {
 	private completedLines = 0;
 	private totalLines = 0;
 	private currentLineBytes = 0;
+	private lastCompletedLineBytes = 0;
 	private hasOpenLine = false;
 	private finished = false;
 
@@ -175,8 +176,9 @@ export class OutputAccumulator {
 		}
 	}
 
+	/** Bytes of the last line: the open one, or the one the last newline closed. */
 	getLastLineBytes(): number {
-		return this.currentLineBytes;
+		return this.hasOpenLine ? this.currentLineBytes : this.lastCompletedLineBytes;
 	}
 
 	private appendDecodedText(text: string): void {
@@ -194,8 +196,10 @@ export class OutputAccumulator {
 
 		let newlines = 0;
 		let lastNewline = -1;
+		let previousNewline = -1;
 		for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) {
 			newlines++;
+			previousNewline = lastNewline;
 			lastNewline = i;
 		}
 		if (newlines === 0) {
@@ -203,6 +207,10 @@ export class OutputAccumulator {
 			this.hasOpenLine = true;
 		} else {
 			this.completedLines += newlines;
+			// The line the last newline closed began in an earlier chunk when no newline precedes it here.
+			this.lastCompletedLineBytes =
+				(previousNewline === -1 ? this.currentLineBytes : 0) +
+				byteLength(text.slice(previousNewline + 1, lastNewline));
 			const tail = text.slice(lastNewline + 1);
 			this.currentLineBytes = byteLength(tail);
 			this.hasOpenLine = tail.length > 0;
