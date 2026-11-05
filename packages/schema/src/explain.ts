@@ -3,7 +3,7 @@
 
 import { newAnnotations } from "./annotations.ts";
 import {
-	bigintBounds,
+	type Bound,
 	codePoints,
 	constCheck,
 	containsCheck,
@@ -83,8 +83,7 @@ export class Explainer {
 			push("const", `expected ${JSON.stringify(node.const)}`);
 		if (typeof v === "string" && node.type !== "bytes") this.walkString(node, v, push);
 		if (v instanceof Uint8Array && node.type === "bytes") this.walkBytes(node, v, push);
-		if (typeof v === "number") this.walkNumber(node, v, push);
-		if (typeof v === "bigint" && node.type === "bigint") this.walkBigint(node, v, push);
+		if (typeof v === "number" || typeof v === "bigint") this.walkNumber(node, v, push);
 		if (isObject(v)) this.walkObject(node, b, v, path, out, push);
 		if (Array.isArray(v)) this.walkArray(node, b, v, path, out, push);
 		if (Array.isArray(node.allOf)) for (const s of node.allOf) this.walk(s, b, v, path, out);
@@ -159,31 +158,16 @@ export class Explainer {
 		}
 	}
 
-	private walkNumber(node: SchemaObject, v: number, push: Push): void {
-		if (typeof node.minimum === "number" && v < node.minimum) push("minimum", `expected >= ${node.minimum}`);
-		if (typeof node.maximum === "number" && v > node.maximum) push("maximum", `expected <= ${node.maximum}`);
-		if (typeof node.exclusiveMinimum === "number" && v <= node.exclusiveMinimum) {
-			push("exclusiveMinimum", `expected > ${node.exclusiveMinimum}`);
-		}
-		if (typeof node.exclusiveMaximum === "number" && v >= node.exclusiveMaximum) {
-			push("exclusiveMaximum", `expected < ${node.exclusiveMaximum}`);
-		}
-		if (typeof node.multipleOf === "number" && !isMultiple(v, node.multipleOf)) {
-			push("multipleOf", `expected a multiple of ${node.multipleOf}`);
-		}
-	}
-
-	private walkBigint(node: SchemaObject, v: bigint, push: Push): void {
-		const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf } = bigintBounds(node);
-		if (minimum !== undefined && v < minimum) push("minimum", `expected >= ${minimum}`);
-		if (maximum !== undefined && v > maximum) push("maximum", `expected <= ${maximum}`);
-		if (exclusiveMinimum !== undefined && v <= exclusiveMinimum)
+	// Numbers and bigints alike: bounds of either kind compare with values of either kind.
+	private walkNumber(node: SchemaObject, v: Bound, push: Push): void {
+		const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf } = node;
+		if (isBound(minimum) && v < minimum) push("minimum", `expected >= ${minimum}`);
+		if (isBound(maximum) && v > maximum) push("maximum", `expected <= ${maximum}`);
+		if (isBound(exclusiveMinimum) && v <= exclusiveMinimum)
 			push("exclusiveMinimum", `expected > ${exclusiveMinimum}`);
-		if (exclusiveMaximum !== undefined && v >= exclusiveMaximum)
+		if (isBound(exclusiveMaximum) && v >= exclusiveMaximum)
 			push("exclusiveMaximum", `expected < ${exclusiveMaximum}`);
-		if (multipleOf !== undefined && multipleOf !== 0n && v % multipleOf !== 0n) {
-			push("multipleOf", `expected a multiple of ${multipleOf}`);
-		}
+		if (isBound(multipleOf) && !isMultiple(v, multipleOf)) push("multipleOf", `expected a multiple of ${multipleOf}`);
 	}
 
 	private walkObject(
@@ -390,6 +374,10 @@ function containsMessage(min: number, max: number): string {
 	if (max === Number.POSITIVE_INFINITY) return `expected at least ${min} matching ${min === 1 ? "item" : "items"}`;
 	if (min === 0) return `expected at most ${max} matching ${max === 1 ? "item" : "items"}`;
 	return `expected between ${min} and ${max} matching items`;
+}
+
+function isBound(value: unknown): value is Bound {
+	return typeof value === "number" || typeof value === "bigint";
 }
 
 function pointer(path: string, key: string | number): string {

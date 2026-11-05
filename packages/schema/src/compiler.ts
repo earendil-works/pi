@@ -24,8 +24,7 @@ import {
 	ALWAYS,
 	and,
 	anyCheck,
-	bigintBounds,
-	bigintCheck,
+	type Bound,
 	bytesCheck,
 	constCheck,
 	containsCheck,
@@ -148,14 +147,12 @@ export class Compiler {
 		if (single === "bytes") {
 			parts.push(bytesCheck(number(node.minLength) ?? 0, number(node.maxLength) ?? Number.POSITIVE_INFINITY));
 			typeInGroup = true;
-		} else if (single === "bigint") {
-			parts.push(bigintCheck(bigintBounds(node)));
-			typeInGroup = true;
 		} else {
 			const string = this.stringGroup(node, single === "string");
 			if (string !== undefined) parts.push(string);
-			const numeric = single === "number" || single === "integer";
-			const number = this.numberGroup(node, single === "number" ? 1 : single === "integer" ? 2 : 0);
+			const numeric = single === "number" || single === "integer" || single === "bigint";
+			const mode = single === "number" ? 1 : single === "integer" ? 2 : single === "bigint" ? 3 : 0;
+			const number = this.numberGroup(node, mode);
 			if (number !== undefined) parts.push(number);
 			const object = this.objectGroup(node, base, single === "object");
 			if (object !== undefined) parts.push(object);
@@ -288,12 +285,12 @@ export class Compiler {
 		return stringCheck(strict, min, max, re, format);
 	}
 
-	private numberGroup(node: SchemaObject, mode: 0 | 1 | 2): Check | undefined {
-		const min = number(node.minimum);
-		const max = number(node.maximum);
-		const xmin = number(node.exclusiveMinimum);
-		const xmax = number(node.exclusiveMaximum);
-		const multipleOf = number(node.multipleOf);
+	private numberGroup(node: SchemaObject, mode: 0 | 1 | 2 | 3): Check | undefined {
+		const min = bound(node.minimum);
+		const max = bound(node.maximum);
+		const xmin = bound(node.exclusiveMinimum);
+		const xmax = bound(node.exclusiveMaximum);
+		const multipleOf = bound(node.multipleOf);
 		if ([min, max, xmin, xmax, multipleOf].every((x) => x === undefined)) return undefined;
 		const inf = Number.POSITIVE_INFINITY;
 		return numberCheck(mode, min ?? -inf, max ?? inf, xmin ?? -inf, xmax ?? inf, multipleOf);
@@ -615,6 +612,11 @@ export function requiredKeys(node: SchemaObject, properties: SchemaObject): stri
 		const property = Object.hasOwn(properties, k) ? properties[k] : undefined;
 		return !(isSchemaObject(property) && property.type === "undefined");
 	});
+}
+
+/** A number keyword's value: a number, or a bigint (TypeBox's `Type.BigInt` bounds). */
+function bound(value: unknown): Bound | undefined {
+	return typeof value === "number" || typeof value === "bigint" ? value : undefined;
 }
 
 function number(value: unknown): number | undefined {

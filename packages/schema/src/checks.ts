@@ -224,39 +224,6 @@ export function maskedAnyCheck(mask: number, checks: readonly Check[]): Check {
 	return (v) => (typeBits(v) & mask) !== 0 || rest(v);
 }
 
-/** A bigint within the bounds (bigint `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`). */
-export function bigintCheck(bounds: BigintBounds): Check {
-	const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf } = bounds;
-	return (v) =>
-		typeof v === "bigint" &&
-		(minimum === undefined || v >= minimum) &&
-		(maximum === undefined || v <= maximum) &&
-		(exclusiveMinimum === undefined || v > exclusiveMinimum) &&
-		(exclusiveMaximum === undefined || v < exclusiveMaximum) &&
-		(multipleOf === undefined || multipleOf === 0n || v % multipleOf === 0n);
-}
-
-/** A `bigint` schema's bounds: each keyword when its value is a bigint, as `Type.BigInt` writes them. */
-export type BigintBounds = {
-	readonly minimum: bigint | undefined;
-	readonly maximum: bigint | undefined;
-	readonly exclusiveMinimum: bigint | undefined;
-	readonly exclusiveMaximum: bigint | undefined;
-	readonly multipleOf: bigint | undefined;
-};
-
-/** The bigint bounds of `node`. */
-export function bigintBounds(node: Readonly<Record<string, unknown>>): BigintBounds {
-	const value = (key: string) => (typeof node[key] === "bigint" ? (node[key] as bigint) : undefined);
-	return {
-		minimum: value("minimum"),
-		maximum: value("maximum"),
-		exclusiveMinimum: value("exclusiveMinimum"),
-		exclusiveMaximum: value("exclusiveMaximum"),
-		multipleOf: value("multipleOf"),
-	};
-}
-
 /** A Uint8Array within the length bounds. */
 export function bytesCheck(min: number, max: number): Check {
 	return (v) => v instanceof Uint8Array && v.length >= min && v.length <= max;
@@ -308,26 +275,42 @@ export function stringCheck(
 	};
 }
 
-/** The number keywords. `mode`: 0 passes other types, 1 requires a number, 2 an integer. */
+/** A number bound: a number, or a bigint (TypeBox's `Type.BigInt` writes its bounds as bigints). */
+export type Bound = number | bigint;
+
+/**
+ * The number keywords, for numbers and bigints alike (as TypeBox applies them): bounds of either kind compare with
+ * values of either kind. `mode`: 0 passes other types, 1 requires a number, 2 an integer, 3 a bigint.
+ */
 export function numberCheck(
-	mode: 0 | 1 | 2,
-	min: number,
-	max: number,
-	xmin: number,
-	xmax: number,
-	multipleOf: number | undefined,
+	mode: 0 | 1 | 2 | 3,
+	min: Bound,
+	max: Bound,
+	xmin: Bound,
+	xmax: Bound,
+	multipleOf: Bound | undefined,
 ): Check {
 	const check: Check = (v) => {
-		if (typeof v !== "number") return mode === 0;
+		if (typeof v !== "number" && typeof v !== "bigint") return mode === 0;
+		if (mode === 3 ? typeof v !== "bigint" : mode !== 0 && typeof v !== "number") return false;
 		if (mode === 2 && !Number.isInteger(v)) return false;
 		return v >= min && v <= max && v > xmin && v < xmax && (multipleOf === undefined || isMultiple(v, multipleOf));
 	};
-	if (mode === 0 || multipleOf !== undefined) return check;
+	const plain =
+		typeof min === "number" && typeof max === "number" && typeof xmin === "number" && typeof xmax === "number";
+	if (mode === 0 || mode === 3 || multipleOf !== undefined || !plain) return check;
 	return leaf(mode === 2 ? 10 : 11, new Bounds(min, max, xmin, xmax), check);
 }
 
-/** Whether `v` is a multiple of `d`, exactly for decimals: 0.0075 / 0.0001 is 74.99999999999999 in floating point. */
-export function isMultiple(v: number, d: number): boolean {
+/**
+ * Whether `v` is a multiple of `d`, exactly for decimals: 0.0075 / 0.0001 is 74.99999999999999 in floating point. With
+ * a bigint on either side, exact integer arithmetic; a bigint is no multiple of 0 or of a fraction.
+ */
+export function isMultiple(v: Bound, d: Bound): boolean {
+	if (typeof v === "bigint" || typeof d === "bigint") {
+		if (!Number.isInteger(Number(v)) || !Number.isInteger(Number(d)) || BigInt(d) === 0n) return false;
+		return BigInt(v) % BigInt(d) === 0n;
+	}
 	const q = v / d;
 	if (Number.isInteger(q)) return true;
 	if (!Number.isFinite(q)) return v % d === 0;
