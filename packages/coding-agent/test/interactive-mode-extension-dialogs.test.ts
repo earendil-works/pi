@@ -12,9 +12,11 @@ type DialogContext = {
 		setFocus: (component: Component) => void;
 		requestRender: () => void;
 		showOverlay: (component: Component) => { hide: () => void; setHidden: (hidden: boolean) => void };
+		hideOverlay: () => void;
 	};
 	overlays: Component[];
 	nextBlockingOverlayId: number;
+	blockingOverlaySources: Set<string>;
 	programStatus: { setBlocked: ReturnType<typeof vi.fn> };
 	disposeActiveSelector: () => void;
 	toggleToolOutputExpansion: () => void;
@@ -33,6 +35,7 @@ type DialogMethods = {
 	setCustomEditorComponent(
 		factory: ((tui: unknown, theme: unknown, keybindings: unknown) => Component) | undefined,
 	): void;
+	resetExtensionUI(): void;
 };
 
 function createContext(): DialogContext & DialogMethods {
@@ -63,9 +66,13 @@ function createContext(): DialogContext & DialogMethods {
 					setHidden: vi.fn(),
 				};
 			},
+			hideOverlay: () => {
+				context.overlays.pop();
+			},
 		},
 		overlays: [],
 		nextBlockingOverlayId: 0,
+		blockingOverlaySources: new Set(),
 		programStatus: { setBlocked: vi.fn() },
 		disposeActiveSelector: vi.fn(),
 		toggleToolOutputExpansion: vi.fn(),
@@ -254,6 +261,38 @@ describe("InteractiveMode extension dialogs", () => {
 		await expect(first).resolves.toBe("one");
 		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-overlay:0", undefined);
 		expect(context.programStatus.setBlocked).toHaveBeenCalledTimes(4);
+	});
+
+	// Regression for #11816: /reload and session switches drop overlays without calling done().
+	it("clears overlay blocked status when the extension UI is reset", async () => {
+		const context = createContext();
+		Object.assign(context, {
+			clearExtensionTerminalInputListeners: vi.fn(),
+			setExtensionFooter: vi.fn(),
+			setExtensionHeader: vi.fn(),
+			clearExtensionWidgets: vi.fn(),
+			footerDataProvider: { clearExtensionStatuses: vi.fn() },
+			footer: { invalidate: vi.fn() },
+			setCustomEditorComponent: vi.fn(),
+			setupAutocompleteProvider: vi.fn(),
+			defaultEditor: {},
+			updateTerminalTitle: vi.fn(),
+			setWorkingIndicator: vi.fn(),
+			setHiddenThinkingLabel: vi.fn(),
+		});
+		void context.showExtensionCustom<string>(() => new Text("question"), {
+			overlay: true,
+			blocked: { kind: "question", message: "Question?" },
+		});
+		await vi.waitFor(() => expect(context.overlays).toHaveLength(1));
+		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-overlay:0", {
+			kind: "question",
+			message: "Question?",
+		});
+
+		context.resetExtensionUI();
+		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-overlay:0", undefined);
+		expect(context.blockingOverlaySources.size).toBe(0);
 	});
 
 	// Regression for #11431: replacing the editor while a dialog was open hid the dialog and left it unanswerable.
