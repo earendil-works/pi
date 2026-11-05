@@ -42,7 +42,12 @@ export type PutBatchResult =
 	 * No slot starts at `after`, and the history does not end there: a slot there would branch the chain inside a batch
 	 * or leave a gap. The uploader's history is not the remote's from `after` on.
 	 */
-	| { readonly type: "not_head"; readonly head: Seq };
+	| { readonly type: "not_head"; readonly head: Seq }
+	/**
+	 * The upload's `epoch` is not the session's current one: another device was given the right to write the session
+	 * since this one was. Who grants it, and when, is the remote's (RFC 0074's single writer); Chord only reports it.
+	 */
+	| { readonly type: "stale_epoch"; readonly epoch: number };
 
 /** A session as the remote's listing describes it. */
 export type SessionSummary = {
@@ -74,7 +79,11 @@ export interface SessionSyncStore {
 		device: string,
 		body: SyncBody,
 		context: Context,
-		options?: { readonly archive?: boolean },
+		options?: {
+			readonly archive?: boolean;
+			/** The writer's epoch: a remote that issues epochs refuses a stale one (`stale_epoch`); others ignore it. */
+			readonly epoch?: number;
+		},
 	): Promise<PutBatchResult>;
 	/** A batch's body; `undefined` when its slot is folded or absent. */
 	getBatch(sessionId: string, after: Seq, context: Context): Promise<SyncBody | undefined>;

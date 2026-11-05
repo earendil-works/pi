@@ -396,6 +396,41 @@ describe("syncing a session between devices", () => {
 		expect(await reads(await replica.store())).toEqual(await reads(await laptop.store()));
 	});
 
+	it("passes the writer's epoch to the remote and reports a refused one as stale_epoch", async () => {
+		const store = await remote();
+		const laptop = device("laptop", store);
+		await laptop.commit(seedBatches().slice(0, 2));
+		const shared = (await laptop.store()).lastSeq;
+		let current = 1;
+		const epochs: (number | undefined)[] = [];
+		// A remote that issues epochs (Radius): refuses an upload whose epoch is not the current one.
+		const issuing = overriding(store, {
+			putBatch: async (...args: Parameters<SessionSyncMaintenance["putBatch"]>) => {
+				const epoch = args[6]?.epoch;
+				epochs.push(epoch);
+				if (epoch !== current) return { type: "stale_epoch", epoch: current };
+				return store.putBatch(...args);
+			},
+		});
+		const source = await laptop.store();
+		const upload = (epoch: number) =>
+			uploadSession({
+				sessionId: SESSION,
+				device: "laptop",
+				source,
+				store: issuing,
+				state: laptop.state,
+				epoch,
+				context,
+			});
+		expect((await upload(1)).type).toBe("uploaded");
+		// The remote gave the session to another writer: this device's epoch is stale.
+		current = 2;
+		await laptop.commit([entry(100)]);
+		expect(await upload(1)).toEqual({ type: "stale_epoch", at: shared, epoch: 2 });
+		expect(epochs).toEqual([1, 1]);
+	});
+
 	it("refuses to upload a copy that lost uploaded commits, and pulls them back", async () => {
 		const store = await remote();
 		const batches = seedBatches();

@@ -11,6 +11,7 @@ import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { int, str } from "../../src/contracts/index.ts";
 import { DurableObjectSqliteDatabase } from "../../src/sqlite/cloudflare.ts";
 import { sqliteBackend } from "../../src/store/backend.ts";
+import { LiveQueries } from "../../src/store/live-query.ts";
 import type { StagedWrite } from "../../src/store/step.ts";
 import { type ChordStore, openStore } from "../../src/store/store.ts";
 import { defineTable } from "../../src/store/table.ts";
@@ -63,7 +64,7 @@ type Env = {
 const Rows = defineTable("rows", { version: 1, columns: { id: str(), n: int(), text: str() }, key: ["id"] });
 const TABLE = "bench.sync:rows";
 const OPEN = { admit: () => true, adopt: () => {} };
-const owner = { label: "bench", scope: {}, assertLive: () => {}, fail: () => {} };
+const owner = { label: "bench", scope: {}, queries: new LiveQueries(), assertLive: () => {}, fail: () => {} };
 /** Where a stored body is split into rows: below the object's 2 MB value limit. */
 const PART = 512 * 1024;
 
