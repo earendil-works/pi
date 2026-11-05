@@ -32,6 +32,8 @@ export interface OwnerAuthEnv {
 
 export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => Promise<{
   ok: boolean;
+  /** HTTP status, used only in the server-side failure detail. */
+  status?: number;
   json(): Promise<unknown>;
 }>;
 
@@ -91,22 +93,47 @@ export function startLogin(env: OwnerAuthEnv, now = Math.floor(Date.now() / 1000
 
 export type CallbackResult =
   | { ok: true; setCookies: string[] }
-  | { ok: false; reason: "not_configured" | "bad_request" | "exchange_failed" | "not_allowed"; setCookies: string[] };
+  | {
+      ok: false;
+      reason: "not_configured" | "bad_request" | "exchange_failed" | "not_allowed";
+      /**
+       * Which check failed, for the server log only; never sent to the browser. Holds no token, code, secret or
+       * cookie: only OAuth error codes, HTTP statuses, and for `not_allowed` the Vercel id and username that were
+       * refused, so the owner can see what to put on the allow-list.
+       */
+      detail: string;
+      setCookies: string[];
+    };
+
+/** Keeps a value from an outside party to a short run of safe characters before it goes into a log line. */
+function safe(value: unknown): string {
+  if (typeof value !== "string" && typeof value !== "number") return "none";
+  const text = String(value).replace(/[^A-Za-z0-9_.:-]/g, "").slice(0, 64);
+  return text === "" ? "none" : text;
+}
 
 /** Finishes sign-in. Checks state, exchanges the code, reads the user, and admits only allow-listed ids. */
 export async function finishLogin(
   env: OwnerAuthEnv,
-  input: { code?: string; state?: string; cookie: string | string[] | undefined },
+  input: { code?: string; state?: string; error?: string; cookie: string | string[] | undefined },
   fetchImpl: FetchLike,
   now = Math.floor(Date.now() / 1000),
 ): Promise<CallbackResult> {
   const clear = [cookieHeader(OAUTH_COOKIE, "", 0)];
-  if (!authConfigured(env)) return { ok: false, reason: "not_configured", setCookies: clear };
+  const fail = (reason: Extract<CallbackResult, { ok: false }>["reason"], detail: string): CallbackResult => ({
+    ok: false,
+    reason,
+    detail,
+    setCookies: clear,
+  });
+  if (!authConfigured(env)) return fail("not_configured", "missing_setting");
+  if (input.error !== undefined) return fail("bad_request", `vercel_error=${safe(input.error)}`);
   const saved = verifyToken(env.NLT_SESSION_SECRET, readCookie(input.cookie, OAUTH_COOKIE), now);
   if (!saved || typeof saved.state !== "string" || typeof saved.verifier !== "string") {
-    return { ok: false, reason: "bad_request", setCookies: clear };
+    return fail("bad_request", "state_cookie_missing_or_expired");
   }
-  if (!input.code || !input.state || input.state !== saved.state) return { ok: false, reason: "bad_request", setCookies: clear };
+  if (!input.code) return fail("bad_request", "code_missing");
+  if (!input.state || input.state !== saved.state) return fail("bad_request", "state_mismatch");
 
   let accessToken: string;
   try {
@@ -122,11 +149,13 @@ export async function finishLogin(
         redirect_uri: env.VERCEL_APP_REDIRECT_URI as string,
       }).toString(),
     });
-    const tokens = (await tokenResponse.json()) as { access_token?: unknown };
-    if (!tokenResponse.ok || typeof tokens.access_token !== "string") return { ok: false, reason: "exchange_failed", setCookies: clear };
+    const tokens = (await tokenResponse.json().catch(() => ({}))) as { access_token?: unknown; error?: unknown };
+    if (!tokenResponse.ok || typeof tokens.access_token !== "string") {
+      return fail("exchange_failed", `token status=${safe(tokenResponse.status)} error=${safe(tokens.error)}`);
+    }
     accessToken = tokens.access_token;
-  } catch {
-    return { ok: false, reason: "exchange_failed", setCookies: clear };
+  } catch (error) {
+    return fail("exchange_failed", `token threw=${safe(error instanceof Error ? error.name : undefined)}`);
   }
 
   let sub: string;
@@ -134,18 +163,20 @@ export async function finishLogin(
   let username: string | undefined;
   try {
     const infoResponse = await fetchImpl(USERINFO_URL, { method: "POST", headers: { authorization: `Bearer ${accessToken}` } });
-    const info = (await infoResponse.json()) as { sub?: unknown; name?: unknown; preferred_username?: unknown };
+    const info = (await infoResponse.json().catch(() => ({}))) as { sub?: unknown; name?: unknown; preferred_username?: unknown; error?: unknown };
     username = typeof info.preferred_username === "string" ? info.preferred_username : undefined;
-    if (!infoResponse.ok || typeof info.sub !== "string") return { ok: false, reason: "exchange_failed", setCookies: clear };
+    if (!infoResponse.ok || typeof info.sub !== "string") {
+      return fail("exchange_failed", `userinfo status=${safe(infoResponse.status)} error=${safe(info.error)} sub=${typeof info.sub}`);
+    }
     sub = info.sub;
     name = typeof info.name === "string" ? info.name : typeof info.preferred_username === "string" ? info.preferred_username : info.sub;
-  } catch {
-    return { ok: false, reason: "exchange_failed", setCookies: clear };
+  } catch (error) {
+    return fail("exchange_failed", `userinfo threw=${safe(error instanceof Error ? error.name : undefined)}`);
   }
 
   const allowed = allowedSubs(env);
   if (!allowed.has(sub) && !(username !== undefined && allowed.has(username))) {
-    return { ok: false, reason: "not_allowed", setCookies: clear };
+    return fail("not_allowed", `sub=${safe(sub)} username=${safe(username)}`);
   }
   const session = signToken(env.NLT_SESSION_SECRET, { exp: now + SESSION_SECONDS, sub, username, name: name.slice(0, 80) });
   return { ok: true, setCookies: [...clear, cookieHeader(SESSION_COOKIE, session, SESSION_SECONDS)] };

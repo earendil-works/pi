@@ -1,0 +1,37 @@
+{
+  "handoff_record": {
+    "session_id": "session_01UNjnjkGsveT9DW8pC9UXhf",
+    "agent_name": "Claude Code",
+    "date": "2026-11-05T20:15:00+00:00",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "ccr-50842984-ofpdnx",
+    "work_completed": [
+      "Investigated 'Sign-in failed, or this Vercel account is not allowed' on nlt-pi-mvp.vercel.app. Evidence: all five sign-in variables present in Production; VERCEL_APP_REDIRECT_URI is https://nlt-pi-mvp.vercel.app/api/auth/callback; runtime logs show GET /api/auth/callback reached on production at 19:55 and 20:05 UTC; login did not return 503, so the app is configured. That narrows the cause to bad_request, exchange_failed or not_allowed.",
+      "At the owner's request, changed NLT_OWNER_VERCEL_SUBS to 'yQOE2lMYO9r9PYTGvZjxRj2D,jdub1216' (Vercel MCP) and, at the owner's request, redeployed production (dpl_DL1FxEeKheWLG1SjH2iYddE47f4q, same commit 266e533). The owner reports the same error; the 20:05 callback ran on the new deployment, so the allow-list id alone was not the cause.",
+      "Added a server-side failure line to the callback: finishLogin returns a `detail` with each failure (Vercel's `error` query parameter, state cookie missing/expired, code missing, state mismatch, token/userinfo HTTP status and OAuth `error` code, or for not_allowed the sub and username Vercel returned). handlers.callback writes `nlt-signin: failed reason=<reason> <detail>` via deps.log (default console.warn). The browser outcome is unchanged (/?signin=failed). Values from Vercel are reduced to [A-Za-z0-9_.:-] and 64 characters; no code, token, secret or cookie is logged (tested).",
+      "Tests: two new auth tests (eight failure paths with exact log lines and leak checks; nothing logged on success)."
+    ],
+    "verification": [
+      "cd mvp && npx tsc --noEmit -p . : passed",
+      "cd mvp && npx vitest --run : 11 files, 217 passed, 10 expected fail",
+      "cd mvp && node --test test/*.test.js : 25 passed",
+      "npm run check:mvp, check:pinned-deps, check:runtime-deps, check:ts-imports, check:entry-graphs : passed",
+      "bash .nltotoi/scripts/validate-governance.sh : 71 passed, 0 failed",
+      "Not run: a real sign-in against Vercel from this session (needs the owner's browser)."
+    ],
+    "work_in_progress": [],
+    "blockers": [
+      "Root cause of the sign-in failure is still unknown until this change is deployed to production and the owner signs in once."
+    ],
+    "decisions_made": [
+      "Owner: change the allow-list and redeploy production (2026-11-05).",
+      "Owner (2026-11-05): logging the refused sub and username of a not-allowed sign-in in the Vercel runtime logs is acceptable; the owner is the only user."
+    ],
+    "decisions_pending": [
+      "Owner: review and merge the diagnostics PR, which redeploys production from main.",
+      "Owner: keep 'jdub1216' on the allow-list or replace it with the real `sub` once the log shows it (a username can change; an id is stable)."
+    ],
+    "next_action": "After merge and deploy, sign in once at https://nlt-pi-mvp.vercel.app, then read the `nlt-signin: failed` line in the Vercel runtime logs (Hobby keeps about 1 hour)."
+  }
+}

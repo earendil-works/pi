@@ -165,6 +165,40 @@ describe("sign-in flow", () => {
     }
   });
 
+  it("logs which check failed on the server, without the code, token or secret, and keeps the browser outcome generic", async () => {
+    const flow = startFlow(env);
+    const ok = { method: "GET", query: { code: "abc", state: flow.state }, headers: { cookie: flow.cookie } };
+    const deniedToken: FetchLike = async (url) =>
+      url.endsWith("/token") ? { ok: false, status: 401, json: async () => ({ error: "invalid_client", error_description: "csecret at-123" }) } : { ok: true, json: async () => ({}) };
+    const cases: { request: AuthRequest; fetch: FetchLike; expected: string }[] = [
+      { request: { method: "GET", query: { error: "access_denied", state: flow.state }, headers: { cookie: flow.cookie } }, fetch: fakeVercel("owner-1").fetchImpl, expected: "reason=bad_request vercel_error=access_denied" },
+      { request: { method: "GET", query: { code: "abc", state: flow.state }, headers: {} }, fetch: fakeVercel("owner-1").fetchImpl, expected: "reason=bad_request state_cookie_missing_or_expired" },
+      { request: { method: "GET", query: { state: flow.state }, headers: { cookie: flow.cookie } }, fetch: fakeVercel("owner-1").fetchImpl, expected: "reason=bad_request code_missing" },
+      { request: { method: "GET", query: { code: "abc", state: "other" }, headers: { cookie: flow.cookie } }, fetch: fakeVercel("owner-1").fetchImpl, expected: "reason=bad_request state_mismatch" },
+      { request: ok, fetch: deniedToken, expected: "reason=exchange_failed token status=401 error=invalid_client" },
+      { request: ok, fetch: fakeVercel("owner-1", { infoOk: false }).fetchImpl, expected: "reason=exchange_failed userinfo status=none error=none sub=string" },
+      { request: ok, fetch: fakeVercel("stranger", { username: "someone" }).fetchImpl, expected: "reason=not_allowed sub=stranger username=someone" },
+      { request: ok, fetch: fakeVercel("stranger").fetchImpl, expected: "reason=not_allowed sub=stranger username=none" },
+    ];
+    for (const { request, fetch, expected } of cases) {
+      const lines: string[] = [];
+      const { out, response } = capture();
+      await callback(request, response, { env, fetch, log: (line) => lines.push(line) });
+      expect(out.headers.Location).toBe("/?signin=failed");
+      expect(lines).toEqual([`nlt-signin: failed ${expected}`]);
+      for (const leaked of ["abc", "at-123", "csecret", SECRET, flow.cookie]) expect(lines[0]).not.toContain(leaked);
+    }
+  });
+
+  it("logs nothing on a successful sign-in", async () => {
+    const flow = startFlow(env);
+    const lines: string[] = [];
+    const { out, response } = capture();
+    await callback({ method: "GET", query: { code: "abc", state: flow.state }, headers: { cookie: flow.cookie } }, response, { env, fetch: fakeVercel("owner-1").fetchImpl, log: (line) => lines.push(line) });
+    expect(out.headers.Location).toBe("/");
+    expect(lines).toEqual([]);
+  });
+
   it("drops a session once the owner is removed from the allow-list or the secret changes", async () => {
     const token = signToken(SECRET, { exp: Math.floor(Date.now() / 1000) + 600, sub: "owner-1", name: "O" });
     const cookie = `${SESSION_COOKIE}=${token}`;

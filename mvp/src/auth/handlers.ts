@@ -16,6 +16,8 @@ import {
 export interface AuthDeps {
   env: OwnerAuthEnv;
   fetch: FetchLike;
+  /** Where a failed sign-in's reason is written on the server. Defaults to console.warn (Vercel runtime logs). */
+  log?: (line: string) => void;
 }
 
 /** GET: sends the browser to Vercel to sign in. 503 when sign-in is not configured. */
@@ -46,12 +48,19 @@ export async function callback(request: AuthRequest, response: AuthResponse, dep
   }
   const result = await finishLogin(
     deps.env,
-    { code: firstQuery(request.query?.code), state: firstQuery(request.query?.state), cookie: request.headers?.cookie },
+    {
+      code: firstQuery(request.query?.code),
+      state: firstQuery(request.query?.state),
+      error: firstQuery(request.query?.error),
+      cookie: request.headers?.cookie,
+    },
     deps.fetch,
   );
   response.setHeader("Set-Cookie", result.setCookies);
   if (!result.ok) {
     // One generic outcome for the browser; the reason is not shown, so the page cannot be used to probe the allow-list.
+    // The reason goes to the server log only, so the owner can see which check failed.
+    (deps.log ?? console.warn)(`nlt-signin: failed reason=${result.reason} ${result.detail}`);
     response.setHeader("Location", `/?signin=failed`);
     response.status(302).end();
     return;
