@@ -14,7 +14,7 @@ const importNodeOnlyApi = (specifier: string): Promise<unknown> => {
 	return import(new URL(runtimeSpecifier, import.meta.url).href);
 };
 
-let bedrockModuleOverride: ProviderStreams | undefined;
+let bedrockModuleLoader: (() => Promise<ProviderStreams>) | undefined;
 
 /**
  * Overrides the dynamically imported bedrock implementation. Used by the Bun
@@ -22,11 +22,22 @@ let bedrockModuleOverride: ProviderStreams | undefined;
  * build registers a statically imported module instead.
  */
 export function setBedrockProviderModule(module: ProviderStreams): void {
-	bedrockModuleOverride = module;
+	bedrockModuleLoader = async () => module;
+}
+
+/**
+ * Overrides how the bedrock implementation is imported, loaded on the first
+ * bedrock request. Used by Node bundles that split at dynamic imports (see
+ * `@earendil-works/pi-ai/lazy-bedrock-provider`): the loader's literal
+ * `import()` lets the bundler keep the implementation in a lazy chunk.
+ */
+export function setBedrockProviderLoader(load: () => Promise<ProviderStreams>): void {
+	bedrockModuleLoader = load;
 }
 
 export const bedrockConverseStreamApi = (): ProviderStreams =>
-	lazyApi(
-		async () =>
-			bedrockModuleOverride ?? ((await importNodeOnlyApi("./bedrock-converse-stream.ts")) as ProviderStreams),
+	lazyApi(async () =>
+		bedrockModuleLoader
+			? await bedrockModuleLoader()
+			: ((await importNodeOnlyApi("./bedrock-converse-stream.ts")) as ProviderStreams),
 	);
