@@ -576,6 +576,9 @@ export class InteractiveMode {
 	// Extension dialogs shown in the editor slot (select, confirm, input, editor, inline custom).
 	// The last entry is visible; see pushExtensionDialog().
 	private extensionDialogs: Array<{ component: ExtensionDialogComponent; blocked: BlockedStatus | undefined }> = [];
+	// Open extension overlays (custom with overlay: true), in opening order. Reset removes only these,
+	// not pi's own overlays.
+	private extensionOverlays = new Map<OverlayHandle, ExtensionDialogComponent>();
 	private extensionTerminalInputSubscriptions = new Set<{
 		handler: (data: string) => { consume?: boolean; data?: string } | undefined;
 		unsubscribe: () => void;
@@ -2583,7 +2586,11 @@ export class InteractiveMode {
 			this.extensionDialogs = [];
 			this.showTopExtensionDialog();
 		}
-		this.ui.hideOverlay();
+		for (const [handle, component] of [...this.extensionOverlays].reverse()) {
+			handle.hide();
+			component.dispose?.();
+		}
+		this.extensionOverlays.clear();
 		this.clearExtensionTerminalInputListeners();
 		this.setExtensionFooter(undefined);
 		this.setExtensionHeader(undefined);
@@ -3084,8 +3091,12 @@ export class InteractiveMode {
 				if (closed) return;
 				closed = true;
 				// Remove this overlay, not the topmost one: another overlay may have opened above it.
-				if (isOverlay) overlayHandle?.hide();
-				else restoreEditor();
+				if (isOverlay) {
+					if (overlayHandle) {
+						overlayHandle.hide();
+						this.extensionOverlays.delete(overlayHandle);
+					}
+				} else restoreEditor();
 				// Note: both branches above already call requestRender
 				resolve(result);
 				try {
@@ -3114,6 +3125,7 @@ export class InteractiveMode {
 							return w ? { width: w } : undefined;
 						};
 						overlayHandle = this.ui.showOverlay(c, resolveOptions());
+						this.extensionOverlays.set(overlayHandle, c);
 						// Expose handle to caller for visibility control
 						options?.onHandle?.(overlayHandle);
 					} else {
