@@ -1,4 +1,5 @@
 import type { Context } from "../context/index.ts";
+import type { SyncBody } from "./batch.ts";
 import { isNotFound, type SyncFileSystem, unwrap } from "./files.ts";
 import {
 	type BatchInfo,
@@ -12,6 +13,13 @@ import {
 } from "./remote.ts";
 
 const pad = (value: number): string => String(value).padStart(16, "0");
+/** How much of a body is read from its file at a time. */
+const READ_CHUNK = 256 * 1024;
+
+/** One buffer as a body. */
+async function* once(bytes: Uint8Array): SyncBody {
+	yield bytes;
+}
 const SLOT_NAME = /^(\d{16})\.json$/;
 const SNAPSHOT_NAME = /^(\d{16})\.batch$/;
 const SESSION_ID = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
@@ -49,7 +57,7 @@ export class FileSystemSyncRemote implements SessionSyncMaintenance {
 		after: Seq,
 		to: Seq,
 		device: string,
-		body: Uint8Array,
+		body: SyncBody,
 		context: Context,
 		options: { readonly archive?: boolean } = {},
 	): Promise<PutBatchResult> {
@@ -64,23 +72,23 @@ export class FileSystemSyncRemote implements SessionSyncMaintenance {
 			sessionId,
 			["slots"],
 			`${pad(after)}.json`,
-			new TextEncoder().encode(JSON.stringify(slot)),
+			once(new TextEncoder().encode(JSON.stringify(slot))),
 			context,
 		);
 		return { type: "created" };
 	}
 
-	async getBatch(sessionId: string, after: Seq, context: Context): Promise<Uint8Array | undefined> {
+	async getBatch(sessionId: string, after: Seq, context: Context): Promise<SyncBody | undefined> {
 		const slot = await this.#slot(sessionId, after, context);
 		if (slot === undefined || slot.folded) return undefined;
-		return this.#read(context, sessionId, "batches", `${pad(after)}.batch`);
+		return this.#stream(context, sessionId, "batches", `${pad(after)}.batch`);
 	}
 
-	getSnapshot(sessionId: string, to: Seq, context: Context): Promise<Uint8Array | undefined> {
-		return this.#read(context, sessionId, "snapshots", `${pad(to)}.batch`);
+	getSnapshot(sessionId: string, to: Seq, context: Context): Promise<SyncBody | undefined> {
+		return this.#stream(context, sessionId, "snapshots", `${pad(to)}.batch`);
 	}
 
-	async putSnapshot(sessionId: string, to: Seq, body: Uint8Array, context: Context): Promise<void> {
+	async putSnapshot(sessionId: string, to: Seq, body: SyncBody, context: Context): Promise<void> {
 		await this.#write(sessionId, ["snapshots"], `${pad(to)}.batch`, body, context);
 	}
 
@@ -93,7 +101,7 @@ export class FileSystemSyncRemote implements SessionSyncMaintenance {
 				sessionId,
 				["slots"],
 				`${pad(after)}.json`,
-				new TextEncoder().encode(JSON.stringify(folded)),
+				once(new TextEncoder().encode(JSON.stringify(folded))),
 				context,
 			);
 			const body = await this.#path(context, sessionId, "batches", `${pad(after)}.batch`);
@@ -145,7 +153,7 @@ export class FileSystemSyncRemote implements SessionSyncMaintenance {
 	}
 
 	async putMeta(sessionId: string, meta: JsonObject, context: Context): Promise<void> {
-		await this.#write(sessionId, [], "meta.json", new TextEncoder().encode(JSON.stringify(meta)), context);
+		await this.#write(sessionId, [], "meta.json", once(new TextEncoder().encode(JSON.stringify(meta))), context);
 	}
 
 	async getMeta(sessionId: string, context: Context): Promise<JsonObject | undefined> {
@@ -170,12 +178,38 @@ export class FileSystemSyncRemote implements SessionSyncMaintenance {
 		return unwrap(result);
 	}
 
-	/** Write through a temporary file and a rename, so a reader never sees half a file. */
+	/** A body streamed back from its file, a chunk at a time; undefined when the file is missing. */
+	async #stream(context: Context, sessionId: string, ...parts: string[]): Promise<SyncBody | undefined> {
+		const opened = await this.#fs.openBinaryReader(
+			await this.#path(context, sessionId, ...parts),
+			undefined,
+			context,
+		);
+		if (isNotFound(opened)) return undefined;
+		const reader = unwrap(opened);
+		return (async function* () {
+			try {
+				for (let offset = 0; ; ) {
+					const chunk = unwrap(await reader.read(offset, READ_CHUNK, context));
+					if (chunk.length === 0) return;
+					offset += chunk.length;
+					yield chunk;
+				}
+			} finally {
+				await reader.close(context);
+			}
+		})();
+	}
+
+	/**
+	 * Write a body through a temporary file and a rename, so a reader never sees half a file; the body is appended chunk
+	 * by chunk as it streams.
+	 */
 	async #write(
 		sessionId: string,
 		directory: readonly string[],
 		name: string,
-		body: Uint8Array,
+		body: SyncBody,
 		context: Context,
 	): Promise<void> {
 		unwrap(
@@ -183,7 +217,13 @@ export class FileSystemSyncRemote implements SessionSyncMaintenance {
 		);
 		const path = await this.#path(context, sessionId, ...directory, name);
 		const temporary = await this.#path(context, sessionId, ...directory, `${name}.tmp`);
-		unwrap(await this.#fs.writeFile(temporary, body, context));
+		unwrap(await this.#fs.writeFile(temporary, new Uint8Array(), context));
+		try {
+			for await (const chunk of body) unwrap(await this.#fs.appendFile(temporary, chunk, context));
+		} catch (error) {
+			await this.#fs.remove(temporary, { force: true }, context);
+			throw error;
+		}
 		unwrap(await this.#fs.renameFile(temporary, path, context));
 	}
 

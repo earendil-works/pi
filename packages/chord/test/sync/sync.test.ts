@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, type Context } from "../../src/context/index.ts";
-import { int, str } from "../../src/contracts/index.ts";
+import { int, opt, str } from "../../src/contracts/index.ts";
 import { openNodeSqliteDatabase } from "../../src/sqlite/node.ts";
 import { type Backend, sqliteBackend } from "../../src/store/backend.ts";
 import type { StagedWrite } from "../../src/store/step.ts";
@@ -67,12 +67,16 @@ async function sessionStore(path = ":memory:"): Promise<Store> {
 }
 
 /** The table every copy writes: a counter per id. */
-const Counts = defineTable("counts", { version: 1, columns: { id: str(), n: int() }, key: ["id"] });
+const Counts = defineTable("counts", {
+	version: 1,
+	columns: { id: str(), n: int(), pad: opt(str()) },
+	key: ["id"],
+});
 const TABLE = "app.sync:counts";
 const OPEN = { admit: () => true, adopt: () => {} };
 
 /** One batch of the test's history: rows to put. */
-type Rows = readonly { readonly id: string; readonly n: number }[];
+type Rows = readonly { readonly id: string; readonly n: number; readonly pad?: string }[];
 
 /** Commits each batch of rows to `store`, preparing the table first (its creation is a commit of its own). */
 async function commitAll(store: Store, batches: readonly Rows[]): Promise<void> {
@@ -227,9 +231,9 @@ describe("batches", () => {
 		await commitAll(store, seedBatches());
 		const commits = await readOutbox(store, LOG_START, 1000, context);
 		expect(commits.length).toBeGreaterThan(0);
-		const bytes = await encodeBatch(commits);
-		expect(bytes[0]).toBe(0x1f);
-		expect(await decodeBatch(bytes)).toEqual(commits);
+		const decoded = [];
+		for await (const commit of decodeBatch(encodeBatch(commits))) decoded.push(commit);
+		expect(decoded).toEqual(commits);
 	});
 });
 
@@ -579,6 +583,61 @@ describe("syncing a session between devices", () => {
 		const replica = device("replica", store);
 		await replica.pull();
 		expect(await reads(await replica.store())).toEqual(await reads(source));
+	});
+});
+
+describe("bounded memory", () => {
+	/** Rows of `size` characters each, one per commit: about `count * size` bytes of history. */
+	function bigBatches(count: number, size: number): Rows[] {
+		return Array.from({ length: count }, (_, index) => [{ id: `big${index}`, n: index, pad: "x".repeat(size) }]);
+	}
+
+	it("ends a batch at BATCH_BYTES, so a large history uploads in several slots", async () => {
+		const store = await remote();
+		const laptop = device("laptop", store);
+		// 24 commits of ~1 MB: about three batches of BATCH_BYTES (8 MB).
+		await laptop.commit(bigBatches(24, 1024 * 1024));
+		expect(await laptop.upload()).toEqual({ type: "uploaded", head: (await laptop.store()).lastSeq });
+		const slots = (await store.list(SESSION, context)).batches;
+		expect(slots.length).toBeGreaterThanOrEqual(3);
+		for (const [index, slot] of slots.entries()) if (index > 0) expect(slot.after).toBe(slots[index - 1]!.to);
+		const replica = device("replica", store);
+		await replica.pull();
+		expect(await reads(await replica.store())).toEqual(await reads(await laptop.store()));
+	});
+
+	it("applies a large batch in chunks of APPLY_BYTES, and a pull stopped between them resumes", async () => {
+		const store = await remote();
+		const laptop = device("laptop", store);
+		// 6 commits of ~1 MB in one batch: about two apply chunks of APPLY_BYTES (4 MB).
+		await laptop.commit(bigBatches(6, 1024 * 1024));
+		await laptop.upload();
+		expect((await store.list(SESSION, context)).batches).toHaveLength(1);
+		const viewer = device("viewer", store);
+		const local = tracked(await sessionStore());
+		const chord = local as ChordStore;
+		let applied = 0;
+		const apply = chord.replay.bind(chord);
+		chord.replay = ((...args: Parameters<ChordStore["replay"]>) => {
+			if (++applied === 2) return Promise.reject(new Error("power cut"));
+			return apply(...args);
+		}) as ChordStore["replay"];
+		const pull = () =>
+			pullSession({
+				sessionId: SESSION,
+				store,
+				local: { kind: "store", store: local },
+				state: viewer.state,
+				context,
+			});
+		await expect(pull()).rejects.toThrow("power cut");
+		const midway = local.lastSeq;
+		expect(midway).toBeGreaterThan(0);
+		expect(midway).toBeLessThan((await laptop.store()).lastSeq);
+		await pull();
+		// The first chunk was applied, the second refused, then the resumed pull applied the rest in more chunks.
+		expect(applied).toBeGreaterThanOrEqual(3);
+		expect(await reads(local)).toEqual(await reads(await laptop.store()));
 	});
 });
 

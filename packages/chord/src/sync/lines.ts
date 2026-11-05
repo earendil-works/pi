@@ -27,29 +27,11 @@ export function encodeLogLine(commit: OutboxCommit): string {
 }
 
 /**
- * Decode JSON lines. A last line without its newline is a torn append and is returned as `torn` instead of a commit;
- * anything else that does not decode is an error. A line of an unknown version is an error too: an older pi must not
- * apply writes it does not understand. The writes themselves are checked by `applyBatch()`, a trust boundary.
+ * One line (without its newline) as an outbox commit; `number` names the line in errors. A line of an unknown version
+ * is an error: an older pi must not apply writes it does not understand. The writes themselves are checked by
+ * `applyBatch()`, a trust boundary.
  */
-export function decodeLogLines(text: string): { readonly commits: OutboxCommit[]; readonly torn: number } {
-	const commits: OutboxCommit[] = [];
-	let start = 0;
-	let previous = 0;
-	while (start < text.length) {
-		const end = text.indexOf("\n", start);
-		if (end === -1) return { commits, torn: text.length - start };
-		const commit = decodeLine(text.slice(start, end), commits.length + 1);
-		if (commit.seq <= previous) {
-			throw new LogFormatError(`Log line ${commits.length + 1} does not increase the sequence`);
-		}
-		previous = commit.seq;
-		commits.push(commit);
-		start = end + 1;
-	}
-	return { commits, torn: 0 };
-}
-
-function decodeLine(text: string, number: number): OutboxCommit {
+export function decodeLogLine(text: string, number: number): OutboxCommit {
 	let value: unknown;
 	try {
 		value = JSON.parse(text);

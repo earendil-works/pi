@@ -1,9 +1,9 @@
 // `SyncFileSystem` over Node's file system, for the sync tests (a host passes its own environment, such as Pi Durable's
 // `NodeExecutionEnv`).
 
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { FileResult, SyncFileInfo, SyncFileSystem } from "../../src/sync/index.ts";
+import type { FileResult, SyncFileInfo, SyncFileReader, SyncFileSystem } from "../../src/sync/index.ts";
 
 /** An error with a `code`: `not_found` for a missing file or directory, as `SyncFileSystem` reports it. */
 class FileError extends Error {
@@ -27,7 +27,23 @@ export const nodeFiles: SyncFileSystem = {
 	joinPath: async (parts) => ({ ok: true, value: join(...parts) }),
 	readTextFile: (path) => attempt(() => readFile(path, "utf8")),
 	readBinaryFile: (path) => attempt(async () => new Uint8Array(await readFile(path))),
+	openBinaryReader: (path) =>
+		attempt(async (): Promise<SyncFileReader> => {
+			const file = await open(path, "r");
+			return {
+				read: (offset, length) =>
+					attempt(async () => {
+						const buffer = new Uint8Array(length);
+						const { bytesRead } = await file.read(buffer, 0, length, offset);
+						return buffer.subarray(0, bytesRead);
+					}),
+				close: async () => {
+					await file.close();
+				},
+			};
+		}),
 	writeFile: (path, content) => attempt(() => writeFile(path, content)),
+	appendFile: (path, content) => attempt(() => appendFile(path, content)),
 	renameFile: (source, destination) => attempt(() => rename(source, destination)),
 	listDir: (path) =>
 		attempt(async () =>

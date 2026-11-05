@@ -1,8 +1,17 @@
 // Session sync over a store's outbox (`@earendil-works/chord/sync`, experimental). Portable: the remote and the host's
 // sync state are interfaces, and the directory-backed ones take their file operations (`SyncFileSystem`).
 
-export { decodeBatch, decodeSnapshot, encodeBatch, encodeSnapshot } from "./batch.ts";
 export {
+	decodeBatch,
+	decodeBatchLines,
+	decodeSnapshot,
+	encodeBatch,
+	encodeSnapshot,
+	type SyncBody,
+} from "./batch.ts";
+export {
+	APPLY_BYTES,
+	BATCH_BYTES,
 	FlushScheduler,
 	type FlushSchedulerOptions,
 	foldSession,
@@ -17,9 +26,9 @@ export {
 	type UploadResult,
 	uploadSession,
 } from "./client.ts";
-export type { FileResult, SyncFileInfo, SyncFileSystem } from "./files.ts";
+export type { FileResult, SyncFileInfo, SyncFileReader, SyncFileSystem } from "./files.ts";
 export { checkSessionId, FileSystemSyncRemote } from "./filesystem.ts";
-export { decodeLogLines, encodeLogLine, LOG_VERSION, LogFormatError } from "./lines.ts";
+export { decodeLogLine, encodeLogLine, LOG_VERSION, LogFormatError } from "./lines.ts";
 export {
 	type BatchInfo,
 	HistoryUnavailableError,

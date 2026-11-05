@@ -1,4 +1,5 @@
 import type { Context } from "../context/index.ts";
+import type { SyncBody } from "./batch.ts";
 
 /** A store's commit sequence (`store.lastSeq`, an outbox commit's `seq`); 0 is before every commit. */
 export type Seq = number;
@@ -62,19 +63,22 @@ export type SessionChanges = {
 
 /** The client's view of a remote store. Clients never delete or fold. */
 export interface SessionSyncStore {
-	/** Create the slot after `after` unless it exists or the history does not end at `after`. */
+	/**
+	 * Create the slot after `after` unless it exists or the history does not end at `after`. `body` is a stream read once;
+	 * a remote that answers without reading it (`exists`, `not_head`) leaves it unread.
+	 */
 	putBatch(
 		sessionId: string,
 		after: Seq,
 		to: Seq,
 		device: string,
-		body: Uint8Array,
+		body: SyncBody,
 		context: Context,
 		options?: { readonly archive?: boolean },
 	): Promise<PutBatchResult>;
 	/** A batch's body; `undefined` when its slot is folded or absent. */
-	getBatch(sessionId: string, after: Seq, context: Context): Promise<Uint8Array | undefined>;
-	getSnapshot(sessionId: string, to: Seq, context: Context): Promise<Uint8Array | undefined>;
+	getBatch(sessionId: string, after: Seq, context: Context): Promise<SyncBody | undefined>;
+	getSnapshot(sessionId: string, to: Seq, context: Context): Promise<SyncBody | undefined>;
 	list(sessionId: string, context: Context): Promise<RemoteListing>;
 	/**
 	 * The sessions changed after `cursor` (all of them without one). A remote may also list sessions that did not change,
@@ -91,7 +95,7 @@ export interface SessionSyncStore {
 
 /** The remote's own side: folding history into snapshots, which clients never do. */
 export interface SessionSyncMaintenance extends SessionSyncStore {
-	putSnapshot(sessionId: string, to: Seq, body: Uint8Array, context: Context): Promise<void>;
+	putSnapshot(sessionId: string, to: Seq, body: SyncBody, context: Context): Promise<void>;
 	/** Drop the bodies of these slots, keeping the slots taken so nobody can create them again. */
 	foldBatches(sessionId: string, afters: readonly Seq[], context: Context): Promise<void>;
 	deleteSnapshots(sessionId: string, snapshots: readonly Seq[], context: Context): Promise<void>;
