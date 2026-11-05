@@ -45,7 +45,7 @@ export class SandboxBusyError extends Error {
   }
 }
 
-export type AgentNetworkPolicy = "deny-all" | { allow: string[] };
+export type AgentNetworkPolicy = "deny-all" | "allow-all" | { allow: string[] };
 
 /**
  * Named groups of exact domains the sandbox may reach. Owner decision (2026-11-05): outbound access is allowed
@@ -83,9 +83,18 @@ export interface AgentSandboxOptions {
   egressPresets?: readonly EgressPreset[];
   /**
    * Extra exact domains the sandbox may reach (for example `registry.npmjs.org` or `*.npmjs.org`), added to the
-   * presets. There is deliberately no way to allow everything.
+   * presets. This list stays least-privilege; use `egressAll` to allow every host.
    */
   egressAllow?: readonly string[];
+  /**
+   * Allow all outbound traffic. Off unless a caller sets it explicitly; the owner asked for this as an option
+   * (2026-11-05). It overrides the presets and `egressAllow`. The default stays the named allowlist. With no
+   * credentials in the sandbox this exposes nothing to read, but it lets the agent send anything it can see
+   * (the workspace) to any host, so it should be a deliberate, per-environment choice.
+   * Caller contract: only the agent route may set this, derived from an owner-set per-environment flag; model output
+   * and tools must never reach it. Nothing here records who set it, so the route should log the effective policy.
+   */
+  egressAll?: boolean;
   /**
    * How long a lock may sit before another turn may take it over, in ms. A turn is told to stop (its signal
    * aborts) at 80% of this, so it has stopped before the lock can be taken over.
@@ -130,8 +139,15 @@ export function agentSandboxParams(options: AgentSandboxOptions = {}): AgentSand
   const vcpus = options.vcpus ?? 1;
   if (!Number.isInteger(vcpus) || vcpus < 1 || vcpus > 2) throw new SandboxPolicyError("vcpus must be 1 or 2");
 
-  const egress = validateEgress([...presetDomains(options.egressPresets ?? DEFAULT_AGENT_EGRESS), ...(options.egressAllow ?? [])]);
-  const networkPolicy: AgentNetworkPolicy = egress.length > 0 ? { allow: egress } : "deny-all";
+  if (options.egressAll !== undefined && typeof options.egressAll !== "boolean") {
+    throw new SandboxPolicyError("egressAll must be true or false");
+  }
+  // In allow-all mode the preset and domain lists are unused, so they are not validated (and cannot misdirect an error).
+  const egress =
+    options.egressAll === true
+      ? []
+      : validateEgress([...presetDomains(options.egressPresets ?? DEFAULT_AGENT_EGRESS), ...(options.egressAllow ?? [])]);
+  const networkPolicy: AgentNetworkPolicy = options.egressAll === true ? "allow-all" : egress.length > 0 ? { allow: egress } : "deny-all";
 
   return {
     name,
