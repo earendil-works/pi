@@ -110,9 +110,14 @@ describe("agentSandboxParams", () => {
   });
 
   it("allows all outbound traffic only when asked to, and refuses non-boolean values", () => {
-    expect(agentSandboxParams().networkPolicy).not.toBe("allow-all");
+    const allowlist = { allow: [...EGRESS_PRESETS.packages, ...EGRESS_PRESETS.git] };
+    expect(agentSandboxParams().networkPolicy).toEqual(allowlist);
     expect(agentSandboxParams({ egressAll: true }).networkPolicy).toBe("allow-all");
-    expect(agentSandboxParams({ egressAll: false }).networkPolicy).not.toBe("allow-all");
+    expect(agentSandboxParams({ egressAll: false }).networkPolicy).toEqual(allowlist);
+    // It overrides presets and extra domains, and unused lists are not validated in this mode.
+    expect(agentSandboxParams({ egressAll: true, egressPresets: [], egressAllow: ["example.org"] }).networkPolicy).toBe("allow-all");
+    expect(agentSandboxParams({ egressAll: true, egressAllow: ["*"], egressPresets: ["nope" as never] }).networkPolicy).toBe("allow-all");
+    expect(() => agentSandboxParams({ egressAll: false, egressAllow: ["*"] })).toThrow(SandboxPolicyError);
     expect(() => agentSandboxParams({ egressAll: "yes" as never })).toThrow(SandboxPolicyError);
   });
 
@@ -268,6 +273,16 @@ describe("withAgentSandbox", () => {
     busy.sandbox.held = true;
     await expect(withAgentSandbox(busy, async () => 1)).rejects.toBeInstanceOf(SandboxBusyError);
     expect(busy.sandbox.policies).toEqual([]);
+  });
+
+  it("applies allow-all to the sandbox each turn when asked, and deny-all when no egress is allowed", async () => {
+    const all = new FakeClient();
+    await withAgentSandbox(all, async () => 1, { egressAll: true });
+    expect(all.calls[0]?.networkPolicy).toBe("allow-all");
+    expect(all.sandbox.policies).toEqual(["allow-all"]);
+    const none = new FakeClient();
+    await withAgentSandbox(none, async () => 1, { egressPresets: [] });
+    expect(none.sandbox.policies).toEqual(["deny-all"]);
   });
 
   it("releases the lock and does not run the work if applying the network policy fails", async () => {

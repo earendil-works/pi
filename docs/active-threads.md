@@ -54,7 +54,7 @@
 **Open (owner):**
 - **Access control.** The owner's answer was "Vercel login for the model provider and model", which can mean the credentials come from the Vercel account (OIDC). That does not restrict who can call the route. Needs a decision: Vercel Authentication for the whole project, a passphrase held in a Vercel environment variable (set by the owner), or something else.
 - **Approval defaults.** Proposal: file edits and commands inside the sandbox run without asking; anything that leaves the sandbox (network, git push, exporting files) needs the owner's approval.
-- **Egress.** Proposal: `deny-all` by default; an allowlist only by explicit choice. `npm install` and `git clone` need it.
+- **Egress.** Resolved 2026-11-05: the default is the named allowlist (package registries and GitHub); `deny-all` is one option away; allow-all is available only as an explicit `egressAll: true` (owner: "let allow all as an option", nlt-pi#21).
 - **Cost.** Vercel Sandbox usage is billed separately from "free models only"; the owner's plan allowance is not known.
 - **Model and agent loop.** A free gateway model (NLTPI-MVP-003) driving the sandbox tools, streamed to the chat page, is step 2. Function duration limits need streaming.  
 **Owner answers (2026-11-05):** egress **allowed**; approvals **yes** (edits and commands inside the sandbox run without asking); **Vercel login added again**.  
