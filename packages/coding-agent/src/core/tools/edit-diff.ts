@@ -5,7 +5,7 @@
 import * as Diff from "diff";
 import { constants } from "fs";
 import { access, readFile } from "fs/promises";
-import { splitBom } from "../../utils/text.ts";
+import { decodeFile, type FileEncoding } from "./file-encoding.ts";
 import { resolveToCwd } from "./path-utils.ts";
 
 export function detectLineEnding(content: string): "\r\n" | "\n" {
@@ -288,6 +288,33 @@ function getNoChangeError(path: string, totalEdits: number): Error {
 	return new Error(`No changes made to ${path}. The replacements produced identical content.`);
 }
 
+const NOT_UTF8_ALTERNATIVES =
+	"The file was left unchanged. For such changes, use bash (for example iconv, or a script that reads and writes the file in its encoding), or, if converting the file to UTF-8 is acceptable, rewrite it with write.";
+
+function describeEdit(path: string, editIndex: number, totalEdits: number): string {
+	return totalEdits === 1 ? `the edit to ${path}` : `edits[${editIndex}] to ${path}`;
+}
+
+function getNonAsciiEditError(path: string, editIndex: number, totalEdits: number): Error {
+	return new Error(
+		`Cannot apply ${describeEdit(path, editIndex, totalEdits)}: the file is not valid UTF-8 (it may use a legacy encoding such as Windows-1252, GBK or Shift-JIS), so its encoding is unknown. Edits to such files are only applied when oldText and newText are ASCII, which keeps every other byte unchanged. Anchor the edit on ASCII-only text. ${NOT_UTF8_ALTERNATIVES}`,
+	);
+}
+
+function getInexactMatchError(path: string, editIndex: number, totalEdits: number): Error {
+	return new Error(
+		`Cannot apply ${describeEdit(path, editIndex, totalEdits)}: the oldText only matches after normalizing whitespace or Unicode punctuation, and the file is not valid UTF-8, so only exact matches are applied. The oldText must match exactly including all whitespace and newlines.`,
+	);
+}
+
+function getSplitCharacterError(path: string, editIndex: number, totalEdits: number): Error {
+	return new Error(
+		`Cannot apply ${describeEdit(path, editIndex, totalEdits)}: the file is not valid UTF-8, and the edit changes text within 3 bytes after a non-ASCII byte. In multi-byte encodings such as GBK, GB18030, Big5 or Shift-JIS such a byte can belong to the preceding character. ${NOT_UTF8_ALTERNATIVES}`,
+	);
+}
+
+const NON_ASCII = /[\u0080-\uffff]/;
+
 /**
  * Apply one or more exact-text replacements to LF-normalized content.
  *
@@ -296,11 +323,17 @@ function getNoChangeError(path: string, totalEdits: number): Error {
  * fuzzy matching, the operation runs in fuzzy-normalized content space and then
  * overlays those line-level changes onto the original content so unchanged line
  * blocks keep their original bytes.
+ *
+ * Content of the `bytes` encoding (not valid UTF-8, one character per byte) has
+ * an unknown encoding, so only ASCII edits that match exactly are accepted, and
+ * none may change the byte right after a non-ASCII byte: those splice exactly
+ * the bytes they replace.
  */
 export function applyEditsToNormalizedContent(
 	normalizedContent: string,
 	edits: Edit[],
 	path: string,
+	encoding: FileEncoding,
 ): AppliedEditsResult {
 	const normalizedEdits = edits.map((edit) => ({
 		oldText: normalizeToLF(edit.oldText),
@@ -311,10 +344,17 @@ export function applyEditsToNormalizedContent(
 		if (normalizedEdits[i].oldText.length === 0) {
 			throw getEmptyOldTextError(path, i, normalizedEdits.length);
 		}
+		if (encoding === "bytes" && NON_ASCII.test(normalizedEdits[i].oldText + normalizedEdits[i].newText)) {
+			throw getNonAsciiEditError(path, i, normalizedEdits.length);
+		}
 	}
 
 	const initialMatches = normalizedEdits.map((edit) => fuzzyFindText(normalizedContent, edit.oldText));
-	const usedFuzzyMatch = initialMatches.some((match) => match.usedFuzzyMatch);
+	const fuzzyEditIndex = initialMatches.findIndex((match) => match.usedFuzzyMatch);
+	const usedFuzzyMatch = fuzzyEditIndex !== -1;
+	if (usedFuzzyMatch && encoding === "bytes") {
+		throw getInexactMatchError(path, fuzzyEditIndex, normalizedEdits.length);
+	}
 	const replacementBaseContent = usedFuzzyMatch ? normalizeForFuzzyMatch(normalizedContent) : normalizedContent;
 
 	const matchedEdits: MatchedEdit[] = [];
@@ -325,7 +365,11 @@ export function applyEditsToNormalizedContent(
 			throw getNotFoundError(path, i, normalizedEdits.length);
 		}
 
-		const occurrences = countOccurrences(replacementBaseContent, edit.oldText);
+		// Text of unknown encoding only matches exactly, so only exact occurrences are duplicates.
+		const occurrences =
+			encoding === "bytes"
+				? replacementBaseContent.split(edit.oldText).length - 1
+				: countOccurrences(replacementBaseContent, edit.oldText);
 		if (occurrences > 1) {
 			throw getDuplicateError(path, i, normalizedEdits.length, occurrences);
 		}
@@ -346,6 +390,25 @@ export function applyEditsToNormalizedContent(
 			throw new Error(
 				`edits[${previous.editIndex}] and edits[${current.editIndex}] overlap in ${path}. Merge them into one edit or target disjoint regions.`,
 			);
+		}
+	}
+
+	if (encoding === "bytes") {
+		for (const edit of matchedEdits) {
+			const matched = normalizedContent.slice(edit.matchIndex, edit.matchIndex + edit.matchLength);
+			if (matched === edit.newText) continue;
+			let unchangedPrefix = 0;
+			while (unchangedPrefix < matched.length && matched[unchangedPrefix] === edit.newText[unchangedPrefix]) {
+				unchangedPrefix++;
+			}
+			// In GBK, Big5, Shift-JIS and GB18030 an ASCII byte can be the second or fourth byte of a
+			// character, at most 3 bytes after a non-ASCII byte. The edit is ASCII, so a change starting
+			// further from non-ASCII bytes changes or inserts only whole characters. Line-ending
+			// normalization only shortens CRLF, so 3 characters here cover at least 3 bytes.
+			const changeStart = edit.matchIndex + unchangedPrefix;
+			if (NON_ASCII.test(normalizedContent.slice(Math.max(0, changeStart - 3), changeStart))) {
+				throw getSplitCharacterError(path, edit.editIndex, normalizedEdits.length);
+			}
 		}
 	}
 
@@ -527,13 +590,10 @@ export async function computeEditsDiff(
 			return { error: `Could not edit file: ${path}. ${errorMessage}.` };
 		}
 
-		// Read the file
-		const rawContent = await readFile(absolutePath, "utf-8");
-
-		// Strip BOM before matching (LLM won't include invisible BOM in oldText)
-		const { text: content } = splitBom(rawContent);
-		const normalizedContent = normalizeToLF(content);
-		const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
+		// Read the file. The decoded text has no BOM (LLM won't include invisible BOM in oldText).
+		const file = decodeFile(await readFile(absolutePath), path);
+		const normalizedContent = normalizeToLF(file.text);
+		const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path, file.encoding);
 
 		// Generate the diff
 		return generateDiffString(baseContent, newContent);
