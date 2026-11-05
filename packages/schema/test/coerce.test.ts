@@ -115,6 +115,29 @@ describe("parse", () => {
 	});
 });
 
+describe("validate", () => {
+	it("checks without coercing, with or without the coerce option", () => {
+		const schema = obj({ count: num(), tags: arr(str()) });
+		const value = { count: 42, tags: ["a"] };
+		for (const validator of [compile(schema), compile(schema, { coerce: true })]) {
+			const result = validator.validate(value);
+			expect(result).toEqual({ ok: true, value });
+			if (result.ok) {
+				expect(result.value).toBe(value);
+				expectTypeOf(result.value).toEqualTypeOf<{ count: number; tags: string[] }>();
+			}
+			// parse() would turn "42" into 42 and "a" into ["a"]; validate() reports both.
+			expect(validator.validate({ count: "42", tags: "a" })).toEqual({
+				ok: false,
+				errors: [
+					{ path: "/count", keyword: "type", message: "expected number, got string" },
+					{ path: "/tags", keyword: "type", message: "expected array, got string" },
+				],
+			});
+		}
+	});
+});
+
 describe("pass 1: optional nulls", () => {
 	it("drops null in optional non-nullable properties, also nested", () => {
 		const schema = obj(

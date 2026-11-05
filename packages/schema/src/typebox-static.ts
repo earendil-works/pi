@@ -1,6 +1,6 @@
 // The static types of TypeBox-built schemas, read from the type shapes TypeBox 1.x declares (`'~kind'`, `'~optional'`,
 // `'~readonly'`, `'~unsafe'`) without importing TypeBox, so `Static` also types tool arguments of TypeBox schemas.
-// Only the common kinds are mapped; every other kind (Enum, Tuple, Intersect, Cyclic, Ref, ...) is `unknown`.
+// Only the common kinds are mapped; every other kind (Intersect, Cyclic, Ref, ...) is `unknown`.
 
 import type { Static } from "./builders.ts";
 
@@ -17,6 +17,8 @@ interface Primitives {
 	Integer: number;
 	Boolean: boolean;
 	Null: null;
+	BigInt: bigint;
+	Undefined: undefined;
 	Unknown: unknown;
 	Any: any;
 }
@@ -43,7 +45,15 @@ type KindStatic<S, K> = K extends keyof Primitives
 						? S extends { readonly patternProperties: infer P }
 							? Record<RecordKey<keyof P>, Static<P[keyof P]>>
 							: unknown
-						: unknown;
+						: K extends "Enum"
+							? S extends { readonly enum: readonly (infer V)[] }
+								? V
+								: unknown
+							: K extends "Tuple"
+								? S extends { readonly items: infer I extends readonly unknown[] }
+									? { -readonly [N in keyof I]: Static<I[N]> }
+									: unknown
+								: unknown;
 
 type Optional = { readonly "~optional": true };
 

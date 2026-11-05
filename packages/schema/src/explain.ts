@@ -3,6 +3,7 @@
 
 import { newAnnotations } from "./annotations.ts";
 import {
+	bigintBounds,
 	codePoints,
 	constCheck,
 	containsCheck,
@@ -13,7 +14,7 @@ import {
 	TYPE_CHECKS,
 	uniqueCheck,
 } from "./checks.ts";
-import type { Compiler } from "./compiler.ts";
+import { type Compiler, requiredKeys } from "./compiler.ts";
 import { isSchemaObject } from "./resolver.ts";
 import { sharedRegex } from "./shared.ts";
 import type { SchemaObject, ValidationError } from "./types.ts";
@@ -83,6 +84,7 @@ export class Explainer {
 		if (typeof v === "string" && node.type !== "bytes") this.walkString(node, v, push);
 		if (v instanceof Uint8Array && node.type === "bytes") this.walkBytes(node, v, push);
 		if (typeof v === "number") this.walkNumber(node, v, push);
+		if (typeof v === "bigint" && node.type === "bigint") this.walkBigint(node, v, push);
 		if (isObject(v)) this.walkObject(node, b, v, path, out, push);
 		if (Array.isArray(v)) this.walkArray(node, b, v, path, out, push);
 		if (Array.isArray(node.allOf)) for (const s of node.allOf) this.walk(s, b, v, path, out);
@@ -171,6 +173,19 @@ export class Explainer {
 		}
 	}
 
+	private walkBigint(node: SchemaObject, v: bigint, push: Push): void {
+		const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf } = bigintBounds(node);
+		if (minimum !== undefined && v < minimum) push("minimum", `expected >= ${minimum}`);
+		if (maximum !== undefined && v > maximum) push("maximum", `expected <= ${maximum}`);
+		if (exclusiveMinimum !== undefined && v <= exclusiveMinimum)
+			push("exclusiveMinimum", `expected > ${exclusiveMinimum}`);
+		if (exclusiveMaximum !== undefined && v >= exclusiveMaximum)
+			push("exclusiveMaximum", `expected < ${exclusiveMaximum}`);
+		if (multipleOf !== undefined && multipleOf !== 0n && v % multipleOf !== 0n) {
+			push("multipleOf", `expected a multiple of ${multipleOf}`);
+		}
+	}
+
 	private walkObject(
 		node: SchemaObject,
 		b: string,
@@ -180,10 +195,8 @@ export class Explainer {
 		push: Push,
 	): void {
 		const properties = isSchemaObject(node.properties) ? node.properties : {};
-		const required = Array.isArray(node.required) ? node.required : [];
-		for (const k of required) {
-			if (typeof k === "string" && (!Object.hasOwn(v, k) || v[k] === undefined))
-				push("required", "missing", pointer(path, k));
+		for (const k of requiredKeys(node, properties)) {
+			if (!Object.hasOwn(v, k) || v[k] === undefined) push("required", "missing", pointer(path, k));
 		}
 		for (const k of Object.keys(properties)) {
 			if (Object.hasOwn(v, k) && v[k] !== undefined) this.walk(properties[k], b, v[k], pointer(path, k), out);
@@ -387,6 +400,7 @@ function typeName(v: unknown): string {
 	if (v === null) return "null";
 	if (Array.isArray(v)) return "array";
 	if (v instanceof Uint8Array) return "bytes";
+	if (typeof v === "bigint") return "bigint";
 	if (typeof v === "number" && Number.isInteger(v)) return "integer";
 	return typeof v;
 }

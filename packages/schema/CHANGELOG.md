@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- `unsafe<T>(schema)` types a schema as accepting `T` without checking it, as TypeBox's `Type.Unsafe` does.
+- `recursive<T>(id, build)` builds a schema that contains itself (a tree), with its type given as `T`.
+- `Validator.validate(value)` returns `{ ok: true, value }` or `{ ok: false, errors }` without coercing, on every validator.
+- `Static` types TypeBox's `Enum`, `Tuple`, `BigInt` and `Undefined` schemas.
+- TypeBox's JavaScript types validate as TypeBox does: `{ type: "bigint" }` (`Type.BigInt`, with bigint bounds) and `{ type: "undefined" }` (`Type.Undefined`; a required property with it may be left out). The `bigint()` builder builds the former.
+- `equal(a, b)`: JSON equality as `const`, `enum` and `uniqueItems` compare, a drop-in for TypeBox's `Value.Equal`.
+
 ### Changed
 
 - Faster checks, still without eval: object and array loops run `const`, small `enum`s, type lists, number bounds, string lengths and patterns inline instead of calling a closure; a closed object looks up keys in declared order first; `anyOf` branches that are bare types (as `nullable` builds) run as one type test. Checks take about 16% less time across the benchmark's speed cases, up to 30% less for tagged unions and 45% less for nullable properties.

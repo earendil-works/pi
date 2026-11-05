@@ -52,6 +52,11 @@ export class Validator<T = unknown> {
 		this.explainer ??= new Explainer(compiler(this.schema, this.options), this.schema);
 		return this.explainer.errors(value);
 	}
+
+	/** `value` itself when it is valid, else its errors: check() and errors() in one result, without coercion. */
+	validate(value: unknown): ParseResult<T> {
+		return this.check(value) ? { ok: true, value } : { ok: false, errors: this.errors(value) };
+	}
 }
 
 /** A validator compiled with `coerce: true`: it also coerces loosely typed input towards the schema. */
@@ -71,8 +76,7 @@ export class CoercingValidator<T = unknown> extends Validator<T> {
 
 	/** Coerces `value`, then checks it: the coerced value when it is valid, else its errors. */
 	parse(value: unknown): ParseResult<T> {
-		const coerced = this.coerce(value);
-		return this.check(coerced) ? { ok: true, value: coerced } : { ok: false, errors: this.errors(coerced) };
+		return this.validate(this.coerce(value));
 	}
 }
 

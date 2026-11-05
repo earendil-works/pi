@@ -4,6 +4,8 @@
 export {
 	type Annotations,
 	arr,
+	type BigintBounds,
+	bigint,
 	bool,
 	bytes,
 	int,
@@ -19,6 +21,7 @@ export {
 	oneOf,
 	opt,
 	type Properties,
+	recursive,
 	type Schema,
 	type Static,
 	type StaticObject,
@@ -26,6 +29,8 @@ export {
 	tuple,
 	union,
 	unknown,
+	unsafe,
 } from "./builders.ts";
+export { deepEqual as equal } from "./checks.ts";
 export type { Check, CompileOptions, FormatCheck, JsonSchema, ParseResult, ValidationError } from "./types.ts";
 export { CoercingValidator, compile, Validator } from "./validator.ts";

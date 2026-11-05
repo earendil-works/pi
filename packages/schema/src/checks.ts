@@ -13,6 +13,8 @@ const IS_BOOLEAN: Check = (v) => typeof v === "boolean";
 const IS_NULL: Check = (v) => v === null;
 export const IS_ARRAY: Check = (v) => Array.isArray(v);
 const IS_BYTES: Check = (v) => v instanceof Uint8Array;
+const IS_BIGINT: Check = (v) => typeof v === "bigint";
+const IS_UNDEFINED: Check = (v) => v === undefined;
 export const IS_OBJECT: Check = (v) => isObject(v);
 
 /** Whether `v` is a JSON object: not null, an array or bytes. */
@@ -20,7 +22,10 @@ export function isObject(v: unknown): v is Record<string, unknown> {
 	return typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof Uint8Array);
 }
 
-/** The check of a `type` name; `bytes` (a Uint8Array) extends JSON Schema for values that never pass through JSON. */
+/**
+ * The check of a `type` name. `bytes` (a Uint8Array), `bigint` (TypeBox's `Type.BigInt`) and `undefined` (TypeBox's
+ * `Type.Undefined`) extend JSON Schema for values that never pass through JSON.
+ */
 export const TYPE_CHECKS: ReadonlyMap<string, Check> = new Map([
 	["string", IS_STRING],
 	["number", IS_NUMBER],
@@ -30,6 +35,8 @@ export const TYPE_CHECKS: ReadonlyMap<string, Check> = new Map([
 	["array", IS_ARRAY],
 	["object", IS_OBJECT],
 	["bytes", IS_BYTES],
+	["bigint", IS_BIGINT],
+	["undefined", IS_UNDEFINED],
 ]);
 
 /**
@@ -175,6 +182,8 @@ const TYPE_BITS: ReadonlyMap<string, number> = new Map([
 	["array", 32],
 	["object", 64],
 	["bytes", 128],
+	["bigint", 256],
+	["undefined", 512],
 ]);
 
 /** The bits of the named types; unknown names add none. */
@@ -195,6 +204,10 @@ function typeBits(v: unknown): number {
 			return 8;
 		case "object":
 			return v === null ? 16 : Array.isArray(v) ? 32 : v instanceof Uint8Array ? 128 : 64;
+		case "bigint":
+			return 256;
+		case "undefined":
+			return 512;
 		default:
 			return 0;
 	}
@@ -209,6 +222,39 @@ export function maskedAnyCheck(mask: number, checks: readonly Check[]): Check {
 	if (checks.length === 0) return maskCheck(mask);
 	const rest = checks.length === 1 ? checks[0] : anyCheck(checks);
 	return (v) => (typeBits(v) & mask) !== 0 || rest(v);
+}
+
+/** A bigint within the bounds (bigint `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`). */
+export function bigintCheck(bounds: BigintBounds): Check {
+	const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf } = bounds;
+	return (v) =>
+		typeof v === "bigint" &&
+		(minimum === undefined || v >= minimum) &&
+		(maximum === undefined || v <= maximum) &&
+		(exclusiveMinimum === undefined || v > exclusiveMinimum) &&
+		(exclusiveMaximum === undefined || v < exclusiveMaximum) &&
+		(multipleOf === undefined || multipleOf === 0n || v % multipleOf === 0n);
+}
+
+/** A `bigint` schema's bounds: each keyword when its value is a bigint, as `Type.BigInt` writes them. */
+export type BigintBounds = {
+	readonly minimum: bigint | undefined;
+	readonly maximum: bigint | undefined;
+	readonly exclusiveMinimum: bigint | undefined;
+	readonly exclusiveMaximum: bigint | undefined;
+	readonly multipleOf: bigint | undefined;
+};
+
+/** The bigint bounds of `node`. */
+export function bigintBounds(node: Readonly<Record<string, unknown>>): BigintBounds {
+	const value = (key: string) => (typeof node[key] === "bigint" ? (node[key] as bigint) : undefined);
+	return {
+		minimum: value("minimum"),
+		maximum: value("maximum"),
+		exclusiveMinimum: value("exclusiveMinimum"),
+		exclusiveMaximum: value("exclusiveMaximum"),
+		multipleOf: value("multipleOf"),
+	};
 }
 
 /** A Uint8Array within the length bounds. */
@@ -535,7 +581,10 @@ export function taggedCheck(key: string, tags: readonly unknown[], checks: reado
 	};
 }
 
-/** JSON equality: same primitives, arrays with equal items in order, objects with the same keys and equal values. */
+/**
+ * JSON equality, as `const`, `enum` and `uniqueItems` compare: the same primitives, arrays with equal items in order,
+ * objects with the same keys and equal values (key order does not matter).
+ */
 export function deepEqual(a: unknown, b: unknown): boolean {
 	if (a === b) return true;
 	if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
