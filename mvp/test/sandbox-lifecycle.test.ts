@@ -109,6 +109,13 @@ describe("agentSandboxParams", () => {
     expect(agentSandboxParams({ name: "other" } as never).name).toBe(AGENT_SANDBOX_NAME);
   });
 
+  it("allows all outbound traffic only when asked to, and refuses non-boolean values", () => {
+    expect(agentSandboxParams().networkPolicy).not.toBe("allow-all");
+    expect(agentSandboxParams({ egressAll: true }).networkPolicy).toBe("allow-all");
+    expect(agentSandboxParams({ egressAll: false }).networkPolicy).not.toBe("allow-all");
+    expect(() => agentSandboxParams({ egressAll: "yes" as never })).toThrow(SandboxPolicyError);
+  });
+
   it("allows outbound traffic to the default presets only, and denies everything when asked to", () => {
     expect([...DEFAULT_AGENT_EGRESS]).toEqual(["packages", "git"]);
     expect(agentSandboxParams({ egressPresets: [] }).networkPolicy).toBe("deny-all");
