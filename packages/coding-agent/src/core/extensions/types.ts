@@ -240,8 +240,9 @@ export interface ExtensionUIContext {
 			/** Called with the overlay handle after the overlay is shown. Use to control visibility. */
 			onHandle?: (handle: OverlayHandle) => void;
 			/**
-			 * Report pi as blocked on user input (OSC 7501 program status) while this component is visible.
-			 * Only applies to inline components, not overlays.
+			 * Report pi as blocked on user input (OSC 7501 program status) while this component waits for input.
+			 * Inline components report it while visible. Overlays report it until `done()` is called, also while
+			 * hidden with `setHidden()`.
 			 */
 			blocked?: { kind: NonNullable<ProgramStatus["kind"]>; message: string };
 		},

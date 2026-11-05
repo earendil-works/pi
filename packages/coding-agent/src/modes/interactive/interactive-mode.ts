@@ -576,6 +576,8 @@ export class InteractiveMode {
 	// Extension dialogs shown in the editor slot (select, confirm, input, editor, inline custom).
 	// The last entry is visible; see pushExtensionDialog().
 	private extensionDialogs: Array<{ component: ExtensionDialogComponent; blocked: BlockedStatus | undefined }> = [];
+	/** Numbers the program status sources of blocking overlays, so closing one keeps the others. */
+	private nextBlockingOverlayId = 0;
 	private extensionTerminalInputSubscriptions = new Set<{
 		handler: (data: string) => { consume?: boolean; data?: string } | undefined;
 		unsubscribe: () => void;
@@ -3072,6 +3074,9 @@ export class InteractiveMode {
 		return new Promise((resolve, reject) => {
 			let component: ExtensionDialogComponent | undefined;
 			let overlayHandle: OverlayHandle | undefined;
+			// An overlay stays blocked until its interaction ends, also while setHidden() hides it.
+			const overlayStatusSource =
+				isOverlay && options?.blocked ? `extension-overlay:${this.nextBlockingOverlayId++}` : undefined;
 			let closed = false;
 
 			const restoreEditor = () => {
@@ -3086,6 +3091,7 @@ export class InteractiveMode {
 				// Remove this overlay, not the topmost one: another overlay may have opened above it.
 				if (isOverlay) overlayHandle?.hide();
 				else restoreEditor();
+				if (overlayStatusSource) this.programStatus.setBlocked(overlayStatusSource, undefined);
 				// Note: both branches above already call requestRender
 				resolve(result);
 				try {
@@ -3114,6 +3120,7 @@ export class InteractiveMode {
 							return w ? { width: w } : undefined;
 						};
 						overlayHandle = this.ui.showOverlay(c, resolveOptions());
+						if (overlayStatusSource) this.programStatus.setBlocked(overlayStatusSource, options?.blocked);
 						// Expose handle to caller for visibility control
 						options?.onHandle?.(overlayHandle);
 					} else {
