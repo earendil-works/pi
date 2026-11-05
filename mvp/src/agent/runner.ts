@@ -110,6 +110,7 @@ export async function bindGatewayModel(model: GatewayCatalogModel, token: string
   }
 }
 
+/** Binds one gateway model into a temporary model runtime; the temporary dir is removed on completion or failure. */
 async function bindInto(dir: string, model: GatewayCatalogModel, token: string): Promise<ModelBinding> {
   const modelRuntime = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
@@ -148,6 +149,27 @@ class CallerAbortedError extends Error {
   }
 }
 
+/** Races a setup promise against the caller's abort signal so a cancelled turn stops before later stages. */
+function raceSignal<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return work;
+  if (signal.aborted) return Promise.reject(new CallerAbortedError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new CallerAbortedError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+/** Short human-readable description of an error, for turn results that report reasons. */
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : "unknown error";
 }
@@ -164,8 +186,9 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
   // 1. Crisis gate. Anything but a literal `allowed: true` stops here.
   let gate: GateResult;
   try {
-    gate = await withinDeadline(deps.gate(input.prompt), input.deadlineAt);
+    gate = await raceSignal(withinDeadline(deps.gate(input.prompt), input.deadlineAt), input.signal);
   } catch (error) {
+    if (error instanceof CallerAbortedError) return { status: "aborted", reason: error.message };
     if (error instanceof SandboxTurnTimeoutError) return { status: "timed_out" };
     return { status: "blocked", reason: `The safety check could not run: ${describeError(error)}`, crisisLevel: null };
   }
@@ -173,11 +196,15 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
     return { status: "blocked", reason: gate?.blockedReason ?? "Blocked by the safety check", crisisLevel: gate?.crisisLevel ?? null };
   }
 
+  // A cancellation that arrived during the gate stops the turn before any model work starts.
+  if (input.signal?.aborted) return { status: "aborted", reason: "The turn was cancelled by the caller" };
+
   // 2. A free model, chosen from the live catalog.
   let chosen: GatewayCatalogModel;
   try {
-    chosen = await withinDeadline((deps.pickModel ?? (() => pickFreeModel({ requireToolUse: true })))(), input.deadlineAt);
+    chosen = await raceSignal(withinDeadline((deps.pickModel ?? (() => pickFreeModel({ requireToolUse: true })))(), input.deadlineAt), input.signal);
   } catch (error) {
+    if (error instanceof CallerAbortedError) return { status: "aborted", reason: error.message };
     if (error instanceof SandboxTurnTimeoutError) return { status: "timed_out" };
     if (error instanceof NoFreeModelError) return { status: "no_free_model", reason: error.message };
     return { status: "error", reason: describeError(error) };

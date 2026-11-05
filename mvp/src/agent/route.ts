@@ -61,14 +61,17 @@ export interface AgentRouteDeps {
   now?: () => number;
 }
 
+/** Whether the owner enabled the agent route (`NLT_AGENT_ENABLED=1`). Fails closed: anything else is off. */
 export function agentEnabled(env: AgentRouteEnv): boolean {
   return env.NLT_AGENT_ENABLED === "1";
 }
 
+/** Whether the owner allowed allow-all egress (`NLT_AGENT_EGRESS_ALL=1`). Fails closed: anything else keeps the allowlist. */
 export function egressAllEnabled(env: AgentRouteEnv): boolean {
   return env.NLT_AGENT_EGRESS_ALL === "1";
 }
 
+/** Reads the prompt from a JSON body; rejects empty or over-long prompts. */
 function readPrompt(body: unknown): string | null {
   let parsed = body;
   if (typeof body === "string") {
@@ -85,6 +88,7 @@ function readPrompt(body: unknown): string | null {
     : null;
 }
 
+/** Maps a turn result to the NDJSON `done` event payload. */
 function describeResult(result: AgentTurnResult): Record<string, unknown> {
   switch (result.status) {
     case "completed":
@@ -100,6 +104,9 @@ function describeResult(result: AgentTurnResult): Record<string, unknown> {
   }
 }
 
+/**
+ * Handles one agent request end to end: off-by-default gate, validation, run, stream, done.
+ */
 export async function handleAgentRequest(
   request: AgentRequest,
   response: AgentResponse,

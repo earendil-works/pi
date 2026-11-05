@@ -7,13 +7,14 @@
  */
 import { randomUUID } from "node:crypto";
 import { getVercelOidcToken } from "@vercel/oidc";
-import { runAgentTurn } from "../src/agent/runner.ts";
+import type { AgentRunnerDeps, AgentTurnInput, AgentTurnResult } from "../src/agent/runner.ts";
 import { gateWorkDir } from "../src/agent/gate-workdir.ts";
 import { AGENT_LOCK_STALE_MS, type AgentRequest, type AgentResponse, handleAgentRequest } from "../src/agent/route.ts";
 import { evaluateGate } from "../src/gate.ts";
 import { AsfdkHarness, Channel } from "../src/harness/harness.ts";
 import { createVercelSandboxClient } from "../src/sandbox/vercel-client.ts";
 
+/** Runs the ASFDK crisis gate for one prompt; fails closed when the assessment cannot run. */
 async function gate(prompt: string) {
   // Sleepwalker writes relative to the working directory; function directories are read-only. The directory
   // is chosen once per process (see gate-workdir.ts), never changed per request.
@@ -32,6 +33,7 @@ async function gate(prompt: string) {
   }
 }
 
+/** Vercel serverless handler wiring the gate, sandbox and gateway for an enabled agent turn. */
 export default async function handler(request: AgentRequest, response: AgentResponse) {
   await handleAgentRequest(request, response, {
     env: process.env,
@@ -41,7 +43,11 @@ export default async function handler(request: AgentRequest, response: AgentResp
       gatewayToken: () => getVercelOidcToken(),
       sandbox: { egressAll, lockStaleMs: AGENT_LOCK_STALE_MS },
     }),
-    run: runAgentTurn,
+    run: async (deps: AgentRunnerDeps, input: AgentTurnInput): Promise<AgentTurnResult> => {
+      // The runner module is loaded only once the route is known to be enabled, so disabled requests never load it.
+      const { runAgentTurn } = await import("../src/agent/runner.ts");
+      return runAgentTurn(deps, input);
+    },
     log: (line) => console.info(line),
   });
 }

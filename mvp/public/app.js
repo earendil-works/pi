@@ -123,6 +123,8 @@ function renderSessions() {
 }
 
 function select(conversation) {
+  // Do not switch conversations while a turn is streaming; the in-flight reply belongs to the captured conversation.
+  if (pending) return;
   active = conversation;
   els.title.textContent = conversation.title;
   renderLog();
@@ -130,6 +132,8 @@ function select(conversation) {
 }
 
 function newConversation() {
+  // Do not switch conversations while a turn is streaming.
+  if (pending) return;
   const conversation = {
     id: conversations.length + 1,
     title: "New conversation",
@@ -139,7 +143,7 @@ function newConversation() {
         role: "assistant",
         kind: "info",
         at: new Date(),
-        text: "Hello. This is a preview of the NLT Coding Agent. Messages are checked by the ASFDK governance gate; no model is connected yet, so I can’t answer them. You can still try the check.",
+        text: "Hello. This is the NLT Coding Agent. Messages are checked by the ASFDK governance gate; agent turns run when the owner enables them. You can still try the check.",
       },
     ],
   };

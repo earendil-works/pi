@@ -86,7 +86,7 @@ The path checks are a guardrail for the file tools, not the security boundary. T
 
 ## Agent runner
 
-`src/agent/runner.ts` runs one governed coding turn: `runAgentTurn(deps, { prompt, signal, onText, onToolStart })` returns a status (`completed`, `blocked`, `busy`, `no_free_model`, `timed_out`, `aborted`, `error`) and never throws for an expected refusal. It is library code only. Nothing in the application calls it yet; the route that will is off unless the owner sets a per-environment flag.
+`src/agent/runner.ts` runs one governed coding turn: `runAgentTurn(deps, { prompt, signal, onText, onToolStart })` returns a status (`completed`, `blocked`, `busy`, `no_free_model`, `timed_out`, `aborted`, `error`) and never throws for an expected refusal. It is library code only. The application calls it through the off-by-default agent route (`mvp/api/agent.ts` → `src/agent/route.ts` → `runAgentTurn`) when the owner sets `NLT_AGENT_ENABLED=1`; while the flag is unset, nothing calls it.
 
 Order of events, each of which can stop the turn before the next starts:
 0. **Cancellation.** A request already cancelled returns `aborted` before any of the steps below.
@@ -137,7 +137,7 @@ The MVP does not yet persist continuity or run a separate post-turn response-gov
 
 ## Chat page
 
-`public/index.html` (with `app.css`, `app.js`, `lib/decision.js`) is a chat page for the Vercel preview. It uses no framework and no build step. Each message is sent to `POST /api/govern` and the page shows the gate's verdict. It does not call a model, run a tool, sign anyone in, or save anything: conversations live in memory for the open tab only, and user text is only written with `textContent`.
+`public/index.html` (with `app.css`, `app.js`, `lib/decision.js`) is a chat page for the Vercel preview. It uses no framework and no build step. Each message goes to `POST /api/agent` first and falls back to `POST /api/govern`; the page itself calls no model and runs no tool, and it saves nothing: conversations live in memory for the open tab only, and user text is only written with `textContent`. While the agent route is off (`NLT_AGENT_ENABLED` unset) the fallback is the gate check.
 
 Values on the page come from `GET /api/health`, `GET /api/status` and the gate response (verification state, crisis level, components that checked, execution state). Where nothing is connected it says so ("None connected", "Disabled"); it does not show a governance "green" state. Anything other than a literal `allowed: true` from the gate (a 503, a 404 on production, a malformed body, a network error) is shown as not allowed. The previous status page is at `/status.html`.
 
