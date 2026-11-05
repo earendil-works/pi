@@ -115,6 +115,48 @@ describe("parse", () => {
 	});
 });
 
+describe("validate", () => {
+	it("checks without coercing, with or without the coerce option", () => {
+		const schema = obj({ count: num(), tags: arr(str()) });
+		const value = { count: 42, tags: ["a"] };
+		for (const validator of [compile(schema), compile(schema, { coerce: true })]) {
+			const result = validator.validate(value);
+			expect(result).toEqual({ ok: true, value });
+			if (result.ok) {
+				expect(result.value).toBe(value);
+				expectTypeOf(result.value).toEqualTypeOf<{ count: number; tags: string[] }>();
+			}
+			// parse() would turn "42" into 42 and "a" into ["a"]; validate() reports both.
+			expect(validator.validate({ count: "42", tags: "a" })).toEqual({
+				ok: false,
+				errors: [
+					{ path: "/count", keyword: "type", message: "expected number, got string" },
+					{ path: "/tags", keyword: "type", message: "expected array, got string" },
+				],
+			});
+		}
+	});
+});
+
+describe("bigint and undefined, as TypeBox's Value.Convert", () => {
+	it("converts to a bigint like TypeBox's TryBigInt", () => {
+		const schema = Type.Object({ n: Type.BigInt({ minimum: 0n }) });
+		expect(compile(schema, { coerce: true }).parse({ n: "42" })).toEqual({ ok: true, value: { n: 42n } });
+		expect(coerceValue(Type.BigInt(), "12n")).toBe(12n);
+		expect(coerceValue(Type.BigInt(), "12.9")).toBe(12n);
+		expect(coerceValue(Type.BigInt(), 3.7)).toBe(3n);
+		expect(coerceValue(Type.BigInt(), true)).toBe(1n);
+		expect(coerceValue(Type.BigInt(), "x")).toBe("x");
+	});
+
+	it("converts to undefined like TypeBox's TryUndefined", () => {
+		for (const value of [null, 0, 0n, false, "", "0", "null", "undefined"]) {
+			expect(coerceValue(Type.Undefined(), value)).toBeUndefined();
+		}
+		expect(coerceValue(Type.Undefined(), "x")).toBe("x");
+	});
+});
+
 describe("pass 1: optional nulls", () => {
 	it("drops null in optional non-nullable properties, also nested", () => {
 		const schema = obj(
