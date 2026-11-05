@@ -25,7 +25,7 @@ const MIN_SESSION_MS = 60 * 1000;
 export const DEFAULT_LOCK_STALE_MS = 15 * 60 * 1000;
 
 const DEFAULT_LOCK_PATH = "/tmp/nlt-agent.lock";
-const LOCK_PATH_PATTERN = /^\/tmp\/[a-z0-9][a-z0-9._-]{0,80}$/;
+const LOCK_PATH_PATTERN = /^\/tmp(\/[A-Za-z0-9][A-Za-z0-9._-]{0,80}){1,2}$/;
 const BUSY_EXIT_CODE = 75;
 const SNAPSHOT_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -91,7 +91,7 @@ export interface AgentSandboxOptions {
    * aborts) at 80% of this, so it has stopped before the lock can be taken over.
    */
   lockStaleMs?: number;
-  /** Where the lock lives inside the sandbox. A single path under /tmp. Tests use this; callers normally do not. */
+  /** Where the lock lives inside the sandbox. One or two plain path segments under /tmp. Tests use this; callers normally do not. */
   lockPath?: string;
 }
 

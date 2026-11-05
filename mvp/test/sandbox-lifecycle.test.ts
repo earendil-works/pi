@@ -1,6 +1,8 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { afterEach, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import {
   ACQUIRE_SCRIPT as ACQUIRE_FOR_TEST,
   AGENT_SANDBOX_NAME,
@@ -324,14 +326,18 @@ class ShellSandbox extends FakeLockedSandbox {
 }
 
 describe("the lock script in a real shell", () => {
-  const LOCK = `/tmp/nlt-lock-test-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+  // A private directory made by mkdtemp (mode 0700, unpredictable name); the lock lives inside it.
+  const DIR = mkdtempSync(join(tmpdir(), "nlt-lock-"));
+  const LOCK = `${DIR}/lock`;
   const clean = () => {
     rmSync(LOCK, { recursive: true, force: true });
-    for (const leftover of readdirSync("/tmp").filter((name) => name.startsWith(`${LOCK.slice(5)}.reap.`))) {
-      rmSync(`/tmp/${leftover}`, { recursive: true, force: true });
+    rmSync(`${LOCK}.reap`, { recursive: true, force: true });
+    for (const leftover of readdirSync(DIR).filter((name) => name.startsWith("lock.reap."))) {
+      rmSync(`${DIR}/${leftover}`, { recursive: true, force: true });
     }
   };
   afterEach(clean);
+  afterAll(() => rmSync(DIR, { recursive: true, force: true }));
   const turn = <T>(client: SandboxClient, fn: Parameters<typeof withAgentSandbox<T>>[1], extra: object = {}) =>
     withAgentSandbox(client, fn, { lockPath: LOCK, ...extra });
   const longAgo = (seconds: number) => new Date(Date.now() - seconds * 1000);
