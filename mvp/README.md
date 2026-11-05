@@ -6,7 +6,8 @@ This directory is the application boundary for the first NLT Coding Agent MVP an
 
 The initial Vercel surface is a read-only status application:
 
-- `public/index.html` provides the accessible, responsive status UI.
+- `public/status.html` provides the accessible, responsive status UI (it was the front page before the chat page; see Chat page below).
+- `public/index.html` is the chat page served at `/`.
 - `api/health.js` reports application-function health.
 - `api/status.js` reports runtime, governance, and execution integration state.
 - `src/status.js` defines the status payload contract.
@@ -69,6 +70,14 @@ The coding-agent workspace packages resolve through their built `dist`, so build
 `runNltCodingTurn()` wraps the above into a single governed turn entry point: assess → block-or-run → inject governed system prompt (ASFDK protocol + preflight) → execute through the pi-coding-agent runtime (ASFDK extension loaded) → return the final assistant response plus post-turn governance/continuity bookkeeping.
 
 The MVP does not yet persist continuity or run a separate post-turn response-governance pass; those remain explicit follow-up agent-side work.
+
+## Chat page
+
+`public/index.html` (with `app.css`, `app.js`, `lib/decision.js`) is a chat page for the Vercel preview. It uses no framework and no build step. Each message is sent to `POST /api/govern` and the page shows the gate's verdict. It does not call a model, run a tool, sign anyone in, or save anything: conversations live in memory for the open tab only, and user text is only written with `textContent`.
+
+Values on the page come from `GET /api/health`, `GET /api/status` and the gate response (verification state, crisis level, components that checked, execution state). Where nothing is connected it says so ("None connected", "Disabled"); it does not show a governance "green" state. Anything other than a literal `allowed: true` from the gate (a 503, a 404 on production, a malformed body, a network error) is shown as not allowed. The previous status page is at `/status.html`.
+
+The blocked-message wording in `lib/decision.js` is placeholder copy and needs owner (and clinician) review. A framework such as Next.js is a separate decision for the owner.
 
 ## Current deployment posture
 
