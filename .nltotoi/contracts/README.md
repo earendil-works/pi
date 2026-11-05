@@ -1,6 +1,6 @@
 # Contract Namespace
 
-This repository's active contract is `NLT-DEV-OTOI.md`, document ID `NLT-PI-DEV-OTOI-1.0.0`.
+This repository's active contract is `NLT-DEV-OTOI.md`, document ID `NLT-PI-DEV-OTOI-1.0.1`.
 
 Versioning:
 - MAJOR: breaking change to authority, trust boundaries, or agent protocol.

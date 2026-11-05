@@ -34,7 +34,7 @@
     ]
   },
   "env": {
-    "NLT_OTOI_VERSION": "NLT-PI-DEV-OTOI-1.0.0",
+    "NLT_OTOI_VERSION": "NLT-PI-DEV-OTOI-1.0.1",
     "NLT_AUTHORITY": "Joshua W. Dorsey, Sr.",
     "NLT_GOVERNANCE_SOURCE": "NeuroLift-Technologies/.github-private",
     "NLT_GOVERNANCE_MODE": "repository-adapted"
