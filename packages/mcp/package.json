@@ -27,7 +27,7 @@
 		"dist",
 		"README.md",
 		"CHANGELOG.md",
-		"LICENSES"
+		"THIRD_PARTY_NOTICES"
 	],
 	"scripts": {
 		"clean": "node ../../scripts/package-files.mjs clean dist",
