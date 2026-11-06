@@ -100,6 +100,9 @@ export function sshArguments(
 		...option("RemoteCommand=none"),
 		...option("PermitLocalCommand=no"),
 		...option("SendEnv=-*"),
+		// A host that is down or rebooting fails a connection attempt within 15 s, instead of the system's TCP timeout
+		// (about two minutes on Linux); keepalives end an established connection whose host stopped answering.
+		...option("ConnectTimeout=15"),
 		...option("ServerAliveInterval=15"),
 		...option(`StrictHostKeyChecking=${strictHostKeys ? "yes" : "accept-new"}`),
 		...option(`UserKnownHostsFile=${configPath("known hosts file", knownHostsFile)}`),

@@ -16,6 +16,12 @@ const PING_INTERVAL_MS = 5000;
 const SILENCE_LIMIT_MS = 30_000;
 /** How long starting the daemon and its `hello` may take. */
 const START_TIMEOUT_MS = 60_000;
+/**
+ * How long an aborted request waits for the daemon's answer to its cancel before it settles as aborted on its own. A live
+ * daemon answers within a round trip, with its own result (an `exec`'s spill file); a connection that died unnoticed (a
+ * rebooting host) would otherwise hold the request until the keepalive gives up.
+ */
+const ABORT_GRACE_MS = 1000;
 /** How much stderr a startup error shows: short, because a tool error can reach the model. */
 const STDERR_TAIL_CHARS = 2000;
 const STDERR_TAIL_LINES = 20;
@@ -93,7 +99,11 @@ type Pending = {
 
 export interface RequestOptions {
 	payload?: Uint8Array;
-	/** Aborting sends `cancel`; the request still settles with the daemon's result or error. */
+	/**
+	 * Aborting while the connection starts rejects at once with code `aborted` (the start goes on for other requests);
+	 * after the request was sent, it sends `cancel`, and the request settles with the daemon's result or error, or with
+	 * code `aborted` if the daemon does not answer within a second.
+	 */
 	signal?: AbortSignal;
 	/** Progress events of the request, such as `exec` output. */
 	onEvent?: (json: Json, payload: Uint8Array) => void;
@@ -133,6 +143,21 @@ export function isConnectionLost(error: unknown): boolean {
 
 function closed(): RemoteError {
 	return new RemoteError({ code: "unknown", message: "Connection closed" });
+}
+
+function aborted(): RemoteError {
+	return new RemoteError({ code: "aborted", message: "aborted" });
+}
+
+/** `promise`, or a rejection with code `aborted` as soon as `signal` aborts; `promise` itself goes on. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+	if (signal === undefined) return promise;
+	if (signal.aborted) return Promise.reject(aborted());
+	return new Promise((resolve, reject) => {
+		const onAbort = () => reject(aborted());
+		signal.addEventListener("abort", onAbort, { once: true });
+		promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+	});
 }
 
 /**
@@ -213,9 +238,12 @@ export class Connection {
 		this.#options = options;
 	}
 
-	/** Connect if needed and return what the daemon reported about its machine. */
-	async info(): Promise<RemoteInfo> {
-		return (await this.#connect()).info;
+	/**
+	 * Connect if needed and return what the daemon reported about its machine. Aborting `signal` stops waiting for the
+	 * start (code `aborted`), not the start itself.
+	 */
+	async info(signal?: AbortSignal): Promise<RemoteInfo> {
+		return (await untilAborted(this.#connect(), signal)).info;
 	}
 
 	/** Connect if needed and return the live session's id. */
@@ -231,7 +259,7 @@ export class Connection {
 			}
 			return this.#send(current, op, json, options);
 		}
-		const { session } = await this.#connect();
+		const { session } = await untilAborted(this.#connect(), options.signal);
 		return this.#send(session, op, json, options);
 	}
 
@@ -264,9 +292,21 @@ export class Connection {
 		if (!session.live) return Promise.reject(lost("pi-env connection lost"));
 		const id = this.#nextId++;
 		return new Promise((resolve, reject) => {
-			const onAbort = () => this.#write(session, frame(CANCEL, id, {}));
-			const done = () => options.signal?.removeEventListener("abort", onAbort);
-			session.pending.set(id, {
+			let grace: ReturnType<typeof setTimeout> | undefined;
+			const onAbort = () => {
+				this.#write(session, frame(CANCEL, id, {}));
+				grace = setTimeout(() => {
+					// Unanswered: a late answer finds no pending request and is dropped.
+					if (session.pending.get(id) !== pending) return;
+					session.pending.delete(id);
+					pending.reject(aborted());
+				}, ABORT_GRACE_MS);
+			};
+			const done = () => {
+				clearTimeout(grace);
+				options.signal?.removeEventListener("abort", onAbort);
+			};
+			const pending: Pending = {
 				resolve: (value) => {
 					done();
 					resolve(value);
@@ -276,7 +316,8 @@ export class Connection {
 					reject(error);
 				},
 				...(options.onEvent ? { onEvent: options.onEvent } : {}),
-			});
+			};
+			session.pending.set(id, pending);
 			options.signal?.addEventListener("abort", onAbort, { once: true });
 			options.onStart?.(id, session.id);
 			this.#write(session, frame(REQUEST, id, { ...json, op }, options.payload));
