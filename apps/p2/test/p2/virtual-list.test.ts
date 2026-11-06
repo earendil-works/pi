@@ -166,3 +166,14 @@ describe("row estimates", () => {
 		assert.equal(rows.estimate(row, 400), first, "learning more does not move a row already estimated");
 	});
 });
+
+describe("shared adaptive estimates", () => {
+	it("invalidates historical offsets when a shared estimator learns a measurement", () => {
+		const estimator = new RowEstimator<{ key: string }>(({ key }) => ({ kind: key, text: 10, fixed: 0 }), 30);
+		const row = { key: "old" };
+		const before = estimator.revision;
+		expect(estimator.estimate(row, 100)).toBeGreaterThan(0);
+		estimator.measured(row, 100, 80);
+		expect(estimator.revision).toBeGreaterThan(before);
+	});
+});
