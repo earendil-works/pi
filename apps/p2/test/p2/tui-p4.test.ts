@@ -491,7 +491,7 @@ test("the chat showing a session's main conversation reads it through its latest
 	const { screen, calls, runtime } = await setup(t, { sessions: rows, screen: "sessions" });
 	// The selector marks nothing; s2's unread answer shows as its marker.
 	await poll(async () => /^ {2}◦ Beta work/m.test(await screen()));
-	assert.equal(calls.markRead, undefined);
+	assert.equal(calls.markRead?.length ?? 0, 0);
 	runtime.navigate("chat", "s2");
 	await poll(() => (calls.markRead?.length ?? 0) === 1);
 	assert.deepEqual(calls.markRead?.[0], { session: "s2", through: 5 });
