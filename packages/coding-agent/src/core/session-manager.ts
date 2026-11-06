@@ -797,11 +797,6 @@ function getMessageActivityTime(entry: SessionMessageEntry): number | undefined 
 	return Number.isNaN(t) ? undefined : t;
 }
 
-/**
- * Session discovery is invoked repeatedly when the picker changes scope. Keep a
- * small, stat-validated LRU of parsed entries so unchanged JSONL histories need
- * not be decoded again. Large transcripts are intentionally not retained.
- */
 /** Independent copies prevent callers from modifying the summary held in the LRU. */
 function copySessionInfo(info: SessionInfo): SessionInfo {
 	return { ...info, created: new Date(info.created.getTime()), modified: new Date(info.modified.getTime()) };
@@ -814,11 +809,23 @@ async function sessionFileDigest(path: string, signal?: AbortSignal): Promise<st
 	return hash.digest("hex");
 }
 
+/**
+ * Session discovery is invoked repeatedly when the picker changes scope. Keep a
+ * small, stat- and digest-validated LRU of parsed entries so unchanged JSONL histories need
+ * not be decoded again. Large transcripts are intentionally not retained.
+ */
 class SessionInfoCache {
 	readonly #entries = new Map<string, { size: number; mtime: number; ctime: number; digest: string; info: SessionInfo; bytes: number }>();
 	#totalBytes = 0;
-	constructor(readonly maxBytes = 16 * 1024 * 1024, readonly maxEntries = 256) {}
+	readonly maxBytes: number;
+	readonly maxEntries: number;
 
+	constructor(maxBytes = 16 * 1024 * 1024, maxEntries = 256) {
+		this.maxBytes = maxBytes;
+		this.maxEntries = maxEntries;
+	}
+
+	/** Return a copy of the cached summary when the file is unchanged by stat and content hash, else evict it. */
 	async get(path: string, stats: Stats, signal?: AbortSignal): Promise<SessionInfo | undefined> {
 		const entry = this.#entries.get(path);
 		if (!entry) return undefined;
@@ -837,6 +844,7 @@ class SessionInfoCache {
 		return copySessionInfo(entry.info);
 	}
 
+	/** Store a copy of a parsed summary, evicting least recently used entries over the byte and entry limits. */
 	put(path: string, stats: Stats, info: SessionInfo, digest: string): void {
 		const bytes = 512 + 2 * (info.allMessagesText.length + info.firstMessage.length + (info.name?.length ?? 0));
 		const old = this.#entries.get(path);
@@ -851,6 +859,7 @@ class SessionInfoCache {
 		}
 	}
 
+	/** Drop one entry and its byte accounting. */
 	#remove(path: string, entry: { bytes: number }): void {
 		this.#entries.delete(path);
 		this.#totalBytes -= entry.bytes;

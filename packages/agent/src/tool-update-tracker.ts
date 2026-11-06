@@ -15,10 +15,13 @@ export class ToolUpdateTracker {
 	#capacityPromise: Promise<void> | undefined;
 	#releaseCapacity: (() => void) | undefined;
 
-	constructor(readonly maxPending = 16) {
+	readonly maxPending: number;
+
+	constructor(maxPending = 16) {
 		if (!Number.isSafeInteger(maxPending) || maxPending < 1) {
 			throw new RangeError("maxPending must be a positive integer");
 		}
+		this.maxPending = maxPending;
 	}
 
 	/** Schedule a partial update. When saturated, only the newest unsent update remains. */
@@ -60,6 +63,7 @@ export class ToolUpdateTracker {
 		return tracked;
 	}
 
+	/** Record the first failure and release anything waiting on progress capacity. */
 	#fail(error: unknown): void {
 		this.#firstFailure ??= { error };
 		this.#latest = undefined;
@@ -71,6 +75,7 @@ export class ToolUpdateTracker {
 		this.#notify();
 	}
 
+	/** Start the newest coalesced update when capacity frees up, then wake waiters. */
 	#settled(): void {
 		if (!this.#firstFailure && this.#latest && this.#pending.size < this.maxPending) {
 			const latest = this.#latest;
@@ -85,6 +90,7 @@ export class ToolUpdateTracker {
 		this.#notify();
 	}
 
+	/** Wake drain() callers so they re-check pending state. */
 	#notify(): void {
 		for (const changed of this.#changed) changed();
 		this.#changed.clear();
@@ -113,6 +119,7 @@ export class ToolUpdateTracker {
 		if (this.#firstFailure) throw this.#firstFailure.error;
 	}
 
+	/** Number of progress notifications currently in flight. */
 	get pendingCount(): number {
 		return this.#pending.size;
 	}
