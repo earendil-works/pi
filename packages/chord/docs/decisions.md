@@ -2687,6 +2687,17 @@ validation and copies the v2 kernel added around Delta.
   other sessions issued for the old value stay what they were (the app revokes them if it wants). The kit stays
   (owner: keep it and change it where it does not fit, rather than wiring p3 from the components: the kit keeps p3's
   base code, which only a restart changes, small).
+- **A reloaded UI part shows its loading state (owner, 2026-11-06: "not worth it imo. a short loading state is
+  absolutely fine. this just adds more bugs and footguns"; p3 step 0a, rejected proposal `apps/p3/docs/step-0a/`
+  version 2, reviews `/tmp/p3-step0a-astra.md`, `/tmp/p3-step0a-sol.md`):** after a web or terminal plugin's reload
+  its components remount and make new references, which show `loading` (no values) for one round trip until bound;
+  the rest of the page, and every reference of a server or worker reload, stay live (design §21). Rejected: a
+  per-host table sharing references between UI components (`useHold`, `useRegistry`, `TuiScope`), released when no
+  component and no call uses them. It covered only a same-update replacement of facet-contributed components; it
+  needed the host address in its key, a lease state machine for ended references, counting of parked and queued
+  calls, a borrowed reference type without `release`, and changed presence counts (one entry for several components;
+  a never-settling call keeping it). The three bug fixes of step 0a stay (stylesheets loaded before the plugin reloads,
+  base bundles built with the server's resolution conditions, the restart mark by content).
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
