@@ -830,6 +830,18 @@ translated phone drawer and intercept chat taps.
   changes (`keepSessions`). Whether the browser was the owner is remembered in `localStorage`
   (`p2-owner`), so the composer is there before the connection; signing out, or the server saying this browser is no
   longer the owner, forgets both.
+- **Elanor** (Earendil's design system): `@earendil-works/elanor-react`, `design-tokens` and `elanor-fonts` from npm
+  (`elanor-react` brings `elanor-icons-react`, and Base UI). The repository's `.npmrc` exempts `@earendil-works/*`
+  from its two-day `min-release-age`, so a new Elanor release installs at once.
+  `src/web/elanor.css` loads the fonts (Mallos Serif, Commit Mono), the pi brand's tokens and the components' styles,
+  before `style.css`. Cascade layers: `p2-reset` (p2's element resets in `style.css`), then `elanor` (all of
+  Elanor's styles), then p2's unlayered rules. The tokens follow `<html data-color-scheme>`, set with `data-theme`
+  (`theme.ts`, and the page's inline script). Fonts are files of the web bundle (`.woff2`, `font/woff2`).
+- **Markdown in Elanor's components** (`src/web/ElanorMarkdown.tsx`): `Markdown.tsx` renders through a component map
+  (`MarkdownComponents`, `MarkdownComponentsContext`; `{}` renders plain elements), Elanor's by default: `Prose` with
+  its flow spacing, `Text`, `Heading` (serif), `List`, `Link`, `Table`, `CodeSnippet` with Copy, a read-only
+  `Checkbox` for task items. p2's parser, its safety (raw HTML as text) and its streaming are unchanged; the streaming
+  dot and a marker's spacing are in `elanor-markdown.css`.
 - **Service worker** (`public/sw.js`, served at `/sw.js` with `no-cache`): the app starts without the network once it
   was opened. App pages come from the network first and fall back to the last app page kept (on failure, or after 3
   seconds); the web bundle's content-named files come from the cache first (the newest two bundle versions are kept);

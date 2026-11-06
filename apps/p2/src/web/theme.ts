@@ -1,7 +1,8 @@
 // Per-browser colour theme, chosen in the sidebar. "system" follows
 // prefers-color-scheme. The resolved theme is always written to
-// <html data-theme>, which style.css keys off. The page's inline script (src/hosts/web.ts) sets the attribute
-// before styles load (no flash) from the same key.
+// <html data-theme>, which style.css keys off, and <html data-color-scheme>, which Elanor's design tokens key off
+// (src/web/elanor.css). The page's inline script (src/hosts/web.ts) sets both before styles load (no flash) from the
+// same key.
 
 export type ThemePreference = "system" | "light" | "dark";
 
@@ -24,6 +25,7 @@ function read(): ThemePreference {
 function apply(): void {
 	const resolved = preference === "system" ? (system?.matches ? "dark" : "light") : preference;
 	document.documentElement.dataset.theme = resolved;
+	document.documentElement.dataset.colorScheme = resolved;
 	// The page has one theme-color per system scheme; an explicit choice overrides both.
 	for (const meta of document.querySelectorAll('meta[name="theme-color"]'))
 		meta.setAttribute("content", BACKGROUND[resolved]);
