@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3 step 0: hello, reloaded</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A spec · p3 step 0 · 2026-11-06</div>
+  <h1>p3<br>Step 0</h1>
+  <p class="subtitle">A p3 server next to p2, the owner signed in, one plugin showing a value from the server, and every edit of a plugin applied in place without a restart</p>
+  <div class="cover-stats"><div class="stat"><b>3</b><span>plugins (shell, hello, reload)</span></div><div class="stat"><b>~200</b><span>lines of base code, the only code a restart changes</span></div><div class="stat"><b>0</b><span>restarts for a plugin edit</span></div><div class="stat"><b>1</b><span>kit change to decide (the reload control)</span></div></div>
+  <div class="cover-note"><p>The spec of p3&#39;s first step, for the owner and two reviewers before anything is built. p3 is built tabula rasa on
+the Chord v2 app kit, on branch <code>p3</code> in <code>apps/p3/</code>. The owner asked for baby steps and for reloads first: this step
+builds almost nothing but the base every later step stands on, and the test that keeps reloads smooth. Names marked
+&quot;decision&quot; do not exist yet. The whole skeleton drafted before (sessions, harness, chat) is in <code>docs/map/</code> as a map,
+not a spec.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#base">I. The Base</a></li>
+<li><a href="#plugins">II. The Plugins</a></li>
+<li><a href="#decision-1">III. Decision 1: the reload control</a></li>
+<li><a href="#done">IV. Done</a></li>
+<li><a href="#what-comes-next">What Comes Next</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">On his phone, next to p2, Mario starts p3: <code>node apps/p3/start.ts</code> prints an owner link for port 8789. He opens it and
+signs in. The page says &quot;Hello from p3&quot; and shows a counter with a button; he taps it three times. On slayer an agent
+changes the greeting in the <code>hello</code> plugin&#39;s page code. A bar at the top of Mario&#39;s page says &quot;1 plugin changed&quot; with
+an <strong>Apply</strong> button. He taps it: the greeting changes in place, the counter still says 3, the page did not reload. The
+agent then changes how the server counts (each tap adds two); Apply again: the next tap adds two, nothing restarted.
+Finally the agent edits the API; the bar says &quot;restart needed&quot;, and only that restarts the server, the counter still
+at its value afterwards.</p>
+<p>In p2 most of these edits were restarts: its behaviour lives in base code (<code>src/runtime/</code>, <code>src/hosts/</code>), and a
+restart stops every worker and reloads every page. p3&#39;s first rule (decision &quot;Reloads first&quot;) is that base code is
+vocabulary and every behaviour is a plugin; this step builds that base and the test that holds it to the rule, with
+one small plugin to reload.</p>
+<h3 id="six-things-to-know">Six things to know</h3>
+<ol class="findings">
+<li><strong>Base code is vocabulary.</strong> <code>start.ts</code>, the API package <code>@p3/app</code> (Chord&#39;s plugin surface re-exported once, the
+principal type, <code>defineFacet</code> bound to it), and a web entry rendering one slot. About 200 lines; a restart changes
+them, nothing else needs one.</li>
+<li><strong>Three plugins.</strong> <code>shell</code> draws the page around a list of parts, <code>hello</code> shows a counter kept on the server,
+<code>reload</code> shows what changed and applies it.</li>
+<li><strong>No workers yet.</strong> The kit runs a server with clients only; the session worker is a later step.</li>
+<li><strong>The owner is a user.</strong> Principals are <code>server</code>, <code>worker</code>, <code>user</code>, <code>guest</code>; the kit&#39;s owner link signs in as <code>{ kind: &quot;user&quot;, id: &quot;owner&quot; }</code> (Chord decision &quot;The kit&#39;s owner is a principal the app chooses&quot;, being built).</li>
+<li><strong>Applying is explicit and in the page.</strong> The kit marks changed plugins and knows when base code changed, but only
+the start script can apply. Decision 1 proposes a small kit object, <code>AppChanges</code>, so a plugin can show the marks and
+apply them.</li>
+<li><strong>Done means the reload suite passes.</strong> A browser test edits each plugin&#39;s page and server code while the page is
+open, applies, and checks that the page never reloaded, its values stayed and the restart mark stayed off; an edit of
+the API sets it.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p><strong>Base code</strong> is what a restart changes: the start script, <code>src/</code> (the API and the web entry), and the packages it
+runs on (Chord, React). A <strong>plugin</strong> is a directory in <code>apps/p3/plugins/</code> with one file per kind of host it runs on
+(<code>server.ts</code>, <code>web.tsx</code>). <strong>Applying changes</strong> builds the changed plugins and rolls them out to the server and then to
+the open pages; on each, only the changed plugin&#39;s code is replaced (design §21). The <strong>restart mark</strong> is the kit&#39;s
+<code>plugins.state.base</code>: true when a file base code was built from changed since the start. A <strong>part</strong> is one thing the
+shell shows, contributed by a plugin.</p>
+</section>
+
+<section class="chapter" id="base"><header class="opener"><div class="numeral">I</div><h2>The Base</h2><p class="lede">Every file a restart changes, and why nothing else is in it.</p></header>
+<pre class="plain"><code>apps/p3/
+  package.json            "@p3/app" (private): exports ./v1, ./v1/server, ./v1/web
+  start.ts                startServer; prints the owner link
+  src/principals.ts       P3Principal
+  src/api/v1/index.ts     Chord's plugin surface re-exported; defineFacet bound to P3Principal
+  src/api/v1/server.ts    the kit's server surface (Http, AppInfo, AppChanges)
+  src/api/v1/web.ts       Chord's React hooks; the one slot, Page
+  src/web/main.tsx        startPage; serves Page; renders its component
+  plugins/shell/          contract.web.ts (Parts), web.tsx, shell.css
+  plugins/hello/          contract.ts (Hello), server.ts, web.tsx
+  plugins/reload/         web.tsx
+  test/                   reload.test.ts (the reload suite), hello.test.ts</code></pre>
+<p>The API re-exports Chord&#39;s plugin-facing surface as one list (contract and schema builders, <code>defineRegistry</code>,
+<code>defineState</code>, <code>defineTable</code> and the query builders, errors, <code>Ctx</code>, messages, themes, the kit&#39;s start-data objects and
+<code>Files</code>), so a plugin that needs one more Chord export never forces an API edit. What it adds is what a plugin cannot
+declare for itself:</p>
+<pre><code><span class="tk-c">// apps/p3/src/principals.ts</span>
+<span class="tk-c">/** Who someone is in p3. `guest` is reserved: its fields come with sharing. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">P3Principal</span> =
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"server"</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"worker"</span>; <span class="tk-k">readonly</span> session: string }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"user"</span>; <span class="tk-k">readonly</span> id: string }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"guest"</span> };
+
+<span class="tk-c">// apps/p3/src/api/v1/index.ts (p3's own part)</span>
+<span class="tk-c">/** Defines a facet of p3: its factories get p3's principals. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineFacet</span>(setup: (host: <span class="tk-t">FacetHost</span>&lt;<span class="tk-t">P3Principal</span>&gt;, self: <span class="tk-t">FacetSelf</span>) =&gt; <span class="tk-k">void</span>) {
+	<span class="tk-k">return</span> <span class="tk-f">chordFacet</span>&lt;<span class="tk-t">P3Principal</span>&gt;(setup);
+}</code></pre>
+<p><code>worker</code> is in the type now so that the type does not change when workers arrive; nothing makes one in this step.</p>
+<p>The page&#39;s base renders one slot. Whatever draws the page is a plugin, so a new layout is a reload, not a restart:</p>
+<pre><code><span class="tk-c">// apps/p3/src/api/v1/web.ts</span>
+<span class="tk-c">/** What draws the page: the first contribution by plugin name (the shell). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Page</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">ComponentType</span>, <span class="tk-t">ComponentType</span> | <span class="tk-k">undefined</span>&gt;(<span class="tk-s">"p3.page"</span>, { version: <span class="tk-n">1</span> });
+<span class="tk-k">export</span> { <span class="tk-t">HostProvider</span>, useHold, useHost, useMessages, usePageState, useRegistry, useWatch } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/react"</span>;
+
+<span class="tk-c">// apps/p3/src/web/main.tsx</span>
+<span class="tk-k">const</span> core = <span class="tk-f">defineFacet</span>((host) =&gt; host.<span class="tk-f">serve</span>(<span class="tk-t">Page</span>, { compose: (table) =&gt; table[<span class="tk-n">0</span>]?.value }));
+
+<span class="tk-k">function</span> <span class="tk-t">Root</span>() {
+	<span class="tk-k">const</span> <span class="tk-t">Drawn</span> = <span class="tk-f">useRegistry</span>(<span class="tk-t">Page</span>);
+	<span class="tk-k">return</span> <span class="tk-t">Drawn</span> === <span class="tk-k">undefined</span> ? <span class="tk-k">null</span> : &lt;<span class="tk-t">Drawn</span> /&gt;;
+}
+
+<span class="tk-k">void</span> <span class="tk-f">startPage</span>({
+	connect: () =&gt; <span class="tk-k">new</span> <span class="tk-t">WebSocket</span>(<span class="tk-s">`${location.origin.replace(/^http/, "ws")}/chord`</span>),
+	modules: { <span class="tk-s">"@p3/app/v1"</span>: v1, <span class="tk-s">"@p3/app/v1/web"</span>: v1web, react: <span class="tk-t">React</span>, <span class="tk-s">"react/jsx-runtime"</span>: jsx },
+	core: [{ name: <span class="tk-s">"@p3/web"</span>, facet: core }],
+	render: (host) =&gt; <span class="tk-f">createRoot</span>(document.<span class="tk-f">getElementById</span>(<span class="tk-s">"root"</span>)!).<span class="tk-f">render</span>(&lt;<span class="tk-t">HostProvider</span> host={host}&gt;&lt;<span class="tk-t">Root</span> /&gt;&lt;/<span class="tk-t">HostProvider</span>&gt;),
+});</code></pre>
+<h3 id="the-start-script">The start script</h3>
+<pre><code><span class="tk-c">// apps/p3/start.ts</span>
+<span class="tk-k">const</span> OWNER = { kind: <span class="tk-s">"user"</span>, id: <span class="tk-s">"owner"</span> } <span class="tk-k">as</span> <span class="tk-k">const</span>;
+
+<span class="tk-k">const</span> app = <span class="tk-k">await</span> <span class="tk-f">startServer</span>&lt;<span class="tk-t">P3Principal</span>&gt;(
+	{
+		name: <span class="tk-s">"p3"</span>,                                              <span class="tk-c">// ~/.p3 unless argv[2] names another directory</span>
+		dataDir: process.argv[<span class="tk-n">2</span>],
+		root: <span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./plugins/"</span>, <span class="tk-k">import</span>.meta.url)),
+		listen: { host: <span class="tk-s">"127.0.0.1"</span>, port: <span class="tk-n">8789</span> },               <span class="tk-c">// p2 keeps 8788</span>
+		api: { name: <span class="tk-s">"@p3/app"</span>, versions: [<span class="tk-s">"v1"</span>], modules: { <span class="tk-s">"@p3/app/v1"</span>: v1, <span class="tk-s">"@p3/app/v1/server"</span>: v1server } },
+		kinds: {
+			server: { platform: <span class="tk-s">"node"</span> },
+			web: { platform: <span class="tk-s">"browser"</span>, packages: { react: {}, <span class="tk-s">"react/jsx-runtime"</span>: {} } },
+		},
+		principal: { server: { kind: <span class="tk-s">"server"</span> }, owner: OWNER },          <span class="tk-c">// no worker kinds yet</span>
+		web: { entry: <span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./src/web/main.tsx"</span>, <span class="tk-k">import</span>.meta.url)), page, paths: [<span class="tk-s">"/"</span>] },
+		base: [<span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./src/"</span>, <span class="tk-k">import</span>.meta.url)), <span class="tk-f">fileURLToPath</span>(<span class="tk-k">import</span>.meta.url)],
+		onError: (error) =&gt; console.<span class="tk-f">error</span>(<span class="tk-s">"p3:"</span>, error.kind, error.error),
+	},
+	BACKGROUND_CONTEXT,
+);
+console.<span class="tk-f">log</span>(<span class="tk-s">`Open ${app.ownerLink()}`</span>);</code></pre>
+<p><code>principal.worker</code> is required by the kit&#39;s options today although p3 has no worker kind yet; the kit change being
+built makes it optional while an app has no worker kinds. The owner
+id <code>&quot;owner&quot;</code> is a fixed id for the first user; a users plugin gives it a profile later. Changing it later replaces the
+owner token file and leaves the old cookie signed in as the old id (the kit decision says so), so it is chosen once.</p>
+<p>Signing in is the kit&#39;s: the start prints a one-time link, <code>http://127.0.0.1:8789/_chord/owner#&lt;token&gt;</code>, valid ten
+minutes, whose page sets the owner&#39;s cookie; every route and the <code>/chord</code> links answer 401 without a principal; tests
+and command-line clients send <code>~/.p3/owner-token</code> as a bearer token.</p>
+</section>
+
+<section class="chapter" id="plugins"><header class="opener"><div class="numeral">II</div><h2>The Plugins</h2><p class="lede">A shell with parts, a counter on the server, a bar that applies changes.</p></header>
+<h3 id="shell">shell</h3>
+<p>The shell contributes the page and serves the registry its parts come from. Step 0&#39;s layout is a column; the real one
+(a sidebar, screens) replaces it later as a plugin reload.</p>
+<pre><code><span class="tk-c">// apps/p3/plugins/shell/contract.web.ts</span>
+<span class="tk-c">/** A part of the page: its name (a key) and its component, in plugin-name order. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Part</span> = { <span class="tk-k">readonly</span> name: string; <span class="tk-k">readonly</span> <span class="tk-t">Component</span>: <span class="tk-t">ComponentType</span> };
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Parts</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">Part</span>, <span class="tk-k">readonly</span> <span class="tk-t">Part</span>[]&gt;(<span class="tk-s">"p3.parts"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">// apps/p3/plugins/shell/web.tsx</span>
+<span class="tk-k">function</span> <span class="tk-t">Shell</span>() {
+	<span class="tk-k">const</span> parts = <span class="tk-f">useRegistry</span>(<span class="tk-t">Parts</span>) ?? [];
+	<span class="tk-k">return</span> &lt;main className={styles.shell}&gt;{parts.<span class="tk-f">map</span>(({ name, <span class="tk-t">Component</span> }) =&gt; &lt;section key={name}&gt;&lt;<span class="tk-t">Component</span> /&gt;&lt;/section&gt;)}&lt;/main&gt;;
+}
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host, self) =&gt; {
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Parts</span>, { compose: (table) =&gt; table.<span class="tk-f">map</span>(({ value }) =&gt; value) });
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Page</span>, <span class="tk-t">Shell</span>);
+});</code></pre>
+<p>The <code>Parts</code> token lives in the shell&#39;s contract file, not in the API (decision &quot;Reloads first&quot;): <code>hello</code> and <code>reload</code>
+import it by relative path, so the build copies it into their scripts and an edit of it reloads all three plugins,
+never restarts.</p>
+<h3 id="hello">hello</h3>
+<p>A counter kept on the server, per user, persisted: the smallest thing whose value must survive every reload and the
+restart.</p>
+<pre><code><span class="tk-c">// apps/p3/plugins/hello/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Hello</span> = <span class="tk-f">remote</span>(<span class="tk-s">"p3.hello"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { user: { state: { count: <span class="tk-f">int</span>() }, methods: { tap: <span class="tk-f">method</span>() } } },
+});
+
+<span class="tk-c">// apps/p3/plugins/hello/server.ts</span>
+<span class="tk-k">const</span> <span class="tk-t">Counts</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"p3.hello.counts"</span>, {
+	schema: <span class="tk-f">obj</span>({ byUser: <span class="tk-f">map</span>(<span class="tk-f">int</span>()) }), version: <span class="tk-n">1</span>, initial: () =&gt; ({ byUser: {} }), persist: <span class="tk-k">true</span>,
+	checkpointWhen: () =&gt; <span class="tk-k">true</span>,
+});
+<span class="tk-k">const</span> <span class="tk-t">Counter</span> = <span class="tk-f">local</span>(<span class="tk-s">"p3.hello.counter"</span>, {
+	version: <span class="tk-n">1</span>, params: {},
+	members: { counts: <span class="tk-f">obj</span>({ byUser: <span class="tk-f">map</span>(<span class="tk-f">int</span>()) }), tap: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ user: <span class="tk-f">str</span>() })) },
+});
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host) =&gt; {
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Counter</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> counts = self.<span class="tk-f">state</span>(<span class="tk-t">Counts</span>);
+		<span class="tk-k">return</span> {
+			counts,
+			tap: <span class="tk-k">async</span> ({ user }, ctx) =&gt; {
+				<span class="tk-k">await</span> counts.<span class="tk-f">change</span>((draft) =&gt; { draft.byUser[user] = (draft.byUser[user] ?? <span class="tk-n">0</span>) + STEP; }, ctx);
+				<span class="tk-k">return</span> <span class="tk-k">null</span>;
+			},
+		};
+	});
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Hello</span>, (_params, principal, self) =&gt; {
+		<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"user"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"hello is for users"</span>);
+		<span class="tk-k">const</span> counter = self.<span class="tk-f">get</span>(<span class="tk-t">Counter</span>, {});
+		<span class="tk-k">return</span> {
+			variant: <span class="tk-s">"user"</span>,
+			members: {
+				count: self.<span class="tk-f">derive</span>([counter.counts], ([c]) =&gt; c.byUser[principal.id] ?? <span class="tk-n">0</span>),
+				tap: (ctx) =&gt; counter.<span class="tk-f">tap</span>({ user: principal.id }, ctx),
+			},
+		};
+	});
+});</code></pre>
+<p>The shared store with per-principal views (design §6), in miniature: one persisted document, a view per user deriving
+that user&#39;s count. <code>STEP</code> is 1; the reload suite&#39;s server edit changes it to 2.</p>
+<pre><code><span class="tk-c">// apps/p3/plugins/hello/web.tsx</span>
+<span class="tk-k">function</span> <span class="tk-t">HelloPart</span>() {
+	<span class="tk-k">const</span> hello = <span class="tk-f">useHold</span>(<span class="tk-t">Hello</span>, {});
+	<span class="tk-k">const</span> count = <span class="tk-f">useWatch</span>(hello?.count);
+	<span class="tk-k">const</span> [shown, addTap] = <span class="tk-f">useOptimistic</span>(count ?? <span class="tk-n">0</span>, (current) =&gt; current + <span class="tk-n">1</span>);
+	<span class="tk-k">const</span> tap = () =&gt; <span class="tk-f">startTransition</span>(<span class="tk-k">async</span> () =&gt; { <span class="tk-f">addTap</span>(<span class="tk-k">null</span>); <span class="tk-k">await</span> hello?.<span class="tk-f">tap</span>(BACKGROUND_CONTEXT); });
+	<span class="tk-k">return</span> (&lt;&gt;&lt;h1&gt;{GREETING}&lt;/h1&gt;&lt;button onClick={tap}&gt;{shown}&lt;/button&gt;&lt;/&gt;);
+}
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; self.<span class="tk-f">contribute</span>(<span class="tk-t">Parts</span>, { name: <span class="tk-s">"hello"</span>, <span class="tk-t">Component</span>: <span class="tk-t">HelloPart</span> }));</code></pre>
+<p>The tap shows at once (<code>useOptimistic</code>); the method awaits its own commit, so the call settles after the new count
+reached the page (Chord&#39;s rule that a call&#39;s answer follows its state), and the optimistic value hands over to the real
+one without a flicker. <code>GREETING</code> is &quot;Hello from p3&quot;; the suite&#39;s page edit changes it.</p>
+<h3 id="reload">reload</h3>
+<p>The bar at the top: which plugins changed, <strong>Apply</strong>, and &quot;restart needed&quot; when base code changed. It needs the kit&#39;s
+marks and its apply on a plugin&#39;s reach, which decision 1 is about.</p>
+<pre><code><span class="tk-c">// apps/p3/plugins/reload/web.tsx (with decision 1's AppChanges)</span>
+<span class="tk-k">function</span> <span class="tk-t">ReloadBar</span>() {
+	<span class="tk-k">const</span> changes = <span class="tk-f">useHold</span>(<span class="tk-t">AppChanges</span>, {});
+	<span class="tk-k">const</span> marks = <span class="tk-f">useWatch</span>(changes?.marks);
+	<span class="tk-k">const</span> [applying, setApplying] = <span class="tk-f">useState</span>(<span class="tk-k">false</span>);
+	<span class="tk-k">if</span> (marks === <span class="tk-k">undefined</span> || (marks.dirty.length === <span class="tk-n">0</span> &amp;&amp; !marks.set &amp;&amp; !marks.base)) <span class="tk-k">return</span> <span class="tk-k">null</span>;
+	<span class="tk-k">const</span> apply = <span class="tk-k">async</span> () =&gt; { <span class="tk-f">setApplying</span>(<span class="tk-k">true</span>); <span class="tk-k">try</span> { <span class="tk-k">await</span> changes?.<span class="tk-f">apply</span>(BACKGROUND_CONTEXT); } <span class="tk-k">finally</span> { <span class="tk-f">setApplying</span>(<span class="tk-k">false</span>); } };
+	<span class="tk-k">return</span> (
+		&lt;div className={styles.bar}&gt;
+			{marks.base ? <span class="tk-s">"Base code changed: restart needed"</span> : <span class="tk-s">`${marks.dirty.length} plugin(s) changed`</span>}
+			{marks.dirty.length &gt; <span class="tk-n">0</span> || marks.set ? &lt;button disabled={applying} onClick={apply}&gt;<span class="tk-t">Apply</span>&lt;/button&gt; : <span class="tk-k">null</span>}
+		&lt;/div&gt;
+	);
+}</code></pre>
+</section>
+
+<section class="chapter" id="decision-1"><header class="opener"><div class="numeral">III</div><h2>Decision 1: the reload control</h2><p class="lede">The kit knows what changed and can apply it, but only the start script can ask.</p></header>
+<p class="dropcap"><strong>Decision needed (Chord, the app kit).</strong> The kit&#39;s <code>app.plugins.state</code> (<code>{ dirty, install, set, base }</code>) and
+<code>app.applyChanges(ctx)</code> are fields of the <code>App</code> object the start script gets. A plugin cannot reach them, so the only
+ways to apply are base code: a signal handler in <code>start.ts</code>, or a route <code>start.ts</code> adds. Either puts reload behaviour
+into base code, against decision &quot;Reloads first&quot;, and neither gives an agent (later, a tool) or the page a way to see
+what changed.</p>
+<p><strong>Recommended:</strong> the kit serves a remote object on the server, <code>AppChanges</code> (<code>chord.app.changes</code>, params <code>{}</code>), for the
+owner only (any other principal is refused <code>forbidden</code>): state <code>marks</code> (the plugins component&#39;s state as it is) and
+the method <code>apply()</code>, which runs <code>applyChanges</code> and answers with a summary: <code>{ steps: { name, failed: string[] }[] }</code>
+(each step&#39;s host name and the plugins whose new code failed and kept the old). The kit&#39;s facet serves it like its
+other objects; the app re-exports the token in its server API, and <code>reload</code> holds it from the page.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 310" width="100%" role="img" aria-label="Applying from the page: the bar holds the kit's object; the rollout replaces the changed plugin on the server, then in every open page." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="130.7" y1="52" x2="130.7" y2="302" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="45.7" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="130.7" y="27" font-size="11" fill="#2a2723" text-anchor="middle">page</text><text x="130.7" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">reload + hello web</text><line x1="360" y1="52" x2="360" y2="302" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="275" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">server</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">AppChanges (kit)</text><line x1="589.3" y1="52" x2="589.3" y2="302" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="504.3" y="10" width="170" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="589.3" y="27" font-size="11" fill="#2a2723" text-anchor="middle">plugins component</text><text x="589.3" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">watcher, builds</text><g class="step edge" style="--i:1"><line x1="589.3" y1="78" x2="363" y2="78" stroke="#7b7468" marker-end="url(#f1m)"/><text x="474.7" y="72" font-size="10" fill="#2a2723" text-anchor="middle">hello/web.tsx changed: marks.dirty = [&quot;hello&quot;]</text></g><g class="step edge" style="--i:2"><line x1="360" y1="110" x2="133.7" y2="110" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="245.3" y="104" font-size="10" fill="#2a2723" text-anchor="middle">state: marks</text></g><g class="step edge" style="--i:3"><line x1="130.7" y1="142" x2="357" y2="142" stroke="#7b7468" marker-end="url(#f1m)"/><text x="245.3" y="136" font-size="10" fill="#2a2723" text-anchor="middle">AppChanges.apply()</text></g><g class="step edge" style="--i:4"><line x1="360" y1="174" x2="586.3" y2="174" stroke="#b4472f" marker-end="url(#f1a)"/><text x="474.7" y="168" font-size="10" fill="#b4472f" text-anchor="middle">build hello, roll out: server, then web</text></g><g class="step edge" style="--i:5"><line x1="589.3" y1="206" x2="133.7" y2="206" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="360" y="200" font-size="10" fill="#2a2723" text-anchor="middle">new web script set (the page reloads hello in place)</text></g><g class="step edge" style="--i:6"><line x1="360" y1="238" x2="133.7" y2="238" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="245.3" y="232" font-size="10" fill="#2a2723" text-anchor="middle">state: marks (clean), then the answer</text></g><g class="step edge" style="--i:7"><path d="M130.7 264 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><text x="172.7" y="274" font-size="10" fill="#2a2723" text-anchor="start">HelloPart remounts: new greeting, count kept</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> Applying from the page: the bar holds the kit&#39;s object; the rollout replaces the changed plugin on the server, then in every open page.</figcaption></figure>
+<p>Why the object: it is the kit&#39;s own state and the kit&#39;s own operation, so the kit owns them (one owner per thing);
+pages, a terminal and later an agent tool use the same object. Alternatives: (B) <code>start.ts</code> applies on a signal
+(<code>SIGUSR2</code>) and prints the result: no change to the kit, but no button and no marks in the page; (C) a route
+contributed by <code>start.ts</code>: base code again. Cost of the recommendation: about 50 lines in the kit with tests, the kit
+README and design §23.</p>
+<div class="note review"><b class="tag">Review: who may apply</b><p>Applying runs the build of every changed plugin on the server: code from the plugin roots runs. It is the owner&#39;s
+alone, as installing plugins is; guests and other users never get the object. Whether a second user should ever apply
+is decided with multi-user.</p>
+</div>
+</section>
+
+<section class="chapter" id="done"><header class="opener"><div class="numeral">IV</div><h2>Done</h2><p class="lede">The reload suite, and what else the build delivers.</p></header>
+<p class="dropcap">The reload suite is the point of the step: it runs from now on in every later step, each step adding its plugins to it.
+A browser test (Chromium, <code>CHROMIUM_BIN</code>) starts p3 on a temporary data directory with a copy of <code>plugins/</code>, signs in
+with the owner link, sets a marker on <code>window</code> (a page reload would lose it), and taps the counter three times. Then:</p>
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th>Edit</th>
+<th>Expect</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td><code>hello/web.tsx</code>: <code>GREETING</code></td>
+<td>the bar shows 1 plugin changed; Apply; the new greeting; count 3; marker present; <code>base</code> false</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>hello/server.ts</code>: <code>STEP = 2</code></td>
+<td>Apply; one tap gives 5; a tap sent while the apply runs is answered (old or new code), none lost; marker present</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>shell/web.tsx</code>: the layout&#39;s class</td>
+<td>Apply; the parts remount inside the new layout; count shown; marker present</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>shell/contract.web.ts</code>: a comment</td>
+<td>Apply reloads shell, hello and reload (each copies it); marker present; <code>base</code> false</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>src/api/v1/index.ts</code>: a comment</td>
+<td>the bar shows &quot;restart needed&quot;; Apply is not offered for it; <code>base</code> true</td>
+</tr>
+<tr>
+<td>6</td>
+<td>restart the server on the same data directory</td>
+<td>the page reconnects and reloads (new base); count 5; signed in</td>
+</tr>
+</tbody></table>
+<p>Besides: <code>npm run check</code> clean at the root and in <code>apps/p3</code> (its own <code>check</code> script and tsconfig); a plugin test of
+<code>hello</code> with <code>testPlugin</code> (a user taps, another user&#39;s count is apart, a non-user is refused); the kit changes with
+their tests (the owner principal, being built; <code>AppChanges</code> if decided); and p3 started on the phone next to p2 (own
+data directory <code>~/.p3</code>, port 8789), deployed by the phone dev session when the owner says so.</p>
+</section>
+
+<section class="chapter epilogue" id="what-comes-next"><header class="opener"><div class="numeral">∴</div><h2>What Comes Next</h2><p class="lede">One small step at a time.</p></header>
+<p class="dropcap">Step 0 is the base and the reload suite, with a counter to reload. The owner decides decision 1 (the kit&#39;s
+<code>AppChanges</code>, recommended); then the spec goes to two reviewers, and the build follows. The next steps, each as small:
+a session list on the server; a worker per session; the harness with a fake model and a minimal chat; real models.
+Each adds its plugins to the reload suite. The map of where they lead (<code>docs/map/</code>) is not a spec: each step gets its
+own when its turn comes.</p>
+</section>
+
+<p class="colophon">p3 step 0 · spec, first edition · 2026-11-06 · sources: Chord design.md §3, §16-§18, §21, §23; decisions 2026-11-01..06; the app kit and example 61</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>
