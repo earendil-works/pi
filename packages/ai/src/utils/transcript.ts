@@ -163,18 +163,19 @@ export interface ToolStateChanges {
 export function getToolStateChanges(previous: readonly Tool[], current: readonly Tool[]): ToolStateChanges {
 	const previousTools = new Map(previous.map((tool) => [tool.name, tool]));
 	const currentTools = new Map(current.map((tool) => [tool.name, tool]));
+	const toolsAdded: Tool[] = [];
+	const changedNames = new Set<string>();
+	for (const tool of current) {
+		const previousTool = previousTools.get(tool.name);
+		if (previousTool === undefined || !declarationsEqual(previousTool, tool)) {
+			changedNames.add(tool.name);
+			toolsAdded.push(toToolDeclaration(tool));
+		}
+	}
 	return {
-		toolsAdded: current
-			.filter((tool) => {
-				const previousTool = previousTools.get(tool.name);
-				return previousTool === undefined || !declarationsEqual(previousTool, tool);
-			})
-			.map(toToolDeclaration),
+		toolsAdded,
 		toolsRemoved: previous
-			.filter((tool) => {
-				const currentTool = currentTools.get(tool.name);
-				return currentTool === undefined || !declarationsEqual(tool, currentTool);
-			})
+			.filter((tool) => !currentTools.has(tool.name) || changedNames.has(tool.name))
 			.map((tool) => ({ name: tool.name })),
 	};
 }

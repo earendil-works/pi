@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
 import type { Api, AssistantMessage, Context, Message, Model, SystemMessage, Tool } from "../src/types.ts";
-import { resolveTranscriptTools } from "../src/utils/transcript.ts";
+import { getToolStateChanges, resolveTranscriptTools } from "../src/utils/transcript.ts";
 
 class PayloadCaptured extends Error {}
 
@@ -661,5 +661,33 @@ describe("declaration comparison avoids redundant schema copying", () => {
 		const changed = { ...clone, description: "Search updated" };
 		expect(declarationsEqual(first as never, clone as never)).toBe(true);
 		expect(declarationsEqual(first as never, changed as never)).toBe(false);
+	});
+});
+
+describe("tool-state comparison efficiency", () => {
+	test("compares existing declarations once and preserves changed/removal semantics", () => {
+		let serialized = 0;
+		const schema = () => ({
+			type: "object",
+			properties: { value: { type: "string" } },
+			toJSON() {
+				serialized++;
+				return { type: "object", properties: { value: { type: "string" } } };
+			},
+		});
+		const previous = ["stable", "changed", "removed"].map((name) => ({
+			name,
+			description: name,
+			parameters: schema(),
+		}));
+		const current = [
+			{ name: "stable", description: "stable", parameters: schema() },
+			{ name: "changed", description: "updated", parameters: schema() },
+			{ name: "added", description: "added", parameters: schema() },
+		];
+		const changes = getToolStateChanges(previous as never, current as never);
+		expect(changes.toolsAdded.map((tool) => tool.name)).toEqual(["changed", "added"]);
+		expect(changes.toolsRemoved.map((tool) => tool.name)).toEqual(["changed", "removed"]);
+		expect(serialized).toBe(6);
 	});
 });
