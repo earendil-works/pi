@@ -187,6 +187,10 @@ Edit `<P2_DATA_DIR>/settings.json` as a file; there is no Settings editor UI. Va
 restart, and in-flight requests keep their configuration. Set the default model and thinking level with
 **Make default for new sessions** in the model picker. `ownerName` (1 to 40 characters, no control characters, `<`
 or `>`; default "Owner") is the name your messages carry from then on; messages already written keep theirs.
+`detail` (1 to 4, default 3) is how much of a turn the web chat shows: 1 only the answer, with the thinking, the
+agent's texts and its tool calls on one wheel per turn; 2 the texts too, thinking and calls on wheels between them;
+3 thinking too (collapsed), only runs of tool calls on wheels; 4 thinking in full and each tool call as its own row,
+no wheels.
 
 ### Projects
 

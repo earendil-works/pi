@@ -1445,6 +1445,19 @@ translated phone drawer and intercept chat taps.
   summaries, grouped calls), `ui-activity.test.ts` (the sheet, its layers and Back, the wide dialog, a mixed turn, a
   long run opening at its end), and the browser tests that open steps (`codemode-card`, `nested-calls`, `ui-agents`,
   `failed-turns`, `ui-mobile-fixes`).
+- **How much of a turn shows: settings.json `detail`** (owner decision: a level in settings.json for now, no app UI;
+  read live from the owner's `Models` resources snapshot, so guests see the default). 1: only the answer and its
+  results; the turn's thinking, texts and calls on one wheel per turn (keyed by the item before the run, like the
+  waiting wheel), its sheet listing thinking and texts among the calls ("Thought", "Note", each opening its words). The
+  turn's last text becomes its answer only once the agent stopped: while it works a text may still turn out to be a
+  note (a call follows), so it stays on the wheel, and the answer arrives in the transcript once, fading in as new rows
+  do, instead of showing and then jumping back onto the wheel.
+  2: the agent's texts in the transcript; thinking and calls on a wheel between them. 3 (default): as above, thinking
+  collapsed and only runs of calls on wheels. 4: thinking open in full and each call its own row (the sheet's row:
+  icon, tool and argument, state), opening its detail alone; no wheels (a waiting wheel still stands for a run before
+  its first call). `chatItems`' `detail` merges what goes on the wheels into the runs of calls (`wheels` in `model.ts`,
+  `WheelEntry`); the summary of a wheel with thinking leads with "Thought". `activity-model.test.ts` covers the
+  levels, `ui-detail.test.ts` the transcript and the sheet as the setting changes live, and the answer arriving once.
 - **Tools' look comes from their plugins** (owner decision: no tool-specific code in `src/web`). A plugin's web facet
   contributes `ToolActivity` entries, keyed by tool name, to the `ToolActivities` registry (`src/runtime/web-core.ts`;
   type in `src/web/activity/model.ts`, the parts a detail is built from in `src/web/activity/api.ts`, all through

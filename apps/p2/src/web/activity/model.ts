@@ -1,7 +1,8 @@
 // A turn's activity: what the agent did between a person's message and its answer. Derived from the transcript's
 // items: `chatItems` keeps each response's thinking and text in the transcript, in their order, and turns each run of
 // consecutive tool calls into an activity item (a wheel in the chat, its steps in a sheet). A turn's last text is its
-// answer, followed by the results meant for the person (artifacts, sent files, opened ports).
+// answer, followed by the results meant for the person (artifacts, sent files, opened ports). How much of that shows
+// in the transcript, and how much goes on the wheels, is settings.json's `detail` (`Detail`).
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ComponentType } from "react";
 import type { Item, NestedCall, ToolView } from "../transcript.ts";
@@ -9,6 +10,19 @@ import type { Item, NestedCall, ToolView } from "../transcript.ts";
 export type StepStatus = "running" | "done" | "error";
 /** One tool call of an activity. */
 export type Step = { id: string; tool: ToolView; status: StepStatus };
+/**
+ * How much of a turn the transcript shows (settings.json `detail`), the rest on its wheels:
+ * 1. only the answer and its results; the turn's thinking, texts and calls on one wheel;
+ * 2. the agent's texts between its calls too; thinking and calls on a wheel between them;
+ * 3. thinking too, collapsed to a line; only runs of calls on wheels (the default);
+ * 4. thinking in full, and each call as its own row: no wheels.
+ */
+export type Detail = 1 | 2 | 3 | 4;
+export const DEFAULT_DETAIL: Detail = 3;
+/** A thinking block or a text on a wheel (detail 1 and 2). */
+export type Words = { kind: "thought" | "text"; id: string; text: string; live: boolean };
+/** What a wheel rolls through, in order: its tool calls, and at detail 1 and 2 thinking (and texts) among them. */
+export type WheelEntry = { kind: "call"; step: Step } | Words;
 
 /** The items the chat shows: the transcript's people, markers and failures, and each turn's parts in order. */
 export type ChatItem =
@@ -18,6 +32,10 @@ export type ChatItem =
 			key: string;
 			/** The run's tool calls. */
 			steps: Step[];
+			/** At detail 1 and 2: everything on the wheel in order, thinking (and texts) among the calls. */
+			entries?: WheelEntry[];
+			/** At detail 4: the calls as rows, one each, not a wheel. */
+			rows?: true;
 			/** The agent is still at it: the row is a ticker, not a summary. */
 			working: boolean;
 			/** The responses whose calls it shows, for a search hit on one of them. */
@@ -34,6 +52,8 @@ export type ChatItem =
 			text: string;
 			/** Still streaming: "Thinking…". */
 			live: boolean;
+			/** At detail 4: open, in full. */
+			full?: true;
 	  }
 	| {
 			/** The agent's text between its calls, as prose; the turn's last text is its answer instead. */
@@ -64,7 +84,7 @@ const toolStatus = (tool: ToolView): StepStatus =>
 
 type Response = Extract<Item, { type: "assistant" }>;
 /** A run of consecutive tool calls, with the responses that made them (for its time). */
-type Calls = { type: "calls"; key: string; steps: Step[]; from: Response[] };
+type Calls = { type: "calls"; key: string; steps: Step[]; from: Response[]; entries?: WheelEntry[] };
 type Part = Calls | Extract<ChatItem, { type: "thought" | "text" }>;
 
 const stepOf = (tool: ToolView): Step => ({ id: tool.id, tool, status: toolStatus(tool) });
@@ -159,18 +179,38 @@ function activityOf(calls: Calls, responses: readonly Response[], working: boole
  * A run's chat items: its thinking, texts and runs of calls in order, the answer (its last text, when nothing came
  * after it), the results. `after`: the key of the item before the run.
  */
-function runItems(run: readonly Item[], working: boolean, after: string, tools: ToolActivityTable): ChatItem[] {
+function runItems(
+	run: readonly Item[],
+	working: boolean,
+	after: string,
+	tools: ToolActivityTable,
+	detail: Detail,
+): ChatItem[] {
 	const first = run[0]!;
-	const parts = partsOf(run, working, after);
+	let parts = partsOf(run, working, after);
 	const responses = run.filter((item): item is Response => item.type === "assistant");
 	const response = responses.at(-1);
-	const final = parts.at(-1);
-	const answer = final?.type === "text" ? final : undefined;
+	const last = parts.at(-1);
+	// The run's last text is its answer, when nothing came after it. At detail 1 only once the run is over: while the
+	// agent works a text may still turn out to be a note (a call follows), so it stays on the wheel until then, and the
+	// answer arrives in the transcript once, when the agent stopped (the row fades in, as new rows do).
+	const answer = last?.type === "text" && !(detail === 1 && working) ? last : undefined;
 	if (answer) parts.pop();
+	// What goes on the wheels with the calls (detail 1: thinking and texts; 2: thinking), merged into them.
+	if (detail <= 2) parts = wheels(parts, responses, after, detail === 1 ? ["thought", "text"] : ["thought"]);
+	const final = parts.at(-1);
 	const notice =
 		response && ["error", "aborted", "length"].includes(response.message.stopReason) && !response.streaming;
 	const items: ChatItem[] = parts.map((part) =>
-		part.type === "calls" ? activityOf(part, responses, working && !answer && part === final) : part,
+		part.type === "calls"
+			? {
+					...activityOf(part, responses, working && !answer && part === final),
+					...(part.entries ? { entries: part.entries } : {}),
+					...(detail === 4 ? { rows: true as const } : {}),
+				}
+			: part.type === "thought" && detail === 4
+				? { ...part, full: true as const }
+				: part,
 	);
 	// Working on a response that shows nothing yet: the activity row, waiting.
 	if (working && !parts.length && !answer)
@@ -192,10 +232,53 @@ function runItems(run: readonly Item[], working: boolean, after: string, tools: 
 	return items;
 }
 
+/**
+ * Parts with the thinking or texts of `kinds` merged into the runs of calls around them: each stretch between the
+ * parts that stay in the transcript is one wheel, keyed by its first part (the turn's first by the item before the run,
+ * `after`, as the wheel that waited for it), timed by the responses of its calls and thinking.
+ */
+function wheels(
+	parts: readonly Part[],
+	responses: readonly Response[],
+	after: string,
+	kinds: readonly ("thought" | "text")[],
+): Part[] {
+	const merged: Part[] = [];
+	for (const part of parts) {
+		if (part.type !== "calls" && !kinds.includes(part.type)) {
+			merged.push(part);
+			continue;
+		}
+		let wheel = merged.at(-1);
+		if (wheel?.type !== "calls") {
+			const key = !merged.length ? `activity:${after}` : part.type === "calls" ? part.key : `activity:${part.key}`;
+			wheel = { type: "calls", key, steps: [], from: [], entries: [] };
+			merged.push(wheel);
+		}
+		const from =
+			part.type === "calls" ? part.from : responses.filter((response) => response.entryId === part.entryId);
+		for (const response of from) if (!wheel.from.includes(response)) wheel.from.push(response);
+		if (part.type === "calls") {
+			wheel.steps.push(...part.steps);
+			wheel.entries?.push(...part.steps.map((step): WheelEntry => ({ kind: "call", step })));
+		} else
+			wheel.entries?.push({
+				kind: part.type,
+				id: part.key,
+				text: part.text,
+				live: part.type === "thought" && part.live,
+			});
+	}
+	// In the responses' order: the first and last time the wheel.
+	for (const part of merged)
+		if (part.type === "calls") part.from.sort((a, b) => responses.indexOf(a) - responses.indexOf(b));
+	return merged;
+}
+
 /** A run's items, kept while its members and state are the same, so unchanged rows keep their identity. */
 const runs = new WeakMap<
 	Item,
-	{ members: readonly Item[]; working: boolean; tools: ToolActivityTable; items: ChatItem[] }
+	{ members: readonly Item[]; working: boolean; tools: ToolActivityTable; detail: Detail; items: ChatItem[] }
 >();
 
 /** The items made last, by key, for keeping the ones a rebuilt run shows the same (the newest `RECENT`). */
@@ -216,6 +299,16 @@ const sameTool = (one: ToolView, other: ToolView): boolean =>
 		one.images.every((image, index) => image === other.images[index]) &&
 		JSON.stringify(one.args) === JSON.stringify(other.args));
 
+/** Whether two steps show the same: the same call in the same state. */
+const sameStep = (step: Step, same: Step): boolean =>
+	step.id === same.id && step.status === same.status && sameTool(step.tool, same.tool);
+
+/** Whether two wheel entries (detail 1 and 2) show the same: the same step, or the same words in the same state. */
+function sameEntry(entry: WheelEntry, same: WheelEntry): boolean {
+	if (entry.kind === "call") return same.kind === "call" && sameStep(entry.step, same.step);
+	return same.kind === entry.kind && same.id === entry.id && same.text === entry.text && same.live === entry.live;
+}
+
 const sameValue = (one: unknown, other: unknown): boolean =>
 	one === other ||
 	(Array.isArray(one) &&
@@ -224,21 +317,12 @@ const sameValue = (one: unknown, other: unknown): boolean =>
 		one.every((value, index) => {
 			const that: unknown = other[index];
 			if (value === that) return true;
+			if (!value || !that || typeof value !== "object" || typeof that !== "object") return false;
+			// An entry on a wheel (detail 1 and 2).
+			if ("kind" in value && "kind" in that) return sameEntry(value as WheelEntry, that as WheelEntry);
 			// A step: the same call in the same state.
-			if (
-				value &&
-				that &&
-				typeof value === "object" &&
-				typeof that === "object" &&
-				"tool" in value &&
-				"tool" in that
-			) {
-				const step = value as Step;
-				const same = that as Step;
-				return step.id === same.id && step.status === same.status && sameTool(step.tool, same.tool);
-			}
-			if (value && that && typeof value === "object" && typeof that === "object" && "id" in value && "id" in that)
-				return sameTool(value as ToolView, that as ToolView);
+			if ("tool" in value && "tool" in that) return sameStep(value as Step, that as Step);
+			if ("id" in value && "id" in that) return sameTool(value as ToolView, that as ToolView);
 			return false;
 		}));
 
@@ -271,13 +355,15 @@ function unfinished(run: readonly Item[]): boolean {
  * shown as its thinking, texts and runs of calls in order, its answer and its results. `working`: the agent is at it,
  * so the last run is live. `known`: whether `working` comes from the server's live state; until it does (the
  * transcript kept on this device), a last run whose entries say it is not over shows as live rather than finished.
- * `tools`: the tools' contributions, which say which calls made results for the person.
+ * `tools`: the tools' contributions, which say which calls made results for the person. `detail`: how much of a turn
+ * shows in the transcript (settings.json `detail`).
  */
 export function chatItems(
 	items: readonly Item[],
 	working: boolean,
 	known: boolean,
 	tools: ToolActivityTable,
+	detail: Detail = DEFAULT_DETAIL,
 ): ChatItem[] {
 	const result: ChatItem[] = [];
 	let run: Item[] = [];
@@ -294,6 +380,7 @@ export function chatItems(
 			cached &&
 			cached.working === live &&
 			cached.tools === tools &&
+			cached.detail === detail &&
 			cached.members.length === run.length &&
 			cached.members.every((item, index) => item === run[index])
 		)
@@ -301,7 +388,7 @@ export function chatItems(
 		else {
 			// A member changed (a streaming delta, a result): the run's items are made again, and those that show the same
 			// as before stay the same objects. Found by key: a streaming response is a new object at every delta.
-			const made = runItems(run, live, after, tools).map((item) => {
+			const made = runItems(run, live, after, tools, detail).map((item) => {
 				const before = recent.get(item.key);
 				const kept = before && sameItem(before, item) ? before : item;
 				recent.delete(item.key);
@@ -312,7 +399,7 @@ export function chatItems(
 				if (recent.size <= RECENT) break;
 				recent.delete(key);
 			}
-			runs.set(run[0]!, { members: run, working: live, tools, items: made });
+			runs.set(run[0]!, { members: run, working: live, tools, detail, items: made });
 			result.push(...made);
 		}
 		run = [];

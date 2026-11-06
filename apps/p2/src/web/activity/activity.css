@@ -281,3 +281,16 @@
 	gap: var(--s4);
 	min-width: 0;
 }
+
+/* Thinking and a text in a wheel's list (detail 1 and 2): their words, not code. */
+.step-list [data-kind] .step-argument {
+	font-family: inherit;
+	font-size: inherit;
+}
+/* At detail 4 (settings.json) a run's calls are rows in the transcript, at the text's edges, between two lines. */
+.activity-rows .step-list {
+	border-block: 1px solid var(--line);
+}
+.activity-rows .step-row {
+	padding-inline: 0;
+}

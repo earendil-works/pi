@@ -6,10 +6,10 @@
 import { type MouseEvent, type ReactNode, useContext } from "react";
 import { ToolActivityContext } from "../chat-context.ts";
 import { Ticker } from "../elanor-extra/ticker.tsx";
-import { openActivity, useElapsed } from "./ActivitySheet.tsx";
-import { CheckIcon, ChevronIcon, SparkIcon } from "./icons.tsx";
+import { openActivity, StepList, useElapsed } from "./ActivitySheet.tsx";
+import { CheckIcon, ChevronIcon, CommentIcon, SparkIcon } from "./icons.tsx";
 import { KindIcon, LabelText } from "./Label.tsx";
-import { live, plain, type Step, summary } from "./model.ts";
+import { live, plain, plainText, type Step, sentence, summary, type WheelEntry } from "./model.ts";
 import "./activity.css";
 
 /** A step on the wheel: what it shows, its plain words for screen readers, and whether it failed. */
@@ -29,26 +29,60 @@ export function Elapsed({ startedAt, endedAt, working }: { startedAt?: number; e
 export function ActivityRow({
 	rowKey,
 	steps,
+	entries = steps.map((step) => ({ kind: "call", step })),
+	rows = false,
 	working,
 	startedAt,
 	endedAt,
 }: {
 	/** The row's key: the sheet's route layer names it. */
 	rowKey: string;
+	/** At detail 4 (settings.json): the calls as rows, one each, each opening its detail; no wheel. */
+	rows?: boolean;
 	steps: readonly Step[];
+	/** Everything on the wheel in order, with settings.json's `wheel: "all"`: thinking and texts among the calls. */
+	entries?: readonly WheelEntry[];
 	working: boolean;
 	startedAt?: number;
 	endedAt?: number;
 }) {
 	const tools = useContext(ToolActivityContext);
-	const done = summary(steps, tools, { failures: false });
-	/** Opens the calls: the list, or a call's detail over it when the reader rolled the wheel to that call. */
-	const show = (step?: string) => openActivity(rowKey, steps.some((each) => each.id === step) ? step : undefined);
+	// Each call its own row, opening its detail alone; a wheel only while the agent works with no call yet.
+	if (rows && steps.length)
+		return (
+			<div className="activity-rows" data-testid="activity" data-state={working ? "working" : "done"}>
+				<StepList entries={entries} onStep={(id) => openActivity(rowKey, id, true)} follow={false} />
+			</div>
+		);
+	const thought = entries.some((entry) => entry.kind === "thought");
+	// "Thought, read 3 files": with thinking on the wheel, its summary says so first.
+	const calls = steps.length ? summary(steps, tools, { failures: false }) : "";
+	const done = thought
+		? ["Thought", calls.charAt(0).toLowerCase() + calls.slice(1)].filter(Boolean).join(", ")
+		: calls || summary(steps, tools);
+	const idOf = (entry: WheelEntry) => (entry.kind === "call" ? entry.step.id : entry.id);
+	/** Opens the steps: the list, or one's detail over it when the reader rolled the wheel to it. */
+	const show = (step?: string) => openActivity(rowKey, entries.some((each) => idOf(each) === step) ? step : undefined);
 	/** A tap beside the wheel; the wheel's own tap (its button) is `onActivate`. */
 	const tap = (event: MouseEvent) => {
 		if (!(event.target instanceof Element && event.target.closest(".activity-ticker"))) show();
 	};
-	const faces: Face[] = steps.map((step) => {
+	const faces: Face[] = entries.map((entry) => {
+		if (entry.kind !== "call") {
+			const words =
+				entry.kind === "thought" ? (entry.live ? "Thinking…" : "Thought") : plainText(sentence(entry.text));
+			return {
+				key: entry.id,
+				label: words,
+				content: (
+					<>
+						{entry.kind === "thought" ? <SparkIcon /> : <CommentIcon />}
+						<span className="label-text">{words}</span>
+					</>
+				),
+			};
+		}
+		const { step } = entry;
 		const label = live(step, tools);
 		return {
 			key: step.id,
@@ -62,7 +96,7 @@ export function ActivityRow({
 			),
 		};
 	});
-	if (!steps.length)
+	if (!entries.length)
 		faces.push({
 			key: "waiting",
 			label: "Working",
@@ -84,7 +118,7 @@ export function ActivityRow({
 						{done}
 						<span className="label-extra">
 							{" "}
-							· {steps.length} {steps.length === 1 ? "step" : "steps"}
+							· {entries.length} {entries.length === 1 ? "step" : "steps"}
 						</span>
 					</span>
 				</>

@@ -13,7 +13,7 @@ import {
 } from "react";
 import { ActivityRow } from "./activity/ActivityRow.tsx";
 import { ActivityLayer } from "./activity/ActivitySheet.tsx";
-import { type ChatItem, chatItems, type ToolActivityTable } from "./activity/model.ts";
+import { type ChatItem, chatItems, DEFAULT_DETAIL, type Detail, type ToolActivityTable } from "./activity/model.ts";
 import { Results } from "./activity/Results.tsx";
 import { CopyButton } from "./Code.tsx";
 import { BranchFrom, OpenConversation, OpenPeerConversation, ReplyTo, RevealEntry } from "./chat-context.ts";
@@ -270,11 +270,15 @@ function rowFeatures(row: TranscriptRow, width: number): RowFeatures {
 				fixed: imagesHeight(item.images, width),
 			};
 		case "activity":
-			// One line, the wheel, however many calls the run made.
-			return { kind: `activity:${spacing}`, text: 0, fixed: 0 };
+			// One line, the wheel, however many calls the run made; at detail 4 a row per call.
+			return item.rows
+				? { kind: `activity:rows:${item.steps.length}:${spacing}`, text: 0, fixed: 0 }
+				: { kind: `activity:${spacing}`, text: 0, fixed: 0 };
 		case "thought":
-			// One line until opened.
-			return { kind: `thought:${spacing}`, text: 0, fixed: 0 };
+			// One line until opened; at detail 4 in full.
+			return item.full
+				? { kind: `thought:full:${spacing}`, text: item.text.length, fixed: 0 }
+				: { kind: `thought:${spacing}`, text: 0, fixed: 0 };
 		case "text":
 			return { kind: `text:${spacing}`, text: item.text.length, fixed: 0 };
 		case "answer":
@@ -503,7 +507,9 @@ function UserMessage({ item }: { item: Extract<Item, { type: "user" }> }) {
 
 /** A thinking block in place: "Thought", opened to its text with a tap; "Thinking…" while it streams. */
 function Thought({ item }: { item: Extract<ChatItem, { type: "thought" }> }) {
-	const [open, setOpen] = useState(false);
+	// Open at detail 4 (settings.json), also when the setting changes while it shows, until the reader toggles it.
+	const [toggled, setOpen] = useState<boolean>();
+	const open = toggled ?? Boolean(item.full);
 	return (
 		<div className={`thinking ${item.live ? "live" : ""}`} data-entry={item.entryId} data-testid="thought">
 			<button type="button" onClick={() => setOpen(!open)} aria-expanded={open}>
@@ -581,6 +587,8 @@ const ItemView = memo(function ItemView({ item }: { item: ChatItem }) {
 				<ActivityRow
 					rowKey={item.key}
 					steps={item.steps}
+					{...(item.entries ? { entries: item.entries } : {})}
+					{...(item.rows ? { rows: true } : {})}
 					working={item.working}
 					{...(item.startedAt ? { startedAt: item.startedAt } : {})}
 					{...(item.endedAt ? { endedAt: item.endedAt } : {})}
@@ -631,7 +639,8 @@ const TURN_PARTS: ReadonlySet<ChatItem["type"]> = new Set(["thought", "text", "a
 const rowsOf = new WeakMap<ChatItem, { first: boolean; gap: TranscriptRow["gap"]; row: TranscriptRow }>();
 /**
  * The rows of a transcript: its items as the chat shows them (`chatItems`: each turn's thinking, texts and runs of
- * calls in order, its answer and results). `tools`: the tools' contributions (`ToolActivities`).
+ * calls in order, its answer and results). `tools`: the tools' contributions (`ToolActivities`); `detail`: how much
+ * of a turn the transcript shows (settings.json `detail`).
  * `working`: the agent is at it, so the last turn is live; `known`: `working` comes from the server's live state (not
  * yet while the transcript kept on this device shows).
  */
@@ -640,8 +649,9 @@ export function transcriptRows(
 	tools: ToolActivityTable,
 	working = false,
 	known = true,
+	detail: Detail = DEFAULT_DETAIL,
 ): TranscriptRow[] {
-	const shown = chatItems(items, working, known, tools);
+	const shown = chatItems(items, working, known, tools, detail);
 	return shown.map((item, index) => {
 		const first = index === 0;
 		const before = shown[index - 1];

@@ -404,3 +404,80 @@ test("before the live state is known, an unfinished last turn shows as live, not
 	// A finished turn stays finished either way.
 	assert.equal(live(chatItems(turn(), false, false)), false);
 });
+
+test("settings.json's detail: how much of a turn shows in the transcript, the rest on its wheels", () => {
+	const at = (detail: 1 | 2 | 3 | 4, working = false) => chatItemsWith(turn(), working, true, TOOLS, detail);
+	type Activity = Extract<ReturnType<typeof at>[number], { type: "activity" }>;
+	const kinds = (activity: Activity | undefined) =>
+		activity?.entries?.map((entry) => (entry.kind === "call" ? entry.step.tool.name : entry.kind));
+	// 1: only the answer and results; the thought, the text and the calls on one wheel, keyed like the waiting one.
+	const one = at(1);
+	assert.deepEqual(
+		one.map((item) => item.type),
+		["user", "activity", "answer", "results"],
+	);
+	const wheel = one[1] as Activity;
+	assert.equal(wheel.key, "activity:u1");
+	assert.deepEqual(kinds(wheel), ["thought", "text", "bash", "artifact"]);
+	assert.deepEqual(wheel.entryIds, [2, 3]);
+	// 2: the text in the transcript; the thought on the wheel before it, the calls on the one after.
+	const two = at(2);
+	assert.deepEqual(
+		two.map((item) => [item.type, item.key]),
+		[
+			["user", "u1"],
+			["activity", "activity:u1"],
+			["text", "text:a1:1"],
+			["activity", "activity:a1:2"],
+			["answer", "text:a3:0"],
+			["results", "results:a1"],
+		],
+	);
+	assert.deepEqual(kinds(two[1] as Activity), ["thought"]);
+	assert.deepEqual(kinds(two[3] as Activity), ["bash", "artifact"]);
+	// 3, the default: as without the setting.
+	const shape = (items: ReturnType<typeof at>) => items.map((item) => [item.type, item.key]);
+	assert.deepEqual(shape(at(3)), shape(chatItems(turn(), false)));
+	assert.equal((at(3)[3] as Activity).entries, undefined);
+	// 4: the thought open, the calls as rows.
+	const four = at(4);
+	assert.equal((four[1] as Extract<(typeof four)[number], { type: "thought" }>).full, true);
+	assert.equal((four[3] as Activity).rows, true);
+	// While the agent works, the turn's one wheel is live (no answer yet).
+	const working = chatItemsWith(turn().slice(0, 3), true, true, TOOLS, 1);
+	assert.deepEqual(
+		working.map((item) => [item.type, item.type === "activity" && item.working]),
+		[
+			["user", false],
+			["activity", true],
+			["results", false],
+		],
+	);
+	// Its last text, even with nothing after it yet, stays on the wheel while the agent works (a call may follow), and
+	// becomes the answer only once the agent stopped.
+	const writing = chatItemsWith(turn(), true, true, TOOLS, 1);
+	assert.deepEqual(
+		writing.map((item) => item.type),
+		["user", "activity", "results"],
+	);
+	assert.deepEqual(kinds(writing[1] as Activity), ["thought", "text", "bash", "artifact", "text"]);
+	assert.equal((writing[1] as Activity).working, true);
+	assert.deepEqual(
+		at(1).map((item) => item.type),
+		["user", "activity", "answer", "results"],
+	);
+	// At the other levels a text is in the transcript anyway: the answer shows as it streams.
+	assert.deepEqual(
+		chatItemsWith(turn(), true, true, TOOLS, 2).map((item) => item.type),
+		["user", "activity", "text", "activity", "answer", "results"],
+	);
+});
+
+test("at detail 1, a rebuilt run keeps its wheel when it shows the same", () => {
+	const made = turn();
+	const first = chatItemsWith(made, false, true, TOOLS, 1);
+	// The answer's response again, as a new object (a delta that changed nothing shown): the run is made again.
+	const again = [...made.slice(0, -1), { ...(made.at(-1) as Extract<Item, { type: "assistant" }>) }];
+	const second = chatItemsWith(again, false, true, TOOLS, 1);
+	assert.equal(second[1], first[1]);
+});
