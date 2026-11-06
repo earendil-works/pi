@@ -55,12 +55,15 @@ export function withoutInitialSystemMessage(messages: Message[]): Message[] {
 }
 
 /** Resolve the tools available after applying every transcript delta in order. */
-export function getCurrentTools(messages: TranscriptMessages): Tool[] {
+export function getCurrentTools(messages: TranscriptMessages, pending: TranscriptMessages = []): Tool[] {
 	const tools = new Map<string, Tool>();
-	for (const message of messages) {
-		if (!isSystemMessage(message)) continue;
-		for (const tool of message.toolsRemoved ?? []) tools.delete(tool.name);
-		for (const tool of message.toolsAdded ?? []) tools.set(tool.name, tool);
+	// Scan the committed transcript and pending messages without allocating a merged history.
+	for (const segment of [messages, pending]) {
+		for (const message of segment) {
+			if (!isSystemMessage(message)) continue;
+			for (const tool of message.toolsRemoved ?? []) tools.delete(tool.name);
+			for (const tool of message.toolsAdded ?? []) tools.set(tool.name, tool);
+		}
 	}
 	return [...tools.values()];
 }

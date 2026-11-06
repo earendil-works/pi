@@ -356,7 +356,7 @@ function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage
 		: pendingMessages;
 	// getToolStateChanges materializes declarations only for added/changed tools.
 	// Cloning every executable schema on every turn was unnecessary work.
-	const changes = getToolStateChanges(getCurrentTools([...context.messages, ...baseline]), context.tools ?? []);
+	const changes = getToolStateChanges(getCurrentTools(context.messages, baseline), context.tools ?? []);
 	const unchanged = changes.toolsAdded.length === 0 && changes.toolsRemoved.length === 0;
 
 	if (pending) {

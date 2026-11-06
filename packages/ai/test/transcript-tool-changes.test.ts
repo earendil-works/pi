@@ -2,7 +2,7 @@ import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
 import type { Api, AssistantMessage, Context, Message, Model, SystemMessage, Tool } from "../src/types.ts";
-import { declarationsEqual, getToolStateChanges, resolveTranscriptTools } from "../src/utils/transcript.ts";
+import { declarationsEqual, getCurrentTools, getToolStateChanges, resolveTranscriptTools } from "../src/utils/transcript.ts";
 
 class PayloadCaptured extends Error {}
 
@@ -688,5 +688,17 @@ describe("tool-state comparison efficiency", () => {
 		expect(changes.toolsAdded.map((tool) => tool.name)).toEqual(["changed", "added"]);
 		expect(changes.toolsRemoved.map((tool) => tool.name)).toEqual(["changed", "removed"]);
 		expect(serialized).toBe(6);
+	});
+});
+
+
+describe("segmented tool-state replay", () => {
+	test("preserves delta ordering without building a combined transcript", () => {
+		const prefix = [{ role: "system", content: "", toolsAdded: [tool("first"), tool("second")], timestamp: 0 }, { role: "system", content: "", toolsRemoved: [{ name: "first" }], timestamp: 1 }] satisfies Message[];
+		const pending = [{ role: "system", content: "", toolsAdded: [tool("third"), { ...tool("second"), description: "changed" }], timestamp: 2 }, { role: "system", content: "", toolsAdded: [tool("first")], timestamp: 3 }] satisfies Message[];
+		expect(getCurrentTools(prefix, pending)).toEqual(getCurrentTools([...prefix, ...pending]));
+		expect(getCurrentTools(prefix, pending).map((t) => t.name)).toEqual(["second", "third", "first"]);
+		 expect(prefix).toHaveLength(2);
+		 expect(pending).toHaveLength(2);
 	});
 });
