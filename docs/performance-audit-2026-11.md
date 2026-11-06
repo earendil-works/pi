@@ -22,7 +22,7 @@ Scope: Static investigation plus isolated, synthetic Node checks. No end-to-end 
 | P09 | Medium | Tool-state diff schema allocations | `packages/agent/src/agent-loop.ts` `declareToolChanges`; `packages/ai/src/utils/transcript.ts` `declarationsEqual` | **Partial:** removes redundant declaration clones and comparisons; replay still scans message history |
 | P10 | Medium | Bulk file-index N+1 reads | `packages/chord/src/node/app/files-index.ts` `#movedMarks`, `#released` per-row `get` | **Implemented, unverified:** chunked `inArray` queries and integration test |
 | P11 | Medium | Web transcript virtual metadata rebuild | `apps/p2/src/web/Chat.tsx` `transcriptRows` maps all items; `use-chat-scroll.ts` `prepare` and `virtual-list.ts` rebuild offsets | **Partial:** append-only offsets fast path; `transcriptRows` and prefix identity checks still scan all rows |
-| P12 | Medium | Unbounded generic event queue | `packages/ai/src/utils/event-stream.ts` `push` appends without capacity or backpressure | **Open:** distinguish lossy progress from lossless semantic events; bound/coalesce only safe event types |
+| P12 | Medium | Unbounded generic event queue | `packages/ai/src/utils/event-stream.ts` `push` appends without capacity or backpressure | **Partial:** agent event producers now await active-consumer capacity; synchronous `push()` and result-only streams remain intentionally unbounded to preserve existing API semantics |
 | P13 | Medium | Mixed tool-batch serialization | `packages/agent/src/agent-loop.ts` previously serialized all calls if one tool was sequential | **Implemented, unverified:** parallel groups separated by sequential barriers; preserve result order and abort semantics |
 | P14 | Low | Streaming Markdown repeatedly lexed | `packages/tui/src/components/markdown.ts` token cache keyed by entire source string | **Open:** incremental streaming token parser with fence/reference correctness |
 | A01 | Medium | Agent steering/follow-up FIFO copies tail | `packages/agent/src/agent.ts` `PendingMessageQueue.drain` previously used `slice(drained.length)` | **Implemented:** head-index FIFO with periodic compaction and isolated 10k-message FIFO test |
@@ -42,6 +42,7 @@ Scope: Static investigation plus isolated, synthetic Node checks. No end-to-end 
 - Synthetic FIFO throughput at 1k/10k/30k: replacing repeated `slice(1)` with head-index draining improved times substantially in this environment; timings fluctuate and are not production measurements.
 - Synthetic progressive session-sort throughput at 1k/10k/30k: incremental binary-search insertion plus occasional slice avoided repeated full-prefix sorting. This is not a file-system workload or end-to-end picker benchmark.
 - Standalone tool-state comparison test: **PASS** after changing comparison to compute each same-name pair only once.
+- Isolated Node event-stream backpressure tests: **4 PASS** for slow consumers, result-only callers, stream closure, and multiple iterators. Tests use a standalone replica of the stream implementation; full workspace Vitest remains unrun.
 
 ## Validation required before merge
 
