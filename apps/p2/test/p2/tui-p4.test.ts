@@ -250,7 +250,9 @@ function stubs(calls: Calls, sessions: Session[], options: { view?: Conversation
 				variant: "owner",
 				answers: self.state({ s2: 5 }),
 				reads: self.state({ s2: 3 }),
-				markRead: () => {},
+				markRead: (args: unknown) => {
+					record("markRead", args);
+				},
 			}),
 		],
 		[
@@ -482,6 +484,21 @@ test("session selector: scopes, threaded subagents, message hits, archive and re
 	send(ENTER);
 	await poll(() => runtime.screen === "chat");
 	assert.equal(runtime.identity, "s1#2");
+});
+
+test("the chat showing a session's main conversation reads it through its latest answer, once", async (t) => {
+	const rows = [session("s1"), session("s2", { title: "Beta work" })];
+	const { screen, calls, runtime } = await setup(t, { sessions: rows, screen: "sessions" });
+	// The selector marks nothing; s2's unread answer shows as its marker.
+	await poll(async () => /^ {2}◦ Beta work/m.test(await screen()));
+	assert.equal(calls.markRead, undefined);
+	runtime.navigate("chat", "s2");
+	await poll(() => (calls.markRead?.length ?? 0) === 1);
+	assert.deepEqual(calls.markRead?.[0], { session: "s2", through: 5 });
+	// Further changes while the stub's reads stay behind send no second call for the same answer.
+	runtime.navigate("chat");
+	await new Promise((resolve) => setTimeout(resolve, 100));
+	assert.equal(calls.markRead?.length, 1);
 });
 
 test("/new, /name and /session", async (t) => {

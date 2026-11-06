@@ -1,7 +1,8 @@
 // The sessions screen: pi's `/resume` session selector (coding-agent interactive/components/session-selector.ts) on
 // p2's data, with the adaptations of p2-tui-port.md section 1.17:
 // - one line per session (activity marker, title, env:cwd in the "all" scope, age); Tab switches the current env:cwd /
-//   all sessions; the marker is the web drawer's dot: working, a failed worker, else an unread answer (owner);
+//   all sessions; the marker is the web drawer's dot: working, a failed worker, else an unread answer (owner); the
+//   chat showing a session's main conversation reads it through its latest answer, as the web does;
 // - local fuzzy filtering over title, env:cwd and ID; message hits come from `Search` (owner), in a separate
 //   "Messages" group of literal matches; pi's phrases and `re:` are unsupported (the hint says so);
 // - sorts: threaded (sessions with their subagent conversations nested, `Subagents`), recent, relevance;
@@ -115,6 +116,9 @@ export class SessionsSurface implements TuiSurface {
 	/** Each session's latest root answer and how far the owner read it (`SessionReads`, owner only). */
 	private answers: Readonly<Record<string, number>> = {};
 	private reads: Readonly<Record<string, number>> = {};
+	private marks: Held<typeof SessionReads> | undefined;
+	/** The last `markRead` sent (`session:through`): runtime changes come often, the call goes once per answer. */
+	private marked = "";
 	private hits: SessionHit[] = [];
 	private sources: TuiSessionSource[] = [];
 	private stopSources: (() => void)[] = [];
@@ -152,12 +156,14 @@ export class SessionsSurface implements TuiSurface {
 			});
 			if (ref.variant === "owner") {
 				// Unread answers are the owner's (any device); guests see none.
-				this.scope.watch(SessionReads, {}, (reads, followReads) => {
+				this.marks = this.scope.watch(SessionReads, {}, (reads, followReads) => {
 					followReads(reads.answers, (answers) => {
 						this.answers = answers;
+						this.markShownRead();
 					});
 					followReads(reads.reads, (value) => {
 						this.reads = value;
+						this.markShownRead();
 					});
 				});
 				follow(ref.operations, (operations) => this.followOperations(operations));
@@ -197,6 +203,7 @@ export class SessionsSurface implements TuiSurface {
 		// "Current folder" follows the viewed session.
 		let viewed = runtime.session;
 		const changed = (): void => {
+			this.markShownRead();
 			if (runtime.session === viewed) return;
 			viewed = runtime.session;
 			this.rebuild();
@@ -208,6 +215,18 @@ export class SessionsSurface implements TuiSurface {
 
 	private get ctx(): TuiContext {
 		return this.runtime.ctx;
+	}
+
+	/** The chat showing a session's main conversation reads it through its latest answer (the web's rule, owner). */
+	private markShownRead(): void {
+		const { screen, session, conversation } = this.runtime;
+		const marks = liveIn(this.marks, "owner");
+		if (!marks || screen !== "chat" || !session || conversation !== this.runtime.mainOf(session)) return;
+		const latest = this.answers[session] ?? 0;
+		const key = `${session}:${latest}`;
+		if (latest <= (this.reads[session] ?? 0) || key === this.marked) return;
+		this.marked = key;
+		void marks.markRead({ session, through: latest }, BACKGROUND_CONTEXT).catch(() => {});
 	}
 
 	/**
