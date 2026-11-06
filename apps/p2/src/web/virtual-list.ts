@@ -38,8 +38,13 @@ export class RowLayout {
 		this.#estimate = estimate;
 		for (let index = 0; index < keys.length; index++) this.#index.set(keys[index]!, start + index);
 		if (keys.length === 0 || this.#dirty) return;
-		const offsets = new Float64Array(this.#keys.length + 1);
-		offsets.set(this.#offsets);
+		// Keep spare prefix-sum capacity so repeatedly appending one row is amortized O(1),
+		// rather than copying the full history on every streamed message.
+		const offsets =
+			this.#offsets.length >= this.#keys.length + 1
+				? this.#offsets
+				: new Float64Array(Math.max(this.#keys.length + 1, this.#offsets.length * 2));
+		if (offsets !== this.#offsets) offsets.set(this.#offsets);
 		let offset = this.#offsets[start] ?? 0;
 		for (let index = start; index < this.#keys.length; index++) {
 			offsets[index] = offset;
@@ -121,7 +126,10 @@ export class RowLayout {
 	#build(): Float64Array {
 		if (!this.#dirty) return this.#offsets;
 		const count = this.#keys.length;
-		const offsets = this.#offsets.length === count + 1 ? this.#offsets : new Float64Array(count + 1);
+		const offsets =
+			this.#offsets.length >= count + 1
+				? this.#offsets
+				: new Float64Array(Math.max(count + 1, this.#offsets.length * 2));
 		let offset = 0;
 		for (let index = 0; index < count; index++) {
 			offsets[index] = offset;
