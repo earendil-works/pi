@@ -484,7 +484,7 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 		run(fn) {
 			let promise;
 			try {
-				promise = fn(toolsProxy, console);
+				promise = fn();
 			} catch (error) {
 				done(false, describeError(error));
 				return;

@@ -94,6 +94,33 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(result).toMatchObject({ ok: true, value: 42 });
 		});
 
+		it.each([
+			["const", "tools"],
+			["let", "tools"],
+			["const", "console"],
+			["let", "console"],
+		])("allows a local %s %s declaration", async (declaration, name) => {
+			const sandbox = createSandbox([echo]);
+			const result = await sandbox.execute(`
+				${declaration} ${name} = await globalThis.tools.echo("local");
+				text(${name});
+				globalThis.console.log("global");
+				return await globalThis.tools.echo("global");
+			`);
+			expect(result).toMatchObject({
+				ok: true,
+				value: "global",
+				output: [
+					{ type: "text", text: "local" },
+					{ type: "text", text: "global", console: true },
+				],
+				calls: [
+					{ name: "echo", status: "ok" },
+					{ name: "echo", status: "ok" },
+				],
+			});
+		});
+
 		it("collects text(), image(), and console output in order", async () => {
 			const sandbox = createSandbox();
 			const result = await sandbox.execute(`
