@@ -59,7 +59,7 @@ export function agentLoop(
 		context,
 		config,
 		async (event) => {
-			stream.push(event);
+			await stream.pushWithBackpressure(event);
 		},
 		signal,
 		streamFn,
@@ -98,7 +98,7 @@ export function agentLoopContinue(
 		context,
 		config,
 		async (event) => {
-			stream.push(event);
+			await stream.pushWithBackpressure(event);
 		},
 		signal,
 		streamFn,
