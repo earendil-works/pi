@@ -5,6 +5,7 @@
 ### Added
 
 - `Tx.submission(id)` reads a committed submission record by ID, so a tool can find the entries of its run's inputs (`pi.live.run.inputs`) without scanning the transcript.
+- Per-conversation compaction settings: `configure({ compaction })` stores a `CompactionSettings` (the shape of `HarnessSettings.compaction`, `modelOverrides` included) in `pi.agent`, inherited by children and forks. Each field resolves from the conversation's model override, then the harness's, then the conversation's own fields, then the harness-wide policy; a conversation's `enabled: false` also beats the harness's model overrides, so it turns off threshold, background and overflow compaction before a compaction task is created ([#11771](https://github.com/earendil-works/pi/issues/11771))
 
 ### Changed
 

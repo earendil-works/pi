@@ -487,6 +487,12 @@ export type AgentState = {
 	 * `unanswered` with `turn_limit`. An integer, `1` or more; unset, no limit. Task-owned children and forks inherit it.
 	 */
 	maxTurns?: number;
+	/**
+	 * This conversation's compaction settings over the harness's, field by field: its `modelOverrides` entry, then the
+	 * harness's, then its own fields, then the harness-wide policy. Its `enabled: false` also beats the harness's model
+	 * override. Task-owned children and forks inherit it.
+	 */
+	compaction?: CompactionSettings;
 };
 
 /** A change to `pi.agent`: a given field replaces the stored one, `null` clears it, `undefined` changes nothing. */
@@ -507,6 +513,8 @@ export type AgentChange = {
 	readonly cwd?: string | null;
 	/** `configure()` throws a `RangeError` unless it is an integer `1` or more (or `null`). */
 	readonly maxTurns?: number | null;
+	/** Replaces the stored settings as a whole; `configure()` throws a `RangeError` unless every token count is an integer `0` or more. */
+	readonly compaction?: CompactionSettings | null;
 };
 
 /** A conversation's agent resolved against a registry snapshot and the settings. */
@@ -529,6 +537,8 @@ export type Agent<Tool extends ToolRegistration = ToolRegistration> = {
 	 * `unanswered` with `turn_limit`. An integer, `1` or more; unset, no limit. Task-owned children and forks inherit it.
 	 */
 	readonly maxTurns?: number;
+	/** This conversation's compaction settings over the harness's (`AgentState.compaction`). */
+	readonly compaction?: CompactionSettings;
 };
 
 /**
@@ -582,8 +592,9 @@ export type CompactionPolicy = {
 };
 
 /**
- * Harness-wide compaction settings. `modelOverrides` is keyed by exact `"provider/modelId"`; each field it sets
- * replaces the harness-wide one for that model, so small- and large-window models can share a harness.
+ * Compaction settings of the harness (`HarnessSettings.compaction`) or of one conversation (`AgentState.compaction`).
+ * `modelOverrides` is keyed by exact `"provider/modelId"`; each field it sets replaces the general one for that model,
+ * so small- and large-window models can share a harness.
  */
 export type CompactionSettings = Partial<CompactionPolicy> & {
 	readonly modelOverrides?: Readonly<Record<string, Partial<CompactionPolicy>>>;
