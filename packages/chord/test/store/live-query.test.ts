@@ -138,6 +138,36 @@ describe("identical live-query refreshes", () => {
 	});
 });
 
+describe("live-query bindings and read caching", () => {
+	it("shares identical bigint-bound reads without throwing on JSON serialization", async () => {
+		const executed: string[] = [];
+		const handle = {
+			sql: {
+				table: "items",
+				select: () => ({ sql: "select where id = ?", params: [42n] }),
+			},
+			owner: {},
+			definition: { key: ["id"], rows: { physical: ["id", "text"], decode: (row: unknown) => row } },
+		} as never;
+		const owner = { label: "test", report: () => {} };
+		const q = query(Items);
+		const a = new LiveQuery(handle, q, 1, owner, {} as never);
+		const b = new LiveQuery(handle, q, 1, owner, {} as never);
+		const step = {
+			all: async <T extends object>(sql: string, ...params: unknown[]): Promise<T[]> => {
+				executed.push(sql);
+				expect(params).toEqual([42n]);
+				return [{ id: 42, text: "item" }] as T[];
+			},
+		} as Step;
+		const refresh = new QueryRefresh([a, b], context);
+		await refresh.write.apply(step);
+		refresh.adopt();
+		expect(executed).toHaveLength(1);
+		expect(a.value).toEqual(b.value);
+	});
+});
+
 describe("activation", () => {
 	it("runs the query before the object goes live, over the rows already stored", async () => {
 		const store = await memoryStore();
