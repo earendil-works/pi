@@ -263,7 +263,7 @@ align_refs() {
 		fi
 		wt="$(git worktree list --porcelain | awk -v b="refs/heads/$ref" '$1=="worktree"{w=$2} $1=="branch"&&$2==b{print w}')"
 		if [[ -n "$wt" && "$wt" != "$repo" ]]; then
-			if [[ -n "$(git -C "$wt" status --porcelain)" ]]; then echo "  $ref: checked out with changes at $wt, skipped" >&2; rc=1; continue; fi
+			if [[ -n "$(git -C "$wt" status --porcelain --untracked-files=no)" ]]; then echo "  $ref: checked out with changes at $wt, skipped" >&2; rc=1; continue; fi
 			git -C "$wt" reset -q --hard "origin/$ref"
 		elif [[ "$wt" == "$repo" ]]; then
 			git reset -q --hard "origin/$ref"
