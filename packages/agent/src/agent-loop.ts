@@ -894,7 +894,7 @@ async function executePreparedToolCall(
 			signal,
 			(partialResult) => {
 				if (!acceptingUpdates) return;
-				updates.track(onUpdate(partialResult));
+				return updates.track(() => onUpdate(partialResult));
 			},
 		);
 		const durationMs = elapsed();
