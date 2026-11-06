@@ -491,6 +491,24 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				if (!block && toolCall.id) {
 					block = toolCallBlocksById.get(toolCall.id);
 				}
+				// Collision guard: a block matched via one key (stream index or tool-call id)
+				// must not silently absorb a different tool call whose other key disagrees,
+				// or the two calls' argument streams concatenate into one malformed tool call
+				// ({"command":"a"}{"command":"b"}) and JSON.parse then fails downstream.
+				// Only a delta that starts a new call — carrying both a disagreeing id and a
+				// function name — may split the block. Some providers (e.g. Kimi) mutate the
+				// id mid-stream on continuation deltas that carry no name; those fragments
+				// belong to the same call and must keep coalescing by stable stream index.
+				const existingState = block ? toolCallStates.get(block) : undefined;
+				const startsNewCall = Boolean(toolCall.function?.name ?? toolCall.custom?.name);
+				const idMismatch = toolCall.id && block?.id && toolCall.id !== block.id && startsNewCall;
+				const indexMismatch =
+					streamIndex !== undefined &&
+					existingState?.streamIndex !== undefined &&
+					existingState.streamIndex !== streamIndex;
+				if (block && (idMismatch || indexMismatch)) {
+					block = undefined;
+				}
 				if (!block) {
 					// Note: the "input" fallback here should/must not be taken.  in case the LLM makes up
 					// a tool we don't knwo about, we at least have a place to stash our stuff.
