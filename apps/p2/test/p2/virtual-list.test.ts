@@ -46,6 +46,17 @@ describe("row layout", () => {
 		assert.equal(layout.total, 10_055, "a measurement correctly invalidates the prefix sums");
 	});
 
+	it("appends a large batch without relying on argument-spread limits", () => {
+		const layout = new RowLayout();
+		layout.setRows(["first"], () => 1);
+		assert.equal(layout.total, 1);
+		const appended = keys(150_000);
+		layout.appendRows(appended, () => 1);
+		assert.equal(layout.count, 150_001);
+		assert.equal(layout.total, 150_001);
+		assert.equal(layout.indexOf("row149999"), 150_000);
+	});
+
 	it("finds the rows overlapping a span", () => {
 		const layout = new RowLayout();
 		layout.setRows(keys(10), () => 100);

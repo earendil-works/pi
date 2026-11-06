@@ -34,7 +34,7 @@ export class RowLayout {
 	 */
 	appendRows(keys: readonly string[], estimate: (index: number) => number): void {
 		const start = this.#keys.length;
-		this.#keys.push(...keys);
+		for (const key of keys) this.#keys.push(key);
 		this.#estimate = estimate;
 		for (let index = 0; index < keys.length; index++) this.#index.set(keys[index]!, start + index);
 		if (keys.length === 0 || this.#dirty) return;
