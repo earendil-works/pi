@@ -511,3 +511,35 @@ describe("SessionManager session file creation", () => {
 		expect(readSessionFileRoles(session.getSessionFile()!)).toEqual(["session", "model_change", "user"]);
 	});
 });
+
+
+describe("session discovery stat cache", () => {
+	it("reuses unchanged JSONL summaries and invalidates them when the session grows", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-session-discovery-cache-"));
+		const path = join(dir, "test-session.jsonl");
+		const initial = [
+			JSON.stringify({ type: "session", version: 3, id: "cache-id", timestamp: "2026-01-01T00:00:00Z", cwd: dir }),
+			JSON.stringify({
+				type: "message", id: "m1", parentId: null, timestamp: "2026-01-01T00:00:01Z",
+				message: { role: "user", content: "first", timestamp: 1 },
+			}),
+		].join("\n");
+		try {
+			writeFileSync(path, `${initial}\n`);
+			const initialList = await SessionManager.list(dir, dir);
+			expect(initialList).toHaveLength(1);
+			const unchanged = await SessionManager.list(dir, dir);
+			expect(unchanged[0]).toBe(initialList[0]);
+
+			appendFileSync(path, `${JSON.stringify({
+				type: "message", id: "m2", parentId: "m1", timestamp: "2026-01-01T00:00:02Z",
+				message: { role: "user", content: "second", timestamp: 2 },
+			})}\n`);
+			const modified = await SessionManager.list(dir, dir);
+			expect(modified[0]).not.toBe(initialList[0]);
+			expect(modified[0]).toMatchObject({ messageCount: 2, allMessagesText: "first second" });
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
