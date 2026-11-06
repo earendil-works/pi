@@ -82,3 +82,26 @@ describe("EventStream producer backpressure", () => {
 		expect(await stream.result()).toBe(42);
 	});
 });
+
+describe("event-stream producer failure", () => {
+	it("rejects result() when the producer fails before a terminal event", async () => {
+		const stream = new EventStream<number, number>(() => false, (value) => value);
+		const result = stream.result();
+		stream.fail(new Error("provider failed"));
+		await expect(result).rejects.toThrow("provider failed");
+	});
+	it("wakes waiting async iterators with the original error", async () => {
+		const stream = new EventStream<number, number>(() => false, (value) => value);
+		const waiting = stream[Symbol.asyncIterator]().next();
+		stream.fail(new Error("stream failed"));
+		await expect(waiting).rejects.toThrow("stream failed");
+	});
+	it("delivers buffered events before reporting a producer failure", async () => {
+		const stream = new EventStream<number, number>(() => false, (value) => value);
+		stream.push(1);
+		stream.fail(new Error("broken"));
+		const iterator = stream[Symbol.asyncIterator]();
+		expect((await iterator.next()).value).toBe(1);
+		await expect(iterator.next()).rejects.toThrow("broken");
+	});
+});

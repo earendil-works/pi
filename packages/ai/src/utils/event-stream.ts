@@ -33,15 +33,22 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 	protected done = false;
 	private finalResultPromise: Promise<R>;
 	private resolveFinalResult!: (result: R) => void;
+	private rejectFinalResult!: (reason: unknown) => void;
+	private failure: unknown;
+	private hasFailed = false;
 	private isComplete: (event: T) => boolean;
 	private extractResult: (event: T) => R;
 
 	constructor(isComplete: (event: T) => boolean, extractResult: (event: T) => R) {
 		this.isComplete = isComplete;
 		this.extractResult = extractResult;
-		this.finalResultPromise = new Promise((resolve) => {
+		this.finalResultPromise = new Promise((resolve, reject) => {
 			this.resolveFinalResult = resolve;
+			this.rejectFinalResult = reject;
 		});
+		// Iteration-only consumers may not request result(); prevent unhandled rejections
+		// while preserving the original rejected result promise for awaiting callers.
+		void this.finalResultPromise.catch(() => {});
 	}
 
 	push(event: T): void {
@@ -79,6 +86,15 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 		this.push(event);
 	}
 
+	/** Finish when a producer rejects before publishing its terminal event. */
+	fail(error: unknown): void {
+		if (this.done) return;
+		this.hasFailed = true;
+		this.failure = error;
+		this.end();
+		this.rejectFinalResult(error);
+	}
+
 	end(result?: R): void {
 		this.done = true;
 		if (result !== undefined) {
@@ -102,10 +118,14 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 					this.waitingForCapacity.dequeue()?.();
 					yield next;
 				} else if (this.done) {
+					if (this.hasFailed) throw this.failure;
 					return;
 				} else {
 					const result = await new Promise<IteratorResult<T>>((resolve) => this.waiting.enqueue(resolve));
-					if (result.done) return;
+					if (result.done) {
+						if (this.hasFailed) throw this.failure;
+						return;
+					}
 					yield result.value;
 				}
 			}
