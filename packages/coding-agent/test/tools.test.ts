@@ -1,5 +1,5 @@
 import { applyPatch } from "diff";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1095,6 +1095,53 @@ describe("Coding Agent Tools", () => {
 			} finally {
 				if (previous === undefined) delete process.env.RIPGREP_CONFIG_PATH;
 				else process.env.RIPGREP_CONFIG_PATH = previous;
+			}
+		});
+
+		// https://github.com/earendil-works/pi/issues/11807
+		it("should resolve folder globs relative to path", async () => {
+			const repo = join(testDir, "repo");
+			mkdirSync(join(repo, "migrations", "main"), { recursive: true });
+			mkdirSync(join(repo, "nested", "migrations", "main"), { recursive: true });
+			writeFileSync(join(repo, "migrations", "main", "a.js"), "hello\n");
+			writeFileSync(join(repo, "nested", "migrations", "main", "b.js"), "hello\n");
+			// rg canonicalizes its cwd, so a symlinked path must still anchor the glob.
+			const link = join(testDir, "repo-link");
+			symlinkSync(repo, link);
+
+			for (const searchPath of [repo, link]) {
+				const anchored = await grepTool.execute("test-call-glob-anchored", {
+					pattern: "hello",
+					path: searchPath,
+					glob: "migrations/main/*.js",
+				});
+				// The decoy under nested/ stays out: the glob is anchored at path.
+				expect(getTextOutput(anchored)).toBe("migrations/main/a.js:1: hello");
+
+				const anyDepth = await grepTool.execute("test-call-glob-any-depth", {
+					pattern: "hello",
+					path: searchPath,
+					glob: "**/migrations/main/*.js",
+				});
+				expect(getTextOutput(anyDepth).split("\n").sort()).toEqual([
+					"migrations/main/a.js:1: hello",
+					"nested/migrations/main/b.js:1: hello",
+				]);
+
+				// rg matches nothing for a leading "./", so the tool drops it.
+				const dotSlash = await grepTool.execute("test-call-glob-dot-slash", {
+					pattern: "hello",
+					path: searchPath,
+					glob: "./migrations/main/*.js",
+				});
+				expect(getTextOutput(dotSlash)).toBe("migrations/main/a.js:1: hello");
+
+				const negated = await grepTool.execute("test-call-glob-negated-dot-slash", {
+					pattern: "hello",
+					path: searchPath,
+					glob: "!./migrations/**",
+				});
+				expect(getTextOutput(negated)).toBe("nested/migrations/main/b.js:1: hello");
 			}
 		});
 
