@@ -19,6 +19,7 @@ import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
 import { filterAndSortSessions, hasSessionName, type NameFilter, type SortMode } from "./session-selector-search.ts";
+import { filterSessionsByRegexInWorker } from "./session-selector-regex-worker.ts";
 
 type SessionScope = "current" | "all";
 
@@ -310,6 +311,11 @@ class SessionList implements Component, Focusable {
 	public onRenameSession?: (sessionPath: string) => void;
 	public onError?: (message: string) => void;
 	private maxVisible: number = 10; // Max sessions visible (one line each)
+	private regexSearchVersion = 0;
+	private regexAbort?: AbortController;
+	private regexDelay?: ReturnType<typeof setTimeout>;
+	private regexSearching = false;
+	public onFilteredSessionsChange?: () => void;
 
 	// Focusable implementation - propagate to searchInput for IME cursor positioning
 	private _focused = false;
@@ -373,10 +379,59 @@ class SessionList implements Component, Focusable {
 		}
 	}
 
+	/** Stop an obsolete or abandoned regex search without waiting for its worker. */
+	cancelSearch(): void {
+		this.regexSearchVersion++;
+		if (this.regexDelay !== undefined) clearTimeout(this.regexDelay);
+		this.regexDelay = undefined;
+		this.regexAbort?.abort();
+		this.regexAbort = undefined;
+		this.regexSearching = false;
+	}
+
 	private filterSessions(query: string): void {
+		this.cancelSearch();
 		const trimmed = query.trim();
 		const nameFiltered =
 			this.nameFilter === "all" ? this.allSessions : this.allSessions.filter((session) => hasSessionName(session));
+
+		if (trimmed.startsWith("re:")) {
+			// Untrusted regexes can catastrophically backtrack on large JSONL histories.
+			// Never execute them on the terminal event loop. Debounce and cancel obsolete queries.
+			const pattern = trimmed.slice(3).trim();
+			this.filteredSessions = [];
+			this.selectedIndex = 0;
+			if (!pattern) return;
+			this.regexSearching = true;
+			const version = this.regexSearchVersion;
+			const controller = new AbortController();
+			this.regexAbort = controller;
+			this.regexDelay = setTimeout(() => {
+				this.regexDelay = undefined;
+				void filterSessionsByRegexInWorker(nameFiltered, pattern, this.sortMode, controller.signal)
+					.then((filtered) => {
+						if (this.regexSearchVersion !== version || controller.signal.aborted) return;
+						this.filteredSessions = filtered.map((session) => ({
+							session,
+							depth: 0,
+							isLast: true,
+							ancestorContinues: [],
+						}));
+						this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredSessions.length - 1));
+						this.regexSearching = false;
+						this.regexAbort = undefined;
+						this.onFilteredSessionsChange?.();
+					})
+					.catch((error: unknown) => {
+						if (this.regexSearchVersion !== version || controller.signal.aborted) return;
+						this.regexSearching = false;
+						this.regexAbort = undefined;
+						this.onError?.(error instanceof Error ? error.message : String(error));
+						this.onFilteredSessionsChange?.();
+					});
+			}, 75);
+			return;
+		}
 
 		if (this.sortMode === "threaded" && !trimmed) {
 			// Threaded mode without search: show tree structure
@@ -429,7 +484,9 @@ class SessionList implements Component, Focusable {
 
 		if (this.filteredSessions.length === 0) {
 			let emptyMessage: string;
-			if (this.nameFilter === "named") {
+			if (this.regexSearching) {
+				emptyMessage = "  Searching sessions...";
+			} else if (this.nameFilter === "named") {
 				const toggleKey = keyText("app.session.toggleNamedFilter");
 				if (this.showCwd) {
 					emptyMessage = `  No named sessions found. Press ${toggleKey} to show all.`;
@@ -795,6 +852,7 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		);
 
 		this.buildBaseLayout(this.sessionList);
+		this.sessionList.onFilteredSessionsChange = () => this.requestRender();
 
 		this.renameInput.onSubmit = (value) => {
 			void this.confirmRename(value);
@@ -875,6 +933,7 @@ export class SessionSelectorComponent extends Container implements Focusable {
 	}
 
 	private cancelLoads(): void {
+		this.sessionList.cancelSearch();
 		if (this.currentLoad) {
 			this.currentLoad.abort();
 			this.currentLoad = null;
