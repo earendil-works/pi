@@ -797,6 +797,50 @@ function getMessageActivityTime(entry: SessionMessageEntry): number | undefined 
 	return Number.isNaN(t) ? undefined : t;
 }
 
+/**
+ * Session discovery is invoked repeatedly when the picker changes scope. Keep a
+ * small, stat-validated LRU of parsed entries so unchanged JSONL histories need
+ * not be decoded again. Large transcripts are intentionally not retained.
+ */
+class SessionInfoCache {
+	readonly #entries = new Map<string, { size: number; mtime: number; ctime: number; info: SessionInfo; bytes: number }>();
+	#totalBytes = 0;
+	constructor(readonly maxBytes = 16 * 1024 * 1024, readonly maxEntries = 256) {}
+
+	get(path: string, stats: Stats): SessionInfo | undefined {
+		const entry = this.#entries.get(path);
+		if (!entry) return undefined;
+		if (entry.size !== stats.size || entry.mtime !== stats.mtimeMs || entry.ctime !== stats.ctimeMs) {
+			this.#remove(path, entry);
+			return undefined;
+		}
+		this.#entries.delete(path);
+		this.#entries.set(path, entry);
+		return entry.info;
+	}
+
+	put(path: string, stats: Stats, info: SessionInfo): void {
+		const bytes = 512 + 2 * (info.allMessagesText.length + info.firstMessage.length + (info.name?.length ?? 0));
+		const old = this.#entries.get(path);
+		if (old) this.#remove(path, old);
+		if (bytes > this.maxBytes) return;
+		this.#entries.set(path, { size: stats.size, mtime: stats.mtimeMs, ctime: stats.ctimeMs, info, bytes });
+		this.#totalBytes += bytes;
+		while (this.#entries.size > this.maxEntries || this.#totalBytes > this.maxBytes) {
+			const oldest = this.#entries.keys().next().value;
+			if (oldest === undefined) break;
+			this.#remove(oldest, this.#entries.get(oldest)!);
+		}
+	}
+
+	#remove(path: string, entry: { bytes: number }): void {
+		this.#entries.delete(path);
+		this.#totalBytes -= entry.bytes;
+	}
+}
+
+const sessionInfoCache = new SessionInfoCache();
+
 async function buildSessionInfo(
 	filePath: string,
 	signal?: AbortSignal,
@@ -804,6 +848,8 @@ async function buildSessionInfo(
 ): Promise<SessionInfo | null> {
 	try {
 		const stats = fileStats ?? (await stat(filePath));
+		const cached = sessionInfoCache.get(filePath, stats);
+		if (cached) return cached;
 		let header: SessionHeader | null = null;
 		let messageCount = 0;
 		let firstMessage = "";
@@ -864,7 +910,7 @@ async function buildSessionInfo(
 					? new Date(headerTime)
 					: stats.mtime;
 
-		return {
+		const info: SessionInfo = {
 			path: filePath,
 			id: header.id,
 			cwd,
@@ -876,6 +922,13 @@ async function buildSessionInfo(
 			firstMessage: firstMessage || "(no messages)",
 			allMessagesText: allMessages.join(" "),
 		};
+		// A session may have been appended while it was streamed. Cache only
+		// snapshots whose metadata remained unchanged across the read.
+		const current = await stat(filePath);
+		if (current.size === stats.size && current.mtimeMs === stats.mtimeMs && current.ctimeMs === stats.ctimeMs) {
+			sessionInfoCache.put(filePath, stats, info);
+		}
+		return info;
 	} catch {
 		signal?.throwIfAborted();
 		return null;
