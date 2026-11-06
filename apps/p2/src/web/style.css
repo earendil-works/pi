@@ -2387,12 +2387,12 @@ button.diff-number:hover {
 }
 .to-bottom {
 	position: absolute;
-	top: -40px;
+	top: calc(-1 * (var(--control) + var(--s2)));
 	left: 50%;
 	display: grid;
 	place-items: center;
-	width: var(--control-sm);
-	height: var(--control-sm);
+	width: var(--control);
+	height: var(--control);
 	border: 1px solid var(--line);
 	border-radius: var(--radius);
 	background: var(--bg);
@@ -3561,4 +3561,44 @@ button.history-edge:disabled {
 }
 .group-lock {
 	display: inline-flex;
+}
+
+/* Touch targets: on a coarse pointer every list row and small control is at least one --row (44px) tall. The
+   transcript's own rows keep their rhythm (.row, TranscriptRow.gap in Chat.tsx). */
+@media (pointer: coarse) {
+	.session-main,
+	.subagent-row,
+	.workspace-row,
+	.foot-button,
+	.text-action,
+	.segments button,
+	.detail-more,
+	.queued > div,
+	.file-completion > [role="option"] {
+		min-height: var(--row);
+	}
+	.foot-button {
+		height: var(--row);
+	}
+	.file-completion > [role="option"] {
+		align-items: center;
+	}
+	.queue-remove,
+	.branch-rename,
+	.comment-nav .icon-button,
+	.line-comment .icon-button {
+		width: var(--row);
+		height: var(--row);
+	}
+	/* The glyph stays where it was: the larger box grows into the label's padding and past the row's end. */
+	.group-new {
+		width: var(--row);
+		height: var(--row);
+		margin: calc((var(--control-sm) - var(--row)) / 2 - var(--s1)) calc((var(--control-sm) - var(--row)) / 2)
+			calc((var(--control-sm) - var(--row)) / 2 - var(--s1)) 0;
+	}
+	.terminal-keys button {
+		height: var(--control);
+		min-width: var(--control);
+	}
 }
