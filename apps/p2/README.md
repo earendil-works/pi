@@ -188,6 +188,13 @@ restart, and in-flight requests keep their configuration. Set the default model 
 **Make default for new sessions** in the model picker. `ownerName` (1 to 40 characters, no control characters, `<`
 or `>`; default "Owner") is the name your messages carry from then on; messages already written keep theirs.
 
+`cacheWarming` (`"idle"` by default, `"streaming"` or `"off"`) keeps prompt caches warm as pi does: before the cache
+entry of a conversation's last request expires (5 minutes for Anthropic and Claude on Radius), p2 sends the request
+again with a one-token answer, while that is cheaper than writing the cache again. `"streaming"` warms while a run
+streams (up to an hour, e.g. during a long tool call); `"idle"` also warms the main conversation for up to 30 minutes
+after its run answered. The refreshes count in the conversation's cost. `stream.cacheRetention: "long"` writes 1-hour
+cache entries instead (at twice the input price).
+
 ### Voice mode
 
 Voice mode talks to the agent hands-free: the microphone button in the composer (owner only) streams your speech to a

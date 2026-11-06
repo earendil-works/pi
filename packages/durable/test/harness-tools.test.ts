@@ -20,6 +20,7 @@ import {
 	defineTask,
 	defineTool,
 	type EntryRecord,
+	type GenerationRequest,
 	GenerationTask,
 	type Harness,
 	hook,
@@ -736,7 +737,7 @@ describe("generation hooks", () => {
 		});
 		const responses: string[] = [];
 		addHooks(setup.registry, GenerationTask, {
-			afterResponse: (message) => void responses.push(textOf(message) ?? ""),
+			afterResponse: ({ message }) => void responses.push(textOf(message) ?? ""),
 		});
 		let yields = 0;
 		addHooks(setup.registry, GenerationTask, {
@@ -788,6 +789,30 @@ describe("generation hooks", () => {
 			{ hook: "keep", model: "faux/faux-1", payload: { body: 1, first: true } },
 			{ hook: "first", model: "faux/faux-1", payload: { body: 2 } },
 			{ hook: "keep", model: "faux/faux-1", payload: { body: 2, first: true } },
+		]);
+		await harness.close(context);
+	});
+
+	it("gives afterResponse the request the attempt sent", async () => {
+		const setup = chatSetup();
+		addHooks(setup.registry, GenerationTask, {
+			beforeRequest: ({ messages }) => ({
+				messages: [...messages, { role: "user", content: "injected", timestamp: 0 }],
+			}),
+		});
+		const requests: (GenerationRequest | undefined)[] = [];
+		addHooks(setup.registry, GenerationTask, { afterResponse: ({ request }) => void requests.push(request) });
+		const { harness, status } = await run(setup, [DONE]);
+		expect(status).toBe("done");
+		const [request] = requests;
+		expect(`${request!.model.provider}/${request!.model.id}`).toBe("faux/faux-1");
+		// The messages after the `beforeRequest` chain, and the request's options without the attempt's own.
+		expect(textOf(request!.messages.at(-1) as never)).toBe("injected");
+		expect(typeof request!.options.sessionId).toBe("string");
+		expect([request!.options.signal, request!.options.onPayload, request!.options.telemetry]).toEqual([
+			undefined,
+			undefined,
+			undefined,
 		]);
 		await harness.close(context);
 	});
@@ -851,13 +876,16 @@ describe("generation hooks", () => {
 		const setup = chatSetup({ deferred: { pendingFetches: 1, pollAfterMs: 1 } });
 		const observed: string[] = [];
 		addHooks(setup.registry, GenerationTask, {
-			afterResponse: (message) => void observed.push(`${message.stopReason}:${textOf(message) ?? ""}`),
+			afterResponse: ({ message, request }) =>
+				void observed.push(
+					`${message.stopReason}:${textOf(message) ?? ""}:${request === undefined ? "polled" : "sent"}`,
+				),
 		});
 		setup.settings.stream = { deferred: true };
 		const result = await run(setup, [fauxAssistantMessage([fauxText("late")])]);
 		expect(result.status).toBe("done");
 		// The still-deferred results are not terminal.
-		expect(observed).toEqual(["stop:late"]);
+		expect(observed).toEqual(["stop:late:polled"]);
 		await result.harness.close(context);
 	});
 
