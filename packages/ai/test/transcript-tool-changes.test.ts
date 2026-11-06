@@ -702,3 +702,23 @@ describe("segmented tool-state replay", () => {
 		 expect(pending).toHaveLength(2);
 	});
 });
+
+describe("root-serialized declarations", () => {
+	test("honors schema toJSON at the root rather than at its parameters property", () => {
+		const left = {
+			name: "special",
+			description: "key-sensitive",
+			parameters: {
+				toJSON(key: string) { return { type: key === "" ? "string" : "object" }; },
+			},
+		};
+		const right = {
+			name: "special",
+			description: "key-sensitive",
+			parameters: {
+				toJSON(key: string) { return { type: key === "" ? "number" : "object" }; },
+			},
+		};
+		expect(declarationsEqual(left as never, right as never)).toBe(false);
+	});
+});

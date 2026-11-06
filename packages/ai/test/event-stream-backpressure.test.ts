@@ -105,3 +105,33 @@ describe("event-stream producer failure", () => {
 		await expect(iterator.next()).rejects.toThrow("broken");
 	});
 });
+
+describe("capacity waiter correctness", () => {
+	it("unblocks an active producer on terminal push without requiring an iterator read", async () => {
+		const stream = new EventStream<number, number>((event) => event === 10, (event) => event);
+		const reader = stream[Symbol.asyncIterator]();
+		const start = reader.next();
+		stream.push(1);
+		await start;
+		await stream.pushWithBackpressure(2, 1);
+		const stalled = stream.pushWithBackpressure(3, 1);
+		stream.push(10);
+		await stalled;
+		expect(await stream.result()).toBe(10);
+		await reader.return?.();
+	});
+	it("rejects a blocked publisher immediately when its abort signal fires", async () => {
+		const stream = new EventStream<number, number>(() => false, (event) => event);
+		const reader = stream[Symbol.asyncIterator]();
+		const first = reader.next();
+		stream.push(1);
+		await first;
+		await stream.pushWithBackpressure(2, 1);
+		const abort = new AbortController();
+		const blocked = stream.pushWithBackpressure(3, 1, abort.signal);
+		abort.abort();
+		await expect(blocked).rejects.toThrow(/abort/i);
+		await reader.return?.();
+		stream.end(0);
+	});
+});
