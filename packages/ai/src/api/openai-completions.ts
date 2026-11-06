@@ -1213,12 +1213,7 @@ export function convertMessages(
 			return `${prefix}_${hash}`;
 		}
 
-		// OpenAI rejects long tool call IDs: 40 characters here, and more than 64 in the Responses API that
-		// OpenRouter forwards OpenAI models to. OpenRouter can route a model to any provider, so its IDs get
-		// the same cap. A hash keeps two IDs that share their first characters distinct.
-		if ((model.provider === "openai" || isOpenRouterModel(model)) && id.length > 40) {
-			return `${id.slice(0, 31)}_${shortHash(id).slice(0, 8)}`;
-		}
+		if (model.provider === "openai") return id.length > 40 ? id.slice(0, 40) : id;
 		return id;
 	};
 
