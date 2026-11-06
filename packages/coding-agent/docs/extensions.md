@@ -602,6 +602,8 @@ pi.on("session_tree", async (event, ctx) => {
 
 Fired before a started session runtime is torn down. Use this to clean up resources opened from `session_start` or other session-scoped hooks.
 
+On Windows, closing the console window or terminal tab sends SIGHUP, and Windows ends the process about 5 seconds later. Cleanup that takes longer is cut off.
+
 ```typescript
 pi.on("session_shutdown", async (event, ctx) => {
   // event.reason - "quit" | "reload" | "new" | "resume" | "fork"

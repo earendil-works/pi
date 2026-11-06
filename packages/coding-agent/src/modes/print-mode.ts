@@ -52,10 +52,9 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 	};
 
 	const registerSignalHandlers = (): void => {
-		const signals: NodeJS.Signals[] = ["SIGTERM"];
-		if (process.platform !== "win32") {
-			signals.push("SIGHUP");
-		}
+		// On Windows, Node never emits SIGTERM, but emits SIGHUP when the console window or terminal tab
+		// is closed; Windows then terminates the process about 5 s later.
+		const signals: NodeJS.Signals[] = ["SIGTERM", "SIGHUP"];
 
 		for (const signal of signals) {
 			const exitCode = signal === "SIGHUP" ? 129 : 143;
