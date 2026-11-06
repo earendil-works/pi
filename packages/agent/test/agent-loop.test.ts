@@ -2269,6 +2269,8 @@ describe("mixed tool execution performance", () => {
 				timeline.push(`start:${args.value}`);
 				await Promise.resolve();
 				await Promise.resolve();
+				// b finishes after a, so a barrier that only waited for a would start c too early.
+				if (args.value === "b") await new Promise<void>((resolve) => setTimeout(resolve, 0));
 				timeline.push(`end:${args.value}`);
 				return { content: [{ type: "text", text: args.value }], details: {} };
 			},
@@ -2318,7 +2320,8 @@ describe("mixed tool execution performance", () => {
 		}
 		expect(ids).toEqual(["a", "b", "c", "d", "e"]);
 		expect(timeline.indexOf("start:b")).toBeLessThan(timeline.indexOf("end:a"));
-		expect(timeline.indexOf("end:a")).toBeLessThan(timeline.indexOf("start:c"));
+		expect(timeline.indexOf("end:a")).toBeLessThan(timeline.indexOf("end:b"));
+		expect(timeline.indexOf("end:b")).toBeLessThan(timeline.indexOf("start:c"));
 		expect(timeline.indexOf("end:c")).toBeLessThan(timeline.indexOf("start:d"));
 		expect(timeline.indexOf("start:e")).toBeLessThan(timeline.indexOf("end:d"));
 	});

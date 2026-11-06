@@ -8,6 +8,9 @@ describe("ToolUpdateTracker", () => {
 			tracker.track(() => Promise.resolve());
 			if (index % 100 === 0) await Promise.resolve();
 		}
+		// Settled updates must be released without waiting for drain().
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		expect(tracker.pendingCount).toBe(0);
 		await tracker.drain();
 		expect(tracker.pendingCount).toBe(0);
 	});

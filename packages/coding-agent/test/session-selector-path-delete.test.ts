@@ -121,7 +121,16 @@ describe("session selector path/delete interactions", () => {
 		);
 		await flushPromises();
 		const list = selector.getSessionList();
-		for (const char of "re:brave") list.handleInput(char);
+		let renderRequests = 0;
+		list.onFilteredSessionsChange = () => {
+			renderRequests++;
+		};
+		for (const char of "re:brav") list.handleInput(char);
+		// Synchronous filtering would already have selected the match. The worker has not answered yet.
+		expect(list.getSelectedSessionPath()).toBeUndefined();
+		renderRequests = 0;
+		// Input stays responsive while the worker result is pending.
+		list.handleInput("e");
 
 		// Worker startup and search are deliberately asynchronous: never block input.
 		let selected: string | undefined;
@@ -131,6 +140,7 @@ describe("session selector path/delete interactions", () => {
 			await new Promise<void>((resolve) => setTimeout(resolve, 20));
 		}
 		expect(selected).toBe(sessions[1]!.path);
+		expect(renderRequests).toBeGreaterThan(0);
 		list.cancelSearch();
 	});
 
