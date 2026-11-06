@@ -198,18 +198,29 @@ interface FlatSessionNode {
  */
 function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
 	const byPath = new Map<string, SessionTreeNode>();
+	// The same session path appears during insertion and parenting. Cache canonical
+	// keys only for this build, so symlink changes are respected on the next load.
+	const keys = new Map<string, string>();
+	const keyOf = (path: string): string => {
+		let key = keys.get(path);
+		if (key === undefined) {
+			key = getSessionPathKey(path);
+			keys.set(path, key);
+		}
+		return key;
+	};
 
 	for (const session of sessions) {
-		const sessionPath = getSessionPathKey(session.path);
+		const sessionPath = keyOf(session.path);
 		byPath.set(sessionPath, { session, children: [], latestActivity: session.modified.getTime() });
 	}
 
 	const roots: SessionTreeNode[] = [];
 
 	for (const session of sessions) {
-		const sessionPath = getSessionPathKey(session.path);
+		const sessionPath = keyOf(session.path);
 		const node = byPath.get(sessionPath)!;
-		const parentPath = session.parentSessionPath ? getSessionPathKey(session.parentSessionPath) : undefined;
+		const parentPath = session.parentSessionPath ? keyOf(session.parentSessionPath) : undefined;
 
 		if (parentPath && byPath.has(parentPath)) {
 			byPath.get(parentPath)!.children.push(node);
