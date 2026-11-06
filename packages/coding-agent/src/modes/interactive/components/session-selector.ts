@@ -315,6 +315,8 @@ class SessionList implements Component, Focusable {
 	private regexAbort?: AbortController;
 	private regexDelay?: ReturnType<typeof setTimeout>;
 	private regexSearching = false;
+	private regexNeedsRefresh = false;
+	private regexSelectedPath: string | undefined;
 	public onFilteredSessionsChange?: () => void;
 
 	// Focusable implementation - propagate to searchInput for IME cursor positioning
@@ -370,6 +372,13 @@ class SessionList implements Component, Focusable {
 		const selectedPath = this.selectionTouched ? this.getSelectedSessionPath() : undefined;
 		this.allSessions = sessions;
 		this.showCwd = showCwd;
+		// Continuous discovery progress must not keep aborting the active worker.
+		// Refresh once its current batch finishes and keep the previous matches
+		// visible while the refreshed search runs.
+		if (this.regexSearching && this.searchInput.getValue().trim().startsWith("re:")) {
+			this.regexNeedsRefresh = true;
+			return;
+		}
 		this.filterSessions(this.searchInput.getValue());
 		if (!this.selectionTouched) {
 			this.selectedIndex = 0;
@@ -387,9 +396,12 @@ class SessionList implements Component, Focusable {
 		this.regexAbort?.abort();
 		this.regexAbort = undefined;
 		this.regexSearching = false;
+		this.regexNeedsRefresh = false;
+		this.regexSelectedPath = undefined;
 	}
 
 	private filterSessions(query: string): void {
+		const previouslySelected = this.regexSelectedPath ?? this.getSelectedSessionPath();
 		this.cancelSearch();
 		const trimmed = query.trim();
 		const nameFiltered =
@@ -399,8 +411,12 @@ class SessionList implements Component, Focusable {
 			// Untrusted regexes can catastrophically backtrack on large JSONL histories.
 			// Never execute them on the terminal event loop. Debounce and cancel obsolete queries.
 			const pattern = trimmed.slice(3).trim();
-			this.filteredSessions = [];
-			this.selectedIndex = 0;
+			// Preserve old matches during a refresh, but never expose matches from a
+			// different user query or filter mode.
+			const refreshing = this.searchInput.getValue().trim() === trimmed && this.filteredSessions.length > 0;
+			if (!refreshing) this.filteredSessions = [];
+			this.selectedIndex = Math.max(0, Math.min(this.selectedIndex, Math.max(0, this.filteredSessions.length - 1)));
+			this.regexSelectedPath = previouslySelected;
 			if (!pattern) return;
 			this.regexSearching = true;
 			const version = this.regexSearchVersion;
@@ -417,10 +433,15 @@ class SessionList implements Component, Focusable {
 							isLast: true,
 							ancestorContinues: [],
 						}));
-						this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredSessions.length - 1));
+						const selected = this.regexSelectedPath;
+						const restored = selected ? this.filteredSessions.findIndex((node) => node.session.path === selected) : -1;
+						this.selectedIndex = restored >= 0 ? restored : Math.max(0, Math.min(this.selectedIndex, Math.max(0, this.filteredSessions.length - 1)));
 						this.regexSearching = false;
 						this.regexAbort = undefined;
+						const needsRefresh = this.regexNeedsRefresh;
+						this.regexNeedsRefresh = false;
 						this.onFilteredSessionsChange?.();
+						if (needsRefresh) this.filterSessions(this.searchInput.getValue());
 					})
 					.catch((error: unknown) => {
 						if (this.regexSearchVersion !== version || controller.signal.aborted) return;
@@ -673,7 +694,7 @@ class SessionList implements Component, Focusable {
 		}
 		// Down arrow
 		else if (kb.matches(keyData, "tui.select.down")) {
-			this.selectedIndex = Math.min(this.filteredSessions.length - 1, this.selectedIndex + 1);
+			this.selectedIndex = Math.max(0, Math.min(this.filteredSessions.length - 1, this.selectedIndex + 1));
 		}
 		// Page up - jump up by maxVisible items
 		else if (kb.matches(keyData, "tui.select.pageUp")) {
@@ -681,7 +702,7 @@ class SessionList implements Component, Focusable {
 		}
 		// Page down - jump down by maxVisible items
 		else if (kb.matches(keyData, "tui.select.pageDown")) {
-			this.selectedIndex = Math.min(this.filteredSessions.length - 1, this.selectedIndex + this.maxVisible);
+			this.selectedIndex = Math.max(0, Math.min(this.filteredSessions.length - 1, this.selectedIndex + this.maxVisible));
 		}
 		// Enter
 		else if (kb.matches(keyData, "tui.select.confirm")) {

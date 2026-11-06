@@ -55,7 +55,12 @@ export async function filterSessionsByRegexInWorker(
 	worker.on("error", onError);
 	worker.on("exit", onExit);
 	signal?.addEventListener("abort", onAbort, { once: true });
-	const timeout = setTimeout(() => reject(new Error("Regex search timed out")), SEARCH_BUDGET_MS);
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	const resetIdleTimeout = () => {
+		if (timeout !== undefined) clearTimeout(timeout);
+		timeout = setTimeout(() => reject(new Error("Regex search timed out")), SEARCH_BUDGET_MS);
+	};
+	resetIdleTimeout();
 
 	const matched: { session: SessionInfo; score: number }[] = [];
 	try {
@@ -64,6 +69,7 @@ export async function filterSessionsByRegexInWorker(
 			const batch = sessions.slice(start, start + BATCH_SIZE);
 			const scores = await new Promise<number[]>((resolve, rejectRequest) => {
 				const onMessage = ({ scores, error }: SearchResponse) => {
+					resetIdleTimeout();
 					worker.off("message", onMessage);
 					rejectActive = undefined;
 					if (error) rejectRequest(new Error(error));
@@ -101,7 +107,7 @@ export async function filterSessionsByRegexInWorker(
 		}
 		return matched.map(({ session }) => session);
 	} finally {
-		clearTimeout(timeout);
+		if (timeout !== undefined) clearTimeout(timeout);
 		signal?.removeEventListener("abort", onAbort);
 		worker.off("error", onError);
 		worker.off("exit", onExit);
