@@ -343,6 +343,9 @@ Adaptations:
   (`Subagents`) rather than by forks.
 - **Named filter.** pi's named filter becomes a "pinned" filter (`pinned` exists).
 - **Delete.** Delete means archive, with restore available in the archived scope.
+- **Activity marker.** Each row starts with the web drawer's dot (`SessionStatus`, `SessionReads`): `●` working
+  (a subagent row: its conversation), `!` a failed worker, `◦` an unread answer (owner), else blank. The column
+  is two cells wide on every row, so titles stay put when a session starts or stops.
 
 Adding regex/phrase search would be a `Search` contract change (d).
 

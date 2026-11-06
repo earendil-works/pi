@@ -1,6 +1,7 @@
 // The sessions screen: pi's `/resume` session selector (coding-agent interactive/components/session-selector.ts) on
 // p2's data, with the adaptations of p2-tui-port.md section 1.17:
-// - one line per session (title, env:cwd in the "all" scope, age); Tab switches the current env:cwd / all sessions;
+// - one line per session (activity marker, title, env:cwd in the "all" scope, age); Tab switches the current env:cwd /
+//   all sessions; the marker is the web drawer's dot: working, a failed worker, else an unread answer (owner);
 // - local fuzzy filtering over title, env:cwd and ID; message hits come from `Search` (owner), in a separate
 //   "Messages" group of literal matches; pi's phrases and `re:` are unsupported (the hint says so);
 // - sorts: threaded (sessions with their subagent conversations nested, `Subagents`), recent, relevance;
@@ -39,6 +40,8 @@ import {
 	TuiSlots,
 	type TuiSurface,
 } from "@p2/app/v1/tui";
+import { SessionReads } from "../search/contract.ts";
+import { SessionStatus, type Status } from "../status/contract.ts";
 import { MAX_TITLE, type Operation, type Session, Sessions } from "./contract.ts";
 import {
 	completeLocation,
@@ -107,6 +110,11 @@ export class SessionsSurface implements TuiSurface {
 	private shownRows: () => Session[];
 	private editing: OptimisticAdd<RowGuess>;
 	private children: Readonly<Record<string, SessionChild[]>> = {};
+	/** Each session's worker status (`SessionStatus`): its busy conversations and a failure. */
+	private statuses: Readonly<Record<string, Status>> = {};
+	/** Each session's latest root answer and how far the owner read it (`SessionReads`, owner only). */
+	private answers: Readonly<Record<string, number>> = {};
+	private reads: Readonly<Record<string, number>> = {};
 	private hits: SessionHit[] = [];
 	private sources: TuiSessionSource[] = [];
 	private stopSources: (() => void)[] = [];
@@ -143,6 +151,15 @@ export class SessionsSurface implements TuiSurface {
 				this.rebuild();
 			});
 			if (ref.variant === "owner") {
+				// Unread answers are the owner's (any device); guests see none.
+				this.scope.watch(SessionReads, {}, (reads, followReads) => {
+					followReads(reads.answers, (answers) => {
+						this.answers = answers;
+					});
+					followReads(reads.reads, (value) => {
+						this.reads = value;
+					});
+				});
 				follow(ref.operations, (operations) => this.followOperations(operations));
 				follow(ref.defaultCwd, (value) => {
 					this.defaultCwd = value ?? "~";
@@ -153,6 +170,13 @@ export class SessionsSurface implements TuiSurface {
 					this.rebuild();
 				});
 			}
+		});
+		// Owners and guests are readers (a guest's view holds its granted sessions, without error texts).
+		this.scope.watch(SessionStatus, {}, (ref, follow) => {
+			if (ref.variant === "reader")
+				follow(ref.statuses, (statuses) => {
+					this.statuses = statuses;
+				});
 		});
 		// Optional sources (subagents, message search) from the plugins that have them.
 		this.stopRegistry = followRegistry(runtime.host, TuiSessionSources, (table) => {
@@ -628,6 +652,23 @@ export class SessionsSurface implements TuiSurface {
 		return [line, ...hints.map((text) => truncateToWidth(text, width, "…"))];
 	}
 
+	/**
+	 * A row's activity marker, two columns wide on every row so titles do not shift: working (accent dot), a failed
+	 * worker (error), an unread answer (muted ring), else blank. A subagent row is working when its conversation is.
+	 */
+	private marker(row: Row): string {
+		const theme = this.runtime.theme.current;
+		if (row.kind !== "session" && row.kind !== "child") return "  ";
+		const id = row.session.id;
+		const status = this.statuses[id];
+		const busy = status?.busy ?? [];
+		if (row.kind === "child") return busy.includes(row.child.conversationId) ? theme.fg("accent", "● ") : "  ";
+		if (busy.length) return theme.fg("accent", "● ");
+		if (status?.error) return theme.fg("error", "! ");
+		if ((this.answers[id] ?? 0) > (this.reads[id] ?? 0)) return theme.fg("muted", "◦ ");
+		return "  ";
+	}
+
 	private rowLine(row: Row, selected: boolean, width: number): string {
 		const theme = this.runtime.theme.current;
 		const cursor = selected ? theme.fg("accent", "› ") : "  ";
@@ -656,10 +697,10 @@ export class SessionsSurface implements TuiSurface {
 			left = color ? theme.fg(color, text) : text;
 			right = `${this.operationText(session.id)}${this.scopeAll ? `${lineText(where(session))} ` : ""}${this.showIds ? `${session.id} ` : ""}${age(session.updatedAt)}`;
 		}
-		const available = Math.max(10, width - 2 - visibleWidth(right) - 2);
+		const available = Math.max(10, width - 4 - visibleWidth(right) - 2);
 		let styled = truncateToWidth(left, available, "…");
 		if (selected) styled = theme.bold(styled);
-		const leftPart = cursor + styled;
+		const leftPart = cursor + this.marker(row) + styled;
 		const line =
 			leftPart +
 			" ".repeat(Math.max(1, width - visibleWidth(leftPart) - visibleWidth(right))) +
