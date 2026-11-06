@@ -1,5 +1,6 @@
-import type { ChildProcess } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { describe, expect, it } from "vitest";
+import { getWindowsJobHelperPath } from "../src/config.ts";
 import { spawnProcessTree } from "../src/utils/shell.ts";
 
 // A command that starts a background node process, prints its pid, and then exits or keeps running. On Unix the
@@ -47,6 +48,11 @@ function readFirstLine(child: ChildProcess): Promise<string> {
 	});
 }
 
+function countProcesses(imagePrefix: string): number {
+	const output = execFileSync("tasklist", ["/FI", `IMAGENAME eq ${imagePrefix}*`, "/NH"], { encoding: "utf8" });
+	return output.split(/\r?\n/).filter((line) => line.toLowerCase().startsWith(imagePrefix)).length;
+}
+
 function waitForExit(child: ChildProcess): Promise<number | null> {
 	return new Promise((resolve) => child.once("exit", (code) => resolve(code)));
 }
@@ -83,6 +89,22 @@ describe("spawnProcessTree", () => {
 		expect(await waitUntil(() => !isAlive(backgroundPid))).toBe(true);
 	});
 
+	it("keeps a holder running from the temp directory while background processes run", async () => {
+		const tree = spawnProcessTree(process.execPath, ["-e", backgroundScript("exit 3")], {
+			stdio: ["ignore", "pipe", "ignore"],
+			windowsHide: true,
+		});
+		const exit = waitForExit(tree.child);
+		const backgroundPid = Number(await readFirstLine(tree.child));
+		await exit;
+		if (process.platform === "win32") {
+			// A holder running from the installed pi-job.exe would keep pi's installation from being replaced.
+			expect(await waitUntil(() => countProcesses("pi-job-holder") > 0)).toBe(true);
+		}
+		tree.kill();
+		expect(await waitUntil(() => !isAlive(backgroundPid))).toBe(true);
+	});
+
 	it("kills the command and its background processes while the command runs", async () => {
 		const tree = spawnProcessTree(process.execPath, ["-e", backgroundScript("stay")], {
 			stdio: ["ignore", "pipe", "ignore"],
@@ -95,5 +117,27 @@ describe("spawnProcessTree", () => {
 		tree.kill();
 		await exit;
 		expect(await waitUntil(() => !isAlive(backgroundPid))).toBe(true);
+	});
+});
+
+describe.skipIf(process.platform !== "win32")("pi-job.exe", () => {
+	it("runs the command without a job when the job name is taken", async () => {
+		const helper = getWindowsJobHelperPath();
+		const name = `pi-test-${process.pid}-taken`;
+		const first = spawn(helper, ["run", name, process.execPath, "-e", "setInterval(() => {}, 1000)"], {
+			stdio: "ignore",
+			windowsHide: true,
+		});
+		try {
+			await new Promise((resolve) => setTimeout(resolve, 500));
+			const second = spawn(helper, ["run", name, process.execPath, "-e", "process.exit(4)"], {
+				stdio: "ignore",
+				windowsHide: true,
+			});
+			expect(await waitForExit(second)).toBe(4);
+		} finally {
+			execFileSync(helper, ["terminate", name]);
+			await waitForExit(first);
+		}
 	});
 });

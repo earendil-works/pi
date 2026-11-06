@@ -208,31 +208,67 @@ export interface ProcessTree {
  * exits, a background process it started has no living parent and cannot be found: in
  * `(while true; do echo tick; sleep 1; done) & exit 1`, killing the shell's pid leaves the loop writing to
  * pi's pipes (#11613). pi-job.exe starts the command in a job object, which every descendant joins and cannot
- * leave, and `kill()` terminates the job by name. Without the helper (unexpected layouts), the taskkill path
- * remains. A missing command also takes it, so it fails with Node's spawn error (ENOENT) instead of an exit code.
+ * leave, and `kill()` terminates the job by name. Without a usable helper, the taskkill path remains. A missing
+ * command also takes it, so it fails with Node's spawn error (ENOENT) instead of an exit code.
  */
 export function spawnProcessTree(command: string, args: string[], options: SpawnOptions): ProcessTree {
-	const helper = process.platform === "win32" ? getWindowsJobHelperPath() : undefined;
-	if (helper && shellPathExists(helper) && shellPathExists(command)) {
+	const helper = process.platform === "win32" ? getUsableWindowsJobHelper() : undefined;
+	if (helper && shellPathExists(command)) {
 		const jobName = `pi-${process.pid}-${randomUUID()}`;
 		const child = spawn(helper, ["run", jobName, command, ...args], options);
 		return {
 			child,
 			kill: () => {
-				// Killing pi-job covers the moment before it created the job (the command never starts) and closes
-				// the job's last handle while it runs; `terminate` reaches processes left after the command exited.
-				child.kill();
+				// taskkill /T on pi-job reaches the command while pi-job runs, also when pi-job could not put it in
+				// a job, and kills pi-job before it created one. `terminate` reaches processes left in the job after
+				// the command exited.
+				killRunningProcessTree(child);
 				spawnCleanup(helper, ["terminate", jobName]);
 			},
 		};
 	}
-	const child = spawn(command, args, { ...options, detached: process.platform !== "win32" });
+	if (process.platform === "win32") {
+		const child = spawn(command, args, options);
+		return { child, kill: () => killRunningProcessTree(child) };
+	}
+	// The process group outlives its leader: killing it after the shell exited still reaches background processes.
+	const child = spawn(command, args, { ...options, detached: true });
 	return {
 		child,
 		kill: () => {
 			if (child.pid) killProcessTree(child.pid);
 		},
 	};
+}
+
+/**
+ * `taskkill /T` on a Windows child that has not exited. Windows reuses pids quickly, so after the child exited its pid
+ * may name an unrelated process, whose tree taskkill would kill.
+ */
+function killRunningProcessTree(child: ChildProcess): void {
+	if (child.pid && child.exitCode === null && child.signalCode === null) killProcessTree(child.pid);
+}
+
+let windowsJobHelper: string | null | undefined;
+
+/**
+ * pi-job.exe if it can run here, checked once per process. Security software can quarantine it or block it from
+ * running; commands then run as before job objects instead of failing.
+ */
+function getUsableWindowsJobHelper(): string | undefined {
+	if (windowsJobHelper === undefined) {
+		const helper = getWindowsJobHelperPath();
+		// `terminate` of a job that does not exist exits with 1 and changes nothing.
+		const probe = shellPathExists(helper)
+			? spawnSync(helper, ["terminate", `pi-probe-${process.pid}`], {
+					stdio: "ignore",
+					timeout: 5000,
+					windowsHide: true,
+				})
+			: undefined;
+		windowsJobHelper = probe && !probe.error && probe.status === 1 ? helper : null;
+	}
+	return windowsJobHelper ?? undefined;
 }
 
 /**

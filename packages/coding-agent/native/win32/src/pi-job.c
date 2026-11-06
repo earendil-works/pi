@@ -8,7 +8,8 @@
 // `run` exits when the command's root process exits, like spawning the command directly. Background processes it
 // started stay in the job and keep running; a `hold` process keeps the job (and its name) alive for them, so a
 // later `terminate` still reaches them. The job kills its processes when its last handle closes, so killing
-// `run` before the command exits also kills the tree.
+// `run` before the command exits also kills the tree. The holder runs from a copy in the temp directory, so it does
+// not keep pi's installation in use. When no job can be created or assigned, the command runs without one.
 //
 // pi generates <name> (letters, digits, '-') and the mode words, so the arguments before the command line are
 // split on spaces; the command line after them is passed to CreateProcessW exactly as pi's spawn quoted it.
@@ -142,23 +143,57 @@ static void format_handle(WCHAR* target, ULONG_PTR value) {
     *target = 0;
 }
 
-// Starts `hold` with only the job handle inherited: no stdio, so pi's pipes still close when the processes
-// writing to them exit, and no console. It runs in the system directory so it never keeps the command's working
-// directory in use.
-static BOOL start_holder(HANDLE job) {
-    WCHAR self[MAX_PATH];
+static int append(WCHAR* target, int length, const WCHAR* text) {
+    while (*text && length < MAX_PATH - 1) target[length++] = *text++;
+    target[length] = 0;
+    return length;
+}
+
+static int append_hex(WCHAR* target, int length, DWORD value) {
+    for (int shift = 28; shift >= 0 && length < MAX_PATH - 1; shift -= 4) {
+        target[length++] = L"0123456789abcdef"[(value >> shift) & 0xF];
+    }
+    target[length] = 0;
+    return length;
+}
+
+// A copy of this executable in the temp directory, named after its size and timestamp. The holder runs from it so
+// that while background processes run, possibly long after pi exited, pi's own installation can still be replaced.
+static BOOL holder_image(const WCHAR* self, WCHAR* image) {
+    WIN32_FILE_ATTRIBUTE_DATA attributes;
+    if (!GetFileAttributesExW(self, GetFileExInfoStandard, &attributes)) return FALSE;
+    DWORD temp_length = GetTempPathW(MAX_PATH, image);
+    if (!temp_length || temp_length >= MAX_PATH - 64) return FALSE;
+    int length = append(image, (int)temp_length, L"pi-job-holder-");
+    length = append_hex(image, length, attributes.nFileSizeLow);
+    length = append_hex(image, length, attributes.ftLastWriteTime.dwHighDateTime);
+    length = append_hex(image, length, attributes.ftLastWriteTime.dwLowDateTime);
+    append(image, length, L".exe");
+    if (GetFileAttributesW(image) != INVALID_FILE_ATTRIBUTES) return TRUE;
+
+    // Copy under a unique name, then rename: a concurrent pi-job never runs a partially written copy.
+    WCHAR partial[MAX_PATH];
+    length = append(partial, 0, image);
+    length = append(partial, length, L".");
+    length = append_hex(partial, length, GetCurrentProcessId());
+    append(partial, length, L".tmp");
+    if (!CopyFileW(self, partial, FALSE)) return FALSE;
+    if (!MoveFileExW(partial, image, 0)) DeleteFileW(partial);
+    return GetFileAttributesW(image) != INVALID_FILE_ATTRIBUTES;
+}
+
+// Starts `hold` from `image` with only the job handle inherited: no stdio, so pi's pipes still close when the
+// processes writing to them exit, and no console. It runs in the system directory so it never keeps the command's
+// working directory in use.
+static BOOL start_holder_from(const WCHAR* image, HANDLE inherited) {
     WCHAR system_directory[MAX_PATH];
-    DWORD self_length = GetModuleFileNameW(NULL, self, MAX_PATH);
-    if (!self_length || self_length >= MAX_PATH) return FALSE;
     DWORD system_length = GetSystemDirectoryW(system_directory, MAX_PATH);
     if (!system_length || system_length >= MAX_PATH) return FALSE;
-    HANDLE inherited = inheritable_copy(job);
-    if (!inherited) return FALSE;
 
     WCHAR command_line[MAX_PATH + 40];
     int length = 0;
     command_line[length++] = L'"';
-    for (DWORD i = 0; i < self_length; i++) command_line[length++] = self[i];
+    for (const WCHAR* c = image; *c; c++) command_line[length++] = *c;
     const WCHAR* hold = L"\" hold ";
     for (const WCHAR* c = hold; *c; c++) command_line[length++] = *c;
     format_handle(command_line + length, (ULONG_PTR)inherited);
@@ -174,7 +209,7 @@ static BOOL start_holder(HANDLE job) {
             startup.StartupInfo.cb = sizeof(startup);
             startup.lpAttributeList = attributes;
             PROCESS_INFORMATION process = {0};
-            started = CreateProcessW(self, command_line, NULL, NULL, TRUE,
+            started = CreateProcessW(image, command_line, NULL, NULL, TRUE,
                 EXTENDED_STARTUPINFO_PRESENT | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, NULL, system_directory,
                 &startup.StartupInfo, &process);
             if (started) {
@@ -185,6 +220,18 @@ static BOOL start_holder(HANDLE job) {
         DeleteProcThreadAttributeList(attributes);
     }
     if (attributes) HeapFree(GetProcessHeap(), 0, attributes);
+    return started;
+}
+
+// Starts a holder from the temp copy, or from this executable when the copy cannot be made or started.
+static BOOL start_holder(HANDLE job) {
+    WCHAR self[MAX_PATH];
+    WCHAR image[MAX_PATH];
+    DWORD self_length = GetModuleFileNameW(NULL, self, MAX_PATH);
+    if (!self_length || self_length >= MAX_PATH) return FALSE;
+    HANDLE inherited = inheritable_copy(job);
+    if (!inherited) return FALSE;
+    BOOL started = (holder_image(self, image) && start_holder_from(image, inherited)) || start_holder_from(self, inherited);
     CloseHandle(inherited);
     return started;
 }
@@ -196,6 +243,27 @@ static void keep_processes_on_close(HANDLE job) {
     SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
 }
 
+// A new job named `name` that kills its processes when its last handle closes, or NULL when none can be made.
+static HANDLE create_job(const WCHAR* name) {
+    HANDLE job = CreateJobObjectW(NULL, name);
+    if (!job) return NULL;
+    // An existing job of that name is not ours; terminating it later would kill another command's processes.
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        CloseHandle(job);
+        return NULL;
+    }
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {0};
+    // Unhandled exceptions end the process instead of opening an error dialog that would keep the job alive.
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+        CloseHandle(job);
+        return NULL;
+    }
+    return job;
+}
+
+// Without a job (one cannot be created or assigned, for example inside a job that forbids it), the command still
+// runs as it did before pi used job objects; pi then reaches it through `taskkill /T` on this process.
 static DWORD run(const WCHAR* name, const WCHAR* command_line_text) {
     SetConsoleCtrlHandler(ignore_interrupts, TRUE);
 
@@ -205,19 +273,7 @@ static DWORD run(const WCHAR* name, const WCHAR* command_line_text) {
     if (!command_line) return fail("HeapAlloc");
     for (SIZE_T i = 0; i < command_line_size / sizeof(WCHAR); i++) command_line[i] = command_line_text[i];
 
-    HANDLE job = CreateJobObjectW(NULL, name);
-    if (!job) return fail("CreateJobObjectW");
-    if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        write_error("CreateJobObjectW (name in use)", ERROR_ALREADY_EXISTS);
-        return EXIT_SETUP_FAILED;
-    }
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {0};
-    // Unhandled exceptions end the process instead of opening an error dialog that would keep the job alive.
-    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
-    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
-        return fail("SetInformationJobObject");
-    }
-
+    HANDLE job = create_job(name);
     STARTUPINFOW startup = {0};
     startup.cb = sizeof(startup);
     startup.dwFlags = STARTF_USESTDHANDLES;
@@ -237,14 +293,13 @@ static DWORD run(const WCHAR* name, const WCHAR* command_line_text) {
         return create_error == ERROR_FILE_NOT_FOUND || create_error == ERROR_PATH_NOT_FOUND ? EXIT_NOT_FOUND
                                                                                             : EXIT_SETUP_FAILED;
     }
-    if (!AssignProcessToJobObject(job, process.hProcess)) {
-        DWORD code = fail("AssignProcessToJobObject");
-        TerminateProcess(process.hProcess, code);
-        return code;
+    if (job && !AssignProcessToJobObject(job, process.hProcess)) {
+        CloseHandle(job);
+        job = NULL;
     }
     if (ResumeThread(process.hThread) == (DWORD)-1) {
         DWORD code = fail("ResumeThread");
-        TerminateJobObject(job, code);
+        TerminateProcess(process.hProcess, code);
         return code;
     }
     CloseHandle(process.hThread);
@@ -252,7 +307,7 @@ static DWORD run(const WCHAR* name, const WCHAR* command_line_text) {
     WaitForSingleObject(process.hProcess, INFINITE);
     DWORD exit_code = EXIT_SETUP_FAILED;
     GetExitCodeProcess(process.hProcess, &exit_code);
-    if (active_processes(job) > 0 && !start_holder(job)) keep_processes_on_close(job);
+    if (job && active_processes(job) > 0 && !start_holder(job)) keep_processes_on_close(job);
     return exit_code;
 }
 

@@ -1,5 +1,7 @@
 // Builds pi-job.exe for win32-x64 and win32-arm64 into prebuilds/. Mirrors packages/tui/native/win32/build.mjs,
 // which builds a DLL instead of an executable; both are self-contained so each ships in its own npm package.
+// zig cc is the default when available: it cross-compiles both architectures from any OS and links
+// deterministically, so a rebuild of the committed prebuilds from the same source gives identical bytes.
 import { spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +18,7 @@ const targets = [
 		arch: "x64",
 		msvcArch: "x64",
 		mingwTarget: "x86_64-w64-windows-gnu",
+		zigTarget: "x86_64-windows-gnu",
 		prefixedCompilers: ["x86_64-w64-mingw32-clang", "x86_64-w64-mingw32-gcc"],
 		envCompiler: "CC_X64",
 	},
@@ -23,6 +26,7 @@ const targets = [
 		arch: "arm64",
 		msvcArch: "arm64",
 		mingwTarget: "aarch64-w64-windows-gnu",
+		zigTarget: "aarch64-windows-gnu",
 		prefixedCompilers: ["aarch64-w64-mingw32-clang", "aarch64-w64-mingw32-gcc"],
 		envCompiler: "CC_ARM64",
 	},
@@ -119,6 +123,30 @@ function resolveMingwCompiler(target) {
 	return undefined;
 }
 
+function resolveZig() {
+	const zig = process.env.ZIG ?? "zig";
+	const result = spawnSync(zig, ["env"], { encoding: "utf8" });
+	if (result.error || result.status !== 0) return undefined;
+	// `zig env` prints ZON with escaped strings: `.lib_dir = "C:\\zig\\lib",`.
+	const match = /\.lib_dir = "((?:[^"\\]|\\.)*)"/.exec(result.stdout);
+	if (!match) return undefined;
+	return { command: zig, libDir: match[1].replace(/\\(.)/g, "$1") };
+}
+
+// Flags shared by the MinGW and zig toolchains: no C runtime, entry point `entry`, console subsystem.
+const gnuFlags = [
+	"-std=c11",
+	"-Wall",
+	"-Wextra",
+	"-Oz",
+	"-fno-builtin",
+	"-nostdlib",
+	"-municode",
+	"-Wl,--entry=entry",
+	"-Wl,--subsystem,console",
+	"-Wl,--strip-all",
+];
+
 function installOutput(temporaryOutput, target) {
 	const outputDir = path.join(scriptDir, "prebuilds", `win32-${target.arch}`);
 	mkdirSync(outputDir, { recursive: true });
@@ -180,16 +208,7 @@ function buildWithMingw(target) {
 
 	const args = [
 		...(compiler.useTargetFlag ? [`--target=${target.mingwTarget}`] : []),
-		"-std=c11",
-		"-Wall",
-		"-Wextra",
-		"-Oz",
-		"-fno-builtin",
-		"-nostdlib",
-		"-municode",
-		"-Wl,--entry=entry",
-		"-Wl,--subsystem,console",
-		"-Wl,--strip-all",
+		...gnuFlags,
 		sourceFile,
 		"-lkernel32",
 		"-o",
@@ -200,13 +219,39 @@ function buildWithMingw(target) {
 	installOutput(temporaryOutput, target);
 }
 
+function buildWithZig(target, zig) {
+	const buildDir = path.join(temporaryDir, `zig-${target.arch}`);
+	const temporaryOutput = path.join(buildDir, outputName);
+	mkdirSync(buildDir, { recursive: true });
+
+	// -nostdlib also drops zig's libc include paths; the Windows headers it bundles are added back explicitly.
+	const windowsHeaders = path.join(zig.libDir, "libc", "include", "any-windows-any");
+	const args = [
+		"cc",
+		`--target=${target.zigTarget}`,
+		"-isystem",
+		windowsHeaders,
+		...gnuFlags,
+		sourceFile,
+		"-lkernel32",
+		"-o",
+		temporaryOutput,
+	];
+
+	run(zig.command, args, { cwd: buildDir });
+	installOutput(temporaryOutput, target);
+}
+
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
 	console.log(`Usage: npm --prefix packages/coding-agent run build:native:win32
 
 Builds win32-x64 and win32-arm64 pi-job.exe prebuilds.
 
+Toolchains, in order of preference: zig (zig cc), msvc (on Windows), mingw.
+
 Environment:
-  PI_WIN32_TOOLCHAIN=msvc|mingw
+  PI_WIN32_TOOLCHAIN=zig|msvc|mingw
+  ZIG=/path/to/zig
   CC_X64=/path/to/x86_64-w64-mingw32-clang
   CC_ARM64=/path/to/aarch64-w64-mingw32-clang
   CC=/path/to/clang`);
@@ -214,14 +259,18 @@ Environment:
 }
 
 const requestedToolchain = process.env.PI_WIN32_TOOLCHAIN;
-if (requestedToolchain && requestedToolchain !== "msvc" && requestedToolchain !== "mingw") {
-	throw new Error("PI_WIN32_TOOLCHAIN must be either 'msvc' or 'mingw'");
+if (requestedToolchain && !["zig", "msvc", "mingw"].includes(requestedToolchain)) {
+	throw new Error("PI_WIN32_TOOLCHAIN must be 'zig', 'msvc' or 'mingw'");
 }
 
+const zig = requestedToolchain === undefined || requestedToolchain === "zig" ? resolveZig() : undefined;
 const vsDevCmd = findVisualStudioDevCmd();
-const toolchain = requestedToolchain ?? (process.platform === "win32" && vsDevCmd ? "msvc" : "mingw");
+const toolchain = requestedToolchain ?? (zig ? "zig" : process.platform === "win32" && vsDevCmd ? "msvc" : "mingw");
 
-if (toolchain === "msvc") {
+if (toolchain === "zig") {
+	if (!zig) throw new Error("zig not found. Install zig (https://ziglang.org/download/) or set ZIG to its path.");
+	for (const target of targets) buildWithZig(target, zig);
+} else if (toolchain === "msvc") {
 	if (!vsDevCmd || !canUseMsvc(vsDevCmd)) {
 		throw new Error("Microsoft C++ Build Tools not found. Install the Visual Studio C++ workload or set PI_WIN32_TOOLCHAIN=mingw.");
 	}
