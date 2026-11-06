@@ -4737,7 +4737,7 @@ export class InteractiveMode {
 		if (isExpandable(activeHeader)) {
 			activeHeader.setExpanded(expanded);
 		}
-		for (const container of [this.loadedResourcesContainer, this.chatContainer]) {
+		for (const container of [this.loadedResourcesContainer, this.chatContainer, this.pendingMessagesContainer]) {
 			for (const child of container.children) {
 				if (isExpandable(child)) {
 					child.setExpanded(expanded);
@@ -7152,6 +7152,7 @@ export class InteractiveMode {
 
 			// Create UI component for display
 			this.bashComponent = new BashExecutionComponent(command, this.ui, excludeFromContext, this.outputPad);
+			this.bashComponent.setExpanded(this.toolOutputExpanded);
 			if (this.session.isStreaming) {
 				this.pendingMessagesContainer.addChild(this.bashComponent);
 				this.pendingBashComponents.push(this.bashComponent);
@@ -7180,6 +7181,7 @@ export class InteractiveMode {
 		// Normal execution path (possibly with custom operations)
 		const isDeferred = this.session.isStreaming;
 		this.bashComponent = new BashExecutionComponent(command, this.ui, excludeFromContext, this.outputPad);
+		this.bashComponent.setExpanded(this.toolOutputExpanded);
 
 		if (isDeferred) {
 			// Show in pending area when agent is streaming

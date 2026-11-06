@@ -154,6 +154,7 @@ describe("InteractiveMode.setToolsExpanded", () => {
 			builtInHeader: header,
 			loadedResourcesContainer: { children: [loadedResourcesChild] },
 			chatContainer: { children: [chatChild] },
+			pendingMessagesContainer: { children: [] },
 			ui: { requestRender: vi.fn() },
 			showStatus: vi.fn(),
 		};
@@ -165,6 +166,25 @@ describe("InteractiveMode.setToolsExpanded", () => {
 		expect(loadedResourcesChild.setExpanded).toHaveBeenCalledWith(true);
 		expect(chatChild.setExpanded).toHaveBeenCalledWith(true);
 		expect(fakeThis.showStatus).toHaveBeenCalledWith("Tool output: expanded");
+	});
+
+	// Regression test for https://github.com/earendil-works/pi/issues/11875
+	test("applies expansion state to user bash output in the pending area", () => {
+		const pendingBashComponent = { setExpanded: vi.fn() };
+		const fakeThis: any = {
+			toolOutputExpanded: false,
+			customHeader: undefined,
+			builtInHeader: undefined,
+			loadedResourcesContainer: { children: [] },
+			chatContainer: { children: [] },
+			pendingMessagesContainer: { children: [pendingBashComponent] },
+			ui: { requestRender: vi.fn() },
+			showStatus: vi.fn(),
+		};
+
+		(InteractiveMode as any).prototype.setToolsExpanded.call(fakeThis, true);
+
+		expect(pendingBashComponent.setExpanded).toHaveBeenCalledWith(true);
 	});
 });
 
