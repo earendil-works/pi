@@ -32,6 +32,16 @@ Paths are relative to `apps/p2`. Read `docs/handoff.md` and the matching part of
 - Owner rules: no coloured side edges, no left border lines, no decorative borders; rows separated by `1px solid
   var(--line)` at most. Kinds differ by icon and word, never by per-kind colour. Touch targets at least 44px
   (`min-height: var(--row)`). Message text stays selectable: links and tap targets go on headers, never on bodies.
+- States: the open or selected row is filled (`background: var(--hover)`), never an inset side edge; a chosen option
+  shows its check icon. Hover backgrounds only inside `@media (hover: hover)` (touch browsers keep `:hover` after a
+  tap); `:active` gives press feedback everywhere. Popovers and dialogs: a 1px `--line` border, no shadow.
+- Text levels: `--text`, then `--muted` for anything a reader needs (meta, sizes, timestamps, hints); `--faint` only for
+  placeholders, icons, chevrons and line numbers. Empty lists say so with `.empty-note`.
+- Coarse pointers: list rows and small controls grow to `--row` in the touch-target block at the end of style.css; add
+  new rows and small buttons there instead of per-screen media queries. Scrollbars are thin everywhere (one rule on
+  `*`); do not add per-element scrollbar styles.
+- Tabs in a bar fill its height, so the selected tab's underline sits on the bar's bottom line. A page inside a sheet
+  goes back with the header's Back (`onBack`), not a "← back" link in its body.
 - Transcript rhythm (`.row` in style.css, `TranscriptRow.gap` in Chat.tsx): a row carries its spacing to the row
   before as padding. A new turn (a person's message, an incoming message, the agent's first part after it, a marker)
   starts `--s5` below; the parts of the agent's turn (thought, words, wheel, answer, results) follow `--s2` apart.
