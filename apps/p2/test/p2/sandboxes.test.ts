@@ -343,15 +343,23 @@ test(
 		const owner = fixture.browser();
 		const envs = owner.hold(Envs, {}, BACKGROUND_CONTEXT);
 		t.after(async () => {
-			await envs.sandboxStop({ name: "sbx" }, BACKGROUND_CONTEXT).catch(() => {});
-			for (const sandbox of ["sbx", "spare"])
-				rmSync(join(homedir(), ".pi", "p2", "sandbox", "run", sandboxKey(fixture.dataDir, sandbox)), {
-					recursive: true,
-					force: true,
-				});
-			await fixture.close();
-			server.kill();
-			rmSync(root, { recursive: true, force: true });
+			// Everything is removed even when closing the fixture fails.
+			try {
+				await envs.sandboxStop({ name: "sbx" }, BACKGROUND_CONTEXT).catch(() => {});
+				await fixture.close();
+			} finally {
+				if (server.exitCode === null && server.signalCode === null) {
+					const exited = new Promise((resolve) => server.once("exit", resolve));
+					server.kill();
+					await exited;
+				}
+				rmSync(root, { recursive: true, force: true });
+				for (const sandbox of ["sbx", "spare"])
+					rmSync(join(homedir(), ".pi", "p2", "sandbox", "run", sandboxKey(fixture.dataDir, sandbox)), {
+						recursive: true,
+						force: true,
+					});
+			}
 		});
 		await poll(
 			() =>
