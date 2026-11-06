@@ -43,6 +43,7 @@
 - Fixed the codemode `resolves to` summary of a tool leaving out field names behind a local `$ref`, for example `structuredContent?` instead of `structuredContent?: { results }` for MCP output schemas that put their models in `$defs` ([#11803](https://github.com/earendil-works/pi/issues/11803))
 - Fixed every codemode script failing with `URI malformed` when any callable tool, such as an MCP tool, had a `$ref` with a malformed percent escape (`#/$defs/%E0`) in its schema, even scripts that do not call that tool. The parameter now renders as `unknown` in the tool's declaration ([#11803](https://github.com/earendil-works/pi/issues/11803))
 - Fixed `ctrl+o` not expanding or collapsing the output of `!` and `!!` commands run while the agent is working. New `!`/`!!` output now starts in the current expand state, the output no longer disappears when a steering or follow-up message is queued, and it moves into the chat when the agent finishes instead of on the next submitted message ([#11875](https://github.com/earendil-works/pi/issues/11875))
+- Fixed resuming a session restoring an old thinking level after `/tree` navigated to before a `/thinking` change. Like the model, the live thinking level is now recorded on the new branch with the next prompt ([#11451](https://github.com/earendil-works/pi/issues/11451))
 
 ## [1.5.0] - 2026-11-02
 
