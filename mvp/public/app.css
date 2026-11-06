@@ -179,6 +179,29 @@ button, textarea { font: inherit; color: inherit; }
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+/* Markdown replies: structured blocks, so the pre-wrap used for plain text is switched off. */
+.msg .bubble.md { white-space: normal; }
+.bubble.md > :first-child { margin-top: 0; }
+.bubble.md > :last-child { margin-bottom: 0; }
+.bubble.md p { margin: 0 0 0.7em; }
+.bubble.md h3, .bubble.md h4, .bubble.md h5, .bubble.md h6 { margin: 1em 0 0.4em; line-height: 1.3; }
+.bubble.md h3 { font-size: 1.15rem; }
+.bubble.md h4 { font-size: 1.05rem; }
+.bubble.md h5, .bubble.md h6 { font-size: 1rem; }
+.bubble.md ul, .bubble.md ol { margin: 0 0 0.7em; padding-left: 1.4em; }
+.bubble.md li { margin: 0.15em 0; }
+.bubble.md li > ul, .bubble.md li > ol { margin: 0.2em 0 0; }
+.bubble.md hr { border: 0; border-top: 1px solid var(--line); margin: 0.9em 0; }
+.bubble.md blockquote { margin: 0 0 0.7em; padding: 0.1em 0 0.1em 0.9em; border-left: 3px solid var(--card-border); color: var(--muted); }
+.bubble.md a { color: #8fb8ff; text-decoration: underline; }
+.bubble.md code { padding: 0.1em 0.35em; border-radius: 5px; background: rgb(3 9 26 / 70%); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.88em; }
+.bubble.md pre { margin: 0 0 0.7em; padding: 10px 12px; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: rgb(3 9 26 / 80%); white-space: pre; }
+.bubble.md pre code { padding: 0; background: none; font-size: 0.85em; }
+.bubble.md .md-table { margin: 0 0 0.7em; overflow-x: auto; }
+.bubble.md table { border-collapse: collapse; font-size: 0.9em; }
+.bubble.md th, .bubble.md td { padding: 6px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.bubble.md th, .bubble.md td { overflow-wrap: normal; }
+.bubble.md th { background: rgb(36 120 255 / 14%); }
 .msg.user .bubble { border-color: #2c6fe0; background: linear-gradient(180deg, #1c5fd6, #1550b8); }
 .msg .meta { display: block; margin-top: 6px; color: var(--muted); font-size: 0.75rem; }
 .msg.user .meta { color: #cfe0ff; }

@@ -12,6 +12,7 @@ import {
   resultLabel,
   validatePrompt,
 } from "./lib/decision.js";
+import { renderMarkdown } from "./lib/markdown.js";
 import { BLOCKED_PLACEHOLDER, HISTORY_NOTICE, createSaver, interpretConversation, interpretHistoryList, shortTitle } from "./lib/history.js";
 
 /**
@@ -20,7 +21,8 @@ import { BLOCKED_PLACEHOLDER, HISTORY_NOTICE, createSaver, interpretConversation
  * What it does: sends each message to POST /api/govern (the ASFDK governance gate) and shows the verdict.
  * What it does not do: call a model, run a tool or sign anyone in. Conversations live in memory for this tab,
  * unless the owner turned on saved history (NLT_HISTORY_ENABLED): then each exchange is also saved through
- * /api/conversations, and saved conversations can be reopened and deleted. User text is only ever written with textContent.
+ * /api/conversations, and saved conversations can be reopened and deleted. User text is only ever written with textContent; the model's replies go through lib/markdown.js, which builds DOM nodes
+ * and never uses innerHTML.
  */
 
 const REQUEST_TIMEOUT_MS = 20000;
@@ -103,14 +105,30 @@ function logEvent(label, tone) {
   while (els.events.children.length > 8) els.events.lastChild.remove();
 }
 
+/**
+ * Sets a bubble's content. Only the model's own allowed replies are rendered as Markdown (built from DOM nodes,
+ * never innerHTML; see lib/markdown.js). The user's text and the page's own notices (blocked, unavailable) stay
+ * plain text.
+ */
+function setBubble(bubble, message) {
+  if (message.role === "assistant" && message.kind === "allowed") {
+    bubble.classList.add("md");
+    bubble.replaceChildren(renderMarkdown(document, message.text));
+  } else {
+    bubble.classList.remove("md");
+    bubble.textContent = message.text;
+  }
+}
+
 function renderMessage(message) {
   const wrap = el("div", `msg ${message.role}`);
   const who = el("span", `who ${message.role === "user" ? "avatar" : "mark-sm"}`, message.role === "user" ? "You" : "");
   who.setAttribute("aria-hidden", "true");
   const body = el("div");
   const speaker = el("span", "sr-only", message.role === "user" ? "You: " : "Assistant: ");
-  const bubble = el("div", "bubble", message.text);
+  const bubble = el("div", "bubble");
   if (message.kind) bubble.dataset.kind = message.kind;
+  setBubble(bubble, message);
   body.append(speaker, bubble, el("span", "meta", formatClock(message.at)));
   wrap.append(who, body);
   if (message.role === "user" && message.kind === "normal") {
@@ -304,7 +322,7 @@ async function runAgent(prompt, conversation) {
       for (const event of parsed.events) {
         if (event.type === "text" && typeof event.delta === "string") {
           reply.text += event.delta;
-          bubble.textContent = reply.text;
+          setBubble(bubble, reply);
         } else if (event.type === "tool" && typeof event.name === "string") {
           els.currentTask.textContent = `Running ${event.name}`;
         } else if (event.type === "done") {
@@ -320,8 +338,8 @@ async function runAgent(prompt, conversation) {
   if (note) {
     reply.kind = done?.status === "blocked" ? "blocked" : "unavailable";
     reply.text = reply.text ? `${reply.text}\n\n${note}` : note;
-    bubble.textContent = reply.text;
     bubble.dataset.kind = reply.kind;
+    setBubble(bubble, reply);
   }
   return { streamed: true, status: done?.status, done, access: Array.isArray(done?.access) ? done.access : undefined };
 }
@@ -811,7 +829,7 @@ async function runContinuation(conversation, prompt, resumeTask, grants) {
         buffer += decoder.decode(chunk.value, { stream: true });
         const parsed = parseNdjson(buffer); buffer = parsed.rest;
         for (const event of parsed.events) {
-          if (event.type === "text" && typeof event.delta === "string") { reply.text += event.delta; bubble.textContent = reply.text; }
+          if (event.type === "text" && typeof event.delta === "string") { reply.text += event.delta; setBubble(bubble, reply); }
           else if (event.type === "tool" && typeof event.name === "string") els.currentTask.textContent = `Running ${event.name}`;
           else if (event.type === "done") done = event;
         }
@@ -820,7 +838,7 @@ async function runContinuation(conversation, prompt, resumeTask, grants) {
     } catch {}
     if (done?.status === "needs_access" && Array.isArray(done.access)) renderAccessCards(conversation, resumeTask, done.access);
     const note = agentDoneMessage(done);
-    if (note) { reply.text = reply.text ? `${reply.text}\n\n${note}` : note; bubble.textContent = reply.text; bubble.dataset.kind = "unavailable"; }
+    if (note) { reply.text = reply.text ? `${reply.text}\n\n${note}` : note; reply.kind = "unavailable"; bubble.dataset.kind = "unavailable"; setBubble(bubble, reply); }
   } finally { setPending(false); els.currentTask.textContent = "Idle"; }
 }
 // --- end access requests ---
