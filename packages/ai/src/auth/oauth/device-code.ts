@@ -7,6 +7,8 @@ const MINIMUM_INTERVAL_MS = 1000;
 const DEFAULT_POLL_INTERVAL_SECONDS = 5;
 // RFC 8628 section 3.5: `slow_down` means the polling interval must increase by 5 seconds.
 const SLOW_DOWN_INTERVAL_INCREMENT_MS = 5000;
+const INITIAL_SLOW_DOWN_MARGIN_MS = 250;
+const MAX_SLOW_DOWN_MARGIN_MS = 5000;
 
 type OAuthDeviceCodeIncompletePollResult =
 	| { status: "pending" }
@@ -54,6 +56,7 @@ export async function pollOAuthDeviceCodeFlow<T>(options: OAuthDeviceCodePollOpt
 	);
 
 	let slowDownResponses = 0;
+	let pollingMarginMs = 0;
 	if (options.waitBeforeFirstPoll) {
 		const remainingMs = deadline - Date.now();
 		if (remainingMs > 0) {
@@ -76,14 +79,20 @@ export async function pollOAuthDeviceCodeFlow<T>(options: OAuthDeviceCodePollOpt
 		if (result.status === "slow_down") {
 			slowDownResponses += 1;
 			// Use the server-provided interval when given (GitHub reports the new required minimum
-			// in `interval`); trusting only a client-tracked value risks polling early forever under
-			// WSL/VM clock drift. Otherwise apply RFC 8628 section 3.5: increase by 5 seconds.
+			// in `interval`), but never let slow_down reduce the interval. Otherwise apply
+			// RFC 8628 section 3.5: increase by 5 seconds.
 			intervalMs =
 				typeof result.intervalSeconds === "number" &&
 				Number.isFinite(result.intervalSeconds) &&
 				result.intervalSeconds > 0
-					? Math.max(MINIMUM_INTERVAL_MS, Math.floor(result.intervalSeconds * 1000))
+					? Math.max(intervalMs, Math.floor(result.intervalSeconds * 1000))
 					: Math.max(MINIMUM_INTERVAL_MS, intervalMs + SLOW_DOWN_INTERVAL_INCREMENT_MS);
+			// Fast local clocks can undershoot even the server's updated minimum. Learn a
+			// separate, bounded margin from slow_down; retain it across pending responses.
+			pollingMarginMs = Math.min(
+				MAX_SLOW_DOWN_MARGIN_MS,
+				Math.max(INITIAL_SLOW_DOWN_MARGIN_MS, pollingMarginMs * 2),
+			);
 		}
 
 		const remainingMs = deadline - Date.now();
@@ -91,7 +100,7 @@ export async function pollOAuthDeviceCodeFlow<T>(options: OAuthDeviceCodePollOpt
 			break;
 		}
 
-		await abortableSleep(Math.min(intervalMs, remainingMs), options.signal, CANCEL_MESSAGE);
+		await abortableSleep(Math.min(intervalMs + pollingMarginMs, remainingMs), options.signal, CANCEL_MESSAGE);
 	}
 
 	throw new Error(slowDownResponses > 0 ? SLOW_DOWN_TIMEOUT_MESSAGE : TIMEOUT_MESSAGE);
