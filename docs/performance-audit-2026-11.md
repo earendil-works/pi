@@ -5,7 +5,7 @@ Repository: `AmirrezaFarnamTaheri/pi`
 Base revision: `4ffe32c6f1a138451162d6772f2723488fa32fad`  
 Scope: Static investigation plus isolated, synthetic Node checks. No end-to-end repository profiling was available in the execution environment.
 
-**Read this first:** Code patterns below establish *potential* or algorithmically evident bottlenecks, not measured production p95s. The PR is incomplete relative to this audit and must remain draft until workspace CI and profiling pass.
+**Read this first:** Code patterns below establish *potential* or algorithmically evident bottlenecks, not measured production p95s. The PR is incomplete relative to this audit: workspace CI and profiling have not been run locally, so the first full run is the PR's own CI.
 
 ## Finding inventory
 
@@ -30,8 +30,8 @@ Scope: Static investigation plus isolated, synthetic Node checks. No end-to-end 
 | A03 | Medium | Agent event stream copy and queue churn | `packages/agent/src/agent-loop.ts` wraps streamed messages in spread copies and awaits downstream emit; `packages/ai/src/utils/event-stream.ts` stores queued events | **Partial:** producer failure now rejects awaiting result() and wakes iterator consumers; still profile provider delta rates, allocation/GC and slow-consumer behavior |
 | A04 | Medium | Repeated conversation projection per provider request | `packages/coding-agent/src/core/agent-session.ts` `_installAgentRequestProjection` calls `buildSessionProjection`; model routing/compaction may compute another projection | **Open:** revision-based projection cache with mutation invalidation and multi-branch tests |
 | A05 | Medium | Agent loadout checks replay full history | `packages/agent/src/agent-loop.ts` `declareToolChanges` calls `getCurrentTools(context.messages, baseline)` each turn | **Partial:** eliminated history concatenation and redundant schema cloning; a full scan remains until incremental loadout state can respect in-place edits |
-| A06 | Medium | Agent pending-tool set copied per event | `packages/agent/src/agent.ts` `processEvents` creates `new Set(pendingToolCalls)` on start/end | **Open:** benchmark many concurrent tool calls; preserve snapshot observer semantics |
-| A07 | Low–Med | Session recovery scans and projection rebuilds | `packages/coding-agent/src/core/agent-session.ts` `_findPersistedMessageEntryId` constructs `[...getBranch()].reverse()` and may build projection | **Open:** indexed entry-id mapping with snapshot/branch correctness tests |
+| A06 | Medium | Agent pending-tool set copied per event | `packages/agent/src/agent.ts` `processEvents` creates `new Set(pendingToolCalls)` on start/end | **Reviewed, left open:** the copy keeps each observer's `pendingToolCalls` snapshot stable and costs O(pending) per start/end, which only matters with hundreds of concurrent calls; benchmark before changing |
+| A07 | Low–Med | Session recovery scans and projection rebuilds | `packages/coding-agent/src/core/agent-session.ts` `_findPersistedMessageEntryId` constructs `[...getBranch()].reverse()` and may build projection | **Partial:** the branch scan no longer copies and reverses the branch; the projection fallback and an indexed entry-id map remain open |
 | A08 | Medium | Durable scheduler sorting idle states | `packages/durable/src/harness/scheduler.ts` sorts `#idleOrder` on candidate selection | **Requires profiling:** heap/ordered queue may help at high task counts; workload-dependent |
 | A09 | Low–Med | React tool argument serialization | `apps/p2/src/web/Chat.tsx` contains repeated `JSON.stringify` of tool args during render | **Requires profiling:** memoize only where props immutable and updates accounted for |
 | A10 | Low–Med | Large-batch argument spread limit | `apps/p2/src/web/virtual-list.ts` append path initially used `push(...keys)` | **Implemented, unverified:** iteration supports 150,000-key regression |
@@ -46,6 +46,13 @@ Scope: Static investigation plus isolated, synthetic Node checks. No end-to-end 
 - Isolated agent queue and progress-update tracker tests: **4 PASS** (10,000-message FIFO and resolved promise retention). Segmented tool replay tests: **2 PASS**, including a 100,000-message history. These also use standalone replicas, not the compiled monorepo.
 - **2026-11-06:** Six local Node regex-worker prototype tests passed, including catastrophic backtracking timeout, in-flight abort and multi-batch ordering. The TypeScript integrated worker tests were committed to the repository but could not be run here.
 - An agent-loop failure regression was added so rejected execution settles `result()` instead of leaving callers hanging. The new Vitest tests remain unverified.
+
+## Review follow-up (2026-11-07)
+
+- Rebased onto upstream `main` (22 commits) without conflicts.
+- Verified each CodeRabbit finding against the current code. Fixed since the review: shared-estimate invalidation in the p2 append path, content-validated and copy-isolated session cache, abort-aware stream publication, fail-fast `ToolUpdateTracker.drain()`, awaitable tool updates, root-normalized declaration comparison, abortable bash output waits, `finish`-aware drain, selection preservation and progress-based timeout in the regex search. Added in this pass: the barrier, tracker, held-`onData` and selector tests, docstrings, and removal of the redundant p2 CI build.
+- Replaced two constructor parameter properties (`ToolUpdateTracker`, `SessionInfoCache`) with explicit fields; `erasableSyntaxOnly` rejects them.
+- Checks run locally: Node strip-only transform of all changed TypeScript files, and Node checks of the tracker, queue and event stream. `npm run check` and `./test.sh` could not be run (no dependency install in the authoring environment).
 
 ## Validation required before merge
 
