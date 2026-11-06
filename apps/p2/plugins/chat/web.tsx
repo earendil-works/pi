@@ -313,9 +313,11 @@ function Composer({
 	return (
 		<form
 			className="composer"
+			onPointerDown={keepComposerFocus}
 			onSubmit={(event) => {
 				event.preventDefault();
-				onSend();
+				// A form in a sheet a composer control opened (chat-mode's name) is a React child: its submit bubbles here.
+				if (event.target === event.currentTarget) onSend();
 			}}
 		>
 			{replying && (
@@ -410,24 +412,12 @@ function Composer({
 				{children}
 				<span className="spacer" />
 				{busy && onStop && (
-					<button
-						type="button"
-						className="round stop"
-						aria-label="Stop"
-						onPointerDown={keepComposerFocus}
-						onClick={onStop}
-					>
+					<button type="button" className="round stop" aria-label="Stop" onClick={onStop}>
 						<StopIcon />
 					</button>
 				)}
 				{(!busy || content) && (
-					<button
-						type="submit"
-						className="round send"
-						aria-label="Send"
-						disabled={!content || disabled}
-						onPointerDown={keepComposerFocus}
-					>
+					<button type="submit" className="round send" aria-label="Send" disabled={!content || disabled}>
 						<SendIcon />
 					</button>
 				)}
@@ -437,11 +427,16 @@ function Composer({
 }
 
 /**
- * Keeps the focus in the composer's textarea when Send or Stop is pressed. Without this the press blurs the textarea, a
- * phone's keyboard closes, the page shrinks back and the button moves out from under the finger before the click: the
- * first tap only closed the keyboard. The click still fires; the keyboard stays open for the next message.
+ * Keeps the focus in the composer's textarea when anything in the composer but a text field is pressed: Send and Stop,
+ * and the space around them. A press that blurs the textarea closes a phone's keyboard and the page grows back under
+ * the finger: a thumb landing a few pixels beside Send (the composer's padding, the bar's gaps) only closed the
+ * keyboard, and the second tap sent. The click still fires.
  */
-function keepComposerFocus(event: React.PointerEvent<HTMLButtonElement>): void {
+function keepComposerFocus(event: React.PointerEvent<HTMLFormElement>): void {
+	// Pointer events target elements, never text nodes.
+	const target = event.target as Element;
+	// Presses in a sheet a composer control opened (a portal) bubble here in React; they are not in the composer.
+	if (!event.currentTarget.contains(target) || target.closest("textarea, input, select, [contenteditable]")) return;
 	event.preventDefault();
 }
 

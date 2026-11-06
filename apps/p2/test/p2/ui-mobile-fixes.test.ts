@@ -466,6 +466,50 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		}
 	});
 
+	it("sends with one touch tap beside Send while the keyboard composes a word; no tap in the composer blurs it", async () => {
+		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+			{ cwd: fixture.workspace, title: "Touch send" },
+			BACKGROUND_CONTEXT,
+		);
+		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const stop = follow(chat.view, () => {});
+		const focused = `document.activeElement === document.querySelector('.composer textarea')`;
+		const tap = async (x: number, y: number) => {
+			await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+			await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+		};
+		try {
+			await browser.metrics(390, 844);
+			await browser.call("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+			await browser.open(url(`/s/${session.id}`));
+			await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+			await browser.evaluate(`document.querySelector('.composer textarea').focus()`);
+			// A phone's keyboard holds the word being typed as a composition until it is committed.
+			await browser.call("Input.insertText", { text: "touch " });
+			await browser.call("Input.imeSetComposition", { text: "send", selectionStart: 4, selectionEnd: 4 });
+			await browser.wait(`!document.querySelector('.composer .send').disabled`);
+			const [bar, right, middle] = await browser.evaluate<[number, number, number]>(
+				`(() => { const s = document.querySelector('.composer .send').getBoundingClientRect(), f = document.querySelector('.composer').getBoundingClientRect(); return [s.left - 30, f.right - 6, s.top + s.height / 2]; })()`,
+			);
+			// A tap in the bar's gap left of Send does nothing: the textarea keeps the focus (and a phone its keyboard).
+			await tap(bar, middle);
+			assert.equal(await browser.evaluate<boolean>(focused), true);
+			// A tap right of Send's glyph, in the composer's padding where a thumb aiming at it lands, sends at once.
+			await tap(right, middle);
+			await until(chat.view, answered("Echo: touch send"), 30_000);
+			assert.deepEqual(
+				await browser.evaluate<[boolean, string]>(
+					`[${focused}, document.querySelector('.composer textarea').value]`,
+				),
+				[true, ""],
+			);
+		} finally {
+			await browser.call("Emulation.setTouchEmulationEnabled", { enabled: false });
+			stop();
+			chat.release();
+		}
+	});
+
 	it("keeps the caret where the user types inside the draft (the composer renders the draft it was given at once)", async () => {
 		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
 			{ cwd: fixture.workspace, title: "Caret" },

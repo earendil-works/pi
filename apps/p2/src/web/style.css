@@ -2585,6 +2585,12 @@ button.diff-number:hover {
 .composer-bar > :last-child {
 	place-items: center end;
 }
+/* Send (or Stop) takes taps up to the composer's right edge: a thumb aiming at the glyph often lands right of it. */
+.composer-bar > .round:last-child {
+	width: calc(var(--control) + var(--x));
+	margin-right: calc(-1 * var(--x));
+	padding-right: var(--x);
+}
 .spacer {
 	flex: 1;
 }
