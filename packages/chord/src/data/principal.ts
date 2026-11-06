@@ -56,3 +56,11 @@ function canonical(value: JsonValue): string {
 		.map((key) => `${JSON.stringify(key)}:${canonical(value[key]!)}`);
 	return `{${fields.join(",")}}`;
 }
+
+/**
+ * Whether `principal` is `other`: the same default key (canonical JSON), each computed once per principal object; no
+ * principal (`undefined`) is none.
+ */
+export function samePrincipal(principal: Principal | undefined, other: Principal, context: Context): boolean {
+	return principal !== undefined && principalKey(principal, context) === principalKey(other, context);
+}

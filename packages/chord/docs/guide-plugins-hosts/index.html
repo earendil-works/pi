@@ -722,7 +722,11 @@ to sign in, one place for files.</p>
 	root: <span class="tk-s">"./plugins"</span>,                              <span class="tk-c">// the app's own plugins: a required root</span>
 	api: { name: <span class="tk-s">"@notes/app"</span>, versions: [<span class="tk-s">"v1"</span>], modules: { <span class="tk-s">"@notes/app/v1"</span>: v1, <span class="tk-s">"@notes/app/v1/server"</span>: v1server } },
 	kinds: { server: { platform: <span class="tk-s">"node"</span> }, worker: { platform: <span class="tk-s">"node"</span> } },
-	principal: { server: { kind: <span class="tk-s">"server"</span> }, worker: (address) =&gt; ({ kind: <span class="tk-s">"worker"</span>, project: address.key }) },
+	principal: {
+		server: { kind: <span class="tk-s">"server"</span> },
+		worker: (address) =&gt; ({ kind: <span class="tk-s">"worker"</span>, project: address.key }),
+		owner: { kind: <span class="tk-s">"owner"</span> },                   <span class="tk-c">// whom the owner link, the token file and pairing sign in</span>
+	},
 	workers: [{
 		kind: <span class="tk-t">Project</span>,                              <span class="tk-c">// one worker per project</span>
 		entry: <span class="tk-s">"./worker.ts"</span>,
@@ -743,8 +747,8 @@ directory and store, the host at the project&#39;s address, the link to the serv
 <h3 id="what-plugins-get-from-the-kit">What plugins get from the kit</h3>
 <p>Plugins still import only the app&#39;s API; the API re-exports the kit&#39;s objects it offers:</p>
 <ul>
-<li><code>AppInfo</code> on the server (data directory, app name, API version) and <code>WorkerInfo</code> on workers (the address and the
-start data <code>start(address)</code> made): the <strong>start-data objects</strong>. Process values reach plugins only through them.</li>
+<li><code>AppInfo</code> on the server (data directory, app name, API version, owner) and <code>WorkerInfo</code> on workers (the address and
+the start data <code>start(address)</code> made): the <strong>start-data objects</strong>. Process values reach plugins only through them.</li>
 <li><code>Files</code>, one per host: <code>put</code> for small files, <code>begin</code>, <code>append</code> and <code>finish</code> for large ones, ranged <code>read</code>, <code>remove</code>
 and a watchable <code>list</code>, stored in the host&#39;s directory with caps per host.</li>
 <li><code>Sessions</code> on the server: <code>issue</code>, <code>revoke</code>, <code>list</code>.</li>
@@ -756,7 +760,8 @@ its home plugin serves it and reads <code>AppInfo</code>, so it reloads like any
 <p>HTTP <strong>denies by default</strong>: a request without a principal gets 401 before any plugin code runs, unless the route says
 <code>public: true</code>. Someone gets a principal through a <strong>session</strong>: a random token, kept in the store only as a hash, sent
 as a signed cookie by a browser or as <code>Authorization: Bearer</code> by a command-line client.</p>
-<p>The first session is the owner&#39;s. At each start the kit makes a one-time <strong>owner link</strong>,
+<p>The first session is the owner&#39;s, the principal the app names in <code>principal.owner</code> (a variant of its own, as here, or
+one of its users). At each start the kit makes a one-time <strong>owner link</strong>,
 <code>http://127.0.0.1:8788/_chord/owner#&lt;token&gt;</code>, valid ten minutes; the start script prints it. The token is in the
 fragment, which browsers never send, so it never reaches a log: the page posts it, the kit consumes it and sets the
 owner&#39;s cookie. A command-line client on the same machine reads <code>&lt;dataDir&gt;/owner-token</code> (mode 0600). One on another

@@ -47,7 +47,7 @@ export function startBoard(dataDir: string, root: string, context: Context): Pro
 				web: { platform: "browser", packages: { react: {}, "react/jsx-runtime": {} } },
 				tui: { platform: "node" },
 			},
-			principal: { server: { kind: "server" }, worker: () => ({ kind: "server" }) },
+			principal: { server: { kind: "server" }, owner: { kind: "owner" } },
 			web: { entry: fileURLToPath(new URL("./web/main.ts", import.meta.url)), page },
 			tui: { entry: fileURLToPath(new URL("./tui/main.ts", import.meta.url)) },
 			onError: (error) => console.error("board:", error.kind, error.error),

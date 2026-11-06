@@ -1,4 +1,5 @@
-// The owner (slice 13 §2, decision "The app kit, point 3: authentication"): no owner by loopback alone. At each start
+// The owner (slice 13 §2, decisions "The app kit, point 3: authentication" and "The kit's owner is a principal the app
+// chooses"): the owner is the principal the app names (`principal.owner`); no owner by loopback alone. At each start
 // the kit makes a one-time owner link (a random token, single use, valid 10 minutes, the previous one dropped); the
 // start script prints it. Its page reads the token from the URL's fragment (never sent to a server, so never in a
 // log) and posts it; the post consumes it and sets a browser session cookie for the owner. The owner token file
@@ -7,16 +8,11 @@
 import { chmod } from "node:fs/promises";
 import type { Context } from "../../context/index.ts";
 import type { Principal } from "../../data/index.ts";
+import { samePrincipal } from "../../data/principal.ts";
 import { defineFacet, type Facet, type Host } from "../../host/index.ts";
 import { Http } from "../http/index.ts";
 import { hashToken, matchesHash, newToken, readSecret, writeSecret } from "./secrets.ts";
 import { Sessions } from "./sessions.ts";
-
-/** The kit's owner principal: a variant every app's principal type has. */
-export type OwnerPrincipal = { readonly kind: "owner" };
-
-/** The owner principal. */
-export const OWNER: OwnerPrincipal = { kind: "owner" };
 
 /** How long an owner link is valid: 10 minutes. */
 const OWNER_LINK_MS = 10 * 60_000;
@@ -48,9 +44,9 @@ export const OWNER_PATH = "/_chord/owner";
 
 /**
  * The kit's facet for the owner link: `GET /_chord/owner`, a page posting the fragment's token, and `POST
- * /_chord/owner`, which consumes it and answers with the owner's session cookie.
+ * /_chord/owner`, which consumes it and answers with a session cookie of `owner`.
  */
-export function ownerFacet<P extends Principal>(link: OwnerLink): Facet<P> {
+export function ownerFacet<P extends Principal>(link: OwnerLink, owner: P): Facet<P> {
 	return defineFacet<P>((_host, self) =>
 		self.contribute(Http, {
 			routes: {
@@ -68,7 +64,7 @@ export function ownerFacet<P extends Principal>(link: OwnerLink): Facet<P> {
 						const sessions = await ctx.get(Sessions, {});
 						const secure = request.provenance.kind !== "local";
 						const issued = await sessions.issue(
-							{ principal: OWNER, label: "owner browser", kind: "browser", secure },
+							{ principal: owner, label: "owner browser", kind: "browser", secure },
 							ctx,
 						);
 						return { kind: "json", value: "signed in", headers: { "Set-Cookie": issued.cookie } };
@@ -95,29 +91,32 @@ export function fragmentPage(path: string, nonce: string): string {
 }
 
 /**
- * The owner token file at `path`: kept when its token still authenticates as the owner (its session exists, its secret
- * matches, it has not expired; its mode set to 0600 again), else a new device session of the owner written there (mode
- * 0600, in one step). Its token, for the start script.
+ * The owner token file at `path`: kept when its token still authenticates as `owner` (its session exists, its secret
+ * matches, it has not expired, it names `owner`; its mode set to 0600 again), else a new device session of `owner`
+ * written there (mode 0600, in one step), the old file's session revoked when it names another principal (the owner
+ * changed). Its token, for the start script.
  */
 export async function ownerTokenFile<P extends Principal>(
 	path: string,
+	owner: P,
 	host: Host<P>,
 	context: Context,
 ): Promise<string> {
 	const existing = await readSecret(path);
 	return host.root(async (ctx) => {
 		const sessions = await ctx.get(Sessions, {});
-		if (existing !== undefined && isOwner(await sessions.verify(existing, ctx))) {
-			await chmod(path, 0o600);
-			return existing;
+		if (existing !== undefined) {
+			// `verify` gives what `issue` stored: a principal of the app's type, or `null`.
+			const verified = (await sessions.verify(existing, ctx)) as P | null;
+			if (samePrincipal(verified ?? undefined, owner, ctx)) {
+				await chmod(path, 0o600);
+				return existing;
+			}
+			// The kit made that session for the file; replacing the file ends it.
+			if (verified !== null) await sessions.revoke(existing.slice(0, existing.indexOf(".")), ctx);
 		}
-		const { token } = await sessions.issue({ principal: OWNER, label: "owner token file", kind: "device" }, ctx);
+		const { token } = await sessions.issue({ principal: owner, label: "owner token file", kind: "device" }, ctx);
 		await writeSecret(path, token, existing === undefined ? "create" : "replace");
 		return token;
 	}, context);
-}
-
-/** Whether `principal` (as `Sessions.verify` gives it) is the owner. */
-function isOwner(principal: unknown): boolean {
-	return typeof principal === "object" && principal !== null && (principal as { kind?: unknown }).kind === "owner";
 }

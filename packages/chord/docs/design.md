@@ -493,8 +493,9 @@ drops, folds or resets.
 - The app defines its principal type `P`: JSON, every variant with a `kind`, a type alias (not an interface),
   unversioned (owner, 2026-10-22): Chord never persists principals, base code changes every host at once, links stamp
   them. Objects persist a projection with its own schema, never the principal (p2: chat's `Author { kind, id, name }`).
-  p2/p3: `owner` (`access: "local" | "relay" | "device"`), `guest` (`session`, `mode`, grant revision), `server`,
-  `worker` (`session`).
+  p2: `owner` (`access: "local" | "relay" | "device"`), `guest` (`session`, `mode`, grant revision), `server`,
+  `worker` (`session`). p3: `user`, `guest`, `worker`, `server`, no `owner` kind: the kit's owner is one of its users
+  (§23, decision "The kit's owner is a principal the app chooses").
 - **Links stamp principals.** A caller's own data never sets its principal.
 - **The principal key** maps a principal to its object identity (`principalKey`, default canonical JSON; cached per
   principal object; the same function on every host). It should include connection provenance and grant revision, so
@@ -2487,12 +2488,18 @@ entry. Opinionated and small: an app is its API, its built-in plugins and a star
   the app in the home directory. One server; worker kinds are a list the app defines, each a host kind with its own
   params (sharding is the app's) and how it starts (entry, start data, principal, idle time); zero kinds is a server
   with clients only.
-- **Principals and users:** the principal is tiny (a kind and an id) and the app's type; the kit needs only its server
-  and worker variants. User data lives in objects keyed by the user's id. Optional kit plugins: users (accounts with an
-  app-supplied profile schema), authenticators (device pairing, invite links, an ephemeral pick-a-name login).
+- **Principals and users:** the principal is tiny (a kind and an id) and the app's type; the kit needs only the server's
+  principal, each worker's (with worker kinds) and the owner's, values of that type the app chooses (decision "The kit's
+  owner is a principal the app chooses": the owner may be one of the app's users; the kit adds no variant). The owner is
+  strict JSON and never the server's principal (refused at start); the kit serves it as start data (`AppInfo.owner`).
+  User data lives in objects keyed by the user's id. Optional kit plugins: users (accounts with an app-supplied profile
+  schema), authenticators (device pairing, invite links, an ephemeral pick-a-name login).
 - **Authentication:** no owner by loopback alone: the start script prints a link with a one-time token that sets a
-  signed owner cookie; deny by default (the HTTP component refuses requests without a principal unless the route or
-  socket is public); a session helper issues and revokes sessions; command-line clients send a token in a header (an
+  signed cookie of the owner's session; the owner link, the owner token file and device pairing sign in as the app's
+  owner principal, and the owner-only routes (pairing's approval, invites) recognize it by canonical JSON, each
+  principal's key computed once per principal object; a change of the owner between starts replaces the owner token file
+  and revokes its old session; deny by default (the HTTP component refuses requests without a principal unless the route
+  or socket is public); a session helper issues and revokes sessions; command-line clients send a token in a header (an
   owner token file readable only by the app's OS user; a device pairing flow from other machines).
 - **Storage:** one store for the server, a directory per worker under its kind and address with its store; plugins
   never use data-directory paths. `Files`, one per host (decision "Files v2"), is the default file storage: its

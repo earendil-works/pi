@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/context/index.ts";
-import { canonicalJson, principalKey } from "../../src/data/internal.ts";
-import { counted, expectCollected } from "../support.ts";
+import { canonicalJson, principalKey, samePrincipal } from "../../src/data/internal.ts";
+import { counted, expectCollected, metered } from "../support.ts";
 
 describe("canonicalJson", () => {
 	it("sorts object keys and writes -0 as 0", () => {
@@ -71,5 +71,27 @@ describe("principalKey", () => {
 			return new WeakRef(principal);
 		})();
 		await expectCollected(ref);
+	});
+});
+
+describe("samePrincipal", () => {
+	const ada = { kind: "user", id: "u1" };
+
+	it("matches the same canonical JSON, whatever the property order; nothing else", () => {
+		expect(samePrincipal({ id: "u1", kind: "user" }, ada, BACKGROUND_CONTEXT)).toBe(true);
+		expect(samePrincipal({ ...ada, name: "Ada" }, ada, BACKGROUND_CONTEXT)).toBe(false);
+		expect(samePrincipal({ kind: "guest", id: "u1" }, ada, BACKGROUND_CONTEXT)).toBe(false);
+		expect(samePrincipal(undefined, ada, BACKGROUND_CONTEXT)).toBe(false);
+	});
+
+	it("computes each principal's key once (cost guard)", async () => {
+		const owner = { kind: "user", id: "owner" };
+		const { context, counts } = await metered();
+		const caller = { kind: "user", id: "owner" };
+		samePrincipal(caller, owner, context);
+		samePrincipal(caller, owner, context);
+		expect(counts()["chord.data.walks"]).toBe(2);
+		samePrincipal({ kind: "user", id: "owner" }, owner, context);
+		expect(counts()["chord.data.walks"]).toBe(3);
 	});
 });

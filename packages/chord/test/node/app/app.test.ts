@@ -1,7 +1,8 @@
 // Tests of `startServer` (slice 13 §1, §4, §5): the layout and the start-data object, start and close, a server without
-// workers, two worker kinds, `applyChanges`, a required root failing, a worker entry that does not build, the base
-// marks (a worker base's inputs among them), and export and import per address (documents, tables and files
-// round-trip; an existing address refused).
+// workers (and without `principal.worker`), an owner refused (not strict JSON, the server's principal), two worker
+// kinds, `applyChanges`, a required root failing, a worker entry that does not build, the base marks (a worker base's
+// inputs among them), and export and import per address (documents, tables and files round-trip; an existing address
+// refused).
 
 import { chmod, mkdir, readdir, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -10,11 +11,24 @@ import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { hostKind, local, remote, str, unknown } from "../../../src/contracts/index.ts";
 import { addressParam, HostData } from "../../../src/node/app/data.ts";
-import { AppInfo } from "../../../src/node/app/index.ts";
+import { AppInfo, type AppOptions } from "../../../src/node/app/index.ts";
 import { changesOf, flushed, rejection } from "../../support.ts";
 import { send } from "../http/support.ts";
 import { gitRepository, writePlugin } from "../plugins/support.ts";
-import { ECHO_SERVER, NOTES_PLUGIN, Notes, Project, tempDir, testApp, WORKER_ENTRY } from "./support.ts";
+import {
+	ECHO_SERVER,
+	NOTES_PLUGIN,
+	Notes,
+	Project,
+	startTestApp,
+	tempDir,
+	testApp,
+	type UserPrincipal,
+	userOwnerApp,
+	WORKER_ENTRY,
+} from "./support.ts";
+
+const ada: UserPrincipal = { kind: "user", id: "u1" };
 
 const Echo = local("test.echo", { version: 1, params: {}, members: { text: str() } });
 
@@ -26,7 +40,12 @@ describe("starting and closing", () => {
 			expect.arrayContaining(["cookie-secret", "store.sqlite"]),
 		);
 		const info = await app.host.get(AppInfo, {}, context);
-		expect([info.dataDir.value, info.name.value, info.version.value]).toEqual([dataDir, "chord-test", "v1"]);
+		expect([info.dataDir.value, info.name.value, info.version.value, info.owner.value]).toEqual([
+			dataDir,
+			"chord-test",
+			"v1",
+			{ kind: "owner" },
+		]);
 		expect((await app.host.get(Echo, {}, context)).text.value).toBe("echo");
 		expect(app.ownerLink()).toMatch(new RegExp(`^http://127\\.0\\.0\\.1:${port}/_chord/owner#[A-Za-z0-9_-]{43}$`));
 		expect(app.workers.size).toBe(0);
@@ -120,6 +139,27 @@ describe("starting and closing", () => {
 		// Closed: the data directory's lock is free again.
 		const { app } = await testApp({ dataDir });
 		await app.close(context);
+	});
+
+	it("starts without worker kinds and without `principal.worker`; worker kinds need it (a type error)", async () => {
+		const { app } = await startTestApp<UserPrincipal>({ server: { kind: "server" }, owner: ada }, {});
+		expect(app.workers.size).toBe(0);
+		await app.close(context);
+		// Type-checked only: the `@ts-expect-error` below is the test.
+		const worker = { kind: Project, entry: WORKER_ENTRY, start: () => null, authorize: () => true };
+		const principal: { server: UserPrincipal; owner: UserPrincipal } = { server: { kind: "server" }, owner: ada };
+		void ((options: AppOptions<UserPrincipal>) => {
+			// @ts-expect-error worker kinds without `principal.worker`
+			const refused: AppOptions<UserPrincipal> = { ...options, principal, workers: [worker] };
+			return refused;
+		});
+	});
+
+	it("refuses an owner that is not strict JSON or is the server's principal, before it opens anything", async () => {
+		const notJson = await rejection(userOwnerApp({ kind: "user", id: "u1", name: undefined }));
+		expect(String(notJson)).toContain("principal.owner must be strict JSON");
+		const server = await rejection(userOwnerApp({ kind: "server" }));
+		expect(String(server)).toContain("principal.owner must not be the server's principal");
 	});
 });
 

@@ -19,7 +19,11 @@ const app = await startServer<P>({
 	listen: { host: "127.0.0.1", port: 8788 },      // 127.0.0.1 and a free port by default
 	api: { name: "@acme/app", versions: ["v3"], modules: { "@acme/app/v3": v3, "@acme/app/v3/server": v3server } },
 	kinds: { server: { platform: "node" }, worker: { platform: "node" } },
-	principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", key: address.key }) },
+	principal: {
+		server: { kind: "server" },
+		worker: (address) => ({ kind: "worker", key: address.key }),   // only with worker kinds
+		owner: { kind: "user", id: "ada" },        // whom the owner's sign-in and pairing sign in
+	},
 	workers: [{
 		kind: Project,                              // a host kind of the app, any params
 		entry: "./worker.ts", execArgv: [...], env: {...},
@@ -50,8 +54,14 @@ await app.close(ctx);                                       // http, workers, ho
 startWorker<P>({ api, kinds, busy, onError });
 ```
 
-- **The principal type** `P` is the app's; the kit needs `principal.server` and `principal.worker(address)` and adds
-  one variant, its owner: `{ kind: "owner" }` must be one of `P` (a type error otherwise, on `AppOptions`).
+- **The principal type** `P` is the app's. The kit needs `principal.server`, `principal.owner` (any value of `P`: one of
+  the app's users or a variant of its own) and, with worker kinds, `principal.worker(address)` (worker kinds without it
+  are a type error on `AppOptions`, also a `workers` list typed as an array, not a tuple, that is empty). The owner must
+  be strict JSON (sessions keep it as JSON) and not the server's principal: `startServer` refuses either. The owner
+  link, the owner token file and device pairing sign in as `principal.owner`; pairing's confirm and approval, its caps'
+  exemption and invites recognize it by canonical JSON (`samePrincipal`: the default principal key, computed once per
+  principal object). Changing `principal.owner` between starts replaces the owner token file and revokes its session;
+  other sessions issued for the previous owner stay its own (the app revokes them through `Sessions` if it wants).
 - **The API's modules** are named by convention: `<api>/<version>` for every kind and `<api>/<version>/<kind>` for a
   kind's own; a kind's `packages` (React for a web kind) are host packages besides. The modules are this process's
   instances; the worker's entry passes the same `api` and `kinds`.
@@ -73,9 +83,9 @@ startWorker<P>({ api, kinds, busy, onError });
 ## Start data
 
 The kit's start-data objects serve process values to plugins: `AppInfo` (`chord.app.info`, on the server: `dataDir`,
-`name`, `version`, the newest API version) and `WorkerInfo` (`chord.app.worker-info`, on workers: `address`, `start`,
-the start data the app's `start(address)` made). Plugins `self.get(AppInfo, {})` through the app's API, which
-re-exports them; nothing else of the process reaches a plugin.
+`name`, `version`, the newest API version, `owner`, the app's `principal.owner`) and `WorkerInfo`
+(`chord.app.worker-info`, on workers: `address`, `start`, the start data the app's `start(address)` made). Plugins
+`self.get(AppInfo, {})` through the app's API, which re-exports them; nothing else of the process reaches a plugin.
 
 ## Base code
 
@@ -113,8 +123,9 @@ and reads `AppInfo`.
   The token stays in the fragment: browsers never send it, so it never reaches a log. No owner by loopback alone.
 - **The owner token file** `<dataDir>/owner-token`: a device session of the owner for command-line clients on the same
   machine, mode 0600, written in one step (a temporary file made exclusively with mode 0600, then linked or renamed into
-  place). Kept while its token authenticates as the owner (its session exists, the secret matches, not expired; its
-  mode set to 0600 again); replaced at the next start otherwise.
+  place). Kept while its token authenticates as the owner (its session exists, the secret matches, not expired, its
+  principal is `principal.owner`; its mode set to 0600 again); replaced at the next start otherwise, its session revoked
+  when it names another principal (the owner changed).
 - **Device pairing** for clients elsewhere: `POST /_chord/pair` (public, `{ label? }`) returns `{ code, poll }`; the
   owner opens `/_chord/pair/<code>` signed in (owner only, a confirm page naming the device) and approves; the
   client's `POST /_chord/pair/poll { poll }` answers `{ status: "waiting" }` until then, `{ status: "approved", token }`
@@ -127,13 +138,13 @@ and reads `AppInfo`.
 
 ## Optional plugins
 
-`defineUsers(profile)` (accounts by id with the app's profile schema: `Users` with `list`, `get`, `update`,
-`remove`), `inviteFacet()` (the owner's `POST /_chord/invites { principal, label }` makes a 7-day single-use link,
-whose page signs the invitee in as that principal) and `ephemeralLoginFacet<P>()` (a public `POST /_chord/login {
+`defineUsers(profile)` (accounts by id with the app's profile schema: `Users` with `list`, `get`, `update`, `remove`),
+`inviteFacet()` (the owner, `AppInfo.owner`, makes a 7-day single-use link with `POST /_chord/invites { principal, label
+}`, whose page signs the invitee in as that principal) and `ephemeralLoginFacet<P>()` (a public `POST /_chord/login {
 name }` signing in as `{ kind: "user", id: <fresh>, name }`, a type error unless `P` allows it). They are exported
-facets, not plugin directories: each takes the app's settings as arguments (a profile schema, the principal type),
-and a plugin directory could not import the kit (plugins import only the app's API). The app re-exports one through
-its API and adds a one-line plugin to its root:
+facets, not plugin directories: each takes the app's settings as arguments (a profile schema, the principal type), and a
+plugin directory could not import the kit (plugins import only the app's API). The app re-exports one through its API
+and adds a one-line plugin to its root:
 
 ```ts
 // app/v3/server.ts

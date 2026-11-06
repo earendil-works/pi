@@ -1,4 +1,4 @@
-// The notes app's principals: its server and workers, the kit's owner, and the users its plugins may sign in.
+// The notes app's principals: its server and workers, its owner, and the users its plugins may sign in.
 
 /** Who someone is in the notes app. */
 export type NotesPrincipal =

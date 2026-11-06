@@ -55,7 +55,8 @@ await startWorker<P>({ api, kinds, onError });   // reads the start message, ope
 ## 2. Principals and sessions
 
 - The app's principal type `P`; the kit needs only `principal.server` and `principal.worker(address)`. The kit adds
-  one variant for its owner: `{ kind: "owner" }` must be assignable to `P` (a type check).
+  one variant for its owner: `{ kind: "owner" }` must be assignable to `P` (a type check). (Superseded: decision "The
+  kit's owner is a principal the app chooses".)
 - **Sessions** (`app/sessions.ts`, a kit object on the server, persisted in the server store): `issue(principal,
   { label, kind: "browser" | "device" }, ctx)` returns a token; tokens stored hashed; `revoke(id)`; `list` (watchable:
   label, kind, created, last used). The kit's authenticator (contributed to `Authenticators`) reads the session cookie
