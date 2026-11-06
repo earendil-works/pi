@@ -16,7 +16,14 @@ import {
 } from "@p2/app/v1/web";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { type EnvSummary, Envs, type EnvTest, type EnvUser, type SandboxStatus } from "./contract.ts";
-import { ENV_NAME, type EnvConfig, type GondolinEnvConfig, type SandboxMount, type SshEnvConfig } from "./schema.ts";
+import {
+	DEFAULT_DISK_GB,
+	ENV_NAME,
+	type EnvConfig,
+	type GondolinEnvConfig,
+	type SandboxMount,
+	type SshEnvConfig,
+} from "./schema.ts";
 
 type SshDraft = {
 	name: string;
@@ -95,6 +102,7 @@ type SandboxDraft = {
 	allowHosts: string;
 	cpus: string;
 	memoryMb: string;
+	diskGb: string;
 };
 function sandboxDraftOf(name: string, config: GondolinEnvConfig): SandboxDraft {
 	return {
@@ -105,6 +113,7 @@ function sandboxDraftOf(name: string, config: GondolinEnvConfig): SandboxDraft {
 		allowHosts: (config.allowHosts ?? []).join("\n"),
 		cpus: config.cpus === undefined ? "" : String(config.cpus),
 		memoryMb: config.memoryMb === undefined ? "" : String(config.memoryMb),
+		diskGb: config.diskGb === undefined ? "" : String(config.diskGb),
 	};
 }
 function sandboxConfigOf(draft: SandboxDraft): EnvConfig {
@@ -124,6 +133,7 @@ function sandboxConfigOf(draft: SandboxDraft): EnvConfig {
 		...(allowHosts.length ? { allowHosts } : {}),
 		...(draft.cpus.trim() ? { cpus: number(draft.cpus, "CPUs") } : {}),
 		...(draft.memoryMb.trim() ? { memoryMb: number(draft.memoryMb, "Memory") } : {}),
+		...(draft.diskGb.trim() ? { diskGb: number(draft.diskGb, "Disk") } : {}),
 	};
 }
 
@@ -651,7 +661,20 @@ function SandboxFields({
 						placeholder="1024"
 					/>
 				</label>
+				<label className="field">
+					<span className="label">Disk (GB)</span>
+					<input
+						className="input mono"
+						value={draft.diskGb}
+						onChange={(event) => update({ diskGb: event.target.value })}
+						inputMode="numeric"
+						placeholder={String(DEFAULT_DISK_GB)}
+					/>
+				</label>
 			</div>
+			<span className="muted small">
+				The VM's own disk keeps what is installed in it across restarts. It can only grow; Reset disk starts over.
+			</span>
 		</>
 	);
 }
@@ -748,6 +771,7 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 		setError(errorText(reason)),
 	);
 	const [confirmDelete, setConfirmDelete] = useState(false);
+	const [confirmReset, setConfirmReset] = useState(false);
 	const filled = useRef<string | null | undefined>(null);
 	useEffect(() => {
 		if (filled.current === screen) return;
@@ -933,6 +957,41 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 										{busy ? "Working…" : "Test"}
 									</button>
 								</div>
+								{confirmReset ? (
+									<div className="stack">
+										<span className="small">
+											Reset {name}'s disk? Everything installed in the VM is removed, and it starts from the
+											guest image again. Shared folders are not touched.
+										</span>
+										<div className="inline-form">
+											<button
+												type="button"
+												className="text-action danger"
+												disabled={busy}
+												onClick={() =>
+													void run(async () => {
+														setConfirmReset(false);
+														setVm(name, await service.sandboxResetDisk({ name }, BACKGROUND_CONTEXT));
+													})
+												}
+											>
+												Reset disk
+											</button>
+											<button type="button" className="text-action" onClick={() => setConfirmReset(false)}>
+												Cancel
+											</button>
+										</div>
+									</div>
+								) : (
+									<button
+										type="button"
+										className="text-action danger"
+										disabled={busy}
+										onClick={() => setConfirmReset(true)}
+									>
+										Reset disk
+									</button>
+								)}
 							</div>
 						)}
 						<p className="muted small sandbox-intro">
@@ -1041,6 +1100,7 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 									{sessions > 0
 										? ` anyway? ${plural(sessions, "session")} keep their history, but their tools refuse to run until you move them to another location.`
 										: "?"}
+									{sandbox ? " Its disk, with everything installed in the VM, is removed too." : ""}
 								</span>
 								<div className="inline-form">
 									<button

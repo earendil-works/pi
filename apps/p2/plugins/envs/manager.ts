@@ -315,7 +315,10 @@ export class EnvManager {
 	}
 
 	/** Run a launcher command for sandbox `name` on its host and read the VM's state from its answer. */
-	private async sandboxCommand(name: string, command: "status" | "start" | "stop" | "forget"): Promise<SandboxStatus> {
+	private async sandboxCommand(
+		name: string,
+		command: "status" | "start" | "stop" | "reset" | "forget",
+	): Promise<SandboxStatus> {
 		const { config, target, remote } = await this.sandboxTarget(name);
 		const key = sandboxKey(this.directory, name);
 		const args = command === "start" ? [command, key, sandboxArgument(config)] : [command, key];
@@ -344,6 +347,12 @@ export class EnvManager {
 	async sandboxStop(name: string): Promise<SandboxStatus> {
 		this.release(name);
 		return this.sandboxCommand(name, "stop");
+	}
+
+	/** Stops the VM and removes its disk: the next start begins from the guest image again. */
+	async sandboxResetDisk(name: string): Promise<SandboxStatus> {
+		this.release(name);
+		return this.sandboxCommand(name, "reset");
 	}
 
 	async acceptHostKey(name: string, lines: readonly string[]): Promise<void> {

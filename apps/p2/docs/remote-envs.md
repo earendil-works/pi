@@ -53,21 +53,30 @@ starts, stops and deletes sandboxes, in the Envs sheet; plugins pick an existing
   "mounts": [{ "host": "~/sbx/box1", "guest": "/workspace" }, { "host": "~/datasets", "guest": "/data", "readonly": true }],
   "allowHosts": ["registry.npmjs.org", "*.github.com"],
   "cpus": 2,
-  "memoryMb": 2048
+  "memoryMb": 2048,
+  "diskGb": 32
 }
 ```
 
-- **What the VM sees:** its own root file system (lost when the VM restarts) and the listed host folders; nothing else
-  of the host.
-  A writable folder must not contain or be inside `~/.pi` (p2's launcher and daemons run from there on the host).
-  `/opt/pi-env` (the daemon) and `/.p2-vfs` (Gondolin's own mount point) are reserved in the VM.
+- **What the VM sees:** its own disk and the listed host folders; nothing else of the host. A writable folder must not
+  contain or be inside `~/.pi` (p2's launcher and daemons run from there on the host). `/opt/pi-env` (the daemon) and
+  `/.p2-vfs` (Gondolin's own mount point) are reserved in the VM.
+- **Disk:** each sandbox has its own disk, `~/.pi/p2/sandbox/disks/<key>.qcow2` on the host: a qcow2 layer over the
+  guest image it was created from, so it takes only the space written. It holds the whole root file system, home and
+  caches included (only `/tmp` is in memory), so what is installed in the VM stays across restarts, crashes and host
+  reboots. Its size is `diskGb` (default 32; it only grows): the supervisor grows the file before boot and the file
+  system once mounted (`resize2fs`; not Gondolin's `rootfs.size`, which resizes while the guest may still be mounting).
+  At its first boot the disk gets an ext4 journal (the guest image has none), so a VM that ends without unmounting is
+  recovered at the next mount; a stop writes what the guest holds in memory first (`sync`; Gondolin's close kills QEMU).
+  **Reset disk** (Envs sheet, `sandboxResetDisk`) stops the VM and removes the disk; the next start begins from the
+  guest image again (and from a newer one if Gondolin's changed meanwhile). Deleting the sandbox removes its disk.
 - **Network:** HTTP(S) to `allowHosts` only (Gondolin's patterns: `*` alone is any host, `*` inside a pattern any
   substring); everything else is refused with 403 before the host resolves the name, so names do not leak to DNS. An
   empty or missing list allows no host. Allowed names that resolve to private addresses are refused too. Other
   protocols are not routed.
 - **Lifecycle:** one long-lived VM per sandbox, shared by every session working in it. It starts at the first
   connection (or **Start**, **Save and start**, **Test**) and runs until **Stop**, deleting the sandbox (which stops it
-  and removes its run directory) or moving it to another host (which stops it first), the VM dying (the supervisor notices within seconds; the next connection starts
+  and removes its disk and run directory) or moving it to another host (which stops it first), the VM dying (the supervisor notices within seconds; the next connection starts
   a new one) or a host reboot. Other configuration changes apply at its next start: the sheet says so while the
   running VM is older, and offers **Save and restart**.
 - **Connection:** the worker connects to the host over SSH as for the host itself, deploys pi-env's daemon there

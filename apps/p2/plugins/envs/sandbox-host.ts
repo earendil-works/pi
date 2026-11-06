@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { type RemotePlatform, type SshTarget, sshArguments } from "@earendil-works/pi-env";
-import type { GondolinEnvConfig } from "./config.ts";
+import { DEFAULT_DISK_GB, type GondolinEnvConfig } from "./config.ts";
 
 /** The launcher's files as deployed: name on the host, file in the launcher's source directory. */
 const FILES: readonly (readonly [string, string])[] = [
@@ -56,6 +56,7 @@ export function sandboxArgument(config: GondolinEnvConfig): string {
 		allowHosts: config.allowHosts ?? [],
 		...(config.cpus === undefined ? {} : { cpus: config.cpus }),
 		...(config.memoryMb === undefined ? {} : { memoryMb: config.memoryMb }),
+		diskGb: config.diskGb ?? DEFAULT_DISK_GB,
 	};
 	return Buffer.from(JSON.stringify(value)).toString("base64");
 }

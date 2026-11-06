@@ -142,6 +142,7 @@ function stubs(calls: Calls, role: "owner" | "guest" = "owner") {
 					sandboxStatus: () => ({ state: "stopped" as const }),
 					sandboxStart: () => ({ state: "stopped" as const }),
 					sandboxStop: () => ({ state: "stopped" as const }),
+					sandboxResetDisk: () => ({ state: "stopped" as const }),
 				};
 			},
 		],

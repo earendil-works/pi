@@ -5,6 +5,7 @@ import { ENV_NAME, type EnvConfig, EnvConfigSchema, type EnvsConfig, type Gondol
 
 export { envRevision } from "@p2/app/v1/node";
 export {
+	DEFAULT_DISK_GB,
 	ENV_NAME,
 	type EnvConfig,
 	EnvConfigSchema,

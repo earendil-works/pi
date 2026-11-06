@@ -35,7 +35,12 @@ export const GondolinEnvConfigSchema = obj({
 	allowHosts: opt(arr(str({ minLength: 1, maxLength: 255 }), { maxItems: 256 })),
 	cpus: opt(int({ minimum: 1, maximum: 64 })),
 	memoryMb: opt(int({ minimum: 256, maximum: 262144 })),
+	/** Size of the VM's own disk, which keeps what is installed across restarts (default `DEFAULT_DISK_GB`; grows only). */
+	diskGb: opt(int({ minimum: 1, maximum: 4096 })),
 });
+
+/** The disk size of a sandbox without `diskGb`. */
+export const DEFAULT_DISK_GB = 32;
 
 export const EnvConfigSchema = union([SshEnvConfigSchema, GondolinEnvConfigSchema]);
 export type SshEnvConfig = Static<typeof SshEnvConfigSchema>;

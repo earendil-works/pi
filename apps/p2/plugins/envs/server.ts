@@ -18,7 +18,7 @@ import { Hosts, Server } from "@p2/app/v1/server";
 import { Catalog, type Session } from "../sessions/contract.ts";
 import { StatusStore } from "../status/contract.ts";
 import { type Child, ChildStore } from "../subagents/contract.ts";
-import { envRevision, sandboxesOn } from "./config.ts";
+import { type EnvConfig, envRevision, sandboxesOn } from "./config.ts";
 import { EnvManagers, EnvService, Envs, EnvTestSchema } from "./contract.ts";
 import { EnvManager } from "./manager.ts";
 import { EnvStore } from "./store.ts";
@@ -36,13 +36,35 @@ export const sessionsUsing = (
 		(session) => session.env === name || (children?.[session.id] ?? []).some((child) => child.location?.env === name),
 	);
 
-/** Pages built with version 1 of `Envs` (before `users` and `force`): rows without users; a delete is never forced. */
+/** A configuration as versions 1 and 2 of `Envs` know it: sandboxes without `diskGb`. */
+const configV2 = (config: EnvConfig): EnvConfig => {
+	if (config.type !== "gondolin") return config;
+	const { diskGb: _diskGb, ...rest } = config;
+	return rest;
+};
+
+/**
+ * Pages built with older versions of `Envs`: 2 gets rows without sandbox disk sizes; 1 also without users, and its
+ * delete is never forced. Their saves are a subset of the current ones.
+ */
 const ENVS_ACCEPTS: AcceptsTable<typeof Envs> = {
 	1: {
-		state: { owner: { envs: (rows) => rows.map(({ users: _users, ...row }) => row) } },
+		state: {
+			owner: { envs: (rows) => rows.map(({ users: _users, ...row }) => ({ ...row, config: configV2(row.config) })) },
+		},
 		methods: {
-			list: { result: (rows) => rows.map(({ users: _users, ...row }) => row) },
+			list: {
+				result: (rows) => rows.map(({ users: _users, ...row }) => ({ ...row, config: configV2(row.config) })),
+			},
+			save: { args: (old) => old },
 			delete: { args: (old) => old },
+		},
+	},
+	2: {
+		state: { owner: { envs: (rows) => rows.map((row) => ({ ...row, config: configV2(row.config) })) } },
+		methods: {
+			list: { result: (rows) => rows.map((row) => ({ ...row, config: configV2(row.config) })) },
+			save: { args: (old) => old },
 		},
 	},
 };
@@ -236,6 +258,7 @@ export default defineFacet((host) => {
 					sandboxStatus: ({ name }) => manager().manager.sandboxStatus(name),
 					sandboxStart: ({ name }) => manager().manager.sandboxStart(name),
 					sandboxStop: ({ name }) => manager().manager.sandboxStop(name),
+					sandboxResetDisk: ({ name }) => manager().manager.sandboxResetDisk(name),
 				},
 			};
 		},
