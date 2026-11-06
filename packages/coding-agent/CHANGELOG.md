@@ -43,6 +43,8 @@
 - Fixed the codemode `resolves to` summary of a tool leaving out field names behind a local `$ref`, for example `structuredContent?` instead of `structuredContent?: { results }` for MCP output schemas that put their models in `$defs` ([#11803](https://github.com/earendil-works/pi/issues/11803))
 - Fixed every codemode script failing with `URI malformed` when any callable tool, such as an MCP tool, had a `$ref` with a malformed percent escape (`#/$defs/%E0`) in its schema, even scripts that do not call that tool. The parameter now renders as `unknown` in the tool's declaration ([#11803](https://github.com/earendil-works/pi/issues/11803))
 - Fixed `ctrl+o` not expanding or collapsing the output of `!` and `!!` commands run while the agent is working. New `!`/`!!` output now starts in the current expand state, the output no longer disappears when a steering or follow-up message is queued, and it moves into the chat when the agent finishes instead of on the next submitted message ([#11875](https://github.com/earendil-works/pi/issues/11875))
+- Fixed closing the console window or terminal tab on Windows skipping `session_shutdown` and leaving commands started by the bash tool running, for example `sleep 300` from `bash -c "sleep 300"`. pi now handles SIGHUP on Windows like on POSIX and waits for `taskkill` to finish before it exits. Quitting with Ctrl+D or `/quit` while a `!` command runs, or ending RPC mode while a `bash` command runs, no longer leaves that command running on Windows either
+
 
 ## [1.5.0] - 2026-11-02
 

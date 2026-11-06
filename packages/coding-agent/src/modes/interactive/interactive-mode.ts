@@ -4495,6 +4495,9 @@ export class InteractiveMode {
 
 		this.stop();
 		await this.runtimeHost.dispose();
+		// dispose() only starts killing a running user `!` command. On Windows that kill is an
+		// asynchronous taskkill, which loses the race with process.exit and leaves the command running.
+		killTrackedDetachedChildren();
 
 		const resumeCommand = formatResumeCommand(this.sessionManager);
 		if (resumeCommand) {
@@ -4563,10 +4566,9 @@ export class InteractiveMode {
 	private registerSignalHandlers(): void {
 		this.unregisterSignalHandlers();
 
-		const signals: NodeJS.Signals[] = ["SIGTERM"];
-		if (process.platform !== "win32") {
-			signals.push("SIGHUP");
-		}
+		// On Windows, Node never emits SIGTERM, but emits SIGHUP when the console window or terminal tab
+		// is closed; Windows then terminates the process about 5 s later.
+		const signals: NodeJS.Signals[] = ["SIGTERM", "SIGHUP"];
 
 		for (const signal of signals) {
 			const handler = () => {

@@ -371,10 +371,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	};
 
 	const registerSignalHandlers = (): void => {
-		const signals: NodeJS.Signals[] = ["SIGTERM"];
-		if (process.platform !== "win32") {
-			signals.push("SIGHUP");
-		}
+		// On Windows, Node never emits SIGTERM, but emits SIGHUP when the console window or terminal tab
+		// is closed; Windows then terminates the process about 5 s later.
+		const signals: NodeJS.Signals[] = ["SIGTERM", "SIGHUP"];
 
 		for (const signal of signals) {
 			const exitCode = signal === "SIGHUP" ? 129 : 143;
@@ -747,6 +746,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
 		await runtimeHost.dispose();
+		// dispose() only starts killing a running `bash` command. On Windows that kill is an
+		// asynchronous taskkill, which loses the race with process.exit and leaves the command running.
+		killTrackedDetachedChildren();
 		detachInput();
 		process.stdin.pause();
 		if (signal !== "SIGTERM") {

@@ -207,11 +207,33 @@ export function untrackDetachedChildPid(pid: number): void {
 	trackedDetachedChildPids.delete(pid);
 }
 
+/** Kill every tracked shell process tree. On Windows this blocks until taskkill finishes. */
 export function killTrackedDetachedChildren(): void {
-	for (const pid of trackedDetachedChildPids) {
-		killProcessTree(pid);
+	if (trackedDetachedChildPids.size === 0) return;
+	if (process.platform === "win32") {
+		// Callers exit right after this. An asynchronous taskkill would race that exit: when pi exits,
+		// libuv's job object kills the shell it spawned, and taskkill /T walks parent PIDs, so it then no
+		// longer finds the command the shell started (bash -c "sleep 300" leaves sleep.exe running).
+		// One taskkill takes about 200 ms; the timeout stays well below the ~5 s Windows allows after a
+		// console close (SIGHUP). windowsHide gives taskkill its own hidden console, so it does not
+		// receive that console's close event.
+		const pidArgs = [...trackedDetachedChildPids].flatMap((pid) => ["/PID", String(pid)]);
+		spawnSync(getTaskkillPath(), ["/F", "/T", ...pidArgs], {
+			stdio: "ignore",
+			timeout: 2000,
+			windowsHide: true,
+		});
+	} else {
+		for (const pid of trackedDetachedChildPids) {
+			killProcessTree(pid);
+		}
 	}
 	trackedDetachedChildPids.clear();
+}
+
+// Use the trusted System32 executable so cleanup does not depend on PATH.
+function getTaskkillPath(): string {
+	return join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe");
 }
 
 /**
@@ -219,17 +241,12 @@ export function killTrackedDetachedChildren(): void {
  */
 export function killProcessTree(pid: number): void {
 	if (process.platform === "win32") {
-		// Use the trusted System32 executable so cleanup does not depend on PATH.
 		try {
-			const child = spawn(
-				join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"),
-				["/F", "/T", "/PID", String(pid)],
-				{
-					stdio: "ignore",
-					detached: true,
-					windowsHide: true,
-				},
-			);
+			const child = spawn(getTaskkillPath(), ["/F", "/T", "/PID", String(pid)], {
+				stdio: "ignore",
+				detached: true,
+				windowsHide: true,
+			});
 			// A failed spawn emits "error" asynchronously; consume it to avoid crashing Node.
 			child.once("error", () => {});
 		} catch {
