@@ -131,7 +131,7 @@ import { parseGitUrl } from "../../utils/git.ts";
 import { ensurePngTranscoder } from "../../utils/image-convert.ts";
 import { getCwdRelativePath, shortenHomePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
-import { killTrackedDetachedChildren } from "../../utils/shell.ts";
+import { killTrackedProcessTrees } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { stripBom } from "../../utils/text.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
@@ -4503,7 +4503,7 @@ export class InteractiveMode {
 	private emergencyTerminalExit(): never {
 		this.isShuttingDown = true;
 		this.unregisterSignalHandlers();
-		killTrackedDetachedChildren();
+		killTrackedProcessTrees();
 		// The terminal is gone. Do not run normal shutdown because TUI and
 		// extension cleanup can write restore sequences and re-trigger EIO.
 		process.exit(129);
@@ -4533,7 +4533,7 @@ export class InteractiveMode {
 			this.unregisterSignalHandlers();
 		} catch {}
 		try {
-			killTrackedDetachedChildren();
+			killTrackedProcessTrees();
 		} catch {}
 		try {
 			this.ui.stop();
@@ -4570,7 +4570,7 @@ export class InteractiveMode {
 				// first, then attempts terminal restore. A genuinely dead terminal
 				// surfaces as an EIO on the restore writes, which the stdout/stderr
 				// error handler converts into emergencyTerminalExit (see #4144, #5080).
-				killTrackedDetachedChildren();
+				killTrackedProcessTrees();
 				void this.shutdown({ fromSignal: true });
 			};
 			process.prependListener(signal, handler);
