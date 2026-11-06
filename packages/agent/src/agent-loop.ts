@@ -905,12 +905,9 @@ async function executePreparedToolCall(
 	} catch (error) {
 		const durationMs = elapsed();
 		acceptingUpdates = false;
-		// Drain pending notifications, but preserve the original tool error if both fail.
-		try {
-			await updates.drain();
-		} catch {
-			// The update failure was already captured by the successful-execution path.
-		}
+		// A tool can reject while an unrelated notification remains pending
+		// forever. Do not mask or delay its original error waiting for progress.
+		updates.cancel();
 		return {
 			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
 			isError: true,

@@ -54,3 +54,27 @@ describe("tool update progress under slow consumers", () => {
 		expect(delivered.length).toBeLessThan(20);
 	});
 });
+
+describe("tool update cancellation", () => {
+	it("does not wait for a stuck notification after tool execution rejects", async () => {
+		const updates = new ToolUpdateTracker(1);
+		updates.track(() => new Promise<void>(() => {}));
+		const capacity = updates.track(() => Promise.resolve());
+		updates.cancel();
+		await capacity;
+		await updates.drain();
+		expect(updates.pendingCount).toBe(0);
+	});
+	it("does not send a coalesced update after cancellation", async () => {
+		const updates = new ToolUpdateTracker(1);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => { release = resolve; });
+		const delivered: string[] = [];
+		updates.track(() => { delivered.push("first"); return gate; });
+		updates.track(() => { delivered.push("second"); });
+		updates.cancel();
+		release();
+		await updates.drain();
+		expect(delivered).toEqual(["first"]);
+	});
+});

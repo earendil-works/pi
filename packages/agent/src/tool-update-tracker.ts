@@ -90,6 +90,20 @@ export class ToolUpdateTracker {
 		this.#changed.clear();
 	}
 
+	/**
+	 * Abandon progress updates after the tool rejects. Pending callbacks can be
+	 * indefinitely stalled by a subscriber; abandoning them must not stall the
+	 * tool's original error, nor deliver a queued stale progress snapshot.
+	 */
+	cancel(): void {
+		this.#latest = undefined;
+		this.#pending.clear();
+		this.#releaseCapacity?.();
+		this.#capacityPromise = undefined;
+		this.#releaseCapacity = undefined;
+		this.#notify();
+	}
+
 	/** Wait for delivery, or fail promptly instead of awaiting unrelated hung updates. */
 	async drain(): Promise<void> {
 		while (this.#pending.size > 0 || this.#latest) {
