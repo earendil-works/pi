@@ -37,6 +37,8 @@ const NONE: RowRange = { start: 0, end: -1 };
 export type RowEstimates<Row> = {
 	estimate(row: Row, width: number): number;
 	measured(row: Row, width: number, height: number): void;
+	/** Optional version of stateful estimates shared between transcripts. */
+	readonly revision?: number;
 };
 const NO_ESTIMATES: RowEstimates<ListRow> = { estimate: () => 0, measured: () => {} };
 /** How far beyond the viewport rows are rendered, in viewports (at least `MIN_OVERSCAN` pixels). */
@@ -123,6 +125,7 @@ export class TranscriptScroll {
 	#cache: string | undefined;
 	#rows: readonly ListRow[] = NO_ROWS;
 	#estimates: RowEstimates<ListRow> = NO_ESTIMATES;
+	#estimatesRevision: number | undefined;
 	#rendered: RowRange = NONE;
 	/** The range the last change replaced (`#updateRange`), while the rows are the same. */
 	#replaced: RowRange | undefined;
@@ -201,9 +204,13 @@ export class TranscriptScroll {
 			const appendOnly =
 				rows.length > previous.length &&
 				estimates === this.#estimates &&
+				// Stateful estimators may learn from another transcript with the same
+				// estimator identity, invalidating earlier unmeasured row heights.
+				(estimates.revision === undefined || estimates.revision === this.#estimatesRevision) &&
 				previous.every((row, index) => rows[index] === row);
 			this.#rows = rows;
 			this.#estimates = estimates;
+			this.#estimatesRevision = estimates.revision;
 			const estimateRow = (index: number) => {
 				const row = rows[index];
 				return row ? estimates.estimate(row, this.#rowWidth()) : 0;

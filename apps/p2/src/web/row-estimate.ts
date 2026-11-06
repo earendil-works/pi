@@ -56,6 +56,12 @@ export class RowEstimator<Row extends object> {
 	readonly #fallback: number;
 	readonly #kinds = new Map<string, Fit>();
 	readonly #all = new Fit();
+	#revision = 0;
+
+	/** Incremented when shared measurements change the estimate model. */
+	get revision(): number {
+		return this.#revision;
+	}
 	readonly #first = new WeakMap<Row, { width: number; height: number }>();
 
 	/** `fallback`: the height of a row while nothing was measured yet. */
@@ -89,5 +95,6 @@ export class RowEstimator<Row extends object> {
 		}
 		fit.add(x, y);
 		this.#all.add(x, y);
+		this.#revision++;
 	};
 }

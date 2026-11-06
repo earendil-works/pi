@@ -11,7 +11,7 @@ import {
 	type UserMessage,
 	uuidv7,
 } from "@earendil-works/pi-ai";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import {
 	appendFileSync,
 	closeSync,
@@ -802,29 +802,47 @@ function getMessageActivityTime(entry: SessionMessageEntry): number | undefined 
  * small, stat-validated LRU of parsed entries so unchanged JSONL histories need
  * not be decoded again. Large transcripts are intentionally not retained.
  */
+/** Independent copies prevent callers from modifying the summary held in the LRU. */
+function copySessionInfo(info: SessionInfo): SessionInfo {
+	return { ...info, created: new Date(info.created.getTime()), modified: new Date(info.modified.getTime()) };
+}
+
+/** Hash a file as a stream to validate cached summaries without buffering JSONL histories. */
+async function sessionFileDigest(path: string, signal?: AbortSignal): Promise<string> {
+	const hash = createHash("sha256");
+	for await (const bytes of createReadStream(path, { signal })) hash.update(bytes);
+	return hash.digest("hex");
+}
+
 class SessionInfoCache {
-	readonly #entries = new Map<string, { size: number; mtime: number; ctime: number; info: SessionInfo; bytes: number }>();
+	readonly #entries = new Map<string, { size: number; mtime: number; ctime: number; digest: string; info: SessionInfo; bytes: number }>();
 	#totalBytes = 0;
 	constructor(readonly maxBytes = 16 * 1024 * 1024, readonly maxEntries = 256) {}
 
-	get(path: string, stats: Stats): SessionInfo | undefined {
+	async get(path: string, stats: Stats, signal?: AbortSignal): Promise<SessionInfo | undefined> {
 		const entry = this.#entries.get(path);
 		if (!entry) return undefined;
 		if (entry.size !== stats.size || entry.mtime !== stats.mtimeMs || entry.ctime !== stats.ctimeMs) {
 			this.#remove(path, entry);
 			return undefined;
 		}
+		// Some filesystems have coarse timestamps; a same-sized rewrite can look
+		// identical to stat(). Compare bytes before trusting a parsed summary.
+		if (await sessionFileDigest(path, signal) !== entry.digest) {
+			this.#remove(path, entry);
+			return undefined;
+		}
 		this.#entries.delete(path);
 		this.#entries.set(path, entry);
-		return entry.info;
+		return copySessionInfo(entry.info);
 	}
 
-	put(path: string, stats: Stats, info: SessionInfo): void {
+	put(path: string, stats: Stats, info: SessionInfo, digest: string): void {
 		const bytes = 512 + 2 * (info.allMessagesText.length + info.firstMessage.length + (info.name?.length ?? 0));
 		const old = this.#entries.get(path);
 		if (old) this.#remove(path, old);
 		if (bytes > this.maxBytes) return;
-		this.#entries.set(path, { size: stats.size, mtime: stats.mtimeMs, ctime: stats.ctimeMs, info, bytes });
+		this.#entries.set(path, { size: stats.size, mtime: stats.mtimeMs, ctime: stats.ctimeMs, info: copySessionInfo(info), digest, bytes });
 		this.#totalBytes += bytes;
 		while (this.#entries.size > this.maxEntries || this.#totalBytes > this.maxBytes) {
 			const oldest = this.#entries.keys().next().value;
@@ -848,7 +866,7 @@ async function buildSessionInfo(
 ): Promise<SessionInfo | null> {
 	try {
 		const stats = fileStats ?? (await stat(filePath));
-		const cached = sessionInfoCache.get(filePath, stats);
+		const cached = await sessionInfoCache.get(filePath, stats, signal);
 		if (cached) return cached;
 		let header: SessionHeader | null = null;
 		let messageCount = 0;
@@ -926,7 +944,11 @@ async function buildSessionInfo(
 		// snapshots whose metadata remained unchanged across the read.
 		const current = await stat(filePath);
 		if (current.size === stats.size && current.mtimeMs === stats.mtimeMs && current.ctimeMs === stats.ctimeMs) {
-			sessionInfoCache.put(filePath, stats, info);
+			const digest = await sessionFileDigest(filePath, signal);
+			const checked = await stat(filePath);
+			if (checked.size === stats.size && checked.mtimeMs === stats.mtimeMs && checked.ctimeMs === stats.ctimeMs) {
+				sessionInfoCache.put(filePath, stats, info, digest);
+			}
 		}
 		return info;
 	} catch {
