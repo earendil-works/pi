@@ -34,6 +34,33 @@ export function clampMaxTokensToContext(model: Model<Api>, context: TranscriptCo
 	return Math.min(maxTokens, Math.max(MIN_MAX_TOKENS, room));
 }
 
+/**
+ * A sampling literal named after a thinking level must speak the model's
+ * vocabulary.
+ *
+ * Providers assign sampling params AFTER translating `thinkingLevelMap`, so a
+ * literal `reasoning_effort` bypasses that translation entirely and reaches the
+ * wire as typed. A server that advertises a level it cannot actually run then
+ * fails the request: SGLang serving Kimi K3.1 accepts `reasoning_effort` values
+ * of none/minimal/low/medium/high/xhigh/ultra/max, answers HTTP 500 for
+ * `medium`, and the only fix available to the caller was to stop configuring it.
+ *
+ * Translate through the map so the map stays authoritative, and drop the key
+ * when the model marks that level unsupported (`null`).
+ */
+function alignSamplingReasoningEffort(model: Model<Api>, params: SamplingParams | undefined): SamplingParams | undefined {
+	const effort = params?.reasoning_effort;
+	if (!params || typeof effort !== "string") return params;
+	const map = model.thinkingLevelMap;
+	if (!map || !(effort in map)) return params;
+	const mapped = map[effort as ModelThinkingLevel];
+	if (mapped === undefined) return params;
+	const next = { ...params };
+	if (mapped === null) delete next.reasoning_effort;
+	else next.reasoning_effort = mapped;
+	return next;
+}
+
 export function resolveSamplingParams(
 	model: Model<Api>,
 	thinkingLevel: ModelThinkingLevel,
@@ -41,9 +68,10 @@ export function resolveSamplingParams(
 ): SamplingParams | undefined {
 	const effectiveThinkingLevel = clampThinkingLevel(model, thinkingLevel);
 	const thinkingLevelParams = model.samplingParamsByThinkingLevel?.[effectiveThinkingLevel];
-	return model.samplingParams || thinkingLevelParams || requestParams
+	const merged = model.samplingParams || thinkingLevelParams || requestParams
 		? { ...model.samplingParams, ...thinkingLevelParams, ...requestParams }
 		: undefined;
+	return alignSamplingReasoningEffort(model, merged);
 }
 
 export function buildBaseOptions(
