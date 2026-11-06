@@ -3023,4 +3023,5 @@ view algebra; keeping natives across reloads by name; Chord ending the process o
 flag on references; cross-relay reset coordination; count limits that refuse calls or holds; relays acking per hop, relay resets
 (`reset { hold }`, `reset { holds }`), relay recovery and id renumbering at relays (replaced by flow control per
 origin); a byte window, credit messages, snapshot admission and debt; `reset` from a consumer; a round-robin of
-relayed calls at the relay; `state: false` on references (C8); `inVariant`/`expectVariant` (C15); per-call deadlines.
+relayed calls at the relay; `state: false` on references (C8); `inVariant`/`expectVariant` (C15); per-call deadlines; references shared between UI
+components across a remount (decision "A reloaded UI part shows its loading state").
