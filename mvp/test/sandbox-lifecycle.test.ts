@@ -128,12 +128,20 @@ describe("agentSandboxParams", () => {
     expect(agentSandboxParams({ egressPresets: ["git"] }).networkPolicy).toEqual({ allow: [...EGRESS_PRESETS.git] });
   });
 
+  it("lets the default policy reach the GitHub API, so the gh CLI works, and nothing wider", () => {
+    const policy = agentSandboxParams({}).networkPolicy;
+    expect(policy).toMatchObject({ allow: expect.arrayContaining(["api.github.com", "github.com"]) });
+    const allow = (policy as { allow: string[] }).allow;
+    expect(allow).not.toContain("*");
+    expect(allow.filter((host) => host.includes("*"))).toEqual(["*.githubusercontent.com"]);
+  });
+
   it("adds extra exact domains to the presets, lowercased and without duplicates", () => {
     expect(agentSandboxParams({ egressPresets: [], egressAllow: ["Registry.NPMJS.org", "*.npmjs.org", "registry.npmjs.org"] }).networkPolicy).toEqual({
       allow: ["registry.npmjs.org", "*.npmjs.org"],
     });
     const merged = agentSandboxParams({ egressPresets: ["git"], egressAllow: ["github.com", "example.org"] }).networkPolicy;
-    expect(merged).toEqual({ allow: ["github.com", "codeload.github.com", "*.githubusercontent.com", "example.org"] });
+    expect(merged).toEqual({ allow: ["github.com", "api.github.com", "codeload.github.com", "*.githubusercontent.com", "example.org"] });
   });
 
   it("refuses unknown presets and any domain that would widen access beyond an exact host", () => {

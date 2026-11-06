@@ -49,12 +49,14 @@ export type AgentNetworkPolicy = "deny-all" | "allow-all" | { allow: string[] };
 
 /**
  * Named groups of exact domains the sandbox may reach. Owner decision (2026-11-05): outbound access is allowed
- * for package installs and public git clones. No credentials are placed in the sandbox, so these domains give
- * read access to public content; they do not give a way to publish or push.
+ * for package installs and public git clones. Owner decision (2026-11-06): the `git` group also allows
+ * `api.github.com`, so the GitHub CLI works in the sandbox. The sandbox holds no credential of its own; if the
+ * owner signs `gh` in inside it (HTTPS), that login lives in the persistent sandbox and these domains then
+ * reach the owner's repos with it, so scope that login narrowly and rotate it.
  */
 export const EGRESS_PRESETS = {
   packages: ["registry.npmjs.org", "registry.yarnpkg.com", "pypi.org", "files.pythonhosted.org"],
-  git: ["github.com", "codeload.github.com", "*.githubusercontent.com"],
+  git: ["github.com", "api.github.com", "codeload.github.com", "*.githubusercontent.com"],
 } as const;
 export type EgressPreset = keyof typeof EGRESS_PRESETS;
 
