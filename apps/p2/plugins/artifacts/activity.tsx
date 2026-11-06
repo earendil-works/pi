@@ -1,5 +1,5 @@
-// How the `artifact` tool shows in the chat: "Made <title>", and the version it made as a card after the turn's
-// answer that opens the viewer (and the artifact itself below it when the agent asked to show it inline).
+// How the `artifact` tool shows in the chat: "Made <title>", and the version it made as a card that opens the viewer,
+// after the turn's answer; when the agent asked to show it inline, in place instead, with the artifact itself below it.
 import {
 	ArtifactIcon,
 	artifactUrls,
@@ -98,7 +98,9 @@ export const artifactActivity: ToolActivity = {
 	running: (step) => ({ kind: "artifact", verb: "Making", object: stringOf(step.tool.args.title), style: "file" }),
 	argument: (tool) => stringOf(tool.args.title) || stringOf(tool.args.name),
 	summary: (count) => (count === 1 ? "made an artifact" : `made ${count} artifacts`),
-	hasResult: (tool) => artifactOf(tool) !== undefined,
+	// In place when the agent asked to show it inline (the artifact below its card, where it was made); else its card
+	// after the answer.
+	hasResult: (tool) => (artifactOf(tool) ? (detailsOf(tool).inline === true ? "inline" : "after") : false),
 	Result: ArtifactResult,
 	Detail: ArtifactDetail,
 };

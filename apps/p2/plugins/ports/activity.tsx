@@ -98,7 +98,7 @@ export const portsActivity: ToolActivity = {
 		[stringOf(tool.args.action), port(tool), stringOf(tool.args.name), tool.args.public === true ? "public" : ""]
 			.filter(Boolean)
 			.join(" "),
-	hasResult: (tool) => forwardOf(tool) !== undefined,
+	hasResult: (tool) => (forwardOf(tool) ? "after" : false),
 	Result: PortLinks,
 	Detail: PortsDetail,
 };

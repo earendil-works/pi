@@ -23,6 +23,7 @@ export {
 	type Label,
 	lastLine,
 	plainText,
+	type ResultPlacement,
 	type Step,
 	type StepStatus,
 	sentence,

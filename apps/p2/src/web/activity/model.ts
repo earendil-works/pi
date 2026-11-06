@@ -1,8 +1,9 @@
 // A turn's activity: what the agent did between a person's message and its answer. Derived from the transcript's
 // items: `chatItems` keeps each response's thinking and text in the transcript, in their order, and turns each run of
 // consecutive tool calls into an activity item (a wheel in the chat, its steps in a sheet). A turn's last text is its
-// answer, followed by the results meant for the person (artifacts, sent files, opened ports). How much of that shows
-// in the transcript, and how much goes on the wheels, is settings.json's `detail` (`Detail`).
+// answer, followed by the results meant for the person (artifacts, sent files, opened ports). A result its tool shows
+// in place (an inline artifact) comes right after its call instead, splitting the run of calls around it. How much of
+// that shows in the transcript, and how much goes on the wheels, is settings.json's `detail` (`Detail`).
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ComponentType } from "react";
 import type { Item, NestedCall, ToolView } from "../transcript.ts";
@@ -76,7 +77,10 @@ export type ChatItem =
 	| {
 			type: "results";
 			key: string;
-			/** Calls whose result is for the person: an artifact, a sent file, an opened port. */
+			/**
+			 * Calls whose result is for the person: an artifact, a sent file, an opened port. After the answer, those of
+			 * the whole turn; in place, the one call before it (`ToolActivity.hasResult` says which).
+			 */
 			tools: ToolView[];
 	  };
 
@@ -86,16 +90,19 @@ const toolStatus = (tool: ToolView): StepStatus =>
 type Response = Extract<Item, { type: "assistant" }>;
 /** A run of consecutive tool calls, with the responses that made them (for its time). */
 type Calls = { type: "calls"; key: string; steps: Step[]; from: Response[]; entries?: WheelEntry[] };
-type Part = Calls | Extract<ChatItem, { type: "thought" | "text" }>;
+/** A result shown in place, right after its call. */
+type InPlace = Extract<ChatItem, { type: "results" }>;
+type Part = Calls | InPlace | Extract<ChatItem, { type: "thought" | "text" }>;
 
 const stepOf = (tool: ToolView): Step => ({ id: tool.id, tool, status: toolStatus(tool) });
 
 /**
- * A run of responses as its parts in order: thinking, text, and runs of calls (results whose call is outside the
- * loaded window join them). The first part, when it is calls, is keyed by the item before the run (`after`), so its
- * wheel is the same row as the one that waited for it.
+ * A run of responses as its parts in order: thinking, text, runs of calls (results whose call is outside the loaded
+ * window join them) and results shown in place, each after its call, ending its run of calls. A run of calls that
+ * comes first, or right after a result in place, is keyed by what came before it (`after`, the result), so its wheel
+ * is the same row as the one that waited for it.
  */
-function partsOf(run: readonly Item[], live: boolean, after: string): Part[] {
+function partsOf(run: readonly Item[], live: boolean, after: string, tools: ToolActivityTable): Part[] {
 	const parts: Part[] = [];
 	const calls = (key: string, from?: Response): Calls => {
 		const last = parts.at(-1);
@@ -105,16 +112,21 @@ function partsOf(run: readonly Item[], live: boolean, after: string): Part[] {
 		}
 		const made: Calls = {
 			type: "calls",
-			key: parts.length ? key : `activity:${after}`,
+			key: !last ? `activity:${after}` : last.type === "results" ? `activity:${last.key}` : key,
 			steps: [],
 			from: from ? [from] : [],
 		};
 		parts.push(made);
 		return made;
 	};
+	const call = (key: string, tool: ToolView, from?: Response) => {
+		calls(key, from).steps.push(stepOf(tool));
+		if (placement(tool, tools) === "inline")
+			parts.push({ type: "results", key: `results:${tool.id}`, tools: [tool] });
+	};
 	for (const item of run) {
 		if (item.type === "tool") {
-			calls(`activity:${item.key}`).steps.push(stepOf(item.tool));
+			call(`activity:${item.key}`, item.tool);
 			continue;
 		}
 		if (item.type !== "assistant") continue;
@@ -145,7 +157,7 @@ function partsOf(run: readonly Item[], live: boolean, after: string): Part[] {
 					output: "",
 					images: [],
 				};
-				calls(`activity:${key}`, item).steps.push(stepOf(tool));
+				call(`activity:${key}`, tool, item);
 			}
 		}
 	}
@@ -188,7 +200,10 @@ function runItems(
 	detail: Detail,
 ): ChatItem[] {
 	const first = run[0]!;
-	let parts = partsOf(run, working, after);
+	let parts = partsOf(run, working, after, tools);
+	// At detail 1 the turn has one wheel: results meant to show in place join those after the answer (still drawn in
+	// full there), rather than splitting it.
+	if (detail === 1) parts = parts.filter((part) => part.type !== "results");
 	const responses = run.filter((item): item is Response => item.type === "assistant");
 	const response = responses.at(-1);
 	const last = parts.at(-1);
@@ -213,9 +228,10 @@ function runItems(
 				? { ...part, full: true as const }
 				: part,
 	);
-	// Working on a response that shows nothing yet: the activity row, waiting.
-	if (working && !parts.length && !answer)
-		items.push({ type: "activity", key: `activity:${after}`, steps: [], working: true });
+	// Working on a response that shows nothing yet (the first, or the next after a result in place): the activity row,
+	// waiting.
+	if (working && !answer && (!final || final.type === "results"))
+		items.push({ type: "activity", key: `activity:${final ? final.key : after}`, steps: [], working: true });
 	if (response && (answer || notice))
 		items.push({
 			type: "answer",
@@ -227,7 +243,12 @@ function runItems(
 			streaming: response.streaming,
 		});
 	const results = parts.flatMap((part) =>
-		part.type === "calls" ? part.steps.flatMap((step) => (isResult(step.tool, tools) ? [step.tool] : [])) : [],
+		part.type === "calls"
+			? part.steps.flatMap((step) => {
+					const where = placement(step.tool, tools);
+					return where === "after" || (where === "inline" && detail === 1) ? [step.tool] : [];
+				})
+			: [],
 	);
 	if (results.length) items.push({ type: "results", key: `results:${first.key}`, tools: results });
 	return items;
@@ -246,13 +267,21 @@ function wheels(
 ): Part[] {
 	const merged: Part[] = [];
 	for (const part of parts) {
-		if (part.type !== "calls" && !kinds.includes(part.type)) {
+		// A result in place, or what this level keeps in the transcript, stands between wheels.
+		if (part.type === "results" || (part.type !== "calls" && !kinds.includes(part.type))) {
 			merged.push(part);
 			continue;
 		}
 		let wheel = merged.at(-1);
 		if (wheel?.type !== "calls") {
-			const key = !merged.length ? `activity:${after}` : part.type === "calls" ? part.key : `activity:${part.key}`;
+			// After a result in place, the wheel is the row that waited there (`activity:<result>`), as a run of calls is.
+			const key = !wheel
+				? `activity:${after}`
+				: part.type === "calls"
+					? part.key
+					: wheel.type === "results"
+						? `activity:${wheel.key}`
+						: `activity:${part.key}`;
 			wheel = { type: "calls", key, steps: [], from: [], entries: [] };
 			merged.push(wheel);
 		}
@@ -492,8 +521,12 @@ export type ToolActivity = {
 	 * share the function count together (write and edit: "edited 2 files").
 	 */
 	summary?: (count: number) => string;
-	/** Whether a call made something for the person, shown after the answer by `Result` (an artifact, a port). */
-	hasResult?: (tool: ToolView) => boolean;
+	/**
+	 * Whether a call made something for the person, shown by `Result`, and where: after the turn's answer (an artifact's
+	 * card, a sent file, an opened port), or in place, right after the call (an artifact the agent asked to show
+	 * inline: the run of calls splits around it). `false` or absent: nothing.
+	 */
+	hasResult?: (tool: ToolView) => ResultPlacement | false;
 	/** The call's detail in the sheet; `onGroup` opens one of its own calls (`tool.calls`, grouped by `groupCalls`). */
 	Detail?: ComponentType<{ step: Step; onGroup: (index: number) => void }>;
 	/** What the detail of a script's call of this tool adds below its input and output (a link to what it made). */
@@ -501,6 +534,8 @@ export type ToolActivity = {
 	/** A result after the answer; `inline`: in the chat (an inline artifact shows itself too), not in the sheet. */
 	Result?: ComponentType<{ tool: ToolView; inline: boolean }>;
 };
+/** Where a call's result for the person shows: after the turn's answer, or in place, right after the call. */
+export type ResultPlacement = "after" | "inline";
 /** Contributions by tool name. */
 export type ToolActivityTable = ReadonlyMap<string, ToolActivity>;
 
@@ -541,9 +576,9 @@ export function argumentOf(tool: ToolView, tools: ToolActivityTable, cwd: string
 	return own ? own(tool, cwd) : shortArgument(tool);
 }
 
-/** Whether a call made something for the person, shown after the answer. */
-export const isResult = (tool: ToolView, tools: ToolActivityTable): boolean =>
-	tools.get(tool.name)?.hasResult?.(tool) ?? false;
+/** Where a call's result for the person shows, if it made one. */
+export const placement = (tool: ToolView, tools: ToolActivityTable): ResultPlacement | false =>
+	tools.get(tool.name)?.hasResult?.(tool) || false;
 
 /** A duration as a reader says it: 12s, 1m 05s, 1h 02m. */
 export function elapsed(ms: number): string {
