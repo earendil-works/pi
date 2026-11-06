@@ -1,3 +1,4 @@
+import { declarationsEqual } from "../src/utils/transcript.ts";
 import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
@@ -647,5 +648,18 @@ describe("transcript system messages", () => {
 		expect(payload.tools?.map((value) => value.function?.name)).toEqual(["late_tool"]);
 		expect(payload.messages.map((message) => message.role)).toEqual(["system", "user"]);
 		expect(payload.messages[0]?.content).toBe("base prompt\n\nupdated guidance\n\n<rules>\nnew rules\n</rules>");
+	});
+});
+
+
+describe("declaration comparison avoids redundant schema copying", () => {
+	it("ignores nonenumerable schema metadata while distinguishing serialized changes", () => {
+		const schema = { type: "object", properties: { term: { type: "string" } } };
+		Object.defineProperty(schema, "kind", { value: "object", enumerable: false });
+		const first = { name: "search", description: "Search", parameters: schema };
+		const clone = { name: "search", description: "Search", parameters: JSON.parse(JSON.stringify(schema)) };
+		const changed = { ...clone, description: "Search updated" };
+		expect(declarationsEqual(first as never, clone as never)).toBe(true);
+		expect(declarationsEqual(first as never, changed as never)).toBe(false);
 	});
 });

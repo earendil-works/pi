@@ -138,7 +138,20 @@ export function toToolDeclaration(tool: Tool): Tool {
  * is exact. This avoids a deep-equal dependency in a browser-safe package.
  */
 export function declarationsEqual(left: Tool, right: Tool): boolean {
-	return JSON.stringify(toToolDeclaration(left)) === JSON.stringify(toToolDeclaration(right));
+	if (left === right) return true;
+	// Serializing the schema once has the same JSON semantics as the old
+	// stringify/parse/stringify round-trip, without allocating cloned schemas.
+	return JSON.stringify({
+		name: left.name,
+		description: left.description,
+		parameters: left.parameters,
+		...(left.constrainedSampling === undefined ? {} : { constrainedSampling: left.constrainedSampling }),
+	}) === JSON.stringify({
+		name: right.name,
+		description: right.description,
+		parameters: right.parameters,
+		...(right.constrainedSampling === undefined ? {} : { constrainedSampling: right.constrainedSampling }),
+	});
 }
 
 export interface ToolStateChanges {
