@@ -1,7 +1,7 @@
 import { createContext, type ReactNode, useEffect, useRef, useState } from "react";
 import { type DownloadInfo, filePreview } from "../runtime/files.ts";
 import type { ArtifactInfo } from "../runtime/schemas.ts";
-import { useScrollMemory } from "../runtime/web.tsx";
+import { useScrollMemory, useShownModal } from "../runtime/web.tsx";
 import { CodeBlock } from "./Code.tsx";
 import { CloseIcon, DownloadIcon } from "./icons.tsx";
 import { Markdown } from "./Markdown.tsx";
@@ -90,6 +90,7 @@ export function ViewerShell({
 	children: ReactNode;
 }) {
 	const area = useRef<HTMLDivElement>(null);
+	useShownModal();
 	useScrollMemory(area);
 	useEffect(() => {
 		// Cancelled, so a CloseWatcher (navigation.ts) doesn't take the same Escape as Back.

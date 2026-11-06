@@ -104,7 +104,15 @@ export function useElapsed(startedAt: number | undefined, endedAt: number | unde
 export function ActivityLayer({ rows }: { rows: readonly { item: ChatItem }[] }) {
 	const top = useSheet(SHEET);
 	const place = top && placeOf(top.locator);
-	const item = place && rows.find((row) => row.item.type === "activity" && row.item.key === place.row)?.item;
+	// By its row's key, else (the rows were made again, keyed differently: another detail level, new code after a
+	// reload) by the call it shows.
+	const item =
+		place &&
+		(rows.find((row) => row.item.type === "activity" && row.item.key === place.row)?.item ??
+			(place.step
+				? rows.find((row) => row.item.type === "activity" && row.item.steps.some((step) => step.id === place.step))
+						?.item
+				: undefined));
 	return item?.type === "activity" && place ? <ActivitySheet activity={item} place={place} /> : null;
 }
 
