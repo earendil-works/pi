@@ -14,6 +14,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
+import { PendingMessageQueue } from "./pending-message-queue.ts";
 import type {
 	AfterToolCallContext,
 	AfterToolCallResult,
@@ -146,39 +147,6 @@ export interface AgentOptions {
 	identity?: ClientIdentity;
 }
 
-class PendingMessageQueue {
-	private messages: AgentMessage[] = [];
-	public mode: QueueMode;
-
-	constructor(mode: QueueMode) {
-		this.mode = mode;
-	}
-
-	enqueue(message: AgentMessage): void {
-		this.messages.push(message);
-	}
-
-	hasItems(): boolean {
-		return this.messages.length > 0;
-	}
-
-	peek(): AgentMessage[] {
-		if (this.mode === "all") return this.messages.slice();
-		const first = this.messages[0];
-		return first ? [first] : [];
-	}
-
-	drain(): AgentMessage[] {
-		const drained = this.peek();
-		this.messages = this.messages.slice(drained.length);
-		return drained;
-	}
-
-	clear(): void {
-		this.messages = [];
-	}
-}
-
 type ActiveRun = {
 	promise: Promise<void>;
 	resolve: () => void;
@@ -194,8 +162,8 @@ type ActiveRun = {
 export class Agent {
 	private _state: MutableAgentState;
 	private readonly listeners = new Set<(event: AgentEvent, signal: AbortSignal) => Promise<void> | void>();
-	private readonly steeringQueue: PendingMessageQueue;
-	private readonly followUpQueue: PendingMessageQueue;
+	private readonly steeringQueue: PendingMessageQueue<AgentMessage>;
+	private readonly followUpQueue: PendingMessageQueue<AgentMessage>;
 
 	public convertToLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	public transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
@@ -252,8 +220,8 @@ export class Agent {
 		this.prepareRequest = runtimeOptions.prepareRequest;
 		this.prepareNextTurn = runtimeOptions.prepareNextTurn;
 		this.prepareNextTurnWithContext = runtimeOptions.prepareNextTurnWithContext;
-		this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time");
-		this.followUpQueue = new PendingMessageQueue(runtimeOptions.followUpMode ?? "one-at-a-time");
+		this.steeringQueue = new PendingMessageQueue<AgentMessage>(runtimeOptions.steeringMode ?? "one-at-a-time");
+		this.followUpQueue = new PendingMessageQueue<AgentMessage>(runtimeOptions.followUpMode ?? "one-at-a-time");
 		this.sessionId = runtimeOptions.sessionId;
 		this.thinkingBudgets = runtimeOptions.thinkingBudgets;
 		this.transport = runtimeOptions.transport ?? "auto";
