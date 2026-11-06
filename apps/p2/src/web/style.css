@@ -42,7 +42,6 @@
 	--row: 44px;
 	--control: 40px;
 	--control-sm: 32px;
-	--tool-icon: 16px;
 	--radius: 4px;
 
 	--fs-xs: 11px;
@@ -57,7 +56,8 @@
 
 	--safe-top: env(safe-area-inset-top, 0px);
 	--safe-bottom: env(safe-area-inset-bottom, 0px);
-	--chat-width: 760px;
+	/* The transcript and the composer under it: centred, at most Elanor's width for running text. */
+	--chat-width: var(--semantic-dimension-size-max-width-text);
 	--chat-size: 100%;
 
 	font-family: var(--sans);
@@ -93,7 +93,6 @@
 }
 @media (min-width: 700px) {
 	:root {
-		--chat-width: 1120px;
 		--chat-size: calc(100% - 56px);
 	}
 }
@@ -382,7 +381,6 @@ textarea.input {
 }
 .text-action,
 .footer-action,
-.tool-link,
 .title-cwd,
 .crumb,
 .cwd-pick span {
@@ -394,7 +392,6 @@ textarea.input {
 @media (hover: hover) {
 	.text-action:hover,
 	.footer-action:hover,
-	.tool-link:hover,
 	.title-cwd:hover,
 	.crumb:hover,
 	.cwd-pick:hover span {
@@ -703,10 +700,12 @@ textarea.input {
 		animation: none;
 	}
 }
-/* A tool call ending one response and one starting the next stack like parallel calls. */
-.row.first,
-.row.joined {
+.row.first {
 	padding-top: 0;
+}
+/* An answer after its turn's activity row: closer, since the wheel's empty lower face already separates them. */
+.row[data-gap="answer"] {
+	padding-top: var(--s1);
 }
 .messages {
 	display: flex;
@@ -897,30 +896,6 @@ textarea.input {
 	cursor: pointer;
 	list-style: none;
 }
-.working {
-	position: sticky;
-	bottom: 0;
-	z-index: 2;
-	display: flex;
-	align-self: flex-start;
-	align-items: center;
-	gap: var(--s1);
-	min-height: 20px;
-}
-.working span {
-	width: 4px;
-	height: 4px;
-	border-radius: 50%;
-	background: var(--muted);
-	animation: pulse 1.2s infinite ease-in-out;
-}
-.working span:nth-child(2) {
-	animation-delay: 0.15s;
-}
-.working span:nth-child(3) {
-	animation-delay: 0.3s;
-}
-
 .code-block {
 	overflow: hidden;
 	border: 1px solid var(--line);
@@ -1031,9 +1006,7 @@ textarea.input {
 	color: #c9a4f5;
 }
 
-/* Thinking and tool calls share one compact row style. */
-.thinking button,
-.tool-head,
+/* A subagent report's head: one compact row. */
 .report-head {
 	display: flex;
 	align-items: center;
@@ -1044,23 +1017,6 @@ textarea.input {
 	font-size: var(--fs-sm);
 	text-align: left;
 }
-.thinking.live button span:first-of-type {
-	background: linear-gradient(90deg, var(--muted) 30%, var(--text) 50%, var(--muted) 70%);
-	background-size: 200% 100%;
-	-webkit-background-clip: text;
-	background-clip: text;
-	color: transparent;
-	animation: shimmer 1.6s linear infinite;
-}
-.thinking-body {
-	margin-top: var(--s1);
-	padding-left: var(--s3);
-	border-left: 1px solid var(--line);
-	color: var(--muted);
-	font-size: var(--fs-sm);
-	overflow-wrap: anywhere;
-	white-space: pre-wrap;
-}
 .chev {
 	display: inline-flex;
 	flex: none;
@@ -1070,183 +1026,7 @@ textarea.input {
 .chev.open {
 	transform: rotate(90deg);
 }
-.tool {
-	min-width: 0;
-}
-/* Consecutive calls stack without a gap, within a response and across response boundaries. */
-.tool + .tool {
-	margin-top: calc(-1 * var(--s3));
-}
-.tool-header {
-	display: flex;
-	align-items: center;
-}
-.tool-head {
-	flex: 1;
-	min-width: 0;
-}
-.tool-icon {
-	display: grid;
-	flex: none;
-	place-items: center;
-	width: var(--tool-icon);
-	color: var(--muted);
-}
-.tool-name {
-	flex: none;
-	color: var(--text);
-	font-weight: var(--fw-strong);
-}
-.tool-summary {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	font-family: var(--mono);
-	font-size: var(--fs-code);
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-.tool-state {
-	display: grid;
-	flex: none;
-	place-items: center;
-	color: var(--muted);
-	font-size: var(--fs-xs);
-}
-.tool-expand {
-	display: grid;
-	flex: none;
-	place-items: center;
-	width: var(--control-sm);
-	min-height: var(--control-sm);
-}
-.tool-body {
-	max-height: 60vh;
-	margin: var(--s1) 0 var(--s2);
-	overflow: auto;
-	border-top: 1px solid var(--line);
-	border-bottom: 1px solid var(--line);
-	background: var(--code);
-}
-.tool-body pre:not(.diff) {
-	margin: 0;
-	padding: var(--s2) var(--s3);
-	font-family: var(--mono);
-	font-size: var(--fs-code);
-	line-height: 1.5;
-	overflow-wrap: anywhere;
-	tab-size: 3;
-	white-space: pre-wrap;
-}
-.tool-body pre + pre {
-	border-top: 1px dashed var(--line);
-}
-.tool-command {
-	color: var(--text);
-}
-.tool-sub {
-	display: flex;
-	flex-direction: column;
-	gap: var(--s2);
-	padding: var(--s2) var(--s3);
-	font-size: var(--fs-sm);
-}
-.tool-link {
-	display: inline-block;
-	padding: var(--s1) 0 var(--s1) calc(var(--tool-icon) + var(--s2));
-	color: var(--muted);
-	font-size: var(--fs-sm);
-}
-.tool-body pre.tool-error {
-	color: var(--bad);
-}
-/* Code mode scripts: the first lines until "Show all"; highlighted exactly like write's content. */
-.script.clip pre {
-	max-height: calc(6 * 1.5 * var(--fs-code) + var(--s2));
-	overflow: hidden;
-}
-/* A failed script is still source: only its output takes the card's error color. */
-.tool.error .script pre {
-	color: var(--text);
-}
-.script + pre {
-	border-top: 1px dashed var(--line);
-}
-.tool-link.script-more {
-	padding-left: var(--s3);
-}
-/* Calls a tool made to other tools: compact status rows aligned with the card's summary. */
-.nested-calls {
-	margin: 0 0 var(--s1);
-	padding: 0;
-	list-style: none;
-}
-.nested-call {
-	display: grid;
-	grid-template-columns: var(--tool-icon) auto minmax(0, 1fr) auto;
-	column-gap: var(--s2);
-	align-items: center;
-	min-height: 24px;
-	padding-left: calc(var(--tool-icon) + var(--s2) + var(--depth, 0) * var(--s3));
-	color: var(--muted);
-	font-size: var(--fs-sm);
-}
-.nested-state {
-	display: grid;
-	place-items: center;
-}
-.nested-call.error .nested-state,
-.nested-call.interrupted .nested-state {
-	color: var(--bad);
-}
-.nested-name {
-	color: var(--text);
-}
-/* A one-shot agent's row opens its transcript. */
-.nested-open {
-	color: var(--text);
-	text-align: left;
-	text-decoration: underline dotted;
-	text-underline-offset: 3px;
-}
-.nested-open:hover {
-	text-decoration-style: solid;
-}
-.nested-summary,
-.nested-detail {
-	min-width: 0;
-	overflow: hidden;
-	font-family: var(--mono);
-	font-size: var(--fs-code);
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-.nested-time {
-	color: var(--faint);
-	font-size: var(--fs-xs);
-	font-variant-numeric: tabular-nums;
-}
-.nested-detail {
-	grid-column: 2 / -1;
-	padding-bottom: var(--s1);
-}
-.nested-error {
-	display: -webkit-box;
-	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 2;
-	line-clamp: 2;
-	color: var(--bad);
-	overflow-wrap: anywhere;
-	white-space: pre-wrap;
-}
 /* Artifact and file cards: the body opens the viewer; the bordered end downloads. */
-.file-tool {
-	padding: var(--s1) 0;
-}
-.tool + .file-tool,
-.file-tool + .tool {
-	margin-top: 0;
-}
 .file-card {
 	display: flex;
 	align-items: stretch;
@@ -3557,11 +3337,6 @@ button.history-edge:disabled {
 		opacity: 0.35;
 	}
 }
-@keyframes shimmer {
-	to {
-		background-position: -200% 0;
-	}
-}
 @keyframes slide {
 	from {
 		transform: translateY(100%);
@@ -3646,21 +3421,6 @@ button.history-edge:disabled {
 }
 .directory-note {
 	margin: var(--s2) 0 0;
-}
-
-/* History tool cards (plugins/history): the entries found or read, each revealing itself in the transcript. */
-.history-hits {
-	margin: 0;
-	padding: 0;
-	list-style: none;
-	display: flex;
-	flex-direction: column;
-	gap: var(--s1);
-	font-size: var(--fs-sm);
-}
-.history-snippet {
-	color: var(--muted);
-	overflow-wrap: anywhere;
 }
 
 /* The lock of a sandboxed location: in the top bar's location line and on sidebar groups. */

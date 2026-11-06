@@ -5,7 +5,7 @@ import type { Transcript } from "../../src/web/transcript.ts";
 import { useChatScroll } from "../../src/web/use-chat-scroll.ts";
 
 export function TranscriptFixture({ transcript }: { transcript: Transcript }) {
-	const rows = useMemo(() => transcriptRows(transcript.items), [transcript]);
+	const rows = useMemo(() => transcriptRows(transcript.items, transcript.working), [transcript]);
 	const follow = useChatScroll({ rows, estimates: rowEstimates });
 	return createElement(
 		"div",

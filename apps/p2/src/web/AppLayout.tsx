@@ -61,6 +61,8 @@ export function AppLayout() {
 				<Slot name="main" fallback={<div className="hero">No chat plugin</div>} />
 			</main>
 			<Slot name="workspace-panel" />
+			{/* A turn's steps, docked at the right on a wide screen (activity/Sheet.tsx renders into it). */}
+			<div className="side-dock" id="side-dock" data-testid="side-dock" />
 		</div>
 	);
 }

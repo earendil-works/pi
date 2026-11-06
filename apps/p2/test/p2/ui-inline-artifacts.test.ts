@@ -112,7 +112,7 @@ describe("inline artifacts in Chromium", { skip: !browserTests }, () => {
 		// Below its card, which stays.
 		assert.equal(
 			await browser.evaluate<boolean>(
-				`document.querySelector('.file-tool .file-card + .inline-artifact')?.dataset.artifact==='notes:1'`,
+				`document.querySelector('[data-testid=results] .file-card + .inline-artifact')?.dataset.artifact==='notes:1'`,
 			),
 			true,
 		);

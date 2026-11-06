@@ -970,12 +970,16 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			? { ...transcript, items: [...transcript.items, ...messages.map((message) => message.item)] }
 			: outgoingTranscript(messages);
 	}, [transcript, pending, pendingQueued]);
-	const rows = useMemo(() => (shown ? transcriptRows(shown.items) : undefined), [shown]);
+	// Until the live view arrives (the kept copy shows), whether the agent works is not known yet.
+	const known = liveView !== undefined;
+	const rows = useMemo(() => (shown ? transcriptRows(shown.items, shown.working, known) : undefined), [shown, known]);
 	const follow = useChatScroll({
 		cache: `${sessionId}#${conversationId}`,
 		...(rows ? { rows } : {}),
 		estimates: rowEstimates,
-		...(transcript && pages ? { history: { more: transcript.earlier, loading: pages.loadingEarlier } } : {}),
+		...(transcript && pages
+			? { history: { more: transcript.earlier, loading: pages.loadingEarlier, size: transcript.items.length } }
+			: {}),
 		onEarlier: () => void loadEarlier(),
 	});
 	const attaching = attachingOf(composer);

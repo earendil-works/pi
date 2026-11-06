@@ -1056,8 +1056,8 @@ translated phone drawer and intercept chat taps.
   (`api.memo`). Server: `AgentTerminals` (worker variant only) serves the session's running current generation (as
   MCP's `currentWorker`), refuses archived sessions, opens only on environments the session works on (its own, its
   subagents'), forwards cancellation. The agent may have 8 running terminals per session (the owner's do not count).
-  Web: the transcript card (code mode off) shows the command line and output with "Open terminal N"; code mode's
-  nested-call rows show the command line. TUI: a card with the command line and the output's last lines.
+  Web: the step's detail in the turn's activity sheet (code mode off) shows the command line and output with "Open
+  terminal N"; code mode's calls show the command line. TUI: a card with the command line and the output's last lines.
   `terminals-host.test.ts` covers shells, disconnect snapshots, foreground jobs, themes and flood resync;
   `terminals.test.ts` covers guest/control denial, one-use byte grants, session isolation, reload and server restart;
   `terminal-agent-host.test.ts` the host's calls (keys done once, cursor, waits, cancel, plain text, the alternate
@@ -1143,8 +1143,8 @@ translated phone drawer and intercept chat taps.
   sent files use the conservative file preview. Nothing opens from a server update. `test/p2/artifacts.test.ts`
   covers fake-provider publication, versions, independent index, reload/restart, CSP, HEAD, guest isolation and
   byte limits; `ui-viewers-search.test.ts` the picker and viewers.
-- **Inline artifacts** (`artifact` tool, `inline: true`): the call's version also renders at its tool call site,
-  below the card, so agents can show diagrams (e.g. SVG sequence diagrams) and small visual results in the chat
+- **Inline artifacts** (`artifact` tool, `inline: true`): the call's version also renders in the chat, below its
+  card in the turn's results, so agents can show diagrams (e.g. SVG sequence diagrams) and small visual results in the chat
   instead of ASCII. `inline` travels only in the result's details (`ArtifactDetails`, `{ ...info, inline: true }`);
   the index, the stored version and every Chord contract are unchanged, so no contract version moved. The web
   (`InlineArtifact` in `plugins/artifacts/preview.tsx`, provided to `Chat.tsx` through `InlineArtifactView`) renders
@@ -1366,15 +1366,47 @@ translated phone drawer and intercept chat taps.
   defaults (`inlineBudget` 3000, `models` on, no namespaces). p2 lists tools only from the subagents' fixed coding-tool
   set, so internal tools never appear; nested-call rows show them by their script name (`models.classify`).
   `codemode-setting.test.ts` toggles it live; `durable-registry.test.ts` covers switches.
-- **Code mode card** (copied from Pi Mobile, `src/web/transcript.ts`, `Chat.tsx`, `icons.tsx`, `style.css`): the
-  `codemode` card shows `<>` Code with the script's first line; its body the script (highlighted JS, clipped to six
-  lines with Show all) and the output. `ToolView.calls` is the one source of nested-call rows: live from
-  `pi.live.nestedTools` (grouped by the model-issued call, depth from the `parentCallId` chain), settled from the
-  result's `details.calls` (Durable's `CodemodeToolDetails`). Rows show status, name, one-line arguments, duration and
-  error or last output line; the newest eight while running, collapsed to "N tool calls · k failed" once settled.
-  The TUI (`src/tui/messages.ts`) shows the first script line and indented rows (summary once settled, all with
+- **Code mode's calls** (copied from Pi Mobile, `src/web/transcript.ts`): `ToolView.calls` is the one source of
+  nested-call rows: live from `pi.live.nestedTools` (grouped by the model-issued call, depth from the `parentCallId`
+  chain), settled from the result's `details.calls` (Durable's `CodemodeToolDetails`). On the web the script is a step
+  of its turn's activity (below): "Ran a script · N calls, k failed" with the script's first comment; its detail shows
+  the script (highlighted JS, Show all past twelve lines), its calls as a timeline (repeated identical calls in a row
+  merged, "×N runs"; a call's own calls marked "nested") and the output; a call opens its input and output, a one-shot
+  agent's call its conversation. The TUI (`src/tui/messages.ts`) shows the first script line and indented rows (summary once settled, all with
   Ctrl+O) until the TUI port replaces it. `codemode-card.test.ts` covers grouping/depth, the details mapping, the TUI
-  and the browser card (fixture `test/fixtures/codemode-card.ts`).
+  and the browser (fixture `test/fixtures/codemode-card.ts`).
+- **Tool calls in the chat: a turn's activity** (ported from the p2-elanor branch's redesign, `src/web/activity/`).
+  The agent's responses between two people's messages (or markers, failures, gaps) are one turn (`chatItems` in
+  `model.ts`): its **activity row**, its **answer** (the turn's last text, with Copy, Branch and Reply; a stop, an
+  error or the length limit below it) and its **results** (artifact and sent-file cards, an inline artifact below its
+  card, an opened port's links). The activity row is a wheel of the turn's steps (thinking, the agent's notes between
+  calls, each tool call): while the agent works the newest step faces the reader in the present tense ("Running npm
+  test") and breathes, a failed one is red, and the turn's time counts; when it ends the wheel rolls to a summary
+  ("Thought, read 3 files, ran 2 commands · 6 steps") and the total time. The reader can roll it back (drag, mouse
+  wheel, arrow keys); a tap opens the **steps**: on a phone a bottom sheet (drag down to close) with a stack of pages,
+  the turn's timeline (opened at its end, on the newest steps), then a step's detail (Input, Output: the command and its output as a terminal, a read's
+  numbered lines or image, an edit's diff, a subagent's message and answer with Open, a history tool's entries that
+  reveal their messages), then one of a script's calls; Back or a swipe right goes back. From 900px the steps open
+  in a panel at the right instead (the workspace's place: opening one closes the other; over the chat until 1280px,
+  docked beside it from there; `AppLayout`'s `#side-dock`), one turn at a time (`panel.ts`), pages crossfading. The
+  last turn is live while the transcript says the agent works (`working`), or, before the live view arrived (the
+  copy kept on the device), while its entries say it is not over. The old per-call cards, the thinking row and the
+  working dots are gone. The wheel, the timeline and the page stack are Elanor's `Ticker`, `Timeline` and
+  `Drawer.Stack`/`Drawer.Page` (with a bottom sheet's rubber-band drag to close), which Elanor's npm release 0.1.0
+  does not have yet: p2 builds them in `src/web/elanor-extra/` (ported from Elanor's source as the branch vendored it,
+  styles in Elanor's layer) until Elanor ships them; the activity's icons are Elanor's Material Symbols
+  (`@earendil-works/elanor-icons-react`). The activity uses the interface's sans: it sets Elanor's ui typography
+  tokens anew with `--sans` (`activity.css`). The transcript and the composer are at most Elanor's width for running
+  text (52rem). Branch-only parts left out: the "files changed" card (needs worker support) and the lab's result
+  rows and cards. Tests: `activity-model.test.ts` (turns, labels, summaries, grouped calls), `activity-panel.test.ts`
+  (docked beside the chat, swapping with the workspace), and the browser tests that open steps (`codemode-card`,
+  `nested-calls`, `ui-agents`, `failed-turns`, `ui-mobile-fixes`).
+- **Earlier history while a turn is one row:** a page of a turn's tool calls can add next to no height (they are all
+  one activity row), so the transcript loads earlier pages by itself while following the answer at the bottom and
+  less than a viewport of history is above it, not only on a scroll up (`#loadEarlier` in `use-chat-scroll.ts`), and
+  asks again after a page that grew the loaded history (`history.size`, the transcript's item count), not only after
+  one that added rows. Before, a long turn could leave only its row under "Earlier messages", with nothing to scroll.
+  `ui-mobile-fixes.test.ts` covers it.
 - **Security limits (as Pi Mobile):** for static UI requests, guests may load their session's pages, the installable
   app's `public/` files, the bundle manifest and files from the current or briefly retained bundle generations
   (`src/hosts/web.ts`); other web-host paths are 403. Authorized plugin routes retain their own guest permissions.

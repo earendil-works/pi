@@ -1,0 +1,303 @@
+/* A turn's activity row, step labels, details and results (src/web/activity). The timeline, the ticker and the
+ * sheet's page stack are Elanor's (built in p2 for now: ../elanor-extra). */
+
+/*
+ * The interface's sans (--sans), not the pi brand's serif that Elanor's ui typography uses: the row, the results and
+ * the sheet or panel set its tokens anew, so every Elanor component inside them follows. Sizes and weights stay
+ * Elanor's.
+ */
+.activity,
+.results,
+.activity-pages {
+	--semantic-typography-ui-primary:
+		var(--semantic-typography-ui-primary-font-weight) var(--semantic-typography-ui-primary-font-size) /
+		var(--semantic-typography-ui-primary-line-height) var(--sans);
+	--semantic-typography-ui-secondary:
+		var(--semantic-typography-ui-secondary-font-weight) var(--semantic-typography-ui-secondary-font-size) /
+		var(--semantic-typography-ui-secondary-line-height) var(--sans);
+	--semantic-typography-ui-tertiary:
+		var(--semantic-typography-ui-tertiary-font-weight) var(--semantic-typography-ui-tertiary-font-size) /
+		var(--semantic-typography-ui-tertiary-line-height) var(--sans);
+	--semantic-typography-ui-label:
+		var(--semantic-typography-ui-label-font-weight) var(--semantic-typography-ui-label-font-size) /
+		var(--semantic-typography-ui-label-line-height) var(--sans);
+}
+
+/* The row in the chat: one large tap target per turn, without a background; it highlights when pressed. */
+.activity {
+	display: flex;
+	align-items: center;
+	align-self: stretch;
+	gap: var(--semantic-dimension-space-gap-small);
+	min-block-size: 3.5rem;
+	margin-inline: calc(-1 * var(--semantic-dimension-space-padding-medium));
+	padding-inline: var(--semantic-dimension-space-padding-medium);
+	border-radius: var(--semantic-dimension-radius-large);
+	color: var(--semantic-color-text-primary);
+	font: var(--semantic-typography-ui-secondary);
+	text-align: start;
+	transition: background-color 0.45s ease-out;
+}
+@media (hover: hover) {
+	.activity:hover {
+		background: var(--semantic-color-background-fill-ghost-neutral-hover);
+	}
+}
+.activity:active {
+	background: var(--semantic-color-background-fill-ghost-neutral-active);
+}
+/* Done: no background, the words in the secondary colour (the counts of changed lines keep theirs). */
+.activity[data-state="done"] {
+	color: var(--semantic-color-text-secondary);
+}
+/* A turn's row stands apart from the message above it. */
+.activity-turn {
+	margin-block-start: var(--semantic-dimension-space-gap-small);
+}
+/* How long the turn took: counting while it works. */
+.activity-time {
+	flex: none;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-tertiary);
+	font-variant-numeric: tabular-nums;
+}
+.activity-chevron {
+	display: grid;
+	flex: none;
+	place-items: center;
+	color: var(--semantic-color-icon-secondary);
+}
+
+/* A step's words: the verb, then a file (semibold) or a command (code font); the agent's words as they are. */
+.label-text {
+	min-inline-size: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.label-object[data-style="file"] {
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+.label-object[data-style="code"] {
+	font-family: var(--semantic-font-family-code);
+	font-size: 0.9em;
+}
+/* In the wheel the verb leads ("Running", "Reading"): bold, and what it acts on in the regular weight. */
+.activity-ticker .label-verb {
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+.activity-ticker .label-object[data-style="file"] {
+	font-weight: inherit;
+}
+.label-extra {
+	color: var(--semantic-color-text-secondary);
+}
+
+/* A step's detail: Input, then Output, each under its label. */
+.detail-label {
+	margin: 0;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+}
+/* A quiet line: no output, how a call ended, a subagent's configuration. */
+.detail-note {
+	margin: 0;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+	overflow-wrap: anywhere;
+}
+.detail-section {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-x-small);
+	min-inline-size: 0;
+}
+.detail-section > * {
+	min-inline-size: 0;
+	max-inline-size: 100%;
+}
+.detail-section pre {
+	max-inline-size: 100%;
+	overflow-x: auto;
+}
+.detail-file {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--semantic-dimension-space-gap-small);
+}
+.detail-path {
+	font: var(--semantic-typography-code-secondary);
+	overflow-wrap: anywhere;
+}
+/* A command as a terminal: the prompt and command, then its output, in one block. */
+.detail-terminal {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	border-radius: var(--semantic-dimension-radius-default);
+	background: var(--semantic-color-background-fill-secondary);
+}
+.detail-command,
+.detail-output {
+	margin: 0;
+	padding: var(--semantic-dimension-space-padding-medium) var(--semantic-dimension-space-padding-large);
+	overflow-x: auto;
+	font: var(--semantic-typography-code-secondary);
+	white-space: pre;
+}
+.detail-command {
+	color: var(--semantic-color-text-primary);
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+.detail-prompt {
+	color: var(--semantic-color-text-secondary);
+}
+.detail-output {
+	color: var(--semantic-color-text-code);
+}
+.detail-more + .detail-output {
+	padding-top: 0;
+}
+/* A failure: its output in red, no louder than that. */
+.detail-terminal[data-failed] .detail-output {
+	color: var(--semantic-color-text-negative);
+}
+.detail-more {
+	align-self: flex-start;
+	padding: var(--semantic-dimension-space-padding-small) var(--semantic-dimension-space-padding-large);
+	color: var(--semantic-color-text-link);
+	font: var(--semantic-typography-ui-tertiary);
+}
+.detail-images {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-small);
+}
+.detail-image {
+	display: block;
+	max-inline-size: 100%;
+	block-size: auto;
+	border: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+	border-radius: var(--semantic-dimension-radius-default);
+}
+
+/* What a turn made for the person, after its answer. */
+.results {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-small);
+}
+.result-links {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-medium);
+	color: var(--semantic-color-icon-secondary);
+}
+.result-link {
+	color: var(--semantic-color-text-link);
+	font: var(--semantic-typography-ui-secondary);
+}
+
+/* The wheel (Elanor's Ticker) fills the row; a finished turn reads in the secondary colour. */
+.activity-turn {
+	cursor: pointer;
+}
+.activity-ticker {
+	flex: 1;
+	min-inline-size: 0;
+}
+.activity[data-state="done"] .activity-ticker {
+	color: var(--semantic-color-text-secondary);
+}
+
+/*
+ * The docked panel (Sheet.tsx) for a turn's steps or changes: like the workspace panel, a column at the right over
+ * the chat from 900px, docked beside it from 1280px; empty, it takes no room. Inside, Elanor's drawer popup fills it.
+ */
+.side-dock {
+	position: fixed;
+	inset-block: 0;
+	inset-inline-end: 0;
+	z-index: 35;
+	display: flex;
+	inline-size: min(var(--activity-panel-width, 460px), 100%);
+	overflow: hidden;
+	border-inline-start: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+	background: var(--semantic-color-background-canvas);
+}
+.side-dock:empty {
+	display: none;
+}
+@media (min-width: 1280px) {
+	.side-dock {
+		position: relative;
+		flex: 0 0 var(--activity-panel-width, 460px);
+		inline-size: auto;
+		min-inline-size: 0;
+	}
+}
+.side-dock > * {
+	display: contents;
+}
+.activity-panel {
+	position: relative;
+	transition: opacity var(--semantic-transition-fade);
+	inset: auto;
+	flex: 1;
+	inline-size: 100%;
+	max-inline-size: none;
+	block-size: 100%;
+	max-block-size: none;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+}
+/* On a phone, the sheet and its backdrop over the chat's layers (the composer, the scroll-down button), like p2's
+   own sheets (.sheet-layer). */
+.activity-sheet-layer {
+	z-index: 38;
+}
+/* Docked, the panel fades in and out where it is: no slide in from the edge as on a phone. */
+.activity-panel[data-starting-style],
+.activity-panel[data-ending-style] {
+	opacity: 0;
+	transform: none;
+}
+
+/* A history tool's entries (Detail.tsx): each a row that opens its message in the transcript. */
+.history-entries {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.history-entry {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-xx-small);
+	inline-size: 100%;
+	padding: var(--semantic-dimension-space-padding-small) 0;
+	border-block-end: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+	text-align: start;
+}
+.history-entry-head {
+	font: var(--semantic-typography-ui-secondary);
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+.history-entry:hover .history-entry-head {
+	text-decoration: underline;
+}
+.history-entry-id {
+	color: var(--semantic-color-text-secondary);
+	font-family: var(--semantic-font-family-code);
+	font-weight: normal;
+}
+.history-entry-text {
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-tertiary);
+	overflow-wrap: anywhere;
+}

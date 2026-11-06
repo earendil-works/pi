@@ -11,14 +11,14 @@ A workflow is a code mode script that runs many one-shot agents (`tools.agent`) 
 const value = await tools.agent({
 	prompt, // the task; give absolute paths and say whether it may change files
 	schema, // JSON Schema of the answer; the call resolves to the parsed, validated value
-	label, // optional: the row name on the script's tool card
+	label, // optional: the name of its row in the script's calls
 	model, // optional 'provider/modelId'; default: the caller's
 	thinkingLevel, // optional
 	tools, // optional subset of read, write, edit, bash, send_file, artifact; default: all
 });
 ```
 
-Each call runs a fresh conversation. Its answer is parsed as JSON and validated; a failure is sent back to the same agent, up to 3 attempts, then the call rejects. Agents are listed as rows on the script's tool card, where their transcripts open (read-only). Their cost counts toward the session total.
+Each call runs a fresh conversation. Its answer is parsed as JSON and validated; a failure is sent back to the same agent, up to 3 attempts, then the call rejects. Agents are listed as rows among the script's calls (its step in the turn's activity), where their transcripts open (read-only). Their cost counts toward the session total.
 
 ## When to use one
 
@@ -38,7 +38,7 @@ A persistent `subagent` fits ongoing delegated work that you talk to again. A sc
 - **Independent checks.** Verifiers and judges use another model family than the agents whose work they check, and are told to refute rather than confirm.
 - **Explicit scope.** Give absolute paths and the exact command to inspect (`git show <commit> -- <paths>`). Say "read-only: change nothing" when that is the intent, because the `bash` tool can change files. Grant only the tools needed.
 - **Bounded cost.** Cap the fan-out (`maxItems`, `slice`), the rounds, and what gets verified (for example only medium/high severity). Use cheaper models for wide phases and a stronger one for the judge.
-- **Labels.** Give each agent a short `label`, so the tool card's rows say what each one did.
+- **Labels.** Give each agent a short `label`, so the script's rows say what each one did.
 - **Return a summary.** Return counts plus the kept results, not every intermediate value: the return value enters the main context.
 
 ## Pattern: fan out, then adversarially verify

@@ -7,7 +7,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
+import type { ConversationView, EntryDraft, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, follow } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
@@ -131,6 +132,73 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		}
 	});
 
+	it("loads earlier pages by itself while a turn's many tool calls, one row, leave nothing to scroll", async () => {
+		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
+			{ cwd: fixture.workspace, title: "One long turn" },
+			BACKGROUND_CONTEXT,
+		);
+		// A few turns, then one with more tool calls than the window and a page hold: they are all one activity row.
+		const entries = bigSessionEntries(20);
+		const text = "Run every check";
+		entries.push({
+			kind: "p2.input",
+			data: { author: { kind: "owner", id: "owner", name: "Owner" }, text, attachments: [] },
+			model: [{ role: "user", content: [{ type: "text", text }], timestamp: 1_800_000_000_000 }],
+		} as EntryDraft);
+		for (let call = 0; call < 150; call++) {
+			const id = `check-${call}`;
+			entries.push(
+				{
+					kind: "pi.assistant",
+					model: [
+						{
+							...fauxAssistantMessage([]),
+							content: [{ type: "toolCall", id, name: "bash", arguments: { command: `check ${call}` } }],
+							stopReason: "toolUse",
+							timestamp: 1_800_000_000_001 + call,
+						},
+					],
+				} as EntryDraft,
+				{
+					kind: "pi.tool-result",
+					model: [
+						{
+							role: "toolResult",
+							toolCallId: id,
+							toolName: "bash",
+							content: [{ type: "text", text: "ok" }],
+							isError: false,
+							timestamp: 1_800_000_000_001 + call,
+						},
+					],
+				} as EntryDraft,
+			);
+		}
+		entries.push({
+			kind: "pi.assistant",
+			model: [
+				{
+					...fauxAssistantMessage([]),
+					content: [{ type: "text", text: "All checks pass." }],
+					timestamp: 1_800_000_001_000,
+				},
+			],
+		} as EntryDraft);
+		await fixture.server.host.root(
+			async (ctx) => (await ctx.get(SessionTransfer, { session: session.id })).seed({ entries }, ctx),
+			BACKGROUND_CONTEXT,
+		);
+		await browser.metrics(390, 844);
+		await browser.open(url(`/s/${session.id}`));
+		await browser.wait(`${messages}.includes('All checks pass.')`);
+		// Without a scroll, the pages before the long turn arrive: its message, and earlier turns above to scroll back to.
+		await browser.wait(`${shows(text)} || ${messages}.includes('Please look at module')`);
+		await browser.wait(
+			`(() => { const e=document.querySelector('.scroller');return e.scrollHeight > e.clientHeight * 1.5; })()`,
+		);
+		assert.equal(await browser.evaluate("document.querySelectorAll('[data-testid=activity]').length > 1"), true);
+	});
+
 	it("keeps the composer and Send while the chat object restarts; a message sent meanwhile arrives", async () => {
 		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
 			{
@@ -233,14 +301,13 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		);
 		await until(chat.view, answered("Forwarded port 5173"), 30_000);
 		await browser.open(url(`/s/${session.id}`));
-		await browser.wait(`[...document.querySelectorAll('.tool-name')].some((e) => e.textContent === 'Ports')`);
-		const card = `[...document.querySelectorAll('.tool')].find((e) => e.querySelector('.tool-name')?.textContent === 'Ports')`;
-		assert.equal(await browser.evaluate(`${card}.querySelector('.tool-summary').textContent`), "open · 5173 · web");
-		await browser.wait(`${card}.querySelector('a.tool-link')`);
+		// The opened port is a result for the person: its link after the answer.
+		const anchor = "document.querySelector('[data-testid=results] a[data-testid=tool-link]')";
+		await browser.wait(anchor);
 		const link = await browser.evaluate<{ text: string; href: string }>(
-			`(() => { const a=${card}.querySelector('a.tool-link');return { text: a.textContent, href: a.href }; })()`,
+			`(a => ({ text: a.textContent, href: a.href }))(${anchor})`,
 		);
-		assert.equal(link.text, "Open web →");
+		assert.equal(link.text, "Open web");
 		assert.match(link.href, /^https:\/\/fwd--0123456789abcdef0123456789abcdef--[a-z0-9]+\.rdtun\.com\/$/);
 		await chat.send({ text: 'ports {"action":"close","port":5173}', requestId: "close" }, BACKGROUND_CONTEXT);
 		await until(chat.view, answered("Stopped forwarding port 5173"), 30_000);
