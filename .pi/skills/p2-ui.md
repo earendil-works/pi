@@ -64,12 +64,16 @@ back gesture and the browser's Back undo it one step at a time:
 
 ## Tools' UI lives in their plugins
 
-No tool-specific code in `src/web` (no tool names, labels, phrases or renderers). The plugin that owns a tool
-contributes its `ToolActivity` (type in `src/web/activity/model.ts`) to `ToolActivities` keyed by tool name, from its
-web facet (`plugins/<name>/activity.tsx` + `web.tsx`, e.g. `plugins/coding-tools`): `describe`/`running` labels (a
-`Kind` icon, verb, object, extra), `argument`, `failure`, `summary(count)`, `Detail`, `CallDetail`, `Result` +
-`hasResult`. Tools without one get the generic look. Do not add UI fields to tool declarations or schemas. Add new
-plugins' contributions to `PLUGIN_TOOLS` in `test/fixtures/transcript.ts`.
+No tool-specific code in `src/web`, `src/tui` or `src/runtime` (no tool names, labels, phrases, renderers or a tool's
+`details` format). The plugin that owns a tool contributes its `ToolActivity` (type in `src/web/activity/model.ts`)
+to `ToolActivities` keyed by tool name, from its web facet (`plugins/<name>/activity.tsx` + `web.tsx`, e.g.
+`plugins/coding-tools`): `describe`/`running` labels (a `Kind` icon, verb, object, extra), `argument`, `failure`,
+`summary(count)`, `Detail`, `hasResult` ("after" the answer or "inline" in place) + `Result`, `nestedCalls` and
+`repeated` for a tool that runs others, `CallInput`/`CallDetail` for its calls made by scripts; its TUI facet
+registers `ToolRenderers` in `TuiToolRenderers`. Tools without one get the generic look. Do not add UI fields to tool
+declarations or schemas. Add new plugins' contributions to `PLUGIN_TOOLS` in `test/fixtures/transcript.ts` (TUI:
+`PLUGIN_TUI_RENDERERS` in `test/fixtures/tui-tools.ts`). The whole guide, with a complete example plugin:
+`docs/tool-ui.md`.
 
 ## State and contracts
 

@@ -573,7 +573,10 @@ export type ToolActivity = {
 	CallInput?: ComponentType<{ call: NestedCall }>;
 	/** What the detail of another call's call of this tool adds below its input and output (a link to what it made). */
 	CallDetail?: ComponentType<{ call: NestedCall }>;
-	/** A result after the answer; `inline`: in the chat (an inline artifact shows itself too), not in the sheet. */
+	/**
+	 * The call's result for the person, where `hasResult` places it; `inline`: in the chat (an inline artifact shows
+	 * itself too), not in a detail.
+	 */
 	Result?: ComponentType<{ tool: ToolView; inline: boolean }>;
 };
 /** Where a call's result for the person shows: after the turn's answer, or in place, right after the call. */
