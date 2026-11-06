@@ -850,7 +850,6 @@ function buildParams(
 			(params as any).tool_stream = true;
 		}
 	} else if (compat.requiresToolsWithToolHistory && hasToolHistory(context.messages)) {
-		// vLLM 0.20+ rejects an empty tools array, so only proxies that require it get one.
 		params.tools = [];
 	}
 
