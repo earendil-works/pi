@@ -1,6 +1,6 @@
 # Active Threads — NLT-Pi
 
-**Last updated:** 2026-11-05
+**Last updated:** 2026-11-06
 
 ## Active
 
@@ -108,13 +108,23 @@
 **Next action:** Owner: sign-in setup. Agent: help verify the first sign-in and the first agent turn once set up.
 
 ### NLTPI-MVP-006 — Chat history in Neon
-**Status:** implemented on `ccr-50842984-chat-history` (nlt-pi#35); off until the owner sets `NLT_HISTORY_ENABLED=1`  
+**Status:** merged (nlt-pi#35). Switched on in production on 2026-11-06 (`NLT_HISTORY_ENABLED=1`, redeployed, deployment READY). The Neon tables are created on the first request, which has not happened yet.  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
 **Summary:** The owner added Neon and Mem0 to the Vercel project (2026-11-05) and chose chat history in Neon first. The owner-approved spec is `docs/superpowers/specs/2026-11-05-chat-history-neon-design.md`. Conversations are saved for the signed-in owner only and kept until deleted. Blocked messages are stored as a marker without text. The page saves through an owner-only `/api/conversations`, so `/api/agent` and `/api/govern` are unchanged. The agent still answers each message on its own. `@neondatabase/serverless` 1.2.0 is pinned.  
 **Verified:** offline tests (store SQL against a recording stub; route against an in-memory store; page helpers), mutation checks (owner filter, blocked-text clearing, session owner), and a Playwright check of the page with stubbed API routes (history off, and on: list, save, open, delete).  
 **Not verified:** a real Neon connection and schema creation.  
-**Next (owner):** merge nlt-pi#35, set `NLT_HISTORY_ENABLED=1` in Production, redeploy, reload and send one message, then reload again to see it listed.  
+**Next (owner):** open the chat page, sign in, send one message, then reload to see it listed. The agent can then confirm the rows in Neon (read-only).  
 **Planned next phase:** Mem0 as the agent's memory layer, with its own design. `@mem0/pi-agent-plugin` 0.3.2 has been reviewed: it fits Pi, but its auto-capture, model-callable delete and machine-based scoping need locking down before use in the hosted runner (`noExtensions: true` today).
+
+### NLTPI-MVP-007 — Sandbox access requests (owner approves new sites)
+**Status:** design only (nlt-pi#39, `ccr-50842984-network-access`); revised once after the owner's review; awaiting the owner's re-review. No code.  
+**Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
+**Summary:** The sandbox can reach only npm, PyPI and GitHub (`EGRESS_PRESETS`). The owner wants the agent to ask before reaching any other site. Spec: `docs/superpowers/specs/2026-11-06-sandbox-access-requests-design.md`. The agent gets a tool `request_network_access(host, reason)`, which records a request and ends the turn. The chat page shows a card (Allow for this turn, Always allow, Deny). A "this turn" approval is bound to one conversation, one task and a one-time nonce, and is consumed in one atomic statement. An "always allow" host is stored per owner in Neon and can be removed. Off unless `NLT_ACCESS_REQUESTS=1`; `NLT_AGENT_EGRESS_ALL=1` is unchanged.  
+**Registration:** `docs/agent-log/registrations/2026-11-06T040112Z-claude-code-01UNjnjkGsveT9DW8pC9UXhf.json`  
+**Intent record:** `docs/agent-log/intent/2026-11-06-sandbox-access-requests.md`  
+**Handoff:** `docs/agent-log/handoffs/2026-11-06-sandbox-access-requests-design.json`  
+**Not verified:** that the real sandbox accepts a host added to its network policy mid-session; this needs one live turn after the feature is built and enabled.  
+**Next (owner):** approve the revised spec or ask for changes. Then an implementation plan and its execution method.
 
 ### NLTPI-MVP-003 — Provider-agnostic model routing for the governed turn
 **Status:** gateway chosen (Vercel AI Gateway) and wired (nlt-pi#21, #26, #27); not yet run against the real gateway  

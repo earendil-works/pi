@@ -1,0 +1,39 @@
+{
+  "handoff_record": {
+    "session_id": "session_01UNjnjkGsveT9DW8pC9UXhf",
+    "agent_name": "Claude Code",
+    "date": "2026-11-06T04:10:00+00:00",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "ccr-50842984-network-access",
+    "work_completed": [
+      "Turned chat history on in production at the owner's request: added NLT_HISTORY_ENABLED=1 (production only) to the nlt-pi-mvp Vercel project and redeployed. The deployment reached READY and is aliased to nlt-pi-mvp.vercel.app. The deployment built main at 828c73d, which includes nlt-pi#38 (a separate Cline contribution that this session did not write or review).",
+      "Read how egress works today (src/sandbox/lifecycle.ts presets, NLT_AGENT_EGRESS_ALL, the per-turn network policy) and worked the design through with the owner: presets stay open, everything else asks; two answers (allow for this turn, always allow); the turn ends on a request and resumes in a new one.",
+      "Wrote docs/superpowers/specs/2026-11-06-sandbox-access-requests-design.md (nlt-pi#39).",
+      "Revised the spec after the owner's review of nlt-pi#39 (changes requested): a 'this turn' approval is now bound to one conversation, one task (SHA-256 of the originating prompt) and a one-time nonce, consumed in a single atomic UPDATE with a short post-decision expiry; the pending cap counts only unexpired pending rows, with cleanup of rows expired more than a day; governance records added.",
+      "Added this registration, an intent record (docs/agent-log/intent/2026-11-06-sandbox-access-requests.md) and thread NLTPI-MVP-007."
+    ],
+    "verification": [
+      "bash .nltotoi/scripts/validate-governance.sh: passed",
+      "git diff --check and a repo-wide conflict-marker grep: clean",
+      "The pre-commit hook ran in full and passed on each commit",
+      "Neon (read-only): the chat history tables do not exist yet. They are created on the first request to /api/conversations, and nobody had loaded the page since the redeploy.",
+      "Not run: any code, because none changed. Not verified: that the real sandbox accepts a host added to its network policy mid-session."
+    ],
+    "work_in_progress": [],
+    "blockers": [],
+    "decisions_made": [
+      "Owner (2026-11-06): keep npm, PyPI and GitHub open; ask for everything else.",
+      "Owner (2026-11-06): offer 'allow for this turn' and 'always allow'; deny is not stored.",
+      "Owner (2026-11-06): approach B, end the turn on a request and resume in a new turn.",
+      "Owner (2026-11-06): enable chat history in production."
+    ],
+    "decisions_pending": [
+      "Owner: re-review the revised spec in nlt-pi#39 and approve it or request changes. Marking the PR ready for review is not read as approval.",
+      "Owner: after approval, the implementation plan and its execution method.",
+      "Owner: whether to review nlt-pi#38, merged by another agent. Its api/agent.ts calls sessionFromCookie(process.env, undefined)?.sub, which looks like it never finds an owner; harmless while memory is off by default.",
+      "Owner: send one message in the chat page so the history tables are created and a saved conversation can be confirmed in Neon."
+    ],
+    "next_action": "Wait for the owner's approval of the revised spec. Then write the implementation plan and add a fresh intent record before any code."
+  }
+}
