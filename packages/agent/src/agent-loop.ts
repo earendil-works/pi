@@ -587,6 +587,7 @@ async function executeToolCallsMixed(
 	};
 }
 
+/** Run tool calls one after another, stopping early if the signal aborts. */
 async function executeToolCallsSequential(
 	currentContext: AgentContext,
 	assistantMessage: AssistantMessage,
@@ -643,6 +644,7 @@ async function executeToolCallsSequential(
 	};
 }
 
+/** Prepare calls in order, run the allowed ones concurrently, and emit results in call order. */
 async function executeToolCallsParallel(
 	currentContext: AgentContext,
 	assistantMessage: AssistantMessage,
@@ -836,6 +838,7 @@ async function prepareToolCall(
 	}
 }
 
+/** Create the progress sink that emits tool_execution_update events for one call. */
 function emitToolExecutionUpdate(toolCall: AgentToolCall, emit: AgentEventSink): ToolUpdateSink {
 	return (partialResult) =>
 		emit({
@@ -878,6 +881,7 @@ export async function runToolCall(toolCall: AgentToolCall, options: RunToolCallO
 	return finalizeExecutedToolCall(context, assistantMessage, preparation, executed, options, signal);
 }
 
+/** Execute one prepared tool, delivering progress through a bounded tracker and turning rejections into error results. */
 async function executePreparedToolCall(
 	prepared: PreparedToolCall,
 	signal: AbortSignal | undefined,

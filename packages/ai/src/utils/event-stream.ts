@@ -4,14 +4,17 @@ class FifoQueue<T> {
 	private incoming: T[] = [];
 	private outgoing: T[] = [];
 
+	/** Number of queued values. */
 	get length(): number {
 		return this.incoming.length + this.outgoing.length;
 	}
 
+	/** Add a value at the back. */
 	enqueue(value: T): void {
 		this.incoming.push(value);
 	}
 
+	/** Remove the oldest value, in amortized constant time. */
 	dequeue(): T | undefined {
 		if (this.outgoing.length === 0) {
 			while (this.incoming.length > 0) {
@@ -51,6 +54,7 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 		void this.finalResultPromise.catch(() => {});
 	}
 
+	/** Publish an event without waiting for consumers; a terminal event resolves result(). */
 	push(event: T): void {
 		if (this.done) return;
 
@@ -114,6 +118,7 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 		this.rejectFinalResult(error);
 	}
 
+	/** Finish the stream, release waiting consumers and producers, and optionally resolve result(). */
 	end(result?: R): void {
 		this.done = true;
 		if (result !== undefined) {
@@ -155,6 +160,7 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 		}
 	}
 
+	/** Promise for the final result; it rejects if the stream failed. */
 	result(): Promise<R> {
 		return this.finalResultPromise;
 	}

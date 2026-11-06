@@ -59,14 +59,17 @@ export class RowLayout {
 		this.#dirty = true;
 	}
 
+	/** Number of rows in the layout. */
 	get count(): number {
 		return this.#keys.length;
 	}
 
+	/** Key of the row at `index`, if any. */
 	keyAt(index: number): string | undefined {
 		return this.#keys[index];
 	}
 
+	/** Index of the row with `key`, if present. */
 	indexOf(key: string): number | undefined {
 		return this.#index.get(key);
 	}
@@ -84,6 +87,7 @@ export class RowLayout {
 		return this.#sizes.has(key);
 	}
 
+	/** Height of the row at `index`, measured or estimated. */
 	sizeOf(index: number): number {
 		const key = this.#keys[index];
 		if (key === undefined) return 0;
@@ -96,6 +100,7 @@ export class RowLayout {
 		return offsets[Math.max(0, Math.min(index, this.#keys.length))] ?? 0;
 	}
 
+	/** Total height of all rows. */
 	get total(): number {
 		return this.offsetOf(this.#keys.length);
 	}

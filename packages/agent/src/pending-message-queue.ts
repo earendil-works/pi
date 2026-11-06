@@ -13,19 +13,23 @@ export class PendingMessageQueue<T> {
 		this.mode = mode;
 	}
 
+	/** Append a message to the back of the queue. */
 	enqueue(message: T): void {
 		this.#messages.push(message);
 	}
 
+	/** Whether any message is still waiting. */
 	hasItems(): boolean {
 		return this.#head < this.#messages.length;
 	}
 
+	/** Messages the next drain() would return, without removing them. */
 	peek(): T[] {
 		if (this.mode === "all") return this.#messages.slice(this.#head);
 		return this.hasItems() ? [this.#messages[this.#head]!] : [];
 	}
 
+	/** Remove and return the next message, or every message in "all" mode. */
 	drain(): T[] {
 		if (!this.hasItems()) return [];
 		if (this.mode === "all") {
@@ -42,6 +46,7 @@ export class PendingMessageQueue<T> {
 		return [first];
 	}
 
+	/** Drop every queued message and release the backing storage. */
 	clear(): void {
 		this.#messages = [];
 		this.#head = 0;
