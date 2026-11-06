@@ -51,3 +51,5 @@ packages/agent/docs/extensions/pi-server-artifact/index.md
 .kilo/cache/
 .kilo/index/
 .kilo/plans/
+.vercel
+.env*

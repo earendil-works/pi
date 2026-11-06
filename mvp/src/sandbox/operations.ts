@@ -1,7 +1,7 @@
 /**
  * Sandbox-backed tool operations for the NLT Coding Agent.
  *
- * The Pi coding-agent tools (bash, read, write, edit) take swappable "operations" objects. These
+ * The Pi coding-agent tools (bash, read, write, edit, ls, find) take swappable "operations" objects. These
  * implementations run them inside a Vercel Sandbox instead of on the machine that hosts the agent loop.
  *
  * Authority model (see AGENTS.md): the sandbox is the execution environment ("AgentOS" stand-in), not an
@@ -21,6 +21,8 @@ import { Writable } from "node:stream";
 import type {
   BashOperations,
   EditOperations,
+  FindOperations,
+  LsOperations,
   ReadOperations,
   WriteOperations,
 } from "@earendil-works/pi-coding-agent";
@@ -82,6 +84,27 @@ export interface SandboxToolOperations {
   read: ReadOperations;
   write: WriteOperations;
   edit: EditOperations;
+  ls: LsOperations;
+  find: FindOperations;
+}
+
+/** Deepest directory the `find` tool will descend, so a pathological tree cannot loop the walk. */
+const FIND_MAX_DEPTH = 64;
+
+/** Converts a pi glob pattern (`**`, `*`, `?`) to a regular expression; `**` spans directory separators. */
+function globToRegExp(pattern: string): RegExp {
+  let source = "^";
+  const segments = pattern.split("/");
+  segments.forEach((segment, index) => {
+    const last = index === segments.length - 1;
+    if (segment === "**") {
+      source += last ? ".*" : "(?:.*/)?";
+      return;
+    }
+    source += segment.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]");
+    if (!last) source += "/";
+  });
+  return new RegExp(`${source}$`);
 }
 
 const DEFAULTS = {
@@ -332,7 +355,135 @@ export function createSandboxToolOperations(
     },
   };
 
-  return { bash, read, write, edit };
+  /** Confines a discovery tool's path to the workspace root and reviews it,
+   * returning the validated/resolved path that callers must use for I/O. */
+  async function authorizeDiscovery(toolName: string, path: string): Promise<string> {
+    const paths = await confineReal(path);
+    authorizePath(toolName, paths);
+    return paths.real;
+  }
+
+  async function isDirectory(path: string): Promise<boolean> {
+    const result = await sandbox.runCommand({ cmd: "test", args: ["-d", path], timeoutMs: 15_000 });
+    return result.exitCode === 0;
+  }
+
+  /** Lists one directory inside the workspace through the sandbox shell, as entry names. */
+  async function listDirectory(path: string, timeoutMs = 15_000): Promise<string[]> {
+    const entries = await new Promise<string>((resolve, reject) => {
+      let out = "";
+      const sink = new Writable({
+        write(chunk: Buffer, _encoding, done) {
+          out += chunk.toString("utf8");
+          done();
+        },
+      });
+      sandbox
+        .runCommand({
+          cmd: "ls",
+          args: ["-1", "--", path],
+          cwd: path,
+          stdout: sink,
+          stderr: sink,
+          timeoutMs,
+        })
+        .then(
+          (result) => {
+            if (result.exitCode !== 0) reject(new Error(`Could not list the directory: ${path}`));
+            else resolve(out);
+          },
+          reject,
+        );
+    });
+    return entries.split("\n").map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  }
+
+  const ls: LsOperations = {
+    async exists(path) {
+      const real = await authorizeDiscovery("ls", path);
+      try {
+        await sandbox.fs.access(real);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async stat(path) {
+      const real = await authorizeDiscovery("ls", path);
+      const directory = await isDirectory(real);
+      return { isDirectory: () => directory };
+    },
+    async readdir(path) {
+      const real = await authorizeDiscovery("ls", path);
+      return listDirectory(real);
+    },
+  };
+
+  const find: FindOperations = {
+    async exists(path) {
+      const real = await authorizeDiscovery("find", path);
+      try {
+        await sandbox.fs.access(real);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async glob(pattern, cwd, { ignore, limit }) {
+      const realCwd = await authorizeDiscovery("find", cwd);
+      const matcher = globToRegExp(pattern);
+      const ignored = ignore.map(globToRegExp);
+      // Patterns without a directory separator (e.g., "*.ts") use recursive
+      // basename matching: they match any file with that basename at any depth.
+      const basenameMatcher = pattern.includes("/") ? null : matcher;
+      const results: string[] = [];
+      const walk = async (dir: string, depth: number): Promise<void> => {
+        if (results.length >= limit) return;
+        const entries = await listDirectory(dir);
+        for (const entry of entries) {
+          const child = dir === "/" ? `/${entry}` : `${dir}/${entry}`;
+          // Re-confine each discovered path so `..` entries cannot escape the workspace root.
+          let confined: string;
+          try {
+            confined = confine(child);
+          } catch {
+            continue; // lexical confinement failure (e.g., `..` escaping)
+          }
+          const relativePath =
+            realCwd === "/" ? confined.slice(1) : confined.slice(realCwd.length + 1);
+          if (ignored.some((re) => re.test(relativePath))) continue;
+          // Match globs against paths relative to the search directory (Pi
+          // semantics). Basename-only patterns (no "/") also match against the
+          // entry name at any depth (recursive basename semantics).
+          const matches =
+            (basenameMatcher ? basenameMatcher.test(entry) : false) ||
+            matcher.test(relativePath);
+          if (matches) {
+            results.push(confined);
+            if (results.length >= limit) return;
+          }
+          // Resolve symlinks and authorize each discovered directory before
+          // descending, so a symlink target outside the workspace is never
+          // traversed.
+          if (depth < FIND_MAX_DEPTH) {
+            try {
+              const resolved = await confineReal(child);
+              // Regular files are never descended into (a file is not a valid cwd).
+              if (!(await isDirectory(resolved.real))) continue;
+              await walk(resolved.real, depth + 1);
+            } catch {
+              // Symlink target outside workspace or unresolvable — skip.
+              continue;
+            }
+          }
+        }
+      };
+      await walk(realCwd, 0);
+      return results;
+    },
+  };
+
+  return { bash, read, write, edit, ls, find };
 }
 
 /** Network policy for a new sandbox when the caller does not choose one. Outbound traffic is denied. */

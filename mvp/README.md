@@ -76,7 +76,7 @@ The coding-agent workspace packages resolve through their built `dist`, so build
 
 ## Sandbox tool operations
 
-`src/sandbox/operations.ts` builds the swappable `bash`, `read`, `write` and `edit` operations that the Pi coding-agent tools accept, so they act inside a Vercel Sandbox instead of on the machine running the agent loop. The owner chose Vercel Sandbox as the first execution environment (2026-11-05).
+`src/sandbox/operations.ts` builds the swappable `bash`, `read`, `write`, `edit`, `ls` and `find` operations that the Pi coding-agent tools accept, so they act inside a Vercel Sandbox instead of on the machine running the agent loop. The owner chose Vercel Sandbox as the first execution environment (2026-11-05).
 
 It is library code only. It does not create a sandbox, read credentials, open a connection, or expose a route. When the owner sets `NLT_AGENT_ENABLED=1`, the application calls it through the off-by-default agent route (`mvp/api/agent.ts` → `src/agent/route.ts` → `runAgentTurn`); while the flag is unset, nothing calls it.
 
@@ -85,7 +85,8 @@ What it enforces, with tests that use a fake sandbox:
 - file paths and the command directory must stay inside one workspace root, including after symlink resolution, and including creating a file under a symlinked directory that leads outside. The harness policy reviews both the path as given and where it really points (so a link to `.env` is refused), and the resolved path is the one used for the read or write. The check is made immediately before use and is not atomic: the sandbox SDK takes a path and resolves it again, so a command that runs at the same moment could swap a link in between. `bash` can reach the same paths anyway, which is why the sandbox is the boundary;
 - the caller's environment is never forwarded to the sandbox (it comes from the host process and can hold credentials); only a fixed, configured environment is;
 - commands always have a timeout (default 2 minutes, at most 10), and output (1 MiB), file reads (10 MiB) and writes (2 MiB) are capped. A file's size is asked of the sandbox before any content is transferred, and the limits must be non-negative integers;
-- any sandbox error is an error, never a pass.
+- any sandbox error is an error, never a pass;
+- the discovery tools (`ls`, `find`) confine their target directory to the workspace root and review it before listing or searching, exactly like the file tools.
 
 The path checks are a guardrail for the file tools, not the security boundary. The sandbox is: it is isolated, and new sandboxes get a limited outbound policy (see Sandbox lifecycle); `DEFAULT_SANDBOX_NETWORK_POLICY` remains `deny-all` for callers that build their own. `bash` inside the sandbox can do anything the sandbox allows, which is why egress and secrets must be handled at the sandbox level.
 
@@ -111,7 +112,7 @@ Order of events, each of which can stop the turn before the next starts:
 2. **Free model** from the live gateway catalog (`pickFreeModel`). If none is free right now the turn does not run (`no_free_model`); no priced model is substituted.
 3. **The sandbox lock** (`withAgentSandbox`). If another turn holds it the result is `busy`, and the credential is not read.
 4. **The credential** is read inside the turn (`gatewayToken`, for example the Vercel OIDC token read inside the request), held in memory by the model runtime, and never put in the sandbox, a file, the session or a log.
-5. **The session** uses Pi's `bash`, `read`, `write` and `edit` tools bound to the sandbox operations, so every call is reviewed by the harness policy first. Pi's built-in host tools are disabled (`noTools: "builtin"`), and no extensions, skills, prompt files or context files from the machine running the code are loaded. The session's working directory is the sandbox workspace (`/vercel/sandbox`, unverified until a real sandbox exists).
+5. **The session** uses Pi's `bash`, `read`, `write`, `edit`, `ls` and `find` tools bound to the sandbox operations, so every call is reviewed by the harness policy first. Pi's built-in host tools are disabled (`noTools: "builtin"`), and no extensions, skills, prompt files or context files from the machine running the code are loaded. The session's working directory is the sandbox workspace (`/vercel/sandbox`, unverified until a real sandbox exists).
 6. The caller's abort signal and the turn deadline both stop the model run; the lock is then released (or, if the turn ignores its deadline, left to expire).
 
 Tests run offline with Pi's faux provider and a recording fake sandbox (11 tests, including checks that a blocked gate, no free model, a busy sandbox, and a policy-blocked command each stop short of the next step, and that the token and host environment never reach the sandbox). They were mutation-checked: removing the policy review or loosening the gate check makes them fail. Not exercised: the real gateway call, a real sandbox, and the tool-name list Pi sends the model.

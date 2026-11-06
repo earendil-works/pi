@@ -1,0 +1,44 @@
+{
+  "handoff_record": {
+    "session_id": "session_delegated-coding-agent-20261106",
+    "agent_name": "Claude Code",
+    "date": "2026-11-06T04:54:49+00:00",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "docs/readme-personal-use",
+    "work_completed": [
+      "Added sandbox-backed ls and find operations to mvp/src/sandbox/operations.ts: listing through the sandbox shell (bash ls -1), directory checks through the sandbox shell (test -d), and a bounded glob walk for find, all behind the harness policy and confined to the workspace root.",
+      "Extended SandboxToolOperations with ls and find; the runner now registers Pi's createLsToolDefinition and createFindToolDefinition with those operations, so the governed turn offers bash/read/write/edit/ls/find.",
+      "Tests: mvp/test/sandbox-operations.test.ts (listing, directory checks, glob with ignore and limit, confinement refusals, policy review) and mvp/test/agent-runner.test.ts (ls and find tool calls run through the sandbox; an ls pointing outside the workspace is refused without running)."
+    ],
+    "work_in_progress": [],
+    "blockers": [
+      "Typecheck (tsc) and biome could not run in this container: the TypeScript 7 native binary and Biome CLI have no prebuilt binaries for the platform. Must be run by the owner or in CI before merge.",
+      "No Kilo client, no live gateway/sandbox/OIDC run, and no real sandbox workspace root were verified in this session (unchanged from NLTPI-MVP-005)."
+    ],
+    "decisions_made": [
+      "Incorporate more of the Pi coding-agent capability set into the MVP agent turn: the read-only discovery tools (ls, find) via Pi's own tool factories over the sandbox operations.",
+      "Keep grep as a bash-only capability: Pi's grep factory cannot execute sandboxed through its operations interface.",
+      "Keep the new tools on the existing policy + confinement seam; no new authority boundary, credential, dependency, egress or persistence decision."
+    ],
+    "decisions_pending": [
+      "Owner direction on what else to incorporate next: a separate grep tool (would need an upstream change), MCP servers, extensions, skills, prompt templates, context files, subagents, compaction.",
+      "Owner answers still open from NLTPI-MVP-005: route access control, approval defaults, cost, model provider retention."
+    ],
+    "escalations": [],
+    "next_agent_notes": "The governed MVP agent turn now composes: crisis gate, free model, sandbox lock, bash/read/write/edit/ls/find tools bound to policy-reviewed sandbox operations, built-in host tools disabled, no host resources loaded. The route stays off unless the owner sets NLT_AGENT_ENABLED=1 per environment; the credential is read inside the turn and kept in memory; egress is the owner-set allowlist with an explicit allow-all option; approvals run without extra prompts inside the sandbox. Next increments on the same thread: a first real sandbox/gateway run by the owner, then more Pi capability surface (for example MCP or subagents) only with the owner's direction and an updated risk decision.",
+    "files_modified": [
+      "mvp/src/sandbox/operations.ts",
+      "mvp/src/agent/runner.ts",
+      "mvp/test/sandbox-operations.test.ts",
+      "mvp/test/agent-runner.test.ts",
+      "mvp/README.md",
+      "docs/active-threads.md",
+      "docs/agent-log/intent/2026-11-06-governed-agent-tools.md",
+      "docs/agent-log/handoffs/2026-11-06-governed-agent-tools.json"
+    ],
+    "tests_run": "mvp vitest --run for mvp/test/sandbox-operations.test.ts (38 passed) and mvp/test/agent-runner.test.ts (21 passed) in the cloud container after hydrating model data; full mvp vitest suite has pre-existing environment-only failures (missing @neurolift-technologies/asfdk package resolution, root-user EACCES assumptions, real-shell lock timeouts), unrelated to this change.",
+    "tests_passing": true,
+    "pr_url": null
+  }
+}

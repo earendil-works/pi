@@ -60,7 +60,12 @@ class FakeSandbox implements SandboxLike {
 
   runCommand: SandboxLike["runCommand"] = async (params) => {
     if (params.cmd === "test") {
-      return { exitCode: this.links.has(params.args?.[1] ?? "") ? 0 : 1 };
+      const flag = params.args?.[0];
+      const target = params.args?.[1] ?? "";
+      if (flag === "-d") {
+        return { exitCode: this.dirs.has(this.resolve(target)) ? 0 : 1 };
+      }
+      return { exitCode: this.links.has(target) ? 0 : 1 };
     }
     if (params.cmd === "stat") {
       // The size probe made before a read. Not recorded as an agent command.
@@ -68,6 +73,37 @@ class FakeSandbox implements SandboxLike {
       if (this.statFail || !data) return { exitCode: 1 };
       params.stdout?.write(Buffer.from(`${this.statOutput ?? data.byteLength}\n`));
       return { exitCode: 0 };
+    }
+    if (params.cmd === "bash") {
+      const script = params.args?.[1] ?? "";
+      const listed = script.match(/^ls -1 -- "(.*)"$/);
+      if (listed) {
+        this.commands.push(params);
+        const dir = listed[1];
+        const names = new Set<string>();
+        for (const key of [...this.dirs, ...this.files.keys()]) {
+          const parent = key.slice(0, key.lastIndexOf("/"));
+          if (parent === dir) names.add(key.slice(dir.length + 1));
+        }
+        if (names.size > 0) params.stdout?.write(Buffer.from([...names].sort().join("\n") + "\n"));
+        return { exitCode: 0 };
+      }
+    }
+    if (params.cmd === "ls") {
+      const args = params.args ?? [];
+      if (args[0] === "-1" && args[1] === "--") {
+        this.commands.push(params);
+        const dir = args[2];
+        // Like a real sandbox: a file (or missing path) cannot be a working directory or listed.
+        if (!this.dirs.has(dir) || (params.cwd !== undefined && !this.dirs.has(params.cwd))) return { exitCode: 2 };
+        const names = new Set<string>();
+        for (const key of [...this.dirs, ...this.files.keys(), ...this.links.keys()]) {
+          const parent = key.slice(0, key.lastIndexOf("/"));
+          if (parent === dir) names.add(key.slice(dir.length + 1));
+        }
+        if (names.size > 0) params.stdout?.write(Buffer.from([...names].sort().join("\n") + "\n"));
+        return { exitCode: 0 };
+      }
     }
     this.commands.push(params);
     if (this.script.fail) throw this.script.fail;
@@ -292,10 +328,142 @@ describe("harness policy applies to every call", () => {
     expect(sandbox.commands).toEqual([]);
   });
 
+  it("asks the reviewer for the discovery tools with the confined path, and obeys a refusal", async () => {
+    const review = vi.fn((_tool: string, _input: Record<string, unknown>) => ({
+      allow: false,
+      severity: "block" as const,
+      reason: "no",
+    }));
+    const { sandbox, ops } = setup({ review });
+    await rejects(Promise.resolve(ops.ls.readdir("/ws")));
+    await rejects(Promise.resolve(ops.find.glob("**/*", "/ws", { ignore: [], limit: 10 })));
+    expect(review.mock.calls.map(([tool]) => tool)).toEqual(["ls", "find"]);
+    expect(review.mock.calls[0]?.[1]).toEqual({ path: "/ws" });
+    expect(sandbox.commands).toEqual([]);
+  });
+
   it("treats anything other than allow:true as a refusal", async () => {
     const { sandbox, ops } = setup({ review: (() => ({ severity: "allow" })) as never });
     await rejects(ops.read.readFile("a.txt"));
     expect(sandbox.reads).toEqual([]);
+  });
+});
+
+describe("discovery tools (ls and find)", () => {
+  it("lists a directory inside the workspace through the sandbox shell", async () => {
+    const { sandbox, ops } = setup();
+    sandbox.dirs.add("/ws/src");
+    sandbox.dirs.add("/ws/docs");
+    sandbox.files.set("/ws/README.md", Buffer.from("hello"));
+    await expect(ops.ls.readdir("/ws")).resolves.toEqual(["README.md", "a.txt", "docs", "src"]);
+    expect(sandbox.commands.map((command) => command.cmd)).toEqual(["ls"]);
+  });
+
+  it("reports that a file is not a directory, and that a missing path does not exist", async () => {
+    const { ops } = setup();
+    expect((await ops.ls.stat("/ws/a.txt")).isDirectory()).toBe(false);
+    expect((await ops.ls.stat("/ws")).isDirectory()).toBe(true);
+    await expect(ops.ls.exists("/ws/missing")).resolves.toBe(false);
+    await expect(ops.find.exists("/ws/missing")).resolves.toBe(false);
+  });
+
+  it("finds files by glob inside the workspace, honouring the ignore list and the limit", async () => {
+    const { sandbox, ops } = setup();
+    sandbox.dirs.add("/ws/src");
+    sandbox.dirs.add("/ws/node_modules/pkg");
+    sandbox.files.set("/ws/b.ts", Buffer.from("export {}"));
+    sandbox.files.set("/ws/src/a.ts", Buffer.from("export {}"));
+    sandbox.files.set("/ws/node_modules/pkg/index.js", Buffer.from("export {}"));
+    await expect(ops.find.glob("**/*.ts", "/ws", { ignore: ["**/node_modules/**"], limit: 10 })).resolves.toEqual([
+      "/ws/b.ts",
+      "/ws/src/a.ts",
+    ]);
+    await expect(ops.find.glob("**/*.js", "/ws", { ignore: ["**/node_modules/**"], limit: 10 })).resolves.toEqual([]);
+  });
+
+  it("refuses to list or search outside the workspace", async () => {
+    const { sandbox, ops } = setup();
+    sandbox.files.set("/etc/hosts", Buffer.from("root"));
+    await expect(ops.ls.readdir("/etc")).rejects.toBeInstanceOf(SandboxPolicyError);
+    await expect(ops.find.glob("**/*", "/etc", { ignore: [], limit: 10 })).rejects.toBeInstanceOf(SandboxPolicyError);
+    expect(sandbox.commands).toEqual([]);
+  });
+
+  it("does not execute shell command substitution in directory names", async () => {
+    const { sandbox, ops } = setup();
+    sandbox.dirs.add("/ws/$(rm -rf /)");
+    sandbox.files.set("/ws/$(rm -rf /)/secret.txt", Buffer.from("top secret"));
+    await ops.ls.readdir("/ws/$(rm -rf /)");
+    // No bash command should ever be run for directory listing.
+    expect(sandbox.commands.filter((command) => command.cmd === "bash")).toEqual([]);
+    expect(sandbox.commands.filter((command) => command.cmd === "ls")).toHaveLength(1);
+  });
+
+  it("matches glob patterns against paths relative to the search directory", async () => {
+    const { sandbox, ops } = setup();
+    sandbox.dirs.add("/ws/src");
+    sandbox.dirs.add("/ws/src/deep");
+    sandbox.dirs.add("/ws/lib");
+    sandbox.files.set("/ws/app.ts", Buffer.from("export {}"));
+    sandbox.files.set("/ws/src/utils.ts", Buffer.from("export {}"));
+    sandbox.files.set("/ws/src/deep/nested.ts", Buffer.from("export {}"));
+    sandbox.files.set("/ws/lib/helper.js", Buffer.from("export {}"));
+    sandbox.files.set("/ws/data.json", Buffer.from("{}"));
+
+    // *.ts matches basenames at any depth (recursive basename semantics)
+    await expect(ops.find.glob("*.ts", "/ws", { ignore: [], limit: 10 })).resolves.toEqual([
+      "/ws/app.ts",
+      "/ws/src/deep/nested.ts",
+      "/ws/src/utils.ts",
+    ]);
+    // src/*.ts matches files directly under src/
+    await expect(ops.find.glob("src/*.ts", "/ws", { ignore: [], limit: 10 })).resolves.toEqual([
+      "/ws/src/utils.ts",
+    ]);
+    // **/*.json matches any .json file at any depth
+    await expect(ops.find.glob("**/*.json", "/ws", { ignore: [], limit: 10 })).resolves.toEqual([
+      "/ws/data.json",
+    ]);
+  });
+
+  it("refuses symlink targets outside the workspace", async () => {
+    const { sandbox, ops } = setup();
+    sandbox.files.set("/etc/passwd", Buffer.from("root:x:0:0:root:/root:/bin/bash"));
+    sandbox.links.set("/ws/secret-link", "/etc/passwd");
+    await expect(ops.ls.readdir("/ws/secret-link")).rejects.toBeInstanceOf(SandboxPolicyError);
+    await expect(ops.ls.exists("/ws/secret-link")).rejects.toBeInstanceOf(SandboxPolicyError);
+    await expect(ops.ls.stat("/ws/secret-link")).rejects.toBeInstanceOf(SandboxPolicyError);
+  });
+
+  it("does not traverse symlinked directories outside the workspace during find.glob", async () => {
+    const { sandbox, ops } = setup();
+    sandbox.dirs.add("/etc/secrets");
+    sandbox.files.set("/etc/secrets/credentials.txt", Buffer.from("secret"));
+    sandbox.links.set("/ws/external", "/etc/secrets");
+    const results = await ops.find.glob("*", "/ws", { ignore: [], limit: 100 });
+    expect(results).not.toContain("/etc/secrets/credentials.txt");
+    expect(results.some((r) => r.startsWith("/etc/"))).toBe(false);
+    // The symlink really was handed to the traversal, and its target was never listed.
+    expect(sandbox.commands.some((c) => c.args?.[2] === "/etc/secrets")).toBe(false);
+    expect(sandbox.commands.some((c) => c.cwd === "/etc/secrets")).toBe(false);
+  });
+
+  it("only descends into directories, never into regular files", async () => {
+    const { sandbox, ops } = setup();
+    sandbox.dirs.add("/ws/src");
+    sandbox.files.set("/ws/readme.md", Buffer.from("hi"));
+    sandbox.files.set("/ws/src/a.ts", Buffer.from("export {}"));
+    await expect(ops.find.glob("*.ts", "/ws", { ignore: [], limit: 10 })).resolves.toEqual(["/ws/src/a.ts"]);
+    const listed = sandbox.commands.filter((c) => c.cmd === "ls").map((c) => c.cwd);
+    expect(listed).toEqual(["/ws", "/ws/src"]);
+  });
+
+  it("refuses to list or search outside the workspace", async () => {
+    const { sandbox, ops } = setup();
+    sandbox.files.set("/etc/hosts", Buffer.from("root"));
+    await expect(ops.ls.readdir("/etc")).rejects.toBeInstanceOf(SandboxPolicyError);
+    await expect(ops.find.glob("**/*", "/etc", { ignore: [], limit: 10 })).rejects.toBeInstanceOf(SandboxPolicyError);
+    expect(sandbox.commands).toEqual([]);
   });
 });
 

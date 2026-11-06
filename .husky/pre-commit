@@ -54,8 +54,10 @@ if [ $RUN_BROWSER_SMOKE -eq 1 ]; then
 fi
 
 # Restage files that were previously staged and may have been modified by formatting
+# Skip paths that .gitignore matches (e.g. tracked files under .claude/): git add rejects them with exit 1,
+# and they are already staged.
 for file in $STAGED_FILES; do
-  if [ -f "$file" ]; then
+  if [ -f "$file" ] && ! git check-ignore -q --no-index "$file"; then
     git add "$file"
   fi
 done

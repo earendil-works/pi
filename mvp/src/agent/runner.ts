@@ -7,9 +7,9 @@
  *   2. The model is chosen from the live gateway catalog and must be free right now (`pickFreeModel`). If none is,
  *      the turn does not run. Model identifiers are never written into source.
  *   3. The turn runs inside the agent's one sandbox, under its lock (`withAgentSandbox`). The tools are the Pi
- *      bash/read/write/edit tools bound to sandbox operations, and every tool call is reviewed by the harness
- *      policy inside those operations. Built-in (host) tools are disabled, so the host filesystem and shell are
- *      never reachable from the model.
+ *      bash/read/write/edit/ls/find tools bound to sandbox operations, and every tool call is reviewed by the
+ *      harness policy inside those operations. Built-in (host) tools are disabled, so the host filesystem and shell
+ *      are never reachable from the model.
  *   4. The gateway credential is read inside the call (`gatewayToken`), held in memory, and never placed in the
  *      sandbox, a file the model can read, the session, or a log.
  *
@@ -25,6 +25,8 @@ import {
   createAgentSession,
   createBashToolDefinition,
   createEditToolDefinition,
+  createFindToolDefinition,
+  createLsToolDefinition,
   createReadToolDefinition,
   createWriteToolDefinition,
   DefaultResourceLoader,
@@ -340,6 +342,8 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
             createReadToolDefinition(root, { operations: ops.read, autoResizeImages: false }) as CustomTools[number],
             createWriteToolDefinition(root, { operations: ops.write }) as CustomTools[number],
             createEditToolDefinition(root, { operations: ops.edit }) as CustomTools[number],
+            createLsToolDefinition(root, { operations: ops.ls }) as CustomTools[number],
+            createFindToolDefinition(root, { operations: ops.find }) as CustomTools[number],
           ];
 
           // No host resources: no extensions, skills, prompt files or context files from the machine running this.
