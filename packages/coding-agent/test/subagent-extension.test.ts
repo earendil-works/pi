@@ -453,6 +453,43 @@ describe("subagent example extension", () => {
 		});
 	});
 
+	describe("pi invocation", () => {
+		it("does not pass a Windows Bun virtual entry path to the child", async () => {
+			// Inside a Windows Bun-compiled binary, argv[1] is "B:/~BUN/root/pi.exe" and
+			// fs.existsSync() reports it as present. Recreate that relative path under the
+			// cwd so existsSync() also succeeds here.
+			const virtualScript = "B:/~BUN/root/pi.exe";
+			mkdirSync(join(tempDir, "B:", "~BUN", "root"), { recursive: true });
+			writeFileSync(join(tempDir, virtualScript), readFileSync(SUBAGENT_FIXTURE_PATH));
+			// The test runs under node, so the fallback spawns "pi" from PATH.
+			const binDir = join(tempDir, "bin");
+			mkdirSync(binDir);
+			writeFileSync(
+				join(binDir, "pi"),
+				`#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(SUBAGENT_FIXTURE_PATH)} "$@"\n`,
+				{ mode: 0o755 },
+			);
+			const argvFile = join(tempDir, "virtual-entry-argv.json");
+			const originalCwd = process.cwd();
+			const originalScript = process.argv[1];
+			const originalPath = process.env.PATH;
+			try {
+				process.chdir(tempDir);
+				process.argv[1] = virtualScript;
+				process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+				await tool.execute("test", singleTask(fixtureScenario.recordArgv(argvFile)), undefined, undefined, ctx);
+			} finally {
+				process.chdir(originalCwd);
+				process.argv[1] = originalScript;
+				process.env.PATH = originalPath;
+			}
+
+			const childArgv = JSON.parse(readFileSync(argvFile, "utf8")) as string[];
+			expect(childArgv.slice(1)).not.toContain(virtualScript);
+			expect(childArgv[1]).toBe(SUBAGENT_FIXTURE_PATH);
+		});
+	});
+
 	describe("task cwd agent discovery", () => {
 		it("resolves a relative task cwd against the session cwd for discovery and execution", async () => {
 			const startupRoot = join(tempDir, "startup-project");
