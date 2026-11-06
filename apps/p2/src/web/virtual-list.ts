@@ -27,6 +27,28 @@ export class RowLayout {
 		this.#dirty = true;
 	}
 
+	/**
+	 * Extend a stable prefix without re-estimating every historical row.
+	 * The caller must use this only when every existing row object is unchanged;
+	 * changing estimates for historical rows still requires setRows()/invalidate().
+	 */
+	appendRows(keys: readonly string[], estimate: (index: number) => number): void {
+		const start = this.#keys.length;
+		this.#keys = [...this.#keys, ...keys];
+		this.#estimate = estimate;
+		for (let index = 0; index < keys.length; index++) this.#index.set(keys[index]!, start + index);
+		if (keys.length === 0 || this.#dirty) return;
+		const offsets = new Float64Array(this.#keys.length + 1);
+		offsets.set(this.#offsets);
+		let offset = this.#offsets[start] ?? 0;
+		for (let index = start; index < this.#keys.length; index++) {
+			offsets[index] = offset;
+			offset += this.sizeOf(index);
+		}
+		offsets[this.#keys.length] = offset;
+		this.#offsets = offsets;
+	}
+
 	/** Estimates changed (the list's width did): offsets are computed again. */
 	invalidate(): void {
 		this.#dirty = true;

@@ -195,15 +195,21 @@ export class TranscriptScroll {
 			this.#earlierSize = -1;
 		}
 		if (rows !== this.#rows || estimates !== this.#estimates) {
+			const previous = this.#rows;
+			// A common streaming append preserves every existing TranscriptRow by identity.
+			// In that case only new rows need sizes and offsets; replacements and prepends rebuild.
+			const appendOnly =
+				rows.length > previous.length &&
+				estimates === this.#estimates &&
+				previous.every((row, index) => rows[index] === row);
 			this.#rows = rows;
 			this.#estimates = estimates;
-			this.layout.setRows(
-				rows.map((row) => row.key),
-				(index) => {
-					const row = rows[index];
-					return row ? estimates.estimate(row, this.#rowWidth()) : 0;
-				},
-			);
+			const estimateRow = (index: number) => {
+				const row = rows[index];
+				return row ? estimates.estimate(row, this.#rowWidth()) : 0;
+			};
+			if (appendOnly) this.layout.appendRows(rows.slice(previous.length).map((row) => row.key), estimateRow);
+			else this.layout.setRows(rows.map((row) => row.key), estimateRow);
 			this.range = this.#computeRange();
 			// Indices of other rows: the last change says nothing about these.
 			this.#replaced = undefined;

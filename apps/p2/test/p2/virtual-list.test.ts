@@ -23,6 +23,29 @@ describe("row layout", () => {
 		assert.equal(layout.measured("row2"), false);
 	});
 
+	it("extends stable row offsets without re-estimating historical rows", () => {
+		const layout = new RowLayout();
+		const original = keys(1_000);
+		let estimated = 0;
+		layout.setRows(original, () => {
+			estimated++;
+			return 10;
+		});
+		assert.equal(layout.total, 10_000);
+		assert.equal(estimated, 1_000);
+		estimated = 0;
+		layout.appendRows(["tail-1", "tail-2"], () => {
+			estimated++;
+			return 20;
+		});
+		assert.equal(layout.offsetOf(1_000), 10_000);
+		assert.equal(layout.total, 10_040);
+		assert.equal(layout.indexOf("tail-2"), 1_001);
+		assert.equal(estimated, 2, "only the appended rows need height estimates");
+		layout.measure("tail-1", 35);
+		assert.equal(layout.total, 10_055, "a measurement correctly invalidates the prefix sums");
+	});
+
 	it("finds the rows overlapping a span", () => {
 		const layout = new RowLayout();
 		layout.setRows(keys(10), () => 100);
