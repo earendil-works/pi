@@ -105,6 +105,35 @@ describe("session selector path/delete interactions", () => {
 		// session selector uses the global theme instance
 		initTheme("dark");
 	});
+	it("executes regex searches asynchronously and updates the visible session list", async () => {
+		const sessions = [
+			makeSession({ id: "unmatched", allMessagesText: "nothing relevant" }),
+			makeSession({ id: "matched", allMessagesText: "Brave work" }),
+		];
+		const selector = new SessionSelectorComponent(
+			async () => sessions,
+			async () => [],
+			() => {},
+			() => {},
+			() => {},
+			() => {},
+			{ keybindings },
+		);
+		await flushPromises();
+		const list = selector.getSessionList();
+		for (const char of "re:brave") list.handleInput(char);
+
+		// Worker startup and search are deliberately asynchronous: never block input.
+		let selected: string | undefined;
+		for (let attempt = 0; attempt < 100; attempt++) {
+			selected = list.getSelectedSessionPath();
+			if (selected === sessions[1]!.path) break;
+			await new Promise<void>((resolve) => setTimeout(resolve, 20));
+		}
+		expect(selected).toBe(sessions[1]!.path);
+		list.cancelSearch();
+	});
+
 	it("does not treat Ctrl+Backspace as delete when search query is non-empty", async () => {
 		const sessions = [makeSession({ id: "a" }), makeSession({ id: "b" })];
 
