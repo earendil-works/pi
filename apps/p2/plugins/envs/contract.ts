@@ -13,7 +13,10 @@ import {
 import type { EnvManager } from "./manager.ts";
 import { EnvConfigSchema } from "./schema.ts";
 
-/** Whether an SSH env can host sandboxes: natively, through Docker, or not (`detail` says why or how). */
+/**
+ * Whether an SSH env can host sandboxes (`detail` says why or how). `docker` is no longer reported (launchers before
+ * Docker was dropped); it stays in the schema so open pages keep binding.
+ */
 export const SandboxSupportSchema = obj({
 	runtime: union([literal("native"), literal("docker"), literal("none")]),
 	detail: str(),

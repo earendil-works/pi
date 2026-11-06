@@ -488,19 +488,15 @@ async function sandboxSupport(target: SshTarget, remote: RemotePlatform, launche
 	}
 	// The host's answer is wire input.
 	if (!checkReport.check(report)) return { runtime: "none", detail: "The sandbox check answered unexpectedly." };
-	const qemu = report.qemu ? `QEMU ${report.qemu}` : "no QEMU";
-	const [major = 0, minor = 0] = report.qemu.split(".").map(Number);
-	const native: string[] = [];
-	if (!report.kvm) native.push(report.kvmDevice ? "/dev/kvm is not accessible to this user" : "there is no /dev/kvm");
-	if (!report.qemu) native.push("QEMU is not installed");
-	else if (major < 7 || (major === 7 && minor < 2)) native.push(`QEMU ${report.qemu} is too old (Gondolin needs 7.2)`);
-	if (!report.node || Number(report.node.split(".")[0]) < 22) native.push("Node 22 or newer is not installed");
 	if (report.runtime === "native")
-		return { runtime: "native", detail: `Gondolin runs natively (${qemu}, Node ${report.node}, KVM).` };
-	if (report.runtime === "docker")
-		return { runtime: "docker", detail: `Gondolin runs in Docker${native.length ? `: ${native.join(", ")}` : ""}.` };
-	return {
-		runtime: "none",
-		detail: `This host cannot run sandboxes: ${[...native, ...(report.docker ? [] : ["no usable Docker"])].join(", ")}.`,
-	};
+		return { runtime: "native", detail: `Gondolin runs with QEMU ${report.qemu}, Node ${report.node} and KVM.` };
+	const [major = 0, minor = 0] = report.qemu.split(".").map(Number);
+	const missing: string[] = [];
+	if (!report.kvm) missing.push(report.kvmDevice ? "/dev/kvm is not accessible to this user" : "there is no /dev/kvm");
+	if (!report.qemu) missing.push("QEMU is not installed (on the PATH or in ~/.local/bin)");
+	else if (major < 7 || (major === 7 && minor < 2))
+		missing.push(`QEMU ${report.qemu} is too old (Gondolin needs 7.2)`);
+	if (!report.node || Number(report.node.split(".")[0]) < 22)
+		missing.push("Node 22 or newer is not installed (on the PATH or in ~/.local/bin)");
+	return { runtime: "none", detail: `This host cannot run sandboxes: ${missing.join(", ")}.` };
 }

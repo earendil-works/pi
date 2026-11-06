@@ -1,7 +1,7 @@
 // p2's sandbox program on a host environment: one long-lived Gondolin VM per sandbox, held by a supervisor process
 // (`serve`), and the commands p2 runs over SSH (`daemon`, `start`, `status`, `stop`, `forget`). `daemon` starts the supervisor
 // when the sandbox is not running, then runs the pi-env daemon in the VM with stdin and stdout passed through, so p2
-// talks to the daemon in the VM as it does to one on any other machine. Started by p2-sandbox.sh, natively or in Docker.
+// talks to the daemon in the VM as it does to one on any other machine. Started by p2-sandbox.sh.
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -98,9 +98,8 @@ function runDir(name) {
 }
 
 /**
- * `~` and `~/…` are the host user's home; other paths must be absolute. In Docker only the home is shared with the
- * container: a folder elsewhere would be one inside the container, so it is refused. A writable folder must not hold
- * or be inside ~/.pi: p2 runs this launcher and pi-env's daemons from there, on the host.
+ * `~` and `~/…` are the host user's home; other paths must be absolute. A writable folder must not hold or be inside
+ * ~/.pi: p2 runs this launcher and pi-env's daemons from there, on the host.
  */
 function hostPath(path, readonly) {
 	const home = homedir();
@@ -108,8 +107,6 @@ function hostPath(path, readonly) {
 	if (!isAbsolute(expanded)) throw new Error(`Folder must be absolute or start with ~: ${path}`);
 	const resolved = resolve(expanded);
 	const within = (parent, child) => child === parent || child.startsWith(parent === "/" ? "/" : `${parent}/`);
-	if (process.env.P2_SANDBOX_RUNTIME === "docker" && !within(home, resolved))
-		throw new Error(`Sandboxes run in Docker on this host, so their folders must be inside ${home}: ${path}`);
 	const pi = join(home, ".pi");
 	if (!readonly && (within(resolved, pi) || within(pi, resolved)))
 		throw new Error(`A writable folder must not contain or be inside ${pi} (p2's launcher runs from there): ${path}`);

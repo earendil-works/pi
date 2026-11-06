@@ -189,10 +189,7 @@ function TestResult({
 							{test.sandboxes.runtime === "none" ? (
 								<strong>Sandboxes: not available</strong>
 							) : (
-								<>
-									<strong>Sandboxes: ready</strong> · Gondolin{" "}
-									{test.sandboxes.runtime === "native" ? "natively" : "in Docker"}
-								</>
+								<strong>Sandboxes: ready</strong>
 							)}
 						</p>
 						{test.sandboxes.detail && <p className="muted small">{test.sandboxes.detail}</p>}

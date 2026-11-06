@@ -14,7 +14,6 @@ import type { GondolinEnvConfig } from "./config.ts";
 const FILES: readonly (readonly [string, string])[] = [
 	["p2-sandbox.sh", "p2-sandbox.sh"],
 	["p2-sandbox.mjs", "p2-sandbox.mjs"],
-	["Dockerfile", "Dockerfile"],
 	["package.json", "host-package.json"],
 	["package-lock.json", "host-package-lock.json"],
 ];
@@ -158,7 +157,7 @@ export async function launcherCommand(
 
 /**
  * Run a command of the launcher deployed in `directory` and parse its last line of output as JSON; `start` may take
- * minutes (a first start builds the Docker image and downloads the guest image).
+ * minutes (a first start installs Gondolin and downloads the guest image).
  */
 export async function deployedCommand(target: SshTarget, directory: string, args: readonly string[]): Promise<unknown> {
 	const timeoutMs = args[0] === "start" ? START_TIMEOUT_MS : COMMAND_TIMEOUT_MS;

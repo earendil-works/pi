@@ -1,6 +1,6 @@
 // Gondolin sandboxes (plugins/envs, type "gondolin"): their configuration, the launcher's arguments, and confinement:
 // a conversation working in a sandbox cannot leave it through the location tools, subagent placement or one-shot agents.
-// The VM itself runs only with P2_TEST_GONDOLIN=1 (it needs /dev/kvm and QEMU >= 7.2 or Docker, and downloads the guest
+// The VM itself runs only with P2_TEST_GONDOLIN=1 (it needs /dev/kvm, QEMU >= 7.2 and Node >= 22, and downloads the guest
 // image on first use), with pi-env's Linux daemon for this machine (static: the guest is Alpine) from P2_TEST_DAEMON or
 // pi-env's package.
 
@@ -227,13 +227,11 @@ test(
 	async (t) => {
 		const daemon = process.env.P2_TEST_DAEMON ?? localDaemon();
 		if (!existsSync(daemon)) return t.skip(`no pi-env daemon at ${daemon}`);
-		// Under the home directory: in Docker, the launcher shares only the home with its container.
-		mkdirSync(join(homedir(), ".cache"), { recursive: true });
-		const home = mkdtempSync(join(homedir(), ".cache", "p2-gondolin-test-"));
-		// Named as p2 deploys it: in Docker the image is tagged with it, and another name would replace the container.
+		const home = mkdtempSync(join(tmpdir(), "p2-gondolin-test-"));
+		// Named as p2 deploys it (its installed Gondolin is shared with real use).
 		const launcher = join(home, launcherId(fileURLToPath(sandboxDir)));
 		mkdirSync(launcher);
-		for (const name of ["p2-sandbox.sh", "p2-sandbox.mjs", "Dockerfile"])
+		for (const name of ["p2-sandbox.sh", "p2-sandbox.mjs"])
 			copyFileSync(new URL(name, sandboxDir), join(launcher, name));
 		copyFileSync(new URL("host-package.json", sandboxDir), join(launcher, "package.json"));
 		copyFileSync(new URL("host-package-lock.json", sandboxDir), join(launcher, "package-lock.json"));
@@ -320,10 +318,9 @@ test(
 		timeout: 900_000,
 	},
 	async (t) => {
-		// A loopback sshd as this user with the real home: in Docker the launcher shares the home with its container, and
-		// the guest image cache is reused.
-		mkdirSync(join(homedir(), ".cache"), { recursive: true });
-		const root = mkdtempSync(join(homedir(), ".cache", "p2-sandbox-ssh-"));
+		// A loopback sshd as this user with the real home: the launcher's installation and the guest image cache are
+		// reused.
+		const root = mkdtempSync(join(tmpdir(), "p2-sandbox-ssh-"));
 		const port = await freePort();
 		execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", join(root, "host_key")]);
 		writeFileSync(join(root, "authorized_keys"), "");
