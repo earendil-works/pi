@@ -193,8 +193,22 @@ Saved conversations for the signed-in owner, in the Neon database the owner adde
 - **What is stored.** The owner's messages and the replies, with times and the conversation title. A message the ASFDK gate blocks is stored only as a `blocked` marker with empty text, both for the prompt and for the reply. The page's welcome message is not stored.
 - **Kept until deleted.** Each saved conversation has a ✕ button that asks for confirmation. Nothing expires.
 - **Failure.** A database error answers 503 and logs only `{"event":"history_error","op":"…"}`. Chat keeps working, and the page retries an unsaved exchange with the next one (marked "Not saved").
-- **Not included.** The agent still answers each message on its own: no earlier messages are given to the model. Mem0 (planned as the agent's memory layer), Neon Auth and Neon realtime are not used.
+- **Not included.** The agent still answers each message on its own: no earlier messages are given to the model. Mem0, Neon Auth and Neon realtime are not used. Mem0 is the planned next phase (see "Next phase: Mem0 memory layer" below).
 - **Not verified offline.** A real Neon connection, and the schema being created on Neon. The tests use a stand-in store and a recording SQL stub.
+
+## Next phase: Mem0 memory layer
+
+Planned, not built. Nothing in the code reads the Mem0 settings yet. The direction was agreed with the owner on 2026-11-05; the written spec comes in its own pull request before any code.
+
+- **Purpose.** Stop the agent forgetting between conversations. Neon stays the exact transcript the owner can reopen and delete. Mem0 would hold only short facts the owner approves.
+- **Phase 1: learned memories.**
+  - The owner saves a message as a memory with a "Remember this" action. Nothing is saved automatically.
+  - Memories go in two buckets: how the owner works, and nlt-pi conventions and fixes.
+  - The agent recalls approved memories in later conversations. Every Mem0 read and write passes the ASFDK checks first, and anything but a clear allow stops the call.
+  - The model gets no Mem0 tool, so it cannot create, change or delete a memory.
+  - A blocked prompt never reaches Mem0, and each allowed prompt is sent to Mem0 as a search query, so the chat page's notice must say so when memory is on.
+- **Phase 2: standing terms.** The owner's signed TOI and the OTOI charter would move into Mem0 as the source of the agent's standing terms. They stay out of every repository, and the model never sees the files or where they live.
+- **Off by default.** The planned switch is owner-set, like `NLT_HISTORY_ENABLED`.
 
 ## Current deployment posture
 
