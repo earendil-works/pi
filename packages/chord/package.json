@@ -91,6 +91,11 @@
 			"types": "./dist/node/app/index.d.ts",
 			"import": "./dist/node/app/index.js"
 		},
+		"./app/files": {
+			"source": "./src/node/app/files-entry.ts",
+			"types": "./dist/node/app/files-entry.d.ts",
+			"import": "./dist/node/app/files-entry.js"
+		},
 		"./web": {
 			"source": "./src/web/index.ts",
 			"types": "./dist/web/index.d.ts",

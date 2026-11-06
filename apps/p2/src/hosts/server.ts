@@ -5,15 +5,16 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isChordError, openStore, type PluginFacet, sqliteBackend, webSocketLink } from "@earendil-works/chord";
+import { isChordError, type PluginFacet, webSocketLink } from "@earendil-works/chord";
+import { filesFacet } from "@earendil-works/chord/app/files";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { RolloutResult } from "@earendil-works/chord/plugins";
-import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { WebSocketServer } from "ws";
 import { type Ctx, createHost, type Host, type HostError, hostErrorText, Server } from "../runtime/chord.ts";
 import { envDefaultModel } from "../runtime/default-model.ts";
 import { type DevCommand, type DevResult, parseDevCommand } from "../runtime/dev-protocol.ts";
 import { configureFetch } from "../runtime/fetch.ts";
+import { assertMigrated, hostFiles, openHostStore, serverDirectory } from "../runtime/host-dirs.ts";
 import { fromOrigin, sendJson } from "../runtime/http.ts";
 import { captureProcessLogs, processLogs } from "../runtime/logs.ts";
 import { hasLoopbackCookie, loopbackCookie } from "../runtime/loopback-cookie.ts";
@@ -123,12 +124,17 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		throw new Error(`Another p2 server uses ${dataDir}`, { cause: error });
 	});
 	const allowedHosts = options.allowedHosts ?? parseAllowedHosts(process.env.P2_ALLOWED_HOSTS);
-	// The server's Chord store: persisted documents and job runs of its host-lifetime objects (session lifecycle
-	// operations, search rebuilds). p2's older SQLite files stay their owners' natives.
-	const store = await openStore(
-		sqliteBackend(await openNodeSqliteDatabase(join(dataDir, "server.sqlite"))),
-		BACKGROUND_CONTEXT,
-	);
+	// The server's Chord store (`<data>/server/store.sqlite`): persisted documents and job runs of its host-lifetime
+	// objects (session lifecycle operations, search rebuilds) and its `Files` index. Its outbox stays off: local-only
+	// data never goes to a sync. p2's older SQLite files stay their owners' natives.
+	let store: Awaited<ReturnType<typeof openHostStore>>;
+	try {
+		assertMigrated(dataDir);
+		store = await openHostStore(serverDirectory(dataDir), { outbox: false }, BACKGROUND_CONTEXT);
+	} catch (error) {
+		await unlock();
+		throw error;
+	}
 	// The server's own requests act as `SERVER`: a worker tells them from a person's (`WorkerBoundary`).
 	const host = createHost({
 		address: Server(),
@@ -318,6 +324,8 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 						}),
 					},
 					{ name: "@p2/tui-preferences", facet: tuiPreferencesFacet(dataDir) },
+					// The server's files (the kit's `Files`): `<data>/server/files/`.
+					{ name: "chord.app.files", facet: filesFacet(hostFiles(serverDirectory(dataDir))) },
 					...(options.facets ?? []),
 				],
 				modules: SERVER_PACKAGES,

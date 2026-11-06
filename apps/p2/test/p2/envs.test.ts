@@ -282,7 +282,7 @@ test(
 		assert(trusted.ok, trusted.ok ? "" : trusted.error);
 		assert.equal(trusted.home, home);
 		// The folder picker warms every environment's connection first (Pi Mobile's `envs` with `warm`).
-		assert.equal(await envs.warm(BACKGROUND_CONTEXT), undefined);
+		assert.equal(await envs.warm(BACKGROUND_CONTEXT), null);
 		assert.equal((await envs.listDirectory({ env: "box", path: "~" }, BACKGROUND_CONTEXT)).path, home);
 		const uploadedKey = await envs.uploadKey(
 			{ name: "copy", key: readFileSync(key.identityFile, "utf8") },

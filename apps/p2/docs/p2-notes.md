@@ -27,7 +27,7 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `P2_DATA_DIR` | `~/.pi/p2` | data directory: `catalog.sqlite`, `sessions/<id>.sqlite`, `settings.json`, `models.json`, `envs.json`, `mcp.json`, `mcp-auth.json`, `auth.json`, `radius.json`, `forwards.json` |
+| `P2_DATA_DIR` | `~/.pi/p2` | data directory: `catalog.sqlite`, `server/` and `sessions/<id>/` (see **Host stores and files**), `settings.json`, `models.json`, `envs.json`, `mcp.json`, `mcp-auth.json`, `auth.json`, `radius.json`, `forwards.json` |
 | `PORT` | `8788` | listen port (loopback only), so p2 never collides with pi-mobile on 8787 |
 | `P2_FAKE` | unset | `1`: the faux provider (`faux/faux-1`, echoes the prompt; `slow …` streams long; `rename-session <title>` calls the tool; `subagent`, `subagent-bad`, `subagent-answer`, `subagent-configure`, `subagent-send`, `subagent-archive`, `subagent-status` exercise subagents, `subagent <json>` calls the tool with those arguments, as do `team <json>`, `history_search|read|handoff <json>`, `location_envs|dirs|move <json>`, `tool_search <json>`, `terminal <json>` and `mcp__<server>__<tool> <json>`; `codemode` runs a script calling bash and read, `codemode-restart` one whose slow middle call a restart interrupts, `codemode <script>` runs that script; `artifact <json>` calls the artifact tool with those arguments; `json <text>` answers exactly `<text>`; a one-shot agent whose task is not `json …`/`slow…` answers a small value matching its schema) |
 | `P2_IDLE_MS` | `300000` | idle time before a session worker stops |
@@ -341,6 +341,36 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
   where it lives with `hostAddress` (`serverHost`, `sessionHost`); a worker serves only its own session, so factories
   no longer compare `host.name`. The session workers are Chord's `createWorkers` (`src/hosts/session-workers.ts`:
   generations, logs and notices, relocation and pauses on `stop`/`retry`).
+- **Host stores and files** (per-host stores; laid out as the app kit lays out its hosts, `src/runtime/host-dirs.ts`):
+  every host has its own Chord store and files directory, private (directories 0700, stores 0600). The server:
+  `<data>/server/store.sqlite` (outbox off: local-only data, credentials included, never goes to a sync) and
+  `<data>/server/files/`; each session: `<data>/sessions/<id>/store.sqlite` (outbox off until p2 syncs: it records
+  nothing while not connected to a sync; turning it on starts at the current commit, and a first sync uploads an
+  archive) and `<data>/sessions/<id>/files/`.
+  Projects will be another host kind of the same shape. Both hosts load the app kit's `Files` (`chord.app.files`,
+  `filesFacet` from `@earendil-works/chord/app/files`); a session's Durable runs on its store through `StoreStorage`
+  under the owner name `p2.durable` (`src/runtime/session-store.ts`), beside `Files`' tables. Plugins reach `Files`
+  with `self.get(Files, {})` / `ctx.get(Files, {})` (`@p2/app/v1/node`), never a path; a session's spaces are
+  `artifacts`, `uploads` and `downloads` (`src/runtime/session-files.ts`). Clone copies the whole session directory
+  while its worker is stopped (blobs hard-linked); fork copies only the source's files, through its worker
+  (`SessionTransfer.copyFiles`, the kit's `copyFiles`), and seeds its history into a fresh store; a failed copy's
+  directory is removed. Each change of a space is pushed by the worker, inside the method that made it, to the server's
+  mirror `FileSummaries` (by session and space; the owner's `of`), for lists that must not start a worker: none uses it
+  yet (the artifact picker and transcript cards are on an open session's worker); a session row's file counts or a
+  drive of an idle session could. A data directory in the older layout (`server.sqlite`, `sessions/<id>.sqlite`,
+  `artifacts/`, `downloads/`) is refused at start: `npm run migrate-data` moves it (below).
+- **Migration** (`npm run migrate-data -- [--dry-run] [--data <dir>]`, `scripts/migrate-data.ts`): offline (refused
+  while a server holds the data directory's lock, which it takes). The server's store is copied to `server/store.sqlite`
+  and verified (equal exports); each session is built in `sessions/.<id>.migrating/` from a copy of its old store:
+  Durable's records replayed into `StoreStorage` in seq order (`scripts/migrate-durable.ts`: seqs renumbered in order,
+  ids kept, the allocator past the old next id) and its artifacts (same version numbers), uploads and downloads (same
+  ids, as keys) written into its `Files` (`scripts/migrate-files.ts`); then verified (every record read through
+  Durable's `Storage` from both, every file byte for byte), renamed into place, and only then its old files moved to
+  `pre-files-backup/` (same relative paths). `uploads/<session>/` stays: it is where this machine materializes
+  attachments now, and old transcripts name those paths. A crash redoes the session it was in; a second run skips
+  what is done. `--dry-run` builds and verifies everything in a temporary directory. `scripts/data-report.ts` reads
+  either layout: a report before and `--compare` after shows any difference. Tests: `pre-files-data.test.ts` (a data
+  directory made by p2 just before this change), `v1-data.test.ts`.
 - **Worker base:** session workers fork from Chord's worker base of `src/hosts/worker.ts` (split at dynamic imports).
   The entry imports only the worker's side (`@earendil-works/chord/workers/child`, `src/hosts/host-packages.ts`), so a
   fork loads no esbuild and no server API; pi-ai's provider SDKs load with their first request. It registers pi-ai's
@@ -654,7 +684,7 @@ translated phone drawer and intercept chat taps.
   need the remote confirmation when any of the session's conversations works on a remote environment
   (`remoteEnvironments`; `Sharing.env` lists them).
 - **Session lifecycle operations** (`SessionOperations`, server, a host-lifetime `local` object of the sessions plugin;
-  its job runs persist in the server's Chord store `<data>/server.sqlite` and run again after a crash, each run
+  its job runs persist in the server's Chord store `<data>/server/store.sqlite` and run again after a crash, each run
   idempotent): `relocate`, `clone`, `fork` and `archive` answer once their visible effect committed on the server and
   run their long part as a job. `create`, `clone` and `fork` take a client-chosen ID (`id`, `copy`), so a page
   navigates before the answer; a chosen ID already in the catalog answers its row (a retry). `clone` and `fork` answer
@@ -887,15 +917,21 @@ translated phone drawer and intercept chat taps.
   `session-actions` slot in the chat top bar, held in the navigation stack; Back closes it and reload restores it.
   `test/p2/sharing.test.ts` covers guests over WebSocket; `ui-drawer.test.ts` a read-only guest page behind HTTPS.
 - **Files** (`plugins/files`): `POST /upload?session=&name=` (owner or read/write guest of the session; exact
-  same-origin `Origin`; 25 MiB; stored in `<data>/uploads/<session>/`, never in the project) returns an attachment;
-  `Chat.send({ attachments: [ids] })` resolves IDs through the worker's `Attachments` local (only files of that
-  session), and the message lists their paths, with images inline when the model accepts them. `DownloadStore`
-  (server local) saves immutable snapshots for producers (send_file); `GET|HEAD
-  /download?session=&id=` serves them to the owner and the session's guests (no `Sec-Fetch-Site: cross-site`;
-  ranges for audio/video). Owns local `Uploads`, `Downloads` and `filePreview` implementations. Web: the composer's
-  attach button, drag/drop and pasted images upload files at send time, including a new session's first prompt. A
-  paste with plain text stays a text paste (Office apps add a picture of the copied text, Chrome on macOS a Finder
-  file's icon); a paste with only images attaches them.
+  same-origin `Origin`; 25 MiB) streams into the session's `Files` (space `uploads`, path `<id>-<name>`, key the
+  upload's UUID, `source` `owner` or `guest:<id>`) through the worker's `SessionFiles` (server only, chunked; a failed
+  upload is cancelled) and answers `{ id, name, size, mimeType? }`. `Chat.send({ attachments: [ids] })` resolves IDs
+  through the worker's `Attachments` local (only uploads of that session): each is materialized before admission into
+  the data directory's `uploads/<session>/` on this machine (for the default data directory that is
+  `~/.pi/p2/uploads/<session>/`) and, when the receiving conversation works on another environment, into
+  `~/.pi/p2/uploads/<session>/` there; the message lists those paths, with images inline (from this machine's copy)
+  when the model accepts them. `DownloadStore` (server local) snapshots a server file into the session's files;
+  producers on the worker (send_file) write there directly (space `downloads`, key the snapshot's UUID). `GET|HEAD
+  /download?session=&id=` serves them through `SessionFiles` to the owner and the session's guests (no
+  `Sec-Fetch-Site: cross-site`; ranges for audio/video). An archived session's downloads and artifacts are not served
+  (its worker does not start) until it is restored. Web: the composer's attach button, drag/drop and pasted images
+  upload files at send time, including a new session's first prompt. A paste with plain text stays a text paste
+  (Office apps add a picture of the copied text, Chrome on macOS a Finder file's icon); a paste with only images
+  attaches them.
 - **File index** (`plugins/file-index`): `FileIndex({ session, conversation })` (participants, as `Workspace`) answers
   `@` completion (`complete`, ranked like pi's `@`) and Tab completion (`list`, one directory) for the TUI and the web
   composer. A worker-local cache per conversation (`FileIndexCache`) builds from `WorkspaceBackend`'s `files` query
@@ -1072,12 +1108,13 @@ translated phone drawer and intercept chat taps.
   the shared modal with scroll memory (Escape and the scrim close the whole modal stack). Shell-level
   `workspace-panel` docks beside `main`; `workspace-terminal` is an optional terminals-plugin surface.
 - **send_file** (`plugins/send-file`): owns its native tool, reading through the conversation's
-  execution environment and saving immutable private snapshots into the files plugin's download store directory.
+  execution environment and saving immutable snapshots into the session's files (space `downloads`, `source: "agent"`).
   Directory sources and files over 25 MiB fail. The existing authorized `/download` route serves snapshots even
   after source deletion or plugin reload. `test/p2/send-file.test.ts` and the files integration tests cover it.
   The artifacts plugin supplies the shared viewer.
-- **Artifacts and viewer** (`plugins/artifacts`): owns its native artifact tool and immutable version
-  storage (2 MiB UTF-8). `ArtifactList` follows the conversation's latest-only `ArtifactDoc`, independently of
+- **Artifacts and viewer** (`plugins/artifacts`): owns its native artifact tool; versions live in the session's
+  files (space `artifacts`, path = the name, Files versions = artifact versions, never reused; title and type in
+  `meta`; 2 MiB UTF-8). The `/artifact` route reads through the worker's `ArtifactSource` (server only). `ArtifactList` follows the conversation's latest-only `ArtifactDoc`, independently of
   transcript paging, compaction and reset, and validates the conversation during activation. `/artifact?session=&name=&version=` rechecks authorization for owner/guest, rejects cross-site reads,
   and serves the preview with a CSP sandbox (no same-origin privilege, forms, child frames or objects). Only
   previews receive the diagnostics bridge; `download=1` returns the original source. HEAD describes the same

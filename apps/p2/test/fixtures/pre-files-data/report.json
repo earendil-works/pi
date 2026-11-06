@@ -1,0 +1,113 @@
+{
+	"sessions": {
+		"699c5071-8153-49a7-8703-b76d38ebf297": {
+			"title": "Alpha (fork)",
+			"location": "/tmp",
+			"archived": false,
+			"updatedAt": 1793915728564,
+			"conversations": {
+				"1": {
+					"entries": 34,
+					"newest": 42
+				}
+			},
+			"subagents": [],
+			"shares": {
+				"links": [],
+				"guests": []
+			},
+			"artifacts": {
+				"demo": 2,
+				"notes": 1
+			},
+			"uploads": 2,
+			"downloads": 1
+		},
+		"7de02a2c-caa8-4a90-ba1c-9ece12806be4": {
+			"title": "Alpha",
+			"location": "/tmp",
+			"archived": false,
+			"updatedAt": 1793915726515,
+			"conversations": {
+				"1": {
+					"entries": 33,
+					"newest": 86
+				},
+				"60": {
+					"entries": 3,
+					"newest": 73
+				}
+			},
+			"subagents": [
+				{
+					"name": "helper",
+					"archived": false
+				}
+			],
+			"shares": {
+				"links": [],
+				"guests": []
+			},
+			"artifacts": {
+				"demo": 2,
+				"notes": 1
+			},
+			"uploads": 2,
+			"downloads": 1
+		},
+		"c3216d2e-6b8b-48f7-b6d7-7e5877a24068": {
+			"title": "Beta",
+			"location": "/tmp",
+			"archived": true,
+			"updatedAt": 1793915727678,
+			"conversations": {
+				"1": {
+					"entries": 5,
+					"newest": 15
+				}
+			},
+			"subagents": [],
+			"shares": {
+				"links": [],
+				"guests": []
+			},
+			"artifacts": {},
+			"uploads": 1,
+			"downloads": 0
+		},
+		"c4b37250-e6c9-46f7-8fb0-60442b0bc2c8": {
+			"title": "Alpha (copy)",
+			"location": "/tmp",
+			"archived": false,
+			"updatedAt": 1793915729960,
+			"conversations": {
+				"1": {
+					"entries": 36,
+					"newest": 91
+				},
+				"60": {
+					"entries": 3,
+					"newest": 73
+				}
+			},
+			"subagents": [
+				{
+					"name": "helper",
+					"archived": false
+				}
+			],
+			"shares": {
+				"links": [],
+				"guests": []
+			},
+			"artifacts": {
+				"demo": 2,
+				"notes": 1
+			},
+			"uploads": 2,
+			"downloads": 1
+		}
+	},
+	"envs": [],
+	"forwards": []
+}

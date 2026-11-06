@@ -2495,9 +2495,14 @@ entry. Opinionated and small: an app is its API, its built-in plugins and a star
   socket is public); a session helper issues and revokes sessions; command-line clients send a token in a header (an
   owner token file readable only by the app's OS user; a device pairing flow from other machines).
 - **Storage:** one store for the server, a directory per worker under its kind and address with its store; plugins
-  never use data-directory paths. A files plugin per address (`put`, chunked transfers, a watchable index, caps) is
-  the default file storage; raw directories only where a real path is needed, owned by one object, under the worker's
-  directory. Export and import the data a host created (`exportData`, `importData`): the store's archive plus its
+  never use data-directory paths. `Files`, one per host (decision "Files v2"), is the default file storage: its
+  bytes as immutable blobs in the host's `files/`, its index in tables of the host's store; every file in a space at
+  a path, folders as index entries and moves in the index only, a version per write and copies sharing blobs (a blob
+  goes once nothing references it), small writes and chunked transfers, idempotency keys, fixed indexed metadata
+  (`source`, `ref`, `key`, `mime`, …) plus free `meta`, queries by folder, path, `ref` and `key`, live folder
+  listings (`FilesFolder`), a summary per space a worker pushes to its server's index, caps per host, and
+  `copyFiles` for a new address made from an existing one. Raw directories only where a real path is needed, owned
+  by one object, under the worker's directory. Export and import the data a host created (`exportData`, `importData`): the store's archive plus its
   files; export stops nothing (a running worker packs its own store; without one the server reads it under the
   worker's lock), import refuses an address that has data (decision "App kit naming and export").
 - **Plugins:** the app's root (required) and the user's root in the data directory; installs from git or npm; one

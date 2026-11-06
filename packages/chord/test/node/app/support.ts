@@ -171,7 +171,7 @@ export const NOTES_PLUGIN: Readonly<Record<string, string>> = {
 		"\t\t\tstart: self.derive([info.start], ([value]) => value),",
 		"\t\t\twrite: (next, ctx) => store.write(next, ctx),",
 		"\t\t\tvisit: (page, ctx) => store.visit(page, ctx),",
-		'\t\t\tattach: (body, ctx) => files.put({ name: "note.txt", mime: "text/plain", bytes: new TextEncoder().encode(body) }, ctx),',
+		'\t\t\tattach: async (body, ctx) => (await files.put({ space: "notes", path: "note.txt", mime: "text/plain", source: "test", bytes: new TextEncoder().encode(body) }, ctx)).id,',
 		"\t\t\tfile: async (id, ctx) => decoder.decode(await files.read({ id, offset: 0, length: 1024 }, ctx)),",
 		"\t\t} };",
 		"\t});",
