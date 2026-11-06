@@ -2333,6 +2333,8 @@ describe("tool declaration replay allocation", () => {
 		});
 		for await (const _event of stream) { /* drain */ }
 		expect(calls).toBe(1);
-		expect(serializations).toBe(1);
+		// Initial declaration plus the next-turn equality check; no upfront
+		// clone of every current tool before the comparison.
+		expect(serializations).toBe(2);
 	});
 });
