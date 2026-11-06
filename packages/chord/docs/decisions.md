@@ -2674,6 +2674,16 @@ validation and copies the v2 kernel added around Delta.
   workers only through a server restart, which the kit's `base` mark flags. Plugins are unaffected (workers get the
   server's built scripts). What the bundle keeps external (Node builtins, packages that cannot be bundled, such as
   native addons) is settled by the build. p2 adopts it through its own `createWorkers`.
+- **The kit's owner is a principal the app chooses (owner, 2026-11-06: "ok"; p3's principals are `user`, `guest`,
+  `worker`, `server`, with no `owner` kind):** the kit hardwired the owner as `{ kind: "owner" }` (the owner link,
+  the owner token file and device pairing issue sessions for it; pairing's confirm and approve, invites and a
+  pairing's starter check `kind === "owner"`; `AppOptions` required the variant in the app's principal type). Rule:
+  `startServer`'s `principal` option takes `owner: P` beside `server` and `worker`; every place above issues sessions
+  for that principal and recognizes it by canonical JSON (compared once per principal object, as the principal key);
+  the type requirement and the kit's `OWNER`/`OwnerPrincipal` exports go. Changing `owner` between starts replaces
+  the owner token file (its session no longer names the owner); sessions issued for the old value stay what they
+  were (the app revokes them if it wants). The kit stays (owner: keep it and change it where it does not fit, rather
+  than wiring p3 from the components: the kit keeps p3's base code, which only a restart changes, small).
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
