@@ -839,9 +839,10 @@ translated phone drawer and intercept chat taps.
   (`theme.ts`, and the page's inline script). Fonts are files of the web bundle (`.woff2`, `font/woff2`).
 - **Markdown in Elanor's components** (`src/web/ElanorMarkdown.tsx`): `Markdown.tsx` renders through a component map
   (`MarkdownComponents`, `MarkdownComponentsContext`; `{}` renders plain elements), Elanor's by default: `Prose` with
-  its flow spacing, `Text`, `Heading` (serif), `List`, `Link`, `Table`, `CodeSnippet` with Copy, a read-only
-  `Checkbox` for task items. p2's parser, its safety (raw HTML as text) and its streaming are unchanged; the streaming
-  dot and a marker's spacing are in `elanor-markdown.css`.
+  its flow spacing, `Text`, `Heading`, `List`, `Link`, `Table`, `CodeSnippet` with Copy, a read-only `Checkbox` for
+  task items. p2's parser, its safety (raw HTML as text) and its streaming are unchanged. `elanor-markdown.css` sets
+  the font family to the interface's sans (`--sans`) instead of the pi brand's prose serif, keeping Elanor's sizes and
+  code font; the streaming dot and a marker's spacing are there too.
 - **Service worker** (`public/sw.js`, served at `/sw.js` with `no-cache`): the app starts without the network once it
   was opened. App pages come from the network first and fall back to the last app page kept (on failure, or after 3
   seconds); the web bundle's content-named files come from the cache first (the newest two bundle versions are kept);

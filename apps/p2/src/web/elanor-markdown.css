@@ -1,5 +1,15 @@
 /* p2's additions to Markdown in Elanor's components (ElanorMarkdown.tsx). */
 
+/*
+ * Markdown in the interface's sans (--sans), not the pi brand's prose serif. Every Elanor component inside sets its own
+ * font from the tokens (Prose, Text, List, Table, Heading), so the family is set on each of them; code keeps its mono
+ * font. Only the family changes: sizes, line heights and weights stay Elanor's.
+ */
+.elanor-markdown,
+.elanor-markdown :not(code, pre, pre *) {
+	font-family: var(--sans);
+}
+
 /* Code indents with tabs as p2's other code does: three columns, not the browser's eight. */
 .elanor-markdown pre {
 	tab-size: 3;
