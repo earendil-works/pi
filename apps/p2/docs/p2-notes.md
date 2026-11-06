@@ -1460,8 +1460,11 @@ translated phone drawer and intercept chat taps.
   between them. 3: as above, thinking collapsed and only runs of calls on wheels. 4: thinking open in full and each call its own row (the sheet's row:
   icon, tool and argument, state), opening its detail alone; no wheels (a waiting wheel still stands for a run before
   its first call). `chatItems`' `detail` merges what goes on the wheels into the runs of calls (`wheels` in `model.ts`,
-  `WheelEntry`); the summary of a wheel with thinking leads with "Thought". `activity-model.test.ts` covers the
-  levels, `ui-detail.test.ts` the transcript and the sheet as the setting changes live, and the answer arriving once.
+  `WheelEntry`); the summary of a wheel with thinking leads with "Thought". A result its tool shows in place (an
+  inline artifact, `hasResult` "inline") stays in place at 2, 3 and 4 (between wheels, or after its call's row at 4;
+  the wheel after it is the row that waited there); at 1 it joins the results after the answer, drawn in full, so the
+  turn keeps its one wheel. `activity-model.test.ts` covers the levels, `ui-detail.test.ts` the transcript and the
+  sheet as the setting changes live, and the answer arriving once.
 - **Tools' look comes from their plugins** (owner decision: no tool-specific code in `src/web`). A plugin's web facet
   contributes `ToolActivity` entries, keyed by tool name, to the `ToolActivities` registry (`src/runtime/web-core.ts`;
   type in `src/web/activity/model.ts`, the parts a detail is built from in `src/web/activity/api.ts`, all through
@@ -1470,7 +1473,8 @@ translated phone drawer and intercept chat taps.
   summary as a function of the count (tools sharing the function count together: write and edit), its `Detail`, the
   calls it made (`nestedCalls`) and how it words repeats of them (`repeated`), a nested call's `CallInput` and
   `CallDetail`, and a `Result` with `hasResult` saying where: after the answer, or inline, right after its call (an
-  artifact with `inline: true`; the run of calls splits around it). Writing one: `docs/tool-ui.md`. A detail shows everything at once (no
+  artifact with `inline: true`; the run of calls splits around it; at detail 1 after the answer). Writing one:
+  `docs/tool-ui.md`. A detail shows everything at once (no
   "Show all" inside it; long output scrolls with the sheet) and follows a running call live; the one cap kept is a
   script's calls: the newest eight, the rest behind "Show all", as the transcript's card had them. Owners: `coding-tools` (bash, read, write, edit), `terminals`, `codemode`, `powershell`,
   `subagents`, `agent`, `artifacts`, `send-file`, `ports`, `conversations`, `history`, each in its `activity.tsx`. The

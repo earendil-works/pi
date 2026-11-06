@@ -222,6 +222,15 @@ sections), `DetailSection`, `CommandBlock`, `OutputBlock`, `CodeBlock`, `DiffBlo
 Decide from the finished call (`tool.status === "done"` and the `details` it needs): a running call has no result
 yet, and the run splits only once the result is there.
 
+How much of a turn the chat shows is the owner's settings.json `detail` (1 to 4, default 2); a result in place
+follows it:
+
+- **2** (the default) and **3**: right after the wheel with its call; the calls after it, and at 2 the thinking
+  after it, go on the next wheel, which is the row that waited there while the agent worked.
+- **4** (no wheels, each call its own row): right after its call's row.
+- **1** (one wheel per turn, only the answer and its results in the transcript): with the results after the answer,
+  still drawn in full (an inline artifact shows itself there); the turn's wheel is not split.
+
 #### Calls of other tools
 
 A tool that runs other tools (code mode's scripts) gets their calls as `tool.calls`, from Durable's live nested
