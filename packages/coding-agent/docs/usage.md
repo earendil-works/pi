@@ -77,7 +77,7 @@ Use `!!` when you want to run a command without sending its output to the model.
 
 ## Copy, export, or share results
 
-Press `Ctrl+X` or run `/copy` to copy the last assistant response. Use `/export` to save the session as HTML or JSONL.
+Press `Ctrl+X` or run `/copy` to choose a code block, quote, or the whole last assistant response from an inline list with a preview. Code blocks copy without fences, quotes without their outer `>` markers, and the whole response as original Markdown. Use `Up`/`Down` to select, `Enter` to copy, and `Escape` to cancel. In fullscreen mode with `fullscreenCopyOnSelect: false`, `Ctrl+X` still copies an active text selection directly. Use `/export` to save the session as HTML or JSONL.
 
 Use `/share` to upload the session and get a viewer link. By default, Radius authentication makes the artifact visible to your Radius organization; otherwise, Pi creates a private GitHub gist through the GitHub CLI. The [`sessionShareDestination`](settings.md#sessions-and-context) setting can force either destination. Review the session first because it can contain prompts, tool output, file contents, and credentials exposed during the conversation.
 

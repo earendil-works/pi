@@ -106,6 +106,20 @@
     "theme": {
       "type": "string"
     },
+    "iconPreset": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "unicode"
+        },
+        {
+          "type": "string",
+          "const": "nerd"
+        }
+      ],
+      "description": "Interactive UI icons. The nerd preset requires a Nerd Font selected in the terminal.",
+      "default": "unicode"
+    },
     "compaction": {
       "type": "object",
       "properties": {

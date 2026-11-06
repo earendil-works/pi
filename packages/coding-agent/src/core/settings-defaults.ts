@@ -6,6 +6,7 @@ export const SETTINGS_DEFAULTS = {
 	sessionShareDestination: "auto",
 	steeringMode: "one-at-a-time",
 	followUpMode: "one-at-a-time",
+	iconPreset: "unicode",
 	compaction: {
 		enabled: true,
 		reserveTokens: 16384,

@@ -39,6 +39,7 @@ describe("SettingsSelectorComponent", () => {
 			availableThinkingLevels: [],
 			modelThinkingLevels: {},
 			availableThemes: [],
+			iconPreset: "unicode",
 		} as unknown as SettingsConfig;
 		const callbacks = {
 			onFullscreenExitOutputChange: onExitOutputChange,
@@ -74,6 +75,7 @@ describe("SettingsSelectorComponent", () => {
 			availableThinkingLevels: [],
 			modelThinkingLevels: {},
 			availableThemes: [],
+			iconPreset: "unicode",
 		} as unknown as SettingsConfig;
 		const callbacks = {
 			onSessionShareDestinationChange,
@@ -94,6 +96,7 @@ describe("SettingsSelectorComponent", () => {
 			currentTheme: "dark",
 			terminalTheme: "dark",
 			availableThemes: ["system", "dark", "light"],
+			iconPreset: "unicode",
 			warnings: {},
 		} as unknown as SettingsConfig;
 		const callbacks = { onThemePreview: vi.fn(), onCancel: () => {} } as unknown as SettingsCallbacks;
@@ -121,6 +124,7 @@ describe("SettingsSelectorComponent", () => {
 			currentTheme: "light/dark",
 			terminalTheme: "dark",
 			availableThemes: ["dark", "light", "other"],
+			iconPreset: "unicode",
 			warnings: {},
 		} as unknown as SettingsConfig;
 		const callbacks = { onThemePreview: vi.fn(), onCancel: () => {} } as unknown as SettingsCallbacks;
@@ -149,6 +153,7 @@ describe("SettingsSelectorComponent", () => {
 			availableDefaultModels: [model],
 			thinkingLevel: "high",
 			modelThinkingLevels: { [modelKey]: "medium" },
+			iconPreset: "unicode",
 		} as unknown as SettingsConfig;
 		const callbacks = { onCancel: () => {} } as unknown as SettingsCallbacks;
 		const list = new SettingsSelectorComponent(config, callbacks).getSettingsList();

@@ -62,7 +62,7 @@ const APP_KEYBINDINGS = {
 	},
 	"app.message.copy": {
 		defaultKeys: "ctrl+x",
-		description: "Copy selection or last assistant message",
+		description: "Copy selection or choose content from the last assistant message",
 	},
 	"app.message.followUp": {
 		defaultKeys: windowsKeybindings ? "ctrl+q" : "alt+enter",

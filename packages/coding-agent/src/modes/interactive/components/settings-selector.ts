@@ -25,6 +25,7 @@ import {
 	type TuiMode,
 	type WarningSettings,
 } from "../../../core/settings-manager.ts";
+import type { IconPreset } from "../icons.ts";
 import {
 	getSettingsListTheme,
 	parseAutoThemeSetting,
@@ -80,6 +81,7 @@ export interface SettingsConfig {
 	currentTheme: string;
 	terminalTheme: TerminalTheme;
 	availableThemes: string[];
+	iconPreset: IconPreset;
 	hideThinkingBlock: boolean;
 	mermaidRenderingMode: MermaidRenderingMode;
 	showCacheMissNotices: boolean;
@@ -120,6 +122,7 @@ export interface SettingsCallbacks {
 	onModelThinkingLevelRemove: (provider: string, modelId: string) => void;
 	onThemeChange: (theme: string) => void;
 	onThemePreview?: (theme: string) => void;
+	onIconPresetChange: (preset: IconPreset) => void;
 	onHideThinkingBlockChange: (hidden: boolean) => void;
 	onMermaidRenderingModeChange: (mode: MermaidRenderingMode) => void;
 	onShowCacheMissNoticesChange: (shown: boolean) => void;
@@ -765,6 +768,13 @@ export class SettingsSelectorComponent extends Container {
 				submenu: (currentValue, done) =>
 					new ThemeSubmenu(currentValue, config.terminalTheme, config.availableThemes, callbacks, done),
 			},
+			{
+				id: "icon-preset",
+				label: "Icons",
+				description: "Unicode symbols or Nerd Font icons (requires a Nerd Font selected in your terminal)",
+				currentValue: config.iconPreset,
+				values: ["unicode", "nerd"],
+			},
 		];
 
 		// Only show image toggle if terminal supports it
@@ -992,6 +1002,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "theme":
 						callbacks.onThemeChange(newValue);
+						break;
+					case "icon-preset":
+						callbacks.onIconPresetChange(newValue as IconPreset);
 						break;
 				}
 			},

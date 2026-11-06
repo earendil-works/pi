@@ -143,6 +143,7 @@ import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
+import { CopySelectorComponent } from "./components/copy-selector.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
@@ -185,7 +186,9 @@ import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
+import { getCopyItems } from "./copy-items.ts";
 import { editInExternalEditor } from "./external-editor.ts";
+import { setIconPreset } from "./icons.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
 import { getModelSearchText } from "./model-search.ts";
 import { type BlockedStatus, ProgramStatusReporter } from "./program-status-reporter.ts";
@@ -630,6 +633,7 @@ export class InteractiveMode {
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
 		this.runtimeHost = runtimeHost;
 		setCapabilityOverrides(this.settingsManager.getTerminalCapabilityOverrides());
+		setIconPreset(this.settingsManager.getIconPreset());
 		const tuiMode = options.tuiMode ?? this.settingsManager.getTuiMode();
 		this.options = { ...options, tuiMode };
 		this.autoTrustOnReloadCwd = options.autoTrustOnReloadCwd;
@@ -2180,6 +2184,7 @@ export class InteractiveMode {
 
 	private applyRuntimeSettings(): void {
 		setCapabilityOverrides(this.settingsManager.getTerminalCapabilityOverrides());
+		setIconPreset(this.settingsManager.getIconPreset());
 		this.ensurePngTranscoder();
 		configureHttpDispatcher(this.settingsManager.getHttpIdleTimeoutMs());
 		this.applyFullscreenScrollbarSetting();
@@ -5106,6 +5111,7 @@ export class InteractiveMode {
 					currentTheme: this.themeController.getThemeSelection() || SYSTEM_THEME_NAME,
 					terminalTheme: this.themeController.getTerminalTheme(),
 					availableThemes: getAvailableThemes(),
+					iconPreset: this.settingsManager.getIconPreset(),
 					hideThinkingBlock: this.hideThinkingBlock,
 					mermaidRenderingMode: this.settingsManager.getMermaidRenderingMode(),
 					collapseChangelog: this.settingsManager.getCollapseChangelog(),
@@ -5207,6 +5213,12 @@ export class InteractiveMode {
 						this.themeController.setThemeSetting(themeSetting);
 					},
 					onThemePreview: (themeName) => this.themeController.preview(themeName),
+					onIconPresetChange: (preset) => {
+						this.settingsManager.setIconPreset(preset);
+						setIconPreset(this.settingsManager.getIconPreset());
+						this.ui.invalidate();
+						this.ui.requestRender();
+					},
 					onHideThinkingBlockChange: (hidden) => {
 						this.hideThinkingBlock = hidden;
 						this.settingsManager.setHideThinkingBlock(hidden);
@@ -6798,16 +6810,30 @@ export class InteractiveMode {
 			return;
 		}
 
-		try {
-			await copyToClipboard(text);
-			if (options.flashConfirmation && this.ui instanceof TuiAltScreen) {
-				this.ui.flash("Copied!");
-			} else {
-				this.showStatus("Copied last agent message to clipboard");
-			}
-		} catch (error) {
-			this.showError(error instanceof Error ? error.message : String(error));
-		}
+		this.showSelector((done) => {
+			const selector = new CopySelectorComponent(
+				getCopyItems(text),
+				async (item) => {
+					done();
+					this.ui.requestRender();
+					try {
+						await copyToClipboard(item.text);
+						if (options.flashConfirmation && this.ui instanceof TuiAltScreen) {
+							this.ui.flash("Copied!");
+						} else {
+							this.showStatus(`Copied ${item.label.toLowerCase()} to clipboard`);
+						}
+					} catch (error) {
+						this.showError(error instanceof Error ? error.message : String(error));
+					}
+				},
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+			);
+			return { component: selector, focus: selector };
+		});
 	}
 
 	private handleNameCommand(text: string): void {
@@ -7034,7 +7060,7 @@ export class InteractiveMode {
 | \`${expandTools}\` | Toggle tool output expansion |
 | \`${toggleThinking}\` | Toggle thinking block visibility |
 | \`${externalEditor}\` | Edit message in external editor |
-| \`${copyMessage}\` | Copy selection or last assistant message |
+| \`${copyMessage}\` | Copy selection or choose a block from the last assistant message |
 | \`${followUp}\` | Queue follow-up message |
 | \`${dequeue}\` | Restore queued messages |
 | \`${pasteImage}\` | Paste files on macOS, images, or text from clipboard |

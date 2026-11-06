@@ -244,6 +244,12 @@ export const SettingsSchema = Type.Object(
 			}),
 		),
 		theme: Type.Optional(Type.String()),
+		iconPreset: Type.Optional(
+			Type.Union([Type.Literal("unicode"), Type.Literal("nerd")], {
+				description: "Interactive UI icons. The nerd preset requires a Nerd Font selected in the terminal.",
+				default: SETTINGS_DEFAULTS.iconPreset,
+			}),
+		),
 		compaction: Type.Optional(CompactionSettingsSchema),
 		branchSummary: Type.Optional(BranchSummarySettingsSchema),
 		retry: Type.Optional(RetrySettingsSchema),

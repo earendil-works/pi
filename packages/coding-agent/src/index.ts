@@ -477,6 +477,7 @@ export {
 	UserMessageSelectorComponent,
 	type VisualTruncateResult,
 } from "./modes/interactive/components/index.ts";
+export { type IconName, type IconPreset, icon } from "./modes/interactive/icons.ts";
 // Theme utilities for custom tools and extensions
 export {
 	getLanguageFromPath,

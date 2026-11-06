@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
+import type { IconPreset } from "../modes/interactive/icons.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
@@ -767,6 +768,17 @@ export class SettingsManager {
 	setTheme(theme: string): void {
 		this.globalSettings.theme = theme;
 		this.markModified("theme");
+		this.save();
+	}
+
+	getIconPreset(): IconPreset {
+		// Settings files are not schema-validated, so unsupported presets use the Unicode default.
+		return this.settings.iconPreset === "nerd" ? "nerd" : SETTINGS_DEFAULTS.iconPreset;
+	}
+
+	setIconPreset(preset: IconPreset): void {
+		this.globalSettings.iconPreset = preset;
+		this.markModified("iconPreset");
 		this.save();
 	}
 

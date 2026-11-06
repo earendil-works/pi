@@ -1,4 +1,4 @@
-import type { Component, Terminal, TUI, WheelScrollLines } from "@earendil-works/pi-tui";
+import type { Component, Terminal, TUI, TuiAltScreen, TuiMainScreen, WheelScrollLines } from "@earendil-works/pi-tui";
 import { Container, getKeybindings, isViewportTUI, ScrollView, setKeybindings, Text } from "@earendil-works/pi-tui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
@@ -202,22 +202,52 @@ describe("InteractiveMode right-click paste", () => {
 	});
 });
 
+type SelectorFactory = (done: () => void) => { component: Component; focus: Component; dispose?: () => void };
+
 type CopyCommandContext = {
 	session: { getLastAssistantText: () => string | undefined };
-	ui: ReturnType<typeof createInteractiveTui>;
+	ui: TuiMainScreen | TuiAltScreen;
+	editor: Component;
+	editorContainer: Container;
+	activeSelectorToken?: object;
+	activeSelectorDispose?: () => void;
+	disposeActiveSelector: () => void;
+	showSelector: (create: SelectorFactory) => void;
 	showStatus: (message: string) => void;
 	showError: (message: string) => void;
 };
 
 type CopyCommandOptions = { flashConfirmation?: boolean; preferSelection?: boolean };
 
-type CopyCommandPrototype = {
+const copyCommandPrototype = InteractiveMode.prototype as unknown as {
 	handleCopyCommand(this: CopyCommandContext, options?: CopyCommandOptions): Promise<void>;
+	showSelector(this: CopyCommandContext, create: SelectorFactory): void;
+	disposeActiveSelector(this: CopyCommandContext): void;
 };
 
-const copyCommandPrototype = InteractiveMode.prototype as unknown as CopyCommandPrototype;
+function createCopyContext(
+	ui: TuiMainScreen | TuiAltScreen,
+	getLastAssistantText: () => string | undefined,
+): CopyCommandContext {
+	const editor = new Text("Unsent draft", 0, 0);
+	const editorContainer = new Container();
+	editorContainer.addChild(editor);
+	ui.addChild(editorContainer);
+	ui.setFocus(editor);
+	const context: CopyCommandContext = {
+		session: { getLastAssistantText },
+		ui,
+		editor,
+		editorContainer,
+		disposeActiveSelector: () => copyCommandPrototype.disposeActiveSelector.call(context),
+		showSelector: (create) => copyCommandPrototype.showSelector.call(context, create),
+		showStatus: vi.fn(),
+		showError: vi.fn(),
+	};
+	return context;
+}
 
-describe("InteractiveMode copy confirmation", () => {
+describe("InteractiveMode copy selection", () => {
 	beforeEach(() => {
 		clipboardMocks.copyToClipboard.mockReset();
 		clipboardMocks.copyToClipboard.mockResolvedValue(undefined);
@@ -235,12 +265,10 @@ describe("InteractiveMode copy confirmation", () => {
 		const getLastAssistantText = vi.fn(() => "assistant response");
 		const showStatus = vi.fn();
 		const showError = vi.fn();
-		const context: CopyCommandContext = {
-			session: { getLastAssistantText },
-			ui,
-			showStatus,
-			showError,
-		};
+		const context = createCopyContext(ui, getLastAssistantText);
+		context.showStatus = showStatus;
+		context.showError = showError;
+		ui.removeChild(context.editorContainer);
 		ui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
 
 		ui.start();
@@ -260,31 +288,23 @@ describe("InteractiveMode copy confirmation", () => {
 			expect(getLastAssistantText).not.toHaveBeenCalled();
 			expect(showStatus).not.toHaveBeenCalled();
 			expect(showError).not.toHaveBeenCalled();
-			expect(terminal.getViewport().some((line) => line.includes("Copied!"))).toBe(true);
 		} finally {
 			ui.stop();
 		}
 	});
 
-	it("copies the last assistant message with an active fullscreen selection when copy-on-select is enabled", async () => {
-		const terminal = new RecordingTerminal(40, 4);
+	it("opens the picker rather than copying the response when copy-on-select is enabled", async () => {
+		initTheme("dark");
+		const terminal = new RecordingTerminal(80, 24);
 		const ui = createInteractiveTui({
 			tuiMode: "fullscreen",
 			showHardwareCursor: false,
 			logDirectory: "/tmp",
 			terminal,
 		});
-		const getLastAssistantText = vi.fn(() => "assistant response");
-		const showStatus = vi.fn();
-		const showError = vi.fn();
-		const context: CopyCommandContext = {
-			session: { getLastAssistantText },
-			ui,
-			showStatus,
-			showError,
-		};
 		ui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
-
+		const text = "```sh\necho selected\n```\n\n> Quoted text";
+		const context = createCopyContext(ui, () => text);
 		ui.start();
 		try {
 			await terminal.waitForRender();
@@ -294,72 +314,113 @@ describe("InteractiveMode copy confirmation", () => {
 			await terminal.waitForRender();
 			clipboardMocks.copyToClipboard.mockClear();
 
-			await copyCommandPrototype.handleCopyCommand.call(context, { flashConfirmation: true, preferSelection: true });
+			await copyCommandPrototype.handleCopyCommand.call(context, { preferSelection: true });
 			await terminal.waitForRender();
+			expect(clipboardMocks.copyToClipboard).not.toHaveBeenCalled();
 
-			expect(clipboardMocks.copyToClipboard).toHaveBeenCalledOnce();
-			expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith("assistant response");
-			expect(getLastAssistantText).toHaveBeenCalledOnce();
-			expect(showStatus).not.toHaveBeenCalled();
-			expect(showError).not.toHaveBeenCalled();
-			expect(terminal.getViewport().some((line) => line.includes("Copied!"))).toBe(true);
+			terminal.sendInput("\r");
+			await vi.waitFor(() => expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith("echo selected"));
+			expect(ui.getFocusedComponent()).toBe(context.editor);
 		} finally {
 			ui.stop();
 		}
 	});
 
-	it("flashes Copied! for the copy shortcut in fullscreen mode", async () => {
-		const terminal = new RecordingTerminal(40, 4);
-		const ui = createInteractiveTui({
-			tuiMode: "fullscreen",
-			showHardwareCursor: false,
-			logDirectory: "/tmp",
-			terminal,
-		});
-		const showStatus = vi.fn();
-		const showError = vi.fn();
-		const context: CopyCommandContext = {
-			session: { getLastAssistantText: () => "assistant response" },
-			ui,
-			showStatus,
-			showError,
-		};
+	it.each(["regular", "fullscreen"] as const)(
+		"copies the chosen quote and restores the draft in %s mode",
+		async (tuiMode) => {
+			initTheme("dark");
+			const terminal = new RecordingTerminal(80, 24);
+			const ui = createInteractiveTui({
+				tuiMode,
+				showHardwareCursor: false,
+				logDirectory: "/tmp",
+				terminal,
+			});
+			const context = createCopyContext(ui, () => "```sh\necho code\n```\n\n> first line\n> second line");
+			ui.start();
+			try {
+				await copyCommandPrototype.handleCopyCommand.call(context);
+				expect(clipboardMocks.copyToClipboard).not.toHaveBeenCalled();
+				terminal.sendInput("\x1b[B");
+				terminal.sendInput("\r");
+				await vi.waitFor(() =>
+					expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith("first line\nsecond line"),
+				);
+				expect(ui.getFocusedComponent()).toBe(context.editor);
+				expect(context.editorContainer.children).toEqual([context.editor]);
+				expect(context.editor.render(80).join("\n")).toContain("Unsent draft");
+			} finally {
+				ui.stop();
+			}
+		},
+	);
 
-		ui.start();
-		try {
-			await terminal.waitForRender();
-			await copyCommandPrototype.handleCopyCommand.call(context, { flashConfirmation: true, preferSelection: true });
-			await terminal.waitForRender();
-
-			expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith("assistant response");
-			expect(showStatus).not.toHaveBeenCalled();
-			expect(showError).not.toHaveBeenCalled();
-			expect(terminal.getViewport().some((line) => line.includes("Copied!"))).toBe(true);
-		} finally {
-			ui.stop();
-		}
-	});
-
-	it("keeps the status-line confirmation for the copy shortcut in regular mode", async () => {
+	it("copies the whole response without modifying its Markdown", async () => {
+		initTheme("dark");
+		const terminal = new RecordingTerminal(80, 24);
 		const ui = createInteractiveTui({
 			tuiMode: "regular",
 			showHardwareCursor: false,
 			logDirectory: "/tmp",
-			terminal: new RecordingTerminal(),
+			terminal,
 		});
-		const showStatus = vi.fn();
-		const showError = vi.fn();
-		const context: CopyCommandContext = {
-			session: { getLastAssistantText: () => "assistant response" },
-			ui,
-			showStatus,
-			showError,
-		};
+		const text = "**Original**\n\n```sh\necho code\n```\n\n> quote\n";
+		const context = createCopyContext(ui, () => text);
+		ui.start();
+		try {
+			await copyCommandPrototype.handleCopyCommand.call(context);
+			terminal.sendInput("\x1b[A");
+			terminal.sendInput("\r");
+			await vi.waitFor(() => expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith(text));
+		} finally {
+			ui.stop();
+		}
+	});
 
-		await copyCommandPrototype.handleCopyCommand.call(context, { flashConfirmation: true, preferSelection: true });
+	it("leaves the clipboard unchanged on cancellation", async () => {
+		initTheme("dark");
+		const terminal = new RecordingTerminal(80, 24);
+		const ui = createInteractiveTui({
+			tuiMode: "regular",
+			showHardwareCursor: false,
+			logDirectory: "/tmp",
+			terminal,
+		});
+		const context = createCopyContext(ui, () => "Plain response");
+		ui.start();
+		try {
+			await copyCommandPrototype.handleCopyCommand.call(context);
+			terminal.sendInput("\x1b");
+			await terminal.waitForRender();
+			expect(clipboardMocks.copyToClipboard).not.toHaveBeenCalled();
+			expect(ui.getFocusedComponent()).toBe(context.editor);
+		} finally {
+			ui.stop();
+		}
+	});
 
-		expect(showStatus).toHaveBeenCalledWith("Copied last agent message to clipboard");
-		expect(showError).not.toHaveBeenCalled();
+	it("restores the editor and reports clipboard failures", async () => {
+		initTheme("dark");
+		clipboardMocks.copyToClipboard.mockRejectedValueOnce(new Error("Clipboard unavailable"));
+		const terminal = new RecordingTerminal(80, 24);
+		const ui = createInteractiveTui({
+			tuiMode: "regular",
+			showHardwareCursor: false,
+			logDirectory: "/tmp",
+			terminal,
+		});
+		const context = createCopyContext(ui, () => "Plain response");
+		ui.start();
+		try {
+			await copyCommandPrototype.handleCopyCommand.call(context);
+			terminal.sendInput("\r");
+			await vi.waitFor(() => expect(context.showError).toHaveBeenCalledWith("Clipboard unavailable"));
+			expect(ui.getFocusedComponent()).toBe(context.editor);
+			expect(context.showStatus).not.toHaveBeenCalled();
+		} finally {
+			ui.stop();
+		}
 	});
 });
 

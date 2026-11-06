@@ -34,10 +34,12 @@ Extensions, prompt templates, and skills can add commands. The command menu in P
 
 | Command | Description |
 |---|---|
-| `/copy` | Copy the last assistant message |
+| `/copy` | Choose a code block, quote, or whole response from the last assistant message to copy |
 | `/export [path]` | Export the session as HTML or JSONL |
 | `/share` | Upload the session and return a viewer link |
 | `/bug [description]` | Prepare a private bug report for the Pi developers |
+
+`/copy` opens an inline list with a preview of the selected item's clipboard content. Use `Up`/`Down` or `PageUp`/`PageDown` to browse, `Enter` to copy, and `Escape` to cancel. Code blocks copy without their fences; quotes copy without their outer `>` markers. The whole-response option preserves the original Markdown and is available even when the response has no code blocks or quotes.
 
 Review a session before exporting or sharing it. Sessions can contain prompts, tool arguments, command output, file contents, and credentials exposed during the conversation.
 

@@ -175,6 +175,20 @@ Theme callbacks evaluated during rendering do not need special rebuilding. State
 
 Use [Themes](themes.md) to create terminal palettes. Use Pi’s `getMarkdownTheme()` when rendering Markdown that should match the active application theme.
 
+## Use shared icons
+
+Import `icon()` from `@earendil-works/pi-coding-agent` to use the interactive harness's configured icon preset:
+
+```typescript
+import { icon } from "@earendil-works/pi-coding-agent";
+
+const label = `${icon("code")} Code`;
+```
+
+The supported names are `"code"`, `"quote"`, and `"copy"` (`IconName`). `icon()` returns an uncolored string; apply the supplied theme's colors separately. It follows the `iconPreset` setting (`"unicode"` or `"nerd"`, represented by `IconPreset`) across built-in components and separately loaded extensions. Resolve icons during rendering, or rebuild cached labels from `invalidate()`, so switching presets updates existing UI. Nerd Font icons require a compatible font selected in the terminal.
+
+Extensions that construct `SettingsSelectorComponent` must provide `SettingsConfig.iconPreset` and `SettingsCallbacks.onIconPresetChange`.
+
 ## Keep rendering responsive
 
 Rendering runs on the interactive path. Cache expensive layout and highlighting work by width and content, then clear that cache from `invalidate()`.
