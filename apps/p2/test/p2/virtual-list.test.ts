@@ -172,8 +172,8 @@ describe("shared adaptive estimates", () => {
 		const estimator = new RowEstimator<{ key: string }>(({ key }) => ({ kind: key, text: 10, fixed: 0 }), 30);
 		const row = { key: "old" };
 		const before = estimator.revision;
-		expect(estimator.estimate(row, 100)).toBeGreaterThan(0);
+		assert.ok(estimator.estimate(row, 100) > 0);
 		estimator.measured(row, 100, 80);
-		expect(estimator.revision).toBeGreaterThan(before);
+		assert.ok(estimator.revision > before);
 	});
 });

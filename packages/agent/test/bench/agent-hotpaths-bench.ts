@@ -47,7 +47,7 @@ for (const count of [1_000, 10_000, 100_000]) {
 	await measure(`tool updates, ${count} resolved`, async () => {
 		const tracker = new ToolUpdateTracker();
 		for (let index = 0; index < count; index++) {
-			tracker.track(Promise.resolve());
+			tracker.track(() => Promise.resolve());
 			if ((index & 127) === 0) await Promise.resolve();
 		}
 		await tracker.drain();
