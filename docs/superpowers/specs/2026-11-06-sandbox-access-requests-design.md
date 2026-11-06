@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-06
 **Owner:** Joshua W. Dorsey, Sr.
-**Status:** design approved in conversation; revised after the owner's review of nlt-pi#39 (changes requested: bind turn approvals to the originating task, define pending capacity, add governance records); awaiting re-review
+**Status:** approved by owner (2026-11-06) and implementation in progress on `kilo/sandbox-access-requests` (MVP-007). Revised after owner review of nlt-pi#39 (task-bound turn approvals, pending capacity, governance records). Real mid-session sandbox network-policy update remains unverified until a live turn.
 **Scope:** `mvp/` (NLT Coding Agent MVP on Vercel, project `nlt-pi-mvp`)
 
 ## 1. Intent

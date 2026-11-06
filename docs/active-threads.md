@@ -109,12 +109,11 @@
 **Next action:** Owner: sign-in setup. Agent: help verify the first sign-in and the first agent turn once set up.
 
 ### NLTPI-MVP-006 — Chat history in Neon
-**Status:** merged (nlt-pi#35). Switched on in production on 2026-11-06 (`NLT_HISTORY_ENABLED=1`, redeployed, deployment READY). The Neon tables are created on the first request, which has not happened yet.  
+**Status:** merged (nlt-pi#35); live in production. Switched on 2026-11-06 (`NLT_HISTORY_ENABLED=1`, redeployed, READY).  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
 **Summary:** The owner added Neon and Mem0 to the Vercel project (2026-11-05) and chose chat history in Neon first. The owner-approved spec is `docs/superpowers/specs/2026-11-05-chat-history-neon-design.md`. Conversations are saved for the signed-in owner only and kept until deleted. Blocked messages are stored as a marker without text. The page saves through an owner-only `/api/conversations`, so `/api/agent` and `/api/govern` are unchanged. The agent still answers each message on its own. `@neondatabase/serverless` 1.2.0 is pinned.  
-**Verified:** offline tests (store SQL against a recording stub; route against an in-memory store; page helpers), mutation checks (owner filter, blocked-text clearing, session owner), and a Playwright check of the page with stubbed API routes (history off, and on: list, save, open, delete).  
-**Not verified:** a real Neon connection and schema creation.  
-**Next (owner):** open the chat page, sign in, send one message, then reload to see it listed. The agent can then confirm the rows in Neon (read-only).  
+**Verified:** offline tests (store SQL against a recording stub; route against an in-memory store; page helpers), mutation checks (owner filter, blocked-text clearing, session owner), and a Playwright check of the page with stubbed API routes (history off, and on: list, save, open, delete). **Live check (2026-11-06, owner-reported):** session history saves in production. Neon tables created on first `/api/conversations` request.  
+**Next:** agent can confirm rows in Neon (read-only) if needed.  
 **Planned next phase:** Mem0 as the agent's memory layer, with its own design. `@mem0/pi-agent-plugin` 0.3.2 has been reviewed: it fits Pi, but its auto-capture, model-callable delete and machine-based scoping need locking down before use in the hosted runner (`noExtensions: true` today).
 
 ### NLTPI-MVP-007 — Sandbox access requests (owner approves new sites)
@@ -186,16 +185,16 @@
 
 
 ### NLTPI-MEM-001 — Mem0 memory layer (phase 1)
-**Status:** built; merged into `feat/mvp-mem0-memory-layer` branch with phase 2
-**Owner:** Joshua W. Dorsey, Sr. / delegated coding agents
-**Summary:** Implements owner-approved learned memories in Mem0, recalled by the agent behind ASFDK checks. Routes: `GET/POST/DELETE /api/memories`, off unless `NLT_MEMORY_ENABLED=1`, 401 without owner session, `Cache-Control: no-store`. Every write passes `validateInputLength`, `sanitizeInput`, `detectInjectionPatterns` from `@neurolift-technologies/asfdk` (fail closed). Recall runs after the crisis gate: search Mem0, filter hits through the same checks, inject as delimited untrusted background. No Mem0 client or credentials reach the model; no code reachable from `runAgentTurn` can write to Mem0. Page: "Remember this" button on user messages, Memories panel (list/delete), data notice.
-**Branch:** `feat/mvp-mem0-memory-layer`
-**Registration:** `docs/agent-log/registrations/2026-11-06-mem0-memory-layer.json`
-**Intent record:** `docs/agent-log/intent/2026-11-05-mem0-memory-layer.md`
-**Spec:** `docs/superpowers/specs/2026-11-05-mem0-memory-layer-design.md`
-**Verification:** mvp vitest `test/memory-route.test.ts` 23 passed; full mvp vitest suite 300 passed / 10 expected fail; `tsc --noEmit` clean; root `npm run check` passed via pre-commit hook. CodeRabbit review findings addressed: owner-scoped delete (client `get` + ownership check before `DELETE`), `infer: false` verbatim payload, recall wired in `api/agent.ts` with `NLT_MEMORY_RECALL_LIMIT` and `recallChecks` filtering on hits.
-**Known issues / notes:** Real Mem0 behaviour not verified offline. Probe results recorded in `docs/superpowers/specs/2026-11-06-mem0-probe-results.md` (all 5 items pending owner verification against live Mem0). Do not enable `NLT_MEMORY_ENABLED=1` in Production until probe results (a) and (e) are reviewed.
-**Next action:** Owner reviews probe results (a)–(e) and confirms enablement decision before setting `NLT_MEMORY_ENABLED=1` in Production. Phase 2 (TOI/OTOI standing terms) replaces `NLT_MEMORY_ENABLED` with TOI `privacy.retention` as the memory consent mechanism.
+**Status:** built; merged into `feat/mvp-mem0-memory-layer` branch with phase 2. **`NLT_MEMORY_ENABLED` kept disabled (owner decision, 2026-11-06)** pending probe results.  
+**Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
+**Summary:** Implements owner-approved learned memories in Mem0, recalled by the agent behind ASFDK checks. Routes: `GET/POST/DELETE /api/memories`, off unless `NLT_MEMORY_ENABLED=1`, 401 without owner session, `Cache-Control: no-store`. Every write passes `validateInputLength`, `sanitizeInput`, `detectInjectionPatterns` from `@neurolift-technologies/asfdk` (fail closed). Recall runs after the crisis gate: search Mem0, filter hits through the same checks, inject as delimited untrusted background. No Mem0 client or credentials reach the model; no code reachable from `runAgentTurn` can write to Mem0. Page: "Remember this" button on user messages, Memories panel (list/delete), data notice.  
+**Branch:** `feat/mvp-mem0-memory-layer`  
+**Registration:** `docs/agent-log/registrations/2026-11-06-mem0-memory-layer.json`  
+**Intent record:** `docs/agent-log/intent/2026-11-05-mem0-memory-layer.md`  
+**Spec:** `docs/superpowers/specs/2026-11-05-mem0-memory-layer-design.md`  
+**Verification:** mvp vitest `test/memory-route.test.ts` 23 passed; full mvp vitest suite 300 passed / 10 expected fail; `tsc --noEmit` clean; root `npm run check` passed via pre-commit hook. CodeRabbit review findings addressed: owner-scoped delete (client `get` + ownership check before `DELETE`), `infer: false` verbatim payload, recall wired in `api/agent.ts` with `NLT_MEMORY_RECALL_LIMIT` and `recallChecks` filtering on hits.  
+**Known issues / notes:** Real Mem0 behaviour not verified offline. Probe results `docs/superpowers/specs/2026-11-06-mem0-probe-results.md`: (a)–(d) unverified; **(e) owner-reported (2026-11-06): Mem0 trains on data on the free plan** — blocker on current plan. Owner decision (2026-11-06): keep `NLT_MEMORY_ENABLED` disabled. Do not enable on the free plan.  
+**Next action:** Owner decides: compliant Mem0 plan/setting with no training + acceptable retention, a different memory provider, or defer Mem0 memory. Still verify (a) before any enablement. Phase 2 (TOI/OTOI `privacy.retention`) governs consent once a compliant storage option exists.
 
 ### NLTPI-MEM-002 — TOI and OTOI standing terms (phase 2)
 **Status:** built; awaiting owner confirmation of pending decisions

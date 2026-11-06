@@ -46,6 +46,10 @@ import {
 } from "../sandbox/lifecycle.ts";
 import { createSandboxToolOperations, type SandboxOperationsOptions } from "../sandbox/operations.ts";
 import type { Memory } from "../memory/store.ts";
+import type { AccessStore } from "../access/store.ts";
+import type { AccessRequestRecord } from "../access/tool.ts";
+import { createRequestNetworkAccessTool, type AccessToolState } from "../access/tool.ts";
+import { accessRequestsEnabled } from "../access/config.ts";
 
 /** Base URL of the gateway's OpenAI-compatible API. */
 export const GATEWAY_API_URL = GATEWAY_MODELS_URL.replace(/\/models$/, "");
@@ -105,6 +109,14 @@ export interface AgentRunnerDeps {
   workspaceRoot?: string;
   sandbox?: AgentSandboxOptions;
   operations?: Omit<SandboxOperationsOptions, "root">;
+  /** Access-request feature (off unless enabled and wired). */
+  access?: {
+    enabled: boolean;
+    env: { NLT_ACCESS_REQUESTS?: string; DATABASE_URL?: string; NLT_AGENT_EGRESS_ALL?: string };
+    owner?: string;
+    store?: AccessStore;
+    log: (line: string) => void;
+  };
 }
 
 export interface AgentTurnInput {
@@ -116,6 +128,12 @@ export interface AgentTurnInput {
   deadlineAt?: number;
   onText?: (delta: string) => void;
   onToolStart?: (name: string) => void;
+  /** UUID of the conversation this turn belongs to. Required for access requests. */
+  conversationId?: string;
+  /** Extra egress domains composed server-side (presets + grants + valid resume). Undefined = use sandbox defaults. */
+  egressAllow?: string[];
+  /** Hosts already allowed for this turn (lowercased), for the access tool's "already allowed" check. */
+  allowedHosts?: ReadonlySet<string>;
 }
 
 export type AgentTurnResult =
@@ -125,7 +143,8 @@ export type AgentTurnResult =
   | { status: "no_free_model"; reason: string }
   | { status: "timed_out" }
   | { status: "aborted"; reason: string }
-  | { status: "error"; reason: string };
+  | { status: "error"; reason: string }
+  | { status: "needs_access"; text: string; model: string; access: AccessRequestRecord[] };
 
 /** Registers the gateway as an OpenAI-compatible provider for one free model, with the token held in memory. */
 export async function bindGatewayModel(model: GatewayCatalogModel, token: string): Promise<ModelBinding> {
@@ -309,6 +328,12 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
   // 3. The turn, inside the one sandbox, under its lock.
   const root = deps.workspaceRoot ?? DEFAULT_WORKSPACE_ROOT;
   try {
+    const sandboxOpts = { ...deps.sandbox, deadlineAt: input.deadlineAt };
+    if (input.egressAllow && sandboxOpts.egressAll !== true) {
+      // Server-composed list (presets + grants + valid resume). Pass via egressAllow with empty presets.
+      sandboxOpts.egressPresets = [];
+      sandboxOpts.egressAllow = input.egressAllow;
+    }
     const outcome = await withAgentSandbox(
       deps.sandboxClient,
       async (sandbox, turnSignal) => {
@@ -336,6 +361,17 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
         let session: AgentSession | undefined;
         try {
           assertSetupSignals(input.signal, turnSignal);
+          // Access-request tool state for this turn.
+          const accessState: AccessToolState = { requests: [], stopRequested: false };
+          const accessCanRun = Boolean(
+            deps.access?.enabled &&
+              accessRequestsEnabled(deps.access.env) &&
+              deps.access.env.NLT_AGENT_EGRESS_ALL !== "1" &&
+              deps.access.env.DATABASE_URL &&
+              deps.access.owner &&
+              deps.access.store &&
+              input.conversationId,
+          );
           // The tool factories return differently typed definitions; the session takes them as one list.
           const tools: CustomTools = [
             createBashToolDefinition(root, { operations: ops.bash, exposeSessionEnvironment: false }) as CustomTools[number],
@@ -345,6 +381,17 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
             createLsToolDefinition(root, { operations: ops.ls }) as CustomTools[number],
             createFindToolDefinition(root, { operations: ops.find }) as CustomTools[number],
           ];
+          if (accessCanRun && deps.access?.owner && deps.access.store && input.conversationId) {
+            tools.push(createRequestNetworkAccessTool({
+              store: deps.access.store,
+              owner: deps.access.owner,
+              conversationId: input.conversationId,
+              prompt: input.prompt,
+              alreadyAllowed: input.allowedHosts ?? new Set(),
+              state: accessState,
+              log: deps.access.log,
+            }) as unknown as CustomTools[number]);
+          }
 
           // No host resources: no extensions, skills, prompt files or context files from the machine running this.
           assertSetupSignals(input.signal, turnSignal);
@@ -400,6 +447,8 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
               input.onText?.(event.assistantMessageEvent.delta);
             } else if (event.type === "tool_execution_start") {
               input.onToolStart?.(event.toolName);
+            } else if (event.type === "tool_execution_end" && accessState.stopRequested) {
+              void live.abort();
             }
           });
 
@@ -418,21 +467,28 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
             turnSignal.removeEventListener("abort", stop);
             unsubscribe();
           }
+          if (accessState.stopRequested && accessState.requests.length > 0) {
+            return { kind: "needs_access" as const, text: out, access: accessState.requests };
+          }
           if (turnSignal.aborted) throw new SandboxTurnTimeoutError();
           if (input.signal?.aborted) throw new CallerAbortedError();
           // `prompt` resolves even when the model run failed; do not report that as a completed turn.
           const final = lastOutcome as { stopReason: string; errorMessage?: string } | undefined;
-          if (final?.stopReason === "error") throw new Error(final.errorMessage ?? "The model run failed");
-          return out;
+          if (final?.stopReason === "error" && !accessState.stopRequested) throw new Error(final.errorMessage ?? "The model run failed");
+          return { kind: "completed" as const, text: out };
         } finally {
           session?.dispose();
           if (scratch) await rm(scratch, { recursive: true, force: true }).catch(() => undefined);
           await binding.dispose?.().catch(() => undefined);
         }
       },
-      { ...deps.sandbox, deadlineAt: input.deadlineAt },
+      sandboxOpts,
     );
-    return { status: "completed", text: outcome, model: chosen.id };
+    if (typeof outcome === "object" && outcome && (outcome as any).kind === "needs_access") {
+      return { status: "needs_access", text: (outcome as any).text, model: chosen.id, access: (outcome as any).access };
+    }
+    const text = typeof outcome === "string" ? outcome : (outcome as any).text ?? "";
+    return { status: "completed", text, model: chosen.id };
   } catch (error) {
     if (error instanceof SandboxBusyError) return { status: "busy" };
     if (error instanceof SandboxTurnTimeoutError || error instanceof SetupTimedOutError) return { status: "timed_out" };

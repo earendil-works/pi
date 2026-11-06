@@ -120,6 +120,7 @@ test("parseNdjson buffers a partial done event behind a complete tool event, the
 });
 
 test("only an explicit completed status is a success", () => {
+  assert.equal(agentDoneMessage({ status: "needs_access", access: [] }), undefined);
   assert.equal(agentDoneMessage({ status: "completed" }), undefined);
   for (const event of [undefined, {}, { status: "weird" }, { status: "blocked" }, { status: "error" }]) {
     assert.equal(typeof agentDoneMessage(event), "string");

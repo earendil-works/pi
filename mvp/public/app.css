@@ -363,3 +363,14 @@ button, textarea { font: inherit; color: inherit; }
   cursor: pointer;
 }
 .remember:hover { color: var(--accent-2); border-color: var(--accent-2); }
+
+/* Sandbox access requests */
+.access-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: rgb(11 23 51 / 70%); display: grid; gap: 8px; }
+.access-host { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1rem; }
+.access-reason { color: var(--muted); overflow-wrap: anywhere; }
+.access-warn { font-size: 0.8rem; color: var(--warn); }
+.access-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.access-actions .chip { cursor: pointer; }
+.access-actions .chip:disabled { opacity: 0.5; cursor: default; }
+.access-item { display:flex; align-items:center; gap:8px; padding:6px 8px; border:1px solid var(--line); border-radius:10px; }
+.access-item code { flex:1; overflow-wrap:anywhere; }

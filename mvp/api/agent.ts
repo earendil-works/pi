@@ -15,6 +15,8 @@ import { evaluateGate } from "../src/gate.ts";
 import { AsfdkHarness, Channel } from "../src/harness/harness.ts";
 import { createVercelSandboxClient } from "../src/sandbox/vercel-client.ts";
 import { parseAllowedModels, parseDefaultModel } from "../src/gateway/free-models.ts";
+import { accessRequestsEnabled } from "../src/access/config.ts";
+import { createSqlAccessStore, neonSqlAccessRunner, type AccessStore } from "../src/access/store.ts";
 import { createMemoryClient, type MemoryClientEnv } from "../src/memory/client.ts";
 import { recallChecks } from "../src/memory/route.ts";
 import type { Memory } from "../src/memory/store.ts";
@@ -66,12 +68,16 @@ export default async function handler(request: AgentRequest, response: AgentResp
     env: process.env,
     // Only a signed-in owner (allow-listed Vercel user) may call the route; see src/auth/owner.ts.
     authorize: (req) => sessionFromCookie(process.env, req.headers?.cookie) !== undefined,
-    createDeps: ({ egressAll }) => {
+    ownerSub: (req) => sessionFromCookie(process.env, req.headers?.cookie)?.sub,
+    createAccessStore: (databaseUrl: string) => createSqlAccessStore(neonSqlAccessRunner(databaseUrl)),
+    createDeps: ({ egressAll, accessStore, owner }) => {
       const env = process.env as unknown as MemoryClientEnv & {
         NLT_MEMORY_ENABLED?: string;
         NLT_MEMORY_RECALL_LIMIT?: string;
+        NLT_ACCESS_REQUESTS?: string;
+        DATABASE_URL?: string;
+        NLT_AGENT_EGRESS_ALL?: string;
       };
-      const owner = sessionFromCookie(process.env, undefined)?.sub;
       return {
         gate,
         recall: (prompt) => recall(prompt, env, owner ?? ""),
@@ -82,6 +88,13 @@ export default async function handler(request: AgentRequest, response: AgentResp
         // Owner-set default for "Auto"; used only while it is free, tool-capable and allowed.
         preferredModels: parseDefaultModel(process.env.NLT_AGENT_DEFAULT_MODEL),
         sandbox: { egressAll, lockStaleMs: AGENT_LOCK_STALE_MS },
+        access: {
+          enabled: accessRequestsEnabled(process.env),
+          env: process.env,
+          owner,
+          store: accessStore,
+          log: (line) => console.info(line),
+        },
       };
     },
     run: async (deps: AgentRunnerDeps, input: AgentTurnInput): Promise<AgentTurnResult> => {

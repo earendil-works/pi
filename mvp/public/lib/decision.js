@@ -144,6 +144,7 @@ export function parseNdjson(buffer) {
 /** What to tell the user for a finished agent turn. Anything but an explicit completed status is not a success. */
 export function agentDoneMessage(event) {
   if (event?.status === "completed") return undefined;
+  if (event?.status === "needs_access") return undefined; // handled by access request cards
   if (event?.status === "blocked") return "The governance gate stopped this message. Please talk to a person you trust.";
   if (event?.status === "busy") return "The agent is busy with another turn. Try again in a moment.";
   if (event?.status === "no_free_model") return "No free model is available right now.";

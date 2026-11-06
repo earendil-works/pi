@@ -53,9 +53,9 @@
 
 **Implementation:** None — this is a terms-of-service question, not code.
 
-**Status:** ❌ Not verified offline.
+**Status:** ✅ Owner-reported (2026-11-06): **Mem0 trains on data on the free plan.** This conflicts with keeping owner memories private.
 
-**Owner action:** Review Mem0's privacy policy, data retention terms, and model-training opt-out options before enabling `NLT_MEMORY_ENABLED=1` in Production.
+**Owner action:** Treat as a blocker for enabling learned memories on the current Mem0 free plan. Before enablement, decide one of: (1) do not use Mem0 for memories on the free plan; (2) confirm/obtain a plan or setting that disables training and meets retention requirements; (3) move memory storage to a provider/architecture that satisfies privacy requirements. Record the chosen option and any terms evidence.
 
 ## Summary
 
@@ -65,6 +65,6 @@
 | (b) User/agent/metadata scoping | Not verified | Recommended |
 | (c) Size limits and search ranking | Not verified | Recommended |
 | (d) Delete semantics (hard delete) | Not verified | Recommended |
-| (e) Retention and model-training terms | Not verified | Yes — owner review required |
+| (e) Retention and model-training terms | **Owner-reported (2026-11-06): trains on data on the free plan** | **Yes — blocker on current plan** |
 
-**Recommendation:** Do not set `NLT_MEMORY_ENABLED=1` in Production until probe results (a) and (e) are recorded and reviewed by the owner.
+**Recommendation:** Keep `NLT_MEMORY_ENABLED` disabled. Do not enable learned memories on the Mem0 free plan given training-on-data. Resolve by choosing a compliant plan/setting, a different memory provider, or deferring Mem0 memory; still verify (a) before any enablement.

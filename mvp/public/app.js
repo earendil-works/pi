@@ -269,7 +269,7 @@ async function runAgent(prompt, conversation) {
     response = await fetch("/api/agent", {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/x-ndjson" },
-      body: JSON.stringify({ prompt, model: modelToSend(els.modelSelect.value, loadedModels) }),
+      body: JSON.stringify({ prompt, model: modelToSend(els.modelSelect.value, loadedModels), conversationId: conversation.id }),
     });
   } catch {
     // The turn may have started before the connection failed; report it as an unavailable outcome rather than
@@ -323,7 +323,7 @@ async function runAgent(prompt, conversation) {
     bubble.textContent = reply.text;
     bubble.dataset.kind = reply.kind;
   }
-  return { streamed: true, status: done?.status, done };
+  return { streamed: true, status: done?.status, done, access: Array.isArray(done?.access) ? done.access : undefined };
 }
 
 function setPending(value) {
@@ -387,6 +387,9 @@ async function submit(raw) {
       );
     } else if (agent.done?.status === "completed" || agent.done?.status === "no_free_model") {
       showGate({ kind: "allowed", components: [], failClosed: false }, NaN);
+    } else if (agent.done?.status === "needs_access" && Array.isArray(agent.access)) {
+      renderAccessCards(conversation, checked.prompt, agent.access);
+      logEvent("Agent requested network access", "idle");
     } else if (agent.done?.status) {
       showGate({ kind: "unavailable", components: [], failClosed: true }, NaN);
     }
@@ -657,6 +660,7 @@ async function loadSession() {
 els.signout.addEventListener("click", async () => {
   await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
   await loadSession();
+loadAllowedSites();
 });
 loadSession();
 
@@ -687,3 +691,136 @@ async function loadModels() {
         : "Model list unavailable; using automatic choice";
 }
 loadModels();
+// --- sandbox access requests (NLTPI-MVP-007) ---
+let accessOn = false;
+let pendingNonces = new Map(); // requestId -> nonce (memory only)
+
+async function accessRequest(method, opts = {}) {
+  try {
+    const r = await fetch("/api/access" + (opts.query ? `?${new URLSearchParams(opts.query)}` : ""), {
+      method,
+      headers: opts.body ? { "content-type": "application/json", accept: "application/json" } : { accept: "application/json" },
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+    if (r.status === 404) { accessOn = false; return { off: true }; }
+    accessOn = true;
+    return { status: r.status, body: await r.json().catch(() => undefined) };
+  } catch { return { networkError: true }; }
+}
+
+async function loadAllowedSites() {
+  const r = await accessRequest("GET");
+  const sec = document.getElementById("access-section");
+  const list = document.getElementById("access-list");
+  if (!sec || !list) return;
+  if (r?.off || r?.networkError || r?.status !== 200 || !Array.isArray(r?.body?.hosts)) { sec.hidden = true; return; }
+  accessOn = true;
+  sec.hidden = false;
+  list.replaceChildren();
+  for (const item of r.body.hosts) {
+    const host = item?.host;
+    if (typeof host !== "string") continue;
+    const li = el("li", "access-item");
+    li.append(el("code", "", host));
+    const rm = el("button", "delete", "Remove");
+    rm.type = "button";
+    rm.addEventListener("click", async () => {
+      await accessRequest("DELETE", { query: { host } });
+      loadAllowedSites();
+    });
+    li.append(rm);
+    list.append(li);
+  }
+}
+
+function renderAccessCards(conversation, originalPrompt, requests) {
+  for (const req of requests) {
+    if (!req || typeof req.id !== "string" || typeof req.host !== "string") continue;
+    const card = el("div", "msg assistant access-card-msg");
+    const body = el("div");
+    const cardBox = el("div", "access-card");
+    cardBox.append(el("div", "access-host", req.host));
+    if (typeof req.reason === "string" && req.reason) cardBox.append(el("div", "access-reason", req.reason));
+    cardBox.append(el("div", "access-warn", "Anything in the workspace can be sent to this site."));
+    const actions = el("div", "access-actions");
+    const mk = (label, cls) => { const b = el("button", cls, label); b.type="button"; return b; };
+    const turnBtn = mk("Allow for this turn", "chip");
+    const alwaysBtn = mk("Always allow", "chip");
+    const denyBtn = mk("Deny", "chip");
+    const status = el("div", "meta", "");
+    actions.append(turnBtn, alwaysBtn, denyBtn);
+    cardBox.append(actions, status);
+    body.append(el("span","sr-only","Assistant: "), cardBox);
+    card.append(el("span","mark-sm",""), body);
+
+    async function decide(decision) {
+      turnBtn.disabled = alwaysBtn.disabled = denyBtn.disabled = true;
+      const r = await accessRequest("POST", { body: { id: req.id, decision } });
+      if (r?.status !== 200) { status.textContent = "Could not record the decision."; turnBtn.disabled=alwaysBtn.disabled=denyBtn.disabled=false; return; }
+      if (decision === "deny") { status.textContent = "Denied."; return; }
+      if (decision === "allow_turn" && typeof r.body?.nonce === "string") {
+        pendingNonces.set(req.id, r.body.nonce);
+        status.textContent = "Allowed for this turn. Continuing…";
+        await continueAfterAccess(conversation, originalPrompt, [{ id: req.id, nonce: r.body.nonce }]);
+        pendingNonces.delete(req.id);
+        return;
+      }
+      if (decision === "allow_always") {
+        status.textContent = "Always allowed. Continuing…";
+        loadAllowedSites();
+        await continueAfterAccess(conversation, originalPrompt, undefined);
+      }
+    }
+    turnBtn.addEventListener("click", () => decide("allow_turn"));
+    alwaysBtn.addEventListener("click", () => decide("allow_always"));
+    denyBtn.addEventListener("click", () => decide("deny"));
+    if (conversation === active) { els.log.append(card); els.log.scrollTop = els.log.scrollHeight; }
+  }
+}
+
+async function continueAfterAccess(conversation, originalTask, grants) {
+  // Resend the task because a resumed turn has no earlier context. Grants carry nonce in memory only.
+  const note = grants ? " (The requested site is now allowed for this turn.)" : " (The requested site is now always allowed.)";
+  const prompt = originalTask + note;
+  await runContinuation(conversation, prompt, originalTask, grants);
+}
+
+async function runContinuation(conversation, prompt, resumeTask, grants) {
+  els.currentTask.textContent = "Continuing after access decision…";
+  setPending(true);
+  try {
+    let response;
+    const body = { prompt, model: modelToSend(els.modelSelect.value, loadedModels), conversationId: conversation.id };
+    if (Array.isArray(grants) && grants.length) body.resume = { task: resumeTask, grants };
+    try {
+      response = await fetch("/api/agent", { method: "POST", headers: { "content-type": "application/json", accept: "application/x-ndjson" }, body: JSON.stringify(body) });
+    } catch { return; }
+    if (!response.ok || !response.body) return;
+    const reply = { id: crypto.randomUUID(), role: "assistant", kind: "allowed", text: "", at: new Date() };
+    conversation.messages.push(reply);
+    const node = renderMessage(reply);
+    const bubble = node.querySelector(".bubble");
+    if (conversation === active) els.log.append(node);
+    const decoder = new TextDecoder();
+    const reader = response.body.getReader();
+    let buffer = ""; let done;
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        const parsed = parseNdjson(buffer); buffer = parsed.rest;
+        for (const event of parsed.events) {
+          if (event.type === "text" && typeof event.delta === "string") { reply.text += event.delta; bubble.textContent = reply.text; }
+          else if (event.type === "tool" && typeof event.name === "string") els.currentTask.textContent = `Running ${event.name}`;
+          else if (event.type === "done") done = event;
+        }
+        els.log.scrollTop = els.log.scrollHeight;
+      }
+    } catch {}
+    if (done?.status === "needs_access" && Array.isArray(done.access)) renderAccessCards(conversation, resumeTask, done.access);
+    const note = agentDoneMessage(done);
+    if (note) { reply.text = reply.text ? `${reply.text}\n\n${note}` : note; bubble.textContent = reply.text; bubble.dataset.kind = "unavailable"; }
+  } finally { setPending(false); els.currentTask.textContent = "Idle"; }
+}
+// --- end access requests ---

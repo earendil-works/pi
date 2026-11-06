@@ -13,6 +13,10 @@
  */
 import type { AgentRunnerDeps, AgentTurnInput, AgentTurnResult } from "./runner.ts";
 import { DEFAULT_AGENT_EGRESS } from "../sandbox/lifecycle.ts";
+import type { AccessStore } from "../access/store.ts";
+import type { AccessRequestRecord } from "../access/tool.ts";
+import { accessRequestsEnabled } from "../access/config.ts";
+import { presetHosts, resolveTurnEgress, validateResume, type ResumeInput } from "../access/policy.ts";
 import { redactForLog } from "./log-redact.ts";
 
 export const MAX_AGENT_PROMPT_LENGTH = 8000;
@@ -58,14 +62,18 @@ export interface AgentRouteEnv {
 }
 
 export interface AgentRouteDeps {
-  env: AgentRouteEnv;
+  env: AgentRouteEnv & { NLT_ACCESS_REQUESTS?: string; DATABASE_URL?: string };
   /** Builds the runner dependencies. Called only after the route is known to be enabled. */
-  createDeps: (options: { egressAll: boolean }) => AgentRunnerDeps;
+  createDeps: (options: { egressAll: boolean; accessStore?: AccessStore; owner?: string }) => AgentRunnerDeps;
   run: (deps: AgentRunnerDeps, input: AgentTurnInput) => Promise<AgentTurnResult>;
   log: (line: string) => void;
   now?: () => number;
   /** True only for a signed-in owner. Required, so a route built without it cannot be reached by anyone. */
   authorize: (request: AgentRequest) => boolean;
+  /** Signed-in owner sub, for access-request binding. */
+  ownerSub?: (request: AgentRequest) => string | undefined;
+  /** Creates an access store when the feature is on and DB is configured. */
+  createAccessStore?: (databaseUrl: string) => AccessStore;
 }
 
 /** Whether the owner enabled the agent route (`NLT_AGENT_ENABLED=1`). Fails closed: anything else is off. */
@@ -78,6 +86,29 @@ export function egressAllEnabled(env: AgentRouteEnv): boolean {
   return env.NLT_AGENT_EGRESS_ALL === "1";
 }
 
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function parseBody(body: unknown): Record<string, unknown> | null {
+  let parsed = body;
+  if (typeof body === "string") { try { parsed = JSON.parse(body); } catch { return null; } }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  return parsed as Record<string, unknown>;
+}
+function readConversationId(body: unknown): string | undefined | null {
+  const p = parseBody(body);
+  if (!p) return null;
+  if (p.conversationId === undefined) return undefined;
+  if (typeof p.conversationId !== "string" || !UUID_RE.test(p.conversationId)) return null;
+  return p.conversationId;
+}
+function readResume(body: unknown, prompt: string): { resume: ResumeInput | undefined } | { error: string } | null {
+  const p = parseBody(body);
+  if (!p) return null;
+  if (p.resume === undefined) return { resume: undefined };
+  const v = validateResume(p.resume, prompt);
+  if (!v.ok) return { error: v.error };
+  return { resume: v.resume };
+}
 /** Reads the prompt from a JSON body; rejects empty or over-long prompts. */
 function readPrompt(body: unknown): string | null {
   let parsed = body;
@@ -127,6 +158,8 @@ function describeResult(result: AgentTurnResult): Record<string, unknown> {
     case "aborted":
     case "error":
       return { status: result.status, reason: result.reason };
+    case "needs_access":
+      return { status: "needs_access", access: result.access };
     default:
       return { status: result.status };
   }
@@ -170,11 +203,54 @@ export async function handleAgentRequest(
     return;
   }
 
+  const conversationIdRead = readConversationId(request.body);
+  if (conversationIdRead === null) {
+    response.status(400).json({ error: "conversationId must be a UUID when provided" });
+    return;
+  }
+  const conversationId = conversationIdRead;
+  const resumeRead = readResume(request.body, prompt);
+  if (resumeRead === null) {
+    response.status(400).json({ error: "Body must be a JSON object" });
+    return;
+  }
+  if ("error" in resumeRead) {
+    response.status(400).json({ error: resumeRead.error });
+    return;
+  }
+  if (resumeRead.resume && !conversationId) {
+    response.status(400).json({ error: "resume requires conversationId" });
+    return;
+  }
+
   const egressAll = egressAllEnabled(deps.env);
+  const owner = deps.ownerSub?.(request);
+
+  let egressAllow: string[] | undefined;
+  let allowedHosts: Set<string> | undefined;
+  let accessStore: AccessStore | undefined;
+  if (!egressAll && accessRequestsEnabled(deps.env) && deps.env.DATABASE_URL && deps.createAccessStore && owner) {
+    try {
+      accessStore = deps.createAccessStore(deps.env.DATABASE_URL);
+      const resolved = await resolveTurnEgress({
+        store: accessStore,
+        owner,
+        conversationId,
+        resume: resumeRead.resume,
+        log: deps.log,
+      });
+      egressAllow = resolved.egressAllow;
+      allowedHosts = resolved.allowedHosts;
+    } catch {
+      deps.log(JSON.stringify({ event: "access_lookup_error", op: "resolve_egress" }));
+      // fail closed to presets
+    }
+  }
   deps.log(
     JSON.stringify({
       event: "agent_turn",
       network: egressAll ? "allow-all" : `allowlist:${DEFAULT_AGENT_EGRESS.join(",")}`,
+      access: accessRequestsEnabled(deps.env) ? "on" : "off",
     }),
   );
 
@@ -188,7 +264,7 @@ export async function handleAgentRequest(
 
   let runnerDeps: AgentRunnerDeps;
   try {
-    runnerDeps = deps.createDeps({ egressAll });
+    runnerDeps = deps.createDeps({ egressAll, accessStore, owner });
   } catch {
     response.status(503).json({ error: "Agent unavailable" });
     return;
@@ -200,6 +276,9 @@ export async function handleAgentRequest(
     result = await deps.run(runnerDeps, {
       prompt,
       model,
+      conversationId,
+      egressAllow,
+      allowedHosts,
       signal: controller.signal,
       deadlineAt,
       onText: (delta) => send({ type: "text", delta }),
@@ -223,5 +302,8 @@ function logSafeOutcome(done: Record<string, unknown>): Record<string, unknown> 
   const out: Record<string, unknown> = { status: done.status };
   if (typeof done.model === "string") out.model = redactForLog(done.model);
   if (typeof done.reason === "string") out.reason = redactForLog(done.reason);
+  if (done.status === "needs_access" && Array.isArray(done.access)) {
+    out.access = (done.access as Array<Record<string, unknown>>).map((a) => ({ id: a.id, host: a.host }));
+  }
   return out;
 }

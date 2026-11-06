@@ -178,9 +178,10 @@ describe("handleAgentRequest", () => {
   it("uses the allowlist by default and logs it without the prompt", async () => {
     const { deps, createDeps, log } = makeDeps(on);
     await handleAgentRequest(post({ prompt: "secret-prompt-text" }), makeResponse().response, deps);
-    expect(createDeps).toHaveBeenCalledWith({ egressAll: false });
+    expect(createDeps.mock.calls[0]?.[0]?.egressAll).toBe(false);
     const line = String(log.mock.calls[0]?.[0]);
     expect(line).toContain("allowlist:packages,git");
+    expect(line).toContain('"access":"off"');
     expect(line).not.toContain("secret-prompt-text");
   });
 
@@ -211,7 +212,7 @@ describe("handleAgentRequest", () => {
   it("enables egressAll only from the owner flag, never the request body", async () => {
     const withBody = makeDeps(on);
     await handleAgentRequest(post({ prompt: "hi", egressAll: true, network: "allow-all" }), makeResponse().response, withBody.deps);
-    expect(withBody.createDeps).toHaveBeenCalledWith({ egressAll: false });
+    expect(withBody.createDeps.mock.calls[0]?.[0]?.egressAll).toBe(false);
 
     const flagged = makeDeps({ ...on, NLT_AGENT_EGRESS_ALL: "1" });
     await handleAgentRequest(post({ prompt: "hi" }), makeResponse().response, flagged.deps);
