@@ -19,6 +19,7 @@ import {
 	validateToolArguments,
 } from "@earendil-works/pi-ai";
 import { getDefaultStreamFn } from "./stream-fn.ts";
+import { ToolUpdateTracker } from "./tool-update-tracker.ts";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -526,8 +527,11 @@ async function executeToolCalls(
 	const hasSequentialToolCall = toolCalls.some(
 		(tc) => currentContext.tools?.find((t) => t.name === tc.name)?.executionMode === "sequential",
 	);
-	if (config.toolExecution === "sequential" || hasSequentialToolCall) {
+	if (config.toolExecution === "sequential") {
 		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);
+	}
+	if (hasSequentialToolCall) {
+		return executeToolCallsMixed(currentContext, assistantMessage, toolCalls, config, signal, emit);
 	}
 	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
 }
@@ -536,6 +540,50 @@ type ExecutedToolCallBatch = {
 	messages: ToolResultMessage[];
 	terminate: boolean;
 };
+
+/**
+ * A sequential tool is a barrier, not a reason to serialize unrelated parallel calls.
+ * Run adjacent parallel calls together, but never overlap them with a sequential tool
+ * or reorder calls across a sequential barrier.
+ */
+async function executeToolCallsMixed(
+	context: AgentContext,
+	assistantMessage: AssistantMessage,
+	toolCalls: AgentToolCall[],
+	config: AgentLoopConfig,
+	signal: AbortSignal | undefined,
+	emit: AgentEventSink,
+): Promise<ExecutedToolCallBatch> {
+	const messages: ToolResultMessage[] = [];
+	const batches: ExecutedToolCallBatch[] = [];
+	let parallel: AgentToolCall[] = [];
+
+	const flushParallel = async () => {
+		if (parallel.length === 0) return;
+		const batch = await executeToolCallsParallel(context, assistantMessage, parallel, config, signal, emit);
+		batches.push(batch);
+		messages.push(...batch.messages);
+		parallel = [];
+	};
+
+	for (const call of toolCalls) {
+		const sequential = context.tools?.find((tool) => tool.name === call.name)?.executionMode === "sequential";
+		if (!sequential) {
+			parallel.push(call);
+			continue;
+		}
+		await flushParallel();
+		const batch = await executeToolCallsSequential(context, assistantMessage, [call], config, signal, emit);
+		batches.push(batch);
+		messages.push(...batch.messages);
+		if (signal?.aborted) break;
+	}
+	if (!signal?.aborted) await flushParallel();
+	return {
+		messages,
+		terminate: batches.length > 0 && batches.every((batch) => batch.terminate),
+	};
+}
 
 async function executeToolCallsSequential(
 	currentContext: AgentContext,
@@ -833,7 +881,7 @@ async function executePreparedToolCall(
 	signal: AbortSignal | undefined,
 	onUpdate: ToolUpdateSink,
 ): Promise<ExecutedToolCallOutcome> {
-	const updateEvents: Promise<void>[] = [];
+	const updates = new ToolUpdateTracker();
 	let acceptingUpdates = true;
 	const startedAt = performance.now();
 	const elapsed = () => Math.round(performance.now() - startedAt);
@@ -845,17 +893,22 @@ async function executePreparedToolCall(
 			signal,
 			(partialResult) => {
 				if (!acceptingUpdates) return;
-				updateEvents.push(Promise.resolve(onUpdate(partialResult)));
+				updates.track(onUpdate(partialResult));
 			},
 		);
 		const durationMs = elapsed();
 		acceptingUpdates = false;
-		await Promise.all(updateEvents);
+		await updates.drain();
 		return { result, isError: result.isError === true, durationMs };
 	} catch (error) {
 		const durationMs = elapsed();
 		acceptingUpdates = false;
-		await Promise.all(updateEvents);
+		// Drain pending notifications, but preserve the original tool error if both fail.
+		try {
+			await updates.drain();
+		} catch {
+			// The update failure was already captured by the successful-execution path.
+		}
 		return {
 			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
 			isError: true,

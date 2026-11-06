@@ -1,0 +1,29 @@
+import { describe, expect, it } from "vitest";
+import { ToolUpdateTracker } from "../src/tool-update-tracker.ts";
+
+describe("ToolUpdateTracker", () => {
+	it("releases completed updates instead of retaining all progress events", async () => {
+		const tracker = new ToolUpdateTracker();
+		for (let index = 0; index < 10_000; index++) {
+			tracker.track(Promise.resolve());
+			if (index % 100 === 0) await Promise.resolve();
+		}
+		await tracker.drain();
+		expect(tracker.pendingCount).toBe(0);
+	});
+
+	it("waits for unresolved updates and preserves asynchronous failures", async () => {
+		const tracker = new ToolUpdateTracker();
+		let release!: () => void;
+		const pending = new Promise<void>((resolve) => { release = resolve; });
+		tracker.track(pending);
+		expect(tracker.pendingCount).toBe(1);
+		release();
+		await tracker.drain();
+		expect(tracker.pendingCount).toBe(0);
+
+		tracker.track(Promise.reject(new Error("update failed")));
+		await expect(tracker.drain()).rejects.toThrow("update failed");
+		expect(tracker.pendingCount).toBe(0);
+	});
+});
