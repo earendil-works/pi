@@ -102,6 +102,32 @@ function ids(rows: readonly { readonly id: number }[]): number[] {
 	return rows.map(({ id }) => id);
 }
 
+describe("identical live-query refreshes", () => {
+	it("shares one transactional SQL read across identical subscriptions", async () => {
+		const rows = [{ id: 1, text: "one", meta: null }];
+		const operations: { sql: string; params: unknown[] }[] = [];
+		const step = {
+			all: async <T extends object>(sql: string, ...params: unknown[]): Promise<T[]> => {
+				operations.push({ sql, params });
+				return rows as unknown as T[];
+			},
+		} as Step;
+		const common = query(Items).orderBy((item) => item.id, "desc");
+		const handle = {
+			sql: { table: "items", select: () => ({ sql: "select items", params: [] }) },
+			store: {},
+			owner: {},
+		} as never;
+		const owner = { label: "test", report: () => {} };
+		const batch = {} as never;
+		const first = new LiveQuery(handle, common, 3, owner, batch);
+		const second = new LiveQuery(handle, common, 3, owner, batch);
+		const refreshed = new QueryRefresh([first, second], context);
+		await refreshed.write.apply(step);
+		expect(operations).toHaveLength(1);
+	});
+});
+
 describe("activation", () => {
 	it("runs the query before the object goes live, over the rows already stored", async () => {
 		const store = await memoryStore();

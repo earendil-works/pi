@@ -132,7 +132,11 @@ export class QueryRefresh {
 	async #rerun(step: Step): Promise<readonly StoreWrite[]> {
 		// A grouped commit that rolled back applies again alone (store.ts): only the last application's runs count.
 		this.#runs.length = 0;
-		for (const query of this.#queries) this.#runs.push(await query.rerun(step, this.#context));
+		// Identical query subscriptions in one transaction see exactly the same
+		// snapshot. Share the backend read while retaining each query's independent
+		// decoding, error state, diff, owner and adoption semantics.
+		const reads = new Map<string, Promise<StoredRow[]>>();
+		for (const query of this.#queries) this.#runs.push(await query.rerun(step, this.#context, reads));
 		return NO_WRITES;
 	}
 
@@ -212,11 +216,21 @@ export class LiveQuery extends Source {
 	}
 
 	/** A run inside the commit step `step`, after its writes: the rows, or the failure; it never throws. */
-	async rerun(step: Step, context: Context): Promise<QueryRun> {
+	async rerun(
+		step: Step,
+		context: Context,
+		reads?: Map<string, Promise<StoredRow[]>>,
+	): Promise<QueryRun> {
 		try {
 			this.#count(context);
 			const { sql, params } = this.#statement;
-			return { kind: "rows", rows: this.#decode(await step.all<StoredRow>(sql, ...params), context) };
+			const key = JSON.stringify([sql, params]);
+			let stored = reads?.get(key);
+			if (!stored) {
+				stored = step.all<StoredRow>(sql, ...params);
+				reads?.set(key, stored);
+			}
+			return { kind: "rows", rows: this.#decode(await stored, context) };
 		} catch (error) {
 			return { kind: "failed", error };
 		}
