@@ -1,6 +1,6 @@
 # Working on the JangMan-J/pi fork
 
-Read this before changing anything. Upstream's own rules in the repo root `AGENTS.md` still apply; this file adds the fork's branch discipline. `.fork/` exists only on `next` and `fork/tooling`; from another branch, read it with `git show next:.fork/AGENTS.md`. To set up a development checkout, run `.fork/install-tests.sh`.
+Read this before changing anything. Upstream's own rules in the repo root `AGENTS.md` still apply; this file adds the fork's branch discipline. `.fork/` exists only on `next` and `fork/tooling`; from another branch, read it with `git show next:.fork/AGENTS.md`. To set up a development checkout, run `.fork/install-tests.sh`; it also installs the `pre-push` hook that refuses pushes of `next` and `main`.
 
 ## Layout
 
@@ -20,7 +20,7 @@ Read this before changing anything. Upstream's own rules in the repo root `AGENT
 
 ## Releases
 
-`next` is the repository's default branch. The workflow `.github/workflows/fork-sync.yml` runs daily, on every push to `next`, and on demand. On the schedule and on demand it first runs the full `sync.sh` (fast-forward `main` from upstream, rebase every branch, rebuild `next`, focused checks, push). Then, if the `next` commit has no release yet, it builds, runs `npm run check` and `.fork/check.sh focused`, packs the build with `.fork/pack-release.sh` (the layout pi's own installer produces), and publishes the GitHub release `next-<first 12 hex of the commit>` with `pi-next.tar.gz` and its `.sha256`. It releases only when `sync.sh --status` is clean: no commits on `next` outside the listed branches, every branch on `main`, and `main` a mirror of upstream. This gate holds for every pusher, person or agent, on any machine. A failed check publishes nothing. The five newest releases are kept.
+`next` is the repository's default branch. Only the workflow `.github/workflows/fork-sync.yml` pushes `next` and `main`; no person or agent ever does. It runs on every push to an owning branch (`feat/**`, `fix/**`, `fork/tooling`), daily, and on demand (`gh workflow run fork-sync.yml --repo JangMan-J/pi`, or the Actions tab). Each run first runs the full `sync.sh --hold-on-conflict --push`: fast-forward `main` from upstream, rebase every branch onto it, rebuild `next`, focused checks, push. If a branch does not rebase cleanly onto the new upstream, the run holds `main` where it was, rebuilds `next` on it from the current branch tips, and names the conflicting branch and commit in a warning and the run summary; that branch's owner rebases it by hand (Recovery). Then, if the `next` commit has no release yet, it builds, runs `npm run check` and `.fork/check.sh focused`, packs the build with `.fork/pack-release.sh` (the layout pi's own installer produces), and publishes the GitHub release `next-<first 12 hex of the commit>` with `pi-next.tar.gz` and its `.sha256`. It releases only when `sync.sh --status` is clean: no commits on `next` outside the listed branches, every branch on `main`, and `main` a mirror of upstream. A failed check publishes nothing. The five newest releases are kept. The workflow pushes through the write deploy key in the secret `FORK_SYNC_DEPLOY_KEY` (`GITHUB_TOKEN` may not push changes to `.github/workflows/`) and signs with `FORK_SYNC_GPG_KEY`.
 
 Machines that run pi install with `.fork/install-next.sh`: it downloads the latest release, verifies the SHA-256, unpacks it under `~/.local/share/pi-fork/releases/`, and switches `~/.local/bin/pi`. It builds and checks nothing; the workflow did. `--rollback` switches back to the previous release.
 
@@ -31,19 +31,21 @@ Machines that run pi install with `.fork/install-next.sh`: it downloads the late
 3. **Bring the branch up to date**: `git fetch origin && git rebase origin/<branch>` (or `git reset --hard origin/<branch>` if you have no local commits on it).
 4. **Make the change with its test.** Every wire change gets a payload-shape test in the branch's test file that pins the bytes. Where server behavior decides, run a live probe and record the sanitized result in the commit message. Run the tests you touched (`cd packages/<package> && npx vitest run test/<file>`); the focused checks run in step 6.
 5. **Commit on the branch.** Commits are signed when the global git config sets `commit.gpgsign=true` and `user.signingkey` to a key GitHub knows (Jang's is `9B79F5EBD9E8D2E5`); `install-tests.sh` warns when signing is off. The pre-commit hook runs `npm run check`. `install-tests.sh` installs it with husky, because `npm ci --ignore-scripts` skips upstream's `prepare` step; if `git config core.hooksPath` prints nothing, run `npx husky` once. Use the upstream commit style, for example `fix(ai): …`.
-6. **Rebuild `next`**: `git checkout next && .fork/sync.sh --rebuild-only`. It tags the old `next`, rebuilds it from the current tips, and runs the focused checks. Nothing is fetched or rebased.
-7. **Push**: `.fork/sync.sh --rebuild-only --push`, or `git push --force-with-lease origin <branch> next`. `next` is always force-pushed because it is regenerated; the branches only when they were rebased. The push to `next` starts the workflow, which checks and publishes the release.
+6. **Optionally preview `next` locally**: `git checkout next && .fork/sync.sh --rebuild-only` tags the old local `next`, rebuilds it from the current local tips and runs the focused checks. Nothing is fetched, rebased or pushed; the local `next` is a throwaway preview.
+7. **Push only the owning branch**: `git push origin <branch>` (`--force-with-lease` after a rebase). Never push `next` or `main`: the `pre-push` hook (`.fork/install-hooks.sh`) refuses it and `.fork/sync.sh --push` refuses to run outside GitHub Actions. The branch push starts `fork-sync.yml`, which rebuilds, checks, pushes and releases `next`; watch it with `gh run watch --repo JangMan-J/pi`. To run it without a push: `gh workflow run fork-sync.yml --repo JangMan-J/pi`. When it is green, `.fork/sync.sh --align` moves the local refs to the workflow's `next` and `.fork/install-next.sh` installs its release.
 
-The workflow pulls in upstream daily. To do it by hand, run `.fork/sync.sh` (full mode) on `next` instead of step 6. Order inside it is fixed: tag tips, fetch, fast-forward `main`, rebase every branch onto `main` in file order, rebuild `next`, check, optionally push. If a rebase stops on a conflict, resolve it, `git rebase --continue`, return to `next`, and re-run `.fork/sync.sh --offline --resume`. Resume mode allows the old `next` commits that the rebase replaced; never use it to discard unrelated commits.
+The workflow pulls in upstream on every run. A local `.fork/sync.sh` (full mode, no `--push`) previews that on your machine: tag tips, fetch, fast-forward `main`, rebase every branch onto `main` in file order, rebuild `next`, check. If a rebase stops on a conflict, resolve it, `git rebase --continue`, return to `next`, and re-run `.fork/sync.sh --offline --resume`. Resume mode allows the old `next` commits that the rebase replaced; never use it to discard unrelated commits. Of the result, push only the owning branches you resolved.
 
 ## Recovery
 
 - Committed on `next` by mistake: `git checkout <owning branch> && git cherry-pick <sha>`, then `.fork/sync.sh --rebuild-only`.
-- Need a previous state: every run leaves signed `pre-sync/<stamp>/<ref>` tags; the audit left `backup/*` tags. `git tag -l 'pre-sync/*'`.
+- The workflow warns "upstream held back" for a branch: on that branch, `git fetch upstream && git rebase upstream/main`, resolve, run its tests, `git push --force-with-lease origin <branch>`. The push starts the workflow, which advances `main` once every branch rebases cleanly.
+- Need a previous state: every run leaves signed `pre-sync/<stamp>/<ref>` tags for the refs it moved; the audit left `backup/*` tags. `git tag -l 'pre-sync/*'`.
 - Branch not based on `main` after a manual change: `git rebase main <branch>`, then rebuild.
 
 ## Do not
 
+- Push `next` or `main`, ever, from any machine (`git push ... next`, `git push ... main`, `.fork/sync.sh --push`). Push only the owning branch; `fork-sync.yml` alone builds, pushes and releases `next`.
 - Commit on `main` or `next`.
 - Edit `main`'s upstream files from a branch unless the change is the branch's purpose.
 - Rewrite `next` by hand; always use `sync.sh`.

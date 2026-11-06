@@ -83,9 +83,11 @@ command -v cargo >/dev/null 2>&1 || die "cargo is required for packages/env test
 
 chmod +x .fork/*.sh
 
-say "Installing the pre-commit hook and checking commit signing"
+say "Installing the pre-commit and pre-push hooks and checking commit signing"
 # npm ci --ignore-scripts skips upstream's "prepare": "husky", which installs the hook that runs npm run check.
 npx --no-install husky
+# pre-push refuses pushes of next and main: only fork-sync.yml pushes them.
+.fork/install-hooks.sh
 [[ "$(git config --get commit.gpgsign)" == true ]] ||
 	echo "warning: commit.gpgsign is not true, so fork commits will be unsigned (see .fork/AGENTS.md, step 5)"
 
@@ -98,7 +100,8 @@ cat > CLAUDE.local.md <<'MD'
 # Fork workflow
 This checkout is the JangMan-J/pi fork. Before changing or committing anything, read `.fork/AGENTS.md`
 (on `next`; from another branch, `git show next:.fork/AGENTS.md`) and run `.fork/sync.sh --status` on `next`.
-Never commit on `main` or `next`.
+Never commit on `main` or `next`. Never push `next` or `main`: push only the owning branch
+(`git push origin <branch>`); that push starts fork-sync.yml, which builds, pushes and releases `next`.
 MD
 grep -qx 'CLAUDE.local.md' .git/info/exclude 2>/dev/null || echo 'CLAUDE.local.md' >> .git/info/exclude
 # pi reads ~/.pi/agent/AGENTS.md in every directory; keep one guarded pointer block, replacing an older one.
@@ -111,6 +114,10 @@ if [[ -d "$(dirname "$pi_agents")" ]]; then
 When the working directory is a checkout of JangMan-J/pi (`git remote get-url origin` names JangMan-J/pi), read
 `.fork/AGENTS.md` before changing anything (on `next`; from another branch, `git show next:.fork/AGENTS.md`) and
 run `.fork/sync.sh --status` on `next` first. Commit only on the owning branch, never on `main` or `next`.
+NEVER push `next` or `main`. Push ONLY the owning branch (`git push origin <branch>`, `--force-with-lease`
+after a rebase); the push starts `.github/workflows/fork-sync.yml`, which alone builds, pushes and releases
+`next` (`gh workflow run fork-sync.yml --repo JangMan-J/pi` to run it without a push). Never run
+`.fork/sync.sh --push` outside GitHub Actions.
 <!-- /fork-workflow -->
 MD
 	echo "wrote the fork pointer block in $pi_agents"

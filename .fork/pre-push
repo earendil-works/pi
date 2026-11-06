@@ -1,0 +1,13 @@
+#!/bin/sh
+# Git pre-push hook: refuse to push next or main from any machine. fork-sync.yml on GitHub Actions is the
+# only pusher of next and main; people and agents push their owning branch. Installed by install-hooks.sh.
+[ "${GITHUB_ACTIONS:-}" = "true" ] && exit 0
+while read -r local_ref local_sha remote_ref remote_sha; do
+	case "$remote_ref" in
+		refs/heads/next | refs/heads/main)
+			echo "Refused: never push next or main locally. Push your owning branch (git push origin <branch>) and let fork-sync.yml build next." >&2
+			exit 1
+			;;
+	esac
+done
+exit 0

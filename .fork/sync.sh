@@ -9,8 +9,11 @@
 #   .fork/sync.sh --upstream-rev REV   like the full sync but fast-forward main to REV instead of upstream/main
 #   .fork/sync.sh --offline            full sync without fetching
 #   .fork/sync.sh --offline --resume   resume after resolving a rebase conflict; old next contains replaced commits
+#   .fork/sync.sh --hold-on-conflict   when a branch does not rebase cleanly onto the new main, abort, keep main where
+#                                      it was, rebase the branches onto that main and rebuild next (the workflow's mode)
 #   .fork/sync.sh --no-check           skip .fork/check.sh focused after the rebuild
-#   .fork/sync.sh --push               push main, next, the branches and the pre-sync tags with --force-with-lease
+#   .fork/sync.sh --push               push main, next, the branches and the pre-sync tags with --force-with-lease.
+#                                      GitHub Actions only (fork-sync.yml): refused on any other machine
 #
 # Layout: `next` starts at the first branch in `branches` and merges each following branch with
 # --no-ff, in file order. Nothing is ever committed directly on `next`; the rebuild refuses if it
@@ -44,6 +47,7 @@ fetch=1
 check=1
 push=0
 resume=0
+hold=0
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--status) mode="status"; shift ;;
@@ -52,9 +56,16 @@ while [[ $# -gt 0 ]]; do
 		--upstream-rev) upstream_rev="$2"; shift 2 ;;
 		--offline|--no-fetch) fetch=0; shift ;;
 		--resume) resume=1; shift ;;
+		--hold-on-conflict) hold=1; shift ;;
 		--no-check) check=0; shift ;;
-		--push) push=1; shift ;;
-		-h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+		--push)
+			# next and main are built, pushed and released only by fork-sync.yml.
+			if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+				echo "Refused: never push next or main locally. Push your owning branch (git push origin <branch>) and let fork-sync.yml build next." >&2
+				exit 2
+			fi
+			push=1; shift ;;
+		-h|--help) sed -n '2,20p' "$0"; exit 0 ;;
 		*) echo "unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
@@ -66,9 +77,21 @@ short() { git rev-parse --short "$1"; }
 count() { git rev-list --count "$@"; }
 is_ancestor() { git merge-base --is-ancestor "$1" "$2"; }
 
+# Revisions whose history next may carry: main, every branch tip, and the tips next was last built from.
+# rebuild_next leaves the latter in its merges ("Merge branch '<b>' into next": the second parent is that
+# branch's tip, the oldest such merge's first parent is the base branch's tip), so commits a branch owner
+# has since rebased away are not mistaken for commits made on next.
+stray_excludes() {
+	local b
+	printf '%s\n' ^main
+	for b in "${branches[@]}"; do printf '^%s\n' "$b"; done
+	git log --first-parent --merges --format='%P %s' next ^main |
+		awk '/ into next$/ { print "^" $2; base = $1 } END { if (base != "") print "^" base }'
+}
+
 stray_on_next() {
-	local excludes=(^main)
-	for b in "${branches[@]}"; do excludes+=("^$b"); done
+	local excludes
+	mapfile -t excludes < <(stray_excludes)
 	count --no-merges next "${excludes[@]}"
 }
 
@@ -148,8 +171,10 @@ refuse_stray() {
 	local stray
 	stray="$(stray_on_next)"
 	if [[ "$stray" -gt 0 ]]; then
+		local excludes
+		mapfile -t excludes < <(stray_excludes)
 		echo "next has $stray commit(s) that are on no branch; cherry-pick them onto the owning branch, then re-run:" >&2
-		git log --no-merges --format='  %h %s' next ^main "${branches[@]/#/^}" >&2
+		git log --no-merges --format='  %h %s' next "${excludes[@]}" >&2
 		exit 1
 	fi
 }
@@ -159,9 +184,61 @@ refuse_stray() {
 rebuild_next() {
 	git checkout -q -B next "${branches[0]}"
 	for b in "${branches[@]:1}"; do
-		git merge --no-ff --no-edit -m "Merge branch '$b' into next" "$b" >/dev/null
+		if ! git merge --no-ff --no-edit -m "Merge branch '$b' into next" "$b" >/dev/null; then
+			echo "merging $b into next conflicts in: $(git diff --name-only --diff-filter=U | paste -sd ' ')" >&2
+			echo "two branches change the same lines; move the change to one owning branch" >&2
+			git merge --abort
+			exit 1
+		fi
 	done
 	echo "next -> $(short next)"
+}
+
+# Rebase every branch onto main in file order. Without --hold-on-conflict the first conflict stops the
+# script with the rebase in progress for a person to resolve. With it, the conflict is aborted and recorded
+# in `conflicts`, and the remaining branches are still tried so one run reports every conflict.
+rebase_branches() {
+	conflicts=()
+	for b in "${branches[@]}"; do
+		git checkout -q "$b"
+		if git rebase -q main; then
+			echo "  $b -> $(short "$b") ($(count main..HEAD) commits)"
+			continue
+		fi
+		if [[ $hold -eq 0 ]]; then
+			echo "rebase of $b onto main failed; resolve it, 'git rebase --continue', then re-run with --offline --resume" >&2
+			exit 1
+		fi
+		conflicts+=("$b: $(git log -1 --format='%h %s' REBASE_HEAD) conflicts in $(git diff --name-only --diff-filter=U | paste -sd ' ')")
+		git rebase --abort
+	done
+}
+
+# Put main and every branch back on the tips tagged before the sync.
+restore_tips() {
+	git checkout -q --detach
+	for ref in main "${branches[@]}"; do
+		git update-ref "refs/heads/$ref" "refs/tags/pre-sync/$stamp/${ref//\//-}^{commit}"
+	done
+}
+
+# Tell the run's reader that upstream is held back and which owning branches must be rebased by hand.
+report_hold() {
+	local line
+	echo "upstream held at main $(short main): these branches do not rebase cleanly onto $upstream_rev ($(short "$upstream_rev")):" >&2
+	for line in "${conflicts[@]}"; do echo "  $line" >&2; done
+	echo "fix: on each branch, git fetch upstream && git rebase upstream/main, resolve, test, git push --force-with-lease origin <branch>" >&2
+	[[ "${GITHUB_ACTIONS:-}" == "true" ]] || return 0
+	for line in "${conflicts[@]}"; do echo "::warning title=upstream held back::$line"; done
+	if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+		{
+			echo "### Upstream held at main $(short main)"
+			echo "These branches do not rebase cleanly onto \`$upstream_rev\` ($(short "$upstream_rev")); next was rebuilt on the held main."
+			for line in "${conflicts[@]}"; do echo "- $line"; done
+			echo
+			echo "Fix: on each branch, \`git fetch upstream && git rebase upstream/main\`, resolve, test, \`git push --force-with-lease origin <branch>\`. The push starts this workflow."
+		} >> "$GITHUB_STEP_SUMMARY"
+	fi
 }
 
 align_refs() {
@@ -198,10 +275,22 @@ align_refs() {
 	return $rc
 }
 
+# Push every ref this run moved, all or none, each only if origin still has the tip the run started from
+# (an owner's push during the run is never overwritten), plus the pre-sync tags of the moved refs.
 push_all() {
-	git push --force-with-lease origin main next "${branches[@]}"
+	local ref tag from moved=() leases=()
+	for ref in main next "${branches[@]}"; do
+		tag="pre-sync/${stamp:-none}/${ref//\//-}"
+		git rev-parse -q --verify "refs/tags/$tag" >/dev/null || continue
+		from="$(git rev-parse "$tag^{commit}")"
+		if [[ "$from" == "$(git rev-parse "$ref")" ]]; then git tag -d "$tag" >/dev/null; continue; fi
+		moved+=("$ref")
+		leases+=("--force-with-lease=$ref:$from")
+	done
+	if [[ ${#moved[@]} -eq 0 ]]; then echo "nothing moved; nothing to push"; return 0; fi
+	git push --atomic "${leases[@]}" origin "${moved[@]}"
 	git push origin "refs/tags/pre-sync/$stamp/*"
-	echo "pushed main, next, ${#branches[@]} branches and pre-sync/$stamp tags"
+	echo "pushed ${moved[*]} and their pre-sync/$stamp tags"
 }
 
 case "$mode" in
@@ -225,7 +314,7 @@ case "$mode" in
 			rebuild_next
 		fi
 		[[ $check -eq 0 ]] || "$repo/.fork/check.sh" focused
-		[[ $push -eq 0 ]] || { stamp="${stamp:-$(date -u +%Y%m%dT%H%M%SZ)}"; git push --force-with-lease origin next "${branches[@]}"; echo "pushed next and ${#branches[@]} branches"; }
+		[[ $push -eq 0 ]] || push_all
 		;;
 	full)
 		require_clean
@@ -245,16 +334,25 @@ case "$mode" in
 		git checkout -q main
 		git merge --ff-only "$upstream_rev"
 		echo "main -> $(short main)"
-		for b in "${branches[@]}"; do
-			git checkout -q "$b"
-			if ! git rebase -q main; then
-				echo "rebase of $b onto main failed; resolve it, 'git rebase --continue', then re-run with --offline --resume" >&2
+		rebase_branches
+		if [[ ${#conflicts[@]} -gt 0 ]]; then
+			restore_tips
+			report_hold
+			# A branch pushed on an older main still has to sit on the held main to be released.
+			rebase_branches
+			if [[ ${#conflicts[@]} -gt 0 ]]; then
+				printf 'branch does not rebase onto the held main either: %s\n' "${conflicts[@]}" >&2
 				exit 1
 			fi
-			echo "  $b -> $(short "$b") ($(count main..HEAD) commits)"
-		done
-		rebuild_next
-		[[ $check -eq 0 ]] || "$repo/.fork/check.sh" focused
+		fi
+		# Held at an unchanged main with no branch moved: the old next is still exact, and its release stands.
+		if [[ -z "$(missing_from_next)" && "$(stray_on_next)" -eq 0 ]]; then
+			git checkout -q next
+			echo "next $(short next) already contains every branch tip; nothing to rebuild"
+		else
+			rebuild_next
+			[[ $check -eq 0 ]] || "$repo/.fork/check.sh" focused
+		fi
 		[[ $push -eq 0 ]] || push_all
 		;;
 esac

@@ -22,10 +22,13 @@ installed, the same layout as pi's own installer.
 
 ## Release workflow
 
-`.github/workflows/fork-sync.yml` runs daily, on every push to `next`, and on demand (Actions tab, "Sync
-fork and release next", Run workflow; untick "push" for a dry run). On the schedule and on demand it runs
-the full `sync.sh`: fast-forward `main` from upstream, rebase every branch, rebuild `next`, focused checks,
-push. Then, when the `next` commit has no release yet, it builds, runs `npm run check` and
+`.github/workflows/fork-sync.yml` runs daily, on every push to an owning branch (`feat/**`, `fix/**`,
+`fork/tooling`), and on demand (Actions tab, "Sync fork and release next", Run workflow; untick "push" for a
+dry run). It is the only pusher of `next` and `main`: people and agents push only their owning branch, which
+starts the workflow. It runs the full `sync.sh --hold-on-conflict --push`: fast-forward `main` from upstream,
+rebase every branch, rebuild `next`, focused checks, push. A branch that does not rebase onto the new upstream
+holds `main` back; the run names it in a warning and rebuilds `next` on the held `main` until its owner rebases
+it. Then, when the `next` commit has no release yet, it builds, runs `npm run check` and
 `check.sh focused`, packs with `pack-release.sh`, and publishes the release. It releases only when
 `sync.sh --status` is clean (`next` is exactly the merge of the branches, `main` mirrors upstream). A
 failed check or a rebase conflict publishes nothing. Commits and tags are signed by the `fork-sync bot` key (repo secret
@@ -53,7 +56,10 @@ operations, and recovery.
 - `sync.sh`: `--status` reports main, every branch and next; `--align` resets them to origin when safe;
   `--rebuild-only` regenerates `next` from the current tips; the full mode tags tips, fast-forwards `main`,
   rebases every branch, rebuilds `next`, runs the focused checks and optionally pushes with
-  `--force-with-lease`. It refuses to rebuild over commits made on `next`.
+  `--force-with-lease` (`--push` is refused outside GitHub Actions). It refuses to rebuild over commits made
+  on `next`.
+- `install-hooks.sh`: installs the `pre-push` hook in every worktree; it refuses pushes of `next` and `main`
+  outside GitHub Actions.
 - `check.sh`: `focused` runs the tests the fork owns; `all` runs `npm run check` and `./test.sh`.
 - `pack-release.sh`: packs a built checkout into `pi-next.tar.gz` for a release.
 - `install-next.sh`: installs releases; `install-tests.sh`: sets up a development checkout.
