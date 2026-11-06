@@ -198,6 +198,26 @@ describe("paths and folders", () => {
 	});
 });
 
+describe("bulk file-index operations", () => {
+	it("moves multiple marked paths and reclaims only unreferenced blobs in a batch", async () => {
+		const files = await filesOf();
+		const shared = await put(files, "keep.txt", "common");
+		await files.copy({ id: shared.id, space: "shared", path: "group/shared.txt" }, context);
+		for (let index = 0; index < 25; index++) {
+			await put(files, `group/sub/file-${index}.txt`, `unique-${index}`);
+		}
+		const oldBlobCount = (await blobFiles(files)).length;
+		await files.move({ space: "shared", from: "group", to: "archive" }, context);
+		expect(await names(files, "archive")).toContain("archive/shared.txt");
+		expect((await names(files, "archive/sub")).length).toBe(25);
+		await files.removePath({ space: "shared", path: "archive" }, context);
+		expect(await names(files, "")).toEqual(["keep.txt"]);
+		expect((await blobFiles(files)).length).toBe(1);
+		expect(oldBlobCount).toBe(26);
+		await files.close();
+	});
+});
+
 describe("versions and blob references", () => {
 	it("adds a version per write; the path names the newest; older ones stay readable", async () => {
 		const files = await filesOf();

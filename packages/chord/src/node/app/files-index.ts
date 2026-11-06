@@ -20,6 +20,7 @@ import {
 	type Condition,
 	defineTable,
 	eq,
+	inArray,
 	json,
 	lt,
 	ne,
@@ -412,14 +413,22 @@ export class FilesIndex {
 
 	/** The marks of the paths `renamed` moves (`from` and those under it), each the higher of its own and the target's. */
 	async #movedMarks(space: string, from: string, renamed: (path: string) => string, context: Context) {
-		const marks: RowOf<typeof markColumns>[] = [];
+		const sources: RowOf<typeof markColumns>[] = [];
 		const q = query(MarkRows).where((m) => and(eq(m.space, space), or(eq(m.path, from), prefix(m.path, `${from}/`))));
-		for await (const mark of this.#marks.rows(q, context)) {
-			const path = renamed(mark.path);
-			const target = await this.#marks.get({ space, path }, context);
-			marks.push({ space, path, last: Math.max(mark.last, target?.last ?? 0) });
+		for await (const mark of this.#marks.rows(q, context)) sources.push(mark);
+		const targets = new Map<string, number>();
+		const paths = [...new Set(sources.map((mark) => renamed(mark.path)))];
+		for (let offset = 0; offset < paths.length; offset += 400) {
+			const chunk = paths.slice(offset, offset + 400);
+			for await (const target of this.#marks.rows(
+				query(MarkRows).where((m) => and(eq(m.space, space), inArray(m.path, chunk))),
+				context,
+			)) targets.set(target.path, target.last);
 		}
-		return marks;
+		return sources.map((mark) => {
+			const path = renamed(mark.path);
+			return { space, path, last: Math.max(mark.last, targets.get(path) ?? 0) };
+		});
 	}
 
 	/**
@@ -545,13 +554,17 @@ export class FilesIndex {
 		const lowered: { id: string; by: number }[] = [];
 		const gone: string[] = [];
 		let bytes = 0;
-		for (const [id, by] of counts) {
-			const blob = await this.#blobs.get({ id }, context);
-			if (blob === undefined) continue;
-			if (blob.refs > by) lowered.push({ id, by });
-			else {
-				gone.push(id);
-				bytes += blob.size;
+		// Batch metadata lookups rather than executing one SQL query per blob.
+		const ids = [...counts.keys()];
+		for (let offset = 0; offset < ids.length; offset += 400) {
+			const chunk = ids.slice(offset, offset + 400);
+			for await (const blob of this.#blobs.rows(query(BlobRows).where((b) => inArray(b.id, chunk)), context)) {
+				const by = counts.get(blob.id)!;
+				if (blob.refs > by) lowered.push({ id: blob.id, by });
+				else {
+					gone.push(blob.id);
+					bytes += blob.size;
+				}
 			}
 		}
 		return { lowered, gone, bytes };
