@@ -234,10 +234,14 @@ test(
 			await browser.wait("document.querySelector('[data-testid=step] button')");
 			assert.match(
 				await browser.evaluate<string>("document.querySelector('[data-testid=step]').textContent"),
-				/Ran a script · 10 calls, 1 failed.*read every file/,
+				/^codemoderead every file● running/,
 			);
 			await browser.click("[data-testid=step] button");
 			await browser.wait("document.querySelectorAll('[data-testid=call]').length===10");
+			assert.equal(
+				await browser.evaluate("document.querySelector('.sheet-head h2').textContent"),
+				"Ran a script · 10 calls, 1 failed",
+			);
 			// The script: highlighted JS, whole (8 lines need no Show all).
 			assert.equal(
 				await browser.evaluate("document.querySelector('[data-testid=detail-input] .hljs-keyword')!==null"),

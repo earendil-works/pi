@@ -1,31 +1,46 @@
-// A turn's activity: what the agent did between a person's message and its answer, as steps for the activity row
-// (a ticker while working, a summary when done) and the timeline in its sheet. Derived from the transcript's items:
-// `chatItems` replaces each run of the agent's responses with an activity item, the answer and the results meant for
-// the person (artifacts, sent files, opened ports).
+// A turn's activity: what the agent did between a person's message and its answer. Derived from the transcript's
+// items: `chatItems` keeps each response's thinking and text in the transcript, in their order, and turns each run of
+// consecutive tool calls into an activity item (a wheel in the chat, its steps in a sheet). A turn's last text is its
+// answer, followed by the results meant for the person (artifacts, sent files, opened ports).
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { Item, NestedCall, ToolView } from "../transcript.ts";
 import { artifactOf, forwardOf, sentFileOf } from "./result-data.ts";
 
 export type StepStatus = "running" | "done" | "error";
-export type Step =
-	| { kind: "thinking"; id: string; text: string; status: StepStatus }
-	| { kind: "note"; id: string; text: string; status: StepStatus }
-	| { kind: "tool"; id: string; tool: ToolView; status: StepStatus };
+/** One tool call of an activity. */
+export type Step = { id: string; tool: ToolView; status: StepStatus };
 
-/** The items the chat shows: the transcript's people, markers and failures, and each turn's activity and answer. */
+/** The items the chat shows: the transcript's people, markers and failures, and each turn's parts in order. */
 export type ChatItem =
 	| Exclude<Item, { type: "assistant" } | { type: "tool" }>
 	| {
 			type: "activity";
 			key: string;
+			/** The run's tool calls. */
 			steps: Step[];
 			/** The agent is still at it: the row is a ticker, not a summary. */
 			working: boolean;
-			/** The responses it shows, for a search hit on one of them. */
+			/** The responses whose calls it shows, for a search hit on one of them. */
 			entryIds?: number[];
-			/** When the work began (its first response) and, once done, ended (the answer began), in ms. */
+			/** When the run began (the response with its first call) and, once done, ended, in ms. */
 			startedAt?: number;
 			endedAt?: number;
+	  }
+	| {
+			/** A thinking block, collapsed to one line in place. */
+			type: "thought";
+			key: string;
+			entryId?: number;
+			text: string;
+			/** Still streaming: "Thinking…". */
+			live: boolean;
+	  }
+	| {
+			/** The agent's text between its calls, as prose; the turn's last text is its answer instead. */
+			type: "text";
+			key: string;
+			entryId?: number;
+			text: string;
 	  }
 	| {
 			type: "answer";
@@ -54,28 +69,56 @@ const detailsOf = (tool: ToolView): Record<string, unknown> =>
 /** Whether a call's result is for the person, shown in the chat after the answer and not only in the timeline. */
 export const isResult = (tool: ToolView): boolean => Boolean(artifactOf(tool) || sentFileOf(tool) || forwardOf(tool));
 
-/** The steps of a run of responses (assistant items, and results whose call is outside the loaded window). */
-function stepsOf(items: readonly Item[], working: boolean): Step[] {
-	const steps: Step[] = [];
-	for (const item of items) {
+type Response = Extract<Item, { type: "assistant" }>;
+/** A run of consecutive tool calls, with the responses that made them (for its time). */
+type Calls = { type: "calls"; key: string; steps: Step[]; from: Response[] };
+type Part = Calls | Extract<ChatItem, { type: "thought" | "text" }>;
+
+const stepOf = (tool: ToolView): Step => ({ id: tool.id, tool, status: toolStatus(tool) });
+
+/**
+ * A run of responses as its parts in order: thinking, text, and runs of calls (results whose call is outside the
+ * loaded window join them). The first part, when it is calls, is keyed by the item before the run (`after`), so its
+ * wheel is the same row as the one that waited for it.
+ */
+function partsOf(run: readonly Item[], live: boolean, after: string): Part[] {
+	const parts: Part[] = [];
+	const calls = (key: string, from?: Response): Calls => {
+		const last = parts.at(-1);
+		if (last?.type === "calls") {
+			if (from && last.from.at(-1) !== from) last.from.push(from);
+			return last;
+		}
+		const made: Calls = {
+			type: "calls",
+			key: parts.length ? key : `activity:${after}`,
+			steps: [],
+			from: from ? [from] : [],
+		};
+		parts.push(made);
+		return made;
+	};
+	for (const item of run) {
 		if (item.type === "tool") {
-			steps.push({ kind: "tool", id: item.tool.id, tool: item.tool, status: toolStatus(item.tool) });
+			calls(`activity:${item.key}`).steps.push(stepOf(item.tool));
 			continue;
 		}
 		if (item.type !== "assistant") continue;
 		const tools = new Map(item.tools.map((tool) => [tool.id, tool]));
 		const last = item.message.content.length - 1;
+		const entry = item.entryId === undefined ? {} : { entryId: item.entryId };
 		for (const [index, part] of item.message.content.entries()) {
-			const id = `${item.key}:${index}`;
+			const key = `${item.key}:${index}`;
 			if (part.type === "thinking" && part.thinking.trim())
-				steps.push({
-					kind: "thinking",
-					id,
+				parts.push({
+					type: "thought",
+					key: `thought:${key}`,
+					...entry,
 					text: part.thinking,
-					status: item.streaming && working && index === last ? "running" : "done",
+					live: item.streaming && live && index === last,
 				});
 			else if (part.type === "text" && part.text.trim())
-				steps.push({ kind: "note", id, text: part.text, status: "done" });
+				parts.push({ type: "text", key: `text:${key}`, ...entry, text: part.text });
 			else if (part.type === "toolCall") {
 				const tool = tools.get(part.id) ?? {
 					id: part.id,
@@ -85,45 +128,57 @@ function stepsOf(items: readonly Item[], working: boolean): Step[] {
 					output: "",
 					images: [],
 				};
-				steps.push({ kind: "tool", id: tool.id, tool, status: toolStatus(tool) });
+				calls(`activity:${key}`, item).steps.push(stepOf(tool));
 			}
 		}
 	}
-	return steps;
+	return parts;
+}
+
+/** A run of calls as its wheel: live while it is the turn's last part and the agent works. */
+function activityOf(calls: Calls, responses: readonly Response[], working: boolean): ChatItem {
+	const first = calls.from[0];
+	const last = calls.from.at(-1);
+	const startedAt = first?.message.timestamp;
+	// Done: when the next response began, or the last response's calls ended.
+	const next = last ? responses[responses.indexOf(last) + 1] : undefined;
+	const endedAt =
+		working || !last
+			? undefined
+			: (next?.message.timestamp ??
+				last.message.timestamp + last.tools.reduce((sum, each) => sum + (each.durationMs ?? 0), 0));
+	const entryIds = calls.from.flatMap((item) => (item.entryId === undefined ? [] : [item.entryId]));
+	return {
+		type: "activity",
+		key: calls.key,
+		steps: calls.steps,
+		working,
+		entryIds,
+		...(startedAt ? { startedAt } : {}),
+		...(startedAt && endedAt ? { endedAt } : {}),
+	};
 }
 
 /**
- * A run's chat items: its activity (the steps but the answer), the answer, the results. `after`: the key of the item
- * before the run, which keys its activity, so the row is the same from before the first step to the end.
+ * A run's chat items: its thinking, texts and runs of calls in order, the answer (its last text, when nothing came
+ * after it), the results. `after`: the key of the item before the run.
  */
 function runItems(run: readonly Item[], working: boolean, after: string): ChatItem[] {
 	const first = run[0]!;
-	const steps = stepsOf(run, working);
-	const responses = run.filter((item): item is Extract<Item, { type: "assistant" }> => item.type === "assistant");
+	const parts = partsOf(run, working, after);
+	const responses = run.filter((item): item is Response => item.type === "assistant");
 	const response = responses.at(-1);
-	// The run's last text is its answer, when nothing came after it.
-	const answer = steps.at(-1)?.kind === "note" ? (steps.pop() as Extract<Step, { kind: "note" }>) : undefined;
-	const items: ChatItem[] = [];
-	const entryIds = responses.flatMap((item) => (item.entryId === undefined ? [] : [item.entryId]));
-	const startedAt = responses[0]?.message.timestamp;
-	// Done: when the answer began, or the last response and the calls it made ended.
-	const endedAt =
-		working || !response
-			? undefined
-			: response.message.timestamp +
-				(answer ? 0 : response.tools.reduce((sum, each) => sum + (each.durationMs ?? 0), 0));
+	const final = parts.at(-1);
+	const answer = final?.type === "text" ? final : undefined;
+	if (answer) parts.pop();
 	const notice =
 		response && ["error", "aborted", "length"].includes(response.message.stopReason) && !response.streaming;
-	if (steps.length || (working && !answer))
-		items.push({
-			type: "activity",
-			key: `activity:${after}`,
-			steps,
-			working,
-			entryIds,
-			...(startedAt ? { startedAt } : {}),
-			...(startedAt && endedAt ? { endedAt } : {}),
-		});
+	const items: ChatItem[] = parts.map((part) =>
+		part.type === "calls" ? activityOf(part, responses, working && !answer && part === final) : part,
+	);
+	// Working on a response that shows nothing yet: the activity row, waiting.
+	if (working && !parts.length && !answer)
+		items.push({ type: "activity", key: `activity:${after}`, steps: [], working: true });
 	if (response && (answer || notice))
 		items.push({
 			type: "answer",
@@ -133,7 +188,9 @@ function runItems(run: readonly Item[], working: boolean, after: string): ChatIt
 			message: response.message,
 			streaming: response.streaming,
 		});
-	const results = steps.flatMap((step) => (step.kind === "tool" && isResult(step.tool) ? [step.tool] : []));
+	const results = parts.flatMap((part) =>
+		part.type === "calls" ? part.steps.flatMap((step) => (isResult(step.tool) ? [step.tool] : [])) : [],
+	);
 	if (results.length) items.push({ type: "results", key: `results:${first.key}`, tools: results });
 	return items;
 }
@@ -157,9 +214,9 @@ function unfinished(run: readonly Item[]): boolean {
 
 /**
  * The chat's items: the agent's responses between two people's messages (or markers and failures) become one run,
- * shown as its activity, its answer and its results. `working`: the agent is at it, so the last run is live.
- * `known`: whether `working` comes from the server's live state; until it does (the transcript kept on this device),
- * a last run whose entries say it is not over shows as live rather than finished.
+ * shown as its thinking, texts and runs of calls in order, its answer and its results. `working`: the agent is at it,
+ * so the last run is live. `known`: whether `working` comes from the server's live state; until it does (the
+ * transcript kept on this device), a last run whose entries say it is not over shows as live rather than finished.
  */
 export function chatItems(items: readonly Item[], working: boolean, known = true): ChatItem[] {
 	const result: ChatItem[] = [];
@@ -222,8 +279,6 @@ const sentence = (text: string) => {
 
 /** The kind of work a step is, for its icon. */
 export type Kind =
-	| "thinking"
-	| "note"
 	| "command"
 	| "search"
 	| "read"
@@ -259,12 +314,6 @@ export const plain = (label: Label) => [label.verb, label.object, label.extra].f
 
 /** A step for the timeline: its label in the past tense and, if there is more to say, a description. */
 export function describe(step: Step): { label: Label; description?: string; mono?: boolean } {
-	if (step.kind === "thinking")
-		return {
-			label: { kind: "thinking", verb: step.status === "running" ? "Thinking…" : "Thought" },
-			description: plainText(sentence(step.text)),
-		};
-	if (step.kind === "note") return { label: { kind: "note", object: plainText(step.text), style: "words" } };
 	const { tool } = step;
 	const path = str(tool.args.path);
 	const details = detailsOf(tool);
@@ -452,10 +501,61 @@ export function describe(step: Step): { label: Label; description?: string; mono
 	}
 }
 
+/** A call's main argument, for its row in the sheet: the command, the file, the script's first comment. */
+export function mainArgument(tool: ToolView): string {
+	const { args } = tool;
+	switch (tool.name) {
+		case "bash":
+			return firstLine(str(args.command));
+		case "read":
+		case "write":
+		case "edit":
+		case "send_file":
+			return str(args.path);
+		case "terminal":
+			return firstLine(terminalCommand(args));
+		case "codemode":
+			return firstLine(str(args.code)).replace(/^\/\/\s*/, "");
+		case "subagent":
+			return [str(args.action), str(args.name)].filter(Boolean).join(" ");
+		case "agent":
+			return str(args.label) || firstLine(str(args.prompt));
+		case "artifact":
+			return str(args.title) || str(args.name);
+		case "history_search":
+			return str(args.query);
+		default: {
+			const value = Object.values(args).find((each) => typeof each === "string" || typeof each === "number");
+			return value === undefined ? "" : firstLine(String(value));
+		}
+	}
+}
+
+/** A duration as a reader says it: 12s, 1m 05s, 1h 02m. */
+export function elapsed(ms: number): string {
+	const seconds = Math.max(0, Math.floor(ms / 1000));
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
+	return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+}
+
+/** A step's state for its row in the sheet: done with its time, how it failed (a command's exit code), running. */
+export function stepState(step: Step): string {
+	const { tool } = step;
+	if (step.status === "running") return "● running";
+	if (step.status === "error") {
+		const code = /exit(?:ed with)? code (\d+)/i.exec(tool.output)?.[1];
+		return `✗ ${code ? `exit ${code}` : tool.status === "interrupted" ? "interrupted" : "failed"}`;
+	}
+	const ms = tool.durationMs;
+	return ms === undefined
+		? "✓"
+		: `✓ ${ms < 1000 ? `${Math.round(ms)}ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : elapsed(ms)}`;
+}
+
 /** A step for the ticker: its label in the present tense while it runs. */
 export function live(step: Step): Label {
-	if (step.kind === "thinking") return { kind: "thinking", verb: step.status === "running" ? "Thinking…" : "Thought" };
-	if (step.kind === "note") return { kind: "note", object: plainText(sentence(step.text)), style: "words" };
 	if (step.status !== "running") return describe(step).label;
 	const { tool } = step;
 	const path = base(str(tool.args.path));
@@ -508,10 +608,10 @@ export function live(step: Step): Label {
 	}
 }
 
-/** One line for a finished turn: what kinds of work it did, counted. `failures: false` leaves out the failures. */
+/** One line for a finished run of calls: what kinds of work it did, counted. `failures: false` leaves out the failures. */
 export function summary(steps: readonly Step[], { failures = true } = {}): string {
 	const count = (test: (step: Step) => boolean) => steps.filter(test).length;
-	const tools = (...names: string[]) => count((step) => step.kind === "tool" && names.includes(step.tool.name));
+	const tools = (...names: string[]) => count((step) => names.includes(step.tool.name));
 	const plural = (n: number, one: string, many: string) => (n === 1 ? one : many.replace("#", String(n)));
 	const known = [
 		"read",
@@ -528,7 +628,6 @@ export function summary(steps: readonly Step[], { failures = true } = {}): strin
 		"terminal",
 	];
 	const parts = [
-		count((step) => step.kind === "thinking") ? "thought" : "",
 		tools("read") ? plural(tools("read"), "read a file", "read # files") : "",
 		tools("bash") ? plural(tools("bash"), "ran a command", "ran # commands") : "",
 		tools("codemode") ? plural(tools("codemode"), "ran a script", "ran # scripts") : "",
@@ -539,15 +638,15 @@ export function summary(steps: readonly Step[], { failures = true } = {}): strin
 		tools("history_search", "history_read") ? "looked through the history" : "",
 		tools("history_handoff") ? "handed off" : "",
 		tools("terminal") ? plural(tools("terminal"), "used the terminal", "used the terminal # times") : "",
-		count((step) => step.kind === "tool" && !known.includes(step.tool.name))
+		count((step) => !known.includes(step.tool.name))
 			? plural(
-					count((step) => step.kind === "tool" && !known.includes(step.tool.name)),
+					count((step) => !known.includes(step.tool.name)),
 					"used a tool",
 					"used # tools",
 				)
 			: "",
 	].filter(Boolean);
-	if (!parts.length) parts.push(count((step) => step.kind === "note") ? "worked" : "done");
+	if (!parts.length) parts.push("done");
 	const errors = failures ? count((step) => step.status === "error") : 0;
 	return `${capitalized(parts.join(", "))}${errors ? ` · ${plural(errors, "1 failed", "# failed")}` : ""}`;
 }
@@ -594,7 +693,6 @@ export function groupCalls(calls: readonly NestedCall[]): CallGroup[] {
 		}
 		const status = callStatus(call.status);
 		const { label, mono } = describe({
-			kind: "tool",
 			id: call.id,
 			status,
 			tool: {

@@ -68,6 +68,8 @@ export type Item =
 			files: string[];
 			/** The entry this item shows; absent for queued items. */
 			entryId?: number;
+			/** When it was sent (its model message's time), in ms; absent for display-only entries. */
+			at?: number;
 			/** A display-only entry shown as a person's message (it never reached the model). */
 			chat?: boolean;
 			/** The message this one answers: shown as a quoted line that leads to it. */
@@ -375,10 +377,17 @@ export function buildTranscript(
 	const responseKeys = new Set<string>();
 	const items: Item[] = [];
 	/** A person's message: who wrote it and what, from its data; a plugin may add a reply quote or a note. */
-	const personItem = (entry: EntryRecord, person: MessageData, images: ImageContent[], chat: boolean): Item => ({
+	const personItem = (
+		entry: EntryRecord,
+		person: MessageData,
+		images: ImageContent[],
+		chat: boolean,
+		at?: number,
+	): Item => ({
 		type: "user",
 		key: String(entry.id),
 		entryId: entry.id,
+		...(at === undefined ? {} : { at }),
 		images,
 		author: person.author,
 		text: person.text,
@@ -443,20 +452,23 @@ export function buildTranscript(
 					const images =
 						typeof message.content === "string" ? [] : message.content.filter((part) => part.type === "image");
 					// A person's input from its data.
+					const at = message.timestamp;
 					const person = messageData(entry.data);
-					if (person) return [personItem(entry, person, images, false)];
+					if (person) return [personItem(entry, person, images, false, at)];
 					const fromAgent = agentMessage(entry.kind, entry.data);
 					if (fromAgent) {
 						const { from, intent, text } = fromAgent;
-						return [{ type: "user", key, entryId: entry.id, images, agent: { from, intent }, text, files: [] }];
+						return [
+							{ type: "user", key, entryId: entry.id, at, images, agent: { from, intent }, text, files: [] },
+						];
 					}
 					// A peer session's message from its data, or a tool's plain input.
 					const peer = peerMessage(entry.kind, entry.data);
 					if (peer)
 						return [
-							{ type: "user", key, entryId: entry.id, images, peer: peer.from, text: peer.text, files: [] },
+							{ type: "user", key, entryId: entry.id, at, images, peer: peer.from, text: peer.text, files: [] },
 						];
-					return [{ type: "user", key, entryId: entry.id, images, text: text(message.content), files: [] }];
+					return [{ type: "user", key, entryId: entry.id, at, images, text: text(message.content), files: [] }];
 				}),
 			);
 		} else if (message?.role === "assistant") {

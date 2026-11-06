@@ -1,9 +1,10 @@
 // A step's detail in the sheet. A tool shows its input (the command, the file and range read, the edited file, the
 // script, the message) and then its output (the command's output as a terminal, the file's numbered lines or the
-// image read, the diff, the script's calls and printed output, the result card). Thinking and notes are prose.
+// image read, the diff, the script's calls and printed output, the result card).
 import { Button } from "@earendil-works/elanor-react";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { type ReactNode, useContext, useState } from "react";
+import { closeLayers } from "../../runtime/web.tsx";
 import { CodeBlock, type CodeLine, DiffBlock, LinesBlock } from "../Code.tsx";
 import {
 	OneShotAgents,
@@ -19,9 +20,7 @@ import { Markdown } from "../Markdown.tsx";
 import { revealInTranscripts } from "../use-chat-scroll.ts";
 import { KindIcon, LabelText } from "./Label.tsx";
 import { type CallGroup, callStatus, groupCalls, parsedArgs, type Step } from "./model.ts";
-import { closeAnyPanel } from "./panel.ts";
 import { Result } from "./Results.tsx";
-import { useDocked } from "./Sheet.tsx";
 
 const str = (value: unknown) => (typeof value === "string" ? value : "");
 const extension = (path: string) => /\.([a-z0-9]+)$/i.exec(path)?.[1];
@@ -46,14 +45,13 @@ const Section = ({ label, children }: { label: string; children: ReactNode }) =>
 
 /**
  * The entries a history tool found or read: each opens its message in the transcript (loading older history first),
- * closing the sheet on a phone so the message shows.
+ * closing the sheet so the message shows.
  */
 function HistoryEntries({ rows, field }: { rows: unknown; field: "snippet" | "preview" }) {
 	const reveal = useContext(RevealEntry);
-	const docked = useDocked();
 	if (!Array.isArray(rows) || !rows.length) return null;
 	const show = async (entry: number) => {
-		if (!docked) closeAnyPanel();
+		closeLayers();
 		if (revealInTranscripts(entry) || !reveal || !(await reveal(entry))) return;
 		for (let frame = 0; frame < 60; frame++) {
 			await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -188,7 +186,7 @@ function FilePath({ path, line, range }: { path: string; line?: number; range?: 
 }
 
 /** What a subagent call asked and, for answer and spawn, how it went; the conversation one tap away. */
-function Subagent({ step }: { step: Extract<Step, { kind: "tool" }> }) {
+function Subagent({ step }: { step: Step }) {
 	const { tool } = step;
 	const openConversation = useContext(OpenConversation);
 	const cwd = useContext(WorkingDirectory)?.replace(/\/+$/, "");
@@ -237,7 +235,7 @@ function Subagent({ step }: { step: Extract<Step, { kind: "tool" }> }) {
 }
 
 /** A terminal call: its tmux command line and output, and the terminal one tap away once it ran. */
-function Terminal({ step }: { step: Extract<Step, { kind: "tool" }> }) {
+function Terminal({ step }: { step: Step }) {
 	const { tool } = step;
 	const openTerminal = useContext(OpenTerminal);
 	const details = tool.details && typeof tool.details === "object" && !Array.isArray(tool.details) ? tool.details : {};
@@ -261,12 +259,6 @@ function Terminal({ step }: { step: Extract<Step, { kind: "tool" }> }) {
 }
 
 export function StepDetail({ step, onGroup }: { step: Step; onGroup: (index: number) => void }) {
-	if (step.kind === "thinking" || step.kind === "note")
-		return (
-			<div className="detail-prose" data-text-context="prose" data-testid="detail-prose">
-				<Markdown text={step.text} />
-			</div>
-		);
 	const { tool } = step;
 	const failed = step.status === "error";
 	const details = tool.details && typeof tool.details === "object" && !Array.isArray(tool.details) ? tool.details : {};

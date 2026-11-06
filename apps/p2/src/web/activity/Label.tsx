@@ -5,22 +5,18 @@ import {
 	ArtifactIcon,
 	BotIcon,
 	CodeIcon,
-	CommentIcon,
 	ConversationIcon,
 	FileIcon,
 	PencilIcon,
 	PortIcon,
 	RefreshIcon,
 	SearchIcon,
-	SparkIcon,
 	TerminalIcon,
 	ToolIcon,
 } from "./icons.tsx";
 import type { Kind, Label } from "./model.ts";
 
 const ICONS: Record<Kind, () => ReactNode> = {
-	thinking: () => <SparkIcon />,
-	note: () => <CommentIcon />,
 	command: () => <TerminalIcon />,
 	search: () => <SearchIcon />,
 	handoff: () => <RefreshIcon />,

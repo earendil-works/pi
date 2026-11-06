@@ -1,5 +1,6 @@
-/* A turn's activity row, step labels, details and results (src/web/activity). The timeline, the ticker and the
- * sheet's page stack are Elanor's (built in p2 for now: ../elanor-extra). */
+/* A run's activity row, its sheet's list of calls, step labels, details and results (src/web/activity). The ticker
+ * and a script's timeline of calls are Elanor's (built in p2 for now: ../elanor-extra); the sheet is p2's own
+ * (.sheet in style.css). */
 
 /*
  * The interface's sans (--sans), not the pi brand's serif that Elanor's ui typography uses: the row, the results and
@@ -8,7 +9,7 @@
  */
 .activity,
 .results,
-.activity-pages {
+.activity-sheet {
 	--semantic-typography-ui-primary:
 		var(--semantic-typography-ui-primary-font-weight) var(--semantic-typography-ui-primary-font-size) /
 		var(--semantic-typography-ui-primary-line-height) var(--sans);
@@ -213,58 +214,76 @@
 	color: var(--semantic-color-text-secondary);
 }
 
-/*
- * The docked panel (Sheet.tsx) for a turn's steps or changes: like the workspace panel, a column at the right over
- * the chat from 900px, docked beside it from 1280px; empty, it takes no room. Inside, Elanor's drawer popup fills it.
- */
-.side-dock {
-	position: fixed;
-	inset-block: 0;
-	inset-inline-end: 0;
-	z-index: 35;
+/* The sheet's first page: the run's calls, one 44px row each, separated by thin lines; the body's padding is the
+ * rows' own, so the lines run from edge to edge. */
+.activity-sheet .sheet-body:has(> .step-list) {
+	padding: 0 0 var(--s3);
+}
+.step-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.step-list li + li {
+	border-top: 1px solid var(--line);
+}
+.step-row {
 	display: flex;
-	inline-size: min(var(--activity-panel-width, 460px), 100%);
-	overflow: hidden;
-	border-inline-start: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
-	background: var(--semantic-color-background-canvas);
+	align-items: center;
+	gap: var(--s3);
+	width: 100%;
+	min-height: var(--row);
+	padding: 0 var(--s2) 0 var(--x);
+	color: var(--text);
+	font-size: var(--fs-sm);
+	text-align: left;
 }
-.side-dock:empty {
-	display: none;
-}
-@media (min-width: 1280px) {
-	.side-dock {
-		position: relative;
-		flex: 0 0 var(--activity-panel-width, 460px);
-		inline-size: auto;
-		min-inline-size: 0;
+@media (hover: hover) {
+	.step-row:hover {
+		background: var(--hover);
 	}
 }
-.side-dock > * {
-	display: contents;
+.step-icon,
+.step-chevron {
+	display: grid;
+	flex: none;
+	place-items: center;
+	color: var(--muted);
 }
-.activity-panel {
-	position: relative;
-	transition: opacity var(--semantic-transition-fade);
-	inset: auto;
+.step-chevron {
+	color: var(--faint);
+}
+.step-words {
 	flex: 1;
-	inline-size: 100%;
-	max-inline-size: none;
-	block-size: 100%;
-	max-block-size: none;
-	border: 0;
-	border-radius: 0;
-	box-shadow: none;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
-/* On a phone, the sheet and its backdrop over the chat's layers (the composer, the scroll-down button), like p2's
-   own sheets (.sheet-layer). */
-.activity-sheet-layer {
-	z-index: 38;
+.step-name {
+	font-weight: var(--fw-strong);
 }
-/* Docked, the panel fades in and out where it is: no slide in from the edge as on a phone. */
-.activity-panel[data-starting-style],
-.activity-panel[data-ending-style] {
-	opacity: 0;
-	transform: none;
+.step-argument {
+	margin-left: var(--s2);
+	color: var(--muted);
+	font-family: var(--mono);
+	font-size: var(--fs-code);
+}
+.step-state {
+	flex: none;
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	font-variant-numeric: tabular-nums;
+}
+.step-state[data-state="error"] {
+	color: var(--bad);
+}
+/* A call's detail: the sheet's padding, the sections apart. */
+.activity-detail {
+	display: flex;
+	flex-direction: column;
+	gap: var(--s4);
+	min-width: 0;
 }
 
 /* A history tool's entries (Detail.tsx): each a row that opens its message in the transcript. */
