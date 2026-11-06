@@ -22,8 +22,10 @@ to local execution when configuration, trust or a connection is unavailable.
 Session groups and the top bar display `gpu:/path`. The catalog stores the raw cwd and a separate `env` field.
 Every conversation works at a location `{ env, cwd }`: the main conversation at the session's; a subagent spawned
 without a cwd follows it; a subagent spawned with a cwd keeps its own, on the environment of the conversation that
-spawned it (its sidebar row, bar, workspace header and terminal tabs show `env:/path`). Deleting an environment is
-refused while any session or subagent location, including archived ones, references it. Editing a valid
+spawned it (its sidebar row, bar, workspace header and terminal tabs show `env:/path`). Deleting an environment
+lists the sessions using it (working there or with a subagent there, archived ones included) and asks for a
+confirmation while there are any: their history stays, and their tools refuse to run until they move to another
+location (they never fall back to this device). An SSH environment with sandboxes on it is deleted only after them. Editing a valid
 configuration stops the idle workers using it; busy workers finish on their captured environment and stop when idle.
 Opening the session again loads the new revision without replaying a prompt.
 
@@ -63,8 +65,8 @@ starts, stops and deletes sandboxes, in the Envs sheet; plugins pick an existing
   empty or missing list allows no host. Allowed names that resolve to private addresses are refused too. Other
   protocols are not routed.
 - **Lifecycle:** one long-lived VM per sandbox, shared by every session working in it. It starts at the first
-  connection (or **Start**, **Save and start**, **Test**) and runs until **Stop**, deleting the sandbox or moving it to
-  another host (both stop it first), the VM dying (the supervisor notices within seconds; the next connection starts
+  connection (or **Start**, **Save and start**, **Test**) and runs until **Stop**, deleting the sandbox (which stops it
+  and removes its run directory) or moving it to another host (which stops it first), the VM dying (the supervisor notices within seconds; the next connection starts
   a new one) or a host reboot. Other configuration changes apply at its next start: the sheet says so while the
   running VM is older, and offers **Save and restart**.
 - **Connection:** the worker connects to the host over SSH as for the host itself, deploys pi-env's daemon there

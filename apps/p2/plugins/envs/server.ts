@@ -157,12 +157,21 @@ export default defineFacet((host) => {
 			([configs, sessions, tests, children]) =>
 				Object.entries(configs)
 					.sort(([a], [b]) => a.localeCompare(b))
-					.map(([name, config]) => ({
-						name,
-						config,
-						sessions: sessionsUsing(name, sessions, children).length,
-						...(tests[name] && tests[name].revision === envRevision(config) ? { test: tests[name].test } : {}),
-					})),
+					.map(([name, config]) => {
+						const users = sessionsUsing(name, sessions, children);
+						return {
+							name,
+							config,
+							sessions: users.length,
+							users: users.map((session) => ({
+								id: session.id,
+								title: session.title,
+								main: session.main,
+								archived: session.archivedAt !== null,
+							})),
+							...(tests[name] && tests[name].revision === envRevision(config) ? { test: tests[name].test } : {}),
+						};
+					}),
 		);
 		return {
 			variant: "owner",
@@ -179,8 +188,8 @@ export default defineFacet((host) => {
 					await service.reload(ctx);
 					return null;
 				},
-				delete: async ({ name }, ctx) => {
-					await manager().manager.delete(name);
+				delete: async ({ name, force }, ctx) => {
+					await manager().manager.delete(name, force === true);
 					await service.reload(ctx);
 					return null;
 				},

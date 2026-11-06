@@ -1,5 +1,5 @@
 // p2's sandbox program on a host environment: one long-lived Gondolin VM per sandbox, held by a supervisor process
-// (`serve`), and the commands p2 runs over SSH (`daemon`, `start`, `status`, `stop`). `daemon` starts the supervisor
+// (`serve`), and the commands p2 runs over SSH (`daemon`, `start`, `status`, `stop`, `forget`). `daemon` starts the supervisor
 // when the sandbox is not running, then runs the pi-env daemon in the VM with stdin and stdout passed through, so p2
 // talks to the daemon in the VM as it does to one on any other machine. Started by p2-sandbox.sh, natively or in Docker.
 
@@ -51,6 +51,12 @@ async function main(args) {
 			return print((await tryRequest(name, { op: "status" })) ?? { state: "stopped" });
 		case "stop":
 			return print((await tryRequest(name, { op: "stop" })) ?? { state: "stopped" });
+		case "forget": {
+			// The sandbox is being deleted: stop it, then remove its run directory (its log) too.
+			const stopped = (await tryRequest(name, { op: "stop" })) ?? { state: "stopped" };
+			rmSync(runDir(name), { recursive: true, force: true });
+			return print(stopped);
+		}
 		case "serve":
 			return serve(name, parseConfig(rest[0]));
 		default:

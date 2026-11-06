@@ -130,16 +130,16 @@ export class EnvManager {
 	}
 
 	/**
-	 * Refused while any session, archived or not, references the env: sessions never fall back to local tools. A
-	 * sandbox's VM is stopped first (nothing could stop it once its configuration is gone); deleting is refused when that
-	 * fails.
+	 * Refused while any session, archived or not, references the env, unless `force`: sessions never fall back to local
+	 * tools, so theirs refuse to run until they move. A sandbox's VM is stopped and its run directory removed first
+	 * (nothing could stop it once its configuration is gone); deleting is refused when that fails.
 	 */
-	async delete(name: string): Promise<void> {
+	async delete(name: string, force = false): Promise<void> {
 		const uses = await this.uses(name);
-		if (uses > 0) throw new Error(`${uses} session${uses === 1 ? "" : "s"} still use "${name}"`);
+		if (uses > 0 && !force) throw new Error(`${uses} session${uses === 1 ? "" : "s"} still use "${name}"`);
 		const configs = await loadEnvs(this.directory);
 		if (Object.hasOwn(configs, name) && configs[name]?.type === "gondolin")
-			await this.sandboxStop(name).catch((error: unknown) => {
+			await this.sandboxCommand(name, "forget").catch((error: unknown) => {
 				throw new Error(`Could not stop sandbox ${name}'s VM, so it was not deleted: ${errorMessage(error)}`);
 			});
 		await saveEnv(this.directory, name, undefined);
@@ -315,7 +315,7 @@ export class EnvManager {
 	}
 
 	/** Run a launcher command for sandbox `name` on its host and read the VM's state from its answer. */
-	private async sandboxCommand(name: string, command: "status" | "start" | "stop"): Promise<SandboxStatus> {
+	private async sandboxCommand(name: string, command: "status" | "start" | "stop" | "forget"): Promise<SandboxStatus> {
 		const { config, target, remote } = await this.sandboxTarget(name);
 		const key = sandboxKey(this.directory, name);
 		const args = command === "start" ? [command, key, sandboxArgument(config)] : [command, key];

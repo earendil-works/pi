@@ -48,10 +48,15 @@ export const EnvTestSchema = union([
 	}),
 ]);
 export type EnvTest = Static<typeof EnvTestSchema>;
+/** A session using an environment (working there, or with a subagent whose own location is there). */
+export const EnvUserSchema = obj({ id: str(), title: str(), main: num(), archived: bool() });
+export type EnvUser = Static<typeof EnvUserSchema>;
 export const EnvSummarySchema = obj({
 	name: str(),
 	config: EnvConfigSchema,
 	sessions: num(),
+	/** The sessions counted in `sessions` (the Envs sheet's list; absent from `list`). */
+	users: opt(arr(EnvUserSchema)),
 	test: opt(EnvTestSchema),
 });
 export type EnvSummary = Static<typeof EnvSummarySchema>;
@@ -92,7 +97,11 @@ export const Envs = remote("p2.envs", {
 				/** Starts every environment's SSH connection in the background (the folder picker opened). */
 				warm: method(),
 				save: method(obj({ name: str(), config: EnvConfigSchema })),
-				delete: method(Name),
+				/**
+				 * Refused while sessions use the env unless `force`: their history stays, and their tools refuse to run
+				 * until they move to another location (never on this device instead).
+				 */
+				delete: method(obj({ name: str(), force: opt(bool()) })),
 				test: method(Name, EnvTestSchema),
 				acceptHostKey: method(obj({ name: str(), lines: arr(str()) })),
 				forgetHostKey: method(Name),

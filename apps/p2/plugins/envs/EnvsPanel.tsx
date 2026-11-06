@@ -3,6 +3,7 @@ import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import {
 	ChevronIcon,
 	CopyButton,
+	conversationRoute,
 	errorText,
 	LockIcon,
 	PlusIcon,
@@ -14,7 +15,7 @@ import {
 	useReadable,
 } from "@p2/app/v1/web";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
-import { type EnvSummary, Envs, type EnvTest, type SandboxStatus } from "./contract.ts";
+import { type EnvSummary, Envs, type EnvTest, type EnvUser, type SandboxStatus } from "./contract.ts";
 import { ENV_NAME, type EnvConfig, type GondolinEnvConfig, type SandboxMount, type SshEnvConfig } from "./schema.ts";
 
 type SshDraft = {
@@ -695,6 +696,22 @@ function VmStatus({ vm, host }: { vm: VmState | undefined; host: string }) {
 	);
 }
 
+/** The sessions using an environment (archived ones too), each opening its session. */
+function UsersList({ users, onOpen }: { users: readonly EnvUser[]; onOpen: (user: EnvUser) => void }) {
+	return (
+		<div className="list env-users">
+			<span className="label">Used by {plural(users.length, "session")}</span>
+			{users.map((user) => (
+				<button type="button" key={user.id} className="row-button" onClick={() => onOpen(user)}>
+					<span>{user.title || "Untitled"}</span>
+					{user.archived && <small className="row-value">archived</small>}
+					<ChevronIcon />
+				</button>
+			))}
+		</div>
+	);
+}
+
 function SandboxRow({
 	env,
 	vm,
@@ -1011,36 +1028,47 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 					</div>
 				)}
 				<div className="list">
+					{existing && sessions > 0 && (
+						<UsersList
+							users={saved?.users ?? []}
+							onOpen={(user) => void nav.push(conversationRoute(nav.route, user.id, user.main))}
+						/>
+					)}
 					{existing &&
-						(sessions > 0 ? (
-							<p className="muted small">
-								Used by {plural(sessions, "session")} (archived ones included); it cannot be deleted while they
-								exist.
-							</p>
-						) : hostedSandboxes.length > 0 ? (
+						(hostedSandboxes.length > 0 ? (
 							<p className="muted small">Sandboxes run on it; delete them before the environment.</p>
 						) : confirmDelete ? (
-							<div className="inline-form">
-								<span className="small">Delete "{name}"?</span>
-								<button
-									type="button"
-									className="text-action danger"
-									onClick={() => {
-										if (!service) return;
-										setError(undefined);
-										edit({ kind: "delete", name }, () => service.delete({ name }, BACKGROUND_CONTEXT));
-										toScreen(undefined, "close");
-									}}
-								>
-									Delete
-								</button>
-								<button type="button" className="text-action" onClick={() => setConfirmDelete(false)}>
-									Cancel
-								</button>
+							<div className="stack">
+								<span className="small">
+									Delete "{name}"
+									{sessions > 0
+										? ` anyway? ${plural(sessions, "session")} keep their history, but their tools refuse to run until you move them to another location.`
+										: "?"}
+								</span>
+								<div className="inline-form">
+									<button
+										type="button"
+										className="text-action danger"
+										onClick={() => {
+											if (!service) return;
+											setError(undefined);
+											edit({ kind: "delete", name }, () =>
+												service.delete({ name, force: sessions > 0 }, BACKGROUND_CONTEXT),
+											);
+											toScreen(undefined, "close");
+										}}
+									>
+										Delete
+									</button>
+									<button type="button" className="text-action" onClick={() => setConfirmDelete(false)}>
+										Cancel
+									</button>
+								</div>
 							</div>
 						) : (
 							<button type="button" className="text-action danger" onClick={() => setConfirmDelete(true)}>
 								{sandbox ? "Delete sandbox" : "Delete environment"}
+								{sessions > 0 ? " anyway" : ""}
 							</button>
 						))}
 					<button type="button" className="text-action" onClick={() => toScreen(undefined, "close")}>
