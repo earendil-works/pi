@@ -44,6 +44,9 @@ replacing the old facet/service runtime and the `pi-client`, `pi-protocol` and `
   ```
   Update: `git pull`, `npm install --ignore-scripts` at the root if dependencies changed, then **Restart** in the app or
   `npm run reload -- --restart` (plugin changes: **Reload**).
+- **Per-host stores:** a p2 with per-host stores refuses a data directory in the older layout. Once: stop p2,
+  `npm run migrate-data -- --dry-run`, then `npm run migrate-data` (old files go to `~/.pi/p2/pre-files-backup/`;
+  `scripts/data-report.ts` before and `--compare` after), then start it (`docs/p2-notes.md`, Migration).
 - **Tunnel:** ngrok as a termux-services (runit) service, `$PREFIX/var/service/ngrok/run`, forwarding
   `https://pim.ngrok.pro` to port 8787 (`sv status|restart $PREFIX/var/service/ngrok`; logs in
   `$PREFIX/var/log/ngrok/current`).

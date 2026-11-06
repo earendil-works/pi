@@ -1,6 +1,8 @@
-// Uploads (POST /upload, attached to messages by ID) and download snapshots (GET /download), owner and guests.
+// Uploads (POST /upload into the session's files, attached to messages by ID and materialized) and download snapshots
+// (GET /download), owner and guests; the server's mirror of the session's file summaries.
 
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -8,12 +10,11 @@ import type { UserMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
-import type { Attachment } from "../../plugins/files/contract.ts";
-import { DownloadStore } from "../../plugins/files/contract.ts";
+import { DownloadStore, FileSummaries, type Uploaded } from "../../plugins/files/contract.ts";
 import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import type { RefIn } from "../../src/runtime/chord.ts";
-import { type Fixture, holdIn, http, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, http, poll, startFixture, until } from "./helpers.ts";
 
 const PNG = Buffer.from(
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -74,26 +75,29 @@ describe("files (fake provider)", () => {
 		await fixture?.close();
 	});
 
-	it("stores uploads outside the project, same-origin only", async () => {
+	it("stores uploads in the session's files, same-origin only; the server mirrors their summary", async () => {
 		assert.equal((await upload(session.id, "a.txt", "x", {})).status, 403, "no Origin");
 		assert.equal((await upload(session.id, "a.txt", "x", { Origin: "https://evil.test" })).status, 403);
 		assert.equal((await upload("missing", "a.txt", "x")).status, 400);
 		assert.equal((await upload(session.id, "", "x")).status, 400);
 		const response = await upload(session.id, "../../evil notes.txt", "uploaded-sentinel\n");
 		assert.equal(response.status, 200, response.body);
-		const text = JSON.parse(response.body) as Attachment;
-		assert.equal(text.name, "evil_notes.txt");
-		assert.equal(text.path, join(fixture.dataDir, "uploads", session.id, `${text.id}-evil_notes.txt`));
-		assert.equal((await stat(text.path)).mode & 0o777, 0o600);
-		assert.equal(await readFile(text.path, "utf8"), "uploaded-sentinel\n");
+		const text = JSON.parse(response.body) as Uploaded;
+		assert.deepEqual(text, { id: text.id, name: "evil_notes.txt", size: 18 });
 		assert.deepEqual(await readdir(fixture.workspace), [], "nothing is written into the project");
+		// The worker pushed the space's summary to the server before the upload answered.
+		const mirror = await holdIn(fixture.browser(), FileSummaries, {}, "owner");
+		const spaces = await mirror.of({ session: session.id }, BACKGROUND_CONTEXT);
+		assert.equal(spaces.uploads?.files, 1);
+		assert.equal(spaces.uploads?.newest[0]?.source, "owner");
+		assert.equal(spaces.uploads?.newest[0]?.key, text.id);
 	});
 
-	it("attaches uploads to messages by ID: paths listed, images inline", async () => {
-		const text = JSON.parse((await upload(session.id, "notes.txt", "hello")).body) as Attachment;
-		const image = JSON.parse((await upload(session.id, "dot.png", PNG)).body) as Attachment;
+	it("attaches uploads to messages by ID, materialized on this machine: paths listed, images inline", async () => {
+		const text = JSON.parse((await upload(session.id, "notes.txt", "hello")).body) as Uploaded;
+		const image = JSON.parse((await upload(session.id, "dot.png", PNG)).body) as Uploaded;
 		assert.equal(image.mimeType, "image/png");
-		const foreign = JSON.parse((await upload(other.id, "private.txt", "private")).body) as Attachment;
+		const foreign = JSON.parse((await upload(other.id, "private.txt", "private")).body) as Uploaded;
 		await assert.rejects(
 			chat.send({ text: "x", requestId: "bad", attachments: ["../../etc/passwd"] }, BACKGROUND_CONTEXT),
 			/Unknown attachment/,
@@ -107,8 +111,13 @@ describe("files (fake provider)", () => {
 		const view = await until(chat.view, (value) => userMessages(value).length > 0);
 		const content = userMessages(view)[0]?.content;
 		assert(Array.isArray(content));
+		// This machine's copies: under the data directory's `uploads/<session>/`, private, outside the project.
+		const textPath = join(fixture.dataDir, "uploads", session.id, `${text.id}-notes.txt`);
+		const imagePath = join(fixture.dataDir, "uploads", session.id, `${image.id}-dot.png`);
 		const note = content.find((part) => part.type === "text" && part.text.includes("<attachments>"));
-		assert(note?.type === "text" && note.text.includes(text.path) && note.text.includes(image.path));
+		assert(note?.type === "text" && note.text.includes(textPath) && note.text.includes(imagePath));
+		assert.equal(await readFile(textPath, "utf8"), "hello");
+		assert.equal((await stat(textPath)).mode & 0o777, 0o600);
 		// The fake model accepts images, so the PNG is also inlined.
 		const inline = content.find((part) => part.type === "image");
 		assert(inline?.type === "image" && inline.mimeType === "image/png" && inline.data === PNG.toString("base64"));
@@ -170,5 +179,56 @@ describe("files (fake provider)", () => {
 		const uploaded = await upload(session.id, "guest.txt", "from guest", { ...TUNNEL, Cookie: writer });
 		assert.equal(uploaded.status, 200, uploaded.body);
 		assert.equal((await upload(other.id, "a.txt", "x", { ...TUNNEL, Cookie: writer })).status, 403);
+	});
+
+	it("answers at once for an archived or unknown session, never waiting for its worker", async () => {
+		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		const archived = await sessions.create({ cwd: fixture.workspace, title: "Archived" }, BACKGROUND_CONTEXT);
+		const archivedChat = await holdIn(
+			fixture.browser(),
+			Chat,
+			{ session: archived.id, conversation: 1 },
+			"participant",
+		);
+		await archivedChat.send({ text: "artifact", requestId: "archived-artifact" }, BACKGROUND_CONTEXT);
+		const artifact = `/artifact?${new URLSearchParams({ session: archived.id, name: "demo", version: "1" })}`;
+		await poll(
+			async () => (await http(fixture.server.port, artifact)).status === 200,
+			30_000,
+			"the artifact is saved",
+		);
+		archivedChat.release();
+		const source = join(fixture.dataDir, "archived.txt");
+		await writeFile(source, "archived");
+		const sent = await snapshot(archived.id, source);
+		const download = `/download?session=${archived.id}&id=${sent.id}`;
+		assert.equal((await http(fixture.server.port, download)).status, 200);
+		await sessions.archive({ id: archived.id }, BACKGROUND_CONTEXT);
+		await until(sessions.sessions, (rows) => rows?.find((row) => row.id === archived.id)?.archivedAt !== null);
+		const started = Date.now();
+		assert.equal((await http(fixture.server.port, artifact)).status, 404);
+		assert.equal((await http(fixture.server.port, download)).status, 404);
+		assert.equal((await http(fixture.server.port, download, { method: "HEAD" })).status, 404);
+		assert.equal((await upload(archived.id, "late.txt", "x")).status, 409);
+		const unknown = randomUUID();
+		assert.equal((await http(fixture.server.port, `/download?session=${unknown}&id=${sent.id}`)).status, 404);
+		assert.equal(
+			(
+				await http(
+					fixture.server.port,
+					`/artifact?${new URLSearchParams({ session: unknown, name: "demo", version: "1" })}`,
+				)
+			).status,
+			404,
+		);
+		await assert.rejects(snapshot(archived.id, source), /archived/);
+		// A worker start that is refused would take a minute per request.
+		assert.ok(Date.now() - started < 5_000, `answered in ${Date.now() - started} ms`);
+		await sessions.restore({ id: archived.id }, BACKGROUND_CONTEXT);
+		await poll(
+			async () => (await http(fixture.server.port, download)).status === 200,
+			30_000,
+			"served again once restored",
+		);
 	});
 });

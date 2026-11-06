@@ -1,5 +1,5 @@
 // A read-only report of what a p2 data directory holds, to check that nothing was lost across a deploy that changes
-// no data (the move to Chord v2): sessions with their conversations and newest entries, subagents, shares, artifacts,
+// no data (the move to Chord v2) or across `npm run migrate-data` (it reads either layout): sessions with their conversations and newest entries, subagents, shares, artifacts,
 // uploads and downloads, and the names of environments and port forwards. Never secrets: no tokens, cookies, keys,
 // forward addresses or message text. Every SQLite file is opened read-only, so it runs beside a live server.
 //
@@ -58,7 +58,7 @@ export function dataReport(dataDir: string): DataReport {
 			location: located(row.env === null ? null : String(row.env), String(row.cwd)),
 			archived: row.archivedAt !== null,
 			updatedAt: Number(row.updatedAt),
-			conversations: conversationsOf(join(dataDir, "sessions", `${id}.sqlite`)),
+			conversations: conversationsOf(dataDir, id),
 			subagents: (children.get(id) ?? [])
 				.filter((child) => child.kind !== "agent")
 				.map((child) => ({
@@ -72,11 +72,7 @@ export function dataReport(dataDir: string): DataReport {
 				}))
 				.sort((a, b) => a.name.localeCompare(b.name)),
 			shares: shares.get(id) ?? { links: [], guests: [] },
-			artifacts: artifactsOf(join(dataDir, "artifacts", id)),
-			uploads: entriesIn(join(dataDir, "uploads", id)).length,
-			downloads: entriesIn(join(dataDir, "downloads", id)).filter((download) =>
-				existsSync(join(dataDir, "downloads", id, download, "metadata.json")),
-			).length,
+			...filesOf(dataDir, id),
 		};
 	}
 	return {
@@ -111,6 +107,10 @@ function rows(path: string, sql: string): Row[] {
 	const db = new DatabaseSync(path, { readOnly: true });
 	try {
 		return db.prepare(sql).all() as Row[];
+	} catch (error) {
+		// A store whose owner never made its table (a session that never wrote a file) holds none of its rows.
+		if (error instanceof Error && error.message.includes("no such table")) return [];
+		throw error;
 	} finally {
 		db.close();
 	}
@@ -138,15 +138,54 @@ function sharesBySession(path: string): Map<string, { links: string[]; guests: s
 	return shares;
 }
 
-/** A session's conversations from its Durable store: entries and the newest entry ID of each. */
-function conversationsOf(path: string): Record<string, { entries: number; newest: number }> {
+/** A session's store in the layout before per-host stores (`sessions/<id>.sqlite`), when it is still there. */
+const oldStore = (dataDir: string, id: string): string => join(dataDir, "sessions", `${id}.sqlite`);
+
+/** A session's store (`sessions/<id>/store.sqlite`). */
+const sessionStore = (dataDir: string, id: string): string => join(dataDir, "sessions", id, "store.sqlite");
+
+/**
+ * A session's conversations from its Durable records: entries and the newest entry ID of each. Either layout, so a
+ * report from before the migration compares with one after it.
+ */
+function conversationsOf(dataDir: string, id: string): Record<string, { entries: number; newest: number }> {
 	const conversations: Record<string, { entries: number; newest: number }> = {};
+	const [path, table] = existsSync(oldStore(dataDir, id))
+		? [oldStore(dataDir, id), "entries"]
+		: [sessionStore(dataDir, id), '"p2.durable:entries"'];
 	for (const row of rows(
 		path,
-		"SELECT conversation_id AS id, count(*) AS entries, max(id) AS newest FROM entries GROUP BY conversation_id ORDER BY conversation_id",
+		`SELECT conversation_id AS id, count(*) AS entries, max(id) AS newest FROM ${table} GROUP BY conversation_id ORDER BY conversation_id`,
 	))
 		conversations[String(row.id)] = { entries: Number(row.entries), newest: Number(row.newest) };
 	return conversations;
+}
+
+/**
+ * A session's artifacts (versions per name), uploads and downloads: from the directories of the old layout while its
+ * old store is there, else from the session's `Files` index.
+ */
+function filesOf(
+	dataDir: string,
+	id: string,
+): { artifacts: Record<string, number>; uploads: number; downloads: number } {
+	if (existsSync(oldStore(dataDir, id)))
+		return {
+			artifacts: artifactsOf(join(dataDir, "artifacts", id)),
+			uploads: entriesIn(join(dataDir, "uploads", id)).length,
+			downloads: entriesIn(join(dataDir, "downloads", id)).filter((download) =>
+				existsSync(join(dataDir, "downloads", id, download, "metadata.json")),
+			).length,
+		};
+	const files = rows(sessionStore(dataDir, id), 'SELECT space, path FROM "chord.app.files:files" ORDER BY path');
+	const artifacts: Record<string, number> = {};
+	for (const row of files.filter((file) => file.space === "artifacts"))
+		artifacts[String(row.path)] = (artifacts[String(row.path)] ?? 0) + 1;
+	return {
+		artifacts,
+		uploads: files.filter((file) => file.space === "uploads").length,
+		downloads: files.filter((file) => file.space === "downloads").length,
+	};
 }
 
 /** The artifacts of a session's directory (`<name>/<version>/version.json`): their number of versions. */

@@ -24,6 +24,7 @@ import workspaceWorker from "../../plugins/workspace/worker.ts";
 import { type Ctx, createHost, defineFacet, Session } from "../../src/runtime/chord.ts";
 import { durableContext, ExtensionSwitches } from "../../src/runtime/durable.ts";
 import { FileIndexCache } from "../../src/runtime/file-index.ts";
+import { openHostStore, sessionDirectory } from "../../src/runtime/host-dirs.ts";
 import { HOST } from "../../src/runtime/principals.ts";
 import {
 	ConversationLocations,
@@ -107,9 +108,11 @@ async function worker(t: test.TestContext, start: Location, machines: Record<str
 			},
 		}),
 	);
+	const store = await openHostStore(sessionDirectory(dataDir, "s1"), { outbox: false }, BACKGROUND_CONTEXT);
 	const host = createHost({
 		address: Session({ id: "s1" }),
 		principal: HOST,
+		store,
 		onError: (error) => console.error(error),
 	});
 	const init: WorkerInit = {
@@ -120,7 +123,7 @@ async function worker(t: test.TestContext, start: Location, machines: Record<str
 		values: { session: { id: "s1", ...start, model: MODEL, thinkingLevel: "off" } },
 	};
 	const location = new SessionLocation(start);
-	const core = workerCore(init, new Liveness(), location, (fn) => host.root(fn, BACKGROUND_CONTEXT));
+	const core = workerCore(init, new Liveness(), location, store, (fn) => host.root(fn, BACKGROUND_CONTEXT));
 	await host.load(
 		[
 			{ name: "@p2/core", facet: core },
@@ -140,6 +143,7 @@ async function worker(t: test.TestContext, start: Location, machines: Record<str
 	t.after(async () => {
 		holder.release();
 		await host.close(BACKGROUND_CONTEXT);
+		await store.close(BACKGROUND_CONTEXT);
 	});
 	const relocate = (next: Location) => host.root((ctx: Ctx) => harness.relocate(next, ctx), BACKGROUND_CONTEXT);
 	/** A subagent conversation working at `own` (its own location), else following the session. */

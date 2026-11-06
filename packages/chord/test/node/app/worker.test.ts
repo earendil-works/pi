@@ -20,9 +20,17 @@ describe("a worker's directory", () => {
 		notes.release();
 		const dir = join(dataDir, "workers", "project", "project%7Cp1");
 		expect((await readdir(dir)).sort()).toEqual(expect.arrayContaining(["files", "store.sqlite"]));
-		expect(await readdir(join(dir, "files"))).toContain(file);
+		// The file's bytes are one blob in `files/blobs/`; its version id is the index's.
+		const [blob, ...more] = await readdir(join(dir, "files", "blobs"));
+		expect(more).toEqual([]);
 		const mode = async (path: string) => (await stat(path)).mode & 0o777;
-		const paths = [dir, join(dir, ".."), join(dir, "store.sqlite"), join(dir, "files"), join(dir, "files", file)];
+		const paths = [
+			dir,
+			join(dir, ".."),
+			join(dir, "store.sqlite"),
+			join(dir, "files"),
+			join(dir, "files", "blobs", blob!),
+		];
 		expect(await Promise.all(paths.map(mode))).toEqual([0o700, 0o700, 0o600, 0o700, 0o600]);
 		const workers = app.workers.get("project")!;
 		await workers.stop(Project({ id: "p1" }), context);

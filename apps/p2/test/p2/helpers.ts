@@ -339,6 +339,9 @@ export function workerFacet(parts: {
 				if (!parts.host) throw new Error("no root in this test worker");
 				return parts.host().root(fn, context);
 			},
+			copyFilesTo: async () => {
+				throw new Error("no files in this test worker");
+			},
 			...parts.worker,
 		});
 	});

@@ -1,12 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, mkdir, open, rename, rm } from "node:fs/promises";
-import { join } from "node:path";
+import type { Ctx, Ref } from "@p2/app/v1";
+import { ARTIFACTS, type Files, readWhole } from "@p2/app/v1/node";
 
 export const MAX_ARTIFACT_BYTES = 2 * 1024 * 1024;
-// JSON can escape each content byte as six ASCII bytes, plus bounded metadata.
-const MAX_SERIALIZED_BYTES = MAX_ARTIFACT_BYTES * 6 + 4096;
-const SESSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const TYPES = ["html", "svg", "markdown", "text"] as const;
 
@@ -91,135 +86,59 @@ function validateInput(value: unknown): ArtifactInput {
 	return { name: value.name, title: value.title, type: value.type, content: value.content };
 }
 
-async function privateDirectory(path: string, create: boolean): Promise<void> {
-	if (create) {
-		try {
-			await mkdir(path, { mode: 0o700 });
-		} catch (error) {
-			if (!record(error) || error.code !== "EEXIST") throw error;
-		}
-	}
-	const stat = await lstat(path);
-	if (!stat.isDirectory() || (stat.mode & 0o077) !== 0) throw new Error("Invalid private directory");
+/** The type an artifact's bytes are stored with. */
+const MIME: Record<ArtifactType, string> = {
+	html: "text/html",
+	svg: "image/svg+xml",
+	markdown: "text/markdown",
+	text: "text/plain",
+};
+
+/**
+ * Saves `input` as the next version of its artifact in the session's files (space `artifacts`, path = its name, Files
+ * versions = artifact versions, never reused), written by the agent of conversation `ref`. Locators do not authorize
+ * access; callers must authorize the session.
+ */
+export async function saveArtifact(
+	files: Ref<typeof Files>,
+	input: ArtifactInput,
+	ref: string,
+	ctx: Ctx,
+): Promise<ArtifactInfo> {
+	const value = validateInput(input);
+	const file = await files.put(
+		{
+			space: ARTIFACTS,
+			path: value.name,
+			mime: MIME[value.type],
+			source: "agent",
+			ref,
+			meta: { title: value.title, type: value.type },
+			bytes: Buffer.from(value.content, "utf8"),
+		},
+		ctx,
+	);
+	return { name: value.name, title: value.title, type: value.type, version: file.version };
 }
 
-/** Private immutable versions. Locators do not authorize access; callers must authorize the session.
- * The configured data directory and local filesystem writers are trusted, not a tool sandbox.
- */
-export class Artifacts {
-	readonly directory: string;
-	private readonly dataDirectory: string;
-	constructor(dataDirectory: string) {
-		this.dataDirectory = dataDirectory;
-		this.directory = join(dataDirectory, "artifacts");
-	}
-
-	async save(sessionId: string, input: ArtifactInput): Promise<ArtifactInfo> {
-		if (typeof sessionId !== "string" || sessionId.length !== 36 || !SESSION.test(sessionId))
-			throw new ArtifactError(400, "Invalid session");
-		const value = validateInput(input);
-		const session = join(this.directory, sessionId);
-		const artifact = join(session, value.name);
-		let temporary: string | undefined;
-		try {
-			await mkdir(this.dataDirectory, { recursive: true, mode: 0o700 });
-			await privateDirectory(this.dataDirectory, false);
-			await privateDirectory(this.directory, true);
-			await privateDirectory(session, true);
-			await privateDirectory(artifact, true);
-			let version = 1;
-			let folder: string;
-			// Exclusive directory creation claims a number across stores/processes. Never reuse
-			// abandoned claims: an interrupted version stays absent from readable history.
-			for (;;) {
-				folder = join(artifact, String(version));
-				try {
-					await mkdir(folder, { mode: 0o700 });
-					break;
-				} catch (error) {
-					if (!record(error) || error.code !== "EEXIST") throw error;
-					if (version === Number.MAX_SAFE_INTEGER) throw new Error("Version limit reached");
-					version++;
-				}
-			}
-			const info: ArtifactInfo = { name: value.name, title: value.title, type: value.type, version };
-			const serialized = JSON.stringify({ info, content: value.content });
-			if (Buffer.byteLength(serialized, "utf8") > MAX_SERIALIZED_BYTES) throw new Error("Invalid serialized size");
-			temporary = join(folder, `.version-${randomUUID()}.tmp`);
-			const output = await open(temporary, "wx", 0o600);
-			try {
-				await output.writeFile(serialized, "utf8");
-				await output.sync();
-			} finally {
-				await output.close();
-			}
-			// One atomic publication point: metadata and content cannot be observed separately.
-			await rename(temporary, join(folder, "version.json"));
-			temporary = undefined;
-			return info;
-		} catch {
-			throw new ArtifactError(500, "Could not save artifact");
-		} finally {
-			if (temporary) await rm(temporary, { force: true }).catch(() => {});
-		}
-	}
-
-	async read(sessionId: string, name: string, version: number): Promise<{ info: ArtifactInfo; content: string }> {
-		if (
-			typeof sessionId !== "string" ||
-			sessionId.length !== 36 ||
-			!SESSION.test(sessionId) ||
-			!validName(name) ||
-			!validVersion(version)
-		)
-			throw new ArtifactError(404, "Artifact not found");
-		try {
-			const session = join(this.directory, sessionId);
-			const artifact = join(session, name);
-			const folder = join(artifact, String(version));
-			for (const path of [this.dataDirectory, this.directory, session, artifact, folder])
-				await privateDirectory(path, false);
-			const file = await open(
-				join(folder, "version.json"),
-				constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
-			);
-			let parsed: unknown;
-			try {
-				const stat = await file.stat();
-				if (!stat.isFile() || stat.size > MAX_SERIALIZED_BYTES || (stat.mode & 0o077) !== 0)
-					throw new Error("Invalid artifact file");
-				const buffer = Buffer.alloc(Math.min(stat.size + 1, MAX_SERIALIZED_BYTES + 1));
-				let size = 0;
-				for (;;) {
-					const { bytesRead } = await file.read(buffer, size, buffer.length - size, null);
-					if (!bytesRead) break;
-					size += bytesRead;
-					if (size === buffer.length) throw new Error("Artifact file changed or exceeds limit");
-				}
-				const text = buffer.subarray(0, size).toString("utf8");
-				if (!buffer.subarray(0, size).equals(Buffer.from(text, "utf8"))) throw new Error("Invalid UTF-8");
-				parsed = JSON.parse(text);
-			} finally {
-				await file.close();
-			}
-			if (
-				!record(parsed) ||
-				Object.keys(parsed).sort().join(",") !== "content,info" ||
-				!record(parsed.info) ||
-				Object.keys(parsed.info).sort().join(",") !== "name,title,type,version" ||
-				parsed.info.name !== name ||
-				parsed.info.version !== version
-			)
-				throw new Error("Invalid artifact metadata");
-			const value = validateInput({
-				name: parsed.info.name,
-				title: parsed.info.title,
-				type: parsed.info.type,
-				content: parsed.content,
-			});
-			return { info: { name, title: value.title, type: value.type, version }, content: value.content };
-		} catch {
-			throw new ArtifactError(404, "Artifact not found");
-		}
+/** Version `version` of artifact `name` of the session's files; a missing or invalid one is "Artifact not found". */
+export async function readArtifact(
+	files: Ref<typeof Files>,
+	name: string,
+	version: number,
+	ctx: Ctx,
+): Promise<{ info: ArtifactInfo; content: string }> {
+	if (!validName(name) || !validVersion(version)) throw new ArtifactError(404, "Artifact not found");
+	const file = await files.get({ space: ARTIFACTS, path: name, version }, ctx);
+	if (file === null || file.size > MAX_ARTIFACT_BYTES) throw new ArtifactError(404, "Artifact not found");
+	const bytes = await readWhole(files, file, ctx);
+	const content = bytes.toString("utf8");
+	const meta = record(file.meta) ? file.meta : {};
+	try {
+		const value = validateInput({ name, title: meta.title, type: meta.type, content });
+		if (!bytes.equals(Buffer.from(content, "utf8"))) throw new Error("Invalid UTF-8");
+		return { info: { name, title: value.title, type: value.type, version }, content: value.content };
+	} catch {
+		throw new ArtifactError(404, "Artifact not found");
 	}
 }

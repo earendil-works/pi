@@ -2629,6 +2629,39 @@ validation and copies the v2 kernel added around Delta.
   takes the method's `ctx` (without its cancellation); a session's worker owns its data and pushes what the server's
   index shows (title, branches, working state) to the server inside the method that changed it, never pulling from
   the server. p2 is rewritten by these rules (audit `/tmp/p2-optimistic-audit.md`).
+- **Files v2 (owner, 2026-11-05; p2's per-host stores brief):** the kit's `Files` is replaced (`chord.app.files`
+  version 2; the version 1 index, one document holding the whole map, is not migrated: nothing outside tests and
+  examples used it). One object per host, bytes in the host's `files/blobs/`, index in four tables of the host's
+  store (`files`: one row per version; `folders`; `blobs` with a reference count; `paths`, high-water marks) plus two persisted documents
+  (`summary` per space, `usage`). Spaces and paths, folders as index entries, moves in the index only, immutable
+  blobs with versions, `copy` sharing a blob, chunked writes as before, idempotency keys, fixed indexed metadata and
+  free `meta`, a summary per space, `copyFiles` and `filesFacet` exported. Decided in the build: (1) a version's id
+  is the id plugins keep (`FileInfo.id`); paths and version numbers are found through the index. (2) A version
+  number is never used twice for a path (owner's review, 2026-11-05: transcripts and links name an artifact by name
+  and version, so a reused number would show an old card new bytes): a `paths` table keeps each path's highest version
+  ever, through removals of versions, the path and its space; a new version is one past it. A move carries its
+  versions' numbers: the path left keeps its mark, the path moved to takes the higher of the two. (3) Changes of one `Files` object take turns (an in-memory queue
+  per attempt): a version number, a key's uniqueness per space and a blob's count are decided by reads before the
+  one transaction, never by a unique index (`key` is `""` when absent, and index columns cannot be `opt`). (4) A
+  folder listing shows the folder's folders first, then its files' newest versions, each by path; its cursor names
+  the part it continues. (5) Live listings are a second local type, `FilesFolder({ space, folder })`, following
+  (`self.follow`) what `Files` hands it: `self.query` is fixed per attempt and only for the declaring object, and
+  folders are dynamic. `Files` reads every watched folder of a changed space once, inside the changing method (one
+  read per watched folder and change). (6) The summary keeps the newest 20 versions by `created` (ties by id),
+  changed in the same commit as the change (the newest after a removal read before the commit, excluding what it
+  removes). (7) The total cap counts the blobs on disk (the `usage` document), so a copy costs nothing. (8) Blob
+  files a crash left without their commit are swept when the object goes live (one index read per blob file, under
+  the change queue). (9) `copyFiles` imports the part of the source store's export that is `Files`' own into a new
+  store and hard-links each blob (a copy where links are refused) while the export holds the source's commit queue,
+  so no removal can delete a blob the copied index names; it refuses an existing target. (10) `meta: null` is stored
+  as absent; space names are `[a-z0-9][a-z0-9._-]{0,63}`, paths at most 1,024 characters without empty, `.` or `..`
+  segments. (11) `cancel(upload)` drops an upload a writer gave up (a server route whose client went away), so it
+  holds neither a slot of the cap nor bytes for the hour until it expires. (12) `@earendil-works/chord/app/files`
+  exports `Files`, `FilesFolder`, `filesFacet`, `copyFiles` and the kit's private directories and stores without the
+  rest of the kit, for an app's worker process that must load neither esbuild nor the server's components (p2's). (13) A
+  write takes an optional `created` for imports (owner, 2026-11-05, after p2's migration dry run: every migrated file
+  had the migration's time, so newest-first orders meant nothing): the version keeps the time it was made elsewhere;
+  the summary's newest versions are kept in `created` order, not write order.
 - **Workers start from the base code the server booted with (owner, 2026-11-04: "let's do this for armin"; Armin's
   incident report, Radius artifact 01m6m3xek8fveayqgstayg8w92):** the problem: a worker loads its entry module and the
   base code it imports from disk when it is forked, while the server keeps what it loaded at boot. An edit of the

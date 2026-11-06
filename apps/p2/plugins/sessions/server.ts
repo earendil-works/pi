@@ -49,7 +49,7 @@ import {
 	Sessions,
 	SessionTransfer,
 } from "./contract.ts";
-import { copySessionDirectories, copySessionStore, removeSessionCopy, removeSessionDirectories } from "./copy.ts";
+import { copySessionDirectory, removeSessionCopy } from "./copy.ts";
 
 /** A row as `Sessions` v4 and `Catalog` v3 consumers read it: a null branch label is the session title. */
 function sessionV4(row: Session) {
@@ -388,8 +388,7 @@ export default defineFacet((host) => {
 						},
 						async () => {
 							await removeSessionCopy(dataDir, copy);
-							await copySessionStore(dataDir, id, copy);
-							await copySessionDirectories(dataDir, id, copy);
+							await copySessionDirectory(dataDir, id, copy);
 						},
 						"cloning",
 					);
@@ -425,8 +424,9 @@ export default defineFacet((host) => {
 				const dataDir = server.info.value.dataDir;
 				try {
 					if (ctx.state.value.copying) {
-						await removeSessionDirectories(dataDir, copy);
-						await copySessionDirectories(dataDir, id, copy);
+						await removeSessionCopy(dataDir, copy);
+						// The source's files, copied by its worker (its store is open there; it goes on meanwhile).
+						await (await ctx.get(SessionTransfer, { session: id })).copyFiles({ to: copy }, ctx);
 						await ctx.state.change((progress) => {
 							progress.copying = false;
 						}, ctx);

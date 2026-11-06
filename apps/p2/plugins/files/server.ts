@@ -1,14 +1,35 @@
-// Uploads (POST /upload) and download snapshots (GET /download) of a session's files.
+// Uploads (POST /upload) and download snapshots (GET /download) of a session's files, which live in the session's
+// worker (its `Files`): the routes check who may upload or view and stream the bytes through `SessionFiles` as the
+// server. The server's mirror of each session's file summaries (`FileSummaries`), pushed by the worker.
+import { once } from "node:events";
+import { constants } from "node:fs";
+import { open } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { pipeline } from "node:stream/promises";
-import { type Ctx, canSend, canView, contribute, defineFacet, filePreview } from "@p2/app/v1";
-import { DownloadError, Downloads } from "@p2/app/v1/node";
-import { fromOrigin, type RequestAccess, Routes, Server, sendJson } from "@p2/app/v1/server";
+import { basename } from "node:path";
+import { map, obj, type Static, str } from "@earendil-works/pi-schema";
+import {
+	type Ctx,
+	canSend,
+	canView,
+	contribute,
+	defineFacet,
+	defineState,
+	filePreview,
+	forbidden,
+	isOwner,
+	isWorker,
+	type JsonValue,
+	local,
+	method,
+	signalOf,
+	unsafe,
+	withAbortSignal,
+} from "@p2/app/v1";
+import { DownloadError, FILE_CHUNK, MAX_DOWNLOAD_BYTES } from "@p2/app/v1/node";
+import { fromOrigin, type RequestAccess, Routes, sendJson, serverOf } from "@p2/app/v1/server";
 import { Catalog } from "../sessions/contract.ts";
-import { DownloadStore } from "./contract.ts";
-import { MAX_UPLOAD_BYTES, UploadError, Uploads } from "./uploads.ts";
-
-/** Registers the upload and download routes. */
+import { DownloadStore, FileSummaries, SessionFiles, SpaceSummarySchema } from "./contract.ts";
+import { MAX_UPLOAD_BYTES, UploadError } from "./uploads.ts";
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -27,34 +48,116 @@ function byteRange(header: string | undefined, size: number): { start: number; e
 	return { start, end: Math.min(end, size - 1) };
 }
 
+/** A space summary as the mirror stores it: checked by its schema, kept as the JSON it is. */
+type StoredSummary = Static<typeof SpaceSummarySchema>;
+
+/** Every session's file summaries, by session (persisted: they show while the session's worker is stopped). */
+const Summaries = defineState("p2.file-summaries", {
+	// The summary's optional fields are absent, never undefined: JSON, which pi-schema's types cannot say.
+	schema: obj({ spaces: map(unsafe<JsonValue>(SpaceSummarySchema)) }),
+	version: 1,
+	initial: () => ({ spaces: {} }),
+	keyed: true,
+	persist: true,
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 20,
+});
+
+/** The mirror's store (server, host-internal): one document per session. */
+const SummaryIndex = local("p2.file-summary-index", {
+	version: 1,
+	params: {},
+	members: {
+		push: method(obj({ session: str(), space: str(), summary: SpaceSummarySchema })),
+		of: method(obj({ session: str() }), map(SpaceSummarySchema)),
+	},
+});
+
 export default defineFacet((host) => {
-	host.serve(DownloadStore, (_params, self) => {
-		const server = self.get(Server, {});
-		const downloads = self.open(
-			async () => new Downloads(server.info.value.dataDir),
-			() => {},
-		);
+	host.serve(SummaryIndex, (_params, self) => {
+		const summaries = self.state(Summaries);
 		return {
-			save: ({ session, path, name }) => downloads.value.save(session, path, name),
+			push: async ({ session, space, summary }, ctx) => {
+				await summaries.change(
+					session,
+					(draft) => {
+						// A summary is JSON (see `Summaries`).
+						draft.spaces[space] = summary as JsonValue;
+					},
+					ctx,
+				);
+				return null;
+			},
+			// Stored by `push`, checked by `SpaceSummarySchema`.
+			of: async ({ session }, ctx) =>
+				((await summaries.get(session, ctx))?.spaces ?? {}) as Record<string, StoredSummary>,
+		};
+	});
+
+	host.serve(FileSummaries, (_params, principal, self) => {
+		const index = self.get(SummaryIndex, {});
+		// A worker pushes its own session's only: the session comes from its principal, never from arguments.
+		if (isWorker(principal)) {
+			const { session } = principal;
+			return {
+				variant: "worker",
+				members: { push: ({ space, summary }, ctx) => index.push({ session, space, summary }, ctx) },
+			};
+		}
+		if (!isOwner(principal)) throw forbidden("file summaries are for the owner and session workers");
+		return { variant: "owner", members: { of: (args, ctx) => index.of(args, ctx) } };
+	});
+
+	host.serve(DownloadStore, (_params, self) => {
+		const catalog = self.get(Catalog, {});
+		return {
+			// A local object's method acts as the server: the session's worker answers it.
+			save: async ({ session, path, name }, ctx) => {
+				// An archived session's worker never starts: refused at once, never waited for.
+				if ((await catalog.get({ id: session }, ctx)).archivedAt !== null)
+					throw new DownloadError(409, "Session is archived");
+				// NONBLOCK avoids hanging on a named pipe before fstat rejects non-regular sources.
+				const source = await open(path, constants.O_RDONLY | constants.O_NONBLOCK).catch(() => {
+					throw new DownloadError(400, "Could not open source file");
+				});
+				try {
+					const stat = await source.stat();
+					if (!stat.isFile()) throw new DownloadError(400, "Source must be a regular file");
+					if (stat.size > MAX_DOWNLOAD_BYTES) throw new DownloadError(413, "File exceeds 25 MiB");
+					const files = await ctx.get(SessionFiles, { session });
+					const begun = await files.begin(
+						{ space: "downloads", name: name ?? basename(path), source: "server" },
+						ctx,
+					);
+					try {
+						const buffer = Buffer.alloc(FILE_CHUNK);
+						for (let offset = 0; ; ) {
+							const { bytesRead } = await source.read(buffer, 0, buffer.length, null);
+							if (!bytesRead) break;
+							if (offset + bytesRead > MAX_DOWNLOAD_BYTES) throw new DownloadError(413, "File exceeds 25 MiB");
+							await files.append({ upload: begun.upload, offset, bytes: buffer.subarray(0, bytesRead) }, ctx);
+							offset += bytesRead;
+						}
+						const saved = await files.finish(begun.upload, ctx);
+						return { id: saved.id, name: saved.name, size: saved.size };
+					} catch (error) {
+						await files.cancel(begun.upload, ctx).catch(() => {});
+						throw error;
+					}
+				} finally {
+					await source.close();
+				}
+			},
 		};
 	});
 
 	contribute(host, "p2.file-routes", (self) => {
-		const server = self.get(Server, {});
 		const catalog = self.get(Catalog, {});
-		const uploads = self.open(
-			async () => new Uploads(server.info.value.dataDir),
-			() => {},
-		);
-		const downloads = self.open(
-			async () => new Downloads(server.info.value.dataDir),
-			() => {},
-		);
+		const server = serverOf(self);
 		const upload = async (
 			request: IncomingMessage,
 			response: ServerResponse,
 			{ principal, origin }: RequestAccess,
-			ctx: Ctx,
+			outer: Ctx,
 		): Promise<void> => {
 			try {
 				// A state-changing request: exactly same-origin (a cross-site form cannot send this Origin).
@@ -62,12 +165,38 @@ export default defineFacet((host) => {
 				const query = new URL(request.url ?? "/", "http://localhost").searchParams;
 				const session = query.get("session") ?? "";
 				if (!canSend(principal, session)) throw new UploadError(403, "Forbidden");
-				await catalog.get({ id: session }, ctx).catch(() => {
-					throw new UploadError(400, "Unknown session");
-				});
 				const name = query.get("name") ?? "";
 				if (!name || name.length > 255) throw new UploadError(400, "Invalid file name");
-				sendJson(response, 200, await uploads.value.save(session, name, request));
+				const declared = Number(request.headers["content-length"] ?? Number.NaN);
+				if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES) throw new UploadError(413, "File too large");
+				const source = principal?.kind === "guest" ? `guest:${principal.id}` : "owner";
+				// A root of the server's own (the worker's `SessionFiles` answers only the server).
+				const uploaded = await server().root(async (ctx) => {
+					// An archived session's worker never starts: refused at once, never waited for.
+					const row = await catalog.get({ id: session }, ctx).catch(() => {
+						throw new UploadError(400, "Unknown session");
+					});
+					if (row.archivedAt !== null) throw new UploadError(409, "Session is archived");
+					const files = await ctx.get(SessionFiles, { session });
+					const { upload } = await files.begin({ space: "uploads", name, source }, ctx);
+					try {
+						let offset = 0;
+						for await (const value of request) {
+							const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value as Uint8Array);
+							if (offset + chunk.length > MAX_UPLOAD_BYTES) throw new UploadError(413, "File too large");
+							for (let start = 0; start < chunk.length; start += FILE_CHUNK) {
+								const bytes = chunk.subarray(start, start + FILE_CHUNK);
+								await files.append({ upload, offset, bytes }, ctx);
+								offset += bytes.length;
+							}
+						}
+						return await files.finish(upload, ctx);
+					} catch (error) {
+						await files.cancel(upload, ctx).catch(() => {});
+						throw error;
+					}
+				}, outer);
+				sendJson(response, 200, uploaded);
 			} catch (error) {
 				request.resume();
 				sendJson(response, error instanceof UploadError ? error.status : 400, {
@@ -80,7 +209,7 @@ export default defineFacet((host) => {
 			request: IncomingMessage,
 			response: ServerResponse,
 			{ principal }: RequestAccess,
-			ctx: Ctx,
+			outer: Ctx,
 		): Promise<void> => {
 			const query = new URL(request.url ?? "/", "http://localhost").searchParams;
 			const session = query.get("session") ?? "";
@@ -90,30 +219,53 @@ export default defineFacet((host) => {
 				response.end("Forbidden");
 				return;
 			}
-			let file: Awaited<ReturnType<Downloads["open"]>> | undefined;
+			const abort = new AbortController();
+			const closed = () => {
+				if (!response.writableFinished) abort.abort(new Error("Disconnected"));
+			};
+			response.on("close", closed);
 			try {
-				await catalog.get({ id: session }, ctx);
-				file = await downloads.value.open(session, query.get("id") ?? "");
-				const { name, size } = file.info;
-				const preview = filePreview(name);
-				const seekable = preview?.kind === "audio" || preview?.kind === "video";
-				const range = seekable ? byteRange(request.headers.range, size) : undefined;
-				if (range === "invalid") {
-					response.writeHead(416, { "Content-Range": `bytes */${size}` });
-					response.end();
-					return;
-				}
-				const { start, end } = range ?? { start: 0, end: Math.max(0, size - 1) };
-				const ascii = name.replace(/[^\x20-\x7e]/g, "_");
-				response.writeHead(range ? 206 : 200, {
-					"Content-Type": preview?.mimeType ?? "application/octet-stream",
-					"Content-Length": size === 0 ? 0 : end - start + 1,
-					"Content-Disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`,
-					"Accept-Ranges": seekable ? "bytes" : "none",
-					...(range ? { "Content-Range": `bytes ${start}-${end}/${size}` } : {}),
-				});
-				if (request.method === "HEAD" || size === 0) response.end();
-				else await pipeline(file.handle.createReadStream({ start, end, autoClose: false }), response);
+				await server().root(
+					async (ctx) => {
+						// An unknown or archived session (whose worker never starts) is a 404 at once, never waited for.
+						const row = await catalog.get({ id: session }, ctx).catch(() => undefined);
+						if (row === undefined || row.archivedAt !== null) throw new DownloadError(404, "File not found");
+						const files = await ctx.get(SessionFiles, { session });
+						const found = await files.download(query.get("id") ?? "", ctx);
+						if (found === null) throw new DownloadError(404, "File not found");
+						const { name, size } = found;
+						const preview = filePreview(name);
+						const seekable = preview?.kind === "audio" || preview?.kind === "video";
+						const range = seekable ? byteRange(request.headers.range, size) : undefined;
+						if (range === "invalid") {
+							response.writeHead(416, { "Content-Range": `bytes */${size}` });
+							response.end();
+							return;
+						}
+						const { start, end } = range ?? { start: 0, end: Math.max(0, size - 1) };
+						const ascii = name.replace(/[^\x20-\x7e]/g, "_");
+						response.writeHead(range ? 206 : 200, {
+							"Content-Type": preview?.mimeType ?? "application/octet-stream",
+							"Content-Length": size === 0 ? 0 : end - start + 1,
+							"Content-Disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+							"Accept-Ranges": seekable ? "bytes" : "none",
+							...(range ? { "Content-Range": `bytes ${start}-${end}/${size}` } : {}),
+						});
+						if (request.method === "HEAD" || size === 0) {
+							response.end();
+							return;
+						}
+						for (let offset = start; offset <= end; ) {
+							const length = Math.min(FILE_CHUNK, end - offset + 1);
+							const bytes = await files.read({ file: found.file, offset, length }, ctx);
+							if (!bytes.length) throw new Error("File changed during transfer");
+							if (!response.write(bytes)) await once(response, "drain", { signal: signalOf(ctx) });
+							offset += bytes.length;
+						}
+						response.end();
+					},
+					withAbortSignal(abort.signal, outer),
+				);
 			} catch (error) {
 				if (response.headersSent) response.destroy();
 				else {
@@ -123,7 +275,7 @@ export default defineFacet((host) => {
 					response.end("File not found");
 				}
 			} finally {
-				await file?.handle.close();
+				response.removeListener("close", closed);
 			}
 		};
 		self.contribute(Routes, {

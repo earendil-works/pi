@@ -4,11 +4,9 @@
 // renamed, conversation 1's null for the session title) and `p2.main` version 1's migration.
 
 import assert from "node:assert/strict";
-import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { type ConversationView, createSession, defineDoc, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
-import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { ArtifactList } from "../../plugins/artifacts/contract.ts";
 import { Chat } from "../../plugins/chat/contract.ts";
@@ -19,6 +17,7 @@ import { SessionTree, type Tree } from "../../plugins/tree/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import { durableContext } from "../../src/runtime/durable.ts";
 import { MainDoc } from "../../src/runtime/main-conversation.ts";
+import { openSessionStorage } from "../../src/runtime/session-store.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 /** `p2.main` as version 1 stored it: the top-level conversations' IDs, no labels. */
@@ -362,14 +361,14 @@ describe("/tree (fake provider)", () => {
 		const sessions = await sessionsRef();
 		await sessions.archive({ id: session.id }, BACKGROUND_CONTEXT);
 		const context = durableContext(new AbortController().signal);
-		const store = createSession(
-			await openNodeSqliteStorage(join(fixture.dataDir, "sessions", `${session.id}.sqlite`)),
-		);
+		const stored = await openSessionStorage(fixture.dataDir, session.id, context);
+		const store = createSession(stored.storage);
 		await store.commit(async (tx) => {
 			await tx.retireDoc(MainDoc);
 			Object.assign(await tx.doc(MainDocV1), { conversation: answer, branches: [1, edit, empty, answer] });
 		}, context);
 		await store.close(context);
+		await stored.close();
 		await sessions.restore({ id: session.id }, BACKGROUND_CONTEXT);
 		const ref = await treeRef();
 		await ref.tree(BACKGROUND_CONTEXT);
