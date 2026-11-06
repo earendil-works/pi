@@ -332,6 +332,26 @@ describe("metadata queries", () => {
 	});
 });
 
+describe("imported times", () => {
+	it("keeps an import's created time; the summary's newest stay in created order", async () => {
+		const files = await filesOf();
+		const fresh = await put(files, "fresh.txt", "now");
+		const old = await put(files, "old.txt", "then", { created: 1_000 });
+		expect(old.created).toBe(1_000);
+		expect(await files.file(old.id, context)).toMatchObject({ created: 1_000 });
+		const begun = await files.begin(
+			{ space: "shared", path: "old.bin", mime: "x", source: "t", created: 2_000 },
+			context,
+		);
+		const upload = begun.kind === "upload" ? begun.upload : "";
+		await files.append({ upload, offset: 0, bytes: encoder.encode("x") }, context);
+		expect((await files.finish(upload, context)).created).toBe(2_000);
+		const newest = (await files.summary.get("shared", context))?.newest.map(({ path }) => path);
+		expect(newest).toEqual([fresh.path, "old.bin", "old.txt"]);
+		await files.close();
+	});
+});
+
 describe("live folder queries", () => {
 	it("lists a folder live through writes, moves and removals", async () => {
 		const files = await filesOf();

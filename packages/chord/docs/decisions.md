@@ -2658,7 +2658,10 @@ validation and copies the v2 kernel added around Delta.
   segments. (11) `cancel(upload)` drops an upload a writer gave up (a server route whose client went away), so it
   holds neither a slot of the cap nor bytes for the hour until it expires. (12) `@earendil-works/chord/app/files`
   exports `Files`, `FilesFolder`, `filesFacet`, `copyFiles` and the kit's private directories and stores without the
-  rest of the kit, for an app's worker process that must load neither esbuild nor the server's components (p2's).
+  rest of the kit, for an app's worker process that must load neither esbuild nor the server's components (p2's). (13) A
+  write takes an optional `created` for imports (owner, 2026-11-05, after p2's migration dry run: every migrated file
+  had the migration's time, so newest-first orders meant nothing): the version keeps the time it was made elsewhere;
+  the summary's newest versions are kept in `created` order, not write order.
 - **Workers start from the base code the server booted with (owner, 2026-11-04: "let's do this for armin"; Armin's
   incident report, Radius artifact 01m6m3xek8fveayqgstayg8w92):** the problem: a worker loads its entry module and the
   base code it imports from disk when it is forked, while the server keeps what it loaded at boot. An edit of the

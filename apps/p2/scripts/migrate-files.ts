@@ -3,7 +3,8 @@
 // same version numbers, title and type in `meta`), uploads (`uploads/<session>/<id>-<name>`: space `uploads`, key = the
 // upload's id) and download snapshots (`downloads/<session>/<id>/{metadata.json,payload}`: space `downloads`, key = the
 // snapshot's id). Ids stay, so transcripts' attachment ids, `/download` links and artifact cards resolve as before.
-// Writes go through `Files`, so its index, blobs, caps and summaries are what the app makes itself.
+// Writes go through `Files`, so its index, blobs, caps and summaries are what the app makes itself. Each file keeps its
+// time (`created`): the old file's modification time, the only time the old layout kept.
 import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Ctx, Ref } from "../src/runtime/chord.ts";
@@ -37,6 +38,8 @@ type OldFile = {
 	readonly bytes: { readonly file: string } | { readonly text: string };
 	/** An artifact's version number; ones the old layout skipped are made and removed, so no number moves. */
 	readonly version?: number;
+	/** When it was made: the old file's modification time (the old layout recorded no other). */
+	readonly created: number;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -74,6 +77,8 @@ export function oldFiles(dataDir: string, id: string): OldFile[] {
 				source: "agent",
 				meta: { title: parsed.info.title, type: parsed.info.type },
 				bytes: { text: parsed.content },
+				// Written once, as the version was saved.
+				created: modified(path),
 				version,
 			});
 		}
@@ -92,6 +97,7 @@ export function oldFiles(dataDir: string, id: string): OldFile[] {
 			source: "unknown",
 			meta: { name },
 			bytes: { file: join(uploads, file) },
+			created: modified(join(uploads, file)),
 		});
 	}
 	const downloads = join(dataDir, "downloads", id);
@@ -108,6 +114,8 @@ export function oldFiles(dataDir: string, id: string): OldFile[] {
 			source: "agent",
 			meta: { name: info.name },
 			bytes: { file: join(downloads, key, "payload") },
+			// Written last, when the snapshot was published.
+			created: modified(metadata),
 		});
 	}
 	return files;
@@ -141,6 +149,7 @@ export async function migrateFiles(
 			mime: old.mime,
 			source: old.source,
 			meta: old.meta,
+			created: old.created,
 			...(old.key === undefined ? {} : { key: old.key }),
 		};
 		const file =
@@ -168,6 +177,7 @@ export async function verifyFiles(dataDir: string, id: string, files: Ref<typeof
 		const what = `${old.space}:${old.path}${old.version === undefined ? "" : ` v${old.version}`}`;
 		if (file === null || file.path !== old.path) throw new Error(`${what} is missing after the migration`);
 		if (JSON.stringify(file.meta) !== JSON.stringify(old.meta)) throw new Error(`${what}'s metadata differs`);
+		if (file.created !== old.created) throw new Error(`${what}'s time differs`);
 		const expected = "text" in old.bytes ? Buffer.from(old.bytes.text, "utf8") : readFileSync(old.bytes.file);
 		if (!expected.equals(await readWhole(files, file, ctx))) throw new Error(`${what}'s bytes differ`);
 	}
@@ -179,6 +189,11 @@ function names(directory: string): string[] {
 	return readdirSync(directory)
 		.filter((name) => !name.startsWith("."))
 		.sort();
+}
+
+/** The modification time of `path`, in whole ms (as `Files` keeps times). */
+function modified(path: string): number {
+	return Math.floor(statSync(path).mtimeMs);
 }
 
 /** The bytes of `path` a chunk at a time, then none. */

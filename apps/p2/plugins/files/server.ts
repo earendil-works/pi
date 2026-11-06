@@ -107,42 +107,48 @@ export default defineFacet((host) => {
 		return { variant: "owner", members: { of: (args, ctx) => index.of(args, ctx) } };
 	});
 
-	host.serve(DownloadStore, () => ({
-		// A local object's method acts as the server: the session's worker answers it.
-		save: async ({ session, path, name }, ctx) => {
-			// NONBLOCK avoids hanging on a named pipe before fstat rejects non-regular sources.
-			const source = await open(path, constants.O_RDONLY | constants.O_NONBLOCK).catch(() => {
-				throw new DownloadError(400, "Could not open source file");
-			});
-			try {
-				const stat = await source.stat();
-				if (!stat.isFile()) throw new DownloadError(400, "Source must be a regular file");
-				if (stat.size > MAX_DOWNLOAD_BYTES) throw new DownloadError(413, "File exceeds 25 MiB");
-				const files = await ctx.get(SessionFiles, { session });
-				const begun = await files.begin(
-					{ space: "downloads", name: name ?? basename(path), source: "server" },
-					ctx,
-				);
+	host.serve(DownloadStore, (_params, self) => {
+		const catalog = self.get(Catalog, {});
+		return {
+			// A local object's method acts as the server: the session's worker answers it.
+			save: async ({ session, path, name }, ctx) => {
+				// An archived session's worker never starts: refused at once, never waited for.
+				if ((await catalog.get({ id: session }, ctx)).archivedAt !== null)
+					throw new DownloadError(409, "Session is archived");
+				// NONBLOCK avoids hanging on a named pipe before fstat rejects non-regular sources.
+				const source = await open(path, constants.O_RDONLY | constants.O_NONBLOCK).catch(() => {
+					throw new DownloadError(400, "Could not open source file");
+				});
 				try {
-					const buffer = Buffer.alloc(FILE_CHUNK);
-					for (let offset = 0; ; ) {
-						const { bytesRead } = await source.read(buffer, 0, buffer.length, null);
-						if (!bytesRead) break;
-						if (offset + bytesRead > MAX_DOWNLOAD_BYTES) throw new DownloadError(413, "File exceeds 25 MiB");
-						await files.append({ upload: begun.upload, offset, bytes: buffer.subarray(0, bytesRead) }, ctx);
-						offset += bytesRead;
+					const stat = await source.stat();
+					if (!stat.isFile()) throw new DownloadError(400, "Source must be a regular file");
+					if (stat.size > MAX_DOWNLOAD_BYTES) throw new DownloadError(413, "File exceeds 25 MiB");
+					const files = await ctx.get(SessionFiles, { session });
+					const begun = await files.begin(
+						{ space: "downloads", name: name ?? basename(path), source: "server" },
+						ctx,
+					);
+					try {
+						const buffer = Buffer.alloc(FILE_CHUNK);
+						for (let offset = 0; ; ) {
+							const { bytesRead } = await source.read(buffer, 0, buffer.length, null);
+							if (!bytesRead) break;
+							if (offset + bytesRead > MAX_DOWNLOAD_BYTES) throw new DownloadError(413, "File exceeds 25 MiB");
+							await files.append({ upload: begun.upload, offset, bytes: buffer.subarray(0, bytesRead) }, ctx);
+							offset += bytesRead;
+						}
+						const saved = await files.finish(begun.upload, ctx);
+						return { id: saved.id, name: saved.name, size: saved.size };
+					} catch (error) {
+						await files.cancel(begun.upload, ctx).catch(() => {});
+						throw error;
 					}
-					const saved = await files.finish(begun.upload, ctx);
-					return { id: saved.id, name: saved.name, size: saved.size };
-				} catch (error) {
-					await files.cancel(begun.upload, ctx).catch(() => {});
-					throw error;
+				} finally {
+					await source.close();
 				}
-			} finally {
-				await source.close();
-			}
-		},
-	}));
+			},
+		};
+	});
 
 	contribute(host, "p2.file-routes", (self) => {
 		const catalog = self.get(Catalog, {});
@@ -166,9 +172,11 @@ export default defineFacet((host) => {
 				const source = principal?.kind === "guest" ? `guest:${principal.id}` : "owner";
 				// A root of the server's own (the worker's `SessionFiles` answers only the server).
 				const uploaded = await server().root(async (ctx) => {
-					await catalog.get({ id: session }, ctx).catch(() => {
+					// An archived session's worker never starts: refused at once, never waited for.
+					const row = await catalog.get({ id: session }, ctx).catch(() => {
 						throw new UploadError(400, "Unknown session");
 					});
+					if (row.archivedAt !== null) throw new UploadError(409, "Session is archived");
 					const files = await ctx.get(SessionFiles, { session });
 					const { upload } = await files.begin({ space: "uploads", name, source }, ctx);
 					try {
@@ -219,7 +227,9 @@ export default defineFacet((host) => {
 			try {
 				await server().root(
 					async (ctx) => {
-						await catalog.get({ id: session }, ctx);
+						// An unknown or archived session (whose worker never starts) is a 404 at once, never waited for.
+						const row = await catalog.get({ id: session }, ctx).catch(() => undefined);
+						if (row === undefined || row.archivedAt !== null) throw new DownloadError(404, "File not found");
 						const files = await ctx.get(SessionFiles, { session });
 						const found = await files.download(query.get("id") ?? "", ctx);
 						if (found === null) throw new DownloadError(404, "File not found");

@@ -364,7 +364,8 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
   and verified (equal exports); each session is built in `sessions/.<id>.migrating/` from a copy of its old store:
   Durable's records replayed into `StoreStorage` in seq order (`scripts/migrate-durable.ts`: seqs renumbered in order,
   ids kept, the allocator past the old next id) and its artifacts (same version numbers), uploads and downloads (same
-  ids, as keys) written into its `Files` (`scripts/migrate-files.ts`); then verified (every record read through
+  ids, as keys; each file's time from the old file's modification time, through `Files`' `created` for imports) written
+  into its `Files` (`scripts/migrate-files.ts`); then verified (every record read through
   Durable's `Storage` from both, every file byte for byte), renamed into place, and only then its old files moved to
   `pre-files-backup/` (same relative paths). `uploads/<session>/` stays: it is where this machine materializes
   attachments now, and old transcripts name those paths. A crash redoes the session it was in; a second run skips
@@ -927,8 +928,9 @@ translated phone drawer and intercept chat taps.
   when the model accepts them. `DownloadStore` (server local) snapshots a server file into the session's files;
   producers on the worker (send_file) write there directly (space `downloads`, key the snapshot's UUID). `GET|HEAD
   /download?session=&id=` serves them through `SessionFiles` to the owner and the session's guests (no
-  `Sec-Fetch-Site: cross-site`; ranges for audio/video). An archived session's downloads and artifacts are not served
-  (its worker does not start) until it is restored. Web: the composer's attach button, drag/drop and pasted images
+  `Sec-Fetch-Site: cross-site`; ranges for audio/video). An archived or unknown session's downloads and artifacts
+  answer 404 at once, and an upload to an archived session 409 (its worker would never start; the routes check the
+  catalog before they reach it), until it is restored. Web: the composer's attach button, drag/drop and pasted images
   upload files at send time, including a new session's first prompt. A paste with plain text stays a text paste
   (Office apps add a picture of the copied text, Chrome on macOS a Finder file's icon); a paste with only images
   attaches them.

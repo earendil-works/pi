@@ -58,7 +58,10 @@ export type FilesCaps = {
 	readonly maxTotal?: number;
 };
 
-/** A write's fields: where, its type, who wrote it (a string the writer sets), its producer's reference, key, `meta`. */
+/**
+ * A write's fields: where, its type, who wrote it (a string the writer sets), its producer's reference, key, `meta`, and
+ * an import's original time.
+ */
 const WRITE = {
 	space: str(),
 	path: str(),
@@ -67,6 +70,8 @@ const WRITE = {
 	ref: opt(str({ min: 1 })),
 	key: opt(str({ min: 1 })),
 	meta: opt(MetaSchema),
+	/** For imports only: when the file was made where it comes from (ms since the epoch); the write's time otherwise. */
+	created: opt(int({ min: 0 })),
 };
 
 /** A page's arguments: a cursor of the page before, and how many (100 by default, at most 1,000). */

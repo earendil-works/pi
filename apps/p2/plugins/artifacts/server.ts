@@ -28,7 +28,9 @@ export default defineFacet((host) => {
 				// The bytes are the session worker's: read in a root of the server's own (its `ArtifactSource` answers only
 				// the server), after the viewer was authorized above.
 				const artifact = await server().root(async (ctx) => {
-					await catalog.get({ id: session }, ctx);
+					// An unknown or archived session (whose worker never starts) is a 404 at once, never waited for.
+					const row = await catalog.get({ id: session }, ctx).catch(() => undefined);
+					if (row === undefined || row.archivedAt !== null) throw new ArtifactError(404, "Artifact not found");
 					return (await ctx.get(ArtifactSource, { session })).read({ name, version }, ctx);
 				}, outer);
 				const download = query.get("download") === "1";

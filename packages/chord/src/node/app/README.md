@@ -182,7 +182,8 @@ see a path on disk.
   a blob is deleted from disk when no version references it (`remove(id)`, `removePath({ space, path })` for a file
   or a folder with everything under it, `removeSpace(space)`). Blobs a crash left without their commit are swept
   when the object goes live.
-- **Writes:** `put({ space, path, mime, source, ref?, key?, meta?, bytes })` (at most 4 MiB) and chunked transfers
+- **Writes:** `put({ space, path, mime, source, ref?, key?, meta?, created?, bytes })` (at most 4 MiB; `created`
+  only for imports: the time the file was made where it comes from, so newest-first orders stay true) and chunked transfers
   (design §23): `begin` (the same fields without `bytes`: `{ kind: "upload", upload }`), `append({ upload, offset,
   bytes })` (at most 4 MiB a chunk, about 1 MiB usual; `offset` must be the bytes stored so far, else `invalid` with
   the stored `{ offset }`), `uploaded(upload)` (where a writer resumes after a drop), `finish(upload)` (the version),
