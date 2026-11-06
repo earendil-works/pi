@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { SessionInfo } from "../src/core/session-manager.ts";
 import { filterSessionsByRegexInWorker } from "../src/modes/interactive/components/session-selector-regex-worker.ts";
@@ -64,6 +67,24 @@ describe("isolated session regex search", () => {
 		);
 		setTimeout(() => controller.abort(), 50);
 		await expect(pending).rejects.toThrow(/cancelled/i);
+	});
+
+	it("searches large history from the JSONL file on the worker, including matches across messages", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "pi-regex-large-session-"));
+		try {
+			const path = join(directory, "large.jsonl");
+			const first = "x".repeat(150_000) + "needle";
+			writeFileSync(path, [
+				JSON.stringify({ type: "session", version: 3, id: "large", cwd: directory, timestamp: "2026-01-01T00:00:00Z" }),
+				JSON.stringify({ type: "message", id: "1", message: { role: "user", content: first }, timestamp: "2026-01-01T00:00:01Z" }),
+				JSON.stringify({ type: "message", id: "2", message: { role: "assistant", content: [{ type: "text", text: "next" }] }, timestamp: "2026-01-01T00:00:02Z" }),
+			].join("\n") + "\n");
+			const item = { ...session("large", first + " next"), path, cwd: directory };
+			const result = await filterSessionsByRegexInWorker([item], "needle next$", "recent");
+			expect(result.map((value) => value.id)).toEqual(["large"]);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
 	});
 
 	it("preserves recent order across worker batches", async () => {

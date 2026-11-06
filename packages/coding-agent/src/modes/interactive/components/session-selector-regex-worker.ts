@@ -8,13 +8,50 @@ import type { SortMode } from "./session-selector-search.ts";
 const REGEX_WORKER_CODE = String.raw`
 "use strict";
 const { parentPort } = require("node:worker_threads");
-parentPort.on("message", ({ pattern, sessions }) => {
+const { createReadStream } = require("node:fs");
+const { createInterface } = require("node:readline");
+
+/**
+ * Parse session content inside the worker for large transcripts. The main
+ * thread sends only a file path, avoiding synchronous structured-clone work
+ * on multi-megabyte strings during interactive search.
+ */
+async function loadSearchText(path) {
+  const texts = [];
+  const lines = createInterface({ input: createReadStream(path, { encoding: "utf8" }), crlfDelay: Infinity });
+  for await (const line of lines) {
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (!message || (message.role !== "user" && message.role !== "assistant")) continue;
+    const content = message.content;
+    const text = typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content.filter((block) => block?.type === "text").map((block) => block.text).join(" ")
+        : "";
+    if (text) texts.push(text);
+  }
+  return texts.join(" ");
+}
+
+parentPort.on("message", async ({ pattern, sessions }) => {
   try {
     const regex = new RegExp(pattern, "i");
-    const scores = sessions.map(({ name, id, text, cwd }) => {
-      if (name && regex.test(name)) return 0;
-      return regex.test(id) || regex.test(text) || regex.test(cwd) ? 1 : -1;
-    });
+    const scores = [];
+    for (const { name, id, text, path, cwd } of sessions) {
+      if (name && regex.test(name)) {
+        scores.push(0);
+        continue;
+      }
+      if (regex.test(id) || regex.test(cwd)) {
+        scores.push(1);
+        continue;
+      }
+      const searchable = text === undefined ? await loadSearchText(path) : text;
+      scores.push(regex.test(searchable) ? 1 : -1);
+    }
     parentPort.postMessage({ scores });
   } catch (error) {
     parentPort.postMessage({ error: error instanceof Error ? error.message : String(error) });
@@ -25,11 +62,13 @@ parentPort.on("message", ({ pattern, sessions }) => {
 const SEARCH_BUDGET_MS = 500;
 const BATCH_SIZE = 16;
 const MAX_PATTERN_LENGTH = 2048;
+const INLINE_TEXT_LIMIT = 64 * 1024;
 type SearchResponse = { scores?: number[]; error?: string };
 
 /**
  * Search full session texts off the UI thread. Serial batches bound the size
- * of each structured-clone transfer; a global budget terminates ReDoS work.
+ * of each structured-clone transfer. Large session texts are loaded inside the
+ * worker, and an idle batch deadline terminates non-progressing regex work.
  */
 export async function filterSessionsByRegexInWorker(
 	sessions: readonly SessionInfo[],
@@ -87,7 +126,10 @@ export async function filterSessionsByRegexInWorker(
 						sessions: batch.map((session) => ({
 							name: session.name,
 							id: session.id,
-							text: session.allMessagesText,
+							path: session.path,
+							// Small histories are cheap to clone; large ones are read off
+							// the terminal thread and never cross postMessage().
+							text: session.allMessagesText.length <= INLINE_TEXT_LIMIT ? session.allMessagesText : undefined,
 							cwd: session.cwd,
 						})),
 					});
