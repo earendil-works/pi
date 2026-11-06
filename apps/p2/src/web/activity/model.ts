@@ -94,7 +94,35 @@ type Calls = { type: "calls"; key: string; steps: Step[]; from: Response[]; entr
 type InPlace = Extract<ChatItem, { type: "results" }>;
 type Part = Calls | InPlace | Extract<ChatItem, { type: "thought" | "text" }>;
 
-const stepOf = (tool: ToolView): Step => ({ id: tool.id, tool, status: toolStatus(tool) });
+/** Calls with the nested calls their tools' contributions give, by table: the same call keeps its object. */
+const withNested = new WeakMap<ToolActivityTable, WeakMap<ToolView, ToolView>>();
+
+/**
+ * A call with its own calls as its tool's contribution reads them (`ToolActivity.nestedCalls`: a script's final list
+ * from its result), else as Durable showed them (`tool.calls`).
+ */
+export function resolveNested(tool: ToolView, tools: ToolActivityTable): ToolView {
+	const own = tools.get(tool.name)?.nestedCalls;
+	if (!own) return tool;
+	const resolved = withNested.get(tools) ?? new WeakMap<ToolView, ToolView>();
+	withNested.set(tools, resolved);
+	let made = resolved.get(tool);
+	if (!made) {
+		const calls = own(tool);
+		if (calls === tool.calls) made = tool;
+		else {
+			const { calls: _, ...rest } = tool;
+			made = calls ? { ...rest, calls } : rest;
+		}
+		resolved.set(tool, made);
+	}
+	return made;
+}
+
+const stepOf = (tool: ToolView, tools: ToolActivityTable): Step => {
+	const resolved = resolveNested(tool, tools);
+	return { id: tool.id, tool: resolved, status: toolStatus(resolved) };
+};
 
 /**
  * A run of responses as its parts in order: thinking, text, runs of calls (results whose call is outside the loaded
@@ -120,9 +148,10 @@ function partsOf(run: readonly Item[], live: boolean, after: string, tools: Tool
 		return made;
 	};
 	const call = (key: string, tool: ToolView, from?: Response) => {
-		calls(key, from).steps.push(stepOf(tool));
-		if (placement(tool, tools) === "inline")
-			parts.push({ type: "results", key: `results:${tool.id}`, tools: [tool] });
+		const step = stepOf(tool, tools);
+		calls(key, from).steps.push(step);
+		if (placement(step.tool, tools) === "inline")
+			parts.push({ type: "results", key: `results:${tool.id}`, tools: [step.tool] });
 	};
 	for (const item of run) {
 		if (item.type === "tool") {
@@ -529,7 +558,20 @@ export type ToolActivity = {
 	hasResult?: (tool: ToolView) => ResultPlacement | false;
 	/** The call's detail in the sheet; `onGroup` opens one of its own calls (`tool.calls`, grouped by `groupCalls`). */
 	Detail?: ComponentType<{ step: Step; onGroup: (index: number) => void }>;
-	/** What the detail of a script's call of this tool adds below its input and output (a link to what it made). */
+	/**
+	 * The calls this call made to other tools (a script's), when its tool keeps their final list in its result's
+	 * `details`: read from there once settled. `tool.calls` holds the ones Durable shows (live, or the last seen); return
+	 * it, or a list built from it, otherwise. Without it, `tool.calls`.
+	 */
+	nestedCalls?: (tool: ToolView) => readonly NestedCall[] | undefined;
+	/**
+	 * How an entry of this call's own calls that groups `count` identical calls in a row says so ("20 runs, 1 failed").
+	 * Without it, the summary of those calls ("Ran 20 commands · 1 failed").
+	 */
+	repeated?: (count: number, failed: number) => string;
+	/** How the input of another call's call of this tool shows in its detail (a command line); without it, JSON. */
+	CallInput?: ComponentType<{ call: NestedCall }>;
+	/** What the detail of another call's call of this tool adds below its input and output (a link to what it made). */
 	CallDetail?: ComponentType<{ call: NestedCall }>;
 	/** A result after the answer; `inline`: in the chat (an inline artifact shows itself too), not in the sheet. */
 	Result?: ComponentType<{ tool: ToolView; inline: boolean }>;
@@ -646,8 +688,21 @@ export type CallGroup = {
 	status: StepStatus;
 };
 
-/** A call's own calls (a script's), repeated identical calls in a row merged: 20 test runs are one entry, "×20". */
-export function groupCalls(calls: readonly NestedCall[], tools: ToolActivityTable): CallGroup[] {
+/** A nested call as a call of its own, for its tool's words. */
+const nestedTool = (call: NestedCall): ToolView => ({
+	id: call.id,
+	name: call.name,
+	args: parsedArgs(call.args),
+	status: call.status,
+	output: "",
+	images: [],
+});
+
+/**
+ * A call's own calls (a script's), repeated identical calls in a row merged: 20 test runs are one entry, described by
+ * the calling tool's words for repeats (`parent`: its name).
+ */
+export function groupCalls(calls: readonly NestedCall[], tools: ToolActivityTable, parent: string): CallGroup[] {
 	const groups: CallGroup[] = [];
 	for (const call of calls) {
 		const last = groups.at(-1);
@@ -663,15 +718,7 @@ export function groupCalls(calls: readonly NestedCall[], tools: ToolActivityTabl
 			continue;
 		}
 		const status = callStatus(call.status);
-		const tool: ToolView = {
-			id: call.id,
-			name: call.name,
-			args: parsedArgs(call.args),
-			status: call.status,
-			output: "",
-			images: [],
-		};
-		const { label, mono } = describe({ id: call.id, status, tool }, tools);
+		const { label, mono } = describe({ id: call.id, status, tool: nestedTool(call) }, tools);
 		// A call another call made (a subagent's read inside a script) says so: the list does not indent.
 		groups.push({
 			key: call.id,
@@ -682,12 +729,18 @@ export function groupCalls(calls: readonly NestedCall[], tools: ToolActivityTabl
 			status,
 		});
 	}
+	const repeated = tools.get(parent)?.repeated;
 	for (const group of groups) {
 		const statuses = group.calls.map((call) => callStatus(call.status));
 		group.status = statuses.includes("running") ? "running" : statuses.includes("error") ? "error" : "done";
 		if (group.calls.length > 1) {
 			const failed = statuses.filter((status) => status === "error").length;
-			group.description = `${group.calls.length} runs${failed ? `, ${failed} failed` : ""}`;
+			group.description = repeated
+				? repeated(group.calls.length, failed)
+				: summary(
+						group.calls.map((call, index) => ({ id: call.id, tool: nestedTool(call), status: statuses[index]! })),
+						tools,
+					);
 		} else if (!group.description && group.calls[0]?.output) group.description = lastLine(group.calls[0].output);
 	}
 	return groups;

@@ -1,10 +1,8 @@
-// Copied from coding-agent core/tools/renderers/{read,write,edit,grep,find,ls}.ts. Removed (section 11): local path
-// resolution, `getReadmePath` docs classification and edit's local preview (`computeEditsDiff` reads the local fs):
-// the edit card shows the result's `details.diff`. Paths display relative to the session cwd.
+// The coding tools' cards in the TUI (tui.ts), copied from coding-agent core/tools/renderers/{read,write,edit,grep,find,
+// ls}.ts. Removed (p2-tui-port.md section 11): local path resolution, `getReadmePath` docs classification and edit's
+// local preview (`computeEditsDiff` reads the local fs): the edit card shows the result's `details.diff`. Paths display
+// relative to the session cwd. bash's card is the shared shell card (`createShellRenderers`).
 import { Container, Spacer, Text } from "@earendil-works/pi-tui";
-import { renderDiff } from "../components/diff.ts";
-import { safeText } from "../render-context.ts";
-import { Theme } from "../theme/theme.ts";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -14,13 +12,20 @@ import {
 	moreLinesHint,
 	normalizeDisplayText,
 	num,
+	record,
+	renderDiff,
 	renderToolPath,
 	replaceTabs,
+	safeText,
 	shortenPath,
 	str,
+	Theme,
+	type ToolArgs,
+	type ToolRenderContext,
+	type ToolRenderers,
+	type ToolResultView,
 	trimTrailingEmptyLines,
-} from "./render-utils.ts";
-import { record, type ToolArgs, type ToolRenderContext, type ToolRenderers, type ToolResultView } from "./types.ts";
+} from "@p2/app/v1/tui";
 
 const pathArg = (args: ToolArgs): string | null => str(args.file_path ?? args.path);
 const textOf = (component: unknown): Text => (component instanceof Text ? component : new Text("", 0, 0));

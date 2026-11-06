@@ -10,6 +10,7 @@ import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import type { CodemodeToolDetails } from "@earendil-works/pi-durable/codemode";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
+import { scriptCalls } from "../../plugins/codemode/nested.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { startServer } from "../../src/hosts/server.ts";
 import type { Host, RefIn } from "../../src/runtime/chord.ts";
@@ -27,10 +28,13 @@ const codemodeResults = (view: ConversationView | null | undefined): ToolResultM
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 /** The settled list of a code mode result: its script's tool calls (Durable writes it with the result). */
 const detailCalls = (result: ToolResultMessage) => (result.details as CodemodeToolDetails | undefined)?.calls ?? [];
-const codemodeCard = (view: ConversationView | null | undefined) =>
-	buildTranscript(wholeView(view!))
+/** The script's call, with its calls as code mode's contribution reads them (live, or its result's list). */
+const codemodeCard = (view: ConversationView | null | undefined) => {
+	const tool = buildTranscript(wholeView(view!))
 		.items.flatMap((item) => (item.type === "assistant" ? item.tools : []))
-		.findLast((tool) => tool.name === "codemode");
+		.findLast((each) => each.name === "codemode");
+	return tool && { ...tool, calls: scriptCalls(tool) };
+};
 const text = (message: ToolResultMessage | undefined) =>
 	(message?.content ?? []).flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
 

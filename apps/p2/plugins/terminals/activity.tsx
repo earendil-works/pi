@@ -9,6 +9,7 @@ import {
 	lastLine,
 	OpenTerminal,
 	OutputBlock,
+	parsedArgs,
 	type Step,
 	stringOf,
 	type ToolActivity,
@@ -57,4 +58,6 @@ export const terminalActivity: ToolActivity = {
 	argument: (tool) => firstLine(commandLine(tool)),
 	summary: (count) => (count === 1 ? "used the terminal" : `used the terminal ${count} times`),
 	Detail: TerminalDetail,
+	// A script's call: the tmux command's name, as a command line.
+	CallInput: ({ call }) => <CommandBlock command={stringOf(parsedArgs(call.args).command)} />,
 };

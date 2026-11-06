@@ -130,7 +130,7 @@ export function NestedCalls({ step, onGroup }: { step: Step; onGroup: (index: nu
 	const [all, setAll] = useState(false);
 	const calls = step.tool.calls ?? [];
 	if (!calls.length) return null;
-	const groups = groupCalls(calls, tools);
+	const groups = groupCalls(calls, tools, step.tool.name);
 	const from = all ? 0 : Math.max(0, groups.length - NEWEST_CALLS);
 	const failed = calls.filter((call) => call.status === "error" || call.status === "interrupted").length;
 	const count = `${calls.length} tool ${calls.length === 1 ? "call" : "calls"}${failed ? ` · ${failed} failed` : ""}`;
@@ -197,17 +197,22 @@ export function StepDetail({ step, onGroup }: { step: Step; onGroup: (index: num
 	return Detail ? <Detail step={step} onGroup={onGroup} /> : <GenericDetail step={step} />;
 }
 
-/** One entry of a call's own calls: its input, then its result, or the runs of a repeated call. */
+/**
+ * One entry of a call's own calls: its input (as its tool shows another call's call of it, else JSON), then its result,
+ * or the runs of a repeated call.
+ */
 export function GroupDetail({ group }: { group: CallGroup }) {
 	const tools = useContext(ToolActivityContext);
 	const first = group.calls[0];
 	if (!first) return null;
-	const args = parsedArgs(first.args);
-	const command = typeof args.command === "string" ? args.command : undefined;
-	const input = command ? (
-		<CommandBlock command={command} />
+	const CallInput = tools.get(first.name)?.CallInput;
+	const input = CallInput ? (
+		<CallInput call={first} />
 	) : (
-		<CodeBlock code={typeof first.args === "string" ? first.args : JSON.stringify(args, null, 2)} language="json" />
+		<CodeBlock
+			code={typeof first.args === "string" ? first.args : JSON.stringify(parsedArgs(first.args), null, 2)}
+			language="json"
+		/>
 	);
 	if (group.calls.length > 1)
 		return (

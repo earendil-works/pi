@@ -8,6 +8,7 @@ import { codingToolActivities } from "../../plugins/coding-tools/activity.tsx";
 import { conversationsActivity } from "../../plugins/conversations/activity.tsx";
 import { historyActivities } from "../../plugins/history/activity.tsx";
 import { portsActivity } from "../../plugins/ports/activity.tsx";
+import { powershellActivity } from "../../plugins/powershell/activity.tsx";
 import { sendFileActivity } from "../../plugins/send-file/activity.tsx";
 import { subagentActivity } from "../../plugins/subagents/activity.tsx";
 import { terminalActivity } from "../../plugins/terminals/activity.tsx";
@@ -27,6 +28,7 @@ export const PLUGIN_TOOLS: ToolActivityTable = new Map(
 		codemode: codemodeActivity,
 		conversations: conversationsActivity,
 		ports: portsActivity,
+		powershell: powershellActivity,
 		send_file: sendFileActivity,
 		subagent: subagentActivity,
 		terminal: terminalActivity,

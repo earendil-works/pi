@@ -6,6 +6,7 @@ import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai"
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationView, EntryId, LiveState } from "@earendil-works/pi-durable";
 import type { CodemodeToolDetails } from "@earendil-works/pi-durable/codemode";
+import { scriptCalls } from "../../plugins/codemode/nested.ts";
 import { buildTranscript } from "../../src/web/transcript.ts";
 import { wholeView } from "../fixtures/whole-view.ts";
 import { Browser, browserTests } from "./browser.ts";
@@ -95,10 +96,13 @@ function settled(): ConversationView {
 	};
 }
 
-const calls = (view: ConversationView) =>
-	buildTranscript(wholeView(view))
+/** The script's calls, as code mode's contribution reads them (live, or its result's list). */
+const calls = (view: ConversationView) => {
+	const tool = buildTranscript(wholeView(view))
 		.items.flatMap((item) => (item.type === "assistant" ? item.tools : []))
-		.find((tool) => tool.name === "codemode")?.calls ?? [];
+		.find((each) => each.name === "codemode");
+	return (tool && scriptCalls(tool)) ?? [];
+};
 
 test("a call interrupted by a restart is interrupted, live and settled; other errors stay errors", () => {
 	assert.deepEqual(

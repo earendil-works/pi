@@ -16,6 +16,7 @@ import {
 	LinesBlock,
 	lastLine,
 	OutputBlock,
+	parsedArgs,
 	relativePath,
 	type Step,
 	stringOf,
@@ -72,6 +73,7 @@ const bash: ToolActivity = {
 	},
 	summary: (count) => (count === 1 ? "ran a command" : `ran ${count} commands`),
 	Detail: BashDetail,
+	CallInput: ({ call }) => <CommandBlock command={stringOf(parsedArgs(call.args).command)} />,
 };
 
 /** A read's output ("40\tcode" per line) as the file's lines, numbered from where the read started. */

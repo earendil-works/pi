@@ -480,12 +480,17 @@ test("a script's repeated identical calls are one entry; nested calls say so", (
 		status,
 		depth,
 	});
-	const groups = groupCalls([call("1"), call("2"), call("3", 0, "error"), call("4", 1)], TOOLS);
+	const calls = [call("1"), call("2"), call("3", 0, "error"), call("4", 1)];
+	// The calling tool's words for repeats (a script's: "3 runs").
+	const script: ToolActivity = { repeated: (count, failed) => `${count} runs${failed ? `, ${failed} failed` : ""}` };
+	const groups = groupCalls(calls, new Map([...TOOLS, ["script", script]]), "script");
 	assert.equal(groups.length, 2);
 	assert.equal(groups[0]?.calls.length, 3);
 	assert.equal(groups[0]?.status, "error");
 	assert.equal(groups[0]?.description, "3 runs, 1 failed");
 	assert.equal(groups[1]?.label.extra, "nested");
+	// A caller without them: the repeated tool's own summary.
+	assert.equal(groupCalls(calls, TOOLS, "other")[0]?.description, "Ran 3 commands · 1 failed");
 });
 
 test("before the live state is known, an unfinished last turn shows as live, not finished", () => {

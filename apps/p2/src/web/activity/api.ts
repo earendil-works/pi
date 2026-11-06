@@ -22,6 +22,7 @@ export {
 	type Kind,
 	type Label,
 	lastLine,
+	parsedArgs,
 	plainText,
 	type ResultPlacement,
 	type Step,

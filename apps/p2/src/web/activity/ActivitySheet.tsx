@@ -119,7 +119,10 @@ function ActivitySheet({ activity, place }: { activity: Activity; place: Place }
 	const step = place.step === undefined ? undefined : steps.find((each) => each.id === place.step);
 	// Thinking or a text on the wheel (detail 1 and 2): its page is its words.
 	const words = entries.find((entry) => entry.kind !== "call" && entry.id === place.step);
-	const group = step && place.group !== undefined ? groupCalls(step.tool.calls ?? [], tools)[place.group] : undefined;
+	const group =
+		step && place.group !== undefined
+			? groupCalls(step.tool.calls ?? [], tools, step.tool.name)[place.group]
+			: undefined;
 	const time = useElapsed(activity.startedAt, activity.endedAt, activity.working);
 	const count = `${entries.length} ${entries.length === 1 ? "step" : "steps"}`;
 	const title = group

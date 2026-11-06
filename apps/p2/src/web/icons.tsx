@@ -150,7 +150,7 @@ export const PencilIcon = () => (
 		<path d="M4 20h4L19 9l-4-4L4 16z" />
 	</Icon>
 );
-/** Angle brackets: code mode scripts. */
+/** Angle brackets: scripts. */
 export const CodeIcon = () => (
 	<Icon size={15}>
 		<path d="M8 7l-5 5 5 5M16 7l5 5-5 5" />
