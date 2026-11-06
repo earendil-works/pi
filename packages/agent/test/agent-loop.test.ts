@@ -2302,3 +2302,37 @@ describe("mixed tool execution performance", () => {
 		expect(timeline.indexOf("start:e")).toBeLessThan(timeline.indexOf("end:d"));
 	});
 });
+
+describe("tool declaration replay allocation", () => {
+	it("serializes a new tool schema only once when declaring it", async () => {
+		let serializations = 0;
+		const toolSchema = obj({ value: str() });
+		const schemaWithSerialization = Object.assign({}, toolSchema, {
+			toJSON() {
+				serializations++;
+				return toolSchema;
+			},
+		});
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo",
+			parameters: schemaWithSerialization,
+			async execute() { return { content: [{ type: "text", text: "ok" }], details: {} }; },
+		};
+		const context: AgentContext = { messages: [], tools: [tool] };
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
+		let calls = 0;
+		const stream = agentLoop([createUserMessage("hi")], context, config, undefined, () => {
+			const response = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				calls++;
+				response.push({ type: "done", reason: "stop", message: createAssistantMessage([{ type: "text", text: "hello" }]) });
+			});
+			return response;
+		});
+		for await (const _event of stream) { /* drain */ }
+		expect(calls).toBe(1);
+		expect(serializations).toBe(1);
+	});
+});
