@@ -5,6 +5,7 @@
 ### Breaking Changes
 
 - Removed `readFile` from `GrepOperations`. The grep tool now takes context lines from ripgrep and no longer reads matched files itself. To search a remote system, override grep's `execute()`; see [Remote Execution](docs/extensions.md#remote-execution) ([#9276](https://github.com/earendil-works/pi/issues/9276))
+- OpenAI-compatible models no longer send `"tools": []` when all tools are disabled in a session that has used tools; the field is omitted. This fixes 400 errors (`tools must not be an empty array`) from vLLM 0.20+, also behind LiteLLM. If your proxy requires `tools` once the history has tool calls, such as older LiteLLM versions in front of Anthropic, set `compat.requiresToolsWithToolHistory: true` for that model in `models.json` ([#11843](https://github.com/earendil-works/pi/issues/11843))
 
 ### Added
 
@@ -44,7 +45,6 @@
 - Fixed every codemode script failing with `URI malformed` when any callable tool, such as an MCP tool, had a `$ref` with a malformed percent escape (`#/$defs/%E0`) in its schema, even scripts that do not call that tool. The parameter now renders as `unknown` in the tool's declaration ([#11803](https://github.com/earendil-works/pi/issues/11803))
 - Fixed `ctrl+o` not expanding or collapsing the output of `!` and `!!` commands run while the agent is working. New `!`/`!!` output now starts in the current expand state, the output no longer disappears when a steering or follow-up message is queued, and it moves into the chat when the agent finishes instead of on the next submitted message ([#11875](https://github.com/earendil-works/pi/issues/11875))
 - Fixed resuming a session restoring an old thinking level after `/tree` navigated to before a `/thinking` change. Like the model, the live thinking level is now recorded on the new branch with the next prompt ([#11451](https://github.com/earendil-works/pi/issues/11451))
-- Fixed requests to OpenAI-compatible vLLM servers, also behind LiteLLM, failing with a 400 (`tools must not be an empty array`) when all tools were disabled in a session that had used tools. Set `compat.requiresToolsWithToolHistory` in `models.json` for proxies that need `"tools": []` ([#11843](https://github.com/earendil-works/pi/issues/11843))
 
 ## [1.5.0] - 2026-11-02
 

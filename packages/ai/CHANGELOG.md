@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `openai-completions` no longer sends `"tools": []` when a request has no tools but the conversation contains tool calls or tool results; the field is omitted. This fixes 400 errors (`tools must not be an empty array`) from vLLM 0.20+, also behind LiteLLM. Proxies that require `tools` once the history has tool calls, such as older LiteLLM versions in front of Anthropic, now reject these requests; set `compat.requiresToolsWithToolHistory: true` on those models to send the empty array again ([#11843](https://github.com/earendil-works/pi/issues/11843))
+
 ### Added
 
 - Anthropic requests with a `sessionId` (and `cacheRetention` not `"none"`) now use message threads (`message-threads-2026-08-12` beta): the server continues from the previous reply and pi sends only the new messages instead of the whole conversation. When anything earlier in the request changed, or the server can't continue the thread, the full request is sent. Token counts and prompt caching are unchanged. On by default only for the `anthropic` provider on `api.anthropic.com`; set `compat.supportsMessageThreads` to change that, for example for gateways that forward the `thread` field. Call `cleanupSessionResources(sessionId)` when a session ends to free the per-session state ([#11545](https://github.com/earendil-works/pi/pull/11545))
@@ -19,7 +23,6 @@
 - Fixed Anthropic non-strict tool schemas dropping root `$defs` and `definitions`, which left property `$ref`s pointing at nothing. Claude then produced wrong arguments for such tools (common in MCP servers), for example a JSON string instead of an object, and some Anthropic-compatible gateways rejected the request outright ([#9557](https://github.com/earendil-works/pi/issues/9557))
 - Fixed OpenRouter rejecting requests with a 400 (`This endpoint's maximum context length is ...`) for models whose output limit is close to the context window, such as DeepSeek flash. OpenRouter counts the input with its own tokenizer, which can be several percent higher than the provider's count, and pi left only 4,096 tokens spare. pi then treated the 400 as a context overflow and compacted the session, even at around 20% of the window. The default output limit now leaves 15% of the estimated input unused, and near a full window at most 32,768 output tokens are requested ([#10497](https://github.com/earendil-works/pi/issues/10497))
 - Fixed Azure GPT-6 Astra, Luna, Sol, GPT-6.1 Sol, and GPT-6.1 Terra using a 272K context window instead of the 1,050,000 tokens Azure Foundry deploys them with ([#11742](https://github.com/earendil-works/pi/issues/11742))
-- Fixed OpenAI-compatible requests failing with a 400 (`tools must not be an empty array`) on vLLM, also behind LiteLLM, when the conversation had tool calls but the request had no tools: pi sent `"tools": []`, which vLLM 0.20+ rejects. The field is now omitted; set `compat.requiresToolsWithToolHistory` for proxies that need the empty array, such as older LiteLLM versions in front of Anthropic ([#11843](https://github.com/earendil-works/pi/issues/11843))
 
 ## [1.5.0] - 2026-11-02
 
