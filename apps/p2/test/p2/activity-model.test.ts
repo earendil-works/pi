@@ -5,8 +5,44 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
-import { chatItems, describe as describeStep, groupCalls, summary } from "../../src/web/activity/model.ts";
+import {
+	argumentOf,
+	chatItems as chatItemsWith,
+	describe as describeStep,
+	groupCalls,
+	live,
+	stepState,
+	summary,
+	type ToolActivity,
+	type ToolActivityTable,
+} from "../../src/web/activity/model.ts";
 import type { Item, NestedCall, ToolView } from "../../src/web/transcript.ts";
+
+const edited = (count: number) => (count === 1 ? "edited a file" : `edited ${count} files`);
+/** Contributions as plugins make them (the plugins' own are React modules, tested in the browser). */
+const TOOLS: ToolActivityTable = new Map<string, ToolActivity>([
+	[
+		"bash",
+		{
+			describe: (step) => ({
+				label: { kind: "command", verb: "Ran", object: String(step.tool.args.command), style: "code" },
+			}),
+			failure: (tool) => /exited with code (\d+)/.exec(tool.output)?.[1]?.replace(/^/, "exit "),
+			summary: (count) => (count === 1 ? "ran a command" : `ran ${count} commands`),
+		},
+	],
+	[
+		"artifact",
+		{
+			summary: (count) => (count === 1 ? "made an artifact" : `made ${count} artifacts`),
+			hasResult: (tool) => tool.details !== undefined,
+		},
+	],
+	["edit", { summary: edited }],
+	["write", { summary: edited }],
+]);
+const chatItems = (items: readonly Item[], working: boolean, known = true) =>
+	chatItemsWith(items, working, known, TOOLS);
 
 const user = (key: string, text: string): Item => ({ type: "user", key, text, images: [], files: [], entryId: 1 });
 
@@ -92,7 +128,7 @@ test("a turn keeps its thought and texts in order; its consecutive calls are one
 		results.tools.map((each) => each.name),
 		["artifact"],
 	);
-	assert.equal(summary(activity.steps), "Ran a command, made an artifact");
+	assert.equal(summary(activity.steps, TOOLS), "Ran a command, made an artifact");
 });
 
 test("thought, text, calls, text, calls: the texts in order and one activity per run of calls", () => {
@@ -198,22 +234,47 @@ test("a stopped turn without text shows its notice as the answer", () => {
 	assert.equal(activity?.type === "activity" && activity.steps[0]?.status, "error");
 });
 
-test("steps read as the work: verbs, files, commands and failures", () => {
-	const step = (each: ToolView) => describeStep({ id: each.id, tool: each, status: "done" });
-	assert.deepEqual(step(tool("r", "read", { path: "/w/src/a.ts", offset: 40, limit: 20 })).label, {
-		kind: "read",
-		verb: "Read",
-		object: "a.ts",
-		style: "file",
+test("a tool's contribution gives its words; a tool without one reads as its name and first short argument", () => {
+	const step = (each: ToolView, status: "done" | "error" | "running" = "done") => ({
+		id: each.id,
+		tool: each,
+		status,
 	});
-	assert.equal(step(tool("r", "read", { path: "/w/src/a.ts", offset: 40, limit: 20 })).description, "Lines 40–59");
-	assert.equal(step(tool("s", "bash", { command: "rg -n foo" })).label.verb, "Searched");
-	const failed = describeStep({
-		id: "f",
-		status: "error",
-		tool: tool("f", "bash", { command: "node x" }, { status: "error", output: "Error: boom\n  at x" }),
+	assert.deepEqual(describeStep(step(tool("b", "bash", { command: "npm test" })), TOOLS).label, {
+		kind: "command",
+		verb: "Ran",
+		object: "npm test",
+		style: "code",
 	});
-	assert.equal(failed.description, "Error: boom");
+	const fetch = tool("f", "web_fetch", { limit: 3, url: "https://example.com\nmore" });
+	assert.deepEqual(describeStep(step(fetch), TOOLS).label, {
+		kind: "tool",
+		verb: "web_fetch",
+		object: "https://example.com",
+		style: "code",
+	});
+	// While it runs, without words of its own for that, the same.
+	assert.deepEqual(live(step(fetch, "running"), TOOLS), describeStep(step(fetch), TOOLS).label);
+	assert.equal(argumentOf(fetch, TOOLS, undefined), "https://example.com");
+	// A failure says what went wrong; the tool may say how in its row.
+	const failed = tool(
+		"x",
+		"bash",
+		{ command: "node x" },
+		{ status: "error", output: "Error: boom\nCommand exited with code 2" },
+	);
+	assert.equal(stepState(step(failed, "error"), TOOLS), "✗ exit 2");
+	assert.equal(stepState(step({ ...fetch, status: "error", output: "Error: boom" }, "error"), TOOLS), "✗ failed");
+	assert.equal(
+		describeStep(step({ ...fetch, status: "error", output: "Error: boom" }, "error"), TOOLS).description,
+		"Error: boom",
+	);
+	// Tools sharing their words count together; a tool without words of its own is "used" by name.
+	const edits = [tool("e", "edit", {}), tool("w", "write", {}), fetch, fetch, tool("g", "grep", {})].map((each) =>
+		step(each),
+	);
+	assert.equal(summary(edits, TOOLS), "Edited 2 files, used web_fetch 2 times, used grep");
+	assert.equal(summary([], TOOLS), "Done");
 });
 
 test("a script's repeated identical calls are one entry; nested calls say so", () => {
@@ -224,7 +285,7 @@ test("a script's repeated identical calls are one entry; nested calls say so", (
 		status,
 		depth,
 	});
-	const groups = groupCalls([call("1"), call("2"), call("3", 0, "error"), call("4", 1)]);
+	const groups = groupCalls([call("1"), call("2"), call("3", 0, "error"), call("4", 1)], TOOLS);
 	assert.equal(groups.length, 2);
 	assert.equal(groups[0]?.calls.length, 3);
 	assert.equal(groups[0]?.status, "error");
@@ -242,16 +303,4 @@ test("before the live state is known, an unfinished last turn shows as live, not
 	assert.equal(live(chatItems(running, false, true)), false);
 	// A finished turn stays finished either way.
 	assert.equal(live(chatItems(turn(), false, false)), false);
-});
-
-test("a terminal call reads as its tmux command line, and the summary counts it", () => {
-	const terminal = tool("x", "terminal", { command: "send-keys", args: ["-t", "1", "C-c"] }, { output: "$ \n" });
-	const step = { id: "x", tool: terminal, status: "done" as const };
-	assert.deepEqual(describeStep(step).label, {
-		kind: "command",
-		verb: "Terminal",
-		object: "send-keys -t 1 C-c",
-		style: "code",
-	});
-	assert.equal(summary([step, step]), "Used the terminal 2 times");
 });

@@ -115,11 +115,12 @@ describe("activity sheet", { skip: !browserTests }, () => {
 
 const conversation = { id: 1 } as ConversationView["conversation"];
 
-/** A response: its parts, and results for its calls (`bash`/`read`/`edit` with a command or path). */
+/** A response: its parts, and results for its calls ("ok <id>", or `results`' own). */
 function respond(
 	entries: ConversationView["entries"][number][],
 	content: AssistantMessage["content"],
 	stopReason: AssistantMessage["stopReason"] = "toolUse",
+	results: Record<string, Partial<ToolResultMessage>> = {},
 ): void {
 	const timestamp = entries.length + 1;
 	const message: AssistantMessage = { ...fauxAssistantMessage([]), content, stopReason, timestamp };
@@ -138,6 +139,7 @@ function respond(
 			content: [{ type: "text", text: `ok ${part.id}` }],
 			isError: false,
 			timestamp,
+			...results[part.id],
 		};
 		entries.push({
 			id: (entries.length + 1) as EntryId,
@@ -227,6 +229,148 @@ describe("a turn's parts", { skip: !browserTests }, () => {
 			["bash", "read"],
 		);
 		// Closed again: the next page of this tab would restore the open layer.
+		await browser.evaluate("history.back()");
+		await browser.wait(`!${sheet}`);
+	});
+
+	it("shows a tool by its plugin's contribution, and one without any by its name and first argument", async () => {
+		const entries: ConversationView["entries"][number][] = [];
+		respond(entries, [
+			call("t1", "bash", { command: "npm test" }),
+			call("t2", "web_fetch", { limit: 3, url: "https://example.com" }),
+		]);
+		respond(entries, [{ type: "text", text: "Done." }], "stop");
+		await show({ conversation, entries, docs: {} });
+		await browser.wait("document.querySelector('[data-testid=activity][data-state=done]')");
+		assert.match(
+			await browser.evaluate<string>("document.querySelector('[data-testid=activity]').textContent"),
+			/Ran a command, used web_fetch/,
+		);
+		await browser.click("[data-testid=activity]");
+		await browser.wait("document.querySelectorAll('[data-testid=step]').length===2");
+		assert.deepEqual(
+			await browser.evaluate(
+				"[...document.querySelectorAll('[data-testid=step]')].map(e=>e.querySelector('.step-name').textContent+' '+e.querySelector('.step-argument').textContent)",
+			),
+			["bash npm test", "web_fetch https://example.com"],
+		);
+		// The generic detail: the input as JSON, the output.
+		await browser.evaluate("document.querySelectorAll('[data-testid=step] button')[1].click()");
+		await browser.wait(`${title}==='web_fetch https://example.com'`);
+		assert.match(
+			await browser.evaluate<string>("document.querySelector('[data-testid=detail-input]').textContent"),
+			/"url": "https:\/\/example.com"/,
+		);
+		assert.equal(await browser.evaluate("document.querySelector('pre.detail-output').textContent"), "ok t2");
+		// The coding tools plugin's: the command as a terminal.
+		await browser.evaluate("history.back()");
+		await browser.wait("document.querySelectorAll('[data-testid=step]').length===2");
+		await browser.evaluate("document.querySelectorAll('[data-testid=step] button')[0].click()");
+		await browser.wait(`${title}==='Ran npm test' && document.querySelector('[data-testid=detail-command]')`);
+		await browser.evaluate("history.back()");
+		await browser.evaluate("history.back()");
+		await browser.wait(`!${sheet}`);
+	});
+
+	it("shows the coding tools' own details: a command as a terminal, a read's numbered lines, an edit's diff", async () => {
+		const entries: ConversationView["entries"][number][] = [];
+		const output = Array.from({ length: 60 }, (_, line) => `line ${line + 1}`).join("\n");
+		respond(
+			entries,
+			[
+				call("b", "bash", { command: "npm test" }),
+				call("r", "read", { path: "src/a.ts", offset: 40, limit: 2 }),
+				call("e", "edit", { path: "src/a.ts", edits: [] }),
+			],
+			"toolUse",
+			{
+				b: { content: [{ type: "text", text: `${output}\nCommand exited with code 1` }], isError: true },
+				r: { content: [{ type: "text", text: "40\tconst a = 1;\n41\tconst b = 2;" }] },
+				e: {
+					content: [{ type: "text", text: "Edited src/a.ts" }],
+					details: { diff: "-40 const a = 1;\n+40 const a = 3;" },
+				},
+			},
+		);
+		respond(entries, [{ type: "text", text: "Done." }], "stop");
+		await show({ conversation, entries, docs: {} });
+		await browser.click("[data-testid=activity]");
+		await browser.wait("document.querySelectorAll('[data-testid=step]').length===3");
+		assert.equal(
+			await browser.evaluate("document.querySelector('[data-testid=step] .step-state').textContent"),
+			"✗ exit 1",
+		);
+		const open = async (index: number) => {
+			await browser.evaluate(`document.querySelectorAll('[data-testid=step] button')[${index}].click()`);
+			await browser.wait(`${sheet}?.querySelector('.sheet-head [aria-label=Back]')`);
+		};
+		// bash: the command after its prompt, the whole output (no "Show all"), red.
+		await open(0);
+		assert.equal(
+			await browser.evaluate("document.querySelector('[data-testid=detail-command]').textContent"),
+			"$ npm test",
+		);
+		const terminal = await browser.evaluate<{ text: string; failed: boolean; more: boolean }>(
+			"(t=>({text:t.querySelector('pre.detail-output').textContent,failed:t.dataset.failed==='true',more:Boolean(document.querySelector('.detail-more'))}))(document.querySelector('[data-testid=detail-output] .detail-terminal'))",
+		);
+		assert.ok(terminal.text.startsWith("line 1\n") && terminal.text.endsWith("Command exited with code 1"));
+		assert.deepEqual([terminal.failed, terminal.more], [true, false]);
+		await browser.evaluate("history.back()");
+		// read: the file's lines, numbered from where the read started.
+		await browser.wait("document.querySelectorAll('[data-testid=step]').length===3");
+		await open(1);
+		assert.equal(
+			await browser.evaluate("document.querySelector('.detail-path').textContent"),
+			"src/a.ts · lines 40–41",
+		);
+		assert.deepEqual(
+			await browser.evaluate(
+				"[...document.querySelectorAll('[data-testid=detail-output] .diff-line')].map(e=>e.querySelector('.diff-number').textContent+':'+e.querySelector('.diff-code').textContent)",
+			),
+			["40:const a = 1;", "41:const b = 2;"],
+		);
+		await browser.evaluate("history.back()");
+		// edit: the diff, its lines marked removed and added.
+		await browser.wait("document.querySelectorAll('[data-testid=step]').length===3");
+		await open(2);
+		assert.deepEqual(
+			await browser.evaluate(
+				"[...document.querySelectorAll('[data-testid=detail-output] pre.diff .diff-line')].map(e=>e.className.replace('diff-line','').trim()+':'+e.textContent.trim())",
+			),
+			["del:-40 const a = 1;", "add:+40 const a = 3;"],
+		);
+		await browser.evaluate("history.back()");
+		await browser.evaluate("history.back()");
+		await browser.wait(`!${sheet}`);
+	});
+
+	it("updates a running call's detail live, as its output streams", async () => {
+		const running = (output: string): ConversationView => {
+			const message: AssistantMessage = {
+				...fauxAssistantMessage([]),
+				content: [call("live", "bash", { command: "npm test" })],
+				stopReason: "toolUse",
+				timestamp: 1,
+			};
+			return {
+				conversation,
+				entries: [{ id: 1 as EntryId, conversationId: conversation.id, kind: "pi.assistant", model: [message] }],
+				docs: {
+					"pi.live": {
+						run: { taskId: 1, inputs: [] },
+						tools: [{ callId: "live", name: "bash", taskId: 1, status: "running", output }],
+					} as unknown as LiveState,
+				} as ConversationView["docs"],
+			};
+		};
+		await show(running("building\n"));
+		await browser.click("[data-testid=activity]");
+		await browser.wait("document.querySelector('[data-testid=step] .step-state')?.textContent==='● running'");
+		await browser.click("[data-testid=step] button");
+		await browser.wait("document.querySelector('pre.detail-output')?.textContent==='building'");
+		await browser.evaluate(`window.showCodemode(${JSON.stringify(running("building\ntesting\n"))})`);
+		await browser.wait("document.querySelector('pre.detail-output')?.textContent==='building\\ntesting'");
+		await browser.evaluate("history.back()");
 		await browser.evaluate("history.back()");
 		await browser.wait(`!${sheet}`);
 	});

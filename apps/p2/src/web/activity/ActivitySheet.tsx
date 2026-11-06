@@ -4,7 +4,7 @@
 // transcript renders it (`ActivityLayer`), so it follows the run live while the wheel's row is scrolled away.
 import { type ReactNode, useContext, useEffect, useRef, useState } from "react";
 import { closeLayers, getNavigation, type Layer, Sheet, useSheet } from "../../runtime/web.tsx";
-import { relativePath, WorkingDirectory } from "../chat-context.ts";
+import { ToolActivityContext, WorkingDirectory } from "../chat-context.ts";
 import {
 	ArtifactIcon,
 	BotIcon,
@@ -20,13 +20,13 @@ import {
 } from "../icons.tsx";
 import { GroupDetail, StepDetail } from "./Detail.tsx";
 import {
+	argumentOf,
 	type ChatItem,
 	describe,
 	elapsed,
 	groupCalls,
 	type Kind,
 	type Label,
-	mainArgument,
 	type Step,
 	stepState,
 } from "./model.ts";
@@ -105,15 +105,16 @@ const heading = (label: Label) =>
 	[[label.verb, label.object].filter(Boolean).join(" "), label.extra].filter(Boolean).join(" · ");
 
 function ActivitySheet({ activity, place }: { activity: Activity; place: Place }) {
+	const tools = useContext(ToolActivityContext);
 	const { steps } = activity;
 	const step = place.step === undefined ? undefined : steps.find((each) => each.id === place.step);
-	const group = step && place.group !== undefined ? groupCalls(step.tool.calls ?? [])[place.group] : undefined;
+	const group = step && place.group !== undefined ? groupCalls(step.tool.calls ?? [], tools)[place.group] : undefined;
 	const time = useElapsed(activity.startedAt, activity.endedAt, activity.working);
 	const count = `${steps.length} ${steps.length === 1 ? "step" : "steps"}`;
 	const title = group
 		? heading(group.label)
 		: step
-			? heading(describe(step).label)
+			? heading(describe(step, tools).label)
 			: [count, time].filter(Boolean).join(" · ");
 	return (
 		<Sheet
@@ -153,10 +154,9 @@ const ICONS: Record<Kind, () => ReactNode> = {
 	tool: () => <ToolIcon />,
 };
 
-const PATHS = new Set(["read", "write", "edit", "send_file"]);
-
 /** The run's calls, one row each: icon, the tool and its main argument, how it went, a way into its detail. */
 function StepList({ steps, onStep }: { steps: readonly Step[]; onStep: (id: string) => void }) {
+	const tools = useContext(ToolActivityContext);
 	const cwd = useContext(WorkingDirectory)?.replace(/\/+$/, "");
 	const list = useRef<HTMLUListElement>(null);
 	// Opened on the newest calls: the reader usually looks for what happened last. Not when the page's remembered
@@ -168,21 +168,17 @@ function StepList({ steps, onStep }: { steps: readonly Step[]; onStep: (id: stri
 	return (
 		<ul className="step-list" data-testid="timeline" ref={list}>
 			{steps.map((step) => {
-				const argument = mainArgument(step.tool);
+				const argument = argumentOf(step.tool, tools, cwd);
 				return (
 					<li key={step.id} data-testid="step" data-state={step.status}>
 						<button type="button" className="step-row" onClick={() => onStep(step.id)}>
-							<span className="step-icon">{ICONS[describe(step).label.kind]()}</span>
+							<span className="step-icon">{ICONS[describe(step, tools).label.kind]()}</span>
 							<span className="step-words">
 								<span className="step-name">{step.tool.name}</span>
-								{argument && (
-									<span className="step-argument">
-										{PATHS.has(step.tool.name) ? relativePath(cwd, argument) : argument}
-									</span>
-								)}
+								{argument && <span className="step-argument">{argument}</span>}
 							</span>
 							<span className="step-state" data-state={step.status}>
-								{stepState(step)}
+								{stepState(step, tools)}
 							</span>
 							<span className="step-chevron" aria-hidden="true">
 								<ChevronIcon size={16} />

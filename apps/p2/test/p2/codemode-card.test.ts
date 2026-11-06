@@ -237,6 +237,14 @@ test(
 				/^codemoderead every file● running/,
 			);
 			await browser.click("[data-testid=step] button");
+			// The newest eight calls, the rest behind "Show all", as the transcript's card had them.
+			await browser.wait("document.querySelectorAll('[data-testid=call]').length===8");
+			assert.equal(
+				await browser.evaluate("document.querySelector('[data-testid=calls-more]').textContent"),
+				"Show all 10 tool calls · 1 failed",
+			);
+			assert.match(await browser.evaluate<string>(`${call(7)}.textContent`), /Running npm test|npm test/);
+			await browser.click("[data-testid=calls-more]");
 			await browser.wait("document.querySelectorAll('[data-testid=call]').length===10");
 			assert.equal(
 				await browser.evaluate("document.querySelector('.sheet-head h2').textContent"),

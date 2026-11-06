@@ -3,7 +3,8 @@
 // to the summary. The reader can roll it back through the calls; a tap opens them in a sheet (ActivitySheet), on the
 // call the wheel shows when the reader rolled it there.
 
-import type { MouseEvent, ReactNode } from "react";
+import { type MouseEvent, type ReactNode, useContext } from "react";
+import { ToolActivityContext } from "../chat-context.ts";
 import { Ticker } from "../elanor-extra/ticker.tsx";
 import { openActivity, useElapsed } from "./ActivitySheet.tsx";
 import { CheckIcon, ChevronIcon, SparkIcon } from "./icons.tsx";
@@ -39,7 +40,8 @@ export function ActivityRow({
 	startedAt?: number;
 	endedAt?: number;
 }) {
-	const done = summary(steps, { failures: false });
+	const tools = useContext(ToolActivityContext);
+	const done = summary(steps, tools, { failures: false });
 	/** Opens the calls: the list, or a call's detail over it when the reader rolled the wheel to that call. */
 	const show = (step?: string) => openActivity(rowKey, steps.some((each) => each.id === step) ? step : undefined);
 	/** A tap beside the wheel; the wheel's own tap (its button) is `onActivate`. */
@@ -47,7 +49,7 @@ export function ActivityRow({
 		if (!(event.target instanceof Element && event.target.closest(".activity-ticker"))) show();
 	};
 	const faces: Face[] = steps.map((step) => {
-		const label = live(step);
+		const label = live(step, tools);
 		return {
 			key: step.id,
 			label: plain(label),

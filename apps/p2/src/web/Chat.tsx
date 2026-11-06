@@ -13,7 +13,7 @@ import {
 } from "react";
 import { ActivityRow } from "./activity/ActivityRow.tsx";
 import { ActivityLayer } from "./activity/ActivitySheet.tsx";
-import { type ChatItem, chatItems } from "./activity/model.ts";
+import { type ChatItem, chatItems, type ToolActivityTable } from "./activity/model.ts";
 import { Results } from "./activity/Results.tsx";
 import { CopyButton } from "./Code.tsx";
 import { BranchFrom, OpenConversation, OpenPeerConversation, ReplyTo, RevealEntry } from "./chat-context.ts";
@@ -89,6 +89,7 @@ export {
 	RevealEntry,
 	relativePath,
 	SessionId,
+	ToolActivityContext,
 	WorkingDirectory,
 } from "./chat-context.ts";
 
@@ -619,12 +620,17 @@ export type TranscriptRow = {
 const rowsOf = new WeakMap<ChatItem, { first: boolean; gap: TranscriptRow["gap"]; row: TranscriptRow }>();
 /**
  * The rows of a transcript: its items as the chat shows them (`chatItems`: each turn's thinking, texts and runs of
- * calls in order, its answer and results).
+ * calls in order, its answer and results). `tools`: the tools' contributions (`ToolActivities`).
  * `working`: the agent is at it, so the last turn is live; `known`: `working` comes from the server's live state (not
  * yet while the transcript kept on this device shows).
  */
-export function transcriptRows(items: readonly Item[], working = false, known = true): TranscriptRow[] {
-	const shown = chatItems(items, working, known);
+export function transcriptRows(
+	items: readonly Item[],
+	tools: ToolActivityTable,
+	working = false,
+	known = true,
+): TranscriptRow[] {
+	const shown = chatItems(items, working, known, tools);
 	return shown.map((item, index) => {
 		const first = index === 0;
 		const gap =

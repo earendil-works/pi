@@ -3,6 +3,7 @@ import {
 	navigate,
 	OpenPeerConversation,
 	Slots,
+	ToolActivities,
 	useComposerState,
 	useConnected,
 	useObject,
@@ -10,6 +11,7 @@ import {
 } from "@p2/app/v1/web";
 import type { ReactNode } from "react";
 import { Sessions } from "../sessions/contract.ts";
+import { conversationsActivity } from "./activity.tsx";
 
 function Attribution({ children }: { children?: ReactNode }) {
 	const sessions = useObject(Sessions, {});
@@ -42,5 +44,6 @@ function Attribution({ children }: { children?: ReactNode }) {
 export default defineFacet((host) => {
 	contribute(host, "p2.web-conversations", (self) => {
 		self.contribute(Slots, { "chat-attribution": Attribution });
+		self.contribute(ToolActivities, { conversations: conversationsActivity });
 	});
 });

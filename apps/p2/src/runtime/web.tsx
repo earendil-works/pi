@@ -45,7 +45,7 @@ import { canonicalJson } from "./json.ts";
 import { follow, followRegistry, type HeldIn, type HeldRef, knownRegistry, liveIn, UI_LINGER } from "./refs.ts";
 import { Slots } from "./web-core.ts";
 
-export { Slots, webCoreFacet } from "./web-core.ts";
+export { Slots, ToolActivities, webCoreFacet } from "./web-core.ts";
 
 export const HostContext = createContext<Host | undefined>(undefined);
 

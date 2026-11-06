@@ -158,16 +158,14 @@
 .detail-output {
 	color: var(--semantic-color-text-code);
 }
-.detail-more + .detail-output {
-	padding-top: 0;
-}
 /* A failure: its output in red, no louder than that. */
 .detail-terminal[data-failed] .detail-output {
 	color: var(--semantic-color-text-negative);
 }
+/* "Show all" a script's calls. */
 .detail-more {
 	align-self: flex-start;
-	padding: var(--semantic-dimension-space-padding-small) var(--semantic-dimension-space-padding-large);
+	min-block-size: var(--control-sm);
 	color: var(--semantic-color-text-link);
 	font: var(--semantic-typography-ui-tertiary);
 }
@@ -190,18 +188,6 @@
 	flex-direction: column;
 	gap: var(--semantic-dimension-space-gap-small);
 }
-.result-links {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: var(--semantic-dimension-space-gap-medium);
-	color: var(--semantic-color-icon-secondary);
-}
-.result-link {
-	color: var(--semantic-color-text-link);
-	font: var(--semantic-typography-ui-secondary);
-}
-
 /* The wheel (Elanor's Ticker) fills the row; a finished turn reads in the secondary colour. */
 .activity-turn {
 	cursor: pointer;
@@ -284,39 +270,4 @@
 	flex-direction: column;
 	gap: var(--s4);
 	min-width: 0;
-}
-
-/* A history tool's entries (Detail.tsx): each a row that opens its message in the transcript. */
-.history-entries {
-	display: flex;
-	flex-direction: column;
-	margin: 0;
-	padding: 0;
-	list-style: none;
-}
-.history-entry {
-	display: flex;
-	flex-direction: column;
-	gap: var(--semantic-dimension-space-gap-xx-small);
-	inline-size: 100%;
-	padding: var(--semantic-dimension-space-padding-small) 0;
-	border-block-end: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
-	text-align: start;
-}
-.history-entry-head {
-	font: var(--semantic-typography-ui-secondary);
-	font-weight: var(--semantic-font-weight-ui-selected);
-}
-.history-entry:hover .history-entry-head {
-	text-decoration: underline;
-}
-.history-entry-id {
-	color: var(--semantic-color-text-secondary);
-	font-family: var(--semantic-font-family-code);
-	font-weight: normal;
-}
-.history-entry-text {
-	color: var(--semantic-color-text-secondary);
-	font: var(--semantic-typography-ui-tertiary);
-	overflow-wrap: anywhere;
 }

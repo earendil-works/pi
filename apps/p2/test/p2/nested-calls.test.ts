@@ -133,6 +133,7 @@ test(
 			await browser.click("[data-testid=activity]");
 			await browser.wait("document.querySelector('[data-testid=step] button')");
 			await browser.click("[data-testid=step] button");
+			await browser.click("[data-testid=calls-more]");
 			await browser.wait("document.querySelectorAll('[data-testid=call]').length===10");
 			// The first failed, the ninth was interrupted by a restart (a failure too), the tenth runs.
 			assert.equal(await browser.evaluate(states), ["error", ...Array(7).fill("done"), "error", "running"].join());

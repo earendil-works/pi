@@ -1,6 +1,15 @@
 import { contribute, defineFacet, liveIn } from "@p2/app/v1";
-import { conversationRoute, Slots, useNavigation, useObject, useReadable, useRoute } from "@p2/app/v1/web";
+import {
+	conversationRoute,
+	Slots,
+	ToolActivities,
+	useNavigation,
+	useObject,
+	useReadable,
+	useRoute,
+} from "@p2/app/v1/web";
 import { Sessions } from "../sessions/contract.ts";
+import { subagentActivity } from "./activity.tsx";
 
 function ParentLink() {
 	const nav = useNavigation();
@@ -22,5 +31,6 @@ function ParentLink() {
 export default defineFacet((host) => {
 	contribute(host, "p2.web-subagents", (self) => {
 		self.contribute(Slots, { "chat-parent": ParentLink });
+		self.contribute(ToolActivities, { subagent: subagentActivity });
 	});
 });

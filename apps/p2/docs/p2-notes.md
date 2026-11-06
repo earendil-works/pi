@@ -1407,6 +1407,22 @@ translated phone drawer and intercept chat taps.
   summaries, grouped calls), `ui-activity.test.ts` (the sheet, its layers and Back, the wide dialog, a mixed turn, a
   long run opening at its end), and the browser tests that open steps (`codemode-card`, `nested-calls`, `ui-agents`,
   `failed-turns`, `ui-mobile-fixes`).
+- **Tools' look comes from their plugins** (owner decision: no tool-specific code in `src/web`). A plugin's web facet
+  contributes `ToolActivity` entries, keyed by tool name, to the `ToolActivities` registry (`src/runtime/web-core.ts`;
+  type in `src/web/activity/model.ts`, the parts a detail is built from in `src/web/activity/api.ts`, all through
+  `@p2/app/v1/web`): its words on the wheel and in the sheet (`describe`, `running`: a `Kind` from the activity's icon
+  vocabulary, a verb, an object, an extra), the row's main argument, a failure word ("exit 1"), its words in a run's
+  summary as a function of the count (tools sharing the function count together: write and edit), its `Detail` and a
+  nested call's `CallDetail`, and a `Result` after the answer with `hasResult`. A detail shows everything at once (no
+  "Show all" inside it; long output scrolls with the sheet) and follows a running call live; the one cap kept is a
+  script's calls: the newest eight, the rest behind "Show all", as the transcript's card had them. Owners: `coding-tools` (bash, read, write, edit), `terminals`, `codemode`,
+  `subagents`, `agent`, `artifacts`, `send-file`, `ports`, `conversations`, `history`, each in its `activity.tsx`. The
+  chat plugin reads the registry and passes the table to `transcriptRows` and `ToolActivityContext`. A tool without a
+  contribution (an MCP tool, `team`, `powershell`) reads as its name and first short string argument with the generic
+  icon ("used web_fetch", "used web_fetch 3 times" in a summary), its detail the input as JSON and the output. Tool declarations and schemas carry nothing for this. Still in
+  core: a script's settled nested calls (`details.calls`, Durable's code mode format) in `transcript.ts`, shared with
+  the TUI. Tests: `activity-model.test.ts` (contributed and generic words, summaries), `ui-activity.test.ts` (a
+  plugin's detail and the generic one), the fixtures' table (`test/fixtures/transcript.ts`, `PLUGIN_TOOLS`).
 - **Incoming messages** (`Incoming` in `src/web/Chat.tsx`): every message that is neither the owner's nor the agent's
   own (a subagent's answer, question, note or failure, `p2.agent-message`; another session's, `p2.peer-message`; a
   guest's input or chat message) has one shape: a header line "icon name · what · time" (answered, asks, wrote,

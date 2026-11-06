@@ -68,6 +68,8 @@ import {
 	seedSizes,
 	setDrawer,
 	setSidebarCollapsed,
+	ToolActivities,
+	ToolActivityContext,
 	type Transcript,
 	takeReveal,
 	transcriptOf,
@@ -972,7 +974,12 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	}, [transcript, pending, pendingQueued]);
 	// Until the live view arrives (the kept copy shows), whether the agent works is not known yet.
 	const known = liveView !== undefined;
-	const rows = useMemo(() => (shown ? transcriptRows(shown.items, shown.working, known) : undefined), [shown, known]);
+	// How tools' calls show: contributed by the plugins that own them.
+	const tools = useRegistry(ToolActivities);
+	const rows = useMemo(
+		() => (shown ? transcriptRows(shown.items, tools, shown.working, known) : undefined),
+		[shown, tools, known],
+	);
 	const follow = useChatScroll({
 		cache: `${sessionId}#${conversationId}`,
 		...(rows ? { rows } : {}),
@@ -1419,41 +1426,43 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 						shown.items.length && rows ? (
 							<SessionId.Provider value={sessionId}>
 								<WorkingDirectory.Provider value={viewCwd}>
-									<OpenConversation.Provider value={openConversation}>
-										<OneShotAgents.Provider value={oneShots}>
-											<OpenWorkspaceFile.Provider value={canWrite ? openWorkspaceFile : undefined}>
-												<OpenTerminal.Provider value={owner ? openTerminal : undefined}>
-													<ReplyTo.Provider value={participant && canReply ? startReply : undefined}>
-														<BranchFrom.Provider value={canBranch ? branchFrom : undefined}>
-															<RevealEntry.Provider value={reveal}>
-																<FillGap.Provider value={fillGap}>
-																	<Messages
-																		transcript={shown}
-																		rows={rows}
-																		list={follow.list}
-																		range={follow.range}
-																		stopped={
-																			stopped?.sessionId === sessionId &&
-																			stopped?.conversationId === conversationId &&
-																			!view?.entries.some((entry) =>
-																				entry.model?.some(
-																					(message) =>
-																						message.role === "assistant" &&
-																						message.stopReason === "aborted",
-																				),
-																			)
-																		}
-																		earlier={earlier}
-																		onEarlier={() => void loadEarlier()}
-																	/>
-																</FillGap.Provider>
-															</RevealEntry.Provider>
-														</BranchFrom.Provider>
-													</ReplyTo.Provider>
-												</OpenTerminal.Provider>
-											</OpenWorkspaceFile.Provider>
-										</OneShotAgents.Provider>
-									</OpenConversation.Provider>
+									<ToolActivityContext.Provider value={tools}>
+										<OpenConversation.Provider value={openConversation}>
+											<OneShotAgents.Provider value={oneShots}>
+												<OpenWorkspaceFile.Provider value={canWrite ? openWorkspaceFile : undefined}>
+													<OpenTerminal.Provider value={owner ? openTerminal : undefined}>
+														<ReplyTo.Provider value={participant && canReply ? startReply : undefined}>
+															<BranchFrom.Provider value={canBranch ? branchFrom : undefined}>
+																<RevealEntry.Provider value={reveal}>
+																	<FillGap.Provider value={fillGap}>
+																		<Messages
+																			transcript={shown}
+																			rows={rows}
+																			list={follow.list}
+																			range={follow.range}
+																			stopped={
+																				stopped?.sessionId === sessionId &&
+																				stopped?.conversationId === conversationId &&
+																				!view?.entries.some((entry) =>
+																					entry.model?.some(
+																						(message) =>
+																							message.role === "assistant" &&
+																							message.stopReason === "aborted",
+																					),
+																				)
+																			}
+																			earlier={earlier}
+																			onEarlier={() => void loadEarlier()}
+																		/>
+																	</FillGap.Provider>
+																</RevealEntry.Provider>
+															</BranchFrom.Provider>
+														</ReplyTo.Provider>
+													</OpenTerminal.Provider>
+												</OpenWorkspaceFile.Provider>
+											</OneShotAgents.Provider>
+										</OpenConversation.Provider>
+									</ToolActivityContext.Provider>
 								</WorkingDirectory.Provider>
 							</SessionId.Provider>
 						) : (
@@ -1500,7 +1509,8 @@ function NewSession() {
 	// The first messages, shown at once while the session is created (session-start.ts).
 	const start = useSyncExternalStore(sessionStart.subscribe, sessionStart.snapshot);
 	const outgoing = useMemo(() => (start ? outgoingTranscript(start.messages) : undefined), [start]);
-	const rows = useMemo(() => (outgoing ? transcriptRows(outgoing.items) : undefined), [outgoing]);
+	const tools = useRegistry(ToolActivities);
+	const rows = useMemo(() => (outgoing ? transcriptRows(outgoing.items, tools) : undefined), [outgoing, tools]);
 	const follow = useChatScroll({ ...(rows ? { rows } : {}), estimates: rowEstimates });
 	/**
 	 * Sends the composer's message without waiting for the session or the connection: it leaves the composer and shows
