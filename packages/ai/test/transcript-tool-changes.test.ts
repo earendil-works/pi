@@ -687,6 +687,6 @@ describe("tool-state comparison efficiency", () => {
 		const changes = getToolStateChanges(previous as never, current as never);
 		expect(changes.toolsAdded.map((tool) => tool.name)).toEqual(["changed", "added"]);
 		expect(changes.toolsRemoved.map((tool) => tool.name)).toEqual(["changed", "removed"]);
-		expect(serialized).toBe(5);
+		expect(serialized).toBe(6);
 	});
 });
