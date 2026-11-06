@@ -35,7 +35,11 @@ export function parseCommandArgs(argsString: string): string[] {
 		const char = argsString[i];
 
 		if (inQuote) {
-			if (char === inQuote) {
+			if (char === "\\" && argsString[i + 1] === inQuote) {
+				// A backslash before the open quote's character keeps it as text: "say \"hi\"" gives say "hi"
+				current += inQuote;
+				i++;
+			} else if (char === inQuote) {
 				inQuote = null;
 			} else {
 				current += char;
