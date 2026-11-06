@@ -6,9 +6,8 @@
 import { BACKGROUND_CONTEXT } from "../../context/index.ts";
 import { type Address, method, obj, remote, str } from "../../contracts/index.ts";
 import { forbidden, type Principal } from "../../data/index.ts";
-import { canonicalJson } from "../../data/principal.ts";
+import { samePrincipal } from "../../data/principal.ts";
 import { defineFacet, type Facet } from "../../host/index.ts";
-import type { JsonValue } from "../../json.ts";
 import type { Store } from "../../store/index.ts";
 import { type ArchiveManifest, packStore } from "./archive.ts";
 
@@ -31,10 +30,9 @@ export function addressParam(address: Address): string {
  * (the server's principal) only.
  */
 export function hostDataFacet<P extends Principal>(store: Store, files: string, server: P): Facet<P> {
-	const serverKey = canonicalJson(server as JsonValue, BACKGROUND_CONTEXT);
 	return defineFacet<P>((host) =>
 		host.serve(HostData, (_params, principal) => {
-			if (canonicalJson(principal as JsonValue, BACKGROUND_CONTEXT) !== serverKey) {
+			if (!samePrincipal(principal, server, BACKGROUND_CONTEXT)) {
 				throw forbidden("chord.app.data: the server's only");
 			}
 			return {

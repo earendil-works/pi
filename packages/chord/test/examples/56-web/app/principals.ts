@@ -1,4 +1,4 @@
-// The board app's principals: its server, the kit's owner, and users.
+// The board app's principals: its server, its owner, and users.
 
 /** Who someone is in the board app. */
 export type BoardPrincipal =

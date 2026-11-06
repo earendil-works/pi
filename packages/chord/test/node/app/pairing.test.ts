@@ -6,7 +6,7 @@ import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { Sessions } from "../../../src/node/app/index.ts";
 import { Pairings } from "../../../src/node/app/pairing.ts";
 import { send } from "../http/support.ts";
-import { testApp } from "./support.ts";
+import { bearerFor, testApp, type UserPrincipal, userOwnerApp } from "./support.ts";
 
 /** A JSON post to `path`. */
 function post(port: number, path: string, body: unknown, headers: Readonly<Record<string, string>> = {}) {
@@ -33,30 +33,15 @@ afterEach(() => {
 describe("pairing over HTTP", () => {
 	it("pairs a client: code, owner approval, one poll with the token, then nothing", async () => {
 		const { app, port } = await testApp();
-		const owner = {
-			authorization: `Bearer ${await app.host.root(async (ctx) => {
-				const sessions = await ctx.get(Sessions, {});
-				return (await sessions.issue({ principal: { kind: "owner" }, label: "owner", kind: "device" }, ctx)).token;
-			}, context)}`,
-		};
+		const owner = await bearerFor(app, { kind: "owner" });
 		const begun = (await post(port, "/_chord/pair", { label: "laptop" })) as { status: number; body: Buffer };
 		const { code, poll } = json(begun) as { code: string; poll: string };
 		expect(code).toMatch(/^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/);
 		expect(json(await post(port, "/_chord/pair/poll", { poll }))).toEqual({ status: "waiting" });
 		// Anonymous and non-owner principals cannot see or approve it.
 		expect((await send(port, "GET", `/_chord/pair/${code}`)).status).toBe(401);
-		const user = await app.host.root(
-			async (ctx) =>
-				(await ctx.get(Sessions, {})).issue(
-					{ principal: { kind: "user", id: "u", name: "u" }, label: "u", kind: "device" },
-					ctx,
-				),
-			context,
-		);
-		expect(
-			(await send(port, "POST", `/_chord/pair/${code}`, { headers: { authorization: `Bearer ${user.token}` } }))
-				.status,
-		).toBe(403);
+		const user = await bearerFor(app, { kind: "user", id: "u", name: "u" });
+		expect((await send(port, "POST", `/_chord/pair/${code}`, { headers: user })).status).toBe(403);
 		const page = await send(port, "GET", `/_chord/pair/${code.toLowerCase()}`, { headers: owner });
 		expect(page.body.toString()).toContain("laptop");
 		expect((await send(port, "POST", `/_chord/pair/${code}`, { headers: owner })).status).toBe(200);
@@ -79,6 +64,30 @@ describe("pairing over HTTP", () => {
 		const { app, port } = await testApp();
 		expect((await post(port, "/_chord/pair/poll", { poll: "nope" })).status).toBe(404);
 		expect((await post(port, "/_chord/pair/poll", {})).status).toBe(404);
+		await app.close(context);
+	});
+});
+
+describe("an owner the app chooses", () => {
+	it("lets only that principal approve, issues the device session for it, and does not count its pairings", async () => {
+		const ada: UserPrincipal = { kind: "user", id: "u1" };
+		const { app, port } = await userOwnerApp(ada, { limits: { pendingPairings: 1, pairingsPerAddress: 1 } });
+		const owner = await bearerFor(app, ada);
+		const other = await bearerFor(app, { kind: "user", id: "u2" });
+		const { code, poll } = json(await post(port, "/_chord/pair", { label: "phone" })) as {
+			code: string;
+			poll: string;
+		};
+		expect((await post(port, "/_chord/pair", {}, other)).status).toBe(429);
+		expect((await post(port, "/_chord/pair", {}, owner)).status).toBe(200);
+		expect((await send(port, "GET", `/_chord/pair/${code}`, { headers: other })).status).toBe(403);
+		expect((await send(port, "POST", `/_chord/pair/${code}`, { headers: other })).status).toBe(403);
+		expect((await send(port, "GET", `/_chord/pair/${code}`, { headers: owner })).status).toBe(200);
+		expect((await send(port, "POST", `/_chord/pair/${code}`, { headers: owner })).status).toBe(200);
+		const approved = json(await post(port, "/_chord/pair/poll", { poll })) as { token: string };
+		const listed = await app.host.root(async (ctx) => (await ctx.get(Sessions, {})).list.value, context);
+		const id = approved.token.slice(0, approved.token.indexOf("."));
+		expect(listed.find((session) => session.id === id)).toMatchObject({ label: "phone", principal: ada });
 		await app.close(context);
 	});
 });
@@ -109,12 +118,7 @@ describe("limits", () => {
 
 	it("lets the signed-in owner pair past the caps, without counting it (recheck N2)", async () => {
 		const { app, port } = await testApp({ limits: { pendingPairings: 1, pairingsPerAddress: 1 } });
-		const { token } = await app.host.root(
-			async (ctx) =>
-				(await ctx.get(Sessions, {})).issue({ principal: { kind: "owner" }, label: "o", kind: "device" }, ctx),
-			context,
-		);
-		const owner = { authorization: `Bearer ${token}` };
+		const owner = await bearerFor(app, { kind: "owner" });
 		expect((await post(port, "/_chord/pair", {})).status).toBe(200);
 		expect((await post(port, "/_chord/pair", {})).status).toBe(429);
 		const statuses = [];

@@ -40,7 +40,11 @@ export function startTally(
 			listen: { host: "127.0.0.1", port: 0 },
 			api: API,
 			kinds: KINDS,
-			principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", tally: address.key }) },
+			principal: {
+				server: { kind: "server" },
+				worker: (address) => ({ kind: "worker", tally: address.key }),
+				owner: { kind: "owner" },
+			},
 			telemetry,
 			workers: [
 				{

@@ -201,10 +201,11 @@ one request across hosts, joined by the <strong>carriers</strong> calls carry.</
 script and a worker entry (design §23, &quot;The app kit&quot;). Everything else is a plugin. This chapter writes the three
 pieces of base code and starts the server.</p>
 <h3 id="the-principals">The principals</h3>
-<p>A <strong>principal</strong> says who is calling. The app defines the type; the kit needs a variant for the server, one for its
-workers, and adds the owner, <code>{ kind: &quot;owner&quot; }</code>, which the app&#39;s type must include:</p>
+<p>A <strong>principal</strong> says who is calling. The app defines the type; the kit needs a principal for the server, one for each of
+its workers (an app without worker kinds leaves it out) and one for the owner, whom the owner&#39;s sign-in names. The todo
+app gives the owner a variant of its own, <code>{ kind: &quot;owner&quot; }</code>; another app could make the owner one of its users:</p>
 <!-- quote: src/principals.ts -->
-<pre><code><span class="tk-c">// The todo app's principals: its server and list workers, the kit's owner, and the users who signed in with a name.</span>
+<pre><code><span class="tk-c">// The todo app's principals: its server and list workers, its owner, and the users who signed in with a name.</span>
 
 <span class="tk-c">/** Who someone is in the todo app. */</span>
 <span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">TodoPrincipal</span> =
@@ -314,7 +315,11 @@ facet kinds (which files a plugin may have), and the principals:</p>
 			listen: { host: <span class="tk-s">"127.0.0.1"</span>, port: <span class="tk-n">0</span> },
 			api: API,
 			kinds: KINDS,
-			principal: { server: { kind: <span class="tk-s">"server"</span> }, worker: (address) =&gt; ({ kind: <span class="tk-s">"worker"</span>, list: address.key }) },
+			principal: {
+				server: { kind: <span class="tk-s">"server"</span> },
+				worker: (address) =&gt; ({ kind: <span class="tk-s">"worker"</span>, list: address.key }),
+				owner: { kind: <span class="tk-s">"owner"</span> },
+			},
 			<span class="tk-c">// The store the server writes: its own spans and metrics, and what the workers and recording pages send.</span>
 			telemetry: telemetry.store,
 			<span class="tk-c">// Who a span was for: a short key and a user's name (each worker's `startWorker` gets the same hook).</span>

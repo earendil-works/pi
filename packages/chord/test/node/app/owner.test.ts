@@ -1,5 +1,7 @@
 // Tests of the owner's sign-in (slice 13 §2): the owner link (single use, expiry, replaced at each start, the token
-// only in the fragment), and the owner token file (mode 0600, kept while its session lives, replaced once revoked).
+// only in the fragment), the owner token file (mode 0600, kept while its session lives, replaced once revoked), and an
+// owner the app chooses (decision "The kit's owner is a principal the app chooses": recognized by canonical JSON, its
+// token file replaced and its session revoked when it changes).
 
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,7 +9,7 @@ import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { Sessions } from "../../../src/node/app/index.ts";
 import { OwnerLink } from "../../../src/node/app/owner.ts";
 import { send } from "../http/support.ts";
-import { testApp, WHOAMI } from "./support.ts";
+import { bearerFor, testApp, type UserPrincipal, userOwnerApp, WHOAMI } from "./support.ts";
 
 /** Posts `token` to the owner route as the link's page does. */
 function postToken(port: number, token: string) {
@@ -107,6 +109,59 @@ describe("the owner token file", () => {
 		const replaced = (await readFile(second.app.ownerTokenFile, "utf8")).trim();
 		expect(replaced).not.toBe(token);
 		expect((await stat(second.app.ownerTokenFile)).mode & 0o777).toBe(0o600);
+		await second.app.close(context);
+	});
+});
+
+describe("an owner the app chooses", () => {
+	const ada: UserPrincipal = { kind: "user", id: "u1" };
+	const bob: UserPrincipal = { kind: "user", id: "u2" };
+
+	/** Who `headers` sign in as on `port` (`GET /whoami`). */
+	async function whoami(port: number, headers: Readonly<Record<string, string>>): Promise<unknown> {
+		return JSON.parse((await send(port, "GET", "/whoami", { headers })).body.toString());
+	}
+
+	it("signs the owner link and the owner token file in as that principal", async () => {
+		const { app, port } = await userOwnerApp(ada, { plugins: { whoami: { "server.ts": WHOAMI } } });
+		const signed = await postToken(port, new URL(app.ownerLink()).hash.slice(1));
+		const cookie = String(signed.headers["set-cookie"]).split(";")[0]!;
+		expect(await whoami(port, { cookie })).toEqual(ada);
+		const token = (await readFile(app.ownerTokenFile, "utf8")).trim();
+		expect(await whoami(port, { authorization: `Bearer ${token}` })).toEqual(ada);
+		await app.close(context);
+	});
+
+	it("keeps a user owner's token file across starts, also with the owner's fields in another order", async () => {
+		const first = await userOwnerApp(ada);
+		const token = (await readFile(first.app.ownerTokenFile, "utf8")).trim();
+		await first.app.close(context);
+		const second = await userOwnerApp({ id: "u1", kind: "user" }, { dataDir: first.dataDir, root: first.root });
+		expect((await readFile(second.app.ownerTokenFile, "utf8")).trim()).toBe(token);
+		await second.app.close(context);
+	});
+
+	it("replaces the owner token file when the owner changes and revokes its session; the old owner's others stay, not the owner", async () => {
+		const first = await userOwnerApp(ada, { plugins: { whoami: { "server.ts": WHOAMI } } });
+		const old = (await readFile(first.app.ownerTokenFile, "utf8")).trim();
+		const other = await bearerFor(first.app, ada);
+		await first.app.close(context);
+		const second = await userOwnerApp(bob, { dataDir: first.dataDir, root: first.root });
+		const replaced = (await readFile(second.app.ownerTokenFile, "utf8")).trim();
+		expect(replaced).not.toBe(old);
+		expect((await stat(second.app.ownerTokenFile)).mode & 0o777).toBe(0o600);
+		const owner = { authorization: `Bearer ${replaced}` };
+		expect(await whoami(second.port, owner)).toEqual(bob);
+		expect((await send(second.port, "GET", "/whoami", { headers: { authorization: `Bearer ${old}` } })).status).toBe(
+			401,
+		);
+		expect(await whoami(second.port, other)).toEqual(ada);
+		// An owner-only route: the old owner's session is refused, the new owner's accepted.
+		const { code } = JSON.parse((await send(second.port, "POST", "/_chord/pair")).body.toString()) as {
+			code: string;
+		};
+		expect((await send(second.port, "GET", `/_chord/pair/${code}`, { headers: other })).status).toBe(403);
+		expect((await send(second.port, "GET", `/_chord/pair/${code}`, { headers: owner })).status).toBe(200);
 		await second.app.close(context);
 	});
 });

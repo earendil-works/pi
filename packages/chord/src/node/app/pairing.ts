@@ -1,17 +1,17 @@
 // Device pairing (slice 13 §2, decision "The app kit, point 3" (c)): a command-line or terminal client on another
-// machine asks for a code (`POST /_chord/pair`, public) and polls with a secret it got with it; the owner opens
-// `/_chord/pair/<code>` in a signed-in browser and approves; the next poll returns a device session's token, once.
-// Codes are short, random, single use and expire after 10 minutes; the poll secret is kept only hashed. Asking is
-// public, so pairings anonymous clients start are capped: `maxPending` in all (100 by default) and `perAddress` per
-// client address (10). The trade: a party filling the caps locks pairing out for others for up to 10 minutes (behind a
-// tunnel every remote client has the tunnel's address), instead of growing the server's memory without bound; a
-// signed-in owner's pairings are not counted, so the owner can always pair.
+// machine asks for a code (`POST /_chord/pair`, public) and polls with a secret it got with it; the owner (the
+// principal the app names) opens `/_chord/pair/<code>` in a signed-in browser and approves; the next poll returns a
+// token of the owner's new device session, once. Codes are short, random, single use and expire after 10 minutes; the
+// poll secret is kept only hashed. Asking is public, so pairings anonymous clients start are capped: `maxPending` in
+// all (100 by default) and `perAddress` per client address (10). The trade: a party filling the caps locks pairing out
+// for others for up to 10 minutes (behind a tunnel every remote client has the tunnel's address), instead of growing
+// the server's memory without bound; a signed-in owner's pairings are not counted, so the owner can always pair.
 
 import { randomInt } from "node:crypto";
 import type { Principal } from "../../data/index.ts";
+import { samePrincipal } from "../../data/principal.ts";
 import { defineFacet, type Facet } from "../../host/index.ts";
 import { Http, type HttpRequest, type HttpResponse } from "../http/index.ts";
-import { OWNER } from "./owner.ts";
 import { hashToken, newToken } from "./secrets.ts";
 import { Sessions } from "./sessions.ts";
 
@@ -126,10 +126,10 @@ export const PAIR_PATH = "/_chord/pair";
 /**
  * The kit's facet for device pairing: `POST /_chord/pair` (public: `{ label? }` → `{ code, poll }`, 429 past a limit
  * unless the owner asks), `POST /_chord/pair/poll` (public: `{ poll }` → `{ status: "waiting" }`, `{ status:
- * "approved", token }` once, else 404), `GET` and `POST /_chord/pair/:code` (the owner's confirm page and approval: a
- * device session of the owner).
+ * "approved", token }` once, else 404), `GET` and `POST /_chord/pair/:code` (`owner`'s confirm page and approval: a
+ * device session of `owner`).
  */
-export function pairingFacet<P extends Principal>(pairings: Pairings): Facet<P> {
+export function pairingFacet<P extends Principal>(pairings: Pairings, owner: P): Facet<P> {
 	return defineFacet<P>((_host, self) =>
 		self.contribute(Http, {
 			routes: {
@@ -137,10 +137,9 @@ export function pairingFacet<P extends Principal>(pairings: Pairings): Facet<P> 
 					public: true,
 					handler: async (request, ctx): Promise<HttpResponse> => {
 						const label = await labelOf(request);
-						const by: PairingStarter =
-							ctx.principal?.kind === "owner"
-								? { kind: "owner" }
-								: { kind: "anonymous", address: request.remoteAddress ?? "" };
+						const by: PairingStarter = samePrincipal(ctx.principal, owner, ctx)
+							? { kind: "owner" }
+							: { kind: "anonymous", address: request.remoteAddress ?? "" };
 						const begun = pairings.begin(label, by);
 						return begun === undefined ? { kind: "error", status: 429 } : { kind: "json", value: begun };
 					},
@@ -157,19 +156,19 @@ export function pairingFacet<P extends Principal>(pairings: Pairings): Facet<P> 
 					},
 				},
 				[`GET ${PAIR_PATH}/:code`]: async (request, ctx) => {
-					if (ctx.principal?.kind !== "owner") return { kind: "error", status: 403 };
+					if (!samePrincipal(ctx.principal, owner, ctx)) return { kind: "error", status: 403 };
 					const pairing = pairings.waiting(request.params.code ?? "");
 					if (pairing === undefined)
 						return { kind: "html", status: 404, body: "<p>No such pairing (or it expired).</p>" };
 					return { kind: "html", body: confirmPage(pairing.code, pairing.label) };
 				},
 				[`POST ${PAIR_PATH}/:code`]: async (request, ctx) => {
-					if (ctx.principal?.kind !== "owner") return { kind: "error", status: 403 };
+					if (!samePrincipal(ctx.principal, owner, ctx)) return { kind: "error", status: 403 };
 					const pairing = pairings.waiting(request.params.code ?? "");
 					if (pairing === undefined)
 						return { kind: "html", status: 404, body: "<p>No such pairing (or it expired).</p>" };
 					const sessions = await ctx.get(Sessions, {});
-					const { token } = await sessions.issue({ principal: OWNER, label: pairing.label, kind: "device" }, ctx);
+					const { token } = await sessions.issue({ principal: owner, label: pairing.label, kind: "device" }, ctx);
 					pairing.token = token;
 					return {
 						kind: "html",

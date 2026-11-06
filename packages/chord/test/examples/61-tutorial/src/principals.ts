@@ -1,4 +1,4 @@
-// The todo app's principals: its server and list workers, the kit's owner, and the users who signed in with a name.
+// The todo app's principals: its server and list workers, its owner, and the users who signed in with a name.
 
 /** Who someone is in the todo app. */
 export type TodoPrincipal =

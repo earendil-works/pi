@@ -10,7 +10,7 @@ import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { type Context, withAbortSignal } from "../../context/index.ts";
 import { type Address, type HostKind, hostKind, type KindShape } from "../../contracts/index.ts";
 import type { Principal } from "../../data/index.ts";
-import { canonicalJson } from "../../data/principal.ts";
+import { principalKey, samePrincipal } from "../../data/principal.ts";
 import {
 	createHost,
 	type Facet,
@@ -19,7 +19,7 @@ import {
 	type PluginFacet,
 	type PrincipalAttributes,
 } from "../../host/index.ts";
-import type { JsonValue } from "../../json.ts";
+import { isJsonValue, type JsonValue } from "../../json.ts";
 import { openNodeSqliteDatabase } from "../../sqlite/node.ts";
 import { openStore, type Store, sqliteBackend } from "../../store/index.ts";
 import { localeChoiceFacet, themeChoiceFacet, themesFacet, translationsFacet } from "../../surfaces/index.ts";
@@ -44,7 +44,7 @@ import { addressParam, HostData } from "./data.ts";
 import { type FilesCaps, filesFacet } from "./files.ts";
 import { appInfoFacet } from "./info.ts";
 import { type AppLayout, createLayout, defaultDataDir, openDataDir, privateStore, workerDirectory } from "./layout.ts";
-import { OWNER_PATH, OwnerLink, type OwnerPrincipal, ownerFacet, ownerTokenFile } from "./owner.ts";
+import { OWNER_PATH, OwnerLink, ownerFacet, ownerTokenFile } from "./owner.ts";
 import { Pairings, pairingFacet } from "./pairing.ts";
 import { secretFile } from "./secrets.ts";
 import { createSessions } from "./sessions.ts";
@@ -96,7 +96,10 @@ export type AppError =
 	| { readonly kind: "workers"; readonly error: WorkersError }
 	| { readonly kind: "plugins"; readonly error: PluginsError };
 
-/** What `startServer` takes. `{ kind: "owner" }` must be one of the app's principals (the kit's owner). */
+/**
+ * What `startServer` takes. Worker kinds need `principal.worker`: a type error without it, also for a `workers` list
+ * typed as an array (not a tuple) that is empty.
+ */
 export type AppOptions<P extends Principal> = {
 	/** The app's name: its default data directory is `~/.<name>`, its archives carry it. */
 	readonly name: string;
@@ -109,8 +112,12 @@ export type AppOptions<P extends Principal> = {
 	readonly api: AppApi;
 	/** The app's facet kinds: `server` and each worker kind's facet kind among them. */
 	readonly kinds: Readonly<Record<string, AppKind>>;
-	/** The server's principal and each worker's (stamped on its link). */
-	readonly principal: { readonly server: P; readonly worker: (address: Address) => P };
+	/**
+	 * The server's principal, each worker's (stamped on its link; only with worker kinds) and the owner's: whom the owner
+	 * link, the owner token file and device pairing sign in, and who approves pairings and makes invites (`AppInfo.owner`).
+	 * The owner must be strict JSON and not the server's principal (refused at start).
+	 */
+	readonly principal: { readonly server: P; readonly worker?: (address: Address) => P; readonly owner: P };
 	/** The worker kinds; none: a server with clients only. */
 	readonly workers?: readonly AppWorkerKind<P>[];
 	/** The caps of each host's files (the server's and every worker's). */
@@ -150,7 +157,7 @@ export type AppOptions<P extends Principal> = {
 	 */
 	readonly timeouts?: AppTimeouts;
 	readonly onError: (error: AppError) => void;
-} & (OwnerPrincipal extends P ? unknown : { readonly "the app's principal type must have { kind: 'owner' }": never });
+} & ({ readonly workers?: readonly [] } | { readonly principal: { readonly worker: (address: Address) => P } });
 
 /**
  * The bounds of what public endpoints, clients and imports may cost: live ephemeral sessions (1,000; past it the
@@ -247,6 +254,7 @@ export type KitStart = {
  * root (or a problem discovery reports there) rejects with the plugins component's `PluginError`, everything closed.
  */
 export async function startServer<P extends Principal>(options: AppOptions<P>, context: Context): Promise<App<P>> {
+	checkOwner(options.principal.owner, options.principal.server, context);
 	const { layout, cookieSecret, store, lock } = await openServer(
 		resolve(options.dataDir ?? defaultDataDir(options.name)),
 		context,
@@ -297,18 +305,20 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 	// The address key of each worker by its principal's key: the principal its link stamps on its telemetry batches.
 	const workerHosts = new Map<string, string>();
 	const link = new OwnerLink();
+	const { owner } = options.principal;
 	const core: PluginFacet<P>[] = [
 		{ name: "chord.http", facet: http.facet },
 		{
 			name: "chord.app.info",
-			facet: appInfoFacet({ dataDir: layout.dataDir, name: options.name, version: api.versions[0] ?? "" }),
+			facet: appInfoFacet({ dataDir: layout.dataDir, name: options.name, version: api.versions[0] ?? "", owner }),
 		},
 		{ name: "chord.app.sessions", facet: sessions.facet },
-		{ name: "chord.app.owner", facet: ownerFacet(link) },
+		{ name: "chord.app.owner", facet: ownerFacet(link, owner) },
 		{
 			name: "chord.app.pairing",
 			facet: pairingFacet(
 				new Pairings({ maxPending: limits.pendingPairings, perAddress: limits.pairingsPerAddress }),
+				owner,
 			),
 		},
 		{ name: "chord.app.files", facet: filesFacet(join(layout.server, "files"), options.files, limits.uploads) },
@@ -320,7 +330,7 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 	if (telemetry !== undefined) {
 		const facet = telemetryIngestFacet<P>({
 			target: telemetry,
-			workerHost: (principal) => workerHosts.get(canonicalJson(principal as unknown as JsonValue, context)),
+			workerHost: (principal) => workerHosts.get(principalKey(principal, context)),
 			principalAttributes: (principal) => host.principalAttributes(principal, context),
 		});
 		core.push({ name: "chord.telemetry", facet });
@@ -343,13 +353,29 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 		const bundled = [...surfaces, ...workers.values()].flatMap(({ inputs }) => inputs);
 		plugins.watchBase([...files, ...bundled]);
 		await plugins.load(host, { kind: "server", core, modules: modulesOf(api, options.kinds.server) }, context);
-		await ownerTokenFile(layout.ownerToken, host, context);
+		await ownerTokenFile(layout.ownerToken, owner, host, context);
 		app.started(link.renew(), await http.listening(context));
 	} catch (error) {
 		await app.close(context);
 		throw error;
 	}
 	return app;
+}
+
+/**
+ * Refuses an owner the kit could not recognize or that would act as the server (a declaration policy the types cannot
+ * express): sessions keep the owner as JSON, so a field `undefined` (or anything else not strict JSON) would never
+ * match it again; the server's principal reaches every worker's kit objects.
+ */
+function checkOwner<P extends Principal>(owner: P, server: P, context: Context): void {
+	if (!isJsonValue(owner)) {
+		throw new Error(
+			"startServer: principal.owner must be strict JSON (no undefined fields, functions or class instances)",
+		);
+	}
+	if (samePrincipal(owner, server, context)) {
+		throw new Error("startServer: principal.owner must not be the server's principal");
+	}
 }
 
 /** A client surface of the app: its name (`web`, `tui`), its facet, its rollout step, its base bundle's hash. */
@@ -432,8 +458,9 @@ function workersOf<P extends Principal>(
 	context: Context,
 ): Promise<Workers<HostKind>> {
 	const facet = kind.facet ?? "worker";
-	const serverKey = canonicalJson(options.principal.server as unknown as JsonValue, context);
-	const isServer = (principal: P): boolean => canonicalJson(principal as unknown as JsonValue, context) === serverKey;
+	// `AppOptions` admits worker kinds only with `principal.worker`.
+	const worker = options.principal.worker as (address: Address) => P;
+	const { server } = options.principal;
 	return createWorkers(
 		host,
 		// A host kind of the app: any params; its addresses come back from its route as the kit hands them on.
@@ -444,17 +471,18 @@ function workersOf<P extends Principal>(
 			...(kind.execArgv === undefined ? {} : { execArgv: kind.execArgv }),
 			...(kind.env === undefined ? {} : { env: kind.env }),
 			// The server reaches its workers' kit objects (`HostData`) whatever the app admits.
-			authorize: (principal, address) => isServer(principal) || kind.authorize(principal, address),
-			principal: options.principal.worker,
+			authorize: (principal, address) =>
+				samePrincipal(principal, server, context) || kind.authorize(principal, address),
+			principal: worker,
 			start: async (address, ctx) => {
-				// Principals are JSON (they cross links).
-				const principal = options.principal.worker(address) as unknown as JsonValue;
-				workerHosts.set(canonicalJson(principal, ctx), address.key);
+				const principal = worker(address);
+				workerHosts.set(principalKey(principal, ctx), address.key);
 				const kit: KitStart = {
 					dir: workerDirectory(dataDir, address),
 					facet,
-					principal,
-					server: options.principal.server as unknown as JsonValue,
+					// Principals are JSON (they cross links).
+					principal: principal as unknown as JsonValue,
+					server: server as unknown as JsonValue,
 					files: { ...options.files },
 					telemetry: options.telemetry !== undefined,
 					...(options.limits?.uploads === undefined ? {} : { uploads: options.limits.uploads }),

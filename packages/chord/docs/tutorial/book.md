@@ -90,12 +90,13 @@ pieces of base code and starts the server.
 
 ## The principals
 
-A **principal** says who is calling. The app defines the type; the kit needs a variant for the server, one for its
-workers, and adds the owner, `{ kind: "owner" }`, which the app's type must include:
+A **principal** says who is calling. The app defines the type; the kit needs a principal for the server, one for each of
+its workers (an app without worker kinds leaves it out) and one for the owner, whom the owner's sign-in names. The todo
+app gives the owner a variant of its own, `{ kind: "owner" }`; another app could make the owner one of its users:
 
 <!-- quote: src/principals.ts -->
 ```ts
-// The todo app's principals: its server and list workers, the kit's owner, and the users who signed in with a name.
+// The todo app's principals: its server and list workers, its owner, and the users who signed in with a name.
 
 /** Who someone is in the todo app. */
 export type TodoPrincipal =
@@ -230,7 +231,11 @@ export function startTodo(
 			listen: { host: "127.0.0.1", port: 0 },
 			api: API,
 			kinds: KINDS,
-			principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", list: address.key }) },
+			principal: {
+				server: { kind: "server" },
+				worker: (address) => ({ kind: "worker", list: address.key }),
+				owner: { kind: "owner" },
+			},
 			// The store the server writes: its own spans and metrics, and what the workers and recording pages send.
 			telemetry: telemetry.store,
 			// Who a span was for: a short key and a user's name (each worker's `startWorker` gets the same hook).

@@ -54,7 +54,11 @@ export function startTodo(
 			listen: { host: "127.0.0.1", port: 0 },
 			api: API,
 			kinds: KINDS,
-			principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", list: address.key }) },
+			principal: {
+				server: { kind: "server" },
+				worker: (address) => ({ kind: "worker", list: address.key }),
+				owner: { kind: "owner" },
+			},
 			// The store the server writes: its own spans and metrics, and what the workers and recording pages send.
 			telemetry: telemetry.store,
 			// Who a span was for: a short key and a user's name (each worker's `startWorker` gets the same hook).
