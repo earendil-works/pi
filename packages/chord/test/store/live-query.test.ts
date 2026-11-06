@@ -117,6 +117,13 @@ describe("identical live-query refreshes", () => {
 			sql: { table: "items", select: () => ({ sql: "select items", params: [] }) },
 			store: {},
 			owner: {},
+			definition: {
+				key: ["id"],
+				rows: {
+					physical: ["id", "text", "meta"],
+					decode: (row: unknown) => row,
+				},
+			},
 		} as never;
 		const owner = { label: "test", report: () => {} };
 		const batch = {} as never;
@@ -124,7 +131,10 @@ describe("identical live-query refreshes", () => {
 		const second = new LiveQuery(handle, common, 3, owner, batch);
 		const refreshed = new QueryRefresh([first, second], context);
 		await refreshed.write.apply(step);
+		refreshed.adopt();
 		expect(operations).toHaveLength(1);
+		expect(first.value).toEqual(rows);
+		expect(second.value).toEqual(rows);
 	});
 });
 
