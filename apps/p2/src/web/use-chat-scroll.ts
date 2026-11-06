@@ -206,7 +206,8 @@ export class TranscriptScroll {
 				estimates === this.#estimates &&
 				// Stateful estimators may learn from another transcript with the same
 				// estimator identity, invalidating earlier unmeasured row heights.
-				(estimates.revision === undefined || estimates.revision === this.#estimatesRevision) &&
+				estimates.revision !== undefined &&
+				estimates.revision === this.#estimatesRevision &&
 				previous.every((row, index) => rows[index] === row);
 			this.#rows = rows;
 			this.#estimates = estimates;

@@ -875,10 +875,12 @@ async function buildSessionInfo(
 		let name: string | undefined;
 		let lastActivityTime: number | undefined;
 
-		const rl = createInterface({
-			input: createReadStream(filePath, { encoding: "utf8", signal }),
-			crlfDelay: Infinity,
-		});
+		// Hash raw bytes as readline parses them, instead of reading the entire
+		// JSONL file a second time on every cold cache fill.
+		const input = createReadStream(filePath, { signal });
+		const hash = createHash("sha256");
+		input.on("data", (bytes: Buffer) => hash.update(bytes));
+		const rl = createInterface({ input, crlfDelay: Infinity });
 
 		for await (const line of rl) {
 			const entry = parseSessionEntryLine(line);
@@ -917,6 +919,7 @@ async function buildSessionInfo(
 		}
 
 		if (!header) return null;
+		const digest = hash.digest("hex");
 
 		const cwd = typeof header.cwd === "string" ? header.cwd : "";
 		const parentSessionPath = header.parentSession;
@@ -944,11 +947,7 @@ async function buildSessionInfo(
 		// snapshots whose metadata remained unchanged across the read.
 		const current = await stat(filePath);
 		if (current.size === stats.size && current.mtimeMs === stats.mtimeMs && current.ctimeMs === stats.ctimeMs) {
-			const digest = await sessionFileDigest(filePath, signal);
-			const checked = await stat(filePath);
-			if (checked.size === stats.size && checked.mtimeMs === stats.mtimeMs && checked.ctimeMs === stats.ctimeMs) {
-				sessionInfoCache.put(filePath, stats, info, digest);
-			}
+			sessionInfoCache.put(filePath, stats, info, digest);
 		}
 		return info;
 	} catch {
