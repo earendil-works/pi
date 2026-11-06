@@ -103,8 +103,9 @@
         </div>
 
         <form class="composer" id="composer" autocomplete="off">
+          <div class="command-picker" id="command-picker" role="listbox" aria-label="Commands" hidden></div>
           <label class="sr-only" for="prompt">Message</label>
-          <textarea id="prompt" rows="1" maxlength="2000" placeholder="Ask the NLT Coding Agent anything…" enterkeyhint="send"></textarea>
+          <textarea id="prompt" rows="1" maxlength="2000" placeholder="Ask the NLT Coding Agent anything…" enterkeyhint="send" aria-haspopup="listbox" aria-controls="command-picker" aria-expanded="false"></textarea>
           <span class="counter" id="counter" aria-hidden="true">0 / 2000</span>
           <button class="send" id="send" type="submit" aria-label="Send message">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 21 3l-8.5 18-2.3-7.2L3 11.5Z" fill="currentColor" /></svg>
