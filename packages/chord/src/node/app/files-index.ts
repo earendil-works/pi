@@ -554,17 +554,23 @@ export class FilesIndex {
 		const lowered: { id: string; by: number }[] = [];
 		const gone: string[] = [];
 		let bytes = 0;
-		// Batch metadata lookups rather than executing one SQL query per blob.
+		// Batch metadata reads without allowing SQL's unspecified row order to
+		// reorder the resulting blob release decisions.
 		const ids = [...counts.keys()];
+		const blobs = new Map<string, RowOf<typeof blobColumns>>();
 		for (let offset = 0; offset < ids.length; offset += 400) {
 			const chunk = ids.slice(offset, offset + 400);
 			for await (const blob of this.#blobs.rows(query(BlobRows).where((b) => inArray(b.id, chunk)), context)) {
-				const by = counts.get(blob.id)!;
-				if (blob.refs > by) lowered.push({ id: blob.id, by });
-				else {
-					gone.push(blob.id);
-					bytes += blob.size;
-				}
+				blobs.set(blob.id, blob);
+			}
+		}
+		for (const [id, by] of counts) {
+			const blob = blobs.get(id);
+			if (!blob) continue;
+			if (blob.refs > by) lowered.push({ id, by });
+			else {
+				gone.push(id);
+				bytes += blob.size;
 			}
 		}
 		return { lowered, gone, bytes };
