@@ -54,6 +54,18 @@ describe("isolated session regex search", () => {
 			.rejects.toThrow(/cancelled/i);
 	});
 
+	it("cancels a catastrophic regex after execution begins without blocking the event loop", async () => {
+		const controller = new AbortController();
+		const pending = filterSessionsByRegexInWorker(
+			[session("catastrophic", "a".repeat(20_000) + "!")],
+			"^(a|aa)+$",
+			"recent",
+			controller.signal,
+		);
+		setTimeout(() => controller.abort(), 50);
+		await expect(pending).rejects.toThrow(/cancelled/i);
+	});
+
 	it("preserves recent order across worker batches", async () => {
 		const items = Array.from({ length: 51 }, (_, index) =>
 			session(`s${index}`, index % 3 === 0 ? "match" : "miss"),
