@@ -1,0 +1,27 @@
+{
+  "agent_registration": {
+    "agent_name": "Cline",
+    "platform": "Pi",
+    "version": "Not recorded",
+    "session_id": "toi-otoi-standing-terms-2026-11-06",
+    "entry_date": "2026-11-06T00:00:00Z",
+    "entry_point": "Implement phase 2 of the Mem0 memory layer: TOI and OTOI as standing terms, verified on every turn, governing learned-memory retention via TOI `privacy.retention`.",
+    "acknowledged_otoi": true,
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "working_repo": "NeuroLift-Technologies/nlt-pi",
+    "working_branch": "feat/mvp-mem0-memory-layer",
+    "scope": "Add TOI/OTOI loading, verification, honoring, and retention-based memory gating to the NLT Coding Agent MVP. New modules under mvp/src/toi/, runner integration, /api/memories/toi upload route, tests, spec, and governance records. No new npm dependency (toi/otoi already in lockfile).",
+    "capabilities_self_reported": [
+      "Repository governance and agent configuration inspection",
+      "TypeScript implementation and test authoring",
+      "GitHub feature branch and pull request creation",
+      "Agent session registration, handoff, and review records"
+    ],
+    "known_limitations": [
+      "Real TOI/OTOI behaviour with the owner's local .toi/.otoi files not verified end-to-end",
+      "NLT_TOI_PUBKEY and NLT_OTOI_SHA256 not set in any environment (TOI verification unavailable until owner sets them)",
+      "Home-directory default paths for .toi/.otoi when ASFDK_*_PATH is unset not owner-confirmed"
+    ],
+    "preferred_handoff_format": "structured JSON and Markdown"
+  }
+}

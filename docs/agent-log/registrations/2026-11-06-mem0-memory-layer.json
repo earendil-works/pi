@@ -1,0 +1,27 @@
+{
+  "agent_registration": {
+    "agent_name": "Cline",
+    "platform": "Pi",
+    "version": "Not recorded",
+    "session_id": "mem0-memory-layer-2026-11-06",
+    "entry_date": "2026-11-06T00:00:00Z",
+    "entry_point": "Implement the Mem0 memory layer (phase 1): owner-approved learned memories, recalled by the agent behind ASFDK checks, off by default behind NLT_MEMORY_ENABLED=1.",
+    "acknowledged_otoi": true,
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "working_repo": "NeuroLift-Technologies/nlt-pi",
+    "working_branch": "main (working tree)",
+    "scope": "Add Mem0 memory storage and recall to the NLT Coding Agent MVP: server-only Mem0 client and store, owner-only /api/memories route with ASFDK checks, recall injection in the agent runner, and page UI (Remember this button, Memories panel, data notice). No new npm dependency (uses fetch). No runtime behavior change unless NLT_MEMORY_ENABLED=1.",
+    "capabilities_self_reported": [
+      "Repository governance and agent configuration inspection",
+      "TypeScript implementation and test authoring",
+      "GitHub feature branch and pull request creation",
+      "Agent session registration, handoff, and review records"
+    ],
+    "known_limitations": [
+      "Real Mem0 behaviour not verified offline (probe items (a)-(e) in spec pending)",
+      "NLT_MEMORY_ENABLED not set in any environment (feature off by default)",
+      "No new npm dependency pinned (fetch used directly against Mem0 REST API)"
+    ],
+    "preferred_handoff_format": "structured JSON and Markdown"
+  }
+}

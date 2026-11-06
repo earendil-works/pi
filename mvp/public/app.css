@@ -298,3 +298,68 @@ button, textarea { font: inherit; color: inherit; }
 .model-row select option { color: #111; background: #fff; }
 .model-row select:disabled { opacity: 0.6; }
 .model-note { opacity: 0.7; }
+
+/* Memories panel */
+.memory-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.memory-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgb(11 23 51 / 50%);
+  font-size: 0.85rem;
+}
+.memory-text {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.memory-bucket {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.memory-delete {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--alert);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--alert);
+  cursor: pointer;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+.memory-delete:hover { background: var(--alert); color: var(--bg); }
+.memory-notice {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* Remember this button on messages */
+.msg > div { display: flex; align-items: baseline; gap: 8px; }
+.remember {
+  margin-left: auto;
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.remember:hover { color: var(--accent-2); border-color: var(--accent-2); }

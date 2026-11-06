@@ -15,6 +15,31 @@ import { evaluateGate } from "../src/gate.ts";
 import { AsfdkHarness, Channel } from "../src/harness/harness.ts";
 import { createVercelSandboxClient } from "../src/sandbox/vercel-client.ts";
 import { parseAllowedModels, parseDefaultModel } from "../src/gateway/free-models.ts";
+import { createMemoryClient, type MemoryClientEnv } from "../src/memory/client.ts";
+import { recallChecks } from "../src/memory/route.ts";
+import type { Memory } from "../src/memory/store.ts";
+
+/** Recalls approved memories for a turn. Searches Mem0, applies deterministic recall checks,
+ * limits results by NLT_MEMORY_RECALL_LIMIT (default 5). Never writes to Mem0. */
+async function recall(
+  prompt: string,
+  env: MemoryClientEnv & { NLT_MEMORY_ENABLED?: string; NLT_MEMORY_RECALL_LIMIT?: string },
+  owner: string,
+): Promise<Memory[]> {
+  if (env.NLT_MEMORY_ENABLED !== "1") return [];
+  const client = createMemoryClient(env);
+  const limit = env.NLT_MEMORY_RECALL_LIMIT
+    ? Number.parseInt(env.NLT_MEMORY_RECALL_LIMIT, 10)
+    : 5;
+  if (!Number.isFinite(limit) || limit < 1) return [];
+  try {
+    const hits = await client.search(owner, prompt, limit);
+    return hits.filter((m) => recallChecks(m.text));
+  } catch {
+    // Mem0 unavailable on recall: turn runs without memories.
+    return [];
+  }
+}
 
 /** Runs the ASFDK crisis gate for one prompt; fails closed when the assessment cannot run. */
 async function gate(prompt: string) {
@@ -41,16 +66,24 @@ export default async function handler(request: AgentRequest, response: AgentResp
     env: process.env,
     // Only a signed-in owner (allow-listed Vercel user) may call the route; see src/auth/owner.ts.
     authorize: (req) => sessionFromCookie(process.env, req.headers?.cookie) !== undefined,
-    createDeps: ({ egressAll }) => ({
-      gate,
-      sandboxClient: createVercelSandboxClient(),
-      gatewayToken: () => getVercelOidcToken(),
-      // Owner-set allow-list of models this plan can call; unset means any free tool-capable model.
-      allowedModels: parseAllowedModels(process.env.NLT_AGENT_MODELS),
-      // Owner-set default for "Auto"; used only while it is free, tool-capable and allowed.
-      preferredModels: parseDefaultModel(process.env.NLT_AGENT_DEFAULT_MODEL),
-      sandbox: { egressAll, lockStaleMs: AGENT_LOCK_STALE_MS },
-    }),
+    createDeps: ({ egressAll }) => {
+      const env = process.env as unknown as MemoryClientEnv & {
+        NLT_MEMORY_ENABLED?: string;
+        NLT_MEMORY_RECALL_LIMIT?: string;
+      };
+      const owner = sessionFromCookie(process.env, undefined)?.sub;
+      return {
+        gate,
+        recall: (prompt) => recall(prompt, env, owner ?? ""),
+        sandboxClient: createVercelSandboxClient(),
+        gatewayToken: () => getVercelOidcToken(),
+        // Owner-set allow-list of models this plan can call; unset means any free tool-capable model.
+        allowedModels: parseAllowedModels(process.env.NLT_AGENT_MODELS),
+        // Owner-set default for "Auto"; used only while it is free, tool-capable and allowed.
+        preferredModels: parseDefaultModel(process.env.NLT_AGENT_DEFAULT_MODEL),
+        sandbox: { egressAll, lockStaleMs: AGENT_LOCK_STALE_MS },
+      };
+    },
     run: async (deps: AgentRunnerDeps, input: AgentTurnInput): Promise<AgentTurnResult> => {
       // The runner module is loaded only once the route is known to be enabled, so disabled requests never load it.
       const { runAgentTurn } = await import("../src/agent/runner.ts");

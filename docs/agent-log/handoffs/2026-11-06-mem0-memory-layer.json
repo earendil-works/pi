@@ -1,0 +1,44 @@
+{
+  "handoff_record": {
+    "session_id": "mem0-memory-layer-2026-11-06",
+    "agent_name": "Cline",
+    "date": "2026-11-06T00:00:00Z",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "main (working tree)",
+    "work_completed": [
+      "docs/superpowers/specs/2026-11-05-mem0-memory-layer-design.md — full design spec (sections 1-10)",
+      "docs/agent-log/intent/2026-11-05-mem0-memory-layer.md — intent record (new third-party processor, persistence boundary)",
+      "src/memory/client.ts — Mem0 REST client over fetch, server side only (MEM0_API_KEY, MEM0_BASE_URL etc. from env)",
+      "src/memory/store.ts — MemoryStore abstraction: fake in-memory store for tests, Mem0 wrapper for production",
+      "src/memory/route.ts — testable owner-only route: GET list, POST save, DELETE delete; 404 off / 401 without owner / 405 with Allow / Cache-Control no-store; ASFDK checks on every write; source-message rule against Neon",
+      "api/memories.ts — Vercel handler wiring the route to Mem0 and the Neon source-message check",
+      "src/agent/runner.ts — recall after the crisis gate: search Mem0, filter through recall checks, inject as delimited untrusted background before the model runs; turn writes nothing to Mem0",
+      "public/app.js — memoryRequest, loadMemories, renderMemories, saveMemory, deleteMemory, rememberMessage; Remember this button on user messages; loadMemories wired into loadSession",
+      "public/app.css — memory panel, memory item, memory delete, remember button styles",
+      "public/index.html — Memories panel HTML (hidden until memory is on)",
+      "test/memory-route.test.ts — 23 vitest route tests (offline, no Mem0 calls): switch off (404), auth (401), methods (405), POST validation (text length, bucket, injection, body size), source message checks (blocked/unavailable/other-owner/503), GET list, DELETE, headers",
+      "mvp/README.md — Mem0 memory layer section and Mem0 row in platforms table",
+      "docs/active-threads.md — NLTPI-MEM-001 active thread",
+      "docs/agent-log/registrations/2026-11-06-mem0-memory-layer.json — agent registration",
+    ],
+    "verification": [
+      "cd mvp && npx vitest --run test/memory-route.test.ts: 23 passed",
+      "cd mvp && npx vitest --run: 247 passed / 10 expected fail / 1 failed (pre-existing: ./data/amazon-bedrock.json not hydrated)",
+      "npx tsc --noEmit -p tsconfig.typecheck.json: no new errors from memory files (pre-existing pi-coding-agent alias errors only)",
+      "No Mem0 calls in any test; no new npm dependency",
+    ],
+    "work_in_progress": [],
+    "blockers": [],
+    "decisions_made": [
+      "Owner (2026-11-05): Memories created only by owner's 'Remember this' (ASSUMED v1, pending confirmation)",
+      "Owner (2026-11-05): No new Mem0 npm dependency; fetch used directly against Mem0 REST API",
+      "Owner (2026-11-05): NLT_MEMORY_ENABLED off by default; set only by owner",
+    ],
+    "decisions_pending": [
+      "Owner: confirm ASSUMED v1 rule (memories created only by owner's 'Remember this')",
+      "Owner: review probe results (a)-(e) before enabling NLT_MEMORY_ENABLED=1 in Production",
+    ],
+    "next_action": "Owner confirms the ASSUMED v1 rule and reviews probe results before enabling the switch."
+  }
+}

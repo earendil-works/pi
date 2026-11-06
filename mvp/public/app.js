@@ -62,6 +62,9 @@ const els = {
   accountLabel: $("account-label"),
   signinLink: $("signin-link"),
   signout: $("signout"),
+  memoriesSection: $("memories-section"),
+  memoryList: $("memory-list"),
+  memoryFine: $("memory-fine"),
 };
 
 const tabSession = { id: crypto.randomUUID().slice(0, 8), startedAt: new Date() };
@@ -72,6 +75,8 @@ const tabSession = { id: crypto.randomUUID().slice(0, 8), startedAt: new Date() 
 const conversations = [];
 /** True only after GET /api/conversations answered 200 for this tab. */
 let historyOn = false;
+/** True only after GET /api/memories answered 200 for this tab. */
+let memoryOn = false;
 /** One save at a time per conversation; see lib/history.js. */
 const saver = createSaver((body) => historyRequest("POST", { body }));
 let active = null;
@@ -108,6 +113,13 @@ function renderMessage(message) {
   if (message.kind) bubble.dataset.kind = message.kind;
   body.append(speaker, bubble, el("span", "meta", formatClock(message.at)));
   wrap.append(who, body);
+  if (message.role === "user" && message.kind === "normal") {
+    const remember = el("button", "remember", "Remember this");
+    remember.type = "button";
+    remember.setAttribute("aria-label", `Remember this message: ${message.text}`);
+    remember.addEventListener("click", () => rememberMessage(message.text, message.id));
+    body.append(remember);
+  }
   return wrap;
 }
 
@@ -481,6 +493,81 @@ async function loadHistory() {
   renderSessions();
 }
 
+/** GET/POST/DELETE /api/memories. Never throws: a failure is `{ networkError: true }`. */
+async function memoryRequest(method, { id, body } = {}) {
+  try {
+    const response = await fetch(`/api/memories${id ? `?id=${encodeURIComponent(id)}` : ""}`, {
+      method,
+      headers: { accept: "application/json", ...(body ? { "content-type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    return { status: response.status, body: await response.json().catch(() => undefined) };
+  } catch {
+    return { networkError: true };
+  }
+}
+
+/** Loads the owner's memories when memory is on; anything else leaves the page as it was. */
+async function loadMemories() {
+  const read = await memoryRequest("GET");
+  if (!read || read.status !== 200 || !Array.isArray(read.body.memories)) return;
+  memoryOn = true;
+  els.memoriesSection.hidden = false;
+  renderMemories(read.body.memories);
+  els.memoryFine.textContent = "Owner-approved facts only. Each turn may recall relevant memories as untrusted background.";
+}
+
+function renderMemories(memories) {
+  els.memoryList.replaceChildren(
+    ...memories.map((m) => {
+      const item = el("li", "memory-item");
+      item.append(
+        el("span", "memory-text", m.text),
+        el("span", "memory-bucket", m.bucket),
+        el("button", "memory-delete", "✕")
+      );
+      const deleteButton = item.querySelector(".memory-delete");
+      deleteButton.type = "button";
+      deleteButton.setAttribute("aria-label", `Delete memory: ${m.text}`);
+      deleteButton.addEventListener("click", () => deleteMemory(m.id));
+      return item;
+    }),
+  );
+}
+
+/** Saves one memory: POST /api/memories with { text, bucket, sourceMessageId }. */
+async function saveMemory(text, bucket, sourceMessageId) {
+  const result = await memoryRequest("POST", { body: { text, bucket, sourceMessageId } });
+  if (result.status === 200) {
+    await loadMemories();
+    return true;
+  }
+  logEvent("Could not save the memory", "offline");
+  return false;
+}
+
+/** Deletes one memory: DELETE /api/memories?id=... */
+async function deleteMemory(id) {
+  if (!window.confirm("Delete this memory?")) return;
+  const result = await memoryRequest("DELETE", { id });
+  if (result.status === 200) {
+    await loadMemories();
+    logEvent("Memory deleted", "idle");
+  } else {
+    logEvent("Could not delete the memory", "offline");
+  }
+}
+
+/** Prompts the owner to approve a message as a memory, then saves it. */
+async function rememberMessage(text, sourceMessageId) {
+  const bucket = prompt('Bucket for this memory ("owner" or "project"):', "owner");
+  if (bucket !== "owner" && bucket !== "project") return;
+  const edited = prompt("Edit the memory text:", text);
+  if (edited === null || edited.trim().length === 0) return;
+  await saveMemory(edited.trim(), bucket, sourceMessageId);
+}
+
 function autosize() {
   els.prompt.style.height = "auto";
   els.prompt.style.height = `${Math.min(els.prompt.scrollHeight, 160)}px`;
@@ -561,7 +648,10 @@ async function loadSession() {
   if (new URLSearchParams(location.search).get("signin") === "failed") {
     els.accountLabel.textContent = "Sign-in failed, or this Vercel account is not allowed";
   }
-  if (view.state === "signed-in" && !historyOn) await loadHistory();
+  if (view.state === "signed-in") {
+    if (!historyOn) await loadHistory();
+    if (!memoryOn) await loadMemories();
+  }
 }
 
 els.signout.addEventListener("click", async () => {

@@ -1,0 +1,43 @@
+{
+  "handoff_record": {
+    "session_id": "toi-otoi-standing-terms-2026-11-06",
+    "agent_name": "Cline",
+    "date": "2026-11-06T00:00:00Z",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "feat/mvp-mem0-memory-layer",
+    "work_completed": [
+      "docs/superpowers/specs/2026-11-06-toi-otoi-standing-terms-design.md — full phase-2 design spec (sections 1-16)",
+      "docs/agent-log/intent/2026-11-06-toi-otoi-standing-terms.md — intent record (new verification boundary, standing terms)",
+      "docs/agent-log/registrations/2026-11-06-toi-otoi-standing-terms.json — agent registration",
+      "mvp/src/toi/loader.ts — load .toi/.otoi from ASFDK_TOI_PATH/ASFDK_OTOI_PATH (home-directory defaults), never throws",
+      "mvp/src/toi/verifier.ts — verifyToiDocument (public key pin + verifyToi), verifyOtoICharter (SHA-256 pin), fail closed, op-name-only logging",
+      "mvp/src/toi/retention.ts — memoryAllowedByRetention from privacy.retention; replaces phase-1 NLT_MEMORY_ENABLED interim consent rule",
+      "mvp/src/toi/honorer.ts — honorAndPropagate: parse TOI, honor OTOI charter (strict + audit + agent nlt-pi-mvp), propagate, build host-written behaviour notes from enum fields only",
+      "mvp/src/toi/index.ts — barrel export",
+      "mvp/src/agent/runner.ts — memoryPolicy dep (allowed, behaviourNotes); gate Mem0 recall on allowed; inject behaviour notes + recalled memories into prompt prefix",
+      "mvp/api/memories.ts — POST /api/memories/toi: owner-only signed .toi upload to Mem0; validates signature, public key pin, verifyToi; stores with metadata { kind: toi, source: owner-upload }",
+      "test/toi.test.ts — 16 vitest tests (verifier: valid signature, missing pin, no signature, key mismatch, bad signature; retention: all 5 retention values + undefined; ALLOWED_RETENTION export)",
+      "mvp/README.md — TOI/OTOI section",
+    ],
+    "verification": [
+      "cd mvp && npx vitest --run: 294 passed / 10 expected fail (16 test files, including new test/toi.test.ts 16 passed)",
+      "cd mvp && npx tsc --noEmit -p tsconfig.typecheck.json: no errors (including new toi/ and api/memories.ts files)",
+      "No new npm dependency (@neurolift-technologies/toi 1.0.3 and @neurolift-technologies/otoi 1.2.0 already in lockfile)",
+      "Pre-commit hook (full npm run check) passed on phase-1 commit; phase-2 changes follow same patterns",
+    ],
+    "work_in_progress": [],
+    "blockers": [],
+    "decisions_made": [
+      "Owner (2026-11-05): TOI/OTOI as standing terms, verified on every turn (from phase-1 design spec section 10)",
+      "Owner (2026-11-06): TOI privacy.retention replaces NLT_MEMORY_ENABLED as the memory consent mechanism",
+      "Owner (2026-11-06): Behaviour notes are host-written templates over enum fields only; model never sees raw TOI/OTOI",
+    ],
+    "decisions_pending": [
+      "Owner: confirm NLT_TOI_PUBKEY and NLT_OTOI_SHA256 pinning process",
+      "Owner: confirm home-directory default paths for .toi/.otoi when ASFDK_*_PATH is unset",
+      "Owner: confirm whether /api/memories/toi upload route is wanted, or whether the owner uploads the signed TOI to Mem0 through another channel",
+    ],
+    "next_action": "Owner confirms pending decisions before enabling TOI/OTOI verification in Production."
+  }
+}

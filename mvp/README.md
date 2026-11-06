@@ -47,7 +47,7 @@ What each outside platform is for, what it sees, and who can reach it. Setting n
 | **Vercel AI Gateway** | The model for agent turns: free, tool-capable models only | Each allowed turn's prompt and any file or command output the agent reads. The provider may retain or train on it (see the chat page's data notice). | `NLT_AGENT_MODELS`, `NLT_AGENT_DEFAULT_MODEL`. The credential is the Vercel OIDC token, read inside the turn. | `/api/agent` and `/api/models` | Free tier: the catalog lists several free models, but some answer 403 on this plan. Only `nvidia/nemotron-3.5-lightning-free` works, so it is the allow-list and the default. | In use |
 | **Vercel Sandbox** | Where the agent's bash, read, write and edit tools run: one reused sandbox, workspace `/vercel/sandbox` | Files the agent creates or reads there | `NLT_AGENT_EGRESS_ALL` (unset means only package registries and GitHub are reachable) | The agent's tools only. The server's settings and secrets are never passed in. | Usage counts against the Vercel plan | In use when `NLT_AGENT_ENABLED=1` |
 | **Neon** (Postgres, project `curly-mouse-57310048`, us-east-1) | Saved chat history (`chat_conversations`, `chat_messages`) | The owner's conversation titles and messages. A message the safety check blocks is stored as a marker with no text. | `DATABASE_URL` and the other `POSTGRES_*` / `PG*` settings from the integration; switch `NLT_HISTORY_ENABLED` | `/api/conversations` only. Not the agent or the model. | Free: 1 GB, 100 compute-hours a month. Deleted rows stay restorable for 6 hours (point-in-time restore). | Chat history arrives with nlt-pi#35 and runs once `NLT_HISTORY_ENABLED=1`. Neon Auth (`NEON_AUTH_*`) and Neon realtime (`NEON_REALTIME_*`) are installed but not used. |
-| **Mem0** (store `nlt-pi-mvp-memo`) | Planned: the agent's long-term memory (facts and preferences recalled across conversations), with its own design | Nothing yet | `MEM0_API_KEY`, `MEM0_ORG_ID`, `MEM0_PROJECT_ID`, `MEM0_BASE_URL` | Nothing in the code reads these | Hobby: 10,000 memories, 1,000 retrieval calls a month | Installed, not used |
+| **Mem0** (store `nlt-pi-mvp-memo`) | The agent's long-term memory: short, approved facts recalled across conversations | The owner's session `sub` (`user_id`), `agent_id = nlt-pi-mvp`, verbatim memory text, and metadata `{ bucket, repo, source_message_id, created_at }` | `MEM0_API_KEY`, `MEM0_ORG_ID`, `MEM0_PROJECT_ID`, `MEM0_BASE_URL` (already present); switch `NLT_MEMORY_ENABLED`; optional `NLT_MEMORY_RECALL_LIMIT` | `/api/memories` only (server side). Not the agent or the model. | Hobby: 10,000 memories, 1,000 retrieval calls a month | Built; off until the owner sets `NLT_MEMORY_ENABLED=1` |
 | **GitHub Actions** | `NLT-Pi Governance Validation` on every PR; code scanning (CodeQL, default setup) | The repository | none | GitHub | — | In use |
 | **PR review bots** | CodeRabbit (automatic on non-draft PRs), Codex (the owner's account), Kilo (reviews the owner runs and posts), Vercel bot (preview links) | The PR diff | none | GitHub | CodeRabbit's free OSS reviews and Codex usage are rate-limited | In use. Reviews advise; they do not approve. |
 
@@ -196,19 +196,32 @@ Saved conversations for the signed-in owner, in the Neon database the owner adde
 - **Not included.** The agent still answers each message on its own: no earlier messages are given to the model. Mem0, Neon Auth and Neon realtime are not used. Mem0 is the planned next phase (see "Next phase: Mem0 memory layer" below).
 - **Not verified offline.** A real Neon connection, and the schema being created on Neon. The tests use a stand-in store and a recording SQL stub.
 
-## Next phase: Mem0 memory layer
+## Mem0 memory layer
 
-Planned, not built. Nothing in the code reads the Mem0 settings yet. The direction was agreed with the owner on 2026-11-05; the written spec comes in its own pull request before any code.
+Learned memories for the signed-in owner: short, approved facts that the agent recalls in later conversations. Design: `docs/superpowers/specs/2026-11-05-mem0-memory-layer-design.md` (this spec).
 
-- **Purpose.** Stop the agent forgetting between conversations. Neon stays the exact transcript the owner can reopen and delete. Mem0 would hold only short facts the owner approves.
-- **Phase 1: learned memories.**
-  - The owner saves a message as a memory with a "Remember this" action. Nothing is saved automatically.
-  - Memories go in two buckets: how the owner works, and nlt-pi conventions and fixes.
-  - The agent recalls approved memories in later conversations. Every Mem0 read and write passes the ASFDK checks first, and anything but a clear allow stops the call.
-  - The model gets no Mem0 tool, so it cannot create, change or delete a memory.
-  - A blocked prompt never reaches Mem0, and each allowed prompt is sent to Mem0 as a search query, so the chat page's notice must say so when memory is on.
-- **Phase 2: standing terms.** The owner's signed TOI and the OTOI charter would move into Mem0 as the source of the agent's standing terms. They stay out of every repository, and the model never sees the files or where they live.
-- **Off by default.** The planned switch is owner-set, like `NLT_HISTORY_ENABLED`.
+- **Off by default.** Without `NLT_MEMORY_ENABLED=1` in that Vercel environment, `/api/memories` answers 404 and touches nothing, and the chat page behaves exactly as before.
+- **`/api/memories`** (`api/memories.ts`, logic in `src/memory/route.ts`, Mem0 client in `src/memory/client.ts`). Owner session required (401 without). `Cache-Control: no-store` on every answer. The routes:
+  - `GET`: list the owner's memories, newest first.
+  - `GET ?id=`: one memory by id (404 if not the owner's).
+  - `POST`: save one memory. Body `{ text, bucket, sourceMessageId? }`. Text 1–500 characters; bucket `owner` or `project`; body ≤ 64 KB. Every write passes `validateInputLength`, `sanitizeInput` and `detectInjectionPatterns` from `@neurolift-technologies/asfdk`, fail closed. A blocked or unavailable source message is refused (requires `NLT_HISTORY_ENABLED=1`).
+  - `DELETE ?id=`: delete one memory; 404 if not the owner's.
+- **What is stored.** Each memory is one short, verbatim fact: `user_id` = the owner's session `sub`, `agent_id` = `nlt-pi-mvp`, metadata `{ bucket, repo: "nlt-pi", source_message_id, created_at }`. Never code, secrets or anything governance repos own. Stored without rewriting (`infer=false`).
+- **Recall (per turn).** After the crisis gate passes, the agent searches Mem0 with the owner's allowed prompt, scoped to owner and agent, limit `NLT_MEMORY_RECALL_LIMIT` (default 5). Each hit passes the same deterministic checks; a hit that fails is skipped. Remaining hits go into the model's context in a delimited block marked as untrusted background, never as instructions. The turn writes nothing to Mem0. If Mem0 or the checks are unavailable, the turn runs without recall. Logs carry the operation name only, e.g. `{"event":"memory_error","op":"recall"}`.
+- **The model never sees a store id, key or Mem0 address.** No code reachable from a model turn can create, change or delete a memory: the Mem0 client and credentials are server side only and are never passed into the turn or the sandbox.
+- **Page.** A "Remember this" button on each normal user message opens an editable text box and bucket choice; the owner's explicit act is the approval. A Memories panel lists and deletes memories. A notice says memory is on and that prompts are sent to Mem0 on every turn. All page text is written with `textContent` only.
+- **Settings (Vercel).** `NLT_MEMORY_ENABLED` (owner-set, off unless `1`); `MEM0_API_KEY`, `MEM0_ORG_ID`, `MEM0_PROJECT_ID`, `MEM0_BASE_URL` (already present, server only); `NLT_MEMORY_RECALL_LIMIT` (optional, default 5).
+
+## TOI and OTOI standing terms (phase 2)
+
+Standing terms for the signed-in owner: the agent's communication style, agency limits, ethical pillars, and privacy floor come from the owner's signed `.toi` and `.otoi` files, verified on every turn and enforced through the ASFDK honoring layer. Design: `docs/superpowers/specs/2026-11-06-toi-otoi-standing-terms-design.md` (this spec).
+
+- **Where they live.** Owner's local home directory (`ASFDK_TOI_PATH` / `ASFDK_OTOI_PATH`, user-level env). Never in any repo. The signed `.toi` copy can be uploaded to Mem0 through `POST /api/memories/toi`.
+- **Verification on every turn.** Before memory recall, the `.toi` signature is verified against the pinned `NLT_TOI_PUBKEY` (public key must match, then `verifyToi` must pass), and the `.otoi` checksum is verified against the pinned `NLT_OTOI_SHA256`. The effective policy is applied via `honor`/`propagate` with `strict` mode, `audit: true`, agent id `nlt-pi-mvp`.
+- **What reaches the model.** Host-written behaviour notes from a fixed template over recognized enum fields (communication, agency, ethical pillars, privacy retention). Never `identity`, `cognitive_profile`, `custom`, `$`-keys, URIs, or raw JSON. The model never sees the files or their locations.
+- **Retention governs learned memory.** The TOI's `privacy.retention` replaces the phase-1 `NLT_MEMORY_ENABLED` interim rule: `user-controlled`/`long-term`/`permanent` allow learned memories; `session-only`/`short-term` turn them off. Unverifiable TOI → privacy-first default, memory off for that turn.
+- **Invariant.** No model output can change a TOI or OTOI. Write authority is possession of the private key, held only by the owner locally. The private key never goes in an env var, repo, Vercel, or Mem0.
+- **Settings (Vercel / owner env).** `NLT_TOI_PUBKEY` (pinned public key); `NLT_OTOI_SHA256` (pinned charter checksum); `ASFDK_TOI_PATH`, `ASFDK_OTOI_PATH` (owner-local file paths).
 
 ## Current deployment posture
 
