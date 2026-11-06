@@ -2,13 +2,14 @@
 // still bind the versions released before `/tree` and its branch labels, through their `accepts`, and map the current
 // state and results back. The old contracts below are copied verbatim from the releases that bundled them
 // (`Sessions` v3 and `Catalog` v2 from 0a730c8a7, `Sessions` v4, `Catalog` v3 and `SessionTree` v1 from e88525506,
-// `Sessions` v5 from 9ff0ebfd0), so their fingerprints are the ones old bundles send.
+// `Sessions` v5 from 9ff0ebfd0, `Envs` v1 from 2a32a605a), so their fingerprints are the ones old bundles send.
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { arr, bool, int, nul, num, obj, opt, str, union } from "@earendil-works/pi-schema";
 import {
 	BACKGROUND_CONTEXT,
+	DirectoryListingSchema,
 	literal,
 	local,
 	ModelRefSchema,
@@ -21,6 +22,8 @@ import {
 	ThinkingLevelSchema,
 } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
+import { Envs, EnvTestSchema, SandboxStatusSchema } from "../../plugins/envs/contract.ts";
+import { EnvConfigSchema } from "../../plugins/envs/schema.ts";
 import { CreateSchema, MAX_TITLE, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { SessionTree } from "../../plugins/tree/contract.ts";
@@ -273,6 +276,40 @@ const SessionTreeV1 = remote("p2.tree", {
 	},
 });
 
+/**
+ * 2a32a605a's `Envs` (version 1): rows without `users`, `delete` without `force`. Its environment schemas are the
+ * current ones, unchanged since that release.
+ */
+const EnvName = obj({ name: str() });
+const EnvKey = obj({ publicKey: str(), identityFile: str() });
+const EnvSummarySchemaV1 = obj({ name: str(), config: EnvConfigSchema, sessions: num(), test: opt(EnvTestSchema) });
+const EnvsV1 = remote("p2.envs", {
+	version: 1,
+	params: {},
+	hostAddress: serverHost,
+	variants: {
+		owner: {
+			state: { envs: arr(EnvSummarySchemaV1), failure: union([str(), nul()]) },
+			methods: {
+				list: method(undefined, arr(EnvSummarySchemaV1)),
+				warm: method(),
+				save: method(obj({ name: str(), config: EnvConfigSchema })),
+				delete: method(EnvName),
+				test: method(EnvName, EnvTestSchema),
+				acceptHostKey: method(obj({ name: str(), lines: arr(str()) })),
+				forgetHostKey: method(EnvName),
+				generateKey: method(EnvName, EnvKey),
+				uploadKey: method(obj({ name: str(), key: str({ maxLength: 16384 }) }), EnvKey),
+				publicKey: method(EnvName, union([str(), nul()])),
+				listDirectory: method(obj({ env: opt(str()), path: str() }), DirectoryListingSchema),
+				sandboxStatus: method(EnvName, SandboxStatusSchema),
+				sandboxStart: method(EnvName, SandboxStatusSchema),
+				sandboxStop: method(EnvName, SandboxStatusSchema),
+			},
+		},
+	},
+});
+
 describe("older contract versions against the current server (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
@@ -344,6 +381,18 @@ describe("older contract versions against the current server (fake provider)", (
 		assert.equal(tree.nodes.length, 2, "conversation 1's message and answer");
 		for (const node of tree.nodes) assert.deepEqual(Object.keys(node).sort(), ["entry", "parent", "role", "text"]);
 		ref.release();
+	});
+
+	it("binds Envs v1: rows without users; its delete is never forced", async () => {
+		const current = await holdIn(owner, Envs, {}, "owner");
+		await current.save({ name: "old-tab", config: { type: "ssh", host: "old.example" } }, BACKGROUND_CONTEXT);
+		const ref = await boundIn(owner, EnvsV1, {}, "owner");
+		const rows = await until(ref.envs, (list) => list.some((row) => row.name === "old-tab"));
+		assert.deepEqual(Object.keys(rows.find((row) => row.name === "old-tab")!).sort(), ["config", "name", "sessions"]);
+		await ref.delete({ name: "old-tab" }, BACKGROUND_CONTEXT);
+		await until(ref.envs, (list) => !list.some((row) => row.name === "old-tab"));
+		ref.release();
+		current.release();
 	});
 
 	it("binds Catalog v2 and v3 on the server", async () => {
