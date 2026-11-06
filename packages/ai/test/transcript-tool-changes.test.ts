@@ -1,9 +1,8 @@
-import { declarationsEqual } from "../src/utils/transcript.ts";
 import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
 import type { Api, AssistantMessage, Context, Message, Model, SystemMessage, Tool } from "../src/types.ts";
-import { getToolStateChanges, resolveTranscriptTools } from "../src/utils/transcript.ts";
+import { declarationsEqual, getToolStateChanges, resolveTranscriptTools } from "../src/utils/transcript.ts";
 
 class PayloadCaptured extends Error {}
 
@@ -688,6 +687,6 @@ describe("tool-state comparison efficiency", () => {
 		const changes = getToolStateChanges(previous as never, current as never);
 		expect(changes.toolsAdded.map((tool) => tool.name)).toEqual(["changed", "added"]);
 		expect(changes.toolsRemoved.map((tool) => tool.name)).toEqual(["changed", "removed"]);
-		expect(serialized).toBe(6);
+		expect(serialized).toBe(5);
 	});
 });
