@@ -715,12 +715,272 @@ describe("bad endings the Gemini CLI retries", () => {
 		expect(isRetryableAssistantError(result)).toBe(true);
 	});
 
+	it("keeps a whitespace-only part that precedes visible text in one text block", async () => {
+		const frame = (parts: unknown[], finishReason?: string) =>
+			`data: ${JSON.stringify({ response: { candidates: [{ content: { parts }, ...(finishReason ? { finishReason } : {}) }] } })}\n\n`;
+		const events: string[] = [];
+		const s = streamSimple(model, context, {
+			apiKey,
+			fetch: async () => new Response(frame([{ text: "\n" }]) + frame([{ text: "Done." }], "STOP")),
+		});
+		for await (const event of s) events.push(event.type);
+		const result = await s.result();
+		expect(result.stopReason).toBe("stop");
+		expect(result.content).toEqual([{ type: "text", text: "\nDone." }]);
+		expect(events.filter((type) => type === "text_start")).toHaveLength(1);
+	});
+
 	it("only classifies the endings above", () => {
 		const base = { role: "assistant", content: [], stopReason: "stop" } as unknown as Parameters<
 			typeof describeInvalidEnding
 		>[1];
 		expect(describeInvalidEnding(model, { ...base, stopReason: "length" })).toBeUndefined();
 		expect(describeInvalidEnding(model, { ...base, stopReason: "toolUse" })).toBeUndefined();
+	});
+});
+
+describe("silent Gemini endings", () => {
+	const argon = antigravityProvider()
+		.getModels()
+		.find((m) => m.id === "gemini-4-argon")!;
+	const nudge =
+		"[System: You previously returned an empty response with no text or thoughts. Please ensure you provide your final answer or call a tool now.]";
+	// Wire shape captured live 2026-11-06 from gemini-4-argon-high on a 602k-token replay (signature
+	// shortened): one signed empty text part, final usage without candidate tokens, no finishReason,
+	// then a clean end of body. The same context failed 3 of 3 identical replays and succeeded once
+	// the nudge below was appended to the last user turn.
+	const silent = () =>
+		new Response(
+			'data: {"response": {"candidates": [{"content": {"role": "model","parts": [{"thoughtSignature": "c2lsZW50","text": ""}]}}],"usageMetadata": {"promptTokenCount": 602624,"totalTokenCount": 602624,"cachedContentTokenCount": 600575},"modelVersion": "gemini-4-argon-w","responseId": "KEDtasvqN-yuwbUPksqS2Qk"},"traceId": "f758f2752732c8ec","metadata": {}}\r\n\r\n',
+			{ headers: { "content-type": "text/event-stream" } },
+		);
+	// Frames without a finish reason, ended by a clean end of body.
+	const unfinished = (parts: unknown[]) =>
+		new Response(
+			`data: ${JSON.stringify({ response: { responseId: "resp-eof", candidates: [{ content: { parts } }] } })}\n\n`,
+			{
+				headers: { "content-type": "text/event-stream" },
+			},
+		);
+	const thoughtOnly = [{ text: "Planning the next step.", thought: true }];
+	// Empty answers are remembered per request context across calls, so every test gets its own.
+	let contexts = 0;
+	const freshContext = (text = "Hello") =>
+		normalizeContext({
+			systemPrompt: `Be concise. (${++contexts})`,
+			messages: [{ role: "user", content: text, timestamp: 1 }],
+		});
+	const lastUserParts = (body: string) => {
+		const contents = JSON.parse(body).request.contents as Array<{ role: string; parts: Array<{ text?: string }> }>;
+		const last = contents.at(-1)!;
+		expect(last.role).toBe("user");
+		return last.parts;
+	};
+	/** One provider call over a scripted list of responses; records request bodies and event types. */
+	const call = async (ctx: ReturnType<typeof freshContext>, replies: Array<() => Response>) => {
+		const bodies: string[] = [];
+		const events: string[] = [];
+		const s = streamSimple(argon, ctx, {
+			apiKey,
+			reasoning: "high",
+			fetch: async (_url, init) => {
+				bodies.push(String(init?.body));
+				return replies[Math.min(bodies.length, replies.length) - 1]!();
+			},
+		});
+		for await (const event of s) events.push(event.type);
+		return { result: await s.result(), bodies, events };
+	};
+	const done = () => response([{ text: "Done." }]);
+
+	describe("in the provider: no event was emitted yet", () => {
+		it("retries a silent ending with the Gemini CLI nudge before emitting any event", async () => {
+			const { result, bodies, events } = await call(freshContext(), [silent, done]);
+			expect(result.stopReason).toBe("stop");
+			expect(result.content).toEqual([{ type: "text", text: "Done." }]);
+			expect(events).toEqual(["start", "text_start", "text_delta", "text_end", "done"]);
+			expect(bodies).toHaveLength(2);
+			expect(lastUserParts(bodies[0]!)).toEqual([{ text: "Hello" }]);
+			expect(lastUserParts(bodies[1]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+		});
+
+		it("reports a persistent silent ending as a retryable error", async () => {
+			const { result, bodies } = await call(freshContext(), [silent]);
+			expect(bodies).toHaveLength(3);
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toBe(
+				"Antigravity stream ended without a finish reason or any output (Gemini returned an empty answer)",
+			);
+			expect(isRetryableAssistantError(result)).toBe(true);
+		});
+
+		it.each([
+			["a whitespace-only part", [{ text: "  \n", thoughtSignature: "c2lsZW50" }]],
+			["no parts", []],
+		])("retries a STOP with %s with the nudge before emitting any event", async (_name, parts) => {
+			const { result, bodies, events } = await call(freshContext(), [() => response(parts), done]);
+			expect(result.stopReason).toBe("stop");
+			expect(result.content).toEqual([{ type: "text", text: "Done." }]);
+			expect(events).toEqual(["start", "text_start", "text_delta", "text_end", "done"]);
+			expect(bodies).toHaveLength(2);
+			expect(lastUserParts(bodies[0]!)).toEqual([{ text: "Hello" }]);
+			expect(lastUserParts(bodies[1]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+		});
+
+		it("reports a persistent empty STOP as a retryable error after three nudged attempts", async () => {
+			const { result, bodies, events } = await call(freshContext(), [() => response([{ text: " " }])]);
+			expect(bodies.map((body) => lastUserParts(body).length)).toEqual([1, 2, 2]);
+			expect(events).toEqual(["error"]);
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toBe(
+				"Antigravity stream ended without visible output (Gemini returned an empty answer)",
+			);
+			expect(isRetryableAssistantError(result)).toBe(true);
+		});
+
+		it("does not nudge an empty body", async () => {
+			const { result, bodies } = await call(freshContext(), [() => new Response(""), done]);
+			expect(result.stopReason).toBe("stop");
+			expect(lastUserParts(bodies[1]!)).toEqual([{ text: "Hello" }]);
+		});
+
+		it("keeps a whitespace-only STOP from Claude as its answer", async () => {
+			const claude = antigravityProvider()
+				.getModels()
+				.find((m) => m.id === "claude-sonnet-5-5")!;
+			const result = await streamSimple(claude, freshContext(), {
+				apiKey,
+				fetch: async () => response([{ text: "\n" }]),
+			}).result();
+			expect(result.stopReason).toBe("stop");
+			expect(result.content).toEqual([{ type: "text", text: "\n" }]);
+		});
+	});
+
+	describe("function calls before a clean end of body", () => {
+		const read = { functionCall: { name: "read", args: { path: "a" } }, thoughtSignature: "c2ln" };
+
+		it("keeps a signed empty text that arrives with STOP after a tool call", async () => {
+			const { result } = await call(freshContext(), [
+				() => response([read, { text: "", thoughtSignature: "c2lsZW50" }]),
+			]);
+			expect(result.stopReason).toBe("toolUse");
+			expect(result.content.map((block) => block.type)).toEqual(["toolCall", "text"]);
+			expect(result.content[1]).toEqual({ type: "text", text: "", textSignature: "c2lsZW50" });
+		});
+
+		// The Gemini CLI accepts a stream without a finish reason once it holds a function call
+		// (packages/core/src/core/geminiChat.ts: the NO_FINISH_REASON check is skipped with tool calls).
+		it("finishes complete function calls without a finish reason as tool use", async () => {
+			const { result, bodies, events } = await call(freshContext(), [
+				() => unfinished([...thoughtOnly, read, { functionCall: { name: "ls", args: {} } }]),
+			]);
+			expect(bodies).toHaveLength(1);
+			expect(events.at(-1)).toBe("done");
+			expect(result.stopReason).toBe("toolUse");
+			expect(result.errorMessage).toBeUndefined();
+			expect(result.content.map((block) => block.type)).toEqual(["thinking", "toolCall", "toolCall"]);
+		});
+
+		it("still fails a truncated frame after function calls", async () => {
+			const truncated = () =>
+				new Response(
+					`data: ${JSON.stringify({ response: { candidates: [{ content: { parts: [read] } }] } })}\n\ndata: {"response": {"cand`,
+				);
+			const { result } = await call(freshContext(), [truncated]);
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toBe("Malformed Antigravity stream event");
+		});
+
+		it("still fails an inline error after function calls", async () => {
+			const inlineError = () =>
+				new Response(
+					`data: ${JSON.stringify({ response: { candidates: [{ content: { parts: [read] } }] } })}\n\ndata: ${JSON.stringify({ error: { message: "backend reset" } })}\n\n`,
+				);
+			const { result } = await call(freshContext(), [inlineError]);
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toBe("backend reset");
+		});
+	});
+
+	describe("across the agent's retry: thinking was already emitted", () => {
+		it.each([
+			["a thinking-only STOP", () => response(thoughtOnly)],
+			["thinking, then whitespace and STOP", () => response([...thoughtOnly, { text: " \n" }])],
+			[
+				"thinking, then a silent end of body",
+				() => unfinished([...thoughtOnly, { text: "", thoughtSignature: "c2lsZW50" }]),
+			],
+		])("fails %s once, then nudges the same context and forgets it on success", async (_name, empty) => {
+			const ctx = freshContext();
+			const first = await call(ctx, [empty]);
+			expect(first.bodies).toHaveLength(1);
+			expect(first.events.slice(0, 2)).toEqual(["start", "thinking_start"]);
+			expect(first.events.at(-1)).toBe("error");
+			expect(isRetryableAssistantError(first.result)).toBe(true);
+
+			const retry = await call(ctx, [done]);
+			expect(retry.result.stopReason).toBe("stop");
+			expect(lastUserParts(retry.bodies[0]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+
+			const next = await call(ctx, [done]);
+			expect(lastUserParts(next.bodies[0]!)).toEqual([{ text: "Hello" }]);
+		});
+
+		it("keeps nudging while the retried context stays empty", async () => {
+			const ctx = freshContext();
+			await call(ctx, [() => response(thoughtOnly)]);
+			const again = await call(ctx, [() => response(thoughtOnly)]);
+			expect(lastUserParts(again.bodies[0]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+			const retry = await call(ctx, [done]);
+			expect(lastUserParts(retry.bodies[0]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+		});
+
+		it("nudges the agent's retry after the provider's own attempts are exhausted", async () => {
+			const ctx = freshContext();
+			await call(ctx, [silent]);
+			const retry = await call(ctx, [done]);
+			expect(lastUserParts(retry.bodies[0]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+		});
+
+		it("ignores the failed attempt the agent keeps in its history", async () => {
+			const systemPrompt = "Be concise. (failed attempt kept)";
+			const user = { role: "user", content: "Hello", timestamp: 1 } as const;
+			const first = await call(normalizeContext({ systemPrompt, messages: [user] }), [() => response(thoughtOnly)]);
+			const withFailure = normalizeContext({ systemPrompt, messages: [user, first.result] });
+			const retry = await call(withFailure, [done]);
+			expect(lastUserParts(retry.bodies[0]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+		});
+
+		it("does not nudge another context, a visible partial answer, or a stale entry", async () => {
+			const ctx = freshContext();
+			await call(ctx, [() => response(thoughtOnly)]);
+			const other = await call(freshContext("Something else"), [done]);
+			expect(lastUserParts(other.bodies[0]!)).toEqual([{ text: "Something else" }]);
+
+			const partial = freshContext();
+			await call(partial, [() => unfinished([{ text: "partial" }])]);
+			const afterPartial = await call(partial, [done]);
+			expect(lastUserParts(afterPartial.bodies[0]!)).toEqual([{ text: "Hello" }]);
+
+			const now = Date.now();
+			const clock = vi.spyOn(Date, "now").mockReturnValue(now + 120_001);
+			try {
+				const stale = await call(ctx, [done]);
+				expect(lastUserParts(stale.bodies[0]!)).toEqual([{ text: "Hello" }]);
+			} finally {
+				clock.mockRestore();
+			}
+		});
+
+		it("remembers at most 16 contexts", async () => {
+			const ctxs = Array.from({ length: 17 }, () => freshContext());
+			for (const ctx of ctxs) await call(ctx, [() => response(thoughtOnly)]);
+			const oldest = await call(ctxs[0]!, [done]);
+			expect(lastUserParts(oldest.bodies[0]!)).toEqual([{ text: "Hello" }]);
+			const newest = await call(ctxs[16]!, [done]);
+			expect(lastUserParts(newest.bodies[0]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+		});
 	});
 });
 

@@ -51,6 +51,7 @@ import type {
 	ToolCall,
 } from "../../types.ts";
 import { createAssistantMessageEventStream } from "../../utils/event-stream.ts";
+import { shortHash } from "../../utils/hash.ts";
 import { headersToRecord, providerHeadersToRecord } from "../../utils/headers.ts";
 import { sleep } from "../../utils/sleep.ts";
 import { ownedSlice } from "../../utils/text.ts";
@@ -1143,6 +1144,47 @@ export async function streamResponse(
 		currentBlock = null;
 	};
 
+	const appendText = (text: string, isThinking: boolean, signature: string | undefined) => {
+		hasContent = true;
+		const type = isThinking ? "thinking" : "text";
+		if (!currentBlock || currentBlock.type !== type) {
+			finishCurrent();
+			currentBlock = isThinking
+				? { type: "thinking", thinking: "", thinkingSignature: undefined }
+				: { type: "text", text: "" };
+			blocks.push(currentBlock);
+			ensureStarted();
+			stream.push({
+				type: isThinking ? "thinking_start" : "text_start",
+				contentIndex: blockIndex(),
+				partial: output,
+			});
+		}
+		if (currentBlock.type === "thinking") {
+			currentBlock.thinking += text;
+			if (signature) currentBlock.thinkingSignature = signature;
+			stream.push({ type: "thinking_delta", contentIndex: blockIndex(), delta: text, partial: output });
+		} else {
+			currentBlock.text += text;
+			if (signature) currentBlock.textSignature = signature;
+			stream.push({ type: "text_delta", contentIndex: blockIndex(), delta: text, partial: output });
+		}
+	};
+
+	// Whitespace-only text that would open a text block is held until a later part or a finish
+	// reason shows the answer goes on. Gemini 4 Argon can end a 200 stream with one signed empty
+	// text part and no finish reason (a silent ending), or with whitespace and STOP; holding it
+	// keeps that attempt free of events, so the caller can retry it. Held text is dropped at the end
+	// of the body, and at a Gemini STOP that would otherwise be the whole answer.
+	let held: { text: string; signature: string | undefined } | undefined;
+	const holds = (text: string, isThinking: boolean) => !isThinking && currentBlock?.type !== "text" && !text.trim();
+	const flushHeld = () => {
+		if (!held) return;
+		const { text, signature } = held;
+		held = undefined;
+		appendText(text, false, signature);
+	};
+
 	try {
 		while (true) {
 			options?.signal?.throwIfAborted();
@@ -1178,44 +1220,20 @@ export async function streamResponse(
 
 				for (const part of candidate?.content?.parts || []) {
 					if (part.text !== undefined) {
-						hasContent = true;
 						const isThinking = part.thought === true;
-						const type = isThinking ? "thinking" : "text";
-						if (!currentBlock || currentBlock.type !== type) {
-							finishCurrent();
-							currentBlock = isThinking
-								? { type: "thinking", thinking: "", thinkingSignature: undefined }
-								: { type: "text", text: "" };
-							blocks.push(currentBlock);
-							ensureStarted();
-							stream.push({
-								type: isThinking ? "thinking_start" : "text_start",
-								contentIndex: blockIndex(),
-								partial: output,
-							});
-						}
-						if (isThinking && currentBlock.type === "thinking") {
-							currentBlock.thinking += part.text;
-							if (part.thoughtSignature) currentBlock.thinkingSignature = part.thoughtSignature;
-							stream.push({
-								type: "thinking_delta",
-								contentIndex: blockIndex(),
-								delta: part.text,
-								partial: output,
-							});
-						} else if (!isThinking && currentBlock.type === "text") {
-							currentBlock.text += part.text;
-							if (part.thoughtSignature) currentBlock.textSignature = part.thoughtSignature;
-							stream.push({
-								type: "text_delta",
-								contentIndex: blockIndex(),
-								delta: part.text,
-								partial: output,
-							});
+						if (holds(part.text, isThinking)) {
+							held = {
+								text: (held?.text ?? "") + part.text,
+								signature: part.thoughtSignature ?? held?.signature,
+							};
+						} else {
+							flushHeld();
+							appendText(part.text, isThinking, part.thoughtSignature);
 						}
 					}
 
 					if (part.functionCall) {
+						flushHeld();
 						hasContent = true;
 						finishCurrent();
 						const rawId = part.functionCall.id || "";
@@ -1245,8 +1263,11 @@ export async function streamResponse(
 				}
 
 				if (candidate?.finishReason) {
-					output.rawStopReason = candidate.finishReason;
 					const reason = mapStopReason(candidate.finishReason);
+					if (reason === StopReason.Stop && blocks.length === 0 && model && isGemini(model, output))
+						held = undefined;
+					else flushHeld();
+					output.rawStopReason = candidate.finishReason;
 					output.stopReason =
 						reason === StopReason.Stop && blocks.some((b) => b.type === "toolCall") ? StopReason.ToolUse : reason;
 				}
@@ -1298,13 +1319,78 @@ export function describeInvalidEnding(model: Model<Api>, output: AssistantMessag
 	if (output.stopReason === StopReason.Error && RETRYABLE_FINISH_REASONS.has(output.rawStopReason ?? "")) {
 		return `Antigravity stream ended without a valid function call (${output.rawStopReason})`;
 	}
-	if (output.stopReason !== StopReason.Stop) return undefined;
-	const isGemini = model.id.startsWith("gemini-") || (output.responseModel ?? "").startsWith("gemini-");
-	if (!isGemini) return undefined;
-	const visible = output.content.some(
+	if (output.stopReason !== StopReason.Stop || !isGemini(model, output)) return undefined;
+	return hasVisibleOutput(output)
+		? undefined
+		: "Antigravity stream ended without visible output (Gemini returned only thinking)";
+}
+
+function isGemini(model: Model<Api>, output: AssistantMessage): boolean {
+	return model.id.startsWith("gemini-") || (output.responseModel ?? "").startsWith("gemini-");
+}
+
+/** Whether the answer holds a tool call or non-whitespace text; thinking alone is not visible. */
+function hasVisibleOutput(output: AssistantMessage): boolean {
+	return output.content.some(
 		(block) => (block.type === "text" && block.text.trim() !== "") || block.type === "toolCall",
 	);
-	return visible ? undefined : "Antigravity stream ended without visible output (Gemini returned only thinking)";
+}
+
+/**
+ * Appended to the last user turn when retrying an empty answer; the Gemini CLI's
+ * NO_RESPONSE_TEXT_NUDGE_MESSAGE (packages/core/src/core/geminiChat.ts). Probe 2026-11-06: a
+ * 602k-token gemini-4-argon context that ended silently on 3 of 3 identical requests answered
+ * normally with this text appended.
+ */
+const SILENT_ENDING_NUDGE =
+	"[System: You previously returned an empty response with no text or thoughts. Please ensure you provide your final answer or call a tool now.]";
+
+/**
+ * Request contexts whose last answer was empty, by key, with the time it was seen. An empty answer
+ * whose thinking already streamed cannot be retried inside the provider; the agent's retry sends
+ * the identical context seconds later, and that request carries the nudge instead of repeating
+ * the prompt that failed. Small and short-lived: the agent retries within seconds.
+ */
+const recentEmptyAnswers = new Map<string, number>();
+const EMPTY_ANSWER_TTL_MS = 120_000;
+const EMPTY_ANSWER_LIMIT = 16;
+
+/**
+ * The agent's retry key for a context: model, system prompt, message count and last message text.
+ * Failed assistant attempts are left out, so a retry that keeps them in its history matches.
+ */
+function emptyAnswerKey(model: Model<Api>, context: Context): string {
+	const messages = context.messages.filter(
+		(m) => m.role !== "assistant" || (m.stopReason !== "error" && m.stopReason !== "aborted"),
+	);
+	const last = messages.at(-1);
+	const lastText = !last
+		? ""
+		: typeof last.content === "string"
+			? last.content
+			: last.content.map((block) => (block.type === "text" ? block.text : "")).join("");
+	return `${model.id}:${shortHash(`${resolveCurrentSystemPrompt(context)}\n${messages.length}\n${lastText}`)}`;
+}
+
+function answeredEmptyRecently(key: string): boolean {
+	const seen = recentEmptyAnswers.get(key);
+	if (seen === undefined) return false;
+	if (Date.now() - seen <= EMPTY_ANSWER_TTL_MS) return true;
+	recentEmptyAnswers.delete(key);
+	return false;
+}
+
+function rememberEmptyAnswer(key: string): void {
+	const now = Date.now();
+	recentEmptyAnswers.delete(key);
+	for (const [other, seen] of recentEmptyAnswers) {
+		if (now - seen > EMPTY_ANSWER_TTL_MS) recentEmptyAnswers.delete(other);
+	}
+	recentEmptyAnswers.set(key, now);
+	// Map iteration follows insertion order, so the first key is the oldest.
+	while (recentEmptyAnswers.size > EMPTY_ANSWER_LIMIT) {
+		recentEmptyAnswers.delete(recentEmptyAnswers.keys().next().value!);
+	}
 }
 
 export function streamAntigravity(
@@ -1357,6 +1443,12 @@ export function streamAntigravity(
 			let response: Response | undefined;
 			let lastText = "";
 			let received = false;
+			const emptyKey = emptyAnswerKey(model, context);
+			// The nudge goes on every attempt after an empty answer to this context, including the
+			// first attempt of the agent's retry.
+			let nudge = answeredEmptyRecently(emptyKey);
+			// Why the last attempt that reached the model gave no output; undefined for empty bodies.
+			let emptyAnswer: string | undefined;
 			let runtimeModel = initialRuntimeModel;
 
 			for (let emptyAttempt = 0; emptyAttempt <= 2; emptyAttempt++) {
@@ -1376,6 +1468,7 @@ export function streamAntigravity(
 						{ ...opts, modelEnum: opts.modelEnum ?? discoveredEnums[runtimeModel] },
 						runtimeModel,
 					);
+					if (nudge) appendTurn(payload.request.contents, GeminiRole.User, [{ text: SILENT_ENDING_NUDGE }]);
 					const body = JSON.stringify((await opts.onPayload?.(payload, model)) ?? payload);
 
 					for (const endpoint of endpointCandidates(opts.env, model.baseUrl)) {
@@ -1456,13 +1549,38 @@ export function streamAntigravity(
 				output.responseModel = runtimeModel !== model.id ? runtimeModel : undefined;
 				received = await streamResponse(response, stream, output, model, opts);
 				if (received || output.stopReason === "error") break;
+				// The model answered with nothing: a STOP, or frames without a finish reason. The same
+				// request tends to repeat it, so later attempts carry the nudge. An empty body is a
+				// transport failure and is retried as is.
+				if (output.stopReason === StopReason.Stop) {
+					emptyAnswer = "Antigravity stream ended without visible output (Gemini returned an empty answer)";
+				} else if (output.stopReason === "pending" && output.responseId !== undefined) {
+					emptyAnswer =
+						"Antigravity stream ended without a finish reason or any output (Gemini returned an empty answer)";
+				}
+				nudge ||= emptyAnswer !== undefined;
 			}
 
 			if (!received && output.stopReason !== "error") {
-				throw new Error("Antigravity stream ended without any content (empty response)");
+				if (emptyAnswer) rememberEmptyAnswer(emptyKey);
+				throw new Error(emptyAnswer ?? "Antigravity stream ended without any content (empty response)");
+			}
+
+			// Complete function calls followed by a clean end of body are a finished tool turn: the
+			// Gemini CLI skips its missing-finish-reason check once a response holds a function call
+			// (packages/core/src/core/geminiChat.ts). Inline errors and truncated frames threw above.
+			if (output.stopReason === "pending" && output.content.some((block) => block.type === "toolCall")) {
+				output.stopReason = StopReason.ToolUse;
 			}
 
 			const invalidEnding = describeInvalidEnding(model, output);
+			// Thinking already streamed, so the agent retries this answer; remember it to nudge that retry.
+			if (
+				!hasVisibleOutput(output) &&
+				(output.stopReason === "pending" || (output.stopReason === StopReason.Stop && invalidEnding))
+			) {
+				rememberEmptyAnswer(emptyKey);
+			}
 			if (invalidEnding) {
 				output.stopReason = StopReason.Error;
 				output.errorMessage = invalidEnding;
@@ -1478,6 +1596,7 @@ export function streamAntigravity(
 			} else if (output.stopReason === "pending") {
 				throw new Error("Antigravity stream ended without a finish reason");
 			} else {
+				recentEmptyAnswers.delete(emptyKey);
 				stream.push({ type: "done", reason: output.stopReason, message: output });
 			}
 			stream.end();
