@@ -98,7 +98,7 @@ test("session selector: a rename and a pin show before their calls answer; a ref
 		columns: 100,
 	});
 	runtime.navigate("sessions", "s");
-	const listed = async (title: string) => new RegExp(`^(?: {2}|› )${title}`, "m").test(await screen());
+	const listed = async (title: string) => new RegExp(`^(?: {2}|› ) {2}${title}`, "m").test(await screen());
 	await poll(() => listed("Fixture"));
 	send(DOWN);
 	send(CTRL_R);

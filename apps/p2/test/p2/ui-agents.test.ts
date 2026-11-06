@@ -72,7 +72,7 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		// The sidebar counts the subagent, not the script's one-shot agent.
 		assert.equal(await browser.evaluate(text(".session-header.has-subagents .subagent-toggle span")), "1");
 		await browser.evaluate(`[...document.querySelectorAll('[data-testid=activity]')].at(-1).click()`);
-		const script = `[...document.querySelectorAll('[data-testid=step]')].find(e=>e.textContent.includes('Ran a script'))`;
+		const script = `[...document.querySelectorAll('[data-testid=step]')].find(e=>e.textContent.startsWith('codemode'))`;
 		await browser.wait(script);
 		await browser.evaluate(`${script}.querySelector('button').click()`);
 		const call = `[...document.querySelectorAll('[data-testid=call]')].find(e=>e.textContent.includes('Asked an agent Check ok'))`;
@@ -181,10 +181,10 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
 		// The spawn's detail names the cwd relative to the session's. Its turn is the last whose activity row says it
 		// used a subagent (the helper's came first).
-		const turn = `[...document.querySelectorAll('[data-testid=activity]')].findLast(e=>e.textContent.includes('used a subagent'))`;
+		const turn = `[...document.querySelectorAll('[data-testid=activity]')].findLast(e=>/used a subagent/i.test(e.textContent))`;
 		await browser.wait(turn);
 		await browser.evaluate(`${turn}.click()`);
-		const spawned = `[...document.querySelectorAll('[data-testid=step]')].find(e=>e.textContent.includes('Started subagent wt'))`;
+		const spawned = `[...document.querySelectorAll('[data-testid=step]')].find(e=>e.textContent.includes('subagentspawn wt'))`;
 		await browser.wait(spawned);
 		await browser.evaluate(`${spawned}.querySelector('button').click()`);
 		await browser.wait(`document.querySelector('[data-testid=tool-config]')`);

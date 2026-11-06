@@ -1,7 +1,10 @@
 // What the chat's parts (Chat.tsx and the activity in src/web/activity) get from where a transcript is shown:
 // navigation, the session and its working directory. Chat.tsx re-exports them.
 import { createContext } from "react";
+import type { ToolActivityTable } from "./activity/model.ts";
 
+/** How tools' calls show, by tool name (`ToolActivities`, contributed by the plugins that own them). */
+export const ToolActivityContext = createContext<ToolActivityTable>(new Map());
 /** Opens a subagent conversation of the current session. */
 export const OpenConversation = createContext<(conversationId: number) => void>(() => {});
 /** The session's one-shot agents: conversation by the nested call ID that ran them (`<script call ID>/c<n>`). */

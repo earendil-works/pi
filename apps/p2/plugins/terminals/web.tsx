@@ -1,6 +1,7 @@
 import { contribute, defineFacet } from "@p2/app/v1";
-import { Slots, TerminalIcon, useNavigation, useObject, useOwner, useRoute } from "@p2/app/v1/web";
+import { Slots, TerminalIcon, ToolActivities, useNavigation, useObject, useOwner, useRoute } from "@p2/app/v1/web";
 import { useState } from "react";
+import { terminalActivity } from "./activity.tsx";
 import { Terminals } from "./contract.ts";
 import { setTerminalPlacement, TerminalPanel, TerminalView, terminalPlacement } from "./Terminal.tsx";
 
@@ -110,5 +111,6 @@ export default defineFacet((host) => {
 			"chat-bottom": BottomTerminal,
 			"workspace-terminal": WorkspaceTerminal,
 		});
+		self.contribute(ToolActivities, { terminal: terminalActivity });
 	});
 });

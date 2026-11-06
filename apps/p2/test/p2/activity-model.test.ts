@@ -1,11 +1,48 @@
-// The chat's turns (src/web/activity/model.ts): a turn's responses become its activity, its answer and its results;
-// the last turn is live while the agent works; unchanged turns keep their items.
+// The chat's turns (src/web/activity/model.ts): a turn's thinking and texts stay in order, each run of consecutive tool
+// calls becomes one activity (a wheel), the last text is the answer, then the results; the last run is live while the
+// agent works; unchanged turns keep their items.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
-import { chatItems, describe as describeStep, groupCalls, summary } from "../../src/web/activity/model.ts";
+import {
+	argumentOf,
+	chatItems as chatItemsWith,
+	describe as describeStep,
+	groupCalls,
+	live,
+	stepState,
+	summary,
+	type ToolActivity,
+	type ToolActivityTable,
+} from "../../src/web/activity/model.ts";
 import type { Item, NestedCall, ToolView } from "../../src/web/transcript.ts";
+
+const edited = (count: number) => (count === 1 ? "edited a file" : `edited ${count} files`);
+/** Contributions as plugins make them (the plugins' own are React modules, tested in the browser). */
+const TOOLS: ToolActivityTable = new Map<string, ToolActivity>([
+	[
+		"bash",
+		{
+			describe: (step) => ({
+				label: { kind: "command", verb: "Ran", object: String(step.tool.args.command), style: "code" },
+			}),
+			failure: (tool) => /exited with code (\d+)/.exec(tool.output)?.[1]?.replace(/^/, "exit "),
+			summary: (count) => (count === 1 ? "ran a command" : `ran ${count} commands`),
+		},
+	],
+	[
+		"artifact",
+		{
+			summary: (count) => (count === 1 ? "made an artifact" : `made ${count} artifacts`),
+			hasResult: (tool) => tool.details !== undefined,
+		},
+	],
+	["edit", { summary: edited }],
+	["write", { summary: edited }],
+]);
+const chatItems = (items: readonly Item[], working: boolean, known = true) =>
+	chatItemsWith(items, working, known, TOOLS);
 
 const user = (key: string, text: string): Item => ({ type: "user", key, text, images: [], files: [], entryId: 1 });
 
@@ -61,30 +98,89 @@ function turn(): Item[] {
 	];
 }
 
-test("a turn is its activity, its answer and its results", () => {
-	const items = chatItems(turn(), false);
+test("a turn keeps its thought and texts in order; its consecutive calls are one activity", () => {
+	const made = turn();
+	const items = chatItems(made, false);
 	assert.deepEqual(
 		items.map((item) => item.type),
-		["user", "activity", "answer", "results"],
+		["user", "thought", "text", "activity", "answer", "results"],
 	);
-	const activity = items[1] as Extract<(typeof items)[number], { type: "activity" }>;
+	const activity = items[3] as Extract<(typeof items)[number], { type: "activity" }>;
 	assert.deepEqual(
-		activity.steps.map((step) => step.kind),
-		["thinking", "note", "tool", "tool"],
+		activity.steps.map((step) => step.tool.name),
+		["bash", "artifact"],
 	);
 	assert.equal(activity.working, false);
-	assert.deepEqual(activity.entryIds, [2, 3, 4]);
-	// Keyed by the message before it, so the row is the same from before the first step.
-	assert.equal(activity.key, "activity:u1");
-	const answer = items[2] as Extract<(typeof items)[number], { type: "answer" }>;
+	assert.deepEqual(activity.entryIds, [2, 3]);
+	// Keyed by the response and part of its first call.
+	assert.equal(activity.key, "activity:a1:2");
+	// From the response with its first call until the response after its last began.
+	const timestamp = (index: number) => (made[index] as Extract<Item, { type: "assistant" }>).message.timestamp;
+	assert.equal(activity.startedAt, timestamp(1));
+	assert.equal(activity.endedAt, timestamp(3));
+	const text = items[2] as Extract<(typeof items)[number], { type: "text" }>;
+	assert.equal(text.text, "Running the tests.");
+	const answer = items[4] as Extract<(typeof items)[number], { type: "answer" }>;
 	assert.equal(answer.text, "All **tests** pass.");
 	assert.equal(answer.entryId, 4);
-	const results = items[3] as Extract<(typeof items)[number], { type: "results" }>;
+	const results = items[5] as Extract<(typeof items)[number], { type: "results" }>;
 	assert.deepEqual(
 		results.tools.map((each) => each.name),
 		["artifact"],
 	);
-	assert.equal(summary(activity.steps), "Thought, ran a command, made an artifact");
+	assert.equal(summary(activity.steps, TOOLS), "Ran a command, made an artifact");
+});
+
+test("thought, text, calls, text, calls: the texts in order and one activity per run of calls", () => {
+	const items = chatItems(
+		[
+			user("u1", "Go"),
+			response(
+				"a1",
+				2,
+				[
+					{ type: "thinking", thinking: "Plan." },
+					{ type: "text", text: "First the tests." },
+					{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "npm test" } },
+					{ type: "toolCall", id: "t2", name: "read", arguments: { path: "a.ts" } },
+				],
+				[tool("t1", "bash", { command: "npm test" }), tool("t2", "read", { path: "a.ts" })],
+			),
+			response(
+				"a2",
+				3,
+				[
+					{ type: "text", text: "Now the fix." },
+					{ type: "toolCall", id: "t3", name: "edit", arguments: { path: "a.ts" } },
+				],
+				[tool("t3", "edit", { path: "a.ts" })],
+			),
+			response("a3", 4, [{ type: "text", text: "Fixed." }]),
+		],
+		true,
+	);
+	assert.deepEqual(
+		items.map((item) => (item.type === "activity" ? `activity:${item.steps.length}:${item.working}` : item.type)),
+		["user", "thought", "text", "activity:2:false", "text", "activity:1:false", "answer"],
+	);
+	// While the last run of calls is the newest part, it is live.
+	const running = chatItems(
+		[
+			user("u1", "Go"),
+			response("a1", 2, [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "x" } }], [], {
+				stopReason: "toolUse",
+			}),
+		],
+		true,
+	);
+	assert.deepEqual(
+		running.map((item) => [item.type, item.key, item.type === "activity" && item.working]),
+		[
+			["user", "u1", false],
+			// The first part: keyed by the message before it, the same row as the one that waited for it.
+			["activity", "activity:u1", true],
+		],
+	);
 });
 
 test("while working, the last turn is live, and a waiting turn has an activity row", () => {
@@ -99,7 +195,7 @@ test("while working, the last turn is live, and a waiting turn has an activity r
 	const items = chatItems(turn().slice(0, 3), true);
 	const activity = items.find((item) => item.type === "activity");
 	assert.equal(activity?.type === "activity" && activity.working, true);
-	assert.equal(activity?.key, "activity:u1");
+	assert.equal(activity?.key, "activity:a1:2");
 	// Done, the same turn is not live.
 	assert.equal(
 		chatItems(turn().slice(0, 3), false).some((item) => item.type === "activity" && item.working),
@@ -111,9 +207,9 @@ test("unchanged turns keep their items; a changed one is rebuilt", () => {
 	const items = turn();
 	const first = chatItems(items, false);
 	const second = chatItems([...items], false);
-	assert.equal(first[1], second[1]);
+	assert.equal(first[3], second[3]);
 	const changed = [...items.slice(0, 3), response("a3", 4, [{ type: "text", text: "Done." }])];
-	assert.notEqual(chatItems(changed, false)[1], first[1]);
+	assert.notEqual(chatItems(changed, false)[3], first[3]);
 });
 
 test("a stopped turn without text shows its notice as the answer", () => {
@@ -138,23 +234,47 @@ test("a stopped turn without text shows its notice as the answer", () => {
 	assert.equal(activity?.type === "activity" && activity.steps[0]?.status, "error");
 });
 
-test("steps read as the work: verbs, files, commands and failures", () => {
-	const step = (each: ToolView) => describeStep({ kind: "tool", id: each.id, tool: each, status: "done" });
-	assert.deepEqual(step(tool("r", "read", { path: "/w/src/a.ts", offset: 40, limit: 20 })).label, {
-		kind: "read",
-		verb: "Read",
-		object: "a.ts",
-		style: "file",
+test("a tool's contribution gives its words; a tool without one reads as its name and first short argument", () => {
+	const step = (each: ToolView, status: "done" | "error" | "running" = "done") => ({
+		id: each.id,
+		tool: each,
+		status,
 	});
-	assert.equal(step(tool("r", "read", { path: "/w/src/a.ts", offset: 40, limit: 20 })).description, "Lines 40–59");
-	assert.equal(step(tool("s", "bash", { command: "rg -n foo" })).label.verb, "Searched");
-	const failed = describeStep({
+	assert.deepEqual(describeStep(step(tool("b", "bash", { command: "npm test" })), TOOLS).label, {
+		kind: "command",
+		verb: "Ran",
+		object: "npm test",
+		style: "code",
+	});
+	const fetch = tool("f", "web_fetch", { limit: 3, url: "https://example.com\nmore" });
+	assert.deepEqual(describeStep(step(fetch), TOOLS).label, {
 		kind: "tool",
-		id: "f",
-		status: "error",
-		tool: tool("f", "bash", { command: "node x" }, { status: "error", output: "Error: boom\n  at x" }),
+		verb: "web_fetch",
+		object: "https://example.com",
+		style: "code",
 	});
-	assert.equal(failed.description, "Error: boom");
+	// While it runs, without words of its own for that, the same.
+	assert.deepEqual(live(step(fetch, "running"), TOOLS), describeStep(step(fetch), TOOLS).label);
+	assert.equal(argumentOf(fetch, TOOLS, undefined), "https://example.com");
+	// A failure says what went wrong; the tool may say how in its row.
+	const failed = tool(
+		"x",
+		"bash",
+		{ command: "node x" },
+		{ status: "error", output: "Error: boom\nCommand exited with code 2" },
+	);
+	assert.equal(stepState(step(failed, "error"), TOOLS), "✗ exit 2");
+	assert.equal(stepState(step({ ...fetch, status: "error", output: "Error: boom" }, "error"), TOOLS), "✗ failed");
+	assert.equal(
+		describeStep(step({ ...fetch, status: "error", output: "Error: boom" }, "error"), TOOLS).description,
+		"Error: boom",
+	);
+	// Tools sharing their words count together; a tool without words of its own is "used" by name.
+	const edits = [tool("e", "edit", {}), tool("w", "write", {}), fetch, fetch, tool("g", "grep", {})].map((each) =>
+		step(each),
+	);
+	assert.equal(summary(edits, TOOLS), "Edited 2 files, used web_fetch 2 times, used grep");
+	assert.equal(summary([], TOOLS), "Done");
 });
 
 test("a script's repeated identical calls are one entry; nested calls say so", () => {
@@ -165,7 +285,7 @@ test("a script's repeated identical calls are one entry; nested calls say so", (
 		status,
 		depth,
 	});
-	const groups = groupCalls([call("1"), call("2"), call("3", 0, "error"), call("4", 1)]);
+	const groups = groupCalls([call("1"), call("2"), call("3", 0, "error"), call("4", 1)], TOOLS);
 	assert.equal(groups.length, 2);
 	assert.equal(groups[0]?.calls.length, 3);
 	assert.equal(groups[0]?.status, "error");
@@ -183,16 +303,4 @@ test("before the live state is known, an unfinished last turn shows as live, not
 	assert.equal(live(chatItems(running, false, true)), false);
 	// A finished turn stays finished either way.
 	assert.equal(live(chatItems(turn(), false, false)), false);
-});
-
-test("a terminal call reads as its tmux command line, and the summary counts it", () => {
-	const terminal = tool("x", "terminal", { command: "send-keys", args: ["-t", "1", "C-c"] }, { output: "$ \n" });
-	const step = { kind: "tool" as const, id: "x", tool: terminal, status: "done" as const };
-	assert.deepEqual(describeStep(step).label, {
-		kind: "command",
-		verb: "Terminal",
-		object: "send-keys -t 1 C-c",
-		style: "code",
-	});
-	assert.equal(summary([step, step]), "Used the terminal 2 times");
 });

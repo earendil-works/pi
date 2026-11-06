@@ -1,0 +1,12 @@
+/* An opened port's links after a turn's answer (activity.tsx). */
+.result-links {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-medium);
+	color: var(--semantic-color-icon-secondary);
+}
+.result-link {
+	color: var(--semantic-color-text-link);
+	font: var(--semantic-typography-ui-secondary);
+}

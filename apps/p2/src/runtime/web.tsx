@@ -17,7 +17,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { clearKept } from "../web/conversation-cache.ts";
-import { CloseIcon } from "../web/icons.tsx";
+import { ChevronIcon, CloseIcon } from "../web/icons.tsx";
 import {
 	conversationRoute,
 	forgetLastConversation,
@@ -45,7 +45,7 @@ import { canonicalJson } from "./json.ts";
 import { follow, followRegistry, type HeldIn, type HeldRef, knownRegistry, liveIn, UI_LINGER } from "./refs.ts";
 import { Slots } from "./web-core.ts";
 
-export { Slots, webCoreFacet } from "./web-core.ts";
+export { Slots, ToolActivities, webCoreFacet } from "./web-core.ts";
 
 export const HostContext = createContext<Host | undefined>(undefined);
 
@@ -98,16 +98,23 @@ export function SlotList({ prefix }: { prefix: string }) {
 	);
 }
 
-/** A modal sheet: a bottom sheet on phones, a centred dialog on wide screens. Escape and the scrim close it. */
+/**
+ * A modal sheet: a bottom sheet on phones, a centred dialog on wide screens. Escape and the scrim close it. `onBack`: a
+ * page inside the sheet (a step's detail) has a Back control before its title, which leads to the page under it.
+ */
 export function Sheet({
 	title,
 	onClose,
+	onBack,
 	className,
+	testId,
 	children,
 }: {
 	title: string;
 	onClose: () => void;
+	onBack?: () => void;
 	className?: string;
+	testId?: string;
 	children: ReactNode;
 }) {
 	const body = useRef<HTMLDivElement>(null);
@@ -135,10 +142,16 @@ export function Sheet({
 				role="dialog"
 				aria-modal="true"
 				aria-label={title}
+				data-testid={testId}
 				ref={section}
 			>
 				<div className="sheet-grip" aria-hidden="true" />
-				<header className="sheet-head">
+				<header className={`sheet-head ${onBack ? "has-back" : ""}`}>
+					{onBack && (
+						<button type="button" className="icon-button back" onClick={onBack} aria-label="Back">
+							<ChevronIcon size={18} />
+						</button>
+					)}
 					<h2>{title}</h2>
 					<button type="button" className="icon-button" onClick={onClose} aria-label="Close">
 						<CloseIcon />

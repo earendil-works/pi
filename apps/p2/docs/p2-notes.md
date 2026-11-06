@@ -1375,32 +1375,65 @@ translated phone drawer and intercept chat taps.
   agent's call its conversation. The TUI (`src/tui/messages.ts`) shows the first script line and indented rows (summary once settled, all with
   Ctrl+O) until the TUI port replaces it. `codemode-card.test.ts` covers grouping/depth, the details mapping, the TUI
   and the browser (fixture `test/fixtures/codemode-card.ts`).
-- **Tool calls in the chat: a turn's activity** (ported from the p2-elanor branch's redesign, `src/web/activity/`).
-  The agent's responses between two people's messages (or markers, failures, gaps) are one turn (`chatItems` in
-  `model.ts`): its **activity row**, its **answer** (the turn's last text, with Copy, Branch and Reply; a stop, an
-  error or the length limit below it) and its **results** (artifact and sent-file cards, an inline artifact below its
-  card, an opened port's links). The activity row is a wheel of the turn's steps (thinking, the agent's notes between
-  calls, each tool call): while the agent works the newest step faces the reader in the present tense ("Running npm
-  test") and breathes, a failed one is red, and the turn's time counts; when it ends the wheel rolls to a summary
-  ("Thought, read 3 files, ran 2 commands · 6 steps") and the total time. The reader can roll it back (drag, mouse
-  wheel, arrow keys); a tap opens the **steps**: on a phone a bottom sheet (drag down to close) with a stack of pages,
-  the turn's timeline (opened at its end, on the newest steps), then a step's detail (Input, Output: the command and its output as a terminal, a read's
-  numbered lines or image, an edit's diff, a subagent's message and answer with Open, a history tool's entries that
-  reveal their messages), then one of a script's calls; Back or a swipe right goes back. From 900px the steps open
-  in a panel at the right instead (the workspace's place: opening one closes the other; over the chat until 1280px,
-  docked beside it from there; `AppLayout`'s `#side-dock`), one turn at a time (`panel.ts`), pages crossfading. The
-  last turn is live while the transcript says the agent works (`working`), or, before the live view arrived (the
-  copy kept on the device), while its entries say it is not over. The old per-call cards, the thinking row and the
-  working dots are gone. The wheel, the timeline and the page stack are Elanor's `Ticker`, `Timeline` and
-  `Drawer.Stack`/`Drawer.Page` (with a bottom sheet's rubber-band drag to close), which Elanor's npm release 0.1.0
-  does not have yet: p2 builds them in `src/web/elanor-extra/` (ported from Elanor's source as the branch vendored it,
-  styles in Elanor's layer) until Elanor ships them; the activity's icons are Elanor's Material Symbols
-  (`@earendil-works/elanor-icons-react`). The activity uses the interface's sans: it sets Elanor's ui typography
-  tokens anew with `--sans` (`activity.css`). The transcript and the composer are at most Elanor's width for running
-  text (52rem). Branch-only parts left out: the "files changed" card (needs worker support) and the lab's result
-  rows and cards. Tests: `activity-model.test.ts` (turns, labels, summaries, grouped calls), `activity-panel.test.ts`
-  (docked beside the chat, swapping with the workspace), and the browser tests that open steps (`codemode-card`,
-  `nested-calls`, `ui-agents`, `failed-turns`, `ui-mobile-fixes`).
+- **Tool calls in the chat: a run's activity** (ported from the p2-elanor branch's redesign, `src/web/activity/`;
+  reshaped by owner decisions after it). The agent's responses between two people's messages (or markers, failures,
+  gaps) are one turn (`chatItems` in `model.ts`). Its thinking blocks and texts stay in the transcript in their order
+  ("Thought ›" opens in place; text as prose); each run of consecutive tool calls between them is one **activity row**;
+  the turn's last text is its **answer** (Copy, Branch and Reply; a stop, an error or the length limit below it),
+  followed by its **results** (artifact and sent-file cards, an inline artifact below its card, an opened port's links).
+  The activity row is a wheel of the run's calls: while the agent works the newest call faces the reader in the present
+  tense ("Running npm test") and breathes, a failed one is red, and the run's time counts (until the next response
+  begins); when it ends the wheel rolls to a summary ("Read 3 files, ran 2 commands · 6 steps") and the total time. The
+  reader can roll it back (drag, mouse wheel, arrow keys); a tap opens the run's calls in **p2's own sheet** (the
+  runtime's `Sheet`: grip, 52px header with "N steps · 18s" and Close, swipe down to close; a centred dialog from
+  700px) as a route layer (`openActivity`, layer `{ kind: "sheet", name: "activity", locator }` with the row's key):
+  one 44px row per call (icon, tool name and main argument, ✓ with its time, ✗ with an exit code, ● running,
+  chevron); a row opens the call's detail one layer up (Input, Output: the command and its output as a terminal, a
+  read's numbered lines or image, an edit's diff, a subagent's message and answer with Open, a history tool's entries
+  that reveal their messages), with Back in the header, and a script's call one more. Back (the browser's, Android's,
+  the header's) leads down a layer at a time and finally closes the sheet, like every other sheet; the wheel rolled to
+  a call opens the list and that call's detail over it. The transcript renders the sheet (`ActivityLayer` in
+  `Messages`), so it follows a running run live. The last run is live while the transcript says the agent works
+  (`working`), or, before the live view arrived (the copy kept on the device), while its entries say it is not over.
+  Before the first response a waiting wheel ("Working…") stands for the run. The wheel and a script's timeline are
+  Elanor's `Ticker` and `Timeline`, which Elanor's npm release 0.1.0 does not have yet: p2 builds them in
+  `src/web/elanor-extra/` (ported from Elanor's source as the branch vendored it, styles in Elanor's layer) until
+  Elanor ships them (its `Drawer` page stack there is no longer used); the wheel's icons are Elanor's Material Symbols
+  (`@earendil-works/elanor-icons-react`), the sheet's p2's own. The activity uses the interface's sans: it sets
+  Elanor's ui typography tokens anew with `--sans` (`activity.css`). The transcript and the composer are at most
+  Elanor's width for running text (52rem). Owner decision: no docked side panel on wide screens (the branch's
+  `#side-dock`); the sheet is the same at every width. Branch-only parts left out: the "files changed" card (needs
+  worker support) and the lab's result rows and cards. Tests: `activity-model.test.ts` (parts in order, runs, labels,
+  summaries, grouped calls), `ui-activity.test.ts` (the sheet, its layers and Back, the wide dialog, a mixed turn, a
+  long run opening at its end), and the browser tests that open steps (`codemode-card`, `nested-calls`, `ui-agents`,
+  `failed-turns`, `ui-mobile-fixes`).
+- **Tools' look comes from their plugins** (owner decision: no tool-specific code in `src/web`). A plugin's web facet
+  contributes `ToolActivity` entries, keyed by tool name, to the `ToolActivities` registry (`src/runtime/web-core.ts`;
+  type in `src/web/activity/model.ts`, the parts a detail is built from in `src/web/activity/api.ts`, all through
+  `@p2/app/v1/web`): its words on the wheel and in the sheet (`describe`, `running`: a `Kind` from the activity's icon
+  vocabulary, a verb, an object, an extra), the row's main argument, a failure word ("exit 1"), its words in a run's
+  summary as a function of the count (tools sharing the function count together: write and edit), its `Detail` and a
+  nested call's `CallDetail`, and a `Result` after the answer with `hasResult`. A detail shows everything at once (no
+  "Show all" inside it; long output scrolls with the sheet) and follows a running call live; the one cap kept is a
+  script's calls: the newest eight, the rest behind "Show all", as the transcript's card had them. Owners: `coding-tools` (bash, read, write, edit), `terminals`, `codemode`,
+  `subagents`, `agent`, `artifacts`, `send-file`, `ports`, `conversations`, `history`, each in its `activity.tsx`. The
+  chat plugin reads the registry and passes the table to `transcriptRows` and `ToolActivityContext`. A tool without a
+  contribution (an MCP tool, `team`, `powershell`) reads as its name and first short string argument with the generic
+  icon ("used web_fetch", "used web_fetch 3 times" in a summary), its detail the input as JSON and the output. Tool declarations and schemas carry nothing for this. Still in
+  core: a script's settled nested calls (`details.calls`, Durable's code mode format) in `transcript.ts`, shared with
+  the TUI. Tests: `activity-model.test.ts` (contributed and generic words, summaries), `ui-activity.test.ts` (a
+  plugin's detail and the generic one), the fixtures' table (`test/fixtures/transcript.ts`, `PLUGIN_TOOLS`).
+- **Incoming messages** (`Incoming` in `src/web/Chat.tsx`): every message that is neither the owner's nor the agent's
+  own (a subagent's answer, question, note or failure, `p2.agent-message`; another session's, `p2.peer-message`; a
+  guest's input or chat message) has one shape: a header line "icon name · what · time" (answered, asks, wrote,
+  failed, (guest) wrote), muted but the name, and the body as Markdown indented under the name, cut after about eight
+  lines with "Show more". Owner decision: no coloured side edges, no left border lines, no per-kind or per-guest
+  colours; kinds differ only by icon and word. A subagent's header (at least 44px, with a chevron) opens its
+  conversation in this session, another session's header that session (owner only); both are navigation steps, so
+  Back returns. A guest's has no target. The body is never a link. The owner's messages keep the bubble; inputs
+  without an author (a main agent's task in a subagent's conversation) too. Not done: "Answered: …" under an answered
+  subagent question (no data links a `team` question to the main agent's later `subagent send`). Test:
+  `ui-incoming.test.ts`.
 - **Earlier history while a turn is one row:** a page of a turn's tool calls can add next to no height (they are all
   one activity row), so the transcript loads earlier pages by itself while following the answer at the bottom and
   less than a viewport of history is above it, not only on a scroll up (`#loadEarlier` in `use-chat-scroll.ts`), and

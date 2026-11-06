@@ -727,11 +727,6 @@ textarea.input {
 	justify-content: flex-end;
 	padding-left: 12%;
 }
-.guest-message {
-	justify-content: flex-start;
-	padding-right: 12%;
-	padding-left: 0;
-}
 .bubble {
 	max-width: 100%;
 	padding: var(--s2) var(--s3);
@@ -792,9 +787,6 @@ textarea.input {
 }
 .reply-button:hover {
 	color: var(--text);
-}
-.guest-message .reply-button {
-	order: 1;
 }
 .user .reply-button {
 	opacity: 0;
@@ -1006,16 +998,31 @@ textarea.input {
 	color: #c9a4f5;
 }
 
-/* A subagent report's head: one compact row. */
-.report-head {
+/* A thinking block in place: one compact row ("Thought ›") that opens to its text, muted and indented under it. */
+.thinking button {
 	display: flex;
 	align-items: center;
 	gap: var(--s2);
-	width: 100%;
 	min-height: var(--control-sm);
 	color: var(--muted);
 	font-size: var(--fs-sm);
 	text-align: left;
+}
+.thinking.live button span:first-of-type {
+	background: linear-gradient(90deg, var(--muted) 30%, var(--text) 50%, var(--muted) 70%);
+	background-size: 200% 100%;
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+	animation: shimmer 1.6s linear infinite;
+}
+.thinking-body {
+	margin-top: var(--s1);
+	padding-left: calc(15px + var(--s2));
+	color: var(--muted);
+	font-size: var(--fs-sm);
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
 }
 .chev {
 	display: inline-flex;
@@ -1979,23 +1986,90 @@ button.diff-number:hover {
 .workspace-toggle.on {
 	color: var(--text);
 }
-.report {
-	padding-left: var(--s3);
-	border-left: 1px solid var(--line);
+/* Someone else's message (Chat.tsx Incoming): a header line, the body indented under the name. One shape for every
+   kind: no coloured edges, no per-kind colours; kinds differ by icon and word. */
+.incoming {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
 }
-.report-head strong {
+.incoming-head {
+	display: flex;
+	align-items: center;
+	margin: 0 calc(-1 * var(--s2));
+}
+.incoming-from {
+	display: flex;
+	flex: 1;
+	align-items: center;
+	gap: var(--s2);
+	min-width: 0;
+	min-height: var(--row);
+	padding: 0 var(--s2);
+	border-radius: var(--radius);
+	color: var(--muted);
+	font-size: var(--fs-sm);
+	text-align: left;
+}
+button.incoming-from:hover {
+	background: var(--hover);
+}
+.incoming-icon {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 18px;
+}
+.incoming-icon svg {
+	width: 16px;
+	height: 16px;
+}
+.incoming-line {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.incoming-name {
 	color: var(--text);
+	font-weight: var(--fw-strong);
 }
-.report-body {
-	margin-top: var(--s1);
+.incoming-chevron {
+	display: grid;
+	flex: none;
+	place-items: center;
+	color: var(--faint);
+}
+.incoming .edit-button,
+.incoming .reply-button {
+	align-self: center;
+}
+.incoming:hover .edit-button,
+.incoming:hover .reply-button {
+	opacity: 1;
+}
+.incoming-content {
+	min-width: 0;
+	padding-left: calc(18px + var(--s2));
 	font-size: var(--fs-md);
 	overflow-wrap: anywhere;
 }
-.report-body.clamp {
-	display: -webkit-box;
+/* About eight lines, then "Show more". */
+.incoming-body.clamped {
+	max-height: 12em;
 	overflow: hidden;
-	-webkit-line-clamp: 4;
-	-webkit-box-orient: vertical;
+}
+.incoming-plain {
+	white-space: pre-wrap;
+}
+.incoming-more {
+	min-height: var(--control-sm);
+	color: var(--muted);
+	font-size: var(--fs-sm);
+}
+.incoming-more:hover {
+	color: var(--text);
 }
 .images {
 	display: flex;
@@ -2807,6 +2881,21 @@ button.diff-number:hover {
 	font-size: var(--fs-lg);
 	font-weight: var(--fw-strong);
 }
+/* A page inside a sheet (a call's detail): Back before the title, which ellipsizes. */
+.sheet-head.has-back {
+	justify-content: flex-start;
+	padding-left: var(--bar-pad);
+}
+.sheet-head.has-back h2 {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.sheet-head .back svg {
+	transform: rotate(180deg);
+}
 .sheet-body {
 	overflow-y: auto;
 	padding: var(--s3) var(--x) var(--s5);
@@ -3335,6 +3424,11 @@ button.history-edge:disabled {
 @keyframes pulse {
 	50% {
 		opacity: 0.35;
+	}
+}
+@keyframes shimmer {
+	to {
+		background-position: -200% 0;
 	}
 }
 @keyframes slide {
