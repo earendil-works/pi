@@ -78,7 +78,10 @@ class BridgeTerminal implements Terminal {
 
 /**
  * The host's parent link, relayed by the launcher: its messages travel as `link` bridge messages to the launcher's
- * socket and back. Until `activate` (the launcher's first activation) what is sent waits.
+ * socket and back. Until `activate` (the launcher's first activation) what is sent waits. Chord closing it (its
+ * heartbeat found the socket silent, a protocol error) posts `linkClosed`: the launcher terminates that socket, and
+ * its reconnect brings a new link. Without it, a connection that died without a close (a laptop that slept while the
+ * relay dropped it) kept the launcher's socket "open" and the TUI stuck on "Connecting conversation…".
  */
 class BridgeLink implements Link {
 	closed = false;
@@ -106,6 +109,12 @@ class BridgeLink implements Link {
 		else this.closeListener = listener;
 	}
 	close(): void {
+		if (this.closed) return;
+		if (this.active) this.sendBridge({ kind: "linkClosed" });
+		this.drop();
+	}
+	/** The launcher's socket closed: ends the link without telling the launcher, whose next socket may be open already. */
+	drop(): void {
 		if (this.closed) return;
 		this.closed = true;
 		const listener = this.closeListener;
@@ -255,7 +264,7 @@ export async function setupTui(bridge: Bridge, facets: readonly PluginFacet<P2Pr
 					// Server defaults sit below the guest's local preferences (section 4.2).
 					.then((server) => runtime.appearance.update({ server }))
 					.catch((error: unknown) => runtime.fail(error));
-			} else link.close();
+			} else link.drop();
 			runtime.changed();
 		} else if (message.kind === "preferences")
 			runtime.appearance.update({ local: parseLocalPreferences(message.preferences) });

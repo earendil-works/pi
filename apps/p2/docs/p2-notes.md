@@ -212,7 +212,8 @@ Terminal interface through the bridge and loads the TUI facets plus `tuiCoreFace
 registries) on a Chord client host whose parent link is relayed as binary messages; it has no Node socket or local
 module loader.
 
-The launcher recognizes output, opaque chord-link frames, reload and exit requests, plus (p2-tui-port.md 3.6a)
+The launcher recognizes output, opaque chord-link frames, `linkClosed` (the worker's link closed on its own, e.g. Chord's
+heartbeat found the socket silent: the launcher terminates the socket and reconnects), reload and exit requests, plus (p2-tui-port.md 3.6a)
 `navigation`/`keyContext` reports, sanitized and rate-limited `title`/`progress`/`programStatus`, and `request`s for
 registered launcher actions, which run only under a grant: the visitor's own privileged key or a confirmation in the
 launcher-drawn consent screen (worker IO suspended meanwhile). Unknown requests are denied. Worker-set terminal modes
@@ -258,7 +259,9 @@ The launcher polls the bundle version every second. A changed hash prepares a ne
 active; once ready, it copies bounded UI state (selection, drafts, send retry IDs, display toggles, reading position),
 swaps the fixed-origin connection and terminates the old worker. Failed preparation retains the old worker.
 `/reload` also creates a fresh worker, even for an unchanged hash. There is no local watcher or local facet reload.
-Network drops reconnect with bounded exponential backoff; Chord rebinds the held references.
+Network drops reconnect with bounded exponential backoff; Chord rebinds the held references. A connection that died
+without a close (a laptop that slept while Radius dropped it) is found by the worker's Chord heartbeat within 30 s:
+`linkClosed` makes the launcher drop that socket (`tui-launcher.test.ts`, silent link).
 Image attachments/results remain text placeholders; no attachment uploader, browser sheets, terminal panel or
 provider-login screen is provided.
 

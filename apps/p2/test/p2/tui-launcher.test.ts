@@ -16,6 +16,7 @@ import { startServer } from "../../src/hosts/server.ts";
 import { startTuiClient } from "../../src/hosts/tui-client.ts";
 import { claimOwner } from "../../src/hosts/tui-config.ts";
 import { TERMINAL_COLOR_QUERY } from "../../src/hosts/tui-terminal-colors.ts";
+import { cookieTransport, type TuiTransport } from "../../src/hosts/tui-transport.ts";
 import { DARK_THEME } from "../../src/tui/theme/builtin-themes.ts";
 import { holdIn, http, poll, startFixture, until } from "./helpers.ts";
 
@@ -150,6 +151,92 @@ test(
 			"launcher reconnect",
 		);
 		assert.equal(((await client.snapshot()) as Snapshot).session, selected);
+		assert.deepEqual(failures, []);
+	},
+);
+
+test(
+	"a link that went silent without a close (a laptop slept, the relay dropped it) reconnects",
+	{ skip: !supported, timeout: 90000 },
+	async (t) => {
+		const fixture = await startFixture();
+		t.after(() => fixture.close());
+		const url = new URL(`http://127.0.0.1:${fixture.server.port}`);
+		const token = (await fixture.browser().hold(Devices, {}, BACKGROUND_CONTEXT).token(BACKGROUND_CONTEXT)).token;
+		const direct = cookieTransport(url, await claimOwner(url, token, {}));
+		let silent = false;
+		let sockets = 0;
+		// The first socket dies silently: once `silent`, nothing arrives or leaves, and the far end's close never
+		// arrives either; only terminating it here ends it.
+		const transport: TuiTransport = {
+			request: direct.request,
+			socket: (path, events) => {
+				sockets++;
+				const dies = sockets === 1;
+				let gone = false;
+				let terminated = false;
+				let ended = false;
+				const end = () => {
+					if (ended) return;
+					ended = true;
+					events.close();
+				};
+				const inner = direct.socket(path, {
+					open: () => events.open(),
+					refused: (status) => events.refused(status),
+					message: (data, binary) => {
+						if (!(dies && silent)) events.message(data, binary);
+					},
+					close: () => {
+						gone = true;
+						if (!(dies && silent) || terminated) end();
+					},
+				});
+				return {
+					get open() {
+						return inner.open;
+					},
+					send: (data) => {
+						if (!(dies && silent)) inner.send(data);
+					},
+					terminate: () => {
+						terminated = true;
+						inner.terminate();
+						if (gone) end();
+					},
+				};
+			},
+		};
+		const terminal = new VirtualTerminal(100, 30);
+		const failures: string[] = [];
+		const client = await startTuiClient({
+			terminal,
+			url,
+			transport,
+			reconnectMs: 20,
+			pollMs: 50,
+			colorQueryMs: 10,
+			capabilities: { trueColor: true, platform: "linux", windowsKeys: false },
+			onFailure: (message) => failures.push(message),
+		});
+		t.after(() => client.close());
+		const screen = async () => (await terminal.flushAndGetViewport()).join("\n");
+		await poll(async () => (await screen()).includes("New session"), 15000, "bundled sessions surface");
+		terminal.sendInput("\r");
+		terminal.sendInput("\x01");
+		terminal.sendInput("\x0b");
+		for (const char of fixture.workspace) terminal.sendInput(char);
+		terminal.sendInput("\r");
+		await poll(async () => ((await client.snapshot()) as Snapshot).screen === "chat");
+		await poll(async () => !(await screen()).includes("Connecting conversation"));
+		silent = true;
+		// Chord's heartbeat in the worker closes the silent link after 30 s; the launcher then drops the socket.
+		await poll(() => sockets === 2 && client.connected, 60000, "a second socket after the silent one");
+		await poll(
+			async () => !(await screen()).includes("Connecting conversation"),
+			15000,
+			"the conversation is live again",
+		);
 		assert.deepEqual(failures, []);
 	},
 );
