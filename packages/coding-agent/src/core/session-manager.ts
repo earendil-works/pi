@@ -922,6 +922,19 @@ function sortSessionInfos(sessions: SessionInfo[]): SessionInfo[] {
 	return sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
 }
 
+/** Keep progressive session results sorted, without re-sorting every published prefix. */
+export function insertSessionByActivity(sorted: SessionInfo[], session: SessionInfo): void {
+	const modified = session.modified.getTime();
+	let low = 0;
+	let high = sorted.length;
+	while (low < high) {
+		const middle = (low + high) >>> 1;
+		if (sorted[middle]!.modified.getTime() >= modified) low = middle + 1;
+		else high = middle;
+	}
+	sorted.splice(low, 0, session);
+}
+
 function buildSessionInfosWithConcurrency(
 	files: SessionFileCandidate[],
 	onLoaded: (info: SessionInfo | null, index: number) => void,
@@ -960,10 +973,10 @@ async function listSessionsFromDir(
 			files,
 			(info) => {
 				loaded++;
-				if (info) partialSessions.push(info);
+				if (info) insertSessionByActivity(partialSessions, info);
 				const publishPartial =
 					loaded === 1 || loaded % CURRENT_SESSION_LIST_PUBLISH_INTERVAL === 0 || loaded === files.length;
-				onProgress?.(loaded, total, publishPartial ? sortSessionInfos([...partialSessions]) : undefined);
+				onProgress?.(loaded, total, publishPartial ? [...partialSessions] : undefined);
 			},
 			signal,
 		);
@@ -2011,11 +2024,11 @@ export class SessionManager {
 				(info, index) => {
 					loaded++;
 					if (index === 0) firstCandidateLoaded = true;
-					if (info) partialSessions.push(info);
+					if (info) insertSessionByActivity(partialSessions, info);
 					const publishPartial =
 						firstCandidateLoaded &&
 						(index === 0 || loaded % ALL_SESSION_LIST_PUBLISH_INTERVAL === 0 || loaded === totalFiles);
-					progress?.(loaded, totalFiles, publishPartial ? sortSessionInfos([...partialSessions]) : undefined);
+					progress?.(loaded, totalFiles, publishPartial ? [...partialSessions] : undefined);
 				},
 				abortSignal,
 			);

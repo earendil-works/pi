@@ -8,7 +8,7 @@
  */
 export class RowLayout {
 	readonly #sizes: Map<string, number>;
-	#keys: readonly string[] = [];
+	#keys: string[] = [];
 	#index = new Map<string, number>();
 	#estimate: (index: number) => number = () => 0;
 	/** `offsets[i]` is where row `i` starts; `offsets[count]` is the total height. Rebuilt lazily after a change. */
@@ -21,7 +21,7 @@ export class RowLayout {
 
 	/** Replaces the rows; `estimate` gives the height of a row that has never been measured. */
 	setRows(keys: readonly string[], estimate: (index: number) => number): void {
-		this.#keys = keys;
+		this.#keys = [...keys];
 		this.#estimate = estimate;
 		this.#index = new Map(keys.map((key, index) => [key, index]));
 		this.#dirty = true;
@@ -34,7 +34,7 @@ export class RowLayout {
 	 */
 	appendRows(keys: readonly string[], estimate: (index: number) => number): void {
 		const start = this.#keys.length;
-		this.#keys = [...this.#keys, ...keys];
+		this.#keys.push(...keys);
 		this.#estimate = estimate;
 		for (let index = 0; index < keys.length; index++) this.#index.set(keys[index]!, start + index);
 		if (keys.length === 0 || this.#dirty) return;
