@@ -102,15 +102,18 @@ function partsOf(run: readonly Item[], live: boolean, after: string): Part[] {
 		const entry = item.entryId === undefined ? {} : { entryId: item.entryId };
 		for (const [index, part] of item.message.content.entries()) {
 			const key = `${item.key}:${index}`;
-			if (part.type === "thinking" && part.thinking.trim())
-				parts.push({
-					type: "thought",
-					key: `thought:${key}`,
-					...entry,
-					text: part.thinking,
-					live: item.streaming && live && index === last,
-				});
-			else if (part.type === "text" && part.text.trim())
+			if (part.type === "thinking" && part.thinking.trim()) {
+				const thinking = item.streaming && live && index === last;
+				const before = parts.at(-1);
+				// Thinking right after thinking (nothing shown between them) is one thought: its texts in order.
+				if (before?.type === "thought")
+					parts[parts.length - 1] = {
+						...before,
+						text: `${before.text}\n\n${part.thinking}`,
+						live: thinking,
+					};
+				else parts.push({ type: "thought", key: `thought:${key}`, ...entry, text: part.thinking, live: thinking });
+			} else if (part.type === "text" && part.text.trim())
 				parts.push({ type: "text", key: `text:${key}`, ...entry, text: part.text });
 			else if (part.type === "toolCall") {
 				const tool = tools.get(part.id) ?? {
@@ -175,7 +178,8 @@ function runItems(run: readonly Item[], working: boolean, after: string, tools: 
 	if (response && (answer || notice))
 		items.push({
 			type: "answer",
-			key: `answer:${response.key}`,
+			// The answer is its text's row: a text that turns out not to be the last (a call follows) keeps its row.
+			key: answer?.key ?? `answer:${response.key}`,
 			...(response.entryId !== undefined ? { entryId: response.entryId } : {}),
 			text: answer?.text ?? "",
 			message: response.message,
@@ -193,6 +197,60 @@ const runs = new WeakMap<
 	Item,
 	{ members: readonly Item[]; working: boolean; tools: ToolActivityTable; items: ChatItem[] }
 >();
+
+/** The items made last, by key, for keeping the ones a rebuilt run shows the same (the newest `RECENT`). */
+const recent = new Map<string, ChatItem>();
+const RECENT = 2_000;
+
+/** Whether two calls show the same: the same tool view, or one with the same state (a streaming call rebuilt). */
+const sameTool = (one: ToolView, other: ToolView): boolean =>
+	one === other ||
+	(one.id === other.id &&
+		one.name === other.name &&
+		one.status === other.status &&
+		one.output === other.output &&
+		one.details === other.details &&
+		one.durationMs === other.durationMs &&
+		one.calls === other.calls &&
+		one.images.length === other.images.length &&
+		one.images.every((image, index) => image === other.images[index]) &&
+		JSON.stringify(one.args) === JSON.stringify(other.args));
+
+const sameValue = (one: unknown, other: unknown): boolean =>
+	one === other ||
+	(Array.isArray(one) &&
+		Array.isArray(other) &&
+		one.length === other.length &&
+		one.every((value, index) => {
+			const that: unknown = other[index];
+			if (value === that) return true;
+			// A step: the same call in the same state.
+			if (
+				value &&
+				that &&
+				typeof value === "object" &&
+				typeof that === "object" &&
+				"tool" in value &&
+				"tool" in that
+			) {
+				const step = value as Step;
+				const same = that as Step;
+				return step.id === same.id && step.status === same.status && sameTool(step.tool, same.tool);
+			}
+			if (value && that && typeof value === "object" && typeof that === "object" && "id" in value && "id" in that)
+				return sameTool(value as ToolView, that as ToolView);
+			return false;
+		}));
+
+/** Whether an item rebuilt shows the same as before: then the earlier object stays, and its row does not render. */
+function sameItem(one: ChatItem, other: ChatItem): boolean {
+	if (one.type !== other.type || one.key !== other.key) return false;
+	const keys = Object.keys(one) as (keyof ChatItem)[];
+	return (
+		keys.length === Object.keys(other).length &&
+		keys.every((key) => sameValue(one[key], other[key as keyof typeof other]))
+	);
+}
 
 /**
  * Whether a run's own entries say it is not over: a response still streaming or one that asked for calls (the next
@@ -241,7 +299,19 @@ export function chatItems(
 		)
 			result.push(...cached.items);
 		else {
-			const made = runItems(run, live, after, tools);
+			// A member changed (a streaming delta, a result): the run's items are made again, and those that show the same
+			// as before stay the same objects. Found by key: a streaming response is a new object at every delta.
+			const made = runItems(run, live, after, tools).map((item) => {
+				const before = recent.get(item.key);
+				const kept = before && sameItem(before, item) ? before : item;
+				recent.delete(item.key);
+				recent.set(item.key, kept);
+				return kept;
+			});
+			for (const key of recent.keys()) {
+				if (recent.size <= RECENT) break;
+				recent.delete(key);
+			}
 			runs.set(run[0]!, { members: run, working: live, tools, items: made });
 			result.push(...made);
 		}

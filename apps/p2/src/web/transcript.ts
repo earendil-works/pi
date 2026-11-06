@@ -479,8 +479,10 @@ export function buildTranscript(
 			for (const call of calls) called.add(call.id);
 			// What this entry's card shows besides the entry: each call's result and live slot, and whether a call with
 			// neither is pending or interrupted. Ending a run thus rebuilds only cards with unfinished calls.
+			// Whether it is the newest response matters only to a call without its result: a new response leaves an
+			// answered one as it is.
 			const inputs = [
-				current,
+				calls.every((call) => results.has(call.id)) || current,
 				...calls.flatMap((call) => {
 					const result = results.get(call.id);
 					const slot = slots.get(call.id);

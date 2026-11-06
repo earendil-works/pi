@@ -612,9 +612,20 @@ export type TranscriptRow = {
 	entryIds?: readonly number[];
 	item: ChatItem;
 	first: boolean;
-	/** The agent's words right after an activity row: closer, the wheel's empty lower face already separates them. */
-	gap?: "answer";
+	/**
+	 * The spacing to the row before: a turn's parts (thinking, words, runs of calls, the answer, its results) follow each
+	 * other closely (`step`); everything else (a person's message, the first part after it, markers) starts a new turn.
+	 */
+	gap?: "step";
+	/**
+	 * The first part of the agent's turn: at least one row tall, as the working wheel it replaces (a first line of
+	 * words is shorter), so the turn never shrinks when its first part arrives.
+	 */
+	lead?: boolean;
 };
+
+/** The parts of the agent's turn, which follow each other at the step distance. */
+const TURN_PARTS: ReadonlySet<ChatItem["type"]> = new Set(["thought", "text", "activity", "answer", "results"]);
 
 /** Rows keep their identity while their item and spacing are unchanged. */
 const rowsOf = new WeakMap<ChatItem, { first: boolean; gap: TranscriptRow["gap"]; row: TranscriptRow }>();
@@ -633,11 +644,8 @@ export function transcriptRows(
 	const shown = chatItems(items, working, known, tools);
 	return shown.map((item, index) => {
 		const first = index === 0;
-		const gap =
-			shown[index - 1]?.type === "activity" &&
-			(item.type === "answer" || item.type === "text" || item.type === "thought")
-				? "answer"
-				: undefined;
+		const before = shown[index - 1];
+		const gap = before && TURN_PARTS.has(before.type) && TURN_PARTS.has(item.type) ? ("step" as const) : undefined;
 		const cached = rowsOf.get(item);
 		if (cached && cached.first === first && cached.gap === gap) return cached.row;
 		const row: TranscriptRow = {
@@ -647,6 +655,7 @@ export function transcriptRows(
 			item,
 			first,
 			...(gap ? { gap } : {}),
+			...(!gap && TURN_PARTS.has(item.type) ? { lead: true } : {}),
 		};
 		rowsOf.set(item, { first, gap, row });
 		return row;
@@ -757,6 +766,7 @@ export const Messages = memo(function Messages({
 							style={delay ? { animationDelay: `${delay}ms` } : undefined}
 							data-row={row.key}
 							data-gap={row.first ? undefined : row.gap}
+							data-lead={row.lead ? "" : undefined}
 							ref={list.rowRef}
 						>
 							<ItemView item={row.item} />

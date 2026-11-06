@@ -32,6 +32,13 @@ Paths are relative to `apps/p2`. Read `docs/handoff.md` and the matching part of
 - Owner rules: no coloured side edges, no left border lines, no decorative borders; rows separated by `1px solid
   var(--line)` at most. Kinds differ by icon and word, never by per-kind colour. Touch targets at least 44px
   (`min-height: var(--row)`). Message text stays selectable: links and tap targets go on headers, never on bodies.
+- Transcript rhythm (`.row` in style.css, `TranscriptRow.gap` in Chat.tsx): a row carries its spacing to the row
+  before as padding. A new turn (a person's message, an incoming message, the agent's first part after it, a marker)
+  starts `--s5` below; the parts of the agent's turn (thought, words, wheel, answer, results) follow `--s2` apart.
+  One-line rows are exactly `--row` tall: the working wheel, a settled wheel, a "Thought" row, an incoming header;
+  the turn's first part is at least `--row` (`data-lead`), so Working… turning into anything never shrinks the turn.
+  Inside a block: `--s3` (answer paragraphs and code blocks, card and code padding), `--s2` (results, inline
+  artifacts below their card, images); the copy/branch actions pull up `--s2` to sit under the answer.
 
 ## Back navigation
 

@@ -668,14 +668,24 @@ textarea.input {
 }
 /* The transcript is a virtual list (use-chat-scroll.ts): `.rows` holds a spacer for the rows above, the rows near the
    viewport, and a spacer for the rows below. Each row carries its spacing to the row before it as padding, so its
-   measured height is everything it adds; a row is a flex column like the list it replaces (its margins stay inside). */
+   measured height is everything it adds; a row is a flex column like the list it replaces (its margins stay inside).
+   The rhythm (.pi/skills/p2-ui.md): a turn starts --s5 below what came before; its parts (thinking, words, wheels, the
+   answer, results) follow --s2 apart. One-line rows (a thought, a wheel, an incoming message's header) are --row tall,
+   so one turning into another never changes the height. */
 .rows {
 	display: flow-root;
 }
 .row {
 	display: flex;
 	flex-direction: column;
-	padding-top: var(--s4);
+	padding-top: var(--s5);
+}
+.row[data-gap="step"] {
+	padding-top: var(--s2);
+}
+/* A turn's first part is at least one row tall, as the working wheel it replaces: the turn never shrinks. */
+.row[data-lead] > * {
+	min-height: var(--row);
 }
 /* A transcript appearing (opening a conversation) fades in rather than snapping in (`.messages`). */
 @keyframes transcript-appear {
@@ -702,10 +712,6 @@ textarea.input {
 }
 .row.first {
 	padding-top: 0;
-}
-/* An answer after its turn's activity row: closer, since the wheel's empty lower face already separates them. */
-.row[data-gap="answer"] {
-	padding-top: var(--s1);
 }
 .messages {
 	display: flex;
@@ -1003,7 +1009,7 @@ textarea.input {
 	display: flex;
 	align-items: center;
 	gap: var(--s2);
-	min-height: var(--control-sm);
+	min-height: var(--row);
 	color: var(--muted);
 	font-size: var(--fs-sm);
 	text-align: left;

@@ -55,9 +55,29 @@ const EDGE = 2;
 /** Whether the browser keeps the reader's place when content above them changes (CSS scroll anchoring). */
 const NATIVE_ANCHORING = typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto");
 
+/** The transcripts gliding (`TranscriptScroll.#glide`), by scroller: their messages, drawn lower for a moment. */
+const gliding = new WeakMap<HTMLElement, HTMLElement>();
+
+/**
+ * Where the content ends. The browser counts a gliding transcript, drawn lower, as content below the end: scrolled
+ * there, the transcript would jump down at the next layout as the glide ends (the browser clamps the scroll position).
+ */
+function contentHeight(element: HTMLElement): number {
+	const messages = gliding.get(element);
+	if (!messages) return element.scrollHeight;
+	const shift = new DOMMatrixReadOnly(getComputedStyle(messages).transform).m42;
+	const bottom =
+		messages.getBoundingClientRect().bottom -
+		shift -
+		element.getBoundingClientRect().top +
+		element.scrollTop +
+		Number.parseFloat(getComputedStyle(element).paddingBottom);
+	return Math.max(element.clientHeight, Math.min(element.scrollHeight, Math.ceil(bottom)));
+}
+
 /** How far the viewport is from the bottom. */
 function fromEnd(element: HTMLElement): number {
-	return element.scrollHeight - element.clientHeight - element.scrollTop;
+	return contentHeight(element) - element.clientHeight - element.scrollTop;
 }
 
 /** How far the viewport is from the top. */
@@ -74,7 +94,7 @@ function isBottom(element: HTMLElement): boolean {
  * momentum on it, and a streaming answer resizes the transcript many times a second.
  */
 function toEnd(element: HTMLElement): void {
-	if (fromEnd(element) >= 1) element.scrollTop = element.scrollHeight;
+	if (fromEnd(element) >= 1) element.scrollTop = contentHeight(element) - element.clientHeight;
 }
 
 /** Mounted transcripts, so a search hit or a quoted message can be revealed wherever it is shown. */
@@ -233,10 +253,19 @@ export class TranscriptScroll {
 		if (!messages || typeof messages.animate !== "function") return;
 		if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 		const from = Math.min(height, this.#viewport || height);
-		this.#gliding = messages.animate([{ transform: `translateY(${from}px)` }, { transform: "translateY(0)" }], {
+		const glide = messages.animate([{ transform: `translateY(${from}px)` }, { transform: "translateY(0)" }], {
 			duration: 320,
 			easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
 		});
+		this.#gliding = glide;
+		const scroller = this.#scroller;
+		if (!scroller) return;
+		gliding.set(scroller, messages);
+		const ended = () => {
+			if (this.#gliding === glide || !this.#gliding) gliding.delete(scroller);
+		};
+		glide.addEventListener("finish", ended);
+		glide.addEventListener("cancel", ended);
 	}
 
 	/**
@@ -382,7 +411,7 @@ export class TranscriptScroll {
 		else {
 			this.#following = true;
 			this.#gesture.wheel();
-			element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+			element.scrollTo({ top: contentHeight(element) - element.clientHeight, behavior: "smooth" });
 		}
 	};
 

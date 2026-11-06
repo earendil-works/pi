@@ -203,13 +203,113 @@ test("while working, the last turn is live, and a waiting turn has an activity r
 	);
 });
 
-test("unchanged turns keep their items; a changed one is rebuilt", () => {
+test("unchanged turns keep their items; in a changed one, only what shows differently is new", () => {
 	const items = turn();
 	const first = chatItems(items, false);
 	const second = chatItems([...items], false);
 	assert.equal(first[3], second[3]);
 	const changed = [...items.slice(0, 3), response("a3", 4, [{ type: "text", text: "Done." }])];
-	assert.notEqual(chatItems(changed, false)[3], first[3]);
+	const rebuilt = chatItems(changed, false);
+	// The run of calls shows the same: the same object, so its row does not render again; the answer is new.
+	assert.equal(rebuilt[3], first[3]);
+	assert.equal(rebuilt[2], first[2]);
+	assert.notEqual(rebuilt[4], first[4]);
+});
+
+test("while an answer streams, the parts before its newest words keep their objects", () => {
+	const streaming = (text: string): Item => ({
+		...response("live", 9, [
+			{ type: "thinking", thinking: "Considering." },
+			{ type: "text", text },
+		]),
+		streaming: true,
+	});
+	const start = chatItems([user("u9", "Go"), streaming("One")], true);
+	const later = chatItems([user("u9", "Go"), streaming("One two")], true);
+	assert.equal(later[1], start[1], "the thought");
+	assert.notEqual(later[2], start[2], "the words");
+	// Words that turn out not to be the last (a call follows) keep their row's key: the answer was that text's row.
+	const called = chatItems(
+		[
+			user("u9", "Go"),
+			{
+				...response("live", 9, [
+					{ type: "thinking", thinking: "Considering." },
+					{ type: "text", text: "One two" },
+					{ type: "toolCall", id: "x1", name: "bash", arguments: { command: "ls" } },
+				]),
+				streaming: true,
+			},
+		],
+		true,
+	);
+	assert.equal(start[2]?.type, "answer");
+	assert.equal(called[2]?.type, "text");
+	assert.equal(called[2]?.key, start[2]?.key);
+});
+
+test("thinking right after thinking is one thought; words or calls between them keep them apart", () => {
+	const kinds = (items: ReturnType<typeof chatItems>) =>
+		items.map((item) => (item.type === "thought" ? `thought:${item.text}` : item.type));
+	// Two blocks in one response, and a block at the end of one response and the start of the next.
+	assert.deepEqual(
+		kinds(
+			chatItems(
+				[
+					user("u1", "Hi"),
+					response("r1", 2, [
+						{ type: "thinking", thinking: "First." },
+						{ type: "thinking", thinking: "Second." },
+						{ type: "text", text: " " },
+					]),
+					response("r2", 3, [
+						{ type: "thinking", thinking: "Third." },
+						{ type: "text", text: "Answer." },
+					]),
+				],
+				false,
+			),
+		),
+		["user", "thought:First.\n\nSecond.\n\nThird.", "answer"],
+	);
+	// Words between: two thoughts. A run of calls between: two thoughts around its wheel.
+	assert.deepEqual(
+		kinds(
+			chatItems(
+				[
+					user("u1", "Hi"),
+					response("r1", 2, [
+						{ type: "thinking", thinking: "First." },
+						{ type: "text", text: "Looking." },
+						{ type: "thinking", thinking: "Second." },
+						{ type: "toolCall", id: "t9", name: "bash", arguments: { command: "ls" } },
+						{ type: "thinking", thinking: "Third." },
+						{ type: "text", text: "Answer." },
+					]),
+				],
+				false,
+			),
+		),
+		["user", "thought:First.", "text", "thought:Second.", "activity", "thought:Third.", "answer"],
+	);
+	// The thought streams as one: live while its last block is.
+	const live = chatItems(
+		[
+			user("u1", "Hi"),
+			{
+				...response("r1", 2, [
+					{ type: "thinking", thinking: "First." },
+					{ type: "thinking", thinking: "Sec" },
+				]),
+				streaming: true,
+			},
+		],
+		true,
+	);
+	assert.deepEqual(
+		live.map((item) => (item.type === "thought" ? [item.text, item.live] : item.type)),
+		["user", ["First.\n\nSec", true]],
+	);
 });
 
 test("a stopped turn without text shows its notice as the answer", () => {
