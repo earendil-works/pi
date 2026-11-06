@@ -12,7 +12,7 @@ import { powershellActivity } from "../../plugins/powershell/activity.tsx";
 import { sendFileActivity } from "../../plugins/send-file/activity.tsx";
 import { subagentActivity } from "../../plugins/subagents/activity.tsx";
 import { terminalActivity } from "../../plugins/terminals/activity.tsx";
-import type { ToolActivityTable } from "../../src/web/activity/model.ts";
+import type { Detail, ToolActivityTable } from "../../src/web/activity/model.ts";
 import { Messages, rowEstimates, transcriptRows } from "../../src/web/Chat.tsx";
 import { ToolActivityContext } from "../../src/web/chat-context.ts";
 import type { Transcript } from "../../src/web/transcript.ts";
@@ -35,15 +35,23 @@ export const PLUGIN_TOOLS: ToolActivityTable = new Map(
 	}),
 );
 
-/** `tools`: the contributions to show calls with; the plugins' by default, none for the generic look. */
+/**
+ * `tools`: the contributions to show calls with; the plugins' by default, none for the generic look. `detail`: how much
+ * of a turn shows (settings.json `detail`; the default without it).
+ */
 export function TranscriptFixture({
 	transcript,
 	tools = PLUGIN_TOOLS,
+	detail,
 }: {
 	transcript: Transcript;
 	tools?: ToolActivityTable;
+	detail?: Detail;
 }) {
-	const rows = useMemo(() => transcriptRows(transcript.items, tools, transcript.working), [transcript, tools]);
+	const rows = useMemo(
+		() => transcriptRows(transcript.items, tools, transcript.working, true, detail),
+		[transcript, tools, detail],
+	);
 	const follow = useChatScroll({ rows, estimates: rowEstimates });
 	return createElement(
 		ToolActivityContext.Provider,

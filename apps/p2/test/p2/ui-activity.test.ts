@@ -3,6 +3,8 @@
 // sheet. On a wide screen it is p2's centred dialog. A turn's thought and texts stay in the transcript in order, one
 // wheel per run of calls, and each wheel's sheet lists only its run; a long run opens on its newest calls.
 import assert from "node:assert/strict";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { AssistantMessage, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
@@ -26,6 +28,10 @@ describe("activity sheet", { skip: !browserTests }, () => {
 		await owner
 			.hold(Models, {}, BACKGROUND_CONTEXT)
 			.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
+		// Detail 3: the thought in the transcript, the call alone on its wheel (the default, 2, puts the thought on it).
+		const settings = join(fixture.dataDir, "settings.json");
+		const base = existsSync(settings) ? (JSON.parse(readFileSync(settings, "utf8")) as Record<string, unknown>) : {};
+		writeFileSync(settings, JSON.stringify({ ...base, detail: 3 }));
 		session = (
 			await (
 				await holdIn(owner, Sessions, {}, "owner")
@@ -195,7 +201,8 @@ describe("a turn's parts", { skip: !browserTests }, () => {
 		await browser.wait("document.querySelector('.app')");
 		await browser.loadFixture("codemode-card.ts");
 		await browser.wait("typeof window.showCodemode==='function'");
-		await browser.evaluate(`window.showCodemode(${JSON.stringify(view)})`);
+		// Detail 3: the thought in the transcript, only runs of calls on wheels (what these tests look at).
+		await browser.evaluate(`window.showCodemode(${JSON.stringify(view)}, 3)`);
 	};
 
 	it("keeps thought and texts in order, one wheel per run of calls, each opening only its run", async () => {

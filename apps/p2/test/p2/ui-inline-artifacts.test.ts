@@ -117,12 +117,13 @@ describe("inline artifacts in Chromium", { skip: !browserTests }, () => {
 			),
 			true,
 		);
-		// Where it was made: right after its call's wheel, before the answer.
+		// Where it was made: right after its call's wheel, before the answer (at the default detail, 2, the answer's
+		// thinking is on a wheel of its own after the artifact).
 		assert.deepEqual(
 			await browser.evaluate<string[]>(
 				`[...document.querySelectorAll('[data-row]')].map((row)=>row.querySelector('[data-testid=activity]')?'activity':row.querySelector('.inline-artifact')?'inline':row.textContent.includes('Echo:')?'answer':'').filter(Boolean)`,
 			),
-			["activity", "inline", "answer"],
+			["activity", "inline", "activity", "answer"],
 		);
 		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.viewer-panel').length`), 0);
 	});
