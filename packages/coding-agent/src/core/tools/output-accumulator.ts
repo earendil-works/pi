@@ -81,15 +81,27 @@ export class OutputAccumulator {
 	/** Wait for a spill-file write buffer to drain before reading more subprocess output. */
 	waitForDrain(): Promise<void> | undefined {
 		const stream = this.tempFileStream;
-		if (!stream?.writableNeedDrain) return undefined;
+		if (!stream) return undefined;
+		if (stream.errored) return Promise.reject(stream.errored);
+		if (stream.writableFinished || !stream.writableNeedDrain) return undefined;
 		return new Promise<void>((resolve, reject) => {
 			const cleanup = () => {
 				stream.off("drain", onDrain);
+				stream.off("finish", onDrain);
+				stream.off("close", onClose);
 				stream.off("error", onError);
 			};
 			const onDrain = () => { cleanup(); resolve(); };
+			const onClose = () => {
+				cleanup();
+				if (stream.errored) reject(stream.errored);
+				else if (stream.writableFinished) resolve();
+				else reject(new Error("Output file closed before write completed"));
+			};
 			const onError = (error: Error) => { cleanup(); reject(error); };
 			stream.once("drain", onDrain);
+			stream.once("finish", onDrain);
+			stream.once("close", onClose);
 			stream.once("error", onError);
 		});
 	}
@@ -142,6 +154,9 @@ export class OutputAccumulator {
 
 		const stream = this.tempFileStream;
 		this.tempFileStream = undefined;
+		if (stream.errored) throw stream.errored;
+		if (stream.writableFinished) return;
+		if (stream.destroyed) throw new Error("Output spill file was closed before finishing");
 
 		await new Promise<void>((resolve, reject) => {
 			const onError = (error: Error) => {
@@ -266,6 +281,9 @@ export class OutputAccumulator {
 		const { path, stream } = createOutputFileStream(this.tempFilePrefix, ".log");
 		this.tempFilePath = path;
 		this.tempFileStream = stream;
+		// Capture errors that occur before a caller begins waiting on backpressure.
+		// stream.errored remains available to waitForDrain() and closeTempFile().
+		stream.on("error", () => {});
 		for (const chunk of this.rawChunks) {
 			this.tempFileStream.write(chunk);
 		}

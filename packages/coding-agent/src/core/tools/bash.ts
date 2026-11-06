@@ -84,7 +84,7 @@ export interface BashOperations {
 		command: string,
 		cwd: string,
 		options: {
-			onData: (data: Buffer) => void | Promise<void>;
+			onData: (data: Buffer) => unknown;
 			signal?: AbortSignal;
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
@@ -142,7 +142,17 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 			let timedOut = false;
 			let exitedBeforeDeadlineAfterMs: number | undefined;
 			let timeoutHandle: NodeJS.Timeout | undefined;
+			let cancelOutputWait: ((error: Error) => void) | undefined;
+			const cancelOutput = new Promise<never>((_resolve, reject) => {
+				cancelOutputWait = reject;
+			});
+			// A fast cancellation can predate the first pending wait. Observe it now
+			// without hiding the rejection from the later Promise.race.
+			void cancelOutput.catch(() => {});
 			const onAbort = () => {
+				cancelOutputWait?.(new Error("aborted"));
+				child.stdout?.resume();
+				child.stderr?.resume();
 				if (child.pid) killProcessTree(child.pid);
 			};
 
@@ -152,6 +162,9 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 					timeoutHandle = setTimeout(() => {
 						timedOut = true;
 						exitedBeforeDeadlineAfterMs = shellExitedAfterMs;
+						cancelOutputWait?.(new ShellTimeoutError(timeout, undefined));
+						child.stdout?.resume();
+						child.stderr?.resume();
 						// Also when the shell already exited: on Unix the group kill still reaches background
 						// processes holding the pipes. Windows cannot find them once the shell pid is gone.
 						if (child.pid) killProcessTree(child.pid);
@@ -165,20 +178,23 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				const failOutput = (error: unknown) => {
 					hasOutputFailure = true;
 					outputFailure = error;
+					cancelOutputWait?.(error instanceof Error ? error : new Error(String(error)));
 					child.stdout?.resume();
 					child.stderr?.resume();
 					onAbort();
 				};
 				const onChunk = (data: Buffer) => {
 					if (hasOutputFailure) return;
-					let result: void | Promise<void>;
+					let result: unknown;
 					try {
 						result = onData(data);
 					} catch (error) {
 						failOutput(error);
 						return;
 					}
-					if (!result) return;
+					// Custom callbacks may return a non-Promise value such as
+					// Array#push's numeric length; only async handlers need throttling.
+					if (!result || typeof (result as PromiseLike<unknown>).then !== "function") return;
 					child.stdout?.pause();
 					child.stderr?.pause();
 					let pending!: Promise<void>;
@@ -203,8 +219,9 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				}
 				// Handle shell spawn errors and wait for the process to terminate without hanging
 				// on inherited stdio handles held by detached descendants.
-				const exitCode = await waitForChildProcess(child);
-				await Promise.all(pendingOutput);
+				const exitCode = await Promise.race([waitForChildProcess(child), cancelOutput]);
+				// A never-settling sink promise must not block abort or timeout.
+				await Promise.race([Promise.all(pendingOutput), cancelOutput]);
 				if (hasOutputFailure) throw outputFailure;
 				if (signal?.aborted) {
 					throw new Error("aborted");
