@@ -210,6 +210,11 @@
 	color: var(--semantic-color-text-secondary);
 }
 
+/* Wider than a settings sheet on large screens: a call's input and output are code, read best unwrapped. */
+.sheet.activity-sheet {
+	max-width: 720px;
+}
+
 /* The sheet's first page: the run's calls, one 44px row each, separated by thin lines; the body's padding is the
  * rows' own, so the lines run from edge to edge. */
 .activity-sheet .sheet-body:has(> .step-list) {

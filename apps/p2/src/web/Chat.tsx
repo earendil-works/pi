@@ -404,6 +404,7 @@ function Incoming({ item }: { item: Extract<Item, { type: "user" }> }) {
 						title="Show the message this answers"
 						onClick={() => item.replyTo && void revealEntry(item.replyTo.entryId, reveal)}
 					>
+						<ReplyIcon size={12} />
 						<strong>{item.replyTo.name}</strong> {item.replyTo.excerpt}
 					</button>
 				)}
@@ -481,6 +482,7 @@ function UserMessage({ item }: { item: Extract<Item, { type: "user" }> }) {
 						title="Show the message this answers"
 						onClick={() => item.replyTo && void revealEntry(item.replyTo.entryId, reveal)}
 					>
+						<ReplyIcon size={12} />
 						<strong>{item.replyTo.name}</strong> {item.replyTo.excerpt}
 					</button>
 				)}
