@@ -31,7 +31,9 @@ the bar says "restart needed" although nothing p3 runs has changed, and says it 
 1. **New stylesheets load before the plugin reloads.** The old ones go after the reload, except those of a plugin
    whose new code failed: it keeps its old script and its old stylesheet together.
 2. **Base bundles resolve packages as the server does.** The page's and the terminal's base bundles are built with the
-   server's resolution conditions, so in this checkout they read Chord's source, as the server runs it, never `dist/`.
+   server's resolution conditions: an app installed from npm (no flags) gets Chord's `dist/` on the server and in the
+   page alike; a server started with `--conditions=source` (this monorepo) gets the source in both. Today the page
+   always takes `dist/`, whatever the server runs.
 3. **"Restart needed" compares content.** Each base build records the bytes it read; the mark is true exactly while a
    file differs from what a running base was built from, checked once when watching starts and again on every event.
 :::
