@@ -45,6 +45,29 @@ describe("EventStream producer backpressure", () => {
 		expect((await iterator.next()).done).toBe(true);
 	});
 
+	it("does not disable backpressure when one of two consumers exits", async () => {
+		const stream = new EventStream<number, number>(() => false, (value) => value);
+		const first = stream[Symbol.asyncIterator]();
+		const second = stream[Symbol.asyncIterator]();
+		const firstNext = first.next();
+		const secondNext = second.next();
+		stream.push(1);
+		stream.push(2);
+		await firstNext;
+		await secondNext;
+		await first.return?.();
+		await stream.pushWithBackpressure(3, 1);
+		const stillBlocked = stream.pushWithBackpressure(4, 1);
+		let resolved = false;
+		void stillBlocked.then(() => { resolved = true; });
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(resolved).toBe(false);
+		expect((await second.next()).value).toBe(3);
+		await stillBlocked;
+		stream.end(4);
+	});
+
 	it("releases producer after an iterator exits early", async () => {
 		const stream = new EventStream<number, number>(() => false, (value) => value);
 		const iterator = stream[Symbol.asyncIterator]();

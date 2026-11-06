@@ -29,7 +29,7 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 	/** Producers are notified as buffered events are consumed. */
 	private waitingForCapacity = new FifoQueue<() => void>();
 	/** Only block a producer when there is an actual async iterator consuming events. */
-	private iteratorActive = false;
+	private activeIterators = 0;
 	protected done = false;
 	private finalResultPromise: Promise<R>;
 	private resolveFinalResult!: (result: R) => void;
@@ -73,7 +73,7 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 		if (!Number.isSafeInteger(maxBuffered) || maxBuffered < 1) {
 			throw new RangeError("maxBuffered must be a positive integer");
 		}
-		while (this.iteratorActive && !this.done && this.queue.length >= maxBuffered) {
+		while (this.activeIterators > 0 && !this.done && this.queue.length >= maxBuffered) {
 			await new Promise<void>((resolve) => this.waitingForCapacity.enqueue(resolve));
 		}
 		this.push(event);
@@ -94,7 +94,7 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 	}
 
 	async *[Symbol.asyncIterator](): AsyncIterator<T> {
-		this.iteratorActive = true;
+		this.activeIterators++;
 		try {
 			while (true) {
 				if (this.queue.length > 0) {
@@ -110,7 +110,7 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 				}
 			}
 		} finally {
-			this.iteratorActive = false;
+			this.activeIterators--;
 			// Breaking out of for-await no longer requires future consumption.
 			while (this.waitingForCapacity.length > 0) this.waitingForCapacity.dequeue()!();
 		}
