@@ -460,9 +460,7 @@ export interface AgentToolCallOutcome {
  * The callback is scoped to the current `execute()` invocation. Calls made after
  * the tool promise settles are ignored.
  */
-export type AgentToolUpdateCallback<T = any> =
-	| ((partialResult: AgentToolResult<T>) => void)
-	| ((partialResult: AgentToolResult<T>) => Promise<void>);
+export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T>) => void | Promise<void>;
 
 /**
  * The arguments type of a tool with parameter schema `TParameters`: pi-schema's `Static<TParameters>` (the builders'

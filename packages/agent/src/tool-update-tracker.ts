@@ -63,6 +63,11 @@ export class ToolUpdateTracker {
 	#fail(error: unknown): void {
 		this.#firstFailure ??= { error };
 		this.#latest = undefined;
+		// A tool awaiting progress capacity must not hang after its subscriber
+		// fails; drain() will surface the original failure.
+		this.#releaseCapacity?.();
+		this.#capacityPromise = undefined;
+		this.#releaseCapacity = undefined;
 		this.#notify();
 	}
 

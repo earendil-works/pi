@@ -317,6 +317,7 @@ class SessionList implements Component, Focusable {
 	private regexSearching = false;
 	private regexNeedsRefresh = false;
 	private regexSelectedPath: string | undefined;
+	private regexQuery: string | undefined;
 	public onFilteredSessionsChange?: () => void;
 
 	// Focusable implementation - propagate to searchInput for IME cursor positioning
@@ -398,10 +399,12 @@ class SessionList implements Component, Focusable {
 		this.regexSearching = false;
 		this.regexNeedsRefresh = false;
 		this.regexSelectedPath = undefined;
+		this.regexQuery = undefined;
 	}
 
 	private filterSessions(query: string): void {
 		const previouslySelected = this.regexSelectedPath ?? this.getSelectedSessionPath();
+		const oldRegexQuery = this.regexQuery;
 		this.cancelSearch();
 		const trimmed = query.trim();
 		const nameFiltered =
@@ -413,10 +416,11 @@ class SessionList implements Component, Focusable {
 			const pattern = trimmed.slice(3).trim();
 			// Preserve old matches during a refresh, but never expose matches from a
 			// different user query or filter mode.
-			const refreshing = this.searchInput.getValue().trim() === trimmed && this.filteredSessions.length > 0;
+			const refreshing = oldRegexQuery === trimmed && this.filteredSessions.length > 0;
 			if (!refreshing) this.filteredSessions = [];
 			this.selectedIndex = Math.max(0, Math.min(this.selectedIndex, Math.max(0, this.filteredSessions.length - 1)));
 			this.regexSelectedPath = previouslySelected;
+			this.regexQuery = trimmed;
 			if (!pattern) return;
 			this.regexSearching = true;
 			const version = this.regexSearchVersion;
@@ -448,7 +452,10 @@ class SessionList implements Component, Focusable {
 						this.regexSearching = false;
 						this.regexAbort = undefined;
 						this.onError?.(error instanceof Error ? error.message : String(error));
+						const needsRefresh = this.regexNeedsRefresh;
+						this.regexNeedsRefresh = false;
 						this.onFilteredSessionsChange?.();
+						if (needsRefresh) this.filterSessions(this.searchInput.getValue());
 					});
 			}, 75);
 			return;
