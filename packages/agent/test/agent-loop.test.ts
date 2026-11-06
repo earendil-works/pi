@@ -110,6 +110,27 @@ describe("default stream function compatibility", () => {
 	});
 });
 
+describe("agent loop rejected execution", () => {
+	it("rejects result() instead of leaving it pending when request preparation throws", async () => {
+		const stream = agentLoop(
+			[createUserMessage("Hello")],
+			{ messages: [], tools: [] },
+			{
+				model: createModel(),
+				convertToLlm: identityConverter,
+				prepareRequest: async () => {
+					throw new Error("request preparation failed");
+				},
+			},
+			undefined,
+			() => {
+				throw new Error("provider must not run");
+			},
+		);
+		await expect(stream.result()).rejects.toThrow("request preparation failed");
+	});
+});
+
 describe("agentLoop with AgentMessage", () => {
 	it("should emit events with AgentMessage types", async () => {
 		const context: AgentContext = {
