@@ -84,7 +84,7 @@ export interface BashOperations {
 		command: string,
 		cwd: string,
 		options: {
-			onData: (data: Buffer) => void;
+			onData: (data: Buffer) => void | Promise<void>;
 			signal?: AbortSignal;
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
@@ -157,9 +157,45 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 						if (child.pid) killProcessTree(child.pid);
 					}, timeoutMs);
 				}
-				// Stream stdout and stderr.
-				child.stdout?.on("data", onData);
-				child.stderr?.on("data", onData);
+
+				// Both pipes feed one spill file; pause both when its write buffer fills.
+				const pendingOutput = new Set<Promise<void>>();
+				let outputFailure: unknown;
+				let hasOutputFailure = false;
+				const failOutput = (error: unknown) => {
+					hasOutputFailure = true;
+					outputFailure = error;
+					child.stdout?.resume();
+					child.stderr?.resume();
+					onAbort();
+				};
+				const onChunk = (data: Buffer) => {
+					if (hasOutputFailure) return;
+					let result: void | Promise<void>;
+					try {
+						result = onData(data);
+					} catch (error) {
+						failOutput(error);
+						return;
+					}
+					if (!result) return;
+					child.stdout?.pause();
+					child.stderr?.pause();
+					let pending!: Promise<void>;
+					pending = Promise.resolve(result).then(
+						() => {},
+						(error: unknown) => failOutput(error),
+					).finally(() => {
+						pendingOutput.delete(pending);
+						if (pendingOutput.size === 0 && !hasOutputFailure) {
+							child.stdout?.resume();
+							child.stderr?.resume();
+						}
+					});
+					pendingOutput.add(pending);
+				};
+				child.stdout?.on("data", onChunk);
+				child.stderr?.on("data", onChunk);
 				// Handle abort signal by killing the entire process tree.
 				if (signal) {
 					if (signal.aborted) onAbort();
@@ -168,6 +204,8 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				// Handle shell spawn errors and wait for the process to terminate without hanging
 				// on inherited stdio handles held by detached descendants.
 				const exitCode = await waitForChildProcess(child);
+				await Promise.all(pendingOutput);
+				if (hasOutputFailure) throw outputFailure;
 				if (signal?.aborted) {
 					throw new Error("aborted");
 				}
@@ -351,6 +389,7 @@ export function createShellToolDefinition(
 				if (!acceptingOutput) return;
 				output.append(data);
 				scheduleOutputUpdate();
+				return output.waitForDrain();
 			};
 
 			const finishOutput = async () => {

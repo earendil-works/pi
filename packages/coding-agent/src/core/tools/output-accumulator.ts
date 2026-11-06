@@ -77,6 +77,23 @@ export class OutputAccumulator {
 		}
 	}
 
+
+	/** Wait for a spill-file write buffer to drain before reading more subprocess output. */
+	waitForDrain(): Promise<void> | undefined {
+		const stream = this.tempFileStream;
+		if (!stream?.writableNeedDrain) return undefined;
+		return new Promise<void>((resolve, reject) => {
+			const cleanup = () => {
+				stream.off("drain", onDrain);
+				stream.off("error", onError);
+			};
+			const onDrain = () => { cleanup(); resolve(); };
+			const onError = (error: Error) => { cleanup(); reject(error); };
+			stream.once("drain", onDrain);
+			stream.once("error", onError);
+		});
+	}
+
 	finish(): void {
 		if (this.finished) {
 			return;
