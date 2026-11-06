@@ -6,5 +6,5 @@ export default function handler(request, response) {
     return response.status(405).json({ error: "Method not allowed" });
   }
 
-  return response.status(200).json(createStatusPayload());
+  return response.status(200).json(createStatusPayload({ env: process.env }));
 }

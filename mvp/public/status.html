@@ -62,24 +62,35 @@
           </article>
           <article class="metric">
             <span class="metric-label">Pi runtime</span>
-            <div class="metric-value" id="runtime-status">Not integrated</div>
-            <div class="metric-detail">Checked-in runtime package</div>
+            <div class="metric-value" id="runtime-status">Checking</div>
+            <div class="metric-detail" id="runtime-detail">Reading server state</div>
           </article>
           <article class="metric">
             <span class="metric-label">ASFDK governance</span>
-            <div class="metric-value" id="governance-status">Not verified</div>
+            <div class="metric-value" id="governance-status">Checking</div>
             <div class="metric-detail">Harness and authorization boundary</div>
           </article>
           <article class="metric">
             <span class="metric-label">Agent execution</span>
-            <div class="metric-value" id="execution-status">Disabled</div>
-            <div class="metric-detail">No model or tool execution is exposed</div>
+            <div class="metric-value" id="execution-status">Checking</div>
+            <div class="metric-detail" id="execution-detail">Reading server state</div>
+          </article>
+          <article class="metric">
+            <span class="metric-label">Sandbox egress</span>
+            <div class="metric-value" id="egress-status">Checking</div>
+            <div class="metric-detail">Outbound network from agent tools</div>
+          </article>
+          <article class="metric">
+            <span class="metric-label">Chat history</span>
+            <div class="metric-value" id="history-status">Checking</div>
+            <div class="metric-detail">Owner-signed-in storage switch</div>
           </article>
         </div>
         <div class="notice" role="note">
-          This is an application shell, not an active agent session. Runtime
-          execution remains disabled until the Pi runtime, ASFDK enforcement,
-          and the independent execution boundary are integrated and verified.
+          These values are read live from the server's own switches. They describe
+          what is turned on; they are not an ASFDK decision and grant no
+          authority. Every agent action is still policy-reviewed and confined to
+          the sandbox, and governance is shown as verified only when it has been.
         </div>
         <div class="links">
           <a href="/api/health">Health endpoint</a>
@@ -95,9 +106,13 @@
     </main>
     <script>
       const labels = {
-        runtime: { integrated: "Integrated", "not-integrated": "Not integrated" },
+        runtime: { enabled: "Enabled", disabled: "Not enabled" },
         governance: { verified: "Verified", "not-verified": "Not verified" },
+        egress: { none: "Not applicable", allowlist: "Allowlist only", "allow-all": "Allow all" },
+        history: { enabled: "Enabled", disabled: "Not enabled" },
       };
+      const REFRESH_MS = 30000;
+      const set = (id, text) => { document.getElementById(id).textContent = text; };
 
       async function refreshStatus() {
         const refreshState = document.getElementById("refresh-state");
@@ -110,18 +125,28 @@
           const [health, status] = await Promise.all([healthResponse.json(), statusResponse.json()]);
           document.getElementById("health-label").textContent = health.status === "ok" ? "Application online" : "Application unavailable";
           document.getElementById("app-status").textContent = health.status === "ok" ? "Healthy" : "Unavailable";
-          document.getElementById("runtime-status").textContent = labels.runtime[status.runtime] ?? "Unknown";
-          document.getElementById("governance-status").textContent = labels.governance[status.governance] ?? "Unknown";
-          document.getElementById("execution-status").textContent = status.executionEnabled === true ? "Enabled" : "Disabled";
-          refreshState.textContent = "Status checked just now.";
+          const on = status.executionEnabled === true;
+          set("runtime-status", labels.runtime[status.runtime] ?? "Unknown");
+          set("runtime-detail", on ? "Agent route is switched on" : "Agent route is switched off (NLT_AGENT_ENABLED)");
+          set("governance-status", labels.governance[status.governance] ?? "Unknown");
+          set("execution-status", on ? "Enabled" : "Disabled");
+          set("execution-detail", on ? "Model and sandbox tool turns can run" : "No model or tool execution is exposed");
+          set("egress-status", labels.egress[status.egress] ?? "Unknown");
+          set("history-status", labels.history[status.history] ?? "Unknown");
+          const checked = status.checkedAt ? new Date(status.checkedAt) : undefined;
+          refreshState.textContent = checked && !Number.isNaN(checked.getTime())
+            ? `Server state as of ${checked.toLocaleTimeString()}. Refreshes every ${REFRESH_MS / 1000}s.`
+            : "Status checked just now.";
         } catch {
           document.getElementById("health-label").textContent = "Status unavailable";
           document.getElementById("app-status").textContent = "Unavailable";
+          for (const id of ["runtime-status", "governance-status", "execution-status", "egress-status", "history-status"]) set(id, "Unknown");
           refreshState.textContent = "Unable to reach the application status endpoints.";
         }
       }
 
       refreshStatus();
+      setInterval(refreshStatus, REFRESH_MS);
     </script>
   </body>
 </html>
