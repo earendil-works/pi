@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>p3 step 0a: reloads without flashes</title>
+<title>p3 step 0a: three reload bugs</title>
 <style>
 
 :root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
@@ -110,250 +110,124 @@ table{max-width:100%}
 <body><div class="book">
 <section class="cover">
   <div class="kicker">A spec · p3 step 0a (Chord) · 2026-11-06</div>
-  <h1>Step 0a<br>No Flashes</h1>
-  <p class="subtitle">Four fixes in Chord so that applying a plugin change shows nothing but the change, and &quot;restart needed&quot; means a restart is needed</p>
-  <div class="cover-stats"><div class="stat"><b>4</b><span>fixes, all in Chord</span></div><div class="stat"><b>1</b><span>decision (components share references)</span></div><div class="stat"><b>1 RTT</b><span>of zero or empty screen today after every Apply</span></div><div class="stat"><b>0</b><span>p3 code: p3 builds on this in step 0b</span></div></div>
-  <div class="cover-note"><p>The spec of step 0a, from the two reviews of the step-0 spec (<code>/tmp/p3-step0-review-adv.md</code>,
-<code>/tmp/p3-step0-review-design.md</code>) and the Chord code on branch <code>p3</code>. Fixes 2 to 4 are bugs against what design §21
-already promises; fix 1 changes how Chord&#39;s React and terminal bindings hold references and is the owner&#39;s decision.
-The loop these fixes polish is explained in the artifact &quot;p3: the reload loop&quot;.</p>
+  <h1>Step 0a<br>Reload Bugs</h1>
+  <p class="subtitle">Three fixes in Chord so that applying a page plugin never shows it unstyled and &quot;restart needed&quot; means base code really changed</p>
+  <div class="cover-stats"><div class="stat"><b>3</b><span>bug fixes, all in Chord</span></div><div class="stat"><b>0</b><span>decisions: each fix makes the code do what design §21 says</span></div><div class="stat"><b>1 RTT</b><span>of loading state for a reloaded UI part: accepted (owner)</span></div><div class="stat"><b>0</b><span>p3 code: p3 builds on this in step 0b</span></div></div>
+  <div class="cover-note"><p>Third version. The first two also proposed sharing references between UI components to avoid a reloaded part&#39;s
+loading state; four reviews found it held only for one path and added footguns, and the owner rejected it (decision
+&quot;A reloaded UI part shows its loading state&quot;, 2026-11-06). What is left are the three bugs the reviews confirmed,
+with the corrections from the GPT-6 Astra and GPT-6.1 Sol reviews (<code>/tmp/p3-step0a-astra.md</code>,
+<code>/tmp/p3-step0a-sol.md</code>), each kept as simple as correctness allows.</p>
 </div>
 </section><div class="inner">
 <nav class="toc"><h2>Contents</h2><ol>
 <li><a href="#before-we-begin">Before we begin</a></li>
-<li><a href="#holds">I. Components Share References</a></li>
-<li><a href="#bugs">II. The Other Three</a></li>
-<li><a href="#done">III. Tests and Done</a></li>
+<li><a href="#css">I. Stylesheets Load First</a></li>
+<li><a href="#conditions">II. Base Bundles Resolve as the Server Does</a></li>
+<li><a href="#base">III. &quot;Restart Needed&quot; Compares Content</a></li>
+<li><a href="#done">IV. Tests and Done</a></li>
 </ol></nav>
 
 <section class="preface" id="before-we-begin">
 <h2>Before we begin</h2>
-<p class="dropcap">Mario&#39;s counter says 3. An agent changes the <code>hello</code> plugin&#39;s page code and he taps Apply. For one round trip to the
-server the counter says 0, then 3 again. If he taps in that moment, nothing happens. If the agent had changed the
-shell, the whole page would have gone blank for that round trip. If the change was to a stylesheet, the page would
-have flashed unstyled. And after an <code>npm run build</code> somewhere in the checkout, the bar says &quot;restart needed&quot; although
-nothing p3 runs has changed, and keeps saying it until a restart.</p>
-<p>None of this is what design §21 promises (&quot;components remount; scroll, other plugins and page state stay&quot;; &quot;restart
-needed&quot; for base code only). Step 0a fixes it in Chord, before p3 builds on it: four fixes, one of them a decision.</p>
-<h3 id="four-things-to-know">Four things to know</h3>
+<p class="dropcap">An agent edits the <code>hello</code> plugin&#39;s page code and stylesheet; Mario taps Apply. Hello&#39;s part shows its loading state
+for one round trip and then the new version: that is accepted (decision &quot;A reloaded UI part shows its loading state&quot;).
+What is not accepted: for a moment the part is unstyled, because the page removes the old stylesheet before the new one
+has loaded. And after someone runs <code>npm run build</code> in the checkout, or a formatter rewrites a file without changing it,
+the bar says &quot;restart needed&quot; although nothing p3 runs has changed, and says it until a restart.</p>
+<h3 id="three-things-to-know">Three things to know</h3>
 <ol class="findings">
-<li><strong>Components share references (decision).</strong> A page or terminal keeps one reference per object a component holds;
-a component that mounts takes the one already there, values included, in its first render. No timer: a reference
-is released once no component uses it and no call made through it is still running, checked after the update that
-let go of it. All in the client bindings (<code>chord/react</code>, <code>chord/tui</code>); the kernel only gains a read-only &quot;calls
-running&quot; on references.</li>
-<li><strong>Stylesheets load before the plugin reloads.</strong> A page fetches a plugin&#39;s new stylesheet and waits for its <code>load</code>
-before it reloads the plugin&#39;s script, and removes the old sheet after.</li>
-<li><strong>The page&#39;s base bundle resolves packages as the server does.</strong> Built with the server&#39;s resolution conditions
-(an explicit option, the server&#39;s own by default), like the worker base: in this checkout Chord&#39;s source, never a
-stale <code>dist/</code>.</li>
-<li><strong>&quot;Restart needed&quot; compares content.</strong> The bundles record the bytes they read; the mark is true while a source
-file differs from what was read, and clears when it is the same again.</li>
+<li><strong>New stylesheets load before the plugin reloads.</strong> The old ones go after the reload, except those of a plugin
+whose new code failed: it keeps its old script and its old stylesheet together.</li>
+<li><strong>Base bundles resolve packages as the server does.</strong> The page&#39;s and the terminal&#39;s base bundles are built with the
+server&#39;s resolution conditions, so in this checkout they read Chord&#39;s source, as the server runs it, never <code>dist/</code>.</li>
+<li><strong>&quot;Restart needed&quot; compares content.</strong> Each base build records the bytes it read; the mark is true exactly while a
+file differs from what a running base was built from, checked once when watching starts and again on every event.</li>
 </ol>
 </section>
 
-<section class="chapter" id="holds"><header class="opener"><div class="numeral">I</div><h2>Components Share References</h2><p class="lede">Why the counter shows 0 after an Apply, and how handing the reference over inside the page removes it.</p></header>
-<h3 id="the-problem">The problem</h3>
-<p><code>useHold</code> makes its reference in an effect, after the first render, and a new reference has no values until the
-server&#39;s <code>bound</code> arrives:</p>
-<pre><code><span class="tk-c">// packages/chord/src/react/hooks.ts today</span>
-<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">useHold</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">Contract</span>&gt;(<span class="tk-t">Type</span>: C, params: <span class="tk-t">ParamsOf</span>&lt;C&gt;): <span class="tk-t">Held</span>&lt;C&gt; | <span class="tk-k">undefined</span> {
-	<span class="tk-k">const</span> [held, setHeld] = <span class="tk-f">useState</span>&lt;...&gt;(<span class="tk-k">undefined</span>);
-	<span class="tk-f">useEffect</span>(() =&gt; {
-		<span class="tk-k">const</span> ref = host.<span class="tk-f">hold</span>(<span class="tk-t">Type</span>, params, BACKGROUND_CONTEXT);   <span class="tk-c">// a new request: no values until `bound`</span>
-		<span class="tk-f">setHeld</span>({ key, ref });
-		<span class="tk-k">return</span> () =&gt; ref.<span class="tk-f">release</span>();                                 <span class="tk-c">// the old component's: released at unmount</span>
-	}, [host, <span class="tk-t">Type</span>, key]);
-	<span class="tk-k">return</span> held?.ref;                                               <span class="tk-c">// undefined in the first render</span>
-}</code></pre>
-<p>An Apply of <code>hello</code> replaces its component with a new function, so React unmounts the old <code>HelloPart</code> and mounts the
-new one. The new one renders <code>undefined</code>, then a reference without values, then, one round trip later, the count. The
-old component&#39;s reference had the count all along and is released in the same commit. A tap in between has no
-reference to call. A terminal component&#39;s <code>scope.hold</code> makes a new request the same way. <code>useRegistry</code> and
-<code>scope.registry</code> read the registry through a promise in an effect, so a shell reload renders an empty page for one
-commit.</p>
-<figure class="fig"><svg viewBox="0 0 720 302" width="100%" role="img" aria-label="Today: an Apply of hello's page code. The new component starts from nothing." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="294" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="102" y="27" font-size="11" fill="#2a2723" text-anchor="middle">React</text><text x="102" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">the page</text><line x1="274" y1="52" x2="274" y2="294" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="274" y="27" font-size="11" fill="#2a2723" text-anchor="middle">old HelloPart</text><text x="274" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">ref A: count 3</text><line x1="446" y1="52" x2="446" y2="294" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="446" y="30" font-size="11" fill="#2a2723" text-anchor="middle">new HelloPart</text><line x1="618" y1="52" x2="618" y2="294" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="618" y="27" font-size="11" fill="#2a2723" text-anchor="middle">server</text><text x="618" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Hello</text><line x1="102" y1="78" x2="443" y2="78" stroke="#7b7468" marker-end="url(#f1m)"/><text x="274" y="72" font-size="10" fill="#2a2723" text-anchor="middle">render: useHold: undefined -&gt; shows 0</text><line x1="102" y1="110" x2="271" y2="110" stroke="#7b7468" marker-end="url(#f1m)"/><text x="188" y="104" font-size="10" fill="#2a2723" text-anchor="middle">unmount: ref A released</text><line x1="618" y1="142" x2="277" y2="142" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="446" y="136" font-size="10" fill="#2a2723" text-anchor="middle">(release A)</text><line x1="102" y1="174" x2="443" y2="174" stroke="#7b7468" marker-end="url(#f1m)"/><text x="274" y="168" font-size="10" fill="#2a2723" text-anchor="middle">effect: host.hold -&gt; ref B (no values)</text><line x1="446" y1="206" x2="615" y2="206" stroke="#7b7468" marker-end="url(#f1m)"/><text x="532" y="200" font-size="10" fill="#2a2723" text-anchor="middle">hold B</text><line x1="618" y1="238" x2="449" y2="238" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="532" y="232" font-size="10" fill="#2a2723" text-anchor="middle">bound B: count 3</text><line x1="102" y1="270" x2="443" y2="270" stroke="#7b7468" marker-end="url(#f1m)"/><text x="274" y="264" font-size="10" fill="#2a2723" text-anchor="middle">render: shows 3</text></svg><figcaption><span class="fignum">Figure 1.</span> Today: an Apply of hello&#39;s page code. The new component starts from nothing.</figcaption></figure>
-<h3 id="the-fix">The fix</h3>
-<p>Each host gets a table of <strong>shared references</strong>, kept beside its page state (<code>src/surfaces/</code>, portable: React and the
-terminal scope use it). Today every component&#39;s <code>hold</code> is its own reference, its own request over the link, its own
-copy of the values (<code>RemoteObject</code>: &quot;two references are two holds&quot;); the objects themselves are already shared on the
-provider. With the table, components on one host share the reference too.</p>
-<ul>
-<li><strong>Key</strong>: the contract&#39;s name, version and fingerprint, and the params by value (canonical JSON). After an Apply the
-plugin&#39;s script evaluates its contract again, so the token is a new object: keyed by the object, the new component
-would miss the entry. Keyed by name and version only, a contract edited without a version bump would get a reference
-of the old shape. The fingerprint is the contract&#39;s own (<code>fingerprintOf</code>), computed once per token.</li>
-<li><strong>Reading is pure</strong>: during a render a component only peeks (<code>peek(key)</code>: the reference held now, or <code>undefined</code>);
-it never makes an entry. React may render and throw the render away (StrictMode, an interrupted transition); a
-render that made entries would leave references nobody releases.</li>
-<li><strong>Holding is in the effect</strong>: <code>acquire(key)</code> makes the reference when none is held (with a host-lifetime context
-and the default options, never the first caller&#39;s), counts the component, and returns its let-go.</li>
-<li><strong>Release without a timer</strong>: when the count reaches zero, the table waits for the end of the update (a task after
-the commit), then releases the reference if the count is still zero and no call made through it is running; if a
-call runs, it releases when the last one settles (unless a component took the reference meanwhile). React renders
-the new component before it runs the old one&#39;s cleanup and runs the new one&#39;s effects right after, so a remount&#39;s
-hand-over always finds the count back at one.</li>
-<li><strong>Ended references leave</strong>: a reference that ends (revoked, its host closed, released by anyone through <code>release()</code>)
-is removed from the table at once; the next acquire makes a new one. A component never calls <code>release()</code> on a shared
-reference itself (the README says so; the table&#39;s let-go is the release).</li>
-</ul>
-<pre><code><span class="tk-c">// packages/chord/src/surfaces/shared-holds.ts (new): one table per host, as page state is</span>
-<span class="tk-c">/** The shared reference to `Type` with `params` on `host`: read during a render, held from an effect. */</span>
-<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">sharedHold</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">Contract</span>&gt;(host: <span class="tk-t">AnyHost</span>, <span class="tk-t">Type</span>: C, params: <span class="tk-t">ParamsOf</span>&lt;C&gt;): <span class="tk-t">SharedHold</span>&lt;C&gt;;
-<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">SharedHold</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">Contract</span>&gt; = {
-	<span class="tk-c">/** The reference held now (by a component, or waiting for its release): readable during a render. */</span>
-	<span class="tk-f">peek</span>(): <span class="tk-t">Held</span>&lt;C&gt; | <span class="tk-k">undefined</span>;
-	<span class="tk-c">/** Notifies when `peek` changes (a reference made, ended or released): for `useSyncExternalStore`. */</span>
-	<span class="tk-f">subscribe</span>(changed: () =&gt; <span class="tk-k">void</span>): () =&gt; <span class="tk-k">void</span>;
-	<span class="tk-c">/** Holds (making the reference when none is held) and counts the caller; the returned function lets go. */</span>
-	<span class="tk-f">acquire</span>(): () =&gt; <span class="tk-k">void</span>;
-};
-
-<span class="tk-c">// packages/chord/src/react/hooks.ts</span>
-<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">useHold</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">Contract</span>&gt;(<span class="tk-t">Type</span>: C, params: <span class="tk-t">ParamsOf</span>&lt;C&gt;): <span class="tk-t">Held</span>&lt;C&gt; | <span class="tk-k">undefined</span> {
-	<span class="tk-k">const</span> shared = <span class="tk-f">sharedHold</span>(<span class="tk-f">useHost</span>(), <span class="tk-t">Type</span>, params);           <span class="tk-c">// a stable handle per key (no entry made here)</span>
-	<span class="tk-k">const</span> held = <span class="tk-f">useSyncExternalStore</span>(shared.subscribe, shared.peek, shared.peek);
-	<span class="tk-f">useEffect</span>(() =&gt; shared.<span class="tk-f">acquire</span>(), [shared]);                  <span class="tk-c">// count while mounted; let go at unmount</span>
-	<span class="tk-k">return</span> held;
-}</code></pre>
-<p><code>TuiScope.hold</code> acquires in place of <code>host.hold</code> and keeps its watch of the reference&#39;s state for redraws, as today.
-<code>useRegistry</code> and <code>TuiScope.registry</code> read the registry&#39;s value synchronously once the host has it (the host keeps one
-value per registry and version already; a synchronous accessor returns it, <code>undefined</code> before the first resolution),
-so only a page&#39;s very first use waits.</p>
-<figure class="fig anim"><svg viewBox="0 0 720 224" width="100%" role="img" aria-label="With the fix: the new component takes the reference the old one has, values included." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="216" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="102" y="27" font-size="11" fill="#2a2723" text-anchor="middle">React</text><text x="102" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">the page</text><line x1="274" y1="52" x2="274" y2="216" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="274" y="27" font-size="11" fill="#2a2723" text-anchor="middle">shared references</text><text x="274" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Hello {}: ref A, 1 user</text><line x1="446" y1="52" x2="446" y2="216" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="446" y="30" font-size="11" fill="#2a2723" text-anchor="middle">old HelloPart</text><line x1="618" y1="52" x2="618" y2="216" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="618" y="30" font-size="11" fill="#2a2723" text-anchor="middle">new HelloPart</text><g class="step edge" style="--i:1"><line x1="102" y1="78" x2="615" y2="78" stroke="#7b7468" marker-end="url(#f2m)"/><text x="360" y="72" font-size="10" fill="#2a2723" text-anchor="middle">render: peek -&gt; ref A: shows 3</text></g><g class="step edge" style="--i:2"><line x1="102" y1="110" x2="443" y2="110" stroke="#7b7468" marker-end="url(#f2m)"/><text x="274" y="104" font-size="10" fill="#2a2723" text-anchor="middle">cleanup: let go (0 users: release after the update)</text></g><g class="step edge" style="--i:3"><line x1="102" y1="142" x2="615" y2="142" stroke="#7b7468" marker-end="url(#f2m)"/><text x="360" y="136" font-size="10" fill="#2a2723" text-anchor="middle">effect: acquire (1 user)</text></g><g class="step" style="--i:4"><rect x="198" y="160" width="152" height="36" rx="3" fill="#f4eee2" stroke="#c2b18c"/><text x="274" y="174" font-size="10" fill="#5b5549" text-anchor="middle">nothing sent: no</text><text x="274" y="187" font-size="10" fill="#5b5549" text-anchor="middle">release, no new hold</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> With the fix: the new component takes the reference the old one has, values included.</figcaption></figure>
-<h3 id="what-changes-in-the-rules">What changes in the rules</h3>
-<ul>
-<li><strong>Design §7 and slice 11 P7/P9</strong>: &quot;released when the component unmounts&quot; becomes &quot;released when no component on the
-host uses it and no call made through it is running&quot;. References stay the only indirection; the table hands out the
-host&#39;s own references. Nothing waits on a clock: design §19&#39;s &quot;no consumer-side linger&quot; (decision D8) stays, refined
-in one point: a running call counts as a user of its reference.</li>
-<li><strong>A save in flight survives its component.</strong> Releasing a reference rejects its calls (design §7). Today a component
-that sends and unmounts (a remount by a reload, a navigation) aborts its own send; with the table its reference stays
-until the send settled, however long it takes. This is the &quot;lost save on remount&quot; the reload reviewers found earlier.</li>
-<li><strong>Fewer requests</strong>: two components showing the same object share one reference and one hold over the link.</li>
-<li><strong>Presence</strong>: a page&#39;s reference ends at the end of the update that dropped its last component, or when its last
-call settles, as before up to the call.</li>
-<li><strong>The kernel gains one read-only member</strong> on references (internal, not exported to apps): whether calls made through
-it are running, with a notification when the last settles.</li>
-</ul>
-<p>What still shows a first value after a remount, by design: a component whose params changed (another object), a
-contract whose version or fingerprint changed in the reload (another reference: it must bind the new shape), and a
-component&#39;s own <code>useState</code> and <code>useOptimistic</code> (they start over; page state survives).</p>
-<p><strong>Alternatives.</strong> (B) A one-second release delay per reference: reverses D8 (a consumer-side linger), cuts calls
-longer than a second, and needs the table anyway to hand the reference to the new component. (C) Last values per type
-and params kept in page state: a second copy of state, stale by design, and the tap in the gap has no reference.</p>
+<section class="chapter" id="css"><header class="opener"><div class="numeral">I</div><h2>Stylesheets Load First</h2><p class="lede">The order of a page&#39;s update, and which stylesheet belongs to which code.</p></header>
+<p class="dropcap"><strong>Today</strong> (<code>src/surfaces/client.ts</code>, <code>#apply</code>; <code>src/web/scripts.ts</code>, <code>syncStylesheets</code>): the page fetches the
+changed scripts, reloads its host, then replaces the plugins&#39; <code>&lt;link&gt;</code>s: the old one removed, the new one appended. Until
+the new sheet has downloaded, the plugin&#39;s components (old or new) are unstyled. Two more faults: the new sheet is
+appended at the end, so the cascade order between plugins changes with every reload; and when a plugin&#39;s new script
+fails and its old code stays, the client records the new script&#39;s digest as loaded, so a later identical set (a
+reconnect&#39;s snapshot) is taken as applied and the plugin&#39;s old code is paired with the new stylesheet.</p>
+<p><strong>Fix</strong>, in <code>#apply</code>:</p>
+<ol>
+<li>For each plugin whose stylesheet differs from the one it has, insert the new <code>&lt;link&gt;</code> right after the plugin&#39;s
+current one (a plugin new to the page: at its place in the set&#39;s order) and wait for its <code>load</code> or <code>error</code>, at most
+10 s, ended early by the client&#39;s stop. CSS-module class names are fixed per plugin and file
+(<code>chord_&lt;hash of plugin and path&gt;_&lt;file&gt;_&lt;class&gt;</code>), so old and new sheets of one plugin apply together without
+harm, the new one later and winning.</li>
+<li>Reload the host with the new scripts, as today.</li>
+<li>For each plugin, keep the stylesheet that belongs to the code it now runs: the new one when its new script loaded;
+the old one, and the new link removed, when its script failed and it kept its old code (the reload report&#39;s
+<code>failed</code>). Remove every other plugin link no longer in the set.</li>
+<li>Record per plugin the digest of the script it actually runs, so a later set with the failed plugin&#39;s new script is
+tried again, not skipped as applied.</li>
+</ol>
+<p>A stylesheet that fails to load is reported; the plugin&#39;s new code is applied anyway (its part may lack its new
+classes until the next apply); a stalled one costs at most 10 s of the update. What stays: a part whose UI comes from
+an object that restarts disappears and comes back with its new sheet already loaded.</p>
 </section>
 
-<section class="chapter" id="bugs"><header class="opener"><div class="numeral">II</div><h2>The Other Three</h2><p class="lede">Bugs against what design §21 already says: no decision, a test each.</p></header>
-<h3 id="stylesheets-load-before-the-plugin-reloads">Stylesheets load before the plugin reloads</h3>
-<p>The page applies a new set in <code>surfaces/client.ts</code> (<code>#apply</code>): it fetches the changed scripts, reloads its host, and
-only then <code>syncStylesheets</code> (<code>web/scripts.ts</code>) removes the old <code>&lt;link&gt;</code> and appends the new one. Between the reload and
-the new sheet&#39;s download, the plugin&#39;s new components are unstyled; a renamed or added CSS-module class stays unstyled
-until then, and removing the old sheet first unstyles the rest.</p>
-<p>Fix: <code>#apply</code> loads the set&#39;s new stylesheets first (a <code>&lt;link&gt;</code> per new sheet, inserted at the position of the plugin&#39;s
-old one so the cascade order stays, awaiting <code>load</code>), then reloads the host, then removes the sheets no longer in the
-set. A sheet that fails to load is reported and the plugin&#39;s old sheet stays. A plugin whose new script failed and kept
-its old code keeps its old sheet too. Sets arriving back to back apply in order (the queue <code>#apply</code> already has).</p>
-<h3 id="the-page-39-s-base-bundle-resolves-as-the-server-does">The page&#39;s base bundle resolves as the server does</h3>
-<p><code>buildBase</code> (<code>node/surfaces/bundle.ts</code>) bundles with esbuild&#39;s default conditions. In this monorepo
-<code>@earendil-works/chord</code> then resolves to its built <code>dist/</code>, while the server (started with <code>--conditions=source</code>) runs
-Chord&#39;s source: the page may run other Chord code than the server, and every <code>npm run build</code> changes files the base was
-built from. The worker base solves it already (<code>conditionsOf(execArgv)</code> in <code>node/workers/base.ts</code>).</p>
-<p>Fix: the web and terminal surfaces take <code>conditions</code> (default: the server process&#39;s own, from <code>process.execArgv</code> and
-<code>NODE_OPTIONS</code>), and <code>buildBase</code> passes them to esbuild; for browser builds it adds <code>module</code>, which esbuild&#39;s defaults
-include and custom conditions drop. The helper reading the conditions moves next to <code>metafileInputs</code> in <code>bundle.ts</code>,
-where the worker base imports it too. The terminal bundle is built on the server, so its conditions are the server&#39;s.</p>
-<h3 id="quot-restart-needed-quot-compares-content">&quot;Restart needed&quot; compares content</h3>
-<p>The watcher (<code>node/plugins/watcher.ts</code>) sets <code>base</code> on any file event under base code and never clears it: a formatter
-that rewrites a file unchanged, an editor&#39;s swap file, a branch switched and back all say &quot;restart needed&quot; until a
-restart.</p>
-<p>Fix:</p>
-<ul>
-<li><strong>The builds record what they read</strong>: the base bundles (web, terminal, worker) hash each input&#39;s bytes in an esbuild
-<code>onLoad</code> hook as they read it (not later, so an edit between the build and the watcher&#39;s start is not missed); the
-app&#39;s <code>base</code> files are hashed when the kit starts.</li>
-<li><strong>The mark is recomputed on each event</strong>: a changed path is hashed again; <code>base</code> is true while any recorded file
-differs or is gone. Back to the recorded bytes, the mark clears.</li>
-<li><strong>New files</strong> in a base directory count only with a source extension (<code>.ts</code>, <code>.tsx</code>, <code>.js</code>, <code>.mjs</code>, <code>.json</code>,
-<code>.css</code>): editor swap files and temporary files do not; a new source file that comes and goes clears again.</li>
-<li><strong>A directory removed and recreated</strong> under base code is watched again (today its watch is lost, which would turn
-into a silent &quot;no restart needed&quot; once the mark can clear).</li>
-</ul>
+<section class="chapter" id="conditions"><header class="opener"><div class="numeral">II</div><h2>Base Bundles Resolve as the Server Does</h2><p class="lede">Where the page&#39;s Chord comes from.</p></header>
+<p class="dropcap"><strong>Today</strong> (<code>src/node/surfaces/bundle.ts</code>, <code>buildBase</code>): esbuild bundles the page&#39;s and the terminal&#39;s base with its
+default conditions, so in this monorepo <code>@earendil-works/chord</code> resolves to its built <code>dist/</code>, while the server,
+started with <code>--conditions=source</code>, runs Chord&#39;s source. The page may then run other Chord code than the server, and
+every <code>npm run build</code> changes files the base was built from. The worker base already resolves as its process will
+(<code>conditionsOf(execArgv)</code> in <code>src/node/workers/base.ts</code>).</p>
+<p><strong>Fix:</strong> <code>buildBase</code> takes <code>conditions</code>. The web and terminal surfaces pass the kit&#39;s option <code>conditions</code> (new on
+<code>AppWeb</code> and the <code>tui</code> option), by default the server process&#39;s own: the <code>--conditions</code>/<code>-C</code> flags of
+<code>process.execArgv</code> and of <code>NODE_OPTIONS</code> (parsed as Node parses it, quoted values included). For browser builds
+<code>module</code> is added, which esbuild&#39;s defaults include and custom conditions drop; the platform stays <code>browser</code>. The
+helper moves into <code>bundle.ts</code>, which the worker base imports; workers keep their own <code>execArgv</code> as today.</p>
 </section>
 
-<section class="chapter" id="done"><header class="opener"><div class="numeral">III</div><h2>Tests and Done</h2><p class="lede">What the build delivers.</p></header>
+<section class="chapter" id="base"><header class="opener"><div class="numeral">III</div><h2>&quot;Restart Needed&quot; Compares Content</h2><p class="lede">A mark that is true exactly while a running base differs from the files.</p></header>
+<p class="dropcap"><strong>Today</strong> (<code>src/node/plugins/watcher.ts</code>): any file event under base code sets <code>base</code>, and nothing clears it. A
+formatter rewriting a file unchanged, an editor&#39;s swap file, a branch switched and back, an <code>npm run build</code>: &quot;restart
+needed&quot; until a restart. And an edit made between a base build and the watcher&#39;s start is never seen.</p>
+<p><strong>Fix:</strong></p>
 <ul>
-<li><code>src/surfaces/shared-holds.ts</code>, tests: a peek during a remount returns the held reference; keys by name, version,
-fingerprint and params (a re-evaluated token with the same contract finds it; a changed fingerprint does not); a
-render that is thrown away makes no entry; release after the update with zero users; a call running keeps the
-reference until it settles, then it is released; an acquire while the release waits cancels it; an ended reference
-leaves the table; a GC test of the table.</li>
-<li><code>useHold</code>, <code>useRegistry</code>, <code>TuiScope.hold</code> and <code>TuiScope.registry</code> on it; the existing assertion in
-<code>test/node/react/hooks.test.ts</code> that a remount makes a new reference changes; the browser test records every
-rendered value: no <code>undefined</code> and no initial value after a remount through a real plugin reload (<code>host.reload</code> with a
-new script of the plugin), for a hold and for a registry; the same for the terminal scope.</li>
-<li>Stylesheets: a slow stylesheet in the browser; the new class styled in the first frame after the reload; a failing
-sheet keeps the old one.</li>
-<li>Base bundles: a base built with <code>conditions: [&quot;source&quot;]</code> lists source files as inputs; the default reads the
-server&#39;s flags and <code>NODE_OPTIONS</code>.</li>
-<li>The watcher: a rewrite with equal bytes (no mark), a change and its revert (mark, then clear), a swap file (no mark),
-a new source file (mark) removed again (clear), a directory removed and recreated (watched again).</li>
-<li><code>npm run check</code>; Chord&#39;s suites that touch these (react, tui, web, surfaces, plugins, reload, the app kit); the
-reload suite (<code>test/node/reload/</code>) gets a step that applies a page plugin and asserts no frame without the value; an
-example in <code>test/examples/</code> showing two components sharing a reference across a reload; design §7, §19, §21 (&quot;What a
-user sees during a reload&quot;), §23, the READMEs, and a decision entry for fix 1 (superseding P7 and P9 in part,
-refining §7&#39;s release and D8).</li>
+<li><strong>Each base artifact records what it read.</strong> The page&#39;s, the terminal&#39;s and each worker kind&#39;s base bundle hash the
+exact bytes their loader hands to esbuild (in the one <code>onLoad</code> that returns the contents, the workers&#39; existing
+module-location loader included, never a second reader). The server&#39;s own code (what Node loaded: the start script,
+the kit, the app&#39;s <code>base</code> files) is hashed when the kit starts; an edit between Node loading a file and that hash is
+the one window this cannot see (stated in the README).</li>
+<li><strong>The mark is computed, not latched.</strong> <code>base</code> is true while, for any running artifact, a recorded file&#39;s current
+bytes differ or the file is gone, or a base directory has a source file (<code>.ts</code>, <code>.tsx</code>, <code>.mts</code>, <code>.cts</code>, <code>.js</code>, <code>.jsx</code>,
+<code>.mjs</code>, <code>.cjs</code>, <code>.json</code>, <code>.css</code>) that was not there at start. A file two artifacts read with different bytes stays
+marked as long as either differs. Back to the recorded bytes, the mark clears.</li>
+<li><strong>Checked when watching starts and on every event.</strong> After the watches are installed, every recorded file and base
+directory is compared once (an edit between the build and the watch is found there). Each event re-reads its path;
+reads of one path are serialized, the latest wins. A base directory removed and recreated is watched again.</li>
+</ul>
+<p>Plugin <code>dirty</code> marks stay as they are (latched until applied); comparing their content too is carried over.</p>
+</section>
+
+<section class="chapter" id="done"><header class="opener"><div class="numeral">IV</div><h2>Tests and Done</h2><p class="lede">What the build delivers.</p></header>
+<ul>
+<li><strong>Stylesheets</strong> (browser): a slow new sheet with a renamed class: the class is styled in the first frame after the
+reload and the old sheet was never missing; cascade order kept across a reload; a plugin whose new script fails keeps
+its old sheet and loses the new one, and a reconnect with the same set tries its script again; a failing sheet is
+reported and the new code applies; a stalled sheet ends the wait at 10 s and at the client&#39;s stop.</li>
+<li><strong>Conditions:</strong> a base built with <code>conditions: [&quot;source&quot;]</code> lists source files as inputs, not <code>dist/</code>; the default
+reads <code>process.execArgv</code> and a quoted <code>NODE_OPTIONS</code>; a browser build still takes a package&#39;s <code>module</code> and <code>browser</code>
+entries; the worker base&#39;s module locations (<code>import.meta.url</code>) still work.</li>
+<li><strong>The mark:</strong> a rewrite with equal bytes (no mark); a change and its revert (mark, then clear); reads completing in
+reverse order (the latest wins); a swap file (no mark); a new source file (mark), removed (clear); an edit between the
+build and the watch with no later event (found at the start); a directory removed and recreated (watched, compared);
+a file read with different bytes by two artifacts.</li>
+<li><code>npm run check</code>; Chord&#39;s suites that touch these (surfaces, web, tui, plugins, workers, reload, the app kit);
+design §21, §23 and the READMEs (kit, surfaces, plugins) updated; carry-over in <code>slices.md</code>: content-compared plugin
+marks.</li>
 </ul>
 <p>Then step 0b builds p3&#39;s base, <code>hello</code> and the reload suite on top.</p>
 </section>
 
-<p class="colophon">p3 step 0a · spec, first edition, revised after two reviews · 2026-11-06 · sources: src/react/hooks.ts, src/tui/scope.ts, src/web/scripts.ts, src/node/surfaces/bundle.ts, src/node/plugins/watcher.ts, design §21, §23</p>
+<p class="colophon">p3 step 0a · spec, third edition (bugs only) · 2026-11-06 · sources: src/surfaces/client.ts, src/web/scripts.ts, src/node/surfaces/bundle.ts, src/node/workers/base.ts, src/node/plugins/watcher.ts, design §21, §23</p>
 </div></div>
-<script>(function activate(root) {
-	const replay = (f) => {
-		f.classList.remove("play");
-		void f.getBoundingClientRect();
-		f.classList.add("play");
-	};
-	const io = new IntersectionObserver(
-		(es) => {
-			for (const e of es)
-				if (e.isIntersecting) {
-					e.target.classList.add("play");
-					io.unobserve(e.target);
-				}
-		},
-		{ threshold: 0.3 },
-	);
-	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
-		f.classList.add("armed");
-		io.observe(f);
-		const b = f.querySelector(".replay");
-		if (b) b.onclick = () => replay(f);
-	});
-	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
-		s.classList.add("js");
-		const ps = [...s.querySelectorAll(":scope>.step-panel")];
-		let i = 0;
-		const c = s.querySelector(".count"),
-			p = s.querySelector(".prev"),
-			n = s.querySelector(".next");
-		const show = () => {
-			ps.forEach((x, j) => x.classList.toggle("on", j === i));
-			c.textContent = `${i + 1} / ${ps.length}`;
-			p.disabled = i === 0;
-			n.disabled = i === ps.length - 1;
-			ps[i].querySelectorAll(".anim").forEach(replay);
-		};
-		p.onclick = () => {
-			i--;
-			show();
-		};
-		n.onclick = () => {
-			i++;
-			show();
-		};
-		show();
-	});
-})(document)</script>
+
 </body></html>
