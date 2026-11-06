@@ -61,6 +61,13 @@ export type Session = Static<typeof SessionSchema>;
 /** Cleanup completed before an archive call returns (e.g. session-owned port forwards). */
 export const SessionArchived = keyedRegistry<(session: string, ctx: Ctx) => Promise<void>>("p2.session-archived");
 
+/**
+ * What a copy of a session takes over from its source (`/clone`, `/fork`; e.g. its project), called once the copy's row
+ * exists and before its copying starts.
+ */
+export const SessionCopied =
+	keyedRegistry<(source: string, copy: string, ctx: Ctx) => Promise<void>>("p2.session-copied");
+
 /** Pi Mobile's MAX_SESSION_TITLE. */
 export const MAX_TITLE = 120;
 const Id = obj({ id: str() });

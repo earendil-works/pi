@@ -44,6 +44,7 @@ import {
 	OperationSchema,
 	type Session,
 	SessionArchived,
+	SessionCopied,
 	SessionMoves,
 	SessionOperations,
 	Sessions,
@@ -237,6 +238,7 @@ const ROW_WAIT_MS = 10_000;
 
 export default defineFacet((host) => {
 	serveKeyed(host, SessionArchived);
+	serveKeyed(host, SessionCopied);
 	host.serve(
 		Catalog,
 		(_params, self) => {
@@ -299,6 +301,7 @@ export default defineFacet((host) => {
 		const children = self.get(ChildStore, {});
 		const archivedStarts = self.get(ArchivedStarts, {});
 		const archived = self.registry(SessionArchived);
+		const copied = self.registry(SessionCopied);
 		const failed = self.state(Failed);
 		/** Copies whose row is being made: their worker waits like one whose files are being copied. */
 		const preparing = self.writable<readonly string[]>([]);
@@ -542,6 +545,7 @@ export default defineFacet((host) => {
 			preparing.set([...preparing.value, copy]);
 			try {
 				const row = await copyOf(source, copy, mark, ctx);
+				for (const take of copied.value.values()) await take(source.id, copy, ctx);
 				await start();
 				return row;
 			} catch (error) {

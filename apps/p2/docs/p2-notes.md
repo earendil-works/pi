@@ -27,7 +27,7 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `P2_DATA_DIR` | `~/.pi/p2` | data directory: `catalog.sqlite`, `server/` and `sessions/<id>/` (see **Host stores and files**), `settings.json`, `models.json`, `envs.json`, `mcp.json`, `mcp-auth.json`, `auth.json`, `radius.json`, `forwards.json` |
+| `P2_DATA_DIR` | `~/.pi/p2` | data directory: `catalog.sqlite`, `server/` and `sessions/<id>/` (see **Host stores and files**), `settings.json`, `models.json`, `envs.json`, `projects.json`, `mcp.json`, `mcp-auth.json`, `auth.json`, `radius.json`, `forwards.json` |
 | `PORT` | `8788` | listen port (loopback only), so p2 never collides with pi-mobile on 8787 |
 | `P2_FAKE` | unset | `1`: the faux provider (`faux/faux-1`, echoes the prompt; `slow …` streams long; `rename-session <title>` calls the tool; `subagent`, `subagent-bad`, `subagent-answer`, `subagent-configure`, `subagent-send`, `subagent-archive`, `subagent-status` exercise subagents, `subagent <json>` calls the tool with those arguments, as do `team <json>`, `history_search|read|handoff <json>`, `location_envs|dirs|move <json>`, `tool_search <json>`, `terminal <json>` and `mcp__<server>__<tool> <json>`; `codemode` runs a script calling bash and read, `codemode-restart` one whose slow middle call a restart interrupts, `codemode <script>` runs that script; `artifact <json>` calls the artifact tool with those arguments; `json <text>` answers exactly `<text>`; a one-shot agent whose task is not `json …`/`slow…` answers a small value matching its schema) |
 | `P2_IDLE_MS` | `300000` | idle time before a session worker stops |
@@ -753,6 +753,44 @@ translated phone drawer and intercept chat taps.
     one connection each and closing only unused machines), `harness-cwd.test.ts` (version 1 registry placement),
     `envs.test.ts` (local to SSH and back in place, an own local location staying while the session moves to SSH,
     real sshd).
+- **Projects** (`plugins/projects`, owner, TUI only so far): `projects.json` names a codebase's places, one per
+  environment (README, Configuration). The server observes it as envs.json is observed (`ProjectService`: one observer,
+  the last valid projects and the reason the last read failed); `Projects` serves them to owners with `local`, the
+  server's hostname, which the TUI writes for this device.
+  - **Membership** is explicit, never derived from a path: `ProjectService` keeps session ID → project name in a
+    persisted document of the server's Chord store (`p2.project-sessions`), not in the session catalog, so the
+    catalog's schema and the `Sessions`/`Catalog` contracts stay as they are and dropping the plugin leaves only an
+    unused document. Written by `Projects.assign` (the TUI's project rows, before `Sessions.create`, refused for a name
+    projects.json lacks) and by copies: the sessions plugin's `SessionCopied` registry (called once a clone's or fork's
+    row exists) gives the copy its source's project. Nothing clears it; archived sessions keep theirs; a project removed
+    from projects.json leaves its name on its sessions.
+  - **Selector:** with an empty search (owner, active sessions, at least one project) the list is grouped: each project
+    row, its sessions below it, then "Other" ("+ New session" and the sessions of no project or of a removed one, the
+    latter dimmed with the old name). Within a group the order is the sort's (pinned first, then newest; relevance
+    equals recent without a query) and the threaded sort nests subagent conversations; rows show their env:cwd. The
+    grouped list has no scope (every session, Tab does nothing, no scope in the header or hints, owner decision); flat
+    lists (a search, archived sessions, guests, no projects) keep Tab's current-folder/all scope as before, except that
+    a search typed in the grouped list starts in "all" (that list showed every session).
+  - **Places** are never resolved on the server: the sessions TUI resolves them with `Envs.listDirectory` (which
+    expands `~` there and fails when the machine is unreachable). The project rows probe every place each time the
+    selector is shown (picks made with left/right reset then). A failed probe is classified from the error's message,
+    the only part that crosses the link (`placeFailure`): Node's and the pi-env daemon's `ENOENT`/`ENOTDIR` and the SSH
+    manager's "Working directory is not a directory" are `?` (no folder), "Environment … is not configured" is `✗`
+    "no such environment", anything else `✗` with its message; the selected row shows these reasons on a line below
+    it. Only `✓` places are used: Enter waits for the places in preference order and creates the session at the first
+    reachable one's absolute path.
+  - **`/move`** without an argument opens a picker (the `/envs` list overlay, `ListOverlay`) of all the project's
+    places in projects.json's order: the session's own one marked `•` current (not probed), the others probed when it
+    opens with the rows' marks and reasons. The cursor starts on the first other place not known to be unusable and
+    moves on as probes answer, until one is reachable or the reader moves it (`ListOverlay.select`). Enter on a `✓`
+    place runs `/move <it>`, on the current one says "Already here" and closes, other places are refused with a note;
+    Escape cancels. No project or no other place: the same errors, no picker.
+  - **`/move <env>`** takes the session's stored project (an error without one, or when projects.json no longer has
+    it) and its place on `<env>`, resolved there. The subfolder is kept when the cwd is below the project's place on
+    the session's current machine (`below`, textual, so that machine may be unreachable: `~/rel` matches `/rel` at
+    segment boundaries after a non-empty home, `~` matches everything with no subpath) and the target has it, else the
+    move goes to the target's root (with a notice when the subfolder is missing there). Then `/cd`'s flow (its
+    confirmation, `Sessions.relocate`). Tests: `projects.test.ts`, `tui-projects.test.ts`.
 - **Principals** (`src/runtime/principals.ts`, typed: `P2Principal`, with Chord's API typed by it in
   `src/runtime/chord.ts`): `owner` (trusted loopback `access: "local"`, authenticated Radius `access: "relay"`, or a
   signed owner cookie `access: "device"` with a device ID), `guest`, `worker` (stamped by the server's `session:` route
