@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3 step 0a: reloads without flashes</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A spec · p3 step 0a (Chord) · 2026-11-06</div>
+  <h1>Step 0a<br>No Flashes</h1>
+  <p class="subtitle">Four fixes in Chord so that applying a plugin change shows nothing but the change, and &quot;restart needed&quot; means a restart is needed</p>
+  <div class="cover-stats"><div class="stat"><b>4</b><span>fixes, all in Chord</span></div><div class="stat"><b>1</b><span>decision (holds that survive a remount)</span></div><div class="stat"><b>1 RTT</b><span>of zero or empty screen today after every Apply</span></div><div class="stat"><b>0</b><span>p3 code: p3 builds on this in step 0b</span></div></div>
+  <div class="cover-note"><p>The spec of step 0a, from the two reviews of the step-0 spec (<code>/tmp/p3-step0-review-adv.md</code>,
+<code>/tmp/p3-step0-review-design.md</code>) and the Chord code on branch <code>p3</code>. Fixes 2 to 4 are bugs against what design §21
+already promises; fix 1 changes how Chord&#39;s React and terminal bindings hold references and is the owner&#39;s decision.
+The loop these fixes polish is explained in the artifact &quot;p3: the reload loop&quot;.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#holds">I. Holds That Survive a Remount</a></li>
+<li><a href="#bugs">II. The Other Three</a></li>
+<li><a href="#done">III. Tests and Done</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Mario&#39;s counter says 3. An agent changes the <code>hello</code> plugin&#39;s page code and he taps Apply. For one round trip to the
+server the counter says 0, then 3 again. If he taps in that moment, nothing happens. If the agent had changed the
+shell, the whole page would have gone blank for that round trip. If the change was to a stylesheet, the page would
+have flashed unstyled. And after an <code>npm run build</code> somewhere in the checkout, the bar says &quot;restart needed&quot; although
+nothing p3 runs has changed, and keeps saying it until a restart.</p>
+<p>None of this is what design §21 promises (&quot;components remount; scroll, other plugins and page state stay&quot;; &quot;restart
+needed&quot; for base code only). Step 0a fixes it in Chord, before p3 builds on it: four fixes, one of them a decision.</p>
+<h3 id="four-things-to-know">Four things to know</h3>
+<ol class="findings">
+<li><strong>Holds survive a remount (decision).</strong> A page keeps one shared reference per object; a component that mounts
+takes the one that is already there, with its values, in its first render. The last component letting go releases
+it a second later. No zero, no blank, no lost tap; a save in flight when its component unmounts finishes.</li>
+<li><strong>Stylesheets swap after the new one loaded.</strong> The old sheet stays until the new one fired <code>load</code>.</li>
+<li><strong>The page&#39;s base bundle resolves packages as the server does.</strong> It is built with the server process&#39;s resolution
+conditions, like the worker base: in this checkout Chord&#39;s source, never a stale <code>dist/</code>.</li>
+<li><strong>&quot;Restart needed&quot; compares content.</strong> The mark is set only when a base file&#39;s bytes differ from what the base was
+built from, and clears when they are the same again.</li>
+</ol>
+</section>
+
+<section class="chapter" id="holds"><header class="opener"><div class="numeral">I</div><h2>Holds That Survive a Remount</h2><p class="lede">Why the counter shows 0 after an Apply, and the one change that fixes it on pages and in terminals.</p></header>
+<h3 id="the-problem">The problem</h3>
+<p><code>useHold</code> makes its reference in an effect, after the first render, and the reference has no values until the
+server&#39;s <code>bound</code> arrives:</p>
+<pre><code><span class="tk-c">// packages/chord/src/react/hooks.ts today</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">useHold</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">Contract</span>&gt;(<span class="tk-t">Type</span>: C, params: <span class="tk-t">ParamsOf</span>&lt;C&gt;): <span class="tk-t">Held</span>&lt;C&gt; | <span class="tk-k">undefined</span> {
+	<span class="tk-k">const</span> [held, setHeld] = <span class="tk-f">useState</span>&lt;...&gt;(<span class="tk-k">undefined</span>);
+	<span class="tk-f">useEffect</span>(() =&gt; {
+		<span class="tk-k">const</span> ref = host.<span class="tk-f">hold</span>(<span class="tk-t">Type</span>, params, BACKGROUND_CONTEXT);   <span class="tk-c">// a new request: no values until `bound`</span>
+		<span class="tk-f">setHeld</span>({ key, ref });
+		<span class="tk-k">return</span> () =&gt; ref.<span class="tk-f">release</span>();                                 <span class="tk-c">// the old component's: released at unmount</span>
+	}, [host, <span class="tk-t">Type</span>, key]);
+	<span class="tk-k">return</span> held?.ref;                                               <span class="tk-c">// undefined in the first render</span>
+}</code></pre>
+<p>An Apply of <code>hello</code> replaces its component with a new function, so React unmounts the old <code>HelloPart</code> and mounts the
+new one. The new one renders <code>undefined</code>, then a reference without values, then, one round trip later, the count. The
+old component&#39;s reference had the count all along and is released in the same commit. <code>useRegistry</code> has the same
+shape (<code>host.registry(R)</code> is a promise, read in an effect), which is why a shell reload blanks the page. A terminal
+component&#39;s <code>scope.hold</code> makes a new request the same way.</p>
+<figure class="fig"><svg viewBox="0 0 720 302" width="100%" role="img" aria-label="Today: an Apply of hello's page code. The new component starts from nothing." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="294" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="102" y="27" font-size="11" fill="#2a2723" text-anchor="middle">React</text><text x="102" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">the page</text><line x1="274" y1="52" x2="274" y2="294" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="274" y="27" font-size="11" fill="#2a2723" text-anchor="middle">old HelloPart</text><text x="274" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">ref A: count 3</text><line x1="446" y1="52" x2="446" y2="294" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="446" y="30" font-size="11" fill="#2a2723" text-anchor="middle">new HelloPart</text><line x1="618" y1="52" x2="618" y2="294" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="618" y="27" font-size="11" fill="#2a2723" text-anchor="middle">server</text><text x="618" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Hello</text><line x1="102" y1="78" x2="443" y2="78" stroke="#7b7468" marker-end="url(#f1m)"/><text x="274" y="72" font-size="10" fill="#2a2723" text-anchor="middle">render: useHold: undefined -&gt; shows 0</text><line x1="102" y1="110" x2="271" y2="110" stroke="#7b7468" marker-end="url(#f1m)"/><text x="188" y="104" font-size="10" fill="#2a2723" text-anchor="middle">unmount: ref A released</text><line x1="618" y1="142" x2="277" y2="142" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="446" y="136" font-size="10" fill="#2a2723" text-anchor="middle">(release A)</text><line x1="102" y1="174" x2="443" y2="174" stroke="#7b7468" marker-end="url(#f1m)"/><text x="274" y="168" font-size="10" fill="#2a2723" text-anchor="middle">effect: host.hold -&gt; ref B (no values)</text><line x1="446" y1="206" x2="615" y2="206" stroke="#7b7468" marker-end="url(#f1m)"/><text x="532" y="200" font-size="10" fill="#2a2723" text-anchor="middle">hold B</text><line x1="618" y1="238" x2="449" y2="238" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="532" y="232" font-size="10" fill="#2a2723" text-anchor="middle">bound B: count 3</text><line x1="102" y1="270" x2="443" y2="270" stroke="#7b7468" marker-end="url(#f1m)"/><text x="274" y="264" font-size="10" fill="#2a2723" text-anchor="middle">render: shows 3</text></svg><figcaption><span class="fignum">Figure 1.</span> Today: an Apply of hello&#39;s page code. The new component starts from nothing.</figcaption></figure>
+<h3 id="the-fix">The fix</h3>
+<p>Each host keeps a table of <strong>shared holds</strong>: one reference per (type, contract version, params by value), counted by
+the components using it. A component reads the table during render and takes the reference it finds; its effect adds
+its count; its cleanup removes it. When the count reaches zero, the reference is released <strong>after a linger of one
+second</strong>, unless a component takes it again before. React components and terminal scopes use the same table (it lives
+in the portable <code>src/surfaces/</code>, beside page state).</p>
+<pre><code><span class="tk-c">// packages/chord/src/surfaces/shared-holds.ts (new): one per host, as page state is</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">sharedHold</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">Contract</span>&gt;(host: <span class="tk-t">Host</span>&lt;<span class="tk-t">Principal</span>&gt;, <span class="tk-t">Type</span>: C, params: <span class="tk-t">ParamsOf</span>&lt;C&gt;): <span class="tk-t">SharedHold</span>&lt;C&gt;;
+<span class="tk-k">type</span> <span class="tk-t">SharedHold</span>&lt;C&gt; = {
+	<span class="tk-c">/** The reference if one is held now (by a component or a lingering release): readable during a render. */</span>
+	<span class="tk-f">peek</span>(): <span class="tk-t">Held</span>&lt;C&gt; | <span class="tk-k">undefined</span>;
+	<span class="tk-c">/** Holds (making the reference when none is held) and counts the caller; the returned function lets go. */</span>
+	<span class="tk-f">acquire</span>(): () =&gt; <span class="tk-k">void</span>;
+};
+
+<span class="tk-c">// packages/chord/src/react/hooks.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">useHold</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">Contract</span>&gt;(<span class="tk-t">Type</span>: C, params: <span class="tk-t">ParamsOf</span>&lt;C&gt;): <span class="tk-t">Held</span>&lt;C&gt; | <span class="tk-k">undefined</span> {
+	<span class="tk-k">const</span> shared = <span class="tk-f">sharedHold</span>(<span class="tk-f">useHost</span>(), <span class="tk-t">Type</span>, params);           <span class="tk-c">// the table's entry for this key, made on demand</span>
+	<span class="tk-k">const</span> held = <span class="tk-f">useSyncExternalStore</span>(shared.subscribe, shared.peek, shared.peek);
+	<span class="tk-f">useEffect</span>(() =&gt; shared.<span class="tk-f">acquire</span>(), [shared]);                  <span class="tk-c">// count while mounted; let go at unmount</span>
+	<span class="tk-k">return</span> held;
+}
+
+<span class="tk-c">// packages/chord/src/tui/scope.ts</span>
+<span class="tk-f">hold</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">Contract</span>&gt;(<span class="tk-t">Type</span>: C, params: <span class="tk-t">ParamsOf</span>&lt;C&gt;): <span class="tk-t">Held</span>&lt;C&gt; {
+	<span class="tk-k">const</span> shared = <span class="tk-f">sharedHold</span>(<span class="tk-k">this</span>.#host, <span class="tk-t">Type</span>, params);
+	<span class="tk-k">this</span>.#releases.<span class="tk-f">push</span>(shared.<span class="tk-f">acquire</span>());
+	<span class="tk-k">return</span> shared.<span class="tk-f">peek</span>()!;
+}</code></pre>
+<p><code>useRegistry</code> gets the same treatment, simpler: once a host has resolved a registry&#39;s value, it keeps the
+<code>RegistryValue</code> (a live view that follows the registry across reloads of its provider) in a per-host table, so every
+later mount reads it in its first render. Only the very first use on a page waits for it.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 224" width="100%" role="img" aria-label="With the fix: the new component takes the reference the old one held, values included." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="216" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="102" y="27" font-size="11" fill="#2a2723" text-anchor="middle">React</text><text x="102" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">the page</text><line x1="274" y1="52" x2="274" y2="216" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="274" y="27" font-size="11" fill="#2a2723" text-anchor="middle">shared holds</text><text x="274" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Hello {}: ref A, count 1</text><line x1="446" y1="52" x2="446" y2="216" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="446" y="30" font-size="11" fill="#2a2723" text-anchor="middle">old HelloPart</text><line x1="618" y1="52" x2="618" y2="216" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="618" y="30" font-size="11" fill="#2a2723" text-anchor="middle">new HelloPart</text><g class="step edge" style="--i:1"><line x1="102" y1="78" x2="615" y2="78" stroke="#7b7468" marker-end="url(#f2m)"/><text x="360" y="72" font-size="10" fill="#2a2723" text-anchor="middle">render: peek -&gt; ref A: shows 3</text></g><g class="step edge" style="--i:2"><line x1="102" y1="110" x2="443" y2="110" stroke="#7b7468" marker-end="url(#f2m)"/><text x="274" y="104" font-size="10" fill="#2a2723" text-anchor="middle">cleanup: let go (count 0, linger starts)</text></g><g class="step edge" style="--i:3"><line x1="102" y1="142" x2="615" y2="142" stroke="#7b7468" marker-end="url(#f2m)"/><text x="360" y="136" font-size="10" fill="#2a2723" text-anchor="middle">effect: acquire (count 1, linger cancelled)</text></g><g class="step" style="--i:4"><rect x="198" y="160" width="152" height="36" rx="3" fill="#f4eee2" stroke="#c2b18c"/><text x="274" y="174" font-size="10" fill="#5b5549" text-anchor="middle">no new request, no round</text><text x="274" y="187" font-size="10" fill="#5b5549" text-anchor="middle">trip</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> With the fix: the new component takes the reference the old one held, values included.</figcaption></figure>
+<h3 id="why-one-second-and-what-else-it-fixes">Why one second, and what else it fixes</h3>
+<ul>
+<li><strong>The remount itself needs no linger</strong>: React renders the new component before it runs the old one&#39;s cleanup, so the
+reference is still counted when the new one peeks. The linger covers the orders where cleanup comes first: a
+component that unmounts and mounts again a moment later (a list re-keyed, a route switched back, a plugin&#39;s script
+arriving a frame after its contribution left), and a terminal redraw.</li>
+<li><strong>A save in flight survives its component.</strong> Releasing a reference rejects the calls made through it (design §7).
+Today a component that sends a message and unmounts (a remount by a reload, a navigation) aborts its own send. With
+the linger, a call has a second to finish after the last component let go; this is the &quot;lost save on remount&quot; the
+reload reviewers found earlier (chord state, open item 3), solved by the same table.</li>
+<li><strong>Fewer requests</strong>: two components showing the same object share one reference, one hold over the link.</li>
+</ul>
+<p>The cost: a reference stays held one second after it is last used (its object lingers on the server that long, as
+<code>linger</code> does for provider objects), and one map entry per held key.</p>
+<p><strong>Alternatives.</strong> (B) Keep per-component holds and add a one-second release delay to each: the new component still
+starts from nothing (its own new request), so the flash stays; only the lost save is fixed. (C) The page keeps the last
+values per type and params in page state and shows them until the new reference binds: a second copy of state beside
+the reference, stale by design, and the tap in the gap still has no reference to call.</p>
+</section>
+
+<section class="chapter" id="bugs"><header class="opener"><div class="numeral">II</div><h2>The Other Three</h2><p class="lede">Bugs against what design §21 already says: no decision, a test each.</p></header>
+<h3 id="stylesheets-swap-after-the-new-one-loaded">Stylesheets swap after the new one loaded</h3>
+<p><code>syncStylesheets</code> (<code>src/web/scripts.ts</code>) removes the plugin&#39;s old <code>&lt;link&gt;</code> and appends the new one in the same
+moment, so between the removal and the new sheet&#39;s download the plugin&#39;s components are unstyled. Fix: append the new
+link first; remove the old one when the new one fires <code>load</code> (or <code>error</code>, reported). Two sheets of one plugin apply for
+that moment; the new one comes later in the document, so it wins where they differ.</p>
+<h3 id="the-page-39-s-base-bundle-resolves-as-the-server-does">The page&#39;s base bundle resolves as the server does</h3>
+<p><code>buildBase</code> (<code>src/node/surfaces/bundle.ts</code>) bundles with esbuild&#39;s default conditions. In this monorepo
+<code>@earendil-works/chord</code> then resolves to its built <code>dist/</code>, while the server (started with <code>--conditions=source</code>)
+runs Chord&#39;s source. Two consequences: the page may run other Chord code than the server, and every <code>npm run build</code>
+touches <code>dist/</code> files the base was built from, setting the restart mark. The worker base already solves this
+(<code>conditionsOf(execArgv)</code> in <code>src/node/workers/base.ts</code>). Fix: the surfaces&#39; base bundles use the server process&#39;s own
+conditions (<code>process.execArgv</code>), the same helper, moved where both use it.</p>
+<h3 id="quot-restart-needed-quot-compares-content">&quot;Restart needed&quot; compares content</h3>
+<p>The watcher (<code>src/node/plugins/watcher.ts</code>) sets <code>base</code> on any file event under base code and never clears it. A
+formatter that rewrites a file unchanged, an editor&#39;s swap file, <code>git checkout</code> of a branch and back: all say &quot;restart
+needed&quot; until a restart. Fix: when the kit hands the watcher its base files, it records each file&#39;s content hash (the
+base bundles&#39; inputs from esbuild&#39;s metafile, the app&#39;s <code>base</code> files and directories); an event re-hashes the file
+and <code>base</code> is true while any file differs from its recorded hash (or a recorded file is gone, or a new file appears in
+a base directory that a bundle would now import: a new file in <code>src/</code> counts as changed). Back to the recorded bytes,
+the mark clears.</p>
+</section>
+
+<section class="chapter" id="done"><header class="opener"><div class="numeral">III</div><h2>Tests and Done</h2><p class="lede">What the build delivers.</p></header>
+<ul>
+<li><code>src/surfaces/shared-holds.ts</code> with tests: peek during a remount returns the held reference; the count; the linger
+(released after one second, kept when acquired within it); a call in flight finishing after its component let go;
+params by value; a GC test of the table (an entry goes with its release).</li>
+<li><code>useHold</code>, <code>useRegistry</code> and <code>TuiScope.hold</code> on the table; the browser test (<code>test/node/react/hooks.test.ts</code>) gets a
+frame recorder: a component counting its renders&#39; values shows no <code>undefined</code> and no initial value after a remount
+through a plugin reload; the same for the terminal scope.</li>
+<li><code>syncStylesheets</code> swaps after <code>load</code>, tested in the browser with a slow stylesheet.</li>
+<li><code>buildBase</code> uses the server&#39;s conditions; a test that a base built with <code>--conditions=source</code> lists source files as
+inputs, not <code>dist/</code>.</li>
+<li>The watcher&#39;s <code>base</code> by content: tests for a rewrite with equal bytes (no mark), a change and its revert (mark, then
+clear), a new file in a base directory (mark).</li>
+<li><code>npm run check</code>; Chord&#39;s suites that touch these (react, tui, web, surfaces, plugins, reload, the app kit); the
+reload suite (<code>test/node/reload/</code>) gets a step that applies a page plugin and asserts no frame without the value;
+design §21 (&quot;What a user sees during a reload&quot;), §23 and the READMEs updated; a decision entry for fix 1.</li>
+</ul>
+<p>Then step 0b builds p3&#39;s base, <code>hello</code> and the reload suite on top.</p>
+</section>
+
+<p class="colophon">p3 step 0a · spec, first edition · 2026-11-06 · sources: src/react/hooks.ts, src/tui/scope.ts, src/web/scripts.ts, src/node/surfaces/bundle.ts, src/node/plugins/watcher.ts, design §21, §23</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>
