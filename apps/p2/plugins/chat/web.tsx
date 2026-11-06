@@ -986,7 +986,8 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 						tools,
 						shown.working,
 						known,
-						detail === 1 || detail === 2 || detail === 4 ? detail : 3,
+						// Anything else: the default (`transcriptRows`' `DEFAULT_DETAIL`).
+						detail === 1 || detail === 2 || detail === 3 || detail === 4 ? detail : undefined,
 					)
 				: undefined,
 		[shown, tools, known, detail],

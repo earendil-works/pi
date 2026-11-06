@@ -41,8 +41,9 @@ const TOOLS: ToolActivityTable = new Map<string, ToolActivity>([
 	["edit", { summary: edited }],
 	["write", { summary: edited }],
 ]);
+/** The turn's parts at detail 3 (thinking and texts in the transcript, runs of calls on wheels), which most tests check. */
 const chatItems = (items: readonly Item[], working: boolean, known = true) =>
-	chatItemsWith(items, working, known, TOOLS);
+	chatItemsWith(items, working, known, TOOLS, 3);
 
 const user = (key: string, text: string): Item => ({ type: "user", key, text, images: [], files: [], entryId: 1 });
 
@@ -435,9 +436,14 @@ test("settings.json's detail: how much of a turn shows in the transcript, the re
 	);
 	assert.deepEqual(kinds(two[1] as Activity), ["thought"]);
 	assert.deepEqual(kinds(two[3] as Activity), ["bash", "artifact"]);
-	// 3, the default: as without the setting.
+	// 2 is the default: as without the setting.
 	const shape = (items: ReturnType<typeof at>) => items.map((item) => [item.type, item.key]);
-	assert.deepEqual(shape(at(3)), shape(chatItems(turn(), false)));
+	assert.deepEqual(shape(chatItemsWith(turn(), false, true, TOOLS)), shape(two));
+	// 3: the thought collapsed in the transcript, only the calls on a wheel.
+	assert.deepEqual(
+		shape(at(3)).map(([type]) => type),
+		["user", "thought", "text", "activity", "answer", "results"],
+	);
 	assert.equal((at(3)[3] as Activity).entries, undefined);
 	// 4: the thought open, the calls as rows.
 	const four = at(4);

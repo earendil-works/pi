@@ -1452,8 +1452,8 @@ translated phone drawer and intercept chat taps.
   turn's last text becomes its answer only once the agent stopped: while it works a text may still turn out to be a
   note (a call follows), so it stays on the wheel, and the answer arrives in the transcript once, fading in as new rows
   do, instead of showing and then jumping back onto the wheel.
-  2: the agent's texts in the transcript; thinking and calls on a wheel between them. 3 (default): as above, thinking
-  collapsed and only runs of calls on wheels. 4: thinking open in full and each call its own row (the sheet's row:
+  2 (default, owner decision after trying it): the agent's texts in the transcript; thinking and calls on a wheel
+  between them. 3: as above, thinking collapsed and only runs of calls on wheels. 4: thinking open in full and each call its own row (the sheet's row:
   icon, tool and argument, state), opening its detail alone; no wheels (a waiting wheel still stands for a run before
   its first call). `chatItems`' `detail` merges what goes on the wheels into the runs of calls (`wheels` in `model.ts`,
   `WheelEntry`); the summary of a wheel with thinking leads with "Thought". `activity-model.test.ts` covers the

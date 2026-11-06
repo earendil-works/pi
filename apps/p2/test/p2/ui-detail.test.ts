@@ -48,7 +48,10 @@ describe("detail in the browser", { skip: !browserTests }, () => {
 		const set = (detail: number) => writeFileSync(settings, JSON.stringify({ ...base, detail }));
 		await browser.metrics(390, 844);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
-		// 3, the default: the text, the script's wheel, the thinking collapsed, the answer.
+		// 2, the default: the text in the transcript, the call and the thinking on the wheel after it.
+		await browser.wait(`${ROWS} === 'text,activity,answer'`);
+		// 3: the text, the script's wheel, the thinking collapsed, the answer.
+		set(3);
 		await browser.wait(`${ROWS} === 'text,activity,thought,answer'`);
 		// 1: only the answer; the text, the call and the thinking on one wheel, listed in its sheet.
 		set(1);

@@ -49,8 +49,8 @@ const schema = obj({
 	codemode: opt(bool()),
 	/**
 	 * p2 addition: how much of a turn the web chat shows, from 1 (only the answer; everything else on one wheel per
-	 * turn) to 4 (thinking in full and each tool call as a row; no wheels). Default 3: the agent's texts and thinking
-	 * (collapsed) in the transcript, each run of tool calls on a wheel. See `Detail` in src/web/activity/model.ts.
+	 * turn) to 4 (thinking in full and each tool call as a row; no wheels). Default 2: the agent's texts in the
+	 * transcript, thinking and tool calls on a wheel between them. See `Detail` in src/web/activity/model.ts.
 	 */
 	detail: opt(int({ minimum: 1, maximum: 4 })),
 	/**

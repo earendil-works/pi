@@ -13,12 +13,13 @@ export type Step = { id: string; tool: ToolView; status: StepStatus };
 /**
  * How much of a turn the transcript shows (settings.json `detail`), the rest on its wheels:
  * 1. only the answer and its results; the turn's thinking, texts and calls on one wheel;
- * 2. the agent's texts between its calls too; thinking and calls on a wheel between them;
- * 3. thinking too, collapsed to a line; only runs of calls on wheels (the default);
+ * 2. the agent's texts between its calls too; thinking and calls on a wheel between them (the default);
+ * 3. thinking too, collapsed to a line; only runs of calls on wheels;
  * 4. thinking in full, and each call as its own row: no wheels.
  */
 export type Detail = 1 | 2 | 3 | 4;
-export const DEFAULT_DETAIL: Detail = 3;
+/** Owner decision: 2 (texts in the transcript, thinking and calls on wheels between them). */
+export const DEFAULT_DETAIL: Detail = 2;
 /** A thinking block or a text on a wheel (detail 1 and 2). */
 export type Words = { kind: "thought" | "text"; id: string; text: string; live: boolean };
 /** What a wheel rolls through, in order: its tool calls, and at detail 1 and 2 thinking (and texts) among them. */
