@@ -36,6 +36,23 @@ For the Vercel project using `mvp/` as its Root Directory, **Include source file
 - **AgentOS:** execution environment (the agent's "computer"), not an authority source.
 - **Human:** final authority for consequential actions.
 
+## Platforms and services
+
+What each outside platform is for, what it sees, and who can reach it. Setting names only; values live in Vercel and are never committed. "Owner-set" means only the owner sets it. Plan limits are as of 2026-11-05.
+
+| Platform | Used for | Data it holds or sees | Settings (Vercel) | Who can reach it | Plan and limits | Status |
+|---|---|---|---|---|---|---|
+| **Vercel** (project `nlt-pi-mvp`) | Hosting the page and the `api/` functions; Vercel Authentication in front of **all** deployments; runtime logs | Requests; one log line per sign-in failure (`nlt-signin`) and per agent turn (`agent_turn_done`, reason redacted); never prompts or model replies | Owner-set switches: `NLT_AGENT_ENABLED`, `NLT_AGENT_EGRESS_ALL`, `NLT_AGENT_MODELS`, `NLT_AGENT_DEFAULT_MODEL`, `NLT_HISTORY_ENABLED` | The owner (dashboard and logs). Visitors only after Vercel login. | Hobby; runtime logs kept about 1 hour | In use |
+| **Sign in with Vercel** | The owner's login to the app (`/api/auth/*`) | The owner's Vercel id (`sub`), name and username, in a signed 8-hour session cookie | `VERCEL_APP_CLIENT_ID`, `VERCEL_APP_CLIENT_SECRET`, `VERCEL_APP_REDIRECT_URI`, `NLT_SESSION_SECRET`, `NLT_OWNER_VERCEL_SUBS` (allow-list) | The auth functions only | The app's permissions must allow `openid`, `email` and `profile`, or sign-in fails with `invalid_scope` | In use |
+| **Vercel AI Gateway** | The model for agent turns: free, tool-capable models only | Each allowed turn's prompt and any file or command output the agent reads. The provider may retain or train on it (see the chat page's data notice). | `NLT_AGENT_MODELS`, `NLT_AGENT_DEFAULT_MODEL`. The credential is the Vercel OIDC token, read inside the turn. | `/api/agent` and `/api/models` | Free tier: the catalog lists several free models, but some answer 403 on this plan. Only `nvidia/nemotron-3.5-lightning-free` works, so it is the allow-list and the default. | In use |
+| **Vercel Sandbox** | Where the agent's bash, read, write and edit tools run: one reused sandbox, workspace `/vercel/sandbox` | Files the agent creates or reads there | `NLT_AGENT_EGRESS_ALL` (unset means only package registries and GitHub are reachable) | The agent's tools only. The server's settings and secrets are never passed in. | Usage counts against the Vercel plan | In use when `NLT_AGENT_ENABLED=1` |
+| **Neon** (Postgres, project `curly-mouse-57310048`, us-east-1) | Saved chat history (`chat_conversations`, `chat_messages`) | The owner's conversation titles and messages. A message the safety check blocks is stored as a marker with no text. | `DATABASE_URL` and the other `POSTGRES_*` / `PG*` settings from the integration; switch `NLT_HISTORY_ENABLED` | `/api/conversations` only. Not the agent or the model. | Free: 1 GB, 100 compute-hours a month. Deleted rows stay restorable for 6 hours (point-in-time restore). | Chat history arrives with nlt-pi#35 and runs once `NLT_HISTORY_ENABLED=1`. Neon Auth (`NEON_AUTH_*`) and Neon realtime (`NEON_REALTIME_*`) are installed but not used. |
+| **Mem0** (store `nlt-pi-mvp-memo`) | Planned: the agent's long-term memory (facts and preferences recalled across conversations), with its own design | Nothing yet | `MEM0_API_KEY`, `MEM0_ORG_ID`, `MEM0_PROJECT_ID`, `MEM0_BASE_URL` | Nothing in the code reads these | Hobby: 10,000 memories, 1,000 retrieval calls a month | Installed, not used |
+| **GitHub Actions** | `NLT-Pi Governance Validation` on every PR; code scanning (CodeQL, default setup) | The repository | none | GitHub | — | In use |
+| **PR review bots** | CodeRabbit (automatic on non-draft PRs), Codex (the owner's account), Kilo (reviews the owner runs and posts), Vercel bot (preview links) | The PR diff | none | GitHub | CodeRabbit's free OSS reviews and Codex usage are rate-limited | In use. Reviews advise; they do not approve. |
+
+The agent and the model never hold a database, Mem0 or sign-in credential. The sandbox gets no host environment. Its network is limited to package registries and GitHub unless the owner sets `NLT_AGENT_EGRESS_ALL=1`.
+
 ## Integration sequence
 
 1. Establish the application surface and health/status observability.
