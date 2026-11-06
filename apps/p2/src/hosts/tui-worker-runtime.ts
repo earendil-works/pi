@@ -2,6 +2,7 @@
 import type { Link, PluginFacet } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
+	type Component,
 	type ProgramStatus,
 	setCapabilityOverrides,
 	setKittyProtocolActive,
@@ -77,6 +78,20 @@ class BridgeTerminal implements Terminal {
 }
 
 /**
+ * pi-tui's alternate screen, except that a click inside the layout keeps keyboard focus on the runtime. pi-tui focuses
+ * the clicked component (an editor click answers `focus: true`); the runtime is the layout's focus owner (commands
+ * first, then the active screen), so a focused editor would bypass Escape, Ctrl+C, Ctrl+D, Ctrl+T and every other
+ * command, and keep getting keys after the screen changed. Clicks that pi-tui maps to an overlay keep that overlay.
+ */
+class RuntimeAltScreen extends TuiAltScreen {
+	focusOwner: Component | undefined;
+	protected override resolveMouseFocusTarget(component: Component): Component {
+		const target = super.resolveMouseFocusTarget(component);
+		return target === component ? (this.focusOwner ?? target) : target;
+	}
+}
+
+/**
  * The host's parent link, relayed by the launcher: its messages travel as `link` bridge messages to the launcher's
  * socket and back. Until `activate` (the launcher's first activation) what is sent waits. Chord closing it (its
  * heartbeat found the socket silent, a protocol error) posts `linkClosed`: the launcher terminates that socket, and
@@ -141,7 +156,7 @@ export async function setupTui(bridge: Bridge, facets: readonly PluginFacet<P2Pr
 	// launcher policy turns it off. Only the clipboard write differs: pi-tui's OSC 52 would be filtered, so its
 	// `copySelection` hook asks the launcher, which accepts only right after it saw the release itself.
 	let requestCopy: (text: string) => Promise<boolean | string> = async () => "Copy unavailable";
-	const tui = new TuiAltScreen(terminal, true, undefined, {
+	const tui = new RuntimeAltScreen(terminal, true, undefined, {
 		mouse: bridge.input.mouse === true,
 		wheelScrollLines: "auto",
 		copySelection: (text) => requestCopy(text),
@@ -179,6 +194,7 @@ export async function setupTui(bridge: Bridge, facets: readonly PluginFacet<P2Pr
 	// Fullscreen layout (P0c): the runtime's root is the layout; the runtime itself stays the focused input target.
 	tui.setLayoutRoot(runtime.root);
 	tui.setFocus(runtime);
+	tui.focusOwner = runtime;
 	runtime.onExit = () => bridge.send({ kind: "exit" });
 	runtime.onReload = () => bridge.send({ kind: "reload" });
 	// Launcher C requests: answered by the launcher after its own consent UI (section 3.3).

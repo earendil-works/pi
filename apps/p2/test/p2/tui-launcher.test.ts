@@ -241,6 +241,60 @@ test(
 	},
 );
 
+test(
+	"a click on the editor keeps keys on the runtime: Ctrl+C still clears and the screen still switches",
+	{ skip: !supported, timeout: 60000 },
+	async (t) => {
+		const fixture = await startFixture();
+		t.after(() => fixture.close());
+		const url = new URL(`http://127.0.0.1:${fixture.server.port}`);
+		const token = (await fixture.browser().hold(Devices, {}, BACKGROUND_CONTEXT).token(BACKGROUND_CONTEXT)).token;
+		const terminal = new VirtualTerminal(100, 30);
+		const client = await startTuiClient({
+			terminal,
+			url,
+			credentials: await claimOwner(url, token, {}),
+			mouse: "on",
+			pollMs: 60000,
+			colorQueryMs: 10,
+			capabilities: { trueColor: true, platform: "linux", windowsKeys: false },
+		});
+		t.after(() => client.close());
+		const viewport = () => terminal.flushAndGetViewport();
+		const screen = async () => (await viewport()).join("\n");
+		const draft = async () => {
+			const snapshot = (await client.snapshot()) as Snapshot;
+			return snapshot.drafts.find(([id]) => id === `${snapshot.session}#1`)?.[1];
+		};
+		await poll(async () => (await screen()).includes("New session"), 15000, "bundled sessions surface");
+		terminal.sendInput("\r");
+		terminal.sendInput("\x01");
+		terminal.sendInput("\x0b");
+		for (const char of fixture.workspace) terminal.sendInput(char);
+		terminal.sendInput("\r");
+		await poll(async () => ((await client.snapshot()) as Snapshot).screen === "chat");
+		await poll(async () => !(await screen()).includes("Connecting conversation"));
+		for (const char of "clicked draft") terminal.sendInput(char);
+		await poll(async () => (await draft()) === "clicked draft");
+		// An SGR click on the editor's line: pi-tui would focus the editor itself, bypassing the runtime's commands.
+		const row = (await viewport()).findIndex((line) => line.includes("clicked draft")) + 1;
+		assert(row > 0);
+		terminal.sendInput(`\x1b[<0;4;${row}M`);
+		terminal.sendInput(`\x1b[<0;4;${row}m`);
+		terminal.sendInput("!");
+		await poll(async () => (await draft())?.includes("!") === true);
+		// Ctrl+C (kitty encoding; the virtual terminal reports the protocol) is app.clear.
+		terminal.sendInput("\x1b[99;5u");
+		await poll(async () => (await draft()) === "", 5000, "Ctrl+C clears the editor after a click");
+		// Ctrl+R (p2.sessions) opens the sessions screen, whose search gets the next keys, not the chat draft.
+		terminal.sendInput("\x1b[114;5u");
+		await poll(async () => ((await client.snapshot()) as Snapshot).screen === "sessions");
+		terminal.sendInput("x");
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		assert.equal(await draft(), "");
+	},
+);
+
 test("TUI admission matches web: strangers refused, associated owners and share guests admitted", async (t) => {
 	const fixture = await startFixture({ allowedHosts: ["tui.test"] });
 	t.after(() => fixture.close());
