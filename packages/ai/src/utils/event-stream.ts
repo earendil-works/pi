@@ -59,6 +59,11 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 			this.resolveFinalResult(this.extractResult(event));
 		}
 
+		// Terminal events also release producers waiting on queue capacity. Consumers
+		// can await result() without draining the remaining progress events.
+		if (this.done) {
+			while (this.waitingForCapacity.length > 0) this.waitingForCapacity.dequeue()!();
+		}
 		// Deliver to waiting consumer or queue it
 		const waiter = this.waiting.dequeue();
 		if (waiter) {
@@ -76,12 +81,26 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 	 * A producer that uses this API (rather than synchronous push()) is backpressured
 	 * until the consumer dequeues an event. Its producer must await the returned promise.
 	 */
-	async pushWithBackpressure(event: T, maxBuffered = 128): Promise<void> {
+	async pushWithBackpressure(event: T, maxBuffered = 128, signal?: AbortSignal): Promise<void> {
 		if (!Number.isSafeInteger(maxBuffered) || maxBuffered < 1) {
 			throw new RangeError("maxBuffered must be a positive integer");
 		}
+		if (signal?.aborted) throw new Error("Event stream publication aborted");
 		while (this.activeIterators > 0 && !this.done && this.queue.length >= maxBuffered) {
-			await new Promise<void>((resolve) => this.waitingForCapacity.enqueue(resolve));
+			await new Promise<void>((resolve, reject) => {
+				const wake = () => {
+					signal?.removeEventListener("abort", onAbort);
+					resolve();
+				};
+				const onAbort = () => {
+					signal?.removeEventListener("abort", onAbort);
+					reject(new Error("Event stream publication aborted"));
+				};
+				signal?.addEventListener("abort", onAbort, { once: true });
+				this.waitingForCapacity.enqueue(wake);
+				if (signal?.aborted) onAbort();
+			});
+			if (signal?.aborted) throw new Error("Event stream publication aborted");
 		}
 		this.push(event);
 	}

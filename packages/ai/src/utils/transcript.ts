@@ -142,19 +142,11 @@ export function toToolDeclaration(tool: Tool): Tool {
  */
 export function declarationsEqual(left: Tool, right: Tool): boolean {
 	if (left === right) return true;
-	// Serializing the schema once has the same JSON semantics as the old
-	// stringify/parse/stringify round-trip, without allocating cloned schemas.
-	return JSON.stringify({
-		name: left.name,
-		description: left.description,
-		parameters: left.parameters,
-		...(left.constrainedSampling === undefined ? {} : { constrainedSampling: left.constrainedSampling }),
-	}) === JSON.stringify({
-		name: right.name,
-		description: right.description,
-		parameters: right.parameters,
-		...(right.constrainedSampling === undefined ? {} : { constrainedSampling: right.constrainedSampling }),
-	});
+	// Normalize each schema at the root before comparing. A schema toJSON(key)
+	// can serialize differently at root ("") and under "parameters"; direct
+	// serialization of the tool object therefore is not equivalent to the
+	// persisted/transmitted tool declaration.
+	return JSON.stringify(toToolDeclaration(left)) === JSON.stringify(toToolDeclaration(right));
 }
 
 export interface ToolStateChanges {

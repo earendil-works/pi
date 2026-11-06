@@ -59,7 +59,7 @@ export function agentLoop(
 		context,
 		config,
 		async (event) => {
-			await stream.pushWithBackpressure(event);
+			await stream.pushWithBackpressure(event, 128, signal);
 		},
 		signal,
 		streamFn,
@@ -99,7 +99,7 @@ export function agentLoopContinue(
 		context,
 		config,
 		async (event) => {
-			await stream.pushWithBackpressure(event);
+			await stream.pushWithBackpressure(event, 128, signal);
 		},
 		signal,
 		streamFn,
@@ -574,6 +574,7 @@ async function executeToolCallsMixed(
 			continue;
 		}
 		await flushParallel();
+		if (signal?.aborted) break;
 		const batch = await executeToolCallsSequential(context, assistantMessage, [call], config, signal, emit);
 		batches.push(batch);
 		messages.push(...batch.messages);
