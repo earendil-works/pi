@@ -1,14 +1,17 @@
 // Session worker host: one process per running session, forked by the server's workers component. Its host sits at the
-// session's address, connected to the server over IPC, and loads the worker facets the server shipped beside the core
-// facet, which owns the session's Durable Harness.
+// session's address on the session's Chord store (`<data>/sessions/<id>/store.sqlite`), connected to the server over
+// IPC, and loads the worker facets the server shipped beside the core facet, which owns the session's Durable Harness
+// (its records in that store), and the kit's `Files` over the session's files.
 
 import { isChordError } from "@earendil-works/chord";
+import { filesFacet } from "@earendil-works/chord/app/files";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { workerMain } from "@earendil-works/chord/workers/child";
 import { registerLazyBedrockProvider } from "@earendil-works/pi-ai/lazy-bedrock-provider";
 import { registerLazyOAuthFlows } from "@earendil-works/pi-ai/lazy-oauth";
 import { createHost, hostErrorText } from "../runtime/chord.ts";
 import { configureFetch } from "../runtime/fetch.ts";
+import { hostFiles, openHostStore, sessionDirectory } from "../runtime/host-dirs.ts";
 import { captureProcessLogs, processLogs } from "../runtime/logs.ts";
 import { HOST, SERVER } from "../runtime/principals.ts";
 import { follow } from "../runtime/refs.ts";
@@ -37,9 +40,16 @@ workerMain(
 		// Keep a redacted diagnostics copy without changing the worker's actual stdout/stderr writes.
 		const stopLogs = captureProcessLogs(`session:${init.values.session.id}`);
 		onClose(() => stopLogs());
+		// The session's directory: its store (Durable's records, its `Files` index) and its files. The outbox is off
+		// until p2 syncs (turning it on later starts it at the current commit; a first sync uploads an archive).
+		// Closed after the host (closers run in reverse).
+		const dir = sessionDirectory(init.dataDir, init.values.session.id);
+		const store = await openHostStore(dir, { outbox: false }, context);
+		onClose(() => store.close(BACKGROUND_CONTEXT));
 		const host = createHost({
 			address,
 			principal: HOST,
+			store,
 			onError: (error) => {
 				if (!(error.kind === "activation_failed" && isChordError(error.failure.error, "released")))
 					console.error(`p2 worker: ${hostErrorText(error)}`, error);
@@ -62,8 +72,10 @@ workerMain(
 				core: [
 					{
 						name: "@p2/core",
-						facet: workerCore(init, liveness, location, (fn, rootContext) => host.root(fn, rootContext)),
+						facet: workerCore(init, liveness, location, store, (fn, rootContext) => host.root(fn, rootContext)),
 					},
+					// The session's files (the kit's `Files`): `<data>/sessions/<id>/files/`.
+					{ name: "chord.app.files", facet: filesFacet(hostFiles(dir)) },
 				],
 			},
 			context,

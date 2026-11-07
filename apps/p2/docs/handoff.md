@@ -44,6 +44,9 @@ replacing the old facet/service runtime and the `pi-client`, `pi-protocol` and `
   ```
   Update: `git pull`, `npm install --ignore-scripts` at the root if dependencies changed, then **Restart** in the app or
   `npm run reload -- --restart` (plugin changes: **Reload**).
+- **Per-host stores:** a p2 with per-host stores refuses a data directory in the older layout. Once: stop p2,
+  `npm run migrate-data -- --dry-run`, then `npm run migrate-data` (old files go to `~/.pi/p2/pre-files-backup/`;
+  `scripts/data-report.ts` before and `--compare` after), then start it (`docs/p2-notes.md`, Migration).
 - **Tunnel:** ngrok as a termux-services (runit) service, `$PREFIX/var/service/ngrok/run`, forwarding
   `https://pim.ngrok.pro` to port 8787 (`sv status|restart $PREFIX/var/service/ngrok`; logs in
   `$PREFIX/var/log/ngrok/current`).
@@ -65,7 +68,7 @@ npm test                     # full suite; TUI tests need Node 26, browser tests
 ```
 
 Environment variables: `docs/p2-notes.md` (Running). Configuration in the data dir: `models.json`, `settings.json`
-(incl. `codemode`, default on in p2), `envs.json`, `mcp.json`, `auth.json`, `radius.json`, `forwards.json`.
+(incl. `codemode`, default on in p2), `envs.json`, `projects.json`, `mcp.json`, `auth.json`, `radius.json`, `forwards.json`.
 
 **Sign-in.** Requests from the device itself are the owner. Other devices get owner rights with a link from `npm
 run owner-link` (single use, 10 minutes, long-lived signed cookie). Guests join through share links. Requests other
@@ -97,7 +100,7 @@ verifying an agent's files on their own before committing. Node 24: `~/node-v24.
   extension switches, input entries, settings, logs, fetch).
 - **Plugins**: chat, chat-mode, sessions, subagents, agent (one-shot agents), codemode, coding-tools, prompt,
   models, login, search, status, drafts, files, send-file, artifacts, workspace, file-index, terminals, envs, mcp, ports,
-  radius, sharing, devices, proxy-marker, logs, dev-tools, powershell, web-shell. Before writing one, read Chord's
+  radius, sharing, devices, proxy-marker, logs, dev-tools, powershell, web-shell, projects. Before writing one, read Chord's
   tutorial (`packages/chord/docs/tutorial/`) and plugin guide (`packages/chord/docs/plugin-authoring.md`), then an
   existing p2 plugin of the same shape.
 - **Locations:** every conversation works at `{ env, cwd }`: the main one at the session's, subagents spawned with a
@@ -174,6 +177,7 @@ From `AGENTS.md` and this project's history:
 | `docs/p2-notes.md` | decisions, configuration, plugin-by-plugin notes |
 | `docs/p2-tui-port.md` | TUI design, as-built notes, open phases |
 | `docs/optimistic-ui.md` | optimistic UI: the pattern for actions, pending states and loads (web and terminal) |
+| `docs/tool-ui.md` | how a plugin shows its tool (web and TUI registrations), with a complete example plugin |
 | `docs/workflows.md` | code mode workflows with one-shot agents |
 | `docs/tree.md` | `/tree`: branches of the main conversation as Durable forks |
 | `docs/remote-envs.md` | SSH environments |

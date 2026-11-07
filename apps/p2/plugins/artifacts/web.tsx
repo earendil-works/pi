@@ -5,11 +5,11 @@ import {
 	ArtifactPicker,
 	closeLayers,
 	FilePanel,
-	InlineArtifactView,
 	OpenViewer,
 	openLayer,
 	SessionId,
 	Slots,
+	ToolActivities,
 	useObject,
 	useReadable,
 	useRoute,
@@ -17,8 +17,9 @@ import {
 } from "@p2/app/v1/web";
 import type { ReactNode } from "react";
 import { DownloadInfoSchema } from "../files/contract.ts";
+import { artifactActivity } from "./activity.tsx";
 import { ArtifactInfoSchema, ArtifactList } from "./contract.ts";
-import { ArtifactPanel, InlineArtifact } from "./preview.tsx";
+import { ArtifactPanel } from "./preview.tsx";
 
 const ViewerSchema = union([
 	obj({ kind: literal("file"), file: DownloadInfoSchema }, { open: true }),
@@ -52,7 +53,7 @@ function Content({ children }: { children?: ReactNode }) {
 	return (
 		<SessionId.Provider value={route.session}>
 			<OpenViewer.Provider value={open}>
-				<InlineArtifactView.Provider value={InlineArtifact}>{children}</InlineArtifactView.Provider>
+				{children}
 				{top?.kind === "sheet" && top.name === "artifacts" && (
 					<ArtifactPicker
 						artifacts={artifacts.toReversed()}
@@ -108,5 +109,6 @@ function ArtifactButton() {
 export default defineFacet((host) => {
 	contribute(host, "p2.web-artifacts", (self) => {
 		self.contribute(Slots, { "chat-content": Content, "artifact-actions": ArtifactButton });
+		self.contribute(ToolActivities, { artifact: artifactActivity });
 	});
 });

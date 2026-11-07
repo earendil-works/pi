@@ -1,19 +1,39 @@
 // p2's sandbox program on a host environment: one long-lived Gondolin VM per sandbox, held by a supervisor process
-// (`serve`), and the commands p2 runs over SSH (`daemon`, `start`, `status`, `stop`). `daemon` starts the supervisor
+// (`serve`), and the commands p2 runs over SSH (`daemon`, `start`, `status`, `stop`, `reset`, `forget`). `daemon` starts the supervisor
 // when the sandbox is not running, then runs the pi-env daemon in the VM with stdin and stdout passed through, so p2
-// talks to the daemon in the VM as it does to one on any other machine. Started by p2-sandbox.sh, natively or in Docker.
+// talks to the daemon in the VM as it does to one on any other machine. Started by p2-sandbox.sh.
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	closeSync,
+	existsSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { connect, createServer } from "node:net";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHttpHooks, ensureImageSelector, ReadonlyProvider, RealFSProvider, VM } from "@earendil-works/gondolin";
+import {
+	createHttpHooks,
+	ensureGuestAssets,
+	ensureImageSelector,
+	loadGuestAssets,
+	ReadonlyProvider,
+	RealFSProvider,
+	VM,
+} from "@earendil-works/gondolin";
 
 /** How long a client waits for a starting sandbox: the first start downloads the guest image (about 200 MB). */
 const START_TIMEOUT_MS = 600_000;
+/** How long a stopping VM may take to write what it holds to its disk. */
+const SYNC_TIMEOUT_MS = 30_000;
 /** Where the pi-env daemon is copied in the VM, and where Gondolin mounts the folders before binding them. */
 const GUEST_TOOLS = "/opt/pi-env";
 const GUEST_VFS = "/.p2-vfs";
@@ -51,6 +71,19 @@ async function main(args) {
 			return print((await tryRequest(name, { op: "status" })) ?? { state: "stopped" });
 		case "stop":
 			return print((await tryRequest(name, { op: "stop" })) ?? { state: "stopped" });
+		case "reset": {
+			// A fresh disk at the next start: stop the VM, then remove its disk.
+			const stopped = (await tryRequest(name, { op: "stop" })) ?? { state: "stopped" };
+			rmSync(diskPath(name), { force: true });
+			return print(stopped);
+		}
+		case "forget": {
+			// The sandbox is being deleted: stop it, then remove its disk and run directory (its log) too.
+			const stopped = (await tryRequest(name, { op: "stop" })) ?? { state: "stopped" };
+			rmSync(diskPath(name), { force: true });
+			rmSync(runDir(name), { recursive: true, force: true });
+			return print(stopped);
+		}
 		case "serve":
 			return serve(name, parseConfig(rest[0]));
 		default:
@@ -82,6 +115,7 @@ function parseConfig(text) {
 		allowHosts: Array.isArray(config.allowHosts) ? config.allowHosts.map(String) : [],
 		cpus: Number.isInteger(config.cpus) ? config.cpus : undefined,
 		memoryMb: Number.isInteger(config.memoryMb) ? config.memoryMb : undefined,
+		diskGb: Number.isInteger(config.diskGb) ? config.diskGb : undefined,
 		revision: createHash("sha256").update(text).digest("hex").slice(0, 16),
 		raw: text,
 	};
@@ -91,10 +125,44 @@ function runDir(name) {
 	return join(homedir(), ".pi", "p2", "sandbox", "run", name);
 }
 
+/** The sandbox's own disk: a qcow2 layer over the guest image it was created from (the image stays its base). */
+function diskPath(name) {
+	return join(homedir(), ".pi", "p2", "sandbox", "disks", `${name}.qcow2`);
+}
+
 /**
- * `~` and `~/…` are the host user's home; other paths must be absolute. In Docker only the home is shared with the
- * container: a folder elsewhere would be one inside the container, so it is refused. A writable folder must not hold
- * or be inside ~/.pi: p2 runs this launcher and pi-env's daemons from there, on the host.
+ * The sandbox's disk, created at its first start (or after a reset) over the guest image, and grown to the configured
+ * size (never shrunk).
+ */
+async function ensureDisk(name, config) {
+	const disk = diskPath(name);
+	if (!existsSync(disk)) await createDisk(disk, config);
+	if (config.diskGb !== undefined) {
+		const size = config.diskGb * 1024 ** 3;
+		const info = JSON.parse(execFileSync("qemu-img", ["info", "--output=json", disk], { encoding: "utf8" }));
+		if (info["virtual-size"] < size) execFileSync("qemu-img", ["resize", disk, String(size)], { stdio: "ignore" });
+	}
+	return disk;
+}
+
+/** A new qcow2 disk at `disk` over the guest image's root file system (the sandbox's image, else Gondolin's default). */
+async function createDisk(disk, config) {
+	const assets = config.image
+		? loadGuestAssets((await ensureImageSelector(config.image)).assetDir)
+		: await ensureGuestAssets();
+	mkdirSync(dirname(disk), { recursive: true, mode: 0o700 });
+	// Created under a temporary name: an interrupted start leaves no half-made disk behind.
+	const temporary = `${disk}.${process.pid}.tmp`;
+	const format = assets.rootfsPath.endsWith(".qcow2") ? "qcow2" : "raw";
+	execFileSync("qemu-img", ["create", "-f", "qcow2", "-F", format, "-b", assets.rootfsPath, temporary], {
+		stdio: "ignore",
+	});
+	renameSync(temporary, disk);
+}
+
+/**
+ * `~` and `~/…` are the host user's home; other paths must be absolute. A writable folder must not hold or be inside
+ * ~/.pi: p2 runs this launcher and pi-env's daemons from there, on the host.
  */
 function hostPath(path, readonly) {
 	const home = homedir();
@@ -102,8 +170,6 @@ function hostPath(path, readonly) {
 	if (!isAbsolute(expanded)) throw new Error(`Folder must be absolute or start with ~: ${path}`);
 	const resolved = resolve(expanded);
 	const within = (parent, child) => child === parent || child.startsWith(parent === "/" ? "/" : `${parent}/`);
-	if (process.env.P2_SANDBOX_RUNTIME === "docker" && !within(home, resolved))
-		throw new Error(`Sandboxes run in Docker on this host, so their folders must be inside ${home}: ${path}`);
 	const pi = join(home, ".pi");
 	if (!readonly && (within(resolved, pi) || within(pi, resolved)))
 		throw new Error(`A writable folder must not contain or be inside ${pi} (p2's launcher runs from there): ${path}`);
@@ -246,7 +312,7 @@ async function serve(name, config) {
 		const real = new RealFSProvider(host);
 		mounts[String(mount.guest)] = mount.readonly ? new ReadonlyProvider(real) : real;
 	}
-	if (config.image) await ensureImageSelector(config.image);
+	const disk = await ensureDisk(name, config);
 	const { httpHooks, env } = createHttpHooks({
 		allowedHosts: config.allowHosts,
 		// Gondolin checks `allowedHosts` only after resolving the name on the host, which would leak any name the guest
@@ -260,10 +326,25 @@ async function serve(name, config) {
 		vfs: { mounts, fuseMount: GUEST_VFS },
 		...(config.cpus === undefined ? {} : { cpus: config.cpus }),
 		...(config.memoryMb === undefined ? {} : { memory: `${config.memoryMb}M` }),
-		...(config.image === undefined ? {} : { sandbox: { imagePath: config.image } }),
+		// The sandbox's own disk, kept across restarts.
+		sandbox: {
+			...(config.image === undefined ? {} : { imagePath: config.image }),
+			rootDiskPath: disk,
+			rootDiskFormat: "qcow2",
+			rootDiskDeleteOnClose: false,
+		},
+		// Only /tmp stays in memory: the home and caches live on the disk, so what is installed there stays too.
+		tmpfs: { "/tmp": {} },
 		sessionLabel: `p2:${name}`,
 	});
 	await vm.exec("true");
+	// The disk outlives the VM, and a VM can end without unmounting (a crash, a host reboot): a journal makes the next
+	// mount recover (the guest image's file system has none). Then the file system grows to the disk's size, once
+	// mounted: not with Gondolin's `rootfs.size`, which runs resize2fs while the guest may still be mounting it.
+	await vm.exec("tune2fs -l /dev/vda | grep -q has_journal || tune2fs -O has_journal /dev/vda >/dev/null 2>&1");
+	if (config.diskGb !== undefined) await vm.exec("resize2fs /dev/vda >/dev/null 2>&1");
+	// Both change the file system's structure, which the journal does not cover until it is on the disk.
+	await vm.exec("sync");
 	const startedAt = Date.now();
 	/** The daemons copied into the VM, by guest path: one copy each, however many connections ask at once. */
 	const installs = new Map();
@@ -278,6 +359,8 @@ async function serve(name, config) {
 			clearInterval(watch);
 			server?.close();
 			rmSync(socketPath, { force: true });
+			// Gondolin ends QEMU without the guest unmounting: what the guest still holds in memory reaches the disk first.
+			await Promise.race([vm.exec("sync"), sleep(SYNC_TIMEOUT_MS)]).catch(() => {});
 			await vm.close().catch(() => {});
 		})();
 		return closing;

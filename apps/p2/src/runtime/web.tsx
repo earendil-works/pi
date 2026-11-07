@@ -9,6 +9,7 @@ import {
 	useCallback,
 	useContext,
 	useEffect,
+	useLayoutEffect,
 	useOptimistic,
 	useRef,
 	useState,
@@ -17,7 +18,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { clearKept } from "../web/conversation-cache.ts";
-import { CloseIcon } from "../web/icons.tsx";
+import { ChevronIcon, CloseIcon } from "../web/icons.tsx";
 import {
 	conversationRoute,
 	forgetLastConversation,
@@ -45,7 +46,7 @@ import { canonicalJson } from "./json.ts";
 import { follow, followRegistry, type HeldIn, type HeldRef, knownRegistry, liveIn, UI_LINGER } from "./refs.ts";
 import { Slots } from "./web-core.ts";
 
-export { Slots, webCoreFacet } from "./web-core.ts";
+export { Slots, ToolActivities, webCoreFacet } from "./web-core.ts";
 
 export const HostContext = createContext<Host | undefined>(undefined);
 
@@ -98,21 +99,68 @@ export function SlotList({ prefix }: { prefix: string }) {
 	);
 }
 
-/** A modal sheet: a bottom sheet on phones, a centred dialog on wide screens. Escape and the scrim close it. */
+/** Modal layers on screen now (`Sheet`, `ViewerShell`): a route layer without one shows nothing. */
+let shownModals = 0;
+
+/** Counts the caller as a modal layer on screen while it is mounted. */
+export function useShownModal(): void {
+	useLayoutEffect(() => {
+		shownModals++;
+		return () => {
+			shownModals--;
+		};
+	}, []);
+}
+
+/** Whether a modal layer (a sheet, a viewer) is on screen. */
+export const modalShown = (): boolean => shownModals > 0;
+
+/** How long a route's top layer may show nothing before it is dropped (its code may still be rendering it). */
+const UNSHOWN_LAYER_MS = 1500;
+
+/**
+ * Drops a top sheet or viewer layer that nothing shows: a route restored by a reload whose new code no longer has what
+ * the layer named (a run's sheet whose row changed, a notice's details), or a plugin that is gone. Such a layer would
+ * stay invisible yet hold the route: Back would close nothing, and the drawer's swipe, which waits for open layers to
+ * close, would never start. Mounted once, by the app's layout.
+ */
+export function useUnshownLayers(): void {
+	const route = useRoute();
+	useEffect(() => {
+		const top = route.layers.at(-1);
+		if (!top || top.kind === "drawer") return;
+		const timer = setTimeout(() => {
+			if (modalShown()) return;
+			// Only this route: a navigation queued meanwhile wins (`replace` with the expected route).
+			void getNavigation().replace({ ...route, layers: route.layers.slice(0, -1) }, route);
+		}, UNSHOWN_LAYER_MS);
+		return () => clearTimeout(timer);
+	}, [route]);
+}
+
+/**
+ * A modal sheet: a bottom sheet on phones, a centred dialog on wide screens. Escape and the scrim close it. `onBack`: a
+ * page inside the sheet (a step's detail) has a Back control before its title, which leads to the page under it.
+ */
 export function Sheet({
 	title,
 	onClose,
+	onBack,
 	className,
+	testId,
 	children,
 }: {
 	title: string;
 	onClose: () => void;
+	onBack?: () => void;
 	className?: string;
+	testId?: string;
 	children: ReactNode;
 }) {
 	const body = useRef<HTMLDivElement>(null);
 	const section = useRef<HTMLElement>(null);
 	const scrim = useRef<HTMLButtonElement>(null);
+	useShownModal();
 	useScrollMemory(body);
 	// Phones: a downward drag on the grip or header closes the sheet (src/web/sheet-swipe.ts).
 	useSheetSwipe(section, scrim, onClose);
@@ -135,10 +183,16 @@ export function Sheet({
 				role="dialog"
 				aria-modal="true"
 				aria-label={title}
+				data-testid={testId}
 				ref={section}
 			>
 				<div className="sheet-grip" aria-hidden="true" />
-				<header className="sheet-head">
+				<header className={`sheet-head ${onBack ? "has-back" : ""}`}>
+					{onBack && (
+						<button type="button" className="icon-button back" onClick={onBack} aria-label="Back">
+							<ChevronIcon size={18} />
+						</button>
+					)}
 					<h2>{title}</h2>
 					<button type="button" className="icon-button" onClick={onClose} aria-label="Close">
 						<CloseIcon />

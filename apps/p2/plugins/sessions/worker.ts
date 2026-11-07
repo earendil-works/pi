@@ -74,6 +74,7 @@ export default defineFacet((host) => {
 	host.serve(SessionTransfer, (_params, principal, self) => {
 		if (principal.kind !== "server") throw forbidden("server only");
 		const harness = harnessOf(self);
+		const worker = workerOf(self);
 		return {
 			variant: "server",
 			members: {
@@ -102,6 +103,10 @@ export default defineFacet((host) => {
 						};
 					});
 					return { entries };
+				},
+				copyFiles: async ({ to }, ctx) => {
+					await worker().copyFilesTo(to, ctx);
+					return null;
 				},
 				seed: async ({ entries }, ctx) => {
 					const durable = harness().durable;

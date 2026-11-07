@@ -28,18 +28,26 @@ export function parseCommandArgs(argsString: string): string[] {
 	// Tracks whether a token has started, so quoted empty strings ("" or '') are kept as arguments
 	let hasToken = false;
 	let inQuote: string | null = null;
+	// Where the open quote started, so an unclosed quote can be re-read as literal text
+	let quoteStart = 0;
 
 	for (let i = 0; i < argsString.length; i++) {
 		const char = argsString[i];
 
 		if (inQuote) {
-			if (char === inQuote) {
+			if (char === "\\" && argsString[i + 1] === inQuote) {
+				// A backslash before the open quote's character keeps it as text: "say \"hi\"" gives say "hi"
+				current += inQuote;
+				i++;
+			} else if (char === inQuote) {
 				inQuote = null;
 			} else {
 				current += char;
 			}
-		} else if (char === '"' || char === "'") {
+		} else if ((char === '"' || char === "'") && !hasToken) {
+			// Quotes only open at the start of an argument, so apostrophes inside words stay literal
 			inQuote = char;
+			quoteStart = i;
 			hasToken = true;
 		} else if (/\s/.test(char)) {
 			if (hasToken) {
@@ -50,6 +58,14 @@ export function parseCommandArgs(argsString: string): string[] {
 		} else {
 			current += char;
 			hasToken = true;
+		}
+
+		if (inQuote && i === argsString.length - 1) {
+			// Unclosed quote: keep the quote character as text and parse the rest normally
+			// (current was empty when the quote opened, because quotes only open a new argument)
+			inQuote = null;
+			current = argsString[quoteStart];
+			i = quoteStart;
 		}
 	}
 

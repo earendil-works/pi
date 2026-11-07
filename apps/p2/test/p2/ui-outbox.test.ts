@@ -150,7 +150,8 @@ describe("offline in the browser", { skip: !browserTests }, () => {
 					arrived.some((row) => row.text.includes(text)),
 					`${text} arrived: ${JSON.stringify(arrived)}`,
 				);
-			assert.equal(arrived.length, 4, JSON.stringify(arrived));
+			// Each turn: the message, the answer's thought and the answer.
+			assert.equal(arrived.length, 6, JSON.stringify(arrived));
 			assert.ok((await browser.evaluate<number>("window.__glides")) > 0, "the transcript glides up to make room");
 			// One after another: increasing delays.
 			const delays = arrived.map((row) => Number.parseFloat(row.delay || "0"));

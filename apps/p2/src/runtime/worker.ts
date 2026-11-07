@@ -1,6 +1,7 @@
 // Locals, registries and natives a session worker host provides to plugins (Chord v2), and the worker's core facet.
 import { existsSync } from "node:fs";
-import { defineRegistry, local, type Native, type RegistryValue } from "@earendil-works/chord";
+import { defineRegistry, local, type Native, type RegistryValue, type Store } from "@earendil-works/chord";
+import { copyFiles } from "@earendil-works/chord/app/files";
 import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
@@ -17,7 +18,6 @@ import {
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { Connection, LocalExecutionEnv, localDaemon, RemoteExecutionEnv } from "@earendil-works/pi-env";
 import {
 	type Ctx,
@@ -30,8 +30,10 @@ import {
 	serveKeyed,
 } from "./chord.ts";
 import { durableContext, durableRegistry, ExtensionSwitches, Extensions } from "./durable.ts";
+import { hostFiles, sessionDirectory } from "./host-dirs.ts";
 import { isRooted, type Location, type LocationInput, sameLocation } from "./location.ts";
 import { topLevelConversations } from "./main-conversation.ts";
+import { durableStorage } from "./session-store.ts";
 import { type SessionInit, WorkerBoundary } from "./session-worker.ts";
 
 export { ExtensionSwitches, Extensions } from "./durable.ts";
@@ -287,6 +289,11 @@ export type WorkerParts = {
 	 * section passes its Durable context), or a method acting as the worker (`withoutAbortSignal(ctx)`).
 	 */
 	readonly root: <T>(fn: (ctx: Ctx) => Promise<T>, context: Context) => Promise<T>;
+	/**
+	 * Copies this session's files (the kit's `Files`: its index and blobs) into the directory of the new session
+	 * `session`, which must not exist yet: a fork, whose worker waits while it copies. The session goes on meanwhile.
+	 */
+	readonly copyFilesTo: (session: string, context: Context) => Promise<void>;
 };
 
 /**
@@ -376,15 +383,19 @@ export function workerCore(
 	init: WorkerInit,
 	liveness: Liveness,
 	location: SessionLocation,
+	store: Store,
 	root: WorkerParts["root"],
 ): Facet {
 	return defineFacet((host, self) => {
 		serveWorkerRegistries(host);
 		host.serve(WorkerProcess, { compose: (table) => table[0]?.value });
-		self.contribute(WorkerProcess, { init, liveness, location, root });
+		const own = sessionDirectory(init.dataDir, init.values.session.id);
+		const copyFilesTo = (session: string, context: Context) =>
+			copyFiles({ store, files: hostFiles(own) }, sessionDirectory(init.dataDir, session), context);
+		self.contribute(WorkerProcess, { init, liveness, location, root, copyFilesTo });
 		host.serve(HarnessNative, { compose: (table) => table[0]?.value });
 		host.serve(HarnessHost, (_params, self) => {
-			self.contribute(HarnessNative, openHarness(self, init, location));
+			self.contribute(HarnessNative, openHarness(self, init, location, store));
 			return {};
 		});
 		host.serve(WorkerBoundary, (_params, principal, self) => {
@@ -641,8 +652,8 @@ async function followSession(
  * with the root conversation created from the session's model and cwd. Scheduling starts with `resume()` once the
  * worker's plugins are loaded (the worker entry). Returns the contribution: the natives, read at each use.
  */
-function openHarness(self: Self, init: WorkerInit, location: SessionLocation): HarnessParts {
-	const { dataDir, values } = init;
+function openHarness(self: Self, init: WorkerInit, location: SessionLocation, store: Store): HarnessParts {
+	const { values } = init;
 	const session = values.session;
 	const config = self.registry(HarnessConfig);
 	const environments = self.registry(HarnessEnvironments);
@@ -702,7 +713,8 @@ function openHarness(self: Self, init: WorkerInit, location: SessionLocation): H
 		async (ctx) => {
 			// Generation needs model access: open once the models plugin has contributed it.
 			await whenPresent(config, "default", ctx.abortSignal ?? new AbortController().signal);
-			const storage = await openNodeSqliteStorage(`${dataDir}/sessions/${session.id}.sqlite`);
+			// Durable's records in the session's store, beside the kit's `Files`.
+			const storage = await durableStorage(store, ctx);
 			const harness = await DurableHarness.open(
 				storage,
 				{

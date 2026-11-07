@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
+import type { Context, Model } from "../src/types.ts";
 
 // Empty tools arrays must NOT be serialized as `tools: []` — some OpenAI-compatible
 // backends (e.g. DashScope / Aliyun Qwen via compatible-mode) reject the request with
@@ -250,55 +251,62 @@ describe("openai-completions empty tools handling", () => {
 		expect(clientOptions.defaultHeaders?.["x-session-affinity"]).toBe("session-1");
 	});
 
-	it("still emits tools: [] for Anthropic/LiteLLM proxy when conversation has tool history", async () => {
-		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
-		const model = { ...baseModel, api: "openai-completions" } as const;
-
-		await streamSimple(
-			model,
-			{
-				messages: [
-					{ role: "user", content: "use the tool", timestamp: Date.now() },
-					{
-						role: "assistant",
-						content: [
-							{
-								type: "toolCall",
-								id: "t1",
-								name: "noop",
-								arguments: {},
-							},
-						],
-						stopReason: "toolUse",
-						usage: {
-							input: 0,
-							output: 0,
-							cacheRead: 0,
-							cacheWrite: 0,
-							totalTokens: 0,
-							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-						},
-						api: "openai-completions",
-						provider: "openai",
-						model: "gpt-4o-mini",
-						timestamp: Date.now(),
+	describe("tool history without tools", () => {
+		const toolHistoryContext: Context = {
+			messages: [
+				{ role: "user", content: "use the tool", timestamp: Date.now() },
+				{
+					role: "assistant",
+					content: [{ type: "toolCall", id: "t1", name: "noop", arguments: {} }],
+					stopReason: "toolUse",
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 					},
-					{
-						role: "toolResult",
-						toolCallId: "t1",
-						toolName: "noop",
-						content: [{ type: "text", text: "done" }],
-						isError: false,
-						timestamp: Date.now(),
-					},
-				],
-				tools: [],
-			},
-			{ apiKey: "test" },
-		).result();
+					api: "openai-completions",
+					provider: "openai",
+					model: "gpt-4o-mini",
+					timestamp: Date.now(),
+				},
+				{
+					role: "toolResult",
+					toolCallId: "t1",
+					toolName: "noop",
+					content: [{ type: "text", text: "done" }],
+					isError: false,
+					timestamp: Date.now(),
+				},
+			],
+			tools: [],
+		};
 
-		const params = mockState.lastParams as { tools?: unknown[] };
-		expect(Array.isArray(params.tools)).toBe(true);
-		expect(params.tools).toEqual([]);
+		// Regression for https://github.com/earendil-works/pi/issues/11843
+		it("omits tools by default", async () => {
+			const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+			const model = { ...baseModel, api: "openai-completions" } as const;
+
+			await streamSimple(model, toolHistoryContext, { apiKey: "test" }).result();
+
+			const params = mockState.lastParams as { tools?: unknown[] };
+			expect(params.tools).toBeUndefined();
+		});
+
+		it("sends tools: [] when compat.requiresToolsWithToolHistory is set", async () => {
+			const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+			const model: Model<"openai-completions"> = {
+				...baseModel,
+				api: "openai-completions",
+				compat: { requiresToolsWithToolHistory: true },
+			};
+
+			await streamSimple(model, toolHistoryContext, { apiKey: "test" }).result();
+
+			const params = mockState.lastParams as { tools?: unknown[] };
+			expect(params.tools).toEqual([]);
+		});
 	});
 });

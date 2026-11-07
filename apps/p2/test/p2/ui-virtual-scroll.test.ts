@@ -96,6 +96,13 @@ const STILL = `(async () => {
 		previous = scroller.scrollTop;
 	}
 })()`;
+/**
+ * A height near `y` (searching down, then up, in 10px steps) where a touch at `x` lands on the transcript but clear of
+ * a turn's activity wheel, which takes vertical drags itself (Elanor's Ticker; in Chromium a touch a few pixels
+ * beside it does not scroll either), and of buttons (scroll down).
+ */
+const besideActivity = (x: number, y: number) =>
+	`(() => { const clear = (at) => [-16, 0, 16].every((d) => !document.elementFromPoint(${x}, at + d)?.closest('.el-ticker')); for (let d = 0; d < 300; d += 10) for (const at of [${y} + d, ${y} - d]) { const e = document.elementFromPoint(${x}, at); if (e?.closest('.scroller') && !e.closest('button') && clear(at)) return at; } return ${y}; })()`;
 const frames = (count: number) =>
 	`new Promise((resolve) => { let n = ${count}; const step = () => (--n <= 0 ? resolve(true) : requestAnimationFrame(step)); requestAnimationFrame(step); })`;
 
@@ -164,7 +171,6 @@ describe("virtual transcript", { skip: !browserTests }, () => {
 		assert.ok(rendered > 2 && rendered < 40, `rendered rows: ${rendered}`);
 
 		const x = 200;
-		const y = 100;
 		const STEP = 50;
 		let largest = 0;
 		let settleShift = 0;
@@ -173,6 +179,7 @@ describe("virtual transcript", { skip: !browserTests }, () => {
 			await browser.evaluate(`window.__phase = 'drag ${drag}'`);
 			// Any momentum of the last drag ends first: a touch landing on a fling stops it, which reads as a move.
 			await browser.evaluate(STILL);
+			const y = await browser.evaluate<number>(besideActivity(x, 100));
 			await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
 			// The first move takes the touch slop; from then on the content follows the finger.
 			await browser.call("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y + STEP }] });
@@ -258,7 +265,7 @@ describe("virtual transcript", { skip: !browserTests }, () => {
 			tick();
 		})()`);
 		const fling = async (dy: number) => {
-			const from = dy > 0 ? 200 : 650;
+			const from = await browser.evaluate<number>(besideActivity(200, dy > 0 ? 200 : 650));
 			await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 200, y: from }] });
 			for (let step = 1; step <= 8; step++) {
 				await browser.call("Input.dispatchTouchEvent", {
@@ -270,10 +277,12 @@ describe("virtual transcript", { skip: !browserTests }, () => {
 			await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 			await browser.evaluate("new Promise((resolve) => setTimeout(resolve, 250))");
 		};
-		for (let index = 0; index < 5; index++) await fling(400);
-		const up = await browser.evaluate<number>(
-			`((s) => s.scrollHeight - s.clientHeight - s.scrollTop)(document.querySelector('.scroller'))`,
-		);
+		// Up past 2000px from the end: a turn is short (its tool calls one activity row), so it may take more flings
+		// than the five it took with a card per call.
+		const fromEnd = `((s) => s.scrollHeight - s.clientHeight - s.scrollTop)(document.querySelector('.scroller'))`;
+		for (let index = 0; index < 15 && (index < 5 || (await browser.evaluate<number>(fromEnd)) <= 2000); index++)
+			await fling(400);
+		const up = await browser.evaluate<number>(fromEnd);
 		assert.ok(up > 2000, `flung up ${up}px from the end`);
 		for (let index = 0; index < 30; index++) {
 			if (await browser.evaluate<boolean>(AT_END)) break;

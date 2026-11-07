@@ -5,7 +5,8 @@ over `http`, `workers` and `plugins` so an app is its API, its built-in plugins 
 server, `startWorker` in a worker's entry; the kit makes the data directory, the stores, the hosts, HTTP with deny by
 default, sessions and the owner's sign-in, device pairing, each host's files, export and import per address, and the
 plugin roots with "apply changes". Node-only. Exported as `@earendil-works/chord/app`. Examples 53 (`53-app/`, a whole
-small app), 54 (sessions and pairing) and 55 (export and import) run one app.
+small app), 54 (sessions and pairing) and 55 (export and import) run one app; 65 (`65-files.ts`) shows `Files` on a
+host of its own.
 
 ## For apps (`index.ts`)
 
@@ -148,7 +149,7 @@ export default users.facet;
 <dataDir>/                 mode 0700, like every directory below
   server/store.sqlite      the server's store, mode 0600 (and its journal files)
   server/cookie-secret     mode 0600
-  server/files/            the server's files, mode 0600
+  server/files/            the server's files: blobs/<id> (mode 0600), .uploads/ (uploads under way)
   workers/<kind>/<key>/    a worker's store.sqlite and files/
   plugins/                 the user's plugins root
   logs/
@@ -162,19 +163,63 @@ read a store (it holds the sessions) nor replace it.
 A worker's key is percent-encoded as one directory name (`/`, `\`, `.` and capital letters included, so keys differing
 only in case stay apart on a case-insensitive file system), or `sha256-<hex>` past 160 characters.
 
-`Files` (`chord.app.files`, local, one per host: the server's and each worker's) keeps a host's files in its `files/`
-and their index (id, name, mime, size, created) in its store: `put({ name, mime, bytes })` (at most 4 MiB),
-chunked transfers (design §23): `begin({ name, mime })`, `append({ upload, offset, bytes })` (at most 4 MiB a chunk,
-about 1 MiB usual; `offset` must be the bytes stored so far, else `invalid` with the stored `{ offset }`),
-`uploaded(upload)` (where a writer resumes after a drop), `finish(upload)`; `read({ id, offset, length })` (at most 4
-MiB), `remove(id)`, `list`. Appends may be sent without waiting for the previous one: each is accepted at the offset
-the accepted ones reached and written at its position (one file handle per upload); `uploaded`, `finish` and expiry
-wait for the writes in flight, and a failed write ends its upload. Each upload under way holds a file handle, so at
-most `limits.uploads` (64) are under way per `Files` object: past it `begin` is refused `unavailable` (`busy`) until
-one finishes or an idle one expires. Caps per host (`files` option): a file over `maxFile` or a write past `maxTotal` (uploads
-under way count) is refused `too_large`. An upload unwritten for an hour expires; uploads end with the object, and
-those a previous run left are dropped when the object goes live. `Files` is `local`: a client uploads through the
-plugin's own remote methods, which call it.
+`Files` (`chord.app.files`, local, one per host: the server's and each worker's; decision "Files v2") keeps a host's
+files: their bytes in its `files/` (`blobs/<id>`, uploads under way in `.uploads/`), their index in its store (tables
+`chord.app.files:files`, `:folders`, `:blobs`, `:paths` and the documents `summary` and `usage`; `files-index.ts`). Plugins never
+see a path on disk.
+
+- **Spaces and paths:** every file lives in a space (`shared`, what a user sees as the host's drive; `artifacts`,
+  `uploads`, `discord`, …: lower case, digits, `.`, `_`, `-`, at most 64) at a path (`docs/report.md`: non-empty
+  segments, no `.` or `..`, at most 1,024 characters). Spaces are organizational (collisions, listing, removal per
+  space), not a security boundary. Folders are index entries: a write makes its folders, `mkdir({ space, path })`
+  makes one; a file where a folder is (or the other way round) is refused `invalid` with `{ conflict: path }`.
+  `move({ space, from, to })` renames a file (every version) or a folder (everything under it) in the index only.
+- **Versions and blobs:** bytes never change. A write to a path adds a version (a new blob), one past the highest
+  the path ever had: a number is never used twice for a path, also after its versions, the path or its space were
+  removed (table `paths`; a move carries its versions' numbers, the target taking the higher mark). The path names the
+  newest, older versions stay listed and readable until removed. A version's id
+  names it (`FileInfo.id`). `copy({ id, space, path })` adds a version sharing the blob (its metadata but its key);
+  a blob is deleted from disk when no version references it (`remove(id)`, `removePath({ space, path })` for a file
+  or a folder with everything under it, `removeSpace(space)`). Blobs a crash left without their commit are swept
+  when the object goes live.
+- **Writes:** `put({ space, path, mime, source, ref?, key?, meta?, created?, bytes })` (at most 4 MiB; `created`
+  only for imports: the time the file was made where it comes from, so newest-first orders stay true) and chunked transfers
+  (design §23): `begin` (the same fields without `bytes`: `{ kind: "upload", upload }`), `append({ upload, offset,
+  bytes })` (at most 4 MiB a chunk, about 1 MiB usual; `offset` must be the bytes stored so far, else `invalid` with
+  the stored `{ offset }`), `uploaded(upload)` (where a writer resumes after a drop), `finish(upload)` (the version),
+  `cancel(upload)` (a writer that gives up).
+  Appends may be sent without waiting for the previous one: each is accepted at the offset the accepted ones reached
+  and written at its position (one file handle per upload); `uploaded`, `finish` and expiry wait for the writes in
+  flight, and a failed write ends its upload. At most `limits.uploads` (64) uploads are under way per object: past it
+  `begin` is refused `unavailable` (`busy`). An upload unwritten for an hour expires; uploads end with the object,
+  and those a previous run left are dropped when the object goes live.
+- **Keys:** a write with a `key` the space has already stores nothing and answers the version written with it
+  (`begin` answers `{ kind: "exists", file }`, or the upload under way with that key), so a retried delivery
+  (Discord's `discord:<message>:<n>`) is stored once. Removing the version frees its key.
+- **Metadata:** fixed, indexed fields: `space`, `path`, `version`, `source` (`owner`, `guest:<id>`, `agent`,
+  `discord`, …: what the writer sets), `ref` (a producer's reference, e.g. a message id), `key`, `mime`, `size`,
+  `created`; and `meta`, free JSON, stored and returned, never queried. Queries: `file(id)`, `get({ space, path,
+  version? })`, `byKey({ space, key })`, `byRef({ space, ref })` (paged, oldest first), `versions({ space, path })`
+  (paged, newest first), `list({ space, folder })` (paged: the folder's folders, then its files' newest versions,
+  each by path; `""` is the root). Pages take `after` (the previous page's `next`) and `limit` (100, at most 1,000).
+  A plugin needing other queries keeps its own table keyed by version id.
+- **Live listings:** `FilesFolder({ space, folder })` (local) shows a folder's first 500 entries and whether more
+  follow; `Files` reads each watched folder of a space again after each change of that space, inside the method that
+  changed it (one read per watched folder and change: for the folders on someone's screen).
+- **Summary:** `summary` is a keyed member, one document per space: `{ files, versions, bytes, newest }` (paths,
+  versions, every version's bytes, the newest 20 versions), changed in the commit of each change. An app's worker
+  pushes it to its server's index, so lists show without starting the worker (`files.summary.at(space)` in a
+  factory, `files.summary.get/watch(space, ctx)` elsewhere).
+- **Caps** per host (`files` option): a file over `maxFile` or a write past `maxTotal` (the blobs on disk, uploads
+  under way included; a copy adds nothing) is refused `too_large`. Reads by range: `read({ id, offset, length })`, at
+  most 4 MiB a call.
+- **For apps with hosts of their own** (`@earendil-works/chord/app/files`, without the rest of the kit):
+  `filesFacet(dir, caps, uploads)` serves `Files` and `FilesFolder` over the files directory `dir`; `startServer` and `startWorker` load it on theirs. `copyFiles({ store, files }, target,
+  ctx)` copies a host's files (the part of its store's export that is `Files`' own, imported as `target/store.sqlite`,
+  and its blobs, hard-linked or copied into `target/files/blobs/`) into a new host directory, where the source store
+  is open, while the source goes on (p2's fork).
+
+`Files` is `local`: a client uploads through the plugin's own remote methods, which call it.
 
 ## Export and import
 
@@ -208,7 +253,9 @@ rolls out to the server, then each worker kind; nothing is applied by itself.
 
 `app.ts` (`startServer`, the `App`), `worker.ts` (`startWorker`), `layout.ts` (the layout, private directories and
 stores), `secrets.ts` (tokens, hashes, files of mode 0600), `sessions.ts`, `owner.ts` (owner link and token file),
-`pairing.ts`, `files.ts` and `uploads.ts` (chunked uploads), `info.ts` (start-data objects), `archive.ts` and `tar.ts`
+`pairing.ts`, `files.ts` (`Files`, `FilesFolder`, the facet), `files-index.ts` (the index's tables, documents,
+queries and changes), `blobs.ts` (blob files), `folder-views.ts` (live listings), `uploads.ts` (chunked uploads),
+`files-copy.ts` (`copyFiles`), `info.ts` (start-data objects), `archive.ts` and `tar.ts`
 (export and import), `ephemeral-sessions.ts`, and the optional plugins `users.ts`, `invite.ts`, `ephemeral.ts`.
 
 ## Web and terminal (slice 11)

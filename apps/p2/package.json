@@ -8,6 +8,7 @@
 		"dev": "node --import ./src/source.ts scripts/dev.mjs",
 		"reload": "node --import ./src/source.ts scripts/reload.mjs",
 		"owner-link": "node --import ./src/source.ts scripts/owner-link.ts",
+		"migrate-data": "node --import ./src/source.ts scripts/migrate-data.ts",
 		"radius:login": "node --import ./src/source.ts plugins/radius/login.ts",
 		"check": "node ../../scripts/biome-check.mjs && tsc --noEmit",
 		"format": "node ../../scripts/biome-check.mjs --write",
@@ -19,6 +20,10 @@
 	},
 	"dependencies": {
 		"@earendil-works/chord": "1.5.0",
+		"@earendil-works/design-tokens": "0.1.0",
+		"@earendil-works/elanor-fonts": "0.1.0",
+		"@earendil-works/elanor-icons-react": "0.1.0",
+		"@earendil-works/elanor-react": "0.1.0",
 		"@earendil-works/pi-ai": "1.5.0",
 		"@earendil-works/pi-codemode": "1.5.0",
 		"@earendil-works/pi-durable": "1.5.0",

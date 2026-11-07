@@ -474,6 +474,7 @@ function ownerStubs(calls: Calls) {
 				sandboxStatus: () => ({ state: "stopped" as const }),
 				sandboxStart: () => ({ state: "stopped" as const }),
 				sandboxStop: () => ({ state: "stopped" as const }),
+				sandboxResetDisk: () => ({ state: "stopped" as const }),
 			}),
 		],
 		[

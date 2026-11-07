@@ -187,6 +187,45 @@ Edit `<P2_DATA_DIR>/settings.json` as a file; there is no Settings editor UI. Va
 restart, and in-flight requests keep their configuration. Set the default model and thinking level with
 **Make default for new sessions** in the model picker. `ownerName` (1 to 40 characters, no control characters, `<`
 or `>`; default "Owner") is the name your messages carry from then on; messages already written keep theirs.
+`detail` (1 to 4, default 2) is how much of a turn the web chat shows: 1 only the answer, with the thinking, the
+agent's texts and its tool calls on one wheel per turn; 2 the texts too, thinking and calls on wheels between them;
+3 thinking too (collapsed), only runs of tool calls on wheels; 4 thinking in full and each tool call as its own row,
+no wheels.
+
+### Projects
+
+A project is one codebase in several places, one per environment. `<P2_DATA_DIR>/projects.json` lists them:
+
+```json
+{ "pi": [{ "env": "mac", "path": "~/projects/pi/pi" }, { "path": "~/projects/pi/pi" }] }
+```
+
+Object order is display order; array order is preference. A place without `env` is this device; `path` is absolute or
+starts with `~` (that machine's home); a project has at most one place per environment. p2 watches the file: valid edits
+apply at once, an invalid one keeps the last valid projects and shows why. Projects are owner-only and, for now, TUI-only:
+
+- A session belongs to a project only when it was started from the project's row (below), or copied (`/clone`,
+  `/fork`) from a session that does. Its folder does not matter: "+ New session" never puts a session in a project,
+  and `/cd` and `/move` keep its project. p2 stores this itself (not in projects.json).
+- With an empty search the session selector is grouped: each project's row, then its sessions below it (newest first,
+  subagent conversations nested in the threaded sort), then **Other** with **+ New session** and the sessions of no
+  project. A session whose project was removed from projects.json shows under Other, dimmed, with the old name in
+  parentheses; it groups again once the project is back. The grouped list always shows every session (Tab does nothing
+  there). A search is flat: typed in the grouped list it searches every session, and Tab narrows it to the current
+  folder; the archived sessions and a list without projects are flat with Tab's scope (current folder or all) as before.
+- A project's row checks each place in the background when the selector opens (`pi   mac ✓   david-pi …`; this
+  device shows as the server's hostname): `…` checking, `✓` reachable, `?` the machine answered but has no such
+  folder, `✗` the machine is unreachable or no such environment is configured. Under the selected project a line says
+  why for each place that is not usable (`mac: no folder ~/projects/x · gpu: no such environment`). Enter starts a
+  session in the project at the first reachable place; left/right pick another place first.
+- `/move <env>` moves the viewed session to its project's place on another environment (`local` or the hostname for
+  this device), after the same confirmation as `/cd`. `/move` alone opens a picker of all the project's places, the
+  session's own one marked `•` current and the others checked when it opens (same marks and reasons as the project
+  rows); the cursor starts on the first other reachable place. Enter moves to a `✓` place (the others cannot be chosen;
+  the current one just closes the picker), Escape cancels. When the session is below its project's place on its current
+  machine, it keeps the subfolder (`.../pi/apps/p2` to `.../pi/apps/p2`) if the target has it, else it goes to the
+  target place itself with a notice; that is read from the paths alone, so `/move` works while the session's machine is
+  unreachable.
 
 ### Voice mode
 

@@ -1,19 +1,15 @@
-/* The extra footer action must not overflow the translated phone drawer and intercept chat taps. */
-.drawer-foot {
-	flex-wrap: wrap;
-}
 .logs-sheet {
 	width: min(900px, 100%);
 }
 .logs-sheet .sheet-body {
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
+	gap: var(--s3);
 	overflow: hidden;
 }
 .logs-controls {
 	display: grid;
-	gap: 8px;
+	gap: var(--s2);
 	flex: none;
 }
 .logs-actions {
@@ -24,21 +20,25 @@
 .logs-actions label {
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: var(--s2);
+	min-height: var(--control);
+	font-size: var(--fs-sm);
 }
+/* Log lines read like a code block: the code background, a thin border, the code font. */
 .logs-output {
 	flex: 1;
 	min-height: 160px;
 	max-height: 55dvh;
 	margin: 0;
-	padding: 12px;
+	padding: var(--s3);
 	overflow: auto;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-	font-size: 11px;
-	line-height: 1.5;
-	background: var(--bg);
 	border: 1px solid var(--line);
 	border-radius: var(--radius);
+	background: var(--code);
+	font-family: var(--mono);
+	font-size: var(--fs-xs);
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
 	user-select: text;
 }

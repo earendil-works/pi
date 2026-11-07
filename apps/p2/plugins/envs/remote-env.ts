@@ -70,8 +70,8 @@ export function envConnection(
 			// The VM is Linux on the host's architecture: the host's own daemon runs in it.
 			const daemon = await deployDaemon(host, detected, options.binary ?? packagedDaemon(detected));
 			const deployed = await deployLauncher(host, detected, launcher);
-			// Start the VM first, with the launcher's own allowance (a first start may build the Docker image and download
-			// the guest image): the daemon connection must answer within pi-env's 30 s once it runs.
+			// Start the VM first, with the launcher's own allowance (a first start may install Gondolin and download the
+			// guest image): the daemon connection must answer within pi-env's 30 s once it runs.
 			const key = sandboxKey(directory, name);
 			await deployedCommand(host, deployed, ["start", key, sandboxArgument(config)]);
 			return [

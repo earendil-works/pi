@@ -1,37 +1,44 @@
 import type { ConversationId } from "@earendil-works/pi-durable";
 import { canView, contribute, defineFacet, deriveTyped, forbidden } from "@p2/app/v1";
+import { ARTIFACTS, Files } from "@p2/app/v1/node";
 import { agentConversation, Extensions, harnessOf, workerOf } from "@p2/app/v1/worker";
-import { ArtifactContent, ArtifactList, MAX_ARTIFACT_PREVIEW } from "./contract.ts";
-import { Artifacts } from "./store.ts";
-import { ArtifactDoc, createArtifactExtension } from "./tool.ts";
+import { FilesMirror } from "../files/contract.ts";
+import { ArtifactContent, ArtifactList, ArtifactSource, MAX_ARTIFACT_PREVIEW } from "./contract.ts";
+import { readArtifact, saveArtifact } from "./store.ts";
+import { ArtifactDoc, createArtifactExtension, type SaveArtifact } from "./tool.ts";
 
 export default defineFacet((host) => {
 	contribute(host, "p2.artifact-tools", (self) => {
 		const worker = workerOf(self);
-		// The tool's declaration; each call saves for the worker's session.
-		const template = createArtifactExtension("", "");
-		self.contribute(Extensions, {
-			[template.name]: {
-				...template,
-				tools: template.tools!.map((tool) => ({
-					...tool,
-					execute: (...args: Parameters<typeof tool.execute>) =>
-						createArtifactExtension(worker().init.dataDir, worker().init.values.session.id).tools![0]!.execute(
-							...args,
-						),
-				})),
-			},
-		});
+		// Versions go into the session's files (space `artifacts`), in a root of the worker's own; the server's mirror
+		// hears of the change before the tool answers.
+		const save: SaveArtifact = (input, holder, context) =>
+			worker().root(async (ctx) => {
+				const info = await saveArtifact(await ctx.get(Files, {}), input, String(holder), ctx);
+				await (await ctx.get(FilesMirror, {})).push(ARTIFACTS, ctx);
+				return info;
+			}, context);
+		const extension = createArtifactExtension(save);
+		self.contribute(Extensions, { [extension.name]: extension });
+	});
+
+	host.serve(ArtifactSource, (_params, principal, self) => {
+		if (principal.kind !== "server") throw forbidden("server only");
+		const files = self.get(Files, {});
+		return {
+			variant: "server",
+			members: { read: ({ name, version }, ctx) => readArtifact(files, name, version, ctx) },
+		};
 	});
 
 	host.serve(ArtifactContent, ({ session }, principal, self) => {
 		if (!canView(principal, session)) throw forbidden("viewers only");
-		const worker = workerOf(self);
+		const files = self.get(Files, {});
 		return {
 			variant: "reader",
 			members: {
-				read: async ({ name, version }) => {
-					const { info, content } = await new Artifacts(worker().init.dataDir).read(session, name, version);
+				read: async ({ name, version }, ctx) => {
+					const { info, content } = await readArtifact(files, name, version, ctx);
 					const truncated = content.length > MAX_ARTIFACT_PREVIEW;
 					// Never split a surrogate pair at the cut.
 					let end = MAX_ARTIFACT_PREVIEW;

@@ -7,7 +7,10 @@ import type { EntryRecord } from "@earendil-works/pi-durable";
 import { arr, bool, int, nul, num, obj, opt, type Static, str, union, unknown } from "@earendil-works/pi-schema";
 import { literal, unsafe } from "./schema.ts";
 
-/** An uploaded file of a session: stored by the server under `<data>/uploads/<session>/`, never in the project. */
+/**
+ * An attachment of a message: an upload of the session (its `Files`, space `uploads`) as written to the machine where
+ * the receiving conversation works (`path`), never into the project.
+ */
 export const AttachmentSchema = obj({
 	id: str(),
 	name: str(),

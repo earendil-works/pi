@@ -423,6 +423,9 @@ export async function startTuiClient(options: {
 							statusMessage(message as Record<string, unknown>);
 						else if (message.kind === "link" && "data" in message && message.data instanceof Uint8Array)
 							send(message.data);
+						// The worker's link closed on its own (e.g. Chord's heartbeat found the socket silent): drop the socket,
+						// so its close reconnects. No new authority: malformed frames already make the server end the link.
+						else if (message.kind === "linkClosed") socket?.terminate();
 						else if (message.kind === "exit") {
 							void close();
 							options.onExit?.();

@@ -1,6 +1,6 @@
 // Gondolin sandboxes (plugins/envs, type "gondolin"): their configuration, the launcher's arguments, and confinement:
 // a conversation working in a sandbox cannot leave it through the location tools, subagent placement or one-shot agents.
-// The VM itself runs only with P2_TEST_GONDOLIN=1 (it needs /dev/kvm and QEMU >= 7.2 or Docker, and downloads the guest
+// The VM itself runs only with P2_TEST_GONDOLIN=1 (it needs /dev/kvm, QEMU >= 7.2 and Node >= 22, and downloads the guest
 // image on first use), with pi-env's Linux daemon for this machine (static: the guest is Alpine) from P2_TEST_DAEMON or
 // pi-env's package.
 
@@ -118,7 +118,7 @@ test("launcher arguments: allowed hosts are always a list, values are quoted", (
 	const decode = (config: typeof box) => JSON.parse(Buffer.from(sandboxArgument(config), "base64").toString("utf8"));
 	// Gondolin allows every host when the list is omitted: an unset list must reach it as an empty one.
 	assert.deepEqual(decode({ ...box, allowHosts: undefined } as unknown as typeof box).allowHosts, []);
-	assert.deepEqual(decode(box), { mounts: box.mounts, allowHosts: box.allowHosts });
+	assert.deepEqual(decode(box), { mounts: box.mounts, allowHosts: box.allowHosts, diskGb: 32 });
 	assert.notEqual(sandboxRevision(box), sandboxRevision({ ...box, allowHosts: [] }));
 	assert.equal(runLauncher("/home/a b", ["daemon", "it's"]), `sh '/home/a b/p2-sandbox.sh' 'daemon' 'it'\\''s'`);
 });
@@ -227,33 +227,38 @@ test(
 	async (t) => {
 		const daemon = process.env.P2_TEST_DAEMON ?? localDaemon();
 		if (!existsSync(daemon)) return t.skip(`no pi-env daemon at ${daemon}`);
-		// Under the home directory: in Docker, the launcher shares only the home with its container.
-		mkdirSync(join(homedir(), ".cache"), { recursive: true });
-		const home = mkdtempSync(join(homedir(), ".cache", "p2-gondolin-test-"));
-		// Named as p2 deploys it: in Docker the image is tagged with it, and another name would replace the container.
+		const home = mkdtempSync(join(tmpdir(), "p2-gondolin-test-"));
+		// Named as p2 deploys it (its installed Gondolin is shared with real use).
 		const launcher = join(home, launcherId(fileURLToPath(sandboxDir)));
 		mkdirSync(launcher);
-		for (const name of ["p2-sandbox.sh", "p2-sandbox.mjs", "Dockerfile"])
+		for (const name of ["p2-sandbox.sh", "p2-sandbox.mjs"])
 			copyFileSync(new URL(name, sandboxDir), join(launcher, name));
 		copyFileSync(new URL("host-package.json", sandboxDir), join(launcher, "package.json"));
 		copyFileSync(new URL("host-package-lock.json", sandboxDir), join(launcher, "package-lock.json"));
 		const shared = join(home, "shared");
 		mkdirSync(shared);
 		writeFileSync(join(shared, "hello.txt"), "from the host\n");
-		const config = { ...box, host: "unused", mounts: [{ host: shared, guest: "/workspace" }], allowHosts: [] };
+		const config = {
+			...box,
+			host: "unused",
+			mounts: [{ host: shared, guest: "/workspace" }],
+			allowHosts: [],
+			diskGb: 3,
+		};
 		const name = `test-${process.pid}`;
 		// As p2 does: start first (a first start installs and boots for longer than pi-env waits for its daemon).
 		execFileSync("sh", [join(launcher, "p2-sandbox.sh"), "start", name, sandboxArgument(config)], {
 			timeout: 660_000,
 		});
-		const connection = new Connection({
+		const launch = (...args: string[]) =>
+			execFileSync("sh", [join(launcher, "p2-sandbox.sh"), ...args], { encoding: "utf8", timeout: 660_000 });
+		let connection = new Connection({
 			command: ["sh", join(launcher, "p2-sandbox.sh"), "daemon", name, sandboxArgument(config), daemon, "--"],
 		});
 		t.after(() => {
 			connection.close();
-			execFileSync("sh", [join(launcher, "p2-sandbox.sh"), "stop", name]);
+			launch("forget", name);
 			rmSync(home, { recursive: true, force: true });
-			rmSync(join(homedir(), ".pi", "p2", "sandbox", "run", name), { recursive: true, force: true });
 		});
 		const info = await connection.info();
 		assert.equal(info.os, "linux");
@@ -292,6 +297,50 @@ test(
 			BACKGROUND_CONTEXT,
 		);
 		assert.equal(output, "403");
+
+		// The VM's own disk: its configured size, and what is installed (here a file in the home) survives a restart.
+		const run = async (command: string) => {
+			let text = "";
+			const onOutput = (chunk: string) => {
+				text += chunk;
+			};
+			await env.exec(command, { cwd: "/", onOutput }, BACKGROUND_CONTEXT);
+			return text.trim();
+		};
+		const sizeKb = Number(await run("df -k / | tail -1 | awk '{print $2}'"));
+		assert(sizeKb > 2_500_000, `the root file system has grown to the disk size (${sizeKb} KB)`);
+		assert.equal(await run("echo kept > /root/kept.txt && cat /root/kept.txt"), "kept");
+		connection.close();
+		launch("stop", name);
+		launch("start", name, sandboxArgument(config));
+		connection = new Connection({
+			command: ["sh", join(launcher, "p2-sandbox.sh"), "daemon", name, sandboxArgument(config), daemon, "--"],
+		});
+		const restarted = new RemoteExecutionEnv({ connection, id: "sandbox-test-2", cwd: "/" });
+		const kept = await restarted.readTextFile("/root/kept.txt", BACKGROUND_CONTEXT);
+		assert.deepEqual(kept, { ok: true, value: "kept\n" }, "the home survives a restart");
+		// A reset starts from the guest image again.
+		connection.close();
+		launch("reset", name);
+		launch("start", name, sandboxArgument(config));
+		connection = new Connection({
+			command: ["sh", join(launcher, "p2-sandbox.sh"), "daemon", name, sandboxArgument(config), daemon, "--"],
+		});
+		const fresh = new RemoteExecutionEnv({ connection, id: "sandbox-test-3", cwd: "/" });
+		assert.equal((await fresh.fileInfo("/root/kept.txt", BACKGROUND_CONTEXT)).ok, false, "a reset disk is fresh");
+		// A VM killed without unmounting (a crash, a host reboot): the disk's journal lets the next start mount it.
+		connection.close();
+		const disk = `${name}.qcow2`;
+		const qemu = execFileSync("pgrep", ["-f", `qemu-system.*${disk}`], { encoding: "utf8" })
+			.trim()
+			.split("\n");
+		for (const pid of qemu) process.kill(Number(pid), "SIGKILL");
+		await poll(() => launch("status", name).includes('"stopped"'), 30_000, "the supervisor notices the dead VM");
+		launch("start", name, sandboxArgument(config));
+		connection = new Connection({
+			command: ["sh", join(launcher, "p2-sandbox.sh"), "daemon", name, sandboxArgument(config), daemon, "--"],
+		});
+		assert.equal((await connection.info()).os, "linux", "the disk mounts again after a crash");
 	},
 );
 
@@ -320,10 +369,9 @@ test(
 		timeout: 900_000,
 	},
 	async (t) => {
-		// A loopback sshd as this user with the real home: in Docker the launcher shares the home with its container, and
-		// the guest image cache is reused.
-		mkdirSync(join(homedir(), ".cache"), { recursive: true });
-		const root = mkdtempSync(join(homedir(), ".cache", "p2-sandbox-ssh-"));
+		// A loopback sshd as this user with the real home: the launcher's installation and the guest image cache are
+		// reused.
+		const root = mkdtempSync(join(tmpdir(), "p2-sandbox-ssh-"));
 		const port = await freePort();
 		execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", join(root, "host_key")]);
 		writeFileSync(join(root, "authorized_keys"), "");
@@ -346,15 +394,23 @@ test(
 		const owner = fixture.browser();
 		const envs = owner.hold(Envs, {}, BACKGROUND_CONTEXT);
 		t.after(async () => {
-			await envs.sandboxStop({ name: "sbx" }, BACKGROUND_CONTEXT).catch(() => {});
-			for (const sandbox of ["sbx", "spare"])
-				rmSync(join(homedir(), ".pi", "p2", "sandbox", "run", sandboxKey(fixture.dataDir, sandbox)), {
-					recursive: true,
-					force: true,
-				});
-			await fixture.close();
-			server.kill();
-			rmSync(root, { recursive: true, force: true });
+			// Everything is removed even when closing the fixture fails.
+			try {
+				await envs.sandboxStop({ name: "sbx" }, BACKGROUND_CONTEXT).catch(() => {});
+				await fixture.close();
+			} finally {
+				if (server.exitCode === null && server.signalCode === null) {
+					const exited = new Promise((resolve) => server.once("exit", resolve));
+					server.kill();
+					await exited;
+				}
+				rmSync(root, { recursive: true, force: true });
+				for (const sandbox of ["sbx", "spare"]) {
+					const key = sandboxKey(fixture.dataDir, sandbox);
+					rmSync(join(homedir(), ".pi", "p2", "sandbox", "run", key), { recursive: true, force: true });
+					rmSync(join(homedir(), ".pi", "p2", "sandbox", "disks", `${key}.qcow2`), { force: true });
+				}
+			}
 		});
 		await poll(
 			() =>

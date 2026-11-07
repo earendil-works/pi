@@ -68,6 +68,8 @@ import {
 	seedSizes,
 	setDrawer,
 	setSidebarCollapsed,
+	ToolActivities,
+	ToolActivityContext,
 	type Transcript,
 	takeReveal,
 	transcriptOf,
@@ -313,9 +315,11 @@ function Composer({
 	return (
 		<form
 			className="composer"
+			onPointerDown={keepComposerFocus}
 			onSubmit={(event) => {
 				event.preventDefault();
-				onSend();
+				// A form in a sheet a composer control opened (chat-mode's name) is a React child: its submit bubbles here.
+				if (event.target === event.currentTarget) onSend();
 			}}
 		>
 			{replying && (
@@ -410,24 +414,12 @@ function Composer({
 				{children}
 				<span className="spacer" />
 				{busy && onStop && (
-					<button
-						type="button"
-						className="round stop"
-						aria-label="Stop"
-						onPointerDown={keepComposerFocus}
-						onClick={onStop}
-					>
+					<button type="button" className="round stop" aria-label="Stop" onClick={onStop}>
 						<StopIcon />
 					</button>
 				)}
 				{(!busy || content) && (
-					<button
-						type="submit"
-						className="round send"
-						aria-label="Send"
-						disabled={!content || disabled}
-						onPointerDown={keepComposerFocus}
-					>
+					<button type="submit" className="round send" aria-label="Send" disabled={!content || disabled}>
 						<SendIcon />
 					</button>
 				)}
@@ -437,11 +429,16 @@ function Composer({
 }
 
 /**
- * Keeps the focus in the composer's textarea when Send or Stop is pressed. Without this the press blurs the textarea, a
- * phone's keyboard closes, the page shrinks back and the button moves out from under the finger before the click: the
- * first tap only closed the keyboard. The click still fires; the keyboard stays open for the next message.
+ * Keeps the focus in the composer's textarea when anything in the composer but a text field is pressed: Send and Stop,
+ * and the space around them. A press that blurs the textarea closes a phone's keyboard and the page grows back under
+ * the finger: a thumb landing a few pixels beside Send (the composer's padding, the bar's gaps) only closed the
+ * keyboard, and the second tap sent. The click still fires.
  */
-function keepComposerFocus(event: React.PointerEvent<HTMLButtonElement>): void {
+function keepComposerFocus(event: React.PointerEvent<HTMLFormElement>): void {
+	// Pointer events target elements, never text nodes.
+	const target = event.target as Element;
+	// Presses in a sheet a composer control opened (a portal) bubble here in React; they are not in the composer.
+	if (!event.currentTarget.contains(target) || target.closest("textarea, input, select, [contenteditable]")) return;
 	event.preventDefault();
 }
 
@@ -975,12 +972,33 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			? { ...transcript, items: [...transcript.items, ...messages.map((message) => message.item)] }
 			: outgoingTranscript(messages);
 	}, [transcript, pending, pendingQueued]);
-	const rows = useMemo(() => (shown ? transcriptRows(shown.items) : undefined), [shown]);
+	// Until the live view arrives (the kept copy shows), whether the agent works is not known yet.
+	const known = liveView !== undefined;
+	// How tools' calls show: contributed by the plugins that own them.
+	const tools = useRegistry(ToolActivities);
+	// How much of a turn the transcript shows (settings.json `detail`, the owner's; guests see the default).
+	const detail = resources?.settings.detail;
+	const rows = useMemo(
+		() =>
+			shown
+				? transcriptRows(
+						shown.items,
+						tools,
+						shown.working,
+						known,
+						// Anything else: the default (`transcriptRows`' `DEFAULT_DETAIL`).
+						detail === 1 || detail === 2 || detail === 3 || detail === 4 ? detail : undefined,
+					)
+				: undefined,
+		[shown, tools, known, detail],
+	);
 	const follow = useChatScroll({
 		cache: `${sessionId}#${conversationId}`,
 		...(rows ? { rows } : {}),
 		estimates: rowEstimates,
-		...(transcript && pages ? { history: { more: transcript.earlier, loading: pages.loadingEarlier } } : {}),
+		...(transcript && pages
+			? { history: { more: transcript.earlier, loading: pages.loadingEarlier, size: transcript.items.length } }
+			: {}),
 		onEarlier: () => void loadEarlier(),
 	});
 	const attaching = attachingOf(composer);
@@ -1420,41 +1438,43 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 						shown.items.length && rows ? (
 							<SessionId.Provider value={sessionId}>
 								<WorkingDirectory.Provider value={viewCwd}>
-									<OpenConversation.Provider value={openConversation}>
-										<OneShotAgents.Provider value={oneShots}>
-											<OpenWorkspaceFile.Provider value={canWrite ? openWorkspaceFile : undefined}>
-												<OpenTerminal.Provider value={owner ? openTerminal : undefined}>
-													<ReplyTo.Provider value={participant && canReply ? startReply : undefined}>
-														<BranchFrom.Provider value={canBranch ? branchFrom : undefined}>
-															<RevealEntry.Provider value={reveal}>
-																<FillGap.Provider value={fillGap}>
-																	<Messages
-																		transcript={shown}
-																		rows={rows}
-																		list={follow.list}
-																		range={follow.range}
-																		stopped={
-																			stopped?.sessionId === sessionId &&
-																			stopped?.conversationId === conversationId &&
-																			!view?.entries.some((entry) =>
-																				entry.model?.some(
-																					(message) =>
-																						message.role === "assistant" &&
-																						message.stopReason === "aborted",
-																				),
-																			)
-																		}
-																		earlier={earlier}
-																		onEarlier={() => void loadEarlier()}
-																	/>
-																</FillGap.Provider>
-															</RevealEntry.Provider>
-														</BranchFrom.Provider>
-													</ReplyTo.Provider>
-												</OpenTerminal.Provider>
-											</OpenWorkspaceFile.Provider>
-										</OneShotAgents.Provider>
-									</OpenConversation.Provider>
+									<ToolActivityContext.Provider value={tools}>
+										<OpenConversation.Provider value={openConversation}>
+											<OneShotAgents.Provider value={oneShots}>
+												<OpenWorkspaceFile.Provider value={canWrite ? openWorkspaceFile : undefined}>
+													<OpenTerminal.Provider value={owner ? openTerminal : undefined}>
+														<ReplyTo.Provider value={participant && canReply ? startReply : undefined}>
+															<BranchFrom.Provider value={canBranch ? branchFrom : undefined}>
+																<RevealEntry.Provider value={reveal}>
+																	<FillGap.Provider value={fillGap}>
+																		<Messages
+																			transcript={shown}
+																			rows={rows}
+																			list={follow.list}
+																			range={follow.range}
+																			stopped={
+																				stopped?.sessionId === sessionId &&
+																				stopped?.conversationId === conversationId &&
+																				!view?.entries.some((entry) =>
+																					entry.model?.some(
+																						(message) =>
+																							message.role === "assistant" &&
+																							message.stopReason === "aborted",
+																					),
+																				)
+																			}
+																			earlier={earlier}
+																			onEarlier={() => void loadEarlier()}
+																		/>
+																	</FillGap.Provider>
+																</RevealEntry.Provider>
+															</BranchFrom.Provider>
+														</ReplyTo.Provider>
+													</OpenTerminal.Provider>
+												</OpenWorkspaceFile.Provider>
+											</OneShotAgents.Provider>
+										</OpenConversation.Provider>
+									</ToolActivityContext.Provider>
 								</WorkingDirectory.Provider>
 							</SessionId.Provider>
 						) : (
@@ -1501,7 +1521,8 @@ function NewSession() {
 	// The first messages, shown at once while the session is created (session-start.ts).
 	const start = useSyncExternalStore(sessionStart.subscribe, sessionStart.snapshot);
 	const outgoing = useMemo(() => (start ? outgoingTranscript(start.messages) : undefined), [start]);
-	const rows = useMemo(() => (outgoing ? transcriptRows(outgoing.items) : undefined), [outgoing]);
+	const tools = useRegistry(ToolActivities);
+	const rows = useMemo(() => (outgoing ? transcriptRows(outgoing.items, tools) : undefined), [outgoing, tools]);
 	const follow = useChatScroll({ ...(rows ? { rows } : {}), estimates: rowEstimates });
 	/**
 	 * Sends the composer's message without waiting for the session or the connection: it leaves the composer and shows

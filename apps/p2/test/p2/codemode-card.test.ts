@@ -1,5 +1,6 @@
-// Code mode's card (copied from Pi Mobile): nested calls live from pi.live.nestedTools, grouped by the model's call
-// with depth from the parentCallId chain, settled from the result's details.calls; in the browser and the TUI.
+// Code mode's calls (copied from Pi Mobile): nested calls live from pi.live.nestedTools, grouped by the model's call
+// with depth from the parentCallId chain, settled from the result's details.calls; in the browser (the script's step
+// in its turn's activity sheet) and in the TUI's card.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
@@ -7,8 +8,10 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationView, EntryId, LiveState } from "@earendil-works/pi-durable";
 import type { CodemodeToolDetails } from "@earendil-works/pi-durable/codemode";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
+import { scriptCalls } from "../../plugins/codemode/nested.ts";
 import { transcriptComponent } from "../../src/tui/messages.ts";
 import { buildTranscript, type ToolView } from "../../src/web/transcript.ts";
+import { PLUGIN_TUI_RENDERERS } from "../fixtures/tui-tools.ts";
 import { wholeView } from "../fixtures/whole-view.ts";
 import { Browser, browserTests } from "./browser.ts";
 import { startFixture } from "./helpers.ts";
@@ -124,10 +127,16 @@ function settled(): ConversationView {
 	};
 }
 
-const codemode = (view: ConversationView): ToolView | undefined =>
-	buildTranscript(wholeView(view))
+/** The script's call, with its calls as code mode's contribution reads them (live, or its result's list). */
+const codemode = (view: ConversationView): ToolView | undefined => {
+	const tool = buildTranscript(wholeView(view))
 		.items.flatMap((item) => (item.type === "assistant" ? item.tools : []))
-		.find((tool) => tool.id === CALL);
+		.find((each) => each.id === CALL);
+	if (!tool) return;
+	const { calls: _, ...rest } = tool;
+	const calls = scriptCalls(tool);
+	return calls ? { ...rest, calls } : rest;
+};
 
 test("live nested calls are grouped under the model's call, with depth from the parent chain", () => {
 	const card = codemode(running());
@@ -187,7 +196,7 @@ test("settled calls come from the result's details.calls", () => {
 
 test("TUI shows pi's code mode card: the script, the newest nested calls by depth, then the output", () => {
 	const render = (view: ConversationView, expanded = false) =>
-		transcriptComponent(buildTranscript(wholeView(view)), false, expanded)
+		transcriptComponent(buildTranscript(wholeView(view)), false, expanded, { renderers: PLUGIN_TUI_RENDERERS })
 			.render(120)
 			.map((line) => stripTerminalSequences(line).trimEnd())
 			.join("\n");
@@ -210,7 +219,7 @@ test("TUI shows pi's code mode card: the script, the newest nested calls by dept
 });
 
 test(
-	"browser card: live rows (newest eight, Show all), the clipped script, and the settled summary",
+	"browser: the script's step, its highlighted script and its calls, live and settled",
 	{ skip: !browserTests, timeout: 60_000 },
 	async () => {
 		const fixture = await startFixture({ web: true });
@@ -223,76 +232,60 @@ test(
 			await browser.loadFixture("codemode-card.ts");
 			await browser.wait("typeof window.showCodemode==='function'");
 			const show = (view: ConversationView) => browser!.evaluate(`window.showCodemode(${JSON.stringify(view)})`);
+			const call = (index: number) => `document.querySelectorAll('[data-testid=call]')[${index}]`;
 			await show(running());
-			await browser.wait("document.querySelectorAll('.nested-call').length===8");
-			assert.equal(await browser.evaluate("document.querySelector('.tool-name').textContent"), "Code");
-			assert.equal(
-				await browser.evaluate("document.querySelector('.tool-summary').textContent"),
-				"// read every file",
+			// The activity row while it runs: the script, with the calls it has made so far.
+			await browser.wait(
+				"document.querySelector('[data-testid=activity][data-state=working]')?.textContent.includes('Running a script · 10 calls')",
 			);
+			await browser.click("[data-testid=activity]");
+			await browser.wait("document.querySelector('[data-testid=step] button')");
+			assert.match(
+				await browser.evaluate<string>("document.querySelector('[data-testid=step]').textContent"),
+				/^codemoderead every file● running/,
+			);
+			await browser.click("[data-testid=step] button");
+			// The newest eight calls, the rest behind "Show all", as the transcript's card had them.
+			await browser.wait("document.querySelectorAll('[data-testid=call]').length===8");
 			assert.equal(
-				await browser.evaluate("document.querySelector('.nested .tool-link').textContent"),
+				await browser.evaluate("document.querySelector('[data-testid=calls-more]').textContent"),
 				"Show all 10 tool calls · 1 failed",
 			);
-			// The newest rows: the running bash call with its last output line, the failed read with its error.
+			assert.match(await browser.evaluate<string>(`${call(7)}.textContent`), /Running npm test|npm test/);
+			await browser.click("[data-testid=calls-more]");
+			await browser.wait("document.querySelectorAll('[data-testid=call]').length===10");
 			assert.equal(
-				await browser.evaluate("document.querySelector('.nested-call.running .nested-name').textContent"),
-				"bash",
+				await browser.evaluate("document.querySelector('.sheet-head h2').textContent"),
+				"Ran a script · 10 calls, 1 failed",
 			);
-			assert.equal(await browser.evaluate("document.querySelector('.nested-call.running .spinner')!==null"), true);
+			// The script: highlighted JS, whole (8 lines need no Show all).
 			assert.equal(
-				await browser.evaluate("document.querySelector('.nested-call.running .nested-detail').textContent"),
-				"running tests",
-			);
-			assert.equal(
-				await browser.evaluate("document.querySelector('.nested-call.error .nested-error').textContent"),
-				"ENOENT: f3.ts",
-			);
-			await browser.click(".nested .tool-link");
-			await browser.wait("document.querySelectorAll('.nested-call').length===10");
-			// A call's own call is indented one level.
-			assert.equal(
-				await browser.evaluate("document.querySelectorAll('.nested-call')[1].style.getPropertyValue('--depth')"),
-				"1",
-			);
-			assert.equal(
-				await browser.evaluate(
-					"parseFloat(getComputedStyle(document.querySelectorAll('.nested-call')[1]).paddingLeft) > parseFloat(getComputedStyle(document.querySelectorAll('.nested-call')[0]).paddingLeft)",
-				),
+				await browser.evaluate("document.querySelector('[data-testid=detail-input] .hljs-keyword')!==null"),
 				true,
 			);
-			// The script: highlighted JS in the card body, clipped to its first lines until Show all.
-			await browser.click(".tool-head");
-			await browser.wait("document.querySelector('.script.clip pre')");
-			assert.equal(await browser.evaluate("document.querySelector('.script .hljs-keyword')!==null"), true);
-			const clipped = await browser.evaluate<number>(
-				"document.querySelector('.script pre').getBoundingClientRect().height",
+			assert.match(
+				await browser.evaluate<string>("document.querySelector('[data-testid=detail-input]').textContent"),
+				/return files\.length;/,
 			);
-			assert.equal(await browser.evaluate("document.querySelector('.script-more').textContent"), "Show all 8 lines");
-			await browser.click(".script-more");
-			await browser.wait("document.querySelector('.script') && !document.querySelector('.script.clip')");
-			assert.ok(
-				(await browser.evaluate<number>("document.querySelector('.script pre').getBoundingClientRect().height")) >
-					clipped,
+			// The subagent's own read is marked as nested; the failed read shows its error, the running bash its last line.
+			assert.match(await browser.evaluate<string>(`${call(1)}.textContent`), /Read inner\.ts · nested/);
+			assert.equal(await browser.evaluate(`${call(3)}.dataset.state`), "error");
+			assert.match(await browser.evaluate<string>(`${call(3)}.textContent`), /ENOENT: f3\.ts/);
+			assert.equal(await browser.evaluate(`${call(9)}.dataset.state`), "running");
+			assert.match(
+				await browser.evaluate<string>(`${call(9)}.textContent`),
+				/Running npm test.*running tests|npm test.*running tests/,
 			);
-			// Settled (a fresh card; an open list stays open when its call settles): the rows collapse behind the count.
-			await show({ conversation, entries: [], docs: {} });
-			await browser.wait("!document.querySelector('.tool')");
+			// Settled: the result's calls; a cancelled one is interrupted, a failure.
 			await show(settled());
-			await browser.wait("document.querySelector('.nested .tool-link')?.textContent==='3 tool calls · 2 failed'");
-			assert.equal(await browser.evaluate("document.querySelectorAll('.nested-call').length"), 0);
-			await browser.click(".nested .tool-link");
-			await browser.wait("document.querySelectorAll('.nested-call').length===3");
-			assert.equal(
-				await browser.evaluate("document.querySelectorAll('.nested-call.error, .nested-call.interrupted').length"),
-				2,
-			);
+			await browser.wait("document.querySelectorAll('[data-testid=call]').length===3");
 			assert.equal(
 				await browser.evaluate(
-					"[...document.querySelectorAll('.nested-time')].map((time)=>time.textContent).join(',')",
+					"[...document.querySelectorAll('[data-testid=call]')].map((row)=>row.dataset.state).join()",
 				),
-				"12ms,3ms,interrupted",
+				"done,error,error",
 			);
+			assert.match(await browser.evaluate<string>(`${call(1)}.textContent`), /ENOENT: b\.ts/);
 		} finally {
 			await browser?.close();
 			await fixture.close();

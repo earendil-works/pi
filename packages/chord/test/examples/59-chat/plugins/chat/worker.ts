@@ -21,7 +21,7 @@ import {
 	Room,
 	str,
 } from "@chat/app/v1";
-import { Files } from "@chat/app/v1/worker";
+import { type FileInfo, Files } from "@chat/app/v1/worker";
 
 /** Every message of the channel, by its number. */
 const Messages = defineTable("chat.messages", {
@@ -80,22 +80,30 @@ export default defineFacet((host) => {
 				messages: self.derive([store.messages], ([messages]) => messages),
 				history: (page, ctx) => store.history(page, ctx),
 				post: (text, ctx) => store.add({ author, text }, ctx),
-				begin: (file, ctx) => files.begin(file, ctx),
+				// Each attachment is a file of the space `attachments`, at its name (a name sent twice is a new version).
+				begin: async ({ name, mime }, ctx) => {
+					const path = name.replaceAll("/", "_");
+					const begun = await files.begin({ space: "attachments", path, mime, source: author }, ctx);
+					// Without a key a begin always starts an upload.
+					return begun.kind === "upload" ? begun.upload : "";
+				},
 				append: (chunk, ctx) => files.append(chunk, ctx),
 				share: async ({ upload, text }, ctx) => {
-					const id = await files.finish(upload, ctx);
-					return store.add({ author, text, file: attachment(files.list.value, id) }, ctx);
+					const file = await files.finish(upload, ctx);
+					return store.add({ author, text, file: attachment(file) }, ctx);
 				},
-				attachment: async (id) => attachment(files.list.value, id),
+				attachment: async (id, ctx) => {
+					const file = await files.file(id, ctx);
+					if (file === null) throw new Error(`no file ${id}`);
+					return attachment(file);
+				},
 				read: (range, ctx) => files.read(range, ctx),
 			},
 		};
 	});
 });
 
-/** The attachment `id` of the channel's files; throws when there is none. */
-function attachment(list: readonly Attachment[], id: string): Attachment {
-	const file = list.find((each) => each.id === id);
-	if (file === undefined) throw new Error(`no file ${id}`);
-	return { id, name: file.name, mime: file.mime, size: file.size };
+/** A file of the channel as an attachment of a message. */
+function attachment(file: FileInfo): Attachment {
+	return { id: file.id, name: file.path, mime: file.mime, size: file.size };
 }

@@ -7,14 +7,13 @@ import { literal } from "@p2/app/v1";
 /** `p2-sandbox.sh check`: how Gondolin can run on the host and what it found. */
 export const LauncherCheckSchema = obj(
 	{
-		runtime: union([literal("native"), literal("docker"), literal("none")]),
+		runtime: union([literal("native"), literal("none")]),
 		system: str(),
 		arch: str(),
 		kvm: bool(),
 		kvmDevice: bool(),
 		qemu: str(),
 		node: str(),
-		docker: bool(),
 	},
 	{ open: true },
 );

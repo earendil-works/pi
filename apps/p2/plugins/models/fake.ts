@@ -166,6 +166,57 @@ export function createFakeModels(options: CreateModelsOptions = {}) {
 					const task = userText(transcript.messages.find((message) => message.role === "user"));
 					if (schema !== undefined && !task.startsWith("json ") && !task.startsWith("slow"))
 						return fauxAssistantMessage([fauxText(JSON.stringify(sampleOf(schema)))]);
+					// `steps`: a turn as real models make them: thinking and a call, words and another call, thinking and the
+					// answer (the transcript's stability tests).
+					if (text === "steps") {
+						const asked = transcript.messages.findLastIndex((message) => message.role === "user");
+						const results = transcript.messages
+							.slice(asked + 1)
+							.filter((message) => message.role === "toolResult").length;
+						if (results === 0)
+							return fauxAssistantMessage(
+								[
+									fauxThinking(`Planning the steps. ${"Looking at the files first. ".repeat(12)}`),
+									fauxToolCall("read", { path: "fixture.txt" }),
+								],
+								{ stopReason: "toolUse" },
+							);
+						if (results === 1)
+							return fauxAssistantMessage(
+								[
+									fauxText(`The first read is done. ${"Reading it once more to be sure. ".repeat(6)}`),
+									fauxToolCall("read", { path: "fixture.txt" }),
+								],
+								{ stopReason: "toolUse" },
+							);
+						return fauxAssistantMessage([
+							fauxThinking(`Wrapping up. ${"Both reads agree. ".repeat(12)}`),
+							fauxText(`Echo: steps. ${"Both reads show the same text, so the file is stable. ".repeat(8)}`),
+						]);
+					}
+					// `inline-steps`: a call, an inline artifact, another call, the answer (the artifact shows in place, between
+					// two wheels).
+					if (text === "inline-steps") {
+						const asked = transcript.messages.findLastIndex((message) => message.role === "user");
+						const results = transcript.messages
+							.slice(asked + 1)
+							.filter((message) => message.role === "toolResult").length;
+						const steps = [
+							() => fauxToolCall("read", { path: "fixture.txt" }),
+							() =>
+								fauxToolCall("artifact", {
+									name: "steps",
+									title: "Steps",
+									type: "markdown",
+									content: "# Between the calls\n\nShown where it was made.",
+									inline: true,
+								}),
+							() => fauxToolCall("read", { path: "fixture.txt" }),
+						];
+						const next = steps[results];
+						if (next) return fauxAssistantMessage([next()], { stopReason: "toolUse" });
+						return fauxAssistantMessage([fauxText("Echo: inline-steps. The artifact is above.")]);
+					}
 					// A section that changed during the run (tools loaded by `tool_search`) adds a system message after the result.
 					const last = transcript.messages.findLast((message) => message.role !== "system");
 					if (last?.role !== "toolResult") {

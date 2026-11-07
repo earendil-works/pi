@@ -530,5 +530,15 @@ test(
 		await envs.forgetHostKey({ name: "box" }, BACKGROUND_CONTEXT);
 		const forgotten = await envs.test({ name: "box" }, BACKGROUND_CONTEXT);
 		assert(!forgotten.ok && forgotten.hostKey?.state === "unknown");
+		// The sheet lists what blocks deleting (archived sessions too); the owner may delete anyway.
+		const blocking = await until(envs.envs, (entries) =>
+			Boolean(entries?.find((entry) => entry.name === "box")?.users?.length),
+		);
+		assert.deepEqual(
+			blocking?.find((entry) => entry.name === "box")?.users?.map((user) => [user.id, user.archived]),
+			[[session.id, true]],
+		);
+		await envs.delete({ name: "box", force: true }, BACKGROUND_CONTEXT);
+		await until(envs.envs, (entries) => entries !== undefined && !entries.some((entry) => entry.name === "box"));
 	},
 );
