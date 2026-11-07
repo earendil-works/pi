@@ -45,6 +45,8 @@ export class Browser {
 	readonly #socket: WebSocket;
 	readonly #pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
 	readonly #loaded = new Set<string>();
+	/** Listeners of DevTools events, by method. */
+	readonly #listeners = new Map<string, (params: Record<string, unknown>) => void>();
 	#id = 0;
 	/** The page's console messages. */
 	readonly console: string[] = [];
@@ -107,6 +109,12 @@ export class Browser {
 		});
 	}
 
+	/** Calls `listener` with the params of each DevTools event `method` (one listener per method; `undefined` removes it). */
+	on(method: string, listener: ((params: Record<string, unknown>) => void) | undefined): void {
+		if (listener === undefined) this.#listeners.delete(method);
+		else this.#listeners.set(method, listener);
+	}
+
 	/** The value of `expression` in the page (awaited). */
 	async evaluate<T>(expression: string): Promise<T> {
 		const answer = (await this.call("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true })) as {
@@ -160,6 +168,9 @@ export class Browser {
 			readonly args?: readonly { readonly value?: unknown }[];
 		};
 	}): void {
+		// An event's params are an object (DevTools protocol); each listener reads the fields of its event.
+		if (message.method !== undefined)
+			this.#listeners.get(message.method)?.(message.params as Record<string, unknown>);
 		if (message.method === "Page.lifecycleEvent" && message.params?.name === "DOMContentLoaded") {
 			this.#loaded.add(message.params.loaderId!);
 		}

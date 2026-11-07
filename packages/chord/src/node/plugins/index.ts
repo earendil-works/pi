@@ -3,6 +3,7 @@
 // rolled out and installed, and a plugin tested alone. Node-only (`fs`, esbuild, `vm`); esbuild is an optional peer
 // dependency, imported only here.
 
+export type { BaseInputs } from "./base-inputs.ts";
 export { type AppApi, type BuildInput, type BuildOptions, type BuiltFacet, buildFacet } from "./build.ts";
 export {
 	type Discovery,

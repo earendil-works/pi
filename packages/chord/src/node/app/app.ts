@@ -4,8 +4,7 @@
 // the server's plugins with the kit's own facets (the start-data object, sessions, the owner link, pairing, files),
 // and gives the app the controls it needs: the owner link, `applyChanges`, installs, export and import per address.
 
-import { statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { type Context, withAbortSignal } from "../../context/index.ts";
 import { type Address, type HostKind, hostKind, type KindShape } from "../../contracts/index.ts";
@@ -27,6 +26,7 @@ import { type TelemetryIngestTarget, telemetryIngestFacet } from "../../telemetr
 import type { Watchable } from "../../watch.ts";
 import { createHttp, type HttpComponent, type HttpError, type ListenAddress } from "../http/index.ts";
 import {
+	type BaseInputs,
 	createPlugins,
 	type HostPackages,
 	type InstallOptions,
@@ -37,8 +37,22 @@ import {
 	type RolloutResult,
 	type RolloutStep,
 } from "../plugins/index.ts";
-import { tuiSurface, WEB_PREFIX, type WebSurfaceOptions, webSurface } from "../surfaces/index.ts";
-import { createWorkers, type ProcessLock, processLock, type Workers, type WorkersError } from "../workers/index.ts";
+import {
+	processConditions,
+	type TuiSurfaceOptions,
+	tuiSurface,
+	WEB_PREFIX,
+	type WebSurfaceOptions,
+	webSurface,
+} from "../surfaces/index.ts";
+import {
+	createWorkers,
+	nodeBaseInputs,
+	type ProcessLock,
+	processLock,
+	type Workers,
+	type WorkersError,
+} from "../workers/index.ts";
 import { ARCHIVE_FORMAT, type ArchiveManifest, packData, unpackData } from "./archive.ts";
 import { addressParam, HostData } from "./data.ts";
 import { type FilesCaps, filesFacet } from "./files.ts";
@@ -89,12 +103,16 @@ export type AppWorkerKind<P extends Principal> = {
 	readonly idleMs?: () => number;
 };
 
-/** What the kit reports: from its host, its HTTP component, its workers or its plugins. */
+/**
+ * What the kit reports: from its host, its HTTP component, its workers or its plugins, or a failed scan of the server's
+ * own code (`server_scan`: the server starts, that code is not compared).
+ */
 export type AppError =
 	| { readonly kind: "host"; readonly error: HostError }
 	| { readonly kind: "http"; readonly error: HttpError }
 	| { readonly kind: "workers"; readonly error: WorkersError }
-	| { readonly kind: "plugins"; readonly error: PluginsError };
+	| { readonly kind: "plugins"; readonly error: PluginsError }
+	| { readonly kind: "server_scan"; readonly error: unknown };
 
 /**
  * What `startServer` takes. Worker kinds need `principal.worker`: a type error without it, also for a `workers` list
@@ -128,11 +146,15 @@ export type AppOptions<P extends Principal> = {
 	readonly install?: InstallOptions;
 	/**
 	 * The web surface (slice 11): the app's web entry (the base bundle's), its page template, the paths serving the
-	 * page (`["/"]`), whether the page is public; the `web` facet kind. None: no web surface.
+	 * page (`["/"]`), whether the page is public, the conditions its packages resolve with (the server process's by
+	 * default); the `web` facet kind. None: no web surface.
 	 */
 	readonly web?: AppWeb;
-	/** The terminal surface (slice 11): the app's terminal entry; the `tui` facet kind. None: no terminal clients. */
-	readonly tui?: { readonly entry: string };
+	/**
+	 * The terminal surface (slice 11): the app's terminal entry and the conditions its packages resolve with (the server
+	 * process's by default); the `tui` facet kind. None: no terminal clients.
+	 */
+	readonly tui?: Pick<TuiSurfaceOptions, "entry" | "conditions">;
 	/**
 	 * The app's telemetry store (§29; decision "The server is the one place telemetry is stored"): the server's host,
 	 * its HTTP requests and the kit's ingest record to it (`createSqliteTelemetry`'s store). With one, every worker
@@ -146,9 +168,10 @@ export type AppOptions<P extends Principal> = {
 	 */
 	readonly principalAttributes?: PrincipalAttributes<P>;
 	/**
-	 * The app's base code beside what the kit knows (files or directories: its API modules, its start script): a change
-	 * sets `plugins.state.base`. The kit adds every file its base bundles were built from: the web's, the terminal's and
-	 * each worker kind's.
+	 * The app's base code beside what the kit knows (files or directories: its API modules, its start script), hashed at
+	 * start: `plugins.state.base` is true while a file differs from what the server or a base bundle read (or a source
+	 * file is new in one of the directories). The kit adds every file its base bundles were built from, with the bytes
+	 * they read: the web's, the terminal's and each worker kind's.
 	 */
 	readonly base?: readonly string[];
 	/**
@@ -185,7 +208,7 @@ export type AppTimeouts = {
 };
 
 /** The kit's web surface options (`webSurface`'s, its kind `web` and plugins the kit's). */
-export type AppWeb = Pick<WebSurfaceOptions, "entry" | "page" | "paths" | "public">;
+export type AppWeb = Pick<WebSurfaceOptions, "entry" | "page" | "paths" | "public" | "conditions">;
 
 /** The plugins of a running app, for its "apply changes" control and its installs. */
 export type AppPlugins = {
@@ -281,9 +304,6 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 		},
 		context,
 	);
-	// Base code by kind: directories are watched as trees, files one by one (`watchBase`).
-	const base = (options.base ?? []).map((path) => resolve(path));
-	const baseDirs = base.filter((path) => statSync(path, { throwIfNoEntry: false })?.isDirectory() === true);
 	const plugins = createPlugins(
 		{
 			roots: [{ path: resolve(options.root ?? "plugins"), required: true }, layout.plugins],
@@ -295,7 +315,8 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 				]),
 			),
 			install: options.install,
-			base: baseDirs,
+			// The server's own base code, hashed now; each base bundle's record is added once built (`watchBase`).
+			base: (options.base ?? []).map((path) => resolve(path)),
 			publicPath: `${WEB_PREFIX}assets/`,
 			onError: (error) => onError({ kind: "plugins", error }),
 		},
@@ -338,6 +359,17 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 	const surfaces: Surface<P>[] = [];
 	const app = new RunningApp(host, http, workers, plugins, surfaces, { store, lock }, layout, options);
 	try {
+		// The server's own code, the static graph of its entry (the start script): compared like every base bundle's.
+		// An entry under `node_modules` is installed code (an npm-installed app, a test runner), never compared.
+		const entry = process.argv[1];
+		if (entry !== undefined && !entry.split(sep).includes("node_modules")) {
+			const conditions = processConditions(process.execArgv, process.env.NODE_OPTIONS);
+			// Best effort: a scan that fails stops nothing; that code is then not compared.
+			await nodeBaseInputs(entry, conditions).then(
+				(inputs) => plugins.watchBase(inputs),
+				(error: unknown) => onError({ kind: "server_scan", error }),
+			);
+		}
 		// Each worker kind's base bundled now: one that does not build fails the start, everything closed.
 		for (const kind of options.workers ?? []) {
 			workers.set(
@@ -349,9 +381,7 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 			surfaces.push(surface);
 			core.push({ name: `chord.${surface.name}`, facet: surface.facet });
 		}
-		const files = base.filter((path) => !baseDirs.includes(path));
-		const bundled = [...surfaces, ...workers.values()].flatMap(({ inputs }) => inputs);
-		plugins.watchBase([...files, ...bundled]);
+		for (const { inputs } of [...surfaces, ...workers.values()]) plugins.watchBase(inputs);
 		await plugins.load(host, { kind: "server", core, modules: modulesOf(api, options.kinds.server) }, context);
 		await ownerTokenFile(layout.ownerToken, owner, host, context);
 		app.started(link.renew(), await http.listening(context));
@@ -384,8 +414,8 @@ type Surface<P extends Principal> = {
 	readonly facet: Facet<P>;
 	step(name: string): RolloutStep;
 	readonly base: string;
-	/** The files its base bundle was built from. */
-	readonly inputs: readonly string[];
+	/** The files its base bundle was built from, with their bytes' hashes. */
+	readonly inputs: BaseInputs;
 };
 
 /** The app's client surfaces, built (their base bundles) in order: the web's, the terminal's. */
@@ -399,7 +429,7 @@ async function surfacesOf<P extends Principal>(
 	if (options.web !== undefined)
 		surfaces.push({ name: "web", ...(await webSurface(host, { ...options.web, plugins }, context)) });
 	if (options.tui !== undefined) {
-		surfaces.push({ name: "tui", ...(await tuiSurface(host, { entry: options.tui.entry, plugins }, context)) });
+		surfaces.push({ name: "tui", ...(await tuiSurface(host, { ...options.tui, plugins }, context)) });
 	}
 	return surfaces;
 }

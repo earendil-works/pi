@@ -23,7 +23,7 @@ const workers = await createWorkers(server, Session, {         // rejects when t
 	onError: (error) => log(error),                                                        // WorkersError
 }, ctx);
 workers.state                                   // { [address key]: WorkerState }, a JSON watchable
-workers.inputs                                  // the files the worker base was built from (base code to watch)
+workers.inputs                                  // the files the worker base read, with their bytes' hashes
 await workers.stop(Session({ id }), ctx);       // suspended while held, then stopped
 await workers.retry(Session({ id }), ctx);      // a failed or suspended address starts again (if held)
 await plugins.rollout([plugins.step("server", server), workers.step("workers")], built, ctx);
@@ -62,7 +62,11 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   with inline source maps, forked with `--enable-source-maps` ahead of the app's `execArgv` (stack traces name the
   source files). The files are in one private temporary directory, written again into a new one when a cleaner removed
   one of them (checked at each fork; a chunk removed while a worker runs fails that worker's import of it), removed at
-  `close`. `inputs` lists the files it was built from: the kit marks `base` when one changes.
+  `close`. `inputs` maps the files it was built from to the hashes of the bytes esbuild read (the module-location
+  loader is the one reader of the source files it handles): the kit marks `base` while one differs.
+  `nodeBaseInputs(entry, conditions)` records the same for a Node entry's static graph without writing or running
+  anything, best effort (the kit's record of the server's own code): literal imports, lazy ones included; an import
+  that does not resolve is left out; resolved as Node does (no `tsconfig.json` `paths`); other esbuild failures reject.
 - **Per address:** a child's events (`started`, `ready`, `idle`, `fatal`, its exit, its link closed by this side) are
   recorded on that child as they happen (a late event of an old child changes nothing); starts and stops run one after
   another. A start waits for the previous child's exit and rejects with a crash recorded meanwhile; a stop records its

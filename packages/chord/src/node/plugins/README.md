@@ -145,8 +145,15 @@ await plugins.rollout([plugins.step("server", server), workers.step("workers")],
   `package.json` sets `install` (and the next build reads the plugin's metadata again; a plugin the next discovery no
   longer has loses its install mark); a directory under a root, a facet file at a plugin's top, or a file at a root's
   top (a single-file plugin's appearing or disappearing) sets `set`; a single-file plugin's file dirties that plugin;
-  a file of base code sets `base` (the app restarts its hosts). Each mark records the generation of its latest change
-  (generations only increase): a change during a build keeps the mark, however late an older rollout ends. A watcher
+  `base` (the app restarts its hosts) is computed, not latched: true exactly while a file differs from what a running
+  base artifact read (`base`, the server's own files and directories, hashed when the component is created; each
+  `watchBase(inputs)`, a base bundle's record of the bytes it read), is gone, or is a source file new in a base
+  directory; compared once when its watch starts (an edit since the build has no later event) and at each event, the
+  reads of one path in order (the latest decides); a file two records read with different bytes stays marked. Every
+  ancestor of a base directory or of a recorded file's directory is watched alone too: an entry on that way created,
+  removed, moved or replaced (an ancestor renamed, a directory made again) renews every base watch under it and
+  compares its files. Each plugin mark records the generation of its latest
+  change (generations only increase): a change during a build keeps the mark, however late an older rollout ends. A watcher
   that cannot watch reports `watch_failed` once; the app builds on demand.
 
 ## Examples
@@ -167,6 +174,7 @@ dependency pinned to a commit, per-kind contract files, a required root), `51-si
 per-kind files, roots, and input capture), `evaluate.ts` (evaluation, the `require` a script gets, `pluginFile`),
 `stack.ts` (the source maps of evaluated scripts while their facets live, `mapStack`), `install.ts` (dependencies,
 git folder packages, plugins from git and npm), `watcher.ts` (the watcher and its marks, a JSON watchable),
+`base-inputs.ts` (what a base build read: each file's bytes hashed as esbuild's loader gets them),
 `css-modules.ts` (CSS modules scoped per plugin and file), `runtime.ts` (evaluated scripts as complete sets for the
 portable `LoadedFacets` of `src/surfaces`, required roots, no esbuild), `plugins.ts` (the
 component: kinds, current sets, `build`, `load`, `reload`, `step`, `rollout`, installs), `testing.ts` (`testPlugin`).

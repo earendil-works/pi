@@ -38,7 +38,7 @@ export async function headlessPage(
 	const headers = { authorization: `Bearer ${token}` };
 	const get = async (path: string): Promise<string> => (await fetch(new URL(path, url), { headers })).text();
 	const html = await get("/");
-	const base = /chordPage=\{base:"([0-9a-f]+)"/.exec(html)![1]!;
+	const base = /chordPage=\{"base":"([0-9a-f]+)"/.exec(html)![1]!;
 	const combined = /src="(\/_chord\/web\/plugins\.[0-9a-f]+\.js)"/.exec(html)![1]!;
 	return startClient<BoardPrincipal>({
 		scripts: WebScripts,

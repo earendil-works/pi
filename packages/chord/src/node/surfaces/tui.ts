@@ -7,7 +7,7 @@ import type { Context } from "../../context/index.ts";
 import type { Principal } from "../../data/index.ts";
 import { defineFacet, type Facet, type Host } from "../../host/index.ts";
 import { Http, type HttpRequest, type HttpResponse } from "../http/index.ts";
-import type { Plugins, RolloutStep } from "../plugins/index.ts";
+import type { BaseInputs, Plugins, RolloutStep } from "../plugins/index.ts";
 import { buildBase } from "./bundle.ts";
 import { scriptsFacet } from "./current.ts";
 import { PublishedScripts } from "./published.ts";
@@ -20,6 +20,8 @@ export type TuiSurfaceOptions = {
 	readonly plugins: Plugins;
 	/** The app's terminal start code (it calls `startTerminalRuntime`): the base bundle's entry. */
 	readonly entry: string;
+	/** The conditions the base bundle's packages resolve with: the server process's by default (`processConditions`). */
+	readonly conditions?: readonly string[];
 };
 
 /** What a launcher downloads at its start (`GET /_chord/tui/start`): the base bundle and the combined plugin file. */
@@ -30,8 +32,8 @@ export type TuiSurface<P extends Principal> = {
 	readonly facet: Facet<P>;
 	step(name: string): RolloutStep;
 	readonly base: string;
-	/** The files its base bundle was built from: the app's base code for this surface. */
-	readonly inputs: readonly string[];
+	/** The files its base bundle was built from, with their bytes' hashes: the app's base code for this surface. */
+	readonly inputs: BaseInputs;
 };
 
 /** Where the terminal surface's files live. */
@@ -43,7 +45,7 @@ export async function tuiSurface<P extends Principal>(
 	options: TuiSurfaceOptions,
 	context: Context,
 ): Promise<TuiSurface<P>> {
-	const base = await buildBase(options.entry, "sandbox", TUI_PREFIX);
+	const base = await buildBase(options.entry, "sandbox", TUI_PREFIX, options.conditions);
 	const published = new PublishedScripts("tui", options.kind ?? "tui", TUI_PREFIX, base.hash, options.plugins, server);
 	await published.start(context);
 	const file = (path: string): ServedFile | undefined => base.files.get(path) ?? published.file(path);
