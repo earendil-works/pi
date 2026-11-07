@@ -143,7 +143,7 @@ whose new code failed: it keeps its old script and its old stylesheet together.<
 server&#39;s resolution conditions: an app installed from npm (no flags) gets Chord&#39;s <code>dist/</code> on the server and in the
 page alike; a server started with <code>--conditions=source</code> (this monorepo) gets the source in both. Today the page
 always takes <code>dist/</code>, whatever the server runs.</li>
-<li><strong>&quot;Restart needed&quot; compares content.</strong> Each base build records the bytes it read; the mark is true exactly while a
+<li><strong>&quot;Restart needed&quot; compares content.</strong> Each base build records a SHA-256 hash of the bytes it read per file; the mark is true exactly while a
 file differs from what a running base was built from, checked once when watching starts and again on every event.</li>
 </ol>
 </section>
@@ -211,7 +211,7 @@ at start as well.</li>
 <li><strong>The mark is computed, not latched.</strong> <code>base</code> is true while, for any running artifact, a recorded file&#39;s current
 bytes differ or the file is gone, or a base directory has a source file (<code>.ts</code>, <code>.tsx</code>, <code>.mts</code>, <code>.cts</code>, <code>.js</code>, <code>.jsx</code>,
 <code>.mjs</code>, <code>.cjs</code>, <code>.json</code>, <code>.css</code>) that was not there at start. A file two artifacts read with different bytes stays
-marked as long as either differs. Back to the recorded bytes, the mark clears.</li>
+marked as long as either differs. Back to bytes with the recorded hash, the mark clears.</li>
 <li><strong>Checked when watching starts and on every event.</strong> After the watches are installed, every recorded file and base
 directory is compared once (an edit between the build and the watch is found there). Each event re-reads its path;
 reads of one path are serialized, the latest wins. A base directory removed and recreated is watched again.</li>

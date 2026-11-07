@@ -24,8 +24,11 @@ request before a context handoff. Read this file first, in full, then the readin
 - He wants things done, but genuinely new decisions go to him **one at a time**, explained with concrete code and
   sequence diagrams (SVG), no invented APIs. Record each decision at once in `packages/chord/docs/decisions.md` (Chord
   decisions, on main) or `apps/p3/docs/decisions.md` (p3 decisions, on the branch) and push.
-- Subagents on `radius/claude-opus-5-5` (never Fable, not direct anthropic). Subagents never commit; I review, then
-  commit. Each build subagent works in its own worktree; remove a worktree only after its subagent's final report.
+- **NEVER commit (or push) source code before the owner reviewed it** (owner, 2026-11-06: "never ever commit again
+  before i review"; "i don't need to review docs, only source code"): docs, specs and decision entries may be committed
+  without his review; code (src, tests, examples, configs) only after he reviewed the diff.
+- Subagents on `radius/claude-opus-5-5` (never Fable, not direct anthropic); correctness reviewers also GPT-6 Astra and
+  GPT-6.1 Sol (`openai-codex/gpt-6-astra`, `openai-codex/gpt-6.1-sol`) when the owner asks. Subagents never commit. Each build subagent works in its own worktree; remove a worktree only after its subagent's final report.
 - Never a file write and a dependent git command or subagent message in one parallel batch.
 - NEVER call history_handoff unless the owner explicitly asks.
 - Radius artifacts private. Never print credentials.

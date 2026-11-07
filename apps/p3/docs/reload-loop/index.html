@@ -112,10 +112,10 @@ table{max-width:100%}
   <div class="kicker">An explainer · p3 · 2026-11-06</div>
   <h1>The Reload<br>Loop</h1>
   <p class="subtitle">What is bundled into what, what only a restart changes, and what happens, step by step, when someone edits a file of a running p3</p>
-  <div class="cover-stats"><div class="stat"><b>4</b><span>bundles built once at start (server code is loaded, not bundled)</span></div><div class="stat"><b>1</b><span>script per plugin and host kind, rebuilt on Apply</span></div><div class="stat"><b>0</b><span>dev modes: the phone runs the same loop</span></div><div class="stat"><b>4</b><span>known rough edges, fixed in step 0a</span></div></div>
+  <div class="cover-stats"><div class="stat"><b>4</b><span>bundles built once at start (server code is loaded, not bundled)</span></div><div class="stat"><b>1</b><span>script per plugin and host kind, rebuilt on Apply</span></div><div class="stat"><b>0</b><span>dev modes: the phone runs the same loop</span></div><div class="stat"><b>3</b><span>rough edges fixed in step 0a, 1 accepted</span></div></div>
   <div class="cover-note"><p>Written for the owner from the Chord code on branch <code>p3</code> (<code>packages/chord/src/node/plugins/</code>, <code>node/surfaces/</code>,
 <code>node/workers/</code>, <code>node/app/</code>, <code>src/web/</code>) and design §21. The p3 file names are step 0&#39;s. The last chapter lists what
-the two step-0 reviewers found rough today; those are step 0a.</p>
+the step-0 reviewers found rough, and what step 0a did about each.</p>
 </div>
 </section><div class="inner">
 <nav class="toc"><h2>Contents</h2><ol>
@@ -124,7 +124,7 @@ the two step-0 reviewers found rough today; those are step 0a.</p>
 <li><a href="#never">II. Never Reloaded</a></li>
 <li><a href="#how">III. Reloaded, and How</a></li>
 <li><a href="#loop">IV. The Loop: I Edit File X</a></li>
-<li><a href="#rough-edges-today">Rough Edges Today</a></li>
+<li><a href="#what-step-0a-changed">What Step 0a Changed</a></li>
 </ol></nav>
 
 <section class="preface" id="before-we-begin">
@@ -323,7 +323,7 @@ components keep their state. A page that was offline catches up from the snapsho
 <td><code>plugins/hello/web.tsx</code></td>
 <td><code>dirty: [@p3/hello]</code></td>
 <td>builds; the server and workers get an unchanged server script (same digest: nothing restarts); pages fetch hello&#39;s new web script</td>
-<td>hello&#39;s part remounts in place; nothing else moves</td>
+<td>hello&#39;s part remounts in place and shows its loading state for one round trip; nothing else moves</td>
 </tr>
 <tr>
 <td><code>plugins/hello/hello.module.css</code></td>
@@ -384,22 +384,23 @@ Apply button (decision 1 of the step-0 spec: a kit object for the marks and the 
 a tool. Nothing applies on save: a save is often half an edit.</p>
 </section>
 
-<section class="chapter epilogue" id="rough-edges-today"><header class="opener"><div class="numeral">∴</div><h2>Rough Edges Today</h2><p class="lede">What the step-0 reviewers found, which step 0a fixes in Chord before p3 builds on it.</p></header>
-<p class="dropcap">The loop above is what Chord is designed to do. The reviewers found four places where today&#39;s code falls short of
-&quot;smooth&quot;:</p>
+<section class="chapter epilogue" id="what-step-0a-changed"><header class="opener"><div class="numeral">∴</div><h2>What Step 0a Changed</h2><p class="lede">The four rough edges the step-0 reviewers found, and what became of each.</p></header>
 <ol>
-<li><strong>A remount flashes.</strong> A remounted component&#39;s <code>useHold</code> and <code>useRegistry</code> start <code>undefined</code>, so the counter shows 0
-(or the shell an empty page) for one round trip after an Apply, and a tap in that moment is lost. Fix: a hold
-survives the remount (released a frame after unmount, picked up by the new component), registries read at once.
-The one real design change: a decision.</li>
-<li><strong>A stylesheet swap flashes unstyled.</strong> The page removes the old stylesheet before the new one loaded. Fix: remove it
-after the new one&#39;s <code>load</code>.</li>
-<li><strong>The page&#39;s base bundle reads Chord&#39;s built <code>dist/</code>.</strong> Any <code>npm run build</code> in this checkout then sets <code>base</code> for
-good, and the page may run other Chord code than the server. Fix: build the page&#39;s base with the server&#39;s
-resolution conditions (source), as the worker base already does.</li>
-<li><strong>The <code>base</code> mark fires on any file event and never clears.</strong> A formatter touching a file without changing it, an
-editor&#39;s swap file or a branch switch says &quot;restart needed&quot; until a restart. Fix: compare content hashes with what
-the base was built from.</li>
+<li><strong>A reloaded UI part shows its loading state.</strong> After a page or terminal plugin&#39;s reload its components remount and
+make new references, which have no values for one round trip. Sharing references between components to avoid that
+was proposed, reviewed four times and rejected by the owner (decision &quot;A reloaded UI part shows its loading
+state&quot;): a short loading state of the reloaded part is fine; the rest of the page, and every server or worker
+reload, stay live.</li>
+<li><strong>Stylesheets</strong> (fixed): a page fetches a plugin&#39;s new stylesheet inactive before it reloads the plugin, switches it
+on only if the plugin&#39;s new code was adopted, and retires the old one after a drawn frame. Failed stylesheets are
+retried by the next update, also those that failed at the page&#39;s first load. Limitation: UI contributed by an object
+that restarts can show unstyled until its successor is live (owner&#39;s call pending: accept, or a kernel signal).</li>
+<li><strong>Base bundles</strong> (fixed): the page&#39;s and the terminal&#39;s base resolve packages with the server&#39;s conditions: an app
+installed from npm gets <code>dist/</code> everywhere, a server started with <code>--conditions=source</code> gets source everywhere.</li>
+<li><strong>&quot;Restart needed&quot;</strong> (fixed): each running base records a SHA-256 hash of the bytes it read per file (the worker, page and terminal bundles,
+and a best-effort scan of the server&#39;s start script); the mark is true exactly while a recorded file differs, and
+clears after a revert. Edits before the watcher started are found when it starts; ancestor directories are watched
+by identity.</li>
 </ol>
 <p>And one gap for later: a plugin&#39;s new npm dependency is not installed by Apply (the <code>install</code> mark is shown, the app
 must install); p3 handles it when the first plugin needs a dependency.</p>

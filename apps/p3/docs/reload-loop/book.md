@@ -7,11 +7,11 @@ stats:
   - 4 | bundles built once at start (server code is loaded, not bundled)
   - 1 | script per plugin and host kind, rebuilt on Apply
   - 0 | dev modes: the phone runs the same loop
-  - 4 | known rough edges, fixed in step 0a
+  - 3 | rough edges fixed in step 0a, 1 accepted
 note: |
   Written for the owner from the Chord code on branch `p3` (`packages/chord/src/node/plugins/`, `node/surfaces/`,
   `node/workers/`, `node/app/`, `src/web/`) and design §21. The p3 file names are step 0's. The last chapter lists what
-  the two step-0 reviewers found rough today; those are step 0a.
+  the step-0 reviewers found rough, and what step 0a did about each.
 colophon: p3 reload loop · first edition · 2026-11-06 · sources: Chord design §21, §23; the plugins, surfaces, workers and app kit code
 ---
 
@@ -174,7 +174,7 @@ plug --> page: marks clear
 | Edit | Marks | Apply does | Mario sees |
 | --- | --- | --- | --- |
 | `plugins/hello/server.ts` | `dirty: [@p3/hello]` | builds hello's facets; restarts hello's objects on the server; ships to workers; publishes the web set (hello's web script unchanged: pages fetch nothing) | the counter `live` throughout, a blink of `loading`, the new code's value |
-| `plugins/hello/web.tsx` | `dirty: [@p3/hello]` | builds; the server and workers get an unchanged server script (same digest: nothing restarts); pages fetch hello's new web script | hello's part remounts in place; nothing else moves |
+| `plugins/hello/web.tsx` | `dirty: [@p3/hello]` | builds; the server and workers get an unchanged server script (same digest: nothing restarts); pages fetch hello's new web script | hello's part remounts in place and shows its loading state for one round trip; nothing else moves |
 | `plugins/hello/hello.module.css` | `dirty: [@p3/hello]` | the web script and its stylesheet are rebuilt; pages swap hello's stylesheet | hello restyles in place |
 | `plugins/shell/contract.web.ts` (a token others import) | `dirty: [shell, hello, reload]`: every plugin that copied it | rebuilds all three; each page reloads the three in place | the page redraws in place |
 | a new directory `plugins/notes/` | `set` | discovers again, builds notes, loads it everywhere | its parts appear |
@@ -194,23 +194,23 @@ reason to keep it small.
 Apply button (decision 1 of the step-0 spec: a kit object for the marks and the apply); later an agent gets the same as
 a tool. Nothing applies on save: a save is often half an edit.
 
-# Rough Edges Today {.epilogue lede="What the step-0 reviewers found, which step 0a fixes in Chord before p3 builds on it."}
+# What Step 0a Changed {.epilogue lede="The four rough edges the step-0 reviewers found, and what became of each."}
 
-The loop above is what Chord is designed to do. The reviewers found four places where today's code falls short of
-"smooth":
-
-1. **A remount flashes.** A remounted component's `useHold` and `useRegistry` start `undefined`, so the counter shows 0
-   (or the shell an empty page) for one round trip after an Apply, and a tap in that moment is lost. Fix: a hold
-   survives the remount (released a frame after unmount, picked up by the new component), registries read at once.
-   The one real design change: a decision.
-2. **A stylesheet swap flashes unstyled.** The page removes the old stylesheet before the new one loaded. Fix: remove it
-   after the new one's `load`.
-3. **The page's base bundle reads Chord's built `dist/`.** Any `npm run build` in this checkout then sets `base` for
-   good, and the page may run other Chord code than the server. Fix: build the page's base with the server's
-   resolution conditions (source), as the worker base already does.
-4. **The `base` mark fires on any file event and never clears.** A formatter touching a file without changing it, an
-   editor's swap file or a branch switch says "restart needed" until a restart. Fix: compare content hashes with what
-   the base was built from.
+1. **A reloaded UI part shows its loading state.** After a page or terminal plugin's reload its components remount and
+   make new references, which have no values for one round trip. Sharing references between components to avoid that
+   was proposed, reviewed four times and rejected by the owner (decision "A reloaded UI part shows its loading
+   state"): a short loading state of the reloaded part is fine; the rest of the page, and every server or worker
+   reload, stay live.
+2. **Stylesheets** (fixed): a page fetches a plugin's new stylesheet inactive before it reloads the plugin, switches it
+   on only if the plugin's new code was adopted, and retires the old one after a drawn frame. Failed stylesheets are
+   retried by the next update, also those that failed at the page's first load. Limitation: UI contributed by an object
+   that restarts can show unstyled until its successor is live (owner's call pending: accept, or a kernel signal).
+3. **Base bundles** (fixed): the page's and the terminal's base resolve packages with the server's conditions: an app
+   installed from npm gets `dist/` everywhere, a server started with `--conditions=source` gets source everywhere.
+4. **"Restart needed"** (fixed): each running base records a SHA-256 hash of the bytes it read per file (the worker, page and terminal bundles,
+   and a best-effort scan of the server's start script); the mark is true exactly while a recorded file differs, and
+   clears after a revert. Edits before the watcher started are found when it starts; ancestor directories are watched
+   by identity.
 
 And one gap for later: a plugin's new npm dependency is not installed by Apply (the `install` mark is shown, the app
 must install); p3 handles it when the first plugin needs a dependency.
