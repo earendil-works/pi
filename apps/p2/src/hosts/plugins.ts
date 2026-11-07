@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import { createPlugins, type Plugins, type PluginsError } from "@earendil-works/chord/plugins";
+import * as discordJs from "discord.js";
 import * as api from "../api/v1/index.ts";
 import * as apiNode from "../api/v1/node.ts";
 import * as apiServer from "../api/v1/server.ts";
@@ -27,11 +28,15 @@ const FACET_KINDS = ["server", "worker", "web", "tui"] as const;
 /** p2's plugin API: one version so far. */
 export const API = { name: "@p2/app", versions: ["v1"] } as const;
 
-/** The host packages of server facets: the API's kind-neutral, Node and server modules, and the shared packages. */
+/**
+ * The host packages of server facets: the API's kind-neutral, Node and server modules, the shared packages, and
+ * discord.js (the discord plugin's bot; a plugin cannot bundle a package from the app's hoisted node_modules).
+ */
 export const SERVER_PACKAGES = {
 	"@p2/app/v1": api,
 	"@p2/app/v1/node": apiNode,
 	"@p2/app/v1/server": apiServer,
+	"discord.js": discordJs,
 	...SHARED_PACKAGES,
 };
 

@@ -1,0 +1,407 @@
+// Pi on Discord: the relay between channels and sessions with a fake Discord and a fake session (who may wake Pi,
+// batches since the cursor, threads, pending replies split at 2000 characters, refusals), and a session's
+// `DiscordIngress` with the fake provider (a batch with an attachment downloaded into the session's uploads, its turn's
+// answer, a thread's subagent forked from the main conversation).
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { after, before, describe, it } from "node:test";
+import type { UserMessage } from "@earendil-works/pi-ai";
+import type { ConversationView } from "@earendil-works/pi-durable";
+import { BACKGROUND_CONTEXT, type SessionLock } from "@p2/app/v1";
+import { Chat } from "../../plugins/chat/contract.ts";
+import type { Binding } from "../../plugins/discord/contract.ts";
+import { DISCORD_BATCH, DiscordIngress } from "../../plugins/discord/contract.ts";
+import {
+	batchOf,
+	chunkText,
+	type DiscordChannel,
+	type DiscordMessage,
+	type DiscordPort,
+	PENDING_TIMEOUT_MS,
+	Relay,
+	type RelayState,
+	type SessionPort,
+	type TurnState,
+} from "../../plugins/discord/relay.ts";
+import { FileSummaries } from "../../plugins/files/contract.ts";
+import { Sessions } from "../../plugins/sessions/contract.ts";
+import { Subagents } from "../../plugins/subagents/contract.ts";
+import type { Held } from "../../src/runtime/chord.ts";
+import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+
+const BOT = "999";
+const NO_LOCK: SessionLock = { mcp: [], projectMcp: false, instructions: false, capabilities: [] };
+
+let serial = 100;
+function message(text: string, options: Partial<DiscordMessage> = {}): DiscordMessage {
+	serial++;
+	return {
+		id: String(serial),
+		channelId: "c1",
+		author: { id: "u1", name: "Ada", bot: false },
+		roles: [],
+		text,
+		mentionsBot: text.includes(`<@${BOT}>`),
+		attachments: [],
+		...options,
+	};
+}
+
+/** A fake Discord: channels with their messages, and what the bot posted. */
+class FakeDiscord implements DiscordPort {
+	readonly botId = BOT;
+	readonly channels = new Map<string, DiscordChannel>();
+	readonly history = new Map<string, DiscordMessage[]>();
+	readonly posted: { channel: string; replyTo: string | undefined; text: string }[] = [];
+	readonly typed: string[] = [];
+	add(channel: DiscordChannel): void {
+		this.channels.set(channel.id, channel);
+		this.history.set(channel.id, []);
+	}
+	say(channel: string, entry: DiscordMessage): DiscordMessage {
+		this.history.get(channel)?.push({ ...entry, channelId: channel });
+		return { ...entry, channelId: channel };
+	}
+	async channel(id: string): Promise<DiscordChannel> {
+		const found = this.channels.get(id);
+		if (!found) throw new Error(`No channel ${id}`);
+		return found;
+	}
+	async messages(channelId: string, query: { after?: string; limit: number }): Promise<DiscordMessage[]> {
+		const all = this.history.get(channelId) ?? [];
+		const after = query.after;
+		return (after ? all.filter((entry) => BigInt(entry.id) > BigInt(after)) : all).slice(-query.limit);
+	}
+	async reply(channel: string, replyTo: string | undefined, text: string): Promise<void> {
+		assert(text.length <= 2000);
+		this.posted.push({ channel, replyTo, text });
+	}
+	async typing(channel: string): Promise<void> {
+		this.typed.push(channel);
+	}
+}
+
+/** A fake session: what it was handed, and the turns' states the test sets. */
+class FakeSessions implements SessionPort {
+	refusal: string | undefined;
+	readonly delivered: Parameters<SessionPort["deliver"]>[1][] = [];
+	readonly turns = new Map<number, TurnState>();
+	readonly threads: { name: string; before: number }[] = [];
+	async usable(): Promise<string | undefined> {
+		return this.refusal;
+	}
+	lock(): SessionLock {
+		return NO_LOCK;
+	}
+	working(): boolean {
+		return true;
+	}
+	async deliver(_session: string, input: Parameters<SessionPort["deliver"]>[1]) {
+		this.delivered.push(input);
+		const submissionId = this.delivered.length;
+		this.turns.set(submissionId, { state: "pending" });
+		return { conversation: input.conversation ?? 1, submissionId };
+	}
+	async turn(_session: string, submissionId: number): Promise<TurnState> {
+		return this.turns.get(submissionId) ?? { state: "unanswered", reason: "gone" };
+	}
+	async thread(_session: string, name: string, before: number) {
+		this.threads.push({ name, before });
+		return { conversation: 40 + this.threads.length };
+	}
+}
+
+function binding(patch: Partial<Binding> = {}): Binding {
+	return {
+		channelId: "c1",
+		channelName: "general",
+		guildId: "g1",
+		guildName: "Guild",
+		session: "s1",
+		wake: { anyone: false, users: ["u1"], roles: ["r1"] },
+		cursor: null,
+		threads: {},
+		createdAt: 1,
+		...patch,
+	};
+}
+
+function setup(initial: Binding = binding()) {
+	const discord = new FakeDiscord();
+	discord.add({ id: "c1", name: "general", guildId: "g1", guildName: "Guild", lastMessageId: null });
+	discord.add({
+		id: "t1",
+		name: "Release plan",
+		guildId: "g1",
+		guildName: "Guild",
+		thread: { parentId: "c1", createdAt: 5_000 },
+		lastMessageId: null,
+	});
+	const sessions = new FakeSessions();
+	let state: RelayState = { bindings: { [initial.channelId]: initial }, pending: {} };
+	const relay = new Relay(() => discord, sessions, {
+		value: () => state,
+		change: async (update) => {
+			const draft = structuredClone(state);
+			update(draft);
+			state = draft;
+		},
+	});
+	return { discord, sessions, relay, state: () => state };
+}
+
+describe("discord relay", () => {
+	it("delivers the messages since the cursor when someone allowed mentions Pi; others are ignored", async () => {
+		const { discord, sessions, relay, state } = setup();
+		discord.say("c1", message("before the bot"));
+		const stranger = discord.say("c1", message(`<@${BOT}> hi`, { author: { id: "u2", name: "Eve", bot: false } }));
+		await relay.onMessage(stranger);
+		assert.equal(sessions.delivered.length, 0, "u2 may not wake Pi");
+		const bot = discord.say("c1", message(`<@${BOT}> I am a bot`, { author: { id: "u1", name: "Bot", bot: true } }));
+		await relay.onMessage(bot);
+		assert.equal(sessions.delivered.length, 0, "bots never wake Pi");
+		const byRole = discord.say(
+			"c1",
+			message(`<@${BOT}> what do you think?`, { author: { id: "u3", name: "Bo", bot: false }, roles: ["r1"] }),
+		);
+		await relay.onMessage(byRole);
+		assert.equal(sessions.delivered.length, 1);
+		const input = sessions.delivered[0];
+		assert(input);
+		assert.equal(input.requestId, `discord:${byRole.id}`);
+		assert.deepEqual(input.author, { id: "u3", name: "Bo" });
+		// No cursor yet: the newest 50, bots left out, the mention written @Pi.
+		assert.deepEqual(input.text.split("\n"), [
+			"[Discord #general (Guild): 3 messages since the last delivery]",
+			"Ada: before the bot",
+			"Eve: @Pi hi",
+			"Bo: @Pi what do you think?",
+		]);
+		assert.equal(state().bindings.c1?.cursor, byRole.id);
+		assert.equal(state().pending[byRole.id]?.submissionId, 1);
+		assert.deepEqual(discord.typed, ["c1"]);
+		// The next batch starts after the cursor.
+		const next = discord.say("c1", message(`<@${BOT}> and now?`));
+		await relay.onMessage(next);
+		assert.deepEqual(sessions.delivered[1]?.text.split("\n").slice(1), ["Ada: @Pi and now?"]);
+	});
+
+	it("posts the answer once its turn ended, as a reply split at 2000 characters", async () => {
+		const { discord, sessions, relay, state } = setup();
+		const trigger = discord.say("c1", message(`<@${BOT}> long answer please`));
+		await relay.onMessage(trigger);
+		await relay.checkPending();
+		assert.equal(discord.posted.length, 0, "still pending");
+		const answer = `${"word ".repeat(500)}\n${"more ".repeat(300)}`;
+		sessions.turns.set(1, { state: "answered", text: answer });
+		await Promise.all([relay.checkPending(), relay.checkPending(new Set(["s1"]))]);
+		assert(discord.posted.length >= 2, "split");
+		assert.equal(discord.posted[0]?.replyTo, trigger.id, "the first part replies to the message that woke Pi");
+		assert(discord.posted.slice(1).every((post) => post.replyTo === undefined));
+		assert.equal(
+			discord.posted
+				.map((post) => post.text)
+				.join(" ")
+				.replace(/\s+/g, " "),
+			answer.trim().replace(/\s+/g, " "),
+		);
+		assert.deepEqual(state().pending, {});
+		// Posted once although two checks ran at once.
+		const count = discord.posted.length;
+		await relay.checkPending();
+		assert.equal(discord.posted.length, count);
+	});
+
+	it("says why when a turn ends without an answer, or never ends", async () => {
+		const { discord, sessions, relay, state } = setup();
+		await relay.onMessage(discord.say("c1", message(`<@${BOT}> one`)));
+		sessions.turns.set(1, { state: "unanswered", reason: "The model failed." });
+		await relay.checkPending();
+		assert.equal(discord.posted.at(-1)?.text, "(No answer: The model failed.)");
+		const trigger = discord.say("c1", message(`<@${BOT}> two`));
+		await relay.onMessage(trigger);
+		const pending = state().pending[trigger.id];
+		assert(pending);
+		pending.since -= PENDING_TIMEOUT_MS + 1;
+		await relay.checkPending();
+		assert.match(discord.posted.at(-1)?.text ?? "", /did not answer in time/);
+	});
+
+	it("refuses with a notice when the session cannot take input; the cursor stays", async () => {
+		const { discord, sessions, relay, state } = setup();
+		sessions.refusal = "its p2 session does not work in a sandbox.";
+		const trigger = discord.say("c1", message(`<@${BOT}> hello`));
+		await relay.onMessage(trigger);
+		assert.equal(sessions.delivered.length, 0);
+		assert.match(
+			discord.posted[0]?.text ?? "",
+			/not listening here right now: its p2 session does not work in a sandbox/,
+		);
+		assert.equal(state().bindings.c1?.cursor, null);
+	});
+
+	it("gives a thread its own subagent at the first mention, with its own cursor; replies go to the thread", async () => {
+		const { discord, sessions, relay, state } = setup(binding({ cursor: "1" }));
+		discord.say("t1", message("thread opener"));
+		const first = discord.say("t1", message(`<@${BOT}> plan it`));
+		await relay.onMessage(first);
+		assert.deepEqual(sessions.threads, [{ name: "Release plan", before: 5_000 }]);
+		assert.equal(sessions.delivered[0]?.conversation, 41);
+		assert.equal(sessions.delivered[0]?.context.thread, "Release plan");
+		assert.deepEqual(sessions.delivered[0]?.text.split("\n"), [
+			'[Discord thread "Release plan" in #general (Guild): 2 messages]',
+			"Ada: thread opener",
+			"Ada: @Pi plan it",
+		]);
+		assert.deepEqual(state().bindings.c1?.threads.t1, { conversation: 41, name: "Release plan", cursor: first.id });
+		assert.equal(state().bindings.c1?.cursor, "1", "the channel's cursor is the channel's own");
+		const second = discord.say("t1", message(`<@${BOT}> next step`));
+		await relay.onMessage(second);
+		assert.equal(sessions.threads.length, 1, "one subagent per thread");
+		assert.equal(sessions.delivered[1]?.conversation, 41);
+		sessions.turns.set(1, { state: "answered", text: "Plan." });
+		await relay.checkPending();
+		assert.deepEqual(discord.posted[0], { channel: "t1", replyTo: first.id, text: "Plan." });
+	});
+
+	it("delivers now without a mention, and refuses when nothing is new", async () => {
+		const { discord, sessions, relay } = setup();
+		discord.say("c1", message("no mention"));
+		await relay.deliverNow("c1");
+		assert.deepEqual(sessions.delivered[0]?.text.split("\n").slice(1), ["Ada: no mention"]);
+		await assert.rejects(relay.deliverNow("c1"), /No new messages/);
+	});
+
+	it("downloads attachments up to 25 MiB (20 at most) and lists larger ones as links", () => {
+		const big = 26 * 1024 * 1024;
+		const batch = batchOf(
+			[
+				message("see files", {
+					id: "7",
+					attachments: [
+						{ name: "a.png", url: "https://cdn/a.png", size: 10 },
+						{ name: "huge.zip", url: "https://cdn/huge.zip", size: big },
+					],
+				}),
+			],
+			BOT,
+			"[h]",
+		);
+		assert.deepEqual(batch.files, [
+			{ url: "https://cdn/a.png", name: "a.png", size: 10, key: "discord:7:0", ref: "7" },
+		]);
+		assert.equal(batch.text, `[h]\nAda: see files\n[attachment huge.zip (${big} bytes): https://cdn/huge.zip]`);
+	});
+
+	it("splits text at line breaks, then spaces, then anywhere", () => {
+		assert.deepEqual(chunkText("short"), ["short"]);
+		assert.deepEqual(chunkText(`${"a".repeat(8)}\n${"b".repeat(8)}`, 10), ["a".repeat(8), "b".repeat(8)]);
+		assert.deepEqual(chunkText("x".repeat(25), 10), ["x".repeat(10), "x".repeat(10), "x".repeat(5)]);
+	});
+});
+
+const texts = (view: ConversationView | null | undefined): string[] =>
+	(view?.entries ?? []).flatMap((entry) =>
+		(entry.model ?? []).flatMap((model) =>
+			model.role === "assistant" ? model.content.flatMap((part) => (part.type === "text" ? [part.text] : [])) : [],
+		),
+	);
+
+/** The turn of `submissionId` once it is no longer pending. */
+async function ended(ingress: Held<typeof DiscordIngress>, submissionId: number): Promise<TurnState> {
+	let turn: TurnState = { state: "pending" };
+	await poll(async () => {
+		turn = await ingress.turn({ submissionId }, BACKGROUND_CONTEXT);
+		return turn.state !== "pending";
+	});
+	return turn;
+}
+
+describe("discord ingress (fake provider)", () => {
+	let fixture: Fixture;
+	let session: string;
+	let cdn: ReturnType<typeof createServer>;
+	let cdnUrl: string;
+	before(async () => {
+		cdn = createServer((request, response) => {
+			response.writeHead(200, { "content-type": "text/plain" });
+			response.end(`file at ${request.url}`);
+		});
+		await new Promise<void>((resolve) => cdn.listen(0, "127.0.0.1", resolve));
+		cdnUrl = `http://127.0.0.1:${(cdn.address() as AddressInfo).port}`;
+		fixture = await startFixture();
+		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
+		session = (await sessions.create({ cwd: fixture.workspace, title: "Discord" }, BACKGROUND_CONTEXT)).id;
+	});
+	after(async () => {
+		await fixture?.close();
+		cdn?.close();
+	});
+
+	it("places a batch as the Discord author's input with its attachment, and reads the turn's answer", async () => {
+		const ingress = fixture.server.host.hold(DiscordIngress, { session }, BACKGROUND_CONTEXT);
+		const input = {
+			requestId: "discord:500",
+			author: { id: "u1", name: "Ada" },
+			text: "[Discord #general (Guild): 1 message since the last delivery]\nAda: @Pi read this",
+			context: { channel: "general", guild: "Guild", messages: 1 },
+			files: [{ url: `${cdnUrl}/notes.txt`, name: "notes.txt", size: 20, key: "discord:500:0", ref: "500" }],
+			lock: NO_LOCK,
+		};
+		const delivered = await ingress.deliver(input, BACKGROUND_CONTEXT);
+		assert.equal(delivered.conversation, 1);
+		// A retry is placed once.
+		assert.equal((await ingress.deliver(input, BACKGROUND_CONTEXT)).submissionId, delivered.submissionId);
+		const turn = await ended(ingress, delivered.submissionId);
+		assert(turn.state === "answered" && turn.text.startsWith("Echo:"), JSON.stringify(turn));
+		const chat = await holdIn(fixture.browser(), Chat, { session, conversation: 1 }, "participant");
+		const view = await until(chat.view, (value) =>
+			(value?.entries ?? []).some((entry) => entry.kind === DISCORD_BATCH),
+		);
+		const entry = view?.entries.find((candidate) => candidate.kind === DISCORD_BATCH);
+		const data = entry?.data as { author: { kind: string; name: string }; attachments: { id: string }[] };
+		assert.deepEqual(data.author, { kind: "guest", id: "discord:u1", name: "Ada · Discord" });
+		assert.deepEqual(data.attachments, [{ id: "discord:500:0", name: "notes.txt" }]);
+		const content = (entry?.model?.[0] as UserMessage).content;
+		assert(Array.isArray(content));
+		assert(content.some((part) => part.type === "text" && part.text.includes("<attachments>")));
+		const mirror = await holdIn(fixture.browser(), FileSummaries, {}, "owner");
+		const spaces = await mirror.of({ session }, BACKGROUND_CONTEXT);
+		assert.equal(spaces.uploads?.newest[0]?.source, "discord");
+	});
+
+	it("forks a thread's subagent from the main conversation's last answer before the thread", async () => {
+		const ingress = fixture.server.host.hold(DiscordIngress, { session }, BACKGROUND_CONTEXT);
+		const { conversation } = await ingress.thread({ name: "Release Plan!", before: Date.now() }, BACKGROUND_CONTEXT);
+		assert.notEqual(conversation, 1);
+		const children = await holdIn(fixture.browser(), Subagents, {}, "reader");
+		await until(children.children, (value) =>
+			(value?.[session] ?? []).some((child) => child.name === "discord-release-plan"),
+		);
+		const sub = await holdIn(fixture.browser(), Chat, { session, conversation }, "participant");
+		const forked = await until(sub.view, (value) => texts(value).some((text) => text.startsWith("Echo:")));
+		assert(texts(forked).length >= 1, "the fork carries the main conversation's answer");
+		const delivered = await ingress.deliver(
+			{
+				conversation,
+				requestId: "discord:600",
+				author: { id: "u1", name: "Ada" },
+				text: "Ada: @Pi in the thread",
+				context: { channel: "general", guild: "Guild", messages: 1, thread: "Release Plan!" },
+				files: [],
+				lock: null,
+			},
+			BACKGROUND_CONTEXT,
+		);
+		assert.equal(delivered.conversation, conversation);
+		const turn = await ended(ingress, delivered.submissionId);
+		assert(turn.state === "answered" && turn.text.includes("in the thread"), JSON.stringify(turn));
+		// A second thread of the same name gets its own subagent.
+		const again = await ingress.thread({ name: "Release Plan!", before: Date.now() }, BACKGROUND_CONTEXT);
+		await until(children.children, (value) =>
+			(value?.[session] ?? []).some((child) => child.name === "discord-release-plan-2"),
+		);
+		assert.notEqual(again.conversation, conversation);
+	});
+});

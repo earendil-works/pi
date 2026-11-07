@@ -90,6 +90,7 @@ function FooterMenu() {
 				<Slot name="sidebar-foot:envs" />
 				<Slot name="sidebar-foot:devices" />
 				<Slot name="sidebar-foot:ports" />
+				<Slot name="sidebar-foot:discord" />
 				<Slot name="sidebar-foot:voice" />
 				<Slot name="sidebar-foot:logs" />
 			</div>

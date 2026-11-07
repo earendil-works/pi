@@ -1,0 +1,17 @@
+.discord-sheet .sheet-body {
+	display: grid;
+	gap: var(--s5);
+	align-content: start;
+}
+.discord-binding {
+	display: grid;
+	gap: var(--s1);
+	padding: var(--s2) 0;
+	border-bottom: 1px solid var(--line);
+}
+.discord-binding p {
+	margin: 0;
+}
+.discord-form {
+	padding-top: var(--s3);
+}

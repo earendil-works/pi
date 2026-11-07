@@ -30,7 +30,9 @@
 		"@earendil-works/pi-env": "1.5.0",
 		"@earendil-works/pi-mcp": "1.5.0",
 		"@earendil-works/pi-schema": "1.5.0",
+		"@earendil-works/pi-tui": "1.5.0",
 		"diff": "8.0.4",
+		"discord.js": "14.28.1",
 		"esbuild": "0.28.2",
 		"grok-mermaid": "0.2.3",
 		"lowlight": "3.3.0",
@@ -40,8 +42,7 @@
 		"react-dom": "19.3.0",
 		"undici": "8.12.3",
 		"ws": "8.21.0",
-		"yaml": "2.9.1",
-		"@earendil-works/pi-tui": "1.5.0"
+		"yaml": "2.9.1"
 	},
 	"devDependencies": {
 		"@types/node": "22.19.19",
