@@ -47,8 +47,9 @@ A session has at most one link and a channel at most one session (its threads fo
   one input of the session's main conversation by a guest author `Name · Discord` (entry kind `discord.batch`), queued
   as a follow-up when the session is busy. The cursor moves to the mention.
 - **Catch-up:** when a bot connects (p2 starting, a new token, a new gateway session after an outage), it reads each of
-  its links and their known threads after the cursor; the newest mention there by someone allowed to wake Pi delivers
-  as if it had just arrived (one delivery per channel or thread, the messages before it included). Its events and live
+  its links and their known threads after the cursor. The newest mention there by someone allowed to wake Pi is the
+  trigger: one batch per channel or thread with every message from the cursor up to it (earlier missed mentions are
+  just messages of the batch), and the reply goes to that newest mention. Its events and live
   messages are handled one at a time, and a mention at or before the cursor never delivers twice. Threads created
   while p2 was down are not searched.
 - **Bots:** only the link's own bot listens; another bot mentioned in the same channel is ignored. A reply waits while

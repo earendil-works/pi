@@ -322,13 +322,19 @@ describe("discord relay", () => {
 		assert.equal(lines.at(-1), "Ada: @Pi what happened?");
 	});
 
-	it("catches up after downtime: the newest allowed mention of each link and thread delivers once", async () => {
-		const known = { conversation: 41, name: "Release plan", cursor: "1" };
-		const { discord, sessions, relay, state } = setup(binding({ cursor: "1", threads: { t1: known } }));
-		// While p2 was down: a stranger's mention, two allowed ones, chatter after them.
+	it("catches up after downtime: one batch per link and thread, every message from the cursor to the newest allowed mention", async () => {
+		const { discord, sessions, relay, state } = setup(binding({ cursor: "1" }));
+		// Delivered before p2 went down: the cursor is this message.
+		const delivered = discord.say("c1", message(`<@${BOT}> already answered`));
+		const link = state().bindings.c1;
+		assert(link);
+		link.cursor = delivered.id;
+		link.threads.t1 = { conversation: 41, name: "Release plan", cursor: "1" };
+		// While p2 was down: chatter, a stranger's mention, two allowed mentions with chatter between, chatter after.
 		discord.say("c1", message("good morning"));
 		discord.say("c1", message(`<@${BOT}> me too`, { author: { id: "u9", name: "Eve", bot: false } }));
 		discord.say("c1", message(`<@${BOT}> first question`));
+		discord.say("c1", message("some context for it", { author: { id: "u3", name: "Bo", bot: false } }));
 		const newest = discord.say("c1", message(`<@${BOT}> second question`));
 		discord.say("c1", message("chatter after"));
 		const inThread = discord.say("t1", message(`<@${BOT}> plan the release`));
@@ -337,11 +343,15 @@ describe("discord relay", () => {
 		await relay.catchUp("bot-a");
 		assert.equal(sessions.delivered.length, 2, "one delivery per channel and thread");
 		const channel = sessions.delivered[0];
+		// The trigger is the newest missed mention; the batch is everything after the cursor up to it, the earlier
+		// mentions and the messages without one included, the cursor's message and what came after the trigger not.
 		assert.equal(channel?.requestId, `discord:${newest.id}`);
-		assert.deepEqual(channel?.text.split("\n").slice(1), [
+		assert.deepEqual(channel?.text.split("\n"), [
+			"[Discord #general (Guild): 5 messages since the last delivery]",
 			"Ada: good morning",
 			"Eve: @Pi me too",
 			"Ada: @Pi first question",
+			"Bo: some context for it",
 			"Ada: @Pi second question",
 		]);
 		assert.equal(state().bindings.c1?.cursor, newest.id);
