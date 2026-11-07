@@ -3,6 +3,7 @@
 // its answer goes back as a reply. A thread of a linked channel gets a subagent forked from the main conversation.
 import { arr, bool, bytes, int, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
 import {
+	evolve,
 	literal,
 	local,
 	MAX_ATTACHMENTS,
@@ -108,6 +109,9 @@ export const LinkSchema = obj({
 });
 export type Link = Static<typeof LinkSchema>;
 
+/** What a link's owner may change in place: who may wake Pi, and what the session may use (applied at once). */
+export const LinkUpdateSchema = obj({ session: str(), wake: WakeSchema, lock: SessionLockSchema });
+
 const Token = str({ minLength: 10, maxLength: 200 });
 
 /** The owner's methods on bots and links (the store serves them; the owner's view forwards them). */
@@ -135,14 +139,20 @@ const OWNER_METHODS = {
 export const DiscordStore = local("p2.discord-store", {
 	version: 2,
 	params: {},
-	members: { bots: arr(BotSchema), bindings: arr(BindingSchema), ...OWNER_METHODS },
+	members: {
+		bots: arr(BotSchema),
+		bindings: arr(BindingSchema),
+		...OWNER_METHODS,
+		/** Changes who may wake Pi and what the session may use, in place. */
+		updateLink: method(LinkUpdateSchema),
+	},
 });
 
 /**
  * The owner's bots and links. 2: several bots, links made from a session (v1 lived a day on the owner's own device
  * only; its pages bind again after a reload, no `accepts` kept).
  */
-export const Discord = remote("p2.discord", {
+export const DiscordV2 = remote("p2.discord", {
 	version: 2,
 	params: {},
 	hostAddress: serverHost,
@@ -160,6 +170,9 @@ const CommandSchema = union(COMMANDS.map((command) => literal(command)));
 export const OfferedFileSchema = obj({ id: str(), name: str(), size: num() });
 export type OfferedFile = Static<typeof OfferedFileSchema>;
 
+/** The owner's bots and links. 3: `updateLink`. The provider still serves 2 (its `accepts`). */
+export const Discord = evolve(DiscordV2, (e) => e.addMethod("owner", "updateLink", LinkUpdateSchema, nul()));
+
 /** A Discord attachment to download into the session's uploads (at most 25 MiB; larger ones are links). */
 export const DiscordFileSchema = obj({ url: str(), name: str(), size: num(), key: str(), ref: str() });
 
@@ -171,9 +184,12 @@ export const DiscordIngress = remote("p2.discord-ingress", {
 	variants: {
 		server: {
 			methods: {
+				/** The session is no longer linked: its agents' Discord prompt section goes. */
+				unlinked: method(),
 				/**
 				 * Places a batch as one input of `conversation` (default: the main conversation), queued while it is busy;
-				 * a retried `requestId` is placed once. `lock`: the session's lock, committed first.
+				 * a retried `requestId` is placed once. `lock`: the session's lock, committed first. Its agent learns that
+				 * it answers Discord (a prompt section).
 				 */
 				deliver: method(
 					obj({

@@ -6,6 +6,8 @@ import {
 	AgentDoc,
 	type AgentState,
 	type ConversationId,
+	defineDoc,
+	defineExtension,
 	type EntryId,
 	type EntryRecord,
 	type Harness,
@@ -13,10 +15,20 @@ import {
 	LiveDoc,
 	ROOT_CONVERSATION_ID,
 	type SubmissionId,
+	section,
 } from "@earendil-works/pi-durable";
-import { type Context, type Ctx, defineFacet, forbidden, type MessageData, type Ref, safeFileName } from "@p2/app/v1";
+import {
+	type Context,
+	type Ctx,
+	contribute,
+	defineFacet,
+	forbidden,
+	type MessageData,
+	type Ref,
+	safeFileName,
+} from "@p2/app/v1";
 import { DOWNLOADS, displayName, durableContext, FILE_CHUNK, Files, findDownload, UPLOADS } from "@p2/app/v1/node";
-import { harnessOf, mainConversation } from "@p2/app/v1/worker";
+import { Extensions, harnessOf, isTopLevel, mainConversation } from "@p2/app/v1/worker";
 import { Conversation } from "../chat/contract.ts";
 import { Attachments, FilesMirror } from "../files/contract.ts";
 import { offeredBy } from "../send-file/contract.ts";
@@ -36,7 +48,53 @@ const IMAGE_TYPES: Record<string, string> = {
 	webp: "image/webp",
 };
 
+/**
+ * The session's Discord link as its agents learn it (session-scoped): the channel, and the conversations of its threads'
+ * subagents with their threads' names. Written at each delivery, cleared when the session is unlinked.
+ */
+export const DiscordLinkDoc = defineDoc<{
+	link: { channel: string; guild: string } | null;
+	threads: Record<string, string>;
+}>({
+	kind: "p2.discord-link",
+	version: 1,
+	scope: "session",
+	initial: () => ({ link: null, threads: {} }),
+	checkpointWhen: () => true,
+});
+
+/** What an agent answering Discord must know: where its answer goes, and that nothing else is posted. */
+export function discordPrompt(where: string): string {
+	return [
+		`Your input comes from ${where}: each one is the messages since the last delivery, one per line as \`Name: text\`,`,
+		"under a header; whoever mentioned the bot expects the answer.",
+		"Only your final answer of each turn is posted there, as a reply to that message; files you offer with send_file",
+		"during the turn are attached to it. Nothing else reaches Discord: not your thinking, tool calls or their output,",
+		"nor text you write before the final answer. So make the final answer complete on its own and written for the",
+		"channel's readers: concise, Markdown as Discord renders it.",
+	].join(" ");
+}
+
+/** The Discord section: on for the main agent of a linked session and for its threads' subagents. */
+export const discordExtension = defineExtension({
+	name: "p2-discord",
+	sections: [
+		section("discord", async (input, context) => {
+			const doc = await input.read.snapshot(DiscordLinkDoc, context);
+			if (!doc?.link) return undefined;
+			const channel = `the Discord channel #${doc.link.channel} (${doc.link.guild})`;
+			const thread = doc.threads[String(input.conversationId)];
+			if (thread !== undefined) return discordPrompt(`the thread "${thread}" of ${channel}`);
+			return (await isTopLevel(input.read, input.conversationId, context)) ? discordPrompt(channel) : undefined;
+		}),
+	],
+});
+
 export default defineFacet((host) => {
+	contribute(host, "p2.discord-extension", (self) => {
+		self.contribute(Extensions, { [discordExtension.name]: discordExtension });
+	});
+
 	host.serve(DiscordIngress, (_params, principal, self) => {
 		if (principal.kind !== "server") throw forbidden("server only");
 		const harness = harnessOf(self);
@@ -50,6 +108,12 @@ export default defineFacet((host) => {
 					const durable = harness().durable;
 					await mirrorLock(durable, lock, durableContext(ctx));
 					const target = conversation ?? (await mainConversation(durable, durableContext(ctx)));
+					await durable.commit(async (tx) => {
+						const doc = await tx.doc(DiscordLinkDoc);
+						doc.link = { channel: context.channel, guild: context.guild };
+						if (conversation !== undefined && context.thread !== undefined)
+							doc.threads[String(conversation)] = context.thread;
+					}, durableContext(ctx));
 					const ids: { id: string; name: string }[] = [];
 					for (const file of downloads) {
 						const id = await download(files, file, ctx);
@@ -80,6 +144,14 @@ export default defineFacet((host) => {
 						ctx,
 					);
 					return { conversation: target, submissionId };
+				},
+				unlinked: async (ctx) => {
+					await harness().durable.commit(async (tx) => {
+						const doc = await tx.doc(DiscordLinkDoc);
+						doc.link = null;
+						doc.threads = {};
+					}, durableContext(ctx));
+					return null;
 				},
 				turn: async ({ submissionId }, ctx) => {
 					const durable = harness().durable;

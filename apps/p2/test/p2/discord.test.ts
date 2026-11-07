@@ -13,7 +13,7 @@ import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, type SessionLock } from "@p2/app/v1";
 import { Chat, ChatCosts } from "../../plugins/chat/contract.ts";
 import type { Binding } from "../../plugins/discord/contract.ts";
-import { DISCORD_BATCH, DiscordIngress } from "../../plugins/discord/contract.ts";
+import { DISCORD_BATCH, Discord, DiscordIngress, DiscordV2 } from "../../plugins/discord/contract.ts";
 import {
 	batchOf,
 	chunkText,
@@ -664,6 +664,21 @@ const texts = (view: ConversationView | null | undefined): string[] =>
 		),
 	);
 
+/** The system sections in effect: the latest value of each, replayed from `pi.system` entries. */
+function sections(view: ConversationView | null | undefined): Record<string, string> {
+	const result: Record<string, string> = {};
+	for (const entry of view?.entries ?? [])
+		for (const message of entry.model ?? []) {
+			if (message.role !== "system" || !("sections" in message)) continue;
+			for (const [key, value] of Object.entries(
+				(message as { sections?: Record<string, string | null> }).sections ?? {},
+			))
+				if (value === null) delete result[key];
+				else result[key] = value;
+		}
+	return result;
+}
+
 /** The turn of `submissionId` once it is no longer pending. */
 async function ended(ingress: Held<typeof DiscordIngress>, submissionId: number): Promise<TurnState> {
 	let turn: TurnState = { state: "pending" };
@@ -764,6 +779,55 @@ describe("discord ingress (fake provider)", () => {
 			["created.txt"],
 		);
 		assert.notEqual(threadTurn.files[0]?.id, offered.id);
+	});
+
+	it("the owner's Discord view: updateLink needs a linked session; pages of version 2 still bind", async () => {
+		const owner = fixture.browser();
+		const discord = await holdIn(owner, Discord, {}, "owner");
+		const lock = { mcp: [], projectMcp: false, instructions: false, capabilities: [] };
+		await assert.rejects(
+			discord.updateLink({ session, wake: { anyone: true, users: [], roles: [] }, lock }, BACKGROUND_CONTEXT),
+			/not linked/,
+		);
+		const old = await holdIn(owner, DiscordV2, {}, "owner");
+		assert.deepEqual(await until(old.bindings, (value) => Array.isArray(value)), []);
+	});
+
+	it("tells a linked session's agents where their answer goes; unlinking takes it back", async () => {
+		const ingress = fixture.server.host.hold(DiscordIngress, { session }, BACKGROUND_CONTEXT);
+		const input = (requestId: string, conversation?: number, thread?: string) => ({
+			...(conversation === undefined ? {} : { conversation }),
+			requestId,
+			author: { id: "u1", name: "Ada" },
+			text: "hello",
+			context: { channel: "general", guild: "Guild", messages: 1, ...(thread ? { thread } : {}) },
+			files: [],
+			lock: null,
+		});
+		await ended(ingress, (await ingress.deliver(input("discord:1000"), BACKGROUND_CONTEXT)).submissionId);
+		const owner = fixture.browser();
+		const main = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const said = sections(await until(main.view, (view) => Boolean(sections(view).discord))).discord ?? "";
+		assert.match(said, /^<discord>\nYour input comes from the Discord channel #general \(Guild\)/);
+		assert.match(said, /Only your final answer of each turn is posted there/);
+		assert.match(said, /files you offer with send_file during the turn are attached/);
+		assert.match(said, /not your thinking, tool calls or their output/);
+		// A thread's subagent: the same, for its thread.
+		const { conversation } = await ingress.thread({ name: "Release", before: Date.now() }, BACKGROUND_CONTEXT);
+		await ended(
+			ingress,
+			(await ingress.deliver(input("discord:1001", conversation, "Release"), BACKGROUND_CONTEXT)).submissionId,
+		);
+		const sub = await holdIn(owner, Chat, { session, conversation }, "participant");
+		const inThread = await until(sub.view, (view) => /the thread "Release"/.test(sections(view).discord ?? ""));
+		assert.match(
+			sections(inThread).discord ?? "",
+			/Your input comes from the thread "Release" of the Discord channel #general/,
+		);
+		// Unlinked: the owner's next turn has no Discord section.
+		await ingress.unlinked(BACKGROUND_CONTEXT);
+		await main.send({ text: "just me now", requestId: "after-unlink" }, BACKGROUND_CONTEXT);
+		await until(main.view, (view) => texts(view).includes("Echo: just me now") && !sections(view).discord);
 	});
 
 	it("stop aborts the running turn and withdraws the queued inputs, as the web's Stop", async () => {

@@ -5,6 +5,7 @@
 import { join } from "node:path";
 import { obj } from "@earendil-works/pi-schema";
 import {
+	type AcceptsTable,
 	BACKGROUND_CONTEXT,
 	type Ctx,
 	defineFacet,
@@ -170,13 +171,19 @@ export default defineFacet((host) => {
 			if (!found) throw new Error("The Discord bot is not connected");
 			return found;
 		};
-		/** Drops `session`'s link and lifts its lock. */
+		/** Drops `session`'s link and lifts its lock; its agents stop being told they answer Discord. */
 		const unlink = async (session: string, ctx: Ctx): Promise<void> => {
 			await state.change((draft) => {
 				for (const [channel, binding] of Object.entries(draft.bindings))
 					if (binding.session === session) delete draft.bindings[channel];
 			}, ctx);
 			await locks.set({ session, lock: null }, ctx);
+			// A session that is gone or archived has no worker to tell (and none to start).
+			const row = catalog.sessions.value.find((entry) => entry.id === session);
+			if (row && row.archivedAt === null)
+				await ingress(session, (worker, scope) => worker.unlinked(scope)).catch((error: unknown) =>
+					console.error("p2 discord: telling the session it is unlinked failed:", errorText(error)),
+				);
 		};
 		return {
 			bots: followNative(
@@ -242,27 +249,43 @@ export default defineFacet((host) => {
 				await unlink(session, ctx);
 				return null;
 			},
-		};
-	});
-
-	host.serve(Discord, (_params, principal, self) => {
-		if (!isOwner(principal)) throw forbidden("Discord is the owner's");
-		const store = self.get(DiscordStore, {});
-		return {
-			variant: "owner",
-			members: {
-				bots: store.bots,
-				bindings: store.bindings,
-				addBot: (args, ctx) => store.addBot(args, ctx),
-				setBotToken: (args, ctx) => store.setBotToken(args, ctx),
-				removeBot: (args, ctx) => store.removeBot(args, ctx),
-				server: (args, ctx) => store.server(args, ctx),
-				mcpServers: (ctx) => store.mcpServers(ctx),
-				link: (args, ctx) => store.link(args, ctx),
-				unlink: (args, ctx) => store.unlink(args, ctx),
+			updateLink: async ({ session, wake, lock }, ctx) => {
+				if (!Object.values(state.value.bindings).some((binding) => binding.session === session))
+					throw new Error("This session is not linked");
+				// Both apply at once: who may wake Pi is read at each message, the lock is mirrored into the session.
+				await locks.set({ session, lock }, ctx);
+				await state.change((draft) => {
+					for (const binding of Object.values(draft.bindings))
+						if (binding.session === session) binding.wake = wake;
+				}, ctx);
+				return null;
 			},
 		};
 	});
+
+	host.serve(
+		Discord,
+		(_params, principal, self) => {
+			if (!isOwner(principal)) throw forbidden("Discord is the owner's");
+			const store = self.get(DiscordStore, {});
+			return {
+				variant: "owner",
+				members: {
+					bots: store.bots,
+					bindings: store.bindings,
+					addBot: (args, ctx) => store.addBot(args, ctx),
+					setBotToken: (args, ctx) => store.setBotToken(args, ctx),
+					removeBot: (args, ctx) => store.removeBot(args, ctx),
+					server: (args, ctx) => store.server(args, ctx),
+					mcpServers: (ctx) => store.mcpServers(ctx),
+					link: (args, ctx) => store.link(args, ctx),
+					unlink: (args, ctx) => store.unlink(args, ctx),
+					updateLink: (args, ctx) => store.updateLink(args, ctx),
+				},
+			};
+		},
+		{ accepts: DISCORD_ACCEPTS },
+	);
 });
 
 /** A Discord avatar (an image of Discord's CDN, a trust boundary: only images pass). */
@@ -273,6 +296,9 @@ async function fetchAvatar(url: string): Promise<{ type: string; bytes: Buffer }
 	if (!response.ok || !/^image\/(png|jpeg|gif|webp)$/.test(type)) throw new Error("No avatar");
 	return { type, bytes: Buffer.from(await response.arrayBuffer()) };
 }
+
+/** `Discord` 2 (pages loaded before `updateLink`): the same state and methods, without it. */
+const DISCORD_ACCEPTS: AcceptsTable<typeof Discord> = { 2: {} };
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 

@@ -98,3 +98,82 @@ test(
 		assert(!logged.some((line) => line.includes("discord-token-sentinel")), "tokens are never logged");
 	},
 );
+
+test(
+	"a linked session's Discord sheet: fixed bot, channel and sandbox; who may wake Pi and resources saved in place",
+	{ skip: !browserTests, timeout: 90_000 },
+	async (t) => {
+		const fixture = await startFixture({ web: true });
+		t.after(() => fixture.close());
+		const browser = await Browser.start();
+		t.after(() => browser.close());
+		await browser.metrics(390, 844);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}`);
+		await browser.wait("document.querySelector('.app')");
+		await browser.loadFixture("discord-linked.ts");
+		await browser.wait("document.querySelector('.discord-form')");
+		const body = () => browser.evaluate<string>("document.querySelector('.discord-form').innerText");
+		const checked = (label: string) =>
+			browser.evaluate<boolean>(
+				`[...document.querySelectorAll('.discord-form label.check')].find(e=>e.textContent.includes(${JSON.stringify(label)})).querySelector('input').checked`,
+			);
+		const tick = (label: string) =>
+			browser.evaluate(
+				`[...document.querySelectorAll('.discord-form label.check')].find(e=>e.textContent.includes(${JSON.stringify(label)})).querySelector('input').click()`,
+			);
+		const save = "document.querySelector('.discord-form button[type=submit]')";
+		// What is fixed shows as rows, not fields.
+		const text = await body();
+		for (const fixed of ["pixi#6938", "Guild › #general", "box1"]) assert(text.includes(fixed), fixed);
+		assert.equal(await browser.evaluate<number>("document.querySelectorAll('.discord-form select').length"), 0);
+		// The saved access is what shows; Save waits for a change.
+		assert.equal(await checked("@maintainers"), true);
+		assert.equal(await checked("@helpers"), false);
+		assert.equal(await checked("tracker"), false);
+		assert.equal(await checked("Your global AGENTS.md"), true);
+		assert.equal(
+			await browser.evaluate<string>("document.querySelector('.discord-form textarea').value"),
+			"123456789",
+		);
+		assert(await browser.evaluate<boolean>(`${save}.disabled`));
+		// Nobody left to wake Pi: not savable, and it says why.
+		await tick("@maintainers");
+		await browser.evaluate(
+			"(()=>{const e=document.querySelector('.discord-form textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,'');e.dispatchEvent(new Event('input',{bubbles:true}));})()",
+		);
+		await browser.wait(
+			`${save}.disabled && document.querySelector('.discord-form').innerText.includes('Pick who may wake Pi.')`,
+		);
+		// A role, an MCP server and a capability: saved in place.
+		await tick("@helpers");
+		await tick("tracker");
+		await tick("Forward ports");
+		await browser.wait(`!${save}.disabled`);
+		await browser.click(".discord-form button[type=submit]");
+		await browser.wait("document.querySelector('.discord-form').innerText.includes('Saved: in effect now.')");
+		assert.deepEqual(await browser.evaluate("window.discordCalls"), [
+			{
+				save: {
+					wake: { anyone: false, users: [], roles: ["r2"] },
+					lock: { mcp: ["docs", "tracker"], projectMcp: false, instructions: true, capabilities: ["ports"] },
+				},
+			},
+		]);
+		// A refused save says why and keeps the edits; Undo goes back to what is saved.
+		await tick("Anyone in the channel");
+		await browser.evaluate("window.failNextSave = true");
+		await browser.click(".discord-form button[type=submit]");
+		await browser.wait(
+			"document.querySelector('.discord-form .notice.error')?.textContent.includes('The session is busy')",
+		);
+		assert.equal(await checked("Anyone in the channel"), true);
+		await browser.evaluate(
+			"[...document.querySelectorAll('.discord-form button')].find(e=>e.textContent==='Undo changes').click()",
+		);
+		await browser.wait(`${save}.disabled`);
+		await browser.evaluate(
+			"[...document.querySelectorAll('.discord-form button')].find(e=>e.textContent==='Unlink').click()",
+		);
+		await poll(async () => (await browser.evaluate<unknown[]>("window.discordCalls")).includes("unlink"));
+	},
+);

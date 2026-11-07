@@ -31,8 +31,17 @@ The Session sheet's **Discord** row shows the session's channel, or "Not linked"
   sessions). **Link** stays disabled and says what is still to pick. Linking moves the session into the sandbox (as
   the owner's Relocate does, into the sandbox's first folder, else `/root`; a busy session refuses, nothing changes),
   stores its lock and the link, and starts listening after the channel's newest message.
-- Linked: the bot, server › channel, who may wake Pi, the sandbox and what it may use, and **Unlink** (stops listening,
-  lifts the lock; the session stays in its sandbox).
+- Linked: the bot, server › channel and sandbox (fixed), then who may wake Pi and what the session may use, editable:
+  **Save** (enabled once something changed and someone may still wake Pi) stores them in place (`Discord.updateLink`,
+  contract version 3; version 2 pages still bind) and they apply at once: who may wake Pi is read at each message, the
+  lock is mirrored into the running session. **Unlink** stops listening and lifts the lock; the session stays in its
+  sandbox.
+- **The agent knows:** a linked session's main agent and its threads' subagents get a `discord` prompt section: their
+  input comes from the channel (or thread), only the final answer of each turn is posted there as the reply, files
+  offered with `send_file` during the turn are attached, and nothing else (thinking, tool calls and their output,
+  earlier text) reaches Discord, so the final answer must stand alone. The worker keeps the link in the session
+  document `p2.discord-link` (written at each delivery, cleared at unlink through `DiscordIngress.unlinked`); other
+  subagents do not get the section.
 
 A session has at most one link and a channel at most one session (its threads follow it).
 
