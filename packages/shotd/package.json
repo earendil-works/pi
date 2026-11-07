@@ -1,0 +1,18 @@
+{
+	"name": "@earendil-works/pi-shotd",
+	"version": "1.5.0",
+	"description": "Screenshot daemon + MCP server (CDP Chromium, WebP, baselines)",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"bin": { "shotd": "dist/server.js" },
+	"exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }, "./package.json": "./package.json" },
+	"files": ["dist"],
+	"scripts": {
+		"clean": "node ../../scripts/package-files.mjs clean dist",
+		"build": "tsc -p tsconfig.build.json && node ../../scripts/package-files.mjs executable dist/server.js",
+		"test": "vitest --run"
+	},
+	"engines": { "node": ">=22.19.0" },
+	"devDependencies": { "@types/node": "22.19.19", "vitest": "4.1.12" }
+}

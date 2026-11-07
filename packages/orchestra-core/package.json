@@ -1,0 +1,29 @@
+{
+	"name": "@earendil-works/pi-orchestra-core",
+	"version": "1.5.0",
+	"description": "Orchestra core: types, SQLite schema, IPC DTOs, fake provider, ULID",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": ["dist"],
+	"scripts": {
+		"clean": "node ../../scripts/package-files.mjs clean dist",
+		"build": "tsc -p tsconfig.build.json",
+		"test": "vitest --run"
+	},
+	"keywords": ["orchestra"],
+	"author": "Earendil Works",
+	"license": "MIT",
+	"engines": { "node": ">=22.19.0" },
+	"devDependencies": {
+		"@types/node": "22.19.19",
+		"vitest": "4.1.12"
+	}
+}
