@@ -1,5 +1,5 @@
 <p align="center">
- 
+
 <a href="https://pi.dev">
   <img src="./assets/pi.svg" alt="Pi" width="80" height="80" />
 </a>
@@ -14,17 +14,58 @@
 
 # Pi
 
-Pi is a minimal, extensible agent harness that you can make your own.
+This is an updated version of Pi that works by itself.
 
-Adapt Pi to your workflows, not the other way around. Customize Pi with [extensions](packages/coding-agent/docs/extensions.md), [skills](packages/coding-agent/docs/skills.md), [prompt templates](packages/coding-agent/docs/prompt-templates.md), and [themes](packages/coding-agent/docs/themes.md). Bundle them as [Pi packages](packages/coding-agent/docs/packages.md) and share via npm or git.
+Pi used to need you to stay close and guide every step. This version fixes that. It is built for self-recursive agent loops and automatic agent handoffs.
 
-Pi ships with powerful defaults but skips features like sub-agents and plan mode. Ask Pi to build what you want, or install a package that does it your way.
+No human supervision. No babysitting.
 
-Use Pi [interactively](packages/coding-agent/docs/usage.md), automate it in [print or JSON mode](packages/coding-agent/docs/cli.md), control it over [RPC](packages/coding-agent/docs/rpc.md), or build apps with the [Pi TypeScript SDK](packages/coding-agent/docs/sdk.md). See [OpenClaw](https://github.com/OpenClaw/OpenClaw) for a real-world integration.
+## What this is
+
+This is Pi, but with teamwork built in.
+
+Normally you give one helper a task and you have to watch it. You check the work. You pass the result to the next helper. If something breaks, you fix it.
+
+This version does that for you. A small team of helpers can work on a project together. They share work, pass work to each other, and check each other's work.
+
+You give the goal once. They do the rest.
+
+## Why I built this
+
+I was tired of supervising agents all day.
+
+"Done" was not something you could check. You had to read everything to know if it was really finished. Helpers could not coordinate. If two helpers touched the same file, work would break. If a helper got stuck, it would keep trying forever.
+
+This removes me from that loop without losing quality.
+
+## What it will do
+
+Give it a goal and it will plan the work, assign the work, run the work, check the work, and fix the work.
+
+- Work is split into small tasks with clear owners.
+- Helpers pass work to each other with short notes.
+- Helpers take turns on files so they do not overwrite each other.
+- Work only counts as finished when checks pass. A helper saying "done" is not enough.
+- If checks fail, the helper tries again with the failure shown.
+- If the same failure keeps happening, it stops and asks for help instead of looping forever.
+- You can see everything at once: who is working, what they are working on, and what is blocked.
+- It can look at screens to check that pages look right.
+
+## Main features
+
+- **It runs itself.** Helpers keep going until checks pass. No babysitting.
+- **Automatic handoffs.** One helper finishes a piece and hands it to the next with a clear note.
+- **Real checks.** Tests, type checks, and screen comparisons prove the work. No guessing.
+- **Safe teamwork.** Only one helper can change a file at a time. It tells you who owns what.
+- **Clear messages.** Helpers send short, typed notes: handoff, blocked, question, answer, done.
+- **Limits that protect you.** It limits time, tokens, turns, and how deep helpers can spawn helpers.
+- **One place to look.** A simple status screen shows helpers, tasks, messages, checks, and problems.
+- **Screen checks.** It takes clear screen pictures to catch small layout changes humans would miss.
+- **Easy to recover.** If a helper stops or the leader stops, work is saved and can restart with nothing lost.
 
 ## Getting started
 
-Install the command-line interface:
+Install the command-line tool:
 
 ```bash
 curl -fsSL https://pi.dev/install.sh | sh
@@ -36,7 +77,7 @@ On Windows:
 powershell -c "irm https://pi.dev/install.ps1 | iex"
 ```
 
-The installer pins all dependencies and updates Pi with `pi update`. Alternatively, install directly with npm, which does not pin transitive dependencies:
+The installer updates Pi with `pi update`. Alternatively, install directly with npm, which does not pin transitive dependencies:
 
 ```bash
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent
@@ -73,17 +114,17 @@ npm run update:model-catalog-pin
 
 ## Packages
 
-This monorepo contains the Pi CLI and its supporting libraries.
+This repo contains the main tools that make Pi work.
 
-| Package | Description |
+| Package | What it does |
 |---------|-------------|
-| **[@earendil-works/chord](packages/chord)** | Object runtime for apps across processes: contracts, documents, a store, links, plugins with hot reload, HTTP, workers, web and terminal clients |
-| **[@earendil-works/pi-telemetry](packages/telemetry)** | Vendor-neutral telemetry contracts, reference adapter, conformance tests, and typed schemas |
-| **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
-| **[@earendil-works/pi-durable](packages/durable)** | Durable conversation, task, and document runtime |
-| **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
-| **[@earendil-works/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
-| **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
+| **[Chord](packages/chord)** | Shared parts that let apps work together safely across processes |
+| **[Telemetry](packages/telemetry)** | Lets the system record what happened |
+| **[AI](packages/ai)** | Lets Pi use many AI providers |
+| **[Durable](packages/durable)** | Keeps conversations, tasks, and work safe across restarts |
+| **[Agent core](packages/agent)** | Makes helpers run, call tools, and keep track of work |
+| **[Coding agent](packages/coding-agent)** | The main tool you run on the command line |
+| **[Terminal UI](packages/tui)** | The text screen you see in the terminal |
 
 For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
 
@@ -142,6 +183,7 @@ For a pnpm project, point `--consumer` at the workspace root:
 node scripts/use-local-packages.mjs \
   --manifest .artifacts/pi-packages/manifest.json \
   --consumer ../my-project \
+  --package @earendil-works/pi-durable \
   --package @earendil-works/pi-agent-core \
   --package-manager pnpm
 cd ../my-project
