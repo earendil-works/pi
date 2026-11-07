@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "vercel": {
+      "command": "npx",
+      "args": ["vercel-mcp"],
+      "env": {
+        "VERCEL_API_KEY": "${VERCEL_API_KEY}"
+      },
+      "description": "Connects to the Vercel API for deployments, DNS, domains, and project management."
+    },
+    "rivet": {
+      "command": "npx",
+      "args": ["-y", "@rivetjs/mcp"],
+      "description": "Rivet MCP server for offline docs search, components, and compiler diagnostics."
+    }
+  }
+}

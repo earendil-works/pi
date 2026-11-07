@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLINE_PROJECT_DIR}/.cline/hooks/session-start.sh\""
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Bash(git push *--force*)",
+      "Bash(git push *-f*)",
+      "Bash(git -C * push *--force*)",
+      "Bash(git -C * push *-f*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git reset *--hard*)",
+      "Bash(git clean -f:*)",
+      "Bash(git clean *-f*)",
+      "Bash(rm -rf:*)",
+      "Bash(rm -fr:*)",
+      "Bash(rm *--recursive*--force*)",
+      "Bash(rm *--force*--recursive*)",
+      "Bash(rm -r:*)",
+      "Bash(rm * -r*)",
+      "Bash(rm --recursive:*)",
+      "Bash(rm *--recursive*)"
+    ]
+  },
+  "env": {
+    "NLT_OTOI_VERSION": "NLT-PI-DEV-OTOI-1.0.1",
+    "NLT_AUTHORITY": "Joshua W. Dorsey, Sr.",
+    "NLT_GOVERNANCE_SOURCE": "NeuroLift-Technologies/.github-private",
+    "NLT_GOVERNANCE_MODE": "repository-adapted"
+  }
+}

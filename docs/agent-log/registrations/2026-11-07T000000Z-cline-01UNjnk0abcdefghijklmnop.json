@@ -1,0 +1,24 @@
+{
+  "agent_registration": {
+    "agent_name": "Cline",
+    "platform": "Cline (cloud container)",
+    "version": "Cline",
+    "session_id": "01UNjnk0abcdefghijklmnop",
+    "entry_date": "2026-11-07T00:00:00+00:00",
+    "entry_point": "Owner request: turn agents and SOPs directories into AgentSKILLS for the repo and create an .agents directory",
+    "acknowledged_otoi": true,
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "working_repo": "NeuroLift-Technologies/nlt-pi",
+    "working_branch": "working tree (no branch yet)",
+    "capabilities_self_reported": [
+      "Read and edit repository files in a cloud container clone",
+      "Run shell commands and Node in that container"
+    ],
+    "known_limitations": [
+      "Repository node_modules were not installed in this container, so `npm run check`, biome, and the repository test suites were NOT run",
+      "No Pi or Kilo client was available, so end-to-end skill discovery is unverified",
+      "No branch or PR was created; commit is pending an explicit owner request"
+    ],
+    "preferred_handoff_format": "structured Markdown or JSON"
+  }
+}

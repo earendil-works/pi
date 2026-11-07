@@ -1,6 +1,6 @@
 # Active Threads — NLT-Pi
 
-**Last updated:** 2026-11-06
+**Last updated:** 2026-11-07
 
 ## Active
 
@@ -216,6 +216,17 @@
 **Verification:** mvp vitest `test/toi.test.ts` 16 passed; full suite 294 passed / 10 expected fail; `tsc --noEmit` clean.
 **Known issues / notes:** Real TOI/OTOI behaviour with owner's local files not verified end-to-end. `NLT_TOI_PUBKEY`/`NLT_OTOI_SHA256` not set in any environment. Home-directory defaults not owner-confirmed.
 **Next action:** Owner confirms pending decisions (pinning process, default paths, upload route) before enabling TOI/OTOI verification in Production.
+
+### NLTPI-GOV-004 — Agent Skills (`.agents/`)
+**Status:** proposed (working tree; awaiting branch/PR decision)
+**Owner:** Joshua W. Dorsey, Sr. / delegated coding agents
+**Summary:** Converted the agent role profiles in `agents/` (`nlt-code-reviewer`, `nlt-governance-steward`, `nlt-implementation-agent`), the SOPs in `SOPs/` (`incident-response` SOP-NLT-003, `new-agent-onboarding` SOP-NLT-001, `repo-governance-setup` SOP-NLT-002), the record templates in `templates/` (`agent-registration`, `commit-message`, `escalation`, `handoff-record`, `intent-log`, `review-record`), and added new guidance skills for the Vercel and Rivet MCP servers (`vercel-mcp`, `rivet-mcp`) — all as loadable Agent Skills under `.agents/skills/<name>/SKILL.md`. Each skill uses Agent Skills frontmatter (`name`, `description`) plus the instruction body, matching the existing `.claude/skills/` surface and Pi's documented `.agents/skills/` project skill location (`packages/coding-agent/docs/skills.md`). Added `.agents/README.md` enumerating the fourteen skills. Original `agents/`, `SOPs/`, and `templates/` files are retained because `nltotoi.json` required_files lists them and `validate-governance.sh` enforces their presence. No policy, authority boundary, or enforcement behavior changed; skills grant no permissions. The MCP skills are guidance only: they contain no connection commands, URLs, tokens, or credentials; actual MCP server configuration (`.pi/mcp.json` / `kilo.jsonc` `mcp`) is an external-integration decision requiring owner approval and was deliberately not changed.
+**Branch:** none yet (working tree; awaiting owner decision on feature branch/PR)
+**Registration:** `docs/agent-log/registrations/2026-11-07T000000Z-cline-01UNjnk0abcdefghijklmnop.json`
+**Intent record:** `docs/agent-log/intent/2026-11-07-agents-sop-as-agent-skills.md`
+**Verification:** `validate-governance.sh` 71 passed / 0 failed; all fourteen skill folder names match frontmatter `name`; names follow Agent Skills rules (lowercase, digits, hyphens, no leading/trailing/consecutive hyphens, ≤64 chars); descriptions non-empty and ≤1024 chars.
+**Known issues / notes:** End-to-end skill discovery by Pi/Kilo not verified (no client available). Not wired into `npm run check` or `scripts/check-agent-skill-parity.mjs`; wiring is the owner's decision. Actual Vercel/Rivet MCP connections require owner approval.
+**Next action:** Owner decides whether to keep, branch, and PR the `.agents/` skills surface, whether to commit the `.kilo/skills/` and `.cline/skills/` additions created by `scripts/install-agent-skills.sh`, whether to commit `.cline/`, and whether to commit `.pi/mcp.json` (Vercel + Rivet MCP servers added by owner approval; `VERCEL_API_KEY` uses env-var reference, no secrets committed).
 ## Resolved
 
 ### NLTPI-CONTRIB-001 — Remove repository-local contributor gate

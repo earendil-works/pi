@@ -211,11 +211,25 @@
   // ---------------------------------------------------------------------------
   // MCP servers.
   //
-  // Intentionally empty. ASFDK MCP is the integration-governance layer: adding
-  // an external tool or service here is an external-integration decision and
-  // requires the owner's approval. Do not add a server to get unblocked.
+  // ASFDK MCP is the integration-governance layer. Servers below were added by
+  // owner approval (Joshua W. Dorsey, Sr.). Credentials use environment-variable
+  // references; no secrets are committed to this repository.
   // ---------------------------------------------------------------------------
-  "mcp": {},
+  "mcp": {
+    "vercel": {
+      "command": "npx",
+      "args": ["vercel-mcp"],
+      "env": {
+        "VERCEL_API_KEY": "${VERCEL_API_KEY}"
+      },
+      "description": "Connects to the Vercel API for deployments, DNS, domains, and project management."
+    },
+    "rivet": {
+      "command": "npx",
+      "args": ["-y", "@rivetjs/mcp"],
+      "description": "Rivet MCP server for offline docs search, components, and compiler diagnostics."
+    }
+  },
 
   // ---------------------------------------------------------------------------
   // Context hygiene.
