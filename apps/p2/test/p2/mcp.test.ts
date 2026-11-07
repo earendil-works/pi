@@ -20,7 +20,7 @@ import { expandHostVariables, parseOwnerConfig } from "../../plugins/mcp/config.
 import { type Instance, Mcp, McpManager } from "../../plugins/mcp/contract.ts";
 import type { ConnectEnv } from "../../plugins/mcp/environments.ts";
 import { mcpServerFacet } from "../../plugins/mcp/server.ts";
-import { Catalog, type Session } from "../../plugins/sessions/contract.ts";
+import { Catalog, type Session, SessionLocks } from "../../plugins/sessions/contract.ts";
 import { type Child, ChildStore } from "../../plugins/subagents/contract.ts";
 import { APP, type Cell, expectChord, failureOf, holdIn, poll, settled, TEST, testHost, until } from "./helpers.ts";
 
@@ -130,6 +130,8 @@ async function mcpHost(
 					return { children, report: UNUSED };
 				},
 			],
+			// No session is locked here (test/p2/mcp-instances.test.ts places a locked one).
+			[SessionLocks, { locks: constant({}), set: UNUSED }],
 			[
 				Server,
 				{

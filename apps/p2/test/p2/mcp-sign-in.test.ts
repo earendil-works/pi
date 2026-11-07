@@ -15,7 +15,7 @@ import { findRoute, Hosts, type RequestAccess, Routes, Server } from "@p2/app/v1
 import { EnvService } from "../../plugins/envs/contract.ts";
 import { type Instance, Mcp, McpManager } from "../../plugins/mcp/contract.ts";
 import { mcpServerFacet } from "../../plugins/mcp/server.ts";
-import { Catalog, type Session } from "../../plugins/sessions/contract.ts";
+import { Catalog, type Session, SessionLocks } from "../../plugins/sessions/contract.ts";
 import { ChildStore } from "../../plugins/subagents/contract.ts";
 import { APP, holdIn, TEST, testHost, until } from "./helpers.ts";
 
@@ -193,6 +193,7 @@ async function signInHost(
 			],
 			[Catalog, { sessions: constant([SESSION]), get: UNUSED, create: UNUSED, activity: UNUSED, update: UNUSED }],
 			[ChildStore, { children: constant({}), report: UNUSED }],
+			[SessionLocks, { locks: constant({}), set: UNUSED }],
 			[
 				Server,
 				{

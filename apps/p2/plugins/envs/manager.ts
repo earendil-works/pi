@@ -35,6 +35,7 @@ import type { DirectoryListing, EnvSummary, EnvTest, SandboxStatus, SandboxSuppo
 import { envConnection, type RemoteSession, remoteSession, sandboxHost, sshOptions } from "./remote-env.ts";
 import { launcherCommand, sandboxArgument, sandboxKey, sandboxRevision } from "./sandbox-host.ts";
 import { LauncherCheckSchema, LauncherStatusSchema } from "./sandbox-schema.ts";
+import { deleteSecret, listSecrets, type SecretInfo, sandboxSecrets, saveSecret } from "./secrets.ts";
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -144,6 +145,7 @@ export class EnvManager {
 			});
 		await saveEnv(this.directory, name, undefined);
 		this.release(name);
+		await deleteSecret(this.directory, name);
 		// A key p2 generated or stored for this env goes with it.
 		const key = this.keyPath(name);
 		await rm(key, { force: true });
@@ -321,8 +323,10 @@ export class EnvManager {
 	): Promise<SandboxStatus> {
 		const { config, target, remote } = await this.sandboxTarget(name);
 		const key = sandboxKey(this.directory, name);
-		const args = command === "start" ? [command, key, sandboxArgument(config)] : [command, key];
-		const report = await launcherCommand(target, remote, this.launcher, args);
+		const secrets = await sandboxSecrets(this.directory, name);
+		const args = command === "start" ? [command, key, sandboxArgument(config, secrets.meta)] : [command, key];
+		const input = command === "start" ? JSON.stringify(secrets.values) : undefined;
+		const report = await launcherCommand(target, remote, this.launcher, args, input);
 		// The host's answer is wire input.
 		if (!statusReport.check(report)) throw new Error("Unexpected answer from the sandbox launcher");
 		if (report.state === "stopped") return { state: "stopped" };
@@ -331,7 +335,7 @@ export class EnvManager {
 			startedAt: report.startedAt,
 			cpus: report.cpus,
 			memoryMb: report.memoryMb,
-			current: report.revision === sandboxRevision(config),
+			current: report.revision === sandboxRevision(config, secrets.meta),
 		};
 	}
 
@@ -353,6 +357,38 @@ export class EnvManager {
 	async sandboxResetDisk(name: string): Promise<SandboxStatus> {
 		this.release(name);
 		return this.sandboxCommand(name, "reset");
+	}
+
+	/** Sandbox `name`'s secrets, without values. */
+	async secrets(name: string): Promise<SecretInfo[]> {
+		const config = await this.config(name);
+		if (config.type !== "gondolin") throw new Error(`"${name}" is not a sandbox`);
+		return listSecrets(this.directory, name);
+	}
+
+	/**
+	 * Set a secret of sandbox `name`; `addHosts` first adds its hosts the sandbox does not allow yet. Applies when the VM
+	 * starts next (the configuration's revision changes).
+	 */
+	async setSecret(
+		name: string,
+		secret: { name: string; value?: string; hosts: string[]; preset?: string },
+		addHosts: boolean,
+	): Promise<void> {
+		let config = await this.config(name);
+		if (config.type !== "gondolin") throw new Error(`"${name}" is not a sandbox`);
+		const allowed = config.allowHosts ?? [];
+		const missing = secret.hosts.filter((host) => !allowed.includes(host));
+		if (missing.length && addHosts) {
+			config = { ...config, allowHosts: [...allowed, ...missing] };
+			await this.save(name, config);
+		}
+		const { name: secretName, ...change } = secret;
+		await saveSecret(this.directory, name, secretName, change, config.allowHosts ?? []);
+	}
+
+	async deleteSecret(name: string, secret: string): Promise<void> {
+		await deleteSecret(this.directory, name, secret);
 	}
 
 	async acceptHostKey(name: string, lines: readonly string[]): Promise<void> {

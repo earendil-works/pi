@@ -51,6 +51,7 @@ import {
 	SessionTransfer,
 } from "./contract.ts";
 import { copySessionDirectory, removeSessionCopy } from "./copy.ts";
+import { serveLocks } from "./locks.ts";
 
 /** A row as `Sessions` v4 and `Catalog` v3 consumers read it: a null branch label is the session title. */
 function sessionV4(row: Session) {
@@ -237,6 +238,7 @@ function failureText(error: JobError): string {
 const ROW_WAIT_MS = 10_000;
 
 export default defineFacet((host) => {
+	serveLocks(host);
 	serveKeyed(host, SessionArchived);
 	serveKeyed(host, SessionCopied);
 	host.serve(

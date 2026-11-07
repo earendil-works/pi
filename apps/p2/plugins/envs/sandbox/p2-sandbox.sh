@@ -61,7 +61,7 @@ if [ ! -f "$D/.installed" ]; then
 	fi
 	if [ ! -f "$D/.installed" ]; then
 		echo "p2-sandbox: installing Gondolin in $D" >&2
-		(cd "$D" && npm ci --ignore-scripts --no-audit --no-fund >&2)
+		(cd "$D" && npm ci --ignore-scripts --no-audit --no-fund </dev/null >&2)
 		touch "$D/.installed"
 	fi
 	exec 9>&-

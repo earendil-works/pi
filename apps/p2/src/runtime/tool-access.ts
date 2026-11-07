@@ -5,6 +5,8 @@ import type { JsonValue } from "@earendil-works/chord/json";
 import type { Extension, ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
 import { isTopLevel } from "./main-conversation.ts";
 import { originOf } from "./origin.ts";
+import type { LockCapability } from "./session-lock.ts";
+import { sessionLock } from "./session-lock-doc.ts";
 
 /** A tool's requirements; both default to `"any"`. */
 export type ToolAccess = {
@@ -15,6 +17,12 @@ export type ToolAccess = {
 	 * `/tree` branches, never a subagent or one-shot agent); or offered only to subagents, which get it without choosing.
 	 */
 	readonly scope?: "any" | "main" | "subagent";
+	/**
+	 * In a locked session (`SessionLock`) the lock replaces the origin check of an `origin: "owner"` tool, whoever's turn
+	 * it is: `pass` (the default: what it reaches is limited by the lock elsewhere, MCP servers by their leases, location
+	 * tools by the sandbox), `never`, or only when the owner picked the capability.
+	 */
+	readonly locked?: "pass" | "never" | LockCapability;
 };
 
 /** A tool as p2 plugins contribute it: a Durable tool with its requirements. */
@@ -39,8 +47,16 @@ export function guardTool(tool: P2Tool): P2Tool {
 		execute: async (args, api, context: Context): Promise<ToolExecutionResult> => {
 			if (tool.scope === "main" && !(await isTopLevel(api, api.conversationId, context)))
 				return refusal(`${tool.name} works only in the session's main conversation.`);
-			if (tool.origin === "owner" && (await originOf(api, context)) !== "owner")
-				return refusal(`${tool.name} needs a turn the owner started; guests and what they start cannot use it.`);
+			if (tool.origin === "owner") {
+				const lock = await sessionLock(api, context);
+				if (lock) {
+					const rule = tool.locked ?? "pass";
+					if (rule === "never") return refusal(`${tool.name} is not available in a locked session.`);
+					if (rule !== "pass" && !lock.capabilities.includes(rule))
+						return refusal(`${tool.name} is not among the resources the owner picked for this session.`);
+				} else if ((await originOf(api, context)) !== "owner")
+					return refusal(`${tool.name} needs a turn the owner started; guests and what they start cannot use it.`);
+			}
 			return tool.execute(args, api, context);
 		},
 	};

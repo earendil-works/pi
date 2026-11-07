@@ -16,6 +16,7 @@ import {
 } from "@p2/app/v1/web";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { type EnvSummary, Envs, type EnvTest, type EnvUser, type SandboxStatus } from "./contract.ts";
+import { SecretsSection } from "./SecretsSection.tsx";
 import {
 	DEFAULT_DISK_GB,
 	ENV_NAME,
@@ -1038,6 +1039,9 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 						</button>
 					</div>
 				</form>
+				{editing.kind === "gondolin" && existing && (
+					<SecretsSection sandbox={name} onChanged={() => void readVm(name)?.then((vm) => setVm(name, vm))} />
+				)}
 				{editing.kind === "ssh" && service && (
 					<KeySection service={service} name={name} onKey={(identityFile) => updateSsh({ identityFile })} />
 				)}

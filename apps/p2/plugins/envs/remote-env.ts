@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-env";
 import { type EnvConfig, envId, hostKeyAlias, knownHostsPath, loadEnvs, type SshEnvConfig } from "./config.ts";
 import { deployedCommand, deployLauncher, runLauncher, sandboxArgument, sandboxKey } from "./sandbox-host.ts";
+import { sandboxSecrets } from "./secrets.ts";
 
 /** `connectSsh`/`sshConnection` options for an SSH env of `envs.json`. */
 export function sshOptions(directory: string, name: string, config: SshEnvConfig): SshConnectOptions {
@@ -73,11 +74,14 @@ export function envConnection(
 			// Start the VM first, with the launcher's own allowance (a first start may install Gondolin and download the
 			// guest image): the daemon connection must answer within pi-env's 30 s once it runs.
 			const key = sandboxKey(directory, name);
-			await deployedCommand(host, deployed, ["start", key, sandboxArgument(config)]);
+			// Secret values go on stdin, never on a command line; the argument names them.
+			const secrets = await sandboxSecrets(directory, name);
+			const argument = sandboxArgument(config, secrets.meta);
+			await deployedCommand(host, deployed, ["start", key, argument], JSON.stringify(secrets.values));
 			return [
 				host.ssh ?? "ssh",
 				...sshArguments(host),
-				runLauncher(deployed, ["daemon", key, sandboxArgument(config), daemon, "--"]),
+				runLauncher(deployed, ["daemon", key, argument, daemon, "--"]),
 			];
 		},
 		...(options.onLog === undefined ? {} : { onLog: options.onLog }),

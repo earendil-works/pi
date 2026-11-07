@@ -9,7 +9,9 @@ import {
 	method,
 	param,
 	propertiesOf,
+	record,
 	remote,
+	SessionLockSchema,
 	serverHost,
 	sessionHost,
 	ThinkingLevelSchema,
@@ -387,5 +389,34 @@ export const SessionTransfer = remote("p2.session-transfer", {
 				copyFiles: method(obj({ to: str() })),
 			},
 		},
+	},
+});
+
+const LockOrNone = union([SessionLockSchema, nul()]);
+
+/** Every session's lock (server, host-internal, persisted): set by the owner, followed by MCP placement and workers. */
+export const SessionLocks = local("p2.session-locks", {
+	version: 1,
+	params: {},
+	members: {
+		locks: record(SessionLockSchema),
+		set: method(obj({ session: str(), lock: LockOrNone })),
+	},
+});
+
+/**
+ * A session's lock as the owner and the session's worker see it: the owner reads and sets every session's; a worker
+ * reads its own session's (its principal names it).
+ */
+export const SessionLock = remote("p2.session-lock", {
+	version: 1,
+	params: {},
+	hostAddress: serverHost,
+	variants: {
+		owner: {
+			state: { locks: record(SessionLockSchema) },
+			methods: { set: method(obj({ session: str(), lock: LockOrNone })) },
+		},
+		worker: { state: { lock: LockOrNone } },
 	},
 });
