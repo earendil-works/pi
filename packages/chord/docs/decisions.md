@@ -2698,6 +2698,12 @@ validation and copies the v2 kernel added around Delta.
   calls, a borrowed reference type without `release`, and changed presence counts (one entry for several components;
   a never-settling call keeping it). The three bug fixes of step 0a stay (stylesheets loaded before the plugin reloads,
   base bundles built with the server's resolution conditions, the restart mark by content).
+- **A restarting page object's old UI may show unstyled (owner, 2026-11-06: "A"; step 0a):** a page applies a plugin's
+  new stylesheet when its new code is adopted and retires the old one a drawn frame after the reload. UI a plugin's
+  facet contributes is replaced in that update and always styled. UI contributed by an object in the page stays on its
+  old version until the restarted object's successor is live (design §21); classes the edit renamed or removed are
+  unstyled until then. Accepted and documented; apps contribute UI from facets and let objects supply data. Rejected
+  for now: a kernel signal "this plugin's restarts on this host finished" to retire old sheets later.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a

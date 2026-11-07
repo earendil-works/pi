@@ -66,11 +66,11 @@ update at the same URL; the plugin's new code is applied anyway (its part may la
 that loads after its timeout is applied then. Stylesheet URLs carry a hash of the CSS, so a CSS-only edit is a new
 file.
 
-**Limitation (accepted for now, owner to confirm):** UI contributed by an object that restarts stays on its old
+**Limitation (accepted, owner 2026-11-06: "A"):** UI contributed by an object that restarts stays on its old
 version until the successor is live (design §21: such an object keeps its contribution until then). Its old sheet is
 retired after the drawn frame anyway, so during that restart the old part can show unstyled (a second in the test).
 UI contributed directly by a plugin's facet, the rule for p3's UI, is not affected. A kernel signal "this plugin's
-restarts finished" would close it (option B, not built).
+restarts finished" would close it (option B, rejected for now).
 
 # Base Bundles Resolve as the Server Does {#conditions lede="Where the page's Chord comes from."}
 
