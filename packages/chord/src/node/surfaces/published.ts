@@ -62,8 +62,8 @@ export class PublishedScripts<P extends Principal> {
 	}
 
 	/**
-	 * Takes the kind's current set as the first one (its plugins' facets of the kind built on first use), before the
-	 * server's load (the scripts object starts with it). The plugins whose build failed.
+	 * Takes the kind's current set as the first one (its plugins' facets of the kind built on first use), after the
+	 * server's load (the surface's build publishes it). The plugins whose build failed.
 	 */
 	async start(context: Context): Promise<readonly PluginFailure[]> {
 		return this.#publish(await this.#plugins.scripts(this.#kind, context));

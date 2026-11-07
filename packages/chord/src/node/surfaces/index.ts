@@ -3,6 +3,7 @@
 
 export { type BaseBundle, processConditions } from "./bundle.ts";
 export type { ServedFile } from "./served.ts";
+export type { SurfaceBuilt } from "./surface-build.ts";
 export { TUI_PREFIX, type TuiStart, type TuiSurface, type TuiSurfaceOptions, tuiSurface } from "./tui.ts";
 export {
 	type PageAssets,

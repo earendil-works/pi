@@ -2,7 +2,7 @@
 
 The workers component (slice 10 §3, §4, design §23, decision "Slice 10's points"): a forked worker process per address
 of one host kind, started on demand by the route it owns, stopped when idle, never restarted by itself; forked from the
-kind's worker base, bundled when the component is created; its plugins are built by the server and shipped.
+kind's worker base, bundled once by `build` (a start waits for it); its plugins are built by the server and shipped.
 `workerMain` is the worker's side. Node-only. Exported as `@earendil-works/chord/workers`; the worker's side alone
 (`workerMain`, `processLock`) as `@earendil-works/chord/workers/child`, which loads no esbuild: a worker entry imports
 that.
@@ -11,8 +11,9 @@ that.
 
 ```ts
 // server.ts
-const workers = await createWorkers(server, Session, {         // rejects when the worker base does not build
+const workers = createWorkers(server, Session, {
 	kind: "worker", entry: "./worker.ts", execArgv: ["--import", resolver], env: { … },      // bootstrap
+	baseDir: join(dataDir, "cache", "workers", "session"), compileCache: join(dataDir, "cache", "node"),   // optional
 	authorize: (principal, address) => app.mayReach(principal, address),                   // the route's (synchronous)
 	principal: (address) => ({ kind: "worker", session: address.params.id }),
 	start: (address, ctx) => app.startData(address, ctx),                                  // JSON, before each start
@@ -23,7 +24,7 @@ const workers = await createWorkers(server, Session, {         // rejects when t
 	onError: (error) => log(error),                                                        // WorkersError
 }, ctx);
 workers.state                                   // { [address key]: WorkerState }, a JSON watchable
-workers.inputs                                  // the files the worker base read, with their bytes' hashes
+await workers.build()                           // { kind: "built", inputs } | { kind: "failed", error }; never rejects
 await workers.stop(Session({ id }), ctx);       // suspended while held, then stopped
 await workers.retry(Session({ id }), ctx);      // a failed or suspended address starts again (if held)
 await plugins.rollout([plugins.step("server", server), workers.step("workers")], built, ctx);
@@ -44,9 +45,11 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   reports that rejection (`resolve_failed`) once per new hold, so every tab opening a failed session adds one `onError`
   entry.
 - **The worker base** (decision "Workers start from the base code the server booted with"): `createWorkers` bundles
-  `entry` and the base code it imports once (esbuild, before routing) and forks every worker from that snapshot, so an
-  edit of the app's source while the server runs (half done, maybe) reaches no worker until the server restarts. A
-  base that does not build rejects `createWorkers`. Inlined: the app's files and workspace packages linked into
+  `entry` and the base code it imports once, at `build` (esbuild; the kit calls it right after the server listens, and
+  a start waits for it, starting it when nothing did), and forks every worker from that snapshot, so an edit of the
+  app's source after the build (half done, maybe) reaches no worker until the server restarts. A base that does not
+  build fails every start (`worker_failed` with esbuild's error, holders get `worker failed to start`); `build`
+  resolves `failed`. Inlined: the app's files and workspace packages linked into
   `node_modules` (by their real paths). External, loaded by Node at each fork from the file the build resolved: Node
   builtins and every package resolved under `node_modules` (native addons, packages reading their own files). Imports
   resolve as the child's Node would (`--conditions` from `execArgv`, `main` only, `tsconfig.json` paths); every
@@ -60,10 +63,17 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   specifier stays an import Node resolves at run time, against the module's source file (its
   `import.meta.url`): outside the snapshot, so base code that must be in it imports with a literal specifier. ES modules
   with inline source maps, forked with `--enable-source-maps` ahead of the app's `execArgv` (stack traces name the
-  source files). The files are in one private temporary directory, written again into a new one when a cleaner removed
-  one of them (checked at each fork; a chunk removed while a worker runs fails that worker's import of it), removed at
-  `close`. `inputs` maps the files it was built from to the hashes of the bytes esbuild read (the module-location
-  loader is the one reader of the source files it handles): the kit marks `base` while one differs.
+  source files). The bundle stays in memory until the first fork, which writes its files into one private directory:
+  `baseDir` when given (the component's own while it is open: emptied first; the kit's
+  `<dataDir>/cache/workers/<kind>/`), else a new temporary one; written again when a cleaner removed one of them
+  (checked at each fork, into a new temporary directory or `baseDir` again; a chunk removed while a worker runs fails
+  that worker's import of it); removed by `close` once every worker exited or was killed (a stopping worker's closers
+  may still import a lazy chunk). A build that ends after `close` writes nothing: the kit releases the data
+  directory's lock after the component's close, so a later start's component may own `baseDir` by then. With
+  `compileCache` every fork gets `NODE_COMPILE_CACHE` (unless `env` sets it): Node keeps the compiled code of the bundle and the packages it loads between forks and, with
+  a `baseDir` that stays the same, between starts (about 18 ms of the first fork's start in example 53). A built
+  base's `inputs` maps the files it was built from to the hashes of the bytes esbuild read (the module-location loader
+  is the one reader of the source files it handles): the kit marks `base` while one differs.
   `nodeBaseInputs(entry, conditions)` records the same for a Node entry's static graph without writing or running
   anything, best effort (the kit's record of the server's own code): literal imports, lazy ones included; an import
   that does not resolve is left out; resolved as Node does (no `tsconfig.json` `paths`); other esbuild failures reject.

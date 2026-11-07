@@ -304,14 +304,15 @@ console.log("   GET / signed in:", (await fetch(url, { headers: { cookie } })).s
 <!-- output: main -->
 ```text
 1. owner link: http://127.0.0.1:<port>/_chord/owner#<token>
-   data directory: logs, owner-token, plugins, server, telemetry.sqlite, telemetry.sqlite-shm, telemetry.sqlite-wal, workers
+   data directory: cache, logs, owner-token, plugins, server, telemetry.sqlite, telemetry.sqlite-shm, telemetry.sqlite-wal, workers
    GET / signed out: 401
    the owner signs in: 200 chord-session=…
    GET / signed in: 200
 ```
 
 `startServer` made the data directory: `server/` (its store, the cookie secret, its files), `workers/` (one directory
-per worker), `plugins/` (the user's plugin root, beside the app's built-in one), `logs/` and `owner-token`;
+per worker), `plugins/` (the user's plugin root, beside the app's built-in one), `cache/` (each worker kind's base, written
+again at every start, and Node's compile cache for the workers), `logs/` and `owner-token`;
 `telemetry.sqlite` (with SQLite's `-shm` and `-wal` files) is the app's own, opened before the server starts
 (chapter XI). The page
 answered 401: HTTP **denies by default**, before any plugin code runs, unless a route says `public: true`.
@@ -659,8 +660,8 @@ approves the code in a signed-in browser, and the client's next poll returns its
 
 # A Page {#page lede="A web entry, a web facet with React, the panels registry, and why a watch starts at the current value."}
 
-A page is a client host in the browser. The kit builds its **base bundle** from the app's web entry at start (Chord,
-React, the app's web modules), serves the plugins' web facets as small scripts beside it, and serves the page through
+A page is a client host in the browser. The kit builds its **base bundle** from the app's web entry right after the
+server listens (Chord, React, the app's web modules; the page's first request waits for it), serves the plugins' web facets as small scripts beside it, and serves the page through
 the app's template (design §23, "Web and TUI").
 
 ## The page's registry

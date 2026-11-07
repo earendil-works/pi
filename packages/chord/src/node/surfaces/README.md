@@ -4,20 +4,27 @@ The web and terminal surfaces' server side (slice 11 §1, §4; decisions "Slice 
 `@earendil-works/chord/surfaces`. The app kit (`startServer({ web, tui })`) creates them; by hand:
 
 ```ts
-const web = await webSurface(server, { plugins, entry: "./src/web/main.ts", page: (request, assets) => shell(request.nonce, assets), paths: ["/"], public: false }, ctx);
-const tui = await tuiSurface(server, { plugins, entry: "./src/tui/main.ts" }, ctx);
+const web = webSurface(server, { plugins, entry: "./src/web/main.ts", page: (request, assets) => shell(request.nonce, assets), paths: ["/"], public: false });
+const tui = tuiSurface(server, { plugins, entry: "./src/tui/main.ts" });
 // web.facet, tui.facet among the server's core facets; web.step("web"), tui.step("tui") after the server's in a rollout
+// after the server's load (and its listen): the base bundle and the kind's first set; never rejects
+const built = await web.build();      // { kind: "built", base, inputs } | { kind: "failed", error }; web.built after
 ```
 
-- **Base bundles** (`bundle.ts`): built at start by esbuild from the entry (its imports inlined once: the app's API for
+- **Base bundles** (`bundle.ts`, `surface-build.ts`): built once by `build` (the kit: right after the server listens,
+  every start from the files as they are then) by esbuild from the entry (its imports inlined once: the app's API for
   the kind, Chord, React), named by the hash of all its outputs. A page's: an IIFE `base.<hash>.js`, its CSS
   `base.<hash>.css`, assets under `assets/`. A terminal's: one CommonJS script the sandbox evaluates from memory with its own
-  `require` (the allowed builtins only). A broken base fails the start. Packages resolve with `conditions` (the
+  `require` (the allowed builtins only). Every route of the surface (its files, its `base` hash, the page, a launcher's
+  start) waits for the build and starts it when nothing did; a base that does not build makes them answer 503 (the
+  surface's `build` resolves `failed` with esbuild's error, the app reports it) and fails the surface's rollout step;
+  the server runs on. Before the build the scripts object shows an empty set (no client holds it then: the page waits).
+  Packages resolve with `conditions` (the
   surface's option), by default the server process's (`processConditions(process.execArgv, NODE_OPTIONS)`: the
   `--conditions`/`-C` flags of both, `NODE_OPTIONS` split as Node splits it, quoted values included); a page's build
   adds `module`, which esbuild's defaults have and custom conditions drop. `inputs` is every file the build read with
   the hash of its bytes as its loader handed them to esbuild (`BaseInputs`): the kit's `base` mark compares with them.
-- **Published scripts** (`published.ts`, `current.ts`): the kind's current set (`plugins.scripts(kind)` at start,
+- **Published scripts** (`published.ts`, `current.ts`): the kind's current set (`plugins.scripts(kind)` at the build,
   `plugins.current(kind)` at each rollout step) as registered scripts `<prefix>plugin/<name, / as ~>.<digest>.js`, their
   CSS beside them as `<name>.<digest>.<hash of the CSS>.css` (a change of only the CSS keeps the script's digest; each
   script with its inline source map), plugin assets under `<prefix>assets/` (the kit's

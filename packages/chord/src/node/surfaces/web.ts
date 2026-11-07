@@ -1,19 +1,18 @@
 // The web surface's server side (slice 11 §1, decisions "Slice 11's points" and "P3" to "P5"): the base bundle built
-// from the app's entry at start, the plugins' web scripts published as registered scripts and one combined file,
+// from the app's entry after the server's start (`build`; the page and the surface's files wait for it, and answer 503
+// when it failed), the plugins' web scripts published as registered scripts and one combined file,
 // `WebScripts` showing the current set, and the page through the app's own template; everything as `Http`
 // contributions of the surface's facet, which the app puts among the server's core facets. The app keeps its HTML,
 // CSS, components and themes.
 
-import type { Context } from "../../context/index.ts";
 import type { Principal } from "../../data/index.ts";
 import { defineFacet, type Facet, type Host } from "../../host/index.ts";
 import { REGISTER, type ScriptSet } from "../../surfaces/index.ts";
 import { Http, type HttpRequest, type HttpResponse, type HttpRouteOptions } from "../http/index.ts";
-import type { BaseInputs, Plugins, RolloutStep } from "../plugins/index.ts";
-import { type BaseBundle, buildBase } from "./bundle.ts";
+import type { Plugins, RolloutStep } from "../plugins/index.ts";
+import type { BaseBundle } from "./bundle.ts";
 import { scriptsFacet } from "./current.ts";
-import { PublishedScripts } from "./published.ts";
-import { type ServedFile, served } from "./served.ts";
+import { SurfaceBuild, type SurfaceBuilt } from "./surface-build.ts";
 
 /** What `webSurface` takes. */
 export type WebSurfaceOptions = {
@@ -44,53 +43,60 @@ export type PageAssets = {
 	readonly styles: readonly string[];
 };
 
-/** The web surface: its facet (for the server's core facets), its rollout step, its base bundle's hash. */
+/** The web surface: its facet (for the server's core facets), its rollout step, its build. */
 export type WebSurface<P extends Principal> = {
 	readonly facet: Facet<P>;
-	/** The rollout step publishing the web kind's current set (after the server's step). */
+	/** The rollout step publishing the web kind's current set (after the server's step; after the build). */
 	step(name: string): RolloutStep;
-	readonly base: string;
-	/** The files its base bundle was built from, with their bytes' hashes: the app's base code for this surface. */
-	readonly inputs: BaseInputs;
+	/**
+	 * Builds the base bundle and publishes the web kind's first set (its facets built on first use), once, after the
+	 * server's load (the page and the surface's files wait for it, and start it when nothing did). Never rejects: how it
+	 * ended (`built`: the base bundle's hash and the files it read, the app's base code for this surface).
+	 */
+	build(): Promise<SurfaceBuilt>;
+	/** How the build ended, once it did. */
+	readonly built: SurfaceBuilt | undefined;
 };
 
 /** Where the web surface's files live. */
 export const WEB_PREFIX = "/_chord/web/";
 
 /**
- * Builds the base bundle and takes the web kind's current set (its facets built on first use), then returns the
- * surface. Rejects with esbuild's failure when the base bundle does not build.
+ * The web surface on `server`: its facet serves the page and the surface's files once `build` built the base bundle
+ * (503 when it failed). The build is not started here.
  */
-export async function webSurface<P extends Principal>(
-	server: Host<P>,
-	options: WebSurfaceOptions,
-	context: Context,
-): Promise<WebSurface<P>> {
-	const base = await buildBase(options.entry, "browser", WEB_PREFIX, options.conditions);
-	const published = new PublishedScripts("web", options.kind ?? "web", WEB_PREFIX, base.hash, options.plugins, server);
-	await published.start(context);
-	const file = (path: string): ServedFile | undefined => base.files.get(path) ?? published.file(path);
+export function webSurface<P extends Principal>(server: Host<P>, options: WebSurfaceOptions): WebSurface<P> {
+	const { kind = "web", entry, conditions, plugins } = options;
+	const building = new SurfaceBuild<P>("web", "browser", WEB_PREFIX, { kind, entry, conditions, plugins }, server);
 	const facet = defineFacet<P>((host, self) => {
-		scriptsFacet<P>("web", published).setup(host, self);
+		scriptsFacet<P>("web", building).setup(host, self);
 		self.contribute(Http, {
-			routes: webRoutes(options, base.hash, file, () => pageAssets(base, published)),
+			routes: webRoutes(options, building),
 			csp: { "style-src": ["'self'"], "img-src": ["'self'", "data:"], "font-src": ["'self'"] },
 			// Scripts from the surface's files only (and the page's nonce): no other same-origin response runs (Opus L8).
 			scripts: [WEB_PREFIX],
 		});
 	});
-	return { facet, step: (name) => published.step(name), base: base.hash, inputs: base.inputs };
+	return {
+		facet,
+		step: (name) => building.step(name),
+		build: () => building.build(),
+		get built() {
+			return building.built;
+		},
+	};
 }
 
-/** The surface's routes: its files (served forever), its current base hash (public), and the page. */
-function webRoutes(
+/**
+ * The surface's routes, each waiting for the build (503 when it failed): its files (served forever), its current base
+ * hash (public), and the page.
+ */
+function webRoutes<P extends Principal>(
 	options: WebSurfaceOptions,
-	base: string,
-	file: (path: string) => ServedFile | undefined,
-	assets: () => PageAssets,
+	building: SurfaceBuild<P>,
 ): Record<string, HttpRouteOptions> {
 	const access = options.public === true ? { public: true as const } : {};
-	const serve = async (request: HttpRequest): Promise<HttpResponse> => served(file(request.path));
+	const serve = async (request: HttpRequest): Promise<HttpResponse> => building.file(request.path);
 	const routes: Record<string, HttpRouteOptions> = {
 		[`GET ${WEB_PREFIX}:file`]: { ...access, handler: serve },
 		[`GET ${WEB_PREFIX}plugin/:file`]: { ...access, handler: serve },
@@ -99,14 +105,22 @@ function webRoutes(
 		// session ended still learns it should reload.
 		[`GET ${WEB_PREFIX}base`]: {
 			public: true,
-			handler: async () => ({ kind: "json", value: base, headers: { "Cache-Control": "no-store" } }),
+			handler: async () => {
+				const parts = await building.parts();
+				if (parts === undefined) return { kind: "error", status: 503 };
+				return { kind: "json", value: parts.base.hash, headers: { "Cache-Control": "no-store" } };
+			},
 		},
 	};
 	for (const path of options.paths ?? ["/"]) {
 		routes[`GET ${path}`] = {
 			...access,
 			page: true,
-			handler: async (request) => ({ kind: "html", body: await options.page(request, assets()) }),
+			handler: async (request) => {
+				const parts = await building.parts();
+				if (parts === undefined) return { kind: "error", status: 503 };
+				return { kind: "html", body: await options.page(request, pageAssets(parts.base, parts.published)) };
+			},
 		};
 	}
 	return routes;

@@ -223,9 +223,12 @@ export class PluginWatcher extends Source {
 	/**
 	 * Adds the record of a running base artifact (a base bundle's `inputs`): `base` is set while one of its files differs
 	 * from it. Each file's directory is watched alone (not its tree), then every file is compared once (an edit since the
-	 * build has no later event); files under ignored directories are skipped.
+	 * build has no later event); files under ignored directories are skipped. Settles once those first comparisons did:
+	 * `base` then knows the record.
 	 */
-	recordBase(inputs: BaseInputs): void {
+	recordBase(inputs: BaseInputs): Promise<void> {
+		// A record arriving after the close (a scan that ended late) watches nothing.
+		if (this.#closed) return Promise.resolve();
 		const record = new Map<string, string>();
 		for (const [file, hash] of inputs) {
 			const path = real(file);
@@ -233,10 +236,12 @@ export class PluginWatcher extends Source {
 		}
 		for (const path of record.keys()) this.#locate(dirname(path));
 		this.#records.push(record);
+		const compared: Promise<void>[] = [];
 		for (const path of record.keys()) {
 			this.#recorded.add(path);
-			this.#compare(path);
+			compared.push(this.#compare(path));
 		}
+		return Promise.all(compared).then(() => {});
 	}
 
 	/** Marks what a change of the file or directory at `path` (absolute) asks for. */
@@ -307,12 +312,13 @@ export class PluginWatcher extends Source {
 	}
 
 	/** Compares the base file at `path` once its comparisons under way are done: reads of one path run in order. */
-	#compare(path: string): void {
+	#compare(path: string): Promise<void> {
 		const next = (this.#comparing.get(path) ?? Promise.resolve()).then(() => this.#compareNow(path));
 		this.#comparing.set(path, next);
 		void next.then(() => {
 			if (this.#comparing.get(path) === next) this.#comparing.delete(path);
 		});
+		return next;
 	}
 
 	/**

@@ -6,7 +6,7 @@ import { realpathSync } from "node:fs";
 import type { FollowAttachment, FollowObserver } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
-import type { Plugins } from "@earendil-works/chord/plugins";
+import type { BaseInputs, Plugins } from "@earendil-works/chord/plugins";
 import { createWorkers, type WorkerState, type Workers, type WorkersError } from "@earendil-works/chord/workers";
 import { type Host, Session } from "../runtime/chord.ts";
 import { logWriter, processLogs } from "../runtime/logs.ts";
@@ -46,6 +46,7 @@ const CRASH_WINDOW_MS = 60_000;
 export class SessionWorkers implements SessionWorkerControl {
 	/** Chord's workers component, made by `create` (its worker base bundled first). */
 	#workers: Workers<typeof Session> | undefined;
+	#baseInputs: BaseInputs | undefined;
 	readonly #options: SessionWorkersOptions;
 	readonly #generations = new Map<string, number>();
 	readonly #operations = new Map<string, Promise<unknown>>();
@@ -73,14 +74,27 @@ export class SessionWorkers implements SessionWorkerControl {
 	}
 
 	/**
-	 * The session workers: Chord's workers component created (it bundles the worker entry once, so every worker runs the
-	 * code the server booted with; a broken entry rejects), then followed.
+	 * The session workers: Chord's workers component created and its worker base built now (the worker entry bundled
+	 * once, so every worker runs the code the server booted with; a broken entry rejects), then followed.
 	 */
 	static async create(options: SessionWorkersOptions, context: Context): Promise<SessionWorkers> {
 		const made = new SessionWorkers(options);
-		made.#workers = await made.#createWorkers(context);
+		const workers = made.#createWorkers(context);
+		made.#workers = workers;
+		const built = await workers.build();
+		if (built.kind === "failed") {
+			await workers.close(context);
+			throw built.error;
+		}
+		made.#baseInputs = built.inputs;
 		await made.#follow();
 		return made;
+	}
+
+	/** The files the worker base was built from, with their bytes' hashes. */
+	get baseInputs(): BaseInputs {
+		// Set by `create` before the instance is handed out.
+		return this.#baseInputs!;
 	}
 
 	/** Chord's workers component for the sessions. */
@@ -89,7 +103,7 @@ export class SessionWorkers implements SessionWorkerControl {
 		return this.#workers!;
 	}
 
-	#createWorkers(context: Context): Promise<Workers<typeof Session>> {
+	#createWorkers(context: Context): Workers<typeof Session> {
 		const options = this.#options;
 		const dataDir = realpathSync(options.dataDir);
 		return createWorkers(

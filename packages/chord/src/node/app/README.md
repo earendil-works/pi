@@ -40,10 +40,12 @@ const app = await startServer<P>({
 	tui: { entry: "./src/tui/main.ts" },
 	base: ["./src/app/", "./start.ts"],             // base code besides worker entries and the base bundles' inputs
 	timeouts: { closeTimeout: 30_000, readyTimeout: 60_000 },   // every host's (server and workers; the defaults)
-	onError: (error) => log(error),                 // AppError: { kind: "host" | "http" | "workers" | "plugins" | "server_scan", error }
+	onError: (error) => log(error),                 // AppError: { kind: "host" | "http" | "workers" | "plugins" | "base_build" | "server_scan", error }
 }, ctx);
 console.log(`Open ${app.ownerLink()}`);
 app.host; app.http; app.workers.get("project"); app.plugins.state; app.dataDir; app.ownerTokenFile;
+await app.basesBuilt;                                       // the bases built after the listen (failures reported)
+await app.baseWatched;                                      // base code recorded and watched (after the start)
 await app.plugins.install({ git: url, ref: "v1" }, ctx);   // into <dataDir>/plugins/
 await app.applyChanges(ctx);                                // build the dirty plugins, roll out: server, then workers
 await app.exportData(Project({ id }), "p.tar", ctx);
@@ -67,12 +69,16 @@ startWorker<P>({ api, kinds, busy, onError });
   instances; the worker's entry passes the same `api` and `kinds`.
 - **`startServer`**, in order: the data directory, by its real path (refused when it is the home directory, a file
   system's root, or another user's: the kit would make it private), its lock (one server per data directory, also
-  through a symbolic link: a second is refused after a second's wait), the layout made private (below), the cookie secret, the server's store, the host (address `Server()`,
-  `principal.server`), `createHttp` (the links endpoint at `/chord`), the plugins component with the two roots, one
-  workers component per worker kind (none without worker kinds), the server's plugins loaded with the kit's core
-  facets (`chord.http`, `chord.app.info`, `chord.app.sessions`, `chord.app.owner`, `chord.app.pairing`,
-  `chord.app.files`, `chord.themes`, `chord.themes.choice`, `chord.translations`, `chord.locale.choice`), the owner token file, the listening port, the owner link. A plugin of the required root failing
-  rejects with the plugins component's `PluginError`, everything closed. `close` is idempotent.
+  through a symbolic link: a second is refused after a second's wait), the layout made private (below), the cookie
+  secret, the server's store, the host (address `Server()`, `principal.server`), `createHttp` (the links endpoint at
+  `/chord`), the plugins component with the two roots, one workers component per worker kind (none without worker
+  kinds), the server's plugins loaded with the kit's core facets (`chord.http`, `chord.app.info`, `chord.app.sessions`,
+  `chord.app.owner`, `chord.app.pairing`, `chord.app.files`, `chord.themes`, `chord.themes.choice`,
+  `chord.translations`, `chord.locale.choice`), the owner token file, the listening port, the owner link. Then, off the
+  start's path: the bases built (the web and terminal base bundles, each worker kind's worker base; `app.basesBuilt`;
+  see "Startup cost"), and the base code recorded and watched (`app.baseWatched`): each base's record once built, then
+  the scan of the server's own code. A plugin of the required root failing rejects with the plugins component's
+  `PluginError`, everything closed. `close` is idempotent.
 - **`startWorker`** is `workerMain` plus: the worker's directory `workers/<kind>/<key>/` and its store there, the host
   at the address acting as `principal.worker(address)`, connected to the server first (trusted, as the server's
   principal), its plugins loaded with the worker's core facets (`chord.app.worker-info`, `chord.app.files`,
@@ -164,6 +170,8 @@ export default users.facet;
   workers/<kind>/<key>/    a worker's store.sqlite and files/
   plugins/                 the user's plugins root
   logs/
+  cache/workers/<kind>/    the worker kind's base (files 0600), written again at every start, removed at close
+  cache/node/              Node's compile cache for the workers
   owner-token              mode 0600
 ```
 
@@ -254,25 +262,71 @@ archive leaves nothing. The next hold starts the worker on the imported store an
 ## Plugins
 
 Roots: the app's `root` (required: a plugin of it failing stops `startServer`) and `<dataDir>/plugins/` (the user's:
-installs go there). `app.plugins.state` is the plugins component's marks for the app's "apply changes" button; its
-`base` ("restart needed") is true exactly while base code differs from what runs. Recorded at start: the server's own
-code, a best-effort static scan of its entry (`process.argv[1]`, the start script): esbuild bundles it with the server's
-conditions only to record the files it reads, nothing written or run (30-110 ms for the examples). It sees the literal
-imports of the start script's static graph, including lazy literal `import()`s Node may never run (conservative: such a
-file's edit asks for a restart); a computed `import(x)` and modules a custom loader provides are not seen; an import
-that does not resolve (an inactive optional import of a missing file or package, a loader's scheme) is left out; it
-resolves as Node does (the conditions, `main`, no `tsconfig.json` `paths`). Any other failure of the scan (a file
-esbuild cannot parse) is reported (`server_scan`) and the server starts without that record. An entry under
-`node_modules` is installed code (an npm-installed app, a test runner) and, as every file under `node_modules`, never
-compared. `base`'s files and directories are hashed too; an edit between Node loading a file and that record is a window
-this cannot see. Each base bundle records the bytes its esbuild loader read (the web's, the terminal's, each worker
-kind's, the entry and everything it imports). The mark is computed, not latched: true while a recorded file's bytes
-differ or it is gone, or a source file (`.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.json`, `.css`)
-is new in one of `base`'s directories, and false again once the files are back to the recorded bytes (a formatter
-rewriting a file unchanged, a branch switched and back, an `npm run build` leave no mark). Compared once when the kit
-starts watching and at every change; files under `node_modules` are never compared (an npm upgrade is a restart anyway).
-`applyChanges` builds the dirty plugins (and installed ones) and rolls out to the server, then each worker kind; nothing
-is applied by itself.
+installs go there). `app.plugins.state` is the plugins component's marks for the app's "apply changes" button.
+
+Its `base` ("restart needed") compares base code with what runs by content, with one latched exception. By content:
+true while a recorded file's bytes differ from the bytes the running code was built from, or it is gone, or a source
+file (`.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.json`, `.css`) is new in one of `base`'s
+directories, and false again once the files are back to those bytes (a formatter rewriting a file unchanged, a branch
+switched and back, an `npm run build` leave no mark). The exception, per timestamp: a scanned file of the server's own
+code whose mtime or ctime (either one) falls after the process started (`performance.timeOrigin`) and not later than
+the scan's time plus 5 s is recorded as differing whatever its bytes, and marks `base` until the next restart, even
+when its bytes are restored. Node may have loaded other bytes than the scan read, and the bytes Node loaded are
+unknown. It is conservative: an edit made after the process started but before Node read the file, a rewrite with the
+same bytes, and a change of metadata only (ctime) mark too. A timestamp outside that range is ignored (stamped in the
+future: a skewed clock, an unpacked archive), which does not exempt the file when its other timestamp is in range; a
+file neither of whose timestamps is in range is compared by content alone. What remains unseen: an edit in that window
+whose timestamp does not show it, on a file system with coarse timestamps (1 s, 2 s on FAT) or a clock behind the process's
+(a network file system); for `base`'s files and directories, hashed at start, an edit between Node loading a file and
+that hash.
+
+What is recorded: the app's `base` files and directories, hashed at start; each base's bytes as its esbuild loader read
+them (the web's, the terminal's, each worker kind's: the entry and everything it imports), once it is built; and the
+server's own code, a best-effort static scan of its entry (`process.argv[1]`, the start script) after the bases are
+built: esbuild bundles it with the server's conditions only to record the files it reads, nothing written or run
+(about 150 ms). The scan sees the literal imports of the start script's static graph, including lazy literal
+`import()`s Node may never run (conservative: such a file's edit asks for a restart); a computed `import(x)` and modules
+a custom loader provides are not seen; an import that does not resolve (an inactive optional import of a missing file
+or package, a loader's scheme) is left out; it resolves as Node does (the conditions, `main`, no `tsconfig.json`
+`paths`). Any other failure of the scan (a file esbuild cannot parse) is reported (`server_scan`) and the server runs
+without that record. An entry under `node_modules` is installed code (an npm-installed app, a test runner) and, as every
+file under `node_modules`, never compared (an npm upgrade is a restart anyway). Each record is compared once when the
+kit starts watching it and at every change. Only the automatic records, the bases' and the scan's, are added after the
+start (the app's `base` files and directories are hashed during it): the server answers meanwhile, and until
+`app.baseWatched` settles (every record compared once) `base` is not known (`false` may mean "not compared yet"); the
+close does not wait for it.
+
+`applyChanges` builds the dirty plugins (and installed ones) and rolls out to the server, then each worker kind, then
+the clients; nothing is applied by itself. A surface whose base has not been built yet is built first by its step (an
+aborted Apply stops waiting there: the rollout stops at that step, the build goes on); one whose base failed fails its
+step.
+
+## Startup cost
+
+A start costs Node's loading of the server's modules (Chord's source, type stripping included, before the start script
+runs; about 390 ms for a minimal server on a desktop), `startServer` itself, and esbuild builds. `startServer` does not
+wait for the builds: it resolves once the server listens (about 30 ms for a minimal server, about 40 ms for example
+53's). Nothing built is kept between starts. Right after the listen the kit builds, at once and from the files as they
+are then, the web base bundle, the terminal base bundle and each worker kind's worker base (`app.basesBuilt` settles
+once every build ended). A request that needs a base waits for its build: the page, the surface's files and its `base`
+hash, a terminal launcher's start, a worker start. A base that fails to build is reported (`AppError`
+`{ kind: "base_build", base: "web" | "tui" | <worker kind>, error }`) and fails only what needs it: the page and the
+surface's files answer 503, the kind's workers fail their start (`worker failed to start`); the server keeps running,
+and the next start builds again. The scan of the server's own code runs after the builds (it would compete with the
+builds the first requests wait for).
+
+Example 53 (one worker kind): `startServer` about 40 ms, the owner page answered about 50 ms after the start began, the
+first worker request about 320 ms after (the worker base's build, about 170 ms, then the fork); with the builds on the
+start's path it was about 560 ms. Example 56 (a web page): the owner page about 45 ms, the first page about 195 ms
+(waiting for the web base). Each worker kind's base is written to `<dataDir>/cache/workers/<kind>/` at its first fork,
+emptied and written again at every start and removed at close, only while the start holds the data directory's lock (a
+build that ends after its start closed writes nothing; a later start owns the directory then), and workers are forked with
+`NODE_COMPILE_CACHE=<dataDir>/cache/node` (unless the worker kind's `env` sets it): the same path at every start, so
+Node's compile cache knows the files (example 53's first worker answers about 18 ms sooner than from a new temporary
+directory). The server's own process loads its modules before the kit runs, so the kit cannot cache them: an app's
+supervisor or start command should set `NODE_COMPILE_CACHE` (for example to `<dataDir>/cache/node`) for the server (a
+minimal server's module loading then takes about 110 ms instead of 390 ms once the cache is warm). Measured on a
+desktop (slayer, Linux x64, Node 24.4.1, warm file system).
 
 ## Internals
 
@@ -293,6 +347,7 @@ flags and `NODE_OPTIONS`: a server started with `--conditions=source` serves pag
 `dist/`), or with `web.conditions`/`tui.conditions`. Plugin assets are served under `/_chord/web/assets/` (the plugins
 component's `publicPath`).
 `applyChanges` rolls out to the server, the workers, then the surfaces (`web`, `tui`: the new set published, clients
-not waited for). `app.web` and `app.tui` give the base bundles' hashes. The server also serves the `Themes` registry and
+not waited for). Both base bundles are built right after the listen (see "Startup cost"); `app.web` and `app.tui` give
+their hashes once built (`undefined` before, and when the build failed). The server also serves the `Themes` registry and
 `ThemeChoice` (each principal's dark and light pick, kept in its store). Without `web` and `tui` an app has no client
 surface (API only).

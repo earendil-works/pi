@@ -149,7 +149,8 @@ await plugins.rollout([plugins.step("server", server), workers.step("workers")],
   base artifact read (`base`, the server's own files and directories, hashed when the component is created; each
   `watchBase(inputs)`, a base bundle's record of the bytes it read), is gone, or is a source file new in a base
   directory; compared once when its watch starts (an edit since the build has no later event) and at each event, the
-  reads of one path in order (the latest decides); a file two records read with different bytes stays marked. Every
+  reads of one path in order (the latest decides); a file two records read with different bytes stays marked, as does
+one whose record holds a hash no bytes have (the kit's latched post-start-edit rule, `src/node/app/README.md`). Every
   ancestor of a base directory or of a recorded file's directory is watched alone too: an entry on that way created,
   removed, moved or replaced (an ancestor renamed, a directory made again) renews every base watch under it and
   compares its files. Each plugin mark records the generation of its latest

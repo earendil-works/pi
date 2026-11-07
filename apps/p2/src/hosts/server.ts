@@ -221,7 +221,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	// (a read now could see an edit made since).
 	devModules?.set(
 		"worker-base",
-		[...workers.workers.inputs]
+		[...workers.baseInputs]
 			.filter(([file]) => !file.startsWith(PLUGINS_DIRECTORY))
 			.map(([file, hash]) => ({ file, hash })),
 	);

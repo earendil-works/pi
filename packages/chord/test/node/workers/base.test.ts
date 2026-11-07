@@ -297,4 +297,30 @@ describe("the bundle's file", () => {
 		expect(existsSync(dirname(first))).toBe(false);
 		expect(run(base)).toBe("lazy");
 	});
+
+	it("writes nothing before the first file(): a handle never forked leaves a named directory as it is, also at remove", async () => {
+		const dir = await project({ "entry.ts": 'console.log("ran");\n' });
+		const named = join(dir, "bases", "worker");
+		await mkdir(named, { recursive: true });
+		await writeFile(join(named, "worker.mjs"), "another start's");
+		const base = await buildWorkerBase(join(dir, "entry.ts"), [], named);
+		base.remove();
+		expect(await readFile(join(named, "worker.mjs"), "utf8")).toBe("another start's");
+	});
+
+	it("in a named directory: emptied first (an earlier build's files go), written again there, removed by remove", async () => {
+		const dir = await project({ "entry.ts": 'console.log("ran");\n' });
+		const named = join(dir, "bases", "worker");
+		await mkdir(named, { recursive: true });
+		await writeFile(join(named, "worker-old.mjs"), "stale");
+		const base = await buildWorkerBase(join(dir, "entry.ts"), [], named);
+		expect(base.file()).toBe(join(named, "worker.mjs"));
+		expect(readdirSync(named)).toEqual(["worker.mjs"]);
+		expect(statSync(named).mode & 0o777).toBe(0o700);
+		await rm(join(named, "worker.mjs"));
+		expect(base.file()).toBe(join(named, "worker.mjs"));
+		expect(run(base)).toBe("ran");
+		base.remove();
+		expect(existsSync(named)).toBe(false);
+	});
 });

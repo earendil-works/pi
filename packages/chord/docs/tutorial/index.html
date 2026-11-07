@@ -376,12 +376,13 @@ console.<span class="tk-f">log</span>(<span class="tk-s">"   the owner signs in:
 console.<span class="tk-f">log</span>(<span class="tk-s">"   GET / signed in:"</span>, (<span class="tk-k">await</span> <span class="tk-f">fetch</span>(url, { headers: { cookie } })).status);</code></pre>
 <!-- output: main -->
 <pre class="plain"><code>1. owner link: http://127.0.0.1:&lt;port&gt;/_chord/owner#&lt;token&gt;
-   data directory: logs, owner-token, plugins, server, telemetry.sqlite, telemetry.sqlite-shm, telemetry.sqlite-wal, workers
+   data directory: cache, logs, owner-token, plugins, server, telemetry.sqlite, telemetry.sqlite-shm, telemetry.sqlite-wal, workers
    GET / signed out: 401
    the owner signs in: 200 chord-session=…
    GET / signed in: 200</code></pre>
 <p><code>startServer</code> made the data directory: <code>server/</code> (its store, the cookie secret, its files), <code>workers/</code> (one directory
-per worker), <code>plugins/</code> (the user&#39;s plugin root, beside the app&#39;s built-in one), <code>logs/</code> and <code>owner-token</code>;
+per worker), <code>plugins/</code> (the user&#39;s plugin root, beside the app&#39;s built-in one), <code>cache/</code> (each worker kind&#39;s base, written
+again at every start, and Node&#39;s compile cache for the workers), <code>logs/</code> and <code>owner-token</code>;
 <code>telemetry.sqlite</code> (with SQLite&#39;s <code>-shm</code> and <code>-wal</code> files) is the app&#39;s own, opened before the server starts
 (chapter XI). The page
 answered 401: HTTP <strong>denies by default</strong>, before any plugin code runs, unless a route says <code>public: true</code>.</p>
@@ -660,8 +661,8 @@ approves the code in a signed-in browser, and the client&#39;s next poll returns
 </section>
 
 <section class="chapter" id="page"><header class="opener"><div class="numeral">IV</div><h2>A Page</h2><p class="lede">A web entry, a web facet with React, the panels registry, and why a watch starts at the current value.</p></header>
-<p class="dropcap">A page is a client host in the browser. The kit builds its <strong>base bundle</strong> from the app&#39;s web entry at start (Chord,
-React, the app&#39;s web modules), serves the plugins&#39; web facets as small scripts beside it, and serves the page through
+<p class="dropcap">A page is a client host in the browser. The kit builds its <strong>base bundle</strong> from the app&#39;s web entry right after the
+server listens (Chord, React, the app&#39;s web modules; the page&#39;s first request waits for it), serves the plugins&#39; web facets as small scripts beside it, and serves the page through
 the app&#39;s template (design §23, &quot;Web and TUI&quot;).</p>
 <h3 id="the-page-39-s-registry">The page&#39;s registry</h3>
 <p>Plugins put panels on the page through a registry the API&#39;s web module declares, with Chord&#39;s React hooks re-exported

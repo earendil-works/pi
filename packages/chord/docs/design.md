@@ -2098,7 +2098,7 @@ worker (the reload suite), not only by unit tests. "The page" is any client over
 | a contract change the new code still `accepts` | the old page keeps working through the mapping | answered through the mapping | unchanged |
 | a contract change not accepted, or a type removed | the reference waits with its last values (`failed { waiting }`) until the page's code updates or the type returns | calls fail at once with the cause (`contract_mismatch`, `unavailable` not served; §7) | unchanged |
 | a web or terminal plugin | the other plugins untouched, scroll kept; the reloaded plugin's components remount; a page fetches the plugin's new stylesheet inactive before the reload (beside its old one, at most 10 s), applies it with the new code and retires the old one a frame after the reload (a plugin whose new script failed keeps its old stylesheet with its old code, the new one never applied); limitation: UI an object contributes stays until its successor is live and can show unstyled during that restart | the reloaded plugin's calls as above | component state starts over; `usePageState`/`scope.pageState` survive |
-| base code (the app's client and worker entries, Chord, React) | applied by restarting the server (the kit builds base bundles at start, the workers component its worker base when it is created; no reload applies them, and a worker forked meanwhile runs the server's boot code); the page reconnects to a new base and reloads (the terminal restarts its sandbox): the only case losing what is on screen | calls in flight end with the link | page state lost; in-memory server and worker state lost; stores unchanged |
+| base code (the app's client and worker entries, Chord, React) | applied by restarting the server (the kit builds the base bundles and each worker kind's worker base right after the server listens; no reload applies them, and a worker forked meanwhile runs the server's boot code); the page reconnects to a new base and reloads (the terminal restarts its sandbox): the only case losing what is on screen | calls in flight end with the link | page state lost; in-memory server and worker state lost; stores unchanged |
 
 Order: the server, then every running worker by the same rules, then the clients' scripts.
 
@@ -2123,12 +2123,14 @@ Order: the server, then every running worker by the same rules, then the clients
   calling facet's own plugin. A plugin's dependencies are installed into its directory (`installDependencies`, as
   coding-agent does: `--omit=dev --legacy-peer-deps --ignore-scripts`). esbuild is an optional peer dependency.
 - **The reload loop:** a watcher marks plugins dirty from the files each facet used (a copied contract dirties every
-  user) and flags changes of base code (the app restarts its hosts): `base` is computed, not latched (p3 step 0a), true
-  exactly while a file differs from the bytes a running base artifact read (each base bundle hashes what its loader
-  hands esbuild; the server's own code is recorded at start by bundling its entry, nothing written or run), is gone, or
-  is a source file new in a base directory;
-  compared once when its watch starts and at each event (reads of one path in order, the latest deciding), so a rewrite
-  with the same bytes or a change and its revert leave no mark; a build is per plugin (a failed one keeps its old code);
+  user) and flags changes of base code (the app restarts its hosts): `base` is content-compared (p3 step 0a), true
+  while a file differs from the bytes a running base artifact read (each base bundle hashes what its loader hands
+  esbuild; the server's own code is recorded after the start by bundling its entry, nothing written or run), is gone,
+  or is a source file new in a base directory; compared once when its watch starts and at each event (reads of one
+  path in order, the latest deciding), so a rewrite with the same bytes or a change and its revert leave no mark. One
+  exception, latched: a file of the server's own code whose timestamps show an edit after the process started is
+  recorded as differing whatever its bytes, since Node may have loaded other bytes than the scan read; it marks `base`
+  until the next restart, even when its bytes are restored (the exact rule: `src/node/app/README.md`, "Plugins"). A build is per plugin (a failed one keeps its old code);
   `rollout` runs the app's steps in order (server, workers, clients; decision "Slice 7b's open points" (3)). A reload
   control (a button, a CLI, an agent tool) is the app's. One base bundle per surface (host packages and the app runtime)
   is an app's startup optimization, the web's in slice 11.
@@ -2440,11 +2442,12 @@ and after a child's exit by a signal, decision "Stale lock files are cleared by 
 draining old holder without polling).
 
 - **The worker base** (decision "Workers start from the base code the server booted with"): `entry` and the base code it
-  imports are bundled once by esbuild when the component is created (`workers.inputs`: the files read), as the surfaces
-  build their base bundles at start, and every worker of the kind is forked from that snapshot: an edit of the app's
-  source while the server runs (an agent half way through a change) reaches no worker; a server restart applies it (the
-  kit gives the inputs, each with its bytes' hash as the build read it, to the watcher's `base` mark). A base that does
-  not build rejects `createWorkers` (the server does not start with it). What it holds: the app's files and workspace
+  imports are bundled once by esbuild at `workers.build()` (the kit: right after the server listens, as it builds the
+  surfaces' base bundles; a start waits for it; `built.inputs`: the files read), and every worker of the kind is forked
+  from that snapshot: an edit of the app's source after the build (an agent half way through a change) reaches no
+  worker; a server restart applies it (the kit gives the inputs, each with its bytes' hash as the build read it, to the
+  watcher's `base` mark). A base that does not build fails every start of the kind (the kit reports it as `base_build`;
+  the server runs on). What it holds: the app's files and workspace
   packages linked into `node_modules` (by their real paths); external, loaded by Node at each fork from where the build
   resolved them: Node builtins and every package resolved under a `node_modules` directory (native addons and packages
   reading their own files work as installed; they change only through an install, which needs a restart anyway).
@@ -2519,14 +2522,34 @@ entry. Opinionated and small: an app is its API, its built-in plugins and a star
   worker's lock), import refuses an address that has data (decision "App kit naming and export").
 - **Plugins:** the app's root (required) and the user's root in the data directory; installs from git or npm; one
   "apply changes" call builds and rolls out to the server, then every running worker, exposed by the app as it likes.
-- **Restart needed:** `plugins.state.base` is true exactly while base code differs from what runs (§21, the reload
-  loop): the app's `base` files and directories hashed at start, the server's own code (a best-effort static scan of its
-  entry, `process.argv[1]`, bundled by esbuild with the server's conditions only to record what it reads: the literal
-  imports of the start script's graph, lazy ones included, never a computed `import(x)` or a loader's module; an
-  unresolved import left out, a failed scan reported and the server started; 30-110 ms), and the bytes each base bundle
+- **Restart needed:** `plugins.state.base` compares base code with what runs by content (§21, the reload loop, with
+  its one latched exception): the app's `base` files and directories hashed at start, the server's own code (a
+  best-effort static scan of its entry, `process.argv[1]`, bundled by esbuild with the server's conditions only to
+  record what it reads: the literal imports of the start script's graph, lazy ones included, never a computed
+  `import(x)` or a loader's module; an unresolved import left out, a failed scan reported), and the bytes each base
   read (the page's, the terminal's, each worker kind's), compared once when the kit watches them and at every change.
-  The page's and the terminal's base resolve packages with the server process's conditions (`--conditions`/`-C` of its
-  flags and `NODE_OPTIONS`), or the app's `web.conditions`/`tui.conditions`; a worker kind's with its own `execArgv`.
+  The bases' records and the scan are added after the start, off its path (`app.baseWatched`; until it settles `base`
+  is not known; the close does not wait for it): the server answers meanwhile. The latched exception covers the
+  window between Node loading the server's modules and the scan reading them; an edit whose timestamps do not show it
+  (a coarse or skewed file system clock) goes unseen there. The page's and the terminal's base resolve packages with
+  the server process's conditions (`--conditions`/`-C` of its flags and `NODE_OPTIONS`), or the app's
+  `web.conditions`/`tui.conditions`; a worker kind's with its own `execArgv`.
+- **Startup cost:** `startServer` resolves once the server listens; nothing it built is kept between starts (owner
+  decision "A"). The web and terminal base bundles and each worker kind's worker base are built right after the listen,
+  at once, from the files as they are then (`app.basesBuilt` settles once every build ended): a page request (the page,
+  the surface's files, its `base` hash, a launcher's start) waits for its surface's build, a worker start for its
+  kind's. A base that fails to build is reported (`AppError` `base_build`) and fails only what needs it: the page and
+  the surface's files answer 503, the kind's workers fail their start; the server runs on, and a restart builds again.
+  An Apply waiting at a surface's step for its initial build stops when its context is aborted (the build goes on: it
+  is shared). The scan of the server's own code runs after the builds. Workers are forked with
+  `NODE_COMPILE_CACHE=<dataDir>/cache/node`, and each kind's worker base is written to
+  `<dataDir>/cache/workers/<kind>/` at its first fork (emptied first, removed at close), only while the start holds the
+  data directory's lock: a build that ends after its start closed writes nothing. The path stays the same, so Node's compile
+  cache knows the files (about 18 ms of the first worker's start). The server's own process must get
+  `NODE_COMPILE_CACHE` from its supervisor or start command (its modules load before the kit runs). A minimal server's
+  `startServer` takes about 30 ms; example 53's about 40 ms, its first worker answering about 320 ms after the start
+  began (was about 560 ms with the builds on the start's path); Node's loading of Chord's source before the start script
+  (about 390 ms, about 110 ms with a warm compile cache) is the remaining cost.
 
 ### Web and TUI (slice 11)
 

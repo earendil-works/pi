@@ -1,15 +1,18 @@
 // The worker base (decision "Workers start from the base code the server booted with"): a worker kind's entry and the
-// base code it imports, bundled once by esbuild when the workers component is created, as the surfaces build their base
-// bundles at start. Every worker of the kind is forked from this snapshot, so an edit of the app's source while the
-// server runs reaches workers only through a restart of the server. Packages installed under `node_modules` (native
+// base code it imports, bundled once by esbuild when the workers component builds it (the kit: right after the server
+// listens), as the surfaces build their base bundles. Every worker of the kind is forked from this snapshot, so an edit
+// of the app's source while the server runs reaches workers only through a restart of the server. Packages installed under `node_modules` (native
 // addons, packages reading their own files) and Node builtins stay external: Node loads them at each fork from where
 // the build resolved them. Everything else, the app's files and workspace packages linked into `node_modules`, is
 // inlined. The bundle is split at each dynamic `import()` esbuild can follow: the entry module and the chunks it imports
 // statically load at each fork, a lazily imported module (pi-ai's provider APIs and the packages they import) only when
-// the worker imports it. Every file is an ES module with an inline source map, in one private temporary directory.
-// Every file the build read is recorded with its bytes' hash (`BaseInputs`), as its one read hands them to esbuild.
+// the worker imports it. Every file is an ES module with an inline source map, written at the first fork (`file()`;
+// a handle never forked writes nothing) into one private directory its handle owns and removes: a new temporary one, or
+// one the caller names (the kit's per kind in the data directory: the same path at every start, so Node's compile cache
+// knows the files). Every file the build read is recorded with its bytes' hash
+// (`BaseInputs`), as its one read hands them to esbuild.
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, parse, resolve, sep } from "node:path";
@@ -23,11 +26,11 @@ export interface WorkerBase {
 	/** The files esbuild read for it with their bytes' hashes: the app's base code, a file differing outdates it. */
 	readonly inputs: BaseInputs;
 	/**
-	 * The entry module's path, its chunks beside it; all written again into a new private directory when a
-	 * temporary-file cleaner removed one of them.
+	 * The entry module's path, its chunks beside it: written at the first call, and again when a temporary-file cleaner
+	 * removed one of them (into a new temporary directory, or its named one).
 	 */
 	file(): string;
-	/** Removes the bundle's directory. */
+	/** Removes the bundle's directory, when `file()` wrote it. */
 	remove(): void;
 }
 
@@ -43,10 +46,11 @@ const MODULE_FILENAME = "__chordModuleFilename";
 const ENTRY_NAME = "worker";
 
 /**
- * Bundles `entry` for workers forked with `execArgv` (its `--conditions` resolve imports as the child's Node would).
- * Rejects with esbuild's failure: the server does not start with a broken worker base.
+ * Bundles `entry` for workers forked with `execArgv` (its `--conditions` resolve imports as the child's Node would),
+ * in memory; its files are written at the handle's first `file()`, into `dir` (a private directory the handle owns:
+ * emptied first, removed by `remove`) or, without one, a new temporary directory. Rejects with esbuild's failure.
  */
-export async function buildWorkerBase(entry: string, execArgv: readonly string[]): Promise<WorkerBase> {
+export async function buildWorkerBase(entry: string, execArgv: readonly string[], dir?: string): Promise<WorkerBase> {
 	// Built as if at the file system's root: the source map's paths relative to it, made absolute by `sourceRoot`.
 	const root = parse(resolve(entry)).root;
 	const inputs = new Map<string, string>();
@@ -92,7 +96,7 @@ export async function buildWorkerBase(entry: string, execArgv: readonly string[]
 		logLevel: "silent",
 	});
 	const files = result.outputFiles.map((output) => ({ name: basename(output.path), contents: output.contents }));
-	return new BundleFiles(files, inputs);
+	return new BundleFiles(files, inputs, dir);
 }
 
 /**
@@ -227,36 +231,51 @@ interface BundleFile {
 	readonly contents: Uint8Array;
 }
 
-/** The bundle as files: written into a private temporary directory, again into a new one when one of them is gone. */
+/**
+ * The bundle as files: written at the first `file()` (a named directory is shared with later starts: a handle whose
+ * owner closed before forking must never touch it) into its named directory (emptied first: the files of an earlier
+ * build go) or a new private temporary one, again when one of them is gone; the directory removed with the handle.
+ */
 class BundleFiles implements WorkerBase {
 	readonly inputs: BaseInputs;
 	readonly #files: readonly BundleFile[];
-	#dir = "";
+	readonly #named: string | undefined;
+	/** Where the files were written; `undefined` before the first `file()` and after `remove`. */
+	#dir: string | undefined;
 
-	constructor(files: readonly BundleFile[], inputs: BaseInputs) {
+	constructor(files: readonly BundleFile[], inputs: BaseInputs, named: string | undefined) {
 		this.#files = files;
 		this.inputs = inputs;
-		this.#write();
+		this.#named = named;
 	}
 
 	file(): string {
 		// A long-running server's temporary directory may be cleaned (systemd-tmpfiles, macOS), a chunk no worker
-		// imported for a while first: a fork needs all of them. A new directory, never the old name: another user may
-		// have made that one since.
-		if (!this.#files.every((file) => existsSync(join(this.#dir, file.name)))) {
-			this.remove();
-			this.#write();
+		// imported for a while first: a fork needs all of them. A temporary directory is a new one, never the old name:
+		// another user may have made that one since (a named directory is the app's own, private).
+		const dir = this.#dir;
+		if (dir !== undefined && this.#files.every((file) => existsSync(join(dir, file.name)))) {
+			return join(dir, `${ENTRY_NAME}.mjs`);
 		}
-		return join(this.#dir, `${ENTRY_NAME}.mjs`);
+		this.remove();
+		return join(this.#write(), `${ENTRY_NAME}.mjs`);
 	}
 
 	remove(): void {
-		rmSync(this.#dir, { recursive: true, force: true });
+		if (this.#dir !== undefined) rmSync(this.#dir, { recursive: true, force: true });
+		this.#dir = undefined;
 	}
 
-	/** Writes the bundle's files into a new private directory (mode 0700, each file 0600). */
-	#write(): void {
-		this.#dir = mkdtempSync(join(tmpdir(), "chord-worker-"));
-		for (const file of this.#files) writeFileSync(join(this.#dir, file.name), file.contents, { mode: 0o600 });
+	/** Writes the bundle's files into its private directory (mode 0700, each file 0600); the directory. */
+	#write(): string {
+		let dir = this.#named;
+		if (dir === undefined) dir = mkdtempSync(join(tmpdir(), "chord-worker-"));
+		else {
+			rmSync(dir, { recursive: true, force: true });
+			mkdirSync(dir, { recursive: true, mode: 0o700 });
+		}
+		for (const file of this.#files) writeFileSync(join(dir, file.name), file.contents, { mode: 0o600 });
+		this.#dir = dir;
+		return dir;
 	}
 }

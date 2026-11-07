@@ -72,6 +72,8 @@ export async function tempDir(): Promise<string> {
 type TestAppOptions<P extends Principal> = Partial<Omit<AppOptions<P>, "principal">> & {
 	readonly plugins?: Readonly<Record<string, Readonly<Record<string, string>>>>;
 	readonly withWorkers?: boolean;
+	/** Whether the app is handed out before its bases are built (`basesBuilt`): after by default. */
+	readonly unbuilt?: boolean;
 };
 
 /** The test apps' server principal. */
@@ -94,7 +96,7 @@ export function userOwnerApp(owner: UserPrincipal, options: TestAppOptions<UserP
 
 /**
  * A test app with the principals `principal` (`worker` only for worker kinds), started in a temporary data directory
- * and plugins root, and what it reported.
+ * and plugins root, its bases built, and what it reported.
  */
 export async function startTestApp<P extends Principal>(
 	principal: { readonly server: P; readonly worker?: (address: Address) => P; readonly owner: P },
@@ -135,6 +137,8 @@ export async function startTestApp<P extends Principal>(
 		} as AppOptions<P>,
 		context,
 	);
+	// The bases built after the listen: most tests get the app as its first requests see it.
+	if (options.unbuilt !== true) await app.basesBuilt;
 	const port = Number(new URL(app.ownerLink()).port);
 	return { app, errors, dataDir, root, port };
 }

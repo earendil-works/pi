@@ -3,8 +3,9 @@
 // `fatal` or a failed start leaves the address failed until `retry` or a rollout. A running worker's lost link is a
 // stop its holders start a new worker after, once a minute (decision "A lost worker link is recovered from").
 // Per address, a child's events are recorded on that child as they happen; starts and stops run one after another.
-// Every worker is forked from the kind's worker base, bundled when the component is created (decision "Workers start
-// from the base code the server booted with").
+// Every worker is forked from the kind's worker base, bundled once by `build` (the kit: right after the server
+// listens; a start waits for it, and fails when it did not build; decision "Workers start from the base code the server
+// booted with").
 
 import type { Context } from "../../context/index.ts";
 import { awaitWithContext, BACKGROUND_CONTEXT, withAbortSignal } from "../../context/index.ts";
@@ -28,12 +29,23 @@ export type WorkersOptions<P extends Principal, K extends KindShape> = {
 	/** The facet kind its workers load (`"worker"`), shipped by the plugins component. */
 	readonly kind: string;
 	/**
-	 * The worker's entry module (it calls `workerMain`), bundled with the base code it imports when the component is
-	 * created; its Node flags (their `--conditions` resolve the bundle's imports too) and its environment.
+	 * The worker's entry module (it calls `workerMain`), bundled with the base code it imports by `build`; its Node flags
+	 * (their `--conditions` resolve the bundle's imports too) and its environment.
 	 */
 	readonly entry: string;
 	readonly execArgv?: readonly string[];
 	readonly env?: Readonly<Record<string, string>>;
+	/**
+	 * The private directory the worker base's files are written into at the first fork, its own while the component is
+	 * open (emptied first, removed at `close`; never touched after it, so a later start may own it then): one that stays
+	 * the same between starts lets Node's compile cache know them; none: a new temporary directory.
+	 */
+	readonly baseDir?: string;
+	/**
+	 * Node's compile cache for the workers (`NODE_COMPILE_CACHE` in their environment unless `env` sets it): forks load
+	 * the base and the packages it imports from compiled code; none: the server's environment decides.
+	 */
+	readonly compileCache?: string;
 	/** The route's `authorize`: whether `principal` may reach `address` (synchronous). */
 	readonly authorize: (principal: P, address: Address<K>) => boolean;
 	/** Who the worker at `address` is (stamped on its link). */
@@ -87,35 +99,48 @@ export type WorkersError =
 	  }
 	| BatchError;
 
+/** How a worker base's build ended: built (the files it read), or failed (esbuild's failure). */
+export type WorkersBuilt =
+	| { readonly kind: "built"; readonly inputs: BaseInputs }
+	| { readonly kind: "failed"; readonly error: unknown };
+
 /** The workers component. */
 export interface Workers<K extends KindShape> {
 	/** Per address key its `WorkerState`; no entry when stopped or never started. A JSON watchable. */
 	readonly state: Watchable<Readonly<Record<string, WorkerState>>>;
-	/** The files its worker base was built from, with their bytes' hashes: the app's base code for its workers. */
-	readonly inputs: BaseInputs;
+	/**
+	 * Bundles the worker base, once (a start waits for it, and starts it when nothing did). Never rejects: how it ended
+	 * (`built`: the files it was built from with their bytes' hashes, the app's base code for its workers). Every start
+	 * fails while it failed.
+	 */
+	build(): Promise<WorkersBuilt>;
+	/** How the build ended, once it did. */
+	readonly built: WorkersBuilt | undefined;
 	/** Suspends `address` while it has holders (`RouteHandle.suspend`), then stops its worker. */
 	stop(address: Address<K>, context: Context): Promise<void>;
 	/** Clears `address`'s failure and suspension: it starts again now if held (`RouteHandle.retry`). */
 	retry(address: Address<K>, context: Context): Promise<void>;
 	/** A rollout step shipping the kind's current set to every worker, one result per worker (§4). */
 	step(name: string): RolloutStep;
-	/** Cancels starts, stops every worker, removes the worker base's file; new starts reject `released/closed`. */
+	/**
+	 * Cancels starts, stops every worker, then removes the worker base's files once every worker exited (also when
+	 * `context` ends the wait first); new starts reject `released/closed`.
+	 */
 	close(context: Context): Promise<void>;
 }
 
 /**
- * Bundles the kind's worker base, then creates the workers component on `host`: it routes `Kind` itself (`host.route`,
- * before `load`). Rejects with esbuild's failure when the base does not build: the server does not start with it.
+ * Creates the workers component on `host`: it routes `Kind` itself (`host.route`, before `load`). Its worker base is
+ * not built yet (`build`).
  */
-export async function createWorkers<P extends Principal, N extends string, Q extends Params>(
+export function createWorkers<P extends Principal, N extends string, Q extends Params>(
 	host: Host<P>,
 	Kind: HostKind<N, Q>,
 	options: WorkersOptions<P, HostKind<N, Q>>,
 	context: Context,
-): Promise<Workers<HostKind<N, Q>>> {
-	const base = await buildWorkerBase(options.entry, options.execArgv ?? []);
+): Workers<HostKind<N, Q>> {
 	// Its addresses are `Address<HostKind<N, Q>>`, as the route hands them over.
-	const component = new WorkersComponent(options as unknown as WorkersOptions<Principal, HostKind>, base, context);
+	const component = new WorkersComponent(options as unknown as WorkersOptions<Principal, HostKind>, context);
 	const route = host.route(
 		Kind,
 		{
@@ -225,6 +250,16 @@ const RECOVERY_WINDOW = 60_000;
 /** The public error of a start that failed. */
 const START_FAILED: CrossedError = { message: "worker failed to start", code: "unavailable" };
 
+/** How the worker base's build ended: its handle, or esbuild's failure. */
+type Base =
+	| { readonly kind: "built"; readonly base: WorkerBase }
+	| { readonly kind: "failed"; readonly error: unknown };
+
+/** `base` as callers see it. */
+function builtOf(base: Base): WorkersBuilt {
+	return base.kind === "built" ? { kind: "built", inputs: base.base.inputs } : base;
+}
+
 /** The link type a route's `resolve` returns. */
 type Link = WorkerProcess["link"];
 
@@ -234,7 +269,11 @@ class WorkersComponent implements Workers<HostKind> {
 	readonly state: Watchable<Readonly<Record<string, WorkerState>>>;
 	readonly #state: WorkersState;
 	readonly #options: WorkersOptions<Principal, HostKind>;
-	readonly #base: WorkerBase;
+	/** What every fork's environment adds to the server's: the app's `env`, the compile cache's directory. */
+	readonly #environment: Readonly<Record<string, string>> | undefined;
+	/** The worker base's build, started once; its outcome once it ended. */
+	#building: Promise<Base> | undefined;
+	#base: Base | undefined;
 	readonly #addresses = new Map<string, Routed>();
 	/** Aborted at `close`: starts waiting in the app's `start` or for `started` end. */
 	readonly #closing = new AbortController();
@@ -244,17 +283,38 @@ class WorkersComponent implements Workers<HostKind> {
 	#routing = false;
 	#idleTimer: ReturnType<typeof setInterval> | undefined;
 
-	constructor(options: WorkersOptions<Principal, HostKind>, base: WorkerBase, context: Context) {
+	constructor(options: WorkersOptions<Principal, HostKind>, context: Context) {
 		this.#options = options;
-		this.#base = base;
+		const { compileCache, env } = options;
+		this.#environment = compileCache === undefined ? env : { NODE_COMPILE_CACHE: compileCache, ...env };
 		this.#state = new WorkersState(this.#addresses, new Batch((error) => options.onError(error), undefined));
 		// Its value is a `Record<string, WorkerState>`.
 		this.state = this.#state as unknown as Watchable<Readonly<Record<string, WorkerState>>>;
 		this.#closeWith(context);
 	}
 
-	get inputs(): BaseInputs {
-		return this.#base.inputs;
+	build(): Promise<WorkersBuilt> {
+		return this.#built().then(builtOf);
+	}
+
+	get built(): WorkersBuilt | undefined {
+		return this.#base === undefined ? undefined : builtOf(this.#base);
+	}
+
+	/** The worker base's build, started once. */
+	#built(): Promise<Base> {
+		const { entry, execArgv = [], baseDir } = this.#options;
+		this.#building ??= buildWorkerBase(entry, execArgv, baseDir)
+			.then(
+				// Nothing is written until a fork (`file()`): a build that ends after the close touches no file.
+				(base): Base => ({ kind: "built", base }),
+				(error: unknown): Base => ({ kind: "failed", error }),
+			)
+			.then((outcome) => {
+				this.#base = outcome;
+				return outcome;
+			});
+		return this.#building;
 	}
 
 	/**
@@ -304,15 +364,19 @@ class WorkersComponent implements Workers<HostKind> {
 
 	async close(context: Context): Promise<void> {
 		if (!this.#closing.signal.aborted) this.#closing.abort(closed());
-		// Nothing forks once closing: running workers loaded their module already.
-		this.#base.remove();
 		clearInterval(this.#idleTimer);
 		this.#idleTimer = undefined;
 		// Each stop, then what its exit queued (the clear of a killed child's lock file).
 		const stops = [...this.#addresses.values()].map((routed) =>
 			this.#enqueue(routed, () => this.#stop(routed)).then(() => routed.queue),
 		);
-		await awaitWithContext(Promise.all(stops), context);
+		// The base's files stay until every child exited or was killed (a stopping worker's closers may import a lazy
+		// chunk), also when `context` ends the wait first: nothing forks once closing, and only files this component
+		// wrote go. The kit releases the data directory's lock only after this close resolved.
+		const exited = Promise.all(stops).then(() => {
+			if (this.#base?.kind === "built") this.#base.base.remove();
+		});
+		await awaitWithContext(exited, context);
 	}
 
 	/** `context`'s abort closes the component (the route's is aborted when the host closes). */
@@ -381,6 +445,13 @@ class WorkersComponent implements Workers<HostKind> {
 		const crashed = routed.failure;
 		if (crashed !== undefined) throw uncrossed(crashed.error);
 		if (this.#closing.signal.aborted) throw closed();
+		// The kind's worker base: a start waits for its build, and fails while it failed.
+		const base = await awaitWithContext(this.#built(), this.#closingContext).catch(() => {
+			// `#built` never rejects: the close ended the wait.
+			throw closed();
+		});
+		if (this.#closing.signal.aborted) throw closed();
+		if (base.kind === "failed") throw this.#fail(routed, { error: base.error, public: START_FAILED }, undefined);
 		const context = withAbortSignal(this.#closing.signal, routing);
 		let data: JsonValue;
 		try {
@@ -389,10 +460,12 @@ class WorkersComponent implements Workers<HostKind> {
 			if (this.#closing.signal.aborted) throw closed();
 			throw this.#fail(routed, { error, public: START_FAILED }, undefined);
 		}
+		// Checked in the same synchronous step as the fork, which writes the base's files (`file()`): never after the
+		// close (the kit releases the data directory's lock after it; a later start owns `baseDir` then).
 		if (this.#closing.signal.aborted) throw closed();
 		let child: Child;
 		try {
-			child = this.#fork(routed);
+			child = this.#fork(routed, base.base);
 		} catch (error) {
 			throw this.#fail(routed, { error, public: START_FAILED }, undefined);
 		}
@@ -430,16 +503,16 @@ class WorkersComponent implements Workers<HostKind> {
 	}
 
 	/** Forks the address's worker and records its events on it as they happen. */
-	#fork(routed: Routed): Child {
+	#fork(routed: Routed, base: WorkerBase): Child {
 		const { address } = routed;
 		const onOutput = this.#options.onOutput;
 		let child!: Child;
 		const process = new WorkerProcess(
 			{
-				entry: this.#base.file(),
+				entry: base.file(),
 				// Stack traces name the base code's files; the app's flags come after (`--no-enable-source-maps` wins).
 				execArgv: ["--enable-source-maps", ...(this.#options.execArgv ?? [])],
-				...(this.#options.env === undefined ? {} : { env: this.#options.env }),
+				...(this.#environment === undefined ? {} : { env: this.#environment }),
 				...(onOutput === undefined ? {} : { onOutput: (stream, chunk) => onOutput(address, stream, chunk) }),
 			},
 			{

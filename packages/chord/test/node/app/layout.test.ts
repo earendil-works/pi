@@ -16,7 +16,13 @@ describe("the data directory", () => {
 	it("makes the layout's directories, the data directory with mode 0700", async () => {
 		const dataDir = join(await tempDir(), "data");
 		const layout = await createLayout(dataDir);
-		expect((await readdir(dataDir)).sort()).toEqual(["logs", "plugins", "server", "workers"]);
+		expect((await readdir(dataDir)).sort()).toEqual(["cache", "logs", "plugins", "server", "workers"]);
+		expect([layout.workerBases, layout.compileCache]).toEqual([
+			join(dataDir, "cache", "workers"),
+			join(dataDir, "cache", "node"),
+		]);
+		for (const dir of ["cache", "cache/workers", "cache/node"])
+			expect((await stat(join(dataDir, dir))).mode & 0o777).toBe(0o700);
 		expect((await stat(dataDir)).mode & 0o777).toBe(0o700);
 		expect([layout.serverStore, layout.ownerToken, layout.cookieSecret]).toEqual([
 			join(dataDir, "server", "store.sqlite"),

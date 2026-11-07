@@ -30,8 +30,8 @@ export type BasePlatform = "browser" | "sandbox";
 /**
  * Builds the base bundle of `entry` for `platform`, its files under `prefix` (`/_chord/web/`): the script
  * `base.<hash>.js`, the stylesheet `base.<hash>.css` when it imports CSS, assets under `assets/` by their own hashes.
- * Packages resolve with `conditions`, by default the server process's (`processConditions`). Throws esbuild's failure:
- * the server does not start with a broken base.
+ * Packages resolve with `conditions`, by default the server process's (`processConditions`). Rejects with esbuild's
+ * failure.
  */
 export async function buildBase(
 	entry: string,

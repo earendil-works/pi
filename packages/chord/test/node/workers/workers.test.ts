@@ -2,8 +2,9 @@
 // `connect`, the start timer covering only the start), failures that stay (a crash, a `fatal`, a failed start: no fork
 // for a new hold, holders `failed { waiting }`) until `retry` or a rollout, a running worker's lost link recovered from
 // once a minute, idle stops and `busy`, `stop` and its suspension, the per-address queue, `close`, the rollout step,
-// stale lock files cleared, nothing kept of 1,000 addresses, and the worker base (an edit after the component was
-// created runs in no worker; a broken entry rejects its creation).
+// stale lock files cleared, nothing kept of 1,000 addresses, and the worker base (an edit after its build runs in no
+// worker; a start waits for the build; a broken entry fails every start; close keeps the files until its workers
+// exited).
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -15,11 +16,10 @@ import { describe, expect, it, vi } from "vitest";
 import { withAbortSignal } from "../../../src/context/index.ts";
 import { createHost } from "../../../src/host/index.ts";
 import { memoryLinkPair } from "../../../src/link/index.ts";
-import { createPlugins, type RolloutHost } from "../../../src/node/plugins/index.ts";
-import { createWorkers } from "../../../src/node/workers/index.ts";
+import type { RolloutHost } from "../../../src/node/plugins/index.ts";
 import { expectCollected } from "../../support.ts";
 import { Control } from "../fixtures/workers/control.ts";
-import { context, ENTRY, fleet, Notes, Server, Session, type TestPrincipal, until } from "./support.ts";
+import { context, ENTRY, fleet, Notes, Session, type TestPrincipal, until } from "./support.ts";
 
 /** A step's hosts as `[host, what]`. */
 function listed(hosts: readonly RolloutHost[]) {
@@ -59,7 +59,7 @@ describe("starts on demand", () => {
 });
 
 describe('the worker base (decision "Workers start from the base code the server booted with")', () => {
-	it("a worker started after an edit of the entry's imported source runs the code the component was created with", async () => {
+	it("a worker started after an edit of the entry's imported source runs the code the base was built with", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "chord-workers-base-"));
 		// The fixture worker, plus a line naming its label and the file it was forked from.
 		await writeFile(join(dir, "label.ts"), 'export const label = "boot";\n');
@@ -72,7 +72,9 @@ describe('the worker base (decision "Workers start from the base code the server
 			].join("\n"),
 		);
 		const { server, workers, output } = await fleet({ entry: join(dir, "entry.ts") });
-		expect([...workers.inputs.keys()]).toEqual(
+		expect(workers.built).toBeUndefined();
+		const built = await workers.build();
+		expect(built.kind === "built" ? [...built.inputs.keys()] : built).toEqual(
 			expect.arrayContaining([join(dir, "entry.ts"), join(dir, "label.ts"), ENTRY]),
 		);
 		// Half way through an edit: the source on disk no longer even parses.
@@ -90,26 +92,44 @@ describe('the worker base (decision "Workers start from the base code the server
 		await rm(dir, { recursive: true, force: true });
 	});
 
-	it("a broken entry rejects createWorkers: nothing is routed, the kind can be routed again", async () => {
+	it("close keeps the base's files until its workers exited: a closer's first lazy import still loads (Astra)", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "chord-workers-base-"));
+		const { server, workers, behaviours, errors } = await fleet();
+		behaviours.set("S1", { lazyOnClose: join(dir, "closed") });
+		(await server.get(Notes, { id: "S1" }, context)).release();
+		await workers.close(context);
+		expect(await readFile(join(dir, "closed"), "utf8")).toBe("lazy chunk loaded at close");
+		expect(errors).toEqual([]);
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	it("a start waits for the base's build, and starts it when nothing did", async () => {
+		const { server, workers, starts } = await fleet();
+		expect(workers.built).toBeUndefined();
+		const notes = server.hold(Notes, { id: "S1" }, context);
+		await until(() => notes.state.value.kind === "live");
+		expect(workers.built?.kind).toBe("built");
+		expect(starts).toEqual(["session|S1"]);
+		notes.release();
+	});
+
+	it("a broken entry fails its build and every start (worker_failed, the public start error); nothing forks", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "chord-workers-base-"));
 		await writeFile(join(dir, "entry.ts"), "export const broken = ;\n");
-		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
-		const plugins = createPlugins({ roots: [dir], kinds: {}, onError: () => {} }, context);
-		const options = {
-			kind: "worker",
-			entry: join(dir, "entry.ts"),
-			authorize: () => true,
-			principal: () => ({ kind: "server" }) as const,
-			start: () => ({}),
-			lock: (address: { readonly key: string }) => `chord-test:${dir}:${address.key}`,
-			plugins,
-			onError: () => {},
-		};
-		await expect(createWorkers(server, Session, options, context)).rejects.toThrow(/Unexpected ";"/);
-		const workers = await createWorkers(server, Session, { ...options, entry: ENTRY }, context);
-		await workers.close(context);
-		await server.close(context);
-		plugins.close();
+		const { server, workers, errors, starts } = await fleet({ entry: join(dir, "entry.ts") });
+		const built = await workers.build();
+		expect(built.kind === "failed" ? (built.error as Error).message : built).toMatch(/Unexpected ";"/);
+		const notes = server.hold(Notes, { id: "S1" }, context);
+		await until(() => notes.state.value.kind === "failed");
+		expect(notes.state.value).toMatchObject({
+			kind: "failed",
+			cause: { kind: "waiting", error: { code: "unavailable", message: "worker failed to start" } },
+		});
+		notes.release();
+		// The app's start data is not asked for: the base fails the start first.
+		expect(starts).toEqual([]);
+		expect(errors).toMatchObject([{ kind: "worker_failed", address: "session|S1" }]);
+		expect(stateOf(workers.state.value, "S1")?.status).toBe("failed");
 		await rm(dir, { recursive: true, force: true });
 	});
 });

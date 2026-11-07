@@ -140,10 +140,10 @@ export interface Plugins {
 	installDependencies(name: string, context: Context): Promise<void>;
 	/**
 	 * Adds a running base artifact's record (a base bundle's `inputs`, beside `base`): `base` is set while one of its
-	 * files differs from the bytes it read or is gone; each is compared once now. Files under `node_modules` are never
-	 * watched.
+	 * files differs from the bytes it read or is gone; each is compared once now (settles once those comparisons did).
+	 * Files under `node_modules` are never watched.
 	 */
-	watchBase(inputs: BaseInputs): void;
+	watchBase(inputs: BaseInputs): Promise<void>;
 	/**
 	 * Installs new plugins from git or npm into `root`, one of the roots (`installPlugin`), and marks `set`: the next
 	 * build discovers and builds them. Returns their names.
@@ -299,8 +299,8 @@ class PluginsComponent implements Plugins {
 		return { steps: done, stopped: undefined };
 	}
 
-	watchBase(inputs: BaseInputs): void {
-		this.#watcher.recordBase(inputs);
+	watchBase(inputs: BaseInputs): Promise<void> {
+		return this.#watcher.recordBase(inputs);
 	}
 
 	async installDependencies(name: string, context: Context): Promise<void> {
