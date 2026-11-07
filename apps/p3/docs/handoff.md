@@ -7,9 +7,10 @@ request before a context handoff. Read this file first, in full, then the readin
 
 - p3 is the successor of p2 (Pi Mobile), built **tabula rasa on the Chord v2 app kit**, next to p2. The owner:
   "leave p2 to the kids". p2 stays his daily driver on the phone until p3 replaces it.
-- **Branch `p3`** of github.com/earendil-works/pi, worktree **`/home/badlogic/pi-p3`** (created from origin/main
-  6bf2ab9bb). p3 lives in **`apps/p3/`**. Do p3 work there, never on main's checkout (`/home/badlogic/pi` is shared by
-  other sessions). Merge main into the branch when Chord/Durable change.
+- **p3 lives on `main`** of github.com/earendil-works/pi, in `/home/badlogic/pi`, in `apps/p3/` (owner, 2026-11-07:
+  "switch to main, p3 can live there too, branch sucks"; the `p3` branch was rebased onto main and merged, b89b2232c).
+  No branches, no worktrees: work in `/home/badlogic/pi` on main; other sessions share the checkout (commit only your
+  own files).
 - **Nothing is specced or built yet.** Next action: write the **step-0 skeleton spec** (section 4) as a Radius artifact
   with the explainer skill, get two reviews, bring it to the owner.
 - **Specs are "nice Radius artifacts using our beautiful explainer"** (owner): Markdown in `apps/p3/docs/<step>/book.md`,
@@ -23,12 +24,12 @@ request before a context handoff. Read this file first, in full, then the readin
 
 - He wants things done, but genuinely new decisions go to him **one at a time**, explained with concrete code and
   sequence diagrams (SVG), no invented APIs. Record each decision at once in `packages/chord/docs/decisions.md` (Chord
-  decisions, on main) or `apps/p3/docs/decisions.md` (p3 decisions, on the branch) and push.
+  decisions, on main) or `apps/p3/docs/decisions.md` (p3 decisions) and push.
 - **NEVER commit (or push) source code before the owner reviewed it** (owner, 2026-11-06: "never ever commit again
   before i review"; "i don't need to review docs, only source code"): docs, specs and decision entries may be committed
   without his review; code (src, tests, examples, configs) only after he reviewed the diff.
 - Subagents on `radius/claude-opus-5-5` (never Fable, not direct anthropic); correctness reviewers also GPT-6 Astra and
-  GPT-6.1 Sol (`openai-codex/gpt-6-astra`, `openai-codex/gpt-6.1-sol`) when the owner asks. Subagents never commit. Each build subagent works in its own worktree; remove a worktree only after its subagent's final report.
+  GPT-6.1 Sol (`openai-codex/gpt-6-astra`, `openai-codex/gpt-6.1-sol`) when the owner asks. Subagents never commit. Build subagents work in the shared checkout on main (no worktrees, owner).
 - Never a file write and a dependent git command or subagent message in one parallel batch.
 - NEVER call history_handoff unless the owner explicitly asks.
 - Radius artifacts private. Never print credentials.
@@ -43,8 +44,8 @@ request before a context handoff. Read this file first, in full, then the readin
 ## 3. p3 principles and decisions so far (owner)
 
 - **Process per step:** a minimal spec in Chord terms (Radius explainer artifact) → two reviewers (one adversarial,
-  one against design.md) → owner approval → build (subagent, worktree, Chord code style, tests, example) → two code
-  reviewers → fixes → commit on branch `p3` → the owner beats it up → next step. Pluggability check for every part:
+  one against design.md) → owner approval → build (subagent in the checkout, Chord code style, tests, example) → two code
+  reviewers → fixes → commit on main (code only after the owner reviewed it) → the owner beats it up → next step. Pluggability check for every part:
   could a third-party plugin provide this, or an alternative, the same way?
 - **Vocabulary stays small:** hosts, one owner object per thing (shared store + per-principal views, design §6),
   registries as extension points (§17), the harness (§24), tools. No p2 names unless they earn it.
@@ -109,7 +110,7 @@ State and history:
 - `/home/badlogic/chord-notes/p3-kickoff.md`: the Discord session's briefing condensed. The full briefing is in
   conversation 8b6ab5cc (history_search "Tabula rasa" or "top grade garbage").
 
-Chord (the rulebook; on main and on the branch):
+Chord (the rulebook):
 - `packages/chord/docs/design.md`, all of it. For p3 above all: §3 (hosts, links, routes), §4 (principals), §5-§8, §9-§11
   (documents, store, tables, live queries), §12-§15 (derives, natives, routines, jobs), §17 (registries), §19
   (presence), §21 (reload), §22 (wire), §23 (HTTP, workers, the app kit, web and TUI surfaces, messages/languages),
@@ -158,7 +159,7 @@ Radius artifacts (owner-facing; read with mcporter `radius.artifacts_read` / `ar
   `cp -r /home/badlogic/pi/packages/ai/src/providers/data <worktree>/packages/ai/src/providers/`.
 - Checks: `npm run check` (root), app checks in `apps/<app>` (`npm run check`). Chord tests from `packages/chord`:
   `node ../../node_modules/vitest/dist/cli.js --run <paths>` (full suite after `npm run build`).
-- Commits: explicit paths, `{feat,fix,docs}(scope): ...`, push the branch `git push origin p3`; main's CI:
+- Commits: explicit paths, `{feat,fix,docs}(scope): ...`, push `git push origin main`; main's CI:
   `gh run list --repo earendil-works/pi --branch main --workflow CI`.
 
 ## 7. Other open threads (not p3, keep track)
