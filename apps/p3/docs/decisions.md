@@ -39,3 +39,13 @@ and its working rules are in `handoff.md`.
 - **Startup building is measured with telemetry (owner, 2026-11-06):** spans for a server start (store, each base
   build, plugin discovery, each plugin build, the load), each worker start and each Apply, in the kit's telemetry
   store; to be specified as a small Chord change.
+- **Requirement for the skeleton: groupings and views are plugins (owner, 2026-11-07, relayed by session cbe4592b from
+  the owner's discussion with Christian, Max and David):** plugins contribute kinds of groupings (sessions per
+  env/cwd, projects, Discord servers, recent, ...), each grouping any addressable thing (sessions, envs, MCP servers,
+  project files) and rendering its own header and extras, without stepping on other plugins' groupings. Selecting an
+  addressable thing shows a view of it that plugins define: the main area is not always a transcript (an env: a file
+  browser, terminals, later VNC). Transcripts stay central; layouts must allow less transcript (an agent may compose a
+  view). The container (a sidebar or not) is open. Skeleton consequence: the page's route is a `(kind, id)` of an
+  addressable thing, the main area renders the view registered for that kind, group kinds and views are registries (web
+  and terminal). Access policies are out of scope for now but must fit later (session resources). Sketch: session
+  cbe4592b's artifact `p2-sidebar-groups`.
