@@ -8,23 +8,27 @@
 
 import type { ToolRenderers } from "../../extensions/types.ts";
 import type { ToolName } from "../index.ts";
+import { applyPatchRenderers } from "./apply-patch.ts";
 import { createShellRenderers } from "./bash.ts";
 import { editRenderers } from "./edit.ts";
 import { findRenderers } from "./find.ts";
 import { grepRenderers } from "./grep.ts";
 import { lsRenderers } from "./ls.ts";
 import { readRenderers } from "./read.ts";
+import { screenshotRenderers } from "./screenshot.ts";
 import { writeRenderers } from "./write.ts";
 
 export type { ToolRenderers };
 
 export {
+	applyPatchRenderers,
 	createShellRenderers,
 	editRenderers,
 	findRenderers,
 	grepRenderers,
 	lsRenderers,
 	readRenderers,
+	screenshotRenderers,
 	writeRenderers,
 };
 
@@ -39,6 +43,8 @@ export function createAllToolRenderers(): Record<ToolName, ToolRenderers> {
 		grep: grepRenderers,
 		find: findRenderers,
 		ls: lsRenderers,
+		screenshot: screenshotRenderers,
+		apply_patch: applyPatchRenderers,
 	};
 }
 

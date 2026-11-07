@@ -7,10 +7,8 @@
 </p>
 <p align="center">
   <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
-  <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@earendil-works/pi-coding-agent?style=flat-square" /></a>
+  <a href="https://github.com/duggal1/pi-self-recursive"><img alt="GitHub" src="https://img.shields.io/badge/github-duggal1%2Fpi--self--recursive-5865F2?style=flat-square&logo=github&logoColor=white" /></a>
 </p>
-
-> New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 # Pi
 
@@ -77,13 +75,13 @@ On Windows:
 powershell -c "irm https://pi.dev/install.ps1 | iex"
 ```
 
-The installer updates Pi with `pi update`. Alternatively, install directly with npm, which does not pin transitive dependencies:
+The installer updates Pi with `pi update`. Alternatively, install directly from GitHub with Bun:
 
 ```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+bun install -g @earendil-works/pi-coding-agent
 ```
 
-Pi requires Node.js 22.19 or newer. The macOS, Linux, and Windows installers can install it if needed. Pi does not require dependency lifecycle scripts for a normal npm installation.
+Pi requires Bun (or Node.js 22.19 or newer). The macOS, Linux, and Windows installers can install it if needed.
 
 Start Pi in the directory where you want it to work:
 
@@ -145,10 +143,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.m
 ## Development
 
 ```bash
-npm install --ignore-scripts  # Install all dependencies without running lifecycle scripts
-npm run build         # Refresh model data, then build all packages
-npm run build:offline # Rebuild using existing model data without network access
-npm run check         # Lint, format, and type check
+bun install           # Install all dependencies
+bun run build         # Refresh model data, then build all packages
+bun run check         # Lint, format, and type check
 ./test.sh            # Run tests (skips LLM-dependent tests without API keys)
 ./pi-test.sh         # Run pi from sources (can be run from any directory)
 ```
@@ -158,14 +155,14 @@ npm run check         # Lint, format, and type check
 Build every public package into one coherent local artifact set:
 
 ```bash
-npm run pack:packages -- --out .artifacts/pi-packages
+bun run pack:packages -- --out .artifacts/pi-packages
 ```
 
 This refreshes model data before building `pi-ai`. To avoid network access when
 model data is already hydrated, pass `--offline-model-data`.
 
 Then configure an external project to consume one package and resolve all of
-its Pi dependencies from the same artifact set. npm is the default:
+its Pi dependencies from the same artifact set:
 
 ```bash
 node scripts/use-local-packages.mjs \
@@ -174,7 +171,7 @@ node scripts/use-local-packages.mjs \
   --package @earendil-works/pi-durable \
   --package @earendil-works/pi-agent-core
 cd ../my-project
-npm install --ignore-scripts
+bun install
 ```
 
 For a pnpm project, point `--consumer` at the workspace root:
@@ -223,28 +220,6 @@ We treat npm dependency changes as reviewed code changes.
 - CI installs with `npm ci --ignore-scripts`, and a scheduled GitHub workflow runs `npm audit --omit=dev` plus `npm audit signatures --omit=dev`.
 - Install lock generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
 
-## Share your OSS coding agent sessions
-
-If you use Pi or other coding agents for open source work, please share your sessions.
-
-Public OSS session data helps improve coding agents with real-world tasks, tool use, failures, and fixes instead of toy benchmarks.
-
-For the full explanation, see [this post on X](https://x.com/badlogicgames/status/2037811643774652911).
-
-To publish sessions, use [`badlogic/pi-share-hf`](https://github.com/badlogic/pi-share-hf). Read its README.md for setup instructions. All you need is a Hugging Face account, the Hugging Face CLI, and `pi-share-hf`.
-
-You can also watch [this video](https://x.com/badlogicgames/status/2041151967695634619), where I show how I publish my `pi-mono` sessions.
-
-I regularly publish my own `pi-mono` work sessions here:
-
-- [badlogicgames/pi-mono on Hugging Face](https://huggingface.co/datasets/badlogicgames/pi-mono)
-
 ## License
 
 MIT
-
-<p align="center">
-  <a href="https://pi.dev">pi.dev</a> domain graciously donated by
-  <br /><br />
-  <a href="https://exe.dev"><img src="packages/coding-agent/docs/images/exy.png" alt="Exy mascot" width="48" /><br />exe.dev</a>
-</p>

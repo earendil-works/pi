@@ -1,0 +1,16 @@
+NOTICE — Third-party attributions
+
+1. Computer-use prompt discipline, screenshot hygiene, and apply_patch
+   semantics in:
+   - packages/coding-agent/src/core/tools/computer-use-prompt.ts
+   - packages/coding-agent/src/core/tools/screenshot.ts
+   - packages/coding-agent/src/core/tools/apply-patch.ts
+   adapted in spirit from openai/codex (Apache License 2.0;
+   https://github.com/openai/codex). Reworded for Pi; no verbatim copy.
+   Original copyright notices preserved in ported files.
+   codex-upstream/ is a git-ignored read-only clone for research and is
+   never committed as-is.
+
+2. packages/coding-agent/src/extensions/opencode-cli/ vendored from
+   pi-opencode-cli-bridge 0.2.17 (MIT, Copyright (c) 2024 luongnv89;
+   see packages/coding-agent/src/extensions/opencode-cli/LICENSE).
