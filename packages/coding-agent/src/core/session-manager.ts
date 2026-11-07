@@ -803,7 +803,9 @@ async function buildSessionInfo(
 	fileStats?: Stats,
 ): Promise<SessionInfo | null> {
 	try {
+		signal?.throwIfAborted();
 		const stats = fileStats ?? (await stat(filePath));
+		signal?.throwIfAborted();
 		let header: SessionHeader | null = null;
 		let messageCount = 0;
 		let firstMessage = "";
@@ -811,45 +813,61 @@ async function buildSessionInfo(
 		let name: string | undefined;
 		let lastActivityTime: number | undefined;
 
+		const stream = createReadStream(filePath, { encoding: "utf8" });
+		// Keep an error listener attached after rl.close() detaches readline's listener on early exit.
+		stream.on("error", () => {});
 		const rl = createInterface({
-			input: createReadStream(filePath, { encoding: "utf8", signal }),
+			input: stream,
 			crlfDelay: Infinity,
 		});
+		const onAbort = () => {
+			rl.close();
+			stream.destroy();
+		};
+		signal?.addEventListener("abort", onAbort, { once: true });
 
-		for await (const line of rl) {
-			const entry = parseSessionEntryLine(line);
-			if (!entry) continue;
+		try {
+			for await (const line of rl) {
+				signal?.throwIfAborted();
+				const entry = parseSessionEntryLine(line);
+				if (!entry) continue;
 
-			if (!header) {
-				if (entry.type !== "session") return null;
-				header = entry;
-				continue;
+				if (!header) {
+					if (entry.type !== "session") return null;
+					header = entry;
+					continue;
+				}
+
+				// Extract session name (use latest, including explicit clears)
+				if (entry.type === "session_info") {
+					name = entry.name?.trim() || undefined;
+				}
+
+				if (entry.type !== "message") continue;
+				messageCount++;
+
+				const activityTime = getMessageActivityTime(entry);
+				if (typeof activityTime === "number") {
+					lastActivityTime = Math.max(lastActivityTime ?? 0, activityTime);
+				}
+
+				const message = entry.message;
+				if (!isMessageWithContent(message)) continue;
+				if (message.role !== "user" && message.role !== "assistant") continue;
+
+				const textContent = extractTextContent(message);
+				if (!textContent) continue;
+
+				allMessages.push(textContent);
+				if (!firstMessage && message.role === "user") {
+					firstMessage = textContent;
+				}
 			}
-
-			// Extract session name (use latest, including explicit clears)
-			if (entry.type === "session_info") {
-				name = entry.name?.trim() || undefined;
-			}
-
-			if (entry.type !== "message") continue;
-			messageCount++;
-
-			const activityTime = getMessageActivityTime(entry);
-			if (typeof activityTime === "number") {
-				lastActivityTime = Math.max(lastActivityTime ?? 0, activityTime);
-			}
-
-			const message = entry.message;
-			if (!isMessageWithContent(message)) continue;
-			if (message.role !== "user" && message.role !== "assistant") continue;
-
-			const textContent = extractTextContent(message);
-			if (!textContent) continue;
-
-			allMessages.push(textContent);
-			if (!firstMessage && message.role === "user") {
-				firstMessage = textContent;
-			}
+			signal?.throwIfAborted();
+		} finally {
+			signal?.removeEventListener("abort", onAbort);
+			rl.close();
+			stream.destroy();
 		}
 
 		if (!header) return null;

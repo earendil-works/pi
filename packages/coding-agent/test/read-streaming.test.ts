@@ -1,11 +1,13 @@
+import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { execFileSync } from "child_process";
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { stat } from "fs/promises";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { pathToFileURL } from "url";
 import type * as util from "util";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { createReadToolDefinition, type ReadOperations } from "../src/core/tools/read.ts";
+import { createReadTool, createReadToolDefinition, type ReadOperations } from "../src/core/tools/read.ts";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "../src/core/tools/truncate.ts";
 
 // Runs when the read tool decodes a chunk: the file is open and partly read, so a test can change it mid-read.
@@ -289,5 +291,87 @@ describe("read tool streaming", () => {
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		expect(closed).toBe(true);
 		expect(chunksRead).toBe(3);
+	});
+
+	it("does not emit uncaught AbortError when local file reads abort across open and stat", async () => {
+		const path = join(tempDir, "abort-race.txt");
+		writeFileSync(
+			path,
+			lines(2000, (i) => `line ${i} ${"x".repeat(64)}`),
+		);
+		const readTool = createReadTool(tempDir);
+		const uncaught: unknown[] = [];
+		const onUncaught = (error: unknown) => uncaught.push(error);
+		process.on("uncaughtException", onUncaught);
+		process.on("unhandledRejection", onUncaught);
+		try {
+			const controllers = Array.from({ length: 24 }, () => new AbortController());
+			const reads = controllers.map((controller, i) => readTool.execute(`call-${i}`, { path }, controller.signal));
+			const aborts = controllers.map(async (controller, i) => {
+				for (let hop = 0; hop < i % 8; hop++) {
+					await stat(path);
+				}
+				controller.abort();
+			});
+			const outcomes = await Promise.allSettled(reads);
+			await Promise.all(aborts);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(outcomes.some((entry) => entry.status === "rejected")).toBe(true);
+			expect(uncaught).toEqual([]);
+		} finally {
+			process.off("uncaughtException", onUncaught);
+			process.off("unhandledRejection", onUncaught);
+		}
+	});
+
+	it("aborts unawaited codemode tools.read calls on real files without uncaught AbortError", async () => {
+		const fastPath = join(tempDir, "codemode-fast.txt");
+		const targetPath = join(tempDir, "codemode-target.txt");
+		writeFileSync(fastPath, "ok\n");
+		writeFileSync(
+			targetPath,
+			lines(3000, (i) => `row ${i} ${"y".repeat(80)}`),
+		);
+		const readTool = createReadTool(tempDir);
+		const uncaught: unknown[] = [];
+		const onUncaught = (error: unknown) => uncaught.push(error);
+		process.on("uncaughtException", onUncaught);
+		process.on("unhandledRejection", onUncaught);
+		const sandbox = new CodemodeSandbox({
+			tools: [
+				{
+					name: "read",
+					execute: async (args, { signal }) => {
+						const { path, offset, limit } = args as { path: string; offset?: number; limit?: number };
+						const result = await readTool.execute("codemode-read", { path, offset, limit }, signal);
+						return result.structuredContent;
+					},
+				},
+			],
+		});
+		try {
+			const result = await sandbox.execute(`
+				const fast = tools.read({ path: "codemode-fast.txt" });
+				const text = await fast;
+				let spin = 0;
+				for (let i = 0; i < 16; i++) {
+					tools.read({ path: "codemode-target.txt" });
+					for (let j = 0; j < i * 500; j++) spin += j;
+				}
+				for (let i = 0; i < 8; i++) {
+					tools.read({ path: "codemode-target.txt" });
+				}
+				return text;
+			`);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(result).toMatchObject({ ok: true, value: "ok\n" });
+			expect(result.calls[0]).toMatchObject({ name: "read", status: "ok" });
+			expect(result.calls.slice(1).some((call) => call.status === "cancelled")).toBe(true);
+			expect(uncaught).toEqual([]);
+		} finally {
+			await sandbox.close();
+			process.off("uncaughtException", onUncaught);
+			process.off("unhandledRejection", onUncaught);
+		}
 	});
 });

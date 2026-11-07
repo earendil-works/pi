@@ -354,6 +354,32 @@ describe("SessionManager custom flat session directory", () => {
 		await expect(listing).rejects.toMatchObject({ name: "AbortError" });
 		await expect(SessionManager.listAll(undefined, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
 	});
+
+	it("closes non-session files on early return without emitting AbortError when aborted later", async () => {
+		const uncaught: unknown[] = [];
+		const onUncaught = (error: unknown) => uncaught.push(error);
+		process.on("uncaughtException", onUncaught);
+		process.on("unhandledRejection", onUncaught);
+		try {
+			// Larger than one 64 KB ReadStream chunk so the stream has not reached EOF when line 1 rejects.
+			writeFileSync(
+				join(tempDir, "non-session.jsonl"),
+				`{"type":"event","id":"not-a-session"}\n${"x".repeat(256 * 1024)}\n`,
+			);
+			const sessionFile = createPersistedSession(projectA, "from A");
+			const controller = new AbortController();
+
+			const listed = await SessionManager.list(projectA, tempDir, undefined, controller.signal);
+			expect(listed.map((session) => session.path)).toEqual([sessionFile]);
+
+			controller.abort();
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(uncaught).toEqual([]);
+		} finally {
+			process.off("uncaughtException", onUncaught);
+			process.off("unhandledRejection", onUncaught);
+		}
+	});
 });
 
 describe("SessionManager.setSessionFile with corrupted files", () => {

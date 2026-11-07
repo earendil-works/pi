@@ -381,6 +381,43 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(aborted).toBe(true);
 		});
 
+		it("swallows late rejections from unawaited calls aborted on script return", async () => {
+			const uncaught: unknown[] = [];
+			const onUncaught = (error: unknown) => uncaught.push(error);
+			process.on("uncaughtException", onUncaught);
+			process.on("unhandledRejection", onUncaught);
+			let settledLate = false;
+			try {
+				const sandbox = createSandbox([
+					{
+						name: "slowReject",
+						execute: (_args, { signal }) =>
+							new Promise((_resolve, reject) => {
+								signal.addEventListener(
+									"abort",
+									() => {
+										setTimeout(() => {
+											settledLate = true;
+											reject(new DOMException("The operation was aborted", "AbortError"));
+										}, 20);
+									},
+									{ once: true },
+								);
+							}),
+					},
+				]);
+				const result = await sandbox.execute("tools.slowReject(); return 'early'");
+				expect(result).toMatchObject({ ok: true, value: "early" });
+				expect(result.calls).toMatchObject([{ name: "slowReject", status: "cancelled" }]);
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				expect(settledLate).toBe(true);
+				expect(uncaught).toEqual([]);
+			} finally {
+				process.off("uncaughtException", onUncaught);
+				process.off("unhandledRejection", onUncaught);
+			}
+		});
+
 		it("names close matches when a script reads a tool that does not exist", async () => {
 			const sandbox = createSandbox([echo, { name: "web-search", execute: () => "" }]);
 			const attempt = async (expression: string) => {

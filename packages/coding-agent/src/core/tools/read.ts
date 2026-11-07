@@ -67,17 +67,30 @@ const defaultReadOperations: ReadOperations = {
 	detectImageMimeType: detectSupportedImageMimeTypeFromFile,
 };
 
+const LOCAL_READ_CHUNK_BYTES = 64 * 1024;
+
 /**
  * Stream a local file the way fs.readFile reads it: a regular file up to its size when opened, so text
  * appended during the read is not counted and a growing file still ends; a file reporting size 0 (such
  * as /proc files) and other file types until EOF.
  */
 async function* readLocalFileChunks(path: string, { signal }: { signal?: AbortSignal }): AsyncIterable<Uint8Array> {
+	signal?.throwIfAborted();
 	const handle = await fsOpen(path, "r");
 	try {
+		signal?.throwIfAborted();
 		const stats = await handle.stat();
-		const end = stats.isFile() && stats.size > 0 ? stats.size - 1 : undefined;
-		yield* handle.createReadStream({ end, signal, autoClose: false });
+		signal?.throwIfAborted();
+		let remaining = stats.isFile() && stats.size > 0 ? stats.size : Number.POSITIVE_INFINITY;
+		while (remaining > 0) {
+			signal?.throwIfAborted();
+			const buffer = Buffer.allocUnsafe(Math.min(LOCAL_READ_CHUNK_BYTES, remaining));
+			const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+			signal?.throwIfAborted();
+			if (bytesRead === 0) break;
+			remaining -= bytesRead;
+			yield bytesRead === buffer.length ? buffer : buffer.subarray(0, bytesRead);
+		}
 	} finally {
 		await handle.close();
 	}
@@ -269,6 +282,7 @@ export function createReadToolDefinition(
 							await ops.access(absolutePath);
 							if (aborted) return;
 							const mimeType = ops.detectImageMimeType ? await ops.detectImageMimeType(absolutePath) : undefined;
+							if (aborted) return;
 							let content: (TextContent | ImageContent)[];
 							let details: ReadToolDetails | undefined;
 							const nonVisionImageNote = getNonVisionImageNote(ctx?.model);
