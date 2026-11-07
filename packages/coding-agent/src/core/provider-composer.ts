@@ -169,7 +169,7 @@ function mergeSamplingParamsByThinkingLevel(
 ): Model<Api>["samplingParamsByThinkingLevel"] {
 	if (!override) return base;
 	const merged = { ...base };
-	for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const) {
+	for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const) {
 		const params = override[level];
 		if (params) merged[level] = { ...base?.[level], ...params };
 	}

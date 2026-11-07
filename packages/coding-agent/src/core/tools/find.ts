@@ -32,7 +32,9 @@ const findSchema = Type.Object({
 
 export const findToolSystemPromptContribution = {
 	snippet: "Find files by glob pattern (respects .gitignore)",
-	guidelines: [],
+	guidelines: [
+		"Use only the Pi find tool declared in this session. Never use OpenCode's native glob tool; Pi find is the glob tool here.",
+	],
 } as const;
 
 export type FindToolInput = Static<typeof findSchema>;
@@ -76,7 +78,9 @@ export function createFindToolDefinition(
 		label: "find",
 		description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
 		promptSnippet: findToolSystemPromptContribution.snippet,
+		promptGuidelines: [...findToolSystemPromptContribution.guidelines],
 		parameters: findSchema,
+		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		async execute(
 			_toolCallId,
 			{ pattern, path: searchDir, limit }: { pattern: string; path?: string; limit?: number },

@@ -19,7 +19,10 @@ const readSchema = Type.Object({
 
 export const readToolSystemPromptContribution = {
 	snippet: "Read file contents",
-	guidelines: ["Use read to examine files instead of cat or sed."],
+	guidelines: [
+		"Use only the Pi read tool declared in this session. Never use OpenCode's native read tool.",
+		"Use read to examine files instead of cat or sed.",
+	],
 } as const;
 
 export type ReadToolInput = Static<typeof readSchema>;

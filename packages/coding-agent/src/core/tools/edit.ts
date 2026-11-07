@@ -40,6 +40,7 @@ const editSchema = Type.Object(
 export const editToolSystemPromptContribution = {
 	snippet: "Make precise file edits with exact text replacement, including multiple disjoint edits in one call",
 	guidelines: [
+		"Use only the Pi edit tool declared in this session. Never use OpenCode's native edit tool.",
 		"Use edit for targeted changes. Batch changes to one file in a single call.",
 		"Each edits[].oldText must exactly and uniquely match the original file. Keep matches short and non-overlapping; merge nearby changes without including large unchanged regions.",
 	],

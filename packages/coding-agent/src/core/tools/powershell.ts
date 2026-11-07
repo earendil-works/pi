@@ -17,7 +17,10 @@ const UTF8_OUTPUT_PREFIX = "try { [Console]::OutputEncoding=[System.Text.Encodin
 
 export const powershellToolSystemPromptContribution = {
 	snippet: "Execute PowerShell commands",
-	guidelines: ["You can inspect PI_* environment variables for current model and session details."],
+	guidelines: [
+		"Use only the Pi powershell tool declared in this session. Never use OpenCode's native shell tool.",
+		"You can inspect PI_* environment variables for current model and session details.",
+	],
 } as const;
 
 export type PowerShellOperations = BashOperations;

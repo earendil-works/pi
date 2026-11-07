@@ -142,6 +142,7 @@ export interface ThinkingBudgets {
 	low?: number;
 	medium?: number;
 	high?: number;
+	ultra?: number;
 }
 
 // Base options all providers share

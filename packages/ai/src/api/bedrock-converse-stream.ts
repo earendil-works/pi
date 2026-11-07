@@ -1338,6 +1338,7 @@ function buildAdditionalModelRequestFields(
 						high: 16384,
 						xhigh: 16384, // Budget-based Claude clamps extended levels to high
 						max: 16384,
+						ultra: 65536,
 					};
 
 					// Custom budgets only cover token-based levels through high.
@@ -1387,6 +1388,7 @@ const OPENAI_GPT_EFFORT: Record<ThinkingLevel, OpenAIGptEffort> = {
 	high: "high",
 	xhigh: "xhigh",
 	max: "max",
+	ultra: "max",
 };
 
 /** gpt-oss takes a flat `reasoning_effort` and only accepts low, medium and high. */
@@ -1397,6 +1399,7 @@ const OPENAI_GPT_OSS_EFFORT: Record<ThinkingLevel, OpenAIGptOssEffort> = {
 	high: "high",
 	xhigh: "high",
 	max: "high",
+	ultra: "high",
 };
 
 function createImageBlock(mimeType: string, data: string) {

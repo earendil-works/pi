@@ -38,7 +38,16 @@ export interface VirtualModelStateData<TState = unknown> {
 	state: TState;
 }
 
-const THINKING_LEVELS: readonly ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const THINKING_LEVELS: readonly ModelThinkingLevel[] = [
+	"off",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+	"ultra",
+];
 
 /**
  * Why a request is being routed.

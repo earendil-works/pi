@@ -43,7 +43,10 @@ const bashSchema = Type.Object({
 
 export const bashToolSystemPromptContribution = {
 	snippet: "Execute bash commands (ls, grep, find, etc.)",
-	guidelines: ["You can inspect PI_* environment variables for current model and session details."],
+	guidelines: [
+		"Use only the Pi bash tool declared in this session. Never use OpenCode's native bash/shell tool.",
+		"You can inspect PI_* environment variables for current model and session details.",
+	],
 } as const;
 
 export type BashToolInput = Static<typeof bashSchema>;

@@ -14,7 +14,10 @@ const writeSchema = Type.Object({
 
 export const writeToolSystemPromptContribution = {
 	snippet: "Create or overwrite files",
-	guidelines: ["Use write only for new files or complete rewrites."],
+	guidelines: [
+		"Use only the Pi write tool declared in this session. Never use OpenCode's native write tool.",
+		"Use write only for new files or complete rewrites.",
+	],
 } as const;
 
 export type WriteToolInput = Static<typeof writeSchema>;

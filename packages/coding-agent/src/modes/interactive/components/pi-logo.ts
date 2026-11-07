@@ -1,27 +1,25 @@
 import { backgroundAnsi, foregroundAnsi, isAppleTerminalSession, rgbColor } from "@earendil-works/pi-tui";
 import { theme } from "../theme/theme.ts";
 
-const CORAL = rgbColor(228, 138, 122);
-const BLUE = rgbColor(79, 142, 179);
-const YELLOW = rgbColor(234, 182, 93);
+const PURPLE = rgbColor(60, 0, 224);
 const RESET = "\x1b[0m";
 
 /**
  * The pi logo: 4 cells wide and 2 lines tall. Each cell shows two square pixels with half blocks:
  *
- *   coral coral coral .
- *   blue  .     coral .
- *   blue  blue  .     yellow
- *   blue  .     .     yellow
+ *   purple purple purple .
+ *   purple  .     purple .
+ *   purple  purple .     purple
+ *   purple  .     .     purple
  *
- * The brand colors stay fixed across themes; they follow the terminal's color mode.
+ * The brand color stays fixed across themes; it follows the terminal's color mode.
  */
 export function piLogoLines(): [string, string] {
 	const mode = theme.getColorMode();
-	const fg = (color: typeof CORAL) => foregroundAnsi(color, mode);
+	const fg = (color: typeof PURPLE) => foregroundAnsi(color, mode);
 	// The fourth cell of the top line is empty, so it is padded to the same width as the bottom line.
-	const top = `${fg(CORAL)}${backgroundAnsi(BLUE, mode)}▀${RESET}${fg(CORAL)}▀█${RESET} `;
-	const bottom = `${fg(BLUE)}█▀${RESET} ${fg(YELLOW)}█${RESET}`;
+	const top = `${fg(PURPLE)}${backgroundAnsi(PURPLE, mode)}▀${RESET}${fg(PURPLE)}▀█${RESET} `;
+	const bottom = `${fg(PURPLE)}█▀${RESET} ${fg(PURPLE)}█${RESET}`;
 	return [top, bottom];
 }
 
@@ -33,8 +31,8 @@ export function supportsPiLogo(): boolean {
 	return !isAppleTerminalSession();
 }
 
-/** Text fallback for the logo: "Pi" with the logo's coral and yellow. */
+/** Text fallback for the logo: "Pi" in the brand purple. */
 export function piWordmark(): string {
 	const mode = theme.getColorMode();
-	return `${foregroundAnsi(CORAL, mode)}P${RESET}${foregroundAnsi(YELLOW, mode)}i${RESET}`;
+	return `${foregroundAnsi(PURPLE, mode)}P${RESET}${foregroundAnsi(PURPLE, mode)}i${RESET}`;
 }

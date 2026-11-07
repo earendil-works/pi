@@ -38,7 +38,7 @@ const grepSchema = Type.Object({
 
 export const grepToolSystemPromptContribution = {
 	snippet: "Search file contents for patterns (respects .gitignore)",
-	guidelines: [],
+	guidelines: ["Use only the Pi grep tool declared in this session. Never use OpenCode's native grep tool."],
 } as const;
 
 export type GrepToolInput = Static<typeof grepSchema>;
@@ -85,7 +85,9 @@ export function createGrepToolDefinition(
 		label: "grep",
 		description: `Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} matches or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Long lines are truncated to ${GREP_MAX_LINE_LENGTH} chars.`,
 		promptSnippet: grepToolSystemPromptContribution.snippet,
+		promptGuidelines: [...grepToolSystemPromptContribution.guidelines],
 		parameters: grepSchema,
+		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		async execute(
 			_toolCallId,
 			{

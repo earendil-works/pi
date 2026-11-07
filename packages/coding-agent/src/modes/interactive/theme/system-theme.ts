@@ -125,6 +125,7 @@ const TOKEN_FAMILIES: Record<ThemeToken, FamilyName> = {
 	thinkingHigh: "thinkingViolet",
 	thinkingXhigh: "thinkingMagenta",
 	thinkingMax: "thinkingRed",
+	thinkingUltra: "thinkingRed",
 };
 
 /** Palette slots for tokens that would otherwise share a hue with a similar token. */
@@ -275,6 +276,7 @@ const THINKING: ThemeColor[] = [
 	"thinkingHigh",
 	"thinkingXhigh",
 	"thinkingMax",
+	"thinkingUltra",
 ];
 const THINKING_LEVELS: Level[] = [
 	"thinking0",

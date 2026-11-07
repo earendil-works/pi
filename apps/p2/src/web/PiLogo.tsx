@@ -1,12 +1,10 @@
 export function PiLogo({ compact = false }: { compact?: boolean }) {
 	return (
-		<svg className={`pi-logo ${compact ? "compact" : ""}`} viewBox="0 0 4 4" role="img" aria-label="Pi">
+		<svg className={`pi-logo ${compact ? "compact" : ""}`} viewBox="0 0 800 800" role="img" aria-label="Pi">
 			<title>Pi</title>
-			<rect className="pi-logo-coral" width="3" height="1" />
-			<rect className="pi-logo-coral" x="2" y="1" width="1" height="1" />
-			<rect className="pi-logo-blue" y="1" width="1" height="3" />
-			<rect className="pi-logo-blue" x="1" y="2" width="1" height="1" />
-			<rect className="pi-logo-yellow" x="3" y="2" width="1" height="2" />
+			<path fill="#3c00e0" d="M165.29 165.29H517.36V400H400V282.65H165.29Z" />
+			<path fill="#3c00e0" d="M165.29 282.65H282.65V400H400V517.36H282.65V634.72H165.29Z" />
+			<path fill="#3c00e0" d="M517.36 400H634.72V634.72H517.36Z" />
 		</svg>
 	);
 }

@@ -13,18 +13,16 @@ import {
 } from "@earendil-works/pi-tui";
 import { lineText, type RenderContext } from "../render-context.ts";
 
-const CORAL = rgbColor(228, 138, 122);
-const BLUE = rgbColor(79, 142, 179);
-const YELLOW = rgbColor(234, 182, 93);
+const PURPLE = rgbColor(60, 0, 224);
 const RESET = "\x1b[0m";
 
-/** pi-logo.ts: 4 cells by 2 lines of half blocks in fixed brand colors, in the theme's color mode. */
+/** pi-logo.ts: 4 cells by 2 lines of half blocks in the fixed brand color, in the theme's color mode. */
 export function piLogoLines(ctx: RenderContext): [string, string] {
 	const mode = ctx.theme.current.getColorMode();
-	const fg = (color: typeof CORAL) => foregroundAnsi(color, mode);
+	const fg = (color: typeof PURPLE) => foregroundAnsi(color, mode);
 	return [
-		`${fg(CORAL)}${backgroundAnsi(BLUE, mode)}▀${RESET}${fg(CORAL)}▀█${RESET} `,
-		`${fg(BLUE)}█▀${RESET} ${fg(YELLOW)}█${RESET}`,
+		`${fg(PURPLE)}${backgroundAnsi(PURPLE, mode)}▀${RESET}${fg(PURPLE)}▀█${RESET} `,
+		`${fg(PURPLE)}█▀${RESET} ${fg(PURPLE)}█${RESET}`,
 	];
 }
 

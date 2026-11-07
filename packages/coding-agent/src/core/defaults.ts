@@ -9,4 +9,5 @@ export const THINKING_LEVEL_OPTIONS: readonly ThinkingLevel[] = [
 	"high",
 	"xhigh",
 	"max",
+	"ultra",
 ];

@@ -1,7 +1,7 @@
 import type { ThinkingLevel, ThinkingLevelMap } from "../src/types.ts";
 import type { ModelsDevReasoningOption } from "./sources/models-dev.ts";
 
-const THINKING_LEVELS: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+const THINKING_LEVELS: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
 /**
  * Converts models.dev verified effort values into Pi's selectable thinking levels.

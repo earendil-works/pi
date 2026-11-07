@@ -29,7 +29,7 @@ button:hover{background:var(--hover)}button:disabled{opacity:.45;cursor:default}
 .error{color:var(--bad)}`;
 
 // Same geometry and colours as src/web/PiLogo.tsx (canonical startup logo).
-const LOGO = `<svg viewBox="0 0 4 4" role="img" aria-label="Pi"><rect fill="rgb(228 138 122)" width="3" height="1"/><rect fill="rgb(228 138 122)" x="2" y="1" width="1" height="1"/><rect fill="rgb(79 142 179)" y="1" width="1" height="3"/><rect fill="rgb(79 142 179)" x="1" y="2" width="1" height="1"/><rect fill="rgb(234 182 93)" x="3" y="2" width="1" height="2"/></svg>`;
+const LOGO = `<svg viewBox="0 0 800 800" role="img" aria-label="Pi"><path fill="#3c00e0" d="M165.29 165.29H517.36V400H400V282.65H165.29Z"/><path fill="#3c00e0" d="M165.29 282.65H282.65V400H400V517.36H282.65V634.72H165.29Z"/><path fill="#3c00e0" d="M517.36 400H634.72V634.72H517.36Z"/></svg>`;
 
 const THEME = `try{const t=localStorage.getItem("pi-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch{}`;
 

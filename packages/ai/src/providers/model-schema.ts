@@ -13,7 +13,7 @@ import {
 } from "@earendil-works/pi-schema";
 import { openObject as object } from "./schema-builders.ts";
 
-export const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
 export const MODEL_THINKING_LEVELS = ["off", ...THINKING_LEVELS] as const;
 export const MODEL_INPUT_MODALITIES = ["text", "image"] as const;
 export const CACHE_RETENTIONS = ["none", "short", "long"] as const;
@@ -34,10 +34,11 @@ export const ThinkingLevelMapSchema = object(
 		high: opt(ThinkingLevelMapValueSchema),
 		xhigh: opt(ThinkingLevelMapValueSchema),
 		max: opt(ThinkingLevelMapValueSchema),
+		ultra: opt(ThinkingLevelMapValueSchema),
 	},
 	{
 		description:
-			"Provider value sent for each thinking level. null marks a level unsupported. Levels the model does not map use the provider's default value through high; xhigh and max are unsupported.",
+			"Provider value sent for each thinking level. null marks a level unsupported. Levels the model does not map use the provider's default value through high; xhigh, max and ultra are unsupported.",
 	},
 );
 

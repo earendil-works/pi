@@ -87,6 +87,7 @@ export const DEFAULT_THINKING_BUDGETS: ThinkingBudgets = {
 	low: 2048,
 	medium: 8192,
 	high: 16384,
+	ultra: 65536,
 };
 
 export function clampReasoning(effort: ThinkingLevel | undefined): Exclude<ThinkingLevel, "xhigh" | "max"> | undefined {

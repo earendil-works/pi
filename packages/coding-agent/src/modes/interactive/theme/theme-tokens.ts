@@ -97,6 +97,11 @@ export const THEME_TOKENS = defineThemeTokens({
 		description: "Thinking level border: max (falls back to thinkingXhigh when omitted)",
 		fallback: "thinkingXhigh",
 	},
+	thinkingUltra: {
+		slot: "foreground",
+		description: "Thinking level border: ultra (falls back to thinkingMax when omitted)",
+		fallback: "thinkingMax",
+	},
 	bashMode: { slot: "foreground", description: "Editor border color in bash mode" },
 });
 

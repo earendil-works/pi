@@ -14,7 +14,7 @@ const lsSchema = Type.Object({
 
 export const lsToolSystemPromptContribution = {
 	snippet: "List directory contents",
-	guidelines: [],
+	guidelines: ["Use only the Pi ls tool declared in this session. Never use OpenCode's native ls tool."],
 } as const;
 
 export type LsToolInput = Static<typeof lsSchema>;
@@ -60,7 +60,9 @@ export function createLsToolDefinition(
 		label: "ls",
 		description: `List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles. Output is truncated to ${DEFAULT_LIMIT} entries or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
 		promptSnippet: lsToolSystemPromptContribution.snippet,
+		promptGuidelines: [...lsToolSystemPromptContribution.guidelines],
 		parameters: lsSchema,
+		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		async execute(
 			_toolCallId,
 			{ path, limit }: { path?: string; limit?: number },

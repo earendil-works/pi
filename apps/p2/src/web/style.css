@@ -2161,7 +2161,6 @@ button.diff-number:hover {
 	width: 64px;
 	height: 64px;
 	flex: none;
-	shape-rendering: crispEdges;
 }
 .hero-title .pi-logo {
 	width: 32px;
@@ -2172,13 +2171,13 @@ button.diff-number:hover {
 	height: 24px;
 }
 .pi-logo-coral {
-	fill: rgb(228 138 122);
+	fill: #3c00e0;
 }
 .pi-logo-blue {
-	fill: rgb(79 142 179);
+	fill: #3c00e0;
 }
 .pi-logo-yellow {
-	fill: rgb(234 182 93);
+	fill: #3c00e0;
 }
 
 /* Composer: same inset as transcript text, one vertical step. */

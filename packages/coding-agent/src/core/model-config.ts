@@ -27,6 +27,7 @@ const SamplingParamsByThinkingLevelSchema = Type.Object(
 		high: Type.Optional(SamplingParamsSchema),
 		xhigh: Type.Optional(SamplingParamsSchema),
 		max: Type.Optional(SamplingParamsSchema),
+		ultra: Type.Optional(SamplingParamsSchema),
 	},
 	{ description: "samplingParams per thinking level, merged over samplingParams." },
 );
