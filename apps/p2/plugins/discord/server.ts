@@ -98,13 +98,14 @@ export default defineFacet((host) => {
 		});
 		self.onLive(async (ctx) => {
 			live = ctx;
-			// Messages one at a time, in the order the bots received them.
+			// One event at a time, in the order the bots received them: a catch-up and a live mention never race.
 			for (;;) {
 				const received = await fleet.value.next(signalOf(ctx));
 				if (!received) return;
-				await relay
-					.onMessage(received.bot, received.message)
-					.catch((error: unknown) => console.error("p2 discord:", errorText(error)));
+				const { bot, event } = received;
+				await (event.kind === "message" ? relay.onMessage(bot, event.message) : relay.catchUp(bot)).catch(
+					(error: unknown) => console.error("p2 discord:", errorText(error)),
+				);
 			}
 		});
 		self.onLive(async (ctx) => {

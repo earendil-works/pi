@@ -16,6 +16,9 @@ import type { DiscordChannel, DiscordMessage, DiscordPort } from "./relay.ts";
 /** The bot's permissions in the invite: view channels, send (also in threads), embed links, attach files, history. */
 const PERMISSIONS = (1n << 10n) | (1n << 11n) | (1n << 14n) | (1n << 15n) | (1n << 16n) | (1n << 38n);
 
+/** What a bot hands its fleet: a message it received, or that it (re)connected and may have missed some. */
+export type BotEvent = { kind: "message"; message: DiscordMessage } | { kind: "ready" };
+
 /** How long a bot that could not reach Discord waits before it tries again (a refused token or intent never does). */
 const RETRY_MS = 60_000;
 
@@ -23,13 +26,13 @@ export class Bot implements DiscordPort {
 	client: Client | undefined;
 	status: BotStatus = { state: "connecting" };
 	readonly #listeners = new Set<() => void>();
-	readonly #onMessage: (message: DiscordMessage) => void;
+	readonly #onEvent: (event: BotEvent) => void;
 	#generation = 0;
 	#retry: ReturnType<typeof setTimeout> | undefined;
 
-	/** A bot that hands what it receives (never its own messages) to `onMessage`. */
-	constructor(onMessage: (message: DiscordMessage) => void) {
-		this.#onMessage = onMessage;
+	/** A bot that hands what it receives (never its own messages) and each (re)connection to `onEvent`. */
+	constructor(onEvent: (event: BotEvent) => void) {
+		this.#onEvent = onEvent;
 	}
 
 	subscribe(listener: () => void): () => void {
@@ -59,12 +62,16 @@ export class Bot implements DiscordPort {
 		});
 		client.on(Events.MessageCreate, (message) => {
 			if (generation !== this.#generation || message.author.id === client.user?.id) return;
-			this.#onMessage(messageOf(message, client.user?.id ?? ""));
+			this.#onEvent({ kind: "message", message: messageOf(message, client.user?.id ?? "") });
 		});
 		const ready = new Promise<void>((resolve) => client.once(Events.ClientReady, () => resolve()));
 		const refresh = () => {
 			if (generation === this.#generation && client.isReady()) this.#set(connected(client));
 		};
+		// A new gateway session after the first (a resumed one replays what it missed): messages may have been missed.
+		client.on(Events.ShardReady, () => {
+			if (generation === this.#generation && this.client === client) this.#onEvent({ kind: "ready" });
+		});
 		client.on(Events.GuildCreate, refresh);
 		client.on(Events.GuildDelete, refresh);
 		client.on(Events.Error, (error) => console.error("p2 discord:", error.message));
@@ -90,6 +97,7 @@ export class Bot implements DiscordPort {
 		}
 		this.client = client;
 		if (client.isReady()) this.#set(connected(client));
+		this.#onEvent({ kind: "ready" });
 		return this.status;
 	}
 
@@ -117,14 +125,12 @@ export class Bot implements DiscordPort {
 		};
 	}
 
-	async messages(channelId: string, query: { after?: string; limit: number }): Promise<DiscordMessage[]> {
+	async messages(channelId: string, query: { after: string; limit: number }): Promise<DiscordMessage[]> {
 		const channel = await this.#text(channelId);
-		const found = await channel.messages.fetch(
-			query.after ? { after: query.after, limit: query.limit } : { limit: query.limit },
-		);
+		const found = await channel.messages.fetch({ after: query.after, limit: query.limit, cache: false });
 		const botId = this.botId;
 		return [...found.values()]
-			.sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+			.sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1))
 			.map((message) => messageOf(message, botId));
 	}
 

@@ -68,10 +68,12 @@ class FakeDiscord implements DiscordPort {
 		if (!found) throw new Error(`No channel ${id}`);
 		return found;
 	}
-	async messages(channelId: string, query: { after?: string; limit: number }): Promise<DiscordMessage[]> {
+	/** History requests, as Discord gets them. */
+	readonly requests: { channel: string; after: string }[] = [];
+	async messages(channelId: string, query: { after: string; limit: number }): Promise<DiscordMessage[]> {
+		this.requests.push({ channel: channelId, after: query.after });
 		const all = this.history.get(channelId) ?? [];
-		const after = query.after;
-		return (after ? all.filter((entry) => BigInt(entry.id) > BigInt(after)) : all).slice(-query.limit);
+		return all.filter((entry) => BigInt(entry.id) > BigInt(query.after)).slice(0, Math.min(query.limit, 100));
 	}
 	async reply(channel: string, replyTo: string | undefined, text: string): Promise<void> {
 		assert(text.length <= 2000);
@@ -284,6 +286,81 @@ describe("discord relay", () => {
 		offline.delete("bot-a");
 		await relay.checkPending();
 		assert.deepEqual(discord.posted, [{ channel: "c1", replyTo: trigger.id, text: "Hi." }]);
+	});
+
+	it("pages through everything since the cursor up to the mention", async () => {
+		const { discord, sessions, relay, state } = setup(binding({ cursor: "1" }));
+		const said = Array.from({ length: 199 }, (_, index) => discord.say("c1", message(`line ${index}`)));
+		const trigger = discord.say("c1", message(`<@${BOT}> summarize`));
+		discord.say("c1", message("after the mention"));
+		await relay.onMessage("bot-a", trigger);
+		const lines = sessions.delivered[0]?.text.split("\n") ?? [];
+		assert.equal(lines[0], "[Discord #general (Guild): 200 messages since the last delivery]");
+		assert.equal(lines[1], "Ada: line 0", "message 1 of 200");
+		assert.equal(lines[101], `Ada: ${said[100]?.text}`, "past the first page");
+		assert.equal(lines.at(-1), "Ada: @Pi summarize");
+		assert.equal(sessions.delivered[0]?.context.messages, 200);
+		assert.deepEqual(
+			discord.requests.map((request) => request.after),
+			["1", said[99]?.id, trigger.id],
+			"after the cursor, then after each full page, until past the mention",
+		);
+		assert.equal(state().bindings.c1?.cursor, trigger.id);
+	});
+
+	it("puts only the newest 200 into a huge batch and says how many earlier ones were left out", async () => {
+		const { discord, sessions, relay } = setup(binding({ cursor: "1" }));
+		for (let index = 0; index < 450; index++) discord.say("c1", message(`line ${index}`));
+		await relay.onMessage("bot-a", discord.say("c1", message(`<@${BOT}> what happened?`)));
+		const lines = sessions.delivered[0]?.text.split("\n") ?? [];
+		assert.equal(
+			lines[0],
+			"[Discord #general (Guild): 451 messages since the last delivery; the 251 earliest are left out, the newest 200 follow]",
+		);
+		assert.equal(lines.length, 201);
+		assert.equal(lines[1], "Ada: line 251");
+		assert.equal(lines.at(-1), "Ada: @Pi what happened?");
+	});
+
+	it("catches up after downtime: the newest allowed mention of each link and thread delivers once", async () => {
+		const known = { conversation: 41, name: "Release plan", cursor: "1" };
+		const { discord, sessions, relay, state } = setup(binding({ cursor: "1", threads: { t1: known } }));
+		// While p2 was down: a stranger's mention, two allowed ones, chatter after them.
+		discord.say("c1", message("good morning"));
+		discord.say("c1", message(`<@${BOT}> me too`, { author: { id: "u9", name: "Eve", bot: false } }));
+		discord.say("c1", message(`<@${BOT}> first question`));
+		const newest = discord.say("c1", message(`<@${BOT}> second question`));
+		discord.say("c1", message("chatter after"));
+		const inThread = discord.say("t1", message(`<@${BOT}> plan the release`));
+		await relay.catchUp("bot-b");
+		assert.equal(sessions.delivered.length, 0, "another bot's links are not its to catch up");
+		await relay.catchUp("bot-a");
+		assert.equal(sessions.delivered.length, 2, "one delivery per channel and thread");
+		const channel = sessions.delivered[0];
+		assert.equal(channel?.requestId, `discord:${newest.id}`);
+		assert.deepEqual(channel?.text.split("\n").slice(1), [
+			"Ada: good morning",
+			"Eve: @Pi me too",
+			"Ada: @Pi first question",
+			"Ada: @Pi second question",
+		]);
+		assert.equal(state().bindings.c1?.cursor, newest.id);
+		assert.equal(sessions.delivered[1]?.conversation, 41);
+		assert.equal(sessions.delivered[1]?.requestId, `discord:${inThread.id}`);
+		assert.equal(state().bindings.c1?.threads.t1?.cursor, inThread.id);
+		assert.equal(sessions.threads.length, 0, "the thread's subagent exists already");
+		// Again, and the same mention replayed by a resumed gateway: nothing new.
+		await relay.catchUp("bot-a");
+		await relay.onMessage("bot-a", newest);
+		assert.equal(sessions.delivered.length, 2);
+		// Answers go back to where each mention was.
+		sessions.turns.set(1, { state: "answered", text: "Second answer." });
+		sessions.turns.set(2, { state: "answered", text: "Plan." });
+		await relay.checkPending();
+		assert.deepEqual(discord.posted, [
+			{ channel: "c1", replyTo: newest.id, text: "Second answer." },
+			{ channel: "t1", replyTo: inThread.id, text: "Plan." },
+		]);
 	});
 
 	it("downloads attachments up to 25 MiB (20 at most) and lists larger ones as links", () => {

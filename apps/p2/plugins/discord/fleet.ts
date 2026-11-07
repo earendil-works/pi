@@ -4,9 +4,8 @@ import { randomBytes } from "node:crypto";
 import { chmod, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { optionalText } from "@p2/app/v1/node";
-import { Bot } from "./bot.ts";
+import { Bot, type BotEvent } from "./bot.ts";
 import type { BotView } from "./contract.ts";
-import type { DiscordMessage } from "./relay.ts";
 
 /** discord.json: each bot's token by p2's ID for it. */
 type BotsFile = { bots: Record<string, { token: string; addedAt: number }> };
@@ -14,8 +13,8 @@ type BotsFile = { bots: Record<string, { token: string; addedAt: number }> };
 /** The ID the one bot of the first release (`{ "token": … }`) gets; its links name it too (server.ts migrates them). */
 export const FIRST_BOT = "bot1";
 
-/** A received message and the bot that received it. */
-export type Received = { bot: string; message: DiscordMessage };
+/** What a bot of the fleet received (a message, or its (re)connection), and which bot. */
+export type Received = { bot: string; event: BotEvent };
 
 export class Fleet {
 	readonly #path: string;
@@ -115,7 +114,7 @@ export class Fleet {
 		this.#changed();
 	}
 
-	/** The next received message, or undefined when `signal` aborts. */
+	/** The next received event, or undefined when `signal` aborts. */
 	async next(signal: AbortSignal): Promise<Received | undefined> {
 		while (!signal.aborted) {
 			const received = this.#queue.shift();
@@ -140,17 +139,22 @@ export class Fleet {
 
 	/** A bot `id` that is not one of the fleet's yet (a token being tried); it delivers messages once adopted. */
 	#candidate(id: string): Bot {
-		const bot: Bot = new Bot((message) => {
-			if (this.#bots.get(id) !== bot) return;
-			this.#queue.push({ bot: id, message });
-			for (const wake of [...this.#waiters]) wake();
+		const bot: Bot = new Bot((event) => {
+			if (this.#bots.get(id) === bot) this.#push({ bot: id, event });
 		});
 		return bot;
 	}
 
+	/** Makes `bot` the fleet's bot `id`; one connected already (a new token) catches up at once. */
 	#adopt(id: string, bot: Bot): void {
 		this.#bots.set(id, bot);
 		bot.subscribe(() => this.#changed());
+		if (bot.client?.isReady()) this.#push({ bot: id, event: { kind: "ready" } });
+	}
+
+	#push(received: Received): void {
+		this.#queue.push(received);
+		for (const wake of [...this.#waiters]) wake();
 	}
 
 	#start(id: string): Bot {

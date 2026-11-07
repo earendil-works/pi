@@ -29,8 +29,8 @@ export type DiscordChannel = {
 export type DiscordPort = {
 	readonly botId: string;
 	channel(id: string): Promise<DiscordChannel>;
-	/** Messages after `after` (oldest first), or the newest `limit` without it. */
-	messages(channelId: string, query: { after?: string; limit: number }): Promise<DiscordMessage[]>;
+	/** The first `limit` messages after `after` (oldest first; `"0"`: from the channel's start). */
+	messages(channelId: string, query: { after: string; limit: number }): Promise<DiscordMessage[]>;
 	/** Posts `text` (at most 2000 characters), as a reply to `messageId` when given. */
 	reply(channelId: string, messageId: string | undefined, text: string): Promise<void>;
 	typing(channelId: string): Promise<void>;
@@ -72,9 +72,10 @@ export type StatePort = {
 	change(update: (draft: RelayState) => void): Promise<void>;
 };
 
-/** Messages one batch delivers at most; with no cursor yet, the newest this many. */
-export const BATCH_LIMIT = 100;
-export const FIRST_BATCH = 50;
+/** Messages one history request asks for (Discord's maximum). */
+export const PAGE = 100;
+/** Messages one batch puts into the input at most: the newest; the header counts the earlier ones left out. */
+export const BATCH_CAP = 200;
 /** Discord's limit for one message's text. */
 export const MESSAGE_LIMIT = 2000;
 /** Attachments up to this size are downloaded into the session; larger ones are listed as links. */
@@ -157,17 +158,28 @@ export class Relay {
 			conversation = known.conversation;
 			cursor = known.cursor;
 		}
-		const fetched = await port.messages(
-			where,
-			cursor === null ? { limit: FIRST_BATCH } : { after: cursor, limit: BATCH_LIMIT },
-		);
-		const messages = fetched.filter(
-			(message) => !message.author.bot && BigInt(message.id) <= BigInt(trigger.id) && message.id !== cursor,
-		);
-		if (!messages.some((message) => message.id === trigger.id)) messages.push(trigger);
+		// Delivered already (a catch-up, then the same mention replayed by a resumed gateway).
+		if (cursor !== null && BigInt(trigger.id) <= BigInt(cursor)) return;
+		// Everything since the cursor, page by page; only the newest BATCH_CAP go into the input.
+		const messages: DiscordMessage[] = [];
+		let total = 0;
+		for await (const message of history(port, where, cursor, trigger.id)) {
+			if (message.author.bot) continue;
+			total++;
+			messages.push(message);
+			if (messages.length > BATCH_CAP) messages.shift();
+		}
+		if (!messages.some((message) => message.id === trigger.id)) {
+			total++;
+			messages.push(trigger);
+			if (messages.length > BATCH_CAP) messages.shift();
+		}
+		const count = `${total} message${total === 1 ? "" : "s"}`;
+		const omitted = total - messages.length;
+		const left = omitted ? `; the ${omitted} earliest are left out, the newest ${messages.length} follow` : "";
 		const header = thread
-			? `[Discord thread "${thread.name}" in #${binding.channelName} (${binding.guildName}): ${messages.length} message${messages.length === 1 ? "" : "s"}]`
-			: `[Discord #${binding.channelName} (${binding.guildName}): ${messages.length} message${messages.length === 1 ? "" : "s"} since the last delivery]`;
+			? `[Discord thread "${thread.name}" in #${binding.channelName} (${binding.guildName}): ${count}${left}]`
+			: `[Discord #${binding.channelName} (${binding.guildName}): ${count} since the last delivery${left}]`;
 		const batch = batchOf(messages, port.botId, header);
 		let delivered: { conversation: number; submissionId: number };
 		try {
@@ -179,7 +191,7 @@ export class Relay {
 				context: {
 					channel: binding.channelName,
 					guild: binding.guildName,
-					messages: messages.length,
+					messages: total,
 					...(thread ? { thread: thread.name } : {}),
 				},
 				files: batch.files,
@@ -211,6 +223,40 @@ export class Relay {
 			};
 		});
 		await port.typing(where).catch(() => {});
+	}
+
+	/**
+	 * Bot `bot` (re)connected: what it missed. For each of its links and their threads, the newest mention since the
+	 * cursor by someone allowed to wake Pi delivers, as if it had just arrived (one delivery each, the messages before it
+	 * included).
+	 */
+	async catchUp(bot: string): Promise<void> {
+		const port = this.#port(bot);
+		for (const binding of Object.values(this.#state.value().bindings)) {
+			if (binding.botId !== bot) continue;
+			const places: { id: string; cursor: string | null; thread: boolean }[] = [
+				{ id: binding.channelId, cursor: binding.cursor, thread: false },
+				...Object.entries(binding.threads).map(([id, known]) => ({ id, cursor: known.cursor, thread: true })),
+			];
+			for (const place of places) {
+				try {
+					let newest: DiscordMessage | undefined;
+					for await (const message of history(port, place.id, place.cursor))
+						if (
+							!message.author.bot &&
+							message.mentionsBot &&
+							mayWake(binding.wake, message.author.id, message.roles)
+						)
+							newest = message;
+					if (!newest) continue;
+					const thread = place.thread ? await port.channel(place.id) : undefined;
+					await this.deliver(binding.channelId, newest, thread);
+				} catch (error) {
+					// A channel or thread that went away (or a session that cannot take it) skips only itself.
+					console.error("p2 discord: catching up failed:", error instanceof Error ? error.message : error);
+				}
+			}
+		}
 	}
 
 	/** Posts the replies of the turns that ended (`sessions`: only those, when given); answers split at 2000. */
@@ -266,6 +312,29 @@ export class Relay {
 			await this.#discord(bot)
 				?.typing(channel)
 				.catch(() => {});
+	}
+}
+
+/**
+ * The messages of `channel` after `cursor` (null: from its start), oldest first, page by page; with `until`, up to and
+ * with that message.
+ */
+async function* history(
+	port: DiscordPort,
+	channel: string,
+	cursor: string | null,
+	until?: string,
+): AsyncGenerator<DiscordMessage> {
+	let after = cursor ?? "0";
+	for (;;) {
+		const page = await port.messages(channel, { after, limit: PAGE });
+		for (const message of page) {
+			if (until !== undefined && BigInt(message.id) > BigInt(until)) return;
+			yield message;
+		}
+		const last = page.at(-1);
+		if (page.length < PAGE || !last) return;
+		after = last.id;
 	}
 }
 

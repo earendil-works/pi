@@ -40,10 +40,17 @@ A session has at most one link and a channel at most one session (its threads fo
 
 - **Waking:** a message that mentions the link's bot, by someone allowed, in a linked channel. Bots never wake Pi; other
   messages only accumulate.
-- **Batch:** the messages after the link's cursor up to the mention (at most 100; with no cursor the newest 50),
-  oldest first, one `Name: text` paragraph each, the mention written `@Pi`, under a header naming the channel. It is
+- **Batch:** every message after the link's cursor up to the mention (paged through Discord's history 100 at a time;
+  a thread's first batch starts at the thread's start), oldest first, one `Name: text` paragraph each, the mention
+  written `@Pi`, under a header naming the channel and the count. At most the newest 200 go into the input; the header
+  says how many earlier ones were left out. It is
   one input of the session's main conversation by a guest author `Name · Discord` (entry kind `discord.batch`), queued
   as a follow-up when the session is busy. The cursor moves to the mention.
+- **Catch-up:** when a bot connects (p2 starting, a new token, a new gateway session after an outage), it reads each of
+  its links and their known threads after the cursor; the newest mention there by someone allowed to wake Pi delivers
+  as if it had just arrived (one delivery per channel or thread, the messages before it included). Its events and live
+  messages are handled one at a time, and a mention at or before the cursor never delivers twice. Threads created
+  while p2 was down are not searched.
 - **Bots:** only the link's own bot listens; another bot mentioned in the same channel is ignored. A reply waits while
   its bot is not connected.
 - **Attachments:** each one up to 25 MiB (20 per batch) is downloaded by the worker into the session's uploads (source
