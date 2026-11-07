@@ -1,8 +1,7 @@
-// The discord plugin's server facet: the bot (its token in `<data>/discord.json`, 0600), the bindings of channels to
-// sessions with their cursors, threads and pending replies (persisted), the relay between them (relay.ts), and the
-// owner's `Discord` view. A session listens only while it works in a sandbox; binding it locks it to the picked
-// resources, and unbinding its last channel lifts the lock.
-import { chmod, rename, writeFile } from "node:fs/promises";
+// The discord plugin's server facet: the owner's bots (fleet.ts, tokens in `<data>/discord.json`), the links of
+// sessions to channels with their cursors, threads and pending replies (persisted), the relay between them (relay.ts),
+// and the owner's `Discord` view. Linking moves the session into a sandbox and locks it to the picked resources;
+// unlinking lifts the lock.
 import { join } from "node:path";
 import { obj } from "@earendil-works/pi-schema";
 import {
@@ -23,16 +22,24 @@ import { optionalText, stripJsonComments } from "@p2/app/v1/node";
 import { Server, serverOf } from "@p2/app/v1/server";
 import { EnvService } from "../envs/contract.ts";
 import { isSandbox } from "../envs/schema.ts";
-import { Catalog, SessionLocks } from "../sessions/contract.ts";
+import { Catalog, SessionLocks, SessionMoves } from "../sessions/contract.ts";
 import { StatusStore } from "../status/contract.ts";
-import { Bot } from "./bot.ts";
 import { BindingSchema, Discord, DiscordIngress, DiscordStore, PendingSchema } from "./contract.ts";
+import { FIRST_BOT, Fleet } from "./fleet.ts";
 import { Relay, type RelayState, type SessionPort } from "./relay.ts";
 
 const State = defineState("p2.discord-bindings", {
 	schema: obj({ bindings: record(BindingSchema), pending: record(PendingSchema) }),
-	version: 1,
+	// 2: several bots; links and pending replies name theirs (the first release's one bot is `FIRST_BOT`).
+	version: 2,
 	initial: () => ({ bindings: {}, pending: {} }),
+	migrate: (old, from) => {
+		if (from !== 1) throw new Error(`Unknown p2.discord-bindings version ${from}`);
+		const value = old as { bindings: Record<string, object>; pending: Record<string, object> };
+		const named = (entries: Record<string, object>) =>
+			Object.fromEntries(Object.entries(entries).map(([key, entry]) => [key, { ...entry, botId: FIRST_BOT }]));
+		return { bindings: named(value.bindings), pending: named(value.pending) } as never;
+	},
 	persist: true,
 	checkpointWhen: () => true,
 });
@@ -47,16 +54,12 @@ export default defineFacet((host) => {
 		const catalog = self.get(Catalog, {});
 		const envs = self.get(EnvService, {});
 		const locks = self.get(SessionLocks, {});
+		const moves = self.get(SessionMoves, {});
 		const statuses = self.get(StatusStore, {});
 		const state = self.state(State);
 		const dataDir = () => server.info.value.dataDir;
-		const bot = self.open(
-			async () => {
-				const opened = new Bot();
-				// Connecting runs in the background: a refused token shows in the status, never fails the store.
-				void opened.connect(await readToken(join(dataDir(), "discord.json")));
-				return opened;
-			},
+		const fleet = self.open(
+			() => Fleet.open(dataDir()),
 			(opened) => opened.close(),
 		);
 		/** The context of the store's live loop: replies, deliveries and state changes run under it. */
@@ -88,18 +91,20 @@ export default defineFacet((host) => {
 			turn: (session, submissionId) => ingress(session, (worker, ctx) => worker.turn({ submissionId }, ctx)),
 			thread: (session, name, before) => ingress(session, (worker, ctx) => worker.thread({ name, before }, ctx)),
 		};
-		const relay = new Relay(() => (bot.value.client?.isReady() ? bot.value : undefined), sessions, {
+		const relay = new Relay((bot) => fleet.value.connected(bot), sessions, {
 			// The state's drafts are the same JSON as the relay's plain records.
 			value: () => state.value as RelayState,
 			change: (update) => state.change((draft) => update(draft as RelayState), during()),
 		});
 		self.onLive(async (ctx) => {
 			live = ctx;
-			// Messages one at a time, in the order Discord sent them.
+			// Messages one at a time, in the order the bots received them.
 			for (;;) {
-				const message = await bot.value.next(signalOf(ctx));
-				if (!message) return;
-				await relay.onMessage(message).catch((error: unknown) => console.error("p2 discord:", errorText(error)));
+				const received = await fleet.value.next(signalOf(ctx));
+				if (!received) return;
+				await relay
+					.onMessage(received.bot, received.message)
+					.catch((error: unknown) => console.error("p2 discord:", errorText(error)));
 			}
 		});
 		self.onLive(async (ctx) => {
@@ -123,78 +128,81 @@ export default defineFacet((host) => {
 			if (live && changed.size && Object.keys(state.value.pending).length)
 				await relay.checkPending(changed).catch((error: unknown) => console.error("p2 discord:", errorText(error)));
 		});
-		/** Lifts `session`'s lock once no channel is bound to it. */
-		const unlockUnbound = async (session: string, ctx: Ctx): Promise<void> => {
-			if (!Object.values(state.value.bindings).some((other) => other.session === session))
-				await locks.set({ session, lock: null }, ctx);
+		const connected = (bot: string) => {
+			const found = fleet.value.connected(bot);
+			if (!found) throw new Error("The Discord bot is not connected");
+			return found;
 		};
-		const connected = () => {
-			const client = bot.value.client;
-			if (!client?.isReady()) throw new Error("The Discord bot is not connected");
-			return bot.value;
+		/** Drops `session`'s link and lifts its lock. */
+		const unlink = async (session: string, ctx: Ctx): Promise<void> => {
+			await state.change((draft) => {
+				for (const [channel, binding] of Object.entries(draft.bindings))
+					if (binding.session === session) delete draft.bindings[channel];
+			}, ctx);
+			await locks.set({ session, lock: null }, ctx);
 		};
 		return {
-			status: followNative(
+			bots: followNative(
 				self,
-				(changed) => bot.value.subscribe(changed),
-				() => bot.value.status,
+				(changed) => fleet.value.subscribe(changed),
+				() => fleet.value.views(),
 			),
 			bindings: deriveTyped(self, [state], ([value]) =>
 				Object.values(value.bindings).sort((a, b) => a.createdAt - b.createdAt),
 			),
-			setToken: async ({ token }) => {
-				await writeToken(join(dataDir(), "discord.json"), token);
-				void bot.value.connect(token ?? undefined);
+			addBot: async ({ token }) => ({ id: await fleet.value.add(token) }),
+			setBotToken: async ({ bot, token }) => {
+				await fleet.value.setToken(bot, token);
 				return null;
 			},
-			channels: () => connected().channels(),
+			removeBot: async ({ bot }, ctx) => {
+				for (const binding of Object.values(state.value.bindings))
+					if (binding.botId === bot) await unlink(binding.session, ctx);
+				await fleet.value.remove(bot);
+				return null;
+			},
+			server: ({ bot, guild }) => connected(bot).server(guild),
 			mcpServers: async () => {
 				const text = await optionalText(join(dataDir(), "mcp.json"));
 				return text ? mcpServerNames(text) : [];
 			},
-			bind: async ({ channelId, session, wake, from, lock }, ctx) => {
-				const channel = await connected().channel(channelId);
-				if (channel.thread) throw new Error("Bind the channel; its threads follow it");
-				const refusal = await usable(session);
-				if (refusal) throw new Error(`Cannot bind: ${refusal.replace(/^its /, "the ")}`);
-				const previous = state.value.bindings[channelId]?.session;
+			link: async ({ session, bot, guild, channel: channelId, wake, sandbox, lock }, ctx) => {
+				const bindings = Object.values(state.value.bindings);
+				if (bindings.some((binding) => binding.session === session))
+					throw new Error("This session is linked already: unlink it first");
+				if (state.value.bindings[channelId]) throw new Error("This channel is linked to another session");
+				const config = envs.configs.value[sandbox];
+				if (config?.type !== "gondolin") throw new Error(`No sandbox ${sandbox}`);
+				const row = catalog.sessions.value.find((entry) => entry.id === session);
+				if (!row || row.archivedAt !== null) throw new Error("No such session");
+				const channel = await connected(bot).channel(channelId);
+				if (channel.thread || channel.guildId !== guild) throw new Error("Pick a channel of the server");
+				// As the owner's Relocate: the session works in the sandbox from now on, and cannot leave it.
+				if (row.env !== sandbox) {
+					const cwd = config.mounts?.[0]?.guest ?? "/root";
+					const { refused } = await moves.relocate({ id: session, cwd, env: sandbox }, ctx);
+					if (refused) throw new Error(`The session could not move into ${sandbox}: ${refused}`);
+				}
 				await locks.set({ session, lock }, ctx);
 				await state.change((draft) => {
 					draft.bindings[channelId] = {
+						botId: bot,
 						channelId,
 						channelName: channel.name,
 						guildId: channel.guildId,
 						guildName: channel.guildName,
 						session,
 						wake,
-						cursor: from === "now" ? channel.lastMessageId : null,
+						// The first mention delivers what comes after linking.
+						cursor: channel.lastMessageId,
 						threads: {},
 						createdAt: Date.now(),
 					};
 				}, ctx);
-				if (previous && previous !== session) await unlockUnbound(previous, ctx);
 				return null;
 			},
-			setWake: async ({ channelId, wake }, ctx) => {
-				await state.change((draft) => {
-					const binding = draft.bindings[channelId];
-					if (!binding) throw new Error("This channel is not bound");
-					binding.wake = wake;
-				}, ctx);
-				return null;
-			},
-			unbind: async ({ channelId }, ctx) => {
-				const binding = state.value.bindings[channelId];
-				if (!binding) return null;
-				await state.change((draft) => {
-					delete draft.bindings[channelId];
-				}, ctx);
-				await unlockUnbound(binding.session, ctx);
-				return null;
-			},
-			deliverNow: async ({ channelId }) => {
-				connected();
-				await relay.deliverNow(channelId);
+			unlink: async ({ session }, ctx) => {
+				await unlink(session, ctx);
 				return null;
 			},
 		};
@@ -206,15 +214,15 @@ export default defineFacet((host) => {
 		return {
 			variant: "owner",
 			members: {
-				status: store.status,
+				bots: store.bots,
 				bindings: store.bindings,
-				setToken: (args, ctx) => store.setToken(args, ctx),
-				channels: (ctx) => store.channels(ctx),
+				addBot: (args, ctx) => store.addBot(args, ctx),
+				setBotToken: (args, ctx) => store.setBotToken(args, ctx),
+				removeBot: (args, ctx) => store.removeBot(args, ctx),
+				server: (args, ctx) => store.server(args, ctx),
 				mcpServers: (ctx) => store.mcpServers(ctx),
-				bind: (args, ctx) => store.bind(args, ctx),
-				setWake: (args, ctx) => store.setWake(args, ctx),
-				unbind: (args, ctx) => store.unbind(args, ctx),
-				deliverNow: (args, ctx) => store.deliverNow(args, ctx),
+				link: (args, ctx) => store.link(args, ctx),
+				unlink: (args, ctx) => store.unlink(args, ctx),
 			},
 		};
 	});
@@ -231,28 +239,4 @@ function mcpServerNames(text: string): string[] {
 	} catch {
 		return [];
 	}
-}
-
-/** The bot token from `discord.json` (`{ "token": "…" }`, a trust boundary: the owner may edit it), if any. */
-async function readToken(path: string): Promise<string | undefined> {
-	const text = await optionalText(path);
-	if (!text?.trim()) return undefined;
-	let value: unknown;
-	try {
-		value = JSON.parse(text);
-	} catch {
-		console.error("p2 discord: discord.json is not valid JSON; the bot stays off");
-		return undefined;
-	}
-	return value && typeof value === "object" && "token" in value && typeof value.token === "string" && value.token
-		? value.token
-		: undefined;
-}
-
-/** Writes `discord.json` (0600): the token, or none. */
-async function writeToken(path: string, token: string | null): Promise<void> {
-	const temporary = `${path}.${process.pid}.tmp`;
-	await writeFile(temporary, `${JSON.stringify(token ? { token } : {}, null, "\t")}\n`, { mode: 0o600 });
-	await chmod(temporary, 0o600);
-	await rename(temporary, path);
 }

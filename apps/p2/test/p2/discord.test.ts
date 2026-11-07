@@ -114,6 +114,7 @@ class FakeSessions implements SessionPort {
 
 function binding(patch: Partial<Binding> = {}): Binding {
 	return {
+		botId: "bot-a",
 		channelId: "c1",
 		channelName: "general",
 		guildId: "g1",
@@ -140,7 +141,9 @@ function setup(initial: Binding = binding()) {
 	});
 	const sessions = new FakeSessions();
 	let state: RelayState = { bindings: { [initial.channelId]: initial }, pending: {} };
-	const relay = new Relay(() => discord, sessions, {
+	// Bot "bot-a" is the link's; "bot-b" another bot in the same server; `offline` bots are not connected.
+	const offline = new Set<string>();
+	const relay = new Relay((bot) => (offline.has(bot) ? undefined : discord), sessions, {
 		value: () => state,
 		change: async (update) => {
 			const draft = structuredClone(state);
@@ -148,7 +151,7 @@ function setup(initial: Binding = binding()) {
 			state = draft;
 		},
 	});
-	return { discord, sessions, relay, state: () => state };
+	return { discord, sessions, relay, offline, state: () => state };
 }
 
 describe("discord relay", () => {
@@ -156,16 +159,16 @@ describe("discord relay", () => {
 		const { discord, sessions, relay, state } = setup();
 		discord.say("c1", message("before the bot"));
 		const stranger = discord.say("c1", message(`<@${BOT}> hi`, { author: { id: "u2", name: "Eve", bot: false } }));
-		await relay.onMessage(stranger);
+		await relay.onMessage("bot-a", stranger);
 		assert.equal(sessions.delivered.length, 0, "u2 may not wake Pi");
 		const bot = discord.say("c1", message(`<@${BOT}> I am a bot`, { author: { id: "u1", name: "Bot", bot: true } }));
-		await relay.onMessage(bot);
+		await relay.onMessage("bot-a", bot);
 		assert.equal(sessions.delivered.length, 0, "bots never wake Pi");
 		const byRole = discord.say(
 			"c1",
 			message(`<@${BOT}> what do you think?`, { author: { id: "u3", name: "Bo", bot: false }, roles: ["r1"] }),
 		);
-		await relay.onMessage(byRole);
+		await relay.onMessage("bot-a", byRole);
 		assert.equal(sessions.delivered.length, 1);
 		const input = sessions.delivered[0];
 		assert(input);
@@ -183,14 +186,14 @@ describe("discord relay", () => {
 		assert.deepEqual(discord.typed, ["c1"]);
 		// The next batch starts after the cursor.
 		const next = discord.say("c1", message(`<@${BOT}> and now?`));
-		await relay.onMessage(next);
+		await relay.onMessage("bot-a", next);
 		assert.deepEqual(sessions.delivered[1]?.text.split("\n").slice(1), ["Ada: @Pi and now?"]);
 	});
 
 	it("posts the answer once its turn ended, as a reply split at 2000 characters", async () => {
 		const { discord, sessions, relay, state } = setup();
 		const trigger = discord.say("c1", message(`<@${BOT}> long answer please`));
-		await relay.onMessage(trigger);
+		await relay.onMessage("bot-a", trigger);
 		await relay.checkPending();
 		assert.equal(discord.posted.length, 0, "still pending");
 		const answer = `${"word ".repeat(500)}\n${"more ".repeat(300)}`;
@@ -215,12 +218,12 @@ describe("discord relay", () => {
 
 	it("says why when a turn ends without an answer, or never ends", async () => {
 		const { discord, sessions, relay, state } = setup();
-		await relay.onMessage(discord.say("c1", message(`<@${BOT}> one`)));
+		await relay.onMessage("bot-a", discord.say("c1", message(`<@${BOT}> one`)));
 		sessions.turns.set(1, { state: "unanswered", reason: "The model failed." });
 		await relay.checkPending();
 		assert.equal(discord.posted.at(-1)?.text, "(No answer: The model failed.)");
 		const trigger = discord.say("c1", message(`<@${BOT}> two`));
-		await relay.onMessage(trigger);
+		await relay.onMessage("bot-a", trigger);
 		const pending = state().pending[trigger.id];
 		assert(pending);
 		pending.since -= PENDING_TIMEOUT_MS + 1;
@@ -232,7 +235,7 @@ describe("discord relay", () => {
 		const { discord, sessions, relay, state } = setup();
 		sessions.refusal = "its p2 session does not work in a sandbox.";
 		const trigger = discord.say("c1", message(`<@${BOT}> hello`));
-		await relay.onMessage(trigger);
+		await relay.onMessage("bot-a", trigger);
 		assert.equal(sessions.delivered.length, 0);
 		assert.match(
 			discord.posted[0]?.text ?? "",
@@ -245,7 +248,7 @@ describe("discord relay", () => {
 		const { discord, sessions, relay, state } = setup(binding({ cursor: "1" }));
 		discord.say("t1", message("thread opener"));
 		const first = discord.say("t1", message(`<@${BOT}> plan it`));
-		await relay.onMessage(first);
+		await relay.onMessage("bot-a", first);
 		assert.deepEqual(sessions.threads, [{ name: "Release plan", before: 5_000 }]);
 		assert.equal(sessions.delivered[0]?.conversation, 41);
 		assert.equal(sessions.delivered[0]?.context.thread, "Release plan");
@@ -257,7 +260,7 @@ describe("discord relay", () => {
 		assert.deepEqual(state().bindings.c1?.threads.t1, { conversation: 41, name: "Release plan", cursor: first.id });
 		assert.equal(state().bindings.c1?.cursor, "1", "the channel's cursor is the channel's own");
 		const second = discord.say("t1", message(`<@${BOT}> next step`));
-		await relay.onMessage(second);
+		await relay.onMessage("bot-a", second);
 		assert.equal(sessions.threads.length, 1, "one subagent per thread");
 		assert.equal(sessions.delivered[1]?.conversation, 41);
 		sessions.turns.set(1, { state: "answered", text: "Plan." });
@@ -265,12 +268,22 @@ describe("discord relay", () => {
 		assert.deepEqual(discord.posted[0], { channel: "t1", replyTo: first.id, text: "Plan." });
 	});
 
-	it("delivers now without a mention, and refuses when nothing is new", async () => {
-		const { discord, sessions, relay } = setup();
-		discord.say("c1", message("no mention"));
-		await relay.deliverNow("c1");
-		assert.deepEqual(sessions.delivered[0]?.text.split("\n").slice(1), ["Ada: no mention"]);
-		await assert.rejects(relay.deliverNow("c1"), /No new messages/);
+	it("listens only through the link's own bot; a reply waits while its bot is not connected", async () => {
+		const { discord, sessions, relay, offline, state } = setup();
+		const other = discord.say("c1", message(`<@${BOT}> hello`));
+		await relay.onMessage("bot-b", other);
+		assert.equal(sessions.delivered.length, 0, "another bot's mention");
+		const trigger = discord.say("c1", message(`<@${BOT}> hello again`));
+		await relay.onMessage("bot-a", trigger);
+		assert.equal(state().pending[trigger.id]?.botId, "bot-a");
+		sessions.turns.set(1, { state: "answered", text: "Hi." });
+		offline.add("bot-a");
+		await relay.checkPending();
+		assert.equal(discord.posted.length, 0);
+		assert(state().pending[trigger.id], "kept for later");
+		offline.delete("bot-a");
+		await relay.checkPending();
+		assert.deepEqual(discord.posted, [{ channel: "c1", replyTo: trigger.id, text: "Hi." }]);
 	});
 
 	it("downloads attachments up to 25 MiB (20 at most) and lists larger ones as links", () => {

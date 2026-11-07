@@ -1,6 +1,6 @@
-// What happens between a Discord channel and its bound session (server): a mention by someone allowed to wake Pi
-// delivers the messages since the binding's cursor (a thread's: to its forked subagent) as one input; a pending reply
-// is posted once its turn ended. Plain logic over ports, so tests run it with a fake Discord and a fake session.
+// What happens between a Discord channel and its linked session (server): a mention by someone allowed to wake Pi, seen
+// by the link's bot, delivers the messages since the link's cursor (a thread's: to its forked subagent) as one input; a
+// pending reply is posted once its turn ended. Plain logic over ports, so tests run it with fake bots and sessions.
 import type { SessionLock } from "@p2/app/v1";
 import type { Binding, Pending, Wake } from "./contract.ts";
 
@@ -85,28 +85,32 @@ const MAX_FILES = 20;
 export const PENDING_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 export class Relay {
-	readonly #discord: () => DiscordPort | undefined;
+	readonly #discord: (bot: string) => DiscordPort | undefined;
 	/** Pending replies being checked: two checks at once would post one reply twice. */
 	readonly #checking = new Set<string>();
 	readonly #sessions: SessionPort;
 	readonly #state: StatePort;
 
-	constructor(discord: () => DiscordPort | undefined, sessions: SessionPort, state: StatePort) {
+	/** `discord`: bot `bot` while it is connected. */
+	constructor(discord: (bot: string) => DiscordPort | undefined, sessions: SessionPort, state: StatePort) {
 		this.#discord = discord;
 		this.#sessions = sessions;
 		this.#state = state;
 	}
 
-	#port(): DiscordPort {
-		const port = this.#discord();
+	#port(bot: string): DiscordPort {
+		const port = this.#discord(bot);
 		if (!port) throw new Error("The Discord bot is not connected");
 		return port;
 	}
 
-	/** A received message: a mention by someone allowed to wake Pi in a bound channel (or a thread of one) delivers. */
-	async onMessage(message: DiscordMessage): Promise<void> {
+	/**
+	 * A message bot `bot` received: a mention of it by someone allowed to wake Pi, in a channel linked through it (or a
+	 * thread of one), delivers.
+	 */
+	async onMessage(bot: string, message: DiscordMessage): Promise<void> {
 		if (message.author.bot || !message.mentionsBot) return;
-		const port = this.#port();
+		const port = this.#port(bot);
 		const { bindings } = this.#state.value();
 		let binding = bindings[message.channelId];
 		let thread: DiscordChannel | undefined;
@@ -117,19 +121,9 @@ export class Relay {
 			if (!binding) return;
 			thread = channel;
 		}
-		if (!mayWake(binding.wake, message.author.id, message.roles)) return;
+		// Another bot in the channel may be mentioned too: only the link's own bot listens.
+		if (binding.botId !== bot || !mayWake(binding.wake, message.author.id, message.roles)) return;
 		await this.deliver(binding.channelId, message, thread);
-	}
-
-	/** Delivers what came since the cursor, as if the newest message had mentioned Pi. */
-	async deliverNow(channelId: string): Promise<void> {
-		const port = this.#port();
-		const binding = this.#state.value().bindings[channelId];
-		if (!binding) throw new Error("This channel is not bound");
-		const [newest] = (await port.messages(channelId, { limit: 1 })).filter((message) => !message.author.bot);
-		if (!newest) throw new Error("No messages to deliver");
-		if (binding.cursor !== null && BigInt(newest.id) <= BigInt(binding.cursor)) throw new Error("No new messages");
-		await this.deliver(channelId, newest, undefined);
 	}
 
 	/**
@@ -137,9 +131,9 @@ export class Relay {
 	 * then advances the cursor and records the pending reply. A session that cannot take it gets a notice instead.
 	 */
 	async deliver(channelId: string, trigger: DiscordMessage, thread: DiscordChannel | undefined): Promise<void> {
-		const port = this.#port();
 		const binding = this.#state.value().bindings[channelId];
 		if (!binding) return;
+		const port = this.#port(binding.botId);
 		const where = thread?.id ?? channelId;
 		const refusal = await this.#sessions.usable(binding.session);
 		if (refusal) return port.reply(where, trigger.id, `Pi is not listening here right now: ${refusal}`);
@@ -207,6 +201,7 @@ export class Relay {
 				if (known) known.cursor = trigger.id;
 			} else current.cursor = trigger.id;
 			draft.pending[trigger.id] = {
+				botId: binding.botId,
 				session: binding.session,
 				channelId,
 				replyChannelId: where,
@@ -220,11 +215,12 @@ export class Relay {
 
 	/** Posts the replies of the turns that ended (`sessions`: only those, when given); answers split at 2000. */
 	async checkPending(sessions?: ReadonlySet<string>): Promise<void> {
-		const port = this.#discord();
-		if (!port) return;
 		const now = Date.now();
 		for (const pending of Object.values(this.#state.value().pending)) {
 			if ((sessions && !sessions.has(pending.session)) || this.#checking.has(pending.messageId)) continue;
+			// A bot that is not connected (or was removed) keeps its replies until it is, or they time out.
+			const port = this.#discord(pending.botId);
+			if (!port && now - pending.since < PENDING_TIMEOUT_MS) continue;
 			this.#checking.add(pending.messageId);
 			try {
 				await this.#check(port, pending, now);
@@ -234,7 +230,7 @@ export class Relay {
 		}
 	}
 
-	async #check(port: DiscordPort, pending: Pending, now: number): Promise<void> {
+	async #check(port: DiscordPort | undefined, pending: Pending, now: number): Promise<void> {
 		let turn: TurnState;
 		try {
 			turn = await this.#sessions.turn(pending.session, pending.submissionId);
@@ -249,6 +245,7 @@ export class Relay {
 		}
 		const text = turn.state === "answered" ? turn.text : `(No answer: ${turn.reason})`;
 		try {
+			if (!port) throw new Error("its bot is not connected");
 			for (const [index, chunk] of chunkText(text).entries())
 				await port.reply(pending.replyChannelId, index === 0 ? pending.messageId : undefined, chunk);
 		} catch (error) {
@@ -262,14 +259,13 @@ export class Relay {
 
 	/** "Pi is typing" in every channel with a pending reply whose session works. */
 	async typing(): Promise<void> {
-		const port = this.#discord();
-		if (!port) return;
-		const channels = new Set(
-			Object.values(this.#state.value().pending)
-				.filter((pending) => this.#sessions.working(pending.session))
-				.map((pending) => pending.replyChannelId),
-		);
-		for (const channel of channels) await port.typing(channel).catch(() => {});
+		const channels = new Map<string, string>();
+		for (const pending of Object.values(this.#state.value().pending))
+			if (this.#sessions.working(pending.session)) channels.set(pending.replyChannelId, pending.botId);
+		for (const [channel, bot] of channels)
+			await this.#discord(bot)
+				?.typing(channel)
+				.catch(() => {});
 	}
 }
 

@@ -1,6 +1,6 @@
-// Pi on Discord (browser-safe contracts): a bot on the p2 server listens to bound channels; a mention by someone
-// allowed to wake Pi delivers the messages since the binding's cursor to the bound session as one input, and the
-// session's answer goes back as a reply. A thread of a bound channel gets a subagent forked from the main conversation.
+// Pi on Discord (browser-safe contracts): the owner's bots run on the p2 server; a session linked to a channel through
+// one of them gets, at a mention by someone allowed to wake Pi, the messages since the link's cursor as one input, and
+// its answer goes back as a reply. A thread of a linked channel gets a subagent forked from the main conversation.
 import { arr, bool, int, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
 import {
 	literal,
@@ -26,15 +26,17 @@ export const WakeSchema = obj({
 });
 export type Wake = Static<typeof WakeSchema>;
 
-/** A Discord thread of a bound channel: its subagent conversation and its own cursor. */
+/** A Discord thread of a linked channel: its subagent conversation and its own cursor. */
 export const ThreadBindingSchema = obj({
 	conversation: int({ minimum: 1 }),
 	name: str(),
 	cursor: union([str(), nul()]),
 });
 
-/** One channel bound to one session. */
+/** One channel linked to one session, through one bot. A session has at most one, a channel at most one. */
 export const BindingSchema = obj({
+	/** The bot that listens (an ID of `discord.json`'s bots). */
+	botId: str(),
 	channelId: str(),
 	channelName: str(),
 	guildId: str(),
@@ -50,6 +52,7 @@ export type Binding = Static<typeof BindingSchema>;
 
 /** A delivered batch waiting for its turn's answer, to go back as a reply to the message that woke Pi. */
 export const PendingSchema = obj({
+	botId: str(),
 	session: str(),
 	/** The binding's channel (the reply goes to `replyChannelId`: the channel, or a thread of it). */
 	channelId: str(),
@@ -60,67 +63,91 @@ export const PendingSchema = obj({
 });
 export type Pending = Static<typeof PendingSchema>;
 
-/** The bot's connection as the owner sees it. */
+/** A Discord server (guild). */
+export const GuildSchema = obj({ id: str(), name: str() });
+export type Guild = Static<typeof GuildSchema>;
+
+/** A bot's connection as the owner sees it. */
 export const BotStatusSchema = union([
-	obj({ state: literal("off") }),
 	obj({ state: literal("connecting") }),
 	obj({ state: literal("error"), error: str() }),
 	obj({
 		state: literal("connected"),
 		user: str(),
 		applicationId: str(),
+		avatarUrl: opt(str()),
 		inviteUrl: str(),
-		guilds: arr(obj({ id: str(), name: str() })),
+		guilds: arr(GuildSchema),
 	}),
 ]);
 export type BotStatus = Static<typeof BotStatusSchema>;
 
-export const ChannelSchema = obj({ id: str(), name: str(), guildId: str(), guildName: str() });
-export type Channel = Static<typeof ChannelSchema>;
+/** One configured bot: its ID (stable, p2's own) and its connection. */
+export const BotSchema = obj({ id: str(), status: BotStatusSchema });
+export type BotView = Static<typeof BotSchema>;
 
-/** What binding a channel takes: the session, who may wake Pi, where its first batch starts, and the session's lock. */
-export const BindSchema = obj({
-	channelId: str(),
+/** A Discord server's text channels and roles, as the link form picks them. */
+export const ServerDetailsSchema = obj({
+	channels: arr(obj({ id: str(), name: str() })),
+	roles: arr(obj({ id: str(), name: str() })),
+});
+export type ServerDetails = Static<typeof ServerDetailsSchema>;
+
+/**
+ * Linking a session to a channel: the bot and channel, who may wake Pi, the sandbox the session moves into (where it
+ * works from then on), and its lock (the resources it may use).
+ */
+export const LinkSchema = obj({
 	session: str(),
+	bot: str(),
+	guild: str(),
+	channel: str(),
 	wake: WakeSchema,
-	/** `now`: after the channel's newest message; `last50`: the first mention delivers the last 50. */
-	from: union([literal("now"), literal("last50")]),
+	sandbox: str(),
 	lock: SessionLockSchema,
 });
-export type Bind = Static<typeof BindSchema>;
+export type Link = Static<typeof LinkSchema>;
 
-/** The owner's methods on the bot and its bindings (the store serves them; the owner's view forwards them). */
+const Token = str({ minLength: 10, maxLength: 200 });
+
+/** The owner's methods on bots and links (the store serves them; the owner's view forwards them). */
 const OWNER_METHODS = {
-	/** Saves the bot token (null removes the bot) and connects with it. */
-	setToken: method(obj({ token: union([str({ minLength: 10, maxLength: 200 }), nul()]) })),
-	/** The text channels the bot sees. */
-	channels: method(undefined, arr(ChannelSchema)),
+	/** Connects a new bot with `token` and keeps it: its ID; refused with Discord's reason (nothing kept). */
+	addBot: method(obj({ token: Token }), obj({ id: str() })),
+	/** Connects bot `bot` with a new token, kept once Discord accepts it. */
+	setBotToken: method(obj({ bot: str(), token: Token })),
+	/** Removes bot `bot`; its sessions are unlinked (and unlocked). */
+	removeBot: method(obj({ bot: str() })),
+	/** The text channels and roles of server `guild`, as bot `bot` sees them. */
+	server: method(obj({ bot: str(), guild: str() }), ServerDetailsSchema),
 	/** The MCP servers of mcp.json, for the lock's picks. */
 	mcpServers: method(undefined, arr(str())),
-	/** Binds a channel to a session, which must work in a sandbox, and locks the session (replacing its binding). */
-	bind: method(BindSchema),
-	/** Changes who may wake Pi in a bound channel. */
-	setWake: method(obj({ channelId: str(), wake: WakeSchema })),
-	/** Stops listening: the binding goes, and the session's lock with its last binding. */
-	unbind: method(obj({ channelId: str() })),
-	/** Delivers the messages since the cursor now, as if the newest one had mentioned Pi. */
-	deliverNow: method(obj({ channelId: str() })),
+	/**
+	 * Links a session to a channel: moves it into the sandbox (as Relocate does), locks it, and listens. Refused when
+	 * the session or the channel is linked already, or the move is refused (a busy session).
+	 */
+	link: method(LinkSchema),
+	/** Stops listening for `session`, and lifts its lock. */
+	unlink: method(obj({ session: str() })),
 };
 
-/** The bot, its bindings and the relay between Discord and sessions (server, host-internal, host lifetime). */
+/** The bots, the links and the relay between Discord and sessions (server, host-internal, host lifetime). */
 export const DiscordStore = local("p2.discord-store", {
-	version: 1,
+	version: 2,
 	params: {},
-	members: { status: BotStatusSchema, bindings: arr(BindingSchema), ...OWNER_METHODS },
+	members: { bots: arr(BotSchema), bindings: arr(BindingSchema), ...OWNER_METHODS },
 });
 
-/** The owner's Discord sheet: the bot, its bindings, and binding channels to sessions. */
+/**
+ * The owner's bots and links. 2: several bots, links made from a session (v1 lived a day on the owner's own device
+ * only; its pages bind again after a reload, no `accepts` kept).
+ */
 export const Discord = remote("p2.discord", {
-	version: 1,
+	version: 2,
 	params: {},
 	hostAddress: serverHost,
 	variants: {
-		owner: { state: { status: BotStatusSchema, bindings: arr(BindingSchema) }, methods: OWNER_METHODS },
+		owner: { state: { bots: arr(BotSchema), bindings: arr(BindingSchema) }, methods: OWNER_METHODS },
 	},
 });
 

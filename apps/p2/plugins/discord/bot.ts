@@ -1,6 +1,6 @@
-// The Discord bot (server, a native of `DiscordStore`): a discord.js client logged in with the owner's token, its
-// status, and the messages it receives queued for the store's routine, behind `DiscordPort` (what the relay uses; tests
-// give it a fake).
+// One Discord bot (server, part of `DiscordStore`'s fleet): a discord.js client logged in with one of the owner's
+// tokens, its status (identity and servers, live), and the messages it receives handed to its owner; behind
+// `DiscordPort`, what the relay uses (tests give it a fake).
 import {
 	ChannelType,
 	Client,
@@ -10,19 +10,27 @@ import {
 	Partials,
 	type TextBasedChannel,
 } from "discord.js";
-import type { BotStatus, Channel } from "./contract.ts";
+import type { BotStatus, ServerDetails } from "./contract.ts";
 import type { DiscordChannel, DiscordMessage, DiscordPort } from "./relay.ts";
 
 /** The bot's permissions in the invite: view channels, send (also in threads), embed links, attach files, history. */
 const PERMISSIONS = (1n << 10n) | (1n << 11n) | (1n << 14n) | (1n << 15n) | (1n << 16n) | (1n << 38n);
 
+/** How long a bot that could not reach Discord waits before it tries again (a refused token or intent never does). */
+const RETRY_MS = 60_000;
+
 export class Bot implements DiscordPort {
 	client: Client | undefined;
-	status: BotStatus = { state: "off" };
+	status: BotStatus = { state: "connecting" };
 	readonly #listeners = new Set<() => void>();
-	readonly #queue: DiscordMessage[] = [];
-	readonly #waiters = new Set<() => void>();
+	readonly #onMessage: (message: DiscordMessage) => void;
 	#generation = 0;
+	#retry: ReturnType<typeof setTimeout> | undefined;
+
+	/** A bot that hands what it receives (never its own messages) to `onMessage`. */
+	constructor(onMessage: (message: DiscordMessage) => void) {
+		this.#onMessage = onMessage;
+	}
 
 	subscribe(listener: () => void): () => void {
 		this.#listeners.add(listener);
@@ -34,13 +42,16 @@ export class Bot implements DiscordPort {
 		for (const listener of [...this.#listeners]) listener();
 	}
 
-	/** Connects with `token` (undefined: disconnects), replacing a connection. */
-	async connect(token: string | undefined): Promise<void> {
+	/**
+	 * Connects with `token`, replacing a connection: its status once Discord accepted or refused it. A failure to reach
+	 * Discord is tried again every minute (the status says why meanwhile).
+	 */
+	async connect(token: string): Promise<BotStatus> {
 		const generation = ++this.#generation;
+		clearTimeout(this.#retry);
 		const previous = this.client;
 		this.client = undefined;
 		if (previous) await previous.destroy().catch(() => {});
-		if (!token) return this.#set({ state: "off" });
 		this.#set({ state: "connecting" });
 		const client = new Client({
 			intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
@@ -48,8 +59,7 @@ export class Bot implements DiscordPort {
 		});
 		client.on(Events.MessageCreate, (message) => {
 			if (generation !== this.#generation || message.author.id === client.user?.id) return;
-			this.#queue.push(messageOf(message, client.user?.id ?? ""));
-			for (const wake of [...this.#waiters]) wake();
+			this.#onMessage(messageOf(message, client.user?.id ?? ""));
 		});
 		const ready = new Promise<void>((resolve) => client.once(Events.ClientReady, () => resolve()));
 		const refresh = () => {
@@ -67,38 +77,20 @@ export class Bot implements DiscordPort {
 			await client.application?.fetch();
 		} catch (error) {
 			await client.destroy().catch(() => {});
-			if (generation !== this.#generation) return;
+			if (generation !== this.#generation) return this.status;
 			const message = error instanceof Error ? error.message : String(error);
-			return this.#set({
-				state: "error",
-				error: message.includes("disallowed intents")
-					? 'Discord refused the Message Content intent: turn on "Message Content Intent" under Bot in the Discord Developer Portal, then connect again.'
-					: message.includes("invalid token") || message.includes("TokenInvalid")
-						? "Discord refused the token."
-						: message,
-			});
+			const refused = refusal(message);
+			if (!refused) this.#retry = setTimeout(() => void this.connect(token), RETRY_MS);
+			this.#set({ state: "error", error: refused ?? `Could not reach Discord: ${message}` });
+			return this.status;
 		}
-		if (generation !== this.#generation) return void client.destroy();
+		if (generation !== this.#generation) {
+			await client.destroy().catch(() => {});
+			return this.status;
+		}
 		this.client = client;
 		if (client.isReady()) this.#set(connected(client));
-	}
-
-	/** The next received message, or undefined when `signal` aborts. */
-	async next(signal: AbortSignal): Promise<DiscordMessage | undefined> {
-		while (!signal.aborted) {
-			const message = this.#queue.shift();
-			if (message) return message;
-			await new Promise<void>((resolve) => {
-				const wake = () => {
-					this.#waiters.delete(wake);
-					signal.removeEventListener("abort", wake);
-					resolve();
-				};
-				this.#waiters.add(wake);
-				signal.addEventListener("abort", wake, { once: true });
-			});
-		}
-		return undefined;
+		return this.status;
 	}
 
 	#client(): Client<true> {
@@ -151,16 +143,23 @@ export class Bot implements DiscordPort {
 		if ("sendTyping" in channel) await channel.sendTyping();
 	}
 
-	async channels(): Promise<Channel[]> {
-		const client = this.#client();
-		const channels: Channel[] = [];
-		for (const guild of client.guilds.cache.values()) {
-			const all = await guild.channels.fetch();
-			for (const channel of all.values())
-				if (channel && (channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement))
-					channels.push({ id: channel.id, name: channel.name, guildId: guild.id, guildName: guild.name });
-		}
-		return channels.sort((a, b) => a.guildName.localeCompare(b.guildName) || a.name.localeCompare(b.name));
+	/** Server `guildId`'s text channels and roles (without @everyone), by name. */
+	async server(guildId: string): Promise<ServerDetails> {
+		const guild = await this.#client().guilds.fetch(guildId);
+		const [channels, roles] = await Promise.all([guild.channels.fetch(), guild.roles.fetch()]);
+		return {
+			channels: [...channels.values()]
+				.flatMap((channel) =>
+					channel && (channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement)
+						? [{ id: channel.id, name: channel.name }]
+						: [],
+				)
+				.sort((a, b) => a.name.localeCompare(b.name)),
+			roles: [...roles.values()]
+				.filter((role) => role.id !== guild.id && !role.managed)
+				.map((role) => ({ id: role.id, name: role.name }))
+				.sort((a, b) => a.name.localeCompare(b.name)),
+		};
 	}
 
 	async #text(id: string): Promise<TextBasedChannel> {
@@ -171,6 +170,7 @@ export class Bot implements DiscordPort {
 
 	async close(): Promise<void> {
 		this.#generation++;
+		clearTimeout(this.#retry);
 		await this.client?.destroy().catch(() => {});
 		this.client = undefined;
 	}
@@ -182,9 +182,18 @@ function connected(client: Client<true>): BotStatus {
 		state: "connected",
 		user: client.user.tag,
 		applicationId,
+		...(client.user.avatar ? { avatarUrl: client.user.displayAvatarURL({ size: 64 }) } : {}),
 		inviteUrl: `https://discord.com/oauth2/authorize?client_id=${applicationId}&scope=bot&permissions=${PERMISSIONS}`,
 		guilds: [...client.guilds.cache.values()].map((guild) => ({ id: guild.id, name: guild.name })),
 	};
+}
+
+/** Why Discord refused a login, in the owner's words; undefined for other failures (worth trying again). */
+function refusal(message: string): string | undefined {
+	if (message.includes("disallowed intents"))
+		return 'Discord refused the Message Content intent: turn on "Message Content Intent" under Bot in the Discord Developer Portal, then connect again.';
+	if (message.includes("invalid token") || message.includes("TokenInvalid")) return "Discord refused the token.";
+	return undefined;
 }
 
 /** A discord.js message as the relay reads it. */

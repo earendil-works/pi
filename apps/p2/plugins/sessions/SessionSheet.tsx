@@ -1,4 +1,4 @@
-import { ChevronIcon, locationLabel, Sheet } from "@p2/app/v1/web";
+import { ChevronIcon, locationLabel, Sheet, SlotList } from "@p2/app/v1/web";
 import { useState } from "react";
 import type { Session } from "./contract.ts";
 
@@ -70,6 +70,8 @@ export function SessionSheet({
 						{reindex?.phase === "failed" && <small className="row-value error">{reindex.error}</small>}
 					</button>
 				)}
+				{/* Plugins' rows for the session (`session-rows:<name>`, e.g. Discord): they read it from the route. */}
+				<SlotList prefix="session-rows" />
 				<button type="button" className="row-button danger" onClick={onArchive}>
 					<span>Archive</span>
 				</button>

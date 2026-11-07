@@ -75,8 +75,8 @@ registered callback URL is unchanged.
 and at most 16 KiB; they are stored privately under `<data>/ssh/keys/`, never returned to a browser. Key generation
 and fetching an existing public key are available to every owner too, never guests. See [remote environments](docs/remote-envs.md).
 
-**Discord** (sidebar → More) connects a bot: people in a bound channel wake a sandboxed, locked session by mentioning
-it, and its answers come back as replies. See [Pi on Discord](docs/discord.md).
+**Discord** (sidebar → More) sets up bots; a session's sheet → Discord links it to a channel: people there wake the
+sandboxed, locked session by mentioning the bot, and its answers come back as replies. See [Pi on Discord](docs/discord.md).
 
 API keys, pasted login codes and uploaded SSH keys pass through your tunnel or relay. Use a trusted transport.
 Keep the data directory, owner-key/tokens/revocations, provider credentials and SSH keys private; never commit them.
