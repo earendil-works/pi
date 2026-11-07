@@ -15,10 +15,11 @@ import {
 	PencilIcon,
 	RefreshIcon,
 	SearchIcon,
+	SparkIcon,
 	TerminalIcon,
 	ToolIcon,
 } from "../icons.tsx";
-import { GroupDetail, StepDetail } from "./Detail.tsx";
+import { DetailProse, GroupDetail, StepDetail } from "./Detail.tsx";
 import {
 	argumentOf,
 	type ChatItem,
@@ -27,8 +28,10 @@ import {
 	groupCalls,
 	type Kind,
 	type Label,
-	type Step,
+	plainText,
+	sentence,
 	stepState,
+	type WheelEntry,
 } from "./model.ts";
 import "./activity.css";
 
@@ -41,10 +44,15 @@ const layer = (place: Place): Layer => ({ kind: "sheet", name: SHEET, locator: J
 
 /**
  * Opens a run's calls: its list, and with `step` that call's detail over it (the reader rolled the wheel to it), so
- * Back leads to the list first. Both steps are computed from the route now: queued pushes see it unchanged.
+ * Back leads to the list first; `alone`: only the call's detail (a call's own row at detail 4), Back closing it. Both
+ * steps are computed from the route now: queued pushes see it unchanged.
  */
-export function openActivity(row: string, step?: string): void {
+export function openActivity(row: string, step?: string, alone = false): void {
 	const nav = getNavigation();
+	if (step && alone) {
+		void nav.push({ ...nav.route, layers: [...nav.route.layers, layer({ row, step })] });
+		return;
+	}
 	const list = { ...nav.route, layers: [...nav.route.layers, layer({ row })] };
 	void nav.push(list);
 	if (step) void nav.push({ ...list, layers: [...list.layers, layer({ row, step })] });
@@ -96,7 +104,15 @@ export function useElapsed(startedAt: number | undefined, endedAt: number | unde
 export function ActivityLayer({ rows }: { rows: readonly { item: ChatItem }[] }) {
 	const top = useSheet(SHEET);
 	const place = top && placeOf(top.locator);
-	const item = place && rows.find((row) => row.item.type === "activity" && row.item.key === place.row)?.item;
+	// By its row's key, else (the rows were made again, keyed differently: another detail level, new code after a
+	// reload) by the call it shows.
+	const item =
+		place &&
+		(rows.find((row) => row.item.type === "activity" && row.item.key === place.row)?.item ??
+			(place.step
+				? rows.find((row) => row.item.type === "activity" && row.item.steps.some((step) => step.id === place.step))
+						?.item
+				: undefined));
 	return item?.type === "activity" && place ? <ActivitySheet activity={item} place={place} /> : null;
 }
 
@@ -107,20 +123,28 @@ const heading = (label: Label) =>
 function ActivitySheet({ activity, place }: { activity: Activity; place: Place }) {
 	const tools = useContext(ToolActivityContext);
 	const { steps } = activity;
+	const entries = activity.entries ?? steps.map((each): WheelEntry => ({ kind: "call", step: each }));
 	const step = place.step === undefined ? undefined : steps.find((each) => each.id === place.step);
-	const group = step && place.group !== undefined ? groupCalls(step.tool.calls ?? [], tools)[place.group] : undefined;
+	// Thinking or a text on the wheel (detail 1 and 2): its page is its words.
+	const words = entries.find((entry) => entry.kind !== "call" && entry.id === place.step);
+	const group =
+		step && place.group !== undefined
+			? groupCalls(step.tool.calls ?? [], tools, step.tool.name)[place.group]
+			: undefined;
 	const time = useElapsed(activity.startedAt, activity.endedAt, activity.working);
-	const count = `${steps.length} ${steps.length === 1 ? "step" : "steps"}`;
+	const count = `${entries.length} ${entries.length === 1 ? "step" : "steps"}`;
 	const title = group
 		? heading(group.label)
 		: step
 			? heading(describe(step, tools).label)
-			: [count, time].filter(Boolean).join(" · ");
+			: words && words.kind !== "call"
+				? WORDS[words.kind]
+				: [count, time].filter(Boolean).join(" · ");
 	return (
 		<Sheet
 			title={title}
 			onClose={closeLayers}
-			{...(step ? { onBack: back } : {})}
+			{...(step || words ? { onBack: back } : {})}
 			className="activity-sheet"
 			testId="activity-sheet"
 		>
@@ -132,8 +156,12 @@ function ActivitySheet({ activity, place }: { activity: Activity; place: Place }
 				<div className="activity-detail">
 					<StepDetail step={step} onGroup={(index) => open({ row: activity.key, step: step.id, group: index })} />
 				</div>
+			) : words && words.kind !== "call" ? (
+				<div className="activity-detail">
+					<DetailProse text={words.text} />
+				</div>
 			) : (
-				<StepList steps={steps} onStep={(id) => open({ row: activity.key, step: id })} />
+				<StepList entries={entries} onStep={(id) => open({ row: activity.key, step: id })} />
 			)}
 		</Sheet>
 	);
@@ -154,20 +182,57 @@ const ICONS: Record<Kind, () => ReactNode> = {
 	tool: () => <ToolIcon />,
 };
 
-/** The run's calls, one row each: icon, the tool and its main argument, how it went, a way into its detail. */
-function StepList({ steps, onStep }: { steps: readonly Step[]; onStep: (id: string) => void }) {
+/** What thinking and a text on a wheel are called in its list and on their page. */
+const WORDS = { thought: "Thought", text: "Note" } as const;
+
+/**
+ * The run's steps, one row each: a call's icon, the tool and its main argument, how it went, a way into its detail;
+ * thinking and texts on the wheel (detail 1 and 2) with their first sentence. `follow`: opened on the newest steps
+ * (in the sheet; not as a turn's rows in the transcript at detail 4).
+ */
+export function StepList({
+	entries,
+	onStep,
+	follow = true,
+}: {
+	entries: readonly WheelEntry[];
+	onStep: (id: string) => void;
+	follow?: boolean;
+}) {
 	const tools = useContext(ToolActivityContext);
 	const cwd = useContext(WorkingDirectory)?.replace(/\/+$/, "");
 	const list = useRef<HTMLUListElement>(null);
 	// Opened on the newest calls: the reader usually looks for what happened last. Not when the page's remembered
 	// scroll position (Back from a call) already placed it.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: only when the list opens.
 	useEffect(() => {
 		const body = list.current?.parentElement;
-		if (body && body.scrollTop === 0) body.scrollTop = body.scrollHeight;
+		if (follow && body && body.scrollTop === 0) body.scrollTop = body.scrollHeight;
 	}, []);
 	return (
 		<ul className="step-list" data-testid="timeline" ref={list}>
-			{steps.map((step) => {
+			{entries.map((entry) => {
+				if (entry.kind !== "call")
+					return (
+						<li key={entry.id} data-testid="step" data-state="done" data-kind={entry.kind}>
+							<button type="button" className="step-row" onClick={() => onStep(entry.id)}>
+								<span className="step-icon">
+									{entry.kind === "thought" ? <SparkIcon size={16} /> : <CommentIcon />}
+								</span>
+								<span className="step-words">
+									<span className="step-name">{WORDS[entry.kind]}</span>
+									<span className="step-argument">{plainText(sentence(entry.text))}</span>
+								</span>
+								<span className="step-state" data-state="done">
+									{entry.live ? "● thinking" : ""}
+								</span>
+								<span className="step-chevron" aria-hidden="true">
+									<ChevronIcon size={16} />
+								</span>
+							</button>
+						</li>
+					);
+				const { step } = entry;
 				const argument = argumentOf(step.tool, tools, cwd);
 				return (
 					<li key={step.id} data-testid="step" data-state={step.status}>

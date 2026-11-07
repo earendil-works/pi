@@ -1,11 +1,11 @@
 // pi's tool renderer contract (coding-agent core/extensions/types.ts `ToolRenderers`, `ToolRenderContext`,
 // `ToolRendererResolver`), typed for p2: arguments and details are JSON from the conversation view, the theme is the
-// instance theme (section 5), and code mode's nested calls come with the context.
+// instance theme (section 5), and the calls a call made to other tools come with the context.
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { Component } from "@earendil-works/pi-tui";
 import type { TuiSettings } from "../../runtime/tui-preferences.ts";
-import type { NestedCall } from "../../web/transcript.ts";
+import type { NestedCall, ToolView } from "../../web/transcript.ts";
 import type { RenderContext } from "../render-context.ts";
 import type { Theme } from "../theme/theme.ts";
 
@@ -36,7 +36,10 @@ export interface ToolRenderContext {
 	/** The final result's execution time. */
 	durationMs: number | undefined;
 	outputPad: number;
-	/** p2: calls this call made to other tools (code mode's `tools.<name>()`), live or settled. */
+	/**
+	 * p2: calls this call made to other tools (a script's), live or settled: as the tool's `nestedCalls` reads them, else
+	 * as Durable shows them.
+	 */
 	calls: readonly NestedCall[] | undefined;
 	/** p2: theme reference and key hints. */
 	ui: RenderContext;
@@ -44,6 +47,12 @@ export interface ToolRenderContext {
 
 export interface ToolRenderers {
 	renderShell?: "default" | "self";
+	/**
+	 * p2: the calls this call made to other tools, when the tool keeps their final list in its result's `details` (read
+	 * from there once settled; `tool.calls` holds the ones Durable shows, live or last seen). Without it, `tool.calls`.
+	 * Resolvers do not change it (`resolveToolRenderers`).
+	 */
+	nestedCalls?: (tool: ToolView) => readonly NestedCall[] | undefined;
 	renderCall?: (args: ToolArgs, theme: Theme, context: ToolRenderContext) => Component;
 	renderResult?: (
 		result: ToolResultView,

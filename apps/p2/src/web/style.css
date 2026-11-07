@@ -15,7 +15,7 @@
 	--bg: #fbfaf8;
 	--text: #1d1b19;
 	--muted: #77716a;
-	--faint: #a8a29b;
+	--faint: #938d86; /* 3:1 on --bg: placeholders and tertiary labels stay legible */
 	--line: #e7e4df;
 	--hover: #f1eee9;
 	--user: #f0ede8;
@@ -69,6 +69,8 @@
 	color: var(--text);
 	-webkit-font-smoothing: antialiased;
 	-webkit-tap-highlight-color: transparent;
+	/* Checkboxes, radios and ranges in the interface's ink, not the browser's blue. */
+	accent-color: var(--text);
 }
 :root[data-theme="dark"] {
 	color-scheme: dark;
@@ -98,8 +100,11 @@
 }
 
 /* Base */
+/* One scrollbar look everywhere (code blocks, tables, sheets, logs), not the platform's thick default. */
 * {
 	box-sizing: border-box;
+	scrollbar-width: thin;
+	scrollbar-color: var(--scrollbar) transparent;
 }
 html,
 body,
@@ -223,19 +228,35 @@ body,
 	text-align: left;
 	text-decoration: none;
 }
-.row-button:hover,
-.model-row:hover,
-.artifact-row:hover,
-.login-action:hover,
-.hit:hover,
-.session-main:hover,
-.subagent-row:hover {
+/* Hover only where a pointer hovers (touch browsers keep :hover after a tap, leaving the row lit); a press lights
+   it everywhere. */
+.row-button:active,
+.model-row:active,
+.artifact-row:active,
+.login-action:active,
+.hit:active,
+.session-main:active,
+.subagent-row:active,
+.workspace-row:active {
 	background: var(--hover);
 }
-.model-row.selected,
+@media (hover: hover) {
+	.row-button:hover,
+	.model-row:hover,
+	.artifact-row:hover,
+	.login-action:hover,
+	.hit:hover,
+	.session-main:hover,
+	.subagent-row:hover {
+		background: var(--hover);
+	}
+}
+/* The open session or conversation is a filled row, never a side edge; the chosen model shows its check. */
+.session-header:has(> .session-main.active),
 .session-main.active,
 .subagent-row.active {
-	box-shadow: inset 2px 0 var(--text);
+	background: var(--hover);
+	color: var(--text);
 }
 .row-button > span,
 .model-row > span,
@@ -342,9 +363,11 @@ textarea.input {
 	text-decoration: none;
 	white-space: nowrap;
 }
-.button:hover,
-.login-continue:hover {
-	background: var(--hover);
+@media (hover: hover) {
+	.button:hover,
+	.login-continue:hover {
+		background: var(--hover);
+	}
 }
 .button.primary {
 	border-color: var(--text);
@@ -375,8 +398,7 @@ textarea.input {
 /* In vertical stacks a text action hugs its label instead of stretching. */
 .stack > .text-action,
 .messages > .text-action,
-.login-flow > .text-action,
-.provider-detail > .text-action {
+.login-flow > .text-action {
 	align-self: flex-start;
 }
 .text-action,
@@ -598,12 +620,14 @@ textarea.input {
 .artifact-button:hover {
 	color: var(--text);
 }
+/* Centred over the chat column: on wide screens it does not stretch across the whole main area. */
 .toast {
 	position: absolute;
 	top: calc(var(--bar) + var(--safe-top) + var(--s2));
-	right: var(--x);
-	left: var(--x);
+	left: 50%;
 	z-index: 8;
+	width: calc(100% - 2 * var(--x));
+	max-width: var(--chat-width);
 	padding: var(--s2) var(--s3);
 	border: 1px solid var(--line);
 	border-radius: var(--radius);
@@ -611,6 +635,7 @@ textarea.input {
 	color: var(--bad);
 	font-size: var(--fs-sm);
 	text-align: left;
+	translate: -50% 0;
 	animation: rise 0.2s ease-out;
 }
 .banner {
@@ -639,13 +664,6 @@ textarea.input {
 }
 .row-space {
 	overflow-anchor: none;
-}
-.scroller,
-.composer textarea,
-.sheet-body,
-.session-scroll {
-	scrollbar-width: thin;
-	scrollbar-color: var(--scrollbar) transparent;
 }
 .scroller::-webkit-scrollbar,
 .composer textarea::-webkit-scrollbar {
@@ -844,18 +862,22 @@ textarea.input {
 	display: inline-flex;
 	color: var(--muted);
 }
+/* The quoted line names what a reply answers by its icon, not a side line. */
 .reply-quote {
 	display: block;
 	max-width: 100%;
 	margin-bottom: var(--s1);
-	padding-left: var(--s2);
 	overflow: hidden;
-	border-left: 2px solid var(--line);
 	color: var(--muted);
 	font-size: var(--fs-xs);
 	text-align: left;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+.reply-quote svg {
+	margin-right: var(--s1);
+	color: var(--faint);
+	vertical-align: -1px;
 }
 .reply-quote:hover {
 	color: var(--text);
@@ -1057,8 +1079,10 @@ textarea.input {
 	padding: var(--s2) var(--s3);
 	text-align: left;
 }
-.file-card-main:hover {
-	background: var(--hover);
+@media (hover: hover) {
+	.file-card-main:hover {
+		background: var(--hover);
+	}
 }
 .file-card-icon {
 	display: grid;
@@ -1095,9 +1119,11 @@ textarea.input {
 	border-left: 1px solid var(--line);
 	color: var(--muted);
 }
-.file-card-download:hover {
-	background: var(--hover);
-	color: var(--text);
+@media (hover: hover) {
+	.file-card-download:hover {
+		background: var(--hover);
+		color: var(--text);
+	}
 }
 /* An artifact rendered at its tool call site (`inline: true`): below the card, at most about 70vh high. */
 .inline-artifact {
@@ -1249,8 +1275,6 @@ audio.file-media {
 		min-height: 0;
 		overflow-y: auto;
 		padding-bottom: var(--s4);
-		scrollbar-width: thin;
-		scrollbar-color: var(--scrollbar) transparent;
 	}
 	/* Drag the left edge to resize the docked panel. touch-action: none, or the browser
 	   turns a finger drag into a pan and stops delivering pointer moves. */
@@ -1299,16 +1323,18 @@ audio.file-media {
 .workspace-location {
 	min-width: 0;
 	overflow: hidden;
-	color: var(--faint);
+	color: var(--muted);
 	font-family: var(--mono);
 	font-size: var(--fs-xs);
 	text-align: right;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-/* Icon tabs: 10px side padding puts the first 20px glyph on the inset; counts sit beside their icon. */
+/* Icon tabs: 10px side padding puts the first 20px glyph on the inset; counts sit beside their icon. The tabs fill
+   the bar's height, so the selected one's underline sits on the bar's bottom line. */
 .workspace-tabs {
 	display: flex;
+	align-self: stretch;
 	min-width: 0;
 }
 .workspace-tabs button {
@@ -1316,7 +1342,6 @@ audio.file-media {
 	flex: none;
 	align-items: center;
 	gap: var(--s1);
-	height: var(--control);
 	padding: 0 10px;
 	color: var(--muted);
 	font-family: var(--mono);
@@ -1335,8 +1360,6 @@ audio.file-media {
 	min-height: 0;
 	overflow-y: auto;
 	padding-bottom: var(--s4);
-	scrollbar-width: thin;
-	scrollbar-color: var(--scrollbar) transparent;
 }
 .workspace-crumbs {
 	display: flex;
@@ -1368,13 +1391,15 @@ audio.file-media {
 	font-size: var(--fs-code);
 	text-align: left;
 }
-.workspace-row:hover {
-	background: var(--hover);
+@media (hover: hover) {
+	.workspace-row:hover {
+		background: var(--hover);
+	}
 }
-/* The file open beside the list. */
+/* The file open beside the list: filled, as the open session in the sidebar. */
 .workspace-row[aria-current="true"] {
-	box-shadow: inset 2px 0 var(--text);
 	background: var(--hover);
+	color: var(--text);
 }
 .workspace-row svg {
 	flex: none;
@@ -1392,7 +1417,7 @@ audio.file-media {
 }
 .workspace-row small {
 	flex: none;
-	color: var(--faint);
+	color: var(--muted);
 	font-size: var(--fs-xs);
 }
 .workspace-status {
@@ -1502,8 +1527,8 @@ audio.file-media {
 }
 .terminal-tabs > button:not(.icon-button) {
 	flex: none;
+	align-self: stretch;
 	max-width: 14em;
-	height: var(--control-sm);
 	padding: 0 var(--s2);
 	overflow: hidden;
 	color: var(--muted);
@@ -1520,11 +1545,11 @@ audio.file-media {
 }
 /* Opened by the agent (the terminal tool). */
 .terminal-agent {
-	margin-right: 0.4em;
-	padding: 0 0.3em;
+	margin-right: var(--s1);
+	padding: 0 var(--s1);
 	border: 1px solid var(--line);
-	border-radius: 3px;
-	font-size: 0.85em;
+	border-radius: var(--radius);
+	font-size: var(--fs-xs);
 }
 .terminal-tabs > .icon-button[aria-pressed="true"] {
 	color: var(--text);
@@ -1707,7 +1732,7 @@ audio.file-media {
 }
 .workspace-hint {
 	padding: var(--s1) var(--x) 0;
-	color: var(--faint);
+	color: var(--muted);
 	font-size: var(--fs-xs);
 }
 .workspace-markdown {
@@ -1731,7 +1756,8 @@ button.diff-number:hover {
 	gap: var(--s2);
 	margin: var(--s1) var(--s2) var(--s1) calc(var(--gutter, 3ch) + var(--s2) * 2);
 	padding: var(--s1) var(--s2);
-	border-left: 2px solid var(--muted);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
 	background: var(--bg);
 	color: var(--text);
 	font-family: var(--sans);
@@ -1759,7 +1785,7 @@ button.diff-number:hover {
 	white-space: pre-wrap;
 }
 .line-comment.current {
-	border-left-color: var(--text);
+	border-color: var(--muted);
 	background: var(--hover);
 }
 .comment-nav {
@@ -1778,7 +1804,7 @@ button.diff-number:hover {
 }
 .line-comment.outdated {
 	flex-wrap: wrap;
-	border-left-color: var(--faint);
+	border-style: dashed;
 }
 .line-comment-outdated {
 	flex: 1 0 100%;
@@ -2017,8 +2043,10 @@ button.diff-number:hover {
 	font-size: var(--fs-sm);
 	text-align: left;
 }
-button.incoming-from:hover {
-	background: var(--hover);
+@media (hover: hover) {
+	button.incoming-from:hover {
+		background: var(--hover);
+	}
 }
 .incoming-icon {
 	display: grid;
@@ -2359,12 +2387,12 @@ button.incoming-from:hover {
 }
 .to-bottom {
 	position: absolute;
-	top: -40px;
+	top: calc(-1 * (var(--control) + var(--s2)));
 	left: 50%;
 	display: grid;
 	place-items: center;
-	width: var(--control-sm);
-	height: var(--control-sm);
+	width: var(--control);
+	height: var(--control);
 	border: 1px solid var(--line);
 	border-radius: var(--radius);
 	background: var(--bg);
@@ -2557,7 +2585,8 @@ button.incoming-from:hover {
 	overflow-y: auto;
 	padding: 0 var(--x) var(--s4);
 }
-.group h3 {
+/* A folder's heading names its path (mono, as typed); other headings (Messages) are section labels. */
+.group > .group-head {
 	overflow: hidden;
 	font-family: var(--mono);
 	text-overflow: ellipsis;
@@ -2589,11 +2618,10 @@ button.incoming-from:hover {
 	padding-top: var(--s1);
 	padding-bottom: var(--s1);
 }
+/* Block, not flex: text in a flex container is clipped without an ellipsis. */
 .session-title {
-	display: flex;
+	display: block;
 	flex: 1;
-	align-items: center;
-	gap: var(--s1);
 	min-width: 0;
 	overflow: hidden;
 	font-size: var(--fs-md);
@@ -2601,15 +2629,16 @@ button.incoming-from:hover {
 	white-space: nowrap;
 }
 .session-title svg {
-	flex: none;
+	margin-right: var(--s1);
 	color: var(--muted);
+	vertical-align: -1px;
 }
 .session-meta {
 	display: flex;
 	flex: none;
 	align-items: center;
 	gap: var(--s1);
-	color: var(--faint);
+	color: var(--muted);
 	font-size: var(--fs-xs);
 }
 /* A lifecycle operation of the session (a move, a copy, an archive) running, or failed with Dismiss. */
@@ -2622,7 +2651,7 @@ button.incoming-from:hover {
 	font-size: var(--fs-xs);
 }
 .session-operation.failed {
-	color: var(--error);
+	color: var(--bad);
 }
 .session-operation > span {
 	overflow: hidden;
@@ -2817,18 +2846,20 @@ button.incoming-from:hover {
 	border: 1px solid var(--line);
 	border-radius: var(--radius);
 	background: var(--bg);
-	box-shadow: 0 6px 24px rgb(0 0 0 / 0.18);
 }
 .foot-menu-list[hidden] {
 	display: none;
 }
 .foot-menu-list .foot-button {
 	width: 100%;
+	height: var(--row);
 	padding: 0 var(--x);
 	text-align: left;
 }
-.foot-menu-list .foot-button:hover {
-	background: var(--hover);
+@media (hover: hover) {
+	.foot-menu-list .foot-button:hover {
+		background: var(--hover);
+	}
 }
 
 /* Sheets: bottom sheet on phones, centred dialog on wide screens. Above the workspace
@@ -2930,6 +2961,7 @@ button.incoming-from:hover {
 	}
 	.sheet {
 		border: 1px solid var(--line);
+		border-radius: var(--radius);
 		animation: pop 0.2s ease-out;
 	}
 	/* Dialogs on wide screens: no grip, no swipe. */
@@ -3267,7 +3299,6 @@ button.incoming-from:hover {
 	grid-column: 2;
 	min-width: 0;
 	overflow-x: auto;
-	scrollbar-width: thin;
 }
 /* Top and middle gridlines of each chart; track borders draw the baselines. */
 .cost-bars {
@@ -3324,7 +3355,6 @@ button.incoming-from:hover {
 .cost-table-wrap {
 	overflow-x: auto;
 	margin: 0 calc(-1 * var(--x));
-	scrollbar-width: thin;
 }
 .cost-table {
 	width: 100%;
@@ -3531,4 +3561,44 @@ button.history-edge:disabled {
 }
 .group-lock {
 	display: inline-flex;
+}
+
+/* Touch targets: on a coarse pointer every list row and small control is at least one --row (44px) tall. The
+   transcript's own rows keep their rhythm (.row, TranscriptRow.gap in Chat.tsx). */
+@media (pointer: coarse) {
+	.session-main,
+	.subagent-row,
+	.workspace-row,
+	.foot-button,
+	.text-action,
+	.segments button,
+	.detail-more,
+	.queued > div,
+	.file-completion > [role="option"] {
+		min-height: var(--row);
+	}
+	.foot-button {
+		height: var(--row);
+	}
+	.file-completion > [role="option"] {
+		align-items: center;
+	}
+	.queue-remove,
+	.branch-rename,
+	.comment-nav .icon-button,
+	.line-comment .icon-button {
+		width: var(--row);
+		height: var(--row);
+	}
+	/* The glyph stays where it was: the larger box grows into the label's padding and past the row's end. */
+	.group-new {
+		width: var(--row);
+		height: var(--row);
+		margin: calc((var(--control-sm) - var(--row)) / 2 - var(--s1)) calc((var(--control-sm) - var(--row)) / 2)
+			calc((var(--control-sm) - var(--row)) / 2 - var(--s1)) 0;
+	}
+	.terminal-keys button {
+		height: var(--control);
+		min-width: var(--control);
+	}
 }

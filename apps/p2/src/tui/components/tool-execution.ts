@@ -28,6 +28,8 @@ export class ToolExecutionComponent extends Container {
 	private ctx: ToolCardContext;
 	private hideComponent = false;
 	private themeVersion: number;
+	/** The calls `calls` read last, for the view they were read from. */
+	private nested?: { tool: ToolView; calls: ToolView["calls"] };
 
 	constructor(tool: ToolView, renderers: ToolRenderers | undefined, ctx: ToolCardContext, argsComplete = true) {
 		super();
@@ -61,11 +63,19 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
-	/** Stops renderer timers (a running bash card's elapsed clock). */
+	/** Stops renderer timers (a running shell card's elapsed clock). */
 	dispose(): void {
 		const interval = this.rendererState.interval;
 		if (interval !== undefined) clearInterval(interval as ReturnType<typeof setInterval>);
 		this.rendererState.interval = undefined;
+	}
+
+	/** The calls this call made: as its tool reads them (`ToolRenderers.nestedCalls`), else as Durable shows them. */
+	private get calls(): ToolView["calls"] {
+		const own = this.renderers.nestedCalls;
+		if (!own) return this.tool.calls;
+		if (this.nested?.tool !== this.tool) this.nested = { tool: this.tool, calls: own(this.tool) };
+		return this.nested.calls;
 	}
 
 	private get isPartial(): boolean {
@@ -79,7 +89,7 @@ export class ToolExecutionComponent extends Container {
 	/** The result as pi's card holds it: absent until the call runs; partial while running. */
 	private get result(): ToolResultView | undefined {
 		const tool = this.tool;
-		if (tool.status === "pending" && !tool.calls?.length) return undefined;
+		if (tool.status === "pending" && !this.calls?.length) return undefined;
 		const text = tool.output || (tool.status === "interrupted" ? "Not run: the answer was interrupted." : "");
 		return {
 			content: [...(text ? [{ type: "text" as const, text }] : []), ...tool.images],
@@ -106,7 +116,7 @@ export class ToolExecutionComponent extends Container {
 			isError: this.isError,
 			durationMs: this.isPartial ? undefined : this.tool.durationMs,
 			outputPad: this.ctx.outputPad ?? 1,
-			calls: this.tool.calls,
+			calls: this.calls,
 			ui: this.ctx,
 		};
 	}

@@ -976,9 +976,21 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const known = liveView !== undefined;
 	// How tools' calls show: contributed by the plugins that own them.
 	const tools = useRegistry(ToolActivities);
+	// How much of a turn the transcript shows (settings.json `detail`, the owner's; guests see the default).
+	const detail = resources?.settings.detail;
 	const rows = useMemo(
-		() => (shown ? transcriptRows(shown.items, tools, shown.working, known) : undefined),
-		[shown, tools, known],
+		() =>
+			shown
+				? transcriptRows(
+						shown.items,
+						tools,
+						shown.working,
+						known,
+						// Anything else: the default (`transcriptRows`' `DEFAULT_DETAIL`).
+						detail === 1 || detail === 2 || detail === 3 || detail === 4 ? detail : undefined,
+					)
+				: undefined,
+		[shown, tools, known, detail],
 	);
 	const follow = useChatScroll({
 		cache: `${sessionId}#${conversationId}`,

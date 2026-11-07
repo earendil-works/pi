@@ -29,7 +29,7 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
 | --- | --- | --- |
 | `P2_DATA_DIR` | `~/.pi/p2` | data directory: `catalog.sqlite`, `server/` and `sessions/<id>/` (see **Host stores and files**), `settings.json`, `models.json`, `envs.json`, `projects.json`, `mcp.json`, `mcp-auth.json`, `auth.json`, `radius.json`, `forwards.json` |
 | `PORT` | `8788` | listen port (loopback only), so p2 never collides with pi-mobile on 8787 |
-| `P2_FAKE` | unset | `1`: the faux provider (`faux/faux-1`, echoes the prompt; `slow …` streams long; `rename-session <title>` calls the tool; `subagent`, `subagent-bad`, `subagent-answer`, `subagent-configure`, `subagent-send`, `subagent-archive`, `subagent-status` exercise subagents, `subagent <json>` calls the tool with those arguments, as do `team <json>`, `history_search|read|handoff <json>`, `location_envs|dirs|move <json>`, `tool_search <json>`, `terminal <json>` and `mcp__<server>__<tool> <json>`; `codemode` runs a script calling bash and read, `codemode-restart` one whose slow middle call a restart interrupts, `codemode <script>` runs that script; `artifact <json>` calls the artifact tool with those arguments; `json <text>` answers exactly `<text>`; a one-shot agent whose task is not `json …`/`slow…` answers a small value matching its schema) |
+| `P2_FAKE` | unset | `1`: the faux provider (`faux/faux-1`, echoes the prompt; `slow …` streams long; `rename-session <title>` calls the tool; `subagent`, `subagent-bad`, `subagent-answer`, `subagent-configure`, `subagent-send`, `subagent-archive`, `subagent-status` exercise subagents, `subagent <json>` calls the tool with those arguments, as do `team <json>`, `history_search|read|handoff <json>`, `location_envs|dirs|move <json>`, `tool_search <json>`, `terminal <json>` and `mcp__<server>__<tool> <json>`; `codemode` runs a script calling bash and read, `codemode-restart` one whose slow middle call a restart interrupts, `codemode <script>` runs that script; `artifact <json>` calls the artifact tool with those arguments; `steps` makes a turn of thinking, calls and words, `inline-steps` one with an inline artifact between two calls; `json <text>` answers exactly `<text>`; a one-shot agent whose task is not `json …`/`slow…` answers a small value matching its schema) |
 | `P2_IDLE_MS` | `300000` | idle time before a session worker stops |
 | `P2_PROVIDER`, `P2_MODEL` | unset | default model for new sessions after settings.json's `defaultModel` (both or neither; Pi Mobile's `PI_MOBILE_PROVIDER`/`PI_MOBILE_MODEL` work too) |
 | `P2_RADIUS` | unset | `0`: disable the outbound Radius brain connection even when signed in |
@@ -227,10 +227,11 @@ the terminal: the stack (frames name `p2-tui-bundle.mjs`), controls removed, at 
 and class names for this); a heap overrun says so instead. Rendering is copied from coding-agent's interactive mode and DurableTui (p2-tui-port.md P0c/P2;
 p2 imports neither coding-agent nor mobile): a fullscreen layout (transcript `ScrollView` over a dock of status lines,
 pending area, pi's editor with the working indicator in its border, and pi's footer), incremental transcript
-components keyed by the shared display items (`src/tui/components/`), pi's tool cards and renderers for bash, read,
-write, edit (the result's diff), grep/find/ls and code mode (`src/tui/tools/`), and plugin contributions through
-`TuiToolRenderers`, `TuiToolRendererResolvers`, `TuiEntryRenderers` and `TuiMarkdownTransformers`
-(`src/runtime/tui-renderers.ts`). Drafts, pending send IDs and reading positions are kept per viewed
+components keyed by the shared display items (`src/tui/components/`), pi's tool card (`src/tui/components/
+tool-execution.ts`, pi's generic card for a tool without renderers, the shared shell card in `src/tui/tools/shell.ts`),
+and plugin contributions through `TuiToolRenderers` (the tools' own cards, from the plugins that own them: bash, read,
+write, edit (the result's diff), grep/find/ls in `coding-tools`, `powershell`, code mode in `codemode`),
+`TuiToolRendererResolvers`, `TuiEntryRenderers` and `TuiMarkdownTransformers` (`src/runtime/tui-renderers.ts`). Drafts, pending send IDs and reading positions are kept per viewed
 (session, conversation); the reading position stays put while output grows or older history is prepended.
 
 pi's defaults (rebindable in pi's `keybindings.json` or p2 prefs; `/hotkeys` lists all with conflicts):
@@ -1404,15 +1405,18 @@ translated phone drawer and intercept chat taps.
   defaults (`inlineBudget` 3000, `models` on, no namespaces). p2 lists tools only from the subagents' fixed coding-tool
   set, so internal tools never appear; nested-call rows show them by their script name (`models.classify`).
   `codemode-setting.test.ts` toggles it live; `durable-registry.test.ts` covers switches.
-- **Code mode's calls** (copied from Pi Mobile, `src/web/transcript.ts`): `ToolView.calls` is the one source of
-  nested-call rows: live from `pi.live.nestedTools` (grouped by the model-issued call, depth from the `parentCallId`
-  chain), settled from the result's `details.calls` (Durable's `CodemodeToolDetails`). On the web the script is a step
-  of its turn's activity (below): "Ran a script · N calls, k failed" with the script's first comment; its detail shows
-  the script (highlighted JS, Show all past twelve lines), its calls as a timeline (repeated identical calls in a row
-  merged, "×N runs"; a call's own calls marked "nested") and the output; a call opens its input and output, a one-shot
-  agent's call its conversation. The TUI (`src/tui/messages.ts`) shows the first script line and indented rows (summary once settled, all with
-  Ctrl+O) until the TUI port replaces it. `codemode-card.test.ts` covers grouping/depth, the details mapping, the TUI
-  and the browser (fixture `test/fixtures/codemode-card.ts`).
+- **Code mode's calls** (copied from Pi Mobile): the core knows nested calls only as Durable shows them
+  (`ToolView.calls` in `src/web/transcript.ts`: live from `pi.live.nestedTools`, grouped by the model-issued call,
+  depth from the `parentCallId` chain, then the last list this browser saw). Code mode's contributions read the rest
+  (`plugins/codemode/nested.ts`, `nestedCalls` in `ToolActivity` and the TUI's `ToolRenderers`): settled from the
+  result's `details.calls` (Durable's `CodemodeToolDetails`), live ones of internal tools by their script name. On the
+  web the script is a step of its turn's activity (below): "Ran a script · N calls, k failed" with the script's first
+  comment; its detail shows the script (highlighted JS, Show all past twelve lines), its calls as a timeline (repeated
+  identical calls in a row merged, "N runs, k failed" from code mode's `repeated`; a call's own calls marked "nested")
+  and the output; a call opens its input (a command line for bash, PowerShell and the terminal: their `CallInput`) and
+  output, a one-shot agent's call its conversation. The TUI card (`plugins/codemode/card.ts`) shows the script and the
+  newest eight calls by depth, all with Ctrl+O. `codemode-card.test.ts` covers grouping/depth, the details mapping, the
+  TUI and the browser (fixture `test/fixtures/codemode-card.ts`).
 - **Tool calls in the chat: a run's activity** (ported from the p2-elanor branch's redesign, `src/web/activity/`;
   reshaped by owner decisions after it). The agent's responses between two people's messages (or markers, failures,
   gaps) are one turn (`chatItems` in `model.ts`). Its thinking blocks and texts stay in the transcript in their order
@@ -1445,21 +1449,39 @@ translated phone drawer and intercept chat taps.
   summaries, grouped calls), `ui-activity.test.ts` (the sheet, its layers and Back, the wide dialog, a mixed turn, a
   long run opening at its end), and the browser tests that open steps (`codemode-card`, `nested-calls`, `ui-agents`,
   `failed-turns`, `ui-mobile-fixes`).
+- **How much of a turn shows: settings.json `detail`** (owner decision: a level in settings.json for now, no app UI;
+  read live from the owner's `Models` resources snapshot, so guests see the default). 1: only the answer and its
+  results; the turn's thinking, texts and calls on one wheel per turn (keyed by the item before the run, like the
+  waiting wheel), its sheet listing thinking and texts among the calls ("Thought", "Note", each opening its words). The
+  turn's last text becomes its answer only once the agent stopped: while it works a text may still turn out to be a
+  note (a call follows), so it stays on the wheel, and the answer arrives in the transcript once, fading in as new rows
+  do, instead of showing and then jumping back onto the wheel.
+  2 (default, owner decision after trying it): the agent's texts in the transcript; thinking and calls on a wheel
+  between them. 3: as above, thinking collapsed and only runs of calls on wheels. 4: thinking open in full and each call its own row (the sheet's row:
+  icon, tool and argument, state), opening its detail alone; no wheels (a waiting wheel still stands for a run before
+  its first call). `chatItems`' `detail` merges what goes on the wheels into the runs of calls (`wheels` in `model.ts`,
+  `WheelEntry`); the summary of a wheel with thinking leads with "Thought". A result its tool shows in place (an
+  inline artifact, `hasResult` "inline") stays in place at 2, 3 and 4 (between wheels, or after its call's row at 4;
+  the wheel after it is the row that waited there); at 1 it joins the results after the answer, drawn in full, so the
+  turn keeps its one wheel. `activity-model.test.ts` covers the levels, `ui-detail.test.ts` the transcript and the
+  sheet as the setting changes live, and the answer arriving once.
 - **Tools' look comes from their plugins** (owner decision: no tool-specific code in `src/web`). A plugin's web facet
   contributes `ToolActivity` entries, keyed by tool name, to the `ToolActivities` registry (`src/runtime/web-core.ts`;
   type in `src/web/activity/model.ts`, the parts a detail is built from in `src/web/activity/api.ts`, all through
   `@p2/app/v1/web`): its words on the wheel and in the sheet (`describe`, `running`: a `Kind` from the activity's icon
   vocabulary, a verb, an object, an extra), the row's main argument, a failure word ("exit 1"), its words in a run's
-  summary as a function of the count (tools sharing the function count together: write and edit), its `Detail` and a
-  nested call's `CallDetail`, and a `Result` after the answer with `hasResult`. A detail shows everything at once (no
+  summary as a function of the count (tools sharing the function count together: write and edit), its `Detail`, the
+  calls it made (`nestedCalls`) and how it words repeats of them (`repeated`), a nested call's `CallInput` and
+  `CallDetail`, and a `Result` with `hasResult` saying where: after the answer, or inline, right after its call (an
+  artifact with `inline: true`; the run of calls splits around it; at detail 1 after the answer). Writing one:
+  `docs/tool-ui.md`. A detail shows everything at once (no
   "Show all" inside it; long output scrolls with the sheet) and follows a running call live; the one cap kept is a
-  script's calls: the newest eight, the rest behind "Show all", as the transcript's card had them. Owners: `coding-tools` (bash, read, write, edit), `terminals`, `codemode`,
+  script's calls: the newest eight, the rest behind "Show all", as the transcript's card had them. Owners: `coding-tools` (bash, read, write, edit), `terminals`, `codemode`, `powershell`,
   `subagents`, `agent`, `artifacts`, `send-file`, `ports`, `conversations`, `history`, each in its `activity.tsx`. The
   chat plugin reads the registry and passes the table to `transcriptRows` and `ToolActivityContext`. A tool without a
-  contribution (an MCP tool, `team`, `powershell`) reads as its name and first short string argument with the generic
-  icon ("used web_fetch", "used web_fetch 3 times" in a summary), its detail the input as JSON and the output. Tool declarations and schemas carry nothing for this. Still in
-  core: a script's settled nested calls (`details.calls`, Durable's code mode format) in `transcript.ts`, shared with
-  the TUI. Tests: `activity-model.test.ts` (contributed and generic words, summaries), `ui-activity.test.ts` (a
+  contribution (an MCP tool, `team`) reads as its name and first short string argument with the generic icon ("used
+  web_fetch", "used web_fetch 3 times" in a summary), its detail the input as JSON and the output; PowerShell
+  contributes only its `CallInput`. Tool declarations and schemas carry nothing for this. Tests: `activity-model.test.ts` (contributed and generic words, summaries), `ui-activity.test.ts` (a
   plugin's detail and the generic one), the fixtures' table (`test/fixtures/transcript.ts`, `PLUGIN_TOOLS`).
 - **Incoming messages** (`Incoming` in `src/web/Chat.tsx`): every message that is neither the owner's nor the agent's
   own (a subagent's answer, question, note or failure, `p2.agent-message`; another session's, `p2.peer-message`; a

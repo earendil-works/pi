@@ -19,7 +19,7 @@ h1{margin:0;font-size:22px;font-weight:600;letter-spacing:-.02em;overflow-wrap:a
 p{margin:0;color:var(--muted);font-size:15px}
 .small{font-size:13px}
 form{display:flex;flex-direction:column;gap:12px}
-label{color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+label{margin-bottom:-8px;color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
 input{width:100%;height:44px;padding:0;border:0;border-bottom:1px solid var(--line);border-radius:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:15px}
 input:focus{border-bottom-color:var(--text)}
 .mono{font-family:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,monospace}

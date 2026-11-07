@@ -1,5 +1,5 @@
 // How the `codemode` tool shows in the chat: "Ran a script · N calls", and its detail: the whole script
-// (highlighted), its calls as a timeline (each opens its own detail) and what it printed.
+// (highlighted), its calls as a timeline (each opens its own detail; nested.ts reads them) and what it printed.
 import {
 	CodeBlock,
 	failureOf,
@@ -13,6 +13,7 @@ import {
 	type ToolActivity,
 	type ToolView,
 } from "@p2/app/v1/web";
+import { repeatedRuns, scriptCalls } from "./nested.ts";
 
 /** The script's first comment: what it is for. */
 const comment = (tool: ToolView) => firstLine(stringOf(tool.args.code)).replace(/^\/\/\s*/, "");
@@ -55,5 +56,8 @@ export const codemodeActivity: ToolActivity = {
 	}),
 	argument: comment,
 	summary: (count) => (count === 1 ? "ran a script" : `ran ${count} scripts`),
+	// The script's calls: live from Durable, then the final list in its result's details.
+	nestedCalls: scriptCalls,
+	repeated: repeatedRuns,
 	Detail: ScriptDetail,
 };

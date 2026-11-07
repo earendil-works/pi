@@ -3,7 +3,7 @@
 // agent works; unchanged turns keep their items.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ToolCall } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import {
 	argumentOf,
@@ -35,14 +35,15 @@ const TOOLS: ToolActivityTable = new Map<string, ToolActivity>([
 		"artifact",
 		{
 			summary: (count) => (count === 1 ? "made an artifact" : `made ${count} artifacts`),
-			hasResult: (tool) => tool.details !== undefined,
+			hasResult: (tool) => (tool.details === undefined ? false : tool.args.inline === true ? "inline" : "after"),
 		},
 	],
 	["edit", { summary: edited }],
 	["write", { summary: edited }],
 ]);
+/** The turn's parts at detail 3 (thinking and texts in the transcript, runs of calls on wheels), which most tests check. */
 const chatItems = (items: readonly Item[], working: boolean, known = true) =>
-	chatItemsWith(items, working, known, TOOLS);
+	chatItemsWith(items, working, known, TOOLS, 3);
 
 const user = (key: string, text: string): Item => ({ type: "user", key, text, images: [], files: [], entryId: 1 });
 
@@ -131,6 +132,95 @@ test("a turn keeps its thought and texts in order; its consecutive calls are one
 	assert.equal(summary(activity.steps, TOOLS), "Ran a command, made an artifact");
 });
 
+test("a result shown in place comes right after its call and splits the run of calls around it", () => {
+	const inline = (id: string) =>
+		tool(id, "artifact", { name: id, inline: true }, { details: { name: id, title: id, type: "html", version: 1 } });
+	const bash = (id: string) => tool(id, "bash", { command: `echo ${id}` });
+	const call = (each: ToolView): ToolCall => ({
+		type: "toolCall",
+		id: each.id,
+		name: each.name,
+		arguments: each.args as ToolCall["arguments"],
+	});
+	const card = tool(
+		"c1",
+		"artifact",
+		{ name: "card" },
+		{ details: { name: "card", title: "Card", type: "html", version: 1 } },
+	);
+	const made = [bash("b1"), inline("i1"), bash("b2"), card, bash("b3")];
+	const turnOf = (tools: ToolView[], answer = true): Item[] => [
+		user("u1", "Go"),
+		response("a1", 2, tools.map(call), tools),
+		...(answer ? [response("a2", 3, [{ type: "text" as const, text: "Done." }])] : []),
+	];
+	const items = chatItems(turnOf(made), false);
+	assert.deepEqual(
+		items.map((item) =>
+			item.type === "activity"
+				? `activity:${item.steps.map((step) => step.id).join(",")}`
+				: item.type === "results"
+					? `results:${item.tools.map((each) => each.id).join(",")}`
+					: item.type,
+		),
+		// The inline artifact's wheel holds the calls up to it; the card waits for the answer.
+		["user", "activity:b1,i1", "results:i1", "activity:b2,c1,b3", "answer", "results:c1"],
+	);
+	// The wheel after a result in place is keyed by it: the row that waited there while the agent worked.
+	assert.equal(items[1]?.key, "activity:u1");
+	assert.equal(items[2]?.key, "results:i1");
+	assert.equal(items[3]?.key, "activity:results:i1");
+	// Working after the result in place, nothing new yet: the waiting row, which the next call's wheel then is.
+	const waiting = chatItems(turnOf(made.slice(0, 2), false), true);
+	assert.deepEqual(
+		waiting.map((item) => [item.type, item.key, item.type === "activity" && item.working]),
+		[
+			["user", "u1", false],
+			["activity", "activity:u1", false],
+			["results", "results:i1", false],
+			["activity", "activity:results:i1", true],
+		],
+	);
+	const next = chatItems(
+		[...turnOf(made.slice(0, 2), false), response("a3", 3, [call(bash("b2"))], [bash("b2")])],
+		true,
+	);
+	const wheel = next.at(-1);
+	assert.equal(wheel?.key, "activity:results:i1");
+	assert.equal(wheel?.type === "activity" && wheel.working, true);
+	// At every level but 1 the result stays in place: at 2 (the default) between the wheels, at 4 between the rows. At 1
+	// the turn keeps its one wheel, and the result joins those after the answer.
+	const shape = (detail: 1 | 2 | 3 | 4) =>
+		chatItemsWith(turnOf(made), false, true, TOOLS, detail).map((item) =>
+			item.type === "activity"
+				? `${item.rows ? "rows" : "activity"}:${item.steps.map((step) => step.id).join(",")}`
+				: item.type === "results"
+					? `results:${item.tools.map((each) => each.id).join(",")}`
+					: item.type,
+		);
+	assert.deepEqual(shape(2), ["user", "activity:b1,i1", "results:i1", "activity:b2,c1,b3", "answer", "results:c1"]);
+	assert.deepEqual(shape(4), ["user", "rows:b1,i1", "results:i1", "rows:b2,c1,b3", "answer", "results:c1"]);
+	assert.deepEqual(shape(1), ["user", "activity:b1,i1,b2,c1,b3", "answer", "results:i1,c1"]);
+	// At 2, the wheel after the result is the row that waited there, even when thinking comes first.
+	const thinking = chatItemsWith(
+		[
+			...turnOf(made.slice(0, 2), false),
+			response("a3", 3, [{ type: "thinking", thinking: "Next." }, call(bash("b2"))], [bash("b2")]),
+		],
+		true,
+		true,
+		TOOLS,
+		2,
+	);
+	assert.equal(thinking.at(-1)?.key, "activity:results:i1");
+	// While the call runs (no result yet), nothing splits.
+	const running = { ...inline("i1"), status: "running" as const, details: undefined };
+	assert.deepEqual(
+		chatItems(turnOf([bash("b1"), running, bash("b2")], false), true).map((item) => item.type),
+		["user", "activity"],
+	);
+});
+
 test("thought, text, calls, text, calls: the texts in order and one activity per run of calls", () => {
 	const items = chatItems(
 		[
@@ -208,7 +298,12 @@ test("unchanged turns keep their items; in a changed one, only what shows differ
 	const first = chatItems(items, false);
 	const second = chatItems([...items], false);
 	assert.equal(first[3], second[3]);
-	const changed = [...items.slice(0, 3), response("a3", 4, [{ type: "text", text: "Done." }])];
+	// Begun when the answer it replaces began: the run of calls ends there.
+	const begun = (items[3] as Extract<Item, { type: "assistant" }>).message.timestamp;
+	const changed = [
+		...items.slice(0, 3),
+		response("a3", 4, [{ type: "text", text: "Done." }], [], { timestamp: begun }),
+	];
 	const rebuilt = chatItems(changed, false);
 	// The run of calls shows the same: the same object, so its row does not render again; the answer is new.
 	assert.equal(rebuilt[3], first[3]);
@@ -385,12 +480,17 @@ test("a script's repeated identical calls are one entry; nested calls say so", (
 		status,
 		depth,
 	});
-	const groups = groupCalls([call("1"), call("2"), call("3", 0, "error"), call("4", 1)], TOOLS);
+	const calls = [call("1"), call("2"), call("3", 0, "error"), call("4", 1)];
+	// The calling tool's words for repeats (a script's: "3 runs").
+	const script: ToolActivity = { repeated: (count, failed) => `${count} runs${failed ? `, ${failed} failed` : ""}` };
+	const groups = groupCalls(calls, new Map([...TOOLS, ["script", script]]), "script");
 	assert.equal(groups.length, 2);
 	assert.equal(groups[0]?.calls.length, 3);
 	assert.equal(groups[0]?.status, "error");
 	assert.equal(groups[0]?.description, "3 runs, 1 failed");
 	assert.equal(groups[1]?.label.extra, "nested");
+	// A caller without them: the repeated tool's own summary.
+	assert.equal(groupCalls(calls, TOOLS, "other")[0]?.description, "Ran 3 commands · 1 failed");
 });
 
 test("before the live state is known, an unfinished last turn shows as live, not finished", () => {
@@ -403,4 +503,86 @@ test("before the live state is known, an unfinished last turn shows as live, not
 	assert.equal(live(chatItems(running, false, true)), false);
 	// A finished turn stays finished either way.
 	assert.equal(live(chatItems(turn(), false, false)), false);
+});
+
+test("settings.json's detail: how much of a turn shows in the transcript, the rest on its wheels", () => {
+	const at = (detail: 1 | 2 | 3 | 4, working = false) => chatItemsWith(turn(), working, true, TOOLS, detail);
+	type Activity = Extract<ReturnType<typeof at>[number], { type: "activity" }>;
+	const kinds = (activity: Activity | undefined) =>
+		activity?.entries?.map((entry) => (entry.kind === "call" ? entry.step.tool.name : entry.kind));
+	// 1: only the answer and results; the thought, the text and the calls on one wheel, keyed like the waiting one.
+	const one = at(1);
+	assert.deepEqual(
+		one.map((item) => item.type),
+		["user", "activity", "answer", "results"],
+	);
+	const wheel = one[1] as Activity;
+	assert.equal(wheel.key, "activity:u1");
+	assert.deepEqual(kinds(wheel), ["thought", "text", "bash", "artifact"]);
+	assert.deepEqual(wheel.entryIds, [2, 3]);
+	// 2: the text in the transcript; the thought on the wheel before it, the calls on the one after.
+	const two = at(2);
+	assert.deepEqual(
+		two.map((item) => [item.type, item.key]),
+		[
+			["user", "u1"],
+			["activity", "activity:u1"],
+			["text", "text:a1:1"],
+			["activity", "activity:a1:2"],
+			["answer", "text:a3:0"],
+			["results", "results:a1"],
+		],
+	);
+	assert.deepEqual(kinds(two[1] as Activity), ["thought"]);
+	assert.deepEqual(kinds(two[3] as Activity), ["bash", "artifact"]);
+	// 2 is the default: as without the setting.
+	const shape = (items: ReturnType<typeof at>) => items.map((item) => [item.type, item.key]);
+	assert.deepEqual(shape(chatItemsWith(turn(), false, true, TOOLS)), shape(two));
+	// 3: the thought collapsed in the transcript, only the calls on a wheel.
+	assert.deepEqual(
+		shape(at(3)).map(([type]) => type),
+		["user", "thought", "text", "activity", "answer", "results"],
+	);
+	assert.equal((at(3)[3] as Activity).entries, undefined);
+	// 4: the thought open, the calls as rows.
+	const four = at(4);
+	assert.equal((four[1] as Extract<(typeof four)[number], { type: "thought" }>).full, true);
+	assert.equal((four[3] as Activity).rows, true);
+	// While the agent works, the turn's one wheel is live (no answer yet).
+	const working = chatItemsWith(turn().slice(0, 3), true, true, TOOLS, 1);
+	assert.deepEqual(
+		working.map((item) => [item.type, item.type === "activity" && item.working]),
+		[
+			["user", false],
+			["activity", true],
+			["results", false],
+		],
+	);
+	// Its last text, even with nothing after it yet, stays on the wheel while the agent works (a call may follow), and
+	// becomes the answer only once the agent stopped.
+	const writing = chatItemsWith(turn(), true, true, TOOLS, 1);
+	assert.deepEqual(
+		writing.map((item) => item.type),
+		["user", "activity", "results"],
+	);
+	assert.deepEqual(kinds(writing[1] as Activity), ["thought", "text", "bash", "artifact", "text"]);
+	assert.equal((writing[1] as Activity).working, true);
+	assert.deepEqual(
+		at(1).map((item) => item.type),
+		["user", "activity", "answer", "results"],
+	);
+	// At the other levels a text is in the transcript anyway: the answer shows as it streams.
+	assert.deepEqual(
+		chatItemsWith(turn(), true, true, TOOLS, 2).map((item) => item.type),
+		["user", "activity", "text", "activity", "answer", "results"],
+	);
+});
+
+test("at detail 1, a rebuilt run keeps its wheel when it shows the same", () => {
+	const made = turn();
+	const first = chatItemsWith(made, false, true, TOOLS, 1);
+	// The answer's response again, as a new object (a delta that changed nothing shown): the run is made again.
+	const again = [...made.slice(0, -1), { ...(made.at(-1) as Extract<Item, { type: "assistant" }>) }];
+	const second = chatItemsWith(again, false, true, TOOLS, 1);
+	assert.equal(second[1], first[1]);
 });

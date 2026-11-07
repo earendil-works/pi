@@ -119,8 +119,8 @@ export const CommentIcon = () => (
 		<path d="M20 15a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z" />
 	</Icon>
 );
-export const ReplyIcon = () => (
-	<Icon size={16}>
+export const ReplyIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
 		<path d="M9 14 4 9l5-5" />
 		<path d="M4 9h11a5 5 0 0 1 5 5v3" />
 	</Icon>
@@ -150,7 +150,7 @@ export const PencilIcon = () => (
 		<path d="M4 20h4L19 9l-4-4L4 16z" />
 	</Icon>
 );
-/** Angle brackets: code mode scripts. */
+/** Angle brackets: scripts. */
 export const CodeIcon = () => (
 	<Icon size={15}>
 		<path d="M8 7l-5 5 5 5M16 7l5 5-5 5" />

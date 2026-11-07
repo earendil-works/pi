@@ -83,7 +83,7 @@ function McpSheet({ onClose }: { onClose: () => void }) {
 					{error}
 				</p>
 			))}
-			{view && servers.length === 0 && <p className="muted">No MCP server is running.</p>}
+			{view && servers.length === 0 && <p className="empty-note">No MCP server is running.</p>}
 			{view && actions && (
 				<div className="list">
 					{servers.map((server) => (

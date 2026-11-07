@@ -1,7 +1,8 @@
-// Inline artifacts (`artifact` with `inline: true`) in Chromium: the call's version renders below its card, Markdown
-// as in the viewer, SVG and HTML drawings filling the sandboxed frame's width, the frame fitted to the content height
-// they report (capped at 70vh), for the owner and for a guest alike; the card still opens the full viewer; a version
-// the route cannot serve says so. Fake provider (`artifact <json>`), disposable sessions.
+// Inline artifacts (`artifact` with `inline: true`) in Chromium: the call's version renders below its card, in place
+// (right after its call's wheel, before the answer), Markdown as in the viewer, SVG and HTML drawings filling the
+// sandboxed frame's width, the frame fitted to the content height they report (capped at 70vh), for the owner and for
+// a guest alike; the card still opens the full viewer; a version the route cannot serve says so. Fake provider
+// (`artifact <json>`), disposable sessions.
 
 import assert from "node:assert/strict";
 import { readdirSync, rmSync } from "node:fs";
@@ -115,6 +116,14 @@ describe("inline artifacts in Chromium", { skip: !browserTests }, () => {
 				`document.querySelector('[data-testid=results] .file-card + .inline-artifact')?.dataset.artifact==='notes:1'`,
 			),
 			true,
+		);
+		// Where it was made: right after its call's wheel, before the answer (at the default detail, 2, the answer's
+		// thinking is on a wheel of its own after the artifact).
+		assert.deepEqual(
+			await browser.evaluate<string[]>(
+				`[...document.querySelectorAll('[data-row]')].map((row)=>row.querySelector('[data-testid=activity]')?'activity':row.querySelector('.inline-artifact')?'inline':row.textContent.includes('Echo:')?'answer':'').filter(Boolean)`,
+			),
+			["activity", "inline", "activity", "answer"],
 		);
 		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.viewer-panel').length`), 0);
 	});

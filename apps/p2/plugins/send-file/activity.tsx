@@ -85,7 +85,7 @@ export const sendFileActivity: ToolActivity = {
 	}),
 	argument: (tool, cwd) => relativePath(cwd, stringOf(tool.args.path)),
 	summary: (count) => (count === 1 ? "sent a file" : `sent ${count} files`),
-	hasResult: (tool) => sentFileOf(tool) !== undefined,
+	hasResult: (tool) => (sentFileOf(tool) ? "after" : false),
 	Result: SentFile,
 	Detail: SendFileDetail,
 };

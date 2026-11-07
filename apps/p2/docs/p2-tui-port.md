@@ -359,7 +359,7 @@ Adding regex/phrase search would be a `Search` contract change (d).
 | Launcher (terminal, connection, sign-in, grants, consent UI, modes, output filter) | `P2/src/hosts/tui.ts`, `tui-client.ts`, `tui-config.ts`, `tui-grants.ts`, `tui-actions.ts`, `tui-trusted-ui.ts`, `tui-modes.ts`, `tui-filter.ts`, `tui-local-preferences.ts` |
 | Bundle and sandbox | `P2/src/hosts/tui-bundle.ts`, `tui-sandbox.ts`, `tui-bootstrap.mjs`, `tui-worker-runtime.ts` |
 | Runtime (screens, overlays, commands, renderer registries, context) | `P2/src/runtime/tui.ts`, `tui-commands.ts`, `tui-renderers.ts`, `tui-context.ts`, `tui-preferences.ts` |
-| Copied components | `P2/src/tui/components/` (messages, transcript, tool card, status indicators and editor, selectors, header/footer/status lines), `P2/src/tui/tools/` (tool renderers), `P2/src/tui/theme/` |
+| Copied components | `P2/src/tui/components/` (messages, transcript, tool card, status indicators and editor, selectors, header/footer/status lines), `P2/src/tui/tools/` (renderer contract, helpers, the shared shell card; the tools' own renderers moved to their plugins' TUI facets), `P2/src/tui/theme/` |
 | Runtime commands, keybindings, reload snapshot | `P2/src/tui/core-commands.ts`, `keybindings.ts`, `snapshot.ts` |
 | Chat surface: transcript `ScrollView` over the dock, pending area, working indicator, sends | `P2/plugins/chat/tui.ts` (`ChatSurface`), `tui-commands.ts` |
 | Plugin screens and cards | `P2/plugins/<name>/tui.ts` |

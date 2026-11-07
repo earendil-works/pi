@@ -177,6 +177,7 @@ From `AGENTS.md` and this project's history:
 | `docs/p2-notes.md` | decisions, configuration, plugin-by-plugin notes |
 | `docs/p2-tui-port.md` | TUI design, as-built notes, open phases |
 | `docs/optimistic-ui.md` | optimistic UI: the pattern for actions, pending states and loads (web and terminal) |
+| `docs/tool-ui.md` | how a plugin shows its tool (web and TUI registrations), with a complete example plugin |
 | `docs/workflows.md` | code mode workflows with one-shot agents |
 | `docs/tree.md` | `/tree`: branches of the main conversation as Durable forks |
 | `docs/remote-envs.md` | SSH environments |

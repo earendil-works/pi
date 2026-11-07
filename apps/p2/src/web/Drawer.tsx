@@ -434,7 +434,10 @@ export const Drawer = memo(function Drawer({
 					const first = list[0];
 					return (
 						<section key={location} className="group">
-							<h3 title={first ? `${first.env ? `${first.env}:` : ""}${first.cwd}` : location}>
+							<h3
+								className="group-head"
+								title={first ? `${first.env ? `${first.env}:` : ""}${first.cwd}` : location}
+							>
 								<FolderIcon />
 								{first?.env && sandboxes?.has(first.env) && (
 									<span className="group-lock" title="Sandbox">
