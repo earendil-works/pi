@@ -26,3 +26,16 @@ and its working rules are in `handoff.md`.
 - **Keep the app kit, change it where it does not fit (owner, 2026-11-06: "ok"):** p3 starts with `startServer` and
   `startWorker`; gaps found (the owner principal; later a plugin's access to its host's store and root scope,
   keep-alive counts from plugins, an "apply changes" object) are fixed in the kit, each a Chord decision.
+- **UI is contributed from a plugin's facet (owner, 2026-11-06: "A"):** a page or terminal plugin contributes its
+  components from its facet's setup; objects in a page supply data (held with `useHold`), never the UI itself. Reason:
+  a facet's contribution is swapped in one update on a reload, always styled; an object's UI stays old until its
+  successor is live and can show unstyled meanwhile (Chord decision "A restarting page object's old UI may show
+  unstyled").
+- **Code is committed only after the owner reviewed it; docs, specs and decisions without (owner, 2026-11-06).**
+- **Base entries are named after what they are (owner, 2026-11-06: "i want things to be named after what they are"):**
+  `server.ts` (the server: `startServer`), `worker.ts` (a session worker: `startWorker`), `supervisor.ts` (runs the
+  server as a child and starts a fresh one on request or after a crash, so "restart needed" can be acted on from the
+  page); the `p3` command runs the supervisor. To be specified in step 0b.
+- **Startup building is measured with telemetry (owner, 2026-11-06):** spans for a server start (store, each base
+  build, plugin discovery, each plugin build, the load), each worker start and each Apply, in the kit's telemetry
+  store; to be specified as a small Chord change.

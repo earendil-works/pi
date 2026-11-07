@@ -204,7 +204,7 @@ a tool. Nothing applies on save: a save is often half an edit.
 2. **Stylesheets** (fixed): a page fetches a plugin's new stylesheet inactive before it reloads the plugin, switches it
    on only if the plugin's new code was adopted, and retires the old one after a drawn frame. Failed stylesheets are
    retried by the next update, also those that failed at the page's first load. Limitation: UI contributed by an object
-   that restarts can show unstyled until its successor is live (owner's call pending: accept, or a kernel signal).
+   that restarts can show unstyled until its successor is live (accepted, owner: UI is contributed from facets).
 3. **Base bundles** (fixed): the page's and the terminal's base resolve packages with the server's conditions: an app
    installed from npm gets `dist/` everywhere, a server started with `--conditions=source` gets source everywhere.
 4. **"Restart needed"** (fixed): each running base records a SHA-256 hash of the bytes it read per file (the worker, page and terminal bundles,

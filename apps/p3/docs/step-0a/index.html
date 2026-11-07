@@ -173,11 +173,11 @@ tried again, not skipped as applied.</li>
 update at the same URL; the plugin&#39;s new code is applied anyway (its part may lack its new classes until then); one
 that loads after its timeout is applied then. Stylesheet URLs carry a hash of the CSS, so a CSS-only edit is a new
 file.</p>
-<p><strong>Limitation (accepted for now, owner to confirm):</strong> UI contributed by an object that restarts stays on its old
+<p><strong>Limitation (accepted, owner 2026-11-06: &quot;A&quot;):</strong> UI contributed by an object that restarts stays on its old
 version until the successor is live (design §21: such an object keeps its contribution until then). Its old sheet is
 retired after the drawn frame anyway, so during that restart the old part can show unstyled (a second in the test).
 UI contributed directly by a plugin&#39;s facet, the rule for p3&#39;s UI, is not affected. A kernel signal &quot;this plugin&#39;s
-restarts finished&quot; would close it (option B, not built).</p>
+restarts finished&quot; would close it (option B, rejected for now).</p>
 </section>
 
 <section class="chapter" id="conditions"><header class="opener"><div class="numeral">II</div><h2>Base Bundles Resolve as the Server Does</h2><p class="lede">Where the page&#39;s Chord comes from.</p></header>
